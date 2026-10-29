@@ -7,7 +7,7 @@
  * not list.
  */
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import golden from "../../fixtures/kubernetes-discovery-golden.json";
 import {
   CNPG_CLUSTER,
@@ -18,6 +18,20 @@ import {
 import type { KubernetesDiscoveredDatabase } from "@/lib/seed/kubernetes-discovery-export";
 
 const PASSWORD = "not-a-real-password-orders";
+const CLUSTER_DOMAIN = "KUBERNETES_DISCOVERY_CLUSTER_DOMAIN";
+const INVALID_CLUSTER_DOMAIN =
+  "KUBERNETES_DISCOVERY_CLUSTER_DOMAIN is not a DNS name: name the cluster's domain, such as cluster.local, in lowercase letters, digits and hyphens, with dots between its labels and none at either end";
+
+const savedClusterDomain = process.env[CLUSTER_DOMAIN];
+
+beforeEach(() => {
+  delete process.env[CLUSTER_DOMAIN];
+});
+
+afterEach(() => {
+  if (savedClusterDomain === undefined) delete process.env[CLUSTER_DOMAIN];
+  else process.env[CLUSTER_DOMAIN] = savedClusterDomain;
+});
 
 function database(overrides: Partial<KubernetesDiscoveredDatabase> = {}): KubernetesDiscoveredDatabase {
   return {
@@ -80,7 +94,7 @@ describe("mapKubernetesDatabase", () => {
         id: kubernetesConnectionId("cnpg", "team-a", "orders"),
         name: "team-a/orders (CloudNativePG)",
         type: "postgres",
-        host: "orders-rw.team-a.svc",
+        host: "orders-rw.team-a.svc.cluster.local.",
         port: 5432,
         database: "orders",
         user: "orders",
@@ -113,13 +127,63 @@ describe("mapKubernetesDatabase", () => {
       });
     expect(mapKubernetesDatabase(supplied({ database: "billing", secret: { name: "billing-owner" } }))).toMatchObject({
       ok: true,
-      connection: { database: "billing", port: 5432, user: "billing_owner", host: "billing-db-rw.prod.svc" },
+      connection: {
+        database: "billing",
+        port: 5432,
+        user: "billing_owner",
+        host: "billing-db-rw.prod.svc.cluster.local.",
+      },
       secret: { namespace: "prod", name: "billing-owner" },
     });
     expect(mapKubernetesDatabase(supplied({ secret: { name: "billing-owner" } }))).toMatchObject({
       ok: true,
       connection: { database: "app", port: 5432 },
     });
+  });
+
+  // Discovered hosts are fully qualified names with a trailing dot, so the pod's DNS search path never applies.
+  it("builds the host as the read-write Service's fully qualified name with a trailing dot", () => {
+    const hostOf = () => {
+      const result = mapKubernetesDatabase(database());
+      if (!result.ok) throw new Error(result.reason);
+      return result.connection.host;
+    };
+    expect(hostOf()).toBe("orders-rw.team-a.svc.cluster.local.");
+    // A blank value is the default, as an unset one is.
+    process.env[CLUSTER_DOMAIN] = "  ";
+    expect(hostOf()).toBe("orders-rw.team-a.svc.cluster.local.");
+  });
+
+  it("ends the host in the cluster domain KUBERNETES_DISCOVERY_CLUSTER_DOMAIN names", () => {
+    for (const value of ["corp.internal", " corp.internal ", "k8s"]) {
+      process.env[CLUSTER_DOMAIN] = value;
+      const result = mapKubernetesDatabase(database());
+      if (!result.ok) throw new Error(result.reason);
+      expect(result.connection.host).toBe(`orders-rw.team-a.svc.${value.trim()}.`);
+    }
+  });
+
+  it("skips every database while KUBERNETES_DISCOVERY_CLUSTER_DOMAIN is not a DNS name, naming the variable, not the value", () => {
+    const invalid = [
+      "Cluster.Local",
+      "cluster..local",
+      ".cluster.local",
+      "cluster.local.",
+      "-cluster.local",
+      "cluster-.local",
+      "cluster_local",
+      "cluster local",
+      "cluster.local:53",
+      "cluster.local/x",
+      `${"a".repeat(64)}.local`,
+      `${"a.".repeat(126)}ab`,
+    ];
+    for (const value of invalid) {
+      process.env[CLUSTER_DOMAIN] = value;
+      const reason = refusalOf(database());
+      expect(reason).toBe(INVALID_CLUSTER_DOMAIN);
+      expect(reason).not.toContain(value);
+    }
   });
 
   it("forces the access fields in code: managed, the admin role, TLS required, no MCP, read-only mode or string", () => {
@@ -228,6 +292,13 @@ describe("the golden fixture", () => {
   it("is Studio's own copy", () => {
     expect(golden.provenance).toBe("libredb-studio");
     expect(golden.cases.length).toBeGreaterThan(0);
+  });
+
+  it("names every host as a fully qualified name with a trailing dot", () => {
+    for (const c of golden.cases) {
+      const { namespace, name } = c.resource.metadata;
+      expect(c.connection.host).toBe(`${name}-rw.${namespace}.svc.cluster.local.`);
+    }
   });
 
   it.each(golden.cases.map((c) => [`${c.resource.metadata.namespace}/${c.resource.metadata.name}`, c] as const))(

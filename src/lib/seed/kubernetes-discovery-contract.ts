@@ -9,9 +9,11 @@
  * released tag.
  *
  * Every connection is built here with its access fields forced in code: managed, the admin role, TLS required, no MCP
- * opt-in, no read-only mode, no connection string. Nothing in the export can change them. The roles a session sees,
- * the literal marker and the Secret marker the Kubernetes access review reads are set after filterByRoles, in
- * src/lib/seed/index.ts, because filterByRoles copies a fixed field list.
+ * opt-in, no read-only mode, no connection string. Nothing in the export can change them. Every host is a fully
+ * qualified name with a trailing dot in the cluster domain KUBERNETES_DISCOVERY_CLUSTER_DOMAIN names, `cluster.local`
+ * by default, so the pod's DNS search path never applies; while that variable is not a DNS name, no database is listed.
+ * The roles a session sees, the literal marker and the Secret marker the Kubernetes access review reads are set after
+ * filterByRoles, in src/lib/seed/index.ts, because filterByRoles copies a fixed field list.
  *
  * A refusal names a field, a key or a Secret, never a value: the values are database passwords.
  */
@@ -49,8 +51,11 @@ export interface KubernetesContractRow {
   secretName(resource: KubernetesDiscoveredResource): string;
   /** Why the exporter left the Secret out as not belonging to the resource: the tie the row requires. */
   notOwned(resource: KubernetesDiscoveredResource, secretName: string): string;
-  /** The connection fields the resource and its Secret give, the host included, or why they give none. */
-  fields(resource: KubernetesDiscoveredResource, secretName: string, data: SecretData): Fields;
+  /**
+   * The connection fields the resource and its Secret give, or why they give none. The host is a fully qualified name
+   * in `clusterDomain`, built with serviceHost.
+   */
+  fields(resource: KubernetesDiscoveredResource, secretName: string, data: SecretData, clusterDomain: string): Fields;
 }
 
 /** The PostgreSQL port CloudNativePG serves on, the port of a Secret the user supplied. */
@@ -60,6 +65,33 @@ const NAME_MAX_CHARS = 128;
 /** The database CloudNativePG's initdb creates when the resource names none. */
 const CNPG_DEFAULT_DATABASE = "app";
 const PORT_PATTERN = /^\d{1,5}$/;
+/** The cluster domain while KUBERNETES_DISCOVERY_CLUSTER_DOMAIN is unset or blank, the one Kubernetes defaults to. */
+const DEFAULT_CLUSTER_DOMAIN = "cluster.local";
+/** The longest DNS name, without its trailing dot. */
+const DNS_NAME_MAX_CHARS = 253;
+/** A DNS label as Kubernetes writes one: 1 to 63 lowercase letters, digits and inner hyphens. */
+const DNS_LABEL = /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/;
+const INVALID_CLUSTER_DOMAIN =
+  "KUBERNETES_DISCOVERY_CLUSTER_DOMAIN is not a DNS name: name the cluster's domain, such as cluster.local, in lowercase letters, digits and hyphens, with dots between its labels and none at either end";
+
+/**
+ * The cluster's DNS domain, which every discovered host ends in: KUBERNETES_DISCOVERY_CLUSTER_DOMAIN, trimmed, or
+ * `cluster.local` while it is unset or blank. It is read on every mapping, never cached with the export. A value that
+ * is not a DNS name is refused, naming the variable and not the value.
+ */
+function kubernetesClusterDomain(): { ok: true; domain: string } | { ok: false; reason: string } {
+  const domain = process.env.KUBERNETES_DISCOVERY_CLUSTER_DOMAIN?.trim() || DEFAULT_CLUSTER_DOMAIN;
+  const isDnsName = domain.length <= DNS_NAME_MAX_CHARS && domain.split(".").every((label) => DNS_LABEL.test(label));
+  return isDnsName ? { ok: true, domain } : { ok: false, reason: INVALID_CLUSTER_DOMAIN };
+}
+
+/**
+ * A Service's fully qualified name with the trailing dot, `<service>.<namespace>.svc.<clusterDomain>.`: discovered
+ * hosts are fully qualified names with a trailing dot, so the pod's DNS search path never applies.
+ */
+function serviceHost(service: string, namespace: string, clusterDomain: string): string {
+  return `${service}.${namespace}.svc.${clusterDomain}.`;
+}
 
 /** A value of the Secret, with an empty value counted as absent. */
 function present(value: string | undefined): string | undefined {
@@ -70,8 +102,8 @@ function present(value: string | undefined): string | undefined {
  * A CloudNativePG `Cluster`: the Secret named by `.spec.bootstrap.initdb.secret.name` when set, otherwise the
  * `<name>-app` Secret the operator writes. From `<name>-app` every field but the host comes from the Secret; from a
  * Secret the user supplied, a `kubernetes.io/basic-auth` Secret, only the user and password do, and the database is
- * initdb's, `app` by default, on port 5432. The host is always the read-write Service by its namespaced name, because
- * Studio runs in a namespace of its own and the Secret's `host` is the short name.
+ * initdb's, `app` by default, on port 5432. The host is always the read-write Service by its fully qualified name,
+ * because Studio runs in a namespace of its own and the Secret's `host` is the short name.
  */
 export const CNPG_CLUSTER: KubernetesContractRow = Object.freeze({
   slug: "cnpg",
@@ -90,12 +122,12 @@ export const CNPG_CLUSTER: KubernetesContractRow = Object.freeze({
       ? `the credential Secret ${secretName} is neither owned by the Cluster nor labelled cnpg.io/cluster=${resource.metadata.name}, so the exporter did not export it`
       : `the credential Secret ${secretName} belongs to another resource or is not of type kubernetes.io/basic-auth, so the exporter did not export it`;
   },
-  fields(resource: KubernetesDiscoveredResource, secretName: string, data: SecretData): Fields {
+  fields(resource: KubernetesDiscoveredResource, secretName: string, data: SecretData, clusterDomain: string): Fields {
     const user = present(data.username);
     if (user === undefined) return { ok: false, reason: `the credential Secret ${secretName} has no username` };
     const password = present(data.password);
     if (password === undefined) return { ok: false, reason: `the credential Secret ${secretName} has no password` };
-    const host = `${resource.metadata.name}-rw.${resource.metadata.namespace}.svc`;
+    const host = serviceHost(`${resource.metadata.name}-rw`, resource.metadata.namespace, clusterDomain);
     const initdb = resource.spec?.bootstrap?.initdb;
     if (present(initdb?.secret?.name) !== undefined) {
       return {
@@ -151,6 +183,9 @@ export type KubernetesMappingResult =
 
 /** The seed connection an exported database becomes, with the Secret its credentials came from, or why it is skipped. */
 export function mapKubernetesDatabase(entry: KubernetesDiscoveredDatabase): KubernetesMappingResult {
+  // A cluster domain that is not a DNS name refuses every database, so no host is ever built from it.
+  const clusterDomain = kubernetesClusterDomain();
+  if (!clusterDomain.ok) return { ok: false, reason: clusterDomain.reason };
   // The export's schema admits only the kinds of this table, so a row always exists.
   const row = KUBERNETES_CONTRACT.find((candidate) => candidate.slug === entry.kind) as KubernetesContractRow;
   const { namespace, name } = entry.resource.metadata;
@@ -169,7 +204,7 @@ export function mapKubernetesDatabase(entry: KubernetesDiscoveredDatabase): Kube
     const problem = entry.secret.problem as keyof typeof SECRET_PROBLEMS;
     return { ok: false, reason: SECRET_PROBLEMS[problem](secretName, entry.secret.key) };
   }
-  const fields = row.fields(entry.resource, secretName, entry.secret.data);
+  const fields = row.fields(entry.resource, secretName, entry.secret.data, clusterDomain.domain);
   if (!fields.ok) return fields;
 
   const result = SeedConnectionSchema.safeParse({

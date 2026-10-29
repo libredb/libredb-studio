@@ -102,7 +102,7 @@ describe("seed/index with the Kubernetes discovery source", () => {
     const orders = await getSeedConnectionById(ORDERS, ["admin"]);
     expect(orders).toMatchObject({
       name: "team-a/orders (CloudNativePG)",
-      host: "orders-rw.team-a.svc",
+      host: "orders-rw.team-a.svc.cluster.local.",
       port: 5432,
       database: "orders",
       user: "orders",
