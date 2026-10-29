@@ -342,20 +342,23 @@ describe("self reviews, with the signed-in user's own token", () => {
   test.each([
     ["session handle", { sessionHandle: "", uid: "uid-dev-a", token: ACCESS_TOKEN }],
     ["uid", { sessionHandle: "handle-u-not-a-real-handle-0000000000000000", uid: "", token: ACCESS_TOKEN }],
-  ])("an empty %s denies without a request unless the decision is fresh, which keeps nothing", async (_field, unkeyed) => {
-    cluster.grants = [ORDERS_SELF_GRANT];
-    const warn = spyOn(logger, "warn").mockImplementation(() => {});
-    try {
-      expect(await accessReviewVerdict(unkeyed, ORDERS)).toBe("denied");
-      expect(cluster.selfReviews()).toHaveLength(0);
-      expect(warn.mock.calls[0][1]).toEqual({ route: "kubernetes-access", reason: "config", heldBack: 0 });
-      expect(await accessReviewVerdict(unkeyed, ORDERS, { fresh: true })).toBe("allowed");
-      expect(await accessReviewVerdict(unkeyed, ORDERS, { fresh: true })).toBe("allowed");
-      expect(cluster.selfReviews()).toHaveLength(2);
-    } finally {
-      warn.mockRestore();
-    }
-  });
+  ])(
+    "an empty %s denies without a request unless the decision is fresh, which keeps nothing",
+    async (_field, unkeyed) => {
+      cluster.grants = [ORDERS_SELF_GRANT];
+      const warn = spyOn(logger, "warn").mockImplementation(() => {});
+      try {
+        expect(await accessReviewVerdict(unkeyed, ORDERS)).toBe("denied");
+        expect(cluster.selfReviews()).toHaveLength(0);
+        expect(warn.mock.calls[0][1]).toEqual({ route: "kubernetes-access", reason: "config", heldBack: 0 });
+        expect(await accessReviewVerdict(unkeyed, ORDERS, { fresh: true })).toBe("allowed");
+        expect(await accessReviewVerdict(unkeyed, ORDERS, { fresh: true })).toBe("allowed");
+        expect(cluster.selfReviews()).toHaveLength(2);
+      } finally {
+        warn.mockRestore();
+      }
+    },
+  );
 
   test("a fresh self decision passes an expired token through, so sign-in can tell it apart", async () => {
     expect(await accessReviewVerdict({ ...H, token: "sha256~not-a-real-token-dead" }, ORDERS, { fresh: true })).toBe(

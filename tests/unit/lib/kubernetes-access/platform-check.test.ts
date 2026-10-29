@@ -187,6 +187,8 @@ describe("clusterPlatform", () => {
   test("keeps the verdict on globalThis under its registered symbol, as separate route bundles share it", async () => {
     await clusterPlatform(new URL(api.url), FAKE_TOKEN, ca);
     const holder = globalThis as Record<symbol, unknown>;
-    expect(holder[Symbol.for("libredb-studio.kubernetes-access-platform")]).toMatchObject({ verdict: "plain-kubernetes" });
+    expect(holder[Symbol.for("libredb-studio.kubernetes-access-platform")]).toMatchObject({
+      verdict: "plain-kubernetes",
+    });
   });
 });
