@@ -92,11 +92,11 @@ afterEach(() => {
 });
 
 /** A sign-in through both routes; every response is recorded as a sink. */
-async function signIn(between: () => void = () => {}): Promise<void> {
+async function signIn(between: () => void = () => {}): Promise<Response> {
   const login = await record(await loginGET(new Request("http://localhost:3000/api/auth/openshift/login")));
   const params = cluster.authorize(new URL(login.headers.get("location") ?? ""));
   between();
-  await record(await callbackGET(callbackRequest(params)));
+  return record(await callbackGET(callbackRequest(params)));
 }
 
 /** Every cookie written, raw and with a JWT's payload decoded, so a value inside a signed cookie is seen too. */
@@ -169,15 +169,18 @@ describe("token custody in openshift sign-in", () => {
     checkCustody();
   });
 
-  test("an ID token in the answer never reaches the store", async () => {
+  test("an ID token in the answer fails the sign-in as malformed: nothing stored, no session cookie", async () => {
     cluster.tokenAnswer = { ...cluster.tokenAnswer, id_token: ID_TOKEN };
     const store = spyOn(tokenStore, "storeOpenShiftSession");
     try {
-      await signIn();
-      expect(text(store.mock.calls)).not.toContain(ID_TOKEN);
+      const res = await signIn();
+      expect(res.headers.get("location")).toBe("https://studio.apps.example.com/login?error=openshift_failed");
+      expect(store).not.toHaveBeenCalled();
     } finally {
       store.mockRestore();
     }
+    expect(sunk.some((line) => line.includes('"step":"token","reason":"malformed"'))).toBe(true);
+    expect(jar.written("auth-token")).toEqual([]);
     checkCustody();
   });
 

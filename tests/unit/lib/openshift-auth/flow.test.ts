@@ -197,7 +197,7 @@ describe("exchangeOpenShiftCode", () => {
     expect(cluster.received("oauth")).toEqual([]);
   });
 
-  test("a refresh token or an ID token in the answer appears nowhere in the outcome", async () => {
+  test("a refresh token is left out of the outcome, and an ID token fails the exchange as malformed", async () => {
     cluster.tokenAnswer = { ...cluster.tokenAnswer, refresh_token: "sha256~not-a-real-token-refresh" };
     const withRefresh = (await signIn()).outcome;
     expect(withRefresh).toEqual({ kind: "token", accessToken: ACCESS_TOKEN, expiresIn: 31536000 });
@@ -205,6 +205,7 @@ describe("exchangeOpenShiftCode", () => {
     cluster.reset();
     cluster.tokenAnswer = { ...cluster.tokenAnswer, id_token: "not-a-real.id-token.value" };
     const withIdToken = (await signIn()).outcome;
+    expect(withIdToken).toEqual({ kind: "failed", reason: "malformed" });
     expect(JSON.stringify(withIdToken)).not.toContain("id-token");
   });
 });
