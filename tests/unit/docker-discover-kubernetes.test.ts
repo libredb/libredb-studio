@@ -71,6 +71,43 @@ delete process.env.SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN;
 
 let api: FakeDiscoveryApi;
 
+/** A candidate an exporter row expands a listed item into, typed for the assertions. */
+interface ExporterCandidate {
+  row: ExporterRow;
+  resource: {
+    metadata: { namespace: string; name: string };
+    spec?: { users?: { name: string; roles?: { db: string }[] }[] } & Record<string, unknown>;
+  };
+  uid?: string;
+  secretName?: string;
+  exact: string[];
+  precheck?: string;
+}
+
+/** An exporter contract row, typed for the assertions: the module is JavaScript, and its inferred union is too narrow. */
+interface ExporterRow {
+  slug: string;
+  group: string;
+  version: string;
+  kind: string;
+  plural: string;
+  secretType: string;
+  allowedKeys: readonly string[];
+  secretKeys: readonly string[];
+  requiredKeys(candidate: unknown): string[];
+  serviceName(resource: unknown): string;
+  expand(item: unknown): { candidates: ExporterCandidate[]; leftOut: number };
+}
+
+const EXPORTER_ROWS = CONTRACT as unknown as readonly ExporterRow[];
+
+/** The exporter's row of the kind `slug`. */
+function exporterRow(slug: string): ExporterRow {
+  const row = EXPORTER_ROWS.find((entry) => entry.slug === slug);
+  if (row === undefined) throw new Error(`the exporter has no row ${slug}`);
+  return row;
+}
+
 /** scanOnce's answer, typed for the assertions: the exporter is JavaScript, so the union TypeScript infers is loose. */
 interface Scan {
   ok: boolean;
@@ -241,7 +278,7 @@ describe("the reviewed constants", () => {
       KUBERNETES_CONTRACT.map((row) => row.slug),
     );
     for (const studio of KUBERNETES_CONTRACT) {
-      const row = CONTRACT.find((entry: { slug: string }) => entry.slug === studio.slug);
+      const row = exporterRow(studio.slug);
       expect(row).toMatchObject({
         slug: studio.slug,
         group: studio.group,
@@ -259,7 +296,7 @@ describe("the reviewed constants", () => {
   });
 
   test("the measured key sets", () => {
-    const keys = (slug: string) => CONTRACT.find((row: { slug: string }) => row.slug === slug);
+    const keys = exporterRow;
     const cnpg = [
       "dbname",
       "fqdn-jdbc-uri",
@@ -301,26 +338,28 @@ describe("the reviewed constants", () => {
     "each golden case names the same Secret and Service on both sides: %s",
     (_, c) => {
       const studio = goldenRow(c);
-      const row = CONTRACT.find((entry: { slug: string }) => entry.slug === studio.slug);
+      const row = exporterRow(studio.slug);
       const { candidates, leftOut } = row.expand(c.resource);
       expect(leftOut).toBe(0);
       const candidate = candidates.find(
-        (entry: { resource: { spec?: { users?: { name: string }[] } } }) =>
+        (entry) =>
           c.user === undefined || (entry.resource.spec?.users?.[0]?.name ?? c.resource.metadata.name) === c.user,
       );
+      if (candidate === undefined) throw new Error("the exporter gave no row for the golden case");
       // The exporter writes the resource Studio reads, and names the Secret and Service Studio's row names.
-      expect(candidate.resource).toEqual(goldenEntry(c).resource);
+      const resource = candidate.resource as KubernetesDiscoveredDatabase["resource"];
+      expect(resource).toEqual(goldenEntry(c).resource);
       expect(candidate.secretName).toBe(c.secretName);
       expect(candidate.uid).toBe(c.resource.metadata.uid);
-      expect(row.serviceName(candidate.resource)).toBe(c.service.name);
-      expect(studio.secretName(candidate.resource)).toBe(c.secretName);
-      expect(studio.serviceName(candidate.resource)).toBe(c.service.name);
+      expect(row.serviceName(resource)).toBe(c.service.name);
+      expect(studio.secretName(resource)).toBe(c.secretName);
+      expect(studio.serviceName(resource)).toBe(c.service.name);
     },
   );
 
   test("the CloudNativePG family prunes a resource to the contract's fields and names the operator's reserved Secrets", () => {
     for (const slug of ["cnpg", "edbpg"]) {
-      const row = CONTRACT.find((entry: { slug: string }) => entry.slug === slug);
+      const row = exporterRow(slug);
       expect(
         row.expand({
           apiVersion: "postgresql.cnpg.io/v1",
@@ -376,7 +415,7 @@ describe("the reviewed constants", () => {
   });
 
   test("names each row's required keys", () => {
-    const row = (slug: string) => CONTRACT.find((entry: { slug: string }) => entry.slug === slug);
+    const row = exporterRow;
     const cnpg = row("cnpg").expand({ metadata: { namespace: "a", name: "b" } }).candidates[0];
     const supplied = row("cnpg").expand({
       metadata: { namespace: "a", name: "b" },
@@ -390,8 +429,8 @@ describe("the reviewed constants", () => {
 });
 
 describe("expansion", () => {
-  const pgo = CONTRACT.find((entry: { slug: string }) => entry.slug === "pgo");
-  const mongo = CONTRACT.find((entry: { slug: string }) => entry.slug === "mongo");
+  const pgo = exporterRow("pgo");
+  const mongo = exporterRow("mongo");
   const PGO_METADATA = { namespace: "team-b", name: "analytics", uid: "uid-analytics" };
   const MONGO_METADATA = { namespace: "team-m", name: "catalog", uid: "uid-catalog" };
 
@@ -462,7 +501,7 @@ describe("expansion", () => {
     ];
     const { candidates, leftOut } = pgo.expand({ metadata: PGO_METADATA, spec: { users } });
     expect(leftOut).toBe(7);
-    expect(candidates.map((entry: { secretName: string }) => entry.secretName)).toEqual(["analytics-pguser-fine"]);
+    expect(candidates.map((entry) => entry.secretName)).toEqual(["analytics-pguser-fine"]);
     expect(pgo.expand({ metadata: PGO_METADATA, spec: { users: "x" } })).toEqual({ candidates: [], leftOut: 1 });
     expect(pgo.expand({ metadata: { namespace: "team-b" } })).toEqual({ candidates: [], leftOut: 1 });
   });
@@ -491,7 +530,7 @@ describe("expansion", () => {
     });
     expect(leftOut).toBe(0);
     const shared = { security: { tls: { enabled: true } }, statefulSet: { spec: { serviceName: "catalog-hl" } } };
-    expect(candidates).toEqual([
+    expect<unknown>(candidates).toEqual([
       {
         row: mongo,
         resource: {
@@ -526,8 +565,9 @@ describe("expansion", () => {
       metadata: MONGO_METADATA,
       spec: { users: [{ name: "appuser", db: "admin", roles }] },
     });
-    expect(candidates[0].resource.spec.users[0].roles).toHaveLength(64);
-    expect(candidates[0].resource.spec.users[0].roles[63]).toEqual({ db: "db63" });
+    const kept = candidates[0]?.resource.spec?.users?.[0]?.roles;
+    expect(kept).toHaveLength(64);
+    expect(kept?.[63]).toEqual({ db: "db63" });
   });
 
   test("MongoDB marks a Secret in another namespace other_namespace, and a name it would have to normalize unsupported_name", () => {
@@ -554,7 +594,7 @@ describe("expansion", () => {
         spec: { users: [{ name: "App_User", db: "admin", connectionStringSecretName: "catalog-app", roles: [] }] },
       }).candidates[0],
     ).toMatchObject({ secretName: "catalog-app" });
-    expect(odd.precheck === "unsupported_name" && odd.resource.spec.users[0].name).toBe("App_User");
+    expect(odd.precheck === "unsupported_name" && odd.resource.spec?.users?.[0]?.name).toBe("App_User");
   });
 
   test("MongoDB leaves out and counts a user whose name, database, role database or Secret name Studio would refuse", () => {
@@ -570,7 +610,7 @@ describe("expansion", () => {
     ];
     const { candidates, leftOut } = mongo.expand({ metadata: MONGO_METADATA, spec: { users } });
     expect(leftOut).toBe(7);
-    expect(candidates.map((entry: { secretName: string }) => entry.secretName)).toEqual(["catalog-admin-fine"]);
+    expect(candidates.map((entry) => entry.secretName)).toEqual(["catalog-admin-fine"]);
     // A Service name override that is not a DNS-1035 label leaves every user of the resource out.
     expect(
       mongo.expand({
@@ -1176,7 +1216,7 @@ describe("scanOnce", () => {
     const result = await scan({ client: client(), config: config() });
     expect(result.leftOut).toBe(2);
     expect(result.databases.map((entry) => entry.resource.metadata.name)).toEqual(["orders", "analytics"]);
-    const [row] = CONTRACT;
+    const row = exporterRow("cnpg");
     expect(
       row.expand({
         metadata: { namespace: "a", name: "b" },
@@ -1478,7 +1518,7 @@ describe("reserved names", () => {
       api.addResource(kind, "team-a", "own", { bootstrap: { initdb: { secret: { name: "own-superuser" } } } });
     }
     const expected = supplied.map((name) => ({ name, problem: "reserved_name" }));
-    expect(await scanWithoutRequests("cnpg,edbpg")).toEqual([
+    expect<unknown>(await scanWithoutRequests("cnpg,edbpg")).toEqual([
       ...expected,
       { name: "own-superuser", problem: "reserved_name" },
       { name: "own-superuser", problem: "reserved_name" },
@@ -1641,7 +1681,7 @@ describe("the Service check", () => {
   });
 
   test("serviceProblem: the rule itself", () => {
-    const [row] = CONTRACT;
+    const row = exporterRow("cnpg");
     const owner = { apiVersion: "postgresql.cnpg.io/v1", kind: "Cluster", name: "orders", uid: "u", controller: true };
     const service = (spec: Record<string, unknown>, owners?: unknown) => ({
       metadata: { name: "orders-rw", ...(owners === undefined ? {} : { ownerReferences: owners }) },
