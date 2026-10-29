@@ -48,6 +48,90 @@ spec:
                     own cluster-wide service account instead of your permissions;
                     create them in the namespace directly
                   rule: size(self) == 0
+              postgresql:
+                description: The bundled PostgreSQL subchart. Through the operator
+                  it takes only the values Studio's storage needs (enabled, auth,
+                  image, primary, tls, metrics, volumePermissions and commonLabels),
+                  and the API server drops any other key. Its objects always stay
+                  in this resource's namespace, so the values that would place them
+                  elsewhere are refused.
+                properties:
+                  auth:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  commonLabels:
+                    additionalProperties:
+                      type: string
+                    type: object
+                  enabled:
+                    type: boolean
+                  extraDeploy:
+                    description: Not available through the operator, which would
+                      create these manifests with its own cluster-wide service account
+                      instead of the permissions of whoever wrote this resource. Create
+                      such objects in the namespace directly.
+                    items:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    type: array
+                    x-kubernetes-validations:
+                    - message: postgresql.extraDeploy is not available through the
+                        operator, because the operator would create these manifests
+                        with its own cluster-wide service account instead of your
+                        permissions; create them in the namespace directly
+                      rule: size(self) == 0
+                  image:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  metrics:
+                    properties:
+                      prometheusRule:
+                        properties:
+                          namespace:
+                            description: Not available through the operator; the
+                              PrometheusRule is created in this resource's namespace.
+                            type: string
+                            x-kubernetes-validations:
+                            - message: postgresql.metrics.prometheusRule.namespace is
+                                not available through the operator; the PrometheusRule
+                                is created in this resource's namespace
+                              rule: self == ''
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                      serviceMonitor:
+                        properties:
+                          namespace:
+                            description: Not available through the operator; the
+                              ServiceMonitor is created in this resource's namespace.
+                            type: string
+                            x-kubernetes-validations:
+                            - message: postgresql.metrics.serviceMonitor.namespace is
+                                not available through the operator; the ServiceMonitor
+                                is created in this resource's namespace
+                              rule: self == ''
+                        type: object
+                        x-kubernetes-preserve-unknown-fields: true
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  namespaceOverride:
+                    description: Not available through the operator; the bundled
+                      PostgreSQL runs in this resource's namespace.
+                    type: string
+                    x-kubernetes-validations:
+                    - message: postgresql.namespaceOverride is not available through
+                        the operator; the bundled PostgreSQL runs in this resource's
+                        namespace
+                      rule: self == ''
+                  primary:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  tls:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  volumePermissions:
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                type: object
             type: object
             x-kubernetes-preserve-unknown-fields: true
           status:
