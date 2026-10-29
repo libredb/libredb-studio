@@ -12,7 +12,7 @@
  */
 import { governanceEnabled } from "@/lib/governance/config";
 import { authProviderSetting } from "@/lib/config/auth-provider";
-import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
+import { accessReviewEnabled, accessReviewSwitch } from "@/lib/kubernetes-access/config";
 
 export const MCP_PATH = "/api/mcp";
 export const MCP_ENABLED_ENV = "LIBREDB_MCP_ENABLED";
@@ -142,7 +142,8 @@ export function mcpChannelStatus(): McpChannelStatus {
     return { state: "off", problems: [GOVERNANCE_HOLD_PROBLEM], url: null, tokenTtlDays: null };
   }
   if (isMcpHeldByAccessReview()) {
-    const problem = accessReviewEnabled() ? ACCESS_REVIEW_HOLD_PROBLEM : SIGN_IN_MODE_HOLD_PROBLEM;
+    // The problem names what is set: openshift mode runs the review whatever KUBERNETES_ACCESS_REVIEW says.
+    const problem = accessReviewSwitch() !== "off" ? ACCESS_REVIEW_HOLD_PROBLEM : SIGN_IN_MODE_HOLD_PROBLEM;
     return { state: "off", problems: [problem], url: null, tokenTtlDays: null };
   }
   const reading = readMcpSwitch();

@@ -409,7 +409,9 @@ describe("the role at sign-in", () => {
     try {
       expect(await accessReviewSignInRole("user-mf77b", [])).toBe("user");
       expect(api.seen).toHaveLength(1);
-      expect(String(warn.mock.calls[0][1]?.problem)).toContain("KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT is not set");
+      expect(String(warn.mock.calls[0][1]?.problem)).toContain(
+        "KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT and KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO are both unset",
+      );
     } finally {
       warn.mockRestore();
     }

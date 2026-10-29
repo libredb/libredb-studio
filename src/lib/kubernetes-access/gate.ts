@@ -24,7 +24,7 @@
  */
 import { logger } from "@/lib/logger";
 import type { ManagedConnection } from "@/lib/seed/types";
-import { accessReviewAdminDeployment, accessReviewEnabled, accessReviewSignIn } from "./config";
+import { accessReviewAdminTarget, accessReviewEnabled, accessReviewSignIn } from "./config";
 import { accessReviewAllows } from "./decisions";
 import { recordedGroups, reviewSubjectProblem } from "./groups";
 import type { ResourceAttributes } from "./review";
@@ -127,9 +127,9 @@ export async function accessReviewSignInRole(
  * user for a deny, a failure or a missing Deployment setting.
  */
 async function accessReviewRole(subject: string, groups: readonly string[]): Promise<"admin" | "user"> {
-  let deployment: ReturnType<typeof accessReviewAdminDeployment>;
+  let target: ResourceAttributes;
   try {
-    deployment = accessReviewAdminDeployment();
+    target = accessReviewAdminTarget();
   } catch (error) {
     logger.warn("Kubernetes access review: no admin role can be decided, so this sign-in is a user", {
       route: "kubernetes-access",
@@ -137,10 +137,6 @@ async function accessReviewRole(subject: string, groups: readonly string[]): Pro
     });
     return "user";
   }
-  const allowed = await accessReviewAllows(
-    { user: subject, groups },
-    { verb: "update", group: "apps", resource: "deployments", namespace: deployment.namespace, name: deployment.name },
-    { fresh: true },
-  );
+  const allowed = await accessReviewAllows({ user: subject, groups }, target, { fresh: true });
   return allowed ? "admin" : "user";
 }

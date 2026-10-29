@@ -23,7 +23,7 @@ import { sessionTtlSeconds } from "@/lib/config/auth-env";
 import { authProviderSetting, authProviderValue } from "@/lib/config/auth-provider";
 import {
   ACCESS_REVIEW_ENV,
-  accessReviewAdminDeployment,
+  accessReviewAdminTarget,
   accessReviewApiUrl,
   accessReviewCacheMs,
   accessReviewCaPath,
@@ -146,7 +146,7 @@ function accessReviewEnvProblems(): string[] {
   }
 
   problems.push(
-    refusalOf(accessReviewAdminDeployment),
+    refusalOf(accessReviewAdminTarget),
     refusalOf(accessReviewSignIn),
     refusalOf(accessReviewApiUrl),
     refusalOf(accessReviewCacheMs),

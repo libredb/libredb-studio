@@ -247,7 +247,9 @@ describe("instrumentation register()", () => {
     }
 
     expect(exitCalls).toEqual([1]);
-    expect(banner).toContain("KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT is not set");
+    expect(banner).toContain(
+      "KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT and KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO are both unset",
+    );
     expect(getSqliteSampleSeedState()).toBe("idle");
     expect(fs.existsSync(path.join(tmpDir, "sample.libredb"))).toBe(false);
     expect(output).not.toContain("Star the project");

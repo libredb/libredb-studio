@@ -57,6 +57,7 @@ const UNSET = [
   "KUBERNETES_ACCESS_REVIEW_API_URL",
   "KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS",
   "KUBERNETES_ACCESS_REVIEW_SIGN_IN",
+  "KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO",
 ] as const;
 
 const KEYS = [...Object.keys(reviewed()), ...UNSET];
@@ -124,7 +125,7 @@ const REFUSED: readonly { readonly variable: string; readonly value: string | un
   {
     variable: "KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT",
     value: undefined,
-    says: "KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT is not set",
+    says: "KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT and KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO are both unset",
   },
   {
     variable: "KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT",
@@ -207,6 +208,21 @@ describe("verifyAccessReviewEnvAtBoot", () => {
     ]);
     expect(run.banner).toContain("KUBERNETES_ACCESS_REVIEW switches the Kubernetes access review on");
     for (const secret of [SECRET, TOKEN, PASSWORD]) expect(run.banner).not.toContain(secret);
+  });
+
+  test("an operator install names its LibreDBStudio resource instead, and naming both or an invalid one stops the boot", () => {
+    delete process.env.KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT;
+    process.env.KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO = "libredb-studio/libredb-studio";
+    expect(runPreflight().passed).toBe(true);
+    process.env.KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO = "libredb-studio";
+    expect(runPreflight().problems).toEqual([
+      "KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO must name Studio's LibreDBStudio resource as <namespace>/<name>, such as libredb-studio/libredb-studio",
+    ]);
+    process.env.KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO = "libredb-studio/libredb-studio";
+    process.env.KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT = "libredb-studio/libredb-studio";
+    expect(runPreflight().problems).toEqual([
+      "KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT and KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO are both set: name Studio's Deployment for a Helm install or its LibreDBStudio resource for an operator install, not both",
+    ]);
   });
 
   test("an empty password counts as unset, as it does for sign-in", () => {

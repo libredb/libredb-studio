@@ -3,7 +3,7 @@ import * as path from "path";
 import { governanceEnabled } from "@/lib/governance/config";
 import { runtimeSetting } from "@/lib/governance/settings";
 import { authProviderSetting } from "@/lib/config/auth-provider";
-import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
+import { accessReviewEnabled, accessReviewSwitch } from "@/lib/kubernetes-access/config";
 import { resolveConfig, validateConfig } from "@/lib/llm/utils/config";
 import { AGENT_MODEL_TURN_TIMEOUT_MS, AGENT_WORKFLOW_BUDGETS } from "./execution-policy";
 
@@ -283,8 +283,9 @@ const runtimeDisabledMessage = (): string =>
 const governanceHoldMessage = (): string =>
   "GOVERNANCE_SOURCE is set: this version of Studio does not run the agent under governance, so this server runs no agent whatever else is configured";
 
+// The message names what is set: openshift mode runs the review whatever KUBERNETES_ACCESS_REVIEW says.
 const accessReviewHoldMessage = (): string =>
-  accessReviewEnabled()
+  accessReviewSwitch() !== "off"
     ? "KUBERNETES_ACCESS_REVIEW is on: this version of Studio does not run the agent under the Kubernetes access review, so this server runs no agent whatever else is configured"
     : "NEXT_PUBLIC_AUTH_PROVIDER is not local or oidc: this version of Studio does not run the agent with OpenShift sign-in, so this server runs no agent whatever else is configured";
 
