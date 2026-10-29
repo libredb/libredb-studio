@@ -944,7 +944,7 @@ describe("captureContextSnapshot — an environment failure on the composed path
     if (capture.kind !== "unavailable") throw new Error("unreachable");
     expect(capture.reasonCode).toBe("CATALOG_READ_REFUSED");
     expect(capture.detail).toContain("under the execution profile a grounding read takes");
-    expect(capture.detail).toContain("Connect as a least-privilege user");
+    expect(capture.detail).toContain("Connect with a least-privilege credential");
     // No run can carry an agent credential (B85: runs open on seed ids, and a seed declares none), so advice naming
     // one sends the operator to a field the run never reads.
     expect(capture.detail).not.toContain("agent credential");
@@ -1055,7 +1055,7 @@ describe("captureContextSnapshot — an environment failure on the composed path
     );
   });
 
-  test("a principal that lacks a privilege is told to grant it, or to connect as a user at all", async () => {
+  test("a principal that lacks a privilege is told to grant it, or to connect with a credential that holds it", async () => {
     // The same code is raised for a connection that authenticated no user, whose repair is a user and not a grant.
     const h = harness("postgres");
 
@@ -1067,9 +1067,9 @@ describe("captureContextSnapshot — an environment failure on the composed path
     });
 
     if (capture.kind !== "unavailable") throw new Error("unreachable");
-    expect(capture.detail).toContain("Grant that user the missing privilege named in the server log");
+    expect(capture.detail).toContain("Grant that credential the missing privilege named in the server log");
     expect(capture.detail).toContain("authenticated no user");
-    expect(capture.detail).toContain("connect as a user that holds it");
+    expect(capture.detail).toContain("connect with a credential that holds it");
   });
 
   test("anything that is not one of those two is this server's own bug, and propagates", async () => {

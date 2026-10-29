@@ -791,11 +791,11 @@ function displayName(object: AgentInventoryObject): string {
  */
 const PROFILE_REFUSAL_ADVICE: Readonly<Record<ExecutionProfileDenyCode, string>> = Object.freeze({
   // No run can carry an agent credential (B85: a run opens on a seed id, and a seed declares none), so the way out is
-  // the connection's own user.
+  // the connection's own credential, a database user or a token depending on the engine.
   PROFILE_PRIVILEGES_TOO_BROAD:
-    "The connection's own user holds privileges no read-only boundary can contain, so the profile refused it rather than run as that user. Connect as a least-privilege user, one that holds read privileges and nothing more.",
+    "The connection's own credential, a database user or a token, holds privileges no read-only boundary can contain, so the profile refused it rather than run as that credential. Connect with a least-privilege credential, one that holds read privileges and nothing more.",
   PROFILE_PRIVILEGES_TOO_NARROW:
-    "The user this connection would run the agent as is missing a privilege the read-only boundary itself needs, or the connection authenticated no user at all, so the profile refused it rather than run without that layer. Grant that user the missing privilege named in the server log, or connect as a user that holds it; this is the opposite of the repair for a user that holds too much, and the two are separate codes for that reason.",
+    "The credential this connection would run the agent as, a database user or a token, is missing a privilege the read-only boundary itself needs, or the connection authenticated no user at all, so the profile refused it rather than run without that layer. Grant that credential the missing privilege named in the server log, or connect with a credential that holds it; this is the opposite of the repair for a credential that holds too much, and the two are separate codes for that reason.",
   PROFILE_SERVER_UNENFORCED:
     "The server accepted a write it should have refused, from a user whose privileges allow none or from no user at all, so it does not enforce authorization and no user is held read-only there. Turn on the server's authorization (on MongoDB, security.authorization) and connect as a user holding only read privileges; changing the connection's user alone cannot help.",
   PROFILE_UNSUPPORTED_BY_PROVIDER:

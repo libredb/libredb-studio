@@ -514,15 +514,17 @@ const FAILURE_SENTENCES = {
   // not at fault: this refusal reaches PostgreSQL and SQLite too (B47).
   "agent-credential-unusable":
     "This connection's agent credential cannot be used: check that it has the form its database takes (an agent user and password; an agent token or service-account key alone where the database takes one; an agent user other than the connection's own where it asks for one; none where it takes none), that the password still decrypts under the current secret key, and that no connection string is set beside it.",
-  // Names the database user, because the engine is supported and the credential was
+  // Names the principal, because the engine is supported and the credential was
   // applied: the profile refused the principal it opened as. Folded into the engine
-  // sentence, an operator connected as `sa` was told to change engines. The repair is
-  // the connection's own user, since no run can carry an agent credential (B85).
+  // sentence, an operator connected as `sa` was told to change engines. The principal
+  // is a database user or a token depending on the engine, so the sentence names both
+  // and the repair is a narrower credential on the connection itself, since no run can
+  // carry an agent credential (B85).
   "agent-principal-refused":
-    "The database user this run would execute as holds privileges the read-only boundary cannot contain, so the profile refused it. Connect as a user holding only read privileges.",
-  // The opposite repair to the sentence above: one more privilege, never a narrower user.
+    "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain, so the profile refused it. Connect with a credential that holds only read privileges.",
+  // The opposite repair to the sentence above: one more privilege, never a narrower credential.
   "agent-principal-underprivileged":
-    "The database user this run would execute as lacks a privilege the read-only path needs, so the profile refused it. Grant it that privilege, or connect as a user that holds it.",
+    "The credential this run would execute as, a database user or a token, lacks a privilege the read-only path needs, so the profile refused it. Grant it that privilege, or connect with a credential that holds it.",
   // Neither user repair helps on a server that holds no user read-only, so this names the
   // server setting; engine-neutral, with MongoDB's spelling of it in parentheses.
   "server-authorization-off":

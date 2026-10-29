@@ -443,7 +443,8 @@ describe("the engine names follow the enforcing list", () => {
 });
 
 describe("a connection whose last run was refused for the connection itself", () => {
-  const refusal = "The database user this run would execute as holds privileges the read-only boundary cannot contain.";
+  const refusal =
+    "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain.";
 
   test("is blocked in agent mode, in the refusal's own words, and says what still runs", () => {
     const posture = agentPosture({

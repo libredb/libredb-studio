@@ -244,9 +244,9 @@ describe("foldLedgerEntries", () => {
     "agent-credential-unusable":
       "This connection's agent credential cannot be used: check that it has the form its database takes (an agent user and password; an agent token or service-account key alone where the database takes one; an agent user other than the connection's own where it asks for one; none where it takes none), that the password still decrypts under the current secret key, and that no connection string is set beside it.",
     "agent-principal-refused":
-      "The database user this run would execute as holds privileges the read-only boundary cannot contain, so the profile refused it. Connect as a user holding only read privileges.",
+      "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain, so the profile refused it. Connect with a credential that holds only read privileges.",
     "agent-principal-underprivileged":
-      "The database user this run would execute as lacks a privilege the read-only path needs, so the profile refused it. Grant it that privilege, or connect as a user that holds it.",
+      "The credential this run would execute as, a database user or a token, lacks a privilege the read-only path needs, so the profile refused it. Grant it that privilege, or connect with a credential that holds it.",
     "server-authorization-off":
       "This database server does not enforce authorization, so no user's read-only boundary holds there and agent mode cannot run. Turn on the server's authorization (on MongoDB, security.authorization) and connect as a read-only user.",
     "profile-target-unsupported":

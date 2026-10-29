@@ -1784,7 +1784,7 @@ describe("AgentRail", () => {
     expect(view.getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("blocked");
     expect(view.getByTestId("agent-safety-headline").textContent).toBe("Refused on this connection");
     expect(view.getByTestId("agent-safety-claim").textContent).toContain(
-      "holds privileges the read-only boundary cannot contain",
+      "a database user or a token, holds privileges the read-only boundary cannot contain",
     );
 
     // Another connection has not been refused, so its strip says what its engine does.

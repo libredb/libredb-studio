@@ -76,7 +76,7 @@ function renderStrip(input: StripCase) {
 describe("SafetyStrip on a connection that was refused", () => {
   test("renders the refusal's posture, and a strip told of no refusal keeps the engine's", () => {
     const refusal =
-      "The database user this run would execute as holds privileges the read-only boundary cannot contain.";
+      "The credential this run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain.";
     const refused = render(
       <SafetyStrip
         mode="agent"
