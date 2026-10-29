@@ -16,6 +16,9 @@
  *    mapping, the aliases, the templates and the pipelines read back the same before and after; the positive control
  *    is a document written through the document API, a route the provider does not send to, into a scratch index the
  *    agent then reads and the script deletes;
+ *  - the catalog read: the `SYS COLUMNS` command the agent's Elasticsearch overlay composes, for every table and for
+ *    one, sent through `queryReadOnly` and mapped into column rows, with the cluster unchanged afterwards; with security
+ *    on, the agent user's inventory holds only the tables its role reads;
  *  - the budgets: a result past the row budget (a plain read and an aggregation), past the byte budget, and a
  *    statement past its deadline are each refused, never truncated, and after each refusal the node holds no open
  *    search context: the cursor the answer left open was closed; a read within the budgets answers its rows;
@@ -37,6 +40,8 @@
  */
 // oxlint-disable no-await-in-loop -- the checks run one at a time on purpose: each reads what the node holds after the one before.
 import { randomBytes } from "node:crypto";
+import { composeCatalogRead } from "@/lib/agent/composed-sql";
+import { engineServerDialect } from "@/lib/agent/languages/engines/server";
 import { createDatabaseProvider, executionContextFor } from "@/lib/db/factory";
 import type { DatabaseProvider, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
@@ -303,6 +308,39 @@ async function main(): Promise<void> {
   const grouped = await agent.queryReadOnly!("SELECT k, COUNT(*) AS n FROM probe_buckets GROUP BY k", BUDGET);
   check(grouped.rowCount === 1500, `read: an aggregation within the budget is returned whole -> ${grouped.rowCount}`);
   check((await openContexts()) === 0, "read: no search context stays open after the reads");
+
+  // The agent's catalog read: the command its overlay composes, sent through the same path, and mapped as the run maps it.
+  const catalogRead = engineServerDialect("elasticsearch").catalogRead;
+  if (catalogRead === "unsupported" || catalogRead.mapRows === undefined) throw new Error("no catalog read to check");
+  const everyTable = composeCatalogRead("elasticsearch", { kind: "columns" });
+  // With security on, an index outside the agent's role exists while the catalog is read, and must not be listed.
+  if (SECURED) await send("PUT", `/${SCRATCH}/_doc/1?refresh=true`, { probe: "outside" });
+  let inventory: Awaited<ReturnType<NonNullable<typeof catalogRead.mapRows>>>;
+  try {
+    inventory = catalogRead.mapRows("columns", (await agent.queryReadOnly!(everyTable, BUDGET)).rows);
+  } finally {
+    if (SECURED) await send("DELETE", `/${SCRATCH}`);
+  }
+  const tables = [...new Set(inventory.rows.map((row) => String(row.table_name)))].sort();
+  check(
+    inventory.rows.some((row) => row.table_name === "probe_orders" && row.column_name === "customer"),
+    `catalog: ${everyTable} answers the column inventory -> ${inventory.rows.length} columns of ${tables.join(", ")}`,
+  );
+  if (SECURED) {
+    check(
+      // A data stream's privileges reach its backing indices, so `probe_stream`'s `.ds-probe_stream-*` index is read too.
+      !tables.includes(SCRATCH) &&
+        tables.every((table) => table.startsWith("probe_") || table.startsWith(".ds-probe_")),
+      `security: the agent user's catalog read holds only the tables its role reads, not ${SCRATCH} -> ${tables.join(", ")}`,
+    );
+  }
+  const oneTable = composeCatalogRead("elasticsearch", { kind: "columns", table: "probe_orders" });
+  const columns = catalogRead.mapRows("columns", (await agent.queryReadOnly!(oneTable, BUDGET)).rows);
+  check(
+    columns.rows.length > 0 && columns.rows.every((row) => row.table_name === "probe_orders"),
+    `catalog: ${oneTable} answers that table's columns -> ${columns.rows.map((row) => row.column_name).join(", ")}`,
+  );
+  check((await clusterState()) === before, "catalog: the cluster reads back the same after the catalog reads");
   await agent.disconnect();
 
   if (SECURED) {
