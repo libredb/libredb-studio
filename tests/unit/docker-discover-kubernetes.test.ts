@@ -1117,6 +1117,32 @@ describe("scanOnce", () => {
     expect(result.databases.map((entry) => entry.resource.metadata.name)).toEqual(["analytics"]);
   });
 
+  // A namespace that fills the database bound early is still listed to its end, so the page bound withdraws it whole.
+  test("withdraws a namespace that hits the page bound after its rows already filled the database bound", async () => {
+    seedLab();
+    for (let index = 0; index < 4; index += 1) api.addCluster("team-a", `extra-${index}`);
+    api.pageSize = 1;
+    // team-a's first two pages fill a bound of two databases, and its five Clusters need five pages of one.
+    const result = await scan({ client: client(), config: config(), limits: limitsWith({ databases: 2, pages: 3 }) });
+    expect(result).toMatchObject({ ok: true, truncated: false });
+    expect(result.namespaces).toEqual([
+      {
+        name: "team-a",
+        status: {
+          ok: false,
+          code: "limit_exceeded",
+          message:
+            "clusters.postgresql.cnpg.io in team-a are too many to list: GET /apis/postgresql.cnpg.io/v1/namespaces/team-a/clusters did not end within 3 pages",
+        },
+      },
+      { name: "team-b", status: { ok: true } },
+    ]);
+    expect(result.databases.map((entry) => entry.resource.metadata.name)).toEqual(["analytics"]);
+    const lists = api.seen.filter((seen) => seen.path.startsWith("/apis/postgresql.cnpg.io/v1/namespaces/team-a/"));
+    expect(lists).toHaveLength(3);
+    expect(api.seen.some((seen) => /\/namespaces\/team-a\/(secrets|services)\//.test(seen.path))).toBe(false);
+  });
+
   // The production bounds, as one namespace's editors could use them: twelve Clusters of 1.4 MB, each under etcd's
   // default 1.5 MiB, are 16.8 MB, over the 16 MiB response bound in one page, and fit it in pages of ten.
   test("lists a namespace of Clusters near etcd's object bound in pages under the response bound", async () => {

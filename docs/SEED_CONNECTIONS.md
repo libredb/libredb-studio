@@ -1237,7 +1237,7 @@ The row fails closed: it is refused as `reserved_name` and its Secret is never r
 A namespace whose listed resources name more than 4096 distinct Secrets in these fields is withdrawn as `limit_exceeded`, because its editors decide how many they name, and once a namespace is listed the exporter keeps only the reserved names its kept rows' Secrets have, so what it holds until it reads the Secrets does not grow with them.
 
 A 403 on a namespace's list, where the exporter's Role is missing, and a 404, where the CloudNativePG CRD is not installed, are answers about that namespace: its databases are withdrawn, the export says why, and the other namespaces are exported.
-So are a list page over 16 MiB, a list that does not end within 100 pages and resources that name more than 4096 reserved Secrets, all `limit_exceeded`, because a namespace's editors decide how many and how large its resources are.
+So are a list page over 16 MiB, a list that does not end within 100 pages, which more than 1000 resources of one kind (100 pages of 10) make, and resources that name more than 4096 reserved Secrets, all `limit_exceeded`, because a namespace's editors decide how many and how large its resources are.
 A namespace that fails on a later page loses what its earlier pages found too.
 Any other failure fails the whole scan: an unreachable API server, a 401, a 5xx or an answer that is not a list.
 The export then keeps the namespaces, databases and `generatedAt` of the last good scan and updates only the status and `checkedAt`, as the CapRover exporter does.
@@ -1328,7 +1328,7 @@ An installation that discovered CloudNativePG Clusters with an earlier release c
 - a credential Secret that is not of type `kubernetes.io/basic-auth` is refused as `wrong_type`, also when the Cluster owns or labels it, which an initdb Secret made by hand can be;
 - a credential Secret that holds a key outside CloudNativePG's measured set, the "Keys allowed" row of [the contract](#the-discovery-contract), is refused as `unexpected_key`;
 - a Cluster whose `<name>-rw` Service is missing, is an ExternalName, or has no selector and is not controlled by the Cluster is refused before its Secret is read, and the exporter now needs `get` on Services in each discovered namespace, which the Helm chart grants;
-- the exporter lists every page of each discovered namespace, so a namespace whose list does not end within 100 pages is withdrawn even when its first pages already filled the 500-database bound.
+- the exporter lists every page of each discovered namespace, so a namespace with more than 1000 resources of one kind (100 pages of 10) is withdrawn even when its first pages already filled the 500-database bound.
 
 An installation that also opts in `pgo` sees a PostgresCluster without `spec.users` refused as `reserved_name` when its name is a reserved suffix without its hyphen, such as `monitoring`, or ends in one, such as `-monitoring`, `-pguser`, `-pooler` or `-pem`, because its default user's Secret `<name>-pguser-<name>` then ends in that suffix; list a user in `spec.users` instead ([reserved names](#reserved-secret-names)).
 
