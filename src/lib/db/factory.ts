@@ -270,7 +270,6 @@ export async function createDatabaseProvider(
     }
 
     case "libsql": {
-      // The execution context's `readOnly` and `sendsStatements` together are what the open-time proof keys on.
       const { LibSQLProvider } = await import("./providers/sql/libsql");
       return new LibSQLProvider(connection, options, execution);
     }
