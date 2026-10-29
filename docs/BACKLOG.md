@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S10 · 7
-- [Drivers and connections](#drivers-and-connections) — D1-D405, U17 · 295
+- [Drivers and connections](#drivers-and-connections) — D1-D410, U17 · 300
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U154 · 140
@@ -4074,6 +4074,62 @@ Rules and rule sets are rules engine objects of the same kind, and the check sti
 Found 2026-10-29 while reviewing the Oracle agent profile.
 
 **Done when:** a grant on a rule and on a rule set is measured live, and the refusal names the statement that lifts each, with a unit case per kind.
+
+### D406. A seed's `createdAt` is the time of the request that listed it
+
+`projectSeedConnection` sets `createdAt: new Date()` (`src/lib/seed/connection-filter.ts:149`), and `GET /api/connections/managed` projects every seed again on each request.
+So every read of the managed list, the first load, the pending-seed poll and the refresh #1502 added, hands the browser a different row for a seed that did not change.
+A client that compares rows by value sees every seed as changed on every refresh, and the time a seed reports as its creation is the time of the last read.
+Repro: project the same seed twice and compare `createdAt`.
+
+Found 2026-10-30 in the October PR review; pre-existing.
+
+**Done when:** a seed's `createdAt` is the same across requests, derived from the seed or persisted with it, with a test that projects one seed twice and reads the same value.
+
+### D407. The two managed-list merges disagree about a seed's editable copy
+
+`useAllConnections` (`src/hooks/use-all-connections.ts:35-52`) and `mergeManagedConnections` in `useConnectionManager` (`src/hooks/use-connection-manager.ts:580-613`) each merge the server's managed list with the user's stored connections, and they have drifted apart.
+For a `managed: false` seed the editor lists the user's stored copy and saves one when none exists, while `useAllConnections` lists the server's row, skips the stored copy and saves nothing.
+So the admin pages, the monitoring page and the schema diff show an editable seed without the user's edits to it.
+Open PR #2032 is being asked to extract the managed-list refresh lifecycle the two hooks need; that is related and not the same, since two merges would remain.
+
+Found 2026-10-29 in the review of #2032; pre-existing.
+
+**Done when:** one merge function outside both hooks serves both, with direct tests of its own for a managed seed, an editable seed with and without a stored copy, a dismissed seed and a user connection that shares a seed's id.
+
+### D408. The explain and query-safety AI routes do not validate their request body
+
+`POST /api/ai/explain` (`src/app/api/ai/explain/route.ts:48-52`) and `POST /api/ai/query-safety` (`src/app/api/ai/query-safety/route.ts:66-70`) check only that `query` is truthy.
+Measured on `main` on 2026-10-30 with the provider mocked, on both routes: a `query` and a `schemaContext` sent as JSON objects reach the provider as `[object Object]` and answer 200, a 200,000-character `schemaContext` reaches the provider uncapped and answers 200, and a body that is not JSON answers 500 from the `SyntaxError` that `req.json()` throws.
+`src/app/api/ai/describe-schema/route.ts:14-22` is the pattern for the first two: a `typeof` string check answering 400 and a `MAX_SCHEMA_CONTEXT_CHARS` cap answering 413.
+It answers an unparseable body with 500 as well.
+Under the fence open PR #1950 adds to all three routes, a non-string `query` or `schemaContext` throws a `TypeError` inside the fence and answers 500; the gap itself exists on `main` already.
+
+Found 2026-10-29 in the review of #1950; pre-existing.
+
+**Done when:** both routes answer a non-string `query`, `schemaContext` or `databaseType` with 400 and an oversized `schemaContext` with 413 before a provider is created, all three routes answer an unparseable body with 400, and each case has a test in `tests/api/ai/`.
+
+### D409. The dangerous-query gate is a pure function tested from a component test file
+
+On `main` the gate, `isDangerousQuery` and `writesUnderGrammar` with the helpers they call, lives in `src/components/QuerySafetyDialog.tsx:604-1295`.
+Its tests live in `tests/components/QuerySafetyDialog.test.tsx`: the `isDangerousQuery` block and the blocks from Snowflake's confirmation forms to the end of the file, about 1640 of its 3131 lines, render nothing and call the two functions directly.
+The hooks import the gate from the component (`src/hooks/use-query-execution.ts`, `src/workspace/hooks/use-query-adapter.ts`), so the tests that stub it mock the component's module (`tests/hooks/use-query-execution.test.ts`, `tests/hooks/script-cancel-contract.test.ts`, `tests/components/StudioWorkspace.test.tsx`).
+Five unit test files import the gate from the component too: `tests/unit/db/destructive-commands.test.ts` and the BigQuery, Couchbase, Druid and carriage-return comment tests in `tests/unit/sql/`.
+Open PR #1990 moves the gate to `src/lib/sql/dangerous-query.ts` and leaves its tests where they are.
+
+Found 2026-10-29 in the review of #1990; pre-existing.
+
+**Done when:** the gate lives in a module of its own outside `src/components/`, its pure-function tests live in a unit test file beside it, the component test keeps only component behaviour, and every import and `mock.module` seam for the gate names the gate's own module.
+
+### D410. `ParsedQueryInfo.isUnion` is read by no production code and answers a narrower question than its name
+
+`analyzeQuery` sets `isUnion` (`src/lib/db/utils/query-limiter.ts:560-564`) from whether `UNION` appears as a code word anywhere after the statement's start.
+Measured on 2026-10-30: `SELECT 1 INTERSECT SELECT 2` and `SELECT 1 EXCEPT SELECT 2` read `false`, and `SELECT * FROM (SELECT 1 AS a UNION SELECT 2) t`, one SELECT over a derived table, reads `true`, because `findCodeWord` does not track parenthesis depth.
+Nothing under `src/` reads the field, the limiter included, and it is not on the package surface (`src/exports/`); only `tests/unit/db/query-limiter.test.ts` reads it.
+
+Found 2026-10-30 in the October PR review; pre-existing.
+
+**Done when:** the field is removed with its tests, or replaced by a reading of top-level set operations (`UNION`, `INTERSECT`, `EXCEPT`) that ignores one inside parentheses, with a test for each operator and for a nested one.
 
 ## Value interpolation
 
