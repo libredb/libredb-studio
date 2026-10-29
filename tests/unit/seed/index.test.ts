@@ -7,8 +7,8 @@ import path from "path";
 import {
   getManagedConnections,
   getPendingSeeds,
-  getSeedConnectionById,
   getSeedConnectionByIdUnfiltered,
+  getSeedListing,
   resetCache,
 } from "@/lib/seed";
 import { resetLiteralModeNotices, resetPlaintextWarnings } from "@/lib/seed/credential-resolver";
@@ -51,16 +51,18 @@ describe("seed/index orchestrator", () => {
     expect(userIds).not.toContain("admin-only");
   });
 
-  it("getSeedConnectionById returns connection with role check", async () => {
-    const conn = await getSeedConnectionById("everyone", ["user"]);
-    expect(conn).not.toBeNull();
-    expect(conn!.seedId).toBe("everyone");
-    expect(conn!.password).toBe("shared-secret");
+  it("getSeedListing lists the operator entries the role may see in before, resolved, and sets none apart", async () => {
+    const { before, pendingReview, after } = await getSeedListing(["user"]);
+    const everyone = before.find((c) => c.seedId === "everyone");
+    expect(everyone?.password).toBe("shared-secret");
+    expect(before.map((c) => c.seedId)).not.toContain("admin-only");
+    expect(pendingReview).toEqual([]);
+    expect(after).toEqual([]);
   });
 
-  it("getSeedConnectionById returns null when role mismatches", async () => {
-    const conn = await getSeedConnectionById("admin-only", ["user"]);
-    expect(conn).toBeNull();
+  it("getManagedConnections is the listing's before then after", async () => {
+    const { before, after } = await getSeedListing(["admin"]);
+    expect(await getManagedConnections(["admin"])).toEqual([...before, ...after]);
   });
 
   it("getSeedConnectionByIdUnfiltered returns connection regardless of role", async () => {
@@ -287,8 +289,8 @@ describe("seed/index with discovered connections", () => {
   });
 
   it("does not find a discovered id through the unfiltered lookup", async () => {
-    // Control: the filtered lookup an admin's query goes through does find it.
-    expect((await getSeedConnectionById("caprover-pg", ["admin"]))?.seedId).toBe("caprover-pg");
+    // Control: the admin role's list does carry it.
+    expect((await getManagedConnections(["admin"])).map((c) => c.seedId)).toContain("caprover-pg");
     expect(await getSeedConnectionByIdUnfiltered("caprover-pg")).toBeNull();
   });
 
@@ -391,7 +393,7 @@ describe("seed/index under governance", () => {
 
       expect(await getManagedConnections(["admin"])).toEqual([]);
       expect(await getManagedConnections(["user"])).toEqual([]);
-      expect(await getSeedConnectionById("default-path", ["admin"])).toBeNull();
+      expect(await getSeedListing(["admin"])).toEqual({ before: [], pendingReview: [], after: [] });
       expect(await getSeedConnectionByIdUnfiltered("default-path")).toBeNull();
       expect(readFile).not.toHaveBeenCalled();
     } finally {
@@ -433,9 +435,8 @@ describe("seed/index under governance", () => {
       process.env.GOVERNANCE_SOURCE = "postgres";
 
       expect(await getManagedConnections(["admin"])).toEqual([]);
-      expect(await getSeedConnectionById("caprover-pg", ["admin"])).toBeNull();
-      expect(await getSeedConnectionById(SQLITE_SAMPLE_SEED_ID, ["admin"])).toBeNull();
-      expect(await getSeedConnectionById(SAMPLE_SEED_ID, ["user"])).toBeNull();
+      expect(await getSeedListing(["admin"])).toEqual({ before: [], pendingReview: [], after: [] });
+      expect(await getSeedListing(["user"])).toEqual({ before: [], pendingReview: [], after: [] });
       expect(getPendingSeeds()).toEqual([]);
       expect(open).not.toHaveBeenCalled();
       expect(existsSync).not.toHaveBeenCalled();
