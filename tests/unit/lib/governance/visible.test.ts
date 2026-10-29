@@ -21,7 +21,7 @@ import {
 import * as decisions from "@/lib/kubernetes-access/decisions";
 import * as gate from "@/lib/kubernetes-access/gate";
 import * as seedIndex from "@/lib/seed";
-import { getManagedConnections, type ManagedConnection, resetCache } from "@/lib/seed";
+import { getManagedConnections, type ManagedConnection, resetCache, type SeedListing } from "@/lib/seed";
 import { KUBERNETES_REVIEWED_ROLE } from "@/lib/seed/roles";
 import {
   admittedConnection,
@@ -137,13 +137,20 @@ describe("without governance, with rows only the Kubernetes access review may li
   const ORDERS = reviewedRow("k8s-orders", "orders-app");
   const BILLING = reviewedRow("k8s-billing", "billing-app");
   const SAMPLE = row("sample");
+  // Rows the listing never puts outside pendingReview while the review is on: a projection that lost the reserved role.
+  const STRAY_BEFORE: ManagedConnection = {
+    ...row("k8s-stray-before"),
+    kubernetesSecret: { namespace: "team-a", name: "a" },
+  };
+  const STRAY_AFTER: ManagedConnection = {
+    ...row("k8s-stray-after"),
+    kubernetesSecret: { namespace: "team-a", name: "b" },
+  };
+  let listing: SeedListing;
 
   beforeEach(() => {
-    spyOn(seedIndex, "getSeedListing").mockImplementation(async () => ({
-      before: [FILE],
-      pendingReview: [ORDERS, BILLING],
-      after: [SAMPLE],
-    }));
+    listing = { before: [FILE], pendingReview: [ORDERS, BILLING], after: [SAMPLE] };
+    spyOn(seedIndex, "getSeedListing").mockImplementation(async () => listing);
   });
 
   afterEach(() => {
@@ -175,6 +182,43 @@ describe("without governance, with rows only the Kubernetes access review may li
     );
     expect(await visibleConnectionById(ALICE, "k8s-billing")).toBe(BILLING);
     expect(review.mock.calls).toEqual([[ALICE, BILLING]]);
+  });
+
+  test("while the review is on, reviews a row of before or after that names a Secret in its place", async () => {
+    listing = { before: [FILE, STRAY_BEFORE], pendingReview: [ORDERS], after: [SAMPLE, STRAY_AFTER] };
+    process.env.KUBERNETES_ACCESS_REVIEW = "on";
+    try {
+      const list = spyOn(gate, "connectionsUnderAccessReview").mockImplementation(async (_principal, rows) =>
+        rows.filter((connection) => connection.seedId === "k8s-stray-after"),
+      );
+      expect((await visibleConnections(ALICE)).map((connection) => connection.seedId)).toEqual([
+        "file-pg",
+        "sample",
+        "k8s-stray-after",
+      ]);
+      expect(list.mock.calls).toEqual([[ALICE, [STRAY_BEFORE, ORDERS, STRAY_AFTER]]]);
+
+      const open = spyOn(gate, "connectionUnderAccessReview").mockImplementation(async () => null);
+      expect(await visibleConnectionById(ALICE, "k8s-stray-before")).toBeNull();
+      expect(await visibleConnectionById(ALICE, "k8s-stray-after")).toBeNull();
+      expect(await visibleConnectionById(ALICE, "file-pg")).toBe(FILE);
+      expect(open.mock.calls).toEqual([
+        [ALICE, STRAY_BEFORE],
+        [ALICE, STRAY_AFTER],
+      ]);
+    } finally {
+      delete process.env.KUBERNETES_ACCESS_REVIEW;
+    }
+  });
+
+  test("while the review is off, lists and opens a row of before or after that names a Secret as listed", async () => {
+    listing = { before: [FILE, STRAY_BEFORE], pendingReview: [], after: [SAMPLE, STRAY_AFTER] };
+    const list = spyOn(gate, "connectionsUnderAccessReview");
+    const open = spyOn(gate, "connectionUnderAccessReview");
+    expect(await visibleConnections(ADMIN)).toEqual([FILE, STRAY_BEFORE, SAMPLE, STRAY_AFTER]);
+    expect(list.mock.calls).toEqual([[ADMIN, []]]);
+    expect(await visibleConnectionById(ADMIN, "k8s-stray-before")).toBe(STRAY_BEFORE);
+    expect(open).not.toHaveBeenCalled();
   });
 
   test("sends no review for an id no section holds", async () => {
