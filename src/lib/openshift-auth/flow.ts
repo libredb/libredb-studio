@@ -37,7 +37,7 @@ import type { OpenShiftState } from "@/lib/openshift-auth/state";
 export type ExchangeOutcome =
   | { kind: "token"; accessToken: string; expiresIn: number | null }
   | { kind: "scope"; granted: "narrower" | "wider" | "other" }
-  | { kind: "failed"; reason: "config" | "unreachable" | "rejected" | "malformed" };
+  | { kind: "failed"; reason: "config" | "ca" | "unreachable" | "rejected" | "malformed" };
 
 const ACCESS_TOKEN_PATTERN = /^[\x21-\x7e]{1,4096}$/;
 const PINNED_SCOPES = OPENSHIFT_SCOPE.split(" ");
@@ -82,7 +82,7 @@ function grantedClass(scope: string): "narrower" | "wider" | "other" {
   return PINNED_SCOPES.every((pinned) => granted.has(pinned)) ? "wider" : "other";
 }
 
-function failed(reason: "config" | "unreachable" | "rejected" | "malformed"): ExchangeOutcome {
+function failed(reason: "config" | "ca" | "unreachable" | "rejected" | "malformed"): ExchangeOutcome {
   return { kind: "failed", reason };
 }
 
@@ -95,9 +95,13 @@ function statusOf(error: unknown): number | undefined {
   return undefined;
 }
 
-/** A failed exchange reduced to its class: transport, 3xx or 5xx unreachable, 4xx rejected, anything else malformed. */
+/**
+ * A failed exchange reduced to its class: a CA file the call trusts that cannot be read is ca, transport, 3xx or 5xx
+ * unreachable, 4xx rejected, anything else malformed.
+ */
 function failureOf(error: unknown): ExchangeOutcome {
-  if ((error as { cause?: unknown }).cause instanceof OpenShiftCallError) return failed("unreachable");
+  const cause = (error as { cause?: unknown }).cause;
+  if (cause instanceof OpenShiftCallError) return failed(cause.reason === "ca" ? "ca" : "unreachable");
   const status = statusOf(error);
   if (status === undefined || (status >= 200 && status <= 299)) return failed("malformed");
   return failed(status >= 400 && status <= 499 ? "rejected" : "unreachable");

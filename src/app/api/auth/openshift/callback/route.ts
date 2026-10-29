@@ -20,7 +20,7 @@ import { AuthConfigError } from "@/lib/auth-errors";
 import { authProviderSetting } from "@/lib/config/auth-provider";
 import { withBasePath } from "@/lib/config/base-path";
 import { logger } from "@/lib/logger";
-import { OPENSHIFT_CALLBACK_PATH, openShiftPublicUrl } from "@/lib/openshift-auth/config";
+import { OPENSHIFT_API_CA_FILE_ENV, OPENSHIFT_CALLBACK_PATH, openShiftPublicUrl } from "@/lib/openshift-auth/config";
 import { type ExchangeOutcome, exchangeOpenShiftCode } from "@/lib/openshift-auth/flow";
 import { type IdentityReading, readOpenShiftIdentity } from "@/lib/openshift-auth/identity";
 import { readOpenShiftMetadata } from "@/lib/openshift-auth/metadata";
@@ -28,6 +28,7 @@ import { type OpenShiftSignInCode, openShiftLoginPageLocation } from "@/lib/open
 import {
   auditSignInFailure,
   auditSignInSuccess,
+  caFileFailureCode,
   metadataFailureCode,
   notFound,
   redirectNoStore,
@@ -63,6 +64,8 @@ function exchangeFailureCode(outcome: Exclude<ExchangeOutcome, { kind: "token" }
     });
     return "openshift_config";
   }
+  if (outcome.reason === "ca")
+    return caFileFailureCode(ROUTE, "token", `${OPENSHIFT_API_CA_FILE_ENV} or NODE_EXTRA_CA_CERTS`);
   logger.warn("OpenShift sign-in: the token request failed", { route: ROUTE, step: "token", reason: outcome.reason });
   return outcome.reason === "unreachable" ? "openshift_unreachable" : "openshift_failed";
 }
@@ -74,6 +77,7 @@ function identityFailureCode(reading: Exclude<IdentityReading, { kind: "ok" }>):
       logger.warn("OpenShift sign-in: the cluster serves no users/~, so it signs in through external OIDC", fields);
       return "openshift_external_oidc";
     case "unreachable":
+      if (reading.reason === "ca") return caFileFailureCode(ROUTE, "user", OPENSHIFT_API_CA_FILE_ENV);
       logger.warn("OpenShift sign-in: the API server did not answer users/~", {
         ...fields,
         reason: reading.reason,

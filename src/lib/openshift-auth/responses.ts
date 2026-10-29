@@ -1,6 +1,6 @@
 /**
  * The answers the two openshift sign-in routes share: the 404 of a route outside the mode, a no-store redirect, the
- * audit line of a refused sign-in, and the reason code of a metadata reading.
+ * audit line of a refused sign-in, the reason code of a metadata reading and of a CA file that cannot be read.
  *
  * Redirects are built by hand, because a refusal may land on a path (openShiftLoginPageLocation when the public URL
  * does not read), which `NextResponse.redirect` refuses. An audit sink that throws never changes the redirect.
@@ -9,6 +9,7 @@
 import { NextResponse } from "next/server";
 import { emitAuditEvent } from "@/lib/audit";
 import { logger } from "@/lib/logger";
+import { OPENSHIFT_API_CA_FILE_ENV } from "@/lib/openshift-auth/config";
 import type { MetadataReading } from "@/lib/openshift-auth/metadata";
 import type { OpenShiftSignInCode } from "@/lib/openshift-auth/redirect";
 
@@ -40,6 +41,18 @@ export function auditSignInSuccess(route: string, user: string, ip: string): voi
   }
 }
 
+/**
+ * A CA file the call trusts cannot be read or holds no certificate: a configuration fault, so openshift_config, logged
+ * with the variable that names the file and never the file's content.
+ */
+export function caFileFailureCode(route: string, step: string, variables: string): OpenShiftSignInCode {
+  logger.error(`OpenShift sign-in: ${variables} names a file that cannot be read or holds no certificate`, undefined, {
+    route,
+    step,
+  });
+  return "openshift_config";
+}
+
 /** The code of a metadata reading that is not `ok`, logged with its fields only. */
 export function metadataFailureCode(
   route: string,
@@ -51,6 +64,9 @@ export function metadataFailureCode(
       step: "metadata",
     });
     return "openshift_external_oidc";
+  }
+  if (reading.kind === "unreachable" && reading.reason === "ca") {
+    return caFileFailureCode(route, "metadata", OPENSHIFT_API_CA_FILE_ENV);
   }
   if (reading.kind === "unreachable") {
     logger.warn("OpenShift sign-in: the API server did not answer the OAuth metadata request", {

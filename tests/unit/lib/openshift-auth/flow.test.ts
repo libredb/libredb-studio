@@ -167,9 +167,14 @@ describe("exchangeOpenShiftCode", () => {
       cluster.script(TOKEN_PATH, answer);
       expect((await signIn()).outcome, String(answer.status)).toEqual({ kind: "failed", reason: "unreachable" });
     }
-    cluster.reset();
+  });
+
+  test("a CA file the token call cannot read or that holds no certificate is a ca failure, and nothing is sent", async () => {
     writeFileSync(cluster.caFile, "no certificate");
-    expect((await signIn()).outcome).toEqual({ kind: "failed", reason: "unreachable" });
+    expect((await signIn()).outcome).toEqual({ kind: "failed", reason: "ca" });
+    writeFileSync(cluster.caFile, "");
+    expect((await signIn()).outcome).toEqual({ kind: "failed", reason: "ca" });
+    expect(cluster.received("oauth")).toEqual([]);
   });
 
   test("an OAuth server nobody answers on is unreachable", async () => {

@@ -4,7 +4,7 @@
  * path on every outcome after it was read; a success stores one record and mints one session whose lifetime is the
  * session lifetime capped by the token's expiry.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { decodeJwt, SignJWT } from "jose";
 import { CookieJar, type CookieWrite } from "../../helpers/openshift-auth/cookie-jar";
@@ -318,6 +318,64 @@ describe("GET /api/auth/openshift/callback, refusals", () => {
       push.mockRestore();
       error.mockRestore();
     }
+  });
+});
+
+// docs/OPENSHIFT.md: a CA file that cannot be read is openshift_config, and the server log names the variable.
+describe("GET /api/auth/openshift/callback, a CA file that cannot be read or holds no certificate", () => {
+  const CONTENT = "no certificate, only text that must never reach the log";
+  let error: ReturnType<typeof spyOn<typeof logger, "error">>;
+  const logged = () => JSON.stringify(error.mock.calls);
+
+  beforeEach(() => {
+    error = spyOn(logger, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    error.mockRestore();
+  });
+
+  test("at the metadata step it is openshift_config, and the log names OPENSHIFT_API_CA_FILE", async () => {
+    const { params } = await approvedSignIn(loginGET, cluster);
+    resetOpenShiftMetadataCache();
+    writeFileSync(cluster.caFile, CONTENT);
+    expect((await GET(callbackRequest(params))).headers.get("location")).toBe(`${LOGIN_PAGE}openshift_config`);
+    expect(lastAudit()).toMatchObject({ type: "login_failure", reason: "openshift_config" });
+    expect(logged()).toContain("OPENSHIFT_API_CA_FILE");
+    expect(logged()).not.toContain(CONTENT);
+    process.env.OPENSHIFT_API_CA_FILE = `${cluster.directory}/missing-ca.crt`;
+    const login = await loginGET(new Request("http://localhost:3000/api/auth/openshift/login"));
+    expect(login.headers.get("location")).toBe(`${LOGIN_PAGE}openshift_config`);
+    expect(cluster.received("api").filter((request) => request.path === METADATA_PATH)).toHaveLength(1);
+    expect(minted()).toEqual([]);
+  });
+
+  test("at the token step it is openshift_config, nothing is sent, and the log names both files the call trusts", async () => {
+    const { params } = await approvedSignIn(loginGET, cluster);
+    writeFileSync(cluster.caFile, "");
+    expect((await GET(callbackRequest(params))).headers.get("location")).toBe(`${LOGIN_PAGE}openshift_config`);
+    expect(cluster.received("oauth").filter((request) => request.path === TOKEN_PATH)).toEqual([]);
+    expect(logged()).toContain("OPENSHIFT_API_CA_FILE");
+    expect(logged()).toContain("NODE_EXTRA_CA_CERTS");
+    expect(minted()).toEqual([]);
+  });
+
+  test("at users/~ it is openshift_config, no token is stored, and the log names OPENSHIFT_API_CA_FILE", async () => {
+    cluster.script(TOKEN_PATH, () => {
+      writeFileSync(cluster.caFile, CONTENT);
+      return undefined;
+    });
+    const store = spyOn(tokenStore, "storeOpenShiftSession");
+    try {
+      expect((await signIn()).headers.get("location")).toBe(`${LOGIN_PAGE}openshift_config`);
+      expect(store).not.toHaveBeenCalled();
+    } finally {
+      store.mockRestore();
+    }
+    expect(cluster.received("api").filter((request) => request.path === USER_PATH)).toEqual([]);
+    expect(logged()).toContain("OPENSHIFT_API_CA_FILE");
+    expect(logged()).not.toContain(CONTENT);
+    expect(minted()).toEqual([]);
   });
 });
 
