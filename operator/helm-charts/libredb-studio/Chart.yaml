@@ -326,6 +326,9 @@ annotations:
   # certificate is application code: appVersion 1.1.0 does not carry it, so it acts only once an
   # application release moves appVersion, and until then a first start that races the injection
   # runs without the bundle until the Deployment is restarted by hand.
+  # False: 0.1.111 makes the bundled PostgreSQL usable as Studio's storage: with postgresql.enabled
+  # and the subchart's TLS off (its default) the storage URL now carries sslmode=disable, so sign-in
+  # no longer fails with "server does not support SSL"; with postgresql.tls.enabled it adds nothing.
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
