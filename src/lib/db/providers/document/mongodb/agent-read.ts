@@ -45,7 +45,7 @@ import {
 // The BSON parser, reached through a namespace import for the reason `index.ts` gives: bun does not see `BSON` as a
 // named export of the driver's CommonJS entry.
 import * as mongodbDriver from "mongodb";
-import { ConnectionError, QueryError } from "../../../errors";
+import { ConnectionError, QueryError, RefusedBeforeSendError } from "../../../errors";
 import { mapDatabaseError } from "../../../map-database-error";
 import {
   assertReadOnlyBudget,
@@ -194,10 +194,15 @@ function connectionLost(error: Error): ConnectionError {
 
 /**
  * The refusal of a command naming a database other than the one the run's connection is bound to. `named` is how the
- * caller named it, `"database": "<name>"` for a command's key, so the sentence quotes what the model wrote.
+ * caller named it, `"database": "<name>"` for a command's key, so the sentence quotes what the model wrote. A
+ * `RefusedBeforeSendError`, since nothing was sent.
  */
-export function anotherDatabaseRefusal(boundDatabase: string, named: string, statement: string): QueryError {
-  return new QueryError(
+export function anotherDatabaseRefusal(
+  boundDatabase: string,
+  named: string,
+  statement: string,
+): RefusedBeforeSendError {
+  return new RefusedBeforeSendError(
     `This run reads the database "${boundDatabase}" its connection is bound to, and ${named} names another, so nothing was sent. Drop the key or name "${boundDatabase}".`,
     "mongodb",
     statement,

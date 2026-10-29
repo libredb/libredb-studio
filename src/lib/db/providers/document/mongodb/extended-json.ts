@@ -26,7 +26,7 @@ import type { Document } from "mongodb";
 // The Extended JSON parser, reached through a namespace import for the reason `index.ts` gives:
 // bun does not see `BSON` as a named export of the driver's CommonJS entry.
 import * as mongodbDriver from "mongodb";
-import { QueryError } from "../../../errors";
+import { RefusedBeforeSendError } from "../../../errors";
 import { EJSON_WRAPPERS, type MongoJsonObject, type MongoReadEnvelope, wrapperShapeProblem } from "./envelope";
 
 /**
@@ -141,8 +141,9 @@ export function parseExtendedJson(text: string): Document {
   return reviveExtendedJson(JSON.parse(text), "") as Document;
 }
 
-function extendedJsonError(path: string, reason: string): QueryError {
-  return new QueryError(`Invalid Extended JSON in the query at "${path}": ${reason}`, "mongodb");
+/** A value the reviver cannot read: refused before anything is sent, in this server's words. */
+function extendedJsonError(path: string, reason: string): RefusedBeforeSendError {
+  return new RefusedBeforeSendError(`Invalid Extended JSON in the query at "${path}": ${reason}`, "mongodb");
 }
 
 function reviveExtendedJson(value: unknown, path: string): unknown {

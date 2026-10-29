@@ -57,6 +57,7 @@ const {
   ExecutionProfileError,
   PermissionDeniedError,
   QueryError,
+  RefusedBeforeSendError,
 } = await import("@/lib/db/errors");
 const { createErrorResponse } = await import("@/lib/api/errors");
 const { ApiErrorCode } = await import("@/lib/api/error-codes");
@@ -2457,6 +2458,10 @@ describe("MongoDBProvider", () => {
         await expect(profiled.queryReadOnly(envelope("find", { flter: {} }), budget)).rejects.toThrow(
           /"flter" is not a key the command envelope takes/,
         );
+        // This server's refusal, not the database's: the rail and MCP say it was refused before it was sent.
+        await expect(
+          profiled.queryReadOnly(envelope("insertOne", { documents: [{ a: 1 }] }), budget),
+        ).rejects.toBeInstanceOf(RefusedBeforeSendError);
         await profiled.disconnect();
       });
 
@@ -2477,6 +2482,9 @@ describe("MongoDBProvider", () => {
         await expect(
           profiled.queryReadOnly(envelope("find", { filter: { _id: { $oid: "zz" } } }), budget),
         ).rejects.toThrow(/Invalid Extended JSON in the query at "filter._id"/);
+        await expect(
+          profiled.queryReadOnly(envelope("find", { filter: { _id: { $oid: "zz" } } }), budget),
+        ).rejects.toBeInstanceOf(RefusedBeforeSendError);
         expect(mongoDriver.foundCollections).toEqual([]);
         await profiled.disconnect();
       });
@@ -2728,6 +2736,9 @@ describe("MongoDBProvider", () => {
         await expect(bound.queryReadOnly(envelope("find", { database: "elsewhere" }), budget)).rejects.toThrow(
           'This run reads the database "fromstring" its connection is bound to, and "database": "elsewhere" names another, so nothing was sent. Drop the key or name "fromstring".',
         );
+        await expect(bound.queryReadOnly(envelope("find", { database: "elsewhere" }), budget)).rejects.toBeInstanceOf(
+          RefusedBeforeSendError,
+        );
         expect([mongoDriver.openedDatabases, mongoDriver.cursors]).toEqual([[], []]);
         await bound.queryReadOnly(envelope("find", { database: "fromstring" }), budget);
         await bound.queryReadOnly(envelope("find"), budget);
@@ -2803,6 +2814,9 @@ describe("MongoDBProvider", () => {
         const profiled = await connected();
         await expect(profiled.readCatalogReadOnly!({ container: "admin" }, budget)).rejects.toThrow(
           'This run reads the database "testdb" its connection is bound to, and the database "admin" names another, so nothing was sent. Drop the key or name "testdb".',
+        );
+        await expect(profiled.readCatalogReadOnly!({ container: "admin" }, budget)).rejects.toBeInstanceOf(
+          RefusedBeforeSendError,
         );
         expect(mongoDriver.listCollectionsCalls).toEqual([]);
         await profiled.disconnect();

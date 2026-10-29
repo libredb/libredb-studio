@@ -1492,6 +1492,7 @@ Measured on 2026-10-17 against PostgreSQL holding the same data, with one local 
 4. **The command is a read** (`readMongoCommand` in `envelope.ts`).
    It admits the five reads of the editor's envelope (`find`, `findOne`, `aggregate`, `count`, `distinct`), each with only the keys that read honours, and refuses with a sentence naming what to send instead: a write, a write's payload, a key the read would drop, a `limit` or `skip` a cursor would misread, a pipeline stage outside the read stages (`$out` and `$merge`, the diagnostic and session stages, `$changeStream`, `$search`), `$where`, `$function` and `$accumulator` wherever they sit, every internal (`$_`) operator, and a model's command past 4,096 characters.
    It is defence in depth: a user holding only read can still run the JavaScript operators and the diagnostic stages the read role grants, and the reader is the one refusal of those.
+   `queryReadOnly` reads the statement again with it, and its refusal there, like a value the Extended JSON reviver cannot read, is a `RefusedBeforeSendError`, so the rail and MCP say the statement was refused before it was sent, in Studio's words.
 5. **The server's deadline, and Studio's.**
    Every command carries `maxTimeMS`, the budget's own deadline; an explain carries it at the top of the explain command, because 8.3.11 and 7.0.43 ignore the one inside the explained command (measured: given only that one, their explains ran 1,520 ms and 715 ms against a 300 ms budget).
    Each read runs in a session the provider starts, and a timer one second past the deadline (`AGENT_DEADLINE_BACKSTOP_MS`) kills that session with `killSessions` and closes the cursor; a user holding only read may kill its own session (measured on 9.0.4, 8.3.11 and 7.0.43: the read ends with code 11601 and no operation is left).
@@ -1512,6 +1513,7 @@ Measured on 2026-10-17 against PostgreSQL holding the same data, with one local 
    A run reads the database its connection is bound to (`getDatabaseName()`: the connection's database, or a connection string's path).
    A command whose `database` names another is refused before anything is sent, naming the bound one; one naming the bound database is read there.
    `readCatalogReadOnly()` refuses another container the same way.
+   Both refusals are `RefusedBeforeSendError`, since nothing was sent.
 
 The estimating plan (`inspect_plan`) explains the command the read would run, built by the same builder (`openBoundedRead`), at `queryPlanner` verbosity and under the same deadline.
 A cursor's explain is a command of its own in the read's session and never opens that cursor (driver 7.7.0's `FindCursor.explain` and `AggregationCursor.explain`), so a plan the server does not end itself is ended by the kill of the session alone, and the plan's cursor is closed once the explain settles.

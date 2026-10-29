@@ -64,6 +64,7 @@ import {
   QueryError,
   ExecutionProfileError,
   PermissionDeniedError,
+  RefusedBeforeSendError,
 } from "../../../errors";
 import { mapDatabaseError } from "../../../map-database-error";
 import { formatBytes } from "../../../utils/pool-manager";
@@ -1313,7 +1314,7 @@ export class MongoDBProvider extends BaseDatabaseProvider {
     this.assertOpenedToSendStatements(statement);
     const reading = readMongoCommand(statement);
     if (!reading.ok) {
-      throw new QueryError(reading.message, "mongodb", statement);
+      throw new RefusedBeforeSendError(reading.message, "mongodb", statement);
     }
     const envelope = reviveEnvelope(reading.envelope);
     const read = await readMongoForAgent(this.client!, this.getDatabaseName(), envelope, budget, mode, statement);
