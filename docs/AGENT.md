@@ -2858,6 +2858,7 @@ The core (`investigation.ts`, `tools.ts` and the modules beside them) names no s
   The catalog read mints an admission for the one statement it just composed (`admitComposedStatement`), and the `sql.query.read` input admits a statement refused only for its verb when it carries an admission the server minted for exactly that text, with no comment and no word the fence forbids.
   A retry's rewrite is another statement and meets the fence unchanged, and so does the same command written by the model through `run_read_query` or sent through MCP `run_read_query`, which carry no admission.
   The provider's own `queryReadOnly` fence and the engine's read-only boundary still run on the admitted command.
+  The repair ledger keys an admitted command apart from every model statement, so the model's refused copy of the same text never blocks the catalog read, and that copy stays refused for the rest of the run.
   `engine-pack-contract.test.ts` holds each declaring overlay's composers to one statement the fence admits by identity, with every name it takes quoted.
 - **Optional:** the adapter's `inventoryProblem` and `planDraftIdentifiers`, which a pack with no such check leaves out.
 

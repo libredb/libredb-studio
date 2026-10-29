@@ -1440,6 +1440,7 @@ export async function executeAgentOperation(
     // are the same call however the model worded its way to them.
     fingerprintSource: request.sql,
     fingerprintLanguage: statementFamilyOf(context.statementLanguage),
+    ...(request.composed === undefined ? {} : { composedByServer: true }),
     input: { [argument]: request.sql, ...(request.composed === undefined ? {} : { composed: request.composed }) },
     ...(request.label === undefined ? {} : { label: request.label }),
     ...(request.target === undefined ? {} : { target: request.target }),
@@ -1490,6 +1491,12 @@ export interface AuditedAgentCall {
    * keeps the SQL fingerprint of its own `operations:...` or `objects:...` key, which is no statement in any language.
    */
   readonly fingerprintLanguage?: AgentStatementLanguageId;
+  /**
+   * Set when the call carries the server's admission of the statement it composed. The ledger then keys the call
+   * apart from every model statement, so a model's refused copy of the same text never blocks the server's own read,
+   * and the model's copy stays refused as before.
+   */
+  readonly composedByServer?: true;
   /** The input the DESCRIPTOR validates. `{sql}` or `{statement}` for a statement, the selector for a curated read. */
   readonly input: unknown;
   readonly label?: string;
@@ -1654,6 +1661,14 @@ function otherStatementAdvice(
   return languageServerPack(language).catalogAdvice?.(message, engine);
 }
 
+/**
+ * The key `call` is held under in the run's repair ledger. A statement fingerprint is a bare digest, so the prefix puts
+ * a call carrying the server's admission where no model statement can land.
+ */
+function repairLedgerKey(call: AuditedAgentCall, statementFingerprint: string): string {
+  return call.composedByServer === true ? `composed:${statementFingerprint}` : statementFingerprint;
+}
+
 export async function runAuditedAgentCall(
   context: AgentToolContext,
   call: AuditedAgentCall,
@@ -1663,8 +1678,9 @@ export async function runAuditedAgentCall(
   // set, so no dispatch of a model's tool call ever arrives here with it.
   if (context.mode !== "agent" && call.grounding !== true) return unavailable("MODE_HAS_NO_TOOLS");
 
-  const fingerprint = languageServer(call.fingerprintLanguage ?? CURATED_CALL_LANGUAGE).fingerprint(
-    call.fingerprintSource,
+  const fingerprint = repairLedgerKey(
+    call,
+    languageServer(call.fingerprintLanguage ?? CURATED_CALL_LANGUAGE).fingerprint(call.fingerprintSource),
   );
   const repairAdmission = context.repairs.admit(fingerprint);
   if (!repairAdmission.admitted) return unavailable(repairAdmission.reasonCode);

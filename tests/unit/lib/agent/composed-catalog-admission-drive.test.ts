@@ -234,6 +234,26 @@ describe("an engine whose catalog read is a composed command", () => {
     expect(refused).toEqual([expect.objectContaining(FENCE_REFUSAL)]);
   });
 
+  test("the model's refused copy of the command does not block the composed catalog read, and stays refused itself", async () => {
+    declaresCommand = true;
+    const { events, sent } = await drive("investigation", [
+      callsTool("run_read_query", { sql: ENGINE_CATALOG, rationale: "list the columns" }, "call_1"),
+      callsTool("inspect_schema", { kind: "columns" }, "call_2"),
+      // The same statement in the ledger's eyes, though not the same step: a trailing terminator is no new statement.
+      callsTool("run_read_query", { sql: `${ENGINE_CATALOG};`, rationale: "list them again" }, "call_3"),
+    ]);
+    expect(sent).toEqual([ENGINE_CATALOG]);
+    const completed = events.flatMap((event) => (event.kind === "tool-completed" ? [event.artifact] : []));
+    expect(completed.map((artifact) => artifact.summary)).toEqual([
+      expect.objectContaining({ rowCount: 2, columnNames: ["table_name", "column_name", "data_type"] }),
+    ]);
+    const refused = events.flatMap((event) => (event.kind === "tool-refused" ? [event.refusal] : []));
+    expect(refused).toEqual([
+      expect.objectContaining(FENCE_REFUSAL),
+      expect.objectContaining({ class: "not-sent", reasonCode: "STATEMENT_ALREADY_FAILED" }),
+    ]);
+  });
+
   test.each([
     ["altered by one character", (sql: string) => sql.replace("orders", "orderz")],
     ["with a second statement appended", (sql: string) => `${sql}; SHOW TABLES`],
