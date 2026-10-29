@@ -756,7 +756,7 @@ demonstrated on one connection. Demonstrating this one needs a **seed entry that
 superuser**, added on purpose. Add it before the demo if the room is a security audience; otherwise
 describe it and move on rather than improvising.
 
-*(The rail names the cause: the database user the run would execute as holds privileges the read-only boundary cannot contain, so connect as a user holding only read privileges.)*
+*(The rail names the cause: the credential the run would execute as, a database user or a token, holds privileges the read-only boundary cannot contain, so connect with a credential that holds only read privileges.)*
 
 ### 23. Every claim is checkable
 Open any report and look at a claim. Each one cites something **this run** produced, and the citation

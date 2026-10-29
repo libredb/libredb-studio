@@ -1527,8 +1527,8 @@ A view has no indexes of its own, and the server refuses `listIndexes` on one.
 
 | Cause | Deny code | Run reason | What the rail says | Repair |
 |---|---|---|---|---|
-| The user holds more than reads of the bound database (the admin seed, `readAnyDatabase`, `backup`, `readWrite` anywhere) | `PROFILE_PRIVILEGES_TOO_BROAD` | `agent-principal-refused` | the user holds privileges the read-only boundary cannot contain | connect as a user holding only `read` on the database |
-| The user holds no privilege at all, or the connection authenticated no user on an enforcing server | `PROFILE_PRIVILEGES_TOO_NARROW` | `agent-principal-underprivileged` | the user lacks a privilege the read-only path needs | grant `read` on the database, or connect as a user that holds it |
+| The user holds more than reads of the bound database (the admin seed, `readAnyDatabase`, `backup`, `readWrite` anywhere) | `PROFILE_PRIVILEGES_TOO_BROAD` | `agent-principal-refused` | the credential holds privileges the read-only boundary cannot contain | connect as a user holding only `read` on the database |
+| The user holds no privilege at all, or the connection authenticated no user on an enforcing server | `PROFILE_PRIVILEGES_TOO_NARROW` | `agent-principal-underprivileged` | the credential lacks a privilege the read-only path needs | grant `read` on the database, or connect as a user that holds it |
 | The server accepted the probe: authorization is off | `PROFILE_SERVER_UNENFORCED` | `server-authorization-off` | the server does not enforce authorization | turn on `security.authorization`, then connect as the read user |
 | The server is not MongoDB, or its host is a wire-compatible service's | `PROFILE_UNSUPPORTED_TARGET` | `profile-target-unsupported` | agent mode runs on this engine, but not against this server | point the connection at MongoDB; plan mode and the operations workflow still work |
 | An agent credential set beside a connection string | `AGENT_CREDENTIAL_WITH_CONNECTION_STRING` | `agent-credential-unusable` | the agent credential cannot be used on this connection | put the read user in the seed's own `user` and `password` |
