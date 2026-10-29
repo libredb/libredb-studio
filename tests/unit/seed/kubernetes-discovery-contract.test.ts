@@ -196,6 +196,70 @@ describe("mapKubernetesDatabase", () => {
     }
   });
 
+  it("skips a database whose resource name is not a single DNS label, naming the field, not the value", () => {
+    const name = "orders.attacker";
+    const reason = refusalOf(
+      database({
+        resource: { metadata: { namespace: "team-a", name } },
+        secret: {
+          name: `${name}-app`,
+          data: { username: "orders", password: PASSWORD, dbname: "orders", port: "5432" },
+        },
+      }),
+    );
+    expect(reason).toBe("the resource's metadata.name is not a single DNS label, which the host's Service name needs");
+    expect(reason).not.toContain(name);
+  });
+
+  it("skips a database whose host has a label over 63 characters, naming the field, not the value", () => {
+    // A 61-character name is a valid label; with the -rw suffix its Service's label is 64 characters.
+    const name = "a".repeat(61);
+    const reason = refusalOf(
+      database({
+        resource: { metadata: { namespace: "team-a", name } },
+        secret: {
+          name: `${name}-app`,
+          data: { username: "orders", password: PASSWORD, dbname: "orders", port: "5432" },
+        },
+      }),
+    );
+    expect(reason).toBe("the host is not a DNS name: one of its labels is not 1 to 63 characters");
+    expect(reason).not.toContain(name);
+  });
+
+  it("lists a database whose host labels are exactly 63 characters", () => {
+    const name = "a".repeat(60);
+    const result = mapKubernetesDatabase(
+      database({
+        resource: { metadata: { namespace: "team-a", name } },
+        secret: {
+          name: `${name}-app`,
+          data: { username: "orders", password: PASSWORD, dbname: "orders", port: "5432" },
+        },
+      }),
+    );
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.connection.host).toBe(`${name}-rw.team-a.svc.cluster.local.`);
+  });
+
+  it("skips a database whose host is over 253 characters, naming the field, not the value", () => {
+    // Without its trailing dot the host is 9 + 1 + 63 + 5 + domain characters: 253 lists, 254 does not.
+    const namespace = "n".repeat(63);
+    const fits = `${"d".repeat(63)}.${"d".repeat(63)}.${"d".repeat(47)}`;
+    const over = `${fits}d`;
+    const hostWith = (domain: string) => {
+      process.env[CLUSTER_DOMAIN] = domain;
+      return mapKubernetesDatabase(database({ resource: { metadata: { namespace, name: "orders" } } }));
+    };
+    const listed = hostWith(fits);
+    if (!listed.ok) throw new Error(listed.reason);
+    expect(listed.connection.host.length).toBe(254);
+    const refused = hostWith(over);
+    if (refused.ok) throw new Error("listed a host over 253 characters");
+    expect(refused.reason).toBe("the host is not a DNS name: it is over 253 characters");
+    expect(refused.reason).not.toContain(namespace);
+  });
+
   it("forces the access fields in code: managed, the admin role, TLS required, no MCP, read-only mode or string", () => {
     const result = mapKubernetesDatabase(database());
     if (!result.ok) throw new Error(result.reason);
@@ -274,9 +338,11 @@ describe("mapKubernetesDatabase", () => {
     // The group shows the namespace whole, and the id is the namespace's and the name's, whatever the name shows.
     expect(long.connection).toMatchObject({ group: namespace, id: kubernetesConnectionId("cnpg", namespace, name) });
 
-    const longest = named(namespace, "d".repeat(253));
+    // The longest name whose Service name is a DNS label, 60 characters and -rw.
+    const longest = named(namespace, "d".repeat(60));
     if (!longest.ok) throw new Error(longest.reason);
-    expect(longest.connection.name).toBe(`…${"d".repeat(111)} (CloudNativePG)`);
+    expect(longest.connection.name).toBe(`…${`${namespace}/${"d".repeat(60)}`.slice(13)} (CloudNativePG)`);
+    expect(longest.connection.name).toHaveLength(128);
 
     // 111 characters of namespace and name fit whole.
     const fits = named(`ns-${"a".repeat(57)}`, "d".repeat(51));
@@ -285,15 +351,19 @@ describe("mapKubernetesDatabase", () => {
     expect(fits.connection.name).toHaveLength(128);
   });
 
-  // The export's schema already refuses a namespace over 63 characters; the seed schema checks the connection again.
+  // The export's schema already refuses an initdb database that is not a string; the seed schema checks the
+  // connection again.
   it("skips a connection the seed schema refuses, naming the field and the issue, never a value", () => {
     const reason = refusalOf(
       database({
-        resource: { metadata: { namespace: "n".repeat(65), name: "orders" } },
-        secret: { name: "orders-app", data: { username: "u", password: PASSWORD, dbname: "x", port: "5432" } },
+        resource: {
+          metadata: { namespace: "team-a", name: "orders" },
+          spec: { bootstrap: { initdb: { database: 42 as unknown as string, secret: { name: "orders-owner" } } } },
+        },
+        secret: { name: "orders-owner", data: { username: "u", password: PASSWORD } },
       }),
     );
-    expect(reason).toBe("the connection is not valid: group (too_big)");
+    expect(reason).toBe("the connection is not valid: database (invalid_type)");
     expect(reason).not.toContain(PASSWORD);
   });
 });

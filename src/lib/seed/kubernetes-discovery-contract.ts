@@ -54,7 +54,7 @@ export interface KubernetesContractRow {
   notOwned(resource: KubernetesDiscoveredResource, secretName: string): string;
   /**
    * The connection fields the resource and its Secret give, or why they give none. The host is a fully qualified name
-   * in `clusterDomain`, built with serviceHost.
+   * in `clusterDomain`, built and checked with serviceHost.
    */
   fields(resource: KubernetesDiscoveredResource, secretName: string, data: SecretData, clusterDomain: string): Fields;
 }
@@ -92,12 +92,35 @@ function kubernetesClusterDomain(): { ok: true; domain: string } | { ok: false; 
   return { ok: true, domain };
 }
 
+/** The longest DNS label. */
+const DNS_LABEL_MAX_CHARS = 63;
+
 /**
  * A Service's fully qualified name with the trailing dot, `<service>.<namespace>.svc.<clusterDomain>.`: discovered
- * hosts are fully qualified names with a trailing dot, so the pod's DNS search path never applies.
+ * hosts are fully qualified names with a trailing dot, so the pod's DNS search path never applies. The resource name
+ * the Service is named after must be a single label, and the host a DNS name: at most 253 characters without its
+ * trailing dot, each label 1 to 63. A refusal names the field, never the value.
  */
-function serviceHost(service: string, namespace: string, clusterDomain: string): string {
-  return `${service}.${namespace}.svc.${clusterDomain}.`;
+function serviceHost(
+  resourceName: string,
+  service: string,
+  namespace: string,
+  clusterDomain: string,
+): { ok: true; host: string } | { ok: false; reason: string } {
+  if (resourceName.includes(".")) {
+    return {
+      ok: false,
+      reason: "the resource's metadata.name is not a single DNS label, which the host's Service name needs",
+    };
+  }
+  const name = `${service}.${namespace}.${SERVICES_LABEL}.${clusterDomain}`;
+  if (name.length > DNS_NAME_MAX_CHARS) {
+    return { ok: false, reason: "the host is not a DNS name: it is over 253 characters" };
+  }
+  if (!name.split(".").every((label) => label.length >= 1 && label.length <= DNS_LABEL_MAX_CHARS)) {
+    return { ok: false, reason: "the host is not a DNS name: one of its labels is not 1 to 63 characters" };
+  }
+  return { ok: true, host: `${name}.` };
 }
 
 /** A value of the Secret, with an empty value counted as absent. */
@@ -134,7 +157,10 @@ export const CNPG_CLUSTER: KubernetesContractRow = Object.freeze({
     if (user === undefined) return { ok: false, reason: `the credential Secret ${secretName} has no username` };
     const password = present(data.password);
     if (password === undefined) return { ok: false, reason: `the credential Secret ${secretName} has no password` };
-    const host = serviceHost(`${resource.metadata.name}-rw`, resource.metadata.namespace, clusterDomain);
+    const { name, namespace } = resource.metadata;
+    const service = serviceHost(name, `${name}-rw`, namespace, clusterDomain);
+    if (!service.ok) return service;
+    const { host } = service;
     const initdb = resource.spec?.bootstrap?.initdb;
     if (present(initdb?.secret?.name) !== undefined) {
       return {

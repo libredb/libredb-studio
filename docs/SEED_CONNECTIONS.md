@@ -1221,6 +1221,7 @@ A value it cannot honour stops it at start with exit code 2 and a line naming th
 Every field the table takes from a Secret is required, and a database whose Secret lacks one is skipped with its reason.
 The host is the Cluster's read-write Service by its fully qualified name, because Studio runs in a namespace of its own and the Secret's `host` is the short name.
 Discovered hosts are fully qualified names with a trailing dot, so the pod's DNS search path never applies.
+A Cluster whose name has a dot, or whose host would be over 253 characters or have a label that is not 1 to 63 characters, is skipped with a reason that names the field.
 The cluster domain is `SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN`, which the Studio server reads, `cluster.local` by default; set it when the cluster's kubelets run with another `--cluster-domain`, with the Helm chart through `extraEnv`.
 While it is not a DNS name, Studio lists no Kubernetes-discovered database and reports each one as skipped, with a reason that names the variable.
 A value whose first label is `svc`, such as `svc.cluster.local`, is refused the same way, because every host already carries that label: name the cluster domain itself, such as `cluster.local`.
