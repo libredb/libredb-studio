@@ -25,7 +25,7 @@
  *    wrong data centre all in one bucket.
  */
 import { describe, expect, test } from "bun:test";
-import { types } from "cassandra-driver";
+import { policies, types } from "cassandra-driver";
 import type { CassandraFaultCategory } from "@/lib/db/providers/sql/cassandra/transport";
 import {
   cassandraClientOptions,
@@ -679,6 +679,38 @@ describe("CassandraDriverTransport", () => {
     await transport.execute("SELECT * FROM probe.orders", { fetchSize: 100, pageState: "04000000fd" });
 
     expect(seen).toEqual({ prepare: false, fetchSize: 100, pageState: "04000000fd" });
+  });
+
+  test("the agent's per-request deadline, consistency and retry reach the driver as its own options", async () => {
+    let seen: Record<string, unknown> = {};
+    const transport = new CassandraDriverTransport(
+      makeConnection(),
+      1000,
+      stubSession({
+        execute: async (_cql: string, _params: unknown, options: unknown) => {
+          seen = options as Record<string, unknown>;
+          return { columns: null, rows: [] };
+        },
+      }),
+    );
+    await transport.connect();
+
+    await transport.execute("SELECT * FROM probe.orders", {
+      fetchSize: 11,
+      readTimeoutMs: 2500,
+      consistency: "local-one",
+      retry: "fall-through",
+    });
+
+    const { retry, ...rest } = seen;
+    expect(rest).toEqual({
+      prepare: false,
+      fetchSize: 11,
+      readTimeout: 2500,
+      consistency: types.consistencies.localOne,
+    });
+    // The driver's own policy that never retries: a statement whose wait ended is not sent a second time.
+    expect(retry).toBeInstanceOf(policies.retry.FallthroughRetryPolicy);
   });
 
   test("a connect failure is classified before it leaves the adapter", async () => {

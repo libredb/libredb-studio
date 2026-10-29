@@ -48,8 +48,11 @@ const DRIVER_TOKENS = [
   "TimeUuid",
   // Protocol-level knobs the seam deliberately does not expose. `prepare:` carries
   // its colon because `prepareQuery` is the provider's own method - a guard that
-  // cries wolf on an ordinary name is a guard the next contributor deletes.
-  "consistency",
+  // cries wolf on an ordinary name is a guard the next contributor deletes. The seam
+  // does name a consistency of its own, the agent's `consistency: "local-one"`, so it
+  // is the driver's map of levels that is guarded, and the retry policies beside it.
+  "consistencies",
+  "RetryPolicy",
   "prepare:",
   "traceQuery",
 ];

@@ -111,6 +111,21 @@ export interface CassandraExecuteOptions {
   fetchSize?: number;
   /** Resume from a page the server described, as `CassandraQueryResult.pageState` reported it. */
   pageState?: string;
+  /**
+   * This request's own client deadline, in place of the session's: the agent's statement budget. The coordinator keeps
+   * working on a statement whose wait ended, because the protocol has no cancellation.
+   */
+  readTimeoutMs?: number;
+  /**
+   * The consistency this request reads at, named here rather than left to the session's default, so nothing set on a
+   * session before reaches the request. `local-one` is the driver's own default, and the only level asked for today.
+   */
+  consistency?: "local-one";
+  /**
+   * `fall-through`: the request is never sent a second time, after a timeout or an unavailable replica set alike, so a
+   * statement's deadline bounds one attempt rather than several.
+   */
+  retry?: "fall-through";
 }
 
 /**

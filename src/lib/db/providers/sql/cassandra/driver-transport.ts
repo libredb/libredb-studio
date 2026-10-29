@@ -34,7 +34,7 @@
  *   becomes 9223372036854776000 and a 20-digit decimal loses its last four digits.
  */
 
-import { Client, types, type ClientOptions, type QueryOptions } from "cassandra-driver";
+import { Client, policies, types, type ClientOptions, type QueryOptions } from "cassandra-driver";
 import type { DatabaseConnection } from "@/lib/db/types";
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import {
@@ -466,6 +466,20 @@ export function cassandraClientOptions(config: DatabaseConnection, readTimeoutMs
   };
 }
 
+/**
+ * The seam's per-statement options as the driver's own: each one present is mapped by name, and an absent one is left
+ * out, so the session's defaults apply only where the caller asked for nothing.
+ */
+function driverQueryOptions(options: CassandraExecuteOptions): QueryOptions {
+  return {
+    ...(options.fetchSize === undefined ? {} : { fetchSize: options.fetchSize }),
+    ...(options.pageState === undefined ? {} : { pageState: options.pageState }),
+    ...(options.readTimeoutMs === undefined ? {} : { readTimeout: options.readTimeoutMs }),
+    ...(options.consistency === undefined ? {} : { consistency: types.consistencies.localOne }),
+    ...(options.retry === undefined ? {} : { retry: new policies.retry.FallthroughRetryPolicy() }),
+  };
+}
+
 // ============================================================================
 // The transport
 // ============================================================================
@@ -512,7 +526,9 @@ export class CassandraDriverTransport implements CassandraTransport {
       // own text or a fixed catalog read, and preparing a one-shot statement adds a
       // round trip and an entry to the server's prepared-statement cache
       // (`system_views.cql_metrics` counts them) for nothing.
-      return toCassandraResult(await session.execute(cql, undefined, { prepare: false, ...options }));
+      return toCassandraResult(
+        await session.execute(cql, undefined, { prepare: false, ...driverQueryOptions(options) }),
+      );
     } catch (error) {
       throw classifyCassandraError(error);
     }
