@@ -10,7 +10,7 @@
 # APP_USER makes the image create the schema owner APP_OWNER in FREEPDB1; 01 creates the rest.
 # Run it from the repository root once the container logs "DATABASE IS READY TO USE!", so 10
 # resolves oracledb from the root node_modules. Sequence values in 04 to 08 depend on this order;
-# 11 to 13 use a user and sequences of their own.
+# 11 to 15 use a user and sequences of their own; 14 runs as SYS, the one user that may grant the DBA_ views.
 set -euo pipefail
 name="$1"
 port="$2"
@@ -35,3 +35,6 @@ node "$dir/10-driver-transaction-end-as-app-ro.mjs" "127.0.0.1:$port/FREEPDB1" \
 sql SYSTEM 11-residuals-setup-as-system
 sql APP_R3 12-residuals-as-app-r3
 sql SYSTEM 13-residuals-effects-as-system
+docker exec -i "$name" sqlplus -s -l "SYS/$pw@//localhost:1521/FREE as sysdba" \
+  < <(cat "$dir/14-catalog-grants-as-sys.sql"; printf '\nexit\n') > "$dir/14-catalog-grants-as-sys.txt"
+sql APP_R3 15-catalog-as-app-r3

@@ -1,0 +1,33 @@
+
+OBJECT_OWN OBJECT_NAME	POLICY_NAME  PF_OWNER	FUNCTION
+---------- ------------ ------------ ---------- ----------
+APP_OWNER  R3_BEHIND	R3_BEHIND_P  APP_OWNER	F_BEHIND
+APP_OWNER  R3_POL	R3_POL_P     APP_OWNER	F_POL
+APP_OWNER  R3_SYNPOL_S	R3_SYN_P     APP_OWNER	F_POL
+PUBLIC	   R3_SYNPOL_P	R3_PSYN_P    APP_OWNER	F_POL
+
+4 rows selected.
+
+
+OBJECT_SCH OBJECT_NAME	POLICY_NAME  PF_SCHEMA	PF_FUNCTIO
+---------- ------------ ------------ ---------- ----------
+APP_OWNER  R3_FGA	R3_FGA_P     APP_OWNER	H_FGA
+
+1 row selected.
+
+
+NAME	     REFERENCED_N
+------------ ------------
+R3_BEHIND_V  R3_BEHIND
+
+1 row selected.
+
+
+TABLE_NA COLUMN_NAME			  HID VIR
+-------- -------------------------------- --- ---
+R3_ES	 A				  NO  NO
+R3_ES	 B				  NO  NO
+R3_ES	 SYS_STUNA$6DVXJXTP05EH56DTIR0X   YES YES
+
+3 rows selected.
+

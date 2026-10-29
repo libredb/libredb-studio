@@ -1,0 +1,22 @@
+
+Session altered.
+
+
+Grant succeeded.
+
+
+Grant succeeded.
+
+
+Table created.
+
+
+EXTENSION
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+SYS_STUNA$6DVXJXTP05EH56DTIR0X
+
+1 row selected.
+
+
+Grant succeeded.
+
