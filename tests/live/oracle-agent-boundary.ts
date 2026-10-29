@@ -204,10 +204,13 @@ const SETUP_AS_SYSTEM: readonly string[] = [
   `CREATE TABLE ${OWNER}.${PREFIX}FBI (ID NUMBER, NAME VARCHAR2(20))`,
   `CREATE INDEX ${OWNER}.${PREFIX}FBI_UP ON ${OWNER}.${PREFIX}FBI (UPPER(NAME))`,
   `CREATE OR REPLACE VIEW ${OWNER}.${PREFIX}FBI_VIEW AS SELECT ID, NAME FROM ${OWNER}.${PREFIX}FBI`,
-  // Row-level policies whose function advances the sequence: on a table, a private and a PUBLIC synonym, and a table
-  // read only through a view; and a fine-grained auditing handler that advances it.
+  // A row-level policy function and an auditing handler that advance the sequence, and a function an audit condition
+  // calls that advances it. The policies are added by the checks below, one at a time: any one refuses the database.
   `CREATE OR REPLACE FUNCTION ${OWNER}.${PREFIX}POL_FN(s VARCHAR2, o VARCHAR2) RETURN VARCHAR2 AS n NUMBER; BEGIN n := ${OWNER}.${PREFIX}SEQ.NEXTVAL; RETURN NULL; END;`,
   `CREATE OR REPLACE PROCEDURE ${OWNER}.${PREFIX}FGA_FN(s VARCHAR2, o VARCHAR2, p VARCHAR2) AS n NUMBER; BEGIN n := ${OWNER}.${PREFIX}SEQ.NEXTVAL; END;`,
+  `CREATE OR REPLACE FUNCTION ${OWNER}.${PREFIX}AC_FN(x NUMBER) RETURN NUMBER AS BEGIN RETURN ${OWNER}.${PREFIX}SEQ.NEXTVAL; END;`,
+  // An empty table shaped like DBA_POLICIES, for a private synonym of that name in the agent user's schema.
+  `CREATE TABLE ${OWNER}.${PREFIX}NOPOL (OBJECT_OWNER VARCHAR2(128), OBJECT_NAME VARCHAR2(128), POLICY_NAME VARCHAR2(128), PF_OWNER VARCHAR2(128))`,
   `CREATE TABLE ${OWNER}.${PREFIX}POL (ID NUMBER)`,
   `INSERT INTO ${OWNER}.${PREFIX}POL VALUES (1)`,
   `CREATE TABLE ${OWNER}.${PREFIX}SYNPOL (ID NUMBER)`,
@@ -218,9 +221,6 @@ const SETUP_AS_SYSTEM: readonly string[] = [
   `CREATE TABLE ${OWNER}.${PREFIX}AUDITED (ID NUMBER)`,
   `INSERT INTO ${OWNER}.${PREFIX}AUDITED VALUES (1)`,
   `CREATE OR REPLACE VIEW ${OWNER}.${PREFIX}AUDITED_VIEW AS SELECT ID FROM ${OWNER}.${PREFIX}AUDITED`,
-  `BEGIN DBMS_RLS.ADD_POLICY(object_schema => '${OWNER}', object_name => '${PREFIX}POL', policy_name => '${PREFIX}POL_P', function_schema => '${OWNER}', policy_function => '${PREFIX}POL_FN', statement_types => 'SELECT'); END;`,
-  `BEGIN DBMS_RLS.ADD_POLICY(object_schema => '${OWNER}', object_name => '${PREFIX}BEHIND', policy_name => '${PREFIX}BEHIND_P', function_schema => '${OWNER}', policy_function => '${PREFIX}POL_FN', statement_types => 'SELECT'); END;`,
-  `BEGIN DBMS_FGA.ADD_POLICY(object_schema => '${OWNER}', object_name => '${PREFIX}AUDITED', policy_name => '${PREFIX}FGA_P', handler_schema => '${OWNER}', handler_module => '${PREFIX}FGA_FN', statement_types => 'SELECT'); END;`,
   // Views over views: one over a view replaced to call the function after the outer one was created, one over a plain
   // view, and one over a chain of two private synonyms ending at the function.
   `CREATE OR REPLACE VIEW ${OWNER}.${PREFIX}INNER AS SELECT 1 AS N FROM DUAL`,
@@ -242,6 +242,40 @@ const SETUP_AS_SYSTEM: readonly string[] = [
   `GRANT SELECT ON ${OWNER}.${PREFIX}CHILD TO ${RO}`,
   `GRANT SELECT, INSERT, UPDATE, DELETE ON ${OWNER}.${PREFIX}SCRATCH TO ${RO}`,
 ];
+
+/** A row-level policy of `name` on `schema.object` whose function is the owner's POL_FN. */
+function rlsPolicy(schema: string, object: string, name: string): string {
+  return `BEGIN DBMS_RLS.ADD_POLICY(object_schema => '${schema}', object_name => '${object}', policy_name => '${name}', function_schema => '${OWNER}', policy_function => '${PREFIX}POL_FN', statement_types => 'SELECT'); END;`;
+}
+
+function dropRlsPolicy(schema: string, object: string, name: string): string {
+  return `BEGIN DBMS_RLS.DROP_POLICY('${schema}', '${object}', '${name}'); END;`;
+}
+
+/** A fine-grained auditing policy of `name` on `schema.object`, with the condition and the handler given, or none. */
+function fgaPolicy(schema: string, object: string, name: string, condition: string | null, handler: boolean): string {
+  const audit = condition === null ? "" : `audit_condition => '${condition.replaceAll("'", "''")}', `;
+  const handlerArgs = handler ? `handler_schema => '${OWNER}', handler_module => '${PREFIX}FGA_FN', ` : "";
+  return `BEGIN DBMS_FGA.ADD_POLICY(object_schema => '${schema}', object_name => '${object}', policy_name => '${name}', ${audit}${handlerArgs}statement_types => 'SELECT'); END;`;
+}
+
+function dropFgaPolicy(schema: string, object: string, name: string): string {
+  return `BEGIN DBMS_FGA.DROP_POLICY('${schema}', '${object}', '${name}'); END;`;
+}
+
+/** How a refusal names a policy. */
+function namedPolicy(schema: string, object: string, name: string): string {
+  return `"${schema}"."${object}" policy "${name}"`;
+}
+
+/** The sequence's last number, which a policy function, handler or condition that ran has advanced. */
+async function sequenceNumber(): Promise<number> {
+  const [row] = await as(
+    "SYSTEM",
+    `SELECT LAST_NUMBER AS N FROM DBA_SEQUENCES WHERE SEQUENCE_OWNER = '${OWNER}' AND SEQUENCE_NAME = '${PREFIX}SEQ'`,
+  );
+  return Number(row?.N);
+}
 
 /** PUBLIC's default EXECUTE grants on the packages the check refuses, as the doc's revoke script lifts them. */
 const REVOKES_AS_SYS: readonly string[] = [
@@ -266,6 +300,10 @@ async function cleanup(): Promise<void> {
   await setup(
     "SYSTEM",
     [
+      dropRlsPolicy("SYSTEM", "HELP", `${PREFIX}HELP_P`),
+      dropFgaPolicy("SYSTEM", "SQLPLUS_PRODUCT_PROFILE", `${PREFIX}SPP_P`),
+      `DROP TABLE ${OWNER}.${PREFIX}NOPOL PURGE`,
+      `DROP FUNCTION ${OWNER}.${PREFIX}AC_FN`,
       `DROP USER ${RO} CASCADE`,
       `DROP USER ${RO_SYS} CASCADE`,
       `DROP ROLE ${PREFIX}ROLE`,
@@ -474,28 +512,61 @@ async function main(): Promise<void> {
       names: `REVOKE ALL ON "${OWNER}"."${PREFIX}FBI" FROM "${RO}"`,
     },
     {
-      label: "a granted table a row-level policy guards",
-      grant: [`GRANT SELECT ON ${OWNER}.${PREFIX}POL TO ${RO}`],
-      revoke: [`REVOKE SELECT ON ${OWNER}.${PREFIX}POL FROM ${RO}`],
-      names: `REVOKE ALL ON "${OWNER}"."${PREFIX}POL" FROM "${RO}"`,
+      label: "a row-level policy on a granted table",
+      grant: [`GRANT SELECT ON ${OWNER}.${PREFIX}POL TO ${RO}`, rlsPolicy(OWNER, `${PREFIX}POL`, `${PREFIX}POL_P`)],
+      revoke: [
+        dropRlsPolicy(OWNER, `${PREFIX}POL`, `${PREFIX}POL_P`),
+        `REVOKE SELECT ON ${OWNER}.${PREFIX}POL FROM ${RO}`,
+      ],
+      names: namedPolicy(OWNER, `${PREFIX}POL`, `${PREFIX}POL_P`),
     },
     {
-      label: "a row-level policy on a private synonym for a granted table",
+      label: "a row-level policy on a table the user is not granted at all, the rule being database wide",
+      grant: [rlsPolicy(OWNER, `${PREFIX}POL`, `${PREFIX}POL_P`)],
+      revoke: [dropRlsPolicy(OWNER, `${PREFIX}POL`, `${PREFIX}POL_P`)],
+      names: namedPolicy(OWNER, `${PREFIX}POL`, `${PREFIX}POL_P`),
+    },
+    {
+      label: "a row-level policy on a private synonym for a granted table, lifted by dropping the synonym",
       grant: [
         `CREATE OR REPLACE SYNONYM ${OWNER}.${PREFIX}SYNPOL_SYN FOR ${OWNER}.${PREFIX}SYNPOL`,
-        `BEGIN DBMS_RLS.ADD_POLICY(object_schema => '${OWNER}', object_name => '${PREFIX}SYNPOL_SYN', policy_name => '${PREFIX}SYN_P', function_schema => '${OWNER}', policy_function => '${PREFIX}POL_FN', statement_types => 'SELECT'); END;`,
+        rlsPolicy(OWNER, `${PREFIX}SYNPOL_SYN`, `${PREFIX}SYN_P`),
       ],
       revoke: [`DROP SYNONYM ${OWNER}.${PREFIX}SYNPOL_SYN`],
-      names: `DROP SYNONYM "${OWNER}"."${PREFIX}SYNPOL_SYN"`,
+      names: namedPolicy(OWNER, `${PREFIX}SYNPOL_SYN`, `${PREFIX}SYN_P`),
     },
     {
-      label: "a row-level policy on a PUBLIC synonym",
+      label: "a row-level policy on a PUBLIC synonym, lifted by dropping the synonym",
       grant: [
         `CREATE OR REPLACE PUBLIC SYNONYM ${PREFIX}SYNPOL_PSYN FOR ${OWNER}.${PREFIX}SYNPOL`,
-        `BEGIN DBMS_RLS.ADD_POLICY(object_schema => 'PUBLIC', object_name => '${PREFIX}SYNPOL_PSYN', policy_name => '${PREFIX}PSYN_P', function_schema => '${OWNER}', policy_function => '${PREFIX}POL_FN', statement_types => 'SELECT'); END;`,
+        rlsPolicy("PUBLIC", `${PREFIX}SYNPOL_PSYN`, `${PREFIX}PSYN_P`),
       ],
       revoke: [`DROP PUBLIC SYNONYM ${PREFIX}SYNPOL_PSYN`],
-      names: `DROP PUBLIC SYNONYM "${PREFIX}SYNPOL_PSYN"`,
+      names: namedPolicy("PUBLIC", `${PREFIX}SYNPOL_PSYN`, `${PREFIX}PSYN_P`),
+    },
+    {
+      label: "a row-level policy of the owner's on SYSTEM.HELP, an object Oracle maintains that PUBLIC reads",
+      grant: [rlsPolicy("SYSTEM", "HELP", `${PREFIX}HELP_P`)],
+      revoke: [dropRlsPolicy("SYSTEM", "HELP", `${PREFIX}HELP_P`)],
+      names: namedPolicy("SYSTEM", "HELP", `${PREFIX}HELP_P`),
+    },
+    {
+      label: "an auditing handler of the owner's on SYSTEM.SQLPLUS_PRODUCT_PROFILE, an object Oracle maintains",
+      grant: [fgaPolicy("SYSTEM", "SQLPLUS_PRODUCT_PROFILE", `${PREFIX}SPP_P`, null, true)],
+      revoke: [dropFgaPolicy("SYSTEM", "SQLPLUS_PRODUCT_PROFILE", `${PREFIX}SPP_P`)],
+      names: namedPolicy("SYSTEM", "SQLPLUS_PRODUCT_PROFILE", `${PREFIX}SPP_P`),
+    },
+    {
+      label: "an auditing policy whose audit condition calls a function of the owner's, with no handler",
+      grant: [fgaPolicy(OWNER, `${PREFIX}AUDITED`, `${PREFIX}AC_P`, `${OWNER}.${PREFIX}AC_FN(ID) = 1`, false)],
+      revoke: [dropFgaPolicy(OWNER, `${PREFIX}AUDITED`, `${PREFIX}AC_P`)],
+      names: namedPolicy(OWNER, `${PREFIX}AUDITED`, `${PREFIX}AC_P`),
+    },
+    {
+      label: "an auditing policy whose audit condition is built-in only, since the condition is not parsed",
+      grant: [fgaPolicy(OWNER, `${PREFIX}AUDITED`, `${PREFIX}AC_P`, "ID > 0", false)],
+      revoke: [dropFgaPolicy(OWNER, `${PREFIX}AUDITED`, `${PREFIX}AC_P`)],
+      names: namedPolicy(OWNER, `${PREFIX}AUDITED`, `${PREFIX}AC_P`),
     },
     {
       label: "a granted view over a view it may not read, replaced to call that function after the outer view was made",
@@ -533,21 +604,39 @@ async function main(): Promise<void> {
     },
     {
       label: "a granted view over a table a row-level policy guards, which ALL_POLICIES does not list",
-      grant: [`GRANT SELECT ON ${OWNER}.${PREFIX}BEHIND_VIEW TO ${RO}`],
-      revoke: [`REVOKE SELECT ON ${OWNER}.${PREFIX}BEHIND_VIEW FROM ${RO}`],
-      names: `REVOKE ALL ON "${OWNER}"."${PREFIX}BEHIND_VIEW" FROM "${RO}"`,
+      grant: [
+        `GRANT SELECT ON ${OWNER}.${PREFIX}BEHIND_VIEW TO ${RO}`,
+        rlsPolicy(OWNER, `${PREFIX}BEHIND`, `${PREFIX}BEHIND_P`),
+      ],
+      revoke: [
+        dropRlsPolicy(OWNER, `${PREFIX}BEHIND`, `${PREFIX}BEHIND_P`),
+        `REVOKE SELECT ON ${OWNER}.${PREFIX}BEHIND_VIEW FROM ${RO}`,
+      ],
+      names: namedPolicy(OWNER, `${PREFIX}BEHIND`, `${PREFIX}BEHIND_P`),
     },
     {
       label: "a granted table with a fine-grained auditing handler",
-      grant: [`GRANT SELECT ON ${OWNER}.${PREFIX}AUDITED TO ${RO}`],
-      revoke: [`REVOKE SELECT ON ${OWNER}.${PREFIX}AUDITED FROM ${RO}`],
-      names: `REVOKE ALL ON "${OWNER}"."${PREFIX}AUDITED" FROM "${RO}"`,
+      grant: [
+        `GRANT SELECT ON ${OWNER}.${PREFIX}AUDITED TO ${RO}`,
+        fgaPolicy(OWNER, `${PREFIX}AUDITED`, `${PREFIX}FGA_P`, null, true),
+      ],
+      revoke: [
+        dropFgaPolicy(OWNER, `${PREFIX}AUDITED`, `${PREFIX}FGA_P`),
+        `REVOKE SELECT ON ${OWNER}.${PREFIX}AUDITED FROM ${RO}`,
+      ],
+      names: namedPolicy(OWNER, `${PREFIX}AUDITED`, `${PREFIX}FGA_P`),
     },
     {
       label: "a granted view over a table with a fine-grained auditing handler",
-      grant: [`GRANT SELECT ON ${OWNER}.${PREFIX}AUDITED_VIEW TO ${RO}`],
-      revoke: [`REVOKE SELECT ON ${OWNER}.${PREFIX}AUDITED_VIEW FROM ${RO}`],
-      names: `REVOKE ALL ON "${OWNER}"."${PREFIX}AUDITED_VIEW" FROM "${RO}"`,
+      grant: [
+        `GRANT SELECT ON ${OWNER}.${PREFIX}AUDITED_VIEW TO ${RO}`,
+        fgaPolicy(OWNER, `${PREFIX}AUDITED`, `${PREFIX}FGA_P`, null, true),
+      ],
+      revoke: [
+        dropFgaPolicy(OWNER, `${PREFIX}AUDITED`, `${PREFIX}FGA_P`),
+        `REVOKE SELECT ON ${OWNER}.${PREFIX}AUDITED_VIEW FROM ${RO}`,
+      ],
+      names: namedPolicy(OWNER, `${PREFIX}AUDITED`, `${PREFIX}FGA_P`),
     },
     {
       label: "a granted view over a view granted only DEBUG, which ALL_OBJECTS hides and the check does not examine",
@@ -568,10 +657,17 @@ async function main(): Promise<void> {
       names: `move "${RO}"."${PREFIX}MINE" out of the agent user's own schema`,
     },
     {
-      label: "a user that reads a granted table and may no longer read DBA_POLICIES",
+      label: "a user that may no longer read DBA_POLICIES",
       grant: [`REVOKE SELECT ON SYS.DBA_POLICIES FROM ${RO}`],
       revoke: [`GRANT SELECT ON SYS.DBA_POLICIES TO ${RO}`],
       names: `GRANT SELECT ON SYS.DBA_POLICIES TO "${RO}" (as SYS)`,
+      admin: "SYS",
+    },
+    {
+      label: "a user that may no longer read DBA_AUDIT_POLICIES",
+      grant: [`REVOKE SELECT ON SYS.DBA_AUDIT_POLICIES FROM ${RO}`],
+      revoke: [`GRANT SELECT ON SYS.DBA_AUDIT_POLICIES TO ${RO}`],
+      names: `GRANT SELECT ON SYS.DBA_AUDIT_POLICIES TO "${RO}" (as SYS)`,
       admin: "SYS",
     },
     {
@@ -599,6 +695,76 @@ async function main(): Promise<void> {
     await setup(admin, revoke);
     check((await verdict(RO)) === "admitted", `with ${label} gone the user is admitted again`);
   }
+  // The policies Oracle ships are admitted: the admitted user reads row-level policies in the fresh database, every one
+  // of whose functions XDB, a schema Oracle maintains, owns (capture 00).
+  const [vendor] = await as(RO, "SELECT COUNT(*) AS N FROM SYS.DBA_POLICIES");
+  check(Number(vendor?.N) > 0, `the admitted user reads ${vendor?.N} row-level policies Oracle ships, and is admitted`);
+  // An auditing policy with neither an audit condition nor a handler runs nothing of the owner's, and is admitted.
+  await setup("SYSTEM", [fgaPolicy(OWNER, `${PREFIX}AUDITED`, `${PREFIX}PLAIN_P`, null, false)]);
+  const plainAudit = await verdict(RO);
+  check(
+    plainAudit === "admitted",
+    `the check admits an auditing policy with no condition and no handler: ${plainAudit}`,
+  );
+  await setup("SYSTEM", [dropFgaPolicy(OWNER, `${PREFIX}AUDITED`, `${PREFIX}PLAIN_P`)]);
+  // What the refused policies would run for the READ ONLY user, read in a session of its own outside the agent path:
+  // the row-level policy on SYSTEM.HELP and the audit condition each advance the owner's sequence.
+  for (const { label, add, drop, read } of [
+    {
+      label: "a row-level policy of the owner's on SYSTEM.HELP",
+      add: [rlsPolicy("SYSTEM", "HELP", `${PREFIX}HELP_P`)],
+      drop: [dropRlsPolicy("SYSTEM", "HELP", `${PREFIX}HELP_P`)],
+      read: "SELECT COUNT(*) AS N FROM SYSTEM.HELP",
+    },
+    {
+      // The condition is evaluated with the policy owner's privileges: SYSTEM, which made the policy, is granted EXECUTE
+      // on the function by its owner, or the read answers ORA-28112 and runs nothing (measured).
+      label: "an audit condition calling a function of the owner's",
+      add: [
+        `GRANT SELECT ON ${OWNER}.${PREFIX}AUDITED TO ${RO}`,
+        fgaPolicy(OWNER, `${PREFIX}AUDITED`, `${PREFIX}AC_P`, `${OWNER}.${PREFIX}AC_FN(ID) = 1`, false),
+      ],
+      drop: [
+        dropFgaPolicy(OWNER, `${PREFIX}AUDITED`, `${PREFIX}AC_P`),
+        `REVOKE SELECT ON ${OWNER}.${PREFIX}AUDITED FROM ${RO}`,
+      ],
+      read: `SELECT COUNT(*) AS N FROM ${OWNER}.${PREFIX}AUDITED`,
+    },
+  ]) {
+    await setup("SYSTEM", add);
+    await setup(OWNER, [`GRANT EXECUTE ON ${OWNER}.${PREFIX}AC_FN TO SYSTEM`]);
+    const before = await sequenceNumber();
+    await as(RO, read);
+    const after = await sequenceNumber();
+    check(after > before, `${label} ran for the READ ONLY user on a plain SELECT (sequence ${before} -> ${after})`);
+    await setup("SYSTEM", drop);
+  }
+  // A private synonym DBA_POLICIES in the agent user's own schema, over an empty table, hides every policy from an
+  // unqualified read, and not from the check, which names the view SYS.DBA_POLICIES.
+  await setup("SYSTEM", [
+    `GRANT SELECT ON ${OWNER}.${PREFIX}NOPOL TO ${RO}`,
+    `CREATE SYNONYM ${RO}.DBA_POLICIES FOR ${OWNER}.${PREFIX}NOPOL`,
+    rlsPolicy(OWNER, `${PREFIX}POL`, `${PREFIX}POL_P`),
+  ]);
+  const [shadowed] = await as(RO, `SELECT COUNT(*) AS N FROM DBA_POLICIES WHERE POLICY_NAME = '${PREFIX}POL_P'`);
+  const [qualified] = await as(RO, `SELECT COUNT(*) AS N FROM SYS.DBA_POLICIES WHERE POLICY_NAME = '${PREFIX}POL_P'`);
+  check(
+    Number(shadowed?.N) === 0 && Number(qualified?.N) === 1,
+    `the private synonym hides the policy from an unqualified DBA_POLICIES (${shadowed?.N} rows) and not from SYS.DBA_POLICIES (${qualified?.N})`,
+  );
+  const shadow = await verdict(RO);
+  check(
+    shadow.startsWith("PROFILE_PRIVILEGES_TOO_BROAD") &&
+      shadow.includes(namedPolicy(OWNER, `${PREFIX}POL`, `${PREFIX}POL_P`)),
+    `the check refuses the policy whatever the user's schema holds named DBA_POLICIES: ${shadow}`,
+  );
+  await setup("SYSTEM", [dropRlsPolicy(OWNER, `${PREFIX}POL`, `${PREFIX}POL_P`)]);
+  const shadowAdmitted = await verdict(RO);
+  check(
+    shadowAdmitted === "admitted",
+    `with the policy dropped the user is admitted, the synonym kept: ${shadowAdmitted}`,
+  );
+  await setup("SYSTEM", [`DROP SYNONYM ${RO}.DBA_POLICIES`, `REVOKE SELECT ON ${OWNER}.${PREFIX}NOPOL FROM ${RO}`]);
   // Views whose synonyms resolve to no code are admitted: DBMS_LOB through Oracle's PUBLIC synonym, a granted table.
   for (const view of [`${PREFIX}LOB_VIEW`, `${PREFIX}DATA_SYN_VIEW`]) {
     await setup("SYSTEM", [`GRANT SELECT ON ${OWNER}.${view} TO ${RO}`]);
