@@ -432,10 +432,19 @@ Bitnami subchart names resources as: <release>-postgresql (not <release>-<chart>
 {{- end }}
 
 {{/*
-Return the PostgreSQL URL when subchart is enabled
+Return the PostgreSQL URL when subchart is enabled.
+The subchart serves plain TCP unless postgresql.tls.enabled is set, and Studio turns
+TLS on for any non-local host whose URL names no sslmode, so sign-in failed with
+"server does not support SSL". sslmode=disable is written only while the subchart's
+TLS is off; with it on the URL keeps no sslmode and Studio's TLS default applies.
 */}}
 {{- define "libredb-studio.postgresql.url" -}}
-{{- printf "postgresql://%s:$(POSTGRES_PASSWORD)@%s:5432/%s" .Values.postgresql.auth.username (include "libredb-studio.postgresql.fullname" .) .Values.postgresql.auth.database }}
+{{- $url := printf "postgresql://%s:$(POSTGRES_PASSWORD)@%s:5432/%s" .Values.postgresql.auth.username (include "libredb-studio.postgresql.fullname" .) .Values.postgresql.auth.database }}
+{{- if dig "tls" "enabled" false (.Values.postgresql | default dict) }}
+{{- $url }}
+{{- else }}
+{{- printf "%s?sslmode=disable" $url }}
+{{- end }}
 {{- end }}
 
 {{/* Prefix only the shipped health path; preserve explicit HTTP/exec/TCP probes. With `ready` set

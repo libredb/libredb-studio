@@ -2,7 +2,7 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting forty-two engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Apache Cassandra, libSQL, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Weaviate, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B
 type: application
-version: 0.1.110
+version: 0.1.111
 appVersion: "1.1.0"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -341,12 +341,7 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "Render an OpenShift Route under openshiftRoute values, with edge TLS, a plain HTTP redirect and a 120s router timeout, disabled by default"
-    - "Mount the cluster's injected trusted CA bundle as NODE_EXTRA_CA_CERTS under openshift.trustedCABundle.enabled, disabled by default"
-    - "Allow OpenShift's DNS port 5353 and API server port 6443 in the NetworkPolicy under networkPolicy.enabled when the cluster is OpenShift, including on an existing install"
-    - "Add optional OpenShift Topology labels under openshift.topology.partOf and openshift.topology.runtime"
-    - "Add a helm test hook pod that checks the health route through the Service"
-    - "Add the charts.openshift.io annotations the OpenShift console catalog reads"
+    - "With postgresql.enabled and the subchart's TLS off (its default), connect to the bundled PostgreSQL with sslmode=disable, so sign-in no longer fails with server does not support SSL"
 dependencies:
   - name: postgresql
     version: "16.x.x"

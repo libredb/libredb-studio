@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.110 \
+  --version 0.1.111 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -79,6 +79,9 @@ helm install libredb libredb/libredb-studio \
 ```
 
 Storage provider is automatically set to `postgres` when the subchart is enabled.
+
+The subchart serves plain TCP by default, so the chart writes `?sslmode=disable` into the `STORAGE_POSTGRES_URL` it builds for it and Studio connects without TLS.
+With `postgresql.tls.enabled=true` (and the subchart's certificate settings) the URL carries no `sslmode`, and Studio uses TLS, its default for any non-local host, without verifying the certificate.
 
 > **Note:** after Broadcom's August 2025 Bitnami catalog freeze the subchart's
 > pinned image is pulled from `docker.io/bitnamilegacy/postgresql`, which is
@@ -899,6 +902,7 @@ helm uninstall libredb
 | `serviceAccount.create` | Create a ServiceAccount for the pod; `false` runs it as `serviceAccount.name`, or the namespace's `default` account when that is empty | `true` |
 | `serviceAccount.automountServiceAccountToken` | Mount an API token into the pod. Set on the pod spec as well as on the created ServiceAccount, so it also holds for an account the chart does not create; only `true` mounts one. Studio reads the token only for Vault Kubernetes auth (`VAULT_ROLE`) | `false` |
 | `postgresql.enabled` | Deploy PostgreSQL subchart | `false` |
+| `postgresql.tls.enabled` | Serve the subchart over TLS. Off, the chart adds `sslmode=disable` to the storage URL; on, it adds none and Studio connects with TLS | `false` |
 | `extraVolumes` | Additional pod volumes (Kubernetes `Volume` objects), such as a private CA from a ConfigMap or Secret | `[]` |
 | `extraVolumeMounts` | Additional volume mounts for the app container (Kubernetes `VolumeMount` objects). With a CA mounted, set `NODE_EXTRA_CA_CERTS` to the file through `extraEnv` so an OIDC issuer or Vault on an internal CA is trusted | `[]` |
 | `extraObjects` | Additional Kubernetes manifests deployed with the release, each rendered through `tpl` so it can use release values and the chart's helpers; a string item is taken as a template as it is. Write a literal `{{`, such as one in a Prometheus alert, as `{{ "{{" }}`, or the install fails. Not available through the OpenShift operator, whose CRD refuses it | `[]` |
