@@ -13,6 +13,13 @@ metadata:
       MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Weaviate, InfluxDB, InfluxDB 3,
       Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect,
       Modbus, NETCONF, SNMP and Sparkplug B - with AI-powered query assistance.
+    features.operators.openshift.io/disconnected: "false"
+    features.operators.openshift.io/fips-compliant: "false"
+    features.operators.openshift.io/proxy-aware: "false"
+    features.operators.openshift.io/tls-profiles: "false"
+    features.operators.openshift.io/token-auth-aws: "false"
+    features.operators.openshift.io/token-auth-azure: "false"
+    features.operators.openshift.io/token-auth-gcp: "false"
     olm.skipRange: '>=0.0.0 <0.0.0'
     repository: https://github.com/libredb/libredb-studio
     support: LibreDB
@@ -27,8 +34,10 @@ spec:
   customresourcedefinitions:
     owned:
     - description: A LibreDB Studio instance managed by the operator. The spec mirrors
-        the Helm chart values except extraObjects, which the operator refuses; every
-        field left unset falls back to the chart defaults.
+        the Helm chart values except extraObjects, which the operator refuses, and
+        the bundled PostgreSQL (postgresql), which takes only the values Studio's
+        storage needs and always runs in this resource's namespace; every field left
+        unset falls back to the chart defaults.
       displayName: LibreDB Studio
       kind: LibreDBStudio
       name: libredbstudios.studio.libredb.org
