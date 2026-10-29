@@ -13,15 +13,18 @@
  *  - the check refuses a user that is not READ ONLY, one granted EXECUTE on a definer's-rights function, one granted a
  *    view that calls it directly, through a private or PUBLIC synonym or through a chain of two synonyms, one granted a
  *    view over a synonym it cannot resolve, over a view it may not read, or over an invoker's-rights function, one
- *    granted a view left invalid, a table with a virtual column or a hidden one of a function-based index, a table or
- *    a synonym a row-level policy guards, a view over a table one guards, a table or a view over a table with a
- *    fine-grained auditing handler, a view over a view granted only DEBUG, a table of its own with a virtual column,
- *    one that may no longer read the catalog, one granted a sequence, one holding a role that is not a default role, one
- *    granted a directory, one holding ALTER SYSTEM, one owning a private database link, and any user while a PUBLIC
- *    database link exists, and admits each again once the grant is gone, the synonym or the table dropped or the
- *    private link dropped by its owner set READ WRITE; it admits a view over DBMS_LOB through Oracle's PUBLIC synonym,
- *    one over a synonym for a granted table, a view leaving out a hidden virtual column, and a view over a view once
- *    both are granted, the inner one INSERT only included;
+ *    granted a view left invalid, a table with a virtual column or a hidden one of a function-based index, a view over a
+ *    view granted only DEBUG, a table of its own with a virtual column, one that may no longer read either policy
+ *    catalog, one granted a sequence, one holding a role that is not a default role, one granted a directory, one
+ *    holding ALTER SYSTEM, one owning a private database link, and any user while a PUBLIC database link exists, or
+ *    while the database holds a row-level policy or a fine-grained auditing handler of the owner's anywhere, Oracle's
+ *    SYSTEM.HELP and SYSTEM.SQLPLUS_PRODUCT_PROFILE included, or an audit condition, and admits each again once the
+ *    grant, the policy, the synonym or the table is gone or the private link dropped by its owner set READ WRITE; a
+ *    private synonym DBA_POLICIES in the user's schema hides no policy from the check; it admits the fresh database's
+ *    own policies, an auditing policy with no condition and no handler, a view over DBMS_LOB through Oracle's PUBLIC
+ *    synonym, one over a synonym for a granted table, a view leaving out a hidden virtual column, and a view over a view
+ *    once both are granted, the inner one INSERT only included; and a policy on SYSTEM.HELP and an audit condition are
+ *    measured to run the owner's function for the READ ONLY user's plain SELECT;
  *  - the boundary, with Studio's client admission bypassed: every write, DDL, temporary table, lock, transaction
  *    statement, PL/SQL write and second statement is sent through `queryReadOnly` as the admitted user and refused,
  *    each classified by its ORA- code; the same writes run as the schema owner through the editor path, the positive
