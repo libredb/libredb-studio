@@ -2596,25 +2596,35 @@ describe("OpenSearchProvider agent profile open", () => {
   });
 
   test.each([
-    ["the settings read", "plugins.sql.delete.enabled"],
-    ["the DELETE probe", "DELETE FROM"],
-  ])("refuses when %s is refused by the cluster, naming what the user needs", async (name, match) => {
-    replyFor = (path, body) =>
-      path.includes(match) || String(body?.query).startsWith(match)
-        ? {
-            status: 403,
-            body: JSON.stringify({ error: { type: "security_exception", reason: "no permissions" }, status: 403 }),
-          }
-        : defaultReply(path, body);
+    [
+      "the settings read",
+      "plugins.sql.delete.enabled",
+      "The agent read-only profile needs OpenSearch SQL's DELETE proved off, and the settings read failed, so this server is refused (a user needs the cluster privilege cluster:monitor/state to read the setting): ",
+    ],
+    [
+      "the DELETE probe",
+      "DELETE FROM",
+      "The agent read-only profile needs OpenSearch SQL's DELETE proved off, and the DELETE probe failed, so this server is refused: ",
+    ],
+  ])(
+    "refuses when %s is refused by the cluster, naming only a privilege that step reads with",
+    async (_name, match, prefix) => {
+      replyFor = (path, body) =>
+        path.includes(match) || String(body?.query).startsWith(match)
+          ? {
+              status: 403,
+              body: JSON.stringify({ error: { type: "security_exception", reason: "no permissions" }, status: 403 }),
+            }
+          : defaultReply(path, body);
 
-    const error = await openAgent();
+      const error = await openAgent();
 
-    expect(error).toBeInstanceOf(ExecutionProfileError);
-    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_SERVER_UNENFORCED");
-    expect((error as Error).message).toStartWith(
-      `The agent read-only profile needs OpenSearch SQL's DELETE proved off, and ${name} failed, so this server is refused (a user needs the cluster privilege cluster:monitor/state to read the setting): `,
-    );
-  });
+      expect(error).toBeInstanceOf(ExecutionProfileError);
+      expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_SERVER_UNENFORCED");
+      expect((error as Error).message).toStartWith(prefix);
+      expect((error as Error).message).toEndWith("(HTTP 403)");
+    },
+  );
 
   test("refuses an unreadable setting", async () => {
     overridePath("plugins.sql.delete.enabled", ok('{"defaults":{"plugins":{"sql":{"delete":{"enabled":"maybe"}}}}}'));
@@ -2720,6 +2730,20 @@ describe("OpenSearchProvider.queryReadOnly", () => {
     const provider = await agentProvider();
 
     const error = await refusal(provider.queryReadOnly("SELECT id, customer, total FROM probe_orders", AGENT_BUDGET));
+
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error.message).toBe(
+      "Read-only execution exceeded the row budget: OpenSearch answers at most 1 rows (plugins.query.size_limit) and cuts the rest without saying so, so an answer that reaches it is refused",
+    );
+  });
+
+  test("refuses an answer that reaches a result limit equal to the row budget, which may have been cut", async () => {
+    overridePath("plugins.query.size_limit", ok('{"transient":{"plugins":{"query":{"size_limit":"1"}}}}'));
+    const provider = await agentProvider();
+
+    const error = await refusal(
+      provider.queryReadOnly("SELECT id, customer, total FROM probe_orders", { ...AGENT_BUDGET, maxResultRows: 1 }),
+    );
 
     expect(error).toBeInstanceOf(QueryError);
     expect(error.message).toBe(

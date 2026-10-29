@@ -1008,16 +1008,21 @@ abstract class SearchProvider extends SQLBaseProvider {
    * `GET /_cluster/settings`, which a least-privilege user reads with the cluster action `cluster:monitor/state`.
    */
   private async assertSqlDeleteOff(transport: SearchHttpTransport): Promise<void> {
-    const refuse = (step: string, error: unknown): ExecutionProfileError =>
+    // Only the settings read needs a privilege of its own; the probe is refused before the plugin resolves any index.
+    const refuse = (step: string, need: string, error: unknown): ExecutionProfileError =>
       new ExecutionProfileError(
-        `The agent read-only profile needs ${this.product.label} SQL's DELETE proved off, and ${step} failed, so this server is refused (a user needs the cluster privilege cluster:monitor/state to read the setting): ${error instanceof Error ? error.message : String(error)}`,
+        `The agent read-only profile needs ${this.product.label} SQL's DELETE proved off, and ${step} failed, so this server is refused${need}: ${error instanceof Error ? error.message : String(error)}`,
         "PROFILE_SERVER_UNENFORCED",
       );
     let setting: { setting: string; enabled: boolean | null };
     try {
       setting = await transport.sqlDeleteSetting(this.deadline());
     } catch (error) {
-      throw refuse("the settings read", error);
+      throw refuse(
+        "the settings read",
+        " (a user needs the cluster privilege cluster:monitor/state to read the setting)",
+        error,
+      );
     }
     if (setting.enabled === true) {
       throw new ExecutionProfileError(
@@ -1029,7 +1034,7 @@ abstract class SearchProvider extends SQLBaseProvider {
     try {
       unrefused = await transport.unrefusedSqlDelete(this.deadline());
     } catch (error) {
-      throw refuse("the DELETE probe", error);
+      throw refuse("the DELETE probe", "", error);
     }
     if (unrefused !== null) {
       throw new ExecutionProfileError(
