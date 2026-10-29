@@ -16,6 +16,7 @@ import {
   kubernetesConnectionId,
   kubernetesIdKey,
   mapKubernetesDatabase,
+  PGO_POSTGRES_CLUSTER,
 } from "@/lib/seed/kubernetes-discovery-contract";
 import {
   KUBERNETES_DISCOVERY_PROBLEMS,
@@ -587,6 +588,205 @@ describe("the CloudNativePG family", () => {
     const result = mapKubernetesDatabase(database(), () => "0".repeat(64));
     if (!result.ok) throw new Error(result.reason);
     expect(result.connection.id).toBe(`k8s-cnpg-${"0".repeat(32)}`);
+  });
+});
+
+describe("the Crunchy PGO row", () => {
+  const PGO_DATA = {
+    user: "analyst",
+    password: PASSWORD,
+    host: "analytics-primary.team-b.svc",
+    port: "5432",
+    dbname: "analytics",
+  };
+
+  /** A PGO row of `analytics` in team-b for `user` (the default user when undefined), read through the parser. */
+  function pgo(user: string | undefined, data: Record<string, string> = PGO_DATA, name = "analytics") {
+    const secretUser = user ?? name;
+    return parsedEntry({
+      kind: "pgo",
+      resource: {
+        metadata: { namespace: "team-b", name },
+        ...(user === undefined ? {} : { spec: { users: [{ name: user }] } }),
+      },
+      secret: { name: `${name}-pguser-${secretUser}`, data },
+    });
+  }
+
+  it("is a per-user PostgreSQL row of PostgresClusters with Opaque Secrets", () => {
+    expect(KUBERNETES_CONTRACT[2]).toBe(PGO_POSTGRES_CLUSTER);
+    expect(PGO_POSTGRES_CLUSTER).toMatchObject({
+      slug: "pgo",
+      label: "Crunchy PGO",
+      group: "postgres-operator.crunchydata.com",
+      version: "v1beta1",
+      kind: "PostgresCluster",
+      plural: "postgresclusters",
+      type: "postgres",
+      perUser: true,
+      secretType: "Opaque",
+      secretKeys: ["user", "password", "host", "port", "dbname"],
+    });
+    const resource = { metadata: { namespace: "team-b", name: "analytics" }, spec: { users: [{ name: "analyst" }] } };
+    expect(PGO_POSTGRES_CLUSTER.serviceName(resource)).toBe("analytics-primary");
+    expect(PGO_POSTGRES_CLUSTER.secretName(resource)).toBe("analytics-pguser-analyst");
+    expect(PGO_POSTGRES_CLUSTER.ssl(resource)).toEqual({ mode: "require" });
+  });
+
+  it("the default user is <name>", () => {
+    const resource = { metadata: { namespace: "team-b", name: "metrics" } };
+    expect(PGO_POSTGRES_CLUSTER.user(resource)).toBe("metrics");
+    expect(PGO_POSTGRES_CLUSTER.secretName(resource)).toBe("metrics-pguser-metrics");
+    const result = mapKubernetesDatabase(
+      pgo(
+        undefined,
+        { ...PGO_DATA, user: "metrics", host: "metrics-primary.team-b.svc", dbname: "metrics" },
+        "metrics",
+      ),
+    );
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.key).toBe("team-b/metrics/metrics");
+    expect(result.connection).toMatchObject({
+      id: `k8s-pgo-${sha256Prefix("team-b/metrics/metrics")}`,
+      name: "team-b/metrics/metrics (Crunchy PGO)",
+      host: "metrics-primary.team-b.svc.cluster.local.",
+      database: "metrics",
+      user: "metrics",
+    });
+    expect(result.secret).toEqual({ namespace: "team-b", name: "metrics-pguser-metrics" });
+  });
+
+  it("one row per spec.users entry keyed <ns>/<name>/<user>", () => {
+    const analyst = mapKubernetesDatabase(pgo("analyst"));
+    const reporter = mapKubernetesDatabase(pgo("reporter", { ...PGO_DATA, user: "reporter" }));
+    if (!analyst.ok || !reporter.ok) throw new Error("a PGO user was refused");
+    expect([analyst.key, reporter.key]).toEqual(["team-b/analytics/analyst", "team-b/analytics/reporter"]);
+    expect(analyst.connection).toEqual({
+      id: `k8s-pgo-${sha256Prefix("team-b/analytics/analyst")}`,
+      name: "team-b/analytics/analyst (Crunchy PGO)",
+      type: "postgres",
+      host: "analytics-primary.team-b.svc.cluster.local.",
+      port: 5432,
+      database: "analytics",
+      user: "analyst",
+      password: PASSWORD,
+      group: "team-b",
+      ssl: { mode: "require" },
+      managed: true,
+      roles: ["admin"],
+    });
+    expect(reporter.connection.id).toBe(`k8s-pgo-${sha256Prefix("team-b/analytics/reporter")}`);
+    expect(analyst.secret).toEqual({ namespace: "team-b", name: "analytics-pguser-analyst" });
+    expect(reporter.secret).toEqual({ namespace: "team-b", name: "analytics-pguser-reporter" });
+  });
+
+  it("a host other than <name>-primary.<ns>.svc is refused without echoing it", () => {
+    const forged = [
+      "evil.example.com",
+      "analytics-primary",
+      "analytics-primary.team-a.svc",
+      "metrics-primary.team-b.svc",
+      "analytics-primary.team-b.svc.cluster.local.",
+      "ANALYTICS-PRIMARY.team-b.svc",
+      "analytics-replicas.team-b.svc",
+      "analytics-primary.team-b.svc.corp.internal",
+      "10.0.0.5",
+    ];
+    // The reason is one fixed text whatever the Secret holds, so it echoes none of it.
+    for (const host of forged) {
+      expect(refusalOf(pgo("analyst", { ...PGO_DATA, host }))).toBe(
+        "the credential Secret analytics-pguser-analyst holds a host other than analytics-primary.team-b.svc",
+      );
+    }
+    expect(refusalOf(pgo("analyst", { ...PGO_DATA, host: "" }))).toBe(
+      "the credential Secret analytics-pguser-analyst has no host",
+    );
+  });
+
+  it("a host of <name>-primary.<ns>.svc or <name>-primary.<ns>.svc.cluster.local connects to <name>-primary.<ns>.svc.cluster.local.", () => {
+    for (const host of ["analytics-primary.team-b.svc", "analytics-primary.team-b.svc.cluster.local"]) {
+      expect(connectionOf(pgo("analyst", { ...PGO_DATA, host })).host).toBe(
+        "analytics-primary.team-b.svc.cluster.local.",
+      );
+    }
+    process.env[CLUSTER_DOMAIN] = "corp.internal";
+    for (const host of ["analytics-primary.team-b.svc", "analytics-primary.team-b.svc.corp.internal"]) {
+      expect(connectionOf(pgo("analyst", { ...PGO_DATA, host })).host).toBe(
+        "analytics-primary.team-b.svc.corp.internal.",
+      );
+    }
+    expect(refusalOf(pgo("analyst", { ...PGO_DATA, host: "analytics-primary.team-b.svc.cluster.local" }))).toBe(
+      "the credential Secret analytics-pguser-analyst holds a host other than analytics-primary.team-b.svc",
+    );
+  });
+
+  it("a Secret without dbname is refused with its reason and never given a database", () => {
+    const { dbname: _, ...withoutDbname } = PGO_DATA;
+    for (const data of [withoutDbname, { ...PGO_DATA, dbname: "" }]) {
+      const result = mapKubernetesDatabase(pgo("analyst", data));
+      expect(result).toEqual({
+        ok: false,
+        key: "team-b/analytics/analyst",
+        reason: "the credential Secret analytics-pguser-analyst has no dbname",
+      });
+    }
+  });
+
+  it("a user other than the row's is refused", () => {
+    for (const user of ["reporter", "postgres", "ANALYST", "analyst "]) {
+      expect(refusalOf(pgo("analyst", { ...PGO_DATA, user }))).toBe(
+        "the credential Secret analytics-pguser-analyst holds a user other than analyst",
+      );
+    }
+    const { user: _, ...withoutUser } = PGO_DATA;
+    expect(refusalOf(pgo("analyst", withoutUser))).toBe("the credential Secret analytics-pguser-analyst has no user");
+  });
+
+  it("refuses a Secret without a password or a valid port", () => {
+    expect(refusalOf(pgo("analyst", { ...PGO_DATA, password: "" }))).toBe(
+      "the credential Secret analytics-pguser-analyst has no password",
+    );
+    const { port: _, ...withoutPort } = PGO_DATA;
+    for (const data of [
+      withoutPort,
+      { ...PGO_DATA, port: "0" },
+      { ...PGO_DATA, port: "65536" },
+      { ...PGO_DATA, port: "x" },
+    ]) {
+      expect(refusalOf(pgo("analyst", data))).toBe("the credential Secret analytics-pguser-analyst has no valid port");
+    }
+  });
+
+  it("pgbouncer keys are never used", () => {
+    const entry = pgo("analyst", {
+      ...PGO_DATA,
+      "pgbouncer-host": "evil.example.com",
+      "pgbouncer-port": "6432",
+      "pgbouncer-uri": "postgresql://analyst@evil.example.com:6432/analytics",
+      "pgbouncer-jdbc-uri": "jdbc:postgresql://evil.example.com:6432/analytics",
+    });
+    expect(Object.keys(entry.secret.data ?? {}).sort()).toEqual(["dbname", "host", "password", "port", "user"]);
+    expect(connectionOf(entry)).toMatchObject({ host: "analytics-primary.team-b.svc.cluster.local.", port: 5432 });
+  });
+
+  it("names the PostgresCluster in its ownership and Service refusals, and the user in no_database", () => {
+    const refusal = (secret: Record<string, unknown>) =>
+      refusalOf({ ...pgo("analyst"), secret } as KubernetesDiscoveredDatabase);
+    expect(refusal({ name: "analytics-pguser-analyst", problem: "not_owned" })).toBe(
+      "the credential Secret analytics-pguser-analyst is not owned by the PostgresCluster analytics, so the exporter did not export it",
+    );
+    expect(refusal({ name: "analytics-pguser-analyst", problem: "service_not_controlled" })).toBe(
+      "the Service analytics-primary has no selector and is not controlled by the PostgresCluster analytics, so the exporter did not read the credential Secret",
+    );
+    expect(refusal({ name: "analytics-pguser-analyst", problem: "no_database" })).toBe(
+      "the user analyst lists no database, so its credential Secret has no dbname and the exporter did not request it",
+    );
+    expect(refusal({ name: "analytics-pguser-analyst", problem: "wrong_type" })).toBe(
+      "the credential Secret analytics-pguser-analyst is not of type Opaque, so the exporter discarded it",
+    );
+    expect(refusal({ name: "analytics-pguser-analyst", problem: "unexpected_key" })).toBe(
+      "the credential Secret analytics-pguser-analyst holds a key outside the Crunchy PGO contract, so the exporter discarded it whole",
+    );
   });
 });
 

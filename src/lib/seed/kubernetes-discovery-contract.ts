@@ -40,6 +40,7 @@ export interface KubernetesSecretRef {
 type SecretData = Partial<Record<(typeof KUBERNETES_DISCOVERY_SECRET_KEYS)[number], string>>;
 
 type CnpgResource = Extract<KubernetesDiscoveredDatabase, { kind: "cnpg" | "edbpg" }>["resource"];
+type PgoResource = Extract<KubernetesDiscoveredDatabase, { kind: "pgo" }>["resource"];
 
 type Fields =
   | { ok: true; fields: Pick<SeedConnection, "host" | "port" | "database" | "user" | "password" | "authSource"> }
@@ -238,8 +239,76 @@ export const EDB_CLUSTER = cnpgFamily(
   "k8s.enterprisedb.io/cluster",
 );
 
+/** A PostgresCluster's user: the one user of its row, or the cluster's own name when spec.users is absent or empty. */
+function pgoUser(resource: PgoResource): string {
+  return resource.spec?.users[0].name ?? resource.metadata.name;
+}
+
+/**
+ * A Crunchy PGO `PostgresCluster` (`v1beta1`), one row per user: each user of `spec.users`, or the default user PGO
+ * names after the cluster when that list is absent or empty. Its Secret is `<name>-pguser-<user>`, of type Opaque and
+ * owned by the cluster; every field comes from it. The Secret's `user` must be the row's user, and its `host` the
+ * primary Service, `<name>-primary.<namespace>.svc`, which PGO writes, or that name in the cluster domain; the
+ * connection then uses the Service's fully qualified name with the trailing dot, never the Secret's text. The PgBouncer
+ * keys are never kept, so a connection never goes through a pooler a Secret names.
+ */
+export const PGO_POSTGRES_CLUSTER: KubernetesContractRow = Object.freeze({
+  slug: "pgo",
+  label: "Crunchy PGO",
+  group: "postgres-operator.crunchydata.com",
+  version: "v1beta1",
+  kind: "PostgresCluster",
+  plural: "postgresclusters",
+  type: "postgres",
+  perUser: true,
+  secretType: "Opaque",
+  secretKeys: Object.freeze(["user", "password", "host", "port", "dbname"]),
+  user: pgoUser,
+  serviceName(resource: PgoResource): string {
+    return `${resource.metadata.name}-primary`;
+  },
+  ssl(): RowSsl {
+    return REQUIRE;
+  },
+  secretName(resource: PgoResource): string {
+    return `${resource.metadata.name}-pguser-${pgoUser(resource)}`;
+  },
+  notOwned(resource: PgoResource, secretName: string): string {
+    return `the credential Secret ${secretName} is not owned by the PostgresCluster ${resource.metadata.name}, so the exporter did not export it`;
+  },
+  fields(resource: PgoResource, secretName: string, data: SecretData, clusterDomain: string): Fields {
+    const rowUser = pgoUser(resource);
+    const user = present(data.user);
+    if (user === undefined) return { ok: false, reason: `the credential Secret ${secretName} has no user` };
+    if (user !== rowUser) {
+      return { ok: false, reason: `the credential Secret ${secretName} holds a user other than ${rowUser}` };
+    }
+    const password = present(data.password);
+    if (password === undefined) return { ok: false, reason: `the credential Secret ${secretName} has no password` };
+    const { name, namespace } = resource.metadata;
+    const service = serviceHost(name, `${name}-primary`, namespace, clusterDomain);
+    if (!service.ok) return service;
+    // The Secret's host is compared, never used: it names the primary Service, short or in the cluster domain.
+    const relative = `${name}-primary.${namespace}.${SERVICES_LABEL}`;
+    const written = present(data.host);
+    if (written === undefined) return { ok: false, reason: `the credential Secret ${secretName} has no host` };
+    if (written !== relative && written !== `${relative}.${clusterDomain}`) {
+      return { ok: false, reason: `the credential Secret ${secretName} holds a host other than ${relative}` };
+    }
+    const port = validPort(data.port);
+    if (port === undefined) return { ok: false, reason: `the credential Secret ${secretName} has no valid port` };
+    const database = present(data.dbname);
+    if (database === undefined) return { ok: false, reason: `the credential Secret ${secretName} has no dbname` };
+    return { ok: true, fields: { host: service.host, port, database, user, password } };
+  },
+});
+
 /** The contract table: one row per supported kind, in the exporter's order. */
-export const KUBERNETES_CONTRACT: readonly KubernetesContractRow[] = Object.freeze([CNPG_CLUSTER, EDB_CLUSTER]);
+export const KUBERNETES_CONTRACT: readonly KubernetesContractRow[] = Object.freeze([
+  CNPG_CLUSTER,
+  EDB_CLUSTER,
+  PGO_POSTGRES_CLUSTER,
+]);
 
 /** SHA-256 over `key`, in hex: the id's digest. */
 function sha256Hex(key: string): string {
