@@ -309,6 +309,7 @@ describe("charts/libredb-studio multiple routes and httpsRedirect (#362)", () =>
 });
 
 interface SchemaNode {
+  default?: unknown;
   properties?: Record<string, SchemaNode>;
   additionalProperties?: boolean | SchemaNode;
 }
