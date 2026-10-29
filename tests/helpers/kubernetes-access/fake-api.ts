@@ -6,6 +6,10 @@
  * It writes a token file and the test CA into a temporary directory of its own and points the review's variables at
  * them and at itself, so the code under test reads them exactly as it reads a pod's projected token and CA. Every
  * request is recorded with its method, path, bearer token and parsed body, so "nothing was sent" is measured.
+ *
+ * It also answers `GET /apis/config.openshift.io/v1`, the platform check the ServiceAccount review runs once per process
+ * before its first review: 404 by default, as vanilla Kubernetes and Rancher answer, or `platformAnswer`. Those requests
+ * are recorded apart, in `platformChecks`, so `seen` keeps holding the reviews alone.
  */
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:https";
@@ -56,6 +60,17 @@ export interface ScriptedAnswer {
 export type FakeAnswer = "grants" | "hang" | ScriptedAnswer | ((body: ReviewBody) => ScriptedAnswer | "grants");
 
 export const REVIEW_PATH = "/apis/authorization.k8s.io/v1/subjectaccessreviews";
+export const PLATFORM_PATH = "/apis/config.openshift.io/v1";
+/** What a vanilla Kubernetes API server answers for an API group it does not serve. */
+const NOT_FOUND: ScriptedAnswer = {
+  status: 404,
+  body: JSON.stringify({ kind: "Status", reason: "NotFound", code: 404 }),
+};
+/** What an OpenShift API server answers: the group's resource list. */
+export const OPENSHIFT_PLATFORM: ScriptedAnswer = {
+  status: 200,
+  body: JSON.stringify({ kind: "APIResourceList", groupVersion: "config.openshift.io/v1", resources: [] }),
+};
 /** Clearly not a credential: gitleaks scans every commit. */
 export const FAKE_TOKEN = "not-a-real-token-1";
 
@@ -74,6 +89,10 @@ export class FakeKubernetesApi {
   open = 0;
   maxOpen = 0;
   readonly seen: SeenReview[] = [];
+  /** What the platform check gets: 404 by default, or a scripted answer, or no answer at all. */
+  platformAnswer: ScriptedAnswer | "hang" = NOT_FOUND;
+  /** The platform checks received, recorded apart from the reviews. */
+  readonly platformChecks: { readonly path: string; readonly authorization: string | undefined }[] = [];
   private readonly saved = new Map<string, string | undefined>();
 
   constructor(
@@ -121,6 +140,8 @@ export class FakeKubernetesApi {
     this.open = 0;
     this.maxOpen = 0;
     this.seen.length = 0;
+    this.platformAnswer = NOT_FOUND;
+    this.platformChecks.length = 0;
     this.setToken(FAKE_TOKEN);
     writeFileSync(this.caPath, this.ca);
   }
@@ -170,6 +191,14 @@ export async function startFakeKubernetesApi(): Promise<FakeKubernetesApi> {
     request.on("data", (chunk: Buffer) => chunks.push(chunk));
     request.on("end", () => {
       const fake = api as FakeKubernetesApi;
+      if (request.method === "GET" && (request.url ?? "").endsWith(PLATFORM_PATH)) {
+        fake.platformChecks.push({ path: request.url ?? "", authorization: request.headers.authorization });
+        const platform = fake.platformAnswer;
+        if (platform === "hang") return;
+        response.writeHead(platform.status, { "content-type": "application/json" });
+        response.end(platform.body);
+        return;
+      }
       const text = Buffer.concat(chunks).toString("utf8");
       let body: ReviewBody = {};
       try {

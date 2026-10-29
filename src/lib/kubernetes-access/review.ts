@@ -12,7 +12,9 @@
  * file without a PEM certificate included, so no runtime falls back to its public roots), a
  * connection or TLS failure, the two-second deadline, a status that is not 2xx (a redirect is never followed), and a
  * body that is not JSON, too large, of another kind or for another user. A failure names its reason and, for a status,
- * the status, and never the token, the groups or the object.
+ * the status, and never the token, the groups or the object. Before its first review in a process it asks whether the
+ * cluster serves config.openshift.io/v1 (platform-check.ts), and on such a cluster every review fails with `platform`:
+ * there a SubjectAccessReview cannot assert the cluster's user name for an OIDC subject.
  *
  * openshift sign-in has a second backend, the self review: a SelfSubjectAccessReview sent with the signed-in user's own
  * scoped token, so the answer is that user's own RBAC and the review names nothing of Studio's choosing about the
@@ -29,6 +31,7 @@ import { isTlsFailureCode } from "@/lib/db/http/node-transport";
 import { OpenShiftConfigError } from "@/lib/openshift-auth/config";
 import { type OpenShiftCallResult, openShiftApiCall } from "@/lib/openshift-auth/http";
 import { accessReviewApiUrl, accessReviewCaPath, accessReviewTokenPath } from "./config";
+import { clusterPlatform } from "./platform-check";
 
 /** The person a review asks about: the identity provider subject and the groups its ID token named. */
 export interface ReviewSubject {
@@ -75,6 +78,8 @@ export type ReviewOutcome =
   | { readonly kind: "expired" }
   | { readonly kind: "failed"; readonly reason: ReviewFailureReason; readonly status?: number };
 
+export type FailedReview = Extract<ReviewOutcome, { kind: "failed" }>;
+
 /** How long one review may take, connection included. */
 const REVIEW_TIMEOUT_MS = 2000;
 /**
@@ -98,7 +103,7 @@ const ALLOWED: ReviewOutcome = Object.freeze({ kind: "allowed" });
 const DENIED: ReviewOutcome = Object.freeze({ kind: "denied" });
 const EXPIRED: ReviewOutcome = Object.freeze({ kind: "expired" });
 
-function failed(reason: ReviewFailureReason, status?: number): ReviewOutcome {
+function failed(reason: ReviewFailureReason, status?: number): FailedReview {
   return status === undefined ? { kind: "failed", reason } : { kind: "failed", reason, status };
 }
 
@@ -115,30 +120,45 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** What the network gave back, before it is judged. */
-interface RawAnswer {
+export interface RawAnswer {
   readonly status: number;
   readonly text: string;
 }
 
 /** Why a request failed on the way: the deadline, TLS, or the network. */
-function transportFailure(error: unknown, signal: AbortSignal): ReviewOutcome {
+function transportFailure(error: unknown, signal: AbortSignal): FailedReview {
   if (signal.aborted) return failed("timeout");
   const code = typeof error === "object" && error !== null ? (error as { code?: unknown }).code : undefined;
   return failed(typeof code === "string" && isTlsFailureCode(code) ? "tls" : "network");
 }
 
-/** POSTs the review body and collects the answer, up to the size cap and the deadline. */
-function post(
-  url: URL,
-  token: string,
-  ca: string,
-  body: string,
-  timeoutMs: number,
-): Promise<RawAnswer | ReviewOutcome> {
-  const signal = AbortSignal.timeout(timeoutMs);
+/** One request of the ServiceAccount backend: a review, or the platform check. */
+export interface ServiceAccountCall {
+  readonly url: URL;
+  readonly method: "GET" | "POST";
+  readonly path: string;
+  readonly token: string;
+  readonly ca: string;
+  readonly body?: string;
+  readonly timeoutMs: number;
+}
+
+/**
+ * Sends one request of the ServiceAccount backend under the API URL's path, with the pod's token and the CA file as
+ * the only trust, and collects the answer, up to the size cap and the deadline. A redirect is an answer, never
+ * followed. Never throws: a failure on the way is a failed outcome.
+ */
+export function serviceAccountCall(call: ServiceAccountCall): Promise<RawAnswer | FailedReview> {
+  const { url, token, ca, body } = call;
+  const signal = AbortSignal.timeout(call.timeoutMs);
+  const headers: Record<string, string | number> = { accept: "application/json", authorization: `Bearer ${token}` };
+  if (body !== undefined) {
+    headers["content-type"] = "application/json";
+    headers["content-length"] = Buffer.byteLength(body);
+  }
   return new Promise((resolve) => {
     let settled = false;
-    const settle = (value: RawAnswer | ReviewOutcome) => {
+    const settle = (value: RawAnswer | FailedReview) => {
       if (settled) return;
       settled = true;
       resolve(value);
@@ -146,20 +166,15 @@ function post(
     try {
       const outgoing = request(
         {
-          method: "POST",
+          method: call.method,
           hostname: url.hostname.replace(/^\[|\]$/g, ""),
           port: url.port === "" ? 443 : Number(url.port),
-          // A URL with no path still has the pathname "/", which the review path must not follow; every other trailing
-          // slash is gone already (accessReviewApiUrl).
-          path: `${url.pathname === "/" ? "" : url.pathname}${REVIEW_PATH}`,
+          // A URL with no path still has the pathname "/", which the request path must not follow; every other
+          // trailing slash is gone already (accessReviewApiUrl).
+          path: `${url.pathname === "/" ? "" : url.pathname}${call.path}`,
           ca,
           signal,
-          headers: {
-            accept: "application/json",
-            authorization: `Bearer ${token}`,
-            "content-type": "application/json",
-            "content-length": Buffer.byteLength(body),
-          },
+          headers,
         },
         (response) => {
           const chunks: Buffer[] = [];
@@ -288,7 +303,11 @@ export async function requestAccessReview(
       },
     },
   });
-  const answer = await post(url, token, ca, body, options.timeoutMs ?? REVIEW_TIMEOUT_MS);
+  const timeoutMs = options.timeoutMs ?? REVIEW_TIMEOUT_MS;
+  const platform = await clusterPlatform(url, token, ca, timeoutMs);
+  if (platform === "openshift") return failed("platform");
+  if (platform !== "kubernetes") return platform;
+  const answer = await serviceAccountCall({ url, method: "POST", path: REVIEW_PATH, token, ca, body, timeoutMs });
   if ("kind" in answer) return answer;
   if (answer.status < 200 || answer.status > 299) return failed("status", answer.status);
   return judge(answer.text, "SubjectAccessReview", (spec) => spec.user === subject.user);
