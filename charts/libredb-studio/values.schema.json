@@ -620,6 +620,20 @@
               "description": "Mount the cluster's injected trusted CA bundle and set NODE_EXTRA_CA_CERTS; needs config.openshift.io/v1 or global.compatibility.openshift.apis=force"
             }
           }
+        },
+        "topology": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "partOf": {
+              "type": "string",
+              "description": "app.kubernetes.io/part-of label on every Deployment and pod template; empty renders none"
+            },
+            "runtime": {
+              "type": "string",
+              "description": "app.openshift.io/runtime label (Topology icon) on every Deployment and pod template; empty renders none"
+            }
+          }
         }
       }
     },

@@ -645,6 +645,15 @@ openshift:
     # global.compatibility.openshift.apis=force) and refuses an extraEnv
     # NODE_EXTRA_CA_CERTS. See "Trusting a private CA" for other clusters.
     enabled: false
+  topology:
+    # -- app.kubernetes.io/part-of on every Deployment the chart renders and its
+    # pod template, grouping them in the OpenShift console's Topology view, e.g.
+    # "libredb". Empty renders no label. The bundled PostgreSQL joins the group
+    # through postgresql.commonLabels.
+    partOf: ""
+    # -- app.openshift.io/runtime on the same objects, the Topology node icon,
+    # e.g. "nodejs". Empty renders no label.
+    runtime: ""
 
 networkPolicy:
   # -- Enable NetworkPolicy

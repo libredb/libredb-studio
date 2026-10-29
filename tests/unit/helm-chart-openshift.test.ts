@@ -527,3 +527,92 @@ describe("charts/libredb-studio OpenShift trusted CA bundle", () => {
     expect(run.stderr).toContain("trustedCABundle");
   });
 });
+
+/**
+ * Topology in the OpenShift console groups workloads by app.kubernetes.io/part-of
+ * and picks the node icon from app.openshift.io/runtime. Both are opt-in, so a
+ * default render is unchanged, and land on every Deployment the chart renders
+ * and on its pod template, never on a selector.
+ */
+describe("charts/libredb-studio OpenShift Topology labels", () => {
+  const PART_OF = "app.kubernetes.io/part-of";
+  const RUNTIME = "app.openshift.io/runtime";
+  const TOPOLOGY = ["--set", "openshift.topology.partOf=libredb", "--set", "openshift.topology.runtime=nodejs"];
+  const DISCOVERY = [
+    "--set",
+    "discovery.kubernetes.enabled=true",
+    "--set",
+    "discovery.kubernetes.namespaces={team-a,team-b}",
+  ];
+
+  interface Deployment {
+    kind: string;
+    metadata: { name: string; labels: Record<string, string> };
+    spec: {
+      selector: { matchLabels: Record<string, string> };
+      template: { metadata: { labels: Record<string, string> } };
+    };
+  }
+
+  const deployments = (args: string[]) =>
+    (renderDocs(args) as unknown as Deployment[]).filter((doc) => doc.kind === "Deployment");
+  const studio = (list: Deployment[]) => list.find((doc) => doc.metadata.name === "release-under-test-libredb-studio");
+  const discovery = (list: Deployment[]) => {
+    const found = list.find((doc) => doc.metadata.name !== "release-under-test-libredb-studio");
+    if (!found) throw new Error("discovery Deployment not found in render output");
+    return found;
+  };
+  const noTopology = (deployment: Deployment | undefined) => {
+    for (const labels of [deployment?.metadata.labels, deployment?.spec.template.metadata.labels]) {
+      expect(labels ?? {}).not.toHaveProperty(PART_OF);
+      expect(labels ?? {}).not.toHaveProperty(RUNTIME);
+    }
+  };
+  const withTopology = (deployment: Deployment | undefined) => {
+    for (const labels of [deployment?.metadata.labels, deployment?.spec.template.metadata.labels]) {
+      expect(labels?.[PART_OF]).toBe("libredb");
+      expect(labels?.[RUNTIME]).toBe("nodejs");
+    }
+  };
+
+  test("default values add no Topology label", () => {
+    noTopology(studio(deployments([])));
+    noTopology(studio(deployments(OPENSHIFT_API)));
+  });
+
+  test("partOf and runtime land on the Deployment and its pod template", () => {
+    const before = studio(deployments([]));
+    const after = studio(deployments(TOPOLOGY));
+    withTopology(after);
+    expect(after?.spec.selector.matchLabels).toEqual(before?.spec.selector.matchLabels);
+  });
+
+  test("each Topology label renders on its own", () => {
+    const partOfOnly = studio(deployments(["--set", "openshift.topology.partOf=libredb"]));
+    expect(partOfOnly?.metadata.labels[PART_OF]).toBe("libredb");
+    expect(partOfOnly?.metadata.labels).not.toHaveProperty(RUNTIME);
+    const runtimeOnly = studio(deployments(["--set", "openshift.topology.runtime=nodejs"]));
+    expect(runtimeOnly?.metadata.labels[RUNTIME]).toBe("nodejs");
+    expect(runtimeOnly?.metadata.labels).not.toHaveProperty(PART_OF);
+  });
+
+  test("partOf and runtime also land on the discovery Deployment and its pod template", () => {
+    const before = discovery(deployments(DISCOVERY));
+    noTopology(before);
+    const after = discovery(deployments([...DISCOVERY, ...TOPOLOGY]));
+    withTopology(after);
+    expect(after.spec.selector.matchLabels).toEqual(before.spec.selector.matchLabels);
+  });
+
+  test("a values set without the openshift block renders no Topology label", () => {
+    const list = deployments([...DISCOVERY, "--set", "openshift=null"]);
+    expect(list).toHaveLength(2);
+    for (const deployment of list) noTopology(deployment);
+  });
+
+  test("an unknown openshift.topology key fails schema validation", () => {
+    const run = helmTemplate(["--set", "openshift.topology.group=libredb"]);
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stderr).toContain("topology");
+  });
+});

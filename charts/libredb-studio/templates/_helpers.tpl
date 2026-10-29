@@ -315,6 +315,24 @@ as off.
 {{- end }}
 
 {{/*
+OpenShift Topology labels, each only when set: app.kubernetes.io/part-of groups
+workloads in the console's Topology view and app.openshift.io/runtime picks the
+node icon. Added to the metadata and pod template labels of every Deployment the
+chart renders, never to a selector. Read with dig over a defaulted dict, never
+`with .Values.openshift.topology.partOf`, which fails on a nil openshift block
+under --reuse-values.
+*/}}
+{{- define "libredb-studio.topologyLabels" -}}
+{{- $openshift := .Values.openshift | default dict }}
+{{- with dig "topology" "partOf" "" $openshift }}
+app.kubernetes.io/part-of: {{ . | quote }}
+{{- end }}
+{{- with dig "topology" "runtime" "" $openshift }}
+app.openshift.io/runtime: {{ . | quote }}
+{{- end }}
+{{- end }}
+
+{{/*
 Pod security context with OpenShift adaptation applied: the fixed
 runAsUser/runAsGroup/fsGroup are omitted so the SCC can inject range-valid
 IDs (runAsNonRoot and seccompProfile are kept). The app image supports
