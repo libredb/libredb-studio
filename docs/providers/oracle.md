@@ -2533,6 +2533,16 @@ the object tree's own routes under `POST /api/db/objects/*`
 
 ## 14. Known limitations & future work
 
+- **Agent mode does not execute statements on Oracle, and a read-only user is not yet enough to let it.**
+  The candidate boundary is a local PDB user set `ALTER USER ... READ ONLY`, proved by `USER_USERS.READ_ONLY`, with every statement in a `SET TRANSACTION READ ONLY` transaction.
+  Measured on Oracle AI Database 26ai Free 23.26.3 (`gvenzl/oracle-free:slim`), with the scripts and their answers in [`tests/fixtures/oracle/23.26.3-free/agent-boundary/`](../../tests/fixtures/oracle/23.26.3-free/agent-boundary/):
+  - Such a user is refused `INSERT`, `UPDATE`, `DELETE` and `MERGE` on a table it holds those grants on, `CREATE TABLE`, a global and a private temporary table, `SELECT ... FOR UPDATE`, `LOCK TABLE`, a write through `DBMS_SQL`, a write in a PL/SQL block after a read, a write over a public database link, and a granted definer's-rights function that writes in an autonomous transaction, each with `ORA-28194: Can perform read operations only`.
+  - `ALTER SESSION SET READ_ONLY = FALSE` answers "Session altered" and every write after it is still refused the same way.
+  - `COMMIT` and `ROLLBACK` are refused the same way too, so such a session ends its transaction only by closing.
+  - A user set read only that holds `ALTER SYSTEM` still runs `ALTER SYSTEM SET` and `ALTER SYSTEM FLUSH SHARED_POOL`, inside `SET TRANSACTION READ ONLY` as well, so a principal check would have to refuse that privilege.
+  - The fresh database grants `PUBLIC` `EXECUTE` on `UTL_HTTP`, `UTL_TCP`, `UTL_SMTP`, `UTL_FILE`, `UTL_INADDR`, `HTTPURITYPE`, `DBMS_LDAP` and `DBMS_SCHEDULER`; the network packages answered `ORA-24247` (no network ACL), `UTL_FILE` answered `ORA-29280` and `DBMS_SCHEDULER.CREATE_JOB` answered `ORA-27486`, all for want of a further grant, not because the user is read only.
+  - **The write that is not refused:** `SELECT <sequence>.NEXTVAL FROM DUAL` advances the sequence for the read-only user, inside `SET TRANSACTION READ ONLY` too, and the fresh database grants `PUBLIC` `SELECT` on four Oracle-maintained sequences (`SYS.DM$EXPIMP_ID_SEQ`, `SYS.PLSQL_CODE_COVERAGE_RUNNUMBER`, `SYS.SCHEDULER$_JOBSUFFIX_S`, `XDB.XDB$NAMESUFF_SEQ`), so every such user can advance them.
+  Until it is decided whether an advanced sequence is a refused write or a named residual, the provider implements no `queryReadOnly`, and the agent runs only the operations workflow and plan mode here.
 - **A LOB is fetched whole.** `CLOB`/`NCLOB`/`BLOB` are read into a string or a `Buffer` in one
   piece rather than streamed, so a single very large cell is held in memory and then in the JSON
   response. Measured: 16 MB of `CLOB` costs 66 ms and 16.4 MB of JSON; V8 refuses a string past

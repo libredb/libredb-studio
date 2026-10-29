@@ -1,0 +1,18 @@
+Transaction set.
+   NEXTVAL
+----------
+	23
+1 row selected.
+SELECT APP_OWNER.WRITE_AUTON() FROM DUAL
+       *
+ERROR at line 1:
+ORA-28194: Can perform read operations only
+ORA-06512: at "APP_OWNER.WRITE_AUTON", line 4
+Role set.
+ERROR:
+ORA-02097: parameter cannot be modified because specified value is invalid
+ORA-65023: active transaction exists in container
+   NEXTVAL
+----------
+	24
+1 row selected.
