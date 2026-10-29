@@ -138,14 +138,16 @@ function set(...pairs: string[]): string[] {
  * OpenShift APIs forced (an offline render has no cluster to ask), and an image past 1.1.0, the last release with no
  * openshift sign-in.
  */
-const OPENSHIFT = set(
+const OPENSHIFT_PAIRS = [
   "authProvider=openshift",
-  `fullnameOverride=${RELEASE}`,
   "openshiftRoute.enabled=true",
   `openshiftRoute.host=${HOST}`,
   "global.compatibility.openshift.apis=force",
   "image.tag=1.2.0",
-);
+];
+
+/** The same with fullnameOverride=v1os, as the V1 hand wiring set it, so every object is named v1os. */
+const OPENSHIFT = set(...OPENSHIFT_PAIRS, `fullnameOverride=${RELEASE}`);
 
 const DISCOVERY = set("discovery.kubernetes.enabled=true", "discovery.kubernetes.namespaces={team-a,team-b}");
 
@@ -285,5 +287,56 @@ describe("the operator namespace guard on discovery (O14)", () => {
 
   test.each(MODES)("%s: a Helm install (operator.managed unset) discovers any namespace", (_, mode) => {
     render([...mode, ...DISCOVERY]);
+  });
+});
+
+describe("the ServiceAccount as the OAuth client", () => {
+  const REFERENCE = "serviceaccounts.openshift.io/oauth-redirectreference.first";
+  const REDIRECT = "serviceaccounts.openshift.io/oauth-redirecturi.first";
+
+  test("names the Route in the redirect reference and the callback path, as the V1 hand wiring did", () => {
+    const account = one(render(OPENSHIFT), "ServiceAccount", RELEASE);
+    expect(account.metadata.annotations).toEqual({
+      [REFERENCE]: '{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"v1os"}}',
+      [REDIRECT]: "api/auth/openshift/callback",
+    });
+    expect(account.automountServiceAccountToken).toBe(false);
+  });
+
+  test("the callback path carries config.basePath without its leading slash", () => {
+    const account = one(render([...OPENSHIFT, ...set("config.basePath=/studio")]), "ServiceAccount", RELEASE);
+    expect(account.metadata.annotations?.[REDIRECT]).toBe("studio/api/auth/openshift/callback");
+  });
+
+  test("the reference names the Route by the fullname without a fullnameOverride", () => {
+    const docs = render(set(...OPENSHIFT_PAIRS, "nameOverride=studio"));
+    const account = one(docs, "ServiceAccount", "v1os-studio");
+    const reference = JSON.parse(account.metadata.annotations?.[REFERENCE] ?? "{}");
+    expect(reference.reference).toEqual({ kind: "Route", name: "v1os-studio" });
+    one(docs, "Route", "v1os-studio");
+  });
+
+  test("a user annotation merges beside them, and the chart's wins on a collision", () => {
+    const account = one(
+      render([
+        ...OPENSHIFT,
+        "--set-string",
+        "serviceAccount.annotations.example\\.com/team=data",
+        "--set-string",
+        `serviceAccount.annotations.${REDIRECT.replaceAll(".", "\\.")}=elsewhere`,
+      ]),
+      "ServiceAccount",
+      RELEASE,
+    );
+    expect(account.metadata.annotations?.["example.com/team"]).toBe("data");
+    expect(account.metadata.annotations?.[REDIRECT]).toBe("api/auth/openshift/callback");
+  });
+
+  test.each([
+    ["local", set("authProvider=local")],
+    ["oidc", set("authProvider=oidc")],
+  ])("%s mode renders neither annotation", (_, mode) => {
+    const account = one(render([...mode, ...set(`fullnameOverride=${RELEASE}`)]), "ServiceAccount", RELEASE);
+    expect(account.metadata.annotations).toBeUndefined();
   });
 });
