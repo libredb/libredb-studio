@@ -4,8 +4,10 @@
  *
  * The check refuses the profile, fail closed, unless the user is set READ ONLY and nothing it can reach runs outside
  * that: no role that is not enabled at sign-in, no EXECUTE on code owned by a schema Oracle does not maintain, no view
- * of such a schema that calls such code, no sequence of such a schema and none of its own, no network or server-file package and no directory, no system
- * privilege but CREATE SESSION, and no database link. Each refusal names the statements that would lift it.
+ * of such a schema that calls such code or reads a view it cannot examine, no such view that is not valid, no virtual
+ * column and no row-level security policy of such a schema on what it reads, no sequence of such a schema and none of
+ * its own, no network or server-file package and no directory, no system privilege but CREATE SESSION, and no database
+ * link. Each refusal names the statements that would lift it.
  */
 import { describe, expect, test } from "bun:test";
 import { ExecutionProfileError, QueryError } from "@/lib/db/errors";
@@ -27,6 +29,9 @@ const CLEAN: Readonly<Record<Statement, Rows>> = {
   roles: [],
   units: [],
   views: [],
+  invalidViews: [],
+  virtualColumns: [],
+  policies: [],
   sequences: [],
   reach: [],
   systemPrivileges: [],
@@ -193,6 +198,123 @@ describe("verifyAgentPrincipal", () => {
     });
   });
 
+  describe("no granted view that reads a view the user cannot examine", () => {
+    test("the check refuses a view dependency of a schema Oracle does not maintain that ALL_OBJECTS does not show the user", () => {
+      // A view reached only through another view lists the outer view's dependency on the inner one, never the inner
+      // view's own calls, and the user can read those only for a view it may read itself (measured).
+      expect(AGENT_PRINCIPAL_STATEMENTS.views).toContain("LEFT JOIN ALL_USERS ru ON ru.USERNAME = d.REFERENCED_OWNER");
+      expect(AGENT_PRINCIPAL_STATEMENTS.views).toContain(
+        "OR d.REFERENCED_TYPE = 'VIEW' AND NVL(ru.ORACLE_MAINTAINED, 'N') <> 'Y' AND NOT EXISTS (SELECT 1 FROM ALL_OBJECTS v " +
+          "WHERE v.OWNER = d.REFERENCED_OWNER AND v.OBJECT_NAME = d.REFERENCED_NAME AND v.OBJECT_TYPE = 'VIEW')",
+      );
+    });
+
+    test("refuses a granted view over a view it cannot examine, naming the outer view's revoke", async () => {
+      const error = await refusal({
+        views: [{ GRANTEE: "APP_RO", OWNER: "APP_OWNER", NAME: "OUTER_V", CALLS: "APP_OWNER.INNER_V" }],
+      });
+      expect(error.message).toContain('REVOKE ALL ON "APP_OWNER"."OUTER_V" FROM "APP_RO"');
+    });
+  });
+
+  describe("no granted view that is not valid", () => {
+    test("refuses a view whose dependencies are stale until it is compiled, naming the compile", async () => {
+      // An invalid view lists the dependencies it had before, and the user's SELECT compiles it and runs what it calls
+      // now (measured: a dropped column re-added as a virtual column over a function advanced its sequence).
+      const error = await refusal({
+        invalidViews: [{ GRANTEE: "APP_RO", OWNER: "APP_OWNER", NAME: "V4", STATUS: "INVALID" }],
+      });
+      expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+      expect(error.message).toContain("it may read a view that is not valid");
+      expect(error.message).toContain('ALTER VIEW "APP_OWNER"."V4" COMPILE');
+    });
+
+    test("the check reads the status of every granted view of a schema Oracle does not maintain", () => {
+      const sql = AGENT_PRINCIPAL_STATEMENTS.invalidViews;
+      expect(sql).toContain("FROM ALL_OBJECTS o JOIN ALL_TAB_PRIVS p");
+      expect(sql).toContain("o.OBJECT_TYPE = 'VIEW' AND o.STATUS <> 'VALID'");
+      expect(sql).toContain("NVL(u.ORACLE_MAINTAINED, 'N') <> 'Y'");
+      expect(sql).toContain("SESSION_ROLES");
+    });
+  });
+
+  describe("no virtual column on what it reads in a schema Oracle does not maintain", () => {
+    test("refuses a virtual column, hidden ones included, naming the revoke on its table", async () => {
+      const error = await refusal({
+        virtualColumns: [
+          { GRANTEE: "APP_RO", OWNER: "APP_OWNER", NAME: "VT", COLUMN_NAME: "N" },
+          { GRANTEE: "RO_ROLE", OWNER: "APP_OWNER", NAME: "FBI", COLUMN_NAME: "SYS_NC00003$" },
+        ],
+      });
+      expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+      expect(error.message).toContain("a virtual column");
+      expect(error.message).toContain("grant a view that leaves it out");
+      expect(error.message).toContain('REVOKE ALL ON "APP_OWNER"."VT" FROM "APP_RO"');
+      expect(error.message).toContain('REVOKE ALL ON "APP_OWNER"."FBI" FROM "RO_ROLE"');
+    });
+
+    test("names one revoke per table and grantee, however many virtual columns it has", async () => {
+      const error = await refusal({
+        virtualColumns: [
+          { GRANTEE: "APP_RO", OWNER: "APP_OWNER", NAME: "VT", COLUMN_NAME: "N" },
+          { GRANTEE: "APP_RO", OWNER: "APP_OWNER", NAME: "VT", COLUMN_NAME: "U" },
+        ],
+      });
+      expect(error.message.split('REVOKE ALL ON "APP_OWNER"."VT" FROM "APP_RO"').length).toBe(2);
+    });
+
+    test("a table the user reads through no grant it can name is still refused, its grantee left open", async () => {
+      const error = await refusal({
+        virtualColumns: [{ GRANTEE: null, OWNER: "APP_RO", NAME: "MINE", COLUMN_NAME: "N" }],
+      });
+      expect(error.message).toContain('REVOKE ALL ON "APP_RO"."MINE" FROM <its grantee>');
+    });
+
+    test("the check reads every virtual column ALL_TAB_COLS lists, hidden ones included, on objects of such schemas", () => {
+      const sql = AGENT_PRINCIPAL_STATEMENTS.virtualColumns;
+      expect(sql).toContain("FROM ALL_TAB_COLS c");
+      expect(sql).toContain("c.VIRTUAL_COLUMN = 'YES'");
+      expect(sql).not.toContain("HIDDEN_COLUMN");
+      expect(sql).toContain("NVL(u.ORACLE_MAINTAINED, 'N') <> 'Y'");
+      expect(sql).toContain("LEFT JOIN ALL_TAB_PRIVS p");
+    });
+  });
+
+  describe("no row-level security policy whose function a schema Oracle does not maintain owns", () => {
+    test("refuses a policy on a table, naming the revoke on the table", async () => {
+      const error = await refusal({
+        policies: [{ GRANTEE: "APP_RO", OWNER: "APP_OWNER", NAME: "PT", IS_SYNONYM: "N" }],
+      });
+      expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+      expect(error.message).toContain("a row-level security policy");
+      expect(error.message).toContain('REVOKE ALL ON "APP_OWNER"."PT" FROM "APP_RO"');
+    });
+
+    test("refuses a policy on a private or a PUBLIC synonym, naming the synonym's drop", async () => {
+      const error = await refusal({
+        policies: [
+          { GRANTEE: null, OWNER: "APP_OWNER", NAME: "ST_SYN", IS_SYNONYM: "Y" },
+          { GRANTEE: null, OWNER: "PUBLIC", NAME: "PST", IS_SYNONYM: "Y" },
+        ],
+      });
+      expect(error.message).toContain('DROP SYNONYM "APP_OWNER"."ST_SYN"');
+      expect(error.message).toContain('DROP PUBLIC SYNONYM "PST"');
+    });
+
+    test("a table policy with no grant it can name is still refused, its grantee left open", async () => {
+      const error = await refusal({ policies: [{ GRANTEE: null, OWNER: "APP_RO", NAME: "MINE", IS_SYNONYM: "N" }] });
+      expect(error.message).toContain('REVOKE ALL ON "APP_RO"."MINE" FROM <its grantee>');
+    });
+
+    test("the check reads ALL_POLICIES, enabled or not, keyed on the policy function's owner", () => {
+      const sql = AGENT_PRINCIPAL_STATEMENTS.policies;
+      expect(sql).toContain("FROM ALL_POLICIES a");
+      expect(sql).toContain("LEFT JOIN ALL_USERS u ON u.USERNAME = a.PF_OWNER");
+      expect(sql).toContain("NVL(u.ORACLE_MAINTAINED, 'N') <> 'Y'");
+      expect(sql).not.toContain("ENABLE");
+    });
+  });
+
   describe("no sequence of a schema Oracle does not maintain, and none of its own", () => {
     test("refuses a granted sequence, which NEXTVAL advances under READ ONLY", async () => {
       const error = await refusal({
@@ -314,6 +436,9 @@ describe("verifyAgentPrincipal", () => {
     ["roles", [{ GRANTEE: "APP_RO" }]],
     ["units", [{ GRANTEE: "APP_RO", OWNER: "A", NAME: 3, OBJECT_TYPE: "FUNCTION" }]],
     ["views", [{ GRANTEE: "APP_RO", OWNER: "A", NAME: "V" }]],
+    ["invalidViews", [{ GRANTEE: "APP_RO", OWNER: "A", STATUS: "INVALID" }]],
+    ["virtualColumns", [{ GRANTEE: "APP_RO", OWNER: "A", NAME: "T" }]],
+    ["policies", [{ GRANTEE: "APP_RO", OWNER: "A", NAME: "T" }]],
     ["sequences", [{ GRANTEE: "APP_RO", OWNER: "A", NAME: "S" }]],
     ["reach", [{ GRANTEE: "APP_RO", OWNER: "SYS", NAME: "UTL_TCP", OBJECT_TYPE: "PACKAGE" }]],
     ["systemPrivileges", [{ GRANTEE: "APP_RO" }]],

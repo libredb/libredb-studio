@@ -10,18 +10,23 @@
  *  - the fresh database refuses its own read-only user, because PUBLIC holds EXECUTE on the network and file
  *    packages; the revoke script the refusal names, run as SYS, lifts it;
  *  - the check refuses a user that is not READ ONLY, one granted EXECUTE on a definer's-rights function, one granted a
- *    view that calls it directly or through a private or PUBLIC synonym, one granted a view over a synonym it cannot
- *    resolve, one granted a sequence, one holding a role that is not a default role, one granted a directory, one
- *    holding ALTER SYSTEM, one owning a private database link, and any user while a PUBLIC database link exists, and
- *    admits each again once the grant is gone, the private link dropped by its owner set READ WRITE; it admits a view
- *    over DBMS_LOB through Oracle's PUBLIC synonym and one over a synonym for a granted table;
+ *    view that calls it directly, through a private or PUBLIC synonym or through a chain of two synonyms, one granted a
+ *    view over a synonym it cannot resolve, over a view it may not read, or over an invoker's-rights function, one
+ *    granted a view left invalid, a table with a virtual column or a hidden one of a function-based index, a table or
+ *    a synonym a row-level policy guards, one granted a sequence, one holding a role that is not a default role, one
+ *    granted a directory, one holding ALTER SYSTEM, one owning a private database link, and any user while a PUBLIC
+ *    database link exists, and admits each again once the grant is gone, the view compiled, the synonym dropped or the
+ *    private link dropped by its owner set READ WRITE; it admits a view over DBMS_LOB through Oracle's PUBLIC synonym,
+ *    one over a synonym for a granted table, a view leaving out a hidden virtual column, and a view over a view once
+ *    both are granted;
  *  - the boundary, with Studio's client admission bypassed: every write, DDL, temporary table, lock, transaction
  *    statement, PL/SQL write and second statement is sent through `queryReadOnly` as the admitted user and refused,
  *    each classified by its ORA- code; the same writes run as the schema owner through the editor path, the positive
  *    control that shows each one would work; the tables, the sequence and the parameter read back the same before and
  *    after;
- *  - what reaches past READ ONLY and is not refused: a PUBLIC sequence Oracle maintains, and a view over a definer's
- *    function, each recorded as the server answered;
+ *  - what reaches past READ ONLY and is not refused: a PUBLIC sequence Oracle maintains, a row-level policy on a table
+ *    read only through a view and a fine-grained auditing handler, which the check cannot see, each recorded as the
+ *    server answered, and `ALTER SESSION SET EDITION` refused inside the call's transaction;
  *  - the operations profile opens the schema owner, a writable user, unproven, and reads its objects, which is what
  *    plan mode grounds on; an editor handle refuses `queryReadOnly` before sending anything;
  *  - the catalog reads the overlay composes, each answered as the admitted user;
@@ -178,7 +183,7 @@ const SETUP_AS_SYSTEM: readonly string[] = [
   `CREATE TABLE ${OWNER}.${PREFIX}LOG (MSG VARCHAR2(100))`,
   `CREATE OR REPLACE SYNONYM ${OWNER}.${PREFIX}LOG_SYN FOR ${OWNER}.${PREFIX}LOG`,
   `CREATE OR REPLACE VIEW ${OWNER}.${PREFIX}LOG_SYN_VIEW AS SELECT MSG FROM ${OWNER}.${PREFIX}LOG_SYN`,
-  `CREATE SEQUENCE ${OWNER}.${PREFIX}SEQ`,
+  `CREATE SEQUENCE ${OWNER}.${PREFIX}SEQ NOCACHE`,
   `CREATE OR REPLACE FUNCTION ${OWNER}.${PREFIX}NEXT RETURN NUMBER AS BEGIN RETURN ${OWNER}.${PREFIX}SEQ.NEXTVAL; END;`,
   `CREATE OR REPLACE VIEW ${OWNER}.${PREFIX}NEXT_VIEW AS SELECT ${OWNER}.${PREFIX}NEXT() AS N FROM DUAL`,
   // The same function called through a private and a PUBLIC synonym: ALL_DEPENDENCIES lists only the synonym.
@@ -193,7 +198,42 @@ const SETUP_AS_SYSTEM: readonly string[] = [
   `CREATE OR REPLACE FUNCTION ${OWNER}.${PREFIX}NEXT_DET(x NUMBER) RETURN NUMBER DETERMINISTIC AS BEGIN RETURN ${OWNER}.${PREFIX}SEQ.NEXTVAL; END;`,
   `CREATE TABLE ${OWNER}.${PREFIX}VIRT (ID NUMBER, N NUMBER GENERATED ALWAYS AS (${OWNER}.${PREFIX}NEXT_DET(ID)) VIRTUAL)`,
   `INSERT INTO ${OWNER}.${PREFIX}VIRT (ID) VALUES (1)`,
-  `GRANT SELECT ON ${OWNER}.${PREFIX}VIRT TO ${RO}`,
+  // A function-based index over a built-in: its hidden virtual column is refused too, and a view leaving it out is not.
+  `CREATE TABLE ${OWNER}.${PREFIX}FBI (ID NUMBER, NAME VARCHAR2(20))`,
+  `CREATE INDEX ${OWNER}.${PREFIX}FBI_UP ON ${OWNER}.${PREFIX}FBI (UPPER(NAME))`,
+  `CREATE OR REPLACE VIEW ${OWNER}.${PREFIX}FBI_VIEW AS SELECT ID, NAME FROM ${OWNER}.${PREFIX}FBI`,
+  // Row-level policies whose function advances the sequence: on a table, a private and a PUBLIC synonym, and a table
+  // read only through a view; and a fine-grained auditing handler that advances it.
+  `CREATE OR REPLACE FUNCTION ${OWNER}.${PREFIX}POL_FN(s VARCHAR2, o VARCHAR2) RETURN VARCHAR2 AS n NUMBER; BEGIN n := ${OWNER}.${PREFIX}SEQ.NEXTVAL; RETURN NULL; END;`,
+  `CREATE OR REPLACE PROCEDURE ${OWNER}.${PREFIX}FGA_FN(s VARCHAR2, o VARCHAR2, p VARCHAR2) AS n NUMBER; BEGIN n := ${OWNER}.${PREFIX}SEQ.NEXTVAL; END;`,
+  `CREATE TABLE ${OWNER}.${PREFIX}POL (ID NUMBER)`,
+  `INSERT INTO ${OWNER}.${PREFIX}POL VALUES (1)`,
+  `CREATE TABLE ${OWNER}.${PREFIX}SYNPOL (ID NUMBER)`,
+  `GRANT SELECT ON ${OWNER}.${PREFIX}SYNPOL TO ${RO}`,
+  `CREATE TABLE ${OWNER}.${PREFIX}BEHIND (ID NUMBER)`,
+  `INSERT INTO ${OWNER}.${PREFIX}BEHIND VALUES (1)`,
+  `CREATE OR REPLACE VIEW ${OWNER}.${PREFIX}BEHIND_VIEW AS SELECT ID FROM ${OWNER}.${PREFIX}BEHIND`,
+  `CREATE TABLE ${OWNER}.${PREFIX}AUDITED (ID NUMBER)`,
+  `INSERT INTO ${OWNER}.${PREFIX}AUDITED VALUES (1)`,
+  `BEGIN DBMS_RLS.ADD_POLICY(object_schema => '${OWNER}', object_name => '${PREFIX}POL', policy_name => '${PREFIX}POL_P', function_schema => '${OWNER}', policy_function => '${PREFIX}POL_FN', statement_types => 'SELECT'); END;`,
+  `BEGIN DBMS_RLS.ADD_POLICY(object_schema => '${OWNER}', object_name => '${PREFIX}BEHIND', policy_name => '${PREFIX}BEHIND_P', function_schema => '${OWNER}', policy_function => '${PREFIX}POL_FN', statement_types => 'SELECT'); END;`,
+  `BEGIN DBMS_FGA.ADD_POLICY(object_schema => '${OWNER}', object_name => '${PREFIX}AUDITED', policy_name => '${PREFIX}FGA_P', handler_schema => '${OWNER}', handler_module => '${PREFIX}FGA_FN', statement_types => 'SELECT'); END;`,
+  // Views over views: one over a view replaced to call the function after the outer one was created, one over a plain
+  // view, and one over a chain of two private synonyms ending at the function.
+  `CREATE OR REPLACE VIEW ${OWNER}.${PREFIX}INNER AS SELECT 1 AS N FROM DUAL`,
+  `CREATE OR REPLACE VIEW ${OWNER}.${PREFIX}OUTER AS SELECT N FROM ${OWNER}.${PREFIX}INNER`,
+  `CREATE OR REPLACE VIEW ${OWNER}.${PREFIX}INNER AS SELECT ${OWNER}.${PREFIX}NEXT() AS N FROM DUAL`,
+  `CREATE OR REPLACE VIEW ${OWNER}.${PREFIX}PLAIN_INNER AS SELECT ID FROM ${OWNER}.${PREFIX}DATA`,
+  `CREATE OR REPLACE VIEW ${OWNER}.${PREFIX}PLAIN_OUTER AS SELECT ID FROM ${OWNER}.${PREFIX}PLAIN_INNER`,
+  `CREATE OR REPLACE SYNONYM ${OWNER}.${PREFIX}CHAIN2 FOR ${OWNER}.${PREFIX}NEXT`,
+  `CREATE OR REPLACE SYNONYM ${OWNER}.${PREFIX}CHAIN1 FOR ${OWNER}.${PREFIX}CHAIN2`,
+  `CREATE OR REPLACE VIEW ${OWNER}.${PREFIX}CHAIN_VIEW AS SELECT ${OWNER}.${PREFIX}CHAIN1() AS N FROM DUAL`,
+  // A view over an invoker's-rights function, which a view runs with the view owner's rights.
+  `CREATE OR REPLACE FUNCTION ${OWNER}.${PREFIX}INVOKER RETURN NUMBER AUTHID CURRENT_USER AS BEGIN RETURN 1; END;`,
+  `CREATE OR REPLACE VIEW ${OWNER}.${PREFIX}INVOKER_VIEW AS SELECT ${OWNER}.${PREFIX}INVOKER() AS N FROM DUAL`,
+  // A view that is left invalid: the column it reads is dropped and added again.
+  `CREATE TABLE ${OWNER}.${PREFIX}STALE (ID NUMBER, N NUMBER)`,
+  `CREATE OR REPLACE VIEW ${OWNER}.${PREFIX}STALE_VIEW AS SELECT ID, N FROM ${OWNER}.${PREFIX}STALE`,
   `CREATE ROLE ${PREFIX}ROLE`,
   `GRANT SELECT ON ${OWNER}.${PREFIX}DATA TO ${RO}`,
   `GRANT SELECT ON ${OWNER}.${PREFIX}CHILD TO ${RO}`,
@@ -232,6 +272,28 @@ async function cleanup(): Promise<void> {
       `DROP SYNONYM ${OWNER}.${PREFIX}LOG_SYN`,
       `DROP PUBLIC SYNONYM ${PREFIX}PSYN`,
       `DROP TABLE ${OWNER}.${PREFIX}VIRT PURGE`,
+      `DROP VIEW ${OWNER}.${PREFIX}FBI_VIEW`,
+      `DROP TABLE ${OWNER}.${PREFIX}FBI PURGE`,
+      `DROP TABLE ${OWNER}.${PREFIX}POL PURGE`,
+      `DROP SYNONYM ${OWNER}.${PREFIX}SYNPOL_SYN`,
+      `DROP PUBLIC SYNONYM ${PREFIX}SYNPOL_PSYN`,
+      `DROP TABLE ${OWNER}.${PREFIX}SYNPOL PURGE`,
+      `DROP VIEW ${OWNER}.${PREFIX}BEHIND_VIEW`,
+      `DROP TABLE ${OWNER}.${PREFIX}BEHIND PURGE`,
+      `DROP TABLE ${OWNER}.${PREFIX}AUDITED PURGE`,
+      `DROP FUNCTION ${OWNER}.${PREFIX}POL_FN`,
+      `DROP PROCEDURE ${OWNER}.${PREFIX}FGA_FN`,
+      `DROP VIEW ${OWNER}.${PREFIX}OUTER`,
+      `DROP VIEW ${OWNER}.${PREFIX}INNER`,
+      `DROP VIEW ${OWNER}.${PREFIX}PLAIN_OUTER`,
+      `DROP VIEW ${OWNER}.${PREFIX}PLAIN_INNER`,
+      `DROP VIEW ${OWNER}.${PREFIX}CHAIN_VIEW`,
+      `DROP SYNONYM ${OWNER}.${PREFIX}CHAIN1`,
+      `DROP SYNONYM ${OWNER}.${PREFIX}CHAIN2`,
+      `DROP VIEW ${OWNER}.${PREFIX}INVOKER_VIEW`,
+      `DROP FUNCTION ${OWNER}.${PREFIX}INVOKER`,
+      `DROP VIEW ${OWNER}.${PREFIX}STALE_VIEW`,
+      `DROP TABLE ${OWNER}.${PREFIX}STALE PURGE`,
       `DROP FUNCTION ${OWNER}.${PREFIX}NEXT_DET`,
       `DROP FUNCTION ${OWNER}.${PREFIX}NEXT`,
       `DROP SEQUENCE ${OWNER}.${PREFIX}SEQ`,
@@ -386,6 +448,76 @@ async function main(): Promise<void> {
       names: `REVOKE ALL ON "${OWNER}"."${PREFIX}LOG_SYN_VIEW" FROM "${RO}"`,
     },
     {
+      label: "a granted table with a virtual column over that function",
+      grant: [`GRANT SELECT ON ${OWNER}.${PREFIX}VIRT TO ${RO}`],
+      revoke: [`REVOKE SELECT ON ${OWNER}.${PREFIX}VIRT FROM ${RO}`],
+      names: `REVOKE ALL ON "${OWNER}"."${PREFIX}VIRT" FROM "${RO}"`,
+    },
+    {
+      label: "a granted table whose function-based index over UPPER has a hidden virtual column",
+      grant: [`GRANT SELECT ON ${OWNER}.${PREFIX}FBI TO ${RO}`],
+      revoke: [`REVOKE SELECT ON ${OWNER}.${PREFIX}FBI FROM ${RO}`],
+      names: `REVOKE ALL ON "${OWNER}"."${PREFIX}FBI" FROM "${RO}"`,
+    },
+    {
+      label: "a granted table a row-level policy guards",
+      grant: [`GRANT SELECT ON ${OWNER}.${PREFIX}POL TO ${RO}`],
+      revoke: [`REVOKE SELECT ON ${OWNER}.${PREFIX}POL FROM ${RO}`],
+      names: `REVOKE ALL ON "${OWNER}"."${PREFIX}POL" FROM "${RO}"`,
+    },
+    {
+      label: "a row-level policy on a private synonym for a granted table",
+      grant: [
+        `CREATE OR REPLACE SYNONYM ${OWNER}.${PREFIX}SYNPOL_SYN FOR ${OWNER}.${PREFIX}SYNPOL`,
+        `BEGIN DBMS_RLS.ADD_POLICY(object_schema => '${OWNER}', object_name => '${PREFIX}SYNPOL_SYN', policy_name => '${PREFIX}SYN_P', function_schema => '${OWNER}', policy_function => '${PREFIX}POL_FN', statement_types => 'SELECT'); END;`,
+      ],
+      revoke: [`DROP SYNONYM ${OWNER}.${PREFIX}SYNPOL_SYN`],
+      names: `DROP SYNONYM "${OWNER}"."${PREFIX}SYNPOL_SYN"`,
+    },
+    {
+      label: "a row-level policy on a PUBLIC synonym",
+      grant: [
+        `CREATE OR REPLACE PUBLIC SYNONYM ${PREFIX}SYNPOL_PSYN FOR ${OWNER}.${PREFIX}SYNPOL`,
+        `BEGIN DBMS_RLS.ADD_POLICY(object_schema => 'PUBLIC', object_name => '${PREFIX}SYNPOL_PSYN', policy_name => '${PREFIX}PSYN_P', function_schema => '${OWNER}', policy_function => '${PREFIX}POL_FN', statement_types => 'SELECT'); END;`,
+      ],
+      revoke: [`DROP PUBLIC SYNONYM ${PREFIX}SYNPOL_PSYN`],
+      names: `DROP PUBLIC SYNONYM "${PREFIX}SYNPOL_PSYN"`,
+    },
+    {
+      label: "a granted view over a view it may not read, replaced to call that function after the outer view was made",
+      grant: [`GRANT SELECT ON ${OWNER}.${PREFIX}OUTER TO ${RO}`],
+      revoke: [`REVOKE SELECT ON ${OWNER}.${PREFIX}OUTER FROM ${RO}`],
+      names: `REVOKE ALL ON "${OWNER}"."${PREFIX}OUTER" FROM "${RO}"`,
+    },
+    {
+      label: "a granted view over a view that calls no code but that it may not read",
+      grant: [`GRANT SELECT ON ${OWNER}.${PREFIX}PLAIN_OUTER TO ${RO}`],
+      revoke: [`REVOKE SELECT ON ${OWNER}.${PREFIX}PLAIN_OUTER FROM ${RO}`],
+      names: `REVOKE ALL ON "${OWNER}"."${PREFIX}PLAIN_OUTER" FROM "${RO}"`,
+    },
+    {
+      label: "a granted view that calls that function through a chain of two private synonyms",
+      grant: [`GRANT SELECT ON ${OWNER}.${PREFIX}CHAIN_VIEW TO ${RO}`],
+      revoke: [`REVOKE SELECT ON ${OWNER}.${PREFIX}CHAIN_VIEW FROM ${RO}`],
+      names: `REVOKE ALL ON "${OWNER}"."${PREFIX}CHAIN_VIEW" FROM "${RO}"`,
+    },
+    {
+      label: "a granted view over an invoker's-rights function",
+      grant: [`GRANT SELECT ON ${OWNER}.${PREFIX}INVOKER_VIEW TO ${RO}`],
+      revoke: [`REVOKE SELECT ON ${OWNER}.${PREFIX}INVOKER_VIEW FROM ${RO}`],
+      names: `REVOKE ALL ON "${OWNER}"."${PREFIX}INVOKER_VIEW" FROM "${RO}"`,
+    },
+    {
+      label: "a granted view left invalid by a dropped column",
+      grant: [
+        `GRANT SELECT ON ${OWNER}.${PREFIX}STALE_VIEW TO ${RO}`,
+        `ALTER TABLE ${OWNER}.${PREFIX}STALE DROP COLUMN N`,
+        `ALTER TABLE ${OWNER}.${PREFIX}STALE ADD (N NUMBER)`,
+      ],
+      revoke: [`ALTER VIEW ${OWNER}.${PREFIX}STALE_VIEW COMPILE`],
+      names: `ALTER VIEW "${OWNER}"."${PREFIX}STALE_VIEW" COMPILE`,
+    },
+    {
       label: "a granted sequence",
       grant: [`GRANT SELECT ON ${OWNER}.${PREFIX}SEQ TO ${RO}`],
       revoke: [`REVOKE SELECT ON ${OWNER}.${PREFIX}SEQ FROM ${RO}`],
@@ -420,6 +552,21 @@ async function main(): Promise<void> {
     );
     await setup("SYSTEM", [`REVOKE SELECT ON ${OWNER}.${view} FROM ${RO}`]);
   }
+  // The remedies an over-refusal names: a view leaving out a hidden virtual column, and the inner view granted too.
+  for (const views of [[`${PREFIX}FBI_VIEW`], [`${PREFIX}PLAIN_OUTER`, `${PREFIX}PLAIN_INNER`]]) {
+    await setup(
+      "SYSTEM",
+      views.map((view) => `GRANT SELECT ON ${OWNER}.${view} TO ${RO}`),
+    );
+    const admitted = await verdict(RO);
+    check(admitted === "admitted", `the check admits the remedy, a grant on ${views.join(" and ")}: ${admitted}`);
+    await setup(
+      "SYSTEM",
+      views.map((view) => `REVOKE SELECT ON ${OWNER}.${view} FROM ${RO}`),
+    );
+  }
+  // The stale view, compiled as the refusal named, kept its grant until here.
+  await setup("SYSTEM", [`REVOKE SELECT ON ${OWNER}.${PREFIX}STALE_VIEW FROM ${RO}`]);
   // A private link the user owns: only its owner drops it, and READ ONLY refuses the owner the DROP.
   await setup("SYSTEM", [`ALTER USER ${RO} READ WRITE`, `GRANT CREATE DATABASE LINK TO ${RO}`]);
   await setup(RO, [
@@ -540,16 +687,31 @@ async function main(): Promise<void> {
   );
   await editor.disconnect();
 
-  // What reaches past READ ONLY: an Oracle-maintained PUBLIC sequence, and a virtual column over a definer's function.
+  // The edition a session reads in cannot be switched inside the call's read-only transaction.
+  const edition = await agentAnswer(agent, "ALTER SESSION SET EDITION = ORA$BASE");
+  check(/ORA-38814/.test(edition), `ALTER SESSION SET EDITION as the admitted user is refused: ${edition}`);
+
+  // What reaches past READ ONLY: an Oracle-maintained PUBLIC sequence, and what the check cannot see: a row-level
+  // policy on a table the user reads only through a view, and a fine-grained auditing handler.
   const sequence = await agentAnswer(agent, "SELECT SYS.SCHEDULER$_JOBSUFFIX_S.NEXTVAL AS N FROM DUAL");
   check(sequence === "ran", `residual: a PUBLIC sequence Oracle maintains advances for the admitted user: ${sequence}`);
-  const seqBefore = await snapshot();
-  const virtual = await agentAnswer(agent, `SELECT N FROM ${OWNER}.${PREFIX}VIRT`);
-  const seqAfter = await snapshot();
-  check(
-    virtual === "ran" && seqAfter !== seqBefore,
-    `residual: a virtual column over a definer's function advances its sequence for the admitted user: ${virtual}; before ${seqBefore}, after ${seqAfter}`,
-  );
+  let seqAfter = await snapshot();
+  for (const [label, object] of [
+    ["a row-level policy on a table read only through a granted view", `${PREFIX}BEHIND_VIEW`],
+    ["a fine-grained auditing handler on a granted table", `${PREFIX}AUDITED`],
+  ] as const) {
+    await setup("SYSTEM", [`GRANT SELECT ON ${OWNER}.${object} TO ${RO}`]);
+    const unseen = await agentFor(RO);
+    const seqBefore = await snapshot();
+    const answer = await agentAnswer(unseen, `SELECT ID FROM ${OWNER}.${object}`);
+    seqAfter = await snapshot();
+    check(
+      answer === "ran" && seqAfter !== seqBefore,
+      `residual: ${label} is admitted and its function advances the sequence: ${answer}; before ${seqBefore}, after ${seqAfter}`,
+    );
+    await unseen.disconnect();
+    await setup("SYSTEM", [`REVOKE SELECT ON ${OWNER}.${object} FROM ${RO}`]);
+  }
 
   // What the agent composes: each catalog kind answered as the admitted user.
   for (const kind of ["columns", "relations", "indexes", "statistics"] as const) {

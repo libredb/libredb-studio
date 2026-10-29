@@ -1100,6 +1100,10 @@ Measured on Oracle AI Database 26ai Free Release 23.26.3.0.0 (`gvenzl/oracle-fre
 - A READ ONLY user that holds `ALTER SYSTEM` still runs `ALTER SYSTEM SET`, inside `SET TRANSACTION READ ONLY` as well (capture 05).
 - `SELECT <sequence>.NEXTVAL` advances the sequence, inside `SET TRANSACTION READ ONLY` too (capture 06).
 - A granted definer's-rights function runs with its owner's privileges: a user holding only `CREATE SESSION` advanced a sequence `ALL_SEQUENCES` does not list for it, and ran `ALTER SYSTEM SET OPEN_CURSORS`, through two granted functions (captures 08 and 09).
+- A `SELECT` runs code of the object's owner in five more places, each measured as a READ ONLY user holding only `CREATE SESSION` and `SELECT` grants, with a sequence of its own (captures 11 to 13): a virtual column over a function, selected by name, the hidden virtual column of a function-based index over a function, selected by its `SYS_NC` name, a row-level security policy function, on the table, on a private synonym and on a `PUBLIC` synonym, and on a table the user reads only through a granted view, a fine-grained auditing handler, and a granted view over a view the user may not read, replaced to call a function after the outer view was created.
+  `ALL_TAB_COLS` lists the user both virtual columns, a hidden one included, and `ALL_POLICIES` the three policies on what it may read, but not the one behind the view; `ALL_AUDIT_POLICIES` answers `ORA-00942`; `ALL_DEPENDENCIES` lists the outer view's dependency on the inner view only.
+- A granted view left invalid, by a column it reads dropped and added again as a virtual column over a function, lists its old dependencies, and the READ ONLY user's `SELECT` compiled it and ran the function (captures 11 to 13).
+- `ALTER SESSION SET EDITION` inside `SET TRANSACTION READ ONLY` is refused with `ORA-38814`, so a call cannot switch the edition its views are read in (capture 12).
 - The fresh database grants `PUBLIC` `EXECUTE` on `DBMS_LDAP`, `DBMS_SCHEDULER`, `DBMS_XSLPROCESSOR`, `HTTPURITYPE`, `UTL_FILE`, `UTL_HTTP`, `UTL_INADDR`, `UTL_SMTP` and `UTL_TCP` among the packages that reach the network or the server's files, and `SELECT` on four sequences Oracle maintains (captures 02 and 07).
 
 #### The check at first use
@@ -1111,11 +1115,15 @@ Each finding is collected, and one `PROFILE_PRIVILEGES_TOO_BROAD` refusal names 
 2. Every role granted to the user, directly or through `PUBLIC` (`USER_ROLE_PRIVS`), must be a default role. `SET ROLE` is permitted under READ ONLY and a pooled session keeps the role it enabled, while `ALL_TAB_PRIVS` lists only the grants of enabled roles, so a role whose grants the check cannot see is refused.
 3. The user, its enabled roles and `PUBLIC` must hold `EXECUTE` on no unit (PL/SQL, type, Java class, library) owned by a schema `ALL_USERS.ORACLE_MAINTAINED` does not mark `Y`; an owner it does not list counts as not maintained.
 4. They may read no view of such a schema whose own definition calls code rather than a table or view (`ALL_DEPENDENCIES`): a plain `SELECT` on such a view runs that code with its owner's rights, and advanced a sequence for a READ ONLY user (measured).
-   A view that calls the code through a synonym, private or `PUBLIC`, lists only the synonym, and `ALL_SYNONYMS` does not show the user another schema's private synonym (measured), so a synonym is admitted only when `ALL_SYNONYMS` resolves it to a table or view the user can see, or to an object of a schema Oracle maintains, as `PUBLIC.DUAL` and `PUBLIC.DBMS_LOB` are; any other is refused, a private synonym for a table the user is not granted included.
-5. They must hold no privilege on a sequence such a schema owns, and the user must own no sequence.
-6. They must hold `EXECUTE` on none of `UTL_HTTP`, `UTL_TCP`, `UTL_SMTP`, `UTL_FILE`, `UTL_INADDR`, `HTTPURITYPE`, `DBMS_LDAP`, `DBMS_SCHEDULER`, `DBMS_PIPE` and `DBMS_XSLPROCESSOR`, in any schema, and no privilege on a directory, which `BFILENAME` reads server files through.
-7. `SESSION_PRIVS` must hold no system privilege but `CREATE SESSION`; the grantee is read from `USER_SYS_PRIVS` and `ROLE_SYS_PRIVS` where they list it.
-8. `ALL_DB_LINKS` must list no link, `PUBLIC` or the user's own, since a link reaches another database under its stored credential.
+   A view that calls the code through a synonym, private or `PUBLIC`, lists only the synonym, and `ALL_SYNONYMS` does not show the user another schema's private synonym (measured), so a synonym is admitted only when `ALL_SYNONYMS` resolves it to a table or view the user can see, or to an object of a schema Oracle maintains, as `PUBLIC.DUAL` and `PUBLIC.DBMS_LOB` are; any other is refused, a private synonym for a table the user is not granted, and one for another synonym, included.
+   A view over another view lists only the inner view, and the user reads the inner view's own dependencies only when it may read the inner view, so a view over a view of such a schema that `ALL_OBJECTS` does not show the user is refused too; a view it may read is held to this same item.
+5. They may read no such view that is not valid (`ALL_OBJECTS.STATUS`): an invalid view lists the dependencies it had, and the user's `SELECT` compiles it and runs what it calls now (measured).
+6. No table or view of such a schema that `ALL_TAB_COLS` shows the user has a virtual column, hidden or not: selecting one evaluates its expression, which can call a function with its owner's rights, and the hidden column of a function-based index can be selected by its `SYS_NC` name (measured). The expression is not parsed to prove it built-in, so every one is refused, `UPPER(NAME)` included.
+7. `ALL_POLICIES` must list no row-level security policy whose function such a schema owns, enabled or not, on a table, view or synonym the user can see: a `SELECT` runs the policy function with its owner's rights (measured).
+8. They must hold no privilege on a sequence such a schema owns, and the user must own no sequence.
+9. They must hold `EXECUTE` on none of `UTL_HTTP`, `UTL_TCP`, `UTL_SMTP`, `UTL_FILE`, `UTL_INADDR`, `HTTPURITYPE`, `DBMS_LDAP`, `DBMS_SCHEDULER`, `DBMS_PIPE` and `DBMS_XSLPROCESSOR`, in any schema, and no privilege on a directory, which `BFILENAME` reads server files through.
+10. `SESSION_PRIVS` must hold no system privilege but `CREATE SESSION`; the grantee is read from `USER_SYS_PRIVS` and `ROLE_SYS_PRIVS` where they list it.
+11. `ALL_DB_LINKS` must list no link, `PUBLIC` or the user's own, since a link reaches another database under its stored credential.
    Only its owner drops a private link, and READ ONLY refuses the owner that `DROP` with `ORA-28194` (measured), so the refusal names it between `ALTER USER ... READ WRITE` and `ALTER USER ... READ ONLY`.
 
 The check runs once per handle: a grant added after the first call is seen on the next handle, which the agent pool opens after 30 idle minutes or a restart.
@@ -1169,6 +1177,13 @@ REVOKE EXECUTE ON SYS.UTL_TCP FROM PUBLIC;
 Revoking from `PUBLIC` reaches every user of the database: grant `EXECUTE` back to each user or role that calls one of these packages, before revoking, and recompile what the revoke invalidates.
 Grant the `SELECT` on tables, or on views whose definitions read only tables and views: a view that calls a function of a schema Oracle does not maintain refuses the user.
 
+The check refuses some grants that run no code, since it cannot prove that they do not; each refusal names a statement that lifts it, and each has a remedy that keeps the read:
+
+- A table with a virtual column, or with a function-based index, whose hidden column is a virtual column, even over a built-in such as `UPPER`: grant a view that leaves the column out instead of the table. The view does not show the user the table's columns, and a view that selects a virtual column over a function lists that function and is refused under item 4.
+- A view over a view the user may not read: grant the inner view as well, so the check reads its dependencies, or define the outer view over the tables directly.
+- A view that is not valid: `ALTER VIEW ... COMPILE` as its owner or an administrator, so the dictionary lists what it reads now.
+- A table, view or synonym with a row-level policy whose function a schema Oracle does not maintain owns, the policy disabled included: revoke the grant, drop the synonym the refusal names, or drop the policy with `DBMS_RLS.DROP_POLICY`. A view over the guarded table is no remedy: the policy still runs, and the check cannot see it there (below).
+
 What the agent reads beyond the tables needs no grant: the catalog reads below and plan-mode grounding read the `ALL_*` views, which list what the user may see.
 Measured with the agent credential set, under the operations profile: the READ ONLY user listed and described the four tables it held `SELECT` on.
 Its operations readings come back degraded, as section 3.7 describes for a user that cannot read the `V$` and `DBA_` views: the database size read `0 MB` and the cache hit ratio `N/A`.
@@ -1176,12 +1191,14 @@ Its operations readings come back degraded, as section 3.7 describes for a user 
 #### What only the operator stops
 
 - A sequence of a schema Oracle maintains that `PUBLIC` may select is advanced by `NEXTVAL`, measured: `SYS.SCHEDULER$_JOBSUFFIX_S` answered for the admitted user. Four are granted on a fresh database (capture 07); advancing one moves a counter and changes no data. Oracle-maintained definer's-rights packages granted to `PUBLIC` are trusted as the vendor's boundary in the same way.
-- A table whose virtual column calls a definer's-rights function of a schema Oracle does not maintain runs that function on a plain `SELECT`: measured, the admitted user's `SELECT` advanced the function's sequence from 1 to 21 (one cache allocation). `ALL_DEPENDENCIES` does not show the user a table's dependency, so the check does not see it; a row-level security policy function on a table it reads, and a view reached only through another view, are in the same position. A view the check admits because its synonym resolves to a table or view is not followed further: that table's virtual column or that view's own calls are this same residual. Grant `SELECT` only on tables and views that call no such code.
+- A row-level security policy on a table the user reads only through a granted view runs its function on the view's `SELECT`, and `ALL_POLICIES` does not list the user a policy on a table it may not read: measured, the policy function advanced its sequence twice for one `SELECT`, and the check admitted the user (captures 11 to 13, and the boundary record).
+- A fine-grained auditing handler (`DBMS_FGA.ADD_POLICY` with a `handler_module`) runs on a `SELECT` of the audited table, and the user may not read `ALL_AUDIT_POLICIES` (`ORA-00942`): measured, the handler advanced its sequence once for one `SELECT` of a granted table, and the check admitted the user.
+  For both, do not grant a view over a table that a row-level policy of a schema Oracle does not maintain guards, and give no fine-grained auditing policy on what the agent user reads a handler module; `DBA_POLICIES` and `DBA_AUDIT_POLICIES` list them for an administrator.
 - `LOCK TABLE` is not a residual: the READ ONLY user is refused it (capture 03).
 
 #### Boundary record
 
-Measured on 26ai Free 23.26.3 (the digest `run.sh` pins, 2026-10-29) by [`tests/live/oracle-agent-boundary.ts`](../../tests/live/oracle-agent-boundary.ts), with Studio's agent admission bypassed: 82 checks, all passing.
+Measured on 26ai Free 23.26.3 (the digest `run.sh` pins, 2026-10-29) by [`tests/live/oracle-agent-boundary.ts`](../../tests/live/oracle-agent-boundary.ts), with Studio's agent admission bypassed: 106 checks, all passing.
 
 | Probe | Admitted READ ONLY user, through `queryReadOnly` | Writable schema owner, positive control |
 | --- | --- | --- |
@@ -1194,10 +1211,12 @@ Measured on 26ai Free 23.26.3 (the digest `run.sh` pins, 2026-10-29) by [`tests/
 | `GRANT` | `ORA-28194` | not sent |
 | `ALTER SYSTEM SET` | `ORA-01031` | not sent |
 | a second statement | `ORA-03405` | not sent |
+| `ALTER SESSION SET EDITION` | `ORA-38814` | not sent |
 
 The table rows, the sequence, `open_cursors`, the owner's objects and the database links read back the same before and after the refused statements.
 The fresh database refused its READ ONLY user, naming the nine revokes above, and admitted it once they ran.
-The check refused, and admitted again once the grant was gone: a user set `READ WRITE`; `EXECUTE` on a definer's-rights function granted to the user, to `PUBLIC` and to a default role; a role set `DEFAULT ROLE NONE`; `SELECT` on a view over that function, on a view that calls it through a private synonym and on one that calls it through a `PUBLIC` synonym, and on a view over a private synonym for a table the user is not granted; `SELECT` on a sequence; a private database link the user owns, which the user, READ ONLY, was refused the `DROP` of with `ORA-28194` and dropped once set READ WRITE; a `PUBLIC` database link; `READ` on a directory. It refused a READ ONLY user holding `ALTER SYSTEM`, and admitted a view over `DBMS_LOB` through Oracle's `PUBLIC` synonym and a view over a private synonym for a table the user is granted.
+The check refused, and admitted again once the grant was gone: a user set `READ WRITE`; `EXECUTE` on a definer's-rights function granted to the user, to `PUBLIC` and to a default role; a role set `DEFAULT ROLE NONE`; `SELECT` on a view over that function, on a view that calls it through a private synonym, through a `PUBLIC` synonym and through a chain of two private synonyms, on a view over a private synonym for a table the user is not granted, on a view over an invoker's-rights function, and on a view over a view the user may not read, one that calls that function and one that calls nothing; `SELECT` on a table with a virtual column over that function and on one with a function-based index over `UPPER`; `SELECT` on a table a row-level policy guards, and a policy on a private and on a `PUBLIC` synonym for a granted table, each lifted by dropping the synonym; `SELECT` on a view left invalid by a dropped column, lifted by `ALTER VIEW ... COMPILE`; `SELECT` on a sequence; a private database link the user owns, which the user, READ ONLY, was refused the `DROP` of with `ORA-28194` and dropped once set READ WRITE; a `PUBLIC` database link; `READ` on a directory. It refused a READ ONLY user holding `ALTER SYSTEM`, and admitted a view over `DBMS_LOB` through Oracle's `PUBLIC` synonym, a view over a private synonym for a table the user is granted, a view that leaves out the function-based index's hidden column, and a view over a view once both were granted.
+What it admitted and could not see: a `SELECT` through a granted view of a table a row-level policy guards advanced the policy function's sequence from 1 to 3, and one of a granted table with a fine-grained auditing handler advanced it from 3 to 4.
 The operations profile opened the writable schema owner unchecked and listed its tables; it and an editor handle refused `queryReadOnly` before sending anything.
 The four catalog kinds answered as the admitted user.
 The budgets: 60 rows under a budget of 50 were refused at the 51st, a 30,000-character `CLOB` under a byte budget of 10,000 was refused, a `CLOB` under the budgets came back as a string, a `BFILE` column was refused, three nested `CURSOR()` levels of 1,000 rows each were refused in 2 ms with no growth of the process, and `DBMS_SESSION.SLEEP(5)` under a one-second deadline was refused, the next statement answering.
@@ -2683,7 +2702,7 @@ the object tree's own routes under `POST /api/db/objects/*`
 
 ## 14. Known limitations & future work
 
-- **Agent mode reaches what READ ONLY does not stop only where the operator grants it.** A sequence Oracle maintains, a virtual column, a row-level policy function or a nested view can run code or advance a counter for the agent user; [section 5.7](#57-agent-read-only-execution-profile) names each one and what the operator does about it.
+- **Agent mode reaches what READ ONLY does not stop only where the operator grants it.** A sequence Oracle maintains, a row-level policy on a table the user reads only through a view, or a fine-grained auditing handler can run code or advance a counter for the agent user; [section 5.7](#57-agent-read-only-execution-profile) names each one and what the operator does about it.
 - **A LOB is fetched whole.** `CLOB`/`NCLOB`/`BLOB` are read into a string or a `Buffer` in one
   piece rather than streamed, so a single very large cell is held in memory and then in the JSON
   response. Measured: 16 MB of `CLOB` costs 66 ms and 16.4 MB of JSON; V8 refuses a string past

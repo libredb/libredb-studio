@@ -23,17 +23,29 @@
  *    does not show the user another schema's private synonym, so a synonym is admitted only when it resolves to a
  *    table or view the user can see, or to an object of a schema Oracle maintains (`PUBLIC.DUAL`), and is refused
  *    otherwise, a private synonym for a table included. `ALL_DEPENDENCIES` lists the user the view's own dependencies
- *    only, so a view reached through another view, a virtual column and a row-level policy function are not seen here.
- * 5. They hold no privilege on a sequence such a schema owns, and the user owns no sequence.
- * 6. They hold EXECUTE on none of the packages that reach the network or the server's files, and no privilege on a
+ *    only, and an inner view's only when the user may read the inner view, so a view over a view of such a schema
+ *    that `ALL_OBJECTS` does not show the user is refused too: measured, the outer view listed only the inner one and
+ *    its SELECT ran the inner view's function.
+ * 5. They may read no such view that is not valid: an invalid view lists the dependencies it had, and the user's SELECT
+ *    compiles it and runs what it calls now (measured).
+ * 6. No table or view of such a schema the user can see in `ALL_TAB_COLS` has a virtual column, hidden ones included:
+ *    a SELECT of the column evaluates its expression, which can call a function with its owner's rights, and a hidden
+ *    column of a function-based index can be selected by name (both measured). Every one is refused, a built-in
+ *    expression such as `UPPER(NAME)` included, since the expression is not proved; a granted view that leaves it out
+ *    is the remedy.
+ * 7. `ALL_POLICIES` lists no row-level security policy whose function such a schema owns, on a table, a view or a
+ *    synonym: a SELECT runs the policy function with its owner's rights (measured).
+ * 8. They hold no privilege on a sequence such a schema owns, and the user owns no sequence.
+ * 9. They hold EXECUTE on none of the packages that reach the network or the server's files, and no privilege on a
  *    directory, which `BFILENAME` reads server files through.
- * 7. The session holds no system privilege but CREATE SESSION.
- * 8. `ALL_DB_LINKS` lists no link, PUBLIC or its own, since a link reaches another database under its stored
+ * 10. The session holds no system privilege but CREATE SESSION.
+ * 11. `ALL_DB_LINKS` lists no link, PUBLIC or its own, since a link reaches another database under its stored
  *    credential.
  *
  * Every finding is collected and named in one refusal, as the statements that lift it. Oracle-maintained schemas'
  * PUBLIC grants are the vendor's boundary and are not refused: their four sequences can still be advanced, which moves
- * a counter and changes no data (capture 07).
+ * a counter and changes no data (capture 07). What the user cannot see is not refused: a row-level policy on a table it
+ * reads only through a view, and a fine-grained auditing handler, whose `ALL_AUDIT_POLICIES` it may not read.
  */
 import { ExecutionProfileError, QueryError } from "@/lib/db/errors";
 import type { QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
@@ -79,12 +91,33 @@ export const AGENT_PRINCIPAL_STATEMENTS = Object.freeze({
     "SELECT p.GRANTEE, d.OWNER, d.NAME, d.REFERENCED_OWNER || '.' || d.REFERENCED_NAME AS CALLS " +
     "FROM ALL_DEPENDENCIES d JOIN ALL_TAB_PRIVS p ON p.TABLE_SCHEMA = d.OWNER AND p.TABLE_NAME = d.NAME " +
     "LEFT JOIN ALL_USERS u ON u.USERNAME = d.OWNER " +
+    "LEFT JOIN ALL_USERS ru ON ru.USERNAME = d.REFERENCED_OWNER " +
     "LEFT JOIN ALL_SYNONYMS s ON s.OWNER = d.REFERENCED_OWNER AND s.SYNONYM_NAME = d.REFERENCED_NAME AND s.DB_LINK IS NULL " +
     "LEFT JOIN ALL_USERS su ON su.USERNAME = s.TABLE_OWNER " +
     "WHERE d.TYPE = 'VIEW' AND (d.REFERENCED_TYPE NOT IN ('TABLE', 'VIEW', 'SYNONYM', 'MATERIALIZED VIEW', 'NON-EXISTENT') " +
+    "OR d.REFERENCED_TYPE = 'VIEW' AND NVL(ru.ORACLE_MAINTAINED, 'N') <> 'Y' AND NOT EXISTS (SELECT 1 FROM ALL_OBJECTS v " +
+    "WHERE v.OWNER = d.REFERENCED_OWNER AND v.OBJECT_NAME = d.REFERENCED_NAME AND v.OBJECT_TYPE = 'VIEW') " +
     "OR d.REFERENCED_TYPE = 'SYNONYM' AND NVL(su.ORACLE_MAINTAINED, 'N') <> 'Y' AND NOT EXISTS (SELECT 1 FROM ALL_OBJECTS o " +
     "WHERE o.OWNER = s.TABLE_OWNER AND o.OBJECT_NAME = s.TABLE_NAME AND o.OBJECT_TYPE IN ('TABLE', 'VIEW', 'MATERIALIZED VIEW'))) " +
     `AND ${NOT_ORACLE_MAINTAINED} AND ${SESSION_GRANTEES} ORDER BY 2, 3, 1, 4`,
+  invalidViews:
+    "SELECT p.GRANTEE, o.OWNER, o.OBJECT_NAME AS NAME, o.STATUS " +
+    "FROM ALL_OBJECTS o JOIN ALL_TAB_PRIVS p ON p.TABLE_SCHEMA = o.OWNER AND p.TABLE_NAME = o.OBJECT_NAME " +
+    "LEFT JOIN ALL_USERS u ON u.USERNAME = o.OWNER " +
+    `WHERE o.OBJECT_TYPE = 'VIEW' AND o.STATUS <> 'VALID' AND ${NOT_ORACLE_MAINTAINED} AND ${SESSION_GRANTEES} ` +
+    "ORDER BY 2, 3, 1",
+  virtualColumns:
+    "SELECT p.GRANTEE, c.OWNER, c.TABLE_NAME AS NAME, c.COLUMN_NAME " +
+    "FROM ALL_TAB_COLS c LEFT JOIN ALL_USERS u ON u.USERNAME = c.OWNER " +
+    `LEFT JOIN ALL_TAB_PRIVS p ON p.TABLE_SCHEMA = c.OWNER AND p.TABLE_NAME = c.TABLE_NAME AND ${SESSION_GRANTEES} ` +
+    `WHERE c.VIRTUAL_COLUMN = 'YES' AND ${NOT_ORACLE_MAINTAINED} ORDER BY 2, 3, 1, 4`,
+  policies:
+    "SELECT DISTINCT p.GRANTEE, a.OBJECT_OWNER AS OWNER, a.OBJECT_NAME AS NAME, " +
+    "CASE WHEN s.SYNONYM_NAME IS NULL THEN 'N' ELSE 'Y' END AS IS_SYNONYM " +
+    "FROM ALL_POLICIES a LEFT JOIN ALL_USERS u ON u.USERNAME = a.PF_OWNER " +
+    "LEFT JOIN ALL_SYNONYMS s ON s.OWNER = a.OBJECT_OWNER AND s.SYNONYM_NAME = a.OBJECT_NAME " +
+    `LEFT JOIN ALL_TAB_PRIVS p ON p.TABLE_SCHEMA = a.OBJECT_OWNER AND p.TABLE_NAME = a.OBJECT_NAME AND ${SESSION_GRANTEES} ` +
+    `WHERE ${NOT_ORACLE_MAINTAINED} ORDER BY 2, 3, 1`,
   sequences:
     "SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME, 'N' AS OWNED " +
     "FROM ALL_TAB_PRIVS p LEFT JOIN ALL_USERS u ON u.USERNAME = p.TABLE_SCHEMA " +
@@ -172,10 +205,53 @@ function unitsFinding(rows: Rows): Finding | null {
 function viewsFinding(rows: Rows): Finding | null {
   if (rows.length === 0) return null;
   return {
-    what: "it may read a view that calls code a schema Oracle does not maintain owns, which a SELECT runs with its owner's rights",
+    what: "it may read a view that calls code a schema Oracle does not maintain owns, or a synonym or view the check cannot follow to its end, which a SELECT runs with its owner's rights",
     statements: rows.map((row) => {
       const [to, owner, name] = text(row, "ALL_DEPENDENCIES", "GRANTEE", "OWNER", "NAME", "CALLS");
       return `REVOKE ALL ON ${quoted(owner)}.${quoted(name)} FROM ${grantee(to)}`;
+    }),
+  };
+}
+
+function invalidViewsFinding(rows: Rows): Finding | null {
+  if (rows.length === 0) return null;
+  return {
+    what: "it may read a view that is not valid, whose dependencies the dictionary lists only once it is compiled, while a SELECT compiles it and runs what it calls",
+    statements: rows.map((row) => {
+      const [, owner, name] = text(row, "ALL_OBJECTS", "GRANTEE", "OWNER", "NAME", "STATUS");
+      return `ALTER VIEW ${quoted(owner)}.${quoted(name)} COMPILE`;
+    }),
+  };
+}
+
+/** A grantee a revoke can name, or the open placeholder when the check read the object through no grant it can name. */
+function optionalGrantee(row: Record<string, unknown>): string {
+  return typeof row.GRANTEE === "string" && row.GRANTEE !== "" ? grantee(row.GRANTEE) : "<its grantee>";
+}
+
+function virtualColumnsFinding(rows: Rows): Finding | null {
+  if (rows.length === 0) return null;
+  return {
+    what: "it may read a table or view with a virtual column, whose expression a SELECT evaluates and which can call code with its owner's rights (grant a view that leaves it out instead)",
+    statements: rows.map((row) => {
+      const [owner, name] = text(row, "ALL_TAB_COLS", "OWNER", "NAME", "COLUMN_NAME");
+      return `REVOKE ALL ON ${quoted(owner)}.${quoted(name)} FROM ${optionalGrantee(row)}`;
+    }),
+  };
+}
+
+function policiesFinding(rows: Rows): Finding | null {
+  if (rows.length === 0) return null;
+  return {
+    what: "it may read an object a row-level security policy guards whose function a schema Oracle does not maintain owns, which a SELECT runs with its owner's rights",
+    statements: rows.map((row) => {
+      const [owner, name, synonym] = text(row, "ALL_POLICIES", "OWNER", "NAME", "IS_SYNONYM");
+      if (synonym === "Y") {
+        return owner === "PUBLIC"
+          ? `DROP PUBLIC SYNONYM ${quoted(name)}`
+          : `DROP SYNONYM ${quoted(owner)}.${quoted(name)}`;
+      }
+      return `REVOKE ALL ON ${quoted(owner)}.${quoted(name)} FROM ${optionalGrantee(row)}`;
     }),
   };
 }
@@ -220,8 +296,7 @@ function systemPrivilegesFinding(rows: Rows): Finding | null {
     statements: rows.map((row) => {
       const [privilege] = text(row, "SESSION_PRIVS", "PRIVILEGE");
       // A privilege the session holds through a grantee neither view lists is still refused, its grantee left open.
-      const to = typeof row.GRANTEE === "string" && row.GRANTEE !== "" ? grantee(row.GRANTEE) : "<its grantee>";
-      return `REVOKE ${privilege} FROM ${to}`;
+      return `REVOKE ${privilege} FROM ${optionalGrantee(row)}`;
     }),
   };
 }
@@ -273,6 +348,9 @@ export async function verifyAgentPrincipal(read: OracleAgentReader): Promise<voi
     rolesFinding(await read(AGENT_PRINCIPAL_STATEMENTS.roles)),
     unitsFinding(await read(AGENT_PRINCIPAL_STATEMENTS.units)),
     viewsFinding(await read(AGENT_PRINCIPAL_STATEMENTS.views)),
+    invalidViewsFinding(await read(AGENT_PRINCIPAL_STATEMENTS.invalidViews)),
+    virtualColumnsFinding(await read(AGENT_PRINCIPAL_STATEMENTS.virtualColumns)),
+    policiesFinding(await read(AGENT_PRINCIPAL_STATEMENTS.policies)),
     sequencesFinding(await read(AGENT_PRINCIPAL_STATEMENTS.sequences)),
     reachFinding(await read(AGENT_PRINCIPAL_STATEMENTS.reach)),
     systemPrivilegesFinding(await read(AGENT_PRINCIPAL_STATEMENTS.systemPrivileges)),
@@ -280,7 +358,8 @@ export async function verifyAgentPrincipal(read: OracleAgentReader): Promise<voi
   ].filter((found): found is Finding => found !== null);
   if (findings.length === 0) return;
 
-  const statements = findings.flatMap((found) => found.statements);
+  // A view or table found through several of its columns or calls is named once.
+  const statements = [...new Set(findings.flatMap((found) => found.statements))];
   const listed = statements.slice(0, LISTED_STATEMENTS).join("; ");
   const rest = statements.length - LISTED_STATEMENTS;
   throw new ExecutionProfileError(
