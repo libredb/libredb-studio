@@ -187,7 +187,7 @@ export function assertReadOnlyClaims(token: string): void {
   }
   const others = Object.keys(record)
     .filter((claim) => claim !== "a" && !ALLOWED_BESIDE_READ_ONLY.has(claim))
-    .sort();
+    .sort((left, right) => left.localeCompare(right));
   if (others.length > 0) {
     throw new ExecutionProfileError(
       `The libSQL token carries claims beyond the read-only marker and the standard ones (${others.map((claim) => JSON.stringify(claim)).join(", ")}), which the server may read to grant writes, so it can write, and the agent read-only profile is refused: use a read-only token that carries no other claim`,
