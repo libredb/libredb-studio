@@ -28,7 +28,12 @@
  * credential Studio holds, so the rule grants nothing the pod spec does not.
  */
 import { logger } from "@/lib/logger";
-import { endOpenShiftSession, openShiftBearerToken, openShiftSessionKey } from "@/lib/openshift-auth/token-store";
+import {
+  endOpenShiftSession,
+  type OpenShiftSessionKey,
+  openShiftBearerToken,
+  openShiftSessionKey,
+} from "@/lib/openshift-auth/token-store";
 import type { ManagedConnection } from "@/lib/seed/types";
 import { accessReviewAdminTarget, accessReviewEnabled, accessReviewSignIn, selfReviewMode } from "./config";
 import { accessReviewAllows, accessReviewVerdict, type ReviewVerdict } from "./decisions";
@@ -62,17 +67,19 @@ interface ListReview {
   expired: boolean;
 }
 
-/**
- * The self review's verdict for `session`, with the token of its live record read first, or null when the session has
- * no key or no live record. An expired verdict ends the record, logged once per record.
- */
-async function selfReviewVerdict(
-  session: ReviewedPrincipal,
-  attributes: ResourceAttributes,
-): Promise<ReviewVerdict | null> {
+/** The key and token of `session`'s live record, or null when it has no key or no live record. */
+function liveRecord(session: ReviewedPrincipal): { readonly key: OpenShiftSessionKey; readonly token: string } | null {
   const key = openShiftSessionKey(session);
   const token = key === null ? null : openShiftBearerToken(key);
-  if (key === null || token === null) return null;
+  return key === null || token === null ? null : { key, token };
+}
+
+/** The self review's verdict with a live record's token; an expired verdict ends the record, logged once per record. */
+async function selfReviewVerdict(
+  record: { readonly key: OpenShiftSessionKey; readonly token: string },
+  attributes: ResourceAttributes,
+): Promise<ReviewVerdict> {
+  const { key, token } = record;
   const verdict = await accessReviewVerdict({ sessionHandle: key.sessionHandle, token }, attributes);
   if (verdict === "expired" && endOpenShiftSession(key.sessionHandle)) {
     logger.info(EXPIRED_MESSAGE, { route: "kubernetes-access" });
@@ -94,7 +101,9 @@ async function mayUse(principal: ReviewedPrincipal, connection: ManagedConnectio
     if (!accessReviewEnabled()) return false;
     const attributes = { verb: "get", group: "", resource: "secrets", namespace: secret.namespace, name: secret.name };
     if (selfReviewMode()) {
-      const verdict = await selfReviewVerdict(principal, attributes);
+      const record = liveRecord(principal);
+      if (record === null) return false;
+      const verdict = await selfReviewVerdict(record, attributes);
       if (verdict === "expired") list.expired = true;
       return verdict === "allowed";
     }
@@ -138,8 +147,11 @@ export async function connectionUnderAccessReview(
   return connection !== null && (await mayUse(principal, connection, { expired: false })) ? connection : null;
 }
 
-/** The sign-in review, or null with a warning naming the setting when it cannot be read. */
-function signInAttributes(): ResourceAttributes | null {
+/**
+ * The sign-in review's attributes, null when this mode runs none (openshift with KUBERNETES_ACCESS_REVIEW_SIGN_IN
+ * unset), or undefined with a warning naming the setting when it cannot be read.
+ */
+function signInAttributes(): ResourceAttributes | null | undefined {
   try {
     return accessReviewSignIn();
   } catch (error) {
@@ -147,6 +159,43 @@ function signInAttributes(): ResourceAttributes | null {
       route: "kubernetes-access",
       problem: (error as Error).message,
     });
+    return undefined;
+  }
+}
+
+/** The admin target, or null with a warning naming the setting when it cannot be read. */
+function signInAdminTarget(): ResourceAttributes | null {
+  try {
+    return accessReviewAdminTarget();
+  } catch (error) {
+    logger.warn("Kubernetes access review: no admin role can be decided, so this sign-in is a user", {
+      route: "kubernetes-access",
+      problem: (error as Error).message,
+    });
+    return null;
+  }
+}
+
+const TARGET_WARNED_AT = Symbol.for("libredb-studio.kubernetes-access-admin-target-warned");
+const TARGET_WARNING_INTERVAL_MS = 60_000;
+
+/**
+ * The admin target for a request of an admin session, or null when it cannot be read, with a warning naming the
+ * setting at most once a minute, because every request of every admin session asks.
+ */
+function requestAdminTarget(): ResourceAttributes | null {
+  try {
+    return accessReviewAdminTarget();
+  } catch (error) {
+    const holder = globalThis as { [TARGET_WARNED_AT]?: number };
+    const now = Date.now();
+    if (now - (holder[TARGET_WARNED_AT] ?? Number.NEGATIVE_INFINITY) >= TARGET_WARNING_INTERVAL_MS) {
+      holder[TARGET_WARNED_AT] = now;
+      logger.warn("Kubernetes access review: no admin role can be decided, so the request runs as a user", {
+        route: "kubernetes-access",
+        problem: (error as Error).message,
+      });
+    }
     return null;
   }
 }
@@ -155,7 +204,7 @@ function signInAttributes(): ResourceAttributes | null {
  * The role a verified sign-in gets while the review is on, or null when it may not sign in at all: a subject no
  * review may assert (logged with the reason, never the subject), or one a fresh sign-in review does not allow, a
  * failure or an unreadable setting included. Otherwise admin when a fresh review allows `subject`, in `groups`, to
- * `update` Studio's Deployment, and user for a deny, a failure or a missing Deployment setting.
+ * `update` Studio's Deployment or LibreDBStudio resource, and user for a deny, a failure or a missing admin setting.
  */
 export async function accessReviewSignInRole(
   subject: string,
@@ -169,27 +218,67 @@ export async function accessReviewSignInRole(
     });
     return null;
   }
+  // OIDC mode always has a sign-in review; none, or one that cannot be read, refuses.
   const attributes = signInAttributes();
-  if (attributes === null) return null;
+  if (!attributes) return null;
   if (!(await accessReviewAllows({ user: subject, groups }, attributes, { fresh: true }))) return null;
-  return accessReviewRole(subject, groups);
+  const target = signInAdminTarget();
+  if (target === null) return "user";
+  return (await accessReviewAllows({ user: subject, groups }, target, { fresh: true })) ? "admin" : "user";
 }
 
 /**
- * The admin decision: admin when a fresh review allows `subject`, in `groups`, to `update` Studio's Deployment, and
- * user for a deny, a failure or a missing Deployment setting.
+ * openshift sign-in: the role a fresh session gets, or null when the optional sign-in review refuses it. Every review
+ * here is fresh, made with the new access token alone and kept nowhere, so nothing at sign-in is cached:
+ * 1. A sign-in review that cannot be read refuses, as for OIDC: nobody signs in on a broken setting.
+ * 2. With KUBERNETES_ACCESS_REVIEW_SIGN_IN set, anything but an allowed verdict refuses, a failure or a dead token
+ *    included; unset, there is no sign-in review.
+ * 3. An admin target that cannot be read makes a user.
+ * 4. Admin when the review allows `update` on the admin target; user for a deny, a failure or a dead token, so an API
+ *    outage neither locks everyone out nor makes anyone admin.
  */
-async function accessReviewRole(subject: string, groups: readonly string[]): Promise<"admin" | "user"> {
-  let target: ResourceAttributes;
+export async function selfReviewSignInRole(accessToken: string): Promise<"admin" | "user" | null> {
+  const subject = { sessionHandle: "", token: accessToken };
+  const signIn = signInAttributes();
+  if (signIn === undefined) return null;
+  if (signIn !== null && (await accessReviewVerdict(subject, signIn, { fresh: true })) !== "allowed") return null;
+  const target = signInAdminTarget();
+  if (target === null) return "user";
+  return (await accessReviewVerdict(subject, target, { fresh: true })) === "allowed" ? "admin" : "user";
+}
+
+/** The session fields the openshift role check reads. */
+export interface ReviewedSession {
+  readonly role: string;
+  readonly username?: string;
+  readonly idpSubject?: string;
+  readonly idpIssuer?: string;
+  readonly sessionHandle?: string;
+}
+
+/**
+ * openshift mode, every request: the role the request runs with, or `expired` when the session must sign in again.
+ * Admin is checked again through the decision cache on every request of an admin session, so a removed right demotes
+ * it within the cache lifetime:
+ * 1. A role other than admin is user, without a request: a user session is never promoted mid-session.
+ * 2. A session with no key or no live token record is expired.
+ * 3. An admin target that cannot be read is user, warned at most once a minute.
+ * 4. Admin while the review allows `update` on the admin target; user for a deny or a failure; expired, with the
+ *    record ended and one line logged, when the API server refuses the token.
+ * 5. Any exception is user, logged by the error's name.
+ */
+export async function reviewedSessionRole(session: ReviewedSession): Promise<"admin" | "user" | "expired"> {
+  if (session.role !== "admin") return "user";
   try {
-    target = accessReviewAdminTarget();
+    const record = liveRecord(session);
+    if (record === null) return "expired";
+    const target = requestAdminTarget();
+    if (target === null) return "user";
+    const verdict = await selfReviewVerdict(record, target);
+    if (verdict === "expired") return "expired";
+    return verdict === "allowed" ? "admin" : "user";
   } catch (error) {
-    logger.warn("Kubernetes access review: no admin role can be decided, so this sign-in is a user", {
-      route: "kubernetes-access",
-      problem: (error as Error).message,
-    });
+    logUndecided(error);
     return "user";
   }
-  const allowed = await accessReviewAllows({ user: subject, groups }, target, { fresh: true });
-  return allowed ? "admin" : "user";
 }

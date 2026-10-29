@@ -450,3 +450,69 @@ describe("GET /api/auth/openshift/callback under a base path", () => {
     expect(cluster.requests).toEqual([]);
   });
 });
+
+describe("GET /api/auth/openshift/callback, the role from the user's own review", () => {
+  const UPDATE_STUDIO = {
+    user: "dev-a",
+    verb: "update",
+    apiGroup: "apps",
+    resource: "deployments",
+    namespace: "os-lab-studio",
+    name: "studio",
+  };
+  const MEMBER = {
+    user: "dev-a",
+    verb: "get",
+    apiGroup: "",
+    resource: "services",
+    namespace: "os-lab-studio",
+    name: "studio",
+  };
+
+  beforeEach(() => {
+    process.env.KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT = "os-lab-studio/studio";
+  });
+
+  afterEach(() => {
+    delete process.env.KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT;
+    delete process.env.KUBERNETES_ACCESS_REVIEW_SIGN_IN;
+  });
+
+  test("an admin when the cluster lets the new token update Studio's Deployment, landing on /admin", async () => {
+    cluster.grants = [UPDATE_STUDIO];
+    const res = await signIn();
+    expect(res.headers.get("location")).toBe("https://studio.apps.example.com/admin");
+    expect(decodeJwt(minted()[0].value ?? "").role).toBe("admin");
+    const reviews = cluster.received("api").filter((request) => request.path.endsWith("/selfsubjectaccessreviews"));
+    expect(reviews.map((request) => request.headers.authorization)).toEqual([`Bearer ${ACCESS_TOKEN}`]);
+  });
+
+  test("a user otherwise", async () => {
+    const res = await signIn();
+    expect(res.headers.get("location")).toBe("https://studio.apps.example.com/");
+    expect(decodeJwt(minted()[0].value ?? "").role).toBe("user");
+  });
+
+  test("openshift_no_access, with no record and no session, when the sign-in review is set and does not allow", async () => {
+    process.env.KUBERNETES_ACCESS_REVIEW_SIGN_IN = "get services/studio -n os-lab-studio";
+    cluster.grants = [UPDATE_STUDIO];
+    const store = spyOn(tokenStore, "storeOpenShiftSession");
+    try {
+      const res = await signIn();
+      expect(res.headers.get("location")).toBe(`${LOGIN_PAGE}openshift_no_access`);
+      expect(store).not.toHaveBeenCalled();
+    } finally {
+      store.mockRestore();
+    }
+    expect(minted()).toEqual([]);
+    expect(lastAudit()).toMatchObject({ type: "login_failure", reason: "openshift_no_access" });
+  });
+
+  test("signs in when the sign-in review allows", async () => {
+    process.env.KUBERNETES_ACCESS_REVIEW_SIGN_IN = "get services/studio -n os-lab-studio";
+    cluster.grants = [MEMBER];
+    const res = await signIn();
+    expect(res.headers.get("location")).toBe("https://studio.apps.example.com/");
+    expect(decodeJwt(minted()[0].value ?? "").role).toBe("user");
+  });
+});

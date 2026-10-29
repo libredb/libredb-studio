@@ -26,7 +26,9 @@ mock.module("@/lib/openshift-auth/token-store", () => ({
   endOpenShiftSession: () => false,
 }));
 
-const { connectionsUnderAccessReview, connectionUnderAccessReview } = await import("@/lib/kubernetes-access/gate");
+const { connectionsUnderAccessReview, connectionUnderAccessReview, reviewedSessionRole } = await import(
+  "@/lib/kubernetes-access/gate"
+);
 const { logger } = await import("@/lib/logger");
 
 const ORDERS: ManagedConnection = {
@@ -94,5 +96,21 @@ test("a thrown value that is not an Error is logged by its type", async () => {
   } finally {
     error.mockRestore();
     thrown = new RecordReaderFault();
+  }
+});
+
+test("the admin check of a request turns an exception into user, logged by the error's name", async () => {
+  const error = spyOn(logger, "error").mockImplementation(() => {});
+  try {
+    expect(await reviewedSessionRole({ ...SESSION, role: "admin" })).toBe("user");
+    expect(error.mock.calls).toEqual([
+      [
+        "Kubernetes access review: a review could not be decided, so it is denied",
+        undefined,
+        { route: "kubernetes-access", kind: "RecordReaderFault" },
+      ],
+    ]);
+  } finally {
+    error.mockRestore();
   }
 });

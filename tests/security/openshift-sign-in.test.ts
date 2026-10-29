@@ -2,8 +2,9 @@
  * openshift sign-in fails closed (docs/SECURITY.md, control 3.27). Studio asks for exactly `user:info
  * user:check-access`, whatever other variables say; a granted scope that is not exactly that signs nobody in; every
  * failure of the metadata, token and users/~ calls sets no session cookie, stores no token record and lands on the
- * login page with its code; the redirect URI comes from OPENSHIFT_PUBLIC_URL whatever the request headers say; and no
- * role, session, record, audit line or log line takes anything from groups, a forged group header or a cookie field.
+ * login page with its code; the redirect URI comes from OPENSHIFT_PUBLIC_URL whatever the request headers say; no
+ * role, session, record, audit line or log line takes anything from groups, a forged group header or a cookie field;
+ * and admin comes only from the self review, made with the new token, of update on Studio's Deployment.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { writeFileSync } from "node:fs";
@@ -316,5 +317,41 @@ describe("no role or record from groups, headers or cookie fields", () => {
     expect("groups" in claims).toBe(false);
     const recorded = JSON.stringify([claims, getServerAuditBuffer().getAll(), logged]);
     for (const group of ["system:cluster-admins", "system:masters", "admins"]) expect(recorded).not.toContain(group);
+  });
+
+  test("admin comes only from the self review: cluster-admin groups and a forged groups field grant nothing", async () => {
+    process.env.KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT = "os-lab-studio/studio";
+    const update = {
+      verb: "update",
+      apiGroup: "apps",
+      resource: "deployments",
+      namespace: "os-lab-studio",
+      name: "studio",
+    };
+    try {
+      // users/~ names cluster-admin groups and the replaced cookie carries a forged groups field, but the cluster's own
+      // RBAC for the token grants update only to a group the token's user is not in: a user.
+      cluster.user = { ...cluster.user, groups: ["system:cluster-admins"] };
+      cluster.grants = [{ group: "system:cluster-admins", ...update }];
+      const forged = await new SignJWT({ role: "admin", username: "dev-a", groups: ["system:cluster-admins"] })
+        .setProtectedHeader({ alg: "HS256" })
+        .setIssuedAt()
+        .setExpirationTime("1h")
+        .sign(new TextEncoder().encode(SECRET));
+      jar.values.set("auth-token", forged);
+      expect(await signIn()).toBe("https://studio.apps.example.com/");
+      const [first] = jar.written("auth-token").filter((write) => write.op === "set");
+      expect(decodeJwt(first.value ?? "").role).toBe("user");
+      // The same sign-in, with the review allowing the token's user to update Studio's Deployment: an admin.
+      jar.reset();
+      cluster.grants = [{ user: "dev-a", ...update }];
+      expect(await signIn()).toBe("https://studio.apps.example.com/admin");
+      const [second] = jar.written("auth-token").filter((write) => write.op === "set");
+      const claims = decodeJwt(second.value ?? "");
+      expect(claims.role).toBe("admin");
+      expect("groups" in claims).toBe(false);
+    } finally {
+      delete process.env.KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT;
+    }
   });
 });
