@@ -15,6 +15,7 @@ import type { AgentRunEvent } from "@/lib/agent/types";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
+import { RefusedBeforeSendError } from "@/lib/db/errors";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import { READ_ALLOWANCE_PREFIX, type RunReadAllowance } from "@/lib/db/read-allowance";
 import type { DatabaseProvider, ProviderCapabilities, ReadOnlyStatementBudget } from "@/lib/db/types";
@@ -58,6 +59,9 @@ const capabilities: ProviderCapabilities = {
 
 /** The model's own statement, told apart from the grounding's catalog statements by its text. */
 const MODEL_SQL = "SELECT count(*) FROM orders";
+
+/** A provider fence's sentence, deliberately without a closing full stop. */
+const FENCE_SENTENCE = "Read-only execution refused the statement before sending it: not-a-real-fence";
 
 /** One read the double served: what it was asked, the allowance it was handed, and what that had left. */
 interface ChargedRead {
@@ -238,6 +242,29 @@ describe("the run read allowance", () => {
       "(run_read_query) was refused before it was sent, so the database never saw it:",
     );
     expect(promptText(replay)).not.toContain("failed at the database");
+  });
+
+  test("a provider's refusal asked again is stated whole, closed with a full stop the provider's sentence lacked", async () => {
+    // A provider fence's sentence may end without a full stop, as several do; the ledger's account of it must still
+    // read as two sentences rather than running the advice on from the refusal.
+    const { provider } = billingProvider(() => 1);
+    const read = provider.queryReadOnly?.bind(provider);
+    if (read === undefined) throw new Error("the double reads nothing");
+    const fenced = {
+      ...provider,
+      queryReadOnly: async (sql: string, budget: ReadOnlyStatementBudget): Promise<QueryResult> => {
+        if (sql === MODEL_SQL) throw new RefusedBeforeSendError(FENCE_SENTENCE, "postgres", sql);
+        return read(sql, budget);
+      },
+    } as DatabaseProvider;
+
+    const { turns } = await drive(fenced, [countOrders("call_1"), countOrders("call_2")]);
+
+    const replay = turns[2];
+    if (replay === undefined) throw new Error("the run ended before the repeated call was answered");
+    expect(promptText(replay)).toContain(
+      `(run_read_query) was refused before it was sent, so the database never saw it: ${FENCE_SENTENCE}. Draft a statement that does not do what the refusal names.`,
+    );
   });
 
   test("is the run's, not the drive's: a resumed drive starts from what the ledger says the run spent", async () => {

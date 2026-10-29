@@ -2961,7 +2961,9 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
     expect(outcome.modelText).not.toContain(UNTRUSTED_CONTENT_BEGIN);
     expect(outcome.modelText).toContain(sentence);
     expect(outcome.modelText).toContain("refused by this server before it was sent; the database was not asked");
-    expect(outcome.modelText).not.toContain("read allowance");
+    // The fence's own advice, not the read allowance's: the repair is a different statement, not a smaller read.
+    expect(outcome.modelText).toContain("Draft a statement that does not do what the refusal names");
+    expect(outcome.modelText).not.toContain("cannot pay for a read that large");
   });
 
   test("an error the database raised is not marked as never sent", async () => {
