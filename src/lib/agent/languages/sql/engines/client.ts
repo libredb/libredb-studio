@@ -12,6 +12,7 @@ import type { INFLUXDB3_SERVER_OVERLAY } from "./influxdb3";
 import type { LIBSQL_SERVER_OVERLAY } from "./libsql";
 import type { MSSQL_SERVER_OVERLAY } from "./mssql";
 import type { MYSQL_SERVER_OVERLAY } from "./mysql";
+import type { OPENSEARCH_SERVER_OVERLAY } from "./opensearch";
 import type { POSTGRES_SERVER_OVERLAY } from "./postgres";
 import type { SQLITE_SERVER_OVERLAY } from "./sqlite";
 
@@ -78,3 +79,10 @@ export const ELASTICSEARCH_CLIENT_OVERLAY = {
     catalogCapture: "unsupported",
   } satisfies ClientDialectOf<(typeof ELASTICSEARCH_SERVER_OVERLAY)["dialect"]>),
 } as const satisfies { dialect: ClientDialectOf<(typeof ELASTICSEARCH_SERVER_OVERLAY)["dialect"]> };
+export const OPENSEARCH_CLIENT_OVERLAY = {
+  dialect: Object.freeze({
+    catalogRead: "supported",
+    planEstimate: "unsupported",
+    catalogCapture: "unsupported",
+  } satisfies ClientDialectOf<(typeof OPENSEARCH_SERVER_OVERLAY)["dialect"]>),
+} as const satisfies { dialect: ClientDialectOf<(typeof OPENSEARCH_SERVER_OVERLAY)["dialect"]> };

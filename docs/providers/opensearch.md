@@ -21,7 +21,8 @@
 | **Connection pooling** | None — each statement is one stateless HTTP request |
 | **Connection string** | **Not supported** — addressed by host and port like Druid, and `http(s)://` is already ClickHouse's in the shared parser ([§4.2](#42-there-is-no-connection-string-and-that-is-deliberate)) |
 | **EXPLAIN** | **None.** `supportsExplain: false` and no `explainFormat`. `EXPLAIN <select>` as a *statement* is refused here; a plan exists only behind a second endpoint this seam does not carry ([§3.10](#310-no-explain-the-statement-form-is-refused)) |
-| **Writes** | **None reach documents.** `DELETE` is in this grammar but **off by default**, and every other mutation is refused outright ([§5.6](#56-this-grammar-has-delete-and-it-is-off)) |
+| **Writes** | **None reach documents.** Every mutation is refused outright; the `DELETE` the grammar names is gone on 3.8.0 and off by default on 2.19.4 ([§5.6](#56-this-grammar-has-delete-and-it-is-off)) |
+| **Agent mode** | Executes read-only statements on 3.8, after the open proves the `DELETE` off ([§5.9](#59-the-agent-read-only-profile-rests-on-the-plugins-refusals)) |
 | **Transactions** | Not exposed (the engine has none) |
 | **Maintenance** | None — nothing in `MaintenanceType` has a SQL-reachable analogue ([§8](#8-maintenance)) |
 | **Query cancellation** | No `cancelQuery`. An abort closes **this client's** socket; the cluster keeps working ([§3.8](#38-the-deadline-is-the-clients-and-only-the-clients)) |
@@ -777,6 +778,125 @@ Block comments are flat, by the same probe and answer as Elasticsearch, and `SEL
 `readsSqlText` is `true`, deliberately: both search engines answer `POST`ed statements with columns and rows, and both providers extend `SQLBaseProvider` and call `prepareQuery`, so reading the text as not SQL would switch the SQL checks off for text that is SQL.
 Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
 
+### 5.9 The agent read-only profile rests on the plugin's refusals
+
+Agent mode executes statements on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch and OpenSearch; here `OpenSearchProvider` implements `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/sql/search/index.ts), over the `readOnlyStatement` mechanics it shares with Elasticsearch.
+The boundary is engine-enforced, by the SQL plugin.
+`POST /_plugins/_sql` carries free statement text, so the provider's fixed set of endpoints proves nothing about it on its own; what holds it is the plugin, which refuses every write and DDL statement sent there before anything runs ([§5.6](#56-this-grammar-has-delete-and-it-is-off) and its checked-in captures).
+The one write the grammar names, `DELETE`, is the reason the open does more than check a version: on 2.19.4 a cluster setting turns it on and it deletes, and a release that brought the setting back would turn it on again with nothing in the version to show it.
+Studio's statement admission in front of it is defence in depth: the boundary does not rest on it.
+
+#### The open and the profile
+
+The factory passes the execution context to the constructor.
+`queryReadOnly` answers only on a handle opened with both `readOnly` and `sendsStatements`, the agent and hand-over profiles, and refuses any other, an editor handle included, before it sends anything.
+The open of a handle that sends statements, after the connect probe and before any agent statement, in order:
+
+1. reads `plugins.sql.delete.enabled` (`GET /_cluster/settings?include_defaults=true&filter_path=*.plugins.sql.delete.enabled`): a value of `true` refuses the profile with `PROFILE_SERVER_UNENFORCED` and sends no `DELETE`; `false`, or no value because the server does not recognize the setting (3.8.0), goes on;
+2. sends one `DELETE FROM libredb_delete_probe_<32 random hex digits>`, a name no index holds, and admits only the refusals measured while the `DELETE` is off: `SQLFeatureNotSupportedException` with "Query must start with SELECT, DELETE, SHOW or DESCRIBE: " and that statement (3.8.0), or `SQLFeatureDisabledException` with the setting's own sentence (2.19.4); anything else, the HTTP 200 with a missing-index fault 2.19.4 answers with the setting on included, refuses the profile with `PROFILE_SERVER_UNENFORCED`;
+3. reads `plugins.query.size_limit` the same way, the number of rows past which the plugin cuts an answer ([The statement path](#the-statement-path)), and refuses the profile when it cannot;
+4. reads the version (`GET /`) and admits only OpenSearch of a release line whose write refusals and catalog answers were captured, 3.8 today (`SearchProduct.checkedSqlReleases`); another release, an Elasticsearch server behind an OpenSearch connection, and a version that cannot be read each refuse the profile with `PROFILE_UNSUPPORTED_TARGET`.
+
+A settings read or a probe the cluster refuses, and an answer that cannot be read, refuse the profile: a server that cannot be shown to refuse a `DELETE` is never admitted.
+2.19.4's write refusals were captured too, and with its setting off it passes the first three steps, but its catalog commands answer every table's columns under the pattern rather than under each table's name, so its version is refused.
+The operations profile and plan mode read no setting and no version and send no probe, and open exactly as an editor connection does; a plan run grounds under the operations profile and never asks for the read-only one.
+The setting is read at open, so a cluster whose administrator turns the `DELETE` on while an agent handle is open is not seen until the next open; on 3.8.0 that cannot happen, since the setting is not recognized and the dispatcher has no `DELETE` branch.
+
+#### The agent credential
+
+The agent credential takes the user-and-password form, sent as `Basic` in place of the connection's own; this type has no connection string, so an agent credential is never beside one, and the security plugin's API keys are not accepted ([§4.1](#41-configuration-fields)).
+The credential is not the boundary, but a least-privilege user is still the right one for the agent.
+Measured on 3.8.0 with security on, the agent's role needs these, each refused without it:
+
+- the cluster action `cluster:monitor/main`, for the version read (`GET /` answers 403 without it);
+- the cluster action `cluster:monitor/state`, for the two settings reads (`GET /_cluster/settings` answers 403 without it); it also lets the user read the cluster state, every index's mappings among it, through the REST API, which the agent's statements cannot reach but a person holding the credential could;
+- on the indices the agent may read, `read`, `indices:admin/mappings/get` and `indices:monitor/settings/get`: a `SELECT` is refused without either of the last two, and the one-table catalog read without the mappings one.
+
+The `DELETE` probe needs nothing: the plugin refuses it before it resolves any index.
+
+```bash
+curl -k -u admin -XPUT -H 'content-type: application/json' 'https://<node>:9200/_plugins/_security/api/roles/libredb_agent_read' \
+  -d '{"cluster_permissions":["cluster:monitor/main","cluster:monitor/state"],
+       "index_permissions":[{"index_patterns":["probe_*"],"allowed_actions":["read","indices:admin/mappings/get","indices:monitor/settings/get"]}]}'
+curl -k -u admin -XPUT -H 'content-type: application/json' 'https://<node>:9200/_plugins/_security/api/internalusers/libredb_agent' \
+  -d '{"password":"<agent password>","opendistro_security_roles":["libredb_agent_read"]}'
+```
+
+That user reads no cluster health (403), its document write is refused 403, and an index outside its role is refused, both a `SELECT` and the one-table catalog read.
+The every-table catalog read, `DESCRIBE TABLES LIKE %`, names every index, so the plugin refuses it to a role that does not cover every index (an `OpenSearchSecurityException` for `indices:admin/get`, answered inside an HTTP 200 and read as the refusal it is, [§10](#10-error-handling)); the agent then names a table instead.
+
+#### What plan mode and the editor tree need beyond that
+
+That role is enough for agent mode and not for plan mode.
+A plan run grounds through the provider's object surface, the same reads the editor's object tree makes, signed in with the connection's own login: the index listing reads `/_cat/indices`, and the aliases, data streams, templates, pipelines and mappings each their own listing.
+The capture is all or nothing, so one refused listing leaves the run with no inventory ([B88](../BACKLOG.md)).
+The index, alias and data-stream listings span every index on the cluster, and the security plugin refuses such a listing whole to a role that does not cover every index it lists, so plan mode's index privileges are on every index.
+Measured on 3.8.0 with security on, through `captureContextSnapshot` in planning mode under the operations profile: on the agent's role alone the read is refused (`CATALOG_READ_REFUSED`); it captures once the role adds the cluster actions `cluster:monitor/health`, `cluster:admin/ingest/pipeline/get` and `indices:admin/index_template/get`, and on every index `indices:monitor/settings/get`, `indices:monitor/stats`, `indices:admin/aliases/get`, `indices:admin/data_stream/get` and `indices:admin/mappings/get`; with any one of the eight taken away it is refused again.
+The agent profile still opens under the wider role.
+
+A connection whose agent credential is a user of its own keeps the two apart: the agent user holds the role above, and the connection's own user holds the wider one.
+A seed connection carries no separate agent user ([B85](../BACKLOG.md)), so its one login serves agent mode, plan mode and the tree, and holds both:
+
+```bash
+curl -k -u admin -XPUT -H 'content-type: application/json' 'https://<node>:9200/_plugins/_security/api/roles/libredb_seed_read' \
+  -d '{"cluster_permissions":["cluster:monitor/main","cluster:monitor/state","cluster:monitor/health","cluster:admin/ingest/pipeline/get","indices:admin/index_template/get"],
+       "index_permissions":[{"index_patterns":["probe_*"],"allowed_actions":["read","indices:admin/mappings/get","indices:monitor/settings/get"]},
+                            {"index_patterns":["*"],"allowed_actions":["indices:monitor/settings/get","indices:monitor/stats","indices:admin/aliases/get","indices:admin/data_stream/get","indices:admin/mappings/get"]}]}'
+```
+
+#### The statement path
+
+Each call is one statement on the SQL endpoint, never through `query()`, in order: the profile is checked, the budget is checked, and the estimate-plan session mode is refused, because no estimating plan is composed for this engine.
+The profile's refusal and the mode's are `RefusedBeforeSendError`s, so the agent and MCP say the statement never reached the cluster rather than quoting Studio's sentence as the engine's.
+The request carries the statement alone and asks for no page size: measured on 3.8.0, with `fetch_size` a `GROUP BY` fails ("invalid value operation on MISSING_VALUE") or is answered by the plugin's older engine, which cuts it at 200 rows with no cursor, and without one both answer whole.
+An answer past the row or byte budget, counted as the JSON array of the rows, is refused in the shared row or byte sentence of [`read-only-budget.ts`](../../src/lib/db/providers/sql/read-only-budget.ts), never cut; a cursor the answer carries is closed first, and a page whose body is past three times the byte budget plus 64 KiB is abandoned unread.
+The plugin answers at most `plugins.query.size_limit` rows, 10,000 by default, and cuts the rest with no sign of the cut: measured on 3.8.0 with the limit at 1,000, a 1,500-row read answers 1,000 rows and a cursor whose next page holds no row, and a 1,500-group aggregation answers 1,000 rows and no cursor.
+So where the limit is within the row budget, an answer that reaches it is refused ("Read-only execution exceeded the row budget: OpenSearch answers at most 1000 rows (plugins.query.size_limit) and cuts the rest without saying so, so an answer that reaches it is refused"), and where the budget is below the limit, an answer that reaches the limit is past the budget anyway.
+The deadline is the budget's and the client's alone, refused in the shared time-budget sentence: a cancel ends the wait, not the work, as [§3.8](#38-the-deadline-is-the-clients-and-only-the-clients) records for the editor.
+
+#### Agent language pack
+
+Statement-language family: `sql`.
+Overlay: [`src/lib/agent/languages/sql/engines/opensearch.ts`](../../src/lib/agent/languages/sql/engines/opensearch.ts), with its client row in [`src/lib/agent/languages/sql/engines/client.ts`](../../src/lib/agent/languages/sql/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`, and the dialect through `engineServerDialect`.
+
+| Member | Kind | Value |
+| --- | --- | --- |
+| `catalogRead` | Dialect-bound | Supplied |
+| `planEstimate` | Dialect-bound | `"unsupported"` |
+| `profileComposition` | Dialect-bound | `"unsupported"` |
+| `statistics` | Dialect-bound | `"unsupported"` |
+| `catalogCapture` | Dialect-bound | `"unsupported"` |
+
+This overlay overrides no Shared member, so every Shared member is the `sql` statement-language family's own.
+The engine reads its catalog only through `SHOW TABLES` and `DESCRIBE TABLES`, never through a SELECT (`information_schema` is read as an index name and answers `IndexNotFoundException`), so the catalog read is declared a command (`commandShaped`): the statement fence admits it only as exactly the statement the overlay composed, on the catalog read alone, and the same text written by the model is refused.
+The column kind composes `DESCRIBE TABLES LIKE %` for every table, or `DESCRIBE TABLES LIKE '<table>'` for one, the name a string with its single quotes doubled, the escape 3.8.0 reads there.
+The two forms are answered by two engines inside the plugin, each measured on 3.8.0: the unquoted `%` by the new one, which lists each table's columns under the table's own name and counts positions from 1; a quoted name by the older one, which takes the name as written and counts from 0, where an unquoted name would be a LIKE pattern (`probe_orders` also matched `probeXorders`), and a backtick-quoted one answered nothing.
+A name the engine reads as an index expression rather than one name is refused: a `*` or `,`, a `%` (read as `*`), `<...>` date math (`'<probe_orders>'` answered `probe_orders`), a `:` remote cluster (`'remote:probe_orders'` answered `probe_orders`), and a leading `_` (`'_all'` answered every index), `-` or `+`; so is a schema, which OpenSearch SQL does not have.
+A pure mapper (`mapRows`) turns the engine's JDBC-shaped answer into `table_name`, `column_name`, `data_type` (the mapping type, such as `keyword`), `is_nullable` (the engine answers an empty string) and `ordinal_position`, one row per engine row; the captures it is tested against are `tests/fixtures/opensearch/3.8.0/catalog-read/`, written by `tests/live/opensearch-catalog-captures.ts`.
+A name no index holds is answered with the engine's `IndexNotFoundException`, not an empty inventory.
+The relation, index and statistics kinds are refused with `SELECTOR_UNSUPPORTED_BY_DIALECT`: the engine keeps no foreign key, no index object apart from the table itself, and no row estimate a catalog command reads.
+The other members are unsupported: the provider reads no `EXPLAIN` ([§3.10](#310-no-explain-the-statement-form-is-refused)), and a table profile would be an aggregate over a whole index, never measured.
+So investigation, database assessment and data analysis open here and send their statements through `queryReadOnly`, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`; the `sql-composers` requirement holds query optimization out; plan mode drafts here as on every engine ([B145](../BACKLOG.md)).
+The provider path has no statement fence of its own, and the plugin answers the composed command as it answers a SELECT.
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+MCP's statement read stays closed on OpenSearch (`MCP_STATEMENT_READ.opensearch` is false) until a change of its own opens it.
+
+#### Boundary record
+
+`bun tests/live/opensearch-agent-boundary.ts`, run on 2026-10-29 against single 3.8.0 nodes seeded per [§11.4](#114-optional-reproducing-the-live-pass), passes 49 checks with security off and 66 with security on, through the production path (`createDatabaseProvider` with the profile's execution context, `connect`, `queryReadOnly`) and with no admission of Studio's in front; against a 2.19.4 node with security off (`LIBREDB_OS_EXPECT_REFUSED=1`) it passes 5:
+
+- the agent profile proves the `DELETE` off, reads the version (3.8.0) and opens the node, the operations profile opens it too, and an editor handle's `queryReadOnly` refuses with nothing sent;
+- 13 write and DDL texts (INSERT, UPDATE, DELETE, CREATE TABLE and INDEX, DROP, ALTER, TRUNCATE, MERGE, a write behind `EXPLAIN` and `WITH`, a second statement) are each sent by `queryReadOnly` and refused by the plugin in its own words, and sent raw each answer 400;
+- the index listing with its document counts, the probe mappings, the aliases and the templates read back the same afterwards;
+- the positive control: a document written through the document API, a route the provider does not send to, into a scratch index the agent then reads (security off) and the script deletes;
+- a plain read and an aggregation past the row budget (`1500 rows > 100 allowed`), a read past the byte budget and a statement past a 1 ms deadline are each refused, never truncated; the estimate-plan mode is refused; a count, an answer of exactly the row budget (1,500 rows) and an aggregation within the budget each answer whole;
+- with `plugins.query.size_limit` lowered to 1,000: a read past a 900-row budget is refused and the cursor it carried is closed (the node's open search contexts back where they were), a read and an aggregation the engine cuts at 1,000 rows under a 1,500-row budget are each refused as cut, and an answer of 999 rows is returned whole;
+- the agent's catalog read: the composed `DESCRIBE TABLES LIKE %` answers the column inventory (security off) and `DESCRIBE TABLES LIKE 'probe_orders'` that table's columns, through `queryReadOnly` and mapped into column rows, and the cluster reads back the same afterwards;
+- with security on, the script creates the `libredb_agent_read` role and an agent user holding it alone: without `cluster:monitor/state` the open cannot read the setting and refuses the agent profile, and without `cluster:monitor/main` it cannot read the version and refuses it; with both, the user reads no cluster health (403), its document write is refused 403, an index outside its role is refused, both a `SELECT` and its catalog read, the every-table catalog read is refused (403), and every check above holds signed in as it;
+- with security on, plan mode: the plan run's schema read, signed in as that user under the operations profile, is refused on the agent's role alone, captures once the role adds the eight privileges above, is refused again with any one of them taken away, and the agent profile still opens under the wider role;
+- on 2.19.4: with the setting off, the open passes the `DELETE` proof and is refused by the version check; with the setting on, it is refused by the setting read before the version check, while the same `DELETE` sent raw deletes the scratch document; the operations profile opens either way.
+
 ## 6. Schema introspection
 
 Everything this provider knows about an index's contents is read through the OBJECT SURFACE, and this
@@ -1521,6 +1641,14 @@ A value that is **not** a seam error never came from the cluster (an internal de
 goes to the shared message-based `mapError()`, exactly as `druid/index.ts` and `clickhouse/index.ts`
 do.
 
+**A refusal can arrive inside an HTTP 200.** The SQL plugin answers some refusals with status 200, its error
+envelope and the refusal's own status in the body: measured on 3.8.0, `DESCRIBE TABLES LIKE %` by a user missing
+`indices:admin/get` on an index it names answers `OpenSearchSecurityException` with `"status": 403`, and on 2.19.4 a
+`DELETE` on a missing index with the delete setting on answers `IndexNotFoundException` with `"status": 404`. Read as
+a success, the envelope would be an answer with no rows, so the transport reads any 2xx body that carries an error
+envelope and a status of 400 or more as the failure that status and envelope describe, for the editor and the agent
+alike (`request()`, [http-transport.ts](../../src/lib/db/providers/sql/search/http-transport.ts)).
+
 The `unreachable` message quotes the cause from **both** places a runtime puts it, because this repo
 runs on two: on Node a refused socket is `TypeError: fetch failed` whose `cause.code` is
 `ECONNREFUSED`, while Bun throws `Error: Unable to connect. Is the computer able to access the url?`
@@ -1645,6 +1773,30 @@ curl -s -XPOST -H 'content-type: application/json' \
 
 `probe_shapes` is the one that matters: one document with one nested element is what makes `_cat`
 report **2** while `SELECT COUNT(*)` answers **1** ([§7](#7-monitoring--health)).
+
+The agent's live checks ([§5.9](#59-the-agent-read-only-profile-rests-on-the-plugins-refusals)) also read
+`probe_buckets`, 1,500 one-field documents, and the alias `probe_orders_alias`:
+
+```bash
+for i in $(seq 1 1500); do printf '{"index":{}}\n{"k":"k%s"}\n' "$i"; done \
+  | curl -s -XPOST -H 'content-type: application/x-ndjson' \
+      'http://localhost:9201/probe_buckets/_bulk?refresh=true' --data-binary @-
+curl -s -XPOST -H 'content-type: application/json' 'http://localhost:9201/_aliases' \
+  -d '{"actions":[{"add":{"index":"probe_orders","alias":"probe_orders_alias"}}]}'
+```
+
+Three scripts under `tests/live/` run against the seeded node, and none is part of `bun run test`; each reads
+`LIBREDB_OS_ORIGIN` (default `http://127.0.0.1:9201`) and `LIBREDB_OS_CONTAINER`.
+`bun tests/live/opensearch-write-refusals.ts` rewrites the write-refusal and delete-setting captures of
+[§5.6](#56-this-grammar-has-delete-and-it-is-off) for the node's version, and stops without writing any when a write
+is not refused or the cluster reads back changed.
+`bun tests/live/opensearch-catalog-captures.ts` rewrites the catalog-read captures of
+[§5.9](#59-the-agent-read-only-profile-rests-on-the-plugins-refusals) on a 3.8.0 node.
+`bun tests/live/opensearch-agent-boundary.ts` is the live boundary check of
+[§5.9](#59-the-agent-read-only-profile-rests-on-the-plugins-refusals); it runs its security-on pass when
+`LIBREDB_OS_ADMIN_USER`, `LIBREDB_OS_ADMIN_PASSWORD`, `LIBREDB_OS_AGENT_USER` and `LIBREDB_OS_AGENT_PASSWORD` are set,
+against a node started without `DISABLE_SECURITY_PLUGIN` (and with `OPENSEARCH_INITIAL_ADMIN_PASSWORD`), and its
+older-node pass with `LIBREDB_OS_EXPECT_REFUSED=1` against `opensearchproject/opensearch:2.19.4`.
 
 ---
 

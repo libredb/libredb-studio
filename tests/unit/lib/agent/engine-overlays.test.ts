@@ -22,6 +22,7 @@ import * as SQL_CLIENT_OVERLAYS from "@/lib/agent/languages/sql/engines/client";
 import * as DUCKDB from "@/lib/agent/languages/sql/engines/duckdb";
 import * as MSSQL from "@/lib/agent/languages/sql/engines/mssql";
 import * as MYSQL from "@/lib/agent/languages/sql/engines/mysql";
+import * as OPENSEARCH from "@/lib/agent/languages/sql/engines/opensearch";
 import * as POSTGRES from "@/lib/agent/languages/sql/engines/postgres";
 import * as SQLITE from "@/lib/agent/languages/sql/engines/sqlite";
 import { SQL_PACK } from "@/lib/agent/languages/sql/index";
@@ -66,6 +67,7 @@ const ENGINE_MODULES: Readonly<Record<string, Readonly<Record<string, unknown>>>
   "sql/engines/libsql": LIBSQL,
   "sql/engines/influxdb3": INFLUXDB3,
   "sql/engines/elasticsearch": ELASTICSEARCH,
+  "sql/engines/opensearch": OPENSEARCH,
   "sql/engines/client": SQL_CLIENT_OVERLAYS,
   "mongo/engines/mongodb": MONGODB,
   "mongo/engines/client": MONGO_CLIENT_OVERLAYS,
@@ -95,6 +97,7 @@ describe("the engine registry", () => {
       "mssql",
       "clickhouse",
       "elasticsearch",
+      "opensearch",
       "mongodb",
       "influxdb3",
       "kubernetes",
@@ -108,6 +111,7 @@ describe("the engine registry", () => {
       "mssql",
       "clickhouse",
       "elasticsearch",
+      "opensearch",
       "influxdb3",
     ]);
   });
@@ -139,7 +143,7 @@ describe("the engine registry", () => {
 
   test("every engine module's server overlay holds a dialect and overridable members, its client one a dialect alone (ruling 2)", () => {
     const exported = exportedOverlays();
-    expect(exported).toHaveLength(22);
+    expect(exported).toHaveLength(24);
     // The one other export is the PostgreSQL retry's rewrite, which its tests call directly.
     expect(
       Object.entries(ENGINE_MODULES)
@@ -228,7 +232,7 @@ describe("engineServerDialect", () => {
     }
   });
 
-  test("planEstimate is supplied on every SQL engine but Elasticsearch: a prefix on seven, SQL Server's session mode", () => {
+  test("planEstimate is supplied on every SQL engine but the two search engines: a prefix on seven, SQL Server's session mode", () => {
     expect(Object.fromEntries(SQL_ENGINES.map((type) => [type, engineServerDialect(type).planEstimate]))).toEqual({
       postgres: { kind: "prefix", prefix: "EXPLAIN (FORMAT JSON)" },
       mysql: { kind: "prefix", prefix: "EXPLAIN FORMAT=JSON" },
@@ -238,6 +242,8 @@ describe("engineServerDialect", () => {
       clickhouse: { kind: "prefix", prefix: "EXPLAIN json = 1, indexes = 1" },
       // Its EXPLAIN answers the engine's own plan text, which no explain strategy reads.
       elasticsearch: "unsupported",
+      // It answers no EXPLAIN the provider reads.
+      opensearch: "unsupported",
       libsql: { kind: "prefix", prefix: "EXPLAIN QUERY PLAN" },
       influxdb3: { kind: "prefix", prefix: "EXPLAIN" },
     });
@@ -261,12 +267,21 @@ describe("engineServerDialect", () => {
     }
     expect(composers("sqlite").relations).toBe(composers("sqlite").columns);
     expect(composers("libsql").relations).toBe(composers("libsql").columns);
-    for (const type of ["postgres", "duckdb", "mssql", "mysql", "clickhouse", "influxdb3", "elasticsearch"] as const) {
+    for (const type of [
+      "postgres",
+      "duckdb",
+      "mssql",
+      "mysql",
+      "clickhouse",
+      "influxdb3",
+      "elasticsearch",
+      "opensearch",
+    ] as const) {
       expect(composers(type).relations).not.toBe(composers(type).columns);
     }
   });
 
-  test("only SQLite and libSQL fold the declared schema, only PostgreSQL retries a failed catalog read, and only Elasticsearch maps its catalog rows and reads its catalog with a command", () => {
+  test("only SQLite and libSQL fold the declared schema, only PostgreSQL retries a failed catalog read, and only the two search engines map their catalog rows and read their catalog with a command", () => {
     const supplied = (member: "declaredSchema" | "retry" | "mapRows" | "commandShaped") =>
       SQL_ENGINES.filter((type) => {
         const catalogRead = engineServerDialect(type).catalogRead;
@@ -274,8 +289,8 @@ describe("engineServerDialect", () => {
       });
     expect(supplied("declaredSchema")).toEqual(["sqlite", "libsql"]);
     expect(supplied("retry")).toEqual(["postgres"]);
-    expect(supplied("mapRows")).toEqual(["elasticsearch"]);
-    expect(supplied("commandShaped")).toEqual(["elasticsearch"]);
+    expect(supplied("mapRows")).toEqual(["elasticsearch", "opensearch"]);
+    expect(supplied("commandShaped")).toEqual(["elasticsearch", "opensearch"]);
     const sqlite = engineServerDialect("sqlite").catalogRead;
     const postgres = engineServerDialect("postgres").catalogRead;
     if (sqlite === "unsupported" || postgres === "unsupported") throw new Error("catalog read missing");
@@ -297,6 +312,7 @@ describe("engineServerDialect", () => {
     expect(engineServerDialect("clickhouse").statistics).toBe("unsupported");
     expect(engineServerDialect("influxdb3").statistics).toBe("unsupported");
     expect(engineServerDialect("elasticsearch").statistics).toBe("unsupported");
+    expect(engineServerDialect("opensearch").statistics).toBe("unsupported");
     const reading = (type: DatabaseType) => {
       const statistics = engineServerDialect(type).statistics;
       if (statistics === "unsupported") throw new Error(`${type} has no statistics`);
@@ -326,7 +342,16 @@ describe("engineServerDialect", () => {
   test("catalogCapture is supplied on PostgreSQL and SQLite, each with its own kinds, builder and kind words", () => {
     const supplied = SQL_ENGINES.filter((type) => engineServerDialect(type).catalogCapture !== "unsupported");
     expect(supplied).toEqual(["postgres", "sqlite"]);
-    for (const type of ["duckdb", "mssql", "mysql", "clickhouse", "libsql", "influxdb3", "elasticsearch"] as const) {
+    for (const type of [
+      "duckdb",
+      "mssql",
+      "mysql",
+      "clickhouse",
+      "libsql",
+      "influxdb3",
+      "elasticsearch",
+      "opensearch",
+    ] as const) {
       expect(engineServerDialect(type).catalogCapture).toBe("unsupported");
     }
     const capture = (type: DatabaseType) => {
@@ -379,6 +404,7 @@ describe("the client dialect", () => {
       mssql: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
       clickhouse: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
       elasticsearch: { catalogRead: "supported", planEstimate: "unsupported", catalogCapture: "unsupported" },
+      opensearch: { catalogRead: "supported", planEstimate: "unsupported", catalogCapture: "unsupported" },
       libsql: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
       influxdb3: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
     });

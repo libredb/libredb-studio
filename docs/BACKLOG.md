@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B144 · 74
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B145 · 75
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -8209,6 +8209,18 @@ Kept so that the engine joined on the members measured on it, and nothing compos
 Found 2026-10-29 with agent execution on Elasticsearch.
 
 **Done when:** the Elasticsearch overlay gains an estimating plan measured on the engine and an explain strategy with an `agentReading` verified against its plans, so query optimization opens there, and a profile composition measured on it, or a recorded decision that it keeps none, with tests for each; cited in `docs/AGENT.md`.
+
+### B145. OpenSearch composes no estimating plan, profile, statistics reading or grounding capture
+
+OpenSearch's engine overlay (`src/lib/agent/languages/sql/engines/opensearch.ts`) supplies the catalog read alone: the column kind is the `DESCRIBE TABLES` command, declared a command and mapped into column rows, and the relation, index and statistics kinds are refused, since the engine keeps no foreign key, no index object apart from the table and no row estimate.
+The other four dialect members are `"unsupported"`: the estimating plan, the profile composition, the statistics reading and the grounding capture.
+The provider reads no `EXPLAIN` (`supportsExplain: false`), and a table profile would be an aggregate over a whole index, never measured.
+So investigation, database assessment and data analysis open on OpenSearch, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT` and an answer is never auto-executed; the `sql-composers` requirement holds query optimization out; plan mode drafts there and grounds under the operations profile.
+Kept so that the engine joined on the members measured on it, and nothing composed from another engine's rule.
+
+Found 2026-10-29 with agent execution on OpenSearch.
+
+**Done when:** the OpenSearch overlay gains an estimating plan measured on the engine and an explain strategy with an `agentReading` verified against its plans, so query optimization opens there, and a profile composition measured on it, or a recorded decision that it keeps none, with tests for each; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

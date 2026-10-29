@@ -2393,18 +2393,15 @@
         "columns": [
           {
             "selector": {},
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"opensearch\""
-            }
+            "sql": "DESCRIBE TABLES LIKE %"
           },
           {
             "selector": {
               "schema": "Sales"
             },
             "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"opensearch\""
+              "reasonCode": "SELECTOR_UNSUPPORTED_BY_DIALECT",
+              "message": "OpenSearch SQL has no schema to narrow by, so name a table instead"
             }
           },
           {
@@ -2412,8 +2409,8 @@
               "schema": "MAIN"
             },
             "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"opensearch\""
+              "reasonCode": "SELECTOR_UNSUPPORTED_BY_DIALECT",
+              "message": "OpenSearch SQL has no schema to narrow by, so name a table instead"
             }
           },
           {
@@ -2422,8 +2419,8 @@
               "table": "orders"
             },
             "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"opensearch\""
+              "reasonCode": "SELECTOR_UNSUPPORTED_BY_DIALECT",
+              "message": "OpenSearch SQL has no schema to narrow by, so name a table instead"
             }
           }
         ],
@@ -2431,8 +2428,8 @@
           {
             "selector": {},
             "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"opensearch\""
+              "reasonCode": "SELECTOR_UNSUPPORTED_BY_DIALECT",
+              "message": "OpenSearch keeps no foreign key, so there is no such inventory to read"
             }
           },
           {
@@ -2440,8 +2437,8 @@
               "schema": "Sales"
             },
             "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"opensearch\""
+              "reasonCode": "SELECTOR_UNSUPPORTED_BY_DIALECT",
+              "message": "OpenSearch keeps no foreign key, so there is no such inventory to read"
             }
           },
           {
@@ -2449,8 +2446,8 @@
               "schema": "MAIN"
             },
             "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"opensearch\""
+              "reasonCode": "SELECTOR_UNSUPPORTED_BY_DIALECT",
+              "message": "OpenSearch keeps no foreign key, so there is no such inventory to read"
             }
           },
           {
@@ -2459,8 +2456,8 @@
               "table": "orders"
             },
             "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"opensearch\""
+              "reasonCode": "SELECTOR_UNSUPPORTED_BY_DIALECT",
+              "message": "OpenSearch keeps no foreign key, so there is no such inventory to read"
             }
           }
         ],
@@ -2468,8 +2465,8 @@
           {
             "selector": {},
             "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"opensearch\""
+              "reasonCode": "SELECTOR_UNSUPPORTED_BY_DIALECT",
+              "message": "OpenSearch keeps no index object apart from the table itself, so there is no such inventory to read"
             }
           },
           {
@@ -2477,8 +2474,8 @@
               "schema": "Sales"
             },
             "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"opensearch\""
+              "reasonCode": "SELECTOR_UNSUPPORTED_BY_DIALECT",
+              "message": "OpenSearch keeps no index object apart from the table itself, so there is no such inventory to read"
             }
           },
           {
@@ -2486,8 +2483,8 @@
               "schema": "MAIN"
             },
             "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"opensearch\""
+              "reasonCode": "SELECTOR_UNSUPPORTED_BY_DIALECT",
+              "message": "OpenSearch keeps no index object apart from the table itself, so there is no such inventory to read"
             }
           },
           {
@@ -2496,8 +2493,8 @@
               "table": "orders"
             },
             "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"opensearch\""
+              "reasonCode": "SELECTOR_UNSUPPORTED_BY_DIALECT",
+              "message": "OpenSearch keeps no index object apart from the table itself, so there is no such inventory to read"
             }
           }
         ],
@@ -2505,8 +2502,8 @@
           {
             "selector": {},
             "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"opensearch\""
+              "reasonCode": "SELECTOR_UNSUPPORTED_BY_DIALECT",
+              "message": "OpenSearch keeps no row estimate a catalog command reads, so there is no such inventory to read"
             }
           },
           {
@@ -2514,8 +2511,8 @@
               "schema": "Sales"
             },
             "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"opensearch\""
+              "reasonCode": "SELECTOR_UNSUPPORTED_BY_DIALECT",
+              "message": "OpenSearch keeps no row estimate a catalog command reads, so there is no such inventory to read"
             }
           },
           {
@@ -2523,8 +2520,8 @@
               "schema": "MAIN"
             },
             "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"opensearch\""
+              "reasonCode": "SELECTOR_UNSUPPORTED_BY_DIALECT",
+              "message": "OpenSearch keeps no row estimate a catalog command reads, so there is no such inventory to read"
             }
           },
           {
@@ -2533,8 +2530,8 @@
               "table": "orders"
             },
             "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"opensearch\""
+              "reasonCode": "SELECTOR_UNSUPPORTED_BY_DIALECT",
+              "message": "OpenSearch keeps no row estimate a catalog command reads, so there is no such inventory to read"
             }
           }
         ]
@@ -2590,10 +2587,7 @@
           }
         }
       ],
-      "statisticsAvailabilityProbe": {
-        "reasonCode": "UNSUPPORTED_DIALECT",
-        "message": "no verified statistics composition for provider type \"opensearch\""
-      },
+      "statisticsAvailabilityProbe": null,
       "tableProfile": {
         "basic": {
           "reasonCode": "UNSUPPORTED_DIALECT",

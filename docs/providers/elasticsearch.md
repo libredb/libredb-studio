@@ -835,7 +835,7 @@ Redaction is `sql` with no name quote: a redacted statement keeps its words, and
 
 ### 5.9 The agent read-only profile rests on the grammar
 
-Agent mode executes statements on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL) and Elasticsearch; here `ElasticsearchProvider` implements `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/sql/search/index.ts).
+Agent mode executes statements on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch and OpenSearch; here `ElasticsearchProvider` implements `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/sql/search/index.ts).
 The boundary is engine-enforced, by the grammar of the SQL endpoint.
 `POST /_sql` carries free statement text, so the provider's fixed set of endpoints proves nothing about it on its own; what holds it is the grammar, which has no write and no DDL statement, so every one sent there is refused with `parsing_exception` before anything runs ([§5.6](#56-this-grammar-does-not-write) and its checked-in captures).
 Studio's statement admission in front of it is defence in depth: the boundary does not rest on it.

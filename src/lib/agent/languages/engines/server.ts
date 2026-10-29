@@ -32,6 +32,7 @@ import { INFLUXDB3_SERVER_OVERLAY } from "../sql/engines/influxdb3";
 import { LIBSQL_SERVER_OVERLAY } from "../sql/engines/libsql";
 import { MSSQL_SERVER_OVERLAY } from "../sql/engines/mssql";
 import { MYSQL_SERVER_OVERLAY } from "../sql/engines/mysql";
+import { OPENSEARCH_SERVER_OVERLAY } from "../sql/engines/opensearch";
 import { POSTGRES_SERVER_OVERLAY } from "../sql/engines/postgres";
 import { SQLITE_SERVER_OVERLAY } from "../sql/engines/sqlite";
 import { engineFamily } from "./client";
@@ -46,6 +47,7 @@ const SERVER_OVERLAYS: AgentEngineServerOverlays = Object.freeze({
   libsql: Object.freeze({ ...LIBSQL_SERVER_OVERLAY }),
   influxdb3: Object.freeze({ ...INFLUXDB3_SERVER_OVERLAY }),
   elasticsearch: Object.freeze({ ...ELASTICSEARCH_SERVER_OVERLAY }),
+  opensearch: Object.freeze({ ...OPENSEARCH_SERVER_OVERLAY }),
   mongodb: Object.freeze({ ...MONGODB_SERVER_OVERLAY }),
   kubernetes: Object.freeze({ ...KUBERNETES_SERVER_OVERLAY }),
 } satisfies AgentEngineServerOverlays);

@@ -617,6 +617,7 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   cassandra: false,
   // Agent mode executes statements on Elasticsearch, and MCP read stays closed on it until a change of its own opens it.
   elasticsearch: false,
+  // Agent mode executes statements on OpenSearch, and MCP read stays closed on it until a change of its own opens it.
   opensearch: false,
   mongodb: true,
   couchbase: false,
@@ -675,6 +676,7 @@ export const CONNECTION_FORM_URI_MODE: Readonly<Record<DatabaseType, boolean>> =
   trino: false,
   cassandra: false,
   elasticsearch: false,
+  // Agent mode executes statements on OpenSearch, and MCP read stays closed on it until a change of its own opens it.
   opensearch: false,
   mongodb: true,
   couchbase: true,
@@ -742,6 +744,7 @@ export const CONNECTION_STRING_ACCEPTED: Readonly<Record<DatabaseType, boolean>>
   trino: false,
   cassandra: false,
   elasticsearch: false,
+  // Agent mode executes statements on OpenSearch, and MCP read stays closed on it until a change of its own opens it.
   opensearch: false,
   mongodb: true,
   couchbase: true,
