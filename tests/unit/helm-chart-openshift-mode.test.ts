@@ -908,7 +908,7 @@ describe("the Tier 0 ConsoleLink", () => {
   test("with discovery off, the ApplicationMenu link has a release-derived name and no locator label", () => {
     const [link] = consoleLinks([...OPENSHIFT, ...LINK]);
     expect(link.metadata.name).toBe(RELEASE_DERIVED);
-    expect(link.metadata.labels).not.toHaveProperty("app.kubernetes.io/name");
+    expect(link.metadata.labels).not.toHaveProperty(["app.kubernetes.io/name"]);
     expect(link.metadata.labels?.["app.kubernetes.io/instance"]).toBe(RELEASE);
     expect(link.spec?.location).toBe("ApplicationMenu");
   });
@@ -920,7 +920,7 @@ describe("the Tier 0 ConsoleLink", () => {
       ...set("openshift.consoleLink.namespaces={team-a,team-b}"),
     ]);
     expect(link.metadata.name).toBe(RELEASE_DERIVED);
-    expect(link.metadata.labels).not.toHaveProperty("app.kubernetes.io/name");
+    expect(link.metadata.labels).not.toHaveProperty(["app.kubernetes.io/name"]);
     expect(link.spec).toEqual({
       href: `https://${HOST}`,
       text: "LibreDB Studio",
