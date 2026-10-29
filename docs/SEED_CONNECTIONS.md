@@ -1228,7 +1228,9 @@ RBAC cannot narrow `get secrets` by name, and resource editors choose part of ev
 
 Only those spec fields reserve a name: a Secret that any other field names, such as a Cluster's `spec.externalClusters`, LDAP or backup credentials, a PGO PostgresCluster's pgBouncer TLS or pgBackRest configuration Secrets, or a MongoDB user's `passwordSecretRef`, is not reserved, and an untied `kubernetes.io/basic-auth` one passes the ownership rule above, which is a [known limit](./SECURITY.md#known-limits).
 Only the kinds of `KUBERNETES_DISCOVERY_KINDS` are listed, so only their resources reserve: discover every operator kind that runs in a discovered namespace, because a resource of a kind left out, such as a MongoDBCommunity in a namespace discovered for `cnpg` alone, reserves nothing there.
-No default name (`<name>-app`, `<name>-pguser-<user>`, `<name>-<db>-<user>`) ends in one of these unless the resource's editor chose a user or database name that makes it so, which is what the rule stops; an initdb Secret you name yourself must avoid them too.
+No default name (`<name>-app`, `<name>-pguser-<user>`, `<name>-<db>-<user>`) ends in one of these unless the resource's editor chose a resource, user or database name that makes it so, which is what the rule stops; an initdb Secret you name yourself must avoid them too.
+A PGO PostgresCluster without `spec.users` gets PGO's default user, named after the cluster, whose Secret `<name>-pguser-<name>` ends in `-<name>`, so a cluster named after a reserved suffix without its hyphen, such as `monitoring`, or whose name ends in one, such as `-monitoring`, `-pguser`, `-pooler` or `-pem`, is refused as `reserved_name`.
+To discover such a database, list a user in `spec.users` whose name ends in no reserved suffix; for a MongoDB user whose `<name>-<db>-<user>` ends in one, set `connectionStringSecretName` to a name that does not.
 The exporter lists every page of every kind in a namespace before it requests any Secret there, so list order decides nothing, and a resource left out for its names, or past the database bound, still reserves the Secrets its spec names.
 So an editor of any listed resource can withdraw another row of its namespace by naming that row's credential Secret in one of these fields.
 The row fails closed: it is refused as `reserved_name` and its Secret is never requested, and its reason names the kind, namespace and name of the first listed resource that reserves the name, so an admin can find it.
@@ -1327,6 +1329,8 @@ An installation that discovered CloudNativePG Clusters with an earlier release c
 - a credential Secret that holds a key outside CloudNativePG's measured set, the "Keys allowed" row of [the contract](#the-discovery-contract), is refused as `unexpected_key`;
 - a Cluster whose `<name>-rw` Service is missing, is an ExternalName, or has no selector and is not controlled by the Cluster is refused before its Secret is read, and the exporter now needs `get` on Services in each discovered namespace, which the Helm chart grants;
 - the exporter lists every page of each discovered namespace, so a namespace whose list does not end within 100 pages is withdrawn even when its first pages already filled the 500-database bound.
+
+An installation that also opts in `pgo` sees a PostgresCluster without `spec.users` refused as `reserved_name` when its name is a reserved suffix without its hyphen, such as `monitoring`, or ends in one, such as `-monitoring`, `-pguser`, `-pooler` or `-pem`, because its default user's Secret `<name>-pguser-<name>` then ends in that suffix; list a user in `spec.users` instead ([reserved names](#reserved-secret-names)).
 
 The ids also change from 12 to 32 hex characters, and the export moves to format version 2, both described above.
 

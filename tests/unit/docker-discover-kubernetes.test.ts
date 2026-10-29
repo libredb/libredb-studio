@@ -1550,6 +1550,34 @@ describe("reserved names", () => {
       { name: "catalog-x-keyfile", problem: "reserved_name" },
     ]);
   });
+  // PGO names a cluster's default user after the cluster, so its Secret <name>-pguser-<name> ends in -<name>.
+  test("a PGO cluster without users is refused when its name makes its default Secret end in a reserved suffix", async () => {
+    for (const name of ["monitoring", "orders-monitoring", "x-pguser", "app-pooler", "tls-pem"]) {
+      api.addResource("pgo", "team-a", name);
+    }
+    // The workarounds pass the reserved check: a user in spec.users, and a MongoDB user's connectionStringSecretName.
+    api.addResource("pgo", "team-a", "metrics-monitoring", { users: [{ name: "reader", databases: ["metrics"] }] });
+    api.addResource("mongo", "team-a", "catalog", { users: [{ name: "config", db: "admin", roles: [] }] });
+    api.addResource("mongo", "team-a", "inventory", {
+      users: [{ name: "config", db: "admin", connectionStringSecretName: "inventory-config-login", roles: [] }],
+    });
+    const result = await scan({
+      client: client(),
+      config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a", KUBERNETES_DISCOVERY_KINDS: "pgo,mongo" }),
+    });
+    expect<unknown>(result.databases.map((entry) => entry.secret)).toEqual([
+      { name: "monitoring-pguser-monitoring", problem: "reserved_name" },
+      { name: "orders-monitoring-pguser-orders-monitoring", problem: "reserved_name" },
+      { name: "x-pguser-pguser-x-pguser", problem: "reserved_name" },
+      { name: "app-pooler-pguser-app-pooler", problem: "reserved_name" },
+      { name: "tls-pem-pguser-tls-pem", problem: "reserved_name" },
+      { name: "metrics-monitoring-pguser-reader", problem: "service_not_found" },
+      { name: "catalog-admin-config", problem: "reserved_name" },
+      { name: "inventory-config-login", problem: "service_not_found" },
+    ]);
+    expect(api.seen.some((seen) => seen.path.includes("/secrets/"))).toBe(false);
+  });
+
   test("each row names the Secrets its resource's spec gives key material and other credentials", () => {
     const cnpgSpec = {
       certificates: { serverCASecret: "a", serverTLSSecret: "b", replicationTLSSecret: "c", clientCASecret: "d" },
