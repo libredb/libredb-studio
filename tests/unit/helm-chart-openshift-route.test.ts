@@ -273,4 +273,21 @@ describe("install notes about the OpenShift Route", () => {
     expect(text).toContain("Access LibreDB Studio via Ingress:\n  http://libredb.example.com/");
     expect(text).toContain("  https://studio.apps.example.com\n");
   });
+
+  // The image has node but no wget or curl, so the health command runs node's fetch,
+  // and it asks the health route under config.basePath, where the probes ask it.
+  const HEALTH_SCRIPT = `node -e 'fetch(process.argv[1]).then(async r=>{console.log(await r.text());if(!r.ok)process.exitCode=1})'`;
+
+  test("the health command runs node's fetch, never wget", () => {
+    const text = notes([]);
+    expect(text).toContain(
+      `kubectl --namespace default exec deploy/${FULLNAME} -- ${HEALTH_SCRIPT} http://localhost:3000/api/db/health\n`,
+    );
+    expect(text).not.toContain("wget");
+  });
+
+  test("the health command asks the health route under config.basePath", () => {
+    const text = notes(["--set", "config.basePath=/studio"]);
+    expect(text).toContain(`-- ${HEALTH_SCRIPT} http://localhost:3000/studio/api/db/health\n`);
+  });
 });
