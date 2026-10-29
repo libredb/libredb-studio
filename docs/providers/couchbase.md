@@ -429,14 +429,14 @@ cardinality can appear on CE plans.
 | `host` | Yes (or `connectionString`) | Cluster node hostname. `validate()` throws `DatabaseConfigError` when both are missing |
 | `port` | No | **Management** port only. Defaults to `8091` (`18091` when SSL is on). Query ports are discovered ([§3.3](#33-ports-are-discovered-not-configured)) |
 | `user` / `password` | No | Sent as HTTP Basic on every request |
-| `database` | Yes, unless supplied in the URI path | Carries the **bucket** name and overrides the URI path. One bucket per connection; the ConnectionModal labels this field "Bucket" |
+| `database` | Yes, unless supplied in the URI path | Carries the **bucket** name and overrides the URI path. One bucket per connection; the ConnectionModal labels this field "Bucket Name" |
 | `connectionString` | No | `couchbase://` / `couchbases://`; see [§4.2](#42-connection-strings) |
 | `ssl` | No | See [§4.3](#43-tls) |
 
 `database` being the bucket is the one field that surprises people, so the form says so:
-`ConnectionModal` renders the label "Bucket" for `type === 'couchbase'` (`databaseFieldLabel`,
-[`ConnectionModal.tsx`](../../src/components/ConnectionModal.tsx)), and `validate()` rejects a
-connection without one ([`index.ts`](../../src/lib/db/providers/document/couchbase/index.ts)):
+the `couchbase` entry of `CONNECTION_FORM` declares the label "Bucket Name" for it (`fieldLabels`,
+[`connection-form.ts`](../../src/lib/db/connection-form.ts)), which `ConnectionModal` draws, and
+`validate()` rejects a connection without one ([`index.ts`](../../src/lib/db/providers/document/couchbase/index.ts)):
 
 ```text
 Couchbase requires a bucket (use the URL path or the "database" field)
