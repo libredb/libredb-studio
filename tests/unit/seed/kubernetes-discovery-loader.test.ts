@@ -265,6 +265,21 @@ describe("kubernetes-discovery-loader", () => {
       expect((await statusNow()).skipped).toEqual([{ resource: "team-a/orders", reason: "id taken by the seed file" }]);
     });
 
+    // A MongoDB row's key names its user but not the database the user authenticates against, so two users of one
+    // name in two databases of one resource share an id, and neither may stand for the other.
+    it("refuses both MongoDB users of one name that authenticate against different databases", async () => {
+      const [appuser] = goldenDatabases(["mongo"]);
+      const other = structuredClone(appuser);
+      (other.resource.spec as { users: { db?: string }[] }).users[0].db = "catalog";
+      other.secret = { ...other.secret, name: "catalog-catalog-appuser" };
+      write({ namespaces: [{ name: "team-m", status: { ok: true } }], databases: [appuser, other] });
+      expect(await ids()).toEqual([]);
+      expect((await statusNow()).skipped).toEqual([
+        { resource: "team-m/catalog/appuser", reason: SHARED },
+        { resource: "team-m/catalog/appuser", reason: SHARED },
+      ]);
+    });
+
     it("refuses both of two entries for the same database", async () => {
       const [orders] = goldenDatabases();
       write({ databases: [orders, orders] });

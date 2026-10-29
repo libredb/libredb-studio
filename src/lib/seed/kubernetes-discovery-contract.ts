@@ -443,7 +443,9 @@ function sha256Hex(key: string): string {
 
 /**
  * The key a discovered database's id is computed from: `<namespace>/<name>`, or `<namespace>/<name>/<user>` for a row
- * per database user. No part can hold a `/` (the export's schema refuses one), so two rows never share a key.
+ * per database user. No part can hold a `/` (the export's schema refuses one), so two rows share a key only when they
+ * name one user of one resource: a MongoDB key leaves out the database the user authenticates against, so two users of
+ * one name in two databases share it, and the loader leaves both out.
  */
 export function kubernetesIdKey(namespace: string, name: string, user?: string): string {
   return user === undefined ? `${namespace}/${name}` : `${namespace}/${name}/${user}`;

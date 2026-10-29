@@ -1292,6 +1292,7 @@ The golden fixture `tests/fixtures/kubernetes-discovery-golden.json` pins the th
 The managed list holds the seed-file connections, then CapRover's, then the Kubernetes ones, then the built-in samples.
 A Kubernetes id that an operator source declares is dropped and reported as skipped, with the reason "id taken by the seed file".
 Two discovered rows that map to one id are both left out, with the reason "id shared with another discovered database, so both are left out", because list order, which the namespaces' editors control, would otherwise pick the winner.
+A MongoDB row's key names its user but not the database the user authenticates against, so two users of one name in two databases of one MongoDBCommunity map to one id and are both left out this way.
 Naming a Kubernetes-discovered id the caller may not open answers the same 404 as an unknown id.
 
 ### Kubernetes freshness and state
