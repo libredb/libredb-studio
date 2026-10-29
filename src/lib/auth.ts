@@ -5,11 +5,13 @@ import { logger } from "@/lib/logger";
 import { getJwtSecret, sessionTtlSeconds } from "@/lib/config/auth-env";
 import { AUTH_PROVIDER_INVALID_MESSAGE, authProvider, authProviderSetting } from "@/lib/config/auth-provider";
 import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
+import { reviewedSessionRole } from "@/lib/kubernetes-access/gate";
 import {
   ACCESS_REVIEW_RETRY_COOKIE,
   ACCESS_REVIEW_RETRY_MAX_AGE_SECONDS,
   type GroupsRecordCheck,
   groupsRecordCheck,
+  sessionRecordCheck,
 } from "@/lib/kubernetes-access/session-guard";
 import { AuthConfigError } from "@/lib/auth-errors";
 import { storedAccountAllows } from "@/lib/local-accounts";
@@ -145,31 +147,65 @@ export async function readSession(): Promise<SessionReading> {
     logAccountCheckFailure(error);
     return { kind: "store_unavailable", error };
   }
-  if (allowed && (await sessionRecordAllows(cookieStore, session))) return { kind: "authenticated", session };
+  const served = allowed ? await sessionWithRecord(cookieStore, session) : null;
+  if (served !== null) return { kind: "authenticated", session: served };
   // The proxy verifies only the signature, so a refused cookie would keep sending /login back to
   // the editor. Clearing it here, on the route's response, lets the next navigation reach login.
   await logout();
   return { kind: "anonymous" };
 }
 
-/** Whether the server-side record a verified session needs in this mode is there, settling the retry marker. */
-async function sessionRecordAllows(
+/**
+ * The session a verified cookie stands for once the server-side record it needs in this mode is checked, or null when
+ * it is refused, settling the retry marker.
+ */
+async function sessionWithRecord(
   cookieStore: Awaited<ReturnType<typeof cookies>>,
   session: UserPayload & { iat?: number },
-): Promise<boolean> {
+): Promise<UserPayload | null> {
   const marker = cookieStore.get(ACCESS_REVIEW_RETRY_COOKIE)?.value;
-  if (authProvider() === "openshift") {
-    // Signed in only while the token record under the session's handle is live and bound to its uid, name and issuer;
-    // a session of another mode has no handle, and the groups check never runs here (src/lib/openshift-auth/session.ts).
-    return settleRecordCheck(cookieStore, openShiftRecordCheck(session, marker), OPENSHIFT_RECORD_MISS_MESSAGE);
-  }
+  if (authProvider() === "openshift") return openShiftSessionWithRole(cookieStore, session, marker);
   // A session openshift sign-in minted reads as signed out in every other mode: no marker, the cookie cleared.
-  if (session.sessionHandle !== undefined) return false;
-  if (!accessReviewEnabled()) return true;
+  if (session.sessionHandle !== undefined) return null;
+  if (!accessReviewEnabled()) return session;
   // With the Kubernetes access review on, no review runs without the groups record of the session's subject, which
   // only this process's memory holds: a session that lost it signs in again, and one without a subject has none
   // (src/lib/kubernetes-access/session-guard.ts).
-  return settleRecordCheck(cookieStore, groupsRecordCheck(session, marker), GROUPS_RECORD_MISS_MESSAGE);
+  const kept = await settleRecordCheck(cookieStore, groupsRecordCheck(session, marker), GROUPS_RECORD_MISS_MESSAGE);
+  return kept ? session : null;
+}
+
+/**
+ * openshift mode: signed in only while the token record under the session's handle is live and bound to its uid, name
+ * and issuer (src/lib/openshift-auth/session.ts); a session of another mode has no handle, and the groups check never
+ * runs here. A live session then runs with the role the access review gives this request
+ * (src/lib/kubernetes-access/gate.ts, `reviewedSessionRole`): an admin session keeps admin only while its own token
+ * may update Studio's Deployment or LibreDBStudio resource, and is signed out when the API server refuses the token.
+ * The retry marker is settled only once that role is known, and a refused token settles it from the marker this
+ * request carried, so a session minted after the marker that meets a refused token trips the loop guard instead of
+ * arming the marker again.
+ */
+async function openShiftSessionWithRole(
+  cookieStore: Awaited<ReturnType<typeof cookies>>,
+  session: UserPayload & { iat?: number },
+  marker: string | undefined,
+): Promise<UserPayload | null> {
+  const check = openShiftRecordCheck(session, marker);
+  if (check.kind === "refused") {
+    await settleRecordCheck(cookieStore, check, OPENSHIFT_RECORD_MISS_MESSAGE);
+    return null;
+  }
+  const role = await reviewedSessionRole(session);
+  if (role === "expired") {
+    await settleRecordCheck(
+      cookieStore,
+      sessionRecordCheck("missing", session.iat, marker),
+      OPENSHIFT_RECORD_MISS_MESSAGE,
+    );
+    return null;
+  }
+  await settleRecordCheck(cookieStore, check, OPENSHIFT_RECORD_MISS_MESSAGE);
+  return role === session.role ? session : { ...session, role };
 }
 
 const GROUPS_RECORD_MISS_MESSAGE = "Kubernetes access review: the session has no groups record, so it signs in again";
