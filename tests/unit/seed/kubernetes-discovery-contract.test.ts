@@ -18,9 +18,9 @@ import {
 import type { KubernetesDiscoveredDatabase } from "@/lib/seed/kubernetes-discovery-export";
 
 const PASSWORD = "not-a-real-password-orders";
-const CLUSTER_DOMAIN = "KUBERNETES_DISCOVERY_CLUSTER_DOMAIN";
+const CLUSTER_DOMAIN = "SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN";
 const INVALID_CLUSTER_DOMAIN =
-  "KUBERNETES_DISCOVERY_CLUSTER_DOMAIN is not a DNS name: name the cluster's domain, such as cluster.local, in lowercase letters, digits and hyphens, with dots between its labels and none at either end";
+  "SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN is not a DNS name: name the cluster's domain, such as cluster.local, in lowercase letters, digits and hyphens, with dots between its labels and none at either end";
 
 const savedClusterDomain = process.env[CLUSTER_DOMAIN];
 
@@ -154,7 +154,7 @@ describe("mapKubernetesDatabase", () => {
     expect(hostOf()).toBe("orders-rw.team-a.svc.cluster.local.");
   });
 
-  it("ends the host in the cluster domain KUBERNETES_DISCOVERY_CLUSTER_DOMAIN names", () => {
+  it("ends the host in the cluster domain SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN names", () => {
     for (const value of ["corp.internal", " corp.internal ", "k8s"]) {
       process.env[CLUSTER_DOMAIN] = value;
       const result = mapKubernetesDatabase(database());
@@ -163,7 +163,7 @@ describe("mapKubernetesDatabase", () => {
     }
   });
 
-  it("skips every database while KUBERNETES_DISCOVERY_CLUSTER_DOMAIN is not a DNS name, naming the variable, not the value", () => {
+  it("skips every database while SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN is not a DNS name, naming the variable, not the value", () => {
     const invalid = [
       "Cluster.Local",
       "cluster..local",

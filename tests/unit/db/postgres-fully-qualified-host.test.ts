@@ -26,7 +26,7 @@ const SSL_REQUEST_CODE = 80877103;
 const AUTHENTICATED_AND_READY = Buffer.from([0x52, 0, 0, 0, 8, 0, 0, 0, 0, 0x5a, 0, 0, 0, 5, 0x49]);
 
 // The hosts below are those of the default cluster domain.
-delete process.env.KUBERNETES_DISCOVERY_CLUSTER_DOMAIN;
+delete process.env.SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN;
 
 let server: Server | null = null;
 /** Every server-side socket, destroyed after each test: `close()` waits for open ones. */

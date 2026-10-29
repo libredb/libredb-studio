@@ -10,8 +10,9 @@
  *
  * Every connection is built here with its access fields forced in code: managed, the admin role, TLS required, no MCP
  * opt-in, no read-only mode, no connection string. Nothing in the export can change them. Every host is a fully
- * qualified name with a trailing dot in the cluster domain KUBERNETES_DISCOVERY_CLUSTER_DOMAIN names, `cluster.local`
- * by default, so the pod's DNS search path never applies; while that variable is not a DNS name, no database is listed.
+ * qualified name with a trailing dot in the cluster domain SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN names,
+ * `cluster.local` by default, so the pod's DNS search path never applies; while that variable is not a DNS name, no
+ * database is listed.
  * The roles a session sees, the literal marker and the Secret marker the Kubernetes access review reads are set after
  * filterByRoles, in src/lib/seed/index.ts, because filterByRoles copies a fixed field list.
  *
@@ -65,22 +66,22 @@ const NAME_MAX_CHARS = 128;
 /** The database CloudNativePG's initdb creates when the resource names none. */
 const CNPG_DEFAULT_DATABASE = "app";
 const PORT_PATTERN = /^\d{1,5}$/;
-/** The cluster domain while KUBERNETES_DISCOVERY_CLUSTER_DOMAIN is unset or blank, the one Kubernetes defaults to. */
+/** The cluster domain while SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN is unset or blank, Kubernetes' default. */
 const DEFAULT_CLUSTER_DOMAIN = "cluster.local";
 /** The longest DNS name, without its trailing dot. */
 const DNS_NAME_MAX_CHARS = 253;
 /** A DNS label as Kubernetes writes one: 1 to 63 lowercase letters, digits and inner hyphens. */
 const DNS_LABEL = /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/;
 const INVALID_CLUSTER_DOMAIN =
-  "KUBERNETES_DISCOVERY_CLUSTER_DOMAIN is not a DNS name: name the cluster's domain, such as cluster.local, in lowercase letters, digits and hyphens, with dots between its labels and none at either end";
+  "SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN is not a DNS name: name the cluster's domain, such as cluster.local, in lowercase letters, digits and hyphens, with dots between its labels and none at either end";
 
 /**
- * The cluster's DNS domain, which every discovered host ends in: KUBERNETES_DISCOVERY_CLUSTER_DOMAIN, trimmed, or
+ * The cluster's DNS domain, which every discovered host ends in: SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN, trimmed, or
  * `cluster.local` while it is unset or blank. It is read on every mapping, never cached with the export. A value that
  * is not a DNS name is refused, naming the variable and not the value.
  */
 function kubernetesClusterDomain(): { ok: true; domain: string } | { ok: false; reason: string } {
-  const domain = process.env.KUBERNETES_DISCOVERY_CLUSTER_DOMAIN?.trim() || DEFAULT_CLUSTER_DOMAIN;
+  const domain = process.env.SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN?.trim() || DEFAULT_CLUSTER_DOMAIN;
   const isDnsName = domain.length <= DNS_NAME_MAX_CHARS && domain.split(".").every((label) => DNS_LABEL.test(label));
   return isDnsName ? { ok: true, domain } : { ok: false, reason: INVALID_CLUSTER_DOMAIN };
 }

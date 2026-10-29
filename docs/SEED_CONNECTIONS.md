@@ -1221,7 +1221,7 @@ A value it cannot honour stops it at start with exit code 2 and a line naming th
 Every field the table takes from a Secret is required, and a database whose Secret lacks one is skipped with its reason.
 The host is the Cluster's read-write Service by its fully qualified name, because Studio runs in a namespace of its own and the Secret's `host` is the short name.
 Discovered hosts are fully qualified names with a trailing dot, so the pod's DNS search path never applies.
-The cluster domain is `KUBERNETES_DISCOVERY_CLUSTER_DOMAIN`, which the Studio server reads, `cluster.local` by default; set it when the cluster's kubelets run with another `--cluster-domain`, with the Helm chart through `extraEnv`.
+The cluster domain is `SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN`, which the Studio server reads, `cluster.local` by default; set it when the cluster's kubelets run with another `--cluster-domain`, with the Helm chart through `extraEnv`.
 While it is not a DNS name, Studio lists no Kubernetes-discovered database and reports each one as skipped, with a reason that names the variable.
 CloudNativePG serves TLS with a CA of its own, whose Secret also holds that CA's private key, so the exporter never reads it, and Studio connects with `ssl: { mode: "require" }`, which encrypts without verifying the server's certificate.
 The table is data in three places that must agree: the exporter, Studio's mapping in `src/lib/seed/kubernetes-discovery-contract.ts`, and the LibreDB Rancher extension, which builds the link that opens a database.
@@ -1492,7 +1492,7 @@ This is the standard application logger (`src/lib/logger.ts`), not a persisted a
 | `SEED_DISCOVERY_MAX_AGE_MS` | `60000` | Age of the export's `generatedAt` after which discovered connections are withdrawn; keep it well above the exporter's `DISCOVERY_INTERVAL_MS` (10000 by default) |
 | `SEED_KUBERNETES_DISCOVERY_PATH` | unset (off) | Path of the Kubernetes discovery export file, the `export.json` of the mounted export Secret; see [Platform discovery (Kubernetes)](#platform-discovery-kubernetes) |
 | `SEED_KUBERNETES_DISCOVERY_MAX_AGE_MS` | `180000` | Age of the Kubernetes export's `generatedAt` after which its connections are withdrawn; keep it above the exporter's `KUBERNETES_DISCOVERY_INTERVAL_MS` (30000 by default) plus 90000 |
-| `KUBERNETES_DISCOVERY_CLUSTER_DOMAIN` | `cluster.local` | The cluster's DNS domain, which every Kubernetes-discovered host ends in, read by the Studio server and not by the exporter; see [The CloudNativePG contract](#the-cloudnativepg-contract) |
+| `SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN` | `cluster.local` | The cluster's DNS domain, which every Kubernetes-discovered host ends in, read by the Studio server and not by the exporter; see [The CloudNativePG contract](#the-cloudnativepg-contract) |
 | `NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS` | `5000` | Shortest interval of an open tab's managed-list refresh, inlined at build time, so it only affects source builds and tests, not packaged artifacts |
 
 The `VAULT_*` variables that back `${vault:...}` references are listed under [Vault Environment Variables](#vault-environment-variables).
