@@ -10,6 +10,10 @@
  * token endpoint checks the PKCE S256 challenge, the redirect URI and the client secret the way the OAuth server does.
  * Shapes follow the cluster: the metadata keys of the API server's document, the token answer keys (`access_token`,
  * `expires_in` 31536000, `scope`, `token_type: Bearer`) and the users/~ answer with name, uid, groups and identities.
+ *
+ * The API server also answers SelfSubjectAccessReviews: a bearer it knows (`tokens`, the access token maps to the
+ * signed-in user by default) is allowed what one of `grants` names for its user or one of its groups, an unknown
+ * bearer gets 401, and the answer echoes the asked spec with its empty fields left out, as the API server writes it.
  */
 import { createHash, randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -29,6 +33,24 @@ export const METADATA_PATH = "/.well-known/oauth-authorization-server";
 export const USER_PATH = "/apis/user.openshift.io/v1/users/~";
 export const TOKEN_PATH = "/oauth/token";
 export const AUTHORIZE_PATH = "/oauth/authorize";
+export const SELF_REVIEW_PATH = "/apis/authorization.k8s.io/v1/selfsubjectaccessreviews";
+
+/** A rule the self review answers allowed for: a user or a group, and the exact resource attributes. */
+export interface SelfReviewGrant {
+  readonly user?: string;
+  readonly group?: string;
+  readonly verb: string;
+  readonly apiGroup: string;
+  readonly resource: string;
+  readonly namespace: string;
+  readonly name: string;
+}
+
+/** Who a bearer token is, for the self review. */
+export interface TokenIdentity {
+  readonly user: string;
+  readonly groups: readonly string[];
+}
 
 export interface RecordedRequest {
   readonly server: "api" | "oauth";
@@ -81,6 +103,10 @@ export class FakeCluster {
   user: FakeUser = { name: "dev-a", uid: "0b6f5c1e-4d2a-4c55-9e1f-7a3b2c1d0e9f", groups: ["system:authenticated"] };
   /** The token endpoint's success answer; `access_token` is also what users/~ accepts as a bearer. */
   tokenAnswer: Record<string, unknown> = {};
+  /** The bearer tokens the self review knows, and who each one is. */
+  tokens: Record<string, TokenIdentity> = {};
+  /** What a self review allows. */
+  grants: SelfReviewGrant[] = [];
   private readonly scripts = new Map<string, Script>();
   private readonly codes = new Map<string, IssuedCode>();
   private readonly saved = new Map<string, string | undefined>();
@@ -191,8 +217,15 @@ export class FakeCluster {
       scope: "user:info user:check-access",
       token_type: "Bearer",
     };
+    this.tokens = { [ACCESS_TOKEN]: { user: "dev-a", groups: ["system:authenticated"] } };
+    this.grants = [];
     this.setClientSecret(CLIENT_SECRET);
     writeFileSync(this.caFile, this.ca);
+  }
+
+  /** The self reviews the API server received. */
+  selfReviews(): RecordedRequest[] {
+    return this.requests.filter((request) => request.server === "api" && request.path === SELF_REVIEW_PATH);
   }
 
   async close(): Promise<void> {
@@ -213,6 +246,7 @@ export class FakeCluster {
     if (scripted !== undefined) return scripted;
     if (request.server === "api" && request.path === METADATA_PATH) return json(200, this.metadata());
     if (request.server === "api" && request.path === USER_PATH) return this.userAnswer(request);
+    if (request.server === "api" && request.path === SELF_REVIEW_PATH) return this.selfReviewAnswer(request);
     if (request.server === "oauth" && request.path === TOKEN_PATH) return this.tokenEndpoint(request);
     return json(404, { kind: "Status", status: "Failure", reason: "NotFound", code: 404 });
   }
@@ -227,6 +261,34 @@ export class FakeCluster {
       metadata: { name: this.user.name, uid: this.user.uid, resourceVersion: "4321" },
       identities: [`htpasswd:${this.user.name}`],
       groups: this.user.groups,
+    });
+  }
+
+  private selfReviewAnswer(request: RecordedRequest): ScriptedAnswer {
+    const bearer = /^Bearer (.+)$/.exec(request.headers.authorization ?? "")?.[1] ?? "";
+    const identity = Object.hasOwn(this.tokens, bearer) ? this.tokens[bearer] : undefined;
+    if (request.method !== "POST" || identity === undefined) {
+      return json(401, { kind: "Status", status: "Failure", reason: "Unauthorized", code: 401 });
+    }
+    const spec = (JSON.parse(request.body) as { spec?: { resourceAttributes?: Record<string, string> } }).spec ?? {};
+    const asked = spec.resourceAttributes ?? {};
+    const allowed = this.grants.some(
+      (grant) =>
+        (grant.user === identity.user || (grant.group !== undefined && identity.groups.includes(grant.group))) &&
+        grant.verb === asked.verb &&
+        grant.apiGroup === (asked.group ?? "") &&
+        grant.resource === asked.resource &&
+        grant.namespace === (asked.namespace ?? "") &&
+        grant.name === (asked.name ?? ""),
+    );
+    // The API server leaves the empty fields of the echoed attributes out.
+    const echoed = Object.fromEntries(Object.entries(asked).filter(([, value]) => value !== ""));
+    return json(201, {
+      kind: "SelfSubjectAccessReview",
+      apiVersion: "authorization.k8s.io/v1",
+      metadata: { creationTimestamp: null },
+      spec: { resourceAttributes: echoed },
+      status: allowed ? { allowed: true, reason: "RBAC: allowed by a test grant" } : { allowed: false },
     });
   }
 
