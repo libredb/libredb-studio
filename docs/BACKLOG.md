@@ -2562,7 +2562,7 @@ Found in the round-2 review of #1552, which introduced the first two edges; the 
 
 ### D244. A broken operator seed file makes the built-in sample connections fail as well
 
-`getSeedConnectionById` in `src/lib/seed/index.ts` finds one id by building the whole managed list, and `getManagedConnections` starts with `loadOperatorSources()`, which throws when an operator source fails.
+`visibleConnectionById` in `src/lib/governance/visible.ts` finds one id by building the whole seed listing, and `getSeedListing` in `src/lib/seed/index.ts` starts with `loadOperatorSources()`, which throws when an operator source fails.
 So a seed file that does not parse, does not validate or cannot be read makes every `seed:` id fail, including `seed:sqlite-embedded-sample` and `seed:libredb-embedded-sample`, which no operator source declares (`src/lib/seed/sqlite-sample.ts`, `src/lib/seed/libredb-sample.ts`).
 `resolveConnection` in `src/lib/seed/resolve-connection.ts` rethrows it, so `/api/db/provider-meta`, `/api/db/health`, `/api/db/query` and every other route that resolves a connection answer 500 for both samples and for every role, and a user's 404 for the admin-only SQLite sample becomes the same 500.
 Measured with the CI image of 715cca4 and an invalid `color` in the seed file: the sidebar showed "This connection could not be read" with the seed error while the active connection was Sample (Employees), and a bun probe on `main` reproduced it for an invalid and for an unreadable file.
