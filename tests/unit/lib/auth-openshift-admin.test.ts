@@ -189,7 +189,9 @@ describe("an admin session in openshift mode", () => {
     expect(await getSession()).toBeNull();
     expect(markerSets()).toEqual([{ op: "set", name: "access-review-retry", value: "loop" }]);
     expect(names("delete")).toEqual(["auth-token"]);
-    expect(info.mock.calls.some((call) => (call[1] as { loop?: boolean } | undefined)?.loop === true)).toBe(true);
+    expect(info.mock.calls.some((call: unknown[]) => (call[1] as { loop?: boolean } | undefined)?.loop === true)).toBe(
+      true,
+    );
   });
 
   test("a live record whose token the API answers 401 signs the session out on the next request and serves no cached admin", async () => {
