@@ -140,8 +140,9 @@ export type AgentVariantRequirement = "sql-catalog" | "sql-composers" | AgentPac
  * The engines each requirement holds on. `sql-catalog` and `sql-composers` are read from the engines' client dialects
  * (`enginesSupporting` in `languages/engines/client.ts`), which say client-safe what each server overlay supplies:
  * the engines that compose a catalog read, and those that compose both a catalog read and an estimating plan. A
- * statement workflow names the one its verdict needs, so a dialect with no estimating plan still opens every workflow
- * whose verdict cites none. A pack's requirement holds on the engines its pack names (`AGENT_PACK_REQUIREMENTS`).
+ * statement workflow names the one it cannot run without, so a dialect with no estimating plan still opens every
+ * workflow whose verdict cites none; the assessment verdict's table profile is deliberately not held (`client.ts`).
+ * A pack's requirement holds on the engines its pack names (`AGENT_PACK_REQUIREMENTS`).
  * `agent-manifest.test.ts` holds both SQL requirements to the composed-SQL entry points in `composed-sql.ts` and each
  * pack requirement to the providers that declare its reading.
  */

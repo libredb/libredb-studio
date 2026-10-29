@@ -196,7 +196,8 @@ describe("the SQL variants", () => {
     optimization verdict cites an estimating plan (a plan comparison, or an index recommendation resting on a plan), so
     only that workflow is held to an engine that estimates one. The other three are offered `inspect_plan` and
     `profile_table` too, and each of those refuses on its own with `UNSUPPORTED_DIALECT` where the dialect has no
-    composition, so neither holds the workflow out.
+    composition, so neither holds the workflow out. The assessment verdict needs a table profile as well, and that
+    need is deliberately not held, so assessment stays open on the engines with no profile composition.
   */
   test.each([
     ["investigation", ["sql-catalog"]],

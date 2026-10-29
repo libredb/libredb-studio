@@ -2904,10 +2904,11 @@ Every member an overlay cannot override stays keyed by the persisted family, so 
 **A pack never opens execution.** Whether agent mode executes on an engine is decided by `AGENT_EXECUTION_ENGINES` and the execution-profile check; a pack only says how a statement in its language is read, refused and narrated.
 
 **What a statement workflow requires of the dialect.**
-Each SQL statement workflow requires of an engine only the dialect members its verdict uses, as the `requires` of its variant in `languages/sql/client.ts`, read against `AGENT_REQUIREMENT_ENGINES` in `agent-manifest.ts`.
+Each SQL statement workflow requires of an engine only the dialect members it cannot run without, as the `requires` of its variant in `languages/sql/client.ts`, read against `AGENT_REQUIREMENT_ENGINES` in `agent-manifest.ts`.
 `sql-catalog` holds on the engines whose client dialect supplies `catalogRead`, and investigation, database assessment and data analysis require it.
 `sql-composers` holds on the engines that supply both `catalogRead` and `planEstimate`, and only query optimization requires it, because its verdict rests on a plan comparison or on an index recommendation that cites a plan.
 The other three are offered `inspect_plan` and `profile_table` as well, and on a dialect with no composition for either, that call alone refuses with `UNSUPPORTED_DIALECT`; a run that holds no plan for its answer never auto-executes it.
+The database assessment verdict also needs a table profile, which only `profile_table` records, and that need is deliberately not held, because holding it would close assessment on the engines with no profile composition (B111, B140, B143); on such an engine assessment opens and its verdict stays unmet.
 An engine in `AGENT_EXECUTION_ENGINES` must open at least one workflow that sends a statement, which `engine-pack-contract.test.ts` holds, so a SQL joiner supplies `catalogRead` at least.
 
 **How to add an engine to a statement-language family.**

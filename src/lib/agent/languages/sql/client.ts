@@ -29,11 +29,14 @@ function sqlReadsPosture(bounds: StatementBudgets): AgentPosture {
 }
 
 /*
-  What each statement workflow requires of an engine's dialect is what its verdict cites, not everything it offers.
+  What each statement workflow requires of an engine's dialect is what it cannot run without, not everything it offers.
   Only the optimization verdict rests on an estimating plan (a plan comparison, or an index recommendation citing a
   plan), so only that variant requires `sql-composers`. The other three require `sql-catalog`: the `inspect_plan` and
   `profile_table` they are offered too each refuse with `UNSUPPORTED_DIALECT` on a dialect that composes neither, and
   a run that cannot estimate a plan never auto-executes, because a missing plan reads as a risky one.
+  The assessment verdict also needs a table profile, which only `profile_table` records, and that need is deliberately
+  not held here: holding it would close assessment on the shipped engines with no profile composition (B111, B140,
+  B143), so on such an engine assessment opens and its verdict stays unmet.
 */
 export const SQL_CLIENT_PACK = Object.freeze({
   copy: Object.freeze({
