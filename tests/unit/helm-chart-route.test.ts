@@ -22,14 +22,24 @@
  *      constrained to HTTPRoute in the schema; `apiVersion` stays free
  *      because v1 and v1alpha2 are both legitimate for HTTPRoute.
  *
+ *   4. values.schema.json described `route` with only `labels` and
+ *      `annotations` under `properties` and every route name through
+ *      `additionalProperties`, so the default route `main` that values.yaml
+ *      ships had no `properties` entry. The OpenShift console builds its Helm
+ *      form field order from `properties` and refused to render the section:
+ *      "uiSchema order list does not contain property 'main'". Every key
+ *      values.yaml sets must have a `properties` entry wherever the schema
+ *      node also takes `additionalProperties`.
+ *
  * Exercises the real `helm template` output against the actual chart - no
  * reimplementation of the templating logic (same approach as
  * helm-chart-openshift.test.ts). This file is also the baseline coverage for
  * the feature #362 shipped, which had no tests at all.
  */
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseAllDocuments } from "yaml";
+import { parse, parseAllDocuments } from "yaml";
 import { howItFailed } from "../helpers/spawn-outcome";
 
 const CHART_DIR = join(import.meta.dir, "../../charts/libredb-studio");
@@ -295,5 +305,69 @@ describe("charts/libredb-studio multiple routes and httpsRedirect (#362)", () =>
       type: "RequestRedirect",
       requestRedirect: { scheme: "https", statusCode: 301 },
     });
+  });
+});
+
+interface SchemaNode {
+  properties?: Record<string, SchemaNode>;
+  additionalProperties?: boolean | SchemaNode;
+}
+
+function isMap(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Paths of values.yaml map keys the schema node at that path does not list under `properties`. */
+function keysWithoutSchemaProperty(values: unknown, schema: SchemaNode | undefined, path: string): string[] {
+  if (!isMap(values)) return [];
+  return Object.entries(values).flatMap(([key, child]) => {
+    const property = schema?.properties?.[key];
+    return property ? keysWithoutSchemaProperty(child, property, `${path}.${key}`) : [`${path}.${key}`];
+  });
+}
+
+/** Paths of values.yaml map keys covered only by an `additionalProperties` schema, which the console form cannot order. */
+function keysOnlyInAdditionalProperties(values: unknown, schema: SchemaNode | undefined, path: string): string[] {
+  if (!isMap(values)) return [];
+  return Object.entries(values).flatMap(([key, child]) => {
+    const keyPath = path ? `${path}.${key}` : key;
+    const property = schema?.properties?.[key];
+    if (property) return keysOnlyInAdditionalProperties(child, property, keyPath);
+    return schema?.additionalProperties === undefined || schema.additionalProperties === false ? [] : [keyPath];
+  });
+}
+
+describe("charts/libredb-studio route schema matches values.yaml (OpenShift console form view)", () => {
+  const values = parse(readFileSync(join(CHART_DIR, "values.yaml"), "utf8")) as Record<string, unknown>;
+  const schema = JSON.parse(readFileSync(join(CHART_DIR, "values.schema.json"), "utf8")) as SchemaNode;
+
+  test("every key values.yaml sets under route has a schema property", () => {
+    expect(keysWithoutSchemaProperty(values.route, schema.properties?.route, "route")).toEqual([]);
+  });
+
+  test("no values.yaml key anywhere is described only through additionalProperties", () => {
+    expect(keysOnlyInAdditionalProperties(values, schema, "")).toEqual([]);
+  });
+
+  test("route.main is described with the values.yaml default enabled: false", () => {
+    expect(schema.properties?.route?.properties?.main).toMatchObject({
+      properties: { enabled: { type: "boolean", default: false } },
+    });
+  });
+
+  // main is spelled out for the console form; it must accept exactly what any other route name accepts.
+  test("route.main takes the same fields as any other route name, differing only in its enabled default", () => {
+    const route = schema.properties?.route;
+    const perRoute = route?.additionalProperties as SchemaNode;
+    const main = route?.properties?.main as SchemaNode;
+    // Everything but the node's own description and the enabled field must match.
+    const comparable = (node: SchemaNode) => {
+      const copy = structuredClone(node) as SchemaNode & { description?: string };
+      delete copy.description;
+      delete copy.properties?.enabled;
+      return copy;
+    };
+    expect(comparable(main)).toEqual(comparable(perRoute));
+    expect(main.properties?.enabled).toEqual({ ...perRoute.properties?.enabled, default: false });
   });
 });
