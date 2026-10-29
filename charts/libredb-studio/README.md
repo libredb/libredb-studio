@@ -850,7 +850,7 @@ helm uninstall libredb
 | `config.oidcPrompt` | Prompt sent on sign-in (`OIDC_PROMPT`): `login`, `omit`, `consent` or `select_account`; empty writes nothing | `""` |
 | `config.oidcAutoRedirect` | `true` writes `OIDC_AUTO_REDIRECT=true`, sending a signed-out visitor of `/login` to the identity provider | `false` |
 | `config.oidcLogoutHint` | `true` writes `OIDC_LOGOUT_HINT=true`, sending `id_token_hint` on logout | `false` |
-| `config.sessionTtlSeconds` | Session lifetime in seconds, 300 to 86400 (`AUTH_SESSION_TTL_SECONDS`); unset keeps the app's 86400 | unset |
+| `config.sessionTtlSeconds` | Session lifetime in seconds, 300 to 86400 (`AUTH_SESSION_TTL_SECONDS`); unset keeps the app's 86400, or 28800 with `authProvider=openshift` | unset |
 | `governance.enabled` | Run Studio under governance (`GOVERNANCE_SOURCE=postgres`); see [Governance](#governance) | `false` |
 | `governance.postgresSchema` | Schema of the governance source (`GOVERNANCE_POSTGRES_SCHEMA`) | `bridge` |
 | `governance.instanceId` | Heartbeat instance id; empty uses the chart's fullname with one replica and each pod's name with more | `""` |
@@ -1016,11 +1016,15 @@ The session lasts the app's 28800 seconds in this mode unless `config.sessionTtl
 No `ADMIN_PASSWORD`, `USER_EMAIL`, `USER_PASSWORD` or `SEED_CACHE_TTL_MS` is written, so `seedConnections.cacheTTL` is ignored in this mode: the browser refreshes the connection list every 10 seconds instead.
 
 The render fails, naming the value, for every values set this mode cannot run: `openshiftRoute.enabled` off or `openshiftRoute.host` empty (the host must be fixed at install time), `serviceAccount.create=false`, `serviceAccount.name=default` or, with discovery on, the exporter's `<fullname>-discovery`, `serviceAccount.automountServiceAccountToken=true`, `replicaCount` above 1 or `autoscaling.enabled` (the users' tokens and the caches live in one process), `config.oidcRoleClaim`, `mcp.enabled`, `agent.enabled=true`, `accessReview.enabled`, `accessReview.cacheSeconds` or `accessReview.signIn` (use `openshift.signIn.*`), `secrets.adminPassword` or `secrets.userPassword`, `governance.enabled`, a `serviceAccount.annotations` entry registering another OAuth redirect, and an `extraVolumes` entry named `openshift-oauth` or an `extraVolumeMounts` entry at `/var/run/secrets/libredb/openshift`.
-Moving an install wired by hand to this mode: drop the hand-wired `extraVolumes`, `extraVolumeMounts`, the `OPENSHIFT_*` and `NEXT_PUBLIC_AUTH_PROVIDER` entries of `extraEnv`, and the two `serviceAccount.annotations`, in the same upgrade that sets `authProvider=openshift`.
+Moving an install wired by hand to this mode: drop the hand-wired `extraVolumes`, `extraVolumeMounts`, the `OPENSHIFT_*`, `KUBERNETES_ACCESS_REVIEW_ADMIN_*` and `NEXT_PUBLIC_AUTH_PROVIDER` entries of `extraEnv`, and the two `serviceAccount.annotations`, in the same upgrade that sets `authProvider=openshift`.
+In every mode, an `extraEnv` entry `NEXT_PUBLIC_AUTH_PROVIDER` that names another mode than `authProvider` fails the render, and so do `OPENSHIFT_OAUTH_CLIENT_ID` and `OPENSHIFT_OAUTH_TOKEN_FILE` outside this mode, because every guard and default of the mode keys on `authProvider`.
 
 With discovery on, each person lists only the discovered databases whose credential Secret they may `get`, and the chart writes `ALLOW_CUSTOM_CONNECTIONS=false` unless `config.allowCustomConnections` is set.
 Setting it to `true` is accepted, but a connection of a user's own then reaches any database the pod can reach, past the review of every discovered one, so weigh it as a network pivot.
-The NetworkPolicy renders by default in this mode with discovery on: its database-port rule allows only the discovered namespaces, and the release namespace while `postgresql.enabled` holds Studio's storage, while DNS (53, 5353), 443 and the API server (6443) stay open.
+The NetworkPolicy renders by default in this mode with discovery on: its database-port rule allows only the discovered namespaces, and the release namespace while `postgresql.enabled` holds Studio's storage, while DNS (53, 5353), 443 and the API server (6443) stay open to every destination.
+It also confines ingress, as every render of the policy does, to TCP `service.targetPort` from anywhere plus `networkPolicy.additionalIngress`, which the router and the chart's test pod use.
+Only the six database ports are confined: a policy matches after the Service rewrite, so a principal who may write EndpointSlices in a discovered namespace (the default `edit` role may not) could still point a Service at another address on 53, 5353, 443 or 6443.
+An upgrade with `--reuse-values` from chart 0.1.113 or earlier carries that release's `networkPolicy.enabled: false` and so opts out silently: upgrade with `--reset-then-reuse-values`, or set `networkPolicy.enabled=true`; the install notes warn when the policy is off in this mode.
 An external storage database or any other destination goes in `networkPolicy.additionalEgress`, and `networkPolicy.enabled=false` is the opt-out.
 On a cluster that serves `config.openshift.io/v1`, discovery with `authProvider=oidc` fails the render, because the review would ask the cluster about the identity provider's subject; use `openshift` or `local` there.
 
@@ -1030,7 +1034,7 @@ A team's own Studio runs without discovery, behind a `NamespaceDashboard` link.
 ### The console link
 
 `openshift.consoleLink.enabled` renders a cluster-scoped `console.openshift.io/v1` ConsoleLink to `https://<openshiftRoute.host><config.basePath>`, so installing it needs a cluster admin; it needs `console.openshift.io/v1` (or `apis=force`) and `openshiftRoute.host`, served by this release's Route (`openshiftRoute.enabled`) or by one of its `ingress.hosts`, so the link never points at a host anyone else could claim.
-Every authenticated user can read ConsoleLinks, so the chart ships no reader role and the link carries nothing but its address.
+Every authenticated user can read ConsoleLinks, so the chart ships no reader role and the link carries its address, its name and the chart's common labels (release name and version), never a discovered namespace.
 `ApplicationMenu` lists it in the console's application launcher under `openshift.consoleLink.section`, with `openshift.consoleLink.imageUrl` as its icon.
 With discovery on, that link is named `libredb-studio` and labelled `app.kubernetes.io/name: libredb-studio`, which locates the cluster's Studio; any other link is named `<namespace>.<fullname>` and carries no such label.
 `NamespaceDashboard` shows the link on the dashboard of `openshift.consoleLink.namespaces` or of the namespaces `openshift.consoleLink.namespaceSelector` selects, and fails the render with neither, or with discovery on.

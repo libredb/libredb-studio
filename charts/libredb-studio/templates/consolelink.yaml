@@ -2,8 +2,8 @@
 The Tier 0 link to Studio in the OpenShift web console, a console.openshift.io/v1 ConsoleLink to
 https://<openshiftRoute.host><config.basePath>, the address OPENSHIFT_PUBLIC_URL names. A
 ConsoleLink is cluster-scoped and every authenticated user can read it (the console grants get and
-list to system:authenticated), so it carries the link and nothing else, and the chart ships no
-reader role.
+list to system:authenticated), so it carries the link, its name and the chart's common labels,
+never a discovered namespace, and the chart ships no reader role.
 
 With discovery on, the ApplicationMenu link is the locator of the cluster's Studio: named
 libredb-studio and labelled app.kubernetes.io/name=libredb-studio, whatever nameOverride says, and

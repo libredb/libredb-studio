@@ -246,7 +246,7 @@
         },
         "sessionTtlSeconds": {
           "anyOf": [{ "type": "null" }, { "type": "string", "maxLength": 0 }, { "type": "integer", "minimum": 300, "maximum": 86400 }],
-          "description": "AUTH_SESSION_TTL_SECONDS: null (default) writes nothing and the app keeps 86400, otherwise whole seconds from 300 to 86400"
+          "description": "AUTH_SESSION_TTL_SECONDS: null (default) writes nothing and the app keeps 86400, or 28800 with authProvider=openshift, otherwise whole seconds from 300 to 86400"
         },
         "allowCustomConnections": {
           "type": ["boolean", "null"],

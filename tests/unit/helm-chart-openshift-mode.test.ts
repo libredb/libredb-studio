@@ -1408,6 +1408,10 @@ describe("the chart README documents openshift mode", () => {
     "operator.clusterStudioNamespace",
     "image.tag",
     "extraVolumes",
+    "KUBERNETES_ACCESS_REVIEW_ADMIN_*",
+    "NEXT_PUBLIC_AUTH_PROVIDER",
+    "--reset-then-reuse-values",
+    "networkPolicy.additionalIngress",
   ])("names %s", (needle) => {
     expect(section.length).toBeGreaterThan(0);
     expect(section).toContain(needle);
