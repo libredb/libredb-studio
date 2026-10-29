@@ -503,3 +503,43 @@ describe("the openshift sign-in environment", () => {
     );
   });
 });
+
+describe("discovery in openshift mode: the list refresh and custom connections", () => {
+  test("no SEED_CACHE_TTL_MS, so the app's 10-second list refresh applies, and custom connections default off", () => {
+    const docs = render([...OPENSHIFT, ...DISCOVERY]);
+    expect(envOf(docs)).not.toHaveProperty("SEED_CACHE_TTL_MS");
+    expect(envOf(docs).SEED_KUBERNETES_DISCOVERY_PATH).toBe("/var/run/libredb/kubernetes-discovery/export.json");
+    expect(configData(docs).ALLOW_CUSTOM_CONNECTIONS).toBe("false");
+  });
+
+  test("seedConnections.cacheTTL is ignored in this mode, with a seed file too", () => {
+    const docs = render([
+      ...OPENSHIFT,
+      ...set("seedConnections.enabled=true", "seedConnections.existingConfigMap=seeds", "seedConnections.cacheTTL=5000"),
+    ]);
+    expect(envOf(docs)).not.toHaveProperty("SEED_CACHE_TTL_MS");
+    expect(envOf(docs).SEED_CONFIG_PATH).toBe("/app/config/seed-connections.yaml");
+  });
+
+  test("an explicit config.allowCustomConnections is honoured, true included", () => {
+    expect(configData(render([...OPENSHIFT, ...DISCOVERY, ...set("config.allowCustomConnections=true")])).ALLOW_CUSTOM_CONNECTIONS).toBe(
+      "true",
+    );
+    expect(configData(render([...OPENSHIFT, ...DISCOVERY, ...set("config.allowCustomConnections=false")])).ALLOW_CUSTOM_CONNECTIONS).toBe(
+      "false",
+    );
+  });
+
+  test("openshift mode without discovery leaves custom connections to the app", () => {
+    expect(configData(render(OPENSHIFT))).not.toHaveProperty("ALLOW_CUSTOM_CONNECTIONS");
+  });
+
+  test.each([
+    ["local", set("authProvider=local")],
+    ["oidc", set("authProvider=oidc")],
+  ])("%s mode with discovery still writes SEED_CACHE_TTL_MS and leaves custom connections alone", (_, mode) => {
+    const docs = render([...mode, ...DISCOVERY, ...set(`fullnameOverride=${RELEASE}`, "seedConnections.cacheTTL=10000")]);
+    expect(envOf(docs).SEED_CACHE_TTL_MS).toBe("10000");
+    expect(configData(docs)).not.toHaveProperty("ALLOW_CUSTOM_CONNECTIONS");
+  });
+});

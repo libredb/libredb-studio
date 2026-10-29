@@ -349,8 +349,10 @@ spec:
             - name: SEED_CONFIG_PATH
               value: "/app/config/{{ .Values.seedConnections.configMapKey | default "seed-connections.yaml" }}"
             {{- end }}
-            {{- /* The managed list's cache also paces how soon the discovery export is read again. */}}
-            {{- if or .Values.seedConnections.enabled (include "libredb-studio.discoveryEnabled" .) }}
+            {{- /* The managed list's cache also paces how soon the discovery export is read again. Never in
+                   openshift mode: there the app tells the browser to refresh the list every 10 seconds while
+                   SEED_CACHE_TTL_MS is unset, so a RoleBinding change shows without waiting on this cache. */}}
+            {{- if and (or .Values.seedConnections.enabled (include "libredb-studio.discoveryEnabled" .)) (not (include "libredb-studio.openshiftSignIn" .)) }}
             - name: SEED_CACHE_TTL_MS
               value: {{ .Values.seedConnections.cacheTTL | default 60000 | quote }}
             {{- end }}

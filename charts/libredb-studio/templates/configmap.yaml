@@ -91,10 +91,14 @@ data:
   STORAGE_POSTGRES_SCHEMA: {{ . | quote }}
   {{- end }}
   {{- /* Three-state on the authCookieSecure rule: null and "" write nothing and the app keeps
-         custom connections on; false is the value that matters, so truthiness cannot test it. */}}
+         custom connections on; false is the value that matters, so truthiness cannot test it.
+         openshift mode with discovery on writes false while it is unset: a connection of a user's
+         own would reach any database the pod can, past the review of every discovered one. */}}
   {{- $customConnections := get .Values.config "allowCustomConnections" }}
   {{- if and (not (kindIs "invalid" $customConnections)) (ne (toString $customConnections) "") }}
   ALLOW_CUSTOM_CONNECTIONS: {{ $customConnections | toString | quote }}
+  {{- else if and (include "libredb-studio.openshiftSignIn" .) (include "libredb-studio.discoveryEnabled" .) }}
+  ALLOW_CUSTOM_CONNECTIONS: "false"
   {{- end }}
   {{- if get .Values.config "seedLiteralValues" }}
   SEED_LITERAL_VALUES: "true"
