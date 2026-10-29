@@ -9,7 +9,7 @@ import { runServerPack } from "@/lib/agent/languages/engines/server";
 import type { AgentEnginePack, AgentEngineServerDialect } from "@/lib/agent/languages/pack";
 import { REFERENCE_RECOMMENDATION_CARD } from "@/lib/agent/languages/server";
 import { type AgentToolName, agentToolDefinition } from "@/lib/agent/tools";
-import type { AgentRunWorkflowType } from "@/lib/agent/types";
+import { AGENT_WORKFLOW_SENDS_STATEMENTS, type AgentRunWorkflowType } from "@/lib/agent/types";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import type { DatabaseType } from "@/lib/types";
 import { toolsNamedIn } from "../../../helpers/agent-tool-rules";
@@ -157,6 +157,14 @@ test("the engines are every type with a statement language, and the execution en
   // A subset only. A type may speak a language and execute nothing; the two lists are not the same claim.
   for (const type of AGENT_EXECUTION_ENGINES) expect(ENGINES).toContain(type);
 });
+
+test.each([...AGENT_EXECUTION_ENGINES])(
+  "%s opens a workflow that sends a statement, so agent mode executing there is true",
+  (type) => {
+    const sending = openVariants(type).filter(({ workflow }) => AGENT_WORKFLOW_SENDS_STATEMENTS[workflow]);
+    expect(sending.length).toBeGreaterThan(0);
+  },
+);
 
 test("the unserved offers name only engines that speak a language", () => {
   for (const type of Object.keys(UNSERVED_OFFERS)) expect(ENGINES).toContain(type as DatabaseType);

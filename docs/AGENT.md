@@ -2850,6 +2850,10 @@ The core (`investigation.ts`, `tools.ts` and the modules beside them) names no s
 - **Shared:** the statement-language family's pack supplies it, and every engine of that family reads it as it is, unless the engine's overlay overrides it (below).
 - **Dialect-bound:** the five SQL members `catalogRead`, `planEstimate`, `profileComposition`, `statistics` and `catalogCapture`.
   Each SQL engine's overlay supplies each one or says `"unsupported"`, and the compiler refuses an overlay that leaves one out.
+  A `catalogRead` may also carry `mapRows`, a pure row mapper for an engine whose catalog statement answers under column names no SELECT can rename.
+  The catalog read applies it to the engine's answer before the run keeps it, so the model, the capture and the statistics reading read the mapped rows, and an engine without one keeps its answer as the engine gave it.
+  `engine-pack-contract.test.ts` holds every mapper pure: it never throws on an engine answer or writes into it, answers the same rows twice, keeps no row it was not given and keys every row by the columns it declares.
+  The composed statement still passes the agent statement fence, which admits only a read whose operative keyword is `SELECT`, `VALUES`, `TABLE` or `EXPLAIN` (`inspectAgentStatement` in `src/lib/db/operations/statement-guard.ts`), so a mapper renames the columns of a catalog the engine answers to a SELECT and does not admit a `SHOW`, `DESCRIBE` or `SYS` command.
 - **Optional:** the adapter's `inventoryProblem` and `planDraftIdentifiers`, which a pack with no such check leaves out.
 
 Some members are global by name, because a reader dispatches on the name before it reads a run's language: every pack's `baseDefinitions`, `shortfallNotices` and `evidenceTools` are merged into `LANGUAGE_BASE_DEFINITIONS`, `LANGUAGE_SHORTFALL_NOTICES` and `AGENT_EVIDENCE_TOOLS`, and every pack's `evidenceEvents` into `AGENT_EVIDENCE_EVENTS` by event kind; a name two packs both hold fails at load.
@@ -2898,6 +2902,13 @@ Every member an overlay cannot override stays keyed by the persisted family, so 
 `CURATED_CALL_LANGUAGE` is the language a curated call is fingerprinted and refused in, because its `operations:` or `objects:` key is no statement in any language.
 
 **A pack never opens execution.** Whether agent mode executes on an engine is decided by `AGENT_EXECUTION_ENGINES` and the execution-profile check; a pack only says how a statement in its language is read, refused and narrated.
+
+**What a statement workflow requires of the dialect.**
+Each SQL statement workflow requires of an engine only the dialect members its verdict uses, as the `requires` of its variant in `languages/sql/client.ts`, read against `AGENT_REQUIREMENT_ENGINES` in `agent-manifest.ts`.
+`sql-catalog` holds on the engines whose client dialect supplies `catalogRead`, and investigation, database assessment and data analysis require it.
+`sql-composers` holds on the engines that supply both `catalogRead` and `planEstimate`, and only query optimization requires it, because its verdict rests on a plan comparison or on an index recommendation that cites a plan.
+The other three are offered `inspect_plan` and `profile_table` as well, and on a dialect with no composition for either, that call alone refuses with `UNSUPPORTED_DIALECT`; a run that holds no plan for its answer never auto-executes it.
+An engine in `AGENT_EXECUTION_ENGINES` must open at least one workflow that sends a statement, which `engine-pack-contract.test.ts` holds, so a SQL joiner supplies `catalogRead` at least.
 
 **How to add an engine to a statement-language family.**
 
