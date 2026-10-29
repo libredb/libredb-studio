@@ -3389,14 +3389,22 @@ describe("LibSQLProvider agent read-only profile", () => {
   test("stops reading an answer past the wire cap and refuses it as over the byte budget", async () => {
     readOnlyToken();
     const provider = await opened();
-    // An answer that never ends: only the cap can stop the read, so a refusal at all proves the cap made it.
+    // An answer far past the cap that is not JSON: only the cap can turn it into a byte-budget refusal, and the stream
+    // ends on its own, so a read with no cap fails this test in moments rather than hanging on it.
     let cancelled = false;
+    let sent = 0;
+    const chunks = 64;
     const chunk = new TextEncoder().encode("x".repeat(64 * 1024));
     globalThis.fetch = (() =>
       Promise.resolve(
         new Response(
           new ReadableStream<Uint8Array>({
             pull(controller) {
+              if (sent === chunks) {
+                controller.close();
+                return;
+              }
+              sent++;
               controller.enqueue(chunk);
             },
             cancel() {
@@ -3414,6 +3422,7 @@ describe("LibSQLProvider agent read-only profile", () => {
     // Six bytes for the budget and the 1 MiB envelope, stopped at the 64 KiB chunk that crossed them.
     expect(Number(counted?.[1])).toBe(17 * 64 * 1024);
     expect(cancelled).toBe(true);
+    expect(sent).toBeLessThan(chunks);
     await provider.disconnect();
   });
 
