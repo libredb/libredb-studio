@@ -1,12 +1,13 @@
 /**
  * The access review's two decisions (src/lib/kubernetes-access/gate.ts), against a fake API server.
  *
- * The gate is handed only the connections the seed listing sets apart for it, each carrying the reserved role the role
- * filter never selects and naming its Kubernetes Secret, so the review is their only gate: one is kept only when the
- * review allows the session's subject, in the groups the store recorded for it, to `get` that Secret, for admins and
- * users alike. The groups come from the store alone; a session without a subject, an issuer or a record is denied
- * without a request. A connection without the Secret marker, and every connection while the review is off, is denied
- * without a request. The admin role is a fresh review of `update` on Studio's Deployment at sign-in.
+ * The gate is handed the connections the seed listing sets apart for it, each carrying the reserved role the role
+ * filter never selects and naming its Kubernetes Secret, and, while the review is on, any other row that names one, so
+ * the review is their only gate: one is kept only when the review allows the session's subject, in the groups the store
+ * recorded for it, to `get` that Secret, for admins and users alike. The groups come from the store alone; a session
+ * without a subject, an issuer or a record is denied without a request. A connection without the Secret marker, and
+ * every connection while the review is off, is denied without a request. The admin role is a fresh review of `update`
+ * on Studio's Deployment at sign-in.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { type FakeKubernetesApi, startFakeKubernetesApi } from "../../../helpers/kubernetes-access/fake-api";

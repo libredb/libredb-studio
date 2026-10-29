@@ -7,8 +7,9 @@
  * (`pendingReview` of src/lib/seed/index.ts) carrying KUBERNETES_REVIEWED_ROLE, which the role filter refuses whatever
  * the caller holds, so this gate is the only way one is listed or opened, for admins and users alike. The review's
  * `user` is the signed session's identity provider subject and its `groups` the groups store's record of that subject
- * (groups.ts); a session without a subject, an issuer or a record is denied without a request. The gate is handed only
- * those connections, so it denies, without a request, a connection without `kubernetesSecret` (a defect: a projection
+ * (groups.ts); a session without a subject, an issuer or a record is denied without a request. The dispatcher
+ * (src/lib/governance/visible.ts) hands the gate those connections and, while the review is on, any other row that
+ * names a Secret, so it denies, without a request, a connection without `kubernetesSecret` (a defect: a projection
  * lost the marker) and every connection while the review is off (the listing sets none apart then, and lists them to
  * the admin role only through the role filter, the rule platform discovery uses). Both functions return the very
  * connection objects they were handed, never a copy, because the dispatcher keeps the rows they allow by identity.

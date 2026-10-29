@@ -99,15 +99,15 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   },
   getKubernetesDiscoveredConnections: {
     "src/lib/seed/index.ts":
-      "getSeedListing, the export's only reader: with the review on every row is set apart under the reserved role, with it off listed under admin through the role filter",
+      "getSeedListing, the only reader of the discovered connections themselves: with the review on every one is set apart in pendingReview under the reserved role, with it off listed in before under admin through the role filter; getKubernetesDiscoveryStatus reads only their names, types and namespaces",
   },
   parseKubernetesDiscoveryExport: {
     "src/lib/seed/kubernetes-discovery-loader.ts":
-      "the Kubernetes discovery source parses the export file it reads, and what it maps from it leaves only through getKubernetesDiscoveredConnections",
+      "the Kubernetes discovery source parses the export file it reads, and what it parses leaves only through getKubernetesDiscoveredConnections and, as names, types and namespaces, getKubernetesDiscoveryStatus",
   },
   mapKubernetesDatabase: {
     "src/lib/seed/kubernetes-discovery-loader.ts":
-      "the Kubernetes discovery source maps each parsed database to a connection, which leaves only through getKubernetesDiscoveredConnections",
+      "the Kubernetes discovery source maps each parsed database to a connection, which leaves only through getKubernetesDiscoveredConnections and, as its name and type, getKubernetesDiscoveryStatus",
   },
   visibleConnections: {
     "src/app/api/connections/managed/route.ts":
@@ -141,10 +141,11 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   },
   connectionsUnderAccessReview: {
     "src/lib/governance/visible.ts":
-      "the dispatcher's list: it hands the review exactly the rows getSeedListing set apart",
+      "the dispatcher's list: it hands the review the rows getSeedListing set apart in pendingReview and, while the review is on, any other row that names a Kubernetes Secret, and keeps a row only where the review returns that very object",
   },
   connectionUnderAccessReview: {
-    "src/lib/governance/visible.ts": "the dispatcher's open: it hands the review only the set-apart row the id names",
+    "src/lib/governance/visible.ts":
+      "the dispatcher's open: it hands the review only the row the id names, when getSeedListing set it apart or, while the review is on, it names a Kubernetes Secret",
   },
   accessReviewSignInRole: {
     "src/app/api/auth/oidc/callback/route.ts":
