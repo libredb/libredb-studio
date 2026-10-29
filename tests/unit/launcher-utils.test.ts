@@ -674,6 +674,13 @@ describe("resolvePathVariables", () => {
     expect(PATH_VARIABLES).toContain("SEED_KUBERNETES_DISCOVERY_PATH");
   });
 
+  test("resolves the two files openshift sign-in reads, which the server reads", () => {
+    const env = { OPENSHIFT_OAUTH_TOKEN_FILE: "oauth-client-token", OPENSHIFT_API_CA_FILE: "ca.crt" };
+    const resolved = resolvePathVariables(env, cwd);
+    expect(resolved.OPENSHIFT_OAUTH_TOKEN_FILE).toBe(path.join(cwd, "oauth-client-token"));
+    expect(resolved.OPENSHIFT_API_CA_FILE).toBe(path.join(cwd, "ca.crt"));
+  });
+
   test("never resolves a URL path, even a relative-looking one", () => {
     const env = { BASE_PATH: "tools/libredb", NEXT_PUBLIC_MONACO_VS_PATH: "monaco/vs", SEED_CONFIG_PATH: "s.yaml" };
     const resolved = resolvePathVariables(env, cwd);
