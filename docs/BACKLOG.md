@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D405, U17 · 295
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U151 · 137
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U154 · 140
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -6003,6 +6003,29 @@ Seen 2026-10-29 on OpenSearch 3.8.0 in a browser pass, signed in with a user hol
 Elasticsearch grounds plan mode through the same object surface, so it likely shows the same; that was reasoned from the code, not measured.
 
 **Done when:** a refused plan-mode catalog read shows a sentence in the rail that names the read that was refused and, where the engine's refusal says so, the privilege it lacked, with the code kept beside it; the sentence comes from the shared refusal path, not a type-id branch; and a component test pins the rail text for a `CATALOG_READ_REFUSED` run.
+
+### U152. A refused agent principal shows no remedy in the rail, and the sentence is wrong for a database-wide refusal
+
+When the execution profile refuses the run's principal, the agent rail shows one generic sentence (`src/components/agent/timeline.ts`): the credential "holds privileges the read-only boundary cannot contain".
+The engine's refusal carries the statements that lift it, on Oracle for example `REVOKE EXECUTE ON "APP_OWNER"."BV_FN" FROM "LIBREDB_AGENT_BV"`, but they reach only the server log, so the user cannot act on the rail.
+On Oracle a refusal can also name a row-level security or fine-grained auditing policy anywhere in the database, where the user holds nothing extra, and there the sentence is false.
+Seen 2026-10-29 on Oracle 26ai Free in a browser pass, for a granted function and for a row-level policy.
+
+**Done when:** the rail shows the refusal's own remedies (statements or policy names) beside its code, from the shared refusal path rather than a type-id branch, the generic sentence no longer claims the credential holds privileges when the refusal is about the database, and a component test pins both texts.
+
+### U153. A statement Studio refuses before sending shows the bare code `INPUT_VALIDATION_FAILED` in the agent rail
+
+An agent statement the provider refuses before it is sent, such as Oracle's `SELECT ... FOR UPDATE`, appears in the rail as `INPUT_VALIDATION_FAILED` with no sentence saying what was refused or why.
+Seen 2026-10-29 on Oracle 26ai Free in a browser pass.
+
+**Done when:** the rail shows the refusal's sentence with the code beside it, and a component test pins it.
+
+### U154. A plan-mode run shows a statement count although it executed nothing
+
+A plan-mode run on an Oracle owner connection showed "1/42 stmt" in the rail while its own copy says it executed nothing; the count appears to be the schema capture's reads, not a statement of the model's.
+Seen 2026-10-29 on Oracle 26ai Free in a browser pass; not checked on other engines.
+
+**Done when:** the plan-mode rail counts only statements of the model's, or labels the capture's reads as reads, and a component test pins the plan-mode count.
 
 ## Dependencies
 
