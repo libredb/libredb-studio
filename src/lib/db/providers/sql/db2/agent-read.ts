@@ -44,7 +44,8 @@
  * 4. They may read no table object that is not IBM's and is a nickname, which reads another server, or a view that is
  *    not valid (a SELECT revalidates it and runs what it calls now), or a view whose dependencies (`SYSCAT.TABDEP`)
  *    hold anything but a table, a function that is IBM's and admitted by item 3, a variable that is IBM's, a view
- *    that is IBM's or one this check also examines, or an alias of a table object this check examines.
+ *    that is IBM's or one this check also examines, or an alias of a table object this check examines. A view that
+ *    calls a routine of an IBM module depends on the module itself, so it is refused whatever the routine reads.
  * 5. `SYSCAT.CONTROLS` lists no row permission or column mask anywhere in the database that is not IBM's: Db2 evaluates
  *    it for any reader of the table it guards, a reader through a view included, and it can call a secured function
  *    with its owner's authority (measured). A fresh database holds five, IBM's own masks on its catalog tables.

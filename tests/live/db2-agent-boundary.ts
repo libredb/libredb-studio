@@ -19,7 +19,8 @@
  *    schema; a module of the owner's; a package of the owner's; READ on a variable of the owner's; USAGE on a sequence;
  *    INSERT on a table; CREATEIN on a schema; CREATETAB and IMPLICIT_SCHEMA on the database, to PUBLIC; DBADM; a view
  *    that calls a function of the owner's; EXECUTE on IBM's UTL_FILE and DBMS_PIPE modules and on its AUDIT_ARCHIVE
- *    table function, each acting outside the call by its own catalog row; a view calling IBM's DBMS_RANDOM.VALUE; a
+ *    table function, each acting outside the call by its own catalog row; a view calling IBM's DBMS_RANDOM.VALUE,
+ *    refused by its module; a view over IBM's AUDIT_ARCHIVE table function, refused by the function's own row; a
  *    view over a view it may not read; a view over an alias of a table it may not read; a view left inoperative; a column mask anywhere in the database; SETSESSIONUSER; a role with its ADMIN
  *    OPTION; a trusted context naming the user as its system authorization ID, on the address the server sees this
  *    script at, whose default role a raw connection of the user is first shown to hold, and the same context
@@ -165,6 +166,7 @@ async function refusedUntilLifted(
 
 const CLEANUP = [
   "DROP VIEW APP.LIBREDB_AB_RANDOM",
+  "DROP VIEW APP.LIBREDB_AB_AUDIT",
   "DROP VIEW APP.LIBREDB_AB_LISTED",
   "DROP VIEW APP.LIBREDB_AB_OUTER",
   "DROP VIEW APP.LIBREDB_AB_INNER",
@@ -587,6 +589,16 @@ try {
     ],
     ["REVOKE SELECT ON APP.LIBREDB_AB_RANDOM FROM USER AGENT_RO"],
     'REVOKE SELECT ON TABLE "APP"."LIBREDB_AB_RANDOM"',
+  );
+  await refusedUntilLifted(
+    provider,
+    "a view over IBM's AUDIT_ARCHIVE table function, an external action not on the measured list",
+    [
+      "CREATE VIEW APP.LIBREDB_AB_AUDIT AS SELECT * FROM TABLE (SYSPROC.AUDIT_ARCHIVE(NULL, -2)) AS T",
+      "GRANT SELECT ON APP.LIBREDB_AB_AUDIT TO USER AGENT_RO",
+    ],
+    ["REVOKE SELECT ON APP.LIBREDB_AB_AUDIT FROM USER AGENT_RO"],
+    'REVOKE SELECT ON TABLE "APP"."LIBREDB_AB_AUDIT"',
   );
   await setup([
     "CREATE VIEW APP.LIBREDB_AB_LISTED AS SELECT VARCHAR(SYSPROC.GET_INDEX_COLNAMES('APP', 'ORDERS'), 40) AS C " +
