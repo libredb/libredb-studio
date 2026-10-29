@@ -8187,16 +8187,17 @@ Found 2026-10-29 with agent execution on InfluxDB 3.
 
 **Done when:** the InfluxDB 3 overlay gains a profile composition bounded in time and measured on the engine, or its SQL variants stop offering `profile_table` through a requirement, and a DataFusion explain strategy with an `agentReading` verified against the engine's plans exists, with tests for both; cited in `docs/AGENT.md`.
 
-### B144. Elasticsearch runs no statement workflow but operations, because its dialect composes nothing
+### B144. Elasticsearch composes no estimating plan, profile, statistics reading or grounding capture
 
-Elasticsearch implements the agent read-only statement path, yet no agent workflow there sends a statement: its engine overlay (`src/lib/agent/languages/sql/engines/elasticsearch.ts`) declares all five dialect members `"unsupported"`: the catalog read, the estimating plan, the profile composition, the statistics reading and the grounding capture.
-The engine's SQL reads its catalog through `SHOW`, `DESCRIBE` and `SYS` commands, whose columns no statement can rename into the rows a catalog read composes, and its `EXPLAIN` answers the engine's own plan text, which no explain strategy reads (`supportsExplain: false`).
-So the `sql-composers` requirement holds the investigation, query-optimization, database-assessment and data-analysis workflows out on Elasticsearch, and an agent-mode run there opens only the operations workflow; plan mode drafts there and grounds under the operations profile.
+Elasticsearch's engine overlay (`src/lib/agent/languages/sql/engines/elasticsearch.ts`) supplies the catalog read alone: the column kind is the `SYS COLUMNS` command, declared a command and mapped into column rows, and the relation, index and statistics kinds are refused, since the engine keeps no foreign key, no index object apart from the table and no row estimate.
+The other four dialect members are `"unsupported"`: the estimating plan, the profile composition, the statistics reading and the grounding capture.
+The engine's `EXPLAIN` answers its own plan text, which no explain strategy reads (`supportsExplain: false`), and a table profile would be an aggregate over a whole index, never measured.
+So investigation, database assessment and data analysis open on Elasticsearch, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT` and an answer is never auto-executed; the `sql-composers` requirement holds query optimization out; plan mode drafts there and grounds under the operations profile.
 Kept so that the engine joined on the members measured on it, and nothing composed from another engine's rule.
 
 Found 2026-10-29 with agent execution on Elasticsearch.
 
-**Done when:** the Elasticsearch overlay gains a catalog read and an estimating plan measured on the engine (a `SELECT` over a catalog source it answers, or a reading of `SYS COLUMNS` the core accepts), and an explain strategy with an `agentReading` verified against its plans, so the statement workflows open there, with tests for both; cited in `docs/AGENT.md`.
+**Done when:** the Elasticsearch overlay gains an estimating plan measured on the engine and an explain strategy with an `agentReading` verified against its plans, so query optimization opens there, and a profile composition measured on it, or a recorded decision that it keeps none, with tests for each; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

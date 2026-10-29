@@ -886,21 +886,26 @@ The agent reads it through `runServerPack` and `agentEnginePack`, and the dialec
 
 | Member | Kind | Value |
 | --- | --- | --- |
-| `catalogRead` | Dialect-bound | `"unsupported"` |
+| `catalogRead` | Dialect-bound | Supplied |
 | `planEstimate` | Dialect-bound | `"unsupported"` |
 | `profileComposition` | Dialect-bound | `"unsupported"` |
 | `statistics` | Dialect-bound | `"unsupported"` |
 | `catalogCapture` | Dialect-bound | `"unsupported"` |
 
 This overlay overrides no Shared member, so every Shared member is the `sql` statement-language family's own.
-Every member is unsupported, each for a measured reason: the engine reads its catalog through `SHOW`, `DESCRIBE` and `SYS` commands, whose columns no statement can rename into the rows a catalog read composes, and it keeps no foreign key, no secondary index object and no row estimate; its `EXPLAIN` answers the engine's own plan text, which no explain strategy reads ([§3.10](#310-no-explain-even-though-elasticsearch-answers-one)).
-So the `sql-composers` requirement holds the investigation, query-optimization, database-assessment and data-analysis workflows out here, and an agent-mode run opens only the operations workflow; plan mode drafts here as on every engine ([B144](../BACKLOG.md)).
+The engine reads its catalog only through `SHOW`, `DESCRIBE` and `SYS` commands, never through a SELECT, so the catalog read is declared a command (`commandShaped`): the statement fence admits it only as exactly the statement the overlay composed, on the catalog read alone, and the same text written by the model is refused.
+The column kind composes `SYS COLUMNS`, or `SYS COLUMNS "<table>"` for one table, the name double-quoted with its double quotes doubled; a name the engine reads as an index expression rather than one name (a `*`, a `,`, `<...>` date math, a `:` remote cluster, a leading `-`, `+` or `_`) is refused, each widening measured on 9.1.4, and so is a schema, which Elasticsearch SQL does not have.
+A pure mapper (`mapRows`) turns the engine's JDBC-shaped answer into `table_name`, `column_name`, `data_type` (the engine's own type name, such as `KEYWORD`), `is_nullable` and `ordinal_position`, one row per engine row; the captures it is tested against are `tests/fixtures/elasticsearch/9.1.4/catalog-read/`, written by `tests/live/elasticsearch-catalog-captures.ts`.
+The relation, index and statistics kinds are refused with `SELECTOR_UNSUPPORTED_BY_DIALECT`: the engine keeps no foreign key, no index object apart from the table itself, and no row estimate a catalog command reads.
+The other members are unsupported, each for a measured reason: its `EXPLAIN` answers the engine's own plan text, which no explain strategy reads ([§3.10](#310-no-explain-even-though-elasticsearch-answers-one)), and a table profile would be an aggregate over a whole index, never measured.
+So investigation, database assessment and data analysis open here and send their statements through `queryReadOnly`, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`; the `sql-composers` requirement holds query optimization out; plan mode drafts here as on every engine ([B144](../BACKLOG.md)).
+The provider path has no statement fence of its own, and the query-only endpoint answers the composed command as it answers a SELECT; the least-privilege role above reads it, and its answer holds only the tables the role reads (a data stream's backing index included).
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
 MCP's statement read stays closed on Elasticsearch (`MCP_STATEMENT_READ.elasticsearch` is false) until a change of its own opens it.
 
 #### Boundary record
 
-`bun tests/live/elasticsearch-agent-boundary.ts`, run on 2026-10-29 against single 9.1.4 nodes seeded per [§11.4](#114-optional-reproducing-the-live-pass), passes 48 checks with security off and 54 with security on, through the production path (`createDatabaseProvider` with the profile's execution context, `connect`, `queryReadOnly`) and with no admission of Studio's in front:
+`bun tests/live/elasticsearch-agent-boundary.ts`, run on 2026-10-29 against single 9.1.4 nodes seeded per [§11.4](#114-optional-reproducing-the-live-pass), passes 51 checks with security off and 58 with security on, through the production path (`createDatabaseProvider` with the profile's execution context, `connect`, `queryReadOnly`) and with no admission of Studio's in front:
 
 - the agent profile reads the node's version (9.1.4) and opens it, the operations profile opens it too, and an editor handle's `queryReadOnly` refuses with nothing sent;
 - 15 write and DDL texts (INSERT, UPDATE, DELETE, CREATE TABLE and INDEX, DROP, ALTER, TRUNCATE, MERGE, `SELECT ... INTO`, a write behind `EXPLAIN`, `DEBUG` and `WITH`, a second statement) are each sent by `queryReadOnly` and refused by the grammar in its own words, and sent raw each answer 400 `parsing_exception`;
@@ -908,7 +913,8 @@ MCP's statement read stays closed on Elasticsearch (`MCP_STATEMENT_READ.elastics
 - the positive control: a document written through the document API, a route the provider does not send to, into a scratch index the agent then reads (security off) and the script deletes;
 - a plain read and an aggregation past the row budget (`101 rows > 100 allowed`), a read past the byte budget and a statement past a 1 ms deadline are each refused, never truncated, and after each refusal the node holds no open search context;
 - the estimate-plan mode is refused, and a count, an answer of exactly the row budget (1,500 rows) and an aggregation within the budget each answer whole;
-- with security on, the script creates the `libredb_agent_read` role and an agent user holding it alone: without `cluster:monitor/main` the open cannot read the version and refuses the agent profile; with that action added, the user still reads no cluster health (403), its document write is refused 403, an index outside its role answers "Unknown index", and every check above holds signed in as it.
+- the agent's catalog read: the composed `SYS COLUMNS`, for every table and for `probe_orders`, answers through `queryReadOnly` and maps into column rows, and the cluster reads back the same afterwards;
+- with security on, the script creates the `libredb_agent_read` role and an agent user holding it alone: without `cluster:monitor/main` the open cannot read the version and refuses the agent profile; with that action added, the user still reads no cluster health (403), its document write is refused 403, an index outside its role answers "Unknown index" and is absent from its catalog read, and every check above holds signed in as it.
 
 ## 6. Schema introspection
 
@@ -1847,8 +1853,9 @@ because the provider exposes no `cancelQuery` ([§3.8](#38-the-deadline-is-the-c
   The column stays listed in the schema tree so the view reflects the index mapping faithfully.
   Measured: Elasticsearch SQL refuses `flattened` with "Cannot use field [blob] with unsupported type [flattened]", so introspection marks it as unprojectable.
   Generate Query omits it from the SELECT list so the starter statement runs (#1459).
-- **Agent mode opens only the operations workflow here.** The engine's overlay composes no catalog read
-  and no estimating plan, so the four statement workflows are held out ([§5.9](#59-the-agent-read-only-profile-rests-on-the-grammar), B144).
+- **Agent mode opens no query optimization here.** The engine's overlay composes its column catalog
+  alone and no estimating plan, so query optimization is held out and `inspect_plan` and `profile_table`
+  refuse in the workflows that open ([§5.9](#59-the-agent-read-only-profile-rests-on-the-grammar), B144).
 - **The whole result body is buffered** before it is parsed
   ([§3.1](#31-http-only--no-driver-and-what-that-costs)).
 
