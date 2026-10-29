@@ -1,5 +1,6 @@
-{{- if .Values.networkPolicy.enabled }}
+{{- if include "libredb-studio.networkPolicyEnabled" . }}
 {{- $onOpenShift := include "libredb-studio.openshiftApiServed" (dict "ctx" $ "api" "security.openshift.io/v1") }}
+{{- $openshiftSignIn := include "libredb-studio.openshiftSignIn" . }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -27,7 +28,7 @@ spec:
           protocol: UDP
         - port: 53
           protocol: TCP
-        {{- if $onOpenShift }}
+        {{- if or $onOpenShift $openshiftSignIn }}
         # OpenShift's dns-default Service listens on 53 and forwards to the CoreDNS pods on 5353;
         # a policy is matched after that rewrite, so 53 alone leaves resolution failing there.
         - port: 5353
@@ -39,7 +40,7 @@ spec:
     - ports:
         - port: 443
           protocol: TCP
-    {{- if or (include "libredb-studio.accessReviewEnabled" .) $onOpenShift }}
+    {{- if or (include "libredb-studio.accessReviewEnabled" .) $onOpenShift $openshiftSignIn }}
     # kube-proxy rewrites https://kubernetes.default.svc to the API server's endpoint port,
     # 6443 on RKE2, k3s, kubeadm and OpenShift. A policy is matched after that rewrite, so 443
     # alone leaves the access review failing closed, and on OpenShift sign-in, self reviews and
@@ -63,6 +64,22 @@ spec:
           protocol: TCP
         - port: 6379
           protocol: TCP
+      {{- /* openshift sign-in with discovery: only the discovered namespaces, and the release
+             namespace while the bundled PostgreSQL holds Studio's storage, so even a forged
+             Service in a discovered namespace cannot point Studio elsewhere. Any other database
+             Studio needs, such as an external storage database, goes in additionalEgress. */}}
+      {{- if and $openshiftSignIn (include "libredb-studio.discoveryEnabled" .) }}
+      {{- $namespaces := .Values.discovery.kubernetes.namespaces }}
+      {{- if .Values.postgresql.enabled }}
+      {{- $namespaces = append $namespaces .Release.Namespace }}
+      {{- end }}
+      to:
+        {{- range $namespace := $namespaces | uniq }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $namespace | quote }}
+        {{- end }}
+      {{- end }}
     {{- with .Values.networkPolicy.additionalEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}

@@ -129,7 +129,10 @@ secrets:
 # Config — non-sensitive values stored in a ConfigMap
 # =============================================================================
 
-# -- Authentication provider: "local" or "oidc"
+# -- Authentication provider: "local", "oidc" or "openshift". "openshift" signs people in with
+# their OpenShift account through the cluster's OAuth server, with Studio's ServiceAccount as the
+# OAuth client (see "OpenShift sign-in" in README.md): it needs openshiftRoute.enabled with a
+# fixed openshiftRoute.host, one replica, and an application image after 1.1.0.
 authProvider: "local"
 
 config:
@@ -250,6 +253,8 @@ config:
   # them on. false switches them off: the server refuses a connection a request supplies and
   # the editor lists seed connections only. Switch it off where Studio shares a network with
   # services its users must not reach. A YAML boolean, not a string. Governance refuses true.
+  # In openshift sign-in mode with Kubernetes discovery on, null writes false: a connection of
+  # a user's own reaches whatever the pod can, past the review of every discovered database.
   # See docs/SEED_CONNECTIONS.md (Custom Connections).
   allowCustomConnections: null
   # -- SEED_LITERAL_VALUES: false (the default) writes nothing; true writes
@@ -655,10 +660,52 @@ openshift:
     # -- app.openshift.io/runtime on the same objects, the Topology node icon,
     # e.g. "nodejs". Empty renders no label.
     runtime: ""
+  # openshift sign-in (authProvider: openshift). Nothing here renders in another mode.
+  signIn:
+    # -- Lifetime in seconds, from 600 to 86400, of the projected ServiceAccount token
+    # Studio sends to the OAuth server as its client secret (audience
+    # libredb-studio-oauth-client, never the API server's). The kubelet renews it.
+    tokenExpirationSeconds: 600
+    # -- KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS, how long Studio keeps the answer of a
+    # self review, whole seconds from 0 to 60. null (the default) writes nothing and the
+    # app keeps 15 in this mode.
+    reviewCacheSeconds: null
+    # -- KUBERNETES_ACCESS_REVIEW_SIGN_IN, a review a person must also pass to sign in, as
+    # oc auth can-i takes it: <verb> <resource>[.<group>][/<name>] [-n <namespace>]. Empty
+    # (the default) writes nothing and every account the OAuth server signs in may sign in.
+    review: ""
+  # The Tier 0 link to Studio in the OpenShift web console, a console.openshift.io/v1
+  # ConsoleLink to https://<openshiftRoute.host><config.basePath>. Cluster-scoped, so
+  # installing it needs a cluster admin. Needs console.openshift.io/v1 (or
+  # global.compatibility.openshift.apis=force) and openshiftRoute.host. Every
+  # authenticated user can read ConsoleLinks, so it carries the link and nothing else.
+  consoleLink:
+    # -- Render the ConsoleLink.
+    enabled: false
+    # -- ApplicationMenu (the console's application launcher) or NamespaceDashboard (the
+    # dashboard of the namespaces below). With discovery on, the ApplicationMenu link is
+    # the one named libredb-studio, which locates the cluster's Studio, and a
+    # NamespaceDashboard link fails the render.
+    location: ApplicationMenu
+    # -- The ApplicationMenu section the link is listed under.
+    section: "LibreDB"
+    # -- The link's text.
+    text: "LibreDB Studio"
+    # -- The ApplicationMenu icon, 24 by 24, as an https URL or a data:image URI. Empty
+    # renders none.
+    imageUrl: ""
+    # -- NamespaceDashboard only: the namespaces whose dashboard shows the link.
+    namespaces: []
+    # -- NamespaceDashboard only: a label selector for those namespaces, used beside or
+    # instead of the list. The render fails when both are empty.
+    namespaceSelector: {}
 
 networkPolicy:
-  # -- Enable NetworkPolicy
-  enabled: false
+  # -- Render the NetworkPolicy. null (the default) renders it only in openshift sign-in mode
+  # with Kubernetes discovery on, where it confines database egress to the discovered
+  # namespaces, and nowhere else; false never renders it (the opt-out in that mode); true
+  # always does.
+  enabled: null
   # -- Additional ingress rules
   additionalIngress: []
   # -- Additional egress rules
@@ -797,7 +844,8 @@ seedConnections:
   existingSecret: ""
   # -- Key within the ConfigMap or Secret containing the YAML config
   configMapKey: "seed-connections.yaml"
-  # -- Cache TTL in milliseconds for config reloading
+  # -- Cache TTL in milliseconds for config reloading (SEED_CACHE_TTL_MS). Ignored in openshift
+  # sign-in mode, which writes no SEED_CACHE_TTL_MS.
   cacheTTL: 60000
 
 # =============================================================================
@@ -875,7 +923,8 @@ discovery:
   # <fullname>-discovery there, so the namespaces must exist) and get and update on
   # the export Secret by name, creates the export Secret <fullname>-discovery-export
   # with no data, mounts it read-only into Studio's pod and writes
-  # SEED_KUBERNETES_DISCOVERY_PATH and SEED_CACHE_TTL_MS (seedConnections.cacheTTL).
+  # SEED_KUBERNETES_DISCOVERY_PATH and SEED_CACHE_TTL_MS (seedConnections.cacheTTL; not in
+  # openshift sign-in mode, where the browser refreshes the list every 10 seconds).
   # Without the access review the discovered databases are listed for admins only.
   # The render fails with no namespace, with governance.enabled, with more than one
   # replica or autoscaling, or with an extraEnv entry named SEED_KUBERNETES_DISCOVERY*.
@@ -900,3 +949,21 @@ discovery:
     maxAgeMs: null
     # -- Resources of the exporter container.
     resources: {}
+    # -- SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN, the cluster's DNS domain every
+    # discovered host ends in, such as cluster.local, when the kubelets run with another
+    # --cluster-domain. null (the default) writes nothing and the app keeps cluster.local.
+    clusterDomain: null
+
+# =============================================================================
+# OLM operator (operator/watches.yaml sets these; a Helm install leaves them)
+# =============================================================================
+operator:
+  # -- Set by the operator for every LibreDBStudio it reconciles. With it set, the chart
+  # renders a cross-namespace or cluster-scoped object (a discovered namespace other than
+  # the release namespace, the ConsoleLink) only for the release in
+  # operator.clusterStudioNamespace, and fails the render otherwise.
+  managed: false
+  # -- The namespace of the one LibreDBStudio a cluster admin allows cross-namespace and
+  # cluster-scoped objects for, from LIBREDB_CLUSTER_STUDIO_NAMESPACE in the operator's
+  # Subscription. Empty allows none.
+  clusterStudioNamespace: ""

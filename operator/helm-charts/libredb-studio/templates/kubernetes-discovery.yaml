@@ -12,6 +12,12 @@ mounts it read-only (deployment.yaml). The guards live in _helpers.tpl.
 {{- $name := include "libredb-studio.discoveryName" . }}
 {{- $roleName := include "libredb-studio.discoveryRoleName" . }}
 {{- $export := include "libredb-studio.discoveryExportSecret" . }}
+{{- /* O14: under operator.managed, a Role in another namespace only for the cluster Studio. */}}
+{{- range $namespace := $kube.namespaces }}
+{{- if ne $namespace $.Release.Namespace }}
+{{- include "libredb-studio.clusterStudioNamespaceGuard" (dict "ctx" $ "what" (printf "discovery.kubernetes.namespaces names %s, outside the release namespace" $namespace)) }}
+{{- end }}
+{{- end }}
 apiVersion: v1
 kind: ServiceAccount
 metadata:

@@ -1,0 +1,70 @@
+{{- /*
+The Tier 0 link to Studio in the OpenShift web console, a console.openshift.io/v1 ConsoleLink to
+https://<openshiftRoute.host><config.basePath>, the address OPENSHIFT_PUBLIC_URL names. A
+ConsoleLink is cluster-scoped and every authenticated user can read it (the console grants get and
+list to system:authenticated), so it carries the link and nothing else, and the chart ships no
+reader role.
+
+With discovery on, the ApplicationMenu link is the locator of the cluster's Studio: named
+libredb-studio and labelled app.kubernetes.io/name=libredb-studio, whatever nameOverride says, and
+a NamespaceDashboard link fails the render, so a team's link never takes its place. Any other link
+is named <namespace>.<fullname>, joined with a dot, which a namespace never holds, and carries no
+app.kubernetes.io/name, so two releases never collide and neither passes for the locator.
+*/}}
+{{- $link := dig "consoleLink" dict (.Values.openshift | default dict) }}
+{{- if get $link "enabled" }}
+{{- if not (include "libredb-studio.openshiftApiServed" (dict "ctx" $ "api" "console.openshift.io/v1")) }}
+{{- fail "openshift.consoleLink.enabled is true but this cluster does not serve console.openshift.io/v1: install on OpenShift, or set global.compatibility.openshift.apis=force to render the ConsoleLink without API detection (GitOps, offline helm template)" }}
+{{- end }}
+{{- include "libredb-studio.clusterStudioNamespaceGuard" (dict "ctx" $ "what" "openshift.consoleLink.enabled renders a cluster-scoped ConsoleLink") }}
+{{- $host := get (.Values.openshiftRoute | default dict) "host" }}
+{{- if not $host }}
+{{- fail "openshift.consoleLink.enabled requires openshiftRoute.host: the link points at https://<openshiftRoute.host><config.basePath>, so set the host the Route serves" }}
+{{- end }}
+{{- $location := get $link "location" | default "ApplicationMenu" }}
+{{- $discovery := include "libredb-studio.discoveryEnabled" . }}
+{{- $namespaces := get $link "namespaces" | default list }}
+{{- $selector := get $link "namespaceSelector" | default dict }}
+{{- if eq $location "NamespaceDashboard" }}
+{{- if $discovery }}
+{{- fail "openshift.consoleLink.location=NamespaceDashboard refuses discovery.kubernetes.enabled: with discovery on, the link is the ApplicationMenu locator of the cluster's Studio, so set openshift.consoleLink.location=ApplicationMenu; a team's Studio without discovery takes a NamespaceDashboard link" }}
+{{- end }}
+{{- if and (not $namespaces) (not $selector) }}
+{{- fail "openshift.consoleLink.location=NamespaceDashboard requires openshift.consoleLink.namespaces or openshift.consoleLink.namespaceSelector: with neither, the link would show in every namespace's dashboard" }}
+{{- end }}
+{{- end }}
+{{- $locator := and (eq $discovery "true") (eq $location "ApplicationMenu") }}
+{{- $labels := include "libredb-studio.labels" . | fromYaml }}
+{{- if $locator }}
+{{- $_ := set $labels "app.kubernetes.io/name" "libredb-studio" }}
+{{- else }}
+{{- $_ := unset $labels "app.kubernetes.io/name" }}
+{{- end }}
+apiVersion: console.openshift.io/v1
+kind: ConsoleLink
+metadata:
+  name: {{ ternary "libredb-studio" (printf "%s.%s" .Release.Namespace (include "libredb-studio.fullname" .)) $locator }}
+  labels:
+    {{- toYaml $labels | nindent 4 }}
+spec:
+  href: {{ printf "https://%s%s" $host (.Values.config.basePath | default "") | quote }}
+  text: {{ get $link "text" | default "LibreDB Studio" | quote }}
+  location: {{ $location }}
+  {{- if eq $location "ApplicationMenu" }}
+  applicationMenu:
+    section: {{ get $link "section" | default "LibreDB" | quote }}
+    {{- with get $link "imageUrl" }}
+    imageURL: {{ . | quote }}
+    {{- end }}
+  {{- else }}
+  namespaceDashboard:
+    {{- with $namespaces }}
+    namespaces:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with $selector }}
+    namespaceSelector:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+  {{- end }}
+{{- end }}

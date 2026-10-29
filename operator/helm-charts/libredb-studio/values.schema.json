@@ -75,8 +75,8 @@
     },
     "authProvider": {
       "type": "string",
-      "enum": ["local", "oidc"],
-      "description": "Authentication provider"
+      "enum": ["local", "oidc", "openshift"],
+      "description": "Authentication provider; openshift needs openshiftRoute.enabled with openshiftRoute.host, one replica and an application image after 1.1.0"
     },
     "secrets": {
       "type": "object",
@@ -700,6 +700,64 @@
               "description": "app.openshift.io/runtime label (Topology icon) on every Deployment and pod template; empty renders none"
             }
           }
+        },
+        "signIn": {
+          "type": "object",
+          "description": "openshift sign-in (authProvider=openshift); nothing here renders in another mode",
+          "additionalProperties": false,
+          "properties": {
+            "tokenExpirationSeconds": {
+              "type": "integer",
+              "minimum": 600,
+              "maximum": 86400,
+              "default": 600,
+              "description": "Lifetime of the projected token, audience libredb-studio-oauth-client, that Studio sends to the OAuth server as its client secret"
+            },
+            "reviewCacheSeconds": {
+              "anyOf": [{ "type": "null" }, { "type": "string", "maxLength": 0 }, { "type": "integer", "minimum": 0, "maximum": 60 }],
+              "description": "KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS: null (default) writes nothing and the app keeps 15 in this mode, otherwise whole seconds from 0 to 60"
+            },
+            "review": {
+              "type": "string",
+              "default": "",
+              "pattern": "^\\s*$|^\\s*([a-z]+|\\*)\\s+[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)?(/[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)?(\\s+-n\\s+[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)?\\s*$",
+              "description": "KUBERNETES_ACCESS_REVIEW_SIGN_IN, a review a person must also pass to sign in, as oc auth can-i takes it: <verb> <resource>[.<group>][/<name>] [-n <namespace>]. Empty (default) writes nothing"
+            }
+          }
+        },
+        "consoleLink": {
+          "type": "object",
+          "description": "The console.openshift.io/v1 ConsoleLink to https://<openshiftRoute.host><config.basePath>; needs console.openshift.io/v1 or global.compatibility.openshift.apis=force",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean", "default": false, "description": "Render the ConsoleLink" },
+            "location": {
+              "type": "string",
+              "enum": ["ApplicationMenu", "NamespaceDashboard"],
+              "default": "ApplicationMenu",
+              "description": "ApplicationMenu (the application launcher) or NamespaceDashboard (the dashboard of the namespaces named below)"
+            },
+            "section": { "type": "string", "minLength": 1, "default": "LibreDB", "description": "The ApplicationMenu section the link is listed under" },
+            "text": { "type": "string", "minLength": 1, "default": "LibreDB Studio", "description": "The link's text" },
+            "imageUrl": {
+              "type": "string",
+              "default": "",
+              "pattern": "^$|^https://\\S+$|^data:image/\\S+$",
+              "description": "The ApplicationMenu icon, 24 by 24, as an https URL or a data:image URI; empty renders none"
+            },
+            "namespaces": {
+              "type": "array",
+              "uniqueItems": true,
+              "default": [],
+              "items": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" },
+              "description": "NamespaceDashboard only: the namespaces whose dashboard shows the link"
+            },
+            "namespaceSelector": {
+              "type": "object",
+              "default": {},
+              "description": "NamespaceDashboard only: a label selector (matchLabels, matchExpressions) for those namespaces"
+            }
+          }
         }
       }
     },
@@ -813,8 +871,8 @@
       "type": "object",
       "properties": {
         "enabled": {
-          "type": "boolean",
-          "description": "Enable NetworkPolicy"
+          "type": ["boolean", "null"],
+          "description": "Render the NetworkPolicy: null (default) renders it only in openshift sign-in mode with Kubernetes discovery on, false never, true always"
         },
         "additionalIngress": {
           "type": "array",
@@ -1035,8 +1093,39 @@
               "anyOf": [{ "type": "null" }, { "type": "string", "maxLength": 0 }, { "type": "integer", "minimum": 1 }],
               "description": "SEED_KUBERNETES_DISCOVERY_MAX_AGE_MS: null (default) writes nothing and the app keeps 180000"
             },
-            "resources": { "type": "object", "default": {}, "description": "Resources of the exporter container" }
+            "resources": { "type": "object", "default": {}, "description": "Resources of the exporter container" },
+            "clusterDomain": {
+              "anyOf": [
+                { "type": "null" },
+                { "type": "string", "maxLength": 0 },
+                {
+                  "type": "string",
+                  "maxLength": 253,
+                  "pattern": "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$",
+                  "not": { "pattern": "^svc(\\.|$)" }
+                }
+              ],
+              "description": "SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN, the cluster's DNS domain, such as cluster.local; its first label may not be svc. null (default) writes nothing and the app keeps cluster.local"
+            }
           }
+        }
+      }
+    },
+    "operator": {
+      "type": "object",
+      "description": "Set by the OLM operator (operator/watches.yaml); a Helm install leaves both defaults",
+      "additionalProperties": false,
+      "properties": {
+        "managed": {
+          "type": "boolean",
+          "default": false,
+          "description": "Set by the operator: cross-namespace and cluster-scoped objects then render only for the release in operator.clusterStudioNamespace"
+        },
+        "clusterStudioNamespace": {
+          "type": "string",
+          "default": "",
+          "pattern": "^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)?$",
+          "description": "The namespace of the one LibreDBStudio allowed cross-namespace and cluster-scoped objects (LIBREDB_CLUSTER_STUDIO_NAMESPACE); empty allows none"
         }
       }
     }

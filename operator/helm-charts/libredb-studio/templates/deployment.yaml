@@ -1,4 +1,10 @@
 {{- /*
+The openshift-mode guards come first, so a values set that mode refuses names the openshift reason
+rather than one of the general guards below.
+*/}}
+{{- include "libredb-studio.openshiftModeGuards" . }}
+{{- include "libredb-studio.discoveryOnOpenShiftGuard" . }}
+{{- /*
 Zero-config bootstrap generates JWT_SECRET per pod on its own data volume, so
 two replicas would sign sessions with different keys (intermittent 401s behind
 the Service). Refuse the combination instead of shipping it broken.
@@ -221,9 +227,10 @@ spec:
                   key: {{ .Values.secrets.existingSecretKeys.adminEmail }}
                   optional: true
             {{- end }}
-            {{- /* Never under governance or the access review, whose boot checks refuse ADMIN_PASSWORD and
-                   USER_PASSWORD: the guards refuse the inline values, and an existingSecret is not read for them. */}}
-            {{- $passwordsOff := or (include "libredb-studio.governanceEnabled" .) (include "libredb-studio.accessReviewEnabled" .) }}
+            {{- /* Never under governance, the access review or openshift sign-in, whose boot checks refuse
+                   ADMIN_PASSWORD and USER_PASSWORD: the guards refuse the inline values, and an existingSecret is
+                   not read for them. */}}
+            {{- $passwordsOff := or (include "libredb-studio.governanceEnabled" .) (include "libredb-studio.accessReviewEnabled" .) (include "libredb-studio.openshiftSignIn" .) }}
             {{- if and (or .Values.secrets.adminPassword .Values.secrets.existingSecret) (not $passwordsOff) }}
             - name: ADMIN_PASSWORD
               valueFrom:
@@ -347,8 +354,10 @@ spec:
             - name: SEED_CONFIG_PATH
               value: "/app/config/{{ .Values.seedConnections.configMapKey | default "seed-connections.yaml" }}"
             {{- end }}
-            {{- /* The managed list's cache also paces how soon the discovery export is read again. */}}
-            {{- if or .Values.seedConnections.enabled (include "libredb-studio.discoveryEnabled" .) }}
+            {{- /* The managed list's cache also paces how soon the discovery export is read again. Never in
+                   openshift mode: there the app tells the browser to refresh the list every 10 seconds while
+                   SEED_CACHE_TTL_MS is unset, so a RoleBinding change shows without waiting on this cache. */}}
+            {{- if and (or .Values.seedConnections.enabled (include "libredb-studio.discoveryEnabled" .)) (not (include "libredb-studio.openshiftSignIn" .)) }}
             - name: SEED_CACHE_TTL_MS
               value: {{ .Values.seedConnections.cacheTTL | default 60000 | quote }}
             {{- end }}
@@ -360,6 +369,12 @@ spec:
             {{- if and (not (kindIs "invalid" $maxAge)) (ne (toString $maxAge) "") }}
             - name: SEED_KUBERNETES_DISCOVERY_MAX_AGE_MS
               value: {{ $maxAge | int64 | toString | quote }}
+            {{- end }}
+            {{- /* Studio maps the export to rows, so the cluster domain is read here, not by the exporter. */}}
+            {{- $clusterDomain := get .Values.discovery.kubernetes "clusterDomain" }}
+            {{- if and (not (kindIs "invalid" $clusterDomain)) (ne (toString $clusterDomain) "") }}
+            - name: SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN
+              value: {{ $clusterDomain | quote }}
             {{- end }}
             {{- end }}
             {{- /* The Kubernetes access review: its switch, Studio's own Deployment as the admin review's
@@ -449,6 +464,41 @@ spec:
             - name: NODE_EXTRA_CA_CERTS
               value: /etc/libredb-studio/trusted-ca/ca-bundle.crt
             {{- end }}
+            {{- /* openshift sign-in (src/lib/openshift-auth/config.ts): the ServiceAccount client, the Route's
+                   public URL, the client token and CA mounted below, and the self review's admin target
+                   (src/lib/kubernetes-access/config.ts): Studio's Deployment for a Helm install, the
+                   LibreDBStudio resource, which the operator names after the release, under the operator. No
+                   OPENSHIFT_API_URL (the app keeps https://kubernetes.default.svc), no AUTH_SESSION_TTL_SECONDS
+                   unless config.sessionTtlSeconds is set, and no review cache unless
+                   openshift.signIn.reviewCacheSeconds is: the app's defaults for this mode stand. Written before
+                   extraEnv, so an extraEnv entry of the same name still wins. */}}
+            {{- if include "libredb-studio.openshiftSignIn" . }}
+            {{- $signIn := dig "signIn" dict (.Values.openshift | default dict) }}
+            - name: OPENSHIFT_OAUTH_CLIENT_ID
+              value: {{ include "libredb-studio.openshiftClientId" . | quote }}
+            - name: OPENSHIFT_PUBLIC_URL
+              value: {{ printf "https://%s%s" (get (.Values.openshiftRoute | default dict) "host") (.Values.config.basePath | default "") | quote }}
+            - name: OPENSHIFT_OAUTH_TOKEN_FILE
+              value: "{{ include "libredb-studio.openshiftSignInDir" . }}/oauth-client-token"
+            - name: OPENSHIFT_API_CA_FILE
+              value: "{{ include "libredb-studio.openshiftSignInDir" . }}/ca.crt"
+            {{- if include "libredb-studio.operatorManaged" . }}
+            - name: KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO
+              value: {{ printf "%s/%s" .Release.Namespace .Release.Name | quote }}
+            {{- else }}
+            - name: KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT
+              value: {{ printf "%s/%s" .Release.Namespace (include "libredb-studio.fullname" .) | quote }}
+            {{- end }}
+            {{- $cache := get $signIn "reviewCacheSeconds" }}
+            {{- if and (not (kindIs "invalid" $cache)) (ne (toString $cache) "") }}
+            - name: KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS
+              value: {{ $cache | int64 | toString | quote }}
+            {{- end }}
+            {{- with get $signIn "review" }}
+            - name: KUBERNETES_ACCESS_REVIEW_SIGN_IN
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -501,6 +551,11 @@ spec:
             {{- if include "libredb-studio.trustedCABundleEnabled" . }}
             - name: trusted-ca
               mountPath: /etc/libredb-studio/trusted-ca
+              readOnly: true
+            {{- end }}
+            {{- if include "libredb-studio.openshiftSignIn" . }}
+            - name: openshift-oauth
+              mountPath: {{ include "libredb-studio.openshiftSignInDir" . }}
               readOnly: true
             {{- end }}
             {{- with .Values.extraVolumeMounts }}
@@ -583,6 +638,23 @@ spec:
         - name: trusted-ca
           configMap:
             name: {{ include "libredb-studio.fullname" . }}-trusted-ca
+        {{- end }}
+        {{- /* openshift mode: Studio's OAuth client secret, a short-lived token of its ServiceAccount
+               with an audience of its own, so it is no use at the API server, and the cluster's CA,
+               which also signs the OAuth route's certificate; the kubelet renews the token. */}}
+        {{- if include "libredb-studio.openshiftSignIn" . }}
+        - name: openshift-oauth
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: {{ include "libredb-studio.openshiftOAuthAudience" . }}
+                  expirationSeconds: {{ dig "signIn" "tokenExpirationSeconds" 600 (.Values.openshift | default dict) | int64 }}
+                  path: oauth-client-token
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
         {{- end }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}

@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.113 \
+  --version 0.1.114 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -291,7 +291,8 @@ Switching `accessReview.enabled` on for an install that already signs people in 
 `discovery.kubernetes.enabled` runs the exporter as a Deployment `<fullname>-discovery` of one replica, from Studio's image and with a ServiceAccount of its own.
 It gets `list` on each kind it discovers (`clusters.postgresql.cnpg.io` for `cnpg`, `clusters.postgresql.k8s.enterprisedb.io` for `edbpg`, `postgresclusters.postgres-operator.crunchydata.com` for `pgo`, `mongodbcommunity.mongodbcommunity.mongodb.com` for `mongo`) and `get` on Secrets and Services in each namespace of `discovery.kubernetes.namespaces`, through a Role and RoleBinding `<namespace>.<fullname>-discovery` there, named by the release namespace so two releases may discover one namespace, so those namespaces must exist first, and `get` and `update` on the export Secret by name; no rule lists or watches Secrets or Services.
 The chart creates that Secret, `<fullname>-discovery-export`, with no data, so an upgrade keeps what the exporter wrote, and Studio mounts it read-only for `SEED_KUBERNETES_DISCOVERY_PATH`.
-`discovery.kubernetes.intervalMs` (30000), `discovery.kubernetes.kinds` (`cnpg` alone when empty; `edbpg`, `pgo` and `mongo` are opted in, each needing its CRD on the cluster), `discovery.kubernetes.maxAgeMs` and `discovery.kubernetes.resources` tune it, and `seedConnections.cacheTTL` is written as `SEED_CACHE_TTL_MS` with discovery on.
+`discovery.kubernetes.intervalMs` (30000), `discovery.kubernetes.kinds` (`cnpg` alone when empty; `edbpg`, `pgo` and `mongo` are opted in, each needing its CRD on the cluster), `discovery.kubernetes.maxAgeMs` and `discovery.kubernetes.resources` tune it, and `seedConnections.cacheTTL` is written as `SEED_CACHE_TTL_MS` with discovery on, outside openshift sign-in mode.
+`discovery.kubernetes.clusterDomain` writes `SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN` for a cluster whose kubelets run with a domain other than `cluster.local`.
 Without the access review, the discovered databases are listed for admins only.
 The render fails with no namespace, with `governance.enabled`, and with an `extraEnv` entry named `SEED_KUBERNETES_DISCOVERY*`.
 
@@ -830,7 +831,7 @@ helm uninstall libredb
 | `image.repository` | Container image | `ghcr.io/libredb/libredb-studio` |
 | `image.tag` | Image tag | `""` (Chart appVersion) |
 | `image.pullPolicy` | Pull policy | `IfNotPresent` |
-| `authProvider` | Auth mode: local or oidc | `local` |
+| `authProvider` | Auth mode: `local`, `oidc` or `openshift` ([OpenShift sign-in](#openshift-sign-in)) | `local` |
 | `config.authBootstrap` | Auth bootstrap: `""` (zero-config, app default), `on` (explicit zero-config), `off` (strict) | `""` |
 | `config.authCookieSecure` | Whether auth cookies carry the `Secure` flag (`AUTH_COOKIE_SECURE`). Unset writes nothing and the app decides (Secure in production, except a loopback host reached over plain http); `false` drops the flag, which is what a browser reaching a non-loopback host over plain http needs - it rejects a Secure cookie and login silently loops; `true` forces it on. TLS terminated at an ingress does not need this | unset |
 | `config.passkeyOrigin` | The public origin people open Studio at, written to `PASSKEY_ORIGIN` when set: scheme, host and port, no path (so no `config.basePath`), such as `https://studio.example.com`. Passkeys also need `config.storageProvider` `sqlite` or `postgres` and `authProvider` `local`; browsers offer them only over https or on `http://localhost`, and the app validates the value. Changing the host means users register their passkeys again. Needs an application image that includes passkey sign-in (#785): appVersion 0.17.0 does not read it. Guide: [`docs/PASSKEYS.md`](https://github.com/libredb/libredb-studio/blob/main/docs/PASSKEYS.md) | `""` |
@@ -898,7 +899,7 @@ helm uninstall libredb
 | `podDisruptionBudget.enabled` | Enable PDB | `false` |
 | `podDisruptionBudget.minAvailable` | Min available pods (set only one of minAvailable/maxUnavailable) | `1` |
 | `podDisruptionBudget.maxUnavailable` | Max unavailable pods (unset minAvailable with `null` to use) | unset |
-| `networkPolicy.enabled` | Enable NetworkPolicy; on OpenShift it also allows egress on UDP and TCP 5353 (DNS) and TCP 6443 (API server) | `false` |
+| `networkPolicy.enabled` | Render the NetworkPolicy: `true` always, `false` never, unset only in openshift sign-in mode with discovery on, where it confines database egress to the discovered namespaces. On OpenShift, and in openshift mode, it also allows egress on UDP and TCP 5353 (DNS) and TCP 6443 (API server) | unset |
 | `serviceAccount.create` | Create a ServiceAccount for the pod; `false` runs it as `serviceAccount.name`, or the namespace's `default` account when that is empty | `true` |
 | `serviceAccount.automountServiceAccountToken` | Mount an API token into the pod. Set on the pod spec as well as on the created ServiceAccount, so it also holds for an account the chart does not create; only `true` mounts one. Studio reads the token only for Vault Kubernetes auth (`VAULT_ROLE`) | `false` |
 | `postgresql.enabled` | Deploy PostgreSQL subchart | `false` |
@@ -919,6 +920,19 @@ helm uninstall libredb
 | `openshift.trustedCABundle.enabled` | Mount the cluster's injected trusted CA bundle and set `NODE_EXTRA_CA_CERTS`; needs `config.openshift.io/v1` or `apis=force`, and refuses an `extraEnv` `NODE_EXTRA_CA_CERTS` | `false` |
 | `openshift.topology.partOf` | `app.kubernetes.io/part-of` on every Deployment and pod template; empty renders none | `""` |
 | `openshift.topology.runtime` | `app.openshift.io/runtime` on every Deployment and pod template; empty renders none | `""` |
+| `openshift.signIn.tokenExpirationSeconds` | openshift mode: lifetime of the projected token, audience `libredb-studio-oauth-client`, Studio sends to the OAuth server as its client secret, 600 to 86400 | `600` |
+| `openshift.signIn.reviewCacheSeconds` | openshift mode: `KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS`, 0 to 60; unset keeps the app's 15 | unset |
+| `openshift.signIn.review` | openshift mode: `KUBERNETES_ACCESS_REVIEW_SIGN_IN`, a review a person must also pass to sign in, as `oc auth can-i` takes it; empty writes nothing | `""` |
+| `openshift.consoleLink.enabled` | Render a `console.openshift.io/v1` ConsoleLink to `https://<openshiftRoute.host><config.basePath>`; needs `console.openshift.io/v1` or `apis=force`, `openshiftRoute.host` and a cluster admin | `false` |
+| `openshift.consoleLink.location` | `ApplicationMenu` or `NamespaceDashboard` | `ApplicationMenu` |
+| `openshift.consoleLink.section` | The `ApplicationMenu` section | `LibreDB` |
+| `openshift.consoleLink.text` | The link's text | `LibreDB Studio` |
+| `openshift.consoleLink.imageUrl` | The `ApplicationMenu` icon, an https URL or a `data:image/` URI; empty renders none | `""` |
+| `openshift.consoleLink.namespaces` | `NamespaceDashboard`: the namespaces whose dashboard shows the link | `[]` |
+| `openshift.consoleLink.namespaceSelector` | `NamespaceDashboard`: a label selector for those namespaces | `{}` |
+| `discovery.kubernetes.clusterDomain` | `SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN`, the cluster's DNS domain every discovered host ends in; unset keeps `cluster.local` | unset |
+| `operator.managed` | Set by the OLM operator only: cross-namespace and cluster-scoped objects then render only for the release in `operator.clusterStudioNamespace` | `false` |
+| `operator.clusterStudioNamespace` | Set by the OLM operator only, from `LIBREDB_CLUSTER_STUDIO_NAMESPACE` in its Subscription; empty allows no cross-namespace or cluster-scoped object | `""` |
 
 See [values.yaml](values.yaml) for the complete list of configurable parameters.
 
@@ -948,7 +962,7 @@ A typical OpenShift install, with the Route, the cluster's trusted CA bundle and
 
 ```bash
 helm install studio libredb/libredb-studio \
-  --version 0.1.113 \
+  --version 0.1.114 \
   --set openshiftRoute.enabled=true \
   --set openshift.trustedCABundle.enabled=true \
   --set openshift.topology.partOf=libredb \
@@ -964,8 +978,65 @@ The symptom of a cut is a JSON parse error in the query UI after about 30 second
 
 The Route and the trusted CA bundle each check that their OpenShift API is served, and the render fails otherwise, naming the value to change; the Topology labels render on any cluster.
 
-With `networkPolicy.enabled` on OpenShift the policy also allows egress on UDP and TCP 5353, where the `dns-default` Service forwards DNS to the CoreDNS pods, and on TCP 6443, where `kubernetes.default.svc` lands on the API server.
+With `networkPolicy.enabled` on OpenShift, and in openshift sign-in mode wherever it renders, the policy also allows egress on UDP and TCP 5353, where the `dns-default` Service forwards DNS to the CoreDNS pods, and on TCP 6443, where `kubernetes.default.svc` lands on the API server.
 An existing OpenShift install with the policy on gains these two egress ports on the upgrade to 0.1.110 without setting any new value.
+
+### OpenShift sign-in
+
+`authProvider=openshift` signs people in with their OpenShift account through the cluster's OAuth server, with Studio's ServiceAccount as the OAuth client, and reviews every database and admin request with the signed-in user's own token.
+It needs an application image after 1.1.0: release 1.1.0 and earlier have no openshift sign-in, so the render fails while the effective `image.tag` (`appVersion` when unset) is a version at or below 1.1.0, and accepts a tag that is not a version, such as `latest` or a branch tag.
+A typical install, with discovery of two namespaces:
+
+```yaml
+authProvider: openshift
+image:
+  tag: "1.2.0"                     # a release after 1.1.0; drop it once appVersion is past 1.1.0
+openshiftRoute:
+  enabled: true
+  host: studio-data.apps.example.com
+discovery:
+  kubernetes:
+    enabled: true
+    namespaces: [team-a, team-b]
+    kinds: [cnpg, pgo]
+openshift:
+  consoleLink:
+    enabled: true                  # a link in the console's application menu
+```
+
+```bash
+helm install studio libredb/libredb-studio --version 0.1.114 --namespace data -f openshift-values.yaml
+```
+
+The chart annotates the ServiceAccount with `serviceaccounts.openshift.io/oauth-redirectreference.first`, naming the Route, and `serviceaccounts.openshift.io/oauth-redirecturi.first`, the callback path under `config.basePath`, so the OAuth server accepts that one callback.
+It mounts a projected token of that account with the audience `libredb-studio-oauth-client`, never the API server's, for `openshift.signIn.tokenExpirationSeconds` (600), and the cluster's CA from the `kube-root-ca.crt` ConfigMap, read-only at `/var/run/secrets/libredb/openshift`; the pod's own API token mount stays off.
+It writes `OPENSHIFT_OAUTH_CLIENT_ID` (`system:serviceaccount:<namespace>:<account>`), `OPENSHIFT_PUBLIC_URL` (`https://<openshiftRoute.host><config.basePath>`), `OPENSHIFT_OAUTH_TOKEN_FILE` and `OPENSHIFT_API_CA_FILE`, all before `extraEnv`, so an `extraEnv` entry of the same name wins.
+A Studio admin is whoever may `update` Studio's Deployment, or, under the OLM operator, the `LibreDBStudio` resource.
+The session lasts the app's 28800 seconds in this mode unless `config.sessionTtlSeconds` is set, and the review cache the app's 15 seconds unless `openshift.signIn.reviewCacheSeconds` is.
+No `ADMIN_PASSWORD`, `USER_EMAIL`, `USER_PASSWORD` or `SEED_CACHE_TTL_MS` is written, so `seedConnections.cacheTTL` is ignored in this mode: the browser refreshes the connection list every 10 seconds instead.
+
+The render fails, naming the value, for every values set this mode cannot run: `openshiftRoute.enabled` off or `openshiftRoute.host` empty (the host must be fixed at install time), `serviceAccount.create=false` or `serviceAccount.name=default`, `replicaCount` above 1 or `autoscaling.enabled` (the users' tokens and the caches live in one process), `config.oidcRoleClaim`, `mcp.enabled`, `agent.enabled=true`, `accessReview.enabled`, `accessReview.cacheSeconds` or `accessReview.signIn` (use `openshift.signIn.*`), `secrets.adminPassword` or `secrets.userPassword`, `governance.enabled`, and an `extraVolumes` entry named `openshift-oauth` or an `extraVolumeMounts` entry at `/var/run/secrets/libredb/openshift`.
+Moving an install wired by hand to this mode: drop the hand-wired `extraVolumes`, `extraVolumeMounts`, the `OPENSHIFT_*` and `NEXT_PUBLIC_AUTH_PROVIDER` entries of `extraEnv`, and the two `serviceAccount.annotations`, in the same upgrade that sets `authProvider=openshift`.
+
+With discovery on, each person lists only the discovered databases whose credential Secret they may `get`, and the chart writes `ALLOW_CUSTOM_CONNECTIONS=false` unless `config.allowCustomConnections` is set.
+Setting it to `true` is accepted, but a connection of a user's own then reaches any database the pod can reach, past the review of every discovered one, so weigh it as a network pivot.
+The NetworkPolicy renders by default in this mode with discovery on: its database-port rule allows only the discovered namespaces, and the release namespace while `postgresql.enabled` holds Studio's storage, while DNS (53, 5353), 443 and the API server (6443) stay open.
+An external storage database or any other destination goes in `networkPolicy.additionalEgress`, and `networkPolicy.enabled=false` is the opt-out.
+On a cluster that serves `config.openshift.io/v1`, discovery with `authProvider=oidc` fails the render, because the review would ask the cluster about the identity provider's subject; use `openshift` or `local` there.
+
+Run one Studio with discovery per cluster, in a namespace only cluster admins hold RoleBindings in.
+A team's own Studio runs without discovery, behind a `NamespaceDashboard` link.
+
+### The console link
+
+`openshift.consoleLink.enabled` renders a cluster-scoped `console.openshift.io/v1` ConsoleLink to `https://<openshiftRoute.host><config.basePath>`, so installing it needs a cluster admin; it needs `console.openshift.io/v1` (or `apis=force`) and `openshiftRoute.host`.
+Every authenticated user can read ConsoleLinks, so the chart ships no reader role and the link carries nothing but its address.
+`ApplicationMenu` lists it in the console's application launcher under `openshift.consoleLink.section`, with `openshift.consoleLink.imageUrl` as its icon.
+With discovery on, that link is named `libredb-studio` and labelled `app.kubernetes.io/name: libredb-studio`, which locates the cluster's Studio; any other link is named `<namespace>.<fullname>` and carries no such label.
+`NamespaceDashboard` shows the link on the dashboard of `openshift.consoleLink.namespaces` or of the namespaces `openshift.consoleLink.namespaceSelector` selects, and fails the render with neither, or with discovery on.
+The OpenShift console plugin is not part of this release.
+
+Under the OLM operator, a ConsoleLink and a discovered namespace other than the release's render only for the `LibreDBStudio` in `operator.clusterStudioNamespace`, which the operator sets from `LIBREDB_CLUSTER_STUDIO_NAMESPACE` in its Subscription; elsewhere the render fails naming the value.
 
 ### The cluster's trusted CA bundle
 
