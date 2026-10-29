@@ -13,6 +13,7 @@ _helpers.tpl.
 */}}
 {{- $navLink := get (.Values.rancher | default dict) "navLink" | default dict }}
 {{- if and (get $navLink "enabled") (.Capabilities.APIVersions.Has "ui.cattle.io/v1/NavLink") }}
+{{- include "libredb-studio.clusterStudioNamespaceGuard" (dict "ctx" $ "what" "rancher.navLink.enabled renders a cluster-scoped NavLink") }}
 apiVersion: ui.cattle.io/v1
 kind: NavLink
 metadata:

@@ -304,6 +304,54 @@ describe("the operator namespace guard on discovery (O14)", () => {
   });
 });
 
+/**
+ * The access review's ClusterRole and ClusterRoleBinding and the Rancher NavLink are cluster-scoped too, so under the
+ * operator they render only for the cluster Studio's namespace, as the ConsoleLink and the discovery Roles do (O14).
+ */
+describe("the operator namespace guard on the other cluster-scoped objects (O14)", () => {
+  const ACCESS_REVIEW = set(
+    "authProvider=oidc",
+    "config.oidcIssuer=https://sso.example.com",
+    "config.sessionTtlSeconds=900",
+    "accessReview.enabled=true",
+    `fullnameOverride=${RELEASE}`,
+  );
+  const NAV_LINK = [
+    ...set(
+      "rancher.navLink.enabled=true",
+      "ingress.enabled=true",
+      "ingress.hosts[0].host=studio.example.com",
+      "ingress.hosts[0].paths[0].path=/",
+      "ingress.hosts[0].paths[0].pathType=Prefix",
+      `fullnameOverride=${RELEASE}`,
+    ),
+    "--api-versions",
+    "ui.cattle.io/v1/NavLink",
+  ];
+
+  test.each([
+    ["the access review", ACCESS_REVIEW, "accessReview.enabled"],
+    ["the NavLink", NAV_LINK, "rancher.navLink.enabled"],
+  ])("operator-managed, %s fails outside operator.clusterStudioNamespace", (_, args, value) => {
+    refused([...args, ...set("operator.managed=true")], "operator.clusterStudioNamespace", value);
+    refused(
+      [...args, ...set("operator.managed=true", "operator.clusterStudioNamespace=studio")],
+      "operator.clusterStudioNamespace",
+      value,
+    );
+  });
+
+  test("operator-managed in the cluster Studio's namespace, and as a Helm install, both render", () => {
+    const own = set("operator.managed=true", `operator.clusterStudioNamespace=${NAMESPACE}`);
+    for (const args of [ACCESS_REVIEW, [...ACCESS_REVIEW, ...own]]) {
+      const docs = render(args);
+      expect(all(docs, "ClusterRole")).toHaveLength(1);
+      expect(all(docs, "ClusterRoleBinding")).toHaveLength(1);
+    }
+    for (const args of [NAV_LINK, [...NAV_LINK, ...own]]) expect(all(render(args), "NavLink")).toHaveLength(1);
+  });
+});
+
 describe("the ServiceAccount as the OAuth client", () => {
   const REFERENCE = "serviceaccounts.openshift.io/oauth-redirectreference.first";
   const REDIRECT = "serviceaccounts.openshift.io/oauth-redirecturi.first";

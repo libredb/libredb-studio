@@ -960,7 +960,8 @@ discovery:
 operator:
   # -- Set by the operator for every LibreDBStudio it reconciles. With it set, the chart
   # renders a cross-namespace or cluster-scoped object (a discovered namespace other than
-  # the release namespace, the ConsoleLink) only for the release in
+  # the release namespace, the ConsoleLink, the access review's ClusterRole and
+  # ClusterRoleBinding, the Rancher NavLink) only for the release in
   # operator.clusterStudioNamespace, and fails the render otherwise.
   managed: false
   # -- The namespace of the one LibreDBStudio a cluster admin allows cross-namespace and

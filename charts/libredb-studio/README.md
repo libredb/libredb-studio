@@ -1036,7 +1036,7 @@ With discovery on, that link is named `libredb-studio` and labelled `app.kuberne
 `NamespaceDashboard` shows the link on the dashboard of `openshift.consoleLink.namespaces` or of the namespaces `openshift.consoleLink.namespaceSelector` selects, and fails the render with neither, or with discovery on.
 The OpenShift console plugin is not part of this release.
 
-Under the OLM operator, a ConsoleLink and a discovered namespace other than the release's render only for the `LibreDBStudio` in `operator.clusterStudioNamespace`, which the operator sets from `LIBREDB_CLUSTER_STUDIO_NAMESPACE` in its Subscription; elsewhere the render fails naming the value.
+Under the OLM operator, a ConsoleLink, a discovered namespace other than the release's, the access review's ClusterRole and ClusterRoleBinding and a Rancher NavLink render only for the `LibreDBStudio` in `operator.clusterStudioNamespace`, which the operator sets from `LIBREDB_CLUSTER_STUDIO_NAMESPACE` in its Subscription; elsewhere the render fails naming the value.
 
 ### The cluster's trusted CA bundle
 
