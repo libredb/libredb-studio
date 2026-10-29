@@ -1799,8 +1799,7 @@ is not refused or the cluster reads back changed.
 `LIBREDB_OS_ADMIN_USER`, `LIBREDB_OS_ADMIN_PASSWORD`, `LIBREDB_OS_AGENT_USER` and `LIBREDB_OS_AGENT_PASSWORD` are set,
 against a node started without `DISABLE_SECURITY_PLUGIN` (and with `OPENSEARCH_INITIAL_ADMIN_PASSWORD`), and its
 older-node pass with `LIBREDB_OS_EXPECT_REFUSED=1` against `opensearchproject/opensearch:2.19.4`.
-The security-on pass also needs one listed index outside `probe_*`: the agent's role already reads the mappings of `probe_*`, so with no other index the plan read still captures once `indices:admin/mappings/get` is taken from every index.
-A node that has run for a while holds a `top_queries-*` index; on a fresh one, write a document into any other index first (measured on 3.8.0, 2026-10-29).
+The security-on pass writes one document into an index of its own outside `probe_*` for the plan-mode checks and removes it after: the agent's role already reads the mappings of `probe_*`, so with no other index the plan read would still capture once `indices:admin/mappings/get` is taken from every index.
 
 ---
 

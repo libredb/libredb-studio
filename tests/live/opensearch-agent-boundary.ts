@@ -79,6 +79,7 @@ const EXPECT_REFUSED = process.env.LIBREDB_OS_EXPECT_REFUSED === "1";
 const AGENT_ROLE = "libredb_agent_read";
 const BUDGET: ReadOnlyStatementBudget = { statementTimeoutMs: 10_000, maxResultRows: 2_000, maxResultBytes: 1_000_000 };
 const SCRATCH = `libredb_lb_${randomBytes(4).toString("hex")}`;
+const OUTSIDE = `libredb_lp_${randomBytes(4).toString("hex")}`;
 const DELETE_SETTING = "plugins.sql.delete.enabled";
 const SIZE_LIMIT_SETTING = "plugins.query.size_limit";
 
@@ -140,13 +141,14 @@ async function read(pathname: string): Promise<string> {
   return answer.text;
 }
 
-/** Whether an index is one the node writes on its own, or the script's scratch index. */
+/** Whether an index is one the node writes on its own, or one of the script's scratch indices. */
 function unwatched(index: string): boolean {
   return (
     index.startsWith(".") ||
     index.startsWith("top_queries-") ||
     index.startsWith("security-auditlog-") ||
-    index === SCRATCH
+    index === SCRATCH ||
+    index === OUTSIDE
   );
 }
 
@@ -307,6 +309,17 @@ async function planGrounding(): Promise<Awaited<ReturnType<typeof captureContext
  */
 async function checkPlanGrounding(): Promise<void> {
   if (!SECURED) return;
+  // The agent's role already reads the mappings of probe_*, so the checks below need one listed index outside it; a
+  // fresh node holds none.
+  await send("PUT", `/${OUTSIDE}/_doc/1?refresh=true`, { probe: "outside" });
+  try {
+    await checkPlanPrivileges();
+  } finally {
+    await send("DELETE", `/${OUTSIDE}`);
+  }
+}
+
+async function checkPlanPrivileges(): Promise<void> {
   const refused = await planGrounding();
   check(
     refused.kind === "unavailable" && refused.reasonCode === "CATALOG_READ_REFUSED",
