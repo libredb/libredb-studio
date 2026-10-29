@@ -136,6 +136,7 @@ function failureAnswer(
     return [ownWordsError(timeoutText(call.args.timeout_ms)), "mcp_timeout"];
   }
   if (failure.kind === "too-large") return [ownWordsError(failure.text), "mcp_result_too_large"];
+  if (failure.kind === "not-sent") return [ownWordsError(failure.text), "mcp_statement_refused"];
   return [engineError(MCP_ENGINE_ERROR_PREFIX, failure.error), "mcp_execution_failed"];
 }
 

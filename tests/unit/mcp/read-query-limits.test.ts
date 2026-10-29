@@ -8,6 +8,7 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { ReadAllowanceExceededError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { rowBudgetRefusal } from "@/lib/db/providers/document/mongodb/agent-read";
 import { READ_QUERY_FORMS, readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
 import {
@@ -173,6 +174,25 @@ describe("the provider refusal mapper", () => {
     ).toEqual({
       kind: "timeout",
     });
+  });
+
+  test("answers a refusal the provider raised before sending in this server's words", () => {
+    const error = new RefusedBeforeSendError(
+      "Read-only execution refused the statement before sending it: not-a-real-fence",
+    );
+    expect(classifyReadQueryFailure(error, 1_000, deadline)).toEqual({
+      kind: "not-sent",
+      text: "The statement was refused before it reached the database: Read-only execution refused the statement before sending it: not-a-real-fence.",
+    });
+    expect(classifyReadQueryFailure(new RefusedBeforeSendError("Refused already."), 1_000, deadline)).toEqual({
+      kind: "not-sent",
+      text: "The statement was refused before it reached the database: Refused already.",
+    });
+  });
+
+  test("keeps the read allowance's refusal as too large, though it too is refused before sending", () => {
+    const error = new ReadAllowanceExceededError("Read-only execution exceeded the read allowance: not-a-real-read");
+    expect(classifyReadQueryFailure(error, 1_000, deadline)).toEqual({ kind: "too-large", text: error.message });
   });
 
   test("leaves any other failure before the deadline to the engine error", () => {

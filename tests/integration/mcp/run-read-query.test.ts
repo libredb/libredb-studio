@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, table } from "@libredb/libredb";
 import { getServerAuditBuffer } from "@/lib/audit";
-import { OffsetUnsupportedError } from "@/lib/db/errors";
+import { OffsetUnsupportedError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { LibreDBProvider } from "@/lib/db/providers/embedded/libredb";
 import { DuckDBProvider } from "@/lib/db/providers/sql/duckdb";
 import { SnowflakeProvider } from "@/lib/db/providers/sql/snowflake/index";
@@ -483,6 +483,27 @@ describe("the boundary", () => {
         },
       ]);
       expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_execution_failed" });
+    } finally {
+      failing.restore();
+    }
+  });
+
+  test("a statement the provider refused before sending it is answered in this server's words, not as the database's", async () => {
+    const failing = failNextCall(
+      SQLiteProvider.prototype,
+      "queryReadOnly",
+      new RefusedBeforeSendError("Read-only execution refused the statement before sending it: not-a-real-fence"),
+    );
+    try {
+      const result = await direct({ connection_id: "seed:shop", sql: "SELECT 1" });
+      expect(result.isError).toBe(true);
+      expect(result.content).toEqual([
+        {
+          type: "text",
+          text: "The statement was refused before it reached the database: Read-only execution refused the statement before sending it: not-a-real-fence.",
+        },
+      ]);
+      expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_statement_refused" });
     } finally {
       failing.restore();
     }
