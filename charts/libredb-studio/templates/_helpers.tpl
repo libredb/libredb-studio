@@ -318,17 +318,21 @@ as off.
 OpenShift Topology labels, each only when set: app.kubernetes.io/part-of groups
 workloads in the console's Topology view and app.openshift.io/runtime picks the
 node icon. Added to the metadata and pod template labels of every Deployment the
-chart renders, never to a selector. Read with dig over a defaulted dict, never
+chart renders, never to a selector. A key that podLabels also sets fails the
+render: the pod template would carry it twice. Read with dig over a defaulted dict, never
 `with .Values.openshift.topology.partOf`, which fails on a nil openshift block
 under --reuse-values.
 */}}
 {{- define "libredb-studio.topologyLabels" -}}
 {{- $openshift := .Values.openshift | default dict }}
-{{- with dig "topology" "partOf" "" $openshift }}
-app.kubernetes.io/part-of: {{ . | quote }}
+{{- $podLabels := .Values.podLabels | default dict }}
+{{- range $value, $label := dict "partOf" "app.kubernetes.io/part-of" "runtime" "app.openshift.io/runtime" }}
+{{- with dig "topology" $value "" $openshift }}
+{{- if hasKey $podLabels $label }}
+{{- fail (printf "openshift.topology.%s=%s and podLabels %s=%v both set the pod label %s; set it in one place" $value . $label (get $podLabels $label) $label) }}
 {{- end }}
-{{- with dig "topology" "runtime" "" $openshift }}
-app.openshift.io/runtime: {{ . | quote }}
+{{ $label }}: {{ . | quote }}
+{{- end }}
 {{- end }}
 {{- end }}
 

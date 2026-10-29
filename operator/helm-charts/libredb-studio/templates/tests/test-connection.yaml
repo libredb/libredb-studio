@@ -2,9 +2,12 @@
   `helm test`: one pod that asks the health route through the Service. It runs
   Studio's own image, which already has node, so no extra image is pulled, and
   takes the Deployment's security context, pull secrets, scheduling and
-  resources, so a private registry, restricted-v2 or a namespace ResourceQuota
-  admits it as it admits the app. Its app.kubernetes.io/name carries a -test
-  suffix, so neither the Service nor the NetworkPolicy selects it. A hook
+  resources and service account (with no token mounted), so a private registry,
+  a pull secret or SCC granted to that account, restricted-v2 or a namespace
+  ResourceQuota admits it as it admits the app. Its app.kubernetes.io/name
+  carries a -test suffix, so neither the Service nor the NetworkPolicy selects
+  it; the name is cut to 58 characters before the suffix, never after, so the
+  label stays within 63 and never falls back to the bare name. A hook
   object: helm install and upgrade never create it, and
   `helm template --skip-tests` leaves it out.
 */ -}}
@@ -13,12 +16,13 @@ kind: Pod
 metadata:
   name: {{ include "libredb-studio.fullname" . }}-test-health
   labels:
-    {{- toYaml (merge (dict "app.kubernetes.io/name" (printf "%s-test" (include "libredb-studio.name" .))) (include "libredb-studio.labels" . | fromYaml)) | nindent 4 }}
+    {{- toYaml (merge (dict "app.kubernetes.io/name" (printf "%s-test" (include "libredb-studio.name" . | trunc 58 | trimSuffix "-"))) (include "libredb-studio.labels" . | fromYaml)) | nindent 4 }}
   annotations:
     helm.sh/hook: test
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 spec:
   restartPolicy: Never
+  serviceAccountName: {{ include "libredb-studio.serviceAccountName" . }}
   automountServiceAccountToken: false
   {{- with .Values.imagePullSecrets }}
   imagePullSecrets:

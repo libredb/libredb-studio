@@ -627,10 +627,14 @@
           "properties": {
             "partOf": {
               "type": "string",
+              "maxLength": 63,
+              "pattern": "^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$",
               "description": "app.kubernetes.io/part-of label on every Deployment and pod template; empty renders none"
             },
             "runtime": {
               "type": "string",
+              "maxLength": 63,
+              "pattern": "^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$",
               "description": "app.openshift.io/runtime label (Topology icon) on every Deployment and pod template; empty renders none"
             }
           }

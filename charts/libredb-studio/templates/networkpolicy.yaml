@@ -40,12 +40,11 @@ spec:
         - port: 443
           protocol: TCP
     {{- if or (include "libredb-studio.accessReviewEnabled" .) $onOpenShift }}
-    # The access review calls https://kubernetes.default.svc, which kube-proxy rewrites to the
-    # API server's endpoint port, 6443 on RKE2, k3s and kubeadm. A policy is matched after that
-    # rewrite, so 443 alone leaves every review failing closed. On OpenShift the API server
-    # also listens on 6443 behind that Service, and sign-in, self reviews and discovery reach
-    # it there. One rule serves both, so 6443 appears once. An API server on another
-    # port goes in networkPolicy.additionalEgress.
+    # kube-proxy rewrites https://kubernetes.default.svc to the API server's endpoint port,
+    # 6443 on RKE2, k3s, kubeadm and OpenShift. A policy is matched after that rewrite, so 443
+    # alone leaves the access review failing closed, and on OpenShift sign-in, self reviews and
+    # discovery failing too. One rule serves both, so 6443 appears once. An API server on
+    # another port goes in networkPolicy.additionalEgress.
     - ports:
         - port: 6443
           protocol: TCP

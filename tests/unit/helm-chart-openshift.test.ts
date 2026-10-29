@@ -303,7 +303,7 @@ describe("charts/libredb-studio OpenShift API detection switch", () => {
  * endpoint, so on OpenShift DNS goes out on 5353 (the CoreDNS pods' port behind
  * the dns-default Service's 53) and the API server on 6443 (behind
  * kubernetes.default.svc's 443). Sign-in, self reviews and discovery all reach
- * * the API server there.
+ * the API server there.
  */
 describe("charts/libredb-studio NetworkPolicy on OpenShift", () => {
   const POLICY = ["--set", "networkPolicy.enabled=true"];
@@ -615,6 +615,39 @@ describe("charts/libredb-studio OpenShift Topology labels", () => {
     expect(run.exitCode).not.toBe(0);
     expect(run.stderr).toContain("topology");
   });
+
+  test("a Topology label that podLabels also sets fails the render and names both values", () => {
+    for (const [value, key, podValue] of [
+      ["openshift.topology.partOf=libredb", "app.kubernetes.io/part-of", "other"],
+      ["openshift.topology.runtime=nodejs", "app.openshift.io/runtime", "nodejs"],
+    ]) {
+      const escaped = key.replaceAll(".", "\\.");
+      const run = helmTemplate(["--set", value, "--set", `podLabels.${escaped}=${podValue}`]);
+      expect(run.exitCode).not.toBe(0);
+      expect(run.stderr).toContain(value);
+      expect(run.stderr).toContain(`podLabels ${key}=${podValue}`);
+    }
+  });
+
+  test("podLabels beside the Topology labels still render once each", () => {
+    const pod = studio(deployments([...TOPOLOGY, "--set", "podLabels.team=data"]))?.spec.template.metadata.labels;
+    expect(pod?.[PART_OF]).toBe("libredb");
+    expect(pod?.team).toBe("data");
+    const fromPodLabelsOnly = studio(deployments(["--set", "podLabels.app\\.kubernetes\\.io/part-of=x"]));
+    expect(fromPodLabelsOnly?.spec.template.metadata.labels[PART_OF]).toBe("x");
+  });
+
+  test("a Topology value that is not a valid label value fails schema validation", () => {
+    for (const key of ["partOf", "runtime"]) {
+      for (const bad of ["lib redb", "-libredb", `a${"b".repeat(63)}`]) {
+        const run = helmTemplate(["--set", `openshift.topology.${key}=${bad}`]);
+        expect(run.exitCode).not.toBe(0);
+        expect(run.stderr).toContain(key);
+      }
+    }
+    const longest = studio(deployments(["--set", `openshift.topology.partOf=${"a".repeat(63)}`]));
+    expect(longest?.metadata.labels[PART_OF]).toBe("a".repeat(63));
+  });
 });
 
 /**
@@ -626,6 +659,7 @@ describe("charts/libredb-studio OpenShift Topology labels", () => {
  */
 describe("charts/libredb-studio OpenShift catalog annotations and helm test hook", () => {
   interface PodSpec {
+    serviceAccountName?: string;
     imagePullSecrets?: unknown;
     nodeSelector?: unknown;
     tolerations?: unknown;
@@ -721,6 +755,27 @@ describe("charts/libredb-studio OpenShift catalog annotations and helm test hook
     expect(pod.spec?.securityContext?.runAsNonRoot).toBe(true);
     expect(pod.spec?.securityContext).toEqual(deploymentPod(rendered).securityContext);
     expect(pod.spec?.containers[0].securityContext).toEqual(deploymentPod(rendered).containers[0].securityContext);
+  });
+
+  test("the hook pod runs as the Deployment's service account", () => {
+    for (const args of [[], ["--set", "serviceAccount.name=studio-sa"], ["--set", "serviceAccount.create=false"]]) {
+      const rendered = docs(args);
+      const deployment = rendered.find((doc) => doc.kind === "Deployment")?.spec?.template?.spec;
+      expect(deployment?.serviceAccountName).toBeDefined();
+      expect(hookPod(rendered).spec?.serviceAccountName).toBe(deployment?.serviceAccountName);
+      expect(hookPod(rendered).spec?.automountServiceAccountToken).toBe(false);
+    }
+  });
+
+  test("the hook pod's name label stays a valid label value under a long nameOverride", () => {
+    const longName = "a".repeat(60);
+    const rendered = docs(["--set", `nameOverride=${longName}`]);
+    const label = hookPod(rendered).metadata.labels?.["app.kubernetes.io/name"] ?? "";
+    expect(label.length).toBeLessThanOrEqual(63);
+    expect(label.endsWith("-test")).toBe(true);
+    const service = rendered.find((doc) => doc.kind === "Service");
+    expect(service?.spec?.selector?.["app.kubernetes.io/name"]).toBe(longName);
+    expect(label).not.toBe(longName);
   });
 
   test("--skip-tests omits the hook pod", () => {
