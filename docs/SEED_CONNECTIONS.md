@@ -1304,8 +1304,10 @@ The identity provider is the only way in: password sign-in, which no review woul
 
 ### Admin
 
-With the review on, a Studio admin is whoever the review allows to `update` Studio's own Deployment, named in `KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT`, decided once at each sign-in.
-Whoever may update that Deployment can already change Studio's environment, image and mounts, so the rule grants nothing the pod spec does not.
+With the review on, a Studio admin is whoever the review allows to `update` Studio's own Deployment, named in `KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT` for a Helm install, or its LibreDBStudio resource, named in `KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO` for an operator install, decided once at each sign-in.
+Exactly one of the two is set, each as `<namespace>/<name>`; both, or neither, refuses to boot.
+Whoever may update that Deployment or resource can already change Studio's environment, image and mounts, so the rule grants nothing the pod spec does not.
+In openshift sign-in mode it is checked again on every request of an admin session ([On OpenShift](#on-openshift-openshift-sign-in)).
 No identity provider claim and no password makes an admin: `OIDC_ROLE_CLAIM`, `ADMIN_PASSWORD` and `USER_PASSWORD` are refused at boot, the callback does not read a role claim, and password sign-in is off.
 A sign-in whose review fails is a user.
 
@@ -1333,13 +1335,16 @@ With the review on, the server refuses to start, naming every variable to fix, w
 
 - `KUBERNETES_ACCESS_REVIEW` holds a value other than `on`, `true`, `1`, `off`, `false` or `0` (any other value counts as on, so a typo fails closed);
 - `GOVERNANCE_SOURCE` is set;
-- `NEXT_PUBLIC_AUTH_PROVIDER` is not `oidc`;
+- `NEXT_PUBLIC_AUTH_PROVIDER` is neither `oidc` nor `openshift`;
 - `ADMIN_PASSWORD` or `USER_PASSWORD` is set;
 - `OIDC_ROLE_CLAIM` or `OIDC_BEARER_AUDIENCE` is set;
 - `LIBREDB_MCP_ENABLED` or `LIBREDB_AGENT_ENABLED` switches either on;
-- `AUTH_SESSION_TTL_SECONDS` is unset, which keeps 86400, or above 900;
-- `KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT`, `KUBERNETES_ACCESS_REVIEW_SIGN_IN`, `KUBERNETES_ACCESS_REVIEW_API_URL` or `KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS` is missing or invalid;
-- the token file cannot be read or is empty, or the CA file cannot be read or holds no certificate.
+- in OIDC mode, `AUTH_SESSION_TTL_SECONDS` is unset, which keeps 86400, or above 900;
+- `KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT` and `KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO` are both unset or both set, or the one set is invalid;
+- `KUBERNETES_ACCESS_REVIEW_SIGN_IN` or `KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS` is invalid;
+- in OIDC mode, `KUBERNETES_ACCESS_REVIEW_API_URL` is invalid, the token file cannot be read or is empty, or the CA file cannot be read or holds no certificate.
+
+openshift sign-in mode refuses two more things, listed under [On OpenShift](#on-openshift-openshift-sign-in).
 
 ### Setting it up
 
@@ -1349,8 +1354,9 @@ With the review on, the server refuses to start, naming every variable to fix, w
 | `KUBERNETES_ACCESS_REVIEW_API_URL` | The Kubernetes API server, https only | `https://kubernetes.default.svc` |
 | `KUBERNETES_ACCESS_REVIEW_TOKEN_PATH` | The ServiceAccount token file, read again for every review | `/var/run/secrets/kubernetes.io/serviceaccount/token` |
 | `KUBERNETES_ACCESS_REVIEW_CA_PATH` | The CA the API server's certificate must chain to, read again for every review | `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt` |
-| `KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS` | How long an answer is kept, whole seconds from 0 to 60 | `30` |
-| `KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT` | Studio's own Deployment as `<namespace>/<name>`; required | none |
+| `KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS` | How long an answer is kept, whole seconds from 0 to 60 | `30`, `15` in openshift sign-in mode |
+| `KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT` | Studio's own Deployment as `<namespace>/<name>`, for a Helm install; exactly one of this and the next is required | none |
+| `KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO` | Studio's own LibreDBStudio resource as `<namespace>/<name>`, for an operator install | none |
 | `KUBERNETES_ACCESS_REVIEW_SIGN_IN` | The review a person must pass to sign in, as `kubectl auth can-i` takes it | `list navlinks.ui.cattle.io` |
 
 Studio authenticates its reviews with its pod's ServiceAccount token and uses that token for nothing else; the Kubernetes database provider never reads it.
@@ -1406,6 +1412,46 @@ Run one replica: the groups of each sign-in and the cached answers live in that 
 The Helm chart renders the ClusterRole, its binding, the projected volume and these variables from `accessReview` ([chart README](../charts/libredb-studio/README.md#rancher-mode-values)), and fails the render for every combination the boot checks above refuse.
 
 ---
+
+### On OpenShift (openshift sign-in)
+
+With `NEXT_PUBLIC_AUTH_PROVIDER=openshift` ([OPENSHIFT.md](./OPENSHIFT.md)) the review is always on, whatever `KUBERNETES_ACCESS_REVIEW` says, and it asks with the signed-in person's own token instead of Studio's ServiceAccount.
+
+- A reviewed connection is listed and opened only when a SelfSubjectAccessReview made with the person's own OpenShift token allows `get` on its Secret.
+  The answer is the cluster's own RBAC for that person, with the groups and bindings the cluster knows, so it equals `oc auth can-i get secret/<name> -n <namespace>` run as them.
+  A cluster that grants `get` on Secrets to `system:authenticated` therefore shows those databases to everyone, as OpenShift would let everyone read the Secrets.
+- The review names nothing of Studio's choosing about the person: no user, groups or scopes, only the five resource attributes.
+  Studio's ServiceAccount needs no review rights in this mode, because a self review needs none.
+- The token is read from the session's server-side record before every decision, cached or not, and an answer is kept per session for `KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS`, 15 by default in this mode, so two sessions never share an answer and none outlives its session.
+  It goes only to `OPENSHIFT_API_URL`, trusting `OPENSHIFT_API_CA_FILE` only, with no environment proxy and no redirect, and never into a log, a response, a URL, a cookie or storage.
+- Every error, timeout, answer that is not 2xx, and answer that is malformed or does not echo the asked attributes denies.
+  A 403 means the token lacks `user:check-access`, which sign-in should have refused; it denies and is logged as an error.
+- A 401 means the API server no longer takes the token, for example after it was deleted or expired: the session's record ends, the rest of that list is denied without a request, and the session signs in again from its next request, through the OpenShift login page.
+  The request that met the 401 keeps the uniform answers, a row omitted or a 404, so it tells nothing about which ids exist.
+- A Studio admin is whoever the review, made with their own token, allows to `update` Studio's Deployment or its LibreDBStudio resource ([Admin](#admin)).
+  It is decided at sign-in and checked again, through the same cache, on every request of an admin session: once the right is removed, the next admin request after the cache lifetime answers `403 ADMIN_REQUIRED`, and a 401 signs the session out.
+  A user session is never promoted mid-session; promotion takes a new sign-in.
+  No group, claim, header, cookie field or password makes an admin.
+  A demoted admin still loads the empty `/admin` page until the session ends, because the page is served from the session cookie; every data request behind it answers 403.
+- `KUBERNETES_ACCESS_REVIEW_SIGN_IN` is optional and unset by default: OpenShift has no resource every intended Studio user holds, and every reviewed connection is reviewed per request anyway.
+  When it is set, a sign-in its review does not allow, a failed review included, is refused with `openshift_no_access`.
+- With `SEED_CACHE_TTL_MS` unset, an open tab refreshes the list every 10 seconds, so a removed RoleBinding leaves the list within about 25 seconds: the 15-second cache plus one refresh.
+- MCP, the agent and password sign-in stay off, and the built-in sample is hidden unless `LIBREDB_EMBEDDED_SAMPLE` is exactly `true`, as with the review on in OIDC mode.
+
+On top of the checks above, the server refuses to boot in this mode when `KUBERNETES_ACCESS_REVIEW` is set to `off`, `false` or `0` (empty counts as unset), or when `KUBERNETES_ACCESS_REVIEW_API_URL`, `KUBERNETES_ACCESS_REVIEW_TOKEN_PATH` or `KUBERNETES_ACCESS_REVIEW_CA_PATH` is set, because those configure the ServiceAccount review only.
+The 900-second session bound does not apply: every gated request is reviewed with the live token, and the session lasts as openshift sign-in sets it.
+
+Known limits:
+
+- Within the cache lifetime a removed right still answers from the cache, and an open tab follows within that plus its list refresh.
+- The first open of an existing reviewed id within one cache lifetime waits one review round trip, which an unknown id never does.
+- An outage of the cluster's OAuth API makes the API server answer 401 for every token, so every Studio session signs in again after it recovers.
+- API server load grows with people times reviewed connections, divided by the cache lifetime; one list runs at most 16 reviews at a time and Studio keeps at most 10,000 answers.
+- Token records and answers live in one process's memory, so this mode runs one replica.
+
+The `authorization.openshift.io/v1` SubjectAccessReview is not used.
+
+In OIDC sign-in mode the ServiceAccount review refuses to run on OpenShift: before its first review it asks whether the API server serves `config.openshift.io/v1`, and on a cluster that does it denies every review, logged as an error that says to sign in with `NEXT_PUBLIC_AUTH_PROVIDER=openshift`, because there a SubjectAccessReview cannot assert the cluster's user name for an OIDC subject.
 
 ## Error Handling
 

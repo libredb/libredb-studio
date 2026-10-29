@@ -4,6 +4,8 @@
  * neither while `KUBERNETES_ACCESS_REVIEW` is on, whatever LIBREDB_MCP_ENABLED, LIBREDB_AGENT_ENABLED and the AI
  * configuration say. The boot preflight refuses an environment that switches either on; this file proves that both
  * stay off when that check is bypassed: the review, both switches and a configured model are all set after boot.
+ * openshift sign-in runs the review whatever the switch says, so `NEXT_PUBLIC_AUTH_PROVIDER=openshift` alone holds
+ * both as well, refuses password sign-in and hides the built-in sample (control 3.30).
  *
  * Every route under src/app/api/agent/ is found on disk, so a route added later is held here without editing this
  * file. A provider is counted where it is built: a database provider by the connect of the SQLite provider the seed
@@ -163,49 +165,83 @@ describe("the Kubernetes access review holds MCP and the agent off", () => {
     expect(keys).toContain("runs");
   });
 
-  test("with the review on, LIBREDB_MCP_ENABLED=true and an LLM configured, /api/mcp and every agent route answer 404, agent/config reports the agent off, and no provider is constructed", async () => {
-    process.env.KUBERNETES_ACCESS_REVIEW = "on";
-    const token = await mintTestToken();
-    const driveToken = await mintAgentDriveToken(SEGMENT_VALUES.runId);
-    const answered: string[] = [];
+  test.each([
+    { mode: "oidc", review: "on", names: "KUBERNETES_ACCESS_REVIEW" },
+    { mode: "openshift", review: undefined, names: "NEXT_PUBLIC_AUTH_PROVIDER" },
+  ])(
+    "with NEXT_PUBLIC_AUTH_PROVIDER=$mode and KUBERNETES_ACCESS_REVIEW=$review, LIBREDB_MCP_ENABLED=true and an LLM configured, /api/mcp and every agent route answer 404, agent/config reports the agent off, and no provider is constructed",
+    async ({ mode, review, names }) => {
+      process.env.NEXT_PUBLIC_AUTH_PROVIDER = mode;
+      if (review === undefined) delete process.env.KUBERNETES_ACCESS_REVIEW;
+      else process.env.KUBERNETES_ACCESS_REVIEW = review;
+      const token = await mintTestToken();
+      const driveToken = await mintAgentDriveToken(SEGMENT_VALUES.runId);
+      const answered: string[] = [];
 
-    const builds = await countBuilds(async () => {
-      for (const request of [runReadQuery(token), ...["GET", "DELETE"].map((method) => withBearer(method, token))]) {
-        const response = await mcpServe(request);
-        // Read whole before any assertion, so a call that was served has ended before the next test starts.
-        const body = await response.text();
-        expect(response.status, `${request.method} /api/mcp`).toBe(404);
-        expect(JSON.parse(body)).toEqual({ error: "MCP is not enabled on this server" });
-        answered.push(`${request.method} /api/mcp`);
-      }
+      const builds = await countBuilds(async () => {
+        for (const request of [runReadQuery(token), ...["GET", "DELETE"].map((method) => withBearer(method, token))]) {
+          const response = await mcpServe(request);
+          // Read whole before any assertion, so a call that was served has ended before the next test starts.
+          const body = await response.text();
+          expect(response.status, `${request.method} /api/mcp`).toBe(404);
+          expect(JSON.parse(body)).toEqual({ error: "MCP is not enabled on this server" });
+          answered.push(`${request.method} /api/mcp`);
+        }
 
-      for (const [key, load] of AGENT_ROUTES) {
-        const routeModule = await load();
-        for (const method of HANDLERS) {
-          const handler = routeModule[method] as Handler | undefined;
-          if (handler === undefined) continue;
-          const label = `${method} /api/agent/${key}`;
-          const response = await callAgentHandler(key, method, handler, driveToken);
-          answered.push(label);
-          if (key === "config") {
-            // The probe answers for the surface instead of being one: the agent is off, and the hold is the reason.
-            expect(response.status, label).toBe(200);
-            const body = (await response.json()) as { enabled: unknown; reason: unknown; detail: string };
-            expect(body).toMatchObject({ enabled: false, reason: "ACCESS_REVIEW_HOLD" });
-            expect(body.detail).toContain("KUBERNETES_ACCESS_REVIEW");
-          } else {
-            expect(response.status, label).toBe(404);
+        for (const [key, load] of AGENT_ROUTES) {
+          const routeModule = await load();
+          for (const method of HANDLERS) {
+            const handler = routeModule[method] as Handler | undefined;
+            if (handler === undefined) continue;
+            const label = `${method} /api/agent/${key}`;
+            const response = await callAgentHandler(key, method, handler, driveToken);
+            answered.push(label);
+            if (key === "config") {
+              // The probe answers for the surface instead of being one: the agent is off, and the hold is the reason.
+              expect(response.status, label).toBe(200);
+              const body = (await response.json()) as { enabled: unknown; reason: unknown; detail: string };
+              expect(body).toMatchObject({ enabled: false, reason: "ACCESS_REVIEW_HOLD" });
+              expect(body.detail).toStartWith(names);
+            } else {
+              expect(response.status, label).toBe(404);
+            }
           }
         }
-      }
-    });
+      });
 
-    expect(answered).toContain("POST /api/agent/runs");
-    expect(answered).toContain("POST /api/agent/drive");
-    expect(answered).toContain("GET /api/agent/config");
-    expect(builds).toEqual({ connects: 0, models: 0 });
-    // No run service was reached either: the durable ledger was never opened.
-    expect(existsSync(ledgerDir)).toBe(false);
+      expect(answered).toContain("POST /api/agent/runs");
+      expect(answered).toContain("POST /api/agent/drive");
+      expect(answered).toContain("GET /api/agent/config");
+      expect(builds).toEqual({ connects: 0, models: 0 });
+      // No run service was reached either: the durable ledger was never opened.
+      expect(existsSync(ledgerDir)).toBe(false);
+    },
+  );
+
+  test("openshift sign-in alone refuses password sign-in with 403 and hides the built-in sample unless asked for", async () => {
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "openshift";
+    delete process.env.KUBERNETES_ACCESS_REVIEW;
+    const savedSample = process.env.LIBREDB_EMBEDDED_SAMPLE;
+    const { POST: login } = await import("@/app/api/auth/login/route");
+    const { isSampleEnabled } = await import("@/lib/seed/libredb-sample");
+    try {
+      const response = await login(
+        new Request("http://localhost:3000/api/auth/login", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ email: "admin@libredb.org", password: "not-a-real-password-holds" }),
+        }),
+      );
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ success: false });
+      delete process.env.LIBREDB_EMBEDDED_SAMPLE;
+      expect(isSampleEnabled()).toBe(false);
+      process.env.LIBREDB_EMBEDDED_SAMPLE = "true";
+      expect(isSampleEnabled()).toBe(true);
+    } finally {
+      if (savedSample === undefined) delete process.env.LIBREDB_EMBEDDED_SAMPLE;
+      else process.env.LIBREDB_EMBEDDED_SAMPLE = savedSample;
+    }
   });
 
   test("the control: with the review off, the same MCP call connects, classify builds a model and the probe opens the ledger", async () => {

@@ -43,6 +43,8 @@ Studio reads the file again at every sign-in, so a rotated token is used at once
 | `OPENSHIFT_API_URL` | No | `https://kubernetes.default.svc` | The API server Studio reads the OAuth metadata and the signed-in user from. |
 | `OPENSHIFT_API_CA_FILE` | No | `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt` | The CA file of the API server, the `ca.crt` key of the `kube-root-ca.crt` ConfigMap. |
 | `AUTH_SESSION_TTL_SECONDS` | No | `28800` in this mode | The session lifetime, capped by the access token's own expiry. |
+| `KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT` | One of the two | | Studio's Deployment as `<namespace>/<name>`, for a Helm install: whoever may update it is a Studio admin. |
+| `KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO` | One of the two | | Studio's LibreDBStudio resource as `<namespace>/<name>`, for an operator install. |
 
 Studio reads the OAuth metadata from the API server's `/.well-known/oauth-authorization-server`, checks that the issuer is https and that both endpoints are on the issuer's origin, and caches it for five minutes.
 Every call to the API server trusts the `OPENSHIFT_API_CA_FILE` certificates only.
@@ -104,6 +106,20 @@ Every refused sign-in lands on the login page with one of these codes, which the
 | `openshift_denied` | The user pressed Deny on the Authorize Access page. |
 | `openshift_scope` | The user unchecked a permission on the Authorize Access page. Delete the user's OAuth client authorization (see above) and sign in again with both checked. |
 | `openshift_no_uid` | users/~ gave no user id or a `system:` name, as for `kube:admin`. Sign in with a regular user. |
-| `openshift_no_access` | The account was refused access to this Studio. |
+| `openshift_no_access` | The account was refused access to this Studio: `KUBERNETES_ACCESS_REVIEW_SIGN_IN` is set and its review, made with the user's own token, did not allow them. |
 | `openshift_failed` | Anything else, such as a code the OAuth server refused or a token answer Studio could not use. Sign in again; the server log names the step. |
 | `openshift_session_lost` | The loop guard tripped: the session's token record went missing twice in a row. Check that Studio runs as one replica. |
+
+## Database access and Studio admins
+
+In this mode Studio decides who may use a database it discovered in the cluster, and who is a Studio admin, by asking the cluster with the signed-in user's own token.
+Every such request is a SelfSubjectAccessReview the sign-in scope `user:check-access` allows, so Studio's ServiceAccount needs no review rights at all in this mode.
+
+- A discovered database is listed and opened only for a user whose own RBAC allows `get` on the Secret its credentials come from, the same answer `oc auth can-i get secret/<name> -n <namespace>` gives that user.
+- A Studio admin is a user whose own RBAC allows `update` on Studio's Deployment (`KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT`, a Helm install) or on its LibreDBStudio resource (`KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO`, an operator install); exactly one of the two is set.
+  It is checked again on every request of an admin session, so no group, claim or password makes an admin.
+- Removing a RoleBinding takes effect within 15 seconds, the review's cache lifetime in this mode, and an open tab drops a database at its next refresh, every 10 seconds by default.
+- Deleting a user's Studio token (`oc delete useroauthaccesstoken`, or the console's API tokens page) makes the API server refuse it: Studio ends that session at its next request, and the user signs in again through the cluster's login page.
+
+The review is always on in this mode; setting `KUBERNETES_ACCESS_REVIEW` to `off` stops the server at boot, and so does `KUBERNETES_ACCESS_REVIEW_API_URL`, `KUBERNETES_ACCESS_REVIEW_TOKEN_PATH` or `KUBERNETES_ACCESS_REVIEW_CA_PATH`, which only configure the review of OIDC mode.
+[SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#on-openshift-openshift-sign-in) has the detail: which failures deny, what is logged, and the known limits.

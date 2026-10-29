@@ -48,9 +48,13 @@ const GATED_MODULES: Readonly<Record<string, readonly string[]>> = {
     "connectionsUnderAccessReview",
     "connectionUnderAccessReview",
     "accessReviewSignInRole",
+    "selfReviewSignInRole",
+    "reviewedSessionRole",
   ],
   "src/lib/kubernetes-access/review.ts": ["requestAccessReview"],
-  "src/lib/kubernetes-access/decisions.ts": ["accessReviewAllows"],
+  "src/lib/kubernetes-access/decisions.ts": ["accessReviewAllows", "accessReviewVerdict"],
+  "src/lib/openshift-auth/token-store.ts": ["openShiftBearerToken", "endOpenShiftSession"],
+  "src/lib/openshift-auth/http.ts": ["openShiftApiCall"],
   "src/lib/db/factory.ts": [
     "createDatabaseProvider",
     "getOrCreateProvider",
@@ -151,9 +155,43 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
     "src/app/api/auth/oidc/callback/route.ts":
       "the OIDC callback's role while the review is on: a fresh review of the sign-in attributes, then of update on Studio's Deployment, decided once at sign-in",
   },
+  selfReviewSignInRole: {
+    "src/lib/openshift-auth/role.ts":
+      "the openshift sign-in role seam: the callback asks it once per sign-in with the new access token, and its null refuses the sign-in with openshift_no_access before any record is written",
+  },
+  reviewedSessionRole: {
+    "src/lib/auth.ts":
+      "readSession's openshift branch, once the token record answers live: every route reads the role a request runs with from here, and its expired answer signs the session out",
+  },
   requestAccessReview: {
     "src/lib/kubernetes-access/decisions.ts":
       "the decision cache, the only sender of a review: one request in flight per key, and failures never cached",
+  },
+  accessReviewVerdict: {
+    "src/lib/kubernetes-access/gate.ts":
+      "the gate's self reviews, of each reviewed row and of the openshift sign-in and admin checks, the only reader of the decision cache that needs the expired verdict",
+  },
+  openShiftBearerToken: {
+    "src/lib/openshift-auth/session.ts":
+      "readSession's record check: it asks only whether the session's record is live and bound to its uid, name and issuer, and drops the token",
+    "src/lib/kubernetes-access/gate.ts":
+      "the gate reads the session's live token before every self review, cached or not, so no decision outlives its record, and hands it only to the review",
+  },
+  endOpenShiftSession: {
+    "src/lib/kubernetes-access/gate.ts":
+      "the gate ends a session's record when the API server answers its self review with 401, so the session signs in again from its next request",
+    "src/app/api/auth/openshift/callback/route.ts":
+      "the OpenShift callback ends the record of a verified cookie it replaces, and the one it wrote when minting the session fails, so no record outlives its cookie",
+    "src/app/api/auth/logout/route.ts":
+      "sign-out deletes the session's token record at once, so a replayed cookie reads as signed out; it reads no token",
+  },
+  openShiftApiCall: {
+    "src/lib/openshift-auth/metadata.ts":
+      "the OAuth metadata fetch from the API server at sign-in: it sends no bearer, and its answer names only the OAuth endpoints",
+    "src/lib/openshift-auth/identity.ts":
+      "users/~ at sign-in with the new access token: its answer names the user, never a connection, and the token goes only to the API URL",
+    "src/lib/kubernetes-access/review.ts":
+      "the self review's only sender: one SelfSubjectAccessReview with the user's own token, judged here, so the CA file as the only trust, the deadline and no proxy stay one implementation",
   },
   accessReviewAllows: {
     "src/lib/kubernetes-access/gate.ts":
@@ -303,6 +341,20 @@ const PINNED_EXACTLY: Readonly<Record<string, readonly string[]>> = {
   connectionUnderAccessReview: ["src/lib/governance/visible.ts"],
   accessReviewAllows: ["src/lib/kubernetes-access/gate.ts"],
   requestAccessReview: ["src/lib/kubernetes-access/decisions.ts"],
+  accessReviewVerdict: ["src/lib/kubernetes-access/gate.ts"],
+  selfReviewSignInRole: ["src/lib/openshift-auth/role.ts"],
+  reviewedSessionRole: ["src/lib/auth.ts"],
+  openShiftBearerToken: ["src/lib/kubernetes-access/gate.ts", "src/lib/openshift-auth/session.ts"],
+  endOpenShiftSession: [
+    "src/app/api/auth/logout/route.ts",
+    "src/app/api/auth/openshift/callback/route.ts",
+    "src/lib/kubernetes-access/gate.ts",
+  ],
+  openShiftApiCall: [
+    "src/lib/kubernetes-access/review.ts",
+    "src/lib/openshift-auth/identity.ts",
+    "src/lib/openshift-auth/metadata.ts",
+  ],
 };
 
 function sourceFiles(dir: string): string[] {
@@ -1309,5 +1361,29 @@ describe("the caller census of the seed lookups, the access review and the provi
     for (const [fn, files] of Object.entries(PINNED_EXACTLY)) {
       expect({ fn, files: [...(census.importers.get(fn)?.keys() ?? [])].sort() }).toEqual({ fn, files: [...files] });
     }
+  });
+
+  test("the openshift HTTPS client sends only through openShiftApiCall and openShiftTokenFetch, and exports nothing else that sends", () => {
+    const file = "src/lib/openshift-auth/http.ts";
+    const source = ts.createSourceFile(file, SOURCES.get(file) ?? "", ts.ScriptTarget.Latest, true);
+    const exportedFunctions = new Map<string, string>();
+    let callIsExported = true;
+    for (const statement of source.statements) {
+      const exported = ts.canHaveModifiers(statement)
+        ? (ts.getModifiers(statement) ?? []).some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
+        : false;
+      if (ts.isFunctionDeclaration(statement) && statement.name !== undefined) {
+        if (statement.name.text === "openShiftHttpsCall") callIsExported = exported;
+        else if (exported) exportedFunctions.set(statement.name.text, statement.getText(source));
+      }
+      if (ts.isExportDeclaration(statement)) exportedFunctions.set("export declaration", statement.getText(source));
+    }
+    const senders = [...exportedFunctions]
+      .filter(([, text]) => /\bopenShiftHttpsCall\s*\(|\bhttps\.request\s*\(|\brequest\s*\(/.test(text))
+      .map(([name]) => name)
+      .sort();
+    expect(callIsExported).toBe(false);
+    expect(senders).toEqual(["openShiftApiCall", "openShiftTokenFetch"]);
+    expect(exportedFunctions.has("export declaration")).toBe(false);
   });
 });
