@@ -135,6 +135,11 @@ annotations:
   artifacthub.io/category: database
   artifacthub.io/license: MIT
   artifacthub.io/prerelease: "false"
+  # Read by the OpenShift console's Helm catalog and the chart verifier.
+  charts.openshift.io/name: LibreDB Studio
+  charts.openshift.io/provider: LibreDB
+  charts.openshift.io/providerType: community
+  charts.openshift.io/supportURL: https://github.com/libredb/libredb-studio/issues
   # False: 0.1.60 tracks app release 0.14.1, which repairs how the light theme is
   # painted and how two wire families are asked for a query plan. Accent colours were
   # picked for a dark ground and reused on the light one, so warning, success and danger

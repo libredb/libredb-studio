@@ -22,10 +22,10 @@
  * .Capabilities.APIVersions exactly like a live API server would.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { cpSync, existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseAllDocuments } from "yaml";
+import { parse, parseAllDocuments } from "yaml";
 import { howItFailed } from "../helpers/spawn-outcome";
 
 const CHART_DIR = join(import.meta.dir, "../../charts/libredb-studio");
@@ -614,5 +614,144 @@ describe("charts/libredb-studio OpenShift Topology labels", () => {
     const run = helmTemplate(["--set", "openshift.topology.group=libredb"]);
     expect(run.exitCode).not.toBe(0);
     expect(run.stderr).toContain("topology");
+  });
+});
+
+/**
+ * The OpenShift console's Helm catalog and the chart verifier read the
+ * charts.openshift.io/* annotations, and a chart without a `helm test` hook
+ * fails the verifier's chart-testing check. The hook pod runs Studio's own
+ * image (node is already there) against the health route through the Service,
+ * under the same security context and scheduling as the Deployment.
+ */
+describe("charts/libredb-studio OpenShift catalog annotations and helm test hook", () => {
+  interface PodSpec {
+    imagePullSecrets?: unknown;
+    nodeSelector?: unknown;
+    tolerations?: unknown;
+    restartPolicy?: string;
+    automountServiceAccountToken?: boolean;
+    securityContext?: Record<string, unknown>;
+    containers: Array<{
+      image: string;
+      command?: string[];
+      args?: string[];
+      resources?: unknown;
+      securityContext?: Record<string, unknown>;
+    }>;
+  }
+
+  interface Manifest {
+    kind: string;
+    metadata: { name: string; labels?: Record<string, string>; annotations?: Record<string, string> };
+    spec?: PodSpec & { selector?: Record<string, string>; template?: { spec: PodSpec } };
+  }
+
+  const HOOK_NAME = "release-under-test-libredb-studio-test-health";
+  const docs = (args: string[]) => renderDocs(args) as unknown as Manifest[];
+  const hookPods = (rendered: Manifest[]) => rendered.filter((doc) => doc.kind === "Pod");
+  const hookPod = (rendered: Manifest[]) => {
+    const pods = hookPods(rendered);
+    if (pods.length !== 1) throw new Error(`expected one hook Pod, rendered ${pods.length}`);
+    return pods[0];
+  };
+  const deploymentPod = (rendered: Manifest[]): PodSpec => {
+    const spec = rendered.find((doc) => doc.kind === "Deployment")?.spec?.template?.spec;
+    if (!spec) throw new Error("Deployment pod spec not found in render output");
+    return spec;
+  };
+  const commandLine = (pod: Manifest) =>
+    [...(pod.spec?.containers[0].command ?? []), ...(pod.spec?.containers[0].args ?? [])].join(" ");
+
+  test("the chart carries the annotations the OpenShift console catalog reads", () => {
+    const chart = parse(readFileSync(join(CHART_DIR, "Chart.yaml"), "utf8")) as {
+      annotations: Record<string, string>;
+    };
+    expect(chart.annotations["charts.openshift.io/name"]).toBe("LibreDB Studio");
+    expect(chart.annotations["charts.openshift.io/provider"]).toBe("LibreDB");
+    expect(chart.annotations["charts.openshift.io/providerType"]).toBe("community");
+    expect(chart.annotations["charts.openshift.io/supportURL"]).toBe(
+      "https://github.com/libredb/libredb-studio/issues",
+    );
+  });
+
+  test("one helm test hook pod checks the health route through the Service", () => {
+    const rendered = docs([]);
+    const pod = hookPod(rendered);
+    expect(pod.metadata.name).toBe(HOOK_NAME);
+    expect(pod.metadata.annotations?.["helm.sh/hook"]).toBe("test");
+    expect(pod.metadata.annotations?.["helm.sh/hook-delete-policy"]).toBe("before-hook-creation,hook-succeeded");
+    const deploymentImage = deploymentPod(rendered).containers[0].image;
+    expect(pod.spec?.containers[0].image).toBe(deploymentImage);
+    expect(pod.spec?.containers[0].command?.[0]).toBe("node");
+    expect(commandLine(pod)).toContain("http://release-under-test-libredb-studio:80/api/db/health");
+    expect(pod.spec?.restartPolicy).toBe("Never");
+    expect(pod.spec?.automountServiceAccountToken).toBe(false);
+  });
+
+  test("the hook pod follows service.port", () => {
+    const pod = hookPod(docs(["--set", "service.port=8080"]));
+    expect(commandLine(pod)).toContain("http://release-under-test-libredb-studio:8080/api/db/health");
+  });
+
+  test("the hook pod URL carries config.basePath", () => {
+    const pod = hookPod(docs(["--set", "config.basePath=/studio"]));
+    expect(commandLine(pod)).toContain("http://release-under-test-libredb-studio:80/studio/api/db/health");
+  });
+
+  test("neither the Service nor the NetworkPolicy selects the hook pod", () => {
+    const rendered = docs(["--set", "networkPolicy.enabled=true"]);
+    const labels = hookPod(rendered).metadata.labels ?? {};
+    const service = rendered.find((doc) => doc.kind === "Service");
+    const policy = rendered.find((doc) => doc.kind === "NetworkPolicy") as unknown as {
+      spec: { podSelector: { matchLabels: Record<string, string> } };
+    };
+    const selects = (selector: Record<string, string>) =>
+      Object.entries(selector).every(([key, value]) => labels[key] === value);
+    expect(selects(service?.spec?.selector ?? {})).toBe(false);
+    expect(selects(policy.spec.podSelector.matchLabels)).toBe(false);
+    expect(labels["app.kubernetes.io/name"]).toBe("libredb-studio-test");
+    expect(labels["app.kubernetes.io/instance"]).toBe("release-under-test");
+  });
+
+  test("the hook pod runs under the adapted security context on OpenShift", () => {
+    const rendered = docs(OPENSHIFT_API);
+    const pod = hookPod(rendered);
+    expect(pod.spec?.securityContext?.runAsUser).toBeUndefined();
+    expect(pod.spec?.securityContext?.runAsNonRoot).toBe(true);
+    expect(pod.spec?.securityContext).toEqual(deploymentPod(rendered).securityContext);
+    expect(pod.spec?.containers[0].securityContext).toEqual(deploymentPod(rendered).containers[0].securityContext);
+  });
+
+  test("--skip-tests omits the hook pod", () => {
+    expect(hookPods(docs(["--skip-tests"]))).toHaveLength(0);
+  });
+
+  test("the hook pod takes the chart's imagePullSecrets, nodeSelector, tolerations and resources", () => {
+    for (const args of [
+      [],
+      [
+        "--set",
+        "imagePullSecrets[0].name=regcred",
+        "--set",
+        "nodeSelector.zone=a",
+        "--set",
+        "tolerations[0].key=k",
+        "--set",
+        "tolerations[0].operator=Exists",
+        "--set",
+        "resources.requests.cpu=10m",
+      ],
+    ]) {
+      const rendered = docs(args);
+      const pod = hookPod(rendered).spec;
+      const deployment = deploymentPod(rendered);
+      expect(pod?.imagePullSecrets).toEqual(deployment.imagePullSecrets);
+      expect(pod?.nodeSelector).toEqual(deployment.nodeSelector);
+      expect(pod?.tolerations).toEqual(deployment.tolerations);
+      expect(pod?.containers[0].resources).toEqual(deployment.containers[0].resources);
+    }
+    const pod = hookPod(docs(["--set", "imagePullSecrets[0].name=regcred"])).spec;
+    expect(pod?.imagePullSecrets).toEqual([{ name: "regcred" }]);
   });
 });
