@@ -4,8 +4,10 @@
  *
  * The catalog is read from the `SYSCAT` views, which every user may read on a fresh database and which list every
  * object, not only those the user may read. Each is named `SYSCAT.<view>`, so an object in the user's schema or a
- * public alias cannot stand in for it. The schemas the system owns (`SYSCAT.SCHEMATA.OWNERTYPE` S) are left out of
- * every read, by that catalog fact rather than by their names. Names are trimmed, since db2-node hands a padded CHAR
+ * public alias cannot stand in for it. The system's own tables (`SYSCAT.TABLES.OWNERTYPE` S) are left out of every
+ * read, by that catalog fact rather than by a schema name: a schema created implicitly, by a CREATE in a schema that
+ * does not exist, is itself owned by SYSIBM, while its tables are owned by their creator (measured). Names are trimmed,
+ * since db2-node hands a padded CHAR
  * name back padded, and each name a selector carries is a string literal compared exactly, as the catalog spells it:
  * an undelimited Db2 name is stored in upper case. Each kind was run as the least-privilege agent user on 12.1.0.0.
  *
@@ -16,9 +18,9 @@
 import { type AgentCatalogRead, type AgentCatalogSelector, equalsClause } from "../../../composed-sql-primitives";
 import type { AgentEngineServerOverlay, SqlServerDialect } from "../../pack";
 
-/** The schemas the system owns, excluded from every catalog read below. */
-function db2SchemaExclusion(column: string): string {
-  return `${column} NOT IN (SELECT s.SCHEMANAME FROM SYSCAT.SCHEMATA s WHERE s.OWNERTYPE = 'S')`;
+/** The table `schema`.`table` is not the system's own, the condition every catalog read below holds its rows to. */
+function db2UserTable(schema: string, table: string): string {
+  return `EXISTS (SELECT 1 FROM SYSCAT.TABLES o WHERE o.TABSCHEMA = ${schema} AND o.TABNAME = ${table} AND o.OWNERTYPE <> 'S')`;
 }
 
 /** The selector's schema and table, compared with the catalog's own columns. */
@@ -34,7 +36,7 @@ function composeDb2Columns(selector: AgentCatalogSelector): string {
   return (
     'SELECT RTRIM(c.TABSCHEMA) AS "table_schema", c.TABNAME AS "table_name", c.COLNAME AS "column_name", ' +
     'RTRIM(c.TYPENAME) AS "data_type", c.NULLS AS "is_nullable", c.COLNO + 1 AS "ordinal_position" ' +
-    `FROM SYSCAT.COLUMNS c WHERE ${db2SchemaExclusion("c.TABSCHEMA")}` +
+    `FROM SYSCAT.COLUMNS c WHERE ${db2UserTable("c.TABSCHEMA", "c.TABNAME")}` +
     narrowing(selector, "c.TABSCHEMA", "c.TABNAME") +
     " ORDER BY c.TABSCHEMA, c.TABNAME, c.COLNO"
   );
@@ -50,7 +52,7 @@ function composeDb2Relations(selector: AgentCatalogSelector): string {
     "JOIN SYSCAT.KEYCOLUSE k ON k.TABSCHEMA = r.TABSCHEMA AND k.TABNAME = r.TABNAME AND k.CONSTNAME = r.CONSTNAME " +
     "JOIN SYSCAT.KEYCOLUSE p ON p.TABSCHEMA = r.REFTABSCHEMA AND p.TABNAME = r.REFTABNAME " +
     "AND p.CONSTNAME = r.REFKEYNAME AND p.COLSEQ = k.COLSEQ " +
-    `WHERE ${db2SchemaExclusion("r.TABSCHEMA")}` +
+    `WHERE ${db2UserTable("r.TABSCHEMA", "r.TABNAME")}` +
     narrowing(selector, "r.TABSCHEMA", "r.TABNAME") +
     " ORDER BY r.TABSCHEMA, r.TABNAME, r.CONSTNAME, k.COLSEQ"
   );
@@ -67,7 +69,7 @@ function composeDb2Indexes(selector: AgentCatalogSelector): string {
     "CASE WHEN i.UNIQUERULE = 'P' THEN 'YES' ELSE 'NO' END AS \"is_primary\", " +
     'u.COLNAME AS "column_name" ' +
     "FROM SYSCAT.INDEXES i JOIN SYSCAT.INDEXCOLUSE u ON u.INDSCHEMA = i.INDSCHEMA AND u.INDNAME = i.INDNAME " +
-    `WHERE ${db2SchemaExclusion("i.TABSCHEMA")}` +
+    `WHERE ${db2UserTable("i.TABSCHEMA", "i.TABNAME")}` +
     narrowing(selector, "i.TABSCHEMA", "i.TABNAME") +
     " ORDER BY i.TABSCHEMA, i.TABNAME, i.INDNAME, u.COLSEQ"
   );
@@ -80,7 +82,7 @@ function composeDb2Indexes(selector: AgentCatalogSelector): string {
 function composeDb2Statistics(selector: AgentCatalogSelector): string {
   return (
     'SELECT RTRIM(t.TABSCHEMA) AS "table_schema", t.TABNAME AS "table_name", NULLIF(t.CARD, -1) AS "estimated_rows" ' +
-    `FROM SYSCAT.TABLES t WHERE t.TYPE IN ('T', 'S') AND ${db2SchemaExclusion("t.TABSCHEMA")}` +
+    "FROM SYSCAT.TABLES t WHERE t.TYPE IN ('T', 'S') AND t.OWNERTYPE <> 'S'" +
     narrowing(selector, "t.TABSCHEMA", "t.TABNAME") +
     " ORDER BY t.TABSCHEMA, t.TABNAME"
   );

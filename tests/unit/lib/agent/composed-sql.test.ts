@@ -1752,15 +1752,16 @@ describe("composeCatalogRead — Oracle", () => {
  * selector's literals included.
  */
 describe("composeCatalogRead — Db2", () => {
-  const EXCLUDED = (column: string) =>
-    `${column} NOT IN (SELECT s.SCHEMANAME FROM SYSCAT.SCHEMATA s WHERE s.OWNERTYPE = 'S')`;
+  // A schema created implicitly is owned by SYSIBM, so the system's tables are told apart by their own owner.
+  const EXCLUDED = (schema: string, table: string) =>
+    `EXISTS (SELECT 1 FROM SYSCAT.TABLES o WHERE o.TABSCHEMA = ${schema} AND o.TABNAME = ${table} AND o.OWNERTYPE <> 'S')`;
 
   test("each kind is exactly the statement below, every catalog view named SYSCAT.<view>", () => {
     const selector = { schema: "APP", table: "ORDERS" };
     expect(composeCatalogRead("db2", { ...selector, kind: "columns" })).toBe(
       'SELECT RTRIM(c.TABSCHEMA) AS "table_schema", c.TABNAME AS "table_name", c.COLNAME AS "column_name", ' +
         'RTRIM(c.TYPENAME) AS "data_type", c.NULLS AS "is_nullable", c.COLNO + 1 AS "ordinal_position" ' +
-        `FROM SYSCAT.COLUMNS c WHERE ${EXCLUDED("c.TABSCHEMA")} AND c.TABSCHEMA = 'APP' AND c.TABNAME = 'ORDERS' ` +
+        `FROM SYSCAT.COLUMNS c WHERE ${EXCLUDED("c.TABSCHEMA", "c.TABNAME")} AND c.TABSCHEMA = 'APP' AND c.TABNAME = 'ORDERS' ` +
         "ORDER BY c.TABSCHEMA, c.TABNAME, c.COLNO",
     );
     expect(composeCatalogRead("db2", { ...selector, kind: "relations" })).toBe(
@@ -1771,7 +1772,7 @@ describe("composeCatalogRead — Db2", () => {
         "JOIN SYSCAT.KEYCOLUSE k ON k.TABSCHEMA = r.TABSCHEMA AND k.TABNAME = r.TABNAME AND k.CONSTNAME = r.CONSTNAME " +
         "JOIN SYSCAT.KEYCOLUSE p ON p.TABSCHEMA = r.REFTABSCHEMA AND p.TABNAME = r.REFTABNAME " +
         "AND p.CONSTNAME = r.REFKEYNAME AND p.COLSEQ = k.COLSEQ " +
-        `WHERE ${EXCLUDED("r.TABSCHEMA")} AND r.TABSCHEMA = 'APP' AND r.TABNAME = 'ORDERS' ` +
+        `WHERE ${EXCLUDED("r.TABSCHEMA", "r.TABNAME")} AND r.TABSCHEMA = 'APP' AND r.TABNAME = 'ORDERS' ` +
         "ORDER BY r.TABSCHEMA, r.TABNAME, r.CONSTNAME, k.COLSEQ",
     );
     expect(composeCatalogRead("db2", { ...selector, kind: "indexes" })).toBe(
@@ -1780,12 +1781,12 @@ describe("composeCatalogRead — Db2", () => {
         "CASE WHEN i.UNIQUERULE = 'P' THEN 'YES' ELSE 'NO' END AS \"is_primary\", " +
         'u.COLNAME AS "column_name" ' +
         "FROM SYSCAT.INDEXES i JOIN SYSCAT.INDEXCOLUSE u ON u.INDSCHEMA = i.INDSCHEMA AND u.INDNAME = i.INDNAME " +
-        `WHERE ${EXCLUDED("i.TABSCHEMA")} AND i.TABSCHEMA = 'APP' AND i.TABNAME = 'ORDERS' ` +
+        `WHERE ${EXCLUDED("i.TABSCHEMA", "i.TABNAME")} AND i.TABSCHEMA = 'APP' AND i.TABNAME = 'ORDERS' ` +
         "ORDER BY i.TABSCHEMA, i.TABNAME, i.INDNAME, u.COLSEQ",
     );
     expect(composeCatalogRead("db2", { ...selector, kind: "statistics" })).toBe(
       'SELECT RTRIM(t.TABSCHEMA) AS "table_schema", t.TABNAME AS "table_name", NULLIF(t.CARD, -1) AS "estimated_rows" ' +
-        `FROM SYSCAT.TABLES t WHERE t.TYPE IN ('T', 'S') AND ${EXCLUDED("t.TABSCHEMA")} AND t.TABSCHEMA = 'APP' ` +
+        "FROM SYSCAT.TABLES t WHERE t.TYPE IN ('T', 'S') AND t.OWNERTYPE <> 'S' AND t.TABSCHEMA = 'APP' " +
         "AND t.TABNAME = 'ORDERS' ORDER BY t.TABSCHEMA, t.TABNAME",
     );
   });
