@@ -47,9 +47,13 @@ describe("the sign-in mode has one reader", () => {
   });
 
   test("no file under src/ other than the mode reader reads NEXT_PUBLIC_AUTH_PROVIDER", () => {
-    const offenders = sourceFiles().filter(
-      (name) => name !== READER && readsTheMode(readFileSync(join(process.cwd(), name), "utf8"), name),
-    );
+    // Each read shape above spells the name, so only a file whose text names the variable is parsed: parsing every
+    // file under src/ outran the 5000 ms test bound on CI.
+    const offenders = sourceFiles().filter((name) => {
+      if (name === READER) return false;
+      const source = readFileSync(join(process.cwd(), name), "utf8");
+      return source.includes(VARIABLE) && readsTheMode(source, name);
+    });
     expect(offenders).toEqual([]);
   });
 
