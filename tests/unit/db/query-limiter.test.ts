@@ -2274,11 +2274,29 @@ describe("the trailing-clause strip stays linear in the statement's length", () 
   test("a long chain is read and refused in time linear in its length", () => {
     // The analysis also feeds the safety dialog in the browser, so it keeps the
     // conservative reading instead of throwing: the refusal belongs to the rewrite.
-    // Eight thousand clauses took twelve seconds when every pass read the whole body.
-    const sql = `SELECT * FROM t${" FOR SHARE OF a".repeat(8000)}`;
-    const info = analyzeQuery(sql, "mysql");
-    expect(info.type).toBe("SELECT");
-    expect(info.hasLimit).toBe(false);
-    expect(() => applyQueryLimit(sql, 500, 0, {}, "mysql")).toThrow(QueryError);
-  });
+    const readAndRefuse = (clauses: number): number => {
+      const sql = `SELECT * FROM t${" FOR SHARE OF a".repeat(clauses)}`;
+      const started = performance.now();
+      const info = analyzeQuery(sql, "mysql");
+      expect(info.type).toBe("SELECT");
+      expect(info.hasLimit).toBe(false);
+      expect(() => applyQueryLimit(sql, 500, 0, {}, "mysql")).toThrow(QueryError);
+      return performance.now() - started;
+    };
+
+    // A wall-clock bound flaked on a loaded CI runner, so the test compares the
+    // growth instead: eight times the clauses costs about eight times as long when
+    // the strip is linear, and about sixty-four times when every pass reads the
+    // whole body (eight thousand clauses took twelve seconds that way). The runs
+    // alternate and the fastest of each is kept, so a slow spell on the machine
+    // weighs on both sizes alike.
+    readAndRefuse(250);
+    let short = Number.POSITIVE_INFINITY;
+    let long = Number.POSITIVE_INFINITY;
+    for (let round = 0; round < 5; round++) {
+      short = Math.min(short, readAndRefuse(250));
+      long = Math.min(long, readAndRefuse(2000));
+    }
+    expect(long / short).toBeLessThan(24);
+  }, 30_000);
 });
