@@ -721,8 +721,19 @@ describe("the openshift-mode guards", () => {
     ["secrets.adminPassword=not-a-real-password", "secrets.adminPassword"],
     ["secrets.userPassword=not-a-real-password", "secrets.userPassword"],
     ["governance.enabled=true", "governance.enabled"],
+    ["serviceAccount.automountServiceAccountToken=true", "serviceAccount.automountServiceAccountToken"],
   ])("%s fails naming %s", (pair, value) => {
     refused([...OPENSHIFT, ...set(pair)], value, "authProvider=openshift");
+  });
+
+  test("with discovery, the exporter's ServiceAccount as Studio's fails naming serviceAccount.name", () => {
+    refused(
+      [...OPENSHIFT, ...DISCOVERY, ...set(`serviceAccount.name=${RELEASE}-discovery`)],
+      "serviceAccount.name",
+      `${RELEASE}-discovery`,
+      "authProvider=openshift",
+    );
+    render([...OPENSHIFT, ...DISCOVERY, ...set("serviceAccount.name=studio")]);
   });
 
   test("mcp.enabled fails naming mcp.enabled", () => {

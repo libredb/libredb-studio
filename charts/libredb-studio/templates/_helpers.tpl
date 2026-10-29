@@ -876,6 +876,13 @@ instead, naming the value to fix. Included from deployment.yaml.
 {{- fail "authProvider=openshift requires openshiftRoute.host: OPENSHIFT_PUBLIC_URL and the ConsoleLink need the public host at install time, so set the host the router serves, such as studio-<namespace>.apps.<cluster domain>" }}
 {{- end }}
 {{- $_ := include "libredb-studio.openshiftClientId" . }}
+{{- $account := include "libredb-studio.serviceAccountName" . }}
+{{- if and (include "libredb-studio.discoveryEnabled" .) (eq $account (include "libredb-studio.discoveryName" .)) }}
+{{- fail (printf "authProvider=openshift refuses serviceAccount.name=%s: that is the discovery exporter's account, which may read Secrets in the discovered namespaces, and Studio's own process never holds a token that can read a database Secret" $account) }}
+{{- end }}
+{{- if .Values.serviceAccount.automountServiceAccountToken }}
+{{- fail "authProvider=openshift refuses serviceAccount.automountServiceAccountToken=true: Studio's process holds only the OAuth client token, whose audience the API server rejects, and reviews every request with the signed-in user's own token; leave it false" }}
+{{- end }}
 {{- if gt (int .Values.replicaCount) 1 }}
 {{- fail "authProvider=openshift requires replicaCount=1: the OpenShift tokens of signed-in users, the review cache and the export cache live in one process" }}
 {{- end }}
