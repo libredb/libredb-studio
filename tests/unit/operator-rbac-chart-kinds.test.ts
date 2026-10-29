@@ -25,7 +25,9 @@ import { parse, parseAllDocuments } from "yaml";
 import { howItFailed } from "../helpers/spawn-outcome";
 
 const ROOT = join(import.meta.dir, "../..");
-const CHART_DIR = join(ROOT, "operator/helm-charts/libredb-studio");
+// The operator embeds a byte copy of charts/libredb-studio (bun run chart:check fails on any drift), and CI
+// vendors the PostgreSQL subchart only for charts/libredb-studio, so the render reads that copy.
+const CHART_DIR = join(ROOT, "charts/libredb-studio");
 const ROLE = join(ROOT, "operator/config/rbac/role.yaml");
 const METRICS_AUTH_ROLE = join(ROOT, "operator/config/rbac/metrics_auth_role.yaml");
 const CSV = join(ROOT, "operator/bundle/manifests/libredb-studio-operator.clusterserviceversion.yaml");
