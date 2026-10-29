@@ -269,14 +269,18 @@ const SOURCES: ReadonlyMap<string, string> = new Map(
 
 const KNOWN: ReadonlySet<string> = new Set(SOURCES.keys());
 
-/** The repository path a specifier names from `file` among `known`, or null for a package or a path not there. */
+/**
+ * The repository path a specifier names from `file` among `known`, or null for a package or a path not there. A `.js`
+ * specifier names the TypeScript module beside it first, as the TypeScript resolver reads it, so `@/exports/index.js`
+ * is the package entry, not the CommonJS file of the same name.
+ */
 function resolveSpecifier(file: string, specifier: string, known: ReadonlySet<string>): string | null {
   let base: string;
   if (specifier.startsWith("@/")) base = repositoryPath(join(SRC, specifier.slice(2)));
   else if (specifier.startsWith(".")) base = repositoryPath(resolve(dirname(join(ROOT, file)), specifier));
   else return null;
   const stem = base.replace(/\.js$/, "");
-  const candidates = [base, `${stem}.ts`, `${stem}.tsx`, `${base}/index.ts`, `${base}/index.tsx`];
+  const candidates = [`${stem}.ts`, `${stem}.tsx`, base, `${base}/index.ts`, `${base}/index.tsx`];
   return candidates.find((candidate) => known.has(candidate)) ?? null;
 }
 
@@ -294,7 +298,10 @@ interface FileFacts {
   readonly whole: readonly { readonly specifier: string; readonly form: "namespace" | "default" | "dynamic" }[];
   /** How many `import()` and `require()` calls name their module with anything but a literal. */
   readonly computed: number;
-  /** `export ... from`: the names given on, `*` for `export *`, and a `from` of `*` for `export * as x`. */
+  /**
+   * `export ... from`: the names given on, `*` for `export *` and for `module.exports = require()`, and a `from` of `*`
+   * for `export * as x`.
+   */
   readonly reExports: readonly { readonly specifier: string; readonly names: readonly Rename[] | "*" }[];
   /** `export { a as b }`, `export default a` and `export const b = a`: a local name given on. */
   readonly localExports: readonly Rename[];
@@ -345,6 +352,19 @@ function patternNames(pattern: ts.ObjectBindingPattern): Rename[] | null {
     names.push({ from: key.text, to: element.name.text });
   }
   return names;
+}
+
+/** `module.exports = require(x)`: a CommonJS module that gives all of another on, like `export * from x`. */
+function isWholeCommonJsExport(node: ts.Node): node is ts.BinaryExpression {
+  return (
+    ts.isBinaryExpression(node) &&
+    node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    ts.isPropertyAccessExpression(node.left) &&
+    ts.isIdentifier(node.left.expression) &&
+    node.left.expression.text === "module" &&
+    node.left.name.text === "exports" &&
+    isModuleLoad(unwrapped(node.right))
+  );
 }
 
 /** Whether a statement carries `export`. */
@@ -434,6 +454,14 @@ function factsOf(file: string, text: string): FileFacts {
       const specifier = literal(node.arguments[0]);
       if (specifier === null) computed += 1;
       else whole.push({ specifier, form: "dynamic" });
+    }
+    if (isWholeCommonJsExport(node)) {
+      const load = unwrapped(node.right) as ts.CallExpression;
+      const specifier = literal(load.arguments[0]);
+      if (specifier !== null) {
+        reExports.push({ specifier, names: "*" });
+        destructured.add(load);
+      }
     }
     if (ts.isExportAssignment(node)) {
       const value = unwrapped(node.expression);
@@ -698,7 +726,7 @@ describe("the census reads every import form", () => {
       ["createDatabaseProvider", "createDatabaseProvider"],
       ["getOrCreateProvider", "getOrCreateProvider"],
     ]);
-    for (const barrel of ["src/exports/providers.ts", "src/exports/index.ts"]) {
+    for (const barrel of ["src/exports/providers.ts", "src/exports/index.ts", "src/exports/index.js"]) {
       expect([...(GATED.get(barrel)?.keys() ?? [])].sort()).toEqual([
         "createDatabaseProvider",
         "getOrCreateProvider",
@@ -744,6 +772,40 @@ describe("the census reads every import form", () => {
     expect(importsOf(FILE, importer, gated).bindings).toEqual([
       { origin: INDEX, fn: "getSeedListing", local: "listSeeds" },
       { origin: INDEX, fn: "getSeedListing", local: "listing" },
+    ]);
+  });
+
+  test("(d) a specifier ending in .js names the TypeScript module beside it before the JavaScript file", () => {
+    expect(resolveSpecifier(FILE, "@/exports/index.js", KNOWN)).toBe("src/exports/index.ts");
+    expect(resolveSpecifier(FILE, "../../exports/index.js", KNOWN)).toBe("src/exports/index.ts");
+    expect(resolveSpecifier(FILE, "@/lib/seed/index.js", KNOWN)).toBe("src/lib/seed/index.ts");
+    const found = importsOf(
+      FILE,
+      [
+        'import { createDatabaseProvider } from "@/exports/index.js";',
+        'import { getOrCreateProvider } from "../../exports/index.js";',
+      ].join("\n"),
+      GATED,
+    );
+    expect(found.bindings).toEqual([
+      { origin: "src/exports/index.ts", fn: "createDatabaseProvider", local: "createDatabaseProvider" },
+      { origin: "src/exports/index.ts", fn: "getOrCreateProvider", local: "getOrCreateProvider" },
+    ]);
+  });
+
+  test("(e) a CommonJS whole re-export gives every gated function of the module it requires on, like export *", () => {
+    expect([...(GATED.get("src/exports/index.js")?.keys() ?? [])].sort()).toEqual([
+      "createDatabaseProvider",
+      "getOrCreateProvider",
+      "withOneShotTunnel",
+    ]);
+    const CJS = "src/lib/census-probe/whole.js";
+    const whole = 'module.exports = require("@/lib/seed");';
+    const importer = 'import { getSeedListing } from "./whole.js";';
+    const gated = closeUnderReExport(new Map([...SOURCES, [CJS, whole], [FILE, importer]]));
+    expect(importsOf(CJS, whole, gated).hidden).toEqual([{ origin: "src/lib/seed/index.ts", form: "re-export" }]);
+    expect(importsOf(FILE, importer, gated, new Set([...KNOWN, CJS])).bindings).toEqual([
+      { origin: CJS, fn: "getSeedListing", local: "getSeedListing" },
     ]);
   });
 
