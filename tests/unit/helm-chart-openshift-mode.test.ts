@@ -808,3 +808,141 @@ describe("the discovery exporter under the OpenShift SCC", () => {
     expect(context.fsGroup).toBe(1001);
   });
 });
+
+describe("the Tier 0 ConsoleLink", () => {
+  const LINK = set("openshift.consoleLink.enabled=true");
+  const DASHBOARD = set("openshift.consoleLink.enabled=true", "openshift.consoleLink.location=NamespaceDashboard");
+  const RELEASE_DERIVED = `${NAMESPACE}.${RELEASE}`;
+
+  function consoleLinks(args: string[]): Manifest[] {
+    return all(render(args), "ConsoleLink");
+  }
+
+  test("with discovery on, the ApplicationMenu link is the locator: fixed name and label, the Route's https URL", () => {
+    const [link, ...rest] = consoleLinks([...OPENSHIFT, ...DISCOVERY, ...LINK]);
+    expect(rest).toEqual([]);
+    expect(link.apiVersion).toBe("console.openshift.io/v1");
+    expect(link.metadata.name).toBe("libredb-studio");
+    expect(link.metadata.namespace).toBeUndefined();
+    expect(link.metadata.labels?.["app.kubernetes.io/name"]).toBe("libredb-studio");
+    expect(link.spec).toEqual({
+      href: `https://${HOST}`,
+      text: "LibreDB Studio",
+      location: "ApplicationMenu",
+      applicationMenu: { section: "LibreDB" },
+    });
+  });
+
+  test("the locator keeps its name and label under a nameOverride", () => {
+    const [link] = consoleLinks([...set(...OPENSHIFT_PAIRS, "nameOverride=studio"), ...DISCOVERY, ...LINK]);
+    expect(link.metadata.name).toBe("libredb-studio");
+    expect(link.metadata.labels?.["app.kubernetes.io/name"]).toBe("libredb-studio");
+  });
+
+  test("the href carries config.basePath, and the text, section and icon come from the values", () => {
+    const [link] = consoleLinks([
+      ...OPENSHIFT,
+      ...LINK,
+      ...set(
+        "config.basePath=/studio",
+        "openshift.consoleLink.text=Databases",
+        "openshift.consoleLink.section=Data",
+        "openshift.consoleLink.imageUrl=https://example.com/icon.png",
+      ),
+    ]);
+    expect(link.spec?.href).toBe(`https://${HOST}/studio`);
+    expect(link.spec?.text).toBe("Databases");
+    expect(link.spec?.applicationMenu).toEqual({ section: "Data", imageURL: "https://example.com/icon.png" });
+  });
+
+  test("with discovery off, the ApplicationMenu link has a release-derived name and no locator label", () => {
+    const [link] = consoleLinks([...OPENSHIFT, ...LINK]);
+    expect(link.metadata.name).toBe(RELEASE_DERIVED);
+    expect(link.metadata.labels).not.toHaveProperty("app.kubernetes.io/name");
+    expect(link.metadata.labels?.["app.kubernetes.io/instance"]).toBe(RELEASE);
+    expect(link.spec?.location).toBe("ApplicationMenu");
+  });
+
+  test("a NamespaceDashboard link names its namespaces, with a release-derived name and no locator label", () => {
+    const [link] = consoleLinks([...OPENSHIFT, ...DASHBOARD, ...set("openshift.consoleLink.namespaces={team-a,team-b}")]);
+    expect(link.metadata.name).toBe(RELEASE_DERIVED);
+    expect(link.metadata.labels).not.toHaveProperty("app.kubernetes.io/name");
+    expect(link.spec).toEqual({
+      href: `https://${HOST}`,
+      text: "LibreDB Studio",
+      location: "NamespaceDashboard",
+      namespaceDashboard: { namespaces: ["team-a", "team-b"] },
+    });
+  });
+
+  test("a NamespaceDashboard link takes a namespace selector", () => {
+    const [link] = consoleLinks([
+      ...OPENSHIFT,
+      ...DASHBOARD,
+      "--set-json",
+      'openshift.consoleLink.namespaceSelector={"matchLabels":{"team":"data"}}',
+    ]);
+    expect(link.spec?.namespaceDashboard).toEqual({ namespaceSelector: { matchLabels: { team: "data" } } });
+  });
+
+  test("a NamespaceDashboard link with neither namespaces nor a selector fails", () => {
+    refused([...OPENSHIFT, ...DASHBOARD], "openshift.consoleLink.namespaces", "openshift.consoleLink.namespaceSelector");
+  });
+
+  test("a NamespaceDashboard link with discovery on fails, so a team link never takes the locator's place", () => {
+    refused(
+      [...OPENSHIFT, ...DISCOVERY, ...DASHBOARD, ...set("openshift.consoleLink.namespaces={team-a}")],
+      "openshift.consoleLink.location",
+    );
+  });
+
+  test("the link without openshiftRoute.host fails naming it", () => {
+    refused([...LINK, ...set("global.compatibility.openshift.apis=force")], "openshift.consoleLink", "openshiftRoute.host");
+  });
+
+  test("without console.openshift.io/v1 and without force it fails naming the force switch", () => {
+    const pairs = OPENSHIFT_PAIRS.filter((pair) => !pair.startsWith("global.compatibility"));
+    refused(
+      [...set(...pairs, `fullnameOverride=${RELEASE}`), ...LINK, "--api-versions", "route.openshift.io/v1"],
+      "console.openshift.io/v1",
+      "global.compatibility.openshift.apis=force",
+    );
+  });
+
+  test("a served console.openshift.io/v1 is detected", () => {
+    const pairs = OPENSHIFT_PAIRS.filter((pair) => !pair.startsWith("global.compatibility"));
+    const links = consoleLinks([
+      ...set(...pairs, `fullnameOverride=${RELEASE}`),
+      ...LINK,
+      "--api-versions",
+      "route.openshift.io/v1",
+      "--api-versions",
+      "console.openshift.io/v1",
+    ]);
+    expect(links).toHaveLength(1);
+  });
+
+  test("operator-managed, it renders only for the cluster Studio's namespace (O14)", () => {
+    refused([...OPENSHIFT, ...LINK, ...set("operator.managed=true")], "operator.clusterStudioNamespace");
+    refused(
+      [...OPENSHIFT, ...LINK, ...set("operator.managed=true", "operator.clusterStudioNamespace=studio")],
+      "operator.clusterStudioNamespace",
+    );
+    expect(
+      consoleLinks([...OPENSHIFT, ...LINK, ...set("operator.managed=true", `operator.clusterStudioNamespace=${NAMESPACE}`)]),
+    ).toHaveLength(1);
+  });
+
+  test("no ConsoleLink reader role or binding ships: every authenticated user may already read them", () => {
+    const docs = render([...OPENSHIFT, ...DISCOVERY, ...LINK]);
+    for (const kind of ["ClusterRole", "ClusterRoleBinding"]) expect(all(docs, kind)).toEqual([]);
+    for (const role of all(docs, "Role")) {
+      for (const rule of role.rules ?? []) expect(rule.resources).not.toContain("consolelinks");
+    }
+  });
+
+  test("off by default: no ConsoleLink, on OpenShift too", () => {
+    expect(consoleLinks(OPENSHIFT)).toEqual([]);
+    expect(consoleLinks([...OPENSHIFT, ...DISCOVERY])).toEqual([]);
+  });
+});
