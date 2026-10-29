@@ -28,6 +28,13 @@ function sqlReadsPosture(bounds: StatementBudgets): AgentPosture {
   };
 }
 
+/*
+  What each statement workflow requires of an engine's dialect is what its verdict cites, not everything it offers.
+  Only the optimization verdict rests on an estimating plan (a plan comparison, or an index recommendation citing a
+  plan), so only that variant requires `sql-composers`. The other three require `sql-catalog`: the `inspect_plan` and
+  `profile_table` they are offered too each refuse with `UNSUPPORTED_DIALECT` on a dialect that composes neither, and
+  a run that cannot estimate a plan never auto-executes, because a missing plan reads as a risky one.
+*/
 export const SQL_CLIENT_PACK = Object.freeze({
   copy: Object.freeze({
     subject: "a database",
@@ -46,7 +53,7 @@ export const SQL_CLIENT_PACK = Object.freeze({
       objective: "Your objective is a question about this database. Answer it from what you establish.",
       planDeliverable: Object.freeze({ kind: "statement", noun: "the statement that answers the question" }),
       canAutoExecute: false,
-      requires: Object.freeze<AgentVariantRequirement[]>(["sql-composers"]),
+      requires: Object.freeze<AgentVariantRequirement[]>(["sql-catalog"]),
       verifier: "agent-investigation.1",
     }),
     /**
@@ -74,7 +81,7 @@ export const SQL_CLIENT_PACK = Object.freeze({
         "Your objective is the state of this database itself: where its data is incomplete, inconsistent or surprising.",
       planDeliverable: Object.freeze({ kind: "statement", noun: "the statement that measures the quality concern" }),
       canAutoExecute: false,
-      requires: Object.freeze<AgentVariantRequirement[]>(["sql-composers"]),
+      requires: Object.freeze<AgentVariantRequirement[]>(["sql-catalog"]),
       verifier: "agent-database-assessment.1",
     }),
     operations: OPERATIONS_VARIANT,
@@ -99,7 +106,7 @@ export const SQL_CLIENT_PACK = Object.freeze({
         "Your objective is a question about the data in this database. Establish the answer from the data and produce something to show for it.",
       planDeliverable: Object.freeze({ kind: "statement", noun: "the statement that produces the answer" }),
       canAutoExecute: true,
-      requires: Object.freeze<AgentVariantRequirement[]>(["sql-composers"]),
+      requires: Object.freeze<AgentVariantRequirement[]>(["sql-catalog"]),
       verifier: "agent-data-analysis.1",
     }),
   } satisfies Record<AgentRunWorkflowType, AgentWorkflowVariant>),

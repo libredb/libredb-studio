@@ -77,6 +77,28 @@ describe("the requirement mirrors", () => {
     expect(Object.isFrozen(AGENT_REQUIREMENT_ENGINES["sql-composers"])).toBe(true);
   });
 
+  test("sql-catalog names exactly the engines whose catalog read composes", () => {
+    const measured = SHIPPED_DATABASE_TYPES.filter((type) => composesCatalogFor(type));
+    expect([...AGENT_REQUIREMENT_ENGINES["sql-catalog"]].sort()).toEqual([...measured].sort());
+  });
+
+  test("sql-catalog is frozen, in this order, and holds every engine sql-composers does", () => {
+    expect(AGENT_REQUIREMENT_ENGINES["sql-catalog"]).toEqual([
+      "postgres",
+      "sqlite",
+      "duckdb",
+      "mssql",
+      "mysql",
+      "clickhouse",
+      "libsql",
+      "influxdb3",
+    ]);
+    expect(Object.isFrozen(AGENT_REQUIREMENT_ENGINES["sql-catalog"])).toBe(true);
+    for (const type of AGENT_REQUIREMENT_ENGINES["sql-composers"]) {
+      expect(AGENT_REQUIREMENT_ENGINES["sql-catalog"]).toContain(type);
+    }
+  });
+
   test.each([
     ["cluster-usage-reading", "usage"],
     ["cluster-workload-reading", "workloads"],
@@ -167,6 +189,23 @@ describe("the SQL variants", () => {
 
   test.each([...WORKFLOWS])("%s may auto-execute exactly where it presents an answer", (workflow) => {
     expect(AGENT_WORKFLOW_VARIANTS.sql[workflow]?.canAutoExecute).toBe(AGENT_WORKFLOW_PRESENTS_ANSWER[workflow]);
+  });
+
+  /*
+    What each statement workflow needs of the dialect, measured from its verdict rather than from its offer. Only the
+    optimization verdict cites an estimating plan (a plan comparison, or an index recommendation resting on a plan), so
+    only that workflow is held to an engine that estimates one. The other three are offered `inspect_plan` and
+    `profile_table` too, and each of those refuses on its own with `UNSUPPORTED_DIALECT` where the dialect has no
+    composition, so neither holds the workflow out.
+  */
+  test.each([
+    ["investigation", ["sql-catalog"]],
+    ["query-optimization", ["sql-composers"]],
+    ["database-assessment", ["sql-catalog"]],
+    ["operations", []],
+    ["data-analysis", ["sql-catalog"]],
+  ] as const)("%s requires exactly %p", (workflow, requires) => {
+    expect(AGENT_WORKFLOW_VARIANTS.sql[workflow]?.requires).toEqual(requires);
   });
 
   test("an absent language reads as sql", () => {
@@ -532,6 +571,46 @@ describe("workflowAvailability", () => {
       open: true,
       statementLanguage: "kubectl",
       variant: null,
+    });
+  });
+
+  /*
+    An engine whose dialect composes a catalog read and no estimating plan, which no shipped engine is yet: driven
+    through tables that hold DuckDB in `sql-catalog` and out of `sql-composers`.
+  */
+  const catalogOnly = {
+    languages: AGENT_STATEMENT_LANGUAGE,
+    variants: AGENT_WORKFLOW_VARIANTS,
+    requirementEngines: { ...AGENT_REQUIREMENT_ENGINES, "sql-catalog": ["duckdb"], "sql-composers": [] },
+  } as const;
+
+  test.each(["investigation", "database-assessment", "data-analysis"] as const)(
+    "%s opens on an engine that composes a catalog read and no estimating plan",
+    (workflow) => {
+      expect(workflowAvailability("agent", workflow, "duckdb", catalogOnly)).toEqual({
+        open: true,
+        statementLanguage: "sql",
+        variant: requiredVariant("sql", workflow),
+      });
+    },
+  );
+
+  test("query-optimization stays refused there, with the sentence it was always refused with", () => {
+    expect(workflowAvailability("agent", "query-optimization", "duckdb", catalogOnly)).toEqual({
+      open: false,
+      cause: "requirement-unmet",
+      sentence:
+        "Agent mode has no verified catalog or plan composition for this engine, so this workflow's tools could only refuse. The operations workflow runs here, and plan mode drafts here.",
+    });
+  });
+
+  test("a statement workflow on an engine that composes no catalog read names what it lacks", () => {
+    const neither = { ...catalogOnly, requirementEngines: { ...catalogOnly.requirementEngines, "sql-catalog": [] } };
+    expect(workflowAvailability("agent", "investigation", "duckdb", neither)).toEqual({
+      open: false,
+      cause: "requirement-unmet",
+      sentence:
+        "Agent mode has no verified catalog composition for this engine, so this workflow's tools could only refuse. The operations workflow runs here, and plan mode drafts here.",
     });
   });
 

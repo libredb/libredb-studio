@@ -134,17 +134,20 @@ function packRequirementProjection<Value>(
  * answer it with no provider in hand. A requirement only one language's variants name is its pack's own
  * (`AgentPackVariantRequirement`).
  */
-export type AgentVariantRequirement = "sql-composers" | AgentPackVariantRequirement;
+export type AgentVariantRequirement = "sql-catalog" | "sql-composers" | AgentPackVariantRequirement;
 
 /**
- * The engines each requirement holds on. `sql-composers` is read from the engines' client dialects
+ * The engines each requirement holds on. `sql-catalog` and `sql-composers` are read from the engines' client dialects
  * (`enginesSupporting` in `languages/engines/client.ts`), which say client-safe what each server overlay supplies:
- * the engines that compose both a catalog read and an estimating plan. A pack's requirement holds on the engines its
- * pack names (`AGENT_PACK_REQUIREMENTS`). `agent-manifest.test.ts` holds `sql-composers` to the composed-SQL entry
- * points in `composed-sql.ts` and each pack requirement to the providers that declare its reading.
+ * the engines that compose a catalog read, and those that compose both a catalog read and an estimating plan. A
+ * statement workflow names the one its verdict needs, so a dialect with no estimating plan still opens every workflow
+ * whose verdict cites none. A pack's requirement holds on the engines its pack names (`AGENT_PACK_REQUIREMENTS`).
+ * `agent-manifest.test.ts` holds both SQL requirements to the composed-SQL entry points in `composed-sql.ts` and each
+ * pack requirement to the providers that declare its reading.
  */
 export const AGENT_REQUIREMENT_ENGINES: Readonly<Record<AgentVariantRequirement, readonly DatabaseType[]>> =
   Object.freeze({
+    "sql-catalog": enginesSupporting("catalogRead"),
     "sql-composers": enginesSupporting("catalogRead", "planEstimate"),
     ...packRequirementProjection((spec) => spec.engines),
   } satisfies Record<AgentVariantRequirement, readonly DatabaseType[]>);
@@ -313,6 +316,8 @@ const NO_VARIANT_SENTENCE =
 
 /** Each requirement's refusal names what the engine lacks, and both ways forward that remain. */
 const REQUIREMENT_SENTENCES: Readonly<Record<AgentVariantRequirement, string>> = Object.freeze({
+  "sql-catalog":
+    "Agent mode has no verified catalog composition for this engine, so this workflow's tools could only refuse. The operations workflow runs here, and plan mode drafts here.",
   "sql-composers":
     "Agent mode has no verified catalog or plan composition for this engine, so this workflow's tools could only refuse. The operations workflow runs here, and plan mode drafts here.",
   ...packRequirementProjection((spec) => spec.sentence),

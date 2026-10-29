@@ -162,9 +162,9 @@ const SHARED_ENTRIES = new Set(
  * - the reference variant record and the ledger's "the default language is not written" rule (R5c
  *   `DEFAULT_STATEMENT_LANGUAGE`), and a curated call, which is no statement in any language (R5c
  *   `CURATED_CALL_LANGUAGE`);
- * - persisted ids: the `sql-composers` requirement, whose engines are derived from the overlays, and the operation ids
- *   of the SQL arm runtime, which stays in the core. The one in `describePriorProgress` is temporary: it marks B127,
- *   and the B127 fix removes it;
+ * - persisted ids: the `sql-catalog` and `sql-composers` requirements, whose engines are derived from the overlays,
+ *   and the operation ids of the SQL arm runtime, which stays in the core. The one in `describePriorProgress` is
+ *   temporary: it marks B127, and the B127 fix removes it;
  * - the execution gate, which the spec keeps in `AGENT_EXECUTION_ENGINES`;
  * - `postgres` as the `@workflow` durable world, which is no `DatabaseType`;
  * - `libredb` as the MCP server's name in each client's configuration snippet, and as the first word of the MCP server's
@@ -193,6 +193,9 @@ const ALLOWLIST: Readonly<Record<string, number>> = Object.freeze({
   [`${AGENT}/tools.ts#fingerprint: R5c CURATED_CALL_LANGUAGE`]: 1,
   [`${AGENT}/tools.ts#advice: R5c CURATED_CALL_LANGUAGE`]: 1,
   [`${AGENT}/tools.ts#runAuditedAgentCall: R5c CURATED_CALL_LANGUAGE`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentVariantRequirement: R5e "sql-catalog"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AGENT_REQUIREMENT_ENGINES: R5e "sql-catalog"`]: 1,
+  [`${AGENT}/agent-manifest.ts#REQUIREMENT_SENTENCES: R5e "sql-catalog"`]: 1,
   [`${AGENT}/agent-manifest.ts#AgentVariantRequirement: R5e "sql-composers"`]: 1,
   [`${AGENT}/agent-manifest.ts#AGENT_REQUIREMENT_ENGINES: R5e "sql-composers"`]: 1,
   [`${AGENT}/agent-manifest.ts#REQUIREMENT_SENTENCES: R5e "sql-composers"`]: 1,
