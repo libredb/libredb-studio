@@ -315,12 +315,16 @@ const MANIFEST_TABLES: AgentAvailabilityTables = Object.freeze({
 const NO_VARIANT_SENTENCE =
   "Agent mode does not offer this workflow on this engine. The operations workflow runs here, and plan mode drafts here.";
 
-/** Each requirement's refusal names what the engine lacks, and both ways forward that remain. */
+/**
+ * Each requirement's refusal names what the engine lacks, and the ways forward that remain on every engine it can be
+ * shown on. `sql-composers` is shown on engines that may still hold `sql-catalog`, so its sentence claims no missing
+ * catalog and names no workflow but operations, the one that opens everywhere.
+ */
 const REQUIREMENT_SENTENCES: Readonly<Record<AgentVariantRequirement, string>> = Object.freeze({
   "sql-catalog":
     "Agent mode has no verified catalog composition for this engine, so this workflow's tools could only refuse. The operations workflow runs here, and plan mode drafts here.",
   "sql-composers":
-    "Agent mode has no verified catalog or plan composition for this engine, so this workflow's tools could only refuse. The operations workflow runs here, and plan mode drafts here.",
+    "This workflow needs both a catalog read and an estimating plan, and agent mode has no verified composition of both for this engine, so this workflow's tools could only refuse. Workflows that need less still run here, the operations workflow among them, and plan mode drafts here.",
   ...packRequirementProjection((spec) => spec.sentence),
 } satisfies Record<AgentVariantRequirement, string>);
 

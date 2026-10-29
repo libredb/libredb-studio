@@ -180,12 +180,12 @@ describe("an engine that composes its catalog read through a row mapper and no e
     expect(workflowAvailability("agent", workflow, "duckdb")).toMatchObject({ open: true, statementLanguage: "sql" });
   });
 
-  test("refuses query-optimization with the sentence it was always refused with", () => {
+  test("refuses query-optimization with the sentence that says it needs an estimating plan", () => {
     expect(workflowAvailability("agent", "query-optimization", "duckdb")).toEqual({
       open: false,
       cause: "requirement-unmet",
       sentence:
-        "Agent mode has no verified catalog or plan composition for this engine, so this workflow's tools could only refuse. The operations workflow runs here, and plan mode drafts here.",
+        "This workflow needs both a catalog read and an estimating plan, and agent mode has no verified composition of both for this engine, so this workflow's tools could only refuse. Workflows that need less still run here, the operations workflow among them, and plan mode drafts here.",
     });
   });
 

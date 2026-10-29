@@ -577,8 +577,8 @@ describe("workflowAvailability", () => {
   });
 
   /*
-    An engine whose dialect composes a catalog read and no estimating plan, which no shipped engine is yet: driven
-    through tables that hold DuckDB in `sql-catalog` and out of `sql-composers`.
+    An engine whose dialect composes a catalog read and no estimating plan: driven through tables that hold DuckDB in
+    `sql-catalog` and out of `sql-composers`, so the case holds whichever shipped engines are in it.
   */
   const catalogOnly = {
     languages: AGENT_STATEMENT_LANGUAGE,
@@ -597,13 +597,24 @@ describe("workflowAvailability", () => {
     },
   );
 
-  test("query-optimization stays refused there, with the sentence it was always refused with", () => {
+  test("query-optimization stays refused there, with the sentence that says it needs an estimating plan", () => {
     expect(workflowAvailability("agent", "query-optimization", "duckdb", catalogOnly)).toEqual({
       open: false,
       cause: "requirement-unmet",
       sentence:
-        "Agent mode has no verified catalog or plan composition for this engine, so this workflow's tools could only refuse. The operations workflow runs here, and plan mode drafts here.",
+        "This workflow needs both a catalog read and an estimating plan, and agent mode has no verified composition of both for this engine, so this workflow's tools could only refuse. Workflows that need less still run here, the operations workflow among them, and plan mode drafts here.",
     });
+  });
+
+  test("on a shipped engine with a catalog read and no estimating plan, the refusal claims no missing catalog", () => {
+    const refused = workflowAvailability("agent", "query-optimization", "elasticsearch");
+    expect(refused).toEqual({
+      open: false,
+      cause: "requirement-unmet",
+      sentence:
+        "This workflow needs both a catalog read and an estimating plan, and agent mode has no verified composition of both for this engine, so this workflow's tools could only refuse. Workflows that need less still run here, the operations workflow among them, and plan mode drafts here.",
+    });
+    expect(workflowAvailability("agent", "investigation", "elasticsearch")).toMatchObject({ open: true });
   });
 
   test("a statement workflow on an engine that composes no catalog read names what it lacks", () => {
