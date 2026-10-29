@@ -53,63 +53,311 @@ function text(value) {
   return typeof value === "string" && value !== "" ? value : undefined;
 }
 
+/** A Service name: an RFC 1035 label. */
+const SERVICE_LABEL = /^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$/;
+/** A database user name of a per-user row, Studio's rule: no slash, so no two rows share an id key. */
+const USER_NAME = /^[A-Za-z0-9_.@+-]{1,63}$/;
+/** A MongoDB database name, of a user's own database or of one of its roles. */
+const MONGO_DB_NAME = /^[A-Za-z0-9_-]{1,63}$/;
+/** A Secret name MongoDB Community uses as it computes it, with nothing to normalize. */
+const PLAIN_SECRET_NAME = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
+/** The roles of a MongoDB user the exporter keeps, the first ones of the resource. */
+const MONGO_ROLES_MAX = 64;
+/** The database MongoDB Community authenticates a user against when the user names none. */
+const MONGO_ADMIN_DATABASE = "admin";
+/** The keys CloudNativePG writes into a `<name>-app` Secret, as measured; EDB writes the same. */
+const CNPG_ALLOWED_KEYS = Object.freeze([
+  "dbname",
+  "fqdn-jdbc-uri",
+  "fqdn-uri",
+  "host",
+  "jdbc-uri",
+  "password",
+  "pgpass",
+  "port",
+  "uri",
+  "user",
+  "username",
+]);
+
+/** The namespace and name of a listed item, or null when either is missing or the name is not an object name. */
+function namedMetadata(item) {
+  const namespace = item?.metadata?.namespace;
+  const name = item?.metadata?.name;
+  if (typeof namespace !== "string" || !isObjectName(name)) return null;
+  return { namespace, name };
+}
+
+/** Whether `secret` carries an ownerReference to the resource whose UID is `uid`. */
+function ownedBy(secret, uid) {
+  const references = Array.isArray(secret?.metadata?.ownerReferences) ? secret.metadata.ownerReferences : [];
+  return uid !== undefined && references.some((reference) => reference?.uid === uid);
+}
+
 /**
- * The contract table, one row per supported kind: the exporter's copy of KUBERNETES_CONTRACT in
- * src/lib/seed/kubernetes-discovery-contract.ts. Adding a row or a key widens what leaves the opted-in namespaces,
- * so it is a separate, reviewed change on both sides.
+ * A row of the CloudNativePG family: CloudNativePG itself, and EDB Postgres for Kubernetes, its downstream, which writes
+ * the same Secrets under its own API group and cluster label. One candidate per Cluster: the Secret named by
+ * `.spec.bootstrap.initdb.secret.name` when set, otherwise the `<name>-app` Secret the operator writes.
  */
-export const CONTRACT = Object.freeze([
-  Object.freeze({
-    slug: "cnpg",
-    group: "postgresql.cnpg.io",
+function cnpgFamilyRow({ slug, group, clusterLabel }) {
+  /** The initdb Secret the user supplied, or undefined for the operator's `<name>-app`. */
+  const supplied = (resource) => text(resource?.spec?.bootstrap?.initdb?.secret?.name);
+  const row = {
+    slug,
+    group,
     version: "v1",
+    kind: "Cluster",
     plural: "clusters",
+    secretType: "kubernetes.io/basic-auth",
+    allowedKeys: CNPG_ALLOWED_KEYS,
     secretKeys: Object.freeze(["username", "password", "dbname", "port"]),
-    /** `.spec.bootstrap.initdb.secret.name` when set, otherwise the `<name>-app` Secret CloudNativePG writes. */
-    secretName(resource) {
-      return text(resource?.spec?.bootstrap?.initdb?.secret?.name) ?? `${resource.metadata.name}-app`;
+    /** The operator's `<name>-app` carries every kept key; a Secret the user supplied, the user and password only. */
+    requiredKeys(candidate) {
+      return supplied(candidate.resource) === undefined
+        ? ["username", "password", "dbname", "port"]
+        : ["username", "password"];
+    },
+    serviceName(resource) {
+      return `${resource.metadata.name}-rw`;
     },
     /**
      * Whether `secret` belongs to the Cluster `resource` prunes, whose UID is `uid`, so a Cluster cannot point the
      * exporter at another workload's Secret of its namespace. A Secret tied to this Cluster, by an ownerReference to
-     * its UID or the label cnpg.io/cluster=<name> CloudNativePG writes, belongs to it. A Secret named by initdb that is
-     * tied to nothing at all, no ownerReference and no cnpg.io/cluster label, belongs to it when it is of type
-     * kubernetes.io/basic-auth, as CloudNativePG requires. Any other Secret does not: another Cluster's `<name>-app`
-     * is basic-auth too, and owned by that Cluster.
+     * its UID or the cluster label the operator writes, belongs to it. A Secret named by initdb that is tied to nothing
+     * at all, no ownerReference and no cluster label, belongs to it when it is of type kubernetes.io/basic-auth, as the
+     * operator requires. Any other Secret does not: another Cluster's `<name>-app` is basic-auth too, and owned by it.
      */
     owns(secret, resource, uid) {
       const references = Array.isArray(secret?.metadata?.ownerReferences) ? secret.metadata.ownerReferences : [];
-      const label = secret?.metadata?.labels?.["cnpg.io/cluster"];
-      const ownedHere = uid !== undefined && references.some((reference) => reference?.uid === uid);
+      const label = secret?.metadata?.labels?.[clusterLabel];
       const labelledHere = typeof label === "string" && label === resource.metadata.name;
-      if (ownedHere || labelledHere) return true;
-      if (text(resource.spec?.bootstrap?.initdb?.secret?.name) === undefined) return false;
+      if (ownedBy(secret, uid) || labelledHere) return true;
+      if (supplied(resource) === undefined) return false;
       return secret?.type === "kubernetes.io/basic-auth" && references.length === 0 && label === undefined;
     },
     /**
-     * The resource with only the fields the contract reads, or null when it has no namespace and name, or names an
-     * initdb database that is not 1 to 63 characters, PostgreSQL's identifier bound: Studio's schema would refuse the
-     * whole export for it, and dropping it would connect to another database.
+     * The Cluster as one candidate, its resource pruned to the fields the contract reads, or left out when it has no
+     * names, names an initdb database that is not 1 to 63 characters (PostgreSQL's identifier bound: Studio's schema
+     * would refuse the whole export, and dropping it would connect to another database), or an initdb Secret that is
+     * not an object name. The candidate carries the exact names this Cluster reserves: the operator's CA, server,
+     * replication and superuser Secrets, and whichever the Cluster's spec names for them, read here and never exported.
      */
-    prune(resource) {
-      const namespace = resource?.metadata?.namespace;
-      const name = resource?.metadata?.name;
-      if (typeof namespace !== "string" || typeof name !== "string") return null;
-      const initdb = resource.spec?.bootstrap?.initdb;
+    expand(item) {
+      const metadata = namedMetadata(item);
+      if (metadata === null) return { candidates: [], leftOut: 1 };
+      const initdb = item.spec?.bootstrap?.initdb;
       const database = initdb?.database;
       if (database !== undefined && !(typeof database === "string" && database.length >= 1 && database.length <= 63)) {
-        return null;
+        return { candidates: [], leftOut: 1 };
       }
       const kept = {
         ...(text(initdb?.database) === undefined ? {} : { database: initdb.database }),
         ...(text(initdb?.secret?.name) === undefined ? {} : { secret: { name: initdb.secret.name } }),
       };
-      return {
-        metadata: { namespace, name },
+      const resource = {
+        metadata,
         ...(Object.keys(kept).length === 0 ? {} : { spec: { bootstrap: { initdb: kept } } }),
       };
+      const secretName = supplied(resource) ?? `${metadata.name}-app`;
+      if (!isObjectName(secretName)) return { candidates: [], leftOut: 1 };
+      const certificates = item.spec?.certificates;
+      const named = [
+        certificates?.serverCASecret,
+        certificates?.serverTLSSecret,
+        certificates?.replicationTLSSecret,
+        certificates?.clientCASecret,
+        item.spec?.superuserSecret?.name,
+      ].filter((name) => text(name) !== undefined);
+      const exact = [
+        `${metadata.name}-ca`,
+        `${metadata.name}-server`,
+        `${metadata.name}-replication`,
+        `${metadata.name}-superuser`,
+        ...named,
+      ];
+      return { candidates: [{ row, resource, uid: text(item.metadata.uid), secretName, exact }], leftOut: 0 };
     },
-  }),
+  };
+  return Object.freeze(row);
+}
+
+/** Whether `name` is a Crunchy PGO user name: Studio's user name rule, and an RFC 1123 label, PGO's own. */
+function isPgoUser(name) {
+  return typeof name === "string" && USER_NAME.test(name) && LABEL.test(name);
+}
+
+/**
+ * Crunchy PGO `PostgresCluster` (`v1beta1`): one candidate per user of `spec.users`, or the default user PGO names after
+ * the cluster when that list is absent or empty. Each user's Secret is `<name>-pguser-<user>`, of type Opaque and owned
+ * by the cluster. A user that lists no database has a Secret without dbname, so it is marked no_database and its
+ * Secret is never requested.
+ */
+const PGO_ROW = {
+  slug: "pgo",
+  group: "postgres-operator.crunchydata.com",
+  version: "v1beta1",
+  kind: "PostgresCluster",
+  plural: "postgresclusters",
+  secretType: "Opaque",
+  allowedKeys: Object.freeze([
+    "dbname",
+    "host",
+    "jdbc-uri",
+    "password",
+    "port",
+    "uri",
+    "user",
+    "verifier",
+    "pgbouncer-host",
+    "pgbouncer-port",
+    "pgbouncer-uri",
+    "pgbouncer-jdbc-uri",
+  ]),
+  secretKeys: Object.freeze(["user", "password", "host", "port", "dbname"]),
+  requiredKeys() {
+    return ["user", "password", "host", "port", "dbname"];
+  },
+  serviceName(resource) {
+    return `${resource.metadata.name}-primary`;
+  },
+  owns(secret, _resource, uid) {
+    return ownedBy(secret, uid);
+  },
+  expand(item) {
+    const metadata = namedMetadata(item);
+    if (metadata === null) return { candidates: [], leftOut: 1 };
+    const uid = text(item.metadata.uid);
+    const users = item.spec?.users;
+    if (users === undefined || users === null || (Array.isArray(users) && users.length === 0)) {
+      const secretName = `${metadata.name}-pguser-${metadata.name}`;
+      if (!isObjectName(secretName)) return { candidates: [], leftOut: 1 };
+      return { candidates: [{ row: PGO_ROW, resource: { metadata }, uid, secretName, exact: [] }], leftOut: 0 };
+    }
+    if (!Array.isArray(users)) return { candidates: [], leftOut: 1 };
+    const candidates = [];
+    let leftOut = 0;
+    for (const user of users) {
+      const name = user?.name;
+      const secretName = `${metadata.name}-pguser-${name}`;
+      if (!isPgoUser(name) || !isObjectName(secretName)) {
+        leftOut += 1;
+        continue;
+      }
+      const databases = Array.isArray(user.databases) ? user.databases : [];
+      candidates.push({
+        row: PGO_ROW,
+        resource: { metadata, spec: { users: [{ name }] } },
+        uid,
+        secretName,
+        exact: [],
+        ...(databases.length === 0 ? { precheck: "no_database" } : {}),
+      });
+    }
+    return { candidates, leftOut };
+  },
+};
+Object.freeze(PGO_ROW);
+
+/** A MongoDB Community user as Studio reads it, or null when a name, database or role database is not one Studio accepts. */
+function mongoUser(user) {
+  const name = user?.name;
+  const db = user?.db;
+  const roles = user?.roles ?? [];
+  const secretName = user?.connectionStringSecretName;
+  if (typeof name !== "string" || !USER_NAME.test(name)) return null;
+  if (db !== undefined && !(typeof db === "string" && MONGO_DB_NAME.test(db))) return null;
+  if (!Array.isArray(roles)) return null;
+  const kept = roles.slice(0, MONGO_ROLES_MAX);
+  if (!kept.every((role) => typeof role?.db === "string" && MONGO_DB_NAME.test(role.db))) return null;
+  if (secretName !== undefined && !isObjectName(secretName)) return null;
+  return {
+    name,
+    ...(db === undefined ? {} : { db }),
+    ...(secretName === undefined ? {} : { connectionStringSecretName: secretName }),
+    roles: kept.map((role) => ({ db: role.db })),
+  };
+}
+
+/**
+ * MongoDB Community `MongoDBCommunity`: one candidate per user of `spec.users`, none without users. A user's Secret is
+ * its connectionStringSecretName, else `<name>-<db>-<user>` when that needs no normalization by the operator, else the
+ * user is marked unsupported_name; a Secret kept in another namespace is marked other_namespace. Neither is requested.
+ */
+const MONGO_ROW = {
+  slug: "mongo",
+  group: "mongodbcommunity.mongodb.com",
+  version: "v1",
+  kind: "MongoDBCommunity",
+  plural: "mongodbcommunity",
+  secretType: "Opaque",
+  allowedKeys: Object.freeze(["connectionString.standard", "connectionString.standardSrv", "password", "username"]),
+  secretKeys: Object.freeze(["connectionString.standard", "username", "password"]),
+  requiredKeys() {
+    return ["connectionString.standard", "username", "password"];
+  },
+  serviceName(resource) {
+    return resource.spec?.statefulSet?.spec?.serviceName ?? `${resource.metadata.name}-svc`;
+  },
+  owns(secret, _resource, uid) {
+    return ownedBy(secret, uid);
+  },
+  expand(item) {
+    const metadata = namedMetadata(item);
+    if (metadata === null) return { candidates: [], leftOut: 1 };
+    const users = item.spec?.users;
+    if (users === undefined || users === null) return { candidates: [], leftOut: 0 };
+    if (!Array.isArray(users)) return { candidates: [], leftOut: 1 };
+    const serviceName = item.spec.statefulSet?.spec?.serviceName;
+    if (serviceName !== undefined && !(typeof serviceName === "string" && SERVICE_LABEL.test(serviceName))) {
+      return { candidates: [], leftOut: users.length };
+    }
+    const tls = item.spec.security?.tls?.enabled;
+    const shared = {
+      ...(typeof tls === "boolean" ? { security: { tls: { enabled: tls } } } : {}),
+      ...(serviceName === undefined ? {} : { statefulSet: { spec: { serviceName } } }),
+    };
+    const uid = text(item.metadata.uid);
+    const candidates = [];
+    let leftOut = 0;
+    for (const raw of users) {
+      const user = mongoUser(raw);
+      if (user === null) {
+        leftOut += 1;
+        continue;
+      }
+      const resource = { metadata, spec: { users: [user], ...shared } };
+      const computed = `${metadata.name}-${user.db ?? MONGO_ADMIN_DATABASE}-${user.name}`;
+      const secretName = user.connectionStringSecretName ?? computed;
+      if (user.connectionStringSecretName === undefined && !(computed.length <= MAX_SUBDOMAIN && PLAIN_SECRET_NAME.test(computed))) {
+        candidates.push({ row: MONGO_ROW, resource, uid, exact: [], precheck: "unsupported_name" });
+        continue;
+      }
+      const otherNamespace =
+        raw.connectionStringSecretNamespace !== undefined && raw.connectionStringSecretNamespace !== metadata.namespace;
+      candidates.push({
+        row: MONGO_ROW,
+        resource,
+        uid,
+        secretName,
+        exact: [],
+        ...(otherNamespace ? { precheck: "other_namespace" } : {}),
+      });
+    }
+    return { candidates, leftOut };
+  },
+};
+Object.freeze(MONGO_ROW);
+
+/**
+ * The contract table, one row per supported kind, in Studio's order: the exporter's copy of KUBERNETES_CONTRACT in
+ * src/lib/seed/kubernetes-discovery-contract.ts. Adding a row or a key widens what leaves the opted-in namespaces,
+ * so it is a separate, reviewed change on both sides.
+ */
+export const CONTRACT = Object.freeze([
+  cnpgFamilyRow({ slug: "cnpg", group: "postgresql.cnpg.io", clusterLabel: "cnpg.io/cluster" }),
+  cnpgFamilyRow({ slug: "edbpg", group: "postgresql.k8s.enterprisedb.io", clusterLabel: "k8s.enterprisedb.io/cluster" }),
+  PGO_ROW,
+  MONGO_ROW,
 ]);
 
 /** What every KUBERNETES_DISCOVERY_* variable means when it is unset or blank. */
@@ -120,6 +368,8 @@ export const DEFAULTS = Object.freeze({
   tokenPath: "/var/run/secrets/kubernetes.io/serviceaccount/token",
   caPath: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
   exportKey: "export.json",
+  // Every other kind is opted in: a kind whose CRD the cluster does not serve withdraws every namespace (crd_missing).
+  kinds: Object.freeze(["cnpg"]),
 });
 
 /** Every bound the exporter enforces; Studio enforces the export's again on its side. */
@@ -244,7 +494,7 @@ export function readConfig(env) {
   if (parts.length !== 2 || !isLabel(parts[0]) || !isObjectName(parts[1])) throw new Error(EXPORT_SECRET_MESSAGE);
 
   const known = CONTRACT.map((row) => row.slug).join(", ");
-  let kinds = CONTRACT;
+  let kinds = CONTRACT.filter((row) => DEFAULTS.kinds.includes(row.slug));
   if (trimmed(source.KUBERNETES_DISCOVERY_KINDS) !== "") {
     const slugs = listSetting(source.KUBERNETES_DISCOVERY_KINDS);
     if (slugs.length === 0) throw new Error(`KUBERNETES_DISCOVERY_KINDS must name at least one kind: ${known}`);
@@ -549,18 +799,16 @@ async function listNamespace({ client, config, namespace, limits }) {
         throw codedError(`GET ${path} answered with something other than a list`, "EBADLIST");
       }
       for (const item of list.items) {
-        const resource = row.prune(item);
-        if (resource === null || resource.metadata.namespace !== namespace || !isObjectName(resource.metadata.name)) {
-          leftOut += 1;
-          continue;
+        const expanded = row.expand(item);
+        leftOut += expanded.leftOut;
+        for (const candidate of expanded.candidates) {
+          if (candidate.resource.metadata.namespace !== namespace) {
+            leftOut += 1;
+            continue;
+          }
+          if (found.length === limits.databases) return { status: { ok: true }, found, more: true, leftOut };
+          found.push(candidate);
         }
-        const secretName = row.secretName(resource);
-        if (!isObjectName(secretName)) {
-          leftOut += 1;
-          continue;
-        }
-        if (found.length === limits.databases) return { status: { ok: true }, found, more: true, leftOut };
-        found.push({ row, resource, uid: text(item?.metadata?.uid), secretName });
       }
       continueToken = typeof list.metadata?.continue === "string" ? list.metadata.continue : "";
       if (continueToken === "") break;
@@ -598,8 +846,11 @@ export async function scanOnce({ client, config, limits = LIMITS }) {
     const databases = [];
     for (const [index, listing] of listings.entries()) {
       for (const candidate of listing.found.slice(0, shares[index])) {
-        // oxlint-disable-next-line no-await-in-loop -- one request at a time keeps the API server's load flat.
-        const secret = await readCredentialSecret(client, candidate);
+        const secret =
+          candidate.precheck === undefined
+            ? // oxlint-disable-next-line no-await-in-loop -- one request at a time keeps the API server's load flat.
+              await readCredentialSecret(client, candidate)
+            : { ...(candidate.secretName === undefined ? {} : { name: candidate.secretName }), problem: candidate.precheck };
         databases.push({ kind: candidate.row.slug, resource: candidate.resource, secret });
       }
     }

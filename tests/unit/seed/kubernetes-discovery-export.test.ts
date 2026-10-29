@@ -530,7 +530,7 @@ describe("parseKubernetesDiscoveryExport", () => {
       expect(parse(document({ status: status("m".repeat(LIMITS.messageChars + 1)) })).ok).toBe(false);
     });
 
-    it("reads a file of the exporter's size bound, and keeps only keys some contract row keeps", () => {
+    it("reads a file of the exporter's size bound, and keeps exactly the keys the exporter's rows keep", () => {
       expect(LIMITS.exportBytes).toBeLessThanOrEqual(KUBERNETES_DISCOVERY_FILE_MAX_BYTES);
       expect<string[]>([...KUBERNETES_DISCOVERY_SECRET_KEYS]).toEqual([
         "username",
@@ -541,9 +541,11 @@ describe("parseKubernetesDiscoveryExport", () => {
         "host",
         "connectionString.standard",
       ]);
+      const kept = new Set<string>();
       for (const row of CONTRACT as readonly { secretKeys: readonly string[] }[]) {
-        for (const key of row.secretKeys) expect<string[]>([...KUBERNETES_DISCOVERY_SECRET_KEYS]).toContain(key);
+        for (const key of row.secretKeys) kept.add(key);
       }
+      expect(kept).toEqual(new Set<string>(KUBERNETES_DISCOVERY_SECRET_KEYS));
     });
   });
 

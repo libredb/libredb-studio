@@ -52,7 +52,7 @@ import {
   startFakeDiscoveryApi,
   statusBody,
 } from "../helpers/kubernetes-discovery/fake-api";
-import { GOLDEN_CASES } from "../helpers/kubernetes-discovery-fixture";
+import { GOLDEN_CASES, goldenEntry, goldenRow } from "../helpers/kubernetes-discovery-fixture";
 import { eventually } from "../helpers/node-transport-fixtures";
 
 const T0 = Date.parse("2026-10-28T08:00:00.000Z");
@@ -203,6 +203,7 @@ describe("the reviewed constants", () => {
       tokenPath: "/var/run/secrets/kubernetes.io/serviceaccount/token",
       caPath: "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
       exportKey: "export.json",
+      kinds: ["cnpg"],
     });
     expect(LIMITS).toEqual({
       namespaces: 256,
@@ -242,44 +243,369 @@ describe("the reviewed constants", () => {
         slug: studio.slug,
         group: studio.group,
         version: studio.version,
+        kind: studio.kind,
         plural: studio.plural,
+        secretType: studio.secretType,
         secretKeys: [...studio.secretKeys],
       });
+      // Every kept key is an allowed key: the exporter never keeps a key it would refuse.
+      for (const key of row.secretKeys) expect(row.allowedKeys).toContain(key);
     }
+    expect(Object.isFrozen(CONTRACT)).toBe(true);
+    for (const row of CONTRACT) expect(Object.isFrozen(row)).toBe(true);
   });
 
-  test.each(CNPG_CASES.map((c) => [`${c.resource.metadata.namespace}/${c.resource.metadata.name}`, c] as const))(
-    "the CloudNativePG row names the golden Secret of %s, as Studio's row does",
+  test("the measured key sets", () => {
+    const keys = (slug: string) => CONTRACT.find((row: { slug: string }) => row.slug === slug);
+    const cnpg = [
+      "dbname",
+      "fqdn-jdbc-uri",
+      "fqdn-uri",
+      "host",
+      "jdbc-uri",
+      "password",
+      "pgpass",
+      "port",
+      "uri",
+      "user",
+      "username",
+    ];
+    expect(keys("cnpg").allowedKeys).toEqual(cnpg);
+    expect(keys("edbpg").allowedKeys).toEqual(cnpg);
+    expect(keys("pgo").allowedKeys).toEqual([
+      "dbname",
+      "host",
+      "jdbc-uri",
+      "password",
+      "port",
+      "uri",
+      "user",
+      "verifier",
+      "pgbouncer-host",
+      "pgbouncer-port",
+      "pgbouncer-uri",
+      "pgbouncer-jdbc-uri",
+    ]);
+    expect(keys("mongo").allowedKeys).toEqual([
+      "connectionString.standard",
+      "connectionString.standardSrv",
+      "password",
+      "username",
+    ]);
+  });
+
+  test.each(GOLDEN_CASES.map((c) => [`${c.resource.kind} ${c.secretName}`, c] as const))(
+    "each golden case names the same Secret and Service on both sides: %s",
     (_, c) => {
-      const [row] = CONTRACT;
-      expect(row.secretName(c.resource)).toBe(c.secretName);
-      expect(row.secretName(c.resource)).toBe(CNPG_CLUSTER.secretName(c.resource));
+      const studio = goldenRow(c);
+      const row = CONTRACT.find((entry: { slug: string }) => entry.slug === studio.slug);
+      const { candidates, leftOut } = row.expand(c.resource);
+      expect(leftOut).toBe(0);
+      const candidate = candidates.find(
+        (entry: { resource: { spec?: { users?: { name: string }[] } } }) =>
+          c.user === undefined || (entry.resource.spec?.users?.[0]?.name ?? c.resource.metadata.name) === c.user,
+      );
+      // The exporter writes the resource Studio reads, and names the Secret and Service Studio's row names.
+      expect(candidate.resource).toEqual(goldenEntry(c).resource);
+      expect(candidate.secretName).toBe(c.secretName);
+      expect(candidate.uid).toBe(c.resource.metadata.uid);
+      expect(row.serviceName(candidate.resource)).toBe(c.service.name);
+      expect(studio.secretName(candidate.resource)).toBe(c.secretName);
+      expect(studio.serviceName(candidate.resource)).toBe(c.service.name);
     },
   );
 
-  test("the CloudNativePG row prunes a resource to the contract's fields", () => {
-    const [row] = CONTRACT;
-    expect(
-      row.prune({
-        apiVersion: "postgresql.cnpg.io/v1",
-        metadata: { namespace: "prod", name: "billing-db", uid: "u", labels: { a: "b" } },
-        spec: {
-          instances: 3,
-          bootstrap: { initdb: { database: "billing", owner: "o", secret: { name: "billing-owner", x: 1 } } },
-        },
-      }),
-    ).toEqual({
-      metadata: { namespace: "prod", name: "billing-db" },
-      spec: { bootstrap: { initdb: { database: "billing", secret: { name: "billing-owner" } } } },
-    });
-    // A database that is not a name Studio accepts leaves the resource out rather than connecting to another one.
-    expect(
-      row.prune({ metadata: { namespace: "a", name: "b" }, spec: { bootstrap: { initdb: { database: 1 } } } }),
-    ).toBeNull();
-    expect(row.prune({ metadata: { namespace: "a", name: "b" } })).toEqual({ metadata: { namespace: "a", name: "b" } });
-    for (const odd of [null, {}, { metadata: { name: "b" } }, { metadata: { namespace: "a", name: 7 } }]) {
-      expect(row.prune(odd)).toBeNull();
+  test("the CloudNativePG family prunes a resource to the contract's fields and names the operator's reserved Secrets", () => {
+    for (const slug of ["cnpg", "edbpg"]) {
+      const row = CONTRACT.find((entry: { slug: string }) => entry.slug === slug);
+      expect(
+        row.expand({
+          apiVersion: "postgresql.cnpg.io/v1",
+          metadata: { namespace: "prod", name: "billing-db", uid: "u", labels: { a: "b" } },
+          spec: {
+            instances: 3,
+            bootstrap: { initdb: { database: "billing", owner: "o", secret: { name: "billing-owner", x: 1 } } },
+            certificates: { serverCASecret: "my-ca", serverTLSSecret: "my-tls", replicationTLSSecret: 7 },
+            superuserSecret: { name: "my-superuser" },
+          },
+        }),
+      ).toEqual({
+        candidates: [
+          {
+            row,
+            resource: {
+              metadata: { namespace: "prod", name: "billing-db" },
+              spec: { bootstrap: { initdb: { database: "billing", secret: { name: "billing-owner" } } } },
+            },
+            uid: "u",
+            secretName: "billing-owner",
+            exact: [
+              "billing-db-ca",
+              "billing-db-server",
+              "billing-db-replication",
+              "billing-db-superuser",
+              "my-ca",
+              "my-tls",
+              "my-superuser",
+            ],
+          },
+        ],
+        leftOut: 0,
+      });
+      // A database that is not a name Studio accepts leaves the resource out rather than connecting to another one.
+      expect(
+        row.expand({ metadata: { namespace: "a", name: "b" }, spec: { bootstrap: { initdb: { database: 1 } } } }),
+      ).toEqual({ candidates: [], leftOut: 1 });
+      expect(row.expand({ metadata: { namespace: "a", name: "b" } }).candidates[0]).toMatchObject({
+        resource: { metadata: { namespace: "a", name: "b" } },
+        secretName: "b-app",
+      });
+      const odd = [
+        null,
+        {},
+        { metadata: { name: "b" } },
+        { metadata: { namespace: "a", name: 7 } },
+        { metadata: { namespace: "a", name: "B" } },
+        { metadata: { namespace: "a", name: "b" }, spec: { bootstrap: { initdb: { secret: { name: "Bad_Name" } } } } },
+      ];
+      for (const item of odd) expect(row.expand(item)).toEqual({ candidates: [], leftOut: 1 });
     }
+  });
+
+  test("names each row's required keys", () => {
+    const row = (slug: string) => CONTRACT.find((entry: { slug: string }) => entry.slug === slug);
+    const cnpg = row("cnpg").expand({ metadata: { namespace: "a", name: "b" } }).candidates[0];
+    const supplied = row("cnpg").expand({
+      metadata: { namespace: "a", name: "b" },
+      spec: { bootstrap: { initdb: { secret: { name: "owner" } } } },
+    }).candidates[0];
+    expect(row("cnpg").requiredKeys(cnpg)).toEqual(["username", "password", "dbname", "port"]);
+    expect(row("cnpg").requiredKeys(supplied)).toEqual(["username", "password"]);
+    expect(row("pgo").requiredKeys({})).toEqual(["user", "password", "host", "port", "dbname"]);
+    expect(row("mongo").requiredKeys({})).toEqual(["connectionString.standard", "username", "password"]);
+  });
+});
+
+describe("expansion", () => {
+  const pgo = CONTRACT.find((entry: { slug: string }) => entry.slug === "pgo");
+  const mongo = CONTRACT.find((entry: { slug: string }) => entry.slug === "mongo");
+  const PGO_METADATA = { namespace: "team-b", name: "analytics", uid: "uid-analytics" };
+  const MONGO_METADATA = { namespace: "team-m", name: "catalog", uid: "uid-catalog" };
+
+  test("PGO gives one candidate per user, its resource pruned to that user", () => {
+    const { candidates, leftOut } = pgo.expand({
+      metadata: PGO_METADATA,
+      spec: {
+        users: [
+          { name: "analyst", databases: ["analytics"], options: "SUPERUSER" },
+          { name: "reporter", databases: ["analytics", "metrics"] },
+        ],
+      },
+    });
+    expect(leftOut).toBe(0);
+    expect(candidates).toEqual([
+      {
+        row: pgo,
+        resource: { metadata: { namespace: "team-b", name: "analytics" }, spec: { users: [{ name: "analyst" }] } },
+        uid: "uid-analytics",
+        secretName: "analytics-pguser-analyst",
+        exact: [],
+      },
+      {
+        row: pgo,
+        resource: { metadata: { namespace: "team-b", name: "analytics" }, spec: { users: [{ name: "reporter" }] } },
+        uid: "uid-analytics",
+        secretName: "analytics-pguser-reporter",
+        exact: [],
+      },
+    ]);
+  });
+
+  test("PGO gives its default user, named after the cluster, when spec.users is absent or empty", () => {
+    for (const spec of [undefined, {}, { users: [] }, { users: null }]) {
+      const { candidates, leftOut } = pgo.expand({ metadata: { ...PGO_METADATA, name: "metrics" }, spec });
+      expect(leftOut).toBe(0);
+      expect(candidates).toEqual([
+        {
+          row: pgo,
+          resource: { metadata: { namespace: "team-b", name: "metrics" } },
+          uid: "uid-analytics",
+          secretName: "metrics-pguser-metrics",
+          exact: [],
+        },
+      ]);
+    }
+  });
+
+  test("PGO marks a user without databases no_database, before any request", () => {
+    for (const user of [{ name: "analyst" }, { name: "analyst", databases: [] }, { name: "analyst", databases: "x" }]) {
+      const { candidates } = pgo.expand({ metadata: PGO_METADATA, spec: { users: [user] } });
+      expect(candidates).toEqual([
+        expect.objectContaining({ secretName: "analytics-pguser-analyst", precheck: "no_database" }),
+      ]);
+    }
+  });
+
+  test("PGO leaves out and counts a user whose name PGO or Studio would refuse", () => {
+    const users = [
+      { name: "Analyst", databases: ["a"] },
+      { name: "ana_lyst", databases: ["a"] },
+      { name: "a/b", databases: ["a"] },
+      { name: "", databases: ["a"] },
+      { name: "a".repeat(64), databases: ["a"] },
+      { name: 7, databases: ["a"] },
+      null,
+      { name: "fine", databases: ["a"] },
+    ];
+    const { candidates, leftOut } = pgo.expand({ metadata: PGO_METADATA, spec: { users } });
+    expect(leftOut).toBe(7);
+    expect(candidates.map((entry: { secretName: string }) => entry.secretName)).toEqual(["analytics-pguser-fine"]);
+    expect(pgo.expand({ metadata: PGO_METADATA, spec: { users: "x" } })).toEqual({ candidates: [], leftOut: 1 });
+    expect(pgo.expand({ metadata: { namespace: "team-b" } })).toEqual({ candidates: [], leftOut: 1 });
+  });
+
+  test("MongoDB gives one candidate per user, its resource pruned to that user, its TLS switch and its Service", () => {
+    const { candidates, leftOut } = mongo.expand({
+      metadata: MONGO_METADATA,
+      spec: {
+        members: 3,
+        security: {
+          tls: { enabled: true, certificateKeySecretRef: { name: "x" } },
+          authentication: { modes: ["SCRAM"] },
+        },
+        statefulSet: { spec: { serviceName: "catalog-hl", replicas: 3 } },
+        users: [
+          {
+            name: "appuser",
+            db: "admin",
+            passwordSecretRef: { name: "appuser-password" },
+            roles: [{ name: "readWrite", db: "catalog" }],
+            additionalConnectionStringConfig: { proxyHost: "evil.example.com" },
+          },
+          { name: "reader", db: "catalog", connectionStringSecretName: "catalog-reader", roles: [] },
+        ],
+      },
+    });
+    expect(leftOut).toBe(0);
+    const shared = { security: { tls: { enabled: true } }, statefulSet: { spec: { serviceName: "catalog-hl" } } };
+    expect(candidates).toEqual([
+      {
+        row: mongo,
+        resource: {
+          metadata: { namespace: "team-m", name: "catalog" },
+          spec: { users: [{ name: "appuser", db: "admin", roles: [{ db: "catalog" }] }], ...shared },
+        },
+        uid: "uid-catalog",
+        secretName: "catalog-admin-appuser",
+        exact: [],
+      },
+      {
+        row: mongo,
+        resource: {
+          metadata: { namespace: "team-m", name: "catalog" },
+          spec: {
+            users: [{ name: "reader", db: "catalog", connectionStringSecretName: "catalog-reader", roles: [] }],
+            ...shared,
+          },
+        },
+        uid: "uid-catalog",
+        secretName: "catalog-reader",
+        exact: [],
+      },
+    ]);
+    expect(mongo.expand({ metadata: MONGO_METADATA, spec: {} })).toEqual({ candidates: [], leftOut: 0 });
+    expect(mongo.expand({ metadata: MONGO_METADATA })).toEqual({ candidates: [], leftOut: 0 });
+  });
+
+  test("MongoDB keeps at most 64 roles of a user", () => {
+    const roles = Array.from({ length: 70 }, (_, index) => ({ name: "read", db: `db${index}` }));
+    const { candidates } = mongo.expand({
+      metadata: MONGO_METADATA,
+      spec: { users: [{ name: "appuser", db: "admin", roles }] },
+    });
+    expect(candidates[0].resource.spec.users[0].roles).toHaveLength(64);
+    expect(candidates[0].resource.spec.users[0].roles[63]).toEqual({ db: "db63" });
+  });
+
+  test("MongoDB marks a Secret in another namespace other_namespace, and a name it would have to normalize unsupported_name", () => {
+    const user = (extra: Record<string, unknown>) =>
+      mongo.expand({
+        metadata: MONGO_METADATA,
+        spec: { users: [{ name: "appuser", db: "admin", roles: [], ...extra }] },
+      }).candidates[0];
+    expect(user({ connectionStringSecretNamespace: "team-x" })).toMatchObject({
+      secretName: "catalog-admin-appuser",
+      precheck: "other_namespace",
+    });
+    expect(user({ connectionStringSecretNamespace: "team-m" })).not.toHaveProperty("precheck");
+    const odd = mongo.expand({
+      metadata: MONGO_METADATA,
+      spec: { users: [{ name: "App_User", db: "admin", roles: [] }] },
+    }).candidates[0];
+    expect(odd).toMatchObject({ precheck: "unsupported_name" });
+    expect(odd).not.toHaveProperty("secretName");
+    // A name the user gave is used as it is, so no normalization is needed.
+    expect(
+      mongo.expand({
+        metadata: MONGO_METADATA,
+        spec: { users: [{ name: "App_User", db: "admin", connectionStringSecretName: "catalog-app", roles: [] }] },
+      }).candidates[0],
+    ).toMatchObject({ secretName: "catalog-app" });
+    expect(odd.precheck === "unsupported_name" && odd.resource.spec.users[0].name).toBe("App_User");
+  });
+
+  test("MongoDB leaves out and counts a user whose name, database, role database or Secret name Studio would refuse", () => {
+    const users = [
+      { name: "app user", db: "admin", roles: [] },
+      { name: "appuser", db: "ad.min", roles: [] },
+      { name: "appuser", db: "admin", roles: [{ db: "cat/alog" }] },
+      { name: "appuser", db: "admin", roles: "x" },
+      { name: "appuser", db: "admin", connectionStringSecretName: "Bad_Name", roles: [] },
+      { name: "appuser", db: 7, roles: [] },
+      null,
+      { name: "fine", roles: [{ db: "catalog" }] },
+    ];
+    const { candidates, leftOut } = mongo.expand({ metadata: MONGO_METADATA, spec: { users } });
+    expect(leftOut).toBe(7);
+    expect(candidates.map((entry: { secretName: string }) => entry.secretName)).toEqual(["catalog-admin-fine"]);
+    // A Service name override that is not a DNS-1035 label leaves every user of the resource out.
+    expect(
+      mongo.expand({
+        metadata: MONGO_METADATA,
+        spec: { statefulSet: { spec: { serviceName: "Catalog" } }, users: [users[7], users[7]] },
+      }),
+    ).toEqual({ candidates: [], leftOut: 2 });
+    expect(mongo.expand({ metadata: MONGO_METADATA, spec: { users: "x" } })).toEqual({ candidates: [], leftOut: 1 });
+  });
+
+  test("scans the prechecked rows with their problem and no Secret request", async () => {
+    api.addResource("pgo", "team-a", "analytics", { users: [{ name: "analyst" }] });
+    api.addResource("mongo", "team-a", "catalog", {
+      users: [
+        { name: "App_User", db: "admin", roles: [] },
+        { name: "appuser", db: "admin", connectionStringSecretNamespace: "team-x", roles: [] },
+      ],
+    });
+    const result = await scan({ client: client(), config: config({ KUBERNETES_DISCOVERY_KINDS: "pgo,mongo" }) });
+    expect(result.databases.map((entry) => [entry.kind, entry.secret])).toEqual([
+      ["pgo", { name: "analytics-pguser-analyst", problem: "no_database" }],
+      ["mongo", { problem: "unsupported_name" }],
+      ["mongo", { name: "catalog-admin-appuser", problem: "other_namespace" }],
+    ]);
+    expect(api.seen.some((seen) => seen.path.includes("/secrets/") || seen.path.includes("/services/"))).toBe(false);
+    const parsed = parseKubernetesDiscoveryExport(
+      JSON.stringify(
+        buildExport({
+          now: T0,
+          status: { ok: true },
+          generatedAt: new Date(T0).toISOString(),
+          namespaces: result.namespaces,
+          databases: result.databases,
+        }),
+      ),
+    );
+    if (!parsed.ok) throw new Error(parsed.reason);
+    expect(parsed.value.databases).toHaveLength(3);
   });
 });
 
@@ -354,11 +680,23 @@ describe("readConfig", () => {
 
   test("refuses a kind it does not know, and a kinds list with none", () => {
     expect(() => readConfig({ ...minimal, KUBERNETES_DISCOVERY_KINDS: "cnpg,mariadb" })).toThrow(
-      'KUBERNETES_DISCOVERY_KINDS names "mariadb", which is not a supported kind: cnpg',
+      'KUBERNETES_DISCOVERY_KINDS names "mariadb", which is not a supported kind: cnpg, edbpg, pgo, mongo',
     );
     expect(() => readConfig({ ...minimal, KUBERNETES_DISCOVERY_KINDS: " , " })).toThrow(
-      "KUBERNETES_DISCOVERY_KINDS must name at least one kind: cnpg",
+      "KUBERNETES_DISCOVERY_KINDS must name at least one kind: cnpg, edbpg, pgo, mongo",
     );
+  });
+
+  // A kind whose CRD the cluster does not serve withdraws every namespace (crd_missing), so each is opted in.
+  test("reads CloudNativePG alone by default, and each opted-in kind in the contract's order", () => {
+    const slugs = (value?: string) =>
+      readConfig({ ...minimal, ...(value === undefined ? {} : { KUBERNETES_DISCOVERY_KINDS: value }) }).kinds.map(
+        (row: { slug: string }) => row.slug,
+      );
+    expect(slugs()).toEqual(["cnpg"]);
+    expect(slugs("  ")).toEqual(["cnpg"]);
+    for (const slug of ["cnpg", "edbpg", "pgo", "mongo"]) expect(slugs(slug)).toEqual([slug]);
+    expect(slugs("mongo, pgo,edbpg,cnpg")).toEqual(["cnpg", "edbpg", "pgo", "mongo"]);
   });
 
   test.each([
@@ -823,10 +1161,10 @@ describe("scanOnce", () => {
     expect(result.databases.map((entry) => entry.resource.metadata.name)).toEqual(["orders", "analytics"]);
     const [row] = CONTRACT;
     expect(
-      row.prune({
+      row.expand({
         metadata: { namespace: "a", name: "b" },
         spec: { bootstrap: { initdb: { database: "d".repeat(63) } } },
-      }),
+      }).candidates[0].resource,
     ).toEqual({
       metadata: { namespace: "a", name: "b" },
       spec: { bootstrap: { initdb: { database: "d".repeat(63) } } },

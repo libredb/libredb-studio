@@ -216,7 +216,7 @@ export class FakeDiscoveryApi {
         namespace,
         name,
         resourceVersion: String(this.version),
-        ...(owners.length === 0 ? {} : { ownerReferences: owners.map((owner) => ({ ...owner })) }),
+        ...(owners.length === 0 ? {} : { ownerReferences: structuredClone([...owners]) }),
       },
       spec: {
         type,
