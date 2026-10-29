@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
+import { calculatePKCECodeChallenge } from "openid-client";
 import { openShiftCallbackUrl } from "@/lib/openshift-auth/config";
 import { exchangeOpenShiftCode, grantedScopeAccepted, openShiftAuthorizationUrl } from "@/lib/openshift-auth/flow";
 import { checkOpenShiftMetadata, type OpenShiftServerMetadata } from "@/lib/openshift-auth/metadata";
@@ -83,9 +83,7 @@ describe("exchangeOpenShiftCode", () => {
     expect(form.get("client_secret")).toBe(CLIENT_SECRET);
     // The fake token endpoint refused nothing, and the challenge is the S256 of the verifier sent (PKCE).
     const verifier = form.get("code_verifier") ?? "";
-    expect(createHash("sha256").update(verifier).digest("base64url")).toBe(
-      url.searchParams.get("code_challenge") ?? "",
-    );
+    expect(await calculatePKCECodeChallenge(verifier)).toBe(url.searchParams.get("code_challenge") ?? "");
     // The API server saw nothing: the token call goes to the OAuth server only.
     expect(cluster.received("api")).toEqual([]);
   });
