@@ -2,7 +2,7 @@
  * Live check of the Oracle agent read-only execution profile, against a server of the operator's choosing.
  *
  * WHY THIS EXISTS, AND WHY IT CANNOT BE A UNIT TEST. The boundary is the server's: a user set READ ONLY, which Oracle
- * refuses every write for, and a check at first use that the user reaches nothing READ ONLY leaves open
+ * refuses every write for, and a check before every statement that the user reaches nothing READ ONLY leaves open
  * (`agent-read.ts`). The provider suite replays answers its author wrote; whether the server refuses a statement, and
  * what the dictionary views list for a user, is the server's to say. So this script asks a real server through the
  * production path (`createDatabaseProvider` with the profile's execution context, then `connect` and `queryReadOnly`):
@@ -24,7 +24,10 @@
  *    own policies, an auditing policy with no condition and no handler, a view over DBMS_LOB through Oracle's PUBLIC
  *    synonym, one over a synonym for a granted table, a view leaving out a hidden virtual column, and a view over a view
  *    once both are granted, the inner one INSERT only included; and a policy on SYSTEM.HELP and an audit condition are
- *    measured to run the owner's function for the READ ONLY user's plain SELECT;
+ *    measured to run the owner's function for the READ ONLY user's plain SELECT; a policy function, an auditing
+ *    handler, a function granted to PUBLIC, a view and a sequence an administrator made in SYSTEM, a schema Oracle
+ *    maintains, are refused, the first two measured to run for that user; and on one handle a policy added after a
+ *    call refuses the next call, and the call after its drop runs;
  *  - the boundary, with Studio's client admission bypassed: every write, DDL, temporary table, lock, transaction
  *    statement, PL/SQL write and second statement is sent through `queryReadOnly` as the admitted user and refused,
  *    each classified by its ORA- code; the same writes run as the schema owner through the editor path, the positive
@@ -240,25 +243,42 @@ const SETUP_AS_SYSTEM: readonly string[] = [
   // A view that is left invalid: the column it reads is dropped and added again.
   `CREATE TABLE ${OWNER}.${PREFIX}STALE (ID NUMBER, N NUMBER)`,
   `CREATE OR REPLACE VIEW ${OWNER}.${PREFIX}STALE_VIEW AS SELECT ID, N FROM ${OWNER}.${PREFIX}STALE`,
+  // Objects an administrator makes in SYSTEM, a schema Oracle maintains: ALL_OBJECTS marks none of them Oracle's.
+  `CREATE SEQUENCE SYSTEM.${PREFIX}SYS_SEQ NOCACHE`,
+  `CREATE OR REPLACE FUNCTION SYSTEM.${PREFIX}SYS_PF(s VARCHAR2, o VARCHAR2) RETURN VARCHAR2 AS n NUMBER; BEGIN n := SYSTEM.${PREFIX}SYS_SEQ.NEXTVAL; RETURN NULL; END;`,
+  `CREATE OR REPLACE PROCEDURE SYSTEM.${PREFIX}SYS_H(s VARCHAR2, o VARCHAR2, p VARCHAR2) AS n NUMBER; BEGIN n := SYSTEM.${PREFIX}SYS_SEQ.NEXTVAL; END;`,
+  `CREATE OR REPLACE FUNCTION SYSTEM.${PREFIX}SYS_NEXT RETURN NUMBER AS BEGIN RETURN SYSTEM.${PREFIX}SYS_SEQ.NEXTVAL; END;`,
+  `CREATE OR REPLACE VIEW SYSTEM.${PREFIX}SYS_VIEW AS SELECT SYSTEM.${PREFIX}SYS_NEXT() AS N FROM DUAL`,
   `CREATE ROLE ${PREFIX}ROLE`,
   `GRANT SELECT ON ${OWNER}.${PREFIX}DATA TO ${RO}`,
   `GRANT SELECT ON ${OWNER}.${PREFIX}CHILD TO ${RO}`,
   `GRANT SELECT, INSERT, UPDATE, DELETE ON ${OWNER}.${PREFIX}SCRATCH TO ${RO}`,
 ];
 
-/** A row-level policy of `name` on `schema.object` whose function is the owner's POL_FN. */
-function rlsPolicy(schema: string, object: string, name: string): string {
-  return `BEGIN DBMS_RLS.ADD_POLICY(object_schema => '${schema}', object_name => '${object}', policy_name => '${name}', function_schema => '${OWNER}', policy_function => '${PREFIX}POL_FN', statement_types => 'SELECT'); END;`;
+/** A row-level policy of `name` on `schema.object` whose function is the owner's POL_FN, or the one given. */
+function rlsPolicy(schema: string, object: string, name: string, fn = `${OWNER}.${PREFIX}POL_FN`): string {
+  const [fnSchema, fnName] = fn.split(".");
+  return `BEGIN DBMS_RLS.ADD_POLICY(object_schema => '${schema}', object_name => '${object}', policy_name => '${name}', function_schema => '${fnSchema}', policy_function => '${fnName}', statement_types => 'SELECT'); END;`;
 }
 
 function dropRlsPolicy(schema: string, object: string, name: string): string {
   return `BEGIN DBMS_RLS.DROP_POLICY('${schema}', '${object}', '${name}'); END;`;
 }
 
-/** A fine-grained auditing policy of `name` on `schema.object`, with the condition and the handler given, or none. */
-function fgaPolicy(schema: string, object: string, name: string, condition: string | null, handler: boolean): string {
+/**
+ * A fine-grained auditing policy of `name` on `schema.object`, with the condition given or none, and the owner's
+ * FGA_FN as its handler (true), the handler given, or none.
+ */
+function fgaPolicy(
+  schema: string,
+  object: string,
+  name: string,
+  condition: string | null,
+  handler: boolean | string,
+): string {
   const audit = condition === null ? "" : `audit_condition => '${condition.replaceAll("'", "''")}', `;
-  const handlerArgs = handler ? `handler_schema => '${OWNER}', handler_module => '${PREFIX}FGA_FN', ` : "";
+  const [handlerSchema, handlerModule] = (handler === true ? `${OWNER}.${PREFIX}FGA_FN` : handler || ".").split(".");
+  const handlerArgs = handler ? `handler_schema => '${handlerSchema}', handler_module => '${handlerModule}', ` : "";
   return `BEGIN DBMS_FGA.ADD_POLICY(object_schema => '${schema}', object_name => '${object}', policy_name => '${name}', ${audit}${handlerArgs}statement_types => 'SELECT'); END;`;
 }
 
@@ -271,11 +291,11 @@ function namedPolicy(schema: string, object: string, name: string): string {
   return `"${schema}"."${object}" policy "${name}"`;
 }
 
-/** The sequence's last number, which a policy function, handler or condition that ran has advanced. */
-async function sequenceNumber(): Promise<number> {
+/** A sequence's last number, which a policy function, handler or condition that ran has advanced. */
+async function sequenceNumber(owner = OWNER, name = `${PREFIX}SEQ`): Promise<number> {
   const [row] = await as(
     "SYSTEM",
-    `SELECT LAST_NUMBER AS N FROM DBA_SEQUENCES WHERE SEQUENCE_OWNER = '${OWNER}' AND SEQUENCE_NAME = '${PREFIX}SEQ'`,
+    `SELECT LAST_NUMBER AS N FROM DBA_SEQUENCES WHERE SEQUENCE_OWNER = '${owner}' AND SEQUENCE_NAME = '${name}'`,
   );
   return Number(row?.N);
 }
@@ -304,7 +324,15 @@ async function cleanup(): Promise<void> {
     "SYSTEM",
     [
       dropRlsPolicy("SYSTEM", "HELP", `${PREFIX}HELP_P`),
+      dropRlsPolicy("SYSTEM", "HELP", `${PREFIX}SYSHELP_P`),
+      dropRlsPolicy("SYSTEM", "HELP", `${PREFIX}LATE_P`),
+      dropFgaPolicy("SYSTEM", "HELP", `${PREFIX}SYSHELP_H`),
       dropFgaPolicy("SYSTEM", "SQLPLUS_PRODUCT_PROFILE", `${PREFIX}SPP_P`),
+      `DROP VIEW SYSTEM.${PREFIX}SYS_VIEW`,
+      `DROP FUNCTION SYSTEM.${PREFIX}SYS_NEXT`,
+      `DROP PROCEDURE SYSTEM.${PREFIX}SYS_H`,
+      `DROP FUNCTION SYSTEM.${PREFIX}SYS_PF`,
+      `DROP SEQUENCE SYSTEM.${PREFIX}SYS_SEQ`,
       `DROP TABLE ${OWNER}.${PREFIX}NOPOL PURGE`,
       `DROP FUNCTION ${OWNER}.${PREFIX}AC_FN`,
       `DROP USER ${RO} CASCADE`,
@@ -560,6 +588,37 @@ async function main(): Promise<void> {
       names: namedPolicy("SYSTEM", "SQLPLUS_PRODUCT_PROFILE", `${PREFIX}SPP_P`),
     },
     {
+      label:
+        "a row-level policy on SYSTEM.HELP whose function an administrator made in SYSTEM, a schema Oracle maintains",
+      grant: [rlsPolicy("SYSTEM", "HELP", `${PREFIX}SYSHELP_P`, `SYSTEM.${PREFIX}SYS_PF`)],
+      revoke: [dropRlsPolicy("SYSTEM", "HELP", `${PREFIX}SYSHELP_P`)],
+      names: namedPolicy("SYSTEM", "HELP", `${PREFIX}SYSHELP_P`),
+    },
+    {
+      label: "an auditing handler on SYSTEM.HELP that an administrator made in SYSTEM",
+      grant: [fgaPolicy("SYSTEM", "HELP", `${PREFIX}SYSHELP_H`, null, `SYSTEM.${PREFIX}SYS_H`)],
+      revoke: [dropFgaPolicy("SYSTEM", "HELP", `${PREFIX}SYSHELP_H`)],
+      names: namedPolicy("SYSTEM", "HELP", `${PREFIX}SYSHELP_H`),
+    },
+    {
+      label: "EXECUTE through PUBLIC on a function an administrator made in SYSTEM",
+      grant: [`GRANT EXECUTE ON SYSTEM.${PREFIX}SYS_NEXT TO PUBLIC`],
+      revoke: [`REVOKE EXECUTE ON SYSTEM.${PREFIX}SYS_NEXT FROM PUBLIC`],
+      names: `REVOKE EXECUTE ON "SYSTEM"."${PREFIX}SYS_NEXT" FROM PUBLIC`,
+    },
+    {
+      label: "a granted view an administrator made in SYSTEM that calls a function made there",
+      grant: [`GRANT SELECT ON SYSTEM.${PREFIX}SYS_VIEW TO ${RO}`],
+      revoke: [`REVOKE SELECT ON SYSTEM.${PREFIX}SYS_VIEW FROM ${RO}`],
+      names: `REVOKE ALL ON "SYSTEM"."${PREFIX}SYS_VIEW" FROM "${RO}"`,
+    },
+    {
+      label: "a granted sequence an administrator made in SYSTEM",
+      grant: [`GRANT SELECT ON SYSTEM.${PREFIX}SYS_SEQ TO ${RO}`],
+      revoke: [`REVOKE SELECT ON SYSTEM.${PREFIX}SYS_SEQ FROM ${RO}`],
+      names: `REVOKE ALL ON "SYSTEM"."${PREFIX}SYS_SEQ" FROM "${RO}"`,
+    },
+    {
       label: "an auditing policy whose audit condition calls a function of the owner's, with no handler",
       grant: [fgaPolicy(OWNER, `${PREFIX}AUDITED`, `${PREFIX}AC_P`, `${OWNER}.${PREFIX}AC_FN(ID) = 1`, false)],
       revoke: [dropFgaPolicy(OWNER, `${PREFIX}AUDITED`, `${PREFIX}AC_P`)],
@@ -699,9 +758,25 @@ async function main(): Promise<void> {
     check((await verdict(RO)) === "admitted", `with ${label} gone the user is admitted again`);
   }
   // The policies Oracle ships are admitted: the admitted user reads row-level policies in the fresh database, every one
-  // of whose functions XDB, a schema Oracle maintains, owns (capture 00).
+  // of which calls XDB.DBMS_XDBZ0, which ALL_OBJECTS shows the user as Oracle-maintained (capture 00).
   const [vendor] = await as(RO, "SELECT COUNT(*) AS N FROM SYS.DBA_POLICIES");
-  check(Number(vendor?.N) > 0, `the admitted user reads ${vendor?.N} row-level policies Oracle ships, and is admitted`);
+  const [xdb] = await as(
+    RO,
+    "SELECT COUNT(*) AS N FROM SYS.ALL_OBJECTS WHERE OWNER = 'XDB' AND OBJECT_NAME = 'DBMS_XDBZ0' AND ORACLE_MAINTAINED = 'Y'",
+  );
+  check(
+    Number(vendor?.N) > 0 && Number(xdb?.N) === 1,
+    `the admitted user reads ${vendor?.N} row-level policies Oracle ships, calling XDB.DBMS_XDBZ0, which ALL_OBJECTS shows it as Oracle's, and is admitted`,
+  );
+  // What ALL_OBJECTS marks an administrator's function in SYSTEM, a schema ALL_USERS marks Oracle-maintained.
+  const [systemFn] = await as(
+    "SYSTEM",
+    `SELECT o.ORACLE_MAINTAINED AS OBJECT_FLAG, u.ORACLE_MAINTAINED AS SCHEMA_FLAG FROM SYS.DBA_OBJECTS o JOIN SYS.DBA_USERS u ON u.USERNAME = o.OWNER WHERE o.OWNER = 'SYSTEM' AND o.OBJECT_NAME = '${PREFIX}SYS_PF'`,
+  );
+  check(
+    systemFn?.OBJECT_FLAG === "N" && systemFn?.SCHEMA_FLAG === "Y",
+    `an administrator's function in SYSTEM is not Oracle's, in a schema marked Oracle's (object ${systemFn?.OBJECT_FLAG}, schema ${systemFn?.SCHEMA_FLAG})`,
+  );
   // An auditing policy with neither an audit condition nor a handler runs nothing of the owner's, and is admitted.
   await setup("SYSTEM", [fgaPolicy(OWNER, `${PREFIX}AUDITED`, `${PREFIX}PLAIN_P`, null, false)]);
   const plainAudit = await verdict(RO);
@@ -712,12 +787,26 @@ async function main(): Promise<void> {
   await setup("SYSTEM", [dropFgaPolicy(OWNER, `${PREFIX}AUDITED`, `${PREFIX}PLAIN_P`)]);
   // What the refused policies would run for the READ ONLY user, read in a session of its own outside the agent path:
   // the row-level policy on SYSTEM.HELP and the audit condition each advance the owner's sequence.
-  for (const { label, add, drop, read } of [
+  for (const { label, add, drop, read, seq = [OWNER, `${PREFIX}SEQ`] } of [
     {
       label: "a row-level policy of the owner's on SYSTEM.HELP",
       add: [rlsPolicy("SYSTEM", "HELP", `${PREFIX}HELP_P`)],
       drop: [dropRlsPolicy("SYSTEM", "HELP", `${PREFIX}HELP_P`)],
       read: "SELECT COUNT(*) AS N FROM SYSTEM.HELP",
+    },
+    {
+      label: "a row-level policy on SYSTEM.HELP whose function an administrator made in SYSTEM",
+      add: [rlsPolicy("SYSTEM", "HELP", `${PREFIX}SYSHELP_P`, `SYSTEM.${PREFIX}SYS_PF`)],
+      drop: [dropRlsPolicy("SYSTEM", "HELP", `${PREFIX}SYSHELP_P`)],
+      read: "SELECT COUNT(*) AS N FROM SYSTEM.HELP",
+      seq: ["SYSTEM", `${PREFIX}SYS_SEQ`],
+    },
+    {
+      label: "an auditing handler on SYSTEM.HELP that an administrator made in SYSTEM",
+      add: [fgaPolicy("SYSTEM", "HELP", `${PREFIX}SYSHELP_H`, null, `SYSTEM.${PREFIX}SYS_H`)],
+      drop: [dropFgaPolicy("SYSTEM", "HELP", `${PREFIX}SYSHELP_H`)],
+      read: "SELECT COUNT(*) AS N FROM SYSTEM.HELP",
+      seq: ["SYSTEM", `${PREFIX}SYS_SEQ`],
     },
     {
       // The condition is evaluated with the policy owner's privileges: SYSTEM, which made the policy, is granted EXECUTE
@@ -736,9 +825,9 @@ async function main(): Promise<void> {
   ]) {
     await setup("SYSTEM", add);
     await setup(OWNER, [`GRANT EXECUTE ON ${OWNER}.${PREFIX}AC_FN TO SYSTEM`]);
-    const before = await sequenceNumber();
+    const before = await sequenceNumber(...seq);
     await as(RO, read);
-    const after = await sequenceNumber();
+    const after = await sequenceNumber(...seq);
     check(after > before, `${label} ran for the READ ONLY user on a plain SELECT (sequence ${before} -> ${after})`);
     await setup("SYSTEM", drop);
   }
@@ -805,6 +894,28 @@ async function main(): Promise<void> {
     `REVOKE SELECT ON ${OWNER}.${PREFIX}PLAIN_OUTER FROM ${RO}`,
     `REVOKE INSERT ON ${OWNER}.${PREFIX}PLAIN_INNER FROM ${RO}`,
   ]);
+  // One handle, as the agent pool keeps it: the check runs before every statement, so a policy added after a call
+  // refuses the next call on the same handle, and dropping it admits the call after that, with no new handle.
+  const pooled = await agentFor(RO);
+  const pooledFirst = await agentAnswer(pooled, "SELECT COUNT(*) AS N FROM SYSTEM.HELP");
+  await setup("SYSTEM", [rlsPolicy("SYSTEM", "HELP", `${PREFIX}LATE_P`)]);
+  const lateBefore = await sequenceNumber();
+  const pooledLate = await agentAnswer(pooled, "SELECT COUNT(*) AS N FROM SYSTEM.HELP");
+  const lateAfter = await sequenceNumber();
+  check(
+    pooledFirst === "ran" &&
+      pooledLate.startsWith("refused:") &&
+      pooledLate.includes(namedPolicy("SYSTEM", "HELP", `${PREFIX}LATE_P`)) &&
+      lateAfter === lateBefore,
+    `a policy added after a call refuses the next call on the same handle, its function not run (sequence ${lateBefore} -> ${lateAfter}): ${pooledLate}`,
+  );
+  await setup("SYSTEM", [dropRlsPolicy("SYSTEM", "HELP", `${PREFIX}LATE_P`)]);
+  const pooledLifted = await agentAnswer(pooled, "SELECT COUNT(*) AS N FROM SYSTEM.HELP");
+  check(pooledLifted === "ran", `with the policy dropped the next call on the same handle runs: ${pooledLifted}`);
+  const timedAt = Date.now();
+  for (let i = 0; i < 10; i++) await agentAnswer(pooled, "SELECT 1 FROM DUAL");
+  console.log(`INFO one agent statement with its check, on a warm handle: ${(Date.now() - timedAt) / 10} ms`);
+  await pooled.disconnect();
   // A private link the user owns: only its owner drops it, and READ ONLY refuses the owner the DROP.
   await setup("SYSTEM", [`ALTER USER ${RO} READ WRITE`, `GRANT CREATE DATABASE LINK TO ${RO}`]);
   await setup(RO, [
