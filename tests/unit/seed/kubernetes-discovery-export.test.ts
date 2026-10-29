@@ -541,8 +541,9 @@ describe("parseKubernetesDiscoveryExport", () => {
         "host",
         "connectionString.standard",
       ]);
-      const kept: string[] = CONTRACT.flatMap((row: { secretKeys: readonly string[] }) => [...row.secretKeys]);
-      for (const key of kept) expect<string[]>([...KUBERNETES_DISCOVERY_SECRET_KEYS]).toContain(key);
+      for (const row of CONTRACT as readonly { secretKeys: readonly string[] }[]) {
+        for (const key of row.secretKeys) expect<string[]>([...KUBERNETES_DISCOVERY_SECRET_KEYS]).toContain(key);
+      }
     });
   });
 

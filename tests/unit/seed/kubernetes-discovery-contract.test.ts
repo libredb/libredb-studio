@@ -66,6 +66,11 @@ function connectionOf(entry: KubernetesDiscoveredDatabase) {
   return result.connection;
 }
 
+/** `data` without `key`. */
+function without(data: Record<string, string>, key: string): Record<string, string> {
+  return Object.fromEntries(Object.entries(data).filter(([name]) => name !== key));
+}
+
 /** The first 32 hex characters of SHA-256 over `key`, written out here rather than taken from the module. */
 function sha256Prefix(key: string): string {
   return createHash("sha256").update(key).digest("hex").slice(0, 32);
@@ -722,7 +727,7 @@ describe("the Crunchy PGO row", () => {
   });
 
   it("a Secret without dbname is refused with its reason and never given a database", () => {
-    const { dbname: _, ...withoutDbname } = PGO_DATA;
+    const withoutDbname = without(PGO_DATA, "dbname");
     for (const data of [withoutDbname, { ...PGO_DATA, dbname: "" }]) {
       const result = mapKubernetesDatabase(pgo("analyst", data));
       expect(result).toEqual({
@@ -739,7 +744,7 @@ describe("the Crunchy PGO row", () => {
         "the credential Secret analytics-pguser-analyst holds a user other than analyst",
       );
     }
-    const { user: _, ...withoutUser } = PGO_DATA;
+    const withoutUser = without(PGO_DATA, "user");
     expect(refusalOf(pgo("analyst", withoutUser))).toBe("the credential Secret analytics-pguser-analyst has no user");
   });
 
@@ -747,7 +752,7 @@ describe("the Crunchy PGO row", () => {
     expect(refusalOf(pgo("analyst", { ...PGO_DATA, password: "" }))).toBe(
       "the credential Secret analytics-pguser-analyst has no password",
     );
-    const { port: _, ...withoutPort } = PGO_DATA;
+    const withoutPort = without(PGO_DATA, "port");
     for (const data of [
       withoutPort,
       { ...PGO_DATA, port: "0" },
