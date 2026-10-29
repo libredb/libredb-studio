@@ -12,9 +12,10 @@
  * file without a PEM certificate included, so no runtime falls back to its public roots), a
  * connection or TLS failure, the two-second deadline, a status that is not 2xx (a redirect is never followed), and a
  * body that is not JSON, too large, of another kind or for another user. A failure names its reason and, for a status,
- * the status, and never the token, the groups or the object. Before its first review in a process it asks whether the
- * cluster serves config.openshift.io/v1 (platform-check.ts), and on such a cluster every review fails with `platform`:
- * there a SubjectAccessReview cannot assert the cluster's user name for an OIDC subject.
+ * the status, and never the token, the groups or the object. Before its first review in a process, and again five
+ * minutes after a 404, it asks whether the cluster serves config.openshift.io/v1 (platform-check.ts), and on such a
+ * cluster every review fails with `platform`: there a SubjectAccessReview cannot assert the cluster's user name for an
+ * OIDC subject.
  *
  * openshift sign-in has a second backend, the self review: a SelfSubjectAccessReview sent with the signed-in user's own
  * scoped token, so the answer is that user's own RBAC and the review names nothing of Studio's choosing about the

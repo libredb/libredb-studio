@@ -1451,7 +1451,7 @@ Known limits:
 
 The `authorization.openshift.io/v1` SubjectAccessReview is not used.
 
-In OIDC sign-in mode the ServiceAccount review refuses to run on OpenShift: before its first review it asks whether the API server serves `config.openshift.io/v1`, and on a cluster that does it denies every review, logged as an error that says to sign in with `NEXT_PUBLIC_AUTH_PROVIDER=openshift`, because there a SubjectAccessReview cannot assert the cluster's user name for an OIDC subject.
+In OIDC sign-in mode the ServiceAccount review refuses to run on OpenShift: before its first review, and again five minutes after the API server answered 404, it asks whether the API server serves `config.openshift.io/v1`, and on a cluster that does it denies every review, logged as an error that says to sign in with `NEXT_PUBLIC_AUTH_PROVIDER=openshift`, because there a SubjectAccessReview cannot assert the cluster's user name for an OIDC subject.
 
 ## Error Handling
 
