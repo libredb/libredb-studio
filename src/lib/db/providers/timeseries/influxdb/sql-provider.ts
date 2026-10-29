@@ -19,7 +19,13 @@
  * query timeout) and its cancel (`createRunRegistry`); every other read carries the surface deadline. A cancel or a
  * disconnect drops the socket, which frees the server's work (spec 5.6).
  */
-import { ConnectionError, DatabaseConfigError, ExecutionProfileError, QueryError } from "@/lib/db/errors";
+import {
+  ConnectionError,
+  DatabaseConfigError,
+  ExecutionProfileError,
+  QueryError,
+  RefusedBeforeSendError,
+} from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
 import { callerBoundTruncationReason, findKind } from "@/lib/db/object-kinds";
 import { SQLBaseProvider } from "@/lib/db/providers/sql/sql-base";
@@ -496,7 +502,7 @@ export class InfluxDB3Provider extends SQLBaseProvider {
    * The engine holds the boundary: InfluxDB 3.12 Core's planner refuses every write, DDL, COPY, SET and transaction
    * statement on the query route, whatever the token, and the open checked the server is that line
    * (`sql-agent-read.ts`). The read policy and the `system` schema fence run first, as parser-only defence, and what
-   * either refuses sends nothing.
+   * either refuses sends nothing, so either refusal is a `RefusedBeforeSendError`.
    *
    * Budgets refuse rather than truncate: the request's response cap and deadline come from the budget, and the answer
    * is shaped in the strict mode, which throws the shared row or byte refusal before anything is returned.
@@ -525,7 +531,7 @@ export class InfluxDB3Provider extends SQLBaseProvider {
       );
     }
     const verdict = evaluateInfluxSql(sql);
-    if (!verdict.allowed) throw new QueryError(verdict.message, this.type, sql);
+    if (!verdict.allowed) throw new RefusedBeforeSendError(verdict.message, this.type, sql);
     assertNoSystemTable(sql);
 
     const { client, options, version, database } = session;

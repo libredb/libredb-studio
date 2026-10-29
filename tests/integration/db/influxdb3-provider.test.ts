@@ -18,7 +18,7 @@
  * tables other than `home` and the hostile one, answered with `home`'s.
  */
 import { describe, expect, test } from "bun:test";
-import { QueryError } from "@/lib/db/errors";
+import { QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { createInfluxClient, type InfluxClientFactory } from "@/lib/db/providers/timeseries/influxdb/client";
 import { buildInfluxConnectionOptions } from "@/lib/db/providers/timeseries/influxdb/connection-options";
 import { SQL_ROUTES } from "@/lib/db/providers/timeseries/influxdb/routes";
@@ -328,10 +328,25 @@ describe("InfluxDB 3.12.0 Core's write refusals, replayed", () => {
     await provider.connect();
     const sent = wire.requests.length;
     const error = await rejection(provider.queryReadOnly("SELECT * FROM system.queries", BUDGET));
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
     expect(error.message).toContain("system.influxdb_schema");
     expect(wire.requests.length).toBe(sent);
     const result = await provider.queryReadOnly("SELECT * FROM system.influxdb_schema", BUDGET);
     expect(result.rows.length).toBeGreaterThan(0);
+    await provider.disconnect();
+  });
+
+  test("a statement the read policy refuses is refused before it is sent, in the policy's words", async () => {
+    const { provider, wire } = recordedServer({}, PROFILE);
+    await provider.connect();
+    const sent = wire.requests.length;
+    const statement = "DELETE FROM home";
+    const verdict = evaluateInfluxSql(statement);
+    expect(verdict.allowed).toBe(false);
+    const error = await rejection(provider.queryReadOnly(statement, BUDGET));
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect(error.message).toBe(verdict.allowed ? "" : verdict.message);
+    expect(wire.requests.length).toBe(sent);
     await provider.disconnect();
   });
 

@@ -14,7 +14,7 @@
  * in the `refuse` mode of `shapeJsonlBody`, so a row past the row budget, a row past the cell budget and rows past the
  * byte budget each throw the shared sentence of `read-only-budget.ts` before anything is returned.
  */
-import { ExecutionProfileError, QueryError } from "@/lib/db/errors";
+import { ExecutionProfileError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
 import {
   assertReadOnlyBudget,
@@ -108,13 +108,15 @@ const isNamed = (token: Token | undefined, name: string): boolean =>
  * holds the text of every query the server ran, `system.parquet_files` the store's file paths and
  * `system.processing_engine_logs` the plugins' output. A name `system` followed by a `.` is the schema, whatever its
  * case or quoting and whatever stands before it (`public.system.queries`), and only `influxdb_schema` may follow it.
- * Parser-only defence: the engine itself serves these tables to any Core token.
+ * Parser-only defence: the engine itself serves these tables to any Core token. Raised as `RefusedBeforeSendError`,
+ * since the statement is never sent.
  */
 export function assertNoSystemTable(sql: string): void {
   const read = tokens(sql);
   for (let index = 0; index < read.length; index++) {
     if (!isNamed(read[index], SYSTEM_SCHEMA) || read[index + 1]?.kind !== "dot") continue;
-    if (!isNamed(read[index + 2], READABLE_SYSTEM_TABLE)) throw new QueryError(SYSTEM_TABLE_REFUSAL, "influxdb3", sql);
+    if (!isNamed(read[index + 2], READABLE_SYSTEM_TABLE))
+      throw new RefusedBeforeSendError(SYSTEM_TABLE_REFUSAL, "influxdb3", sql);
   }
 }
 
