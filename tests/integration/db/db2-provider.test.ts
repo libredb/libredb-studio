@@ -2092,6 +2092,20 @@ describe("Db2Provider: queryReadOnly under the agent read-only profile", () => {
     expect(transactionCalls).toEqual([]);
   });
 
+  test("a statement the derived table cannot hold whole is refused before a connection opens", async () => {
+    const provider = await connected({}, AGENT);
+    for (const sql of [
+      "SELECT 1 FROM SYSIBM.SYSDUMMY1) AS X, LATERAL (SELECT COLNAME FROM SYSCAT.COLUMNS",
+      "SELECT 'x FROM APP.ORDERS",
+    ]) {
+      const refused = await provider.queryReadOnly(sql, budget).catch((caught: unknown) => caught);
+      expect(refused).toBeInstanceOf(QueryError);
+      expect((refused as Error).message).toStartWith("Read-only execution refused this statement: ");
+    }
+    expect(built).toHaveLength(1);
+    expect(transactionCalls).toEqual([]);
+  });
+
   test("runs each call on a connection of its own: the check, the description and the bounded statement, then rolls back and closes", async () => {
     server();
     const provider = await connected({}, AGENT);

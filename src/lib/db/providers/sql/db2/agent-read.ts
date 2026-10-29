@@ -46,6 +46,7 @@
 import { ExecutionProfileError, QueryError } from "@/lib/db/errors";
 import type { QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
+import { readSqlSpan } from "@/lib/sql/spans";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import { byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "../read-only-budget";
 import type { Db2ColumnMeta } from "./driver";
@@ -431,13 +432,45 @@ export async function verifyAgentPrincipal(read: Db2AgentReader): Promise<void> 
 /** The correlation name of the derived table the agent's statement is sent in. */
 const AGENT_READ = "LIBREDB_AGENT_READ";
 
+/** The refusal of a statement the derived table cannot be proved to hold whole. */
+function unbounded(reason: string, sql: string): QueryError {
+  return new QueryError(
+    `Read-only execution refused this statement: ${reason}, so the row bound around it could not be proved to hold`,
+    "db2",
+    sql,
+  );
+}
+
 /**
  * The statement's own text: trimmed, its terminator and trailing comments left out, read under Db2's grammar, so the
- * closing parenthesis is never swallowed by a `;` or a trailing comment.
+ * closing parenthesis is never swallowed by a `;` or a trailing comment. Refused before anything is sent unless the
+ * derived table provably holds it whole: its end must be readable (no literal, quoted name or comment left open, which
+ * would swallow what follows), and every parenthesis outside a literal, a quoted name or a comment must close one the
+ * statement opened, and all of them close. A statement that closed the derived table early could put a clause beside
+ * it that the row bound does not reach.
  */
 function statementText(sql: string): string {
   const source = sql.trim();
-  return source.slice(0, readStatementEnd(source, resolveSqlGrammar("db2")).end);
+  const grammar = resolveSqlGrammar("db2");
+  const { end, rewritable } = readStatementEnd(source, grammar);
+  if (!rewritable) {
+    throw unbounded("its end cannot be read, a literal, a quoted name or a comment is left open", sql);
+  }
+  const text = source.slice(0, end);
+  let depth = 0;
+  for (let i = 0; i < text.length; ) {
+    // Every span inside the statement's own text is terminated: `readStatementEnd` refused any that is not.
+    const span = readSqlSpan(text, i, grammar);
+    if (span !== null) {
+      i = span.end;
+      continue;
+    }
+    if (text[i] === "(") depth++;
+    if (text[i] === ")" && --depth < 0) throw unbounded("it closes a parenthesis it did not open", sql);
+    i++;
+  }
+  if (depth !== 0) throw unbounded("it leaves a parenthesis open", sql);
+  return text;
 }
 
 /**

@@ -249,7 +249,8 @@ export class Db2Provider extends SQLBaseProvider {
    * client is the editor's. On it the call begins a unit of work, runs the check, keeping no verdict between calls, so
    * a grant or a control added after one call refuses the next and a lifted refusal admits it, describes the statement
    * without fetching a row, refusing a LOB or XML column, then sends it in a derived table bounded at one row past the
-   * row budget (`boundAgentStatement`), rolls the unit of work back and closes the connection, on every path.
+   * row budget (`boundAgentStatement`), rolls the unit of work back and closes the connection, on every path. A
+   * statement that derived table cannot be proved to hold whole is refused before the connection opens.
    *
    * The deadline is the statement budget, over the whole call: past it the wait ends with the shared time refusal and
    * the connection is closed without waiting (`boundByClose`), which ends the wait, not the work. Db2 rolls the unit of
@@ -272,17 +273,18 @@ export class Db2Provider extends SQLBaseProvider {
     }
     assertReadOnlyBudget(budget, "db2");
     if (mode !== "execute") throw new QueryError("Db2 composes no estimating plan for the agent", "db2", sql);
+    // Both refuse, before any connection opens, a statement the derived table cannot be proved to hold whole.
+    const describe = describeAgentStatement(sql);
+    const bounded = boundAgentStatement(sql, budget.maxResultRows);
 
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(() =>
         this.withAgentSession(sql, budget, async (transaction) => {
           await this.verifyAgentPrincipalOn(transaction);
           try {
-            const described = await transaction.query(describeAgentStatement(sql), undefined, { rowMode: "array" });
+            const described = await transaction.query(describe, undefined, { rowMode: "array" });
             assertAgentColumnTypes(described.columns, sql);
-            return await transaction.query(boundAgentStatement(sql, budget.maxResultRows), undefined, {
-              rowMode: "array",
-            });
+            return await transaction.query(bounded, undefined, { rowMode: "array" });
           } catch (error) {
             if (error instanceof QueryError) throw error;
             throw mapDb2Error(error, sql);

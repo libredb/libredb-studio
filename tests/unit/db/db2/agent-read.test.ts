@@ -416,6 +416,53 @@ describe("the statement's derived table", () => {
   });
 });
 
+describe("the derived table holds the statement whole, or nothing is sent", () => {
+  const refusal = (reason: string, sql: string) =>
+    new QueryError(
+      `Read-only execution refused this statement: ${reason}, so the row bound around it could not be proved to hold`,
+      "db2",
+      sql,
+    );
+
+  test.each([
+    ["a literal left open", "SELECT 'x FROM APP.ORDERS"],
+    ["a quoted name left open", 'SELECT "X FROM APP.ORDERS'],
+    ["a block comment left open", "SELECT 1 FROM SYSIBM.SYSDUMMY1 /* the rest"],
+  ])("refuses a statement whose end cannot be read: %s", (_, sql) => {
+    const expected = refusal("its end cannot be read, a literal, a quoted name or a comment is left open", sql);
+    expect(() => boundAgentStatement(sql, 5)).toThrow(expected);
+    expect(() => describeAgentStatement(sql)).toThrow(expected);
+  });
+
+  test.each([
+    [
+      "closes the derived table early to join a lateral read",
+      "SELECT 1 FROM SYSIBM.SYSDUMMY1) AS X, LATERAL (SELECT COLNAME FROM SYSCAT.COLUMNS",
+    ],
+    [
+      "closes it early to add a union",
+      "SELECT COLNAME FROM SYSCAT.COLUMNS) AS X UNION ALL SELECT * FROM (SELECT COLNAME FROM SYSCAT.COLUMNS",
+    ],
+    ["closes one more than it opens", "SELECT (1)) FROM SYSIBM.SYSDUMMY1"],
+  ])("refuses a statement that %s", (_, sql) => {
+    const expected = refusal("it closes a parenthesis it did not open", sql);
+    expect(() => boundAgentStatement(sql, 5)).toThrow(expected);
+    expect(() => describeAgentStatement(sql)).toThrow(expected);
+  });
+
+  test("refuses a statement that leaves a parenthesis open", () => {
+    const sql = "SELECT COUNT((1) FROM SYSIBM.SYSDUMMY1";
+    expect(() => boundAgentStatement(sql, 5)).toThrow(refusal("it leaves a parenthesis open", sql));
+  });
+
+  test("reads past a parenthesis inside a literal, a quoted name or a comment", () => {
+    const sql = "SELECT ')' AS \"a)b\", ID FROM APP.ORDERS -- )\nWHERE ID IN (1, 2) /* ( */ ORDER BY ID";
+    expect(boundAgentStatement(sql, 5)).toBe(
+      `SELECT * FROM (\n${sql}\n) AS LIBREDB_AGENT_READ ORDER BY ORDER OF LIBREDB_AGENT_READ FETCH FIRST 6 ROWS ONLY`,
+    );
+  });
+});
+
 describe("assertAgentColumnTypes", () => {
   const column = (name: string, typeName: string, db2TypeName?: string): Db2ColumnMeta => ({
     name,
