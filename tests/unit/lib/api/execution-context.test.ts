@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { editorExecutionContext, sessionOwner } from "@/lib/api/execution-context";
 import { SETTINGS_REGISTRY } from "@/lib/governance/settings-registry";
 import { recordGovernanceSnapshot, resetGovernanceState } from "@/lib/governance/state";
+import { KUBERNETES_REVIEWED_ROLE } from "@/lib/seed/roles";
 import type { DatabaseConnection } from "@/lib/types";
 import { grantedSnapshot } from "../../../helpers/governance/granted-snapshot";
 
@@ -73,6 +74,12 @@ describe("editorExecutionContext on a seed a non-admin role can use", () => {
       expect(editorExecutionContext(USER, seed(roles))).toEqual({ allowExternalFileAccess: false });
     },
   );
+
+  // Every session the Kubernetes access review allows resolves the same record, as with `*`.
+  test("a Kubernetes-discovered seed set apart for the access review is shared too, so every requester gets the deny posture", () => {
+    expect(editorExecutionContext(ADMIN, seed([KUBERNETES_REVIEWED_ROLE]))).toEqual({ allowExternalFileAccess: false });
+    expect(editorExecutionContext(USER, seed([KUBERNETES_REVIEWED_ROLE]))).toEqual({ allowExternalFileAccess: false });
+  });
 
   test("an unmanaged seed resolves to the same shared record, so it is decided the same way", () => {
     // A `managed: false` seed is copied into each browser with its `seed:` id kept, and
