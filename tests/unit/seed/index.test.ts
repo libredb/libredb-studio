@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, spyOn } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach, setSystemTime, spyOn } from "bun:test";
 import * as fs from "fs";
 import * as fsPromises from "fs/promises";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -61,8 +61,14 @@ describe("seed/index orchestrator", () => {
   });
 
   it("getManagedConnections is the listing's before then after", async () => {
-    const { before, after } = await getSeedListing(["admin"]);
-    expect(await getManagedConnections(["admin"])).toEqual([...before, ...after]);
+    // Each listing stamps createdAt with the clock, so the clock is held still to compare two listings.
+    setSystemTime(new Date("2026-10-29T00:00:00.000Z"));
+    try {
+      const { before, after } = await getSeedListing(["admin"]);
+      expect(await getManagedConnections(["admin"])).toEqual([...before, ...after]);
+    } finally {
+      setSystemTime();
+    }
   });
 
   it("getSeedConnectionByIdUnfiltered returns connection regardless of role", async () => {
