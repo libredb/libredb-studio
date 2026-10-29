@@ -505,6 +505,9 @@ Measured on Db2 Community Edition 12.1.0.0 (`icr.io/db2_community/db2`, digest p
 - A user holding `CONNECT` and `SELECT` on two tables is refused an `INSERT`, a data change in `FINAL TABLE`, a `BEGIN ATOMIC` block that inserts, and `NEXT VALUE FOR` on a sequence it holds no `USAGE` on, each with `SQL0551N`, and `CREATE TABLE` with `SQL0552N`; a declared temporary table fails with `SQL0286N`, for want of a user temporary tablespace (captures 02 and 08).
 - It is not refused `LOCK TABLE ... IN EXCLUSIVE MODE` on a table it may read, `SET CURRENT SCHEMA` or `SET CURRENT PATH`, which last for its session (capture 02).
 - A fresh database grants `PUBLIC` `EXECUTE` on 456 `SYSPROC` routines, `SYSPROC.ADMIN_CMD` among them, which exported a table to a server file as that user; `CREATEIN` on `SYSTOOLS`, where the user created a function; `CREATEIN` and `DROPIN` on `SYSPUBLIC`, the public alias schema; `UPDATE` on fourteen `SYSSTAT` statistics views; `EXECUTE` on eleven `SYSIBMADM` modules, `DBMS_JOB` among them; `BIND` and `EXECUTE` on IBM's packages in `NULLID`; and `SELECT` on the catalog (captures 00, 02 and 03). It grants `PUBLIC` no `CONNECT`.
+- Of what `PUBLIC` keeps after the seed's revokes, 81 `SYSPROC` functions, monitor and catalog readers such as the `SNAP_GET_*` and `HEALTH_*` table functions, read `EXTERNAL_ACTION` E in their own catalog row, and seven `SYSIBMADM` modules hold a function that reads E or `SQL_DATA_ACCESS` M: `DBMS_DDL`, `DBMS_LOB`, `DBMS_LOCK`, `DBMS_RANDOM`, `DBMS_SQL`, `DBMS_STATS` and `DBMS_UTILITY` (capture 10).
+  Both columns are blank for a built-in (`ORIGIN` B) and for a function Db2 generates for a type (`ORIGIN` S), and the catalog views declare them nullable.
+- The instance owner can neither add a type or a routine to an IBM module (`SQL0551N`) nor create a module in `SYSIBMADM` (`SQL0553N`); the functions Db2 generated inside IBM's modules for their types read `ORIGIN` S and are owned by the instance owner that created the database (capture 11).
 - A granted SQL table function that `MODIFIES SQL DATA` wrote a row, with its owner's authority, into a table the user may not insert into; a granted view that calls a function read, with its owner's authority, a table the user may not read; and a column mask whose secured function reads such a table returns that table's data to the user's plain `SELECT` (captures 02 and 03, and the live check).
 - `NEXT VALUE FOR` advanced a sequence the user was granted `USAGE` on, and the advance outlives a rollback (captures 02 and 03).
 - An administrator cannot create in `SYSPROC`, `SYSCAT`, `SYSIBM` or `SYSIBMADM` (`SQL0553N`), and what it creates in `SYSTOOLS` is owned by it, `OWNERTYPE` U, while every object the database made for itself reads `OWNERTYPE` S; the five row and column access controls of a fresh database are IBM's own masks on its catalog tables (capture 00).
@@ -523,8 +526,15 @@ So the check reads the trusted contexts first.
 0. No trusted context, enabled or not, names the user as its system authorization ID (`SYSCAT.CONTEXTS`). A disabled one is refused too, since enabling it changes nothing the user's own grants would show. The refusal names each context and its default role; dropping the context, or giving the agent its own user that no context names, lifts it. A fresh database holds one context, IBM's `SYSATSCONTEXT`, whose system authorization ID is `SYSATS`, and `PUBLIC` may read `SYSCAT.CONTEXTS` (capture 09).
 1. The user holds no database or instance authority but `CONNECT`, in any of those ways (`AUTH_LIST_AUTHORITIES_FOR_AUTHID`).
 2. Its grantees hold no table, column or index privilege but `SELECT`, no schema privilege (`CREATEIN` and `SELECTIN` included), no tablespace `USE`, no sequence privilege, since `NEXT VALUE FOR` advances a sequence and the rollback does not take that back, no role's `ADMIN OPTION`, no `PASSTHRU` and no `SETSESSIONUSER` (`SYSCAT.TABAUTH`, `COLAUTH`, `INDEXAUTH`, `SCHEMAAUTH`, `TBSPACEAUTH`, `SEQUENCEAUTH`, `ROLEAUTH`, `PASSTHRUAUTH`, `SURROGATEAUTHIDS`).
-3. They may execute no routine, module or package that is not IBM's, since that code runs with its owner's authority, and none of IBM's routines and modules that write a server file, reach another server or another session, or schedule work outside the call: `SYSPROC.ADMIN_CMD`, `ADMIN_TASK_ADD`, `ADMIN_TASK_UPDATE`, `DB2LOAD`, `REMOTE_QUERY`, `SNAP_WRITE_FILE` and `SYSTS_ADMIN_CMD`, and the `SYSIBMADM` modules `DBMS_ALERT`, `DBMS_JOB`, `DBMS_PIPE`, `UTL_DIR`, `UTL_FILE`, `UTL_MAIL`, `UTL_SMTP` and `UTL_TCP`; a grant on every routine of a schema is refused when any routine there is not admitted. They may read or write no global variable that is not IBM's, whose default can call code (`SYSCAT.ROUTINEAUTH`, `MODULEAUTH`, `PACKAGEAUTH`, `VARIABLEAUTH`).
-4. They may read no table object that is not IBM's and is a nickname, which reads another server, or a view that is not valid, which a `SELECT` revalidates and runs as it reads now, or a view whose dependencies (`SYSCAT.TABDEP`) hold anything but a table, a function or variable that is IBM's, a view that is IBM's or one this check also examines, or an alias of a table object this check examines.
+3. They may execute no routine, module or package that is not IBM's, since that code runs with its owner's authority (`SYSCAT.ROUTINEAUTH`, `MODULEAUTH`, `PACKAGEAUTH`).
+   Of IBM's code, the rule is the routine's own catalog row, not a list of names: a function or method is refused when `SYSCAT.ROUTINES` reads `EXTERNAL_ACTION` E or `SQL_DATA_ACCESS` M, or a missing value in either, and a sourced one when its source is neither a built-in nor an IBM routine that passes the same rule.
+   An IBM module is refused when any function in it is, and its routines count as IBM's when their own row reads `OWNERTYPE` S or, inside that module only, `ORIGIN` S, the functions Db2 generated for the module's types, which only Db2 can add (capture 11).
+   IBM's procedures are admitted, whatever they do: the agent's statement is a fullselect in a derived table, where no `CALL` fits, so only a function or method can be invoked from it.
+   The one exception is a short list of IBM functions that read `EXTERNAL_ACTION` E yet were measured as reading only, by exact specific name ([`reading-functions.ts`](../../src/lib/db/providers/sql/db2/reading-functions.ts)): the 81 capture 10 lists, which a unit test holds equal to that capture.
+   A function IBM adds in another release is refused until it is measured, so another Db2 release may need the list measured again.
+   A grant on every routine of a schema is refused when any routine there is not admitted.
+   They may read or write no global variable that is not IBM's, whose default can call code (`SYSCAT.VARIABLEAUTH`).
+4. They may read no table object that is not IBM's and is a nickname, which reads another server, or a view that is not valid, which a `SELECT` revalidates and runs as it reads now, or a view whose dependencies (`SYSCAT.TABDEP`) hold anything but a table, a function that is IBM's and admitted by item 3, a variable that is IBM's, a view that is IBM's or one this check also examines, or an alias of a table object this check examines.
 5. `SYSCAT.CONTROLS` lists no row permission or column mask anywhere in the database that is not IBM's, enabled or not: Db2 evaluates it for any reader of the table it guards, through a view included, and it can call a secured function with its owner's authority. A database that holds one is refused whatever the user is granted, since which tables the user reaches through views is not proven.
 
 Each finding is collected, and one `PROFILE_PRIVILEGES_TOO_BROAD` refusal names them all, as the statements that lift them or, for a trusted context or a control, as the object itself.
@@ -574,7 +584,18 @@ REVOKE EXECUTE ON SPECIFIC PROCEDURE SYSPROC.REMOTE_QUERY FROM PUBLIC RESTRICT;
 REVOKE EXECUTE ON SPECIFIC PROCEDURE SYSPROC.SNAP_WRITE_FILE FROM PUBLIC RESTRICT;
 REVOKE EXECUTE ON SPECIFIC PROCEDURE SYSPROC.SYSTS_ADMIN_CMD FROM PUBLIC RESTRICT;
 REVOKE EXECUTE ON MODULE SYSIBMADM.DBMS_JOB FROM PUBLIC;
+REVOKE EXECUTE ON MODULE SYSIBMADM.DBMS_DDL FROM PUBLIC;
+REVOKE EXECUTE ON MODULE SYSIBMADM.DBMS_LOB FROM PUBLIC;
+REVOKE EXECUTE ON MODULE SYSIBMADM.DBMS_LOCK FROM PUBLIC;
+REVOKE EXECUTE ON MODULE SYSIBMADM.DBMS_RANDOM FROM PUBLIC;
+REVOKE EXECUTE ON MODULE SYSIBMADM.DBMS_SQL FROM PUBLIC;
+REVOKE EXECUTE ON MODULE SYSIBMADM.DBMS_STATS FROM PUBLIC;
+REVOKE EXECUTE ON MODULE SYSIBMADM.DBMS_UTILITY FROM PUBLIC;
 ```
+
+The check needs the `SYSSTAT`, `SYSPUBLIC`, `SYSTOOLS` revokes and the last seven module revokes.
+The `SYSPROC` procedure revokes and the `DBMS_JOB` revoke are hygiene the check does not need, since no agent statement can call a procedure; the seed keeps them because they close what the credential itself could do outside Studio.
+The module revokes take `DBMS_LOB`, `DBMS_UTILITY` and the others from every user: grant `EXECUTE` on a module back to each user or role whose code calls it, as `GRANT EXECUTE ON MODULE SYSIBMADM.DBMS_LOB TO USER APP_USER`, before revoking it from `PUBLIC`.
 
 Revoking from `PUBLIC` reaches every user of the database: grant a privilege back to each user or role that needs it before revoking.
 A schema Db2 creates implicitly, for a `CREATE` in a schema that does not exist, gives `PUBLIC` `CREATEIN` on it (measured), which the check refuses with the revoke that lifts it.
@@ -585,12 +606,14 @@ What the agent reads beyond the tables needs no grant: the catalog reads below a
 
 #### What only the operator stops
 
-- IBM's own routines, modules and packages that `PUBLIC` may execute, apart from those item 3 names, and IBM's views are trusted as the vendor's boundary. Inside the derived table only a function can be invoked, so no procedure, IBM's or not, is reachable from an agent statement, whatever the grants.
+- IBM's functions that pass item 3, IBM's packages and IBM's views are trusted as the vendor's boundary: a function whose catalog row reads neither an external action nor a data change, or one of the 81 measured as reading only, is taken at its catalog's word.
+- A built-in function (`ORIGIN` B) needs no grant and has no catalog facts to read, so it is part of the SQL language the server parses, not something the check can refuse.
+- Inside the derived table only a function can be invoked, so no procedure, IBM's or not, is reachable from an agent statement, whatever the grants.
 - `LOCK TABLE` and `SET` are not residuals: the user may run them raw, and neither fits inside the derived table.
 
 #### Boundary record
 
-Measured on 12.1.0.0 (the digest `run.sh` pins, 2026-10-29) by [`tests/live/db2-agent-boundary.ts`](../../tests/live/db2-agent-boundary.ts), with Studio's agent admission bypassed: 90 checks, all passing.
+Measured on 12.1.0.0 (the digest `run.sh` pins, 2026-10-29) by [`tests/live/db2-agent-boundary.ts`](../../tests/live/db2-agent-boundary.ts), with Studio's agent admission bypassed: 100 checks, all passing.
 
 | Probe | Admitted agent user, through `queryReadOnly` | The same user, raw | Instance owner, positive control |
 | --- | --- | --- | --- |
@@ -604,8 +627,9 @@ Measured on 12.1.0.0 (the digest `run.sh` pins, 2026-10-29) by [`tests/live/db2-
 | `CREATE TABLE`, a function in `SYSTOOLS`, `UPDATE SYSSTAT.TABLES` | not sent | `SQL0552N`, `SQL0551N`, `SQL0551N` | not sent |
 
 The rows and `APP.ORDER_SEQ` read back the same before and after.
-The check refused, and admitted again once the grant or the object was gone: `EXECUTE` on an SQL table function that writes, granted to the user, to `PUBLIC`, to a role and through a grant on every function of its schema, measured to write a row for the user; `EXECUTE` on a module and on a package of the owner's; `READ` on a variable of the owner's; `USAGE` on a sequence; `INSERT` on a table; `CREATEIN` on a schema; `CREATETAB` and `IMPLICIT_SCHEMA` to `PUBLIC`; `DBADM`; `SETSESSIONUSER`; a role's `ADMIN OPTION`; `SELECT` on a view that calls a function of the owner's, on a view over a view the user may not read, lifted by granting the inner view, on a view over an alias of a table the user may not read, and on a view left inoperative by a dropped table; a column mask on a table the user may not read; and a trusted context naming the agent user as its system authorization ID on the address the server saw the script at, enabled and then disabled, after a raw connection of the agent user was shown to hold its default role's `INSERT` with that role absent from `AUTH_LIST_ROLES_FOR_AUTHID`.
+The check refused, and admitted again once the grant or the object was gone: `EXECUTE` on an SQL table function that writes, granted to the user, to `PUBLIC`, to a role and through a grant on every function of its schema, measured to write a row for the user; `EXECUTE` on a module and on a package of the owner's; `READ` on a variable of the owner's; `USAGE` on a sequence; `INSERT` on a table; `CREATEIN` on a schema; `CREATETAB` and `IMPLICIT_SCHEMA` to `PUBLIC`; `DBADM`; `SETSESSIONUSER`; a role's `ADMIN OPTION`; `SELECT` on a view that calls a function of the owner's, on a view over a view the user may not read, lifted by granting the inner view, on a view over an alias of a table the user may not read, and on a view left inoperative by a dropped table; `EXECUTE` on IBM's `UTL_FILE` and `DBMS_PIPE` modules and on its `AUDIT_ARCHIVE` table function, each acting outside the call by its own catalog row and not on the measured list; `SELECT` on a view that calls IBM's `DBMS_RANDOM.VALUE`; a column mask on a table the user may not read; and a trusted context naming the agent user as its system authorization ID on the address the server saw the script at, enabled and then disabled, after a raw connection of the agent user was shown to hold its default role's `INSERT` with that role absent from `AUTH_LIST_ROLES_FOR_AUTHID`.
 It admitted a view over a table, a view over a view the user may read, and a view calling `UPPER` and `LENGTH`.
+It admitted `SYSPROC.DB_MEMBERS`, read through `queryReadOnly`, and a view calling `SYSPROC.GET_INDEX_COLNAMES`, both on the measured list.
 On one handle a call ran, an `INSERT` granted after it refused the next call, and the call after its revoke ran; each call read the agent user's own `CURRENT SCHEMA`.
 The operations profile opened the instance owner unchecked and listed its tables; it and an editor handle refused `queryReadOnly` before sending anything.
 The four catalog kinds answered as the agent user, and the column kind read a table in a schema made implicitly, which `SYSIBM` owns; that schema gave `PUBLIC` `CREATEIN`, which the check refused until it was revoked.

@@ -49,3 +49,5 @@ in_container su - db2inst1 -c "db2 connect to testdb >/dev/null; db2 -tvf /tmp/0
   > "$dir/07-public-revokes-as-db2inst1.txt" || true
 clp agent-ro 08-after-revokes-as-agent-ro
 clp agent-ro 09-trusted-contexts-as-agent-ro
+clp agent-ro 10-external-action-functions-as-agent-ro
+clp db2inst1 11-ibm-module-alter-as-db2inst1

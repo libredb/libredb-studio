@@ -7,12 +7,16 @@
  * whose default role a matching connection takes without asking, and unless the user, its groups, its roles and PUBLIC
  * hold nothing but CONNECT and SELECT that reaches past the read: no other authority; no write, DDL, schema, tablespace, sequence, role-admin,
  * pass-through or session-user privilege; no EXECUTE on code that is not IBM's, which runs with its owner's authority,
- * nor on IBM's code that reaches the server's files, the network or work outside the call; no view that calls such
- * code, reads a view or alias the check cannot follow or a nickname, or is not valid; and no row permission or column
- * mask anywhere in the database that is not IBM's. IBM's is the object's own OWNERTYPE, never its schema. Every catalog
- * view is named SYSCAT.<view>. Each refusal names the statements that would lift it, or the controls it found.
+ * nor on an IBM function, or a module holding one, whose own catalog row reads EXTERNAL_ACTION E or SQL_DATA_ACCESS M,
+ * unless capture 10 lists it as measured reading only (procedures are admitted: no agent statement can call one); no
+ * view that calls such code, reads a view or alias the check cannot follow or a nickname, or is not valid; and no row
+ * permission or column mask anywhere in the database that is not IBM's. IBM's is the object's own OWNERTYPE, never its
+ * schema. Every catalog view is named SYSCAT.<view>. Each refusal names the statements that would lift it, or the
+ * controls it found.
  */
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { ExecutionProfileError, QueryError } from "@/lib/db/errors";
 import {
   AGENT_PRINCIPAL_STATEMENTS,
@@ -22,6 +26,7 @@ import {
   readAgentAnswer,
   verifyAgentPrincipal,
 } from "@/lib/db/providers/sql/db2/agent-read";
+import { DB2_READING_FUNCTIONS } from "@/lib/db/providers/sql/db2/reading-functions";
 import type { Db2ColumnMeta } from "@/lib/db/providers/sql/db2/driver";
 import type { QueryResult } from "@/lib/db/types";
 
@@ -39,10 +44,37 @@ const GRANTEES =
 
 const held = (alias: string) => `JOIN G ON G.GRANTEE = ${alias}.GRANTEE AND G.GRANTEETYPE = ${alias}.GRANTEETYPE`;
 
-/** IBM's routine, and not one of IBM's that reaches the server's files, the network or work outside the call. */
+/**
+ * Capture 10: the IBM functions a fresh 12.1.0.0 database, after the seed's revokes, lets the agent user's grantees
+ * execute although their own catalog row reads EXTERNAL_ACTION E or SQL_DATA_ACCESS M. The check's allowlist is held
+ * equal to it, so a release that adds or drops one is re-measured rather than admitted.
+ */
+const CAPTURE_10 = readFileSync(
+  join(import.meta.dir, "../../../fixtures/db2/12.1.0.0/agent-boundary/10-external-action-functions-as-agent-ro.txt"),
+  "utf8",
+);
+const MEASURED_READERS = CAPTURE_10.split("\n")
+  .filter((line) => line.startsWith("SYSPROC "))
+  .map((line) => line.split(/\s+/)[1]);
+
+const facts = (row: string) =>
+  `COALESCE(${row}.EXTERNAL_ACTION, 'E') <> 'E' AND COALESCE(${row}.SQL_DATA_ACCESS, 'M') <> 'M'`;
+
+/**
+ * The routine keeps to the call: no external action and no data change by its own row, a sourced one on a built-in or
+ * on an IBM routine that keeps to the call, or one of the functions capture 10 lists, by specific name.
+ */
+const keepsToTheCall = (alias: string) =>
+  `(${facts(alias)} AND (COALESCE(${alias}.ORIGIN, 'U') <> 'U' OR COALESCE(${alias}.SOURCESCHEMA, '') = 'SYSIBM' ` +
+  `OR EXISTS (SELECT 1 FROM SYSCAT.ROUTINES s WHERE s.ROUTINESCHEMA = ${alias}.SOURCESCHEMA ` +
+  `AND s.SPECIFICNAME = ${alias}.SOURCESPECIFIC AND COALESCE(s.OWNERTYPE, '') = 'S' ` +
+  `AND COALESCE(s.ORIGIN, 'U') <> 'U' AND ${facts("s")})) ` +
+  `OR ${alias}.ROUTINESCHEMA = 'SYSPROC' AND COALESCE(${alias}.ROUTINETYPE, '') = 'F' ` +
+  `AND ${alias}.SPECIFICNAME IN (${MEASURED_READERS.map((name) => `'${name}'`).join(", ")}))`;
+
+/** IBM's routine, and a procedure, which no agent statement can call, or a routine that keeps to the call. */
 const admittedRoutine = (alias: string) =>
-  `${alias}.OWNERTYPE = 'S' AND NOT (${alias}.ROUTINESCHEMA = 'SYSPROC' AND ${alias}.ROUTINENAME IN ` +
-  "('ADMIN_CMD', 'ADMIN_TASK_ADD', 'ADMIN_TASK_UPDATE', 'DB2LOAD', 'REMOTE_QUERY', 'SNAP_WRITE_FILE', 'SYSTS_ADMIN_CMD'))";
+  `COALESCE(${alias}.OWNERTYPE, '') = 'S' AND (COALESCE(${alias}.ROUTINETYPE, '') = 'P' OR ${keepsToTheCall(alias)})`;
 
 const PINNED: Record<Statement, string> = {
   user: "SELECT CAST(SESSION_USER AS VARCHAR(128)) AS USERNAME FROM SYSIBM.SYSDUMMY1",
@@ -95,8 +127,9 @@ const PINNED: Record<Statement, string> = {
     "UNION ALL SELECT m.GRANTEE, m.GRANTEETYPE, 'EXECUTE', 'MODULE', m.MODULESCHEMA, m.MODULENAME " +
     `FROM SYSCAT.MODULEAUTH m ${held("m")} WHERE m.EXECUTEAUTH <> 'N' ` +
     "AND NOT EXISTS (SELECT 1 FROM SYSCAT.MODULES d WHERE d.MODULEID = m.MODULEID AND d.OWNERTYPE = 'S' " +
-    "AND NOT (d.MODULESCHEMA = 'SYSIBMADM' AND d.MODULENAME IN " +
-    "('DBMS_ALERT', 'DBMS_JOB', 'DBMS_PIPE', 'UTL_DIR', 'UTL_FILE', 'UTL_MAIL', 'UTL_SMTP', 'UTL_TCP'))) " +
+    "AND NOT EXISTS (SELECT 1 FROM SYSCAT.ROUTINES r WHERE r.ROUTINEMODULEID = d.MODULEID AND NOT (" +
+    "(COALESCE(r.OWNERTYPE, '') = 'S' OR COALESCE(r.ORIGIN, '') = 'S') " +
+    `AND (COALESCE(r.ROUTINETYPE, '') = 'P' OR ${keepsToTheCall("r")})))) ` +
     "UNION ALL SELECT k.GRANTEE, k.GRANTEETYPE, p.PRIVILEGE, 'PACKAGE', k.PKGSCHEMA, k.PKGNAME " +
     `FROM SYSCAT.PACKAGEAUTH k ${held("k")}, ` +
     "TABLE (VALUES ('CONTROL', k.CONTROLAUTH), ('BIND', k.BINDAUTH), ('EXECUTE', k.EXECUTEAUTH)) " +
@@ -188,6 +221,14 @@ describe("the check's statements", () => {
       const named = [...sql.matchAll(/\b(?:FROM|JOIN)\s+(?!TABLE\b|G\b|ROOTS\b|\()([A-Z_."]+)/g)].map((m) => m[1]);
       for (const name of named) expect(name).toMatch(/^(SYSCAT|SYSIBM|SYSPROC)\./);
     }
+  });
+});
+
+describe("IBM's functions measured as reading only", () => {
+  test("are exactly capture 10's, by specific name, frozen", () => {
+    expect(MEASURED_READERS).toHaveLength(81);
+    expect([...DB2_READING_FUNCTIONS]).toEqual(MEASURED_READERS);
+    expect(Object.isFrozen(DB2_READING_FUNCTIONS)).toBe(true);
   });
 });
 
@@ -294,8 +335,8 @@ describe("verifyAgentPrincipal", () => {
     });
     expect(error.message).toBe(
       "The agent read-only execution profile refuses the Db2 user AGENT_RO: it may execute code that is not IBM's, " +
-        "which runs with its owner's authority, or IBM code that reaches the server's files, the network or work " +
-        "outside the call. Run, as an administrator: " +
+        "which runs with its owner's authority, or an IBM function, or a module holding one, whose own catalog row " +
+        "says it acts outside the call or modifies data. Run, as an administrator: " +
         'REVOKE EXECUTE ON SPECIFIC FUNCTION "APP"."WRITE_LEDGER" FROM USER "AGENT_RO" RESTRICT; ' +
         'REVOKE EXECUTE ON SPECIFIC PROCEDURE "SYSPROC"."ADMIN_CMD" FROM PUBLIC RESTRICT; ' +
         'REVOKE EXECUTE ON FUNCTION "SYSTOOLS".* FROM PUBLIC RESTRICT; ' +
@@ -315,7 +356,8 @@ describe("verifyAgentPrincipal", () => {
     });
     expect(error.message).toBe(
       "The agent read-only execution profile refuses the Db2 user AGENT_RO: it may read a view that calls code that " +
-        "is not IBM's or reads a view or alias the check cannot follow, a view that is not valid, or a nickname, " +
+        "is not IBM's or an IBM function that acts outside the call or modifies data, or reads a view or alias the " +
+        "check cannot follow, a view that is not valid, or a nickname, " +
         "which reads another server; each runs with its owner's authority. Run, as an administrator: " +
         'REVOKE SELECT ON TABLE "APP"."CALLS_CODE" FROM USER "AGENT_RO"; ' +
         'REVOKE SELECT ON TABLE "APP"."REMOTE_ORDERS" FROM PUBLIC.',

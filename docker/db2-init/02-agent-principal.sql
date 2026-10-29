@@ -5,8 +5,10 @@
 -- The agent's check before each statement refuses a user whose groups, roles or PUBLIC hold anything that writes or
 -- runs outside the read (docs/providers/db2.md, "The agent user"). A fresh 12.1 database gives PUBLIC exactly these,
 -- so they are revoked here, from every user of this database: UPDATE on the statistics views, CREATEIN and DROPIN on
--- the public alias schema SYSPUBLIC, CREATEIN on SYSTOOLS, EXECUTE on the SYSPROC procedures that write a server file,
--- reach another server or schedule work, and EXECUTE on the DBMS_JOB module. Grant one back to a user that needs it.
+-- the public alias schema SYSPUBLIC, CREATEIN on SYSTOOLS, and EXECUTE on the SYSIBMADM modules whose functions the
+-- catalog marks EXTERNAL ACTION or MODIFIES SQL DATA. The EXECUTE revokes on the SYSPROC procedures that write a server
+-- file, reach another server or schedule work, and on DBMS_JOB, are hygiene the check does not need: an agent statement
+-- cannot call a procedure. Grant one back to each user or role that calls it before revoking.
 GRANT CONNECT ON DATABASE TO USER AGENT_RO;
 GRANT SELECT ON APP.ORDERS TO USER AGENT_RO;
 GRANT SELECT ON APP.CUSTOMERS TO USER AGENT_RO;
@@ -34,3 +36,10 @@ REVOKE EXECUTE ON SPECIFIC PROCEDURE SYSPROC.REMOTE_QUERY FROM PUBLIC RESTRICT;
 REVOKE EXECUTE ON SPECIFIC PROCEDURE SYSPROC.SNAP_WRITE_FILE FROM PUBLIC RESTRICT;
 REVOKE EXECUTE ON SPECIFIC PROCEDURE SYSPROC.SYSTS_ADMIN_CMD FROM PUBLIC RESTRICT;
 REVOKE EXECUTE ON MODULE SYSIBMADM.DBMS_JOB FROM PUBLIC;
+REVOKE EXECUTE ON MODULE SYSIBMADM.DBMS_DDL FROM PUBLIC;
+REVOKE EXECUTE ON MODULE SYSIBMADM.DBMS_LOB FROM PUBLIC;
+REVOKE EXECUTE ON MODULE SYSIBMADM.DBMS_LOCK FROM PUBLIC;
+REVOKE EXECUTE ON MODULE SYSIBMADM.DBMS_RANDOM FROM PUBLIC;
+REVOKE EXECUTE ON MODULE SYSIBMADM.DBMS_SQL FROM PUBLIC;
+REVOKE EXECUTE ON MODULE SYSIBMADM.DBMS_STATS FROM PUBLIC;
+REVOKE EXECUTE ON MODULE SYSIBMADM.DBMS_UTILITY FROM PUBLIC;

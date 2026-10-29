@@ -18,12 +18,14 @@
  *    function that writes, granted to the user, to PUBLIC, to a role, and through a grant on every function of a
  *    schema; a module of the owner's; a package of the owner's; READ on a variable of the owner's; USAGE on a sequence;
  *    INSERT on a table; CREATEIN on a schema; CREATETAB and IMPLICIT_SCHEMA on the database, to PUBLIC; DBADM; a view
- *    that calls a function of the owner's; a view over a view it may not read; a view over an alias of a table it may
- *    not read; a view left inoperative; a column mask anywhere in the database; SETSESSIONUSER; a role with its ADMIN
+ *    that calls a function of the owner's; EXECUTE on IBM's UTL_FILE and DBMS_PIPE modules and on its AUDIT_ARCHIVE
+ *    table function, each acting outside the call by its own catalog row; a view calling IBM's DBMS_RANDOM.VALUE; a
+ *    view over a view it may not read; a view over an alias of a table it may not read; a view left inoperative; a column mask anywhere in the database; SETSESSIONUSER; a role with its ADMIN
  *    OPTION; a trusted context naming the user as its system authorization ID, on the address the server sees this
  *    script at, whose default role a raw connection of the user is first shown to hold, and the same context
  *    disabled; and on one handle a grant added after a call refuses the next call, and its revoke admits the one after;
- *  - it admits a view over a table, a view over a view it may read, and a view calling IBM's own function;
+ *  - it admits a view over a table, a view over a view it may read, a view calling IBM's own function, IBM's DB_MEMBERS
+ *    and a view calling GET_INDEX_COLNAMES, both on the list of IBM functions measured as reading only;
  *  - each call has a connection of its own: what one call's session holds is not the next one's;
  *  - the operations profile opens the instance owner unproven; an editor handle refuses `queryReadOnly`;
  *  - the catalog reads the overlay composes, each answered as the agent user;
@@ -162,6 +164,8 @@ async function refusedUntilLifted(
 }
 
 const CLEANUP = [
+  "DROP VIEW APP.LIBREDB_AB_RANDOM",
+  "DROP VIEW APP.LIBREDB_AB_LISTED",
   "DROP VIEW APP.LIBREDB_AB_OUTER",
   "DROP VIEW APP.LIBREDB_AB_INNER",
   "DROP VIEW APP.LIBREDB_AB_CALLS",
@@ -543,6 +547,59 @@ try {
     ["DROP MASK APP.LIBREDB_AB_MASK"],
     '"APP"."LIBREDB_AB_MASK" on "APP"."LIBREDB_AB_SECRET"',
   );
+  // IBM's code by its own catalog row: a module holding a function that acts outside the call, and a function of
+  // IBM's that does and is not on the measured list, are refused; a function on that list is admitted, called raw.
+  for (const ibmModule of ["UTL_FILE", "DBMS_PIPE"]) {
+    await refusedUntilLifted(
+      provider,
+      `EXECUTE on IBM's ${ibmModule} module, which holds a function with an external action`,
+      [`GRANT EXECUTE ON MODULE SYSIBMADM.${ibmModule} TO USER AGENT_RO`],
+      [`REVOKE EXECUTE ON MODULE SYSIBMADM.${ibmModule} FROM USER AGENT_RO`],
+      `REVOKE EXECUTE ON MODULE "SYSIBMADM"."${ibmModule}" FROM USER "AGENT_RO"`,
+    );
+  }
+  await refusedUntilLifted(
+    provider,
+    "EXECUTE on IBM's AUDIT_ARCHIVE table function, an external action not on the measured list",
+    ["GRANT EXECUTE ON SPECIFIC FUNCTION SYSPROC.AUDIT_ARCHIVE_TF TO USER AGENT_RO"],
+    ["REVOKE EXECUTE ON SPECIFIC FUNCTION SYSPROC.AUDIT_ARCHIVE_TF FROM USER AGENT_RO RESTRICT"],
+    'REVOKE EXECUTE ON SPECIFIC FUNCTION "SYSPROC"."AUDIT_ARCHIVE_TF" FROM USER "AGENT_RO" RESTRICT',
+  );
+  {
+    let members: unknown;
+    try {
+      members = (await provider.queryReadOnly?.("SELECT COUNT(*) AS N FROM TABLE (SYSPROC.DB_MEMBERS()) AS T", BUDGET))
+        ?.rows[0]?.N;
+    } catch (error) {
+      members = error;
+    }
+    check(
+      Number(members) === 1,
+      `admitted: IBM's DB_MEMBERS, an external action on the measured list, answers through queryReadOnly${members instanceof Error ? ` (got: ${members.message.slice(0, 300)})` : ""}`,
+    );
+  }
+  await refusedUntilLifted(
+    provider,
+    "a view that calls IBM's DBMS_RANDOM.VALUE, an external action",
+    [
+      "CREATE VIEW APP.LIBREDB_AB_RANDOM AS SELECT SYSIBMADM.DBMS_RANDOM.VALUE() AS V FROM SYSIBM.SYSDUMMY1",
+      "GRANT SELECT ON APP.LIBREDB_AB_RANDOM TO USER AGENT_RO",
+    ],
+    ["REVOKE SELECT ON APP.LIBREDB_AB_RANDOM FROM USER AGENT_RO"],
+    'REVOKE SELECT ON TABLE "APP"."LIBREDB_AB_RANDOM"',
+  );
+  await setup([
+    "CREATE VIEW APP.LIBREDB_AB_LISTED AS SELECT VARCHAR(SYSPROC.GET_INDEX_COLNAMES('APP', 'ORDERS'), 40) AS C " +
+      "FROM SYSIBM.SYSDUMMY1",
+    "GRANT SELECT ON APP.LIBREDB_AB_LISTED TO USER AGENT_RO",
+  ]);
+  const listedView = await refusalOf(provider, "SELECT C FROM APP.LIBREDB_AB_LISTED");
+  check(
+    listedView === undefined,
+    `admitted: a view that calls IBM's GET_INDEX_COLNAMES, on the measured list${listedView instanceof Error ? ` (got: ${listedView.message.slice(0, 300)})` : ""}`,
+  );
+  await setup(["REVOKE SELECT ON APP.LIBREDB_AB_LISTED FROM USER AGENT_RO"]);
+
   // Measured first: a connection from the address a trusted context names becomes trusted without asking, and holds
   // the context's default role, which AUTH_LIST_ROLES_FOR_AUTHID does not list.
   const address = String(

@@ -1,0 +1,158 @@
+SELECT VARCHAR(r.ROUTINESCHEMA, 8) AS ROUTINESCHEMA, VARCHAR(r.SPECIFICNAME, 30) AS SPECIFICNAME, r.EXTERNAL_ACTION, r.SQL_DATA_ACCESS FROM SYSCAT.ROUTINEAUTH a JOIN SYSCAT.ROUTINES r ON r.ROUTINESCHEMA = a.SCHEMA AND (r.SPECIFICNAME = a.SPECIFICNAME OR a.SPECIFICNAME IS NULL AND r.ROUTINETYPE = a.ROUTINETYPE) WHERE (a.GRANTEE, a.GRANTEETYPE) IN (VALUES (CAST(SESSION_USER AS VARCHAR(128)), CAST('U' AS CHAR(1))), (CAST('PUBLIC' AS VARCHAR(128)), CAST('G' AS CHAR(1)))) AND a.EXECUTEAUTH <> 'N' AND r.OWNERTYPE = 'S' AND r.ROUTINETYPE IN ('F', 'M') AND (r.EXTERNAL_ACTION = 'E' OR r.SQL_DATA_ACCESS = 'M') ORDER BY 1, 2
+
+ROUTINESCHEMA SPECIFICNAME                   EXTERNAL_ACTION SQL_DATA_ACCESS
+------------- ------------------------------ --------------- ---------------
+SYSPROC       ADMIN_LIST_DB_PATHS            E               N              
+SYSPROC       ADMIN_LIST_HIST                E               N              
+SYSPROC       DB_MEMBERS                     E               N              
+SYSPROC       DB_PARTITIONS                  E               N              
+SYSPROC       GEO_STASSDEBINARY1             E               R              
+SYSPROC       GET_INDEX_COLNAMES             E               R              
+SYSPROC       HEALTH_CONT_HI                 E               N              
+SYSPROC       HEALTH_CONT_HI_HIS             E               N              
+SYSPROC       HEALTH_CONT_INFO               E               N              
+SYSPROC       HEALTH_DBM_HI                  E               N              
+SYSPROC       HEALTH_DBM_HI_HIS              E               N              
+SYSPROC       HEALTH_DBM_INFO                E               N              
+SYSPROC       HEALTH_DB_HI                   E               N              
+SYSPROC       HEALTH_DB_HIC                  E               N              
+SYSPROC       HEALTH_DB_HIC_HIS              E               N              
+SYSPROC       HEALTH_DB_HI_HIS               E               N              
+SYSPROC       HEALTH_DB_INFO                 E               N              
+SYSPROC       HEALTH_TBS_HI                  E               N              
+SYSPROC       HEALTH_TBS_HI_HIS              E               N              
+SYSPROC       HEALTH_TBS_INFO                E               N              
+SYSPROC       LOGICAL_BACKUP_DETAILS_TAB     E               N              
+SYSPROC       SNAP_GET_AGENT                 E               N              
+SYSPROC       SNAP_GET_AGENT_AP              E               N              
+SYSPROC       SNAP_GET_AGENT_MEMORY_POOL     E               N              
+SYSPROC       SNAP_GET_AGENT_MEMORY_POOL_AP  E               N              
+SYSPROC       SNAP_GET_APPL                  E               N              
+SYSPROC       SNAP_GET_APPL_AP               E               N              
+SYSPROC       SNAP_GET_APPL_INFO             E               N              
+SYSPROC       SNAP_GET_APPL_INFO_AP          E               N              
+SYSPROC       SNAP_GET_BP                    E               N              
+SYSPROC       SNAP_GET_BP_AP                 E               N              
+SYSPROC       SNAP_GET_BP_PART               E               N              
+SYSPROC       SNAP_GET_BP_PART_AP            E               N              
+SYSPROC       SNAP_GET_CONTAINER             E               N              
+SYSPROC       SNAP_GET_CONTAINER_AP          E               N              
+SYSPROC       SNAP_GET_DB                    E               N              
+SYSPROC       SNAP_GET_DBM                   E               N              
+SYSPROC       SNAP_GET_DBM_AP                E               N              
+SYSPROC       SNAP_GET_DBM_MEMORY_POOL       E               N              
+SYSPROC       SNAP_GET_DBM_MEMORY_POOL_AP    E               N              
+SYSPROC       SNAP_GET_DB_AP                 E               N              
+SYSPROC       SNAP_GET_DB_MEMORY_POOL        E               N              
+SYSPROC       SNAP_GET_DB_MEMORY_POOL_AP     E               N              
+SYSPROC       SNAP_GET_DETAILLOG             E               N              
+SYSPROC       SNAP_GET_DETAILLOG_AP          E               N              
+SYSPROC       SNAP_GET_DYN_SQL               E               N              
+SYSPROC       SNAP_GET_DYN_SQL_AP            E               N              
+SYSPROC       SNAP_GET_FCM                   E               N              
+SYSPROC       SNAP_GET_FCM_AP                E               N              
+SYSPROC       SNAP_GET_FCM_PART              E               N              
+SYSPROC       SNAP_GET_FCM_PART_AP           E               N              
+SYSPROC       SNAP_GET_HADR                  E               N              
+SYSPROC       SNAP_GET_HADR_AP               E               N              
+SYSPROC       SNAP_GET_LOCK                  E               N              
+SYSPROC       SNAP_GET_LOCKWAIT              E               N              
+SYSPROC       SNAP_GET_LOCKWAIT_AP           E               N              
+SYSPROC       SNAP_GET_LOCK_AP               E               N              
+SYSPROC       SNAP_GET_STMT                  E               N              
+SYSPROC       SNAP_GET_STMT_AP               E               N              
+SYSPROC       SNAP_GET_STORAGE_PATHS         E               N              
+SYSPROC       SNAP_GET_STORAGE_PATHS_AP      E               N              
+SYSPROC       SNAP_GET_SUBSECTION            E               N              
+SYSPROC       SNAP_GET_SUBSECTION_AP         E               N              
+SYSPROC       SNAP_GET_SWITCHES              E               N              
+SYSPROC       SNAP_GET_SWITCHES_AP           E               N              
+SYSPROC       SNAP_GET_TAB                   E               N              
+SYSPROC       SNAP_GET_TAB_AP                E               N              
+SYSPROC       SNAP_GET_TAB_REORG             E               N              
+SYSPROC       SNAP_GET_TAB_REORG_AP          E               N              
+SYSPROC       SNAP_GET_TBSP                  E               N              
+SYSPROC       SNAP_GET_TBSP_AP               E               N              
+SYSPROC       SNAP_GET_TBSP_PART             E               N              
+SYSPROC       SNAP_GET_TBSP_PART_AP          E               N              
+SYSPROC       SNAP_GET_TBSP_QUIESCER         E               N              
+SYSPROC       SNAP_GET_TBSP_QUIESCER_AP      E               N              
+SYSPROC       SNAP_GET_TBSP_RANGE            E               N              
+SYSPROC       SNAP_GET_TBSP_RANGE_AP         E               N              
+SYSPROC       SNAP_GET_UTIL                  E               N              
+SYSPROC       SNAP_GET_UTIL_AP               E               N              
+SYSPROC       SNAP_GET_UTIL_PROGRESS         E               N              
+SYSPROC       SNAP_GET_UTIL_PROGRESS_AP      E               N              
+
+  81 record(s) selected.
+
+
+SELECT VARCHAR(m.MODULESCHEMA, 10) AS MODULESCHEMA, VARCHAR(m.MODULENAME, 22) AS MODULENAME, COUNT(*) AS FUNCTIONS FROM SYSCAT.MODULEAUTH m JOIN SYSCAT.ROUTINES r ON r.ROUTINEMODULEID = m.MODULEID WHERE m.GRANTEE IN (SESSION_USER, 'PUBLIC') AND m.EXECUTEAUTH <> 'N' AND r.ROUTINETYPE IN ('F', 'M') AND (r.EXTERNAL_ACTION = 'E' OR r.SQL_DATA_ACCESS = 'M') GROUP BY m.MODULESCHEMA, m.MODULENAME ORDER BY 1, 2
+
+MODULESCHEMA MODULENAME             FUNCTIONS  
+------------ ---------------------- -----------
+
+  0 record(s) selected.
+
+
+SELECT * FROM (SELECT COUNT(*) AS N FROM TABLE (SYSPROC.DB_MEMBERS()) AS T) AS LIBREDB_AGENT_READ
+
+N          
+-----------
+          1
+
+  1 record(s) selected.
+
+
+SELECT * FROM (SELECT COUNT(*) AS N FROM TABLE (SYSPROC.DB_PARTITIONS()) AS T) AS LIBREDB_AGENT_READ
+
+N          
+-----------
+          1
+
+  1 record(s) selected.
+
+
+SELECT * FROM (SELECT COUNT(*) AS N FROM TABLE (SYSPROC.ADMIN_LIST_HIST()) AS T) AS LIBREDB_AGENT_READ
+
+N          
+-----------
+          0
+
+  1 record(s) selected.
+
+
+SELECT * FROM (SELECT COUNT(*) AS N FROM TABLE (SYSPROC.HEALTH_DB_INFO('', -1)) AS T) AS LIBREDB_AGENT_READ
+
+N          
+-----------
+          1
+
+  1 record(s) selected.
+
+
+SELECT * FROM (SELECT VARCHAR(SYSPROC.GET_INDEX_COLNAMES('APP', 'ORDERS'), 40) AS C FROM SYSIBM.SYSDUMMY1) AS LIBREDB_AGENT_READ
+
+C                                       
+----------------------------------------
+                                        
+
+  1 record(s) selected.
+
+
+SELECT * FROM (SELECT COUNT(*) AS N FROM TABLE (SYSPROC.SNAP_GET_DB('', -1)) AS T) AS LIBREDB_AGENT_READ
+
+N          
+-----------
+SQL1092N  The requested command or operation failed because the user ID does 
+not have the authority to perform the requested command or operation.  User 
+ID: "AGENT_RO".
+
+SELECT * FROM (SELECT COUNT(*) AS N FROM TABLE (SYSPROC.SNAP_GET_TAB('', -1)) AS T) AS LIBREDB_AGENT_READ
+
+N          
+-----------
+SQL1092N  The requested command or operation failed because the user ID does 
+not have the authority to perform the requested command or operation.  User 
+ID: "AGENT_RO".
+

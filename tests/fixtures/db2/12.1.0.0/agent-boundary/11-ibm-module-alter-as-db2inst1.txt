@@ -1,0 +1,38 @@
+ALTER MODULE SYSIBMADM.DBMS_LOB ADD TYPE LIBREDB_PROBE_T AS INTEGER ARRAY[]
+DB21034E  The command was processed as an SQL statement because it was not a 
+valid Command Line Processor command.  During SQL processing it returned:
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "DB2INST1".  Operation: "ALTER MODULE". Object: "SYSIBMADM.DBMS_LOB".  
+LINE NUMBER=1.  SQLSTATE=42501
+
+ALTER MODULE SYSIBMADM.DBMS_LOB PUBLISH FUNCTION LIBREDB_PROBE () RETURNS INTEGER LANGUAGE SQL RETURN 1
+DB21034E  The command was processed as an SQL statement because it was not a 
+valid Command Line Processor command.  During SQL processing it returned:
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "DB2INST1".  Operation: "ALTER MODULE". Object: "SYSIBMADM.DBMS_LOB".  
+LINE NUMBER=1.  SQLSTATE=42501
+
+CREATE MODULE SYSIBMADM.LIBREDB_PROBE_M
+DB21034E  The command was processed as an SQL statement because it was not a 
+valid Command Line Processor command.  During SQL processing it returned:
+SQL0553N  An object cannot be created with the schema name "SYSIBMADM".  LINE 
+NUMBER=1.  SQLSTATE=42939
+
+SELECT VARCHAR(m.MODULENAME, 14) AS MODULENAME, m.OWNERTYPE AS MODULE_OWNERTYPE, r.ORIGIN, VARCHAR(r.OWNER, 10) AS ROUTINE_OWNER, r.OWNERTYPE AS ROUTINE_OWNERTYPE, COUNT(*) AS N FROM SYSCAT.ROUTINES r JOIN SYSCAT.MODULES m ON m.MODULEID = r.ROUTINEMODULEID WHERE m.MODULESCHEMA = 'SYSIBMADM' AND r.OWNERTYPE <> 'S' GROUP BY m.MODULENAME, m.OWNERTYPE, r.ORIGIN, r.OWNER, r.OWNERTYPE ORDER BY 1
+
+MODULENAME     MODULE_OWNERTYPE ORIGIN ROUTINE_OWNER ROUTINE_OWNERTYPE N          
+-------------- ---------------- ------ ------------- ----------------- -----------
+DBMS_OUTPUT    S                S      DB2INST1      U                           2
+DBMS_SQL       S                S      DB2INST1      U                          12
+DBMS_STATS     S                S      DB2INST1      U                          10
+DBMS_UTILITY   S                S      DB2INST1      U                           4
+MONREPORT      S                S      DB2INST1      U                          40
+UTL_FILE       S                S      DB2INST1      U                           8
+UTL_SMTP       S                S      DB2INST1      U                           6
+UTL_TCP        S                S      DB2INST1      U                           2
+
+  8 record(s) selected.
+
+

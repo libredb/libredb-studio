@@ -35,13 +35,16 @@
  *    sequence privilege (`NEXT VALUE FOR` advances a sequence the rollback does not take back), no role's ADMIN
  *    OPTION, no pass-through to a federated server and no SETSESSIONUSER.
  * 3. They may execute no routine, module or package that is not IBM's, since such code runs with its owner's
- *    authority, none of IBM's routines and modules that reach the server's files, the network or work outside the
- *    call (`REACHING_ROUTINES`, `REACHING_MODULES`), and read or write no global variable that is not IBM's, whose
- *    default can call code. A grant on every routine of a schema is refused when any routine there is not admitted.
+ *    authority, and no IBM function, or IBM module holding one, whose own catalog row says it acts outside the call
+ *    or modifies data (`EXTERNAL_ACTION` E or `SQL_DATA_ACCESS` M), unless it is one of the functions measured as
+ *    reading only (`reading-functions.ts`). IBM's procedures are admitted: the agent's statement is a fullselect in a
+ *    derived table, where no `CALL` fits, so only a function or method can be invoked. They read or write no global
+ *    variable that is not IBM's, whose default can call code. A grant on every routine of a schema is refused when
+ *    any routine there is not admitted.
  * 4. They may read no table object that is not IBM's and is a nickname, which reads another server, or a view that is
  *    not valid (a SELECT revalidates it and runs what it calls now), or a view whose dependencies (`SYSCAT.TABDEP`)
- *    hold anything but a table, a function that is IBM's, a variable that is IBM's, a view that is IBM's or one this
- *    check also examines, or an alias of a table object this check examines.
+ *    hold anything but a table, a function that is IBM's and admitted by item 3, a variable that is IBM's, a view
+ *    that is IBM's or one this check also examines, or an alias of a table object this check examines.
  * 5. `SYSCAT.CONTROLS` lists no row permission or column mask anywhere in the database that is not IBM's: Db2 evaluates
  *    it for any reader of the table it guards, a reader through a view included, and it can call a secured function
  *    with its owner's authority (measured). A fresh database holds five, IBM's own masks on its catalog tables.
@@ -56,35 +59,13 @@ import { readSqlSpan } from "@/lib/sql/spans";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import { byteBudgetSentence, measureResultBytes, rowBudgetSentence } from "../read-only-budget";
 import type { Db2ColumnMeta } from "./driver";
+import { DB2_READING_FUNCTIONS } from "./reading-functions";
 import { db2TypeName } from "./values";
 
 type Rows = readonly Record<string, unknown>[];
 
 /** Runs one catalog read as the agent user and answers its rows, keyed by the column names its statement gives. */
 export type Db2AgentReader = (sql: string) => Promise<Rows>;
-
-/** IBM's routines in SYSPROC that write a server file, reach another server or schedule work outside the call. */
-const REACHING_ROUTINES: readonly string[] = [
-  "ADMIN_CMD",
-  "ADMIN_TASK_ADD",
-  "ADMIN_TASK_UPDATE",
-  "DB2LOAD",
-  "REMOTE_QUERY",
-  "SNAP_WRITE_FILE",
-  "SYSTS_ADMIN_CMD",
-];
-
-/** IBM's modules in SYSIBMADM that reach the server's files, the network, other sessions or the job scheduler. */
-const REACHING_MODULES: readonly string[] = [
-  "DBMS_ALERT",
-  "DBMS_JOB",
-  "DBMS_PIPE",
-  "UTL_DIR",
-  "UTL_FILE",
-  "UTL_MAIL",
-  "UTL_SMTP",
-  "UTL_TCP",
-];
 
 const list = (names: readonly string[]) => names.map((name) => `'${name}'`).join(", ");
 
@@ -102,12 +83,33 @@ function held(alias: string): string {
   return `JOIN G ON G.GRANTEE = ${alias}.GRANTEE AND G.GRANTEETYPE = ${alias}.GRANTEETYPE`;
 }
 
-/** The `SYSCAT.ROUTINES` row `alias` is IBM's, and not one of IBM's that reaches outside the call. */
-function admittedRoutine(alias: string): string {
+/**
+ * The `SYSCAT.ROUTINES` row `alias` keeps to the call by its own catalog facts: neither `EXTERNAL_ACTION` E nor
+ * `SQL_DATA_ACCESS` M, and, if sourced (`ORIGIN` U), sourced on a built-in or on an IBM routine that keeps to the call
+ * itself; or it is one of IBM's functions measured as reading only, by its specific name (`reading-functions.ts`). A
+ * built-in (`ORIGIN` B) and a function Db2 generates for a type (`ORIGIN` S) leave both columns blank. A missing value
+ * counts against the routine.
+ */
+function keepsToTheCall(alias: string): string {
+  const facts = (row: string) =>
+    `COALESCE(${row}.EXTERNAL_ACTION, 'E') <> 'E' AND COALESCE(${row}.SQL_DATA_ACCESS, 'M') <> 'M'`;
   return (
-    `${alias}.OWNERTYPE = 'S' AND NOT (${alias}.ROUTINESCHEMA = 'SYSPROC' AND ${alias}.ROUTINENAME IN ` +
-    `(${list(REACHING_ROUTINES)}))`
+    `(${facts(alias)} AND (COALESCE(${alias}.ORIGIN, 'U') <> 'U' OR COALESCE(${alias}.SOURCESCHEMA, '') = 'SYSIBM' ` +
+    `OR EXISTS (SELECT 1 FROM SYSCAT.ROUTINES s WHERE s.ROUTINESCHEMA = ${alias}.SOURCESCHEMA ` +
+    `AND s.SPECIFICNAME = ${alias}.SOURCESPECIFIC AND COALESCE(s.OWNERTYPE, '') = 'S' ` +
+    `AND COALESCE(s.ORIGIN, 'U') <> 'U' AND ${facts("s")})) ` +
+    `OR ${alias}.ROUTINESCHEMA = 'SYSPROC' AND COALESCE(${alias}.ROUTINETYPE, '') = 'F' ` +
+    `AND ${alias}.SPECIFICNAME IN (${list(DB2_READING_FUNCTIONS)}))`
   );
+}
+
+/**
+ * The `SYSCAT.ROUTINES` row `alias` is IBM's, and a procedure or a routine that keeps to the call. A procedure is
+ * admitted because the agent's statement is a fullselect in a derived table, where no `CALL` fits: only a function or
+ * method can be invoked from it.
+ */
+function admittedRoutine(alias: string): string {
+  return `COALESCE(${alias}.OWNERTYPE, '') = 'S' AND (COALESCE(${alias}.ROUTINETYPE, '') = 'P' OR ${keepsToTheCall(alias)})`;
 }
 
 /** The privileges a lateral VALUES spreads one catalog row into, one per column that may hold it. */
@@ -194,8 +196,13 @@ export const AGENT_PRINCIPAL_STATEMENTS = Object.freeze({
         `AND NOT (${admittedRoutine("r")}))`,
       "SELECT m.GRANTEE, m.GRANTEETYPE, 'EXECUTE', 'MODULE', m.MODULESCHEMA, m.MODULENAME " +
         `FROM SYSCAT.MODULEAUTH m ${held("m")} WHERE m.EXECUTEAUTH <> 'N' ` +
+        // An IBM module is admitted when each of its routines is: IBM's own, or one Db2 generated for the module's types
+        // (ORIGIN S, owned by the instance owner that created the database), which only Db2 can add, since the instance
+        // owner can neither alter an IBM module nor create one in SYSIBMADM (capture 11).
         "AND NOT EXISTS (SELECT 1 FROM SYSCAT.MODULES d WHERE d.MODULEID = m.MODULEID AND d.OWNERTYPE = 'S' " +
-        `AND NOT (d.MODULESCHEMA = 'SYSIBMADM' AND d.MODULENAME IN (${list(REACHING_MODULES)})))`,
+        "AND NOT EXISTS (SELECT 1 FROM SYSCAT.ROUTINES r WHERE r.ROUTINEMODULEID = d.MODULEID AND NOT (" +
+        "(COALESCE(r.OWNERTYPE, '') = 'S' OR COALESCE(r.ORIGIN, '') = 'S') " +
+        `AND (COALESCE(r.ROUTINETYPE, '') = 'P' OR ${keepsToTheCall("r")}))))`,
       "SELECT k.GRANTEE, k.GRANTEETYPE, p.PRIVILEGE, 'PACKAGE', k.PKGSCHEMA, k.PKGNAME " +
         `FROM SYSCAT.PACKAGEAUTH k ${held("k")}, ` +
         spread("k", [
@@ -387,8 +394,8 @@ function codeFinding(rows: Rows): Finding | null {
   if (rows.length === 0) return null;
   return {
     what:
-      "it may execute code that is not IBM's, which runs with its owner's authority, or IBM code that reaches the " +
-      "server's files, the network or work outside the call",
+      "it may execute code that is not IBM's, which runs with its owner's authority, or an IBM function, or a module " +
+      "holding one, whose own catalog row says it acts outside the call or modifies data",
     statements: rows.map((row) => revoke(row, "code")),
   };
 }
@@ -397,8 +404,9 @@ function reachFinding(rows: Rows): Finding | null {
   if (rows.length === 0) return null;
   return {
     what:
-      "it may read a view that calls code that is not IBM's or reads a view or alias the check cannot follow, a view " +
-      "that is not valid, or a nickname, which reads another server; each runs with its owner's authority",
+      "it may read a view that calls code that is not IBM's or an IBM function that acts outside the call or modifies " +
+      "data, or reads a view or alias the check cannot follow, a view that is not valid, or a nickname, which reads " +
+      "another server; each runs with its owner's authority",
     statements: rows.map((row) => {
       const [name, type, schema, object] = text(row, "reach", ["GRANTEE", "GRANTEETYPE", "SCHEMA", "NAME"]);
       return `REVOKE SELECT ON TABLE ${quoted(schema)}.${quoted(object)} FROM ${grantee(name, type, "reach")}`;
