@@ -8,8 +8,8 @@
  * node's to say. So this script asks one, through the production path (`createDatabaseProvider` with the agent
  * profile's execution context, then `connect` and `queryReadOnly`), with no admission of Studio's in front:
  *
- *  - the open: the agent profile and the operations profile both open the node, and an editor handle's
- *    `queryReadOnly` refuses with nothing sent;
+ *  - the open: the agent profile reads the node's version and opens it, the operations profile opens it too, and an
+ *    editor handle's `queryReadOnly` refuses with nothing sent;
  *  - the boundary: each write and DDL statement sent through `queryReadOnly` is refused by the grammar in the engine's
  *    own words (a `line 1:N: mismatched input` or `extraneous input` refusal, never a budget or a credential refusal),
  *    and the same text sent raw answers 400 `parsing_exception`; the index listing with its document counts, every
@@ -20,7 +20,9 @@
  *    statement past its deadline are each refused, never truncated, and after each refusal the node holds no open
  *    search context: the cursor the answer left open was closed; a read within the budgets answers its rows;
  *  - with security on (LIBREDB_ES_AGENT_USER set): the agent user holds only `read` and `view_index_metadata` on
- *    `probe_*`, its own document write is refused 403, and an index outside its role is refused.
+ *    `probe_*` and the cluster action `cluster:monitor/main`; without that action the agent profile is refused at open,
+ *    since the version cannot be read; its own document write is refused 403, and an index outside its role is
+ *    refused.
  *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name. Run it against a node seeded per section 11.4
  * of docs/providers/elasticsearch.md:
@@ -167,15 +169,31 @@ async function refusalOf(run: () => Promise<unknown>): Promise<Error | null> {
   }
 }
 
-/** The agent user's role, created by the superuser: reads on the probe indices and nothing else. */
+const AGENT_INDICES = [{ names: ["probe_*"], privileges: ["read", "view_index_metadata"] }];
+
+/**
+ * The agent user's role, created by the superuser: reads on the probe indices, and the one cluster action that reads
+ * the server's version. The role is created without that action first, to show the open refuses a version it cannot
+ * read.
+ */
 async function createAgentUser(): Promise<void> {
   if (!SECURED) return;
-  const role = await send("PUT", `/_security/role/${AGENT_ROLE}`, {
-    indices: [{ names: ["probe_*"], privileges: ["read", "view_index_metadata"] }],
-  });
+  const role = await send("PUT", `/_security/role/${AGENT_ROLE}`, { indices: AGENT_INDICES });
   check(role.status === 200, `security: the superuser creates the role ${AGENT_ROLE} -> ${role.status}`);
   const user = await send("PUT", `/_security/user/${AGENT_USER}`, { password: AGENT_PASSWORD, roles: [AGENT_ROLE] });
   check(user.status === 200, `security: the superuser creates the agent user with that role alone -> ${user.status}`);
+  const unread = await refusalOf(() => open("agent-read-only"));
+  check(
+    unread?.name === "ExecutionProfileError" && unread.message.includes("cluster:monitor/main"),
+    `security: without cluster:monitor/main the version is unread and the agent profile refused -> ${unread?.message.slice(0, 110)}`,
+  );
+  const versioned = await send("PUT", `/_security/role/${AGENT_ROLE}`, {
+    cluster: ["cluster:monitor/main"],
+    indices: AGENT_INDICES,
+  });
+  check(versioned.status === 200, `security: the role gains cluster:monitor/main alone -> ${versioned.status}`);
+  const health = await send("GET", "/_cluster/health", undefined, basic(AGENT_USER, AGENT_PASSWORD));
+  check(health.status === 403, `security: that action reads no cluster health -> ${health.status}`);
 }
 
 async function main(): Promise<void> {

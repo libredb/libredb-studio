@@ -80,6 +80,7 @@ import {
   AuthenticationError,
   ConnectionError,
   DatabaseConfigError,
+  ExecutionProfileError,
   OffsetUnsupportedError,
   QueryCancelledError,
   QueryError,
@@ -321,6 +322,16 @@ interface SearchProduct {
    * `readOnlyStatement` is the only reader.
    */
   readonly queryOnlySqlEndpoint: boolean;
+
+  /**
+   * The release lines, as the version's first two numbers, on which the SQL endpoint's write refusals were captured
+   * from a live server: the only lines the open of an agent read-only connection admits, since the boundary is the
+   * grammar of the release the server runs, and a release never measured is an unknown server that refuses the profile.
+   *
+   * Elasticsearch: 9.1 (9.1.4, `tests/fixtures/elasticsearch/9.1.4/write-refusal/`). OpenSearch: none, since its
+   * endpoint is not query-only.
+   */
+  readonly checkedSqlReleases: readonly string[];
 }
 
 export const ELASTICSEARCH_PRODUCT: SearchProduct = Object.freeze({
@@ -332,6 +343,7 @@ export const ELASTICSEARCH_PRODUCT: SearchProduct = Object.freeze({
   statementLanguage:
     "Elasticsearch SQL, the product's own SQL endpoint - NOT the JSON query DSL, NOT an aggregation body, and NOT ES|QL",
   queryOnlySqlEndpoint: true,
+  checkedSqlReleases: Object.freeze(["9.1"]),
 });
 
 export const OPENSEARCH_PRODUCT: SearchProduct = Object.freeze({
@@ -343,6 +355,7 @@ export const OPENSEARCH_PRODUCT: SearchProduct = Object.freeze({
   statementLanguage:
     "OpenSearch SQL, the SQL plugin's own dialect - NOT the JSON query DSL, NOT an aggregation body, and NOT PPL",
   queryOnlySqlEndpoint: false,
+  checkedSqlReleases: Object.freeze([]),
 });
 
 // ============================================================================
@@ -945,9 +958,42 @@ abstract class SearchProvider extends SQLBaseProvider {
       this.setError(failure);
       throw failure;
     }
+    if (this.readOnlyProfile) await this.assertCheckedServer(transport);
 
     this.transport = transport;
     this.setConnected(true);
+  }
+
+  /**
+   * Admits the agent read-only profile only on a server of a release line whose write refusals were captured
+   * ({@link SearchProduct.checkedSqlReleases}), read from the version payload before any agent statement is sent. A
+   * server of another release, another product, or one whose version cannot be read is refused: the version is read
+   * with `GET /`, which a least-privilege user reads with the one cluster action `cluster:monitor/main`.
+   */
+  private async assertCheckedServer(transport: SearchHttpTransport): Promise<void> {
+    const checked = `${this.product.label} ${this.product.checkedSqlReleases.join(", ")}`;
+    let server: { version: string; product: string };
+    try {
+      server = await transport.version(this.deadline());
+    } catch (error) {
+      throw new ExecutionProfileError(
+        `The agent read-only profile is checked on ${checked}, and this server's version could not be read, so it is refused (a user needs the cluster privilege cluster:monitor/main to read it): ${error instanceof Error ? error.message : String(error)}`,
+        "PROFILE_UNSUPPORTED_TARGET",
+      );
+    }
+    const release = /^(\d+\.\d+)\./.exec(server.version)?.[1];
+    if (
+      server.product === this.product.dialect &&
+      release !== undefined &&
+      this.product.checkedSqlReleases.includes(release)
+    ) {
+      return;
+    }
+    const product = server.product === this.product.dialect ? this.product.label : server.product;
+    throw new ExecutionProfileError(
+      `The agent read-only profile is checked on ${checked}, and this server reports ${product} ${server.version || "with no version"}: its write refusals have not been captured, so it is refused`,
+      "PROFILE_UNSUPPORTED_TARGET",
+    );
   }
 
   /**

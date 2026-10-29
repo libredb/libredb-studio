@@ -49,6 +49,7 @@ import {
   AuthenticationError,
   ConnectionError,
   DatabaseConfigError,
+  ExecutionProfileError,
   OffsetUnsupportedError,
   QueryCancelledError,
   QueryError,
@@ -4047,5 +4048,90 @@ describe("ElasticsearchProvider.queryReadOnly", () => {
       "OpenSearch SQL is not a query-only endpoint, so the agent read-only profile has no boundary to run on here",
     );
     expect(sent.length).toBe(before);
+  });
+});
+
+// ============================================================================
+// The agent read-only profile's open: the measured release only
+// ============================================================================
+
+/**
+ * The boundary is the grammar of the SQL endpoint, and it was measured on 9.1.4 alone. So the open of a connection that
+ * sends agent statements reads the server's version (`GET /`, which a least-privilege user reads with the one cluster
+ * action `cluster:monitor/main`) and admits only Elasticsearch of the measured release line; any other version, an
+ * OpenSearch server behind an Elasticsearch connection, and a version it cannot read each refuse the profile.
+ */
+describe("ElasticsearchProvider agent profile open", () => {
+  function rootWith(version: Record<string, unknown>): Reply {
+    return ok(JSON.stringify({ name: "n", cluster_name: "c", version, tagline: "You Know, for Search" }));
+  }
+
+  async function openFailure(execution: ProviderExecutionContext = AGENT_PROFILE): Promise<unknown> {
+    const provider = new ElasticsearchProvider(makeConnection(), {}, execution);
+    return provider.connect().then(
+      () => provider,
+      (error: unknown) => error,
+    );
+  }
+
+  test("reads the version after the probe and admits the measured release line", async () => {
+    const opened = await openFailure();
+
+    expect(opened).toBeInstanceOf(ElasticsearchProvider);
+    expect(sent.map((request) => request.path)).toEqual([SQL_PATH, "/"]);
+  });
+
+  test("a patch release of the measured line is admitted", async () => {
+    overridePath("/", rootWith({ number: "9.1.10", build_flavor: "default" }));
+
+    expect(await openFailure()).toBeInstanceOf(ElasticsearchProvider);
+  });
+
+  test.each(["9.2.0", "8.19.4", "10.0.0", "9.10.1", ""])(
+    "refuses version %p: its refusals were never captured",
+    async (number) => {
+      overridePath("/", rootWith({ number, build_flavor: "default" }));
+
+      const error = await openFailure();
+
+      expect(error).toBeInstanceOf(ExecutionProfileError);
+      expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
+      expect((error as Error).message).toBe(
+        `The agent read-only profile is checked on Elasticsearch 9.1, and this server reports Elasticsearch ${number || "with no version"}: its write refusals have not been captured, so it is refused`,
+      );
+    },
+  );
+
+  test("refuses an OpenSearch server behind an Elasticsearch connection", async () => {
+    overridePath("/", rootWith({ number: "9.1.4", distribution: "opensearch" }));
+
+    const error = await openFailure();
+
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as Error).message).toBe(
+      "The agent read-only profile is checked on Elasticsearch 9.1, and this server reports opensearch 9.1.4: its write refusals have not been captured, so it is refused",
+    );
+  });
+
+  test("refuses when the version cannot be read, naming the one cluster action it needs", async () => {
+    overridePath("/", fail(403, NO_BODY));
+
+    const error = await openFailure();
+
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
+    expect((error as Error).message).toStartWith(
+      "The agent read-only profile is checked on Elasticsearch 9.1, and this server's version could not be read, so it is refused (a user needs the cluster privilege cluster:monitor/main to read it): ",
+    );
+  });
+
+  test.each([
+    ["an editor handle", {}],
+    ["a read-only acquisition that sends no statement", { readOnly: true, sendsStatements: false }],
+  ] as const)("does not read the version on %s", async (_name, execution) => {
+    overridePath("/", rootWith({ number: "7.17.0" }));
+
+    expect(await openFailure(execution)).toBeInstanceOf(ElasticsearchProvider);
+    expect(sent.map((request) => request.path)).toEqual([SQL_PATH]);
   });
 });

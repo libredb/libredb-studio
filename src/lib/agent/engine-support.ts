@@ -37,7 +37,8 @@ import type { DatabaseType } from "@/lib/types";
  * statement on the one route that carries statement text, whatever the token, and the open
  * checks the server is that line. Elasticsearch's boundary is the engine's too: the grammar of
  * its SQL endpoint, the one route that carries statement text, holds no write or DDL statement,
- * and every one sent raw there is refused. Each provider's own `queryReadOnly` argues its own case.
+ * and every one sent raw there is refused, and the open checks the server is the measured 9.1 line. Each provider's
+ * own `queryReadOnly` argues its own case.
  * `tests/unit/lib/agent/engine-support.test.ts` is what keeps the two equal - it walks EVERY
  * id in the `DatabaseType` union, reads `queryReadOnly` off the real provider class the
  * factory would construct, and fails if this array and the drivers diverge in either direction.
