@@ -71,7 +71,6 @@ delete process.env.SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN;
 
 let api: FakeDiscoveryApi;
 
-
 /** scanOnce's answer, typed for the assertions: the exporter is JavaScript, so the union TypeScript infers is loose. */
 interface Scan {
   ok: boolean;
@@ -1692,21 +1691,18 @@ describe("Secret checks per kind", () => {
     expect(await goldenSecret(slug, () => {})).toEqual({ name: c.secretName, data: goldenEntry(c).secret.data });
   });
 
-  test.each([["cnpg"], ["edbpg"], ["pgo"], ["mongo"]])(
-    "refuses a %s Secret of another type as wrong_type",
-    async (slug) => {
-      const c = caseOf(slug);
-      const other = c.secretType === "Opaque" ? "kubernetes.io/basic-auth" : "Opaque";
-      for (const type of [other, undefined, "kubernetes.io/tls"]) {
-        api.reset();
-        expect(
-          await goldenSecret(slug, (secret) => {
-            secret.type = type;
-          }),
-        ).toEqual({ name: c.secretName, problem: "wrong_type" });
-      }
-    },
-  );
+  const OTHER_TYPES = ["kubernetes.io/basic-auth", "Opaque", undefined, "kubernetes.io/tls"];
+  test.each(
+    ["cnpg", "edbpg", "pgo", "mongo"].flatMap((slug) =>
+      OTHER_TYPES.filter((type) => type !== caseOf(slug).secretType).map((type) => [slug, String(type), type] as const),
+    ),
+  )("refuses a %s Secret of type %s as wrong_type", async (slug, _, type) => {
+    expect(
+      await goldenSecret(slug, (secret) => {
+        secret.type = type;
+      }),
+    ).toEqual({ name: caseOf(slug).secretName, problem: "wrong_type" });
+  });
 
   test("ties each kind's Secret to its resource by that kind's own rule", async () => {
     const untie =
@@ -1716,7 +1712,6 @@ describe("Secret checks per kind", () => {
         if (labels !== undefined) secret.metadata.labels = labels;
         if (owners !== undefined) secret.metadata.ownerReferences = owners;
       };
-    const other = [{ apiVersion: "v1", kind: "X", name: "x", uid: "uid-someone-else", controller: true }];
     expect(await goldenSecret("edbpg", untie({ "k8s.enterprisedb.io/cluster": "ledger" }))).toMatchObject({ data: {} });
     api.reset();
     expect(await goldenSecret("edbpg", untie({ "cnpg.io/cluster": "ledger" }))).toEqual({
@@ -1728,31 +1723,47 @@ describe("Secret checks per kind", () => {
       name: "orders-app",
       problem: "not_owned",
     });
-    for (const slug of ["pgo", "mongo"]) {
-      const c = caseOf(slug);
-      for (const change of [
-        untie({ "postgres-operator.crunchydata.com/cluster": c.resource.metadata.name }),
-        untie(undefined, other),
-        untie(),
-      ]) {
-        api.reset();
-        expect(await goldenSecret(slug, change)).toEqual({ name: c.secretName, problem: "not_owned" });
-      }
-    }
   });
 
-  test("discards a Secret holding a key outside its row's measured set, whole, without naming the key", async () => {
-    const odd = "tls.key-not-in-any-contract";
-    for (const slug of ["cnpg", "edbpg", "pgo", "mongo"]) {
-      api.reset();
+  test.each(
+    ["pgo", "mongo"].flatMap((slug) =>
+      [
+        [
+          "its cluster label",
+          { "postgres-operator.crunchydata.com/cluster": caseOf(slug).resource.metadata.name },
+          undefined,
+        ],
+        [
+          "another resource's ownerReference",
+          undefined,
+          [{ apiVersion: "v1", kind: "X", name: "x", uid: "uid-x", controller: true }],
+        ],
+        ["no tie", undefined, undefined],
+      ].map(([how, labels, owners]) => [slug, how, labels, owners] as const),
+    ),
+  )("refuses a %s Secret tied by %s only, as not_owned: the uid decides", async (slug, _, labels, owners) => {
+    const secret = await goldenSecret(slug, (stored) => {
+      delete stored.metadata.labels;
+      delete stored.metadata.ownerReferences;
+      if (labels !== undefined) stored.metadata.labels = labels;
+      if (owners !== undefined) stored.metadata.ownerReferences = owners;
+    });
+    expect(secret).toEqual({ name: caseOf(slug).secretName, problem: "not_owned" });
+  });
+
+  test.each([["cnpg"], ["edbpg"], ["pgo"], ["mongo"]])(
+    "discards a %s Secret holding a key outside its row's measured set, whole, without naming the key",
+    async (slug) => {
+      const odd = "tls.key-not-in-any-contract";
       const secret = await goldenSecret(slug, (stored) => {
         (stored.data as Record<string, string>)[odd] = encoded("not-a-real-private-key");
       });
       expect(secret).toEqual({ name: caseOf(slug).secretName, problem: "unexpected_key" });
       expect(JSON.stringify(secret)).not.toContain(odd);
-    }
-    // PGO's PgBouncer keys are measured keys: allowed, never kept.
-    api.reset();
+    },
+  );
+
+  test("allows PGO's PgBouncer keys, which it measured, and never keeps them", async () => {
     const pgbouncer = await goldenSecret("pgo", (stored) => {
       (stored.data as Record<string, string>)["pgbouncer-host"] = encoded("analytics-pgbouncer.team-b.svc");
     });
