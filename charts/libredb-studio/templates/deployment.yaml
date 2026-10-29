@@ -504,6 +504,11 @@ spec:
               mountPath: /etc/libredb-studio/trusted-ca
               readOnly: true
             {{- end }}
+            {{- if include "libredb-studio.openshiftSignIn" . }}
+            - name: openshift-oauth
+              mountPath: {{ include "libredb-studio.openshiftSignInDir" . }}
+              readOnly: true
+            {{- end }}
             {{- with .Values.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -584,6 +589,23 @@ spec:
         - name: trusted-ca
           configMap:
             name: {{ include "libredb-studio.fullname" . }}-trusted-ca
+        {{- end }}
+        {{- /* openshift mode: Studio's OAuth client secret, a short-lived token of its ServiceAccount
+               with an audience of its own, so it is no use at the API server, and the cluster's CA,
+               which also signs the OAuth route's certificate; the kubelet renews the token. */}}
+        {{- if include "libredb-studio.openshiftSignIn" . }}
+        - name: openshift-oauth
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: {{ include "libredb-studio.openshiftOAuthAudience" . }}
+                  expirationSeconds: {{ dig "signIn" "tokenExpirationSeconds" 600 (.Values.openshift | default dict) | int64 }}
+                  path: oauth-client-token
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
         {{- end }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}

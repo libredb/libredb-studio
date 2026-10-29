@@ -340,3 +340,56 @@ describe("the ServiceAccount as the OAuth client", () => {
     expect(account.metadata.annotations).toBeUndefined();
   });
 });
+
+describe("the OAuth client token and the cluster CA", () => {
+  const PROJECTED = {
+    name: "openshift-oauth",
+    projected: {
+      sources: [
+        {
+          serviceAccountToken: {
+            audience: "libredb-studio-oauth-client",
+            expirationSeconds: 600,
+            path: "oauth-client-token",
+          },
+        },
+        { configMap: { name: "kube-root-ca.crt", items: [{ key: "ca.crt", path: "ca.crt" }] } },
+      ],
+    },
+  };
+
+  test("one projected volume holds the client token with its own audience and the kube-root-ca.crt CA", () => {
+    const pod = studioPod(render(OPENSHIFT));
+    expect(pod.volumes?.find((volume) => volume.name === "openshift-oauth")).toEqual(PROJECTED);
+    expect(pod.containers[0].volumeMounts).toContainEqual({ name: "openshift-oauth", mountPath: SIGN_IN_DIR, readOnly: true });
+  });
+
+  test("the token lifetime comes from openshift.signIn.tokenExpirationSeconds", () => {
+    const pod = studioPod(render([...OPENSHIFT, ...set("openshift.signIn.tokenExpirationSeconds=3600")]));
+    const volume = pod.volumes?.find((entry) => entry.name === "openshift-oauth");
+    expect(volume?.projected?.sources[0]).toEqual({
+      serviceAccountToken: { audience: "libredb-studio-oauth-client", expirationSeconds: 3600, path: "oauth-client-token" },
+    });
+  });
+
+  test("the pod still mounts no API token of its own", () => {
+    expect(studioPod(render(OPENSHIFT)).automountServiceAccountToken).toBe(false);
+  });
+
+  test("every volume name is distinct, with the trusted CA bundle on beside it", () => {
+    const pod = studioPod(render([...OPENSHIFT, ...set("openshift.trustedCABundle.enabled=true")]));
+    const names = (pod.volumes ?? []).map((volume) => volume.name);
+    expect(new Set(names).size).toBe(names.length);
+    expect(names).toContain("trusted-ca");
+    expect(names).not.toContain("access-review");
+  });
+
+  test.each([
+    ["local", set("authProvider=local")],
+    ["oidc", set("authProvider=oidc")],
+  ])("%s mode mounts no openshift volume", (_, mode) => {
+    const pod = studioPod(render([...mode, ...set(`fullnameOverride=${RELEASE}`)]));
+    expect((pod.volumes ?? []).map((volume) => volume.name)).not.toContain("openshift-oauth");
+    expect((pod.containers[0].volumeMounts ?? []).map((mount) => mount.mountPath)).not.toContain(SIGN_IN_DIR);
+  });
+});
