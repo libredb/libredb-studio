@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D410, U17 · 300
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U158 · 144
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U159 · 145
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -6112,8 +6112,18 @@ Seen 2026-10-29 in a browser pass on Db2 12.1; the Oracle pass the same day had 
 
 Signing in on `http://127.0.0.1:<port>` under `next dev` sent the form as a GET and made no session; the same form on `localhost` signed in.
 Seen once, 2026-10-29, during a browser pass; not measured on a production build, and the cause (a submit before hydration, or a dev origin rule) is not known.
+Seen again 2026-10-30 in a Cassandra pass, where the dev server logged that it blocked a cross-origin request from `127.0.0.1` and named `allowedDevOrigins`, which points at the dev origin rule (`DEV_ALLOWED_ORIGINS` in `next.config.ts`) keeping the page from hydrating.
 
 **Done when:** the cause is measured on `next dev` and on a production build, and either the form cannot submit as a GET (a `method="post"` fallback) or the dev origin rule is documented, with an E2E case on `127.0.0.1`.
+
+### U159. An operations panel the provider declines shows as "The database refused the statement" and spends a repair attempt
+
+On a Cassandra agent connection, an Operate run called `inspect_operations` for the table statistics, index statistics and storage panels.
+The provider declined each one with its own sentence ("This engine family publishes no honest table statistics ..."), in 0 to 2 ms, yet the ledger recorded each as `class: "database-error"` and the rail headed it "The database refused the statement" (`src/components/agent/timeline.ts`), which attributes Studio's sentence to the engine.
+The three refusals also used the run's three repair attempts, so the next call was refused with `REPAIR_BUDGET_EXHAUSTED` and the run stopped drafting.
+Seen 2026-10-30 in a browser pass on Apache Cassandra 5.0.9; not checked on the other engines whose providers decline these panels.
+
+**Done when:** a panel the provider declines without sending a statement is recorded as not sent and headed "Refused before the database" with the provider's sentence as the detail, it does not count as a repair attempt, and a timeline test and an agent test pin both.
 
 ## Dependencies
 
