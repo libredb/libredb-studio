@@ -1,6 +1,6 @@
 /**
- * The agent read-only execution profile's statement path on Oracle: the check of the agent user, run once at first
- * use, and the reading of an answer against the budget.
+ * The agent read-only execution profile's statement path on Oracle: the check of the agent user, run before every
+ * statement on the statement's own session, and the reading of an answer against the budget.
  *
  * The boundary is the credential's. A local user set `ALTER USER ... READ ONLY` (Oracle Database 23ai and later) is
  * refused every write with ORA-28194: DML, DDL, temporary tables, `SELECT ... FOR UPDATE`, `LOCK TABLE`, `DBMS_SQL`,
@@ -9,42 +9,48 @@
  * Free 23.26.3, `tests/fixtures/oracle/23.26.3-free/agent-boundary/`). What READ ONLY does not stop is what the user
  * can reach through others: a sequence's `NEXTVAL` advances, and a granted definer's-rights function runs with its
  * owner's privileges, `ALTER SYSTEM` and `NEXTVAL` included (captures 05 to 09). So the user is proved to reach none
- * of that before its first statement, from the dictionary views it reads as itself. Each is named `SYS.<view>`: an
+ * of that before each statement, from the dictionary views it reads as itself. Each is named `SYS.<view>`: an
  * unqualified name resolves first to an object or a private synonym in the user's own schema, then to a PUBLIC
  * synonym, either of which could stand in for the view and hide what it lists.
+ *
+ * Code, a view, a table or a sequence is Oracle's own only when `ALL_OBJECTS` shows the user every object of its owner
+ * and name as `ORACLE_MAINTAINED`; one the user cannot see is not. The schema's flag proves nothing: an administrator
+ * can create a function in SYSTEM, a schema Oracle maintains, which is not marked, and a row-level policy calling it on
+ * SYSTEM.HELP, which PUBLIC may read, ran it with SYSTEM's rights for a READ ONLY user (measured).
  *
  * 1. `USER_USERS.READ_ONLY` reads YES. A server without the column (ORA-00904) is older than 23ai and is refused.
  * 2. Every role granted to it, directly or through PUBLIC, is a default role. `SET ROLE` is permitted under READ ONLY
  *    and a pooled session keeps the role it enabled, while `ALL_TAB_PRIVS` lists only the grants of enabled roles, so
  *    a role the check cannot see the grants of is refused.
- * 3. It, its roles and PUBLIC hold EXECUTE on no PL/SQL unit, type, Java class or library a schema Oracle does not
- *    maintain owns (`ALL_USERS.ORACLE_MAINTAINED`), since such code runs with its owner's rights.
- * 4. They may read no view of such a schema whose definition calls code, a function, package or type, rather than a
+ * 3. It, its roles and PUBLIC hold EXECUTE on no PL/SQL unit, type, Java class or library that is not Oracle's, since
+ *    such code runs with its owner's rights.
+ * 4. They may read no view that is not Oracle's whose definition calls code, a function, package or type, rather than a
  *    table or view: a plain SELECT on such a view runs the code with its owner's rights, and advanced a sequence for a
  *    READ ONLY user (measured). A view that calls the code through a synonym lists only the synonym, and `ALL_SYNONYMS`
  *    does not show the user another schema's private synonym, so a synonym is admitted only when it resolves to an
- *    object the check starts from (`ROOTS`), or to an object of a schema Oracle maintains (`PUBLIC.DUAL`), and is
+ *    object the check starts from (`ROOTS`), or to an object that is Oracle's (`PUBLIC.DUAL`), and is
  *    refused otherwise, a private synonym for a table included. `ALL_DEPENDENCIES` lists the user the view's own
  *    dependencies only, and an inner view's only when `ALL_OBJECTS` shows the user the inner view, any object grant
- *    that does so included, so a view over a view of such a schema is admitted only when the inner view is one the
+ *    that does so included, so a view over a view that is not Oracle's is admitted only when the inner view is one the
  *    check starts from: measured, an outer view over an inner view the user could not see listed only the inner one
  *    and its SELECT ran the inner view's function.
  * 5. They may read no such view that is not valid: an invalid view lists the dependencies it had, and the user's SELECT
  *    compiles it and runs what it calls now (measured).
- * 6. No table or view of such a schema the user can see in `ALL_TAB_COLS` has a virtual column, hidden ones included:
+ * 6. No table or view that is not Oracle's the user can see in `ALL_TAB_COLS` has a virtual column, hidden ones included:
  *    a SELECT of the column evaluates its expression, which can call a function with its owner's rights, and a hidden
  *    column of a function-based index can be selected by name (both measured). Every one is refused, a built-in
  *    expression such as `UPPER(NAME)` and the hidden column extended statistics add included, since the expression is
  *    not proved; a granted view that leaves it out is the remedy.
- * 7. `DBA_POLICIES` lists no row-level security policy anywhere in the database whose function such a schema owns,
+ * 7. `DBA_POLICIES` lists no row-level security policy anywhere in the database whose function is not Oracle's,
  *    on any object, one Oracle maintains included: a SELECT of what it guards runs the function with its owner's
  *    rights, and the user can reach a guarded object the check cannot follow it to, behind a view or among Oracle's
  *    own tables (measured). A database that holds one is refused whatever the user is granted.
  * 8. `DBA_AUDIT_POLICIES` lists no fine-grained auditing policy anywhere with an audit condition, which a read
- *    evaluates and which can call a function with its owner's rights (measured), or with a handler such a schema owns,
- *    which a read runs. The condition is not parsed to prove it built-in. A fresh 26ai database holds no such policy
- *    and no such row-level policy (capture 00). A user that may not read either view is refused, naming its grant.
- * 9. They hold no privilege on a sequence such a schema owns, and the user owns no sequence.
+ *    evaluates and which can call a function with its owner's rights (measured), or with a handler that is not
+ *    Oracle's, which a read runs. The condition is not parsed to prove it built-in. A fresh 26ai database holds no
+ *    auditing policy, and twelve row-level policies whose function is XDB.DBMS_XDBZ0, which PUBLIC may execute and
+ *    `ALL_OBJECTS` marks Oracle's (capture 00). A user that may not read either view is refused, naming its grant.
+ * 9. They hold no privilege on a sequence that is not Oracle's, and the user owns no sequence.
  * 10. They hold EXECUTE on none of the packages that reach the network or the server's files, and no privilege on a
  *    directory, which `BFILENAME` reads server files through.
  * 11. The session holds no system privilege but CREATE SESSION.
@@ -53,9 +59,9 @@
  *
  * Every finding is collected and named in one refusal, as the statements that lift it, or, for a policy, as the
  * policy. A revoke can uncover the next finding: a granted view over a view the refusal names is refused once that
- * inner grant is gone, so the check is run again until it admits. Oracle-maintained schemas'
- * PUBLIC grants are the vendor's boundary and are not refused: their four sequences can still be advanced, which moves
- * a counter and changes no data (capture 07).
+ * inner grant is gone; the next call's check reads the database as it is then. Oracle's own objects granted to
+ * PUBLIC are the vendor's boundary and are not refused: four of its sequences can still be advanced, which moves a
+ * counter and changes no data (capture 07).
  */
 import { ExecutionProfileError, QueryError } from "@/lib/db/errors";
 import type { QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
@@ -69,20 +75,30 @@ export type OracleAgentReader = (sql: string) => Promise<Rows>;
 /** The grantees whose privileges the session holds: the user, the roles enabled in it, and PUBLIC. */
 const SESSION_GRANTEES = "(p.GRANTEE IN (USER, 'PUBLIC') OR p.GRANTEE IN (SELECT ROLE FROM SYS.SESSION_ROLES))";
 
-/** An owner ALL_USERS does not mark as Oracle-maintained, an owner it does not list included, fail closed. */
-const NOT_ORACLE_MAINTAINED = "NVL(u.ORACLE_MAINTAINED, 'N') <> 'Y'";
+/**
+ * Whether the object `owner`.`name` is not proven Oracle's own: `ALL_OBJECTS` shows the user no object of that owner
+ * and name, or one that Oracle does not maintain. The object's own flag, not its schema's: an administrator can create
+ * a function in SYSTEM, a schema Oracle maintains, and it is not marked (measured). An object the user cannot see counts
+ * as not Oracle's, fail closed.
+ */
+function notOracles(owner: string, name: string): string {
+  return (
+    "NVL((SELECT MIN(NVL(m.ORACLE_MAINTAINED, 'N')) FROM SYS.ALL_OBJECTS m " +
+    `WHERE m.OWNER = ${owner} AND m.OBJECT_NAME = ${name}), 'N') <> 'Y'`
+  );
+}
 
 /**
- * The objects the check starts from, as a common table expression named `r`: every object of a schema Oracle does not
- * maintain granted to a grantee the session holds that `ALL_OBJECTS` shows the user, and every table or view the user
- * owns, with the grantee a revoke names (none for the user's own). A view's dependencies are read only for these, so an
+ * The objects the check starts from, as a common table expression named `r`: every object Oracle does not maintain
+ * granted to a grantee the session holds that `ALL_OBJECTS` shows the user, and every table or view the user owns,
+ * with the grantee a revoke names (none for the user's own). A view's dependencies are read only for these, so an
  * object outside them is one the check has not examined: a grant `ALL_OBJECTS` does not show the object for, such as
  * DEBUG on a view, shows the user none of its dependencies either (measured).
  */
 const ROOTS =
   "WITH r AS (SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME FROM SYS.ALL_TAB_PRIVS p " +
   "JOIN SYS.ALL_OBJECTS o ON o.OWNER = p.TABLE_SCHEMA AND o.OBJECT_NAME = p.TABLE_NAME " +
-  `LEFT JOIN SYS.ALL_USERS u ON u.USERNAME = p.TABLE_SCHEMA WHERE NVL(p.TYPE, '-') <> 'USER' AND ${NOT_ORACLE_MAINTAINED} ` +
+  "WHERE NVL(p.TYPE, '-') <> 'USER' AND NVL(o.ORACLE_MAINTAINED, 'N') <> 'Y' " +
   `AND ${SESSION_GRANTEES} ` +
   "UNION SELECT NULL, USER, OBJECT_NAME FROM SYS.USER_OBJECTS WHERE OBJECT_TYPE IN ('TABLE', 'VIEW', 'MATERIALIZED VIEW'))";
 
@@ -108,46 +124,36 @@ export const AGENT_PRINCIPAL_STATEMENTS = Object.freeze({
     "ORDER BY 2, 1",
   units:
     "SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME, p.TYPE AS OBJECT_TYPE " +
-    "FROM SYS.ALL_TAB_PRIVS p LEFT JOIN SYS.ALL_USERS u ON u.USERNAME = p.TABLE_SCHEMA " +
-    `WHERE p.PRIVILEGE = 'EXECUTE' AND ${NOT_ORACLE_MAINTAINED} AND ${SESSION_GRANTEES} ` +
-    "ORDER BY 2, 3, 1",
+    "FROM SYS.ALL_TAB_PRIVS p WHERE p.PRIVILEGE = 'EXECUTE' AND NVL(p.TYPE, '-') <> 'DIRECTORY' " +
+    `AND ${notOracles("p.TABLE_SCHEMA", "p.TABLE_NAME")} AND ${SESSION_GRANTEES} ORDER BY 2, 3, 1`,
   views:
     `${ROOTS} SELECT p.GRANTEE, d.OWNER, d.NAME, d.REFERENCED_OWNER || '.' || d.REFERENCED_NAME AS CALLS ` +
     "FROM SYS.ALL_DEPENDENCIES d JOIN r p ON p.OWNER = d.OWNER AND p.NAME = d.NAME " +
-    "LEFT JOIN SYS.ALL_USERS u ON u.USERNAME = d.OWNER " +
-    "LEFT JOIN SYS.ALL_USERS ru ON ru.USERNAME = d.REFERENCED_OWNER " +
     "LEFT JOIN SYS.ALL_SYNONYMS s ON s.OWNER = d.REFERENCED_OWNER AND s.SYNONYM_NAME = d.REFERENCED_NAME " +
     "AND s.DB_LINK IS NULL " +
-    "LEFT JOIN SYS.ALL_USERS su ON su.USERNAME = s.TABLE_OWNER " +
     "WHERE d.TYPE = 'VIEW' AND (d.REFERENCED_TYPE NOT IN ('TABLE', 'VIEW', 'SYNONYM', 'MATERIALIZED VIEW', 'NON-EXISTENT') " +
-    "OR d.REFERENCED_TYPE = 'VIEW' AND NVL(ru.ORACLE_MAINTAINED, 'N') <> 'Y' AND NOT EXISTS (SELECT 1 FROM r v " +
-    "WHERE v.OWNER = d.REFERENCED_OWNER AND v.NAME = d.REFERENCED_NAME) " +
-    "OR d.REFERENCED_TYPE = 'SYNONYM' AND NVL(su.ORACLE_MAINTAINED, 'N') <> 'Y' AND NOT EXISTS (SELECT 1 FROM r o " +
-    "WHERE o.OWNER = s.TABLE_OWNER AND o.NAME = s.TABLE_NAME)) " +
-    `AND ${NOT_ORACLE_MAINTAINED} ORDER BY 2, 3, 1, 4`,
+    `OR d.REFERENCED_TYPE = 'VIEW' AND ${notOracles("d.REFERENCED_OWNER", "d.REFERENCED_NAME")} ` +
+    "AND NOT EXISTS (SELECT 1 FROM r v WHERE v.OWNER = d.REFERENCED_OWNER AND v.NAME = d.REFERENCED_NAME) " +
+    `OR d.REFERENCED_TYPE = 'SYNONYM' AND ${notOracles("s.TABLE_OWNER", "s.TABLE_NAME")} ` +
+    "AND NOT EXISTS (SELECT 1 FROM r o WHERE o.OWNER = s.TABLE_OWNER AND o.NAME = s.TABLE_NAME)) ORDER BY 2, 3, 1, 4",
   invalidViews:
     `${ROOTS} SELECT p.GRANTEE, o.OWNER, o.OBJECT_NAME AS NAME, o.STATUS ` +
     "FROM SYS.ALL_OBJECTS o JOIN r p ON p.OWNER = o.OWNER AND p.NAME = o.OBJECT_NAME " +
-    "LEFT JOIN SYS.ALL_USERS u ON u.USERNAME = o.OWNER " +
-    `WHERE o.OBJECT_TYPE = 'VIEW' AND o.STATUS <> 'VALID' AND ${NOT_ORACLE_MAINTAINED} ORDER BY 2, 3, 1`,
+    "WHERE o.OBJECT_TYPE = 'VIEW' AND o.STATUS <> 'VALID' ORDER BY 2, 3, 1",
   virtualColumns:
-    "SELECT p.GRANTEE, c.OWNER, c.TABLE_NAME AS NAME, c.COLUMN_NAME " +
-    "FROM SYS.ALL_TAB_COLS c LEFT JOIN SYS.ALL_USERS u ON u.USERNAME = c.OWNER " +
+    "SELECT p.GRANTEE, c.OWNER, c.TABLE_NAME AS NAME, c.COLUMN_NAME FROM SYS.ALL_TAB_COLS c " +
     `LEFT JOIN SYS.ALL_TAB_PRIVS p ON p.TABLE_SCHEMA = c.OWNER AND p.TABLE_NAME = c.TABLE_NAME AND ${SESSION_GRANTEES} ` +
-    `WHERE c.VIRTUAL_COLUMN = 'YES' AND ${NOT_ORACLE_MAINTAINED} ORDER BY 2, 3, 1, 4`,
+    `WHERE c.VIRTUAL_COLUMN = 'YES' AND ${notOracles("c.OWNER", "c.TABLE_NAME")} ORDER BY 2, 3, 1, 4`,
   policies:
-    "SELECT a.OBJECT_OWNER AS OWNER, a.OBJECT_NAME AS NAME, a.POLICY_NAME AS POLICY " +
-    "FROM SYS.DBA_POLICIES a LEFT JOIN SYS.ALL_USERS u ON u.USERNAME = a.PF_OWNER " +
-    `WHERE ${NOT_ORACLE_MAINTAINED} ORDER BY 1, 2, 3`,
+    "SELECT a.OBJECT_OWNER AS OWNER, a.OBJECT_NAME AS NAME, a.POLICY_NAME AS POLICY FROM SYS.DBA_POLICIES a " +
+    `WHERE ${notOracles("a.PF_OWNER", "NVL(a.PACKAGE, a.FUNCTION)")} ORDER BY 1, 2, 3`,
   auditPolicies:
-    "SELECT f.OBJECT_SCHEMA AS OWNER, f.OBJECT_NAME AS NAME, f.POLICY_NAME AS POLICY " +
-    "FROM SYS.DBA_AUDIT_POLICIES f LEFT JOIN SYS.ALL_USERS u ON u.USERNAME = f.PF_SCHEMA " +
+    "SELECT f.OBJECT_SCHEMA AS OWNER, f.OBJECT_NAME AS NAME, f.POLICY_NAME AS POLICY FROM SYS.DBA_AUDIT_POLICIES f " +
     "WHERE f.POLICY_TEXT IS NOT NULL OR (f.PF_PACKAGE IS NOT NULL OR f.PF_FUNCTION IS NOT NULL) " +
-    `AND ${NOT_ORACLE_MAINTAINED} ORDER BY 1, 2, 3`,
+    `AND ${notOracles("f.PF_SCHEMA", "NVL(f.PF_PACKAGE, f.PF_FUNCTION)")} ORDER BY 1, 2, 3`,
   sequences:
-    "SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME, 'N' AS OWNED " +
-    "FROM SYS.ALL_TAB_PRIVS p LEFT JOIN SYS.ALL_USERS u ON u.USERNAME = p.TABLE_SCHEMA " +
-    `WHERE p.TYPE = 'SEQUENCE' AND ${NOT_ORACLE_MAINTAINED} AND ${SESSION_GRANTEES} ` +
+    "SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME, 'N' AS OWNED FROM SYS.ALL_TAB_PRIVS p " +
+    `WHERE p.TYPE = 'SEQUENCE' AND ${notOracles("p.TABLE_SCHEMA", "p.TABLE_NAME")} AND ${SESSION_GRANTEES} ` +
     "UNION ALL SELECT USER, USER, SEQUENCE_NAME, 'Y' FROM SYS.USER_SEQUENCES ORDER BY 2, 3, 1",
   reach:
     "SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME, p.PRIVILEGE, p.TYPE AS OBJECT_TYPE " +
@@ -223,7 +229,7 @@ function rolesFinding(rows: Rows): Finding | null {
 function unitsFinding(rows: Rows): Finding | null {
   if (rows.length === 0) return null;
   return {
-    what: "it holds EXECUTE on code a schema Oracle does not maintain owns, which runs with its owner's rights",
+    what: "it holds EXECUTE on code Oracle does not maintain, which runs with its owner's rights",
     statements: rows.map((row) => {
       const [to, owner, name] = text(row, "ALL_TAB_PRIVS", "GRANTEE", "OWNER", "NAME");
       return `REVOKE EXECUTE ON ${quoted(owner)}.${quoted(name)} FROM ${grantee(to)}`;
@@ -251,7 +257,7 @@ function lift(row: Record<string, unknown>, user: string, owner: string, name: s
 function viewsFinding(rows: Rows, user: string): Finding | null {
   if (rows.length === 0) return null;
   return {
-    what: "it may read a view that calls code a schema Oracle does not maintain owns, or a synonym or view the check cannot follow to its end, which a SELECT runs with its owner's rights",
+    what: "it may read a view Oracle does not maintain that calls code, or a synonym or view the check cannot follow to its end, which a SELECT runs with its owner's rights",
     statements: rows.map((row) => {
       const [owner, name] = text(row, "ALL_DEPENDENCIES", "OWNER", "NAME", "CALLS");
       return lift(row, user, owner, name);
@@ -292,13 +298,13 @@ const POLICY_CATALOGS = {
     view: "DBA_POLICIES",
     lists: "the row-level security policies of the database",
     holds:
-      "a row-level security policy whose function a schema Oracle does not maintain owns, which Oracle runs with that owner's rights when any user reads what it guards",
+      "a row-level security policy whose function is not one Oracle maintains, which Oracle runs with its owner's rights when any user reads what it guards",
   },
   auditPolicies: {
     view: "DBA_AUDIT_POLICIES",
     lists: "the fine-grained auditing policies of the database",
     holds:
-      "a fine-grained auditing policy with an audit condition, which Oracle evaluates when any user reads what it audits and which can call a function, or with a handler a schema Oracle does not maintain owns, which Oracle runs with that owner's rights",
+      "a fine-grained auditing policy with an audit condition, which Oracle evaluates when any user reads what it audits and which can call a function, or with a handler that is not one Oracle maintains, which Oracle runs with its owner's rights",
   },
 } as const;
 
@@ -408,7 +414,7 @@ function isMissingReadOnlyColumn(error: unknown): boolean {
 }
 
 /**
- * Proves the agent user before its first statement, sending each check through `read` in order and refusing the
+ * Proves the agent user before a statement, sending each check through `read` in order and refusing the
  * profile when any finds anything (see the module docblock). A failure of the first read other than ORA-00904, or of
  * any later read, leaves as it came, so the call fails and no statement is sent.
  */

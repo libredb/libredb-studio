@@ -1,16 +1,17 @@
 /**
- * The Oracle agent read path's pure parts: the principal check run at first use, as the agent user, and the reading of
- * an answer against the budget. The provider wiring is in tests/integration/db/oracle-provider.test.ts.
+ * The Oracle agent read path's pure parts: the principal check run before every statement, as the agent user, and the
+ * reading of an answer against the budget. The provider wiring is in tests/integration/db/oracle-provider.test.ts.
  *
  * The check refuses the profile, fail closed, unless the user is set READ ONLY and nothing it can reach runs outside
- * that: no role that is not enabled at sign-in, no EXECUTE on code owned by a schema Oracle does not maintain, no view
- * of such a schema that calls such code or reads a view it cannot examine, no such view that is not valid, no virtual
- * column of such a schema on what it reads, no row-level security policy anywhere in the database whose function such
- * a schema owns, and no fine-grained auditing policy anywhere with an audit condition or with a handler such a schema
- * owns, read from two catalogs the user must be able to read, no sequence of such a schema and none of its own, no
- * network or server-file package and no directory, no system privilege but CREATE SESSION, and no database link. Every
- * dictionary view is named SYS.<view>, so nothing in the user's schema and no PUBLIC synonym stands in for it. Each
- * refusal names the statements that would lift it, or the policies it found.
+ * that. "Oracle's" means an object ALL_OBJECTS shows the user as Oracle-maintained, never a schema's flag, since an
+ * administrator can create objects in SYSTEM: no role that is not enabled at sign-in, no EXECUTE on code that is not
+ * Oracle's, no view that is not Oracle's that calls code or reads a view it cannot examine, no such view that is not
+ * valid, no virtual column on what it reads that is not Oracle's, no row-level security policy anywhere in the
+ * database whose function is not Oracle's, and no fine-grained auditing policy anywhere with an audit condition or a
+ * handler that is not Oracle's, read from two catalogs the user must be able to read, no sequence that is not Oracle's
+ * and none of its own, no network or server-file package and no directory, no system privilege but CREATE SESSION,
+ * and no database link. Every dictionary view is named SYS.<view>, so nothing in the user's schema and no PUBLIC
+ * synonym stands in for it. Each refusal names the statements that would lift it, or the policies it found.
  */
 import { describe, expect, test } from "bun:test";
 import { ExecutionProfileError, QueryError } from "@/lib/db/errors";
@@ -31,9 +32,20 @@ const SESSION = "(p.GRANTEE IN (USER, 'PUBLIC') OR p.GRANTEE IN (SELECT ROLE FRO
 const ROOTS =
   "WITH r AS (SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME FROM SYS.ALL_TAB_PRIVS p " +
   "JOIN SYS.ALL_OBJECTS o ON o.OWNER = p.TABLE_SCHEMA AND o.OBJECT_NAME = p.TABLE_NAME " +
-  "LEFT JOIN SYS.ALL_USERS u ON u.USERNAME = p.TABLE_SCHEMA WHERE NVL(p.TYPE, '-') <> 'USER' " +
-  `AND NVL(u.ORACLE_MAINTAINED, 'N') <> 'Y' AND ${SESSION} ` +
+  "WHERE NVL(p.TYPE, '-') <> 'USER' AND NVL(o.ORACLE_MAINTAINED, 'N') <> 'Y' " +
+  `AND ${SESSION} ` +
   "UNION SELECT NULL, USER, OBJECT_NAME FROM SYS.USER_OBJECTS WHERE OBJECT_TYPE IN ('TABLE', 'VIEW', 'MATERIALIZED VIEW'))";
+
+/**
+ * An object not proven Oracle's own: ALL_OBJECTS shows the user no object of that owner and name, or one of them is
+ * not Oracle-maintained. The schema's flag is no proof, since an administrator can create objects in SYSTEM or SYS.
+ */
+function notOracles(owner: string, name: string): string {
+  return (
+    "NVL((SELECT MIN(NVL(m.ORACLE_MAINTAINED, 'N')) FROM SYS.ALL_OBJECTS m " +
+    `WHERE m.OWNER = ${owner} AND m.OBJECT_NAME = ${name}), 'N') <> 'Y'`
+  );
+}
 
 /** Every check statement, whole: a change of any join, filter or view the check reads fails the test that pins it. */
 const EXPECTED_STATEMENTS: Readonly<Record<Statement, string>> = {
@@ -43,45 +55,36 @@ const EXPECTED_STATEMENTS: Readonly<Record<Statement, string>> = {
     "ORDER BY 2, 1",
   units:
     "SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME, p.TYPE AS OBJECT_TYPE " +
-    "FROM SYS.ALL_TAB_PRIVS p LEFT JOIN SYS.ALL_USERS u ON u.USERNAME = p.TABLE_SCHEMA " +
-    `WHERE p.PRIVILEGE = 'EXECUTE' AND NVL(u.ORACLE_MAINTAINED, 'N') <> 'Y' AND ${SESSION} ORDER BY 2, 3, 1`,
+    "FROM SYS.ALL_TAB_PRIVS p WHERE p.PRIVILEGE = 'EXECUTE' AND NVL(p.TYPE, '-') <> 'DIRECTORY' " +
+    `AND ${notOracles("p.TABLE_SCHEMA", "p.TABLE_NAME")} AND ${SESSION} ORDER BY 2, 3, 1`,
   views:
     `${ROOTS} SELECT p.GRANTEE, d.OWNER, d.NAME, d.REFERENCED_OWNER || '.' || d.REFERENCED_NAME AS CALLS ` +
     "FROM SYS.ALL_DEPENDENCIES d JOIN r p ON p.OWNER = d.OWNER AND p.NAME = d.NAME " +
-    "LEFT JOIN SYS.ALL_USERS u ON u.USERNAME = d.OWNER " +
-    "LEFT JOIN SYS.ALL_USERS ru ON ru.USERNAME = d.REFERENCED_OWNER " +
     "LEFT JOIN SYS.ALL_SYNONYMS s ON s.OWNER = d.REFERENCED_OWNER AND s.SYNONYM_NAME = d.REFERENCED_NAME " +
     "AND s.DB_LINK IS NULL " +
-    "LEFT JOIN SYS.ALL_USERS su ON su.USERNAME = s.TABLE_OWNER " +
     "WHERE d.TYPE = 'VIEW' AND (d.REFERENCED_TYPE NOT IN ('TABLE', 'VIEW', 'SYNONYM', 'MATERIALIZED VIEW', 'NON-EXISTENT') " +
-    "OR d.REFERENCED_TYPE = 'VIEW' AND NVL(ru.ORACLE_MAINTAINED, 'N') <> 'Y' AND NOT EXISTS (SELECT 1 FROM r v " +
-    "WHERE v.OWNER = d.REFERENCED_OWNER AND v.NAME = d.REFERENCED_NAME) " +
-    "OR d.REFERENCED_TYPE = 'SYNONYM' AND NVL(su.ORACLE_MAINTAINED, 'N') <> 'Y' AND NOT EXISTS (SELECT 1 FROM r o " +
-    "WHERE o.OWNER = s.TABLE_OWNER AND o.NAME = s.TABLE_NAME)) " +
-    "AND NVL(u.ORACLE_MAINTAINED, 'N') <> 'Y' ORDER BY 2, 3, 1, 4",
+    `OR d.REFERENCED_TYPE = 'VIEW' AND ${notOracles("d.REFERENCED_OWNER", "d.REFERENCED_NAME")} ` +
+    "AND NOT EXISTS (SELECT 1 FROM r v WHERE v.OWNER = d.REFERENCED_OWNER AND v.NAME = d.REFERENCED_NAME) " +
+    `OR d.REFERENCED_TYPE = 'SYNONYM' AND ${notOracles("s.TABLE_OWNER", "s.TABLE_NAME")} ` +
+    "AND NOT EXISTS (SELECT 1 FROM r o WHERE o.OWNER = s.TABLE_OWNER AND o.NAME = s.TABLE_NAME)) ORDER BY 2, 3, 1, 4",
   invalidViews:
     `${ROOTS} SELECT p.GRANTEE, o.OWNER, o.OBJECT_NAME AS NAME, o.STATUS ` +
     "FROM SYS.ALL_OBJECTS o JOIN r p ON p.OWNER = o.OWNER AND p.NAME = o.OBJECT_NAME " +
-    "LEFT JOIN SYS.ALL_USERS u ON u.USERNAME = o.OWNER " +
-    "WHERE o.OBJECT_TYPE = 'VIEW' AND o.STATUS <> 'VALID' AND NVL(u.ORACLE_MAINTAINED, 'N') <> 'Y' ORDER BY 2, 3, 1",
+    "WHERE o.OBJECT_TYPE = 'VIEW' AND o.STATUS <> 'VALID' ORDER BY 2, 3, 1",
   virtualColumns:
-    "SELECT p.GRANTEE, c.OWNER, c.TABLE_NAME AS NAME, c.COLUMN_NAME " +
-    "FROM SYS.ALL_TAB_COLS c LEFT JOIN SYS.ALL_USERS u ON u.USERNAME = c.OWNER " +
+    "SELECT p.GRANTEE, c.OWNER, c.TABLE_NAME AS NAME, c.COLUMN_NAME FROM SYS.ALL_TAB_COLS c " +
     `LEFT JOIN SYS.ALL_TAB_PRIVS p ON p.TABLE_SCHEMA = c.OWNER AND p.TABLE_NAME = c.TABLE_NAME AND ${SESSION} ` +
-    "WHERE c.VIRTUAL_COLUMN = 'YES' AND NVL(u.ORACLE_MAINTAINED, 'N') <> 'Y' ORDER BY 2, 3, 1, 4",
+    `WHERE c.VIRTUAL_COLUMN = 'YES' AND ${notOracles("c.OWNER", "c.TABLE_NAME")} ORDER BY 2, 3, 1, 4`,
   policies:
-    "SELECT a.OBJECT_OWNER AS OWNER, a.OBJECT_NAME AS NAME, a.POLICY_NAME AS POLICY " +
-    "FROM SYS.DBA_POLICIES a LEFT JOIN SYS.ALL_USERS u ON u.USERNAME = a.PF_OWNER " +
-    "WHERE NVL(u.ORACLE_MAINTAINED, 'N') <> 'Y' ORDER BY 1, 2, 3",
+    "SELECT a.OBJECT_OWNER AS OWNER, a.OBJECT_NAME AS NAME, a.POLICY_NAME AS POLICY FROM SYS.DBA_POLICIES a " +
+    `WHERE ${notOracles("a.PF_OWNER", "NVL(a.PACKAGE, a.FUNCTION)")} ORDER BY 1, 2, 3`,
   auditPolicies:
-    "SELECT f.OBJECT_SCHEMA AS OWNER, f.OBJECT_NAME AS NAME, f.POLICY_NAME AS POLICY " +
-    "FROM SYS.DBA_AUDIT_POLICIES f LEFT JOIN SYS.ALL_USERS u ON u.USERNAME = f.PF_SCHEMA " +
+    "SELECT f.OBJECT_SCHEMA AS OWNER, f.OBJECT_NAME AS NAME, f.POLICY_NAME AS POLICY FROM SYS.DBA_AUDIT_POLICIES f " +
     "WHERE f.POLICY_TEXT IS NOT NULL OR (f.PF_PACKAGE IS NOT NULL OR f.PF_FUNCTION IS NOT NULL) " +
-    "AND NVL(u.ORACLE_MAINTAINED, 'N') <> 'Y' ORDER BY 1, 2, 3",
+    `AND ${notOracles("f.PF_SCHEMA", "NVL(f.PF_PACKAGE, f.PF_FUNCTION)")} ORDER BY 1, 2, 3`,
   sequences:
-    "SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME, 'N' AS OWNED " +
-    "FROM SYS.ALL_TAB_PRIVS p LEFT JOIN SYS.ALL_USERS u ON u.USERNAME = p.TABLE_SCHEMA " +
-    `WHERE p.TYPE = 'SEQUENCE' AND NVL(u.ORACLE_MAINTAINED, 'N') <> 'Y' AND ${SESSION} ` +
+    "SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME, 'N' AS OWNED FROM SYS.ALL_TAB_PRIVS p " +
+    `WHERE p.TYPE = 'SEQUENCE' AND ${notOracles("p.TABLE_SCHEMA", "p.TABLE_NAME")} AND ${SESSION} ` +
     "UNION ALL SELECT USER, USER, SEQUENCE_NAME, 'Y' FROM SYS.USER_SEQUENCES ORDER BY 2, 3, 1",
   reach:
     "SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME, p.PRIVILEGE, p.TYPE AS OBJECT_TYPE " +
@@ -240,13 +243,13 @@ describe("verifyAgentPrincipal", () => {
     });
   });
 
-  describe("no EXECUTE on code owned by a schema Oracle does not maintain", () => {
+  describe("no EXECUTE on code Oracle does not maintain", () => {
     test("refuses a granted definer's-rights function, naming the revoke", async () => {
       const error = await refusal({
         units: [{ GRANTEE: "APP_RO", OWNER: "APP_OWNER", NAME: "BUMP", OBJECT_TYPE: "FUNCTION" }],
       });
       expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
-      expect(error.message).toContain("EXECUTE on code a schema Oracle does not maintain owns");
+      expect(error.message).toContain("EXECUTE on code Oracle does not maintain, which runs with its owner's rights");
       expect(error.message).toContain('REVOKE EXECUTE ON "APP_OWNER"."BUMP" FROM "APP_RO"');
     });
 
@@ -266,18 +269,23 @@ describe("verifyAgentPrincipal", () => {
       expect(sql).toContain("ALL_TAB_PRIVS");
       expect(sql).toContain("SESSION_ROLES");
       expect(sql).toContain("'PUBLIC'");
-      // An owner ALL_USERS does not list counts as one Oracle does not maintain, fail closed.
-      expect(sql).toContain("NVL(u.ORACLE_MAINTAINED, 'N') <> 'Y'");
+      // Code is Oracle's only when ALL_OBJECTS shows the user every object of its name as Oracle-maintained: a schema
+      // Oracle maintains proves nothing, since an administrator can create a function in SYSTEM, and an object the
+      // user cannot see counts as not Oracle's, fail closed.
+      expect(sql).toContain(notOracles("p.TABLE_SCHEMA", "p.TABLE_NAME"));
+      expect(sql).not.toContain("ALL_USERS");
+      // A directory's EXECUTE is the reach check's, which names the directory revoke.
+      expect(sql).toContain("NVL(p.TYPE, '-') <> 'DIRECTORY'");
     });
   });
 
-  describe("no granted view that calls code a schema Oracle does not maintain owns", () => {
+  describe("no granted view Oracle does not maintain that calls code", () => {
     test("refuses a granted view over a definer's-rights function, which a plain SELECT runs", async () => {
       const error = await refusal({
         views: [{ GRANTEE: "APP_RO", OWNER: "APP_OWNER", NAME: "NEXT_VIEW", CALLS: "APP_OWNER.NEXT_ID" }],
       });
       expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
-      expect(error.message).toContain("it may read a view that calls code a schema Oracle does not maintain owns");
+      expect(error.message).toContain("it may read a view Oracle does not maintain that calls code");
       expect(error.message).toContain('REVOKE ALL ON "APP_OWNER"."NEXT_VIEW" FROM "APP_RO"');
     });
 
@@ -296,9 +304,8 @@ describe("verifyAgentPrincipal", () => {
       expect(sql).toContain(
         "LEFT JOIN SYS.ALL_SYNONYMS s ON s.OWNER = d.REFERENCED_OWNER AND s.SYNONYM_NAME = d.REFERENCED_NAME AND s.DB_LINK IS NULL",
       );
-      expect(sql).toContain("LEFT JOIN SYS.ALL_USERS su ON su.USERNAME = s.TABLE_OWNER");
       expect(sql).toContain(
-        "d.REFERENCED_TYPE = 'SYNONYM' AND NVL(su.ORACLE_MAINTAINED, 'N') <> 'Y' AND NOT EXISTS (SELECT 1 FROM r o " +
+        `d.REFERENCED_TYPE = 'SYNONYM' AND ${notOracles("s.TABLE_OWNER", "s.TABLE_NAME")} AND NOT EXISTS (SELECT 1 FROM r o ` +
           "WHERE o.OWNER = s.TABLE_OWNER AND o.NAME = s.TABLE_NAME)",
       );
     });
@@ -312,15 +319,16 @@ describe("verifyAgentPrincipal", () => {
   });
 
   describe("no granted view that reads a view the user cannot examine", () => {
-    test("the check admits an inner view of a schema Oracle does not maintain only when it examines that view itself", () => {
+    test("the check admits an inner view Oracle does not maintain only when it examines that view itself", () => {
       // A view reached only through another view lists the outer view's dependency on the inner one, never the inner
       // view's own calls. The check reads a view's dependencies only for the objects it starts from, those granted to
       // the session's grantees or owned by the user, so an inner view is admitted only when it is one of them; that
       // ALL_OBJECTS shows it is not enough.
       const sql = AGENT_PRINCIPAL_STATEMENTS.views;
-      expect(sql).toContain("LEFT JOIN SYS.ALL_USERS ru ON ru.USERNAME = d.REFERENCED_OWNER");
+      // An inner view in a schema Oracle maintains is admitted unexamined only when ALL_OBJECTS shows the user it as
+      // Oracle-maintained: an administrator's view in SYSTEM is not Oracle's.
       expect(sql).toContain(
-        "OR d.REFERENCED_TYPE = 'VIEW' AND NVL(ru.ORACLE_MAINTAINED, 'N') <> 'Y' AND NOT EXISTS (SELECT 1 FROM r v " +
+        `OR d.REFERENCED_TYPE = 'VIEW' AND ${notOracles("d.REFERENCED_OWNER", "d.REFERENCED_NAME")} AND NOT EXISTS (SELECT 1 FROM r v ` +
           "WHERE v.OWNER = d.REFERENCED_OWNER AND v.NAME = d.REFERENCED_NAME)",
       );
       expect(sql).toContain("FROM SYS.ALL_DEPENDENCIES d JOIN r p ON p.OWNER = d.OWNER AND p.NAME = d.NAME");
@@ -373,16 +381,18 @@ describe("verifyAgentPrincipal", () => {
       expect(error.message).not.toContain("COMPILE");
     });
 
-    test("the check reads the status of every granted view of a schema Oracle does not maintain", () => {
+    test("the check reads the status of every granted view Oracle does not maintain", () => {
       const sql = AGENT_PRINCIPAL_STATEMENTS.invalidViews;
       expect(sql).toContain("FROM SYS.ALL_OBJECTS o JOIN r p ON p.OWNER = o.OWNER AND p.NAME = o.OBJECT_NAME");
       expect(sql).toContain("o.OBJECT_TYPE = 'VIEW' AND o.STATUS <> 'VALID'");
-      expect(sql).toContain("NVL(u.ORACLE_MAINTAINED, 'N') <> 'Y'");
+      // The objects it starts from are those ALL_OBJECTS does not mark Oracle-maintained, an administrator's object in
+      // SYSTEM included.
+      expect(sql).toContain("NVL(o.ORACLE_MAINTAINED, 'N') <> 'Y'");
       expect(sql).toContain("SESSION_ROLES");
     });
   });
 
-  describe("no virtual column on what it reads in a schema Oracle does not maintain", () => {
+  describe("no virtual column on what it reads that Oracle does not maintain", () => {
     test("refuses a virtual column, hidden ones included, naming the revoke on its table", async () => {
       const error = await refusal({
         virtualColumns: [
@@ -427,12 +437,12 @@ describe("verifyAgentPrincipal", () => {
       expect(sql).toContain("FROM SYS.ALL_TAB_COLS c");
       expect(sql).toContain("c.VIRTUAL_COLUMN = 'YES'");
       expect(sql).not.toContain("HIDDEN_COLUMN");
-      expect(sql).toContain("NVL(u.ORACLE_MAINTAINED, 'N') <> 'Y'");
+      expect(sql).toContain(notOracles("c.OWNER", "c.TABLE_NAME"));
       expect(sql).toContain("LEFT JOIN SYS.ALL_TAB_PRIVS p");
     });
   });
 
-  describe("no row-level security policy anywhere in the database whose function a schema Oracle does not maintain owns", () => {
+  describe("no row-level security policy anywhere in the database whose function Oracle does not maintain", () => {
     test("refuses a policy on any object, an Oracle-maintained one included, naming the policy and no revoke", async () => {
       // Oracle runs the policy function with its owner's rights on every read of what it guards, by any user, and a
       // table, view or synonym reached through a view the check cannot follow, or Oracle's own SYSTEM.HELP, is read
@@ -446,10 +456,19 @@ describe("verifyAgentPrincipal", () => {
       expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
       expect(error.message).toBe(
         "The agent read-only execution profile refuses the Oracle user APP_RO: the database holds a row-level security " +
-          "policy whose function a schema Oracle does not maintain owns, which Oracle runs with that owner's rights " +
+          "policy whose function is not one Oracle maintains, which Oracle runs with its owner's rights " +
           "when any user reads what it guards, so agent mode is not offered on this database while it exists: " +
           '"APP_OWNER"."PT" policy "PT_P", "SYSTEM"."HELP" policy "HELP_P".',
       );
+    });
+
+    test("a policy function is Oracle's only when ALL_OBJECTS shows the user it as Oracle-maintained, whatever schema owns it", () => {
+      // The fresh database's XDB policies call XDB.DBMS_XDBZ0, which PUBLIC may execute and ALL_OBJECTS marks
+      // Oracle-maintained; an administrator's function in SYSTEM, a schema Oracle maintains, is not marked, and ran
+      // with SYSTEM's rights for a READ ONLY user reading SYSTEM.HELP (measured), so it is refused like any other.
+      const sql = AGENT_PRINCIPAL_STATEMENTS.policies;
+      expect(sql).toContain(`WHERE ${notOracles("a.PF_OWNER", "NVL(a.PACKAGE, a.FUNCTION)")}`);
+      expect(sql).not.toContain("ALL_USERS");
     });
 
     test("refuses, fail closed, a user that may not read SYS.DBA_POLICIES, naming the grant only SYS may run", async () => {
@@ -492,10 +511,19 @@ describe("verifyAgentPrincipal", () => {
       expect(error.message).toBe(
         "The agent read-only execution profile refuses the Oracle user APP_RO: the database holds a fine-grained " +
           "auditing policy with an audit condition, which Oracle evaluates when any user reads what it audits and which " +
-          "can call a function, or with a handler a schema Oracle does not maintain owns, which Oracle runs with that " +
+          "can call a function, or with a handler that is not one Oracle maintains, which Oracle runs with its " +
           "owner's rights, so agent mode is not offered on this database while it exists: " +
           '"APP_OWNER"."AUDITED" policy "AC_P", "SYSTEM"."SQLPLUS_PRODUCT_PROFILE" policy "H_P".',
       );
+    });
+
+    test("refuses every audit condition, and a handler unless ALL_OBJECTS shows the user it as Oracle-maintained", () => {
+      const sql = AGENT_PRINCIPAL_STATEMENTS.auditPolicies;
+      expect(sql).toContain(
+        "WHERE f.POLICY_TEXT IS NOT NULL OR (f.PF_PACKAGE IS NOT NULL OR f.PF_FUNCTION IS NOT NULL) " +
+          `AND ${notOracles("f.PF_SCHEMA", "NVL(f.PF_PACKAGE, f.PF_FUNCTION)")} ORDER BY`,
+      );
+      expect(sql).not.toContain("ALL_USERS");
     });
 
     test("refuses, fail closed, a user that may not read SYS.DBA_AUDIT_POLICIES, naming the grant", async () => {
@@ -527,7 +555,7 @@ describe("verifyAgentPrincipal", () => {
     });
   });
 
-  describe("no sequence of a schema Oracle does not maintain, and none of its own", () => {
+  describe("no sequence Oracle does not maintain, and none of its own", () => {
     test("refuses a granted sequence, which NEXTVAL advances under READ ONLY", async () => {
       const error = await refusal({
         sequences: [{ GRANTEE: "APP_RO", OWNER: "APP_OWNER", NAME: "SEQ1", OWNED: "N" }],
