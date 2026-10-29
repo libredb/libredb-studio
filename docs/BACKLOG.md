@@ -3957,7 +3957,7 @@ Found 2026-10-28 in a review of the Couchbase grammar row; pre-existing.
 ### D394. libSQL's health read fails on a read-only token
 
 `readHealth` in `src/lib/db/providers/sql/libsql/introspect.ts` sends `PRAGMA integrity_check` and `PRAGMA journal_mode` in one batch with the size read.
-sqld answers both with 403 for a connection whose JWT carries `a: "ro"`, so `POST /api/db/health` on a read-only-token connection answers 401 `AUTH_ERROR` ("Database auth error") and the header shows the connection degraded, though the token reads every table.
+sqld answers both with 403 for a connection whose JWT carries `a: "ro"`, so `POST /api/db/health` on a read-only-token connection answers 401 `AUTH_ERROR` with sqld's own 403 message as the error, the server logs "Database auth error", and the header shows the connection degraded, though the token reads every table.
 The docblock above `readHealth` says both statements are accepted by both deployments, which holds for a writable token only.
 Turso Cloud was not measured for these two statements with a read-only token.
 
