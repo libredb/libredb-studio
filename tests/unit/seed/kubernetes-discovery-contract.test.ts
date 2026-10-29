@@ -253,7 +253,7 @@ describe("mapKubernetesDatabase", () => {
     };
     const listed = hostWith(fits);
     if (!listed.ok) throw new Error(listed.reason);
-    expect(listed.connection.host.length).toBe(254);
+    expect(listed.connection.host?.length).toBe(254);
     const refused = hostWith(over);
     if (refused.ok) throw new Error("listed a host over 253 characters");
     expect(refused.reason).toBe("the host is not a DNS name: it is over 253 characters");
