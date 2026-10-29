@@ -24,6 +24,9 @@
  * object or array literal, through `.bind` or as an argument, which an allowance names by the text around it. A call
  * through `.call` or `.apply` is a call. A call inside a gated function's own module is that module's composition,
  * pinned by the module's own tests, and is not counted. Type-only imports bind no value and are not counted either.
+ *
+ * Every failure names the file and line, the gated function and the specifier it came through, and says which map to
+ * edit and what to add or remove there.
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
@@ -354,32 +357,42 @@ interface Rename {
 /** What one file's syntax tree says about the values it takes from other modules and gives on. */
 interface FileFacts {
   /** `import { a as b }` and `const { a: b } = await import()` or `= require()`, by specifier. */
-  readonly named: readonly { readonly specifier: string; readonly names: readonly Rename[] }[];
+  readonly named: readonly { readonly specifier: string; readonly names: readonly Rename[]; readonly line: number }[];
   /** A whole module bound to one name: namespace, default, `import x = require()`, or an undestructured load. */
   readonly whole: readonly {
     readonly specifier: string;
     readonly form: "namespace" | "default" | "dynamic";
     /** The name the module is bound to, or null for a load whose result is used in place. */
     readonly local: string | null;
+    readonly line: number;
   }[];
   /** How many `import()` and `require()` calls name their module with anything but a literal. */
-  readonly computed: number;
+  readonly computed: readonly { readonly specifier: string; readonly line: number }[];
   /**
    * `export ... from`: the names given on, `*` for `export *` and for `module.exports = require()`, and a `from` of `*`
    * for `export * as x`.
    */
-  readonly reExports: readonly { readonly specifier: string; readonly names: readonly Rename[] | "*" }[];
+  readonly reExports: readonly {
+    readonly specifier: string;
+    readonly names: readonly Rename[] | "*";
+    readonly line: number;
+  }[];
   /** `export { a as b }`, `export default a` and `export const b = a`: a local name given on. */
-  readonly localExports: readonly Rename[];
+  readonly localExports: readonly (Rename & { readonly line: number })[];
   /** Every name the file exports. */
   readonly exported: ReadonlySet<string>;
   /** Each use of one of the file's own gated functions as a value: not a call, its declaration or `export { f }`. */
-  readonly aliases: readonly string[];
+  readonly aliases: readonly { readonly name: string; readonly line: number }[];
   /**
    * Each use of a name the file imports as a value, not a call nor a give-on `localExports` holds, with where the text
    * around it starts and ends, read only for a gated name.
    */
-  readonly uses: readonly { readonly name: string; readonly start: number; readonly end: number }[];
+  readonly uses: readonly {
+    readonly name: string;
+    readonly start: number;
+    readonly end: number;
+    readonly line: number;
+  }[];
 }
 
 /** The text of a string literal or of a template without substitutions, or null for anything else. */
@@ -470,18 +483,20 @@ function factsOf(file: string, text: string): FileFacts {
   const cached = FACTS.get(file);
   if (cached?.text === text) return cached.facts;
   const own = new Set(GATED_MODULES[file] ?? []);
-  const named: { specifier: string; names: Rename[] }[] = [];
+  const named: FileFacts["named"][number][] = [];
   const whole: FileFacts["whole"][number][] = [];
-  const reExports: { specifier: string; names: Rename[] | "*" }[] = [];
-  const localExports: Rename[] = [];
+  const reExports: FileFacts["reExports"][number][] = [];
+  const localExports: FileFacts["localExports"][number][] = [];
   const exported = new Set<string>();
-  const aliases: string[] = [];
-  const uses: { name: string; start: number; end: number }[] = [];
+  const aliases: FileFacts["aliases"][number][] = [];
+  const uses: FileFacts["uses"][number][] = [];
   const destructured = new Set<ts.Node>();
   /** The identifiers a give-on `localExports` holds already reads, so they are not value uses as well. */
   const givenOn = new Set<ts.Node>();
-  let computed = 0;
+  const computed: FileFacts["computed"][number][] = [];
   const sourceFile = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, false);
+  const lineOf = (node: ts.Node): number =>
+    sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
   const imported = new Set(
     sourceFile.statements.flatMap((statement) => {
       const bindings = ts.isImportDeclaration(statement) ? statement.importClause?.namedBindings : undefined;
@@ -493,35 +508,43 @@ function factsOf(file: string, text: string): FileFacts {
     const specifier = literal(node.moduleSpecifier);
     const clause = node.importClause;
     if (specifier === null || clause === undefined || clause.isTypeOnly) return;
-    if (clause.name !== undefined) whole.push({ specifier, form: "default", local: clause.name.text });
+    const line = lineOf(node);
+    if (clause.name !== undefined) whole.push({ specifier, form: "default", local: clause.name.text, line });
     const bindings = clause.namedBindings;
     if (bindings === undefined) return;
     if (ts.isNamespaceImport(bindings)) {
-      whole.push({ specifier, form: "namespace", local: bindings.name.text });
+      whole.push({ specifier, form: "namespace", local: bindings.name.text, line });
       return;
     }
     const names = bindings.elements.filter((element) => !element.isTypeOnly);
-    named.push({ specifier, names: names.map((e) => ({ from: (e.propertyName ?? e.name).text, to: e.name.text })) });
+    named.push({
+      specifier,
+      names: names.map((e) => ({ from: (e.propertyName ?? e.name).text, to: e.name.text })),
+      line,
+    });
   };
 
   const readExport = (node: ts.ExportDeclaration): void => {
     if (node.isTypeOnly) return;
     const clause = node.exportClause;
     const specifier = node.moduleSpecifier === undefined ? undefined : literal(node.moduleSpecifier);
+    const line = lineOf(node);
     if (clause !== undefined && ts.isNamespaceExport(clause)) {
       exported.add(clause.name.text);
-      if (typeof specifier === "string") reExports.push({ specifier, names: [{ from: "*", to: clause.name.text }] });
+      if (typeof specifier === "string") {
+        reExports.push({ specifier, names: [{ from: "*", to: clause.name.text }], line });
+      }
       return;
     }
     const names = (clause?.elements ?? [])
       .filter((element) => !element.isTypeOnly)
       .map((e) => ({ from: (e.propertyName ?? e.name).text, to: e.name.text }));
     for (const { to } of names) exported.add(to);
-    if (typeof specifier === "string") reExports.push({ specifier, names: clause === undefined ? "*" : names });
+    if (typeof specifier === "string") reExports.push({ specifier, names: clause === undefined ? "*" : names, line });
     if (specifier !== undefined) return;
     for (const rename of names) {
-      localExports.push(rename);
-      if (own.has(rename.from) && rename.from !== rename.to) aliases.push(rename.from);
+      localExports.push({ ...rename, line });
+      if (own.has(rename.from) && rename.from !== rename.to) aliases.push({ name: rename.from, line });
     }
   };
 
@@ -531,7 +554,9 @@ function factsOf(file: string, text: string): FileFacts {
     if (ts.isImportEqualsDeclaration(node)) {
       const reference = node.moduleReference;
       const specifier = ts.isExternalModuleReference(reference) ? literal(reference.expression) : null;
-      if (!node.isTypeOnly && specifier !== null) whole.push({ specifier, form: "namespace", local: node.name.text });
+      if (!node.isTypeOnly && specifier !== null) {
+        whole.push({ specifier, form: "namespace", local: node.name.text, line: lineOf(node) });
+      }
       return;
     }
     if (ts.isTypeNode(node)) return;
@@ -540,7 +565,7 @@ function factsOf(file: string, text: string): FileFacts {
       const specifier = isModuleLoad(load) ? literal(load.arguments[0]) : null;
       const names = specifier === null ? null : patternNames(node.name);
       if (specifier !== null && names !== null) {
-        named.push({ specifier, names });
+        named.push({ specifier, names, line: lineOf(node) });
         destructured.add(load);
         for (const { to } of names) imported.add(to);
       }
@@ -549,20 +574,21 @@ function factsOf(file: string, text: string): FileFacts {
       const load = unwrapped(node.initializer);
       const specifier = isModuleLoad(load) ? literal(load.arguments[0]) : null;
       if (specifier !== null) {
-        whole.push({ specifier, form: "dynamic", local: node.name.text });
+        whole.push({ specifier, form: "dynamic", local: node.name.text, line: lineOf(node) });
         destructured.add(load);
       }
     }
     if (isModuleLoad(node) && !destructured.has(node)) {
       const specifier = literal(node.arguments[0]);
-      if (specifier === null) computed += 1;
-      else whole.push({ specifier, form: "dynamic", local: null });
+      const argument = node.arguments[0];
+      if (specifier === null) computed.push({ specifier: argument?.getText(sourceFile) ?? "", line: lineOf(node) });
+      else whole.push({ specifier, form: "dynamic", local: null, line: lineOf(node) });
     }
     if (isWholeCommonJsExport(node)) {
       const load = unwrapped(node.right) as ts.CallExpression;
       const specifier = literal(load.arguments[0]);
       if (specifier !== null) {
-        reExports.push({ specifier, names: "*" });
+        reExports.push({ specifier, names: "*", line: lineOf(node) });
         destructured.add(load);
       }
     }
@@ -570,7 +596,7 @@ function factsOf(file: string, text: string): FileFacts {
       const value = unwrapped(node.expression);
       exported.add("default");
       if (ts.isIdentifier(value)) {
-        localExports.push({ from: value.text, to: "default" });
+        localExports.push({ from: value.text, to: "default", line: lineOf(node) });
         givenOn.add(value);
       }
     }
@@ -580,7 +606,7 @@ function factsOf(file: string, text: string): FileFacts {
           for (const element of declaration.name.elements) {
             if (!ts.isIdentifier(element.name)) continue;
             exported.add(element.name.text);
-            localExports.push({ from: element.name.text, to: element.name.text });
+            localExports.push({ from: element.name.text, to: element.name.text, line: lineOf(element) });
           }
           continue;
         }
@@ -588,7 +614,7 @@ function factsOf(file: string, text: string): FileFacts {
         exported.add(declaration.name.text);
         const value = declaration.initializer === undefined ? undefined : unwrapped(declaration.initializer);
         if (value !== undefined && ts.isIdentifier(value)) {
-          localExports.push({ from: value.text, to: declaration.name.text });
+          localExports.push({ from: value.text, to: declaration.name.text, line: lineOf(declaration) });
           givenOn.add(value);
         }
       }
@@ -601,9 +627,9 @@ function factsOf(file: string, text: string): FileFacts {
       exported.add(node.name.text);
     }
     if (ts.isIdentifier(node) && (own.has(node.text) || imported.has(node.text)) && usesValue(node, parent, grand)) {
-      if (own.has(node.text)) aliases.push(node.text);
+      if (own.has(node.text)) aliases.push({ name: node.text, line: lineOf(node) });
       else if (!givenOn.has(node)) {
-        uses.push({ name: node.text, start: parent.getStart(sourceFile), end: parent.end });
+        uses.push({ name: node.text, start: parent.getStart(sourceFile), end: parent.end, line: lineOf(node) });
       }
     }
     ts.forEachChild(node, (child) => visit(child, node, parent));
@@ -620,6 +646,9 @@ interface Binding {
   readonly origin: string;
   readonly fn: string;
   readonly local: string;
+  /** Where: the line of the import and the specifier it names the module with. */
+  readonly line: number;
+  readonly specifier: string;
 }
 
 /**
@@ -636,6 +665,11 @@ interface HiddenImport {
   readonly form: HiddenForm;
   /** For a value use, the text around it. */
   readonly use?: string;
+  /** The gated functions it hides, by name, or null when it may hide any. */
+  readonly fn: string | null;
+  readonly line: number;
+  /** The specifier as written, or null for a use of the module's own function. */
+  readonly specifier: string | null;
 }
 
 interface FileImports {
@@ -645,11 +679,13 @@ interface FileImports {
 
 /** The gated functions `file` imports by name, each under its local name. */
 function bindingsOf(file: string, facts: FileFacts, gated: Gated, known: ReadonlySet<string>): Binding[] {
-  return facts.named.flatMap(({ specifier, names }) => {
+  return facts.named.flatMap(({ specifier, names, line }) => {
     const origin = resolveSpecifier(file, specifier, known);
     const functions = origin === null ? undefined : gated.get(origin);
     if (origin === null || functions === undefined) return [];
-    return names.flatMap(({ from, to }) => (functions.get(from) ?? []).map((fn) => ({ origin, fn, local: to })));
+    return names.flatMap(({ from, to }) =>
+      (functions.get(from) ?? []).map((fn) => ({ origin, fn, local: to, line, specifier })),
+    );
   });
 }
 
@@ -728,42 +764,58 @@ function importsOf(file: string, source: string, gated: Gated, known: ReadonlySe
   };
   const bindings = bindingsOf(file, facts, gated, known);
   const hidden: HiddenImport[] = [];
-  for (const { specifier, form } of facts.whole) {
-    const origin = gatedOrigin(specifier);
-    if (origin !== null) hidden.push({ origin, form });
+  const named = (fns: readonly string[]): string | null => (fns.length === 0 ? null : [...new Set(fns)].join(", "));
+  /** Each local name bound to a gated module's value: the module, the specifier and the functions it carries. */
+  const importedFrom = new Map<string, { origin: string; specifier: string; fns: string[] }>();
+  for (const { local, origin, specifier, fn } of bindings) {
+    importedFrom.set(local, { origin, specifier, fns: [...(importedFrom.get(local)?.fns ?? []), fn] });
   }
-  for (const { specifier, names } of facts.reExports) {
+  const namedFrom = new Map(importedFrom);
+  for (const { specifier, form, local, line } of facts.whole) {
     const origin = gatedOrigin(specifier);
-    const givesGated = (name: string): boolean => name === "*" || (gated.get(origin ?? "")?.has(name) ?? false);
-    if (origin !== null && (names === "*" || names.some(({ from }) => givesGated(from)))) {
-      hidden.push({ origin, form: "re-export" });
+    if (origin === null) continue;
+    const functions = gated.get(origin);
+    const fns = form === "default" ? [...(functions?.get("default") ?? [])] : allOf(functions);
+    hidden.push({ origin, form, fn: named(fns), line, specifier });
+    if (local !== null) importedFrom.set(local, { origin, specifier, fns });
+  }
+  for (const { specifier, names, line } of facts.reExports) {
+    const origin = gatedOrigin(specifier);
+    const from = gated.get(origin ?? "");
+    if (origin === null || from === undefined) continue;
+    const fns =
+      names === "*"
+        ? allOf(from)
+        : names.flatMap(({ from: name }) => (name === "*" ? allOf(from) : (from.get(name) ?? [])));
+    if (fns.length > 0) hidden.push({ origin, form: "re-export", fn: named(fns), line, specifier });
+  }
+  for (const { from, line } of facts.localExports) {
+    const imported = importedFrom.get(from);
+    if (imported !== undefined) {
+      const { origin, specifier, fns } = imported;
+      hidden.push({ origin, form: "re-export", fn: named(fns), line, specifier });
     }
   }
-  const namedFrom = new Map(bindings.map(({ local, origin }) => [local, origin]));
-  const importedFrom = new Map(namedFrom);
-  for (const { specifier, local } of facts.whole) {
-    const origin = gatedOrigin(specifier);
-    if (local !== null && origin !== null) importedFrom.set(local, origin);
+  for (const { specifier, line } of facts.computed) {
+    hidden.push({ origin: null, form: "computed", fn: null, line, specifier });
   }
-  for (const { from } of facts.localExports) {
-    const origin = importedFrom.get(from);
-    if (origin !== undefined) hidden.push({ origin, form: "re-export" });
+  for (const { name, line } of facts.aliases) {
+    hidden.push({ origin: file, form: "alias", fn: name, line, specifier: null });
   }
-  hidden.push(...Array.from({ length: facts.computed }, (): HiddenImport => ({ origin: null, form: "computed" })));
-  hidden.push(...facts.aliases.map((): HiddenImport => ({ origin: file, form: "alias" })));
-  for (const { name, start, end } of facts.uses) {
-    const origin = namedFrom.get(name);
-    if (origin !== undefined) {
-      hidden.push({ origin, form: "value", use: source.slice(start, end).replace(/\s+/g, " ").slice(0, 120) });
-    }
+  for (const { name, start, end, line } of facts.uses) {
+    const imported = namedFrom.get(name);
+    if (imported === undefined) continue;
+    const { origin, specifier, fns } = imported;
+    const use = source.slice(start, end).replace(/\s+/g, " ").slice(0, 120);
+    hidden.push({ origin, form: "value", use, fn: named(fns), line, specifier });
   }
   return { bindings, hidden };
 }
 
 interface Census {
   readonly gated: Gated;
-  /** function -> the files that import it */
-  readonly importers: ReadonlyMap<string, ReadonlySet<string>>;
+  /** function -> the files that import it, each with its first import of it */
+  readonly importers: ReadonlyMap<string, ReadonlyMap<string, Binding>>;
   /** file -> the hidden imports it holds */
   readonly hidden: ReadonlyMap<string, readonly HiddenImport[]>;
 }
@@ -771,18 +823,66 @@ interface Census {
 function takeCensus(sources: ReadonlyMap<string, string>): Census {
   const known = new Set(sources.keys());
   const gated = closeUnderReExport(sources);
-  const importers = new Map<string, Set<string>>();
+  const importers = new Map<string, Map<string, Binding>>();
   const hidden = new Map<string, HiddenImport[]>();
   for (const [file, source] of sources) {
     const found = importsOf(file, source, gated, known);
     if (found.hidden.length > 0) hidden.set(file, found.hidden);
-    for (const { fn } of found.bindings) importers.set(fn, (importers.get(fn) ?? new Set<string>()).add(file));
+    for (const binding of found.bindings) {
+      const files = importers.get(binding.fn) ?? new Map<string, Binding>();
+      if (!files.has(file)) files.set(file, binding);
+      importers.set(binding.fn, files);
+    }
   }
   return { gated, importers, hidden };
 }
 
 const census = takeCensus(SOURCES);
 const GATED = census.gated;
+
+/** What a hidden import hides, as a failure says it. */
+function hiddenForm({ origin, form, fn, specifier, use }: HiddenImport): string {
+  const from = `"${specifier}" (${origin})`;
+  if (form === "computed") {
+    return `import() or require() of ${specifier} names its module with an expression, which may be any gated module`;
+  }
+  if (form === "re-export") return `gives ${fn} on from ${from}`;
+  if (form === "alias") return `uses its own gated function ${fn} as a value, not a call`;
+  if (form === "value") return `uses ${fn}, imported from ${from}, as a value, not a call: \`${use}\``;
+  return `${form} import of ${from} hides which of ${fn ?? "its exports"} it uses`;
+}
+
+/** An allowance as HIDDEN_FORMS_ALLOWED spells it, without its reason. */
+const allowanceOf = ({ origin, form, use }: HiddenImport | Allowance): string =>
+  `{ origin: ${JSON.stringify(origin)}, form: "${form}"${use === undefined ? "" : `, use: ${JSON.stringify(use)}`} }`;
+
+/** How to allow `hidden` in `file`, for a failure to say. */
+const toAllow = (file: string, hidden: HiddenImport): string =>
+  `Import the function by name and call it, or add ${allowanceOf(hidden).replace(/ }$/, ', reason: "<why it hides no caller>" }')} under "${file}" in HIDDEN_FORMS_ALLOWED`;
+
+/** The files that import a gated function REVIEWED_CALLERS does not list under it, with how to list them. */
+function unreviewed(found: Census): string[] {
+  return [...found.importers].flatMap(([fn, files]) =>
+    [...files]
+      .filter(([file]) => !(file in (REVIEWED_CALLERS[fn] ?? {})))
+      .map(([file, { line, specifier, origin }]) => {
+        const pinned = fn in PINNED_EXACTLY ? `, and "${file}" to PINNED_EXACTLY.${fn}` : "";
+        return `${file}:${line} imports ${fn} from "${specifier}" (${origin}), and REVIEWED_CALLERS does not list it under ${fn}: reach the connection through a reviewed caller instead, or add "${file}": "<why it cannot reach a reviewed connection>" under ${fn} in REVIEWED_CALLERS${pinned}`;
+      }),
+  );
+}
+
+/** The entries of REVIEWED_CALLERS whose file no longer imports their function. */
+function staleCallers(found: Census): string[] {
+  return Object.entries(REVIEWED_CALLERS).flatMap(([fn, files]) =>
+    Object.keys(files)
+      .filter((file) => !found.importers.get(fn)?.has(file))
+      .map((file) => {
+        const pinned = fn in PINNED_EXACTLY ? ` and from PINNED_EXACTLY.${fn}` : "";
+        return `REVIEWED_CALLERS.${fn} lists "${file}", which imports ${fn} no more: remove that entry${pinned}`;
+      }),
+  );
+}
 
 const sameForm = (a: HiddenImport, b: HiddenImport | Allowance): boolean =>
   a.origin === b.origin && a.form === b.form && a.use === b.use;
@@ -797,7 +897,7 @@ function unallowed(found: Census): string[] {
         left.splice(index, 1);
         return [];
       }
-      return [`${file}: ${hidden.form} of ${hidden.origin}`];
+      return [`${file}:${hidden.line} ${hiddenForm(hidden)}. ${toAllow(file, hidden)}`];
     });
   });
 }
@@ -812,18 +912,25 @@ function staleAllowances(found: Census): string[] {
         left.splice(index, 1);
         return [];
       }
-      return [`${file}: ${allowance.form} of ${allowance.origin}`];
+      return [
+        `HIDDEN_FORMS_ALLOWED["${file}"] lists ${allowanceOf(allowance)}, which no hidden import of that file matches any more: remove that entry`,
+      ];
     });
   });
 }
 
-const pairs = (importers: ReadonlyMap<string, ReadonlySet<string>>): string[] =>
-  [...importers].flatMap(([fn, files]) => [...files].map((file) => `${fn} <- ${file}`)).sort();
+const pairs = (importers: Census["importers"]): string[] =>
+  [...importers].flatMap(([fn, files]) => [...files.keys()].map((file) => `${fn} <- ${file}`)).sort();
 
-const reviewedPairs = (): string[] =>
-  Object.entries(REVIEWED_CALLERS)
-    .flatMap(([fn, files]) => Object.keys(files).map((file) => `${fn} <- ${file}`))
-    .sort();
+/** A hidden import as the tests below read it: what it hides, without where. */
+const shapeOf = ({ origin, form, use }: HiddenImport): object => ({
+  origin,
+  form,
+  ...(use === undefined ? {} : { use }),
+});
+
+/** A binding as the tests below read it: what it binds, without where. */
+const boundAs = ({ origin, fn, local }: Binding): object => ({ origin, fn, local });
 
 describe("the census reads every import form", () => {
   const FILE = "src/lib/census-probe/caller.ts";
@@ -839,13 +946,13 @@ describe("the census reads every import form", () => {
       ].join("\n"),
       GATED,
     );
-    expect(bindings).toEqual([
+    expect(bindings.map(boundAs)).toEqual([
       { origin: "src/lib/seed/index.ts", fn: "getManagedConnections", local: "getManagedConnections" },
       { origin: "src/lib/seed/resolve-connection.ts", fn: "resolveConnection", local: "open" },
       { origin: "src/lib/governance/visible.ts", fn: "visibleConnectionById", local: "byId" },
       { origin: "src/lib/db/index.ts", fn: "getOrCreateProvider", local: "build" },
     ]);
-    expect(hidden).toEqual([]);
+    expect(hidden.map(shapeOf)).toEqual([]);
   });
 
   test("a namespace, default or non-destructured dynamic import and a re-export are hidden imports", () => {
@@ -862,7 +969,7 @@ describe("the census reads every import form", () => {
       ].join("\n"),
       GATED,
     );
-    expect(hidden).toEqual([
+    expect(hidden.map(shapeOf)).toEqual([
       { origin: "src/lib/seed/index.ts", form: "namespace" },
       { origin: "src/lib/kubernetes-access/gate.ts", form: "default" },
       { origin: "src/lib/db/factory.ts", form: "dynamic" },
@@ -882,12 +989,12 @@ describe("the census reads every import form", () => {
     ].join("\n");
     const importer = 'import { listSeeds, listing, seedRolesOf } from "./barrel";';
     const gated = closeUnderReExport(new Map([...SOURCES, [BARREL, barrel], [FILE, importer]]));
-    expect(importsOf(BARREL, barrel, gated).hidden).toEqual([
+    expect(importsOf(BARREL, barrel, gated).hidden.map(shapeOf)).toEqual([
       { origin: "src/lib/seed/index.ts", form: "re-export" },
       { origin: "src/lib/seed/index.ts", form: "re-export" },
     ]);
     const known = new Set([...KNOWN, BARREL]);
-    expect(importsOf(FILE, importer, gated, known).bindings).toEqual([
+    expect(importsOf(FILE, importer, gated, known).bindings.map(boundAs)).toEqual([
       { origin: BARREL, fn: "getSeedListing", local: "listSeeds" },
       { origin: BARREL, fn: "getSeedListing", local: "listing" },
     ]);
@@ -933,8 +1040,10 @@ describe("the census reads every import form", () => {
       ].join("\n"),
       GATED,
     );
-    expect(found.bindings).toEqual([{ origin: "src/lib/seed/index.ts", fn: "getSeedListing", local: "list" }]);
-    expect(found.hidden).toEqual([
+    expect(found.bindings.map(boundAs)).toEqual([
+      { origin: "src/lib/seed/index.ts", fn: "getSeedListing", local: "list" },
+    ]);
+    expect(found.hidden.map(shapeOf)).toEqual([
       { origin: "src/lib/seed/index.ts", form: "dynamic" },
       { origin: null, form: "computed" },
       { origin: null, form: "computed" },
@@ -951,12 +1060,12 @@ describe("the census reads every import form", () => {
     ].join("\n");
     const importer = 'import { listSeeds, listing } from "@/lib/seed";';
     const gated = closeUnderReExport(new Map([...SOURCES, [INDEX, aliasing], [FILE, importer]]));
-    expect(importsOf(INDEX, aliasing, gated).hidden).toEqual([
+    expect(importsOf(INDEX, aliasing, gated).hidden.map(shapeOf)).toEqual([
       { origin: INDEX, form: "alias" },
       { origin: INDEX, form: "alias" },
       { origin: INDEX, form: "alias" },
     ]);
-    expect(importsOf(FILE, importer, gated).bindings).toEqual([
+    expect(importsOf(FILE, importer, gated).bindings.map(boundAs)).toEqual([
       { origin: INDEX, fn: "getSeedListing", local: "listSeeds" },
       { origin: INDEX, fn: "getSeedListing", local: "listing" },
     ]);
@@ -974,7 +1083,7 @@ describe("the census reads every import form", () => {
       ].join("\n"),
       GATED,
     );
-    expect(found.bindings).toEqual([
+    expect(found.bindings.map(boundAs)).toEqual([
       { origin: "src/exports/index.ts", fn: "createDatabaseProvider", local: "createDatabaseProvider" },
       { origin: "src/exports/index.ts", fn: "getOrCreateProvider", local: "getOrCreateProvider" },
     ]);
@@ -990,8 +1099,10 @@ describe("the census reads every import form", () => {
     const whole = 'module.exports = require("@/lib/seed");';
     const importer = 'import { getSeedListing } from "./whole.js";';
     const gated = closeUnderReExport(new Map([...SOURCES, [CJS, whole], [FILE, importer]]));
-    expect(importsOf(CJS, whole, gated).hidden).toEqual([{ origin: "src/lib/seed/index.ts", form: "re-export" }]);
-    expect(importsOf(FILE, importer, gated, new Set([...KNOWN, CJS])).bindings).toEqual([
+    expect(importsOf(CJS, whole, gated).hidden.map(shapeOf)).toEqual([
+      { origin: "src/lib/seed/index.ts", form: "re-export" },
+    ]);
+    expect(importsOf(FILE, importer, gated, new Set([...KNOWN, CJS])).bindings.map(boundAs)).toEqual([
       { origin: CJS, fn: "getSeedListing", local: "getSeedListing" },
     ]);
   });
@@ -1011,7 +1122,7 @@ describe("the census reads every import form", () => {
       ["seedNs2", seedFns],
       ["seedNs", seedFns],
     ]);
-    expect(importsOf(FILE, importer, gated, new Set([...KNOWN, BARREL])).bindings).toEqual([
+    expect(importsOf(FILE, importer, gated, new Set([...KNOWN, BARREL])).bindings.map(boundAs)).toEqual([
       ...seedFns.map((fn) => ({ origin: BARREL, fn, local: "seedNs" })),
       ...seedFns.map((fn) => ({ origin: BARREL, fn, local: "seedNs2" })),
     ]);
@@ -1019,16 +1130,55 @@ describe("the census reads every import form", () => {
 
   test("(g) an allowed file is allowed only its own hidden imports, each by origin and form", () => {
     const DB = "src/lib/db/index.ts";
+    const at = (SOURCES.get(DB) ?? "").split("\n").length + 1;
     const withExtra = (extra: string): string[] =>
       unallowed(takeCensus(new Map([...SOURCES, [DB, `${SOURCES.get(DB)}\n${extra}\n`]])));
+    const seedFns = GATED_MODULES["src/lib/seed/index.ts"].join(", ");
+    const allow = (origin: string, form: string): string =>
+      `Import the function by name and call it, or add { origin: "${origin}", form: "${form}", reason: "<why it hides no caller>" } under "${DB}" in HIDDEN_FORMS_ALLOWED`;
     expect(unallowed(census)).toEqual([]);
     expect(withExtra('import * as seedNs from "@/lib/seed";\nexport { seedNs };')).toEqual([
-      `${DB}: namespace of src/lib/seed/index.ts`,
-      `${DB}: re-export of src/lib/seed/index.ts`,
+      `${DB}:${at} namespace import of "@/lib/seed" (src/lib/seed/index.ts) hides which of ${seedFns} it uses. ${allow("src/lib/seed/index.ts", "namespace")}`,
+      `${DB}:${at + 1} gives ${seedFns} on from "@/lib/seed" (src/lib/seed/index.ts). ${allow("src/lib/seed/index.ts", "re-export")}`,
     ]);
-    expect(withExtra('export * as seedNs from "@/lib/seed";')).toEqual([`${DB}: re-export of src/lib/seed/index.ts`]);
+    expect(withExtra('export * as seedNs from "@/lib/seed";')).toEqual([
+      `${DB}:${at} gives ${seedFns} on from "@/lib/seed" (src/lib/seed/index.ts). ${allow("src/lib/seed/index.ts", "re-export")}`,
+    ]);
     expect(withExtra('export { withOneShotTunnel } from "./factory";')).toEqual([
-      `${DB}: re-export of src/lib/db/factory.ts`,
+      `${DB}:${at} gives withOneShotTunnel on from "./factory" (src/lib/db/factory.ts). ${allow("src/lib/db/factory.ts", "re-export")}`,
+    ]);
+  });
+
+  test("(k) every failure names the function, the file, the line and the specifier, and the map to edit", () => {
+    const PROBE = "src/lib/census-probe/caller.ts";
+    const VISIBLE = "src/lib/governance/visible.ts";
+    const at = (SOURCES.get(VISIBLE) ?? "").split("\n").length + 1;
+    const found = takeCensus(
+      new Map([
+        ...SOURCES,
+        [PROBE, 'import { getSeedListing } from "@/lib/seed";\nconst load = (name: string) => import(name);'],
+        [VISIBLE, `${SOURCES.get(VISIBLE)}\nexport const lookups = [connectionsUnderAccessReview];\n`],
+      ]),
+    );
+    expect(unreviewed(found)).toEqual([
+      `${PROBE}:1 imports getSeedListing from "@/lib/seed" (src/lib/seed/index.ts), and REVIEWED_CALLERS does not list it under getSeedListing: reach the connection through a reviewed caller instead, or add "${PROBE}": "<why it cannot reach a reviewed connection>" under getSeedListing in REVIEWED_CALLERS, and "${PROBE}" to PINNED_EXACTLY.getSeedListing`,
+    ]);
+    expect(unallowed(found)).toEqual([
+      `${VISIBLE}:${at} uses connectionsUnderAccessReview, imported from "@/lib/kubernetes-access/gate" (src/lib/kubernetes-access/gate.ts), as a value, not a call: \`[connectionsUnderAccessReview]\`. Import the function by name and call it, or add { origin: "src/lib/kubernetes-access/gate.ts", form: "value", use: "[connectionsUnderAccessReview]", reason: "<why it hides no caller>" } under "${VISIBLE}" in HIDDEN_FORMS_ALLOWED`,
+      `${PROBE}:2 import() or require() of name names its module with an expression, which may be any gated module. Import the function by name and call it, or add { origin: null, form: "computed", reason: "<why it hides no caller>" } under "${PROBE}" in HIDDEN_FORMS_ALLOWED`,
+    ]);
+    const without = takeCensus(new Map([...SOURCES].filter(([file]) => file !== "src/lib/mcp/context.ts")));
+    expect(staleCallers(without)).toEqual([
+      'REVIEWED_CALLERS.getManagedConnections lists "src/lib/mcp/context.ts", which imports getManagedConnections no more: remove that entry',
+      'REVIEWED_CALLERS.acquireExecutionProfileProvider lists "src/lib/mcp/context.ts", which imports acquireExecutionProfileProvider no more: remove that entry',
+    ]);
+    const LOADER = "src/lib/seed/kubernetes-discovery-loader.ts";
+    const unparsed = (SOURCES.get(LOADER) ?? "").replace(
+      "parse: parseKubernetesDiscoveryExport,",
+      "parse: (text) => parseKubernetesDiscoveryExport(text),",
+    );
+    expect(staleAllowances(takeCensus(new Map([...SOURCES, [LOADER, unparsed]])))).toEqual([
+      `HIDDEN_FORMS_ALLOWED["${LOADER}"] lists { origin: "src/lib/seed/kubernetes-discovery-export.ts", form: "value", use: "parse: parseKubernetesDiscoveryExport" }, which no hidden import of that file matches any more: remove that entry`,
     ]);
   });
 
@@ -1050,7 +1200,7 @@ describe("the census reads every import form", () => {
       ].join("\n"),
       GATED,
     );
-    expect(found.hidden).toEqual([
+    expect(found.hidden.map(shapeOf)).toEqual([
       { origin: SEED, form: "value", use: "getSeedListing" },
       { origin: GATE, form: "value", use: "review: connectionsUnderAccessReview" },
       { origin: SEED, form: "value", use: "[managed]" },
@@ -1065,8 +1215,10 @@ describe("the census reads every import form", () => {
     const importer = 'import { listing2 } from "@/lib/governance/visible";';
     const gated = closeUnderReExport(new Map([...SOURCES, [VISIBLE, text], [FILE, importer]]));
     expect(gated.get(VISIBLE)?.get("listing2")).toEqual(["getSeedListing"]);
-    expect(importsOf(VISIBLE, text, gated).hidden).toEqual([{ origin: "src/lib/seed/index.ts", form: "re-export" }]);
-    expect(importsOf(FILE, importer, gated).bindings).toEqual([
+    expect(importsOf(VISIBLE, text, gated).hidden.map(shapeOf)).toEqual([
+      { origin: "src/lib/seed/index.ts", form: "re-export" },
+    ]);
+    expect(importsOf(FILE, importer, gated).bindings.map(boundAs)).toEqual([
       { origin: VISIBLE, fn: "getSeedListing", local: "listing2" },
     ]);
   });
@@ -1100,7 +1252,7 @@ describe("the census reads every import form", () => {
       ].join("\n"),
       GATED,
     );
-    expect(found).toEqual({
+    expect({ bindings: found.bindings.map(boundAs), hidden: found.hidden }).toEqual({
       bindings: [
         { origin: "src/lib/seed/index.ts", fn: "getSeedListing", local: "getSeedListing" },
         { origin: "src/lib/governance/visible.ts", fn: "visibleConnections", local: "visibleConnections" },
@@ -1127,13 +1279,11 @@ describe("the caller census of the seed lookups, the access review and the provi
   });
 
   test("every file that imports a gated function is a reviewed caller of it", () => {
-    const reviewed = new Set(reviewedPairs());
-    expect(pairs(census.importers).filter((pair) => !reviewed.has(pair))).toEqual([]);
+    expect(unreviewed(census)).toEqual([]);
   });
 
   test("no reviewed caller is stale", () => {
-    const found = new Set(pairs(census.importers));
-    expect(reviewedPairs().filter((pair) => !found.has(pair))).toEqual([]);
+    expect(staleCallers(census)).toEqual([]);
   });
 
   test("every reviewed caller and every allowance says why, in at least 20 characters", () => {
