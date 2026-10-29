@@ -119,7 +119,9 @@ Every such request is a SelfSubjectAccessReview the sign-in scope `user:check-ac
 - A Studio admin is a user whose own RBAC allows `update` on Studio's Deployment (`KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT`, a Helm install) or on its LibreDBStudio resource (`KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO`, an operator install); exactly one of the two is set.
   It is checked again on every request of an admin session, so no group, claim or password makes an admin.
 - Removing a RoleBinding takes effect within 15 seconds, the review's cache lifetime in this mode, and an open tab drops a database at its next refresh, every 10 seconds by default.
-- Deleting a user's Studio token (`oc delete useroauthaccesstoken`, or the console's API tokens page) makes the API server refuse it: Studio ends that session at its next request, and the user signs in again through the cluster's login page.
+- Deleting a user's Studio token (`oc delete useroauthaccesstoken` for the user's own, `oc delete oauthaccesstoken` for a cluster admin, or the console's API tokens page) makes the API server refuse it: Studio ends that session at its next request, and the user signs in again through the cluster's login page.
+- The API server caches token authentication, groups included, for up to about two minutes, so a group-membership change or a deleted OAuth access token can keep answering for that long, while a RoleBinding change takes effect within Studio's decision cache.
+  Studio cannot shorten the platform's cache; to cut a user off at once, remove the RoleBinding that grants them.
 
 The review is always on in this mode; setting `KUBERNETES_ACCESS_REVIEW` to `off` stops the server at boot, and so does `KUBERNETES_ACCESS_REVIEW_API_URL`, `KUBERNETES_ACCESS_REVIEW_TOKEN_PATH` or `KUBERNETES_ACCESS_REVIEW_CA_PATH`, which only configure the review of OIDC mode.
 [SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#on-openshift-openshift-sign-in) has the detail: which failures deny, what is logged, and the known limits.

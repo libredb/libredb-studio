@@ -23,7 +23,11 @@
  *
  * The tokens: `dev-a` and `dev-b` with the scope `user:info user:check-access`, `dev-a-info` with `user:info` only, and
  * `dev-a-extra` with `user:info user:check-access user:list-scoped-projects`. The last case deletes the
- * `useroauthaccesstoken` object of the `dev-a-extra` token, so that token is spent afterwards.
+ * `oauthaccesstoken` object of the `dev-a-extra` token, so that token is spent afterwards.
+ *
+ * The group-removal and expiry cases each wait up to PLATFORM_TOKEN_CACHE_SECONDS: the API server caches token
+ * authentication, groups included, for about two minutes, so the token keeps its old groups, and a deleted token keeps
+ * authenticating, until that entry expires (17 s and about 78 s seen on CRC 4.22). A RoleBinding change is not cached.
  *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name (`EXCLUDED` in `tests/runner/discover.ts`).
  * Point it at a lab: it creates and deletes a namespace and a group named libredb-os2-live-<random>.
@@ -173,13 +177,23 @@ function expectEqual(actual: unknown, expected: unknown): void {
   }
 }
 
-/** Asks until the review answers `expected`, as an RBAC change reaches the authorizer within seconds. */
+/**
+ * The longest the API server's token authentication cache is waited for, with margin: an entry, groups included,
+ * lives about two minutes, so a group-membership change or a deleted token shows only once it expires.
+ */
+const PLATFORM_TOKEN_CACHE_SECONDS = 150;
+
+/**
+ * Asks until the review answers `expected` or `seconds` have passed, as an RBAC change reaches the authorizer within
+ * seconds and a token change within the platform's token cache.
+ */
 async function eventually(ask: () => Promise<ReviewOutcome>, expected: ReviewOutcome, seconds = 15): Promise<void> {
+  const deadline = Date.now() + seconds * 1000;
   let last: ReviewOutcome = { kind: "denied" };
-  for (let tries = 0; tries < seconds; tries += 1) {
+  while (true) {
     // oxlint-disable-next-line no-await-in-loop -- one try a second until the cluster answers as expected.
     last = await ask();
-    if (JSON.stringify(last) === JSON.stringify(expected)) return;
+    if (JSON.stringify(last) === JSON.stringify(expected) || Date.now() >= deadline) break;
     // oxlint-disable-next-line no-await-in-loop -- one try a second until the cluster answers as expected.
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
@@ -214,7 +228,13 @@ const CASES: LiveCase[] = [
     run: async () => {
       await eventually(() => requestAccessReview(self("dev-b"), GET_SECRET), { kind: "allowed" });
       oc(["adm", "groups", "remove-users", GROUP, "dev-b"]);
-      await eventually(() => requestAccessReview(self("dev-b"), GET_SECRET), { kind: "denied" });
+      // dev-b's token was just authenticated with the group, and the API server keeps that answer, groups included,
+      // until its token cache entry expires, so the denial can take up to that long.
+      await eventually(
+        () => requestAccessReview(self("dev-b"), GET_SECRET),
+        { kind: "denied" },
+        PLATFORM_TOKEN_CACHE_SECONDS,
+      );
     },
   },
   {
@@ -286,19 +306,26 @@ const CASES: LiveCase[] = [
     },
   },
   {
-    name: "a token whose useroauthaccesstoken object was deleted is expired (spends the dev-a-extra token)",
+    name: "a token whose oauthaccesstoken object was deleted is expired (spends the dev-a-extra token)",
     run: async () => {
       const value = token("dev-a-extra");
       const object = `sha256~${createHash("sha256")
         .update(value.replace(/^sha256~/, ""))
         .digest("base64url")}`;
+      // oauthaccesstokens is the cluster admin's view of every user's tokens; useroauthaccesstokens lists only the
+      // caller's own, so deleting another user's token through it answers NotFound.
       try {
-        oc(["delete", "useroauthaccesstoken", object]);
+        oc(["delete", "oauthaccesstoken", object]);
       } catch {
         // The command line names the object, a sha256~ value, so its error is never printed.
-        throw new Error("oc delete useroauthaccesstoken failed");
+        throw new Error("oc delete oauthaccesstoken failed");
       }
-      await eventually(() => requestAccessReview(self("dev-a-extra"), GET_SECRET), { kind: "expired" });
+      // The API server keeps authenticating a deleted token until its token cache entry expires.
+      await eventually(
+        () => requestAccessReview(self("dev-a-extra"), GET_SECRET),
+        { kind: "expired" },
+        PLATFORM_TOKEN_CACHE_SECONDS,
+      );
     },
   },
 ];
