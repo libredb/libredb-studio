@@ -186,3 +186,40 @@ describe("GET /api/connections/managed under the access review", () => {
     expect(api.seen).toHaveLength(0);
   });
 });
+
+describe("the list refresh hint", () => {
+  const saved = { mode: process.env.NEXT_PUBLIC_AUTH_PROVIDER, ttl: process.env.SEED_CACHE_TTL_MS };
+
+  afterEach(() => {
+    if (saved.mode === undefined) delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+    else process.env.NEXT_PUBLIC_AUTH_PROVIDER = saved.mode;
+    if (saved.ttl === undefined) delete process.env.SEED_CACHE_TTL_MS;
+    else process.env.SEED_CACHE_TTL_MS = saved.ttl;
+  });
+
+  async function hint(): Promise<unknown> {
+    const response = await GET();
+    expect(response.status).toBe(200);
+    return ((await response.json()) as { cacheHint: unknown }).cacheHint;
+  }
+
+  test("is 10 seconds in openshift sign-in mode while SEED_CACHE_TTL_MS is unset, so a removed right shows soon", async () => {
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "openshift";
+    delete process.env.SEED_CACHE_TTL_MS;
+    expect(await hint()).toBe(10_000);
+  });
+
+  test("is SEED_CACHE_TTL_MS when it is set, in openshift mode too", async () => {
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "openshift";
+    process.env.SEED_CACHE_TTL_MS = "30000";
+    expect(await hint()).toBe(30_000);
+  });
+
+  test("stays 60 seconds by default in the other modes", async () => {
+    delete process.env.SEED_CACHE_TTL_MS;
+    for (const mode of ["oidc", "local"]) {
+      process.env.NEXT_PUBLIC_AUTH_PROVIDER = mode;
+      expect(await hint(), mode).toBe(60_000);
+    }
+  });
+});

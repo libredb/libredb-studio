@@ -5,6 +5,7 @@ import { getPendingSeeds, KUBERNETES_REVIEWED_ROLE, type ManagedConnection } fro
 import { logger } from "@/lib/logger";
 import { withoutSecretFields } from "@/lib/storage/connection-secrets";
 import { SEED_CONFIG_UNREADABLE_REASON } from "@/hooks/use-connection-payload";
+import { authProviderSetting } from "@/lib/config/auth-provider";
 import { governanceEnabled } from "@/lib/governance/config";
 import { GovernanceUnavailableError, visibleConnections } from "@/lib/governance/visible";
 
@@ -15,6 +16,12 @@ export const dynamic = "force-dynamic";
  * reaches the list within seconds, while the snapshot it is read from is in process memory and costs nothing to ask.
  */
 const GOVERNED_CACHE_HINT_MS = 10_000;
+/**
+ * How often a browser asks again in openshift sign-in mode when SEED_CACHE_TTL_MS is unset: a removed RoleBinding
+ * changes the access review's answer, not the discovery export, so a list follows it within this plus the review's
+ * decision cache (15 seconds there).
+ */
+const OPENSHIFT_CACHE_HINT_MS = 10_000;
 
 /**
  * The server-only markers are not part of this response's shape, so they are removed before anything reaches the
@@ -35,11 +42,15 @@ function withoutServerMarkers(conn: GovernedRecord): ManagedConnection {
 /** A listed record: a governed one carries the level of the credential it was resolved for. */
 type GovernedRecord = ManagedConnection & { grantLevel?: "read" | "write" };
 
-/** How long the browser may keep the list, in ms: `SEED_CACHE_TTL_MS`, 60000 by default, and 10000 under governance. */
+/**
+ * How long the browser may keep the list, in ms: 10000 under governance, else `SEED_CACHE_TTL_MS`, by default 10000
+ * in openshift sign-in mode and 60000 otherwise.
+ */
 function cacheHintMs(): number {
   if (governanceEnabled()) return GOVERNED_CACHE_HINT_MS;
   const rawTTL = Number(process.env.SEED_CACHE_TTL_MS);
-  return Number.isFinite(rawTTL) ? rawTTL : 60_000;
+  if (Number.isFinite(rawTTL)) return rawTTL;
+  return authProviderSetting() === "openshift" ? OPENSHIFT_CACHE_HINT_MS : 60_000;
 }
 
 export async function GET() {
