@@ -428,9 +428,10 @@ export interface ManagedConnection extends DatabaseConnection {
   /**
    * The Kubernetes Secret this connection's credentials come from. Set in code after the role filter, by a Kubernetes
    * discovery source, as `literal` is; never read from a file, because SeedConnectionSchema does not declare it;
-   * stripped by GET /api/connections/managed. With the Kubernetes access review on, the connection is listed and opened
-   * only for a session the review allows to `get` this Secret, and with it off for the admin role only
-   * (src/lib/kubernetes-access/gate.ts).
+   * stripped by GET /api/connections/managed. With the Kubernetes access review on, the connection carries
+   * KUBERNETES_REVIEWED_ROLE and is listed and opened only for a session the review allows to `get` this Secret
+   * (src/lib/kubernetes-access/gate.ts), and with it off for the admin role only, through the role filter
+   * (src/lib/seed/index.ts).
    */
   kubernetesSecret?: { readonly namespace: string; readonly name: string };
   /**
