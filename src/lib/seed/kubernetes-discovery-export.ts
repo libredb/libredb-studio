@@ -78,6 +78,8 @@ const SERVICE_NAME = z.string().regex(/^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$/);
 /** The roles of a MongoDB user the exporter keeps, the first ones of the resource. */
 const MONGO_ROLES_MAX = 64;
 const METADATA = z.object({ namespace: NAMESPACE_NAME, name: OBJECT_NAME });
+/** A kind of the contract table, by its slug. */
+const KIND = z.enum(["cnpg", "edbpg", "pgo", "mongo"]);
 
 const ExportStatusSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true) }),
@@ -148,7 +150,8 @@ const MongoCommunitySchema = z.object({
 
 /**
  * A row's credential Secret: its kept keys, or the problem that stopped the exporter keeping them, never both. The name
- * is absent exactly when the exporter could not compute it (unsupported_name).
+ * is absent exactly when the exporter could not compute it (unsupported_name). `reservedBy`, the listed resource of the
+ * row's namespace whose spec reserves the name, comes with reserved_name alone.
  */
 function secretSchema<Data extends z.ZodRawShape>(data: z.ZodObject<Data>) {
   return z
@@ -157,9 +160,11 @@ function secretSchema<Data extends z.ZodRawShape>(data: z.ZodObject<Data>) {
       data: data.optional(),
       problem: z.enum(KUBERNETES_DISCOVERY_PROBLEMS).optional(),
       key: z.enum(KUBERNETES_DISCOVERY_SECRET_KEYS).optional(),
+      reservedBy: z.object({ kind: KIND, name: OBJECT_NAME }).optional(),
     })
     .refine((secret) => (secret.data === undefined) !== (secret.problem === undefined))
-    .refine((secret) => (secret.name === undefined) === (secret.problem === "unsupported_name"));
+    .refine((secret) => (secret.name === undefined) === (secret.problem === "unsupported_name"))
+    .refine((secret) => secret.reservedBy === undefined || secret.problem === "reserved_name");
 }
 
 const CNPG_DATA = z.object({

@@ -1158,7 +1158,7 @@ The checks of one row, the first failure deciding its problem:
 1. its names: a resource, user, database or Secret name Studio would refuse leaves the row out, counted, and no request is built from it;
 2. `unsupported_name`: a MongoDB user without `connectionStringSecretName` whose `<name>-<db>-<user>` the operator would have to normalize, and `other_namespace`: a MongoDB user whose connection string Secret is in another namespace;
 3. `no_database`: a PGO user that lists no database, whose Secret has no `dbname`;
-4. `reserved_name`: a Secret name reserved for an operator's key material or internal credentials, never requested ([reserved names](#reserved-secret-names));
+4. `reserved_name`: a Secret name reserved for an operator's key material or internal credentials, never requested, with the listed resource that reserves it when a spec does ([reserved names](#reserved-secret-names));
 5. `service_invalid_name`: a Service name that is not a DNS-1035 label, so no such Service can exist;
 6. the row's Service, got once per scan: `service_forbidden` on a 403, `service_not_found` on a 404, `service_external_name` for an ExternalName Service, and `service_not_controlled` for a Service with no selector that the row's resource does not control (an ownerReference with `controller: true` and the resource's UID, kind and API group), which Crunchy PGO's primary Service is;
 7. the credential Secret: `forbidden` on a 403, `not_found` on a 404;
@@ -1228,6 +1228,8 @@ RBAC cannot narrow `get secrets` by name, and resource editors choose part of ev
 
 No default name (`<name>-app`, `<name>-pguser-<user>`, `<name>-<db>-<user>`) ends in one of these unless the resource's editor chose a user or database name that makes it so, which is what the rule stops; an initdb Secret you name yourself must avoid them too.
 The exporter lists every page of every kind in a namespace before it requests any Secret there, so list order decides nothing, and a resource left out for its names, or past the database bound, still reserves the Secrets its spec names.
+So an editor of any listed resource can withdraw another row of its namespace by naming that row's credential Secret in one of these fields.
+The row fails closed: it is refused as `reserved_name` and its Secret is never requested, and its reason names the kind, namespace and name of the first listed resource that reserves the name, so an admin can find it.
 A namespace whose listed resources name more than 4096 distinct Secrets in these fields is withdrawn as `limit_exceeded`, because its editors decide how many they name, and once a namespace is listed the exporter keeps only the reserved names its kept rows' Secrets have, so what it holds until it reads the Secrets does not grow with them.
 
 A 403 on a namespace's list, where the exporter's Role is missing, and a 404, where the CloudNativePG CRD is not installed, are answers about that namespace: its databases are withdrawn, the export says why, and the other namespaces are exported.
@@ -1304,7 +1306,7 @@ Keep `SEED_KUBERNETES_DISCOVERY_MAX_AGE_MS` above `KUBERNETES_DISCOVERY_INTERVAL
 A role removed in the cluster does not wait for the export: with the access review on, the review decides each list and open within its own cache lifetime.
 A namespace removed from `KUBERNETES_DISCOVERY_NAMESPACES`, which restarts the exporter, leaves the export at its next scan, and Studio withdraws its databases once the kubelet shows that export.
 The exporter's codes are `api_unreachable`, `credentials_unavailable`, `unauthorized`, `api_error` and `limit_exceeded`; a namespace it could not read carries `forbidden`, `crd_missing` or `limit_exceeded`.
-A row it refused carries one of the problems of [the checks](#the-kubernetes-exporter), and Studio skips it with a reason that names the Secret, the Service, the key or the user, never a value.
+A row it refused carries one of the problems of [the checks](#the-kubernetes-exporter), and Studio skips it with a reason that names the Secret, the Service, the key, the user or the resource whose spec reserves the Secret's name, never a value.
 `crd_missing` in every namespace means a kind of `KUBERNETES_DISCOVERY_KINDS` whose operator is not installed; `service_forbidden` means the exporter's Role lacks `get` on Services, which earlier releases did not grant.
 An export of format version 1, written by an exporter of an earlier release, is refused whole as `invalid_export`, so during an upgrade the discovered connections read as unavailable until the new exporter writes its first export.
 A write the exporter cannot make, to an export Secret that is missing or that its Role may not update, writes nothing, so Studio reads the last export it wrote until that turns stale; the exporter logs each failed write.

@@ -428,6 +428,25 @@ describe("parseKubernetesDiscoveryExport", () => {
     ).toBe("the file does not match the export schema at databases.0.secret.key (invalid_value)");
   });
 
+  it("carries the resource that reserves a name only with reserved_name, as a kind and an object name", () => {
+    const secret = (value: Record<string, unknown>) => document({ databases: [database({ secret: value })] });
+    for (const kind of ["cnpg", "edbpg", "pgo", "mongo"]) {
+      const value = { name: "orders-app", problem: "reserved_name", reservedBy: { kind, name: "keeper" } };
+      const parsed = parse(secret(value));
+      expect(parsed.ok && parsed.value.databases[0].secret).toEqual(value);
+    }
+    const reservedBy = { kind: "cnpg", name: "keeper" };
+    expect(refusal(secret({ name: "orders-app", problem: "not_found", reservedBy }))).toBe(
+      "the file does not match the export schema at databases.0.secret (custom)",
+    );
+    expect(
+      refusal(secret({ name: "orders-app", problem: "reserved_name", reservedBy: { kind: "redis", name: "keeper" } })),
+    ).toBe("the file does not match the export schema at databases.0.secret.reservedBy.kind (invalid_value)");
+    expect(
+      refusal(secret({ name: "orders-app", problem: "reserved_name", reservedBy: { kind: "cnpg", name: "Keeper" } })),
+    ).toBe("the file does not match the export schema at databases.0.secret.reservedBy.name (invalid_format)");
+  });
+
   // MongoDB Community names a user's Secret <name>-<db>-<user> after normalizing it, which discovery does not compute.
   it("name is absent exactly with unsupported_name", () => {
     const secret = (value: Record<string, unknown>) => document({ databases: [mongoDatabase({ secret: value })] });

@@ -421,16 +421,36 @@ export const RESERVED_SECRET_SUFFIXES = Object.freeze([
 /** Whole names that are never requested: Crunchy PGO's root certificate authority. */
 export const RESERVED_SECRET_NAMES = Object.freeze(["pgo-root-cacert"]);
 
+/** Whether an operator keeps the Secret name `name` for itself: a reserved name, or one with a reserved suffix. */
+function isOperatorSecretName(name) {
+  return RESERVED_SECRET_NAMES.includes(name) || RESERVED_SECRET_SUFFIXES.some((suffix) => name.endsWith(suffix));
+}
+
 /**
  * Whether a credential Secret named `name` must not be requested: one its namespace's listed resources reserve
- * (`reserved`, a Set), a reserved name or one with a reserved suffix.
+ * (`reserved`, a Set or a Map of the names), a reserved name or one with a reserved suffix.
  */
 export function isReservedSecretName(name, reserved) {
-  return (
-    reserved.has(name) ||
-    RESERVED_SECRET_NAMES.includes(name) ||
-    RESERVED_SECRET_SUFFIXES.some((suffix) => name.endsWith(suffix))
-  );
+  return reserved.has(name) || isOperatorSecretName(name);
+}
+
+/**
+ * The resource the export names as reserving a Secret: its kind's slug and its name, or null when its names are not
+ * Kubernetes names of `namespace`, which the export could not carry.
+ */
+function reserver(row, item, namespace) {
+  const metadata = namedMetadata(item);
+  return metadata === null || metadata.namespace !== namespace ? null : { kind: row.slug, name: metadata.name };
+}
+
+/**
+ * The reserved_name entry of the Secret `name`. When only a listed resource's spec reserves it, the entry names the
+ * first listed resource that does (`reservedBy`), so whoever reads the reason can see which resource withdrew the row;
+ * a name an operator keeps for itself names none.
+ */
+function reservedEntry(name, reserved) {
+  const by = isOperatorSecretName(name) ? null : (reserved.get(name) ?? null);
+  return { name, problem: "reserved_name", ...(by === null ? {} : { reservedBy: by }) };
 }
 
 /**
@@ -857,14 +877,14 @@ async function checkService(client, { row, resource, uid }, services) {
 }
 
 /**
- * A candidate's Secret entry: the problem decided before any request, or a reserved name (`reserved` holds what its
- * namespace's listed resources reserve), or the Service check's refusal, each without requesting the Secret;
- * otherwise what reading the Secret gives.
+ * A candidate's Secret entry: the problem decided before any request, or a reserved name (`reserved` maps each name its
+ * namespace's listed resources reserve to the first of them that does), or the Service check's refusal, each without
+ * requesting the Secret; otherwise what reading the Secret gives.
  */
 async function readCandidate(client, candidate, services, reserved) {
   const { secretName, precheck } = candidate;
   if (precheck !== undefined) return { ...(secretName === undefined ? {} : { name: secretName }), problem: precheck };
-  if (isReservedSecretName(secretName, reserved)) return { name: secretName, problem: "reserved_name" };
+  if (isReservedSecretName(secretName, reserved)) return reservedEntry(secretName, reserved);
   const problem = await checkService(client, candidate, services);
   if (problem !== null) return { name: secretName, problem };
   return readCredentialSecret(client, candidate);
@@ -932,7 +952,7 @@ function namespaceRefusal(error, row, namespace) {
  */
 export async function listNamespace({ client, config, namespace, limits }) {
   const found = [];
-  const reserved = new Set();
+  const reserved = new Map();
   let more = false;
   let leftOut = 0;
   for (const row of config.kinds) {
@@ -957,13 +977,14 @@ export async function listNamespace({ client, config, namespace, limits }) {
         throw codedError(`GET ${path} answered with something other than a list`, "EBADLIST");
       }
       for (const item of list.items) {
+        const by = reserver(row, item, namespace);
         for (const name of row.reserves(item)) {
           if (reserved.has(name)) continue;
           if (reserved.size === limits.reservedNames) {
             const message = `the resources listed in ${namespace} name more than ${limits.reservedNames} distinct Secrets in the spec fields the exporter reserves, the most it keeps for one namespace`;
             return { status: { ok: false, code: "limit_exceeded", message } };
           }
-          reserved.add(name);
+          reserved.set(name, by);
         }
         const expanded = row.expand(item);
         leftOut += expanded.leftOut;
@@ -982,8 +1003,8 @@ export async function listNamespace({ client, config, namespace, limits }) {
   }
   // Only a kept row's Secret is checked against the names, so the rest go: what a namespace holds until its Secrets are
   // read is bounded by its kept rows, not by how many names its editors write.
-  const hits = new Set();
-  for (const candidate of found) if (reserved.has(candidate.secretName)) hits.add(candidate.secretName);
+  const hits = new Map();
+  for (const { secretName } of found) if (reserved.has(secretName)) hits.set(secretName, reserved.get(secretName));
   return { status: { ok: true }, found, more, leftOut, reserved: hits };
 }
 

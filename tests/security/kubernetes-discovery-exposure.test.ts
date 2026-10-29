@@ -253,7 +253,11 @@ describe("Kubernetes discovery exposure", () => {
       "srv-admin-outuser",
     ];
     expect([...requested].sort()).toEqual([...new Set(expected)].sort());
-    expect(exportedSecret("thief")).toEqual({ name: "keeper-root", problem: "reserved_name" });
+    expect(exportedSecret("thief")).toEqual({
+      name: "keeper-root",
+      problem: "reserved_name",
+      reservedBy: { kind: "cnpg", name: "keeper" },
+    });
     for (const [, suffix, name] of BYSTANDERS) {
       expect(exportedSecret(`asks${suffix}`)).toEqual({ name, problem: "reserved_name" });
     }
@@ -296,6 +300,13 @@ describe("Kubernetes discovery exposure", () => {
       expect(text).not.toContain(FAKE_DISCOVERY_TOKEN);
     }
     expect(studio).not.toContain("evil.example.com");
+  });
+
+  test("a row another resource's spec withdraws is skipped with a reason naming that resource (row 3.32)", async () => {
+    const status = await getKubernetesDiscoveryStatus(deps);
+    expect(status?.skipped.find((entry) => entry.resource === "team-a/thief")?.reason).toBe(
+      "the credential Secret keeper-root is reserved by the Cluster team-a/keeper (CloudNativePG), whose spec names it for key material or another credential, so the exporter did not request it",
+    );
   });
 
   test("Studio lists exactly the golden connections, and skips every adversarial row by its id key (row 3.35)", async () => {

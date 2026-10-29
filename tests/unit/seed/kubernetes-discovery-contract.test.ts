@@ -553,6 +553,17 @@ describe("the CloudNativePG family", () => {
     expect(reason({ name: "orders-app", problem: "reserved_name" })).toBe(
       "the credential Secret orders-app has a name reserved for an operator's key material or internal credentials, so the exporter did not request it",
     );
+    const reservers: [string, string][] = [
+      ["cnpg", "Cluster team-a/keeper (CloudNativePG)"],
+      ["edbpg", "Cluster team-a/keeper (EDB Postgres for Kubernetes)"],
+      ["pgo", "PostgresCluster team-a/keeper (Crunchy PGO)"],
+      ["mongo", "MongoDBCommunity team-a/keeper (MongoDB Community)"],
+    ];
+    for (const [kind, named] of reservers) {
+      expect(reason({ name: "orders-app", problem: "reserved_name", reservedBy: { kind, name: "keeper" } })).toBe(
+        `the credential Secret orders-app is reserved by the ${named}, whose spec names it for key material or another credential, so the exporter did not request it`,
+      );
+    }
     expect(reason({ name: "orders-app", problem: "wrong_type" })).toBe(
       "the credential Secret orders-app is not of type kubernetes.io/basic-auth, so the exporter discarded it",
     );

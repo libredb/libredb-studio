@@ -1520,7 +1520,13 @@ describe("reserved names", () => {
     for (const kind of ["cnpg", "edbpg"]) {
       api.addResource(kind, "team-a", "own", { bootstrap: { initdb: { secret: { name: "own-superuser" } } } });
     }
-    const expected = supplied.map((name) => ({ name, problem: "reserved_name" }));
+    // Each spec-named Secret is reserved by db-0, the first listed resource that names it; pgo-root-cacert by none.
+    const first = { kind: "cnpg", name: "db-0" };
+    const expected = supplied.map((name) =>
+      name === "pgo-root-cacert"
+        ? { name, problem: "reserved_name" }
+        : { name, problem: "reserved_name", reservedBy: first },
+    );
     expect<unknown>(await scanWithoutRequests("cnpg,edbpg")).toEqual([
       ...expected,
       { name: "own-superuser", problem: "reserved_name" },
@@ -1650,11 +1656,56 @@ describe("reserved names", () => {
       },
     });
     for (const name of asked) api.addSecret("team-a", name, { username: "u", password: "not-a-real-password-x" });
+    const keeper = { kind: "cnpg", name: "keeper" };
+    const reservers: Record<string, { kind: string; name: string }> = {
+      "left-login": { kind: "cnpg", name: "odd" },
+      "pg-tls-pair": { kind: "pgo", name: "pg" },
+      "pg-repl-pair": { kind: "pgo", name: "pg" },
+      "mongo-key-pair": { kind: "mongo", name: "mdb" },
+      "mongo-trust": { kind: "mongo", name: "mdb" },
+      "mongo-agent-pair": { kind: "mongo", name: "mdb" },
+    };
     expect<unknown>(await scanWithoutRequests("cnpg,pgo,mongo")).toEqual([
-      ...asked.map((name) => ({ name, problem: "reserved_name" })),
-      { name: "su-login", problem: "reserved_name" },
+      ...asked.map((name) => ({ name, problem: "reserved_name", reservedBy: reservers[name] ?? keeper })),
+      { name: "su-login", problem: "reserved_name", reservedBy: keeper },
       { name: "pg-pguser-u", problem: "no_database" },
-      { name: "role-b-login", problem: "reserved_name" },
+      { name: "role-b-login", problem: "reserved_name", reservedBy: keeper },
+    ]);
+  });
+
+  test("the reason names the first resource that reserves a name, none for an operator's name or an odd resource", async () => {
+    api.addCluster("team-a", "asks-suffix", { bootstrap: { initdb: { secret: { name: "x-superuser" } } } });
+    api.addCluster("team-a", "asks-odd", { bootstrap: { initdb: { secret: { name: "odd-login" } } } });
+    api.addCluster("team-a", "asks-far", { bootstrap: { initdb: { secret: { name: "far-login" } } } });
+    // keeper names x-superuser, reserved by its suffix anyway, and its own initdb Secret before later does.
+    api.addCluster("team-a", "keeper", {
+      superuserSecret: { name: "x-superuser" },
+      managed: { roles: [{ name: "a", passwordSecret: { name: "twice-login" } }] },
+      bootstrap: { initdb: { secret: { name: "twice-login" } } },
+    });
+    // A resource whose names are not Kubernetes names, or not of this namespace, is left out and reserves unnamed.
+    api.addCluster("team-a", "Odd_Name", { superuserSecret: { name: "odd-login" } });
+    api.scripted.set("/apis/postgres-operator.crunchydata.com/v1beta1/namespaces/team-a/postgresclusters", {
+      status: 200,
+      body: JSON.stringify({
+        items: [
+          {
+            metadata: { namespace: "team-a", name: "later" },
+            spec: { users: [{ name: "u" }], customTLSSecret: { name: "twice-login" } },
+          },
+          {
+            metadata: { namespace: "team-b", name: "elsewhere" },
+            spec: { users: [{ name: "u" }], customTLSSecret: { name: "far-login" } },
+          },
+        ],
+      }),
+    });
+    expect<unknown>(await scanWithoutRequests("cnpg,pgo")).toEqual([
+      { name: "x-superuser", problem: "reserved_name" },
+      { name: "odd-login", problem: "reserved_name" },
+      { name: "far-login", problem: "reserved_name" },
+      { name: "twice-login", problem: "reserved_name", reservedBy: { kind: "cnpg", name: "keeper" } },
+      { name: "later-pguser-u", problem: "no_database" },
     ]);
   });
 
@@ -1671,7 +1722,7 @@ describe("reserved names", () => {
     });
     expect(result).toMatchObject({ ok: true, truncated: true });
     expect<unknown>(result.databases.map((entry) => entry.secret)).toEqual([
-      { name: "late-login", problem: "reserved_name" },
+      { name: "late-login", problem: "reserved_name", reservedBy: { kind: "cnpg", name: "third" } },
     ]);
     expect(api.seen.some((seen) => seen.path.includes("/secrets/") || seen.path.includes("/services/"))).toBe(false);
   });
@@ -1711,7 +1762,7 @@ describe("reserved names", () => {
     const rows = [
       { name: "wide-a-app", problem: "not_found" },
       { name: "wide-b-app", problem: "not_found" },
-      { name: "wide-7-login", problem: "reserved_name" },
+      { name: "wide-7-login", problem: "reserved_name", reservedBy: { kind: "cnpg", name: "wide-a" } },
       { name: "orders-app", data: { username: "orders", password: PASSWORD_A, dbname: "orders", port: "5432" } },
       { name: "pg-pguser-u", problem: "no_database" },
     ];

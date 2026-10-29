@@ -478,6 +478,8 @@ interface ProblemContext {
   readonly resource: KubernetesDiscoveredResource;
   readonly secret: string;
   readonly key: string | undefined;
+  /** The listed resource of the row's namespace whose spec reserves the Secret's name, by its kind's slug. */
+  readonly reservedBy: { readonly kind: string; readonly name: string } | undefined;
 }
 
 /** The user a per-user problem names: the row's user, or the resource for a row per resource. */
@@ -492,8 +494,14 @@ const SECRET_PROBLEMS: Readonly<Record<KubernetesSecretProblem, (context: Proble
   not_owned: ({ row, resource, secret }) => row.notOwned(resource, secret),
   invalid_value: ({ secret, key = "value" }) =>
     `the credential Secret ${secret} holds a ${key} that is over 1024 bytes or not UTF-8 text`,
-  reserved_name: ({ secret }) =>
-    `the credential Secret ${secret} has a name reserved for an operator's key material or internal credentials, so the exporter did not request it`,
+  reserved_name: ({ resource, secret, reservedBy }) => {
+    if (reservedBy === undefined) {
+      return `the credential Secret ${secret} has a name reserved for an operator's key material or internal credentials, so the exporter did not request it`;
+    }
+    // The export's schema admits only the kinds of this table, so a row always exists.
+    const by = KUBERNETES_CONTRACT.find((row) => row.slug === reservedBy.kind) as KubernetesContractRow;
+    return `the credential Secret ${secret} is reserved by the ${by.kind} ${resource.metadata.namespace}/${reservedBy.name} (${by.label}), whose spec names it for key material or another credential, so the exporter did not request it`;
+  },
   wrong_type: ({ row, secret }) =>
     `the credential Secret ${secret} is not of type ${row.secretType}, so the exporter discarded it`,
   unexpected_key: ({ row, secret }) =>
@@ -541,7 +549,9 @@ export function mapKubernetesDatabase(
   const secretName = entry.secret.name;
   // The schema leaves the name out exactly when the exporter could not compute it.
   if (secretName === undefined) {
-    return refuse(SECRET_PROBLEMS.unsupported_name({ row, resource, secret: "", key: undefined }));
+    return refuse(
+      SECRET_PROBLEMS.unsupported_name({ row, resource, secret: "", key: undefined, reservedBy: undefined }),
+    );
   }
   // An exporter of another version could read another Secret than this row names; the review must ask about the one
   // whose values the connection carries, so such an entry is not listed.
@@ -551,7 +561,8 @@ export function mapKubernetesDatabase(
   }
   if (entry.secret.data === undefined) {
     const problem = entry.secret.problem as KubernetesSecretProblem;
-    return refuse(SECRET_PROBLEMS[problem]({ row, resource, secret: secretName, key: entry.secret.key }));
+    const { key, reservedBy } = entry.secret;
+    return refuse(SECRET_PROBLEMS[problem]({ row, resource, secret: secretName, key, reservedBy }));
   }
   const fields = row.fields(resource, secretName, entry.secret.data, clusterDomain.domain);
   if (!fields.ok) return refuse(fields.reason);
