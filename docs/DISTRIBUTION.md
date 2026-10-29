@@ -386,10 +386,16 @@ an IPv6 address that refuses every connection, and the install notes warn about 
 (operator-sdk helm plugin): a `LibreDBStudio` custom resource whose spec mirrors
 the chart values.
 
-The one value the spec does not mirror is `extraObjects`, which the CRD refuses with a CEL rule (#1526).
+The spec does not mirror two values.
+`extraObjects` is refused by a CEL rule in the CRD (#1526).
 The operator applies the release with its own cluster-wide service account, so a manifest listed there would be created with the operator's permissions instead of those of whoever wrote the resource, and the editor role is meant to grant no RBAC.
 Plain Helm applies a release with the installer's own credentials, and Argo CD within the limits of its AppProject, so the chart offers the value there.
-The chart's Rancher mode is not offered through the operator either, in this release: the operator's role grants no `ui.cattle.io` `NavLink`, no ClusterRole or ClusterRoleBinding and no read on CloudNativePG Clusters, so the API server also refuses the exporter's Roles as an escalation, and a resource with `rancher.navLink.enabled`, `accessReview.enabled` or `discovery.kubernetes.enabled` fails to reconcile, and Rancher installs go through Helm or Rancher's Apps page.
+`postgresql`, the bundled PostgreSQL subchart, takes only the values Studio's storage needs: `enabled`, `auth`, `image`, `primary`, `tls`, `metrics`, `volumePermissions` and `commonLabels`.
+The API server drops any other key under it (strict field validation, the `kubectl` default, refuses it instead) and refuses `postgresql.extraDeploy`, `postgresql.namespaceOverride` and the `metrics` ServiceMonitor and PrometheusRule namespaces with a message, so every object of the subchart stays in the resource's namespace.
+`operator/watches.yaml` also pins those values empty at reconcile, for a resource stored before the CRD refused them.
+A resource stored before this release keeps only the accepted keys when it is read back, so an upgrade drops any other `postgresql` value from the next reconcile.
+The chart's Rancher mode is not offered through the operator in this release: the operator's role grants no `ui.cattle.io` `NavLink` and no ClusterRole or ClusterRoleBinding, so a resource with `rancher.navLink.enabled` or `accessReview.enabled` fails to reconcile, and Rancher installs go through Helm or Rancher's Apps page.
+Kubernetes discovery is offered, for one resource only, as the next section says.
 
 Publishing works in two stages:
 
@@ -425,6 +431,28 @@ Two copies are kept honest by CI: the embedded chart copy
 generated `operator/bundle`) is checked in the Helm Chart Lint job whenever a
 PR touches `operator/`. The operator Makefile derives `VERSION` from
 `package.json`, so there is no fourth hand-maintained version string.
+
+### OpenShift mode and the cluster Studio namespace
+
+The operator renders the chart's OpenShift sign-in mode (`authProvider: openshift`, see [OPENSHIFT.md](OPENSHIFT.md)) and the console objects that go with it: the `route.openshift.io` Route with the host the resource sets, and with `openshift.consoleLink.enabled` a `console.openshift.io` ConsoleLink in the application menu or on the dashboards of the namespaces it names.
+No ConsolePlugin ships in this release.
+Every authenticated user may read ConsoleLinks, so the operator ships no reader role, and a link carries no discovered namespace.
+
+A ConsoleLink is cluster-scoped and Kubernetes discovery renders a Role in each namespace it discovers, while any user who may edit a namespace may create a `LibreDBStudio` there.
+So the operator renders those objects for one resource only: the one in the namespace a cluster admin names as `LIBREDB_CLUSTER_STUDIO_NAMESPACE` in the Subscription's `spec.config.env`.
+A resource in any other namespace that asks for them fails to reconcile with a message naming `operator.clusterStudioNamespace`, and with the variable unset no resource may render them.
+The operator sets `operator.managed` and `operator.clusterStudioNamespace` itself through `overrideValues` in `operator/watches.yaml`, which win over the resource's spec, so a resource cannot change either.
+helm-operator applies `overrideValues` like `helm --set-string`, so each one reaches the chart as a string: the chart receives `operator.managed` as the string `"true"`, and a boolean must never be pinned that way, since the string `"false"` is truthy in a template.
+
+The manager role grants what these objects need and no more: Routes and `routes/custom-host` (setting a Route's host needs it), ConsoleLinks, and read on the four kinds discovery lists (CloudNativePG and EDB `clusters`, Crunchy `postgresclusters` and `mongodbcommunity`), because Kubernetes lets the operator create the exporter's Roles only with verbs it holds itself.
+It grants no ClusterRole, ClusterRoleBinding, access review or ConsolePlugin, and `tests/unit/operator-openshift-rbac.test.ts` pins it to a reviewed list.
+
+The CSV declares the seven `features.operators.openshift.io` annotations OperatorHub reads, all `"false"` in this release: no `relatedImages` or digests yet, no FIPS build, no cluster proxy for Studio's token exchange and API calls, no cluster TLS profile and no cloud token authentication.
+`make -C operator bundle` stamps `com.redhat.openshift.versions: "v4.16"` into `bundle/metadata/annotations.yaml` after `generate bundle` rewrites it, so the catalogs offer the bundle from OpenShift 4.16 on; 4.14 and 4.15 are untested.
+The submission's `ci.yaml` maps v4.15 to v4.22 today (the rendered catalogs below); the intended mapping is v4.16 to v4.22 without the end-of-life v4.17 row, an owner pull request on community-operators-prod outside this repository.
+
+OLM v1 can install the same bundle as a ClusterExtension from a ClusterCatalog.
+A ClusterExtension has no Subscription, so `LIBREDB_CLUSTER_STUDIO_NAMESPACE` stays unset there unless the controller's environment is set another way, and the operator then renders no cross-namespace or cluster-scoped object.
 
 ### An FBC release is two upstream PRs
 
