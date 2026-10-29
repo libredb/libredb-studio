@@ -272,6 +272,20 @@ describe("verifyAccessReviewEnvAtBoot, in openshift sign-in mode", () => {
     ]);
   });
 
+  test.each(["enabled", "yes", "maybe"])(
+    "refuses KUBERNETES_ACCESS_REVIEW=%p, a value it does not know, with the advice of this mode",
+    (value) => {
+      openShift();
+      process.env.KUBERNETES_ACCESS_REVIEW = value;
+      const run = runPreflight();
+      expect(run.problems).toEqual([
+        `KUBERNETES_ACCESS_REVIEW is ${JSON.stringify(value)}: openshift sign-in always reviews database access and admin rights with the signed-in user's own token, so unset it or set it to on`,
+      ]);
+      // OIDC mode's advice would offer off, which this mode refuses.
+      expect(run.banner).not.toContain("off, false or 0");
+    },
+  );
+
   test.each(["", "  ", "on", "true"])("takes KUBERNETES_ACCESS_REVIEW=%p, empty counting as unset", (value) => {
     openShift();
     process.env.KUBERNETES_ACCESS_REVIEW = value;

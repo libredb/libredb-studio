@@ -16,10 +16,11 @@
  * first, an invalid session lifetime, is not reported twice.
  *
  * openshift sign-in always runs the review, with the signed-in user's own token through OPENSHIFT_API_URL and
- * OPENSHIFT_API_CA_FILE (whose file the openshift preflight checks), so in that mode it refuses an explicit off value of
- * KUBERNETES_ACCESS_REVIEW and any ServiceAccount backend setting (its API URL, token and CA paths), which would let an
- * admin believe the reviews go elsewhere, and it neither bounds the session (every gated request is reviewed with the
- * live token) nor reads a token or CA file of its own.
+ * OPENSHIFT_API_CA_FILE (whose file the openshift preflight checks), so in that mode it refuses any value of
+ * KUBERNETES_ACCESS_REVIEW but unset or on, telling the admin to unset it or set it to on, and any ServiceAccount
+ * backend setting (its API URL, token and CA paths), which would let an admin believe the reviews go elsewhere, and it
+ * neither bounds the session (every gated request is reviewed with the live token) nor reads a token or CA file of its
+ * own.
  *
  * Runs only on standalone boot, after the governance preflight in `src/instrumentation.ts`, and checks nothing while
  * the review is off.
@@ -117,16 +118,18 @@ function accessReviewEnvProblems(): string[] {
   const provider = authProviderSetting();
   const openshift = provider === "openshift";
   const switchValue = process.env[ACCESS_REVIEW_ENV];
+  const reviewSwitch = accessReviewSwitch();
+  // An empty value counts as unset; an explicit off, like a value Studio does not know, contradicts openshift mode,
+  // whose advice never offers off.
+  const explicitOff = reviewSwitch === "off" && (switchValue ?? "").trim() !== "";
 
-  if (accessReviewSwitch() === "invalid") {
-    problems.push(
-      `${ACCESS_REVIEW_ENV} is ${shown(switchValue)}: set it to on, true or 1 to keep the review, or off, false or 0 to run without it; any other value counts as on, so the server fails closed`,
-    );
-  }
-  // An empty value counts as unset; only an explicit off contradicts the mode.
-  if (openshift && accessReviewSwitch() === "off" && (switchValue ?? "").trim() !== "") {
+  if (openshift && (explicitOff || reviewSwitch === "invalid")) {
     problems.push(
       `${ACCESS_REVIEW_ENV} is ${shown(switchValue)}: openshift sign-in always reviews database access and admin rights with the signed-in user's own token, so unset it or set it to on`,
+    );
+  } else if (reviewSwitch === "invalid") {
+    problems.push(
+      `${ACCESS_REVIEW_ENV} is ${shown(switchValue)}: set it to on, true or 1 to keep the review, or off, false or 0 to run without it; any other value counts as on, so the server fails closed`,
     );
   }
   if ((process.env.GOVERNANCE_SOURCE ?? "") !== "") {
