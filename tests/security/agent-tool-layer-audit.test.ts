@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
+import { readSchemaStatistics } from "@/lib/agent/schema-stats";
 import { type AgentToolContext, executeAgentOperation, runReadQueryTool } from "@/lib/agent/tools";
 import { getServerAuditBuffer } from "@/lib/audit";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
@@ -207,5 +208,51 @@ describe("the tool layer records no content it is not allowed to record", () => 
     expect(recorded).toContain(outcome.artifact.correlationId);
     expect(recorded).not.toContain(SQL_SENTINEL);
     expect(recorded).not.toContain(SESSION_SENTINEL);
+  });
+});
+
+describe("a plan run's statistics read is audited under the profile it grounds under", () => {
+  /** The `action` of every agent_operation line the audit stream wrote, in order. */
+  function auditedActions(): string[] {
+    return consoleSpy.mock.calls
+      .map((call) => String(call[0]))
+      .filter((line) => line.startsWith("{"))
+      .map((line) => JSON.parse(line) as { event?: string; action?: string })
+      .filter((event) => event.event === "agent_operation")
+      .map((event) => String(event.action));
+  }
+
+  test("on an engine whose inventory comes from its provider, it is a db.schema.read and records no statement", async () => {
+    const query = mock(async () => ({
+      rows: [{ table_schema: "dbo", table_name: SQL_SENTINEL, estimated_rows: 7 }],
+      fields: ["table_schema", "table_name", "estimated_rows"],
+      rowCount: 1,
+      executionTime: 2,
+    }));
+    const statistics = await readSchemaStatistics(
+      context({
+        mode: "planning",
+        connection: { ...connection, type: "mssql" },
+        deadline: new AgentRunDeadline(60_000, stubClock(0, 0)),
+        acquireProvider: mock(async () => ({ query }) as unknown as DatabaseProvider),
+      }),
+    );
+
+    expect(statistics.kind).toBe("read");
+    // The decision and the execution, under the same descriptor the provider inventory read takes.
+    expect(auditedActions()).toEqual(["db.schema.read", "db.schema.read"]);
+    const recorded = auditedText();
+    expect(recorded).not.toContain("sys.partitions");
+    expect(recorded).not.toContain(SQL_SENTINEL);
+    expect(recorded).not.toContain(SESSION_SENTINEL);
+  });
+
+  test("on an engine that grounds through its composed catalog, it is still the bounded statement read", async () => {
+    const statistics = await readSchemaStatistics(
+      context({ mode: "planning", deadline: new AgentRunDeadline(60_000, stubClock(0, 0)) }),
+    );
+
+    expect(statistics.kind).toBe("read");
+    expect(auditedActions()).toEqual(["sql.query.read", "sql.query.read"]);
   });
 });

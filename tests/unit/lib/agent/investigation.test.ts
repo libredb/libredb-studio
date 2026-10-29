@@ -24,9 +24,11 @@ import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
-import { QueryError } from "@/lib/db/errors";
+import { ExecutionProfileError, QueryError } from "@/lib/db/errors";
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import { MongoDBProvider } from "@/lib/db/providers/document/mongodb";
+import { MSSQLProvider } from "@/lib/db/providers/sql/mssql";
+import { MySQLProvider } from "@/lib/db/providers/sql/mysql";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes";
 import { CLUSTER_USAGE_FIELDS, WORKLOAD_PROFILE_FIELDS } from "@/lib/db/providers/platform/kubernetes/agent-readings";
 import { kubectlStatementLanguage } from "@/lib/db/providers/platform/kubernetes/labels";
@@ -1256,5 +1258,163 @@ describe("the database tool dispatch", () => {
     await expect(profileTable(service, context, { input: { table: "orders" } }, new Set())).rejects.toThrow(
       "agent run loop: the kubectl language has no profile_table arm",
     );
+  });
+});
+
+/** What a plan drive on a connection whose read-only open refuses leaves behind. */
+interface ProfileDrive {
+  readonly requested: readonly string[];
+  readonly statements: readonly string[];
+  readonly status: string | undefined;
+  readonly events: readonly AgentRunEvent[];
+  readonly opening: string;
+}
+
+/**
+ * One plan drive whose acquirer serves `agent-operations` and refuses `agent-read-only`, the way a login that can write
+ * is refused by an engine that proves its read-only principal at open. The provider double lists one table, and its
+ * `query` answers `statistics` for any statement it is sent, so a statistics read through the operations profile is
+ * visible in `statements`; its `queryReadOnly` must never be reached.
+ */
+async function planDriveRefusingReadOnly(
+  connection: DatabaseConnection,
+  declared: Declarations,
+  statistics: readonly Record<string, unknown>[],
+): Promise<ProfileDrive> {
+  forgetHeldSnapshots();
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-plan-profile-"));
+  dataDirs.push(dataDir);
+  const { capabilities, labels } = declared;
+  const [listed] = capabilities.objectKinds ?? [];
+  if (listed === undefined) throw new Error(`${connection.type} declares no object kind to list`);
+  const statements: string[] = [];
+  // One container per declared level, so the table sits where the engine's own walk would find it.
+  const levels = ["app", "dbo"].slice(0, capabilities.containerLevels?.length ?? 0);
+  const provider = {
+    listContainers: async (parent: readonly string[] = []) =>
+      parent.length < levels.length
+        ? [{ path: levels.slice(0, parent.length + 1), name: levels[parent.length], level: parent.length }]
+        : [],
+    countObjects: async () => ({ [listed.id]: { count: 1 } }),
+    listObjects: async (container: readonly string[], kind: string) =>
+      kind === listed.id ? [{ path: [...container, "orders"], name: "orders", kind }] : [],
+    describeObjects: async () => ({ details: [] }),
+    query: async (sql: string) => {
+      statements.push(sql);
+      return {
+        rows: [...statistics],
+        fields: Object.keys(statistics[0] ?? {}),
+        rowCount: statistics.length,
+        executionTime: 1,
+      };
+    },
+    queryReadOnly: async () => {
+      throw new Error("a plan run that grounds under the operations profile sends no statement through queryReadOnly");
+    },
+  } as unknown as DatabaseProvider;
+  const requested: string[] = [];
+  const store = new AgentRunStore({ world: createLocalWorld({ dataDir, recoverActiveRuns: false }) });
+  const tracker = new ExecutionBudgetTracker();
+  const artifacts = new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 });
+  const service = new AgentRunService({ store, resources: { tracker, artifacts } });
+  const run = await service.start({
+    mode: "planning",
+    actor: { sessionId: "sess_1", role: "user" },
+    connectionId: connection.id,
+    objective: "Which orders are largest?",
+  });
+  const closing = ["Here is the read.", "", "```sql", "SELECT * FROM orders", "```"].join("\n");
+  const script = scriptedModel(answersProse(closing), answersProse(closing));
+
+  await runInvestigation(run.runId, {
+    service,
+    model: await modelOver(script.fetch),
+    resources: {
+      connection,
+      capabilities,
+      labels,
+      registry: createCanonicalOperationRegistry(),
+      scope: createTargetScope(connection.id),
+      tracker,
+      artifacts,
+      deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.investigation.runDeadlineMs, () => 10_000),
+      repairs: new AgentRepairLedger(),
+      acquireProvider: async (_connection, profile) => {
+        requested.push(profile);
+        if (profile === "agent-read-only") {
+          throw new ExecutionProfileError(
+            "not-a-real-login can write, so the read-only open refuses it",
+            "PROFILE_PRIVILEGES_TOO_BROAD",
+          );
+        }
+        return provider;
+      },
+    },
+  });
+
+  const view = await store.read(run.runId);
+  if (!view) throw new Error(`run ${run.runId} has no ledger`);
+  const [first] = script.turns;
+  return {
+    requested,
+    statements,
+    status: view.record.status,
+    events: view.record.events,
+    opening: first === undefined ? "" : promptText(first),
+  };
+}
+
+describe("a plan run's statistics follow the profile it grounds under", () => {
+  test("SQL Server: the statistics are read under the operations profile, and the read-only profile is never asked for", async () => {
+    const connection: DatabaseConnection = {
+      id: "conn_mssql",
+      name: "SQL Server",
+      type: "mssql",
+      host: "127.0.0.1",
+      port: 1433,
+      database: "app",
+      createdAt: new Date(0),
+    };
+    const engine = new MSSQLProvider(connection);
+
+    const drive = await planDriveRefusingReadOnly(
+      connection,
+      { capabilities: engine.getCapabilities(), labels: engine.getLabels() },
+      [{ table_schema: "dbo", table_name: "orders", estimated_rows: 1234 }],
+    );
+
+    expect(drive.status).toBe("succeeded");
+    expect(drive.requested).not.toContain("agent-read-only");
+    expect(drive.events.some((event) => event.kind === "context-captured")).toBe(true);
+    expect(drive.events.some((event) => event.kind === "context-unavailable")).toBe(false);
+    // One statement, the composed statistics read, sent through the operations profile's provider.
+    expect(drive.statements).toHaveLength(1);
+    expect(drive.statements[0]).toContain("SUM(p.rows)");
+    expect(drive.opening).toContain("Estimated table statistics follow");
+    expect(drive.opening).not.toContain("No estimated table statistics are available");
+  });
+
+  test("an engine whose inventory comes from its provider and that holds no statistics is grounded the same way", async () => {
+    const connection: DatabaseConnection = {
+      id: "conn_mysql",
+      name: "MySQL",
+      type: "mysql",
+      host: "127.0.0.1",
+      port: 3306,
+      database: "app",
+      createdAt: new Date(0),
+    };
+    const engine = new MySQLProvider(connection);
+
+    const drive = await planDriveRefusingReadOnly(
+      connection,
+      { capabilities: engine.getCapabilities(), labels: engine.getLabels() },
+      [],
+    );
+
+    expect(drive.status).toBe("succeeded");
+    expect(drive.requested).not.toContain("agent-read-only");
+    expect(drive.statements).toHaveLength(0);
+    expect(drive.opening).toContain("No estimated table statistics are available");
   });
 });

@@ -4,9 +4,11 @@
  * This is the only place in the agent runtime that reaches a database, and it does
  * so through exactly one path: `executeAuditedOperation` (`src/lib/db/operations/`)
  * against a provider acquired under the agent read-only execution profile. There is
- * no second path, no direct `provider.query()`, and no provider method reached
- * outside a registered operation — a reach that skipped this module would be a
- * defect by the milestone's own constraint, not a shortcut.
+ * no second path, no `provider.query()` with a statement anyone but this server
+ * composed, and no provider method reached outside a registered operation — a reach
+ * that skipped this module would be a defect by the milestone's own constraint, not a
+ * shortcut. The one `provider.query()` is `readStatisticsForGrounding` under the
+ * operations profile, which sends a statement it composes itself.
  *
  * Four properties are load-bearing, and each is asserted rather than asserted-in-prose:
  *
@@ -68,6 +70,7 @@ import {
   PoolExhaustedError,
   QueryError,
   ReadAllowanceExceededError,
+  TimeoutError,
 } from "@/lib/db/errors";
 import type { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import type { ExecutionBudget, ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
@@ -140,7 +143,7 @@ import type { ColumnSchema, DatabaseConnection, QueryResult } from "@/lib/types"
 import { type ProfileTargetResolution, type ResolvedProfileTarget, resolveProfileTarget } from "./inventory-address";
 import { addressableObjects } from "./inventory-objects";
 import type { AgentInventory, AgentInventoryObject, AgentUnlistedParent, AgentUnlistedParentsNotNamed } from "./types";
-import { composeCatalogRead, composeEstimatingExplain } from "./composed-sql";
+import { composeCatalogRead, composeEstimatingExplain, composeStatisticsAvailabilityProbe } from "./composed-sql";
 import {
   type AgentCatalogKind,
   type AgentCatalogRead,
@@ -2324,6 +2327,24 @@ export async function readCatalogForGrounding(
 }
 
 /**
+ * `work`, or `overrun()` once `grantedMs` has passed, whichever comes first.
+ *
+ * For a provider call that takes no budget of its own, so what this bounds is THE RUN and not the database: the call
+ * is not cancelled, and this run simply stops waiting for it.
+ */
+async function withinGrantedTime<T>(work: Promise<T>, grantedMs: number, overrun: () => Error): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const overran = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(overrun()), grantedMs);
+  });
+  try {
+    return await Promise.race([work, overran]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * The provider object read overran the time this call was granted.
  *
  * A sentinel rather than a refusal code, for the same reason `AgentCuratedReadError`
@@ -2380,6 +2401,21 @@ export type AgentObjectInventoryRead =
  */
 export function groundsUnderExecutionProfile(context: AgentToolContext): boolean {
   return context.mode === "agent" && context.workflowType !== "operations" && context.statementLanguage !== undefined;
+}
+
+/**
+ * Whether this run's grounding STATEMENTS are sent under the execution profile: its object inventory is
+ * (`groundsUnderExecutionProfile`), or its dialect grounds through the composed catalog (its overlay's
+ * `catalogCapture`), whose statements are sent under the read-only profile in every mode. The statistics read follows
+ * it (`readStatisticsForGrounding`), so a run that grounds under the operations profile never acquires the read-only
+ * one: that acquisition runs the engine's own read-only open, which refuses a login that can write and may send a
+ * write probe to find out, on a run that is documented to run no statement of the user's and to write nothing.
+ */
+function groundingStatementsUnderExecutionProfile(context: AgentToolContext): boolean {
+  return (
+    groundsUnderExecutionProfile(context) ||
+    engineServerDialect(context.connection.type).catalogCapture !== "unsupported"
+  );
 }
 
 /**
@@ -2478,22 +2514,17 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
         // database. The walk is not cancelled - it goes on reading until the engine or the
         // driver ends it - and this run simply stops waiting for it. Without the race there is
         // no bound at all, which is the only worse answer.
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const overran = new Promise<never>((_resolve, reject) => {
-          timer = setTimeout(
-            () => reject(new AgentSchemaReadTimeout(budget.statementTimeoutMs)),
-            budget.statementTimeoutMs,
-          );
-        });
         try {
-          const walked = await Promise.race([walkObjectInventory(provider, context.capabilities, declared), overran]);
+          const walked = await withinGrantedTime(
+            walkObjectInventory(provider, context.capabilities, declared),
+            budget.statementTimeoutMs,
+            () => new AgentSchemaReadTimeout(budget.statementTimeoutMs),
+          );
           inventory = walked.inventory;
           defaultContainer = walked.defaultContainer;
         } catch (error) {
           if (error instanceof AgentSchemaReadTimeout) throw error;
           throw asReadingFailure(error, context.connection.type);
-        } finally {
-          clearTimeout(timer);
         }
 
         // The projection is one row per object naming its kind, so the artifact a claim
@@ -2836,6 +2867,77 @@ export async function readStatementForGrounding(
     label: request.label,
     grounding: true,
   });
+}
+
+/** One of the two statements a statistics read sends: the availability probe, or the estimates themselves. */
+export type AgentStatisticsStatement = "availability" | "estimates";
+
+/**
+ * One statement of the run's statistics read, taken by the server while it grounds a run, under the profile the run
+ * grounds under (`groundingStatementsUnderExecutionProfile`).
+ *
+ * Under the execution profile it is the composed read every other grounding statement is: `readStatementForGrounding`
+ * for the probe and `readCatalogForGrounding` for the estimates, through `queryReadOnly`. Under the operations profile
+ * it is the curated family `readObjectInventoryForGrounding` belongs to, and audited the same way, under the
+ * `db.schema.read` descriptor with an empty input: the statement is composed HERE from the dialect's own composers,
+ * the caller names only which of the two it wants, and no text from a caller or a model reaches the engine. It is sent
+ * through `provider.query`, because the operations profile opens no read-only statement path, and it is bounded the
+ * way the curated reads are: a result over the run's row or byte budget is refused rather than cut, and a read that
+ * outlasts the time the call was granted is refused as a timeout, which `readSchemaStatistics` reports like any other
+ * read that did not complete.
+ */
+export async function readStatisticsForGrounding(
+  context: AgentToolContext,
+  statement: AgentStatisticsStatement,
+): Promise<AgentToolOutcome> {
+  const dialect = context.connection.type;
+  if (groundingStatementsUnderExecutionProfile(context)) {
+    return statement === "availability"
+      ? readStatementForGrounding(context, { sql: availabilityProbe(dialect), label: STATISTICS_AVAILABILITY_LABEL })
+      : readCatalogForGrounding(context, { kind: "statistics" });
+  }
+  const sql =
+    statement === "availability" ? availabilityProbe(dialect) : composeCatalogRead(dialect, { kind: "statistics" });
+  return runAuditedAgentCall(context, {
+    operationId: "db.schema.read",
+    fingerprintSource: `statistics:${statement}:${context.connection.id}`,
+    input: {},
+    label: statement === "availability" ? STATISTICS_AVAILABILITY_LABEL : CATALOG_LABELS.statistics,
+    grounding: true,
+    invoke: async (_validatedInput, budget, phase) => {
+      const provider = await context.acquireProvider(context.connection, AGENT_OPERATIONS_PROFILE);
+      const startedAtMs = context.clock?.() ?? Date.now();
+      phase.statementSent = true;
+      let read: QueryResult;
+      try {
+        read = await withinGrantedTime(
+          provider.query(sql),
+          budget.statementTimeoutMs,
+          () => new TimeoutError("the statistics read did not answer in time", dialect, budget.statementTimeoutMs),
+        );
+      } catch (error) {
+        throw asReadingFailure(error, dialect);
+      }
+      if (read.rows.length > budget.maxResultRows || JSON.stringify(read.rows).length > budget.maxResultBytes) {
+        throw new AgentCuratedReadError("READING_OVER_BUDGET");
+      }
+      return {
+        rows: read.rows,
+        fields: read.fields,
+        rowCount: read.rows.length,
+        executionTime: (context.clock?.() ?? Date.now()) - startedAtMs,
+      };
+    },
+  });
+}
+
+const STATISTICS_AVAILABILITY_LABEL = "statistics availability";
+
+/** The dialect's availability probe. Asked for only where `readSchemaStatistics` found one, so its absence is a defect. */
+function availabilityProbe(dialect: DatabaseConnection["type"]): string {
+  const probe = composeStatisticsAvailabilityProbe(dialect);
+  if (probe === null) throw new Error(`agent tool layer: ${dialect} has no statistics availability probe to send`);
+  return probe;
 }
 
 async function readCatalog(

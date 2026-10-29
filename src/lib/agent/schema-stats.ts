@@ -35,14 +35,17 @@
  *     defaulted to zero: a model shown silence reads it as an empty table, which is
  *     the one wrong conclusion this whole block exists to prevent.
  *
- * The reads themselves are the server's own grounding calls through `tools.ts` — the
- * same audited, read-only, budgeted, policy-gated path as every catalog read. There
- * is no second path to an engine here.
+ * The reads themselves are the server's own grounding calls through `tools.ts`
+ * (`readStatisticsForGrounding`) — the same audited, budgeted, policy-gated path as
+ * every catalog read, under the profile the run grounds under: the read-only profile
+ * where the inventory is a composed catalog read, and the operations profile where it
+ * is the provider's own, so a plan run on such an engine never asks for the read-only
+ * profile at all. There is no second path to an engine here.
  */
 
 import { composeStatisticsAvailabilityProbe } from "./composed-sql";
-import { AgentComposedSqlError, type AgentCatalogSelector } from "./composed-sql-primitives";
-import { type AgentToolContext, readCatalogForGrounding, readStatementForGrounding } from "./tools";
+import { AgentComposedSqlError } from "./composed-sql-primitives";
+import { type AgentToolContext, readStatisticsForGrounding } from "./tools";
 import { addressableObjects } from "./inventory-objects";
 import { engineServerDialect } from "./languages/engines/server";
 import { fenceUntrustedContent } from "./untrusted-content";
@@ -157,15 +160,14 @@ export async function readSchemaStatistics(context: AgentToolContext): Promise<A
   const nowMs = context.clock?.() ?? Date.now();
 
   if (probe !== null) {
-    const outcome = await readStatementForGrounding(context, { sql: probe, label: "statistics availability" });
+    const outcome = await readStatisticsForGrounding(context, "availability");
     if (outcome.kind !== "completed") return unavailable("STATISTICS_READ_REFUSED");
     const artifact = context.artifacts.get(outcome.artifact.correlationId, nowMs);
     if (artifact === undefined) return unavailable("STATISTICS_RESULT_UNAVAILABLE");
     if (artifact.value.rows.length === 0) return unavailable("STATISTICS_NEVER_COLLECTED");
   }
 
-  const selector: AgentCatalogSelector = { kind: "statistics" };
-  const outcome = await readCatalogForGrounding(context, selector);
+  const outcome = await readStatisticsForGrounding(context, "estimates");
   if (outcome.kind !== "completed") return unavailable("STATISTICS_READ_REFUSED");
   const artifact = context.artifacts.get(outcome.artifact.correlationId, nowMs);
   if (artifact === undefined) return unavailable("STATISTICS_RESULT_UNAVAILABLE");

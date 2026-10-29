@@ -8,7 +8,7 @@ import {
   packSchemaStatistics,
   readSchemaStatistics,
 } from "@/lib/agent/schema-stats";
-import type { AgentToolContext } from "@/lib/agent/tools";
+import { type AgentToolContext, readStatisticsForGrounding } from "@/lib/agent/tools";
 import type { AgentInventory, AgentInventoryObject, AgentRunMode } from "@/lib/agent/types";
 import { UNTRUSTED_CONTENT_BEGIN, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrusted-content";
 import { QueryError } from "@/lib/db/errors";
@@ -70,16 +70,32 @@ const frozenClock = () => 1_000;
 interface Harness {
   readonly context: AgentToolContext;
   readonly artifacts: ExecutionArtifactStore<QueryResult>;
+  /** Every statement sent, through either provider method, in order. */
   readonly statements: () => string[];
+  /** The method each statement went through: `queryReadOnly` under the read-only profile, `query` under operations. */
+  readonly methods: () => string[];
+  /** Every profile the read acquired, in order. */
+  readonly profiles: () => string[];
 }
 
 function harness(
   type: DatabaseType,
   answer: (sql: string) => Promise<QueryResult>,
   mode: AgentRunMode = "planning",
+  statementLanguage?: AgentToolContext["statementLanguage"],
 ): Harness {
-  const queryReadOnly = mock(answer);
-  const provider = { queryReadOnly } as unknown as DatabaseProvider;
+  const sent: { readonly method: string; readonly sql: string }[] = [];
+  const provider = {
+    queryReadOnly: async (sql: string) => {
+      sent.push({ method: "queryReadOnly", sql });
+      return answer(sql);
+    },
+    query: async (sql: string) => {
+      sent.push({ method: "query", sql });
+      return answer(sql);
+    },
+  } as unknown as DatabaseProvider;
+  const acquireProvider = mock(async (_connection: DatabaseConnection, _profile: string) => provider);
   const artifacts = new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 });
 
   return {
@@ -88,6 +104,7 @@ function harness(
       modelId: "unmeasured-model-for-tests",
       mode,
       workflowType: "investigation",
+      ...(statementLanguage === undefined ? {} : { statementLanguage }),
       actor: { sessionId: "session-1", role: "user" },
       connection: connectionOf(type),
       capabilities,
@@ -101,11 +118,13 @@ function harness(
         frozenClock,
       ),
       repairs: new AgentRepairLedger(),
-      acquireProvider: mock(async () => provider),
+      acquireProvider,
       clock: frozenClock,
     },
     artifacts,
-    statements: () => queryReadOnly.mock.calls.map((call) => String(call[0])),
+    statements: () => sent.map((call) => call.sql),
+    methods: () => sent.map((call) => call.method),
+    profiles: () => acquireProvider.mock.calls.map((call) => String(call[1])),
   };
 }
 
@@ -442,6 +461,107 @@ describe("readSchemaStatistics — SQL Server", () => {
     // distributions, behind a DBCC command this boundary refuses, so the sentence that
     // says the engine records none would be false.
     expect(packed).not.toContain("records no per-column distinct count");
+  });
+});
+
+describe("readSchemaStatistics — the profile it reads under", () => {
+  /**
+   * A plan run reads its statistics under the profile its inventory was read under. On an engine whose inventory comes
+   * from its provider, that is the operations profile, and the read-only profile is never acquired: acquiring it runs
+   * the engine's own read-only open, which refuses a login that can write and may run a write probe to find out.
+   */
+  test("SQL Server in plan mode: the composed read goes through the operations profile, never the read-only one", async () => {
+    const h = harness("mssql", answerMssql);
+
+    const statistics = await readOf(h);
+
+    expect(statistics.kind).toBe("read");
+    expect(h.profiles()).toEqual(["agent-operations"]);
+    expect(h.methods()).toEqual(["query"]);
+    expect(h.statements()[0]).toContain("SUM(p.rows)");
+    // The estimates are the same ones the read-only path reads: the statement is the same composed one.
+    if (statistics.kind !== "read") throw new Error("expected a reading");
+    expect(statistics.byTable.get("public.orders")).toEqual({ estimatedRows: 1000, columns: [] });
+  });
+
+  test("SQL Server in agent mode grounds under its execution profile, so its statistics do too", async () => {
+    const h = harness("mssql", answerMssql, "agent", "sql");
+
+    expect((await readOf(h)).kind).toBe("read");
+    expect(h.profiles()).toEqual(["agent-read-only"]);
+    expect(h.methods()).toEqual(["queryReadOnly"]);
+  });
+
+  test.each([
+    ["postgres", answerPostgres, 1],
+    ["sqlite", answerSqlite(true), 2],
+  ] as const)(
+    "%s reads its composed catalog under the read-only profile, so its statistics are unchanged",
+    async (type, answer, sent) => {
+      const h = harness(type, answer);
+
+      expect((await readOf(h)).kind).toBe("read");
+      expect(h.profiles()).toEqual(Array(sent).fill("agent-read-only"));
+      expect(h.methods()).toEqual(Array(sent).fill("queryReadOnly"));
+    },
+  );
+
+  test("a read that fails under the operations profile is a refused read, said as one", async () => {
+    const h = harness("mssql", async () => {
+      throw new QueryError("The SELECT permission was denied on the object 'partitions'", "mssql");
+    });
+
+    expect(await readOf(h)).toEqual({ kind: "unavailable", reasonCode: "STATISTICS_READ_REFUSED" });
+    expect(h.profiles()).toEqual(["agent-operations"]);
+  });
+
+  test("a driver failure that is no database error is still a refused read rather than a crash", async () => {
+    const h = harness("mssql", async () => {
+      throw new TypeError("the driver could not read the answer");
+    });
+
+    expect(await readOf(h)).toEqual({ kind: "unavailable", reasonCode: "STATISTICS_READ_REFUSED" });
+  });
+
+  test("more rows than the run's budget is refused, never cut, as the read-only path refuses it", async () => {
+    const rows = Array.from(
+      { length: AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxResultRows + 1 },
+      (_, i) => ({
+        table_schema: "dbo",
+        table_name: `t${i}`,
+        estimated_rows: i,
+      }),
+    );
+    const h = harness("mssql", async () => result(rows));
+
+    expect(await readOf(h)).toEqual({ kind: "unavailable", reasonCode: "STATISTICS_READ_REFUSED" });
+  });
+
+  test("more bytes than the run's budget is refused as well", async () => {
+    const wide = "x".repeat(AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxResultBytes);
+    const h = harness("mssql", async () => result([{ table_schema: "dbo", table_name: wide, estimated_rows: 1 }]));
+
+    expect(await readOf(h)).toEqual({ kind: "unavailable", reasonCode: "STATISTICS_READ_REFUSED" });
+  });
+
+  test("a read that outlasts the time the call was granted is refused, and the run stops waiting for it", async () => {
+    const h = harness("mssql", () => new Promise<QueryResult>(() => {}));
+    // 250ms is `AGENT_MINIMUM_CALL_MS`, the smallest call this deadline will admit, so the granted timeout is the
+    // whole of what the run has left.
+    const context = { ...h.context, deadline: new AgentRunDeadline(250, frozenClock) };
+
+    expect(await readSchemaStatistics(context)).toEqual({ kind: "unavailable", reasonCode: "STATISTICS_READ_REFUSED" });
+  });
+});
+
+describe("readStatisticsForGrounding", () => {
+  test("a probe asked of a dialect that has none is the server's own defect, and nothing is acquired", async () => {
+    const h = harness("mssql", answerMssql);
+
+    await expect(readStatisticsForGrounding(h.context, "availability")).rejects.toThrow(
+      "agent tool layer: mssql has no statistics availability probe to send",
+    );
+    expect(h.profiles()).toEqual([]);
   });
 });
 
