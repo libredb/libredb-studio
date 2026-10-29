@@ -51,7 +51,8 @@ const GATED_MODULES: Readonly<Record<string, readonly string[]>> = {
     "selfReviewSignInRole",
     "reviewedSessionRole",
   ],
-  "src/lib/kubernetes-access/review.ts": ["requestAccessReview"],
+  "src/lib/kubernetes-access/review.ts": ["requestAccessReview", "serviceAccountCall"],
+  "src/lib/kubernetes-access/platform-check.ts": ["clusterPlatform"],
   "src/lib/kubernetes-access/decisions.ts": ["accessReviewAllows", "accessReviewVerdict"],
   "src/lib/openshift-auth/token-store.ts": ["openShiftBearerToken", "endOpenShiftSession"],
   "src/lib/openshift-auth/http.ts": ["openShiftApiCall"],
@@ -166,6 +167,14 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   requestAccessReview: {
     "src/lib/kubernetes-access/decisions.ts":
       "the decision cache, the only sender of a review: one request in flight per key, and failures never cached",
+  },
+  serviceAccountCall: {
+    "src/lib/kubernetes-access/platform-check.ts":
+      "the platform check's GET of config.openshift.io/v1 with the pod token, through the ServiceAccount review's own transport: its answer is only a 200 or 404 verdict and never names a person, a Secret or a connection",
+  },
+  clusterPlatform: {
+    "src/lib/kubernetes-access/review.ts":
+      "the ServiceAccount review asks it before each review it would send and refuses with platform on a cluster that serves config.openshift.io/v1: the verdict can only stop a review, never answer one",
   },
   accessReviewVerdict: {
     "src/lib/kubernetes-access/gate.ts":
@@ -355,6 +364,8 @@ const PINNED_EXACTLY: Readonly<Record<string, readonly string[]>> = {
     "src/lib/openshift-auth/identity.ts",
     "src/lib/openshift-auth/metadata.ts",
   ],
+  serviceAccountCall: ["src/lib/kubernetes-access/platform-check.ts"],
+  clusterPlatform: ["src/lib/kubernetes-access/review.ts"],
 };
 
 function sourceFiles(dir: string): string[] {
