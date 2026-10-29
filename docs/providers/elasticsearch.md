@@ -867,6 +867,24 @@ curl -u elastic -XPUT -H 'content-type: application/json' 'https://<node>:9200/_
 
 An index outside the role answers as if it did not exist ("Unknown index"), measured on 9.1.4.
 
+#### What plan mode and the editor tree need beyond that
+
+That role is enough for agent mode and not for plan mode.
+A plan run grounds through the provider's object surface, the same reads the editor's object tree makes, signed in with the connection's own login: the index listing reads `/_cat/indices`, the template listing `/_index_template`, the pipeline listing `/_ingest/pipeline`, and the aliases, data streams and mappings the agent's role already reads.
+The capture is all or nothing, so one refused listing leaves the run with no inventory ([B88](../BACKLOG.md)).
+Measured on 9.1.4 with security on, through `captureContextSnapshot` in planning mode under the operations profile: on the agent's role alone the read is refused (`CATALOG_READ_REFUSED`), and the tree answers 403 on Indices, Ingest Pipelines and Index Templates; with the cluster privileges `monitor` and `read_pipeline` and the index privilege `monitor` added, it captures and every tree folder lists.
+Each of the three is needed: without cluster `monitor` the index and template listings answer 403, without `read_pipeline` the pipeline listing does, and without index `monitor` the index listing does, and each refusal ends the capture.
+Cluster and index `monitor` also serve the monitoring tab's health read, which answers 403 without either.
+Cluster `monitor` includes `cluster:monitor/main`, so the agent profile's version read still opens under the wider role.
+
+A connection whose agent credential is a user of its own keeps the two apart: the agent user holds the role above, and the connection's own user holds the wider one.
+A seed connection carries no separate agent user ([B85](../BACKLOG.md)), so its one login serves agent mode, plan mode and the tree, and holds both:
+
+```bash
+curl -u elastic -XPUT -H 'content-type: application/json' 'https://<node>:9200/_security/role/libredb_seed_read' \
+  -d '{"cluster":["cluster:monitor/main","monitor","read_pipeline"],"indices":[{"names":["probe_*"],"privileges":["read","view_index_metadata","monitor"]}]}'
+```
+
 #### The statement path
 
 Each call is one statement on the SQL endpoint, never through `query()`, in order: the profile is checked, the budget is checked, and the estimate-plan session mode is refused, because no estimating plan is composed for this engine.
@@ -905,7 +923,7 @@ MCP's statement read stays closed on Elasticsearch (`MCP_STATEMENT_READ.elastics
 
 #### Boundary record
 
-`bun tests/live/elasticsearch-agent-boundary.ts`, run on 2026-10-29 against single 9.1.4 nodes seeded per [§11.4](#114-optional-reproducing-the-live-pass), passes 51 checks with security off and 58 with security on, through the production path (`createDatabaseProvider` with the profile's execution context, `connect`, `queryReadOnly`) and with no admission of Studio's in front:
+`bun tests/live/elasticsearch-agent-boundary.ts`, run on 2026-10-29 against single 9.1.4 nodes seeded per [§11.4](#114-optional-reproducing-the-live-pass), passes 51 checks with security off and 64 with security on, through the production path (`createDatabaseProvider` with the profile's execution context, `connect`, `queryReadOnly`) and with no admission of Studio's in front:
 
 - the agent profile reads the node's version (9.1.4) and opens it, the operations profile opens it too, and an editor handle's `queryReadOnly` refuses with nothing sent;
 - 15 write and DDL texts (INSERT, UPDATE, DELETE, CREATE TABLE and INDEX, DROP, ALTER, TRUNCATE, MERGE, `SELECT ... INTO`, a write behind `EXPLAIN`, `DEBUG` and `WITH`, a second statement) are each sent by `queryReadOnly` and refused by the grammar in its own words, and sent raw each answer 400 `parsing_exception`;
@@ -914,7 +932,8 @@ MCP's statement read stays closed on Elasticsearch (`MCP_STATEMENT_READ.elastics
 - a plain read and an aggregation past the row budget (`101 rows > 100 allowed`), a read past the byte budget and a statement past a 1 ms deadline are each refused, never truncated, and after each refusal the node holds no open search context;
 - the estimate-plan mode is refused, and a count, an answer of exactly the row budget (1,500 rows) and an aggregation within the budget each answer whole;
 - the agent's catalog read: the composed `SYS COLUMNS`, for every table and for `probe_orders`, answers through `queryReadOnly` and maps into column rows, and the cluster reads back the same afterwards;
-- with security on, the script creates the `libredb_agent_read` role and an agent user holding it alone: without `cluster:monitor/main` the open cannot read the version and refuses the agent profile; with that action added, the user still reads no cluster health (403), its document write is refused 403, an index outside its role answers "Unknown index" and is absent from its catalog read, and every check above holds signed in as it.
+- with security on, the script creates the `libredb_agent_read` role and an agent user holding it alone: without `cluster:monitor/main` the open cannot read the version and refuses the agent profile; with that action added, the user still reads no cluster health (403), its document write is refused 403, an index outside its role answers "Unknown index" and is absent from its catalog read, and every check above holds signed in as it;
+- with security on, plan mode: the plan run's schema read, signed in as that user under the operations profile, is refused on the agent's role alone, captures once the role adds cluster `monitor` and `read_pipeline` and index `monitor`, is refused again with any one of the three taken away, and the agent profile still opens under the wider role.
 
 ## 6. Schema introspection
 

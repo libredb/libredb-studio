@@ -25,7 +25,11 @@
  *  - with security on (LIBREDB_ES_AGENT_USER set): the agent user holds only `read` and `view_index_metadata` on
  *    `probe_*` and the cluster action `cluster:monitor/main`; without that action the agent profile is refused at open,
  *    since the version cannot be read; its own document write is refused 403, and an index outside its role is
- *    refused.
+ *    refused;
+ *  - with security on, plan-mode grounding: the plan run's schema read (`captureContextSnapshot` in planning mode,
+ *    under the operations profile, signed in as the same user) is refused on the agent's role alone, captures once the
+ *    role adds the cluster privileges `monitor` and `read_pipeline` and the index privilege `monitor`, and is refused
+ *    again with any one of the three taken away; the agent profile still opens under that wider role.
  *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name. Run it against a node seeded per section 11.4
  * of docs/providers/elasticsearch.md:
@@ -41,9 +45,18 @@
 // oxlint-disable no-await-in-loop -- the checks run one at a time on purpose: each reads what the node holds after the one before.
 import { randomBytes } from "node:crypto";
 import { composeCatalogRead } from "@/lib/agent/composed-sql";
+import { captureContextSnapshot } from "@/lib/agent/context-snapshot";
+import { AgentRunDeadline } from "@/lib/agent/deadline";
+import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { engineServerDialect } from "@/lib/agent/languages/engines/server";
+import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
+import type { AgentToolContext } from "@/lib/agent/tools";
 import { createDatabaseProvider, executionContextFor } from "@/lib/db/factory";
-import type { DatabaseProvider, ReadOnlyStatementBudget } from "@/lib/db/types";
+import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
+import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
+import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
+import { createTargetScope } from "@/lib/db/operations/policy";
+import type { DatabaseProvider, QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 
 const ORIGIN = new URL(process.env.LIBREDB_ES_ORIGIN ?? "http://127.0.0.1:9200");
@@ -201,8 +214,86 @@ async function createAgentUser(): Promise<void> {
   check(health.status === 403, `security: that action reads no cluster health -> ${health.status}`);
 }
 
+/** What plan mode adds to the agent's role, each measured as needed on 9.1.4 (section 5.9 of the provider doc). */
+const PLAN_CLUSTER = ["monitor", "read_pipeline"] as const;
+const PLAN_INDICES = ["monitor"] as const;
+
+/** The plan run's schema read, as a plan run takes it: planning mode, under the operations profile. */
+async function planGrounding(): Promise<Awaited<ReturnType<typeof captureContextSnapshot>>> {
+  const provider = await open("agent-operations");
+  const clock = () => Date.now();
+  const context: AgentToolContext = {
+    runId: "elasticsearch-live-plan",
+    modelId: "unmeasured-model-for-tests",
+    mode: "planning",
+    workflowType: "investigation",
+    actor: { sessionId: "elasticsearch-live", role: "user" },
+    connection: connection(),
+    capabilities: provider.getCapabilities(),
+    labels: provider.getLabels(),
+    registry: createCanonicalOperationRegistry(),
+    scope: createTargetScope(connection().id),
+    tracker: new ExecutionBudgetTracker(),
+    artifacts: new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 }),
+    deadline: new AgentRunDeadline(AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxTotalRunMs * 2, clock),
+    repairs: new AgentRepairLedger(),
+    acquireProvider: async () => provider,
+    clock,
+  };
+  try {
+    return await captureContextSnapshot(context);
+  } finally {
+    await provider.disconnect();
+  }
+}
+
+async function setAgentRole(cluster: readonly string[], indexPrivileges: readonly string[]): Promise<void> {
+  const role = await send("PUT", `/_security/role/${AGENT_ROLE}`, {
+    cluster,
+    indices: [{ names: ["probe_*"], privileges: indexPrivileges }],
+  });
+  if (role.status !== 200) throw new Error(`role update: ${role.status} ${role.text}`);
+}
+
+/**
+ * Plan mode grounds through the provider's object surface with the connection's own login, and a seed carries one
+ * login only (B85), so on a seed that login holds the agent's role and plan mode's additions together.
+ */
+async function checkPlanGrounding(): Promise<void> {
+  if (!SECURED) return;
+  const agentCluster = ["cluster:monitor/main"];
+  const agentIndices = AGENT_INDICES[0].privileges;
+  const refused = await planGrounding();
+  check(
+    refused.kind === "unavailable" && refused.reasonCode === "CATALOG_READ_REFUSED",
+    `plan: on the agent's role alone the plan run's schema read is refused -> ${refused.kind}`,
+  );
+  await setAgentRole([...agentCluster, ...PLAN_CLUSTER], [...agentIndices, ...PLAN_INDICES]);
+  const grounded = await planGrounding();
+  const kinds = grounded.kind === "captured" ? [...new Set(grounded.snapshot.objects.map((o) => o.kind))].sort() : [];
+  check(
+    grounded.kind === "captured" && kinds.includes("index"),
+    `plan: with cluster monitor and read_pipeline and index monitor added it captures -> ${grounded.kind} ${kinds.join(", ")}`,
+  );
+  const agent = await open("agent-read-only");
+  check(agent.isConnected(), "plan: the agent profile still opens under the wider role");
+  await agent.disconnect();
+  const without: readonly [string, readonly string[], readonly string[]][] = [
+    ["cluster monitor", [...agentCluster, "read_pipeline"], [...agentIndices, ...PLAN_INDICES]],
+    ["read_pipeline", [...agentCluster, "monitor"], [...agentIndices, ...PLAN_INDICES]],
+    ["index monitor", [...agentCluster, ...PLAN_CLUSTER], agentIndices],
+  ];
+  for (const [name, cluster, indexPrivileges] of without) {
+    await setAgentRole(cluster, indexPrivileges);
+    const capture = await planGrounding();
+    check(capture.kind === "unavailable", `plan: without ${name} the schema read is refused again -> ${capture.kind}`);
+  }
+  await setAgentRole(agentCluster, agentIndices);
+}
+
 async function main(): Promise<void> {
   await createAgentUser();
+  await checkPlanGrounding();
   const agent = await open("agent-read-only");
   check(agent.isConnected(), "open: the agent profile opens the node");
   const operations = await open("agent-operations");
