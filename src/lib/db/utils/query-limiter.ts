@@ -496,9 +496,12 @@ function analyzeUnderGrammar(sql: string, grammar: SqlGrammar): ParsedQueryInfo 
     }
   }
 
-  // ANSI/Oracle/Db2/MSSQL/PostgreSQL: [OFFSET m [ROW|ROWS]] FETCH {FIRST|NEXT} [n] {ROW|ROWS} {ONLY|WITH TIES}.
-  // Omitting the count (`FETCH FIRST ROW ONLY`) is standard SQL for 1 row, and `WITH TIES` is an alternative
-  // to `ONLY`. A preceding `OFFSET m [ROW|ROWS]` is part of the same row-limiting clause.
+  // OFFSET/FETCH row limiting, read as one clause: [OFFSET m [ROW|ROWS]] FETCH {FIRST|NEXT} [n] {ROW|ROWS}
+  // {ONLY|WITH TIES}, an omitted count (`FETCH FIRST ROW ONLY`) meaning 1 row. That is every shape the engines
+  // accept between them, not what each one accepts: PostgreSQL takes all of it, Oracle needs ROW|ROWS after
+  // OFFSET, Db2 has no WITH TIES, and SQL Server takes FETCH only after `OFFSET m {ROW|ROWS}`, always with a count
+  // and only with ONLY. A shape the engine rejects still reads as the statement's own bound and is kept as written
+  // (without forceLimit), so the engine reports its own error rather than one about a clause Studio added.
   if (!hasLimit) {
     const fetchMatch = clauseStripped.match(
       new RegExp(

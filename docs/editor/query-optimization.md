@@ -377,6 +377,13 @@ The same reading of the end answers "is this statement already bounded". The `LI
 - a real bound followed by a comment (`SELECT … LIMIT 10 -- deliberate`) is still detected, honoured
   and never doubled — a second bound is a syntax error, not extra rows.
 
+The `FETCH` probe reads the whole row-limiting clause, `[OFFSET m [ROW|ROWS]] FETCH {FIRST|NEXT} [n]
+{ROW|ROWS} {ONLY|WITH TIES}` (#1930): a `FETCH` with no count is a bound of 1 row, `WITH TIES` is a
+bound of the count written even though ties can return more rows, and a preceding `OFFSET m` is the
+statement's own offset. The probe reads that shape whether or not the engine accepts it, so a form
+SQL Server refuses (a `FETCH` with no `OFFSET` before it, with no count, or with `WITH TIES`) is left
+as written and SQL Server reports its own error.
+
 Reading where a statement ends and **cutting** it there are separate answers, because they are not
 equally risky: a probe that stops early merely finds no bound, while a clause inserted early lands in
 the middle of the statement and the server rejects it outright. Three shapes are therefore read but not

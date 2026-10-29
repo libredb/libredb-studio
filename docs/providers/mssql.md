@@ -140,7 +140,7 @@ and deliberately blunt: a column named `offset`, or a page belonging to a subque
 decline, so such a statement keeps its full result set and is reported honestly as unbounded (#293).
 
 One page form was invisible even where the end **is** cuttable: **`OFFSET n ROWS` with no `FETCH`
-tail** is a complete T-SQL page, and the shared probes recognise only a `FETCH … ROWS ONLY` tail or a
+tail** is a complete T-SQL page, and the shared probes recognise only a `FETCH` tail or a
 bare `OFFSET n`. `SELECT … ORDER BY id OFFSET 10 ROWS` therefore collected a `TOP` — and with an offset
 requested, a second `OFFSET … FETCH` appended beside the first. It is now read here rather than in the
 shared limiter, since the form is this dialect's own and no other dialect's probes should move for it:
