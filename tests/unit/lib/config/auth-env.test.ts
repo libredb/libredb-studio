@@ -11,6 +11,7 @@ import {
   SESSION_TTL_DEFAULT_SECONDS,
   SESSION_TTL_MAX_SECONDS,
   SESSION_TTL_MIN_SECONDS,
+  SESSION_TTL_OPENSHIFT_DEFAULT_SECONDS,
   sessionTtlSeconds,
 } from "@/lib/config/auth-env";
 
@@ -164,6 +165,38 @@ describe("config/auth-env sessionTtlSeconds", () => {
     expect(sessionTtlSeconds()).toBe(300);
     process.env.AUTH_SESSION_TTL_SECONDS = String(SESSION_TTL_MAX_SECONDS);
     expect(sessionTtlSeconds()).toBe(86400);
+  });
+
+  describe("by sign-in mode", () => {
+    const origMode = process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+
+    afterEach(() => {
+      if (origMode === undefined) delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+      else process.env.NEXT_PUBLIC_AUTH_PROVIDER = origMode;
+    });
+
+    test("openshift mode defaults to 28800 seconds when unset or blank", () => {
+      process.env.NEXT_PUBLIC_AUTH_PROVIDER = "openshift";
+      expect(SESSION_TTL_OPENSHIFT_DEFAULT_SECONDS).toBe(28800);
+      delete process.env.AUTH_SESSION_TTL_SECONDS;
+      expect(sessionTtlSeconds()).toBe(28800);
+      process.env.AUTH_SESSION_TTL_SECONDS = "  ";
+      expect(sessionTtlSeconds()).toBe(28800);
+    });
+
+    test("an explicit 600 wins in openshift mode", () => {
+      process.env.NEXT_PUBLIC_AUTH_PROVIDER = "openshift";
+      process.env.AUTH_SESSION_TTL_SECONDS = "600";
+      expect(sessionTtlSeconds()).toBe(600);
+    });
+
+    test("every other mode keeps 86400, an unknown mode value included", () => {
+      delete process.env.AUTH_SESSION_TTL_SECONDS;
+      for (const mode of ["local", "oidc", "OpenShift"]) {
+        process.env.NEXT_PUBLIC_AUTH_PROVIDER = mode;
+        expect(sessionTtlSeconds()).toBe(86400);
+      }
+    });
   });
 
   test("throws AuthConfigError naming the variable for a non-integer or out-of-range value", () => {
