@@ -1280,8 +1280,11 @@ async function planDriveRefusingReadOnly(
   connection: DatabaseConnection,
   declared: Declarations,
   statistics: readonly Record<string, unknown>[],
+  { reuseHeld = false }: { readonly reuseHeld?: boolean } = {},
 ): Promise<ProfileDrive> {
-  forgetHeldSnapshots();
+  // A cold process, unless the drive is the one after it on the same connection: that one is grounded on the inventory
+  // the first held, and still reads its own statistics.
+  if (!reuseHeld) forgetHeldSnapshots();
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "agent-plan-profile-"));
   dataDirs.push(dataDir);
   const { capabilities, labels } = declared;
@@ -1392,6 +1395,35 @@ describe("a plan run's statistics follow the profile it grounds under", () => {
     expect(drive.statements[0]).toContain("SUM(p.rows)");
     expect(drive.opening).toContain("Estimated table statistics follow");
     expect(drive.opening).not.toContain("No estimated table statistics are available");
+  });
+
+  test("SQL Server: a second plan run grounded on the held inventory reads its statistics the same way", async () => {
+    const connection: DatabaseConnection = {
+      id: "conn_mssql_reused",
+      name: "SQL Server",
+      type: "mssql",
+      host: "127.0.0.1",
+      port: 1433,
+      database: "app",
+      createdAt: new Date(0),
+    };
+    const engine = new MSSQLProvider(connection);
+    const declared = { capabilities: engine.getCapabilities(), labels: engine.getLabels() };
+    const statistics = [{ table_schema: "dbo", table_name: "orders", estimated_rows: 1234 }];
+
+    const fresh = await planDriveRefusingReadOnly(connection, declared, statistics);
+    const reused = await planDriveRefusingReadOnly(connection, declared, statistics, { reuseHeld: true });
+
+    expect(fresh.events.some((event) => event.kind === "context-captured")).toBe(true);
+    expect(reused.events.some((event) => event.kind === "context-reused")).toBe(true);
+    expect(reused.events.some((event) => event.kind === "context-captured")).toBe(false);
+    expect(reused.status).toBe("succeeded");
+    expect(reused.requested).not.toContain("agent-read-only");
+    // No inventory walk this time: the one statement is the statistics read, under the operations profile.
+    expect(reused.requested).toEqual(["agent-operations"]);
+    expect(reused.statements).toHaveLength(1);
+    expect(reused.statements[0]).toContain("SUM(p.rows)");
+    expect(reused.opening).toContain("Estimated table statistics follow");
   });
 
   test("an engine whose inventory comes from its provider and that holds no statistics is grounded the same way", async () => {
