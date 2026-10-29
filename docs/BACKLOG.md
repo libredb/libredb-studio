@@ -2083,6 +2083,7 @@ The script loads the fixture only when its count query prints exactly `0`, and p
 
 Found 2026-10-03 by the browser pass of #1246.
 Seen again on 2026-10-04, on three fresh volumes in a row (12.1.0.0 twice, 11.5.9.0 once), each printing the skip message over an empty `APP`; run by hand moments after "Setup has completed", the same count query answered `SQL1024N A database connection does not exist`, which the script reads as a loaded fixture.
+Measured 2026-10-29: the count runs in a pipeline (`db2 -x ... | tr -d ' '`), and a db2 command in a pipeline does not share the connection the shell made, so it answers `SQL1024N` whenever it runs; `VALUES 1` piped the same way answers it too, and read through a file it answers 1. `docker/db2-init/02-agent-principal.sh` reads its own count through a file for that reason.
 
 **Done when:** the script tells a failed or warning count query from a non-zero count and fails loudly on the first, a fresh volume gets the fixture, and the check that the fixture loaded is part of the service's own start.
 
