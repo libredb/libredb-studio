@@ -775,3 +775,99 @@ Studio would refuse to start with fails the render instead, naming the value to 
 {{- end }}
 {{- end }}
 {{- end }}
+
+{{/*
+Whether Studio signs people in with their OpenShift account (authProvider: openshift, trimmed and
+lower-cased as the app reads NEXT_PUBLIC_AUTH_PROVIDER). Every openshift-mode object and variable
+gates on it.
+*/}}
+{{- define "libredb-studio.openshiftSignIn" -}}
+{{- if eq (.Values.authProvider | toString | trim | lower) "openshift" }}
+{{- true }}
+{{- end }}
+{{- end }}
+
+{{/*
+Where openshift mode mounts its projected volume: the OAuth client token is oauth-client-token
+(OPENSHIFT_OAUTH_TOKEN_FILE) and the cluster's CA is ca.crt (OPENSHIFT_API_CA_FILE).
+*/}}
+{{- define "libredb-studio.openshiftSignInDir" -}}
+/var/run/secrets/libredb/openshift
+{{- end }}
+
+{{/*
+The audience of the projected token Studio sends to the OAuth server as its client secret. Fixed,
+not a value: the one requirement is that it is not the API server's audience, so the token can do
+nothing at the API server.
+*/}}
+{{- define "libredb-studio.openshiftOAuthAudience" -}}
+libredb-studio-oauth-client
+{{- end }}
+
+{{/*
+The OAuth client id of a ServiceAccount client, system:serviceaccount:<namespace>:<account>. The
+chart annotates the account with the redirect it accepts, so it must be an account the chart
+creates, and never the namespace's default one, which every other pod there runs as.
+*/}}
+{{- define "libredb-studio.openshiftClientId" -}}
+{{- if not .Values.serviceAccount.create }}
+{{- fail "authProvider=openshift requires serviceAccount.create=true: Studio's ServiceAccount is the OAuth client, and the chart can annotate only an account it creates" }}
+{{- end }}
+{{- $account := include "libredb-studio.serviceAccountName" . }}
+{{- if eq $account "default" }}
+{{- fail "authProvider=openshift refuses serviceAccount.name=default: the namespace's default ServiceAccount, which every other pod there runs as, would become the OAuth client; name an account of Studio's own or leave serviceAccount.name empty" }}
+{{- end }}
+{{- printf "system:serviceaccount:%s:%s" .Release.Namespace $account }}
+{{- end }}
+
+{{/*
+Whether the OLM operator renders this release (operator.managed, which only operator/watches.yaml
+sets). Read with dig over a defaulted dict, so a --reuse-values upgrade from a chart without the
+block renders as a Helm install, and compared as text, so only true counts.
+*/}}
+{{- define "libredb-studio.operatorManaged" -}}
+{{- if eq (dig "managed" false (.Values.operator | default dict) | toString) "true" }}
+{{- true }}
+{{- end }}
+{{- end }}
+
+{{/*
+Whether this release may render cross-namespace and cluster-scoped objects (O14): always for a Helm
+install, and under operator.managed only for the release in operator.clusterStudioNamespace, the
+namespace a cluster admin named in the operator's Subscription. Any namespace editor may create a
+LibreDBStudio and the operator reconciles it cluster-wide, so without this an editor would have the
+operator create Roles in other namespaces or cluster-scoped objects.
+*/}}
+{{- define "libredb-studio.clusterStudioNamespaceOK" -}}
+{{- if not (include "libredb-studio.operatorManaged" .) }}
+{{- true }}
+{{- else }}
+{{- $namespace := dig "clusterStudioNamespace" "" (.Values.operator | default dict) | toString | trim }}
+{{- if and $namespace (eq $namespace .Release.Namespace) }}
+{{- true }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+Fails the render, naming operator.clusterStudioNamespace, when clusterStudioNamespaceOK does not
+hold. Called as include "libredb-studio.clusterStudioNamespaceGuard" (dict "ctx" $ "what" "<the
+object>").
+*/}}
+{{- define "libredb-studio.clusterStudioNamespaceGuard" -}}
+{{- if not (include "libredb-studio.clusterStudioNamespaceOK" .ctx) }}
+{{- $namespace := dig "clusterStudioNamespace" "" (.ctx.Values.operator | default dict) | toString | trim }}
+{{- fail (printf "operator.managed is set and %s: the operator renders cross-namespace and cluster-scoped objects only for the LibreDBStudio in the namespace operator.clusterStudioNamespace names (LIBREDB_CLUSTER_STUDIO_NAMESPACE in the operator's Subscription), which is %s, not this release's namespace %s" .what (ternary (printf "%q" $namespace) "unset" (ne $namespace "")) .ctx.Release.Namespace) }}
+{{- end }}
+{{- end }}
+
+{{/*
+The openshift-mode render guards. Each mirrors a refusal of Studio's openshift preflight or a
+constraint of this mode, so a values set Studio would refuse to start with fails the render
+instead, naming the value to fix. Included from deployment.yaml.
+*/}}
+{{- define "libredb-studio.openshiftModeGuards" -}}
+{{- if include "libredb-studio.openshiftSignIn" . }}
+{{- $_ := include "libredb-studio.openshiftClientId" . }}
+{{- end }}
+{{- end }}

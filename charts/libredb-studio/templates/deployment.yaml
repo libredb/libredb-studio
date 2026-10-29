@@ -14,6 +14,7 @@ that does not exist and never start. Refuse the combination instead.
 {{- if and .Values.seedConnections.enabled (not .Values.seedConnections.config) (not .Values.seedConnections.existingConfigMap) (not (get .Values.seedConnections "existingSecret")) }}
 {{- fail "seedConnections.enabled requires seedConnections.config (inline), seedConnections.existingConfigMap or seedConnections.existingSecret - with none, the pod would mount a ConfigMap that does not exist" }}
 {{- end }}
+{{- include "libredb-studio.openshiftModeGuards" . }}
 {{- include "libredb-studio.rancherModeGuards" . }}
 {{- /*
 The permission-fix init container needs root, which OpenShift's restricted-v2

@@ -224,3 +224,66 @@ describe("authProvider openshift and the openshift sign-in values", () => {
     ]);
   });
 });
+
+describe("the ServiceAccount the OAuth client id names", () => {
+  test("serviceAccount.create=false fails naming serviceAccount.create", () => {
+    refused([...OPENSHIFT, ...set("serviceAccount.create=false", "serviceAccount.name=studio")], "serviceAccount.create");
+  });
+
+  test("serviceAccount.name=default fails naming serviceAccount.name", () => {
+    refused([...OPENSHIFT, ...set("serviceAccount.name=default")], "serviceAccount.name");
+  });
+
+  test("the same values outside openshift mode still render", () => {
+    render(set("serviceAccount.create=false"));
+    render(set("serviceAccount.name=default"));
+  });
+});
+
+/**
+ * O14: a LibreDBStudio any namespace editor may create is reconciled by the cluster-wide operator, so under
+ * operator.managed a cross-namespace object renders only for the release in operator.clusterStudioNamespace. The
+ * discovery render is gated in every sign-in mode, not only openshift mode.
+ */
+describe("the operator namespace guard on discovery (O14)", () => {
+  const MODES: Array<[string, string[]]> = [
+    ["local", set("authProvider=local")],
+    ["oidc", set("authProvider=oidc")],
+    ["openshift", OPENSHIFT],
+  ];
+
+  test.each(MODES)("%s: operator-managed discovery of another namespace with no cluster Studio namespace fails", (_, mode) => {
+    refused([...mode, ...DISCOVERY, ...set("operator.managed=true")], "operator.clusterStudioNamespace");
+  });
+
+  test.each(MODES)("%s: operator-managed discovery from a namespace other than the cluster Studio's fails", (_, mode) => {
+    refused(
+      [...mode, ...DISCOVERY, ...set("operator.managed=true", "operator.clusterStudioNamespace=studio")],
+      "operator.clusterStudioNamespace",
+    );
+  });
+
+  test.each(MODES)("%s: the cluster Studio's namespace discovers other namespaces", (_, mode) => {
+    const docs = render([
+      ...mode,
+      ...DISCOVERY,
+      ...set("operator.managed=true", `operator.clusterStudioNamespace=${NAMESPACE}`),
+    ]);
+    expect(
+      all(docs, "Role")
+        .map((role) => role.metadata.namespace)
+        .filter(Boolean),
+    ).toEqual(["team-a", "team-b"]);
+  });
+
+  test.each(MODES)("%s: an operator-managed release may discover its own namespace", (_, mode) => {
+    render([
+      ...mode,
+      ...set("discovery.kubernetes.enabled=true", `discovery.kubernetes.namespaces={${NAMESPACE}}`, "operator.managed=true"),
+    ]);
+  });
+
+  test.each(MODES)("%s: a Helm install (operator.managed unset) discovers any namespace", (_, mode) => {
+    render([...mode, ...DISCOVERY]);
+  });
+});
