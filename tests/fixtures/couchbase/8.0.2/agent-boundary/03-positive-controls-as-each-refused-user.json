@@ -1,0 +1,190 @@
+[
+ {
+  "note": "positive controls: each user the check refuses runs the write or the read beyond the bucket its role allows"
+ },
+ {
+  "as": "agent_update",
+  "query": {
+   "statement": "UPDATE `_default` SET n = 11 WHERE META().id = \"d1\" RETURNING META().id",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_insert",
+  "query": {
+   "statement": "INSERT INTO `_default` (KEY, VALUE) VALUES (\"w-insert\", {\"by\": \"agent_insert\"})",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_delete",
+  "query": {
+   "statement": "DELETE FROM `_default` WHERE META().id = \"w-insert\"",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_writer",
+  "rest": "POST /pools/default/buckets/probe/scopes/_default/collections/_default/docs/w-writer",
+  "form": {
+   "value": "{\"by\":\"agent_writer\"}"
+  }
+ },
+ {
+  "as": "agent_grouped_w",
+  "rest": "POST /pools/default/buckets/probe/scopes/_default/collections/_default/docs/w-grouped",
+  "form": {
+   "value": "{\"by\":\"agent_grouped_w\"}"
+  }
+ },
+ {
+  "as": "agent_badmin",
+  "query": {
+   "statement": "CREATE INDEX ix_badmin ON `_default`(note)",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_badmin",
+  "query": {
+   "statement": "DROP INDEX ix_badmin ON `_default`",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_admin",
+  "query": {
+   "statement": "DELETE FROM `_default` WHERE META().id IN [\"w-writer\", \"w-grouped\"] RETURNING META().id",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_all",
+  "query": {
+   "statement": "SELECT d.n FROM default:`other` AS d",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_two",
+  "query": {
+   "statement": "SELECT d.n FROM default:`other` AS d",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_funcs",
+  "query": {
+   "statement": "SELECT default:`probe`.`_default`.f_jsw() AS v",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_gfuncs",
+  "query": {
+   "statement": "SELECT default:g_inline(2) AS v",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_xfuncs",
+  "query": {
+   "statement": "SELECT default:`probe`.`_default`.f_jsw() AS v",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_seq",
+  "query": {
+   "statement": "SELECT NEXTVAL FOR `probe`.`_default`.seq1 AS v",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_catalog",
+  "query": {
+   "statement": "SELECT m.statement FROM system:completed_requests AS m WHERE m.statement LIKE \"%admin-statement-marker%\" AND m.statement NOT LIKE \"%LIKE%\"",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_catalog",
+  "query": {
+   "statement": "SELECT p.name FROM system:prepareds AS p WHERE p.name LIKE \"%admin_p%\"",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_curl",
+  "query": {
+   "statement": "SELECT RAW CURL(\"http://127.0.0.1:8091/pools\").implementationVersion",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_grouped",
+  "query": {
+   "statement": "SELECT d.n FROM `_default` AS d ORDER BY d.n",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro_coll",
+  "query": {
+   "statement": "SELECT d.n FROM `_default` AS d ORDER BY d.n",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro_coll",
+  "query": {
+   "statement": "SELECT d.n FROM `probe`.`s1`.`c1` AS d",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "note": "the data after"
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "SELECT META(d).id, d.* FROM `_default` AS d ORDER BY META(d).id",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "UPSERT INTO `_default` (KEY, VALUE) VALUES (\"d1\", {\"n\": 1, \"note\": \"first\"})",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "DELETE FROM `_default` WHERE META().id = \"w-js\"",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ }
+]

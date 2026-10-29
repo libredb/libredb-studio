@@ -1,0 +1,643 @@
+[
+ {
+  "note": "as Administrator: log every request, and leave a statement and a prepared statement another user could read"
+ },
+ {
+  "as": "Administrator",
+  "rest": "POST /settings/querySettings",
+  "form": {
+   "queryCompletedThreshold": "0"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "SELECT \"admin-statement-marker\" AS m",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "PREPARE admin_p FROM SELECT \"admin-prepared-marker\" AS m",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "note": "as agent_ro, query_select on probe only, readonly left unset so only the server's grants answer"
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "INSERT INTO `_default` (KEY, VALUE) VALUES (\"w1\", {\"by\": \"agent_ro\"})",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "UPSERT INTO `_default` (KEY, VALUE) VALUES (\"d1\", {\"n\": -1})",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "UPDATE `_default` SET n = -1 WHERE META().id = \"d1\"",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "DELETE FROM `_default` WHERE META().id = \"d1\"",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "MERGE INTO `_default` AS t USING [{\"id\": \"d1\"}] AS s ON META(t).id = s.id WHEN MATCHED THEN UPDATE SET t.n = -1",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "CREATE INDEX ix_n ON `_default`(n)",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "DROP PRIMARY INDEX ON `_default`",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "BUILD INDEX ON `_default`(`#primary`)",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "CREATE SCOPE `probe`.`s2`",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "DROP COLLECTION `_default`.`s1`.`c1`",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "CREATE FUNCTION f_new(x) { x }",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "EXECUTE FUNCTION f_inline(1)",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT f_inline(1) AS v",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT default:`probe`.`_default`.f_inline(1) AS v",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT g_inline(1) AS v",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT f_js(1) AS v",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT f_jsw() AS v",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT CURL(\"http://127.0.0.1:8091/pools\") AS v",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT ADVISOR({\"action\": \"start\", \"duration\": \"1m\"}) AS v",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT ADVISOR(\"SELECT * FROM `_default` WHERE n = 1\") AS v",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT ADVISOR(\"DELETE FROM `_default` WHERE n = 1\") AS v",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT ADVISOR(\"UPDATE STATISTICS FOR `_default` INDEX ALL\") AS v",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT RAW ds_version()",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT NEXTVAL FOR `probe`.`_default`.seq1 AS v",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT PREVVAL FOR `probe`.`_default`.seq1 AS v",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "CREATE SEQUENCE `probe`.`_default`.seq2",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "BEGIN WORK",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "START TRANSACTION",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "PREPARE p1 FROM SELECT 1 AS a",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "EXECUTE admin_p",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "UPDATE STATISTICS FOR `_default` INDEX ALL",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "ADVISE SELECT * FROM `_default` WHERE n = 1",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "INFER `_default`",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "EXPLAIN SELECT * FROM `_default`",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "GRANT query_update ON `_default` TO agent_ro",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT META(d).id, d.n FROM `_default` AS d ORDER BY META(d).id",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT d.n FROM `probe`.`s1`.`c1` AS d",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT d.n FROM default:`other` AS d",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT d.n FROM default:`probe` AS d ORDER BY d.n",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT 1 AS a; DELETE FROM `_default`",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "WITH a AS (1) UPDATE `_default` SET n = a WHERE META().id = \"d1\"",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "WITH a AS (SELECT RAW 1) SELECT a",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT * FROM `_default` USE KEYS \"d2\"",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT m.statement FROM system:completed_requests AS m",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT a.statement FROM system:active_requests AS a",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT p.name, p.statement FROM system:prepareds AS p",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT f.* FROM system:functions AS f",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT * FROM system:functions_cache",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT * FROM system:user_info",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT * FROM system:my_user_info",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT * FROM system:applicable_roles",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT k.name, k.`bucket` FROM system:keyspaces AS k",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT k.name FROM system:all_keyspaces AS k",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT i.name, i.keyspace_id FROM system:indexes AS i",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT * FROM system:sequences",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT * FROM system:transactions",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT * FROM system:dictionary",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT * FROM system:tasks_cache",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT * FROM system:nodes",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT * FROM system:vitals",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT * FROM system:bucket_info",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT * FROM system:aus",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT * FROM system:datastores",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT * FROM system:namespaces",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "DELETE FROM system:prepareds",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "DELETE FROM system:completed_requests",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "DELETE FROM system:active_requests",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT default:`probe`.`_default`.f_js(1) AS v",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT default:`probe`.`_default`.f_jsw() AS v",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "EXECUTE FUNCTION default:`probe`.`_default`.f_jsw()",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT default:g_inline(1) AS v",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "UPDATE STATISTICS FOR `_default` INDEX ALL",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus",
+   "readonly": true
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT q.* FROM `probe`.`_system`.`_query` AS q",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT m.* FROM `probe`.`_system`.`_mobile` AS m",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_reader",
+  "query": {
+   "statement": "SELECT d.n FROM `_default` AS d ORDER BY d.n",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "note": "data_reader alone, and the data after: d1 still reads n 1, and no w1 or w-js document"
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "SELECT META(d).id, d.* FROM `_default` AS d ORDER BY META(d).id",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ }
+]

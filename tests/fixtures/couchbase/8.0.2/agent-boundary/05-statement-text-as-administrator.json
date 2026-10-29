@@ -1,0 +1,245 @@
+[
+ {
+  "note": "as Administrator, so a refusal is the parser's, never a missing grant: comments, line ends, statement count, WITH"
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "SELECT 1 AS a;",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "SELECT 1 AS a; ",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "SELECT 1 AS a;;",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "SELECT 1 AS a; -- trailing",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "SELECT 1 AS a; /* trailing */",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "-- lead\nSELECT 1 AS a",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "/* lead */ SELECT 1 AS a",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "-- lead\rSELECT 1 AS a",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "-- lead\r\nSELECT 1 AS a",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "SELECT 1 AS a -- x\r, 2 AS b",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "SELECT 1 AS a -- x\u2028, 2 AS b",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "SELECT 1 AS a -- x\u0085, 2 AS b",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "SELECT 1 AS a -- x\f, 2 AS b",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "SELECT 1 AS a /* x */",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "SELECT 1 AS a /* x",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "\ufeffSELECT 1 AS a",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "\u00a0SELECT 1 AS a",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "(SELECT 1 AS a)",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "SELECT 1 AS a UNION SELECT 2 AS a",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "WITH a AS (1) INSERT INTO `_default` (KEY, VALUE) VALUES (\"wx\", {})",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "WITH a AS (1) DELETE FROM `_default` WHERE META().id = \"wx\"",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "WITH a AS (1) UPSERT INTO `_default` (KEY, VALUE) VALUES (\"wx\", {})",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "WITH a AS (1) MERGE INTO `_default` AS t USING [] AS s ON META(t).id = s.id WHEN MATCHED THEN DELETE",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "WITH a AS (1) EXECUTE FUNCTION default:g_inline(1)",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "WITH RECURSIVE r AS (SELECT 1 AS n UNION SELECT r.n + 1 AS n FROM r WHERE r.n < 3) SELECT RAW r.n FROM r",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "SELECT (DELETE FROM `_default` WHERE META().id = \"wx\") AS a",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "SELECT 1 AS a FROM [1] AS x LET y = (UPDATE `_default` SET n = 1) ",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "SELECT `select` FROM [{\"select\": 1}] AS d",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "select 1 AS a",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "SeLeCt 1 AS a",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ }
+]

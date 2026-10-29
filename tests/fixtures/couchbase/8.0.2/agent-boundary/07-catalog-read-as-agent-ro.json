@@ -1,0 +1,65 @@
+[
+ {
+  "note": "the agent's column inventory as agent_ro: a sample of one collection's documents, each field name and JSON type, sent as the agent path sends it"
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT DISTINCT \"_default\" AS table_schema, \"_default\" AS table_name, p.name AS column_name, TYPE(p.val) AS data_type FROM (SELECT RAW d FROM `_default`.`_default` AS d LIMIT 100) AS doc UNNEST OBJECT_PAIRS(doc) AS p ORDER BY p.name, TYPE(p.val)",
+   "query_context": "default:`probe`",
+   "scan_consistency": "not_bounded",
+   "readonly": true,
+   "timeout": "30000ms"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT DISTINCT \"s1\" AS table_schema, \"c1\" AS table_name, p.name AS column_name, TYPE(p.val) AS data_type FROM (SELECT RAW d FROM `s1`.`c1` AS d LIMIT 100) AS doc UNNEST OBJECT_PAIRS(doc) AS p ORDER BY p.name, TYPE(p.val)",
+   "query_context": "default:`probe`",
+   "scan_consistency": "not_bounded",
+   "readonly": true,
+   "timeout": "30000ms"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT DISTINCT \"s1\" AS table_schema, \"nope\" AS table_name, p.name AS column_name, TYPE(p.val) AS data_type FROM (SELECT RAW d FROM `s1`.`nope` AS d LIMIT 100) AS doc UNNEST OBJECT_PAIRS(doc) AS p ORDER BY p.name, TYPE(p.val)",
+   "query_context": "default:`probe`",
+   "scan_consistency": "not_bounded",
+   "readonly": true,
+   "timeout": "30000ms"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT k.`scope` AS table_schema, k.name AS table_name FROM system:keyspaces AS k WHERE k.`bucket` = \"probe\" ORDER BY k.`scope`, k.name",
+   "query_context": "default:`probe`",
+   "scan_consistency": "not_bounded",
+   "readonly": true,
+   "timeout": "30000ms"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT RAW 1",
+   "query_context": "default:`other`",
+   "scan_consistency": "not_bounded",
+   "readonly": true,
+   "timeout": "30000ms"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT d.n FROM `_default` AS d",
+   "query_context": "default:`other`",
+   "scan_consistency": "not_bounded",
+   "readonly": true,
+   "timeout": "30000ms"
+  }
+ }
+]

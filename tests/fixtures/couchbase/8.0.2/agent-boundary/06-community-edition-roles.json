@@ -1,0 +1,132 @@
+[
+ {
+  "note": "Community Edition node: the roles it offers, and what each user it can make holds"
+ },
+ {
+  "as": "Administrator",
+  "rest": "GET /settings/rbac/roles"
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/users/local/agent_ro",
+  "form": {
+   "password": "@PASSWORD@",
+   "roles": "query_select[probe]"
+  }
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/users/local/agent_full",
+  "form": {
+   "password": "@PASSWORD@",
+   "roles": "bucket_full_access[probe]"
+  }
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/users/local/agent_roadmin",
+  "form": {
+   "password": "@PASSWORD@",
+   "roles": "ro_admin"
+  }
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/groups/grp_ro",
+  "form": {
+   "roles": "bucket_full_access[probe]"
+  }
+ },
+ {
+  "sleep": 2000
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "CREATE PRIMARY INDEX ON `_default`",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "UPSERT INTO `_default` (KEY, VALUE) VALUES (\"d1\", {\"n\": 1})",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_full",
+  "rest": "GET /whoami"
+ },
+ {
+  "as": "agent_roadmin",
+  "rest": "GET /whoami"
+ },
+ {
+  "as": "agent_ro",
+  "rest": "GET /whoami"
+ },
+ {
+  "as": "agent_full",
+  "rest": "GET /pools"
+ },
+ {
+  "as": "agent_full",
+  "query": {
+   "statement": "SELECT d.n FROM `_default` AS d",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_full",
+  "query": {
+   "statement": "INSERT INTO `_default` (KEY, VALUE) VALUES (\"w-full\", {\"by\": \"agent_full\"})",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_full",
+  "query": {
+   "statement": "DELETE FROM `_default` WHERE META().id = \"w-full\"",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_full",
+  "query": {
+   "statement": "INSERT INTO `_default` (KEY, VALUE) VALUES (\"w-full2\", {\"by\": \"agent_full\"})",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus",
+   "readonly": true
+  }
+ },
+ {
+  "as": "agent_roadmin",
+  "query": {
+   "statement": "SELECT d.n FROM `_default` AS d",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_roadmin",
+  "query": {
+   "statement": "INSERT INTO `_default` (KEY, VALUE) VALUES (\"w-ro\", {\"by\": \"agent_roadmin\"})",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "SELECT RAW ds_version()",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ }
+]

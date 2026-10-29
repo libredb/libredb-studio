@@ -1,0 +1,104 @@
+[
+ {
+  "note": "GET /whoami as each user: the roles the server reports, a group's roles included or not"
+ },
+ {
+  "as": "agent_ro",
+  "rest": "GET /whoami"
+ },
+ {
+  "as": "agent_ro_coll",
+  "rest": "GET /whoami"
+ },
+ {
+  "as": "agent_update",
+  "rest": "GET /whoami"
+ },
+ {
+  "as": "agent_insert",
+  "rest": "GET /whoami"
+ },
+ {
+  "as": "agent_delete",
+  "rest": "GET /whoami"
+ },
+ {
+  "as": "agent_writer",
+  "rest": "GET /whoami"
+ },
+ {
+  "as": "agent_badmin",
+  "rest": "GET /whoami"
+ },
+ {
+  "as": "agent_admin",
+  "rest": "GET /whoami"
+ },
+ {
+  "as": "agent_all",
+  "rest": "GET /whoami"
+ },
+ {
+  "as": "agent_two",
+  "rest": "GET /whoami"
+ },
+ {
+  "as": "agent_funcs",
+  "rest": "GET /whoami"
+ },
+ {
+  "as": "agent_gfuncs",
+  "rest": "GET /whoami"
+ },
+ {
+  "as": "agent_xfuncs",
+  "rest": "GET /whoami"
+ },
+ {
+  "as": "agent_catalog",
+  "rest": "GET /whoami"
+ },
+ {
+  "as": "agent_curl",
+  "rest": "GET /whoami"
+ },
+ {
+  "as": "agent_seq",
+  "rest": "GET /whoami"
+ },
+ {
+  "as": "agent_reader",
+  "rest": "GET /whoami"
+ },
+ {
+  "as": "agent_grouped",
+  "rest": "GET /whoami"
+ },
+ {
+  "as": "agent_grouped_w",
+  "rest": "GET /whoami"
+ },
+ {
+  "as": "Administrator",
+  "rest": "GET /whoami"
+ },
+ {
+  "note": "what the provider's open reads, as the query_select-only user"
+ },
+ {
+  "as": "agent_ro",
+  "rest": "GET /pools/default/nodeServices"
+ },
+ {
+  "as": "agent_ro",
+  "rest": "GET /pools/default/buckets/probe"
+ },
+ {
+  "as": "agent_ro",
+  "rest": "GET /pools"
+ },
+ {
+  "as": "no_such_user",
+  "rest": "GET /whoami"
+ }
+]

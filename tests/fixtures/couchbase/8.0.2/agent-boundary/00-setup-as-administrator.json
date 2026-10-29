@@ -1,0 +1,272 @@
+[
+ {
+  "note": "Enterprise Edition node: buckets probe and other exist (run.sh makes them); users, groups, data, indexes, functions and a sequence"
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/groups/grp_ro",
+  "form": {
+   "roles": "query_select[probe]",
+   "description": "select only"
+  }
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/groups/grp_w",
+  "form": {
+   "roles": "data_writer[probe]",
+   "description": "writer"
+  }
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/users/local/agent_ro",
+  "form": {
+   "password": "@PASSWORD@",
+   "roles": "query_select[probe]"
+  }
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/users/local/agent_ro_coll",
+  "form": {
+   "password": "@PASSWORD@",
+   "roles": "query_select[probe:_default:_default]"
+  }
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/users/local/agent_update",
+  "form": {
+   "password": "@PASSWORD@",
+   "roles": "query_select[probe],query_update[probe]"
+  }
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/users/local/agent_insert",
+  "form": {
+   "password": "@PASSWORD@",
+   "roles": "query_select[probe],query_insert[probe]"
+  }
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/users/local/agent_delete",
+  "form": {
+   "password": "@PASSWORD@",
+   "roles": "query_select[probe],query_delete[probe]"
+  }
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/users/local/agent_writer",
+  "form": {
+   "password": "@PASSWORD@",
+   "roles": "query_select[probe],data_writer[probe]"
+  }
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/users/local/agent_badmin",
+  "form": {
+   "password": "@PASSWORD@",
+   "roles": "query_select[probe],bucket_admin[probe]"
+  }
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/users/local/agent_admin",
+  "form": {
+   "password": "@PASSWORD@",
+   "roles": "admin"
+  }
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/users/local/agent_all",
+  "form": {
+   "password": "@PASSWORD@",
+   "roles": "query_select[*]"
+  }
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/users/local/agent_two",
+  "form": {
+   "password": "@PASSWORD@",
+   "roles": "query_select[probe],query_select[other]"
+  }
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/users/local/agent_funcs",
+  "form": {
+   "password": "@PASSWORD@",
+   "roles": "query_select[probe],query_execute_functions[probe:_default]"
+  }
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/users/local/agent_gfuncs",
+  "form": {
+   "password": "@PASSWORD@",
+   "roles": "query_select[probe],query_execute_global_functions"
+  }
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/users/local/agent_xfuncs",
+  "form": {
+   "password": "@PASSWORD@",
+   "roles": "query_select[probe],query_execute_external_functions[probe:_default]"
+  }
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/users/local/agent_catalog",
+  "form": {
+   "password": "@PASSWORD@",
+   "roles": "query_select[probe],query_system_catalog"
+  }
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/users/local/agent_curl",
+  "form": {
+   "password": "@PASSWORD@",
+   "roles": "query_select[probe],query_external_access"
+  }
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/users/local/agent_seq",
+  "form": {
+   "password": "@PASSWORD@",
+   "roles": "query_select[probe],query_use_sequences[probe:_default]"
+  }
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/users/local/agent_reader",
+  "form": {
+   "password": "@PASSWORD@",
+   "roles": "data_reader[probe]"
+  }
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/users/local/agent_grouped",
+  "form": {
+   "password": "@PASSWORD@",
+   "roles": "",
+   "groups": "grp_ro"
+  }
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/users/local/agent_grouped_w",
+  "form": {
+   "password": "@PASSWORD@",
+   "roles": "query_select[probe]",
+   "groups": "grp_w"
+  }
+ },
+ {
+  "sleep": 3000
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "CREATE PRIMARY INDEX ON `probe`"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "CREATE PRIMARY INDEX ON `other`"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "CREATE SCOPE `probe`.`s1`"
+  }
+ },
+ {
+  "sleep": 2000
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "CREATE COLLECTION `probe`.`s1`.`c1`"
+  }
+ },
+ {
+  "sleep": 2000
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "CREATE PRIMARY INDEX ON `probe`.`s1`.`c1`"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "UPSERT INTO `probe` (KEY, VALUE) VALUES (\"d1\", {\"n\": 1, \"note\": \"first\"}), (\"d2\", {\"n\": 2, \"note\": \"second\"})"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "UPSERT INTO `other` (KEY, VALUE) VALUES (\"o1\", {\"n\": 10, \"note\": \"other bucket\"})"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "UPSERT INTO `probe`.`s1`.`c1` (KEY, VALUE) VALUES (\"c1\", {\"n\": 100})"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "CREATE OR REPLACE FUNCTION `probe`.`_default`.f_inline(x) { x + 1 }"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "CREATE OR REPLACE FUNCTION g_inline(x) { x * 2 }"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "CREATE OR REPLACE FUNCTION `probe`.`_default`.f_js(x) LANGUAGE JAVASCRIPT AS \"function f_js(x) { return x + 1; }\""
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "CREATE OR REPLACE FUNCTION `probe`.`_default`.f_jsw() LANGUAGE JAVASCRIPT AS \"function f_jsw() { var r = INSERT INTO `_default` (KEY, VALUE) VALUES ('w-js', {'by': 'js'}); r.close(); return 'wrote'; }\""
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "CREATE SEQUENCE `probe`.`_default`.seq1"
+  }
+ },
+ {
+  "sleep": 2000
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "SELECT META(d).id, d.* FROM default:`probe` AS d ORDER BY META(d).id",
+   "scan_consistency": "request_plus"
+  }
+ }
+]

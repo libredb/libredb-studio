@@ -1,0 +1,48 @@
+# positive controls: each user the check refuses runs the write or the read beyond the bucket its role allows
+> as agent_update: {"statement":"UPDATE `_default` SET n = 11 WHERE META().id = \"d1\" RETURNING META().id","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"id":"json"},"results":[{"id":"d1"}],"status":"success","metrics":{"resultCount":1,"resultSize":11,"mutationCount":1}}
+> as agent_insert: {"statement":"INSERT INTO `_default` (KEY, VALUE) VALUES (\"w-insert\", {\"by\": \"agent_insert\"})","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":null,"results":[],"status":"success","metrics":{"resultCount":0,"resultSize":0,"mutationCount":1}}
+> as agent_delete: {"statement":"DELETE FROM `_default` WHERE META().id = \"w-insert\"","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":null,"results":[],"status":"success","metrics":{"resultCount":0,"resultSize":0,"mutationCount":1}}
+> as agent_writer: POST /pools/default/buckets/probe/scopes/_default/collections/_default/docs/w-writer {"value":"{\"by\":\"agent_writer\"}"}
+  200 []
+> as agent_grouped_w: POST /pools/default/buckets/probe/scopes/_default/collections/_default/docs/w-grouped {"value":"{\"by\":\"agent_grouped_w\"}"}
+  200 []
+> as agent_badmin: {"statement":"CREATE INDEX ix_badmin ON `_default`(note)","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  401 {"signature":null,"results":[],"errors":[{"code":13014,"msg":"User does not have credentials to run index operations. Add role query_manage_index on default:probe._default._default to allow the statement to run.","reason":{"missing_role":"query_manage_index","path":"default:probe._default._default"}}],"status":"fatal","metrics":{"resultCount":0,"resultSize":0,"errorCount":1}}
+> as agent_badmin: {"statement":"DROP INDEX ix_badmin ON `_default`","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  401 {"signature":null,"results":[],"errors":[{"code":13014,"msg":"User does not have credentials to run index operations. Add role query_manage_index on default:probe._default._default to allow the statement to run.","reason":{"missing_role":"query_manage_index","path":"default:probe._default._default"}}],"status":"fatal","metrics":{"resultCount":0,"resultSize":0,"errorCount":1}}
+> as agent_admin: {"statement":"DELETE FROM `_default` WHERE META().id IN [\"w-writer\", \"w-grouped\"] RETURNING META().id","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"id":"json"},"results":[{"id":"w-grouped"},{"id":"w-writer"}],"status":"success","metrics":{"resultCount":2,"resultSize":35,"mutationCount":2}}
+> as agent_all: {"statement":"SELECT d.n FROM default:`other` AS d","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"n":"json"},"results":[{"n":10}],"status":"success","metrics":{"resultCount":1,"resultSize":8}}
+> as agent_two: {"statement":"SELECT d.n FROM default:`other` AS d","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"n":"json"},"results":[{"n":10}],"status":"success","metrics":{"resultCount":1,"resultSize":8}}
+> as agent_funcs: {"statement":"SELECT default:`probe`.`_default`.f_jsw() AS v","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"v":"json"},"results":[],"errors":[{"code":5010,"msg":"Error evaluating projection","reason":{"_level":"exception","caller":"auth:422","cause":{"missing_role":"query_execute_external_functions","path":"default:probe._default.f_jsw"},"code":13014,"key":"datastore.couchbase.insufficient_credentials","message":"User does not have credentials to execute scope external functions. Add role query_execute_external_functions on default:probe._default.f_jsw to allow the statement to run."}}],"status":"fatal","metrics":{"resultCount":0,"resultSize":0,"errorCount":1}}
+> as agent_gfuncs: {"statement":"SELECT default:g_inline(2) AS v","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"v":"json"},"results":[{"v":4}],"status":"success","metrics":{"resultCount":1,"resultSize":7}}
+> as agent_xfuncs: {"statement":"SELECT default:`probe`.`_default`.f_jsw() AS v","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"v":"json"},"results":[],"errors":[{"code":5010,"msg":"Error evaluating projection","reason":{"_level":"exception","caller":"javascript:481","cause":{"details":{"Code":"function f_jsw() { var r = N1QL('INSERT INTO `_default` (KEY, VALUE) VALUES (\\'w-js\\', {\\'by\\': \\'js\\'});', {}, true); r.close(); return 'wrote'; }","Exception":" not a readonly request","Location":"functions/default:probe._default.f_jsw.js:1","Stack":"   at f_jsw (functions/default:probe._default.f_jsw.js:1:28)"},"type":"Exceptions from JS code"},"code":10109,"key":"function.execution.error","message":"Error executing function 'f_jsw' (default:probe._default.f_jsw:f_jsw)"}}],"status":"fatal","metrics":{"resultCount":0,"resultSize":0,"errorCount":1}}
+> as agent_seq: {"statement":"SELECT NEXTVAL FOR `probe`.`_default`.seq1 AS v","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"v":"number"},"results":[{"v":0}],"status":"success","metrics":{"resultCount":1,"resultSize":7}}
+> as agent_catalog: {"statement":"SELECT m.statement FROM system:completed_requests AS m WHERE m.statement LIKE \"%admin-statement-marker%\" AND m.statement NOT LIKE \"%LIKE%\"","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"statement":"json"},"results":[{"statement":"SELECT \"admin-statement-marker\" AS m"}],"status":"success","metrics":{"resultCount":1,"resultSize":54}}
+> as agent_catalog: {"statement":"SELECT p.name FROM system:prepareds AS p WHERE p.name LIKE \"%admin_p%\"","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"name":"json"},"results":[{"name":"admin_p"}],"status":"success","metrics":{"resultCount":1,"resultSize":18}}
+> as agent_curl: {"statement":"SELECT RAW CURL(\"http://127.0.0.1:8091/pools\").implementationVersion","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":"json","results":[],"errors":[{"code":5010,"msg":"Error evaluating projection","reason":{"_level":"exception","caller":"func_curl:193","cause":{"error":"The end point http://127.0.0.1:8091/pools is not permitted.  List allowed end points in the configuration."},"code":5007,"key":"execution.curl","message":"Error executing CURL function"}}],"status":"fatal","metrics":{"resultCount":0,"resultSize":0,"errorCount":1}}
+> as agent_grouped: {"statement":"SELECT d.n FROM `_default` AS d ORDER BY d.n","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"n":"json"},"results":[{"n":2},{"n":11}],"status":"success","metrics":{"resultCount":2,"resultSize":15,"sortCount":2}}
+> as agent_ro_coll: {"statement":"SELECT d.n FROM `_default` AS d ORDER BY d.n","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"n":"json"},"results":[{"n":2},{"n":11}],"status":"success","metrics":{"resultCount":2,"resultSize":15,"sortCount":2}}
+> as agent_ro_coll: {"statement":"SELECT d.n FROM `probe`.`s1`.`c1` AS d","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  401 {"signature":{"n":"json"},"results":[],"errors":[{"code":13014,"msg":"User does not have credentials to run SELECT queries on default:probe.s1.c1. Add role query_select on default:probe.s1.c1 to allow the statement to run.","reason":{"missing_role":"query_select","path":"default:probe.s1.c1"}}],"status":"fatal","metrics":{"resultCount":0,"resultSize":0,"errorCount":1}}
+# the data after
+> as Administrator: {"statement":"SELECT META(d).id, d.* FROM `_default` AS d ORDER BY META(d).id","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"id":"json","*":"*"},"results":[{"id":"d1","n":11,"note":"first"},{"id":"d2","n":2,"note":"second"}],"status":"success","metrics":{"resultCount":2,"resultSize":66}}
+> as Administrator: {"statement":"UPSERT INTO `_default` (KEY, VALUE) VALUES (\"d1\", {\"n\": 1, \"note\": \"first\"})","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":null,"results":[],"status":"success","metrics":{"resultCount":0,"resultSize":0,"mutationCount":1}}
+> as Administrator: {"statement":"DELETE FROM `_default` WHERE META().id = \"w-js\"","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":null,"results":[],"status":"success","metrics":{"resultCount":0,"resultSize":0}}

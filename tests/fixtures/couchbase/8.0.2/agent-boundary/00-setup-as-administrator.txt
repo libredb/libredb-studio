@@ -1,0 +1,75 @@
+# Enterprise Edition node: buckets probe and other exist (run.sh makes them); users, groups, data, indexes, functions and a sequence
+> as Administrator: PUT /settings/rbac/groups/grp_ro {"roles":"query_select[probe]","description":"select only"}
+  200 ""
+> as Administrator: PUT /settings/rbac/groups/grp_w {"roles":"data_writer[probe]","description":"writer"}
+  200 ""
+> as Administrator: PUT /settings/rbac/users/local/agent_ro {"password":"(generated)","roles":"query_select[probe]"}
+  200 ""
+> as Administrator: PUT /settings/rbac/users/local/agent_ro_coll {"password":"(generated)","roles":"query_select[probe:_default:_default]"}
+  200 ""
+> as Administrator: PUT /settings/rbac/users/local/agent_update {"password":"(generated)","roles":"query_select[probe],query_update[probe]"}
+  200 ""
+> as Administrator: PUT /settings/rbac/users/local/agent_insert {"password":"(generated)","roles":"query_select[probe],query_insert[probe]"}
+  200 ""
+> as Administrator: PUT /settings/rbac/users/local/agent_delete {"password":"(generated)","roles":"query_select[probe],query_delete[probe]"}
+  200 ""
+> as Administrator: PUT /settings/rbac/users/local/agent_writer {"password":"(generated)","roles":"query_select[probe],data_writer[probe]"}
+  200 ""
+> as Administrator: PUT /settings/rbac/users/local/agent_badmin {"password":"(generated)","roles":"query_select[probe],bucket_admin[probe]"}
+  200 ""
+> as Administrator: PUT /settings/rbac/users/local/agent_admin {"password":"(generated)","roles":"admin"}
+  200 ""
+> as Administrator: PUT /settings/rbac/users/local/agent_all {"password":"(generated)","roles":"query_select[*]"}
+  200 ""
+> as Administrator: PUT /settings/rbac/users/local/agent_two {"password":"(generated)","roles":"query_select[probe],query_select[other]"}
+  200 ""
+> as Administrator: PUT /settings/rbac/users/local/agent_funcs {"password":"(generated)","roles":"query_select[probe],query_execute_functions[probe:_default]"}
+  200 ""
+> as Administrator: PUT /settings/rbac/users/local/agent_gfuncs {"password":"(generated)","roles":"query_select[probe],query_execute_global_functions"}
+  200 ""
+> as Administrator: PUT /settings/rbac/users/local/agent_xfuncs {"password":"(generated)","roles":"query_select[probe],query_execute_external_functions[probe:_default]"}
+  200 ""
+> as Administrator: PUT /settings/rbac/users/local/agent_catalog {"password":"(generated)","roles":"query_select[probe],query_system_catalog"}
+  200 ""
+> as Administrator: PUT /settings/rbac/users/local/agent_curl {"password":"(generated)","roles":"query_select[probe],query_external_access"}
+  200 ""
+> as Administrator: PUT /settings/rbac/users/local/agent_seq {"password":"(generated)","roles":"query_select[probe],query_use_sequences[probe:_default]"}
+  200 ""
+> as Administrator: PUT /settings/rbac/users/local/agent_reader {"password":"(generated)","roles":"data_reader[probe]"}
+  200 ""
+> as Administrator: PUT /settings/rbac/users/local/agent_grouped {"password":"(generated)","roles":"","groups":"grp_ro"}
+  200 ""
+> as Administrator: PUT /settings/rbac/users/local/agent_grouped_w {"password":"(generated)","roles":"query_select[probe]","groups":"grp_w"}
+  200 ""
+(waited 3000 ms)
+> as Administrator: {"statement":"CREATE PRIMARY INDEX ON `probe`"}
+  200 {"signature":null,"results":[],"status":"success","metrics":{"resultCount":0,"resultSize":0}}
+> as Administrator: {"statement":"CREATE PRIMARY INDEX ON `other`"}
+  200 {"signature":null,"results":[],"status":"success","metrics":{"resultCount":0,"resultSize":0}}
+> as Administrator: {"statement":"CREATE SCOPE `probe`.`s1`"}
+  200 {"signature":null,"results":[],"status":"success","metrics":{"resultCount":0,"resultSize":0}}
+(waited 2000 ms)
+> as Administrator: {"statement":"CREATE COLLECTION `probe`.`s1`.`c1`"}
+  200 {"signature":null,"results":[],"status":"success","metrics":{"resultCount":0,"resultSize":0}}
+(waited 2000 ms)
+> as Administrator: {"statement":"CREATE PRIMARY INDEX ON `probe`.`s1`.`c1`"}
+  200 {"signature":null,"results":[],"status":"success","metrics":{"resultCount":0,"resultSize":0}}
+> as Administrator: {"statement":"UPSERT INTO `probe` (KEY, VALUE) VALUES (\"d1\", {\"n\": 1, \"note\": \"first\"}), (\"d2\", {\"n\": 2, \"note\": \"second\"})"}
+  200 {"signature":null,"results":[],"status":"success","metrics":{"resultCount":0,"resultSize":0,"mutationCount":2}}
+> as Administrator: {"statement":"UPSERT INTO `other` (KEY, VALUE) VALUES (\"o1\", {\"n\": 10, \"note\": \"other bucket\"})"}
+  200 {"signature":null,"results":[],"status":"success","metrics":{"resultCount":0,"resultSize":0,"mutationCount":1}}
+> as Administrator: {"statement":"UPSERT INTO `probe`.`s1`.`c1` (KEY, VALUE) VALUES (\"c1\", {\"n\": 100})"}
+  200 {"signature":null,"results":[],"status":"success","metrics":{"resultCount":0,"resultSize":0,"mutationCount":1}}
+> as Administrator: {"statement":"CREATE OR REPLACE FUNCTION `probe`.`_default`.f_inline(x) { x + 1 }"}
+  200 {"signature":null,"results":[],"status":"success","metrics":{"resultCount":0,"resultSize":0}}
+> as Administrator: {"statement":"CREATE OR REPLACE FUNCTION g_inline(x) { x * 2 }"}
+  200 {"signature":null,"results":[],"status":"success","metrics":{"resultCount":0,"resultSize":0}}
+> as Administrator: {"statement":"CREATE OR REPLACE FUNCTION `probe`.`_default`.f_js(x) LANGUAGE JAVASCRIPT AS \"function f_js(x) { return x + 1; }\""}
+  200 {"signature":null,"results":[],"status":"success","metrics":{"resultCount":0,"resultSize":0}}
+> as Administrator: {"statement":"CREATE OR REPLACE FUNCTION `probe`.`_default`.f_jsw() LANGUAGE JAVASCRIPT AS \"function f_jsw() { var r = INSERT INTO `_default` (KEY, VALUE) VALUES ('w-js', {'by': 'js'}); r.close(); return 'wrote'; }\""}
+  200 {"signature":null,"results":[],"status":"success","metrics":{"resultCount":0,"resultSize":0}}
+> as Administrator: {"statement":"CREATE SEQUENCE `probe`.`_default`.seq1"}
+  200 {"signature":null,"results":[],"status":"success","metrics":{"resultCount":0,"resultSize":0}}
+(waited 2000 ms)
+> as Administrator: {"statement":"SELECT META(d).id, d.* FROM default:`probe` AS d ORDER BY META(d).id","scan_consistency":"request_plus"}
+  200 {"signature":{"id":"json","*":"*"},"results":[{"id":"d1","n":1,"note":"first"},{"id":"d2","n":2,"note":"second"}],"status":"success","metrics":{"resultCount":2,"resultSize":65}}

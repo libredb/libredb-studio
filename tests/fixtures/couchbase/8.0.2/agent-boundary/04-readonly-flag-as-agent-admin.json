@@ -1,0 +1,155 @@
+[
+ {
+  "note": "as agent_admin (role admin) with readonly true on every request: what the request flag refuses and what it lets through"
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "PREPARE pdel FROM DELETE FROM `_default` WHERE META().id = \"ro-prepared\"",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "UPSERT INTO `_default` (KEY, VALUE) VALUES (\"ro-prepared\", {\"n\": 0}), (\"ro-delete\", {\"n\": 0})",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_admin",
+  "query": {
+   "statement": "INSERT INTO `_default` (KEY, VALUE) VALUES (\"ro-insert\", {\"n\": 0})",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus",
+   "readonly": true
+  }
+ },
+ {
+  "as": "agent_admin",
+  "query": {
+   "statement": "DELETE FROM `_default` WHERE META().id = \"ro-delete\"",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus",
+   "readonly": true
+  }
+ },
+ {
+  "as": "agent_admin",
+  "query": {
+   "statement": "UPDATE `_default` SET n = 5 WHERE META().id = \"d2\"",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus",
+   "readonly": true
+  }
+ },
+ {
+  "as": "agent_admin",
+  "query": {
+   "statement": "CREATE INDEX ix_ro ON `_default`(note)",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus",
+   "readonly": true
+  }
+ },
+ {
+  "as": "agent_admin",
+  "query": {
+   "statement": "UPDATE STATISTICS FOR `_default` INDEX ALL",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus",
+   "readonly": true
+  }
+ },
+ {
+  "as": "agent_admin",
+  "query": {
+   "statement": "EXECUTE pdel",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus",
+   "readonly": true
+  }
+ },
+ {
+  "as": "agent_admin",
+  "query": {
+   "statement": "SELECT default:`probe`.`_default`.f_jsw() AS v",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus",
+   "readonly": true
+  }
+ },
+ {
+  "as": "agent_admin",
+  "query": {
+   "statement": "EXECUTE FUNCTION default:`probe`.`_default`.f_jsw()",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus",
+   "readonly": true
+  }
+ },
+ {
+  "as": "agent_admin",
+  "query": {
+   "statement": "SELECT NEXTVAL FOR `probe`.`_default`.seq1 AS v",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus",
+   "readonly": true
+  }
+ },
+ {
+  "as": "agent_admin",
+  "query": {
+   "statement": "BEGIN WORK",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus",
+   "readonly": true
+  }
+ },
+ {
+  "as": "agent_admin",
+  "query": {
+   "statement": "SELECT RAW CURL(\"http://127.0.0.1:8091/pools\").implementationVersion",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus",
+   "readonly": true
+  }
+ },
+ {
+  "note": "the data after"
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "SELECT META(d).id, d.* FROM `_default` AS d ORDER BY META(d).id",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "SELECT i.name FROM system:indexes AS i WHERE i.keyspace_id = \"_default\" AND i.bucket_id = \"probe\"",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "DELETE FROM `_default` WHERE META().id IN [\"ro-prepared\", \"ro-delete\", \"ro-insert\", \"w-js\"]",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "query": {
+   "statement": "DROP INDEX ix_ro IF EXISTS ON `_default`",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ }
+]

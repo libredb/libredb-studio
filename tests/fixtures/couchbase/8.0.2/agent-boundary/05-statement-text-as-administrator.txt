@@ -1,0 +1,61 @@
+# as Administrator, so a refusal is the parser's, never a missing grant: comments, line ends, statement count, WITH
+> as Administrator: {"statement":"SELECT 1 AS a;","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"a":"number"},"results":[{"a":1}],"status":"success","metrics":{"resultCount":1,"resultSize":7}}
+> as Administrator: {"statement":"SELECT 1 AS a; ","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"a":"number"},"results":[{"a":1}],"status":"success","metrics":{"resultCount":1,"resultSize":7}}
+> as Administrator: {"statement":"SELECT 1 AS a;;","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"a":"number"},"results":[{"a":1}],"status":"success","metrics":{"resultCount":1,"resultSize":7}}
+> as Administrator: {"statement":"SELECT 1 AS a; -- trailing","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"a":"number"},"results":[{"a":1}],"status":"success","metrics":{"resultCount":1,"resultSize":7}}
+> as Administrator: {"statement":"SELECT 1 AS a; /* trailing */","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"a":"number"},"results":[{"a":1}],"status":"success","metrics":{"resultCount":1,"resultSize":7}}
+> as Administrator: {"statement":"-- lead\nSELECT 1 AS a","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"a":"number"},"results":[{"a":1}],"status":"success","metrics":{"resultCount":1,"resultSize":7}}
+> as Administrator: {"statement":"/* lead */ SELECT 1 AS a","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"a":"number"},"results":[{"a":1}],"status":"success","metrics":{"resultCount":1,"resultSize":7}}
+> as Administrator: {"statement":"-- lead\rSELECT 1 AS a","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"a":"number"},"results":[{"a":1}],"status":"success","metrics":{"resultCount":1,"resultSize":7}}
+> as Administrator: {"statement":"-- lead\r\nSELECT 1 AS a","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"a":"number"},"results":[{"a":1}],"status":"success","metrics":{"resultCount":1,"resultSize":7}}
+> as Administrator: {"statement":"SELECT 1 AS a -- x\r, 2 AS b","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"a":"number","b":"number"},"results":[{"a":1,"b":2}],"status":"success","metrics":{"resultCount":1,"resultSize":13}}
+> as Administrator: {"statement":"SELECT 1 AS a -- x , 2 AS b","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"a":"number"},"results":[{"a":1}],"status":"success","metrics":{"resultCount":1,"resultSize":7}}
+> as Administrator: {"statement":"SELECT 1 AS a -- x, 2 AS b","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"a":"number"},"results":[{"a":1}],"status":"success","metrics":{"resultCount":1,"resultSize":7}}
+> as Administrator: {"statement":"SELECT 1 AS a -- x\f, 2 AS b","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"a":"number"},"results":[{"a":1}],"status":"success","metrics":{"resultCount":1,"resultSize":7}}
+> as Administrator: {"statement":"SELECT 1 AS a /* x */","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"a":"number"},"results":[{"a":1}],"status":"success","metrics":{"resultCount":1,"resultSize":7}}
+> as Administrator: {"statement":"SELECT 1 AS a /* x","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  400 {"errors":[{"code":3000,"column":15,"line":1,"msg":"syntax error - line 1, column 15, near 'SELECT 1 AS a ', at: /"}],"status":"fatal","metrics":{"resultCount":0,"resultSize":0,"errorCount":1}}
+> as Administrator: {"statement":"﻿SELECT 1 AS a","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  400 {"errors":[{"code":3000,"column":1,"line":1,"msg":"syntax error - line 1, column 1, at: ﻿"}],"status":"fatal","metrics":{"resultCount":0,"resultSize":0,"errorCount":1}}
+> as Administrator: {"statement":" SELECT 1 AS a","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"a":"number"},"results":[{"a":1}],"status":"success","metrics":{"resultCount":1,"resultSize":7}}
+> as Administrator: {"statement":"(SELECT 1 AS a)","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  500 {"errors":[{"code":3083,"msg":"Invalid input.","reason":{"expected":"statement"}}],"status":"fatal","metrics":{"resultCount":0,"resultSize":0,"errorCount":1}}
+> as Administrator: {"statement":"SELECT 1 AS a UNION SELECT 2 AS a","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"a":"number"},"results":[{"a":2},{"a":1}],"status":"success","metrics":{"resultCount":2,"resultSize":14}}
+> as Administrator: {"statement":"WITH a AS (1) INSERT INTO `_default` (KEY, VALUE) VALUES (\"wx\", {})","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  400 {"errors":[{"code":3000,"column":15,"line":1,"msg":"syntax error - line 1, column 15, near 'WITH a AS (1) ', at: INSERT (reserved word)"}],"status":"fatal","metrics":{"resultCount":0,"resultSize":0,"errorCount":1}}
+> as Administrator: {"statement":"WITH a AS (1) DELETE FROM `_default` WHERE META().id = \"wx\"","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  400 {"errors":[{"code":3000,"column":15,"line":1,"msg":"syntax error - line 1, column 15, near 'WITH a AS (1) ', at: DELETE (reserved word)"}],"status":"fatal","metrics":{"resultCount":0,"resultSize":0,"errorCount":1}}
+> as Administrator: {"statement":"WITH a AS (1) UPSERT INTO `_default` (KEY, VALUE) VALUES (\"wx\", {})","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  400 {"errors":[{"code":3000,"column":15,"line":1,"msg":"syntax error - line 1, column 15, near 'WITH a AS (1) ', at: UPSERT (reserved word)"}],"status":"fatal","metrics":{"resultCount":0,"resultSize":0,"errorCount":1}}
+> as Administrator: {"statement":"WITH a AS (1) MERGE INTO `_default` AS t USING [] AS s ON META(t).id = s.id WHEN MATCHED THEN DELETE","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  400 {"errors":[{"code":3000,"column":15,"line":1,"msg":"syntax error - line 1, column 15, near 'WITH a AS (1) ', at: MERGE (reserved word)"}],"status":"fatal","metrics":{"resultCount":0,"resultSize":0,"errorCount":1}}
+> as Administrator: {"statement":"WITH a AS (1) EXECUTE FUNCTION default:g_inline(1)","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  400 {"errors":[{"code":3000,"column":15,"line":1,"msg":"syntax error - line 1, column 15, near 'WITH a AS (1) ', at: EXECUTE (reserved word)"}],"status":"fatal","metrics":{"resultCount":0,"resultSize":0,"errorCount":1}}
+> as Administrator: {"statement":"WITH RECURSIVE r AS (SELECT 1 AS n UNION SELECT r.n + 1 AS n FROM r WHERE r.n < 3) SELECT RAW r.n FROM r","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":"json","results":[1,2,3],"status":"success","metrics":{"resultCount":3,"resultSize":3}}
+> as Administrator: {"statement":"SELECT (DELETE FROM `_default` WHERE META().id = \"wx\") AS a","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  400 {"errors":[{"code":3000,"column":9,"line":1,"msg":"syntax error - line 1, column 9, near 'SELECT (', at: DELETE (reserved word)"}],"status":"fatal","metrics":{"resultCount":0,"resultSize":0,"errorCount":1}}
+> as Administrator: {"statement":"SELECT 1 AS a FROM [1] AS x LET y = (UPDATE `_default` SET n = 1) ","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  400 {"errors":[{"code":3000,"column":38,"line":1,"msg":"syntax error - line 1, column 38, near '...M [1] AS x LET y = (', at: UPDATE (reserved word)"}],"status":"fatal","metrics":{"resultCount":0,"resultSize":0,"errorCount":1}}
+> as Administrator: {"statement":"SELECT `select` FROM [{\"select\": 1}] AS d","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"select":"json"},"results":[{"select":1}],"status":"success","metrics":{"resultCount":1,"resultSize":12}}
+> as Administrator: {"statement":"select 1 AS a","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"a":"number"},"results":[{"a":1}],"status":"success","metrics":{"resultCount":1,"resultSize":7}}
+> as Administrator: {"statement":"SeLeCt 1 AS a","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"a":"number"},"results":[{"a":1}],"status":"success","metrics":{"resultCount":1,"resultSize":7}}

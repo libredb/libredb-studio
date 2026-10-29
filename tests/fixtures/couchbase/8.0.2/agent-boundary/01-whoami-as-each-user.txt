@@ -1,0 +1,50 @@
+# GET /whoami as each user: the roles the server reports, a group's roles included or not
+> as agent_ro: GET /whoami
+  200 {"roles":[{"role":"query_select","bucket_name":"probe","scope_name":"*","collection_name":"*"}],"id":"agent_ro","domain":"local","password_change_date":"2026-10-29T23:50:54Z"}
+> as agent_ro_coll: GET /whoami
+  200 {"roles":[{"role":"query_select","bucket_name":"probe","scope_name":"_default","collection_name":"_default"}],"id":"agent_ro_coll","domain":"local","password_change_date":"2026-10-29T23:50:54Z"}
+> as agent_update: GET /whoami
+  200 {"roles":[{"role":"query_select","bucket_name":"probe","scope_name":"*","collection_name":"*"},{"role":"query_update","bucket_name":"probe","scope_name":"*","collection_name":"*"}],"id":"agent_update","domain":"local","password_change_date":"2026-10-29T23:50:54Z"}
+> as agent_insert: GET /whoami
+  200 {"roles":[{"role":"query_insert","bucket_name":"probe","scope_name":"*","collection_name":"*"},{"role":"query_select","bucket_name":"probe","scope_name":"*","collection_name":"*"}],"id":"agent_insert","domain":"local","password_change_date":"2026-10-29T23:50:54Z"}
+> as agent_delete: GET /whoami
+  200 {"roles":[{"role":"query_delete","bucket_name":"probe","scope_name":"*","collection_name":"*"},{"role":"query_select","bucket_name":"probe","scope_name":"*","collection_name":"*"}],"id":"agent_delete","domain":"local","password_change_date":"2026-10-29T23:50:54Z"}
+> as agent_writer: GET /whoami
+  200 {"roles":[{"role":"data_writer","bucket_name":"probe","scope_name":"*","collection_name":"*"},{"role":"query_select","bucket_name":"probe","scope_name":"*","collection_name":"*"}],"id":"agent_writer","domain":"local","password_change_date":"2026-10-29T23:50:54Z"}
+> as agent_badmin: GET /whoami
+  200 {"roles":[{"role":"bucket_admin","bucket_name":"probe"},{"role":"query_select","bucket_name":"probe","scope_name":"*","collection_name":"*"}],"id":"agent_badmin","domain":"local","password_change_date":"2026-10-29T23:50:54Z"}
+> as agent_admin: GET /whoami
+  200 {"roles":[{"role":"admin"}],"id":"agent_admin","domain":"local","password_change_date":"2026-10-29T23:50:54Z"}
+> as agent_all: GET /whoami
+  200 {"roles":[{"role":"query_select","bucket_name":"*","scope_name":"*","collection_name":"*"}],"id":"agent_all","domain":"local","password_change_date":"2026-10-29T23:50:54Z"}
+> as agent_two: GET /whoami
+  200 {"roles":[{"role":"query_select","bucket_name":"other","scope_name":"*","collection_name":"*"},{"role":"query_select","bucket_name":"probe","scope_name":"*","collection_name":"*"}],"id":"agent_two","domain":"local","password_change_date":"2026-10-29T23:50:54Z"}
+> as agent_funcs: GET /whoami
+  200 {"roles":[{"role":"query_execute_functions","bucket_name":"probe","scope_name":"_default"},{"role":"query_select","bucket_name":"probe","scope_name":"*","collection_name":"*"}],"id":"agent_funcs","domain":"local","password_change_date":"2026-10-29T23:50:54Z"}
+> as agent_gfuncs: GET /whoami
+  200 {"roles":[{"role":"query_execute_global_functions"},{"role":"query_select","bucket_name":"probe","scope_name":"*","collection_name":"*"}],"id":"agent_gfuncs","domain":"local","password_change_date":"2026-10-29T23:50:54Z"}
+> as agent_xfuncs: GET /whoami
+  200 {"roles":[{"role":"query_execute_external_functions","bucket_name":"probe","scope_name":"_default"},{"role":"query_select","bucket_name":"probe","scope_name":"*","collection_name":"*"}],"id":"agent_xfuncs","domain":"local","password_change_date":"2026-10-29T23:50:54Z"}
+> as agent_catalog: GET /whoami
+  200 {"roles":[{"role":"query_system_catalog"},{"role":"query_select","bucket_name":"probe","scope_name":"*","collection_name":"*"}],"id":"agent_catalog","domain":"local","password_change_date":"2026-10-29T23:50:54Z"}
+> as agent_curl: GET /whoami
+  200 {"roles":[{"role":"query_external_access"},{"role":"query_select","bucket_name":"probe","scope_name":"*","collection_name":"*"}],"id":"agent_curl","domain":"local","password_change_date":"2026-10-29T23:50:54Z"}
+> as agent_seq: GET /whoami
+  200 {"roles":[{"role":"query_select","bucket_name":"probe","scope_name":"*","collection_name":"*"},{"role":"query_use_sequences","bucket_name":"probe","scope_name":"_default"}],"id":"agent_seq","domain":"local","password_change_date":"2026-10-29T23:50:54Z"}
+> as agent_reader: GET /whoami
+  200 {"roles":[{"role":"data_reader","bucket_name":"probe","scope_name":"*","collection_name":"*"}],"id":"agent_reader","domain":"local","password_change_date":"2026-10-29T23:50:54Z"}
+> as agent_grouped: GET /whoami
+  200 {"roles":[{"role":"query_select","bucket_name":"probe","scope_name":"*","collection_name":"*"}],"id":"agent_grouped","domain":"local","password_change_date":"2026-10-29T23:50:54Z"}
+> as agent_grouped_w: GET /whoami
+  200 {"roles":[{"role":"data_writer","bucket_name":"probe","scope_name":"*","collection_name":"*"},{"role":"query_select","bucket_name":"probe","scope_name":"*","collection_name":"*"}],"id":"agent_grouped_w","domain":"local","password_change_date":"2026-10-29T23:50:54Z"}
+> as Administrator: GET /whoami
+  200 {"roles":[{"role":"admin"}],"id":"Administrator","domain":"admin"}
+# what the provider's open reads, as the query_select-only user
+> as agent_ro: GET /pools/default/nodeServices
+  200 {"rev":69,"nodesExt":[{"nodeUUID":"2234d9c7bc15777213e27716621c0179","services":{"capi":8092,"capiSSL":18092,"eventingAdminPort":8096,"eventingDebug":9140,"eventingSSL":18096,"fts":8094,"ftsGRPC":9130,"ftsGRPCSSL":19130,"ftsSSL":18094,"indexAdmin":9100,"indexHttp":9102,"indexHttps":19102,"indexScan":9101,"indexStreamCatchup":9104,"indexStreamInit":9103,"indexStreamMaint":9105,"kv":11210,"kvSSL":11207,"mgmt":8091,"mgmtSSL":18091,"n1ql":8093,"n1qlSSL":18093,"projector":9999},"thisNode":true,"hostname":"172.17.0.2","serverGroup":"Group 1"}],"revEpoch":1,"clusterCapabilitiesVer":[1,0],"clusterCapabilities":{"n1ql":["costBasedOptimizer","indexAdvisor","javaScriptFunctions","inlineFunctions","enhancedPreparedStatements","readFromReplica"],"search":["vectorSearch","scopedSearchIndex"]},"clusterUUID":"17ffae37c6f99a700170ed42b9570f00","clusterName":"","prod":"server","prodName":"Couchbase Server"}
+> as agent_ro: GET /pools/default/buckets/probe
+  200 {"name":"probe","nodeLocator":"vbucket","bucketType":"membase","storageBackend":"magma","uuid":"875651d857afc4a01571ef02458a7be1","uri":"/pools/default/buckets/probe?bucket_uuid=875651d857afc4a01571ef02458a7be1","streamingUri":"/pools/default/bucketsStreaming/probe?bucket_uuid=875651d857afc4a01571ef02458a7be1","numVBuckets":128,"bucketCapabilitiesVer":"","bucketCapabilities":["collections","durableWrite","tombstonedUserXAttrs","subdoc.ReplaceBodyWithXattr","subdoc.DocumentMacroSupport","subdoc.ReviveDocument","nonDedupedHistory","dcp.IgnorePurgedTombstones","preserveExpiry","querySystemCollection","mobileSystemCollection","subdoc.ReplicaRead","subdoc.BinaryXattr","subdoc.AccessDeleted","rangeScan","dcp","cbhello","touch","cccp","xdcrCheckpointing","nodesExt","xattr"],"collectionsManifestUid":"3","vBucketServerMap":{"hashAlgorithm":"CRC","numReplicas":1,"serverList":["172.17.0.2:11210"],"vBucketMap":[[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[0,-1],[ ...(5812 chars)
+> as agent_ro: GET /pools
+  200 {"isAdminCreds":true,"isROAdminCreds":false,"isEnterprise":true,"prod":"server","prodName":"Couchbase Server","configProfile":"default","allowedServices":["kv","n1ql","index","fts","cbas","eventing","backup"],"isDeveloperPreview":false,"packageVariant":"linux/docker","pools":[{"name":"default","uri":"/pools/default?uuid=17ffae37c6f99a700170ed42b9570f00","streamingUri":"/poolsStreaming/default?uuid=17ffae37c6f99a700170ed42b9570f00"}],"settings":{"maxParallelIndexers":"/settings/maxParallelIndexers?uuid=17ffae37c6f99a700170ed42b9570f00","viewUpdateDaemon":"/settings/viewUpdateDaemon?uuid=17ffae37c6f99a700170ed42b9570f00"},"uuid":"17ffae37c6f99a700170ed42b9570f00","implementationVersion":"8.0.2-5503-enterprise","componentsVersion":{"chronicle":"0.0.1","asn1":"5.4.2","ssl":"11.5.1","esaml":"4.6.0","ns_server":"8.0.2-5503-enterprise","ns_common":"0.0.0","xmerl":"2.1.8","os_mon":"2.11.2","sasl":"4.3","crypto":"5.8.1","public_key":"1.20.1","stdlib":"7.2.1","ale":"0.0.0","kernel":"10.5","inets":"9.5","lhttpc":"1.3.0"}}
+> as no_such_user: GET /whoami
+  401 ""

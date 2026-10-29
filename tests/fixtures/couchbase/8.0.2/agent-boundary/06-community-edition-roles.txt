@@ -1,0 +1,38 @@
+# Community Edition node: the roles it offers, and what each user it can make holds
+> as Administrator: GET /settings/rbac/roles
+  200 [{"role":"admin","name":"Full Admin","desc":"Can manage all cluster features (including security). This user can access the web console. This user can read and write all data."},{"role":"ro_admin","name":"Read-Only Admin","desc":"Can view all cluster statistics. This user can access the web console. This user cannot read security-related information, including listing users or groups."},{"role":"bucket_full_access","bucket_name":"*","name":"Application Access","desc":"Full access to bucket data. This user cannot access the web console and is intended only for application access. This user can read and write data except for the _system scope which can only be read."}]
+> as Administrator: PUT /settings/rbac/users/local/agent_ro {"password":"(generated)","roles":"query_select[probe]"}
+  400 {"errors":{"roles":"Cannot assign roles to user because the following roles are unknown, malformed or role parameters are undefined: [query_select[probe]]"}}
+> as Administrator: PUT /settings/rbac/users/local/agent_full {"password":"(generated)","roles":"bucket_full_access[probe]"}
+  200 ""
+> as Administrator: PUT /settings/rbac/users/local/agent_roadmin {"password":"(generated)","roles":"ro_admin"}
+  200 ""
+> as Administrator: PUT /settings/rbac/groups/grp_ro {"roles":"bucket_full_access[probe]"}
+  400 "This http API endpoint requires enterprise edition"
+(waited 2000 ms)
+> as Administrator: {"statement":"CREATE PRIMARY INDEX ON `_default`","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":null,"results":[],"status":"success","metrics":{"resultCount":0,"resultSize":0}}
+> as Administrator: {"statement":"UPSERT INTO `_default` (KEY, VALUE) VALUES (\"d1\", {\"n\": 1})","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":null,"results":[],"status":"success","metrics":{"resultCount":0,"resultSize":0,"mutationCount":1}}
+> as agent_full: GET /whoami
+  200 {"roles":[{"role":"bucket_full_access","bucket_name":"probe"}],"id":"agent_full","domain":"local","password_change_date":"2026-10-29T23:51:10Z"}
+> as agent_roadmin: GET /whoami
+  200 {"roles":[{"role":"ro_admin"}],"id":"agent_roadmin","domain":"local","password_change_date":"2026-10-29T23:51:10Z"}
+> as agent_ro: GET /whoami
+  401 ""
+> as agent_full: GET /pools
+  200 {"isAdminCreds":true,"isROAdminCreds":false,"isEnterprise":false,"prod":"server","prodName":"Couchbase Server","configProfile":"default","allowedServices":["kv","n1ql","index","fts"],"isDeveloperPreview":false,"packageVariant":"linux/docker","pools":[{"name":"default","uri":"/pools/default?uuid=530f70b08a66a0f32aa9f9158178e1c9","streamingUri":"/poolsStreaming/default?uuid=530f70b08a66a0f32aa9f9158178e1c9"}],"settings":{"maxParallelIndexers":"/settings/maxParallelIndexers?uuid=530f70b08a66a0f32aa9f9158178e1c9","viewUpdateDaemon":"/settings/viewUpdateDaemon?uuid=530f70b08a66a0f32aa9f9158178e1c9"},"uuid":"530f70b08a66a0f32aa9f9158178e1c9","implementationVersion":"8.0.2-5503-community","componentsVersion":{"chronicle":"0.0.1","asn1":"5.4.2","ssl":"11.5.1","esaml":"4.6.0","ns_server":"8.0.2-5503-community","ns_common":"0.0.0","xmerl":"2.1.8","os_mon":"2.11.2","crypto":"5.8.1","public_key":"1.20.1","sasl":"4.3","stdlib":"7.2.1","ale":"0.0.0","kernel":"10.5","inets":"9.5","lhttpc":"1.3.0"}}
+> as agent_full: {"statement":"SELECT d.n FROM `_default` AS d","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"n":"json"},"results":[{"n":1}],"status":"success","metrics":{"resultCount":1,"resultSize":7}}
+> as agent_full: {"statement":"INSERT INTO `_default` (KEY, VALUE) VALUES (\"w-full\", {\"by\": \"agent_full\"})","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":null,"results":[],"status":"success","metrics":{"resultCount":0,"resultSize":0,"mutationCount":1}}
+> as agent_full: {"statement":"DELETE FROM `_default` WHERE META().id = \"w-full\"","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":null,"results":[],"status":"success","metrics":{"resultCount":0,"resultSize":0,"mutationCount":1}}
+> as agent_full: {"statement":"INSERT INTO `_default` (KEY, VALUE) VALUES (\"w-full2\", {\"by\": \"agent_full\"})","query_context":"default:`probe`","scan_consistency":"request_plus","readonly":true}
+  403 {"errors":[{"code":1000,"msg":"The server or request is read-only and cannot accept this write statement."}],"status":"fatal","metrics":{"resultCount":0,"resultSize":0,"errorCount":1}}
+> as agent_roadmin: {"statement":"SELECT d.n FROM `_default` AS d","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  401 {"signature":{"n":"json"},"results":[],"errors":[{"code":13014,"msg":"User does not have credentials to run SELECT queries on default:probe._default._default. Add role bucket_full_access on default:probe._default._default to allow the statement to run.","reason":{"missing_role":"bucket_full_access","path":"default:probe._default._default"}}],"status":"fatal","metrics":{"resultCount":0,"resultSize":0,"errorCount":1}}
+> as agent_roadmin: {"statement":"INSERT INTO `_default` (KEY, VALUE) VALUES (\"w-ro\", {\"by\": \"agent_roadmin\"})","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  401 {"signature":null,"results":[],"errors":[{"code":13014,"msg":"User does not have credentials to run INSERT queries on default:probe._default._default. Add role bucket_full_access on default:probe._default._default to allow the statement to run.","reason":{"missing_role":"bucket_full_access","path":"default:probe._default._default"}}],"status":"fatal","metrics":{"resultCount":0,"resultSize":0,"errorCount":1}}
+> as Administrator: {"statement":"SELECT RAW ds_version()","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":"string","results":["8.0.2-5503-community"],"status":"success","metrics":{"resultCount":1,"resultSize":22}}
