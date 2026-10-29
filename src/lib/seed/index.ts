@@ -62,8 +62,9 @@ export interface SeedListing {
 /**
  * The seed connections these roles may see, in getManagedConnections' order, with the rows only the Kubernetes access
  * review may list set apart in `pendingReview`, their place in that order: the operator entries, then the discovered
- * connections of CapRover and of Kubernetes, then the samples. Only src/lib/governance/visible.ts reads it, and it
- * hands `pendingReview` to the review and nowhere else.
+ * connections of CapRover and of Kubernetes, then the samples. Outside this module only src/lib/governance/visible.ts
+ * reads it, and it hands `pendingReview` to the review and nowhere else; getManagedConnections, below, reads only
+ * `before` and `after`.
  *
  * Governance mode (`GOVERNANCE_SOURCE`, docs/GOVERNANCE.md) replaces all three with the governance source, so under it
  * this reads no source at all and answers three empty sections, whatever the environment says: not the seed file at

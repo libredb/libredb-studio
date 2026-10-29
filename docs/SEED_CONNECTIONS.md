@@ -1674,8 +1674,8 @@ seed-connections.yaml (SEED_CONFIG_PATH)
 | `resolve-connection.ts` | Shared utility for all API routes |
 | `libredb-sample.ts` | Built-in "Sample (LibreDB)" connection: file seeding + descriptor |
 | `sqlite-sample.ts` | Built-in "Sample (Employees)" connection: vendored template copy + descriptor |
-| `index.ts` | Public API: `getManagedConnections()`, `getPendingSeeds()`, `getSeedConnectionById()`, `getSeedConnectionByIdUnfiltered()` and `resetCache()` |
-| `roles.ts` | `seedRolesOf()`: the session's role and the claim roles that carry `OIDC_ROLE_PREFIX`, which seed roles are matched against |
+| `index.ts` | Public API: `getManagedConnections()`, `getSeedListing()`, `getPendingSeeds()`, `getSeedConnectionByIdUnfiltered()` and `resetCache()` |
+| `roles.ts` | `seedRolesOf()`: the session's role and the claim roles that carry `OIDC_ROLE_PREFIX`, which seed roles are matched against; `KUBERNETES_REVIEWED_ROLE`, the role reserved for Kubernetes-discovered connections while the access review is on, which the role filter never selects |
 | `discovery-export.ts` | Zod schema and parser of the platform discovery export file, with its 2 MiB cap |
 | `discovery-fingerprint.ts` | Image repository parsing, engine detection and credential mapping of discovered services |
 | `discovery-probe.ts` | TCP probe for environment-matched candidates: 1 s timeout, 30 s positive cache, 16 at a time |
