@@ -407,6 +407,19 @@ describe("auth", () => {
         process.env.AUTH_SESSION_TTL_SECONDS = "28800";
         expect(await issuedLifetime()).toEqual({ tokenSeconds: 28800, cookieMaxAge: 28800 });
       });
+
+      test("a lifetime given to login sets exp minus iat and the cookie Max-Age alike", async () => {
+        delete process.env.AUTH_SESSION_TTL_SECONDS;
+        await login("user", "dev-a", undefined, undefined, undefined, 600);
+        const claims = jose.decodeJwt(mockSetCalls[0].value);
+        expect((claims.exp as number) - (claims.iat as number)).toBe(600);
+        expect((mockSetCalls[0].opts as { maxAge?: number }).maxAge).toBe(600);
+      });
+
+      test("signJWT takes a lifetime of its own", async () => {
+        const claims = jose.decodeJwt(await signJWT({ role: "user", username: "dev-a" }, 1234));
+        expect((claims.exp as number) - (claims.iat as number)).toBe(1234);
+      });
     });
 
     test("sets auth-token cookie with admin role", async () => {
@@ -437,6 +450,24 @@ describe("auth", () => {
         role: "user",
         username: "member@example.com",
         sessionVersion: 4,
+        iat: expect.any(Number),
+        exp: expect.any(Number),
+      });
+    });
+
+    test("login with a session handle signs it beside the subject and issuer", async () => {
+      await login("user", "dev-a", undefined, {
+        subject: "0b6f5c1e-4d2a-4c55-9e1f-7a3b2c1d0e9f",
+        issuer: "https://oauth-openshift.apps.example.com",
+        sessionHandle: "h".repeat(43),
+      });
+      const claims = jose.decodeJwt(mockSetCalls[0].value);
+      expect(claims).toEqual({
+        role: "user",
+        username: "dev-a",
+        idpSubject: "0b6f5c1e-4d2a-4c55-9e1f-7a3b2c1d0e9f",
+        idpIssuer: "https://oauth-openshift.apps.example.com",
+        sessionHandle: "h".repeat(43),
         iat: expect.any(Number),
         exp: expect.any(Number),
       });

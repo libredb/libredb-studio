@@ -2,7 +2,8 @@
  * The key a session's server storage rows are filed under, the `user_id` of `user_storage` (docs/STORAGE.md, User
  * Scoping & Security).
  *
- * Without governance it is the session's username, exactly as before. Under governance it is `sub:` followed by the
+ * Without governance it is the session's username, exactly as before. Under governance, and in openshift sign-in mode
+ * (where the subject is the OpenShift user's uid), it is `sub:` followed by the
  * identity provider's subject, the `sub` a control plane writes grants under (docs/GOVERNANCE.md, Sign-in). An OIDC
  * session's username is the user's email when the ID token carries one, and an email can change, while the subject
  * stays, so a later email change does not move the user's rows. The prefix keeps a subject apart from any username a
@@ -16,17 +17,19 @@
  * row under this key.
  */
 import type { UserPayload } from "@/lib/auth";
+import { authProvider } from "@/lib/config/auth-provider";
 import { governanceEnabled } from "@/lib/governance/config";
 
 // One line, never a concatenation across lines: bun's line coverage under-counts the continuation lines of a message
 // built that way.
 const SUBJECT_PREFIX = "sub:";
 const RESERVED_USERNAME_MESSAGE = `A username that starts with "${SUBJECT_PREFIX}" cannot use server storage: the prefix is reserved for identity provider subjects under governance`;
-const SUBJECT_MISSING_MESSAGE =
-  "Server storage under governance is keyed by the identity provider's subject, and this session carries none";
+const SUBJECT_MISSING_MESSAGE = `Server storage under governance or openshift sign-in is keyed by the identity provider's subject, and this session carries none`;
 
 export function storageOwnerKey(session: UserPayload): string {
-  if (!governanceEnabled()) {
+  // openshift sign-in files rows under the user's uid as governance does under the subject: a user re-created under
+  // the same name, or a name equal to a username of an earlier mode, starts over instead of reading those rows.
+  if (!governanceEnabled() && authProvider() !== "openshift") {
     if (session.username.startsWith(SUBJECT_PREFIX)) throw new Error(RESERVED_USERNAME_MESSAGE);
     return session.username;
   }

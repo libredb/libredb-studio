@@ -10,5 +10,8 @@ export async function GET() {
   if (reading.kind !== "authenticated") {
     return NextResponse.json({ authenticated: false }, { status: 401 });
   }
-  return NextResponse.json({ authenticated: true, user: reading.session });
+  // The session handle of an openshift session keys its token record: it never leaves the server in a body.
+  const user = { ...reading.session };
+  delete user.sessionHandle;
+  return NextResponse.json({ authenticated: true, user });
 }
