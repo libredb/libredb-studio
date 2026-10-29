@@ -20,6 +20,12 @@ export async function register(): Promise<void> {
   const { verifyAuthEnvAtBoot } = await import("@/lib/config/auth-preflight");
   if (!verifyAuthEnvAtBoot()) return;
 
+  // Private CA preflight: Node only warns when NODE_EXTRA_CA_CERTS names a missing or
+  // empty file, so refuse to boot instead; on OpenShift the cluster fills the chart's
+  // trusted-CA ConfigMap after start, and the restart picks the bundle up.
+  const { verifyExtraCaCertsAtBoot } = await import("@/lib/config/ca-bundle-preflight");
+  if (!verifyExtraCaCertsAtBoot()) return;
+
   // Governance preflight (docs/GOVERNANCE.md#boot-checks): with
   // GOVERNANCE_SOURCE set, refuse an environment that contradicts governance
   // mode, such as a password, a seed file or a missing governance URL, before
