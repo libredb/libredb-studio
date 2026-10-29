@@ -30,6 +30,9 @@ let api: FakeKubernetesApi;
 let exportFile: KubernetesDiscoveryExportFixture;
 const spies: { mockRestore(): void }[] = [];
 
+// The hosts below are those of the default cluster domain.
+delete process.env.SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN;
+
 const { GET } = await import("@/app/api/connections/managed/route");
 const { resolveConnection } = await import("@/lib/seed/resolve-connection");
 const { recordGroups, resetGroupRecords } = await import("@/lib/kubernetes-access/groups");

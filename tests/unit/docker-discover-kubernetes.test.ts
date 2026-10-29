@@ -58,6 +58,9 @@ const PASSWORD_A = "not-a-real-password-orders";
 const PASSWORD_B = "not-a-real-password-analytics";
 const EXPORT_PATH = "/api/v1/namespaces/libredb-studio/secrets/libredb-studio-discovery-export";
 
+// The hosts below are those of the default cluster domain.
+delete process.env.SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN;
+
 let api: FakeDiscoveryApi;
 
 /** scanOnce's answer, typed for the assertions: the exporter is JavaScript, so the union TypeScript infers is loose. */
