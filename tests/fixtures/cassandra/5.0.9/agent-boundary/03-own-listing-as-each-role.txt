@@ -1,0 +1,115 @@
+== as agent_ro
+> LIST ROLES OF 'agent_ro';
+ok, 1 rows
+  {"role":"agent_ro","super":false,"login":true,"options":{},"datacenters":"ALL"}
+  (session keyspace: none)
+> LIST ALL PERMISSIONS OF 'agent_ro';
+ok, 1 rows
+  {"role":"agent_ro","username":"agent_ro","resource":"<keyspace probe>","permission":"SELECT"}
+  (session keyspace: none)
+== as agent_table
+> LIST ROLES OF 'agent_table';
+ok, 1 rows
+  {"role":"agent_table","super":false,"login":true,"options":{},"datacenters":"ALL"}
+  (session keyspace: none)
+> LIST ALL PERMISSIONS OF 'agent_table';
+ok, 1 rows
+  {"role":"agent_table","username":"agent_table","resource":"<table probe.customers>","permission":"SELECT"}
+  (session keyspace: none)
+== as agent_modify
+> LIST ROLES OF 'agent_modify';
+ok, 1 rows
+  {"role":"agent_modify","super":false,"login":true,"options":{},"datacenters":"ALL"}
+  (session keyspace: none)
+> LIST ALL PERMISSIONS OF 'agent_modify';
+ok, 2 rows
+  {"role":"agent_modify","username":"agent_modify","resource":"<keyspace other>","permission":"MODIFY"}
+  {"role":"agent_modify","username":"agent_modify","resource":"<keyspace probe>","permission":"SELECT"}
+  (session keyspace: none)
+== as agent_super
+> LIST ROLES OF 'agent_super';
+ok, 1 rows
+  {"role":"agent_super","super":true,"login":true,"options":{},"datacenters":"ALL"}
+  (session keyspace: none)
+> LIST ALL PERMISSIONS OF 'agent_super';
+ok, no result columns
+  (session keyspace: none)
+== as agent_allks
+> LIST ROLES OF 'agent_allks';
+ok, 1 rows
+  {"role":"agent_allks","super":false,"login":true,"options":{},"datacenters":"ALL"}
+  (session keyspace: none)
+> LIST ALL PERMISSIONS OF 'agent_allks';
+ok, 1 rows
+  {"role":"agent_allks","username":"agent_allks","resource":"<all keyspaces>","permission":"SELECT"}
+  (session keyspace: none)
+== as agent_exec
+> LIST ROLES OF 'agent_exec';
+ok, 1 rows
+  {"role":"agent_exec","super":false,"login":true,"options":{},"datacenters":"ALL"}
+  (session keyspace: none)
+> LIST ALL PERMISSIONS OF 'agent_exec';
+ok, 2 rows
+  {"role":"agent_exec","username":"agent_exec","resource":"<keyspace probe>","permission":"SELECT"}
+  {"role":"agent_exec","username":"agent_exec","resource":"<function probe.plus_one(int)>","permission":"EXECUTE"}
+  (session keyspace: none)
+== as agent_unmask
+> LIST ROLES OF 'agent_unmask';
+ok, 1 rows
+  {"role":"agent_unmask","super":false,"login":true,"options":{},"datacenters":"ALL"}
+  (session keyspace: none)
+> LIST ALL PERMISSIONS OF 'agent_unmask';
+ok, 2 rows
+  {"role":"agent_unmask","username":"agent_unmask","resource":"<keyspace probe>","permission":"SELECT"}
+  {"role":"agent_unmask","username":"agent_unmask","resource":"<keyspace probe>","permission":"UNMASK"}
+  (session keyspace: none)
+== as agent_inherit
+> LIST ROLES OF 'agent_inherit';
+ok, 3 rows
+  {"role":"agent_inherit","super":false,"login":true,"options":{},"datacenters":"ALL"}
+  {"role":"writer_inner","super":false,"login":false,"options":{},"datacenters":"ALL"}
+  {"role":"writer_middle","super":false,"login":false,"options":{},"datacenters":"ALL"}
+  (session keyspace: none)
+> LIST ALL PERMISSIONS OF 'agent_inherit';
+ok, 2 rows
+  {"role":"agent_inherit","username":"agent_inherit","resource":"<keyspace probe>","permission":"SELECT"}
+  {"role":"writer_inner","username":"writer_inner","resource":"<keyspace probe>","permission":"MODIFY"}
+  (session keyspace: none)
+== as agent_inherit_super
+> LIST ROLES OF 'agent_inherit_super';
+ok, 2 rows
+  {"role":"agent_inherit_super","super":false,"login":true,"options":{},"datacenters":"ALL"}
+  {"role":"super_inner","super":true,"login":false,"options":{},"datacenters":"ALL"}
+  (session keyspace: none)
+> LIST ALL PERMISSIONS OF 'agent_inherit_super';
+ok, 1 rows
+  {"role":"agent_inherit_super","username":"agent_inherit_super","resource":"<keyspace probe>","permission":"SELECT"}
+  (session keyspace: none)
+== as agent_mixed
+> LIST ROLES OF 'agent_mixed';
+ok, 1 rows
+  {"role":"agent_mixed","super":false,"login":true,"options":{},"datacenters":"ALL"}
+  (session keyspace: none)
+> LIST ALL PERMISSIONS OF 'agent_mixed';
+ok, 2 rows
+  {"role":"agent_mixed","username":"agent_mixed","resource":"<keyspace MixedCase>","permission":"SELECT"}
+  {"role":"agent_mixed","username":"agent_mixed","resource":"<table MixedCase.Things>","permission":"SELECT"}
+  (session keyspace: none)
+== as agent_none
+> LIST ROLES OF 'agent_none';
+ok, 1 rows
+  {"role":"agent_none","super":false,"login":true,"options":{},"datacenters":"ALL"}
+  (session keyspace: none)
+> LIST ALL PERMISSIONS OF 'agent_none';
+ok, no result columns
+  (session keyspace: none)
+== as agent_describe
+> LIST ROLES OF 'agent_describe';
+ok, 1 rows
+  {"role":"agent_describe","super":false,"login":true,"options":{},"datacenters":"ALL"}
+  (session keyspace: none)
+> LIST ALL PERMISSIONS OF 'agent_describe';
+ok, 2 rows
+  {"role":"agent_describe","username":"agent_describe","resource":"<keyspace probe>","permission":"SELECT"}
+  {"role":"agent_describe","username":"agent_describe","resource":"<all roles>","permission":"DESCRIBE"}
+  (session keyspace: none)

@@ -1,0 +1,6 @@
+> CREATE OR REPLACE FUNCTION probe.now() CALLED ON NULL INPUT RETURNS int LANGUAGE java AS 'return 1;';
+ok, no result columns
+  (session keyspace: none)
+> CREATE OR REPLACE FUNCTION probe.totimestamp(x timeuuid) CALLED ON NULL INPUT RETURNS int LANGUAGE java AS 'return 1;';
+ok, no result columns
+  (session keyspace: none)

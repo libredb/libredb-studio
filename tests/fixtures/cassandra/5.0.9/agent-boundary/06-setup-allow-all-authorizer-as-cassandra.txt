@@ -1,0 +1,12 @@
+> CREATE KEYSPACE probe WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
+ok, no result columns
+  (session keyspace: none)
+> CREATE TABLE probe.customers (id int PRIMARY KEY, name text);
+ok, no result columns
+  (session keyspace: none)
+> CREATE ROLE agent_ro WITH LOGIN = true AND PASSWORD = 'not-a-real-password';
+ok, no result columns
+  (session keyspace: none)
+> GRANT SELECT ON KEYSPACE probe TO agent_ro;
+error ResponseError code=0: java.lang.UnsupportedOperationException: GRANT operation is not supported by AllowAllAuthorizer
+  (session keyspace: none)

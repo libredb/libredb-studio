@@ -1,0 +1,121 @@
+> INSERT INTO probe.customers (id, name) VALUES (99, 'x');
+error ResponseError code=8448: User agent_ro has no MODIFY permission on <table probe.customers> or any of its parents
+  (session keyspace: probe)
+> UPDATE probe.customers SET name = 'x' WHERE id = 1;
+error ResponseError code=8448: User agent_ro has no MODIFY permission on <table probe.customers> or any of its parents
+  (session keyspace: probe)
+> DELETE FROM probe.customers WHERE id = 1;
+error ResponseError code=8448: User agent_ro has no MODIFY permission on <table probe.customers> or any of its parents
+  (session keyspace: probe)
+> INSERT INTO probe.customers (id, name) VALUES (98, 'x') IF NOT EXISTS;
+error ResponseError code=8448: User agent_ro has no MODIFY permission on <table probe.customers> or any of its parents
+  (session keyspace: probe)
+> BEGIN BATCH INSERT INTO probe.customers (id, name) VALUES (97, 'x'); APPLY BATCH;
+error ResponseError code=8448: User agent_ro has no MODIFY permission on <table probe.customers> or any of its parents
+  (session keyspace: probe)
+> BEGIN UNLOGGED BATCH UPDATE probe.orders SET amount = 0 WHERE id = 10; APPLY BATCH;
+error ResponseError code=8448: User agent_ro has no MODIFY permission on <table probe.orders> or any of its parents
+  (session keyspace: probe)
+> TRUNCATE probe.customers;
+error ResponseError code=8448: User agent_ro has no MODIFY permission on <table probe.customers> or any of its parents
+  (session keyspace: probe)
+> CREATE TABLE probe.created (id int PRIMARY KEY);
+error ResponseError code=8448: User agent_ro has no CREATE permission on <all tables in probe> or any of its parents
+  (session keyspace: probe)
+> CREATE TABLE IF NOT EXISTS probe.created (id int PRIMARY KEY);
+error ResponseError code=8448: User agent_ro has no CREATE permission on <all tables in probe> or any of its parents
+  (session keyspace: probe)
+> DROP TABLE probe.orders;
+error ResponseError code=8448: User agent_ro has no DROP permission on <table probe.orders> or any of its parents
+  (session keyspace: probe)
+> DROP TABLE IF EXISTS probe.libredb_agent_probe;
+error ResponseError code=8448: User agent_ro has no DROP permission on <table probe.libredb_agent_probe> or any of its parents
+  (session keyspace: probe)
+> ALTER TABLE probe.customers ADD extra text;
+error ResponseError code=8448: User agent_ro has no ALTER permission on <table probe.customers> or any of its parents
+  (session keyspace: probe)
+> CREATE INDEX ON probe.customers (name);
+error ResponseError code=8448: User agent_ro has no ALTER permission on <table probe.customers> or any of its parents
+  (session keyspace: probe)
+> CREATE MATERIALIZED VIEW probe.mv2 AS SELECT * FROM probe.customers WHERE id IS NOT NULL AND name IS NOT NULL PRIMARY KEY (name, id);
+error ResponseError code=8448: User agent_ro has no ALTER permission on <table probe.customers> or any of its parents
+  (session keyspace: probe)
+> CREATE FUNCTION probe.f2(x int) RETURNS NULL ON NULL INPUT RETURNS int LANGUAGE java AS 'return x;';
+error ResponseError code=8448: User agent_ro has no CREATE permission on <all functions in probe> or any of its parents
+  (session keyspace: probe)
+> CREATE TYPE probe.addr (street text);
+error ResponseError code=8448: User agent_ro has no CREATE permission on <all tables in probe> or any of its parents
+  (session keyspace: probe)
+> ALTER KEYSPACE probe WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
+error ResponseError code=8448: User agent_ro has no ALTER permission on <keyspace probe> or any of its parents
+  (session keyspace: probe)
+> CREATE KEYSPACE made WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
+error ResponseError code=8448: User agent_ro has no CREATE permission on <all keyspaces> or any of its parents
+  (session keyspace: probe)
+> GRANT SELECT ON KEYSPACE other TO agent_ro;
+error ResponseError code=8448: User agent_ro has no AUTHORIZE permission on <keyspace other> or any of its parents
+  (session keyspace: probe)
+> GRANT MODIFY ON KEYSPACE probe TO agent_ro;
+error ResponseError code=8448: User agent_ro has no AUTHORIZE permission on <keyspace probe> or any of its parents
+  (session keyspace: probe)
+> REVOKE SELECT ON KEYSPACE probe FROM agent_ro;
+error ResponseError code=8448: User agent_ro has no AUTHORIZE permission on <keyspace probe> or any of its parents
+  (session keyspace: probe)
+> CREATE ROLE made_role;
+error ResponseError code=8448: User agent_ro does not have sufficient privileges to perform the requested operation
+  (session keyspace: probe)
+> ALTER ROLE agent_ro WITH SUPERUSER = true;
+error ResponseError code=8448: You aren't allowed to alter your own superuser status or that of a role granted to you
+  (session keyspace: probe)
+> ALTER ROLE agent_ro WITH LOGIN = false;
+error ResponseError code=8448: You aren't allowed to alter LOGIN
+  (session keyspace: probe)
+> ALTER ROLE agent_ro WITH OPTIONS = {'k': 'v'};
+error ResponseError code=8448: You aren't allowed to alter OPTIONS
+  (session keyspace: probe)
+> ALTER ROLE agent_ro WITH PASSWORD = 'not-a-real-password';
+ok, no result columns
+  (session keyspace: probe)
+> INSERT INTO other.t (id, v) VALUES (2, 'x');
+error ResponseError code=8448: User agent_ro has no MODIFY permission on <table other.t> or any of its parents
+  (session keyspace: probe)
+> SELECT * FROM other.t;
+error ResponseError code=8448: User agent_ro has no SELECT permission on <table other.t> or any of its parents
+  (session keyspace: probe)
+> SELECT plus_one(id) FROM probe.customers WHERE id = 1;
+error ResponseError code=8448: User agent_ro has no EXECUTE permission on <function probe.plus_one(int)> or any of its parents
+  (session keyspace: probe)
+> SELECT probe.plus_one(id) FROM probe.customers WHERE id = 1;
+error ResponseError code=8448: User agent_ro has no EXECUTE permission on <function probe.plus_one(int)> or any of its parents
+  (session keyspace: probe)
+> SELECT total(amount) FROM probe.orders;
+error ResponseError code=8448: User agent_ro has no EXECUTE permission on <function probe.total(int)> or any of its parents
+  (session keyspace: probe)
+> SELECT id, plain, builtin_masked, udf_masked FROM probe.masked;
+ok, 1 rows
+  {"id":1,"plain":"visible","builtin_masked":"****","udf_masked":"redacted-by-udf"}
+  (session keyspace: probe)
+> SELECT id, plain FROM probe.masked;
+ok, 1 rows
+  {"id":1,"plain":"visible"}
+  (session keyspace: probe)
+> SELECT * FROM probe.orders_by_customer;
+ok, 1 rows
+  {"customer_id":1,"id":10,"amount":5}
+  (session keyspace: probe)
+> SELECT toJson(name), now(), writetime(name), token(id) FROM probe.customers WHERE id = 1;
+ok, 1 rows
+  {"system.tojson(name)":"\"Ada\"","system.now()":"25456a70-d3df-11f1-aedd-41b2c28f9a61","writetime(name)":"1793309053665000","system.token(id)":"-4069959284402364209"}
+  (session keyspace: probe)
+> SELECT name, value FROM system_views.settings WHERE name = 'authorizer';
+error ResponseError code=8448: User agent_ro has no SELECT permission on <table system_views.settings> or any of its parents
+  (session keyspace: probe)
+> UPDATE system_views.settings SET value = 'false' WHERE name = 'materialized_views_enabled';
+error ResponseError code=8448: User agent_ro has no MODIFY permission on <table system_views.settings> or any of its parents
+  (session keyspace: probe)
+> USE other;
+ok, no result columns
+  (session keyspace: other)
+> SELECT * FROM t;
+error ResponseError code=8448: User agent_ro has no SELECT permission on <table other.t> or any of its parents
+  (session keyspace: other)

@@ -1,0 +1,162 @@
+> CREATE KEYSPACE probe WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
+ok, no result columns
+  (session keyspace: none)
+> CREATE KEYSPACE other WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
+ok, no result columns
+  (session keyspace: none)
+> CREATE KEYSPACE "MixedCase" WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
+ok, no result columns
+  (session keyspace: none)
+> CREATE TABLE probe.customers (id int PRIMARY KEY, name text, email text);
+ok, no result columns
+  (session keyspace: none)
+> CREATE TABLE probe.orders (id int PRIMARY KEY, customer_id int, amount int);
+ok, no result columns
+  (session keyspace: none)
+> CREATE TABLE probe.masked (id int PRIMARY KEY, plain text, builtin_masked text MASKED WITH mask_default(), udf_masked text);
+ok, no result columns
+  (session keyspace: none)
+> CREATE TABLE other.t (id int PRIMARY KEY, v text);
+ok, no result columns
+  (session keyspace: none)
+> CREATE TABLE "MixedCase"."Things" (id int PRIMARY KEY);
+ok, no result columns
+  (session keyspace: none)
+> INSERT INTO probe.customers (id, name, email) VALUES (1, 'Ada', 'ada@example.test');
+ok, no result columns
+  (session keyspace: none)
+> INSERT INTO probe.customers (id, name, email) VALUES (2, 'Brian', 'brian@example.test');
+ok, no result columns
+  (session keyspace: none)
+> INSERT INTO probe.orders (id, customer_id, amount) VALUES (10, 1, 5);
+ok, no result columns
+  (session keyspace: none)
+> INSERT INTO probe.masked (id, plain, builtin_masked, udf_masked) VALUES (1, 'visible', 'hidden-by-builtin', 'hidden-by-udf');
+ok, no result columns
+  (session keyspace: none)
+> INSERT INTO other.t (id, v) VALUES (1, 'before');
+ok, no result columns
+  (session keyspace: none)
+> CREATE FUNCTION probe.plus_one(x int) RETURNS NULL ON NULL INPUT RETURNS int LANGUAGE java AS 'return x + 1;';
+ok, no result columns
+  (session keyspace: none)
+> CREATE FUNCTION probe.acc(state int, v int) CALLED ON NULL INPUT RETURNS int LANGUAGE java AS 'return state + (v == null ? 0 : v);';
+ok, no result columns
+  (session keyspace: none)
+> CREATE AGGREGATE probe.total(int) SFUNC acc STYPE int INITCOND 0;
+ok, no result columns
+  (session keyspace: none)
+> CREATE FUNCTION probe.redact(v text) RETURNS NULL ON NULL INPUT RETURNS text LANGUAGE java AS 'return "redacted-by-udf";';
+ok, no result columns
+  (session keyspace: none)
+> CREATE FUNCTION probe.js_one(x int) RETURNS NULL ON NULL INPUT RETURNS int LANGUAGE javascript AS 'x + 1';
+error ResponseError code=8704: Currently only Java UDFs are available in Cassandra. For more information - CASSANDRA-18252 and CASSANDRA-17281
+  (session keyspace: none)
+> ALTER TABLE probe.masked ALTER udf_masked MASKED WITH probe.redact();
+ok, no result columns
+  (session keyspace: none)
+> CREATE MATERIALIZED VIEW probe.orders_by_customer AS SELECT * FROM probe.orders WHERE customer_id IS NOT NULL AND id IS NOT NULL PRIMARY KEY (customer_id, id);
+ok, no result columns
+  (session keyspace: none)
+> CREATE ROLE agent_ro WITH LOGIN = true AND PASSWORD = 'not-a-real-password';
+ok, no result columns
+  (session keyspace: none)
+> GRANT SELECT ON KEYSPACE probe TO agent_ro;
+ok, no result columns
+  (session keyspace: none)
+> CREATE ROLE agent_table WITH LOGIN = true AND PASSWORD = 'not-a-real-password';
+ok, no result columns
+  (session keyspace: none)
+> GRANT SELECT ON TABLE probe.customers TO agent_table;
+ok, no result columns
+  (session keyspace: none)
+> CREATE ROLE agent_modify WITH LOGIN = true AND PASSWORD = 'not-a-real-password';
+ok, no result columns
+  (session keyspace: none)
+> GRANT SELECT ON KEYSPACE probe TO agent_modify;
+ok, no result columns
+  (session keyspace: none)
+> GRANT MODIFY ON KEYSPACE other TO agent_modify;
+ok, no result columns
+  (session keyspace: none)
+> CREATE ROLE agent_super WITH LOGIN = true AND SUPERUSER = true AND PASSWORD = 'not-a-real-password';
+ok, no result columns
+  (session keyspace: none)
+> CREATE ROLE agent_allks WITH LOGIN = true AND PASSWORD = 'not-a-real-password';
+ok, no result columns
+  (session keyspace: none)
+> GRANT SELECT ON ALL KEYSPACES TO agent_allks;
+ok, no result columns
+  (session keyspace: none)
+> CREATE ROLE agent_exec WITH LOGIN = true AND PASSWORD = 'not-a-real-password';
+ok, no result columns
+  (session keyspace: none)
+> GRANT SELECT ON KEYSPACE probe TO agent_exec;
+ok, no result columns
+  (session keyspace: none)
+> GRANT EXECUTE ON FUNCTION probe.plus_one(int) TO agent_exec;
+ok, no result columns
+  (session keyspace: none)
+> CREATE ROLE agent_unmask WITH LOGIN = true AND PASSWORD = 'not-a-real-password';
+ok, no result columns
+  (session keyspace: none)
+> GRANT SELECT ON KEYSPACE probe TO agent_unmask;
+ok, no result columns
+  (session keyspace: none)
+> GRANT UNMASK ON KEYSPACE probe TO agent_unmask;
+ok, no result columns
+  (session keyspace: none)
+> CREATE ROLE writer_inner;
+ok, no result columns
+  (session keyspace: none)
+> GRANT MODIFY ON KEYSPACE probe TO writer_inner;
+ok, no result columns
+  (session keyspace: none)
+> CREATE ROLE writer_middle;
+ok, no result columns
+  (session keyspace: none)
+> GRANT writer_inner TO writer_middle;
+ok, no result columns
+  (session keyspace: none)
+> CREATE ROLE agent_inherit WITH LOGIN = true AND PASSWORD = 'not-a-real-password';
+ok, no result columns
+  (session keyspace: none)
+> GRANT SELECT ON KEYSPACE probe TO agent_inherit;
+ok, no result columns
+  (session keyspace: none)
+> GRANT writer_middle TO agent_inherit;
+ok, no result columns
+  (session keyspace: none)
+> CREATE ROLE super_inner WITH SUPERUSER = true;
+ok, no result columns
+  (session keyspace: none)
+> CREATE ROLE agent_inherit_super WITH LOGIN = true AND PASSWORD = 'not-a-real-password';
+ok, no result columns
+  (session keyspace: none)
+> GRANT SELECT ON KEYSPACE probe TO agent_inherit_super;
+ok, no result columns
+  (session keyspace: none)
+> GRANT super_inner TO agent_inherit_super;
+ok, no result columns
+  (session keyspace: none)
+> CREATE ROLE agent_mixed WITH LOGIN = true AND PASSWORD = 'not-a-real-password';
+ok, no result columns
+  (session keyspace: none)
+> GRANT SELECT ON KEYSPACE "MixedCase" TO agent_mixed;
+ok, no result columns
+  (session keyspace: none)
+> GRANT SELECT ON TABLE "MixedCase"."Things" TO agent_mixed;
+ok, no result columns
+  (session keyspace: none)
+> CREATE ROLE agent_none WITH LOGIN = true AND PASSWORD = 'not-a-real-password';
+ok, no result columns
+  (session keyspace: none)
+> CREATE ROLE agent_describe WITH LOGIN = true AND PASSWORD = 'not-a-real-password';
+ok, no result columns
+  (session keyspace: none)
+> GRANT SELECT ON KEYSPACE probe TO agent_describe;
+ok, no result columns
+  (session keyspace: none)
+> GRANT DESCRIBE ON ALL ROLES TO agent_describe;
+ok, no result columns
+  (session keyspace: none)

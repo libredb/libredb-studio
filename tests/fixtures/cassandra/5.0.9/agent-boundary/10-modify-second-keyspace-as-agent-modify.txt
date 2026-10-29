@@ -1,0 +1,9 @@
+> INSERT INTO other.t (id, v) VALUES (3, 'written-by-agent-modify');
+ok, no result columns
+  (session keyspace: none)
+> SELECT * FROM other.t WHERE id = 3;
+error ResponseError code=8448: User agent_modify has no SELECT permission on <table other.t> or any of its parents
+  (session keyspace: none)
+> INSERT INTO probe.customers (id, name) VALUES (96, 'x');
+error ResponseError code=8448: User agent_modify has no MODIFY permission on <table probe.customers> or any of its parents
+  (session keyspace: none)

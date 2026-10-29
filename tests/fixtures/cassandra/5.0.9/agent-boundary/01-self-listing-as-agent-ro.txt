@@ -1,0 +1,89 @@
+> LIST ROLES OF agent_ro;
+ok, 1 rows
+  {"role":"agent_ro","super":false,"login":true,"options":{},"datacenters":"ALL"}
+  (session keyspace: probe)
+> LIST ROLES OF agent_ro NORECURSIVE;
+ok, 1 rows
+  {"role":"agent_ro","super":false,"login":true,"options":{},"datacenters":"ALL"}
+  (session keyspace: probe)
+> LIST ALL PERMISSIONS OF agent_ro;
+ok, 1 rows
+  {"role":"agent_ro","username":"agent_ro","resource":"<keyspace probe>","permission":"SELECT"}
+  (session keyspace: probe)
+> LIST ALL PERMISSIONS OF agent_ro NORECURSIVE;
+ok, 1 rows
+  {"role":"agent_ro","username":"agent_ro","resource":"<keyspace probe>","permission":"SELECT"}
+  (session keyspace: probe)
+> LIST ALL PERMISSIONS;
+error ResponseError code=8448: You are not authorized to view everyone's permissions
+  (session keyspace: probe)
+> LIST ROLES;
+ok, 1 rows
+  {"role":"agent_ro","super":false,"login":true,"options":{},"datacenters":"ALL"}
+  (session keyspace: probe)
+> LIST ROLES OF agent_modify;
+error ResponseError code=8448: You are not authorized to view roles granted to agent_modify 
+  (session keyspace: probe)
+> LIST ALL PERMISSIONS OF agent_modify;
+error ResponseError code=8448: You are not authorized to view agent_modify's permissions
+  (session keyspace: probe)
+> SELECT role, is_superuser, can_login FROM system_auth.roles;
+error ResponseError code=8448: User agent_ro has no SELECT permission on <table system_auth.roles> or any of its parents
+  (session keyspace: probe)
+> SELECT * FROM system_auth.role_permissions;
+error ResponseError code=8448: User agent_ro has no SELECT permission on <table system_auth.role_permissions> or any of its parents
+  (session keyspace: probe)
+> SELECT release_version FROM system.local;
+ok, 1 rows
+  {"release_version":"5.0.9"}
+  (session keyspace: probe)
+> SELECT key FROM system.versions;
+error ResponseError code=8704: table versions does not exist
+  (session keyspace: probe)
+> SELECT keyspace_name, table_name, column_name, column_name_bytes, mask FROM system_schema.column_masks;
+error ResponseError code=8704: Undefined column name column_name_bytes in table system_schema.column_masks
+  (session keyspace: probe)
+> SELECT keyspace_name, function_name, argument_types, language FROM system_schema.functions;
+ok, 3 rows
+  {"keyspace_name":"probe","function_name":"acc","argument_types":["int","int"],"language":"java"}
+  {"keyspace_name":"probe","function_name":"plus_one","argument_types":["int"],"language":"java"}
+  {"keyspace_name":"probe","function_name":"redact","argument_types":["text"],"language":"java"}
+  (session keyspace: probe)
+> SELECT keyspace_name, aggregate_name, state_func, final_func FROM system_schema.aggregates;
+ok, 1 rows
+  {"keyspace_name":"probe","aggregate_name":"total","state_func":"acc","final_func":null}
+  (session keyspace: probe)
+> SELECT keyspace_name AS table_schema, table_name, column_name, type AS data_type, kind AS column_kind, position AS ordinal_position FROM system_schema.columns WHERE keyspace_name = 'probe';
+ok, 13 rows
+  {"table_schema":"probe","table_name":"customers","column_name":"email","data_type":"text","column_kind":"regular","ordinal_position":-1}
+  {"table_schema":"probe","table_name":"customers","column_name":"id","data_type":"int","column_kind":"partition_key","ordinal_position":0}
+  {"table_schema":"probe","table_name":"customers","column_name":"name","data_type":"text","column_kind":"regular","ordinal_position":-1}
+  {"table_schema":"probe","table_name":"masked","column_name":"builtin_masked","data_type":"text","column_kind":"regular","ordinal_position":-1}
+  {"table_schema":"probe","table_name":"masked","column_name":"id","data_type":"int","column_kind":"partition_key","ordinal_position":0}
+  {"table_schema":"probe","table_name":"masked","column_name":"plain","data_type":"text","column_kind":"regular","ordinal_position":-1}
+  {"table_schema":"probe","table_name":"masked","column_name":"udf_masked","data_type":"text","column_kind":"regular","ordinal_position":-1}
+  {"table_schema":"probe","table_name":"orders","column_name":"amount","data_type":"int","column_kind":"regular","ordinal_position":-1}
+  {"table_schema":"probe","table_name":"orders","column_name":"customer_id","data_type":"int","column_kind":"regular","ordinal_position":-1}
+  {"table_schema":"probe","table_name":"orders","column_name":"id","data_type":"int","column_kind":"partition_key","ordinal_position":0}
+  {"table_schema":"probe","table_name":"orders_by_customer","column_name":"amount","data_type":"int","column_kind":"regular","ordinal_position":-1}
+  {"table_schema":"probe","table_name":"orders_by_customer","column_name":"customer_id","data_type":"int","column_kind":"partition_key","ordinal_position":0}
+  {"table_schema":"probe","table_name":"orders_by_customer","column_name":"id","data_type":"int","column_kind":"clustering","ordinal_position":0}
+  (session keyspace: probe)
+> SELECT keyspace_name FROM system_schema.keyspaces;
+ok, 8 rows
+  {"keyspace_name":"system_auth"}
+  {"keyspace_name":"system_schema"}
+  {"keyspace_name":"MixedCase"}
+  {"keyspace_name":"system_distributed"}
+  {"keyspace_name":"other"}
+  {"keyspace_name":"system"}
+  {"keyspace_name":"system_traces"}
+  {"keyspace_name":"probe"}
+  (session keyspace: probe)
+> SELECT keyspace_name, table_name FROM system_schema.tables WHERE keyspace_name = 'other';
+ok, 1 rows
+  {"keyspace_name":"other","table_name":"t"}
+  (session keyspace: probe)
+> SELECT name, value FROM system_views.settings WHERE name = 'authorizer';
+error ResponseError code=8448: User agent_ro has no SELECT permission on <table system_views.settings> or any of its parents
+  (session keyspace: probe)

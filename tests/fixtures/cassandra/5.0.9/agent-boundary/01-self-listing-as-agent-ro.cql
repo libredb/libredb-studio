@@ -1,0 +1,20 @@
+-- What the agent role reads about itself, the server and the catalog, and what it may not list.
+LIST ROLES OF agent_ro;
+LIST ROLES OF agent_ro NORECURSIVE;
+LIST ALL PERMISSIONS OF agent_ro;
+LIST ALL PERMISSIONS OF agent_ro NORECURSIVE;
+LIST ALL PERMISSIONS;
+LIST ROLES;
+LIST ROLES OF agent_modify;
+LIST ALL PERMISSIONS OF agent_modify;
+SELECT role, is_superuser, can_login FROM system_auth.roles;
+SELECT * FROM system_auth.role_permissions;
+SELECT release_version FROM system.local;
+SELECT key FROM system.versions;
+SELECT keyspace_name, table_name, column_name, column_name_bytes, mask FROM system_schema.column_masks;
+SELECT keyspace_name, function_name, argument_types, language FROM system_schema.functions;
+SELECT keyspace_name, aggregate_name, state_func, final_func FROM system_schema.aggregates;
+SELECT keyspace_name AS table_schema, table_name, column_name, type AS data_type, kind AS column_kind, position AS ordinal_position FROM system_schema.columns WHERE keyspace_name = 'probe';
+SELECT keyspace_name FROM system_schema.keyspaces;
+SELECT keyspace_name, table_name FROM system_schema.tables WHERE keyspace_name = 'other';
+SELECT name, value FROM system_views.settings WHERE name = 'authorizer';

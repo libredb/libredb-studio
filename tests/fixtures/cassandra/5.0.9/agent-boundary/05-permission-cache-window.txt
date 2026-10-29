@@ -1,0 +1,12 @@
+    0ms before grant: listing [SELECT <keyspace probe>], INSERT refused code=8448
+    5ms granted MODIFY
+    5ms listing [SELECT <keyspace probe>, MODIFY <keyspace probe>], INSERT refused code=8448
+  908ms listing [SELECT <keyspace probe>, MODIFY <keyspace probe>], INSERT refused code=8448
+ 1811ms listing [SELECT <keyspace probe>, MODIFY <keyspace probe>], INSERT refused code=8448
+ 2715ms listing [SELECT <keyspace probe>, MODIFY <keyspace probe>], INSERT accepted
+ 3623ms revoked MODIFY
+ 3623ms listing [SELECT <keyspace probe>], INSERT accepted
+ 4526ms listing [SELECT <keyspace probe>], INSERT accepted
+ 5431ms listing [SELECT <keyspace probe>], INSERT refused code=8448
+ 6335ms listing [SELECT <keyspace probe>], INSERT refused code=8448
+ 7238ms listing [SELECT <keyspace probe>], INSERT refused code=8448

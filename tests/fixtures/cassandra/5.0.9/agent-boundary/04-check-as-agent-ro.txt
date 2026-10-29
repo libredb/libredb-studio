@@ -1,0 +1,29 @@
+> SELECT release_version FROM system.local;
+ok, 1 rows
+  {"release_version":"5.0.9"}
+  (session keyspace: probe)
+> SELECT key FROM system.versions;
+error ResponseError code=8704: table versions does not exist
+  (session keyspace: probe)
+> LIST ROLES OF 'agent_ro';
+ok, 1 rows
+  {"role":"agent_ro","super":false,"login":true,"options":{},"datacenters":"ALL"}
+  (session keyspace: probe)
+> LIST ALL PERMISSIONS OF 'agent_ro';
+ok, 1 rows
+  {"role":"agent_ro","username":"agent_ro","resource":"<keyspace probe>","permission":"SELECT"}
+  (session keyspace: probe)
+> SELECT keyspace_name, table_name, column_name, function_keyspace, function_name FROM system_schema.column_masks WHERE keyspace_name = 'probe';
+ok, 2 rows
+  {"keyspace_name":"probe","table_name":"masked","column_name":"builtin_masked","function_keyspace":"system","function_name":"mask_default"}
+  {"keyspace_name":"probe","table_name":"masked","column_name":"udf_masked","function_keyspace":"probe","function_name":"redact"}
+  (session keyspace: probe)
+> DROP TABLE IF EXISTS "probe".libredb_agent_probe_000000000000000000000000;
+error ResponseError code=8448: User agent_ro has no DROP permission on <table probe.libredb_agent_probe_000000000000000000000000> or any of its parents
+  (session keyspace: probe)
+> SELECT keyspace_name AS table_schema, table_name, column_name, type AS data_type, kind AS column_kind, position AS ordinal_position FROM system_schema.columns WHERE keyspace_name = 'probe' AND table_name = 'customers';
+ok, 3 rows
+  {"table_schema":"probe","table_name":"customers","column_name":"email","data_type":"text","column_kind":"regular","ordinal_position":-1}
+  {"table_schema":"probe","table_name":"customers","column_name":"id","data_type":"int","column_kind":"partition_key","ordinal_position":0}
+  {"table_schema":"probe","table_name":"customers","column_name":"name","data_type":"text","column_kind":"regular","ordinal_position":-1}
+  (session keyspace: probe)

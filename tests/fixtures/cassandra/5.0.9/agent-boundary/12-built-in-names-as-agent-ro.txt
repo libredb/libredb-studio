@@ -1,0 +1,14 @@
+> SELECT now() FROM probe.customers WHERE id = 1;
+error ResponseError code=8448: User agent_ro has no EXECUTE permission on <function probe.now()> or any of its parents
+  (session keyspace: probe)
+> SELECT totimestamp(now()) FROM probe.customers WHERE id = 1;
+error ResponseError code=8448: User agent_ro has no EXECUTE permission on <function probe.now()> or any of its parents
+  (session keyspace: probe)
+> SELECT system.now() FROM probe.customers WHERE id = 1;
+ok, 1 rows
+  {"system.now()":"7560c870-d3e3-11f1-aedd-41b2c28f9a61"}
+  (session keyspace: probe)
+> SELECT system.totimestamp(system.now()) FROM probe.customers WHERE id = 1;
+ok, 1 rows
+  {"system.totimestamp(system.now())":"Fri Oct 30 2026 00:55:30 GMT+0300 (Türkiye Standard Time)"}
+  (session keyspace: probe)

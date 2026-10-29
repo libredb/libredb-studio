@@ -1,0 +1,17 @@
+> LIST ROLES OF 'agent_ro';
+ok, 1 rows
+  {"role":"agent_ro","super":false,"login":true,"options":{},"datacenters":"ALL"}
+  (session keyspace: none)
+> LIST ALL PERMISSIONS OF 'agent_ro';
+error ResponseError code=8704: LIST PERMISSIONS operation is not supported by AllowAllAuthorizer
+  (session keyspace: none)
+> DROP TABLE IF EXISTS "probe".libredb_agent_probe_000000000000000000000000;
+ok, no result columns
+  (session keyspace: none)
+> INSERT INTO probe.customers (id, name) VALUES (1, 'written-by-a-select-only-role');
+ok, no result columns
+  (session keyspace: none)
+> SELECT * FROM probe.customers;
+ok, 1 rows
+  {"id":1,"name":"written-by-a-select-only-role"}
+  (session keyspace: none)
