@@ -1,0 +1,20 @@
+{
+  "version": "9.1.4",
+  "name": "write-refusal/insert-select",
+  "image": "docker.elastic.co/elasticsearch/elasticsearch:9.1.4",
+  "capturedAt": "2026-10-29",
+  "request": {
+    "method": "POST",
+    "path": "/_sql",
+    "query": {
+      "format": "json"
+    },
+    "body": {
+      "query": "INSERT INTO probe_orders SELECT * FROM probe_orders"
+    },
+    "auth": "none"
+  },
+  "status": 400,
+  "contentType": "application/json",
+  "body": "{\"error\":{\"root_cause\":[{\"type\":\"parsing_exception\",\"reason\":\"line 1:1: mismatched input 'INSERT' expecting {'(', 'DEBUG', 'DESC', 'DESCRIBE', 'EXPLAIN', 'SELECT', 'SHOW', 'SYS', 'WITH'}\"}],\"type\":\"parsing_exception\",\"reason\":\"line 1:1: mismatched input 'INSERT' expecting {'(', 'DEBUG', 'DESC', 'DESCRIBE', 'EXPLAIN', 'SELECT', 'SHOW', 'SYS', 'WITH'}\",\"caused_by\":{\"type\":\"input_mismatch_exception\",\"reason\":null}},\"status\":400}"
+}

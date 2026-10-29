@@ -1,0 +1,20 @@
+{
+  "version": "9.1.4",
+  "name": "write-refusal/select-into",
+  "image": "docker.elastic.co/elasticsearch/elasticsearch:9.1.4",
+  "capturedAt": "2026-10-29",
+  "request": {
+    "method": "POST",
+    "path": "/_sql",
+    "query": {
+      "format": "json"
+    },
+    "body": {
+      "query": "SELECT * INTO libredb_wr_into FROM probe_orders"
+    },
+    "auth": "none"
+  },
+  "status": 400,
+  "contentType": "application/json",
+  "body": "{\"error\":{\"root_cause\":[{\"type\":\"parsing_exception\",\"reason\":\"line 1:15: mismatched input 'libredb_wr_into' expecting {<EOF>, ',', 'FROM', 'GROUP', 'HAVING', 'LIMIT', 'ORDER', 'WHERE', LIMIT_ESC}\"}],\"type\":\"parsing_exception\",\"reason\":\"line 1:15: mismatched input 'libredb_wr_into' expecting {<EOF>, ',', 'FROM', 'GROUP', 'HAVING', 'LIMIT', 'ORDER', 'WHERE', LIMIT_ESC}\",\"caused_by\":{\"type\":\"input_mismatch_exception\",\"reason\":null}},\"status\":400}"
+}

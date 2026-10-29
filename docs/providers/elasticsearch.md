@@ -775,7 +775,12 @@ Every one of these is HTTP 400 with `parsing_exception`, measured verbatim on 9.
 | `ALTER TABLE probe_orders ADD COLUMN x INT` | same |
 
 The grammar's own error message enumerating its accepted statements is the clearest possible statement
-of the fact, which is why nothing is special-cased. Consequences elsewhere in the product:
+of the fact, which is why nothing is special-cased.
+
+The refusals are checked in as captures, not only quoted here.
+`tests/live/elasticsearch-write-refusals.ts` sent 20 write and DDL statements raw to `POST /_sql?format=json` on a 9.1.4 node with security disabled, so no privilege stood between the statement and the grammar: INSERT (VALUES and SELECT), UPDATE, DELETE, CREATE TABLE, INDEX and VIEW, DROP TABLE and INDEX, ALTER TABLE, TRUNCATE, MERGE, a write behind `EXPLAIN`, `DEBUG` and `WITH`, `SELECT ... INTO`, and a second statement after `;`.
+Every one answered 400 `parsing_exception`, and the cluster read back unchanged after each: the index listing with its document counts, every mapping, the aliases, the templates and the pipelines.
+The answers live in [`tests/fixtures/elasticsearch/9.1.4/write-refusal/`](../../tests/fixtures/elasticsearch/9.1.4/write-refusal/), and `tests/integration/db/elasticsearch-provider.test.ts` replays each one through the provider. Consequences elsewhere in the product:
 
 - Declaring no `createTable` and `supportsInlineRowEdit: false` are facts about the grammar, not
   unimplemented features, so the EDIT toggle and the editable cell are not offered (#269).

@@ -1,0 +1,20 @@
+{
+  "version": "9.1.4",
+  "name": "write-refusal/second-statement",
+  "image": "docker.elastic.co/elasticsearch/elasticsearch:9.1.4",
+  "capturedAt": "2026-10-29",
+  "request": {
+    "method": "POST",
+    "path": "/_sql",
+    "query": {
+      "format": "json"
+    },
+    "body": {
+      "query": "SELECT 1; DELETE FROM probe_orders"
+    },
+    "auth": "none"
+  },
+  "status": 400,
+  "contentType": "application/json",
+  "body": "{\"error\":{\"root_cause\":[{\"type\":\"parsing_exception\",\"reason\":\"line 1:9: mismatched input ';' expecting {<EOF>, ',', 'ANALYZE', 'ANALYZED', 'AND', 'AS', 'BETWEEN', 'CATALOGS', 'COLUMNS', 'CURRENT_DATE', 'CURRENT_TIME', 'CURRENT_TIMESTAMP', 'DAY', 'DEBUG', 'EXECUTABLE', 'EXPLAIN', 'FIRST', 'FORMAT', 'FROM', 'FULL', 'FUNCTIONS', 'GRAPHVIZ', 'GROUP', 'HAVING', 'HOUR', 'IN', 'INTERVAL', 'IS', 'LAST', 'LIKE', 'LIMIT', 'MAPPED', 'MINUTE', 'MONTH', 'NOT', 'OPTIMIZED', 'OR', 'ORDER', 'PARSED', 'PHYSICAL', 'PIVOT', 'PLAN', 'RLIKE', 'QUERY', 'SCHEMAS', 'SECOND', 'SHOW', 'SYS', 'TABLES', 'TEXT', 'TOP', 'TYPE', 'TYPES', 'VERIFY', 'WHERE', 'YEAR', LIMIT_ESC, '=', '<=>', NEQ, '<', '<=', '>', '>=', '+', '-', '*', '/', '%', '::', IDENTIFIER, DIGIT_IDENTIFIER, QUOTED_IDENTIFIER, BACKQUOTED_IDENTIFIER}\"}],\"type\":\"parsing_exception\",\"reason\":\"line 1:9: mismatched input ';' expecting {<EOF>, ',', 'ANALYZE', 'ANALYZED', 'AND', 'AS', 'BETWEEN', 'CATALOGS', 'COLUMNS', 'CURRENT_DATE', 'CURRENT_TIME', 'CURRENT_TIMESTAMP', 'DAY', 'DEBUG', 'EXECUTABLE', 'EXPLAIN', 'FIRST', 'FORMAT', 'FROM', 'FULL', 'FUNCTIONS', 'GRAPHVIZ', 'GROUP', 'HAVING', 'HOUR', 'IN', 'INTERVAL', 'IS', 'LAST', 'LIKE', 'LIMIT', 'MAPPED', 'MINUTE', 'MONTH', 'NOT', 'OPTIMIZED', 'OR', 'ORDER', 'PARSED', 'PHYSICAL', 'PIVOT', 'PLAN', 'RLIKE', 'QUERY', 'SCHEMAS', 'SECOND', 'SHOW', 'SYS', 'TABLES', 'TEXT', 'TOP', 'TYPE', 'TYPES', 'VERIFY', 'WHERE', 'YEAR', LIMIT_ESC, '=', '<=>', NEQ, '<', '<=', '>', '>=', '+', '-', '*', '/', '%', '::', IDENTIFIER, DIGIT_IDENTIFIER, QUOTED_IDENTIFIER, BACKQUOTED_IDENTIFIER}\",\"caused_by\":{\"type\":\"input_mismatch_exception\",\"reason\":null}},\"status\":400}"
+}

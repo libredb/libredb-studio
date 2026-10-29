@@ -32,7 +32,7 @@
  *   turned back into page one.
  */
 import { describe, test, expect, beforeEach, afterEach, spyOn } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import type { DatabaseProvider, ProviderCapabilities } from "@/lib/db/types";
@@ -3776,4 +3776,82 @@ describe("endOpenQueryTransaction()", () => {
       "the engine has no transaction to leave open",
     ]);
   });
+});
+
+// ============================================================================
+// The grammar's write refusals, replayed
+// ============================================================================
+
+/** One capture of tests/fixtures/elasticsearch/9.1.4/write-refusal/, written by tests/live/elasticsearch-write-refusals.ts. */
+interface WriteRefusalCapture {
+  readonly version: string;
+  readonly name: string;
+  readonly request: {
+    readonly method: string;
+    readonly path: string;
+    readonly query: Readonly<Record<string, string>>;
+    readonly body: { readonly query: string };
+    readonly auth: string;
+  };
+  readonly status: number;
+  readonly body: string;
+}
+
+const WRITE_REFUSAL_DIR = join(import.meta.dir, "../../fixtures/elasticsearch/9.1.4/write-refusal");
+
+const WRITE_REFUSALS: readonly WriteRefusalCapture[] = readdirSync(WRITE_REFUSAL_DIR)
+  .filter((file) => file.endsWith(".json"))
+  .sort()
+  .map((file) => JSON.parse(readFileSync(join(WRITE_REFUSAL_DIR, file), "utf8")) as WriteRefusalCapture);
+
+/**
+ * The SQL route's boundary, replayed: what 9.1.4 answered each write and DDL statement sent raw to `/_sql` on a node
+ * with security disabled (tests/live/elasticsearch-write-refusals.ts, 2026-10-29). The route carries free statement
+ * text, so the claim that it cannot write rests on these answers: each one is a grammar refusal, the cluster read back
+ * unchanged after each, and each reaches a caller as a statement refusal in the engine's own words, never as rows.
+ */
+describe("Elasticsearch 9.1.4's write refusals, replayed", () => {
+  const verbOf = (entry: WriteRefusalCapture): string => entry.request.body.query.split(" ")[0];
+
+  test("20 statements were captured raw on the SQL route, every one refused by the grammar with a 400", () => {
+    expect(WRITE_REFUSALS).toHaveLength(20);
+    for (const entry of WRITE_REFUSALS) {
+      expect(entry.version).toBe("9.1.4");
+      expect(entry.name.startsWith("write-refusal/")).toBe(true);
+      expect([entry.request.method, entry.request.path, entry.request.query, entry.request.auth]).toEqual([
+        "POST",
+        "/_sql",
+        { format: "json" },
+        "none",
+      ]);
+      expect(entry.status).toBe(400);
+      const error = (JSON.parse(entry.body) as { error: { type: string; reason: string } }).error;
+      expect(error.type).toBe("parsing_exception");
+      expect(error.reason).toMatch(/^line 1:\d+: (mismatched|extraneous) input /);
+    }
+  });
+
+  test("the captures cover INSERT, UPDATE, DELETE, CREATE, DROP and ALTER, and a write behind a read keyword", () => {
+    const verbs = new Set(WRITE_REFUSALS.map(verbOf));
+    for (const verb of ["INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "TRUNCATE", "MERGE"]) {
+      expect(verbs).toContain(verb);
+    }
+    for (const reader of ["EXPLAIN", "DEBUG", "WITH", "SELECT"]) expect(verbs).toContain(reader);
+  });
+
+  test.each(WRITE_REFUSALS.map((entry) => [entry.name, entry] as const))(
+    "%s: the provider sends the captured request, and the engine's refusal reaches the caller as a QueryError",
+    async (_name, entry) => {
+      const provider = await connectProvider();
+      overrideSql(fail(entry.status, entry.body));
+      const error = await provider.query(entry.request.body.query).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(QueryError);
+      const reason = (JSON.parse(entry.body) as { error: { reason: string } }).error.reason;
+      expect((error as Error).message).toContain(reason);
+      const request = sqlRequests().at(-1);
+      expect(request?.body).toEqual({ ...entry.request.body, ...SQL_QUERY_OPTIONS });
+      await provider.disconnect();
+    },
+  );
 });
