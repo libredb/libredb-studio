@@ -53,13 +53,16 @@
  * - EVERY CONNECT-TIME FAULT ARRIVES AS ONE ERROR CLASS. See `driver-transport.ts`.
  */
 
+import { randomBytes } from "node:crypto";
 import { SQLBaseProvider } from "../sql-base";
 import {
   AuthenticationError,
   ConnectionError,
   DatabaseConfigError,
+  ExecutionProfileError,
   OffsetUnsupportedError,
   QueryError,
+  RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
 import {
@@ -79,10 +82,13 @@ import {
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
+  type ProviderExecutionContext,
   type ProviderLabels,
   type ProviderOptions,
   type QueryPrepareOptions,
   type QueryResult,
+  type ReadOnlyStatementBudget,
+  type ReadOnlyStatementMode,
   type SlowQueryStats,
   type StorageStats,
   type TableStats,
@@ -90,6 +96,14 @@ import {
 import { analyzeQuery } from "@/lib/db/utils/query-limiter";
 import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
 import { readSqlSpan } from "@/lib/sql/spans";
+import {
+  assertReadOnlyBudget,
+  byteBudgetSentence,
+  measureResultBytes,
+  rowBudgetSentence,
+  TIME_BUDGET_PREFIX,
+} from "../read-only-budget";
+import { verifyCassandraAgentProfile } from "./agent-boundary";
 import { CASSANDRA_DEFAULT_PORT, CassandraDriverTransport } from "./driver-transport";
 import {
   CASSANDRA_IDENTITY_CQL,
@@ -116,7 +130,7 @@ import {
   readEngineKeyspaces,
   listObjects as readObjects,
 } from "./objects";
-import { CassandraTransportError, type CassandraTransport } from "./transport";
+import { type CassandraQueryResult, CassandraTransportError, type CassandraTransport } from "./transport";
 
 // ============================================================================
 // Constants
@@ -203,17 +217,38 @@ export class CassandraProvider extends SQLBaseProvider {
   private engineKeyspaces: readonly string[] = [];
 
   /**
-   * The transport is injectable, and this is the only production-visible seam: the
-   * factory passes two arguments, so a real connection always builds its own driver
-   * session. The integration suite passes one built over a session that replays a
+   * Whether this provider was opened to send an agent's statements: under an execution profile (`readOnly`) whose
+   * acquisition calls `queryReadOnly` (`sendsStatements`). Only then does the open check the role
+   * (`verifyCassandraAgentProfile` in `agent-boundary.ts`) and does `queryReadOnly` answer. The operations profile
+   * sends no statement, so plan mode keeps grounding on a connection whose role is privileged.
+   */
+  private readonly readOnlyProfile: boolean;
+
+  /** Opens the session one agent call runs on, with the call's deadline as its read timeout. */
+  private readonly openAgentTransport: (readTimeoutMs: number) => CassandraTransport;
+
+  /**
+   * The transports are injectable, and these are the only production-visible seams: the
+   * factory passes three arguments, so a real connection always builds its own driver
+   * sessions. The integration suite passes ones built over sessions that replay a
    * live cluster's ResultSets, which is what makes the driver adapter's own mapping -
    * the hex blob, the stringified `Long`, the unwrapped `NoHostAvailableError` -
-   * testable against what the server really said.
+   * testable against what the server really said. `openAgentTransport` builds the
+   * session of one agent call, which the call opens and closes.
    */
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}, transport?: CassandraTransport) {
+  constructor(
+    config: DatabaseConnection,
+    options: ProviderOptions = {},
+    execution: ProviderExecutionContext = {},
+    transport?: CassandraTransport,
+    openAgentTransport?: (readTimeoutMs: number) => CassandraTransport,
+  ) {
     super(config, options);
     this.transport = transport ?? null;
     this.facts = null;
+    this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
+    this.openAgentTransport =
+      openAgentTransport ?? ((readTimeoutMs) => new CassandraDriverTransport(this.config, readTimeoutMs));
     this.validate();
   }
 
@@ -447,13 +482,16 @@ export class CassandraProvider extends SQLBaseProvider {
       // Which keyspaces this engine owns beyond Cassandra's, which the keyspace tree hides
       // (#1428). One more statement per connection, and a refusal answers none.
       this.engineKeyspaces = await readEngineKeyspaces(transport);
+      // A handle that will send an agent's statements proves its role at the open, so an acquisition the role cannot
+      // serve is refused before any statement; every call proves it again on its own session.
+      if (this.readOnlyProfile) await this.verifyAgentRoleOn(transport);
     } catch (error) {
       // `connect()` opens a pool with sockets and reconnection timers behind it, and
       // the identity read runs AFTER that - so a probe that fails leaks the pool
       // unless it is closed here, once per attempt, and the connection dialog retries.
       // Druid and Couchbase close before mapping for the same reason.
       await transport.close();
-      const failure = this.describeConnectFailure(error);
+      const failure = error instanceof ExecutionProfileError ? error : this.describeConnectFailure(error);
       this.setError(failure);
       throw failure;
     }
@@ -599,6 +637,136 @@ export class CassandraProvider extends SQLBaseProvider {
         throw this.mapCassandraError(error, sql);
       }
     });
+  }
+
+  /**
+   * One agent statement under the read-only profile.
+   *
+   * The boundary is the role's: a role holding only SELECT on the connection's keyspace is refused every write, DDL and
+   * GRANT statement by the server as Unauthorized, and the check proves the role is such a role, on a server that
+   * enforces its grants (`agent-boundary.ts`). Each call opens a session of its own, runs the check on it, keeping no
+   * verdict between calls, so a grant added after one call refuses the next and a lifted refusal admits it, then sends
+   * the statement on that session and closes it, on every path. The session is never shared: a driver session keeps
+   * the keyspace a `USE` moved it to and applies it to every later statement (capture 02), so nothing one call set on
+   * its session reaches the next.
+   *
+   * The statement goes out with its own deadline (the budget's, as the driver's `readTimeout`), at consistency
+   * LOCAL_ONE, with a retry policy that never sends it twice, and asks for one page of one row past the row budget.
+   * Budgets refuse rather than truncate: a page past the row budget, or a page the server says is not the last, is
+   * refused, and so is a result past the byte budget. The deadline ends the wait, not the work: the protocol has no
+   * cancellation, so the coordinator finishes what it started.
+   *
+   * Refused outside the profile, and for an estimating plan, which CQL does not have, before anything is sent.
+   */
+  public async queryReadOnly(
+    sql: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    this.requireTransport();
+    if (!this.readOnlyProfile) {
+      throw new RefusedBeforeSendError(
+        "Read-only execution requires a provider opened under the agent read-only profile",
+        this.type,
+        sql,
+      );
+    }
+    assertReadOnlyBudget(budget, this.type);
+    if (mode !== "execute") {
+      throw new RefusedBeforeSendError("Apache Cassandra composes no estimating plan for the agent", this.type, sql);
+    }
+
+    return this.trackQuery(async () => {
+      const { result, executionTime } = await this.measureExecution(() =>
+        this.withAgentTransport(budget, async (transport) => {
+          await this.verifyAgentRoleOn(transport).catch((error: unknown) => {
+            if (error instanceof ExecutionProfileError) throw error;
+            // The environment's failure, not the statement's: the agent must not offer it to the model as one to repair.
+            throw new ConnectionError(
+              `The agent read-only execution profile's check of the Cassandra role could not be read: ${this.mapCassandraError(error).message}`,
+              this.type,
+              this.config.host,
+              this.config.port,
+            );
+          });
+          return transport
+            .execute(sql, {
+              fetchSize: budget.maxResultRows + 1,
+              readTimeoutMs: budget.statementTimeoutMs,
+              consistency: "local-one",
+              retry: "fall-through",
+            })
+            .catch((error: unknown) => {
+              if (error instanceof CassandraTransportError && error.category === "client-timeout") {
+                throw new QueryError(
+                  `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`,
+                  this.type,
+                  sql,
+                );
+              }
+              throw this.mapCassandraError(error, sql);
+            });
+        }),
+      );
+      return this.readAgentAnswer(result, executionTime, budget, sql);
+    });
+  }
+
+  /** The check of the agent role, on `transport`, the session the statement runs on. */
+  private verifyAgentRoleOn(transport: CassandraTransport): Promise<void> {
+    return verifyCassandraAgentProfile((cql) => transport.execute(cql), {
+      role: this.config.user ?? "",
+      keyspace: this.config.database ?? "",
+      // The probe's table carries a fresh name each time, so no table anyone made can be the one it names.
+      nonce: randomBytes(12).toString("hex"),
+    });
+  }
+
+  /** Runs `work` on a session opened for it alone, under the budget's deadline, and closes it on every path. */
+  private async withAgentTransport<T>(
+    budget: ReadOnlyStatementBudget,
+    work: (transport: CassandraTransport) => Promise<T>,
+  ): Promise<T> {
+    const transport = this.openAgentTransport(budget.statementTimeoutMs);
+    try {
+      await transport.connect().catch((error: unknown) => {
+        throw this.mapCassandraError(error);
+      });
+      return await work(transport);
+    } finally {
+      await transport.close().catch(() => {});
+    }
+  }
+
+  /** The agent's result, or the shared refusal: one page, held to both budgets, never cut. */
+  private readAgentAnswer(
+    result: CassandraQueryResult,
+    executionTime: number,
+    budget: ReadOnlyStatementBudget,
+    sql: string,
+  ): QueryResult {
+    const rows = result.rows;
+    if (rows.length > budget.maxResultRows) {
+      throw new QueryError(rowBudgetSentence(rows.length, budget.maxResultRows), this.type, sql);
+    }
+    if (result.pageState !== null) {
+      throw new QueryError(
+        `Read-only execution refused a partial answer: Apache Cassandra answered ${rows.length} ${rows.length === 1 ? "row" : "rows"} and said more remain on a later page, and the agent reads one page only. Narrow the statement with a partition key or a smaller LIMIT.`,
+        this.type,
+        sql,
+      );
+    }
+    const bytes = measureResultBytes(rows);
+    if (bytes > budget.maxResultBytes) {
+      throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, sql);
+    }
+    return {
+      rows,
+      fields: result.fieldNames ?? [],
+      rowCount: rows.length,
+      executionTime,
+      ...(result.columnTypes === null ? {} : { columnTypes: result.columnTypes }),
+    };
   }
 
   /**

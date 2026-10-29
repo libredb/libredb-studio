@@ -39,13 +39,15 @@
  *    orders partition key, then clustering, then the rest by name, and says so.
  */
 import { describe, expect, spyOn, test } from "bun:test";
-import { types } from "cassandra-driver";
+import { policies, types } from "cassandra-driver";
 import {
   AuthenticationError,
   ConnectionError,
   DatabaseConfigError,
+  ExecutionProfileError,
   OffsetUnsupportedError,
   QueryError,
+  RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
 import { CassandraDriverTransport, type CassandraSession } from "@/lib/db/providers/sql/cassandra/driver-transport";
@@ -431,7 +433,7 @@ async function connectedProvider(
 ): Promise<{ provider: CassandraProvider; session: CassandraSession & { asked: string[] } }> {
   const config = makeConnection(overrides);
   const session = fakeSession(replies);
-  const provider = new CassandraProvider(config, {}, new CassandraDriverTransport(config, 60_000, session));
+  const provider = new CassandraProvider(config, {}, {}, new CassandraDriverTransport(config, 60_000, session));
   await provider.connect();
 
   return { provider, session };
@@ -621,7 +623,7 @@ describe("connect", () => {
         },
       });
     };
-    const provider = new CassandraProvider(config, {}, new CassandraDriverTransport(config, 60_000, session));
+    const provider = new CassandraProvider(config, {}, {}, new CassandraDriverTransport(config, 60_000, session));
 
     await expect(provider.connect()).rejects.toThrow(AuthenticationError);
     expect(provider.isConnected()).toBe(false);
@@ -635,7 +637,7 @@ describe("connect", () => {
         "127.0.0.1:19999": { name: "Error", code: "ECONNREFUSED", message: "connect ECONNREFUSED 127.0.0.1:19999" },
       });
     };
-    const provider = new CassandraProvider(config, {}, new CassandraDriverTransport(config, 60_000, session));
+    const provider = new CassandraProvider(config, {}, {}, new CassandraDriverTransport(config, 60_000, session));
 
     await expect(provider.connect()).rejects.toThrow(ConnectionError);
   });
@@ -648,7 +650,7 @@ describe("connect", () => {
     session.connect = async () => {
       throw responseError(8704, "Keyspace 'nosuchks' does not exist");
     };
-    const provider = new CassandraProvider(config, {}, new CassandraDriverTransport(config, 60_000, session));
+    const provider = new CassandraProvider(config, {}, {}, new CassandraDriverTransport(config, 60_000, session));
 
     await expect(provider.connect()).rejects.toThrow(/nosuchks/);
   });
@@ -671,7 +673,7 @@ describe("connect", () => {
     // A fresh provider per assertion: a failed connect closes the pool it opened, and
     // the adapter forgets its session when it closes - so a second attempt on the same
     // provider would build a real driver client and go to the network.
-    const attempt = () => new CassandraProvider(config, {}, new CassandraDriverTransport(config, 60_000, session));
+    const attempt = () => new CassandraProvider(config, {}, {}, new CassandraDriverTransport(config, 60_000, session));
 
     await expect(attempt().connect()).rejects.toThrow(DatabaseConfigError);
     await expect(attempt().connect()).rejects.toThrow(/\[datacenter1\]/);
@@ -685,6 +687,7 @@ describe("connect", () => {
     const config = makeConnection();
     const provider = new CassandraProvider(
       config,
+      {},
       {},
       {
         kind: "native" as const,
@@ -706,7 +709,7 @@ describe("connect", () => {
     session.shutdown = async () => {
       shutdowns += 1;
     };
-    const provider = new CassandraProvider(config, {}, new CassandraDriverTransport(config, 60_000, session));
+    const provider = new CassandraProvider(config, {}, {}, new CassandraDriverTransport(config, 60_000, session));
 
     await provider.connect();
     await provider.disconnect();
@@ -1694,7 +1697,7 @@ describe("connect closes what it opened", () => {
     // dialog retries, so the leak is per attempt. Druid and Couchbase close first,
     // then map and rethrow.
     const closed = { count: 0 };
-    const provider = new CassandraProvider(makeConnection(), {}, probeFailingTransport(closed));
+    const provider = new CassandraProvider(makeConnection(), {}, {}, probeFailingTransport(closed));
 
     await expect(provider.connect()).rejects.toThrow(QueryError);
     expect(closed.count).toBe(1);
@@ -1705,6 +1708,7 @@ describe("connect closes what it opened", () => {
     const closed = { count: 0 };
     const provider = new CassandraProvider(
       makeConnection(),
+      {},
       {},
       {
         kind: "native" as const,
@@ -3028,7 +3032,7 @@ describe("the object source read, against the committed fixture", () => {
       return inner(statement, options as never);
     };
     const config = makeConnection();
-    const provider = new CassandraProvider(config, {}, new CassandraDriverTransport(config, 60_000, session));
+    const provider = new CassandraProvider(config, {}, {}, new CassandraDriverTransport(config, 60_000, session));
     await provider.connect();
 
     const document = await provider.readObjectSource!([KEYSPACE, "address"], "type");
@@ -3057,7 +3061,7 @@ describe("the object source read, against the committed fixture", () => {
       return inner(statement, options as never);
     };
     const config = makeConnection();
-    const provider = new CassandraProvider(config, {}, new CassandraDriverTransport(config, 60_000, session));
+    const provider = new CassandraProvider(config, {}, {}, new CassandraDriverTransport(config, 60_000, session));
     await provider.connect();
 
     await expect(provider.readObjectSource!([KEYSPACE, "address"], "type")).rejects.toThrow(
@@ -3796,5 +3800,388 @@ describe("endOpenQueryTransaction()", () => {
     expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual([
       "the engine has no transaction to leave open",
     ]);
+  });
+});
+
+// ============================================================================
+// The agent read-only profile: the role check and the statement path
+// ============================================================================
+
+describe("the agent read-only profile", () => {
+  const AGENT_PROFILE = { readOnly: true, sendsStatements: true } as const;
+  const BUDGET = { statementTimeoutMs: 4_000, maxResultRows: 2, maxResultBytes: 10_000 };
+  const PROBE = /^DROP TABLE IF EXISTS "probe"\.libredb_agent_probe_[0-9a-f]{24}$/;
+  const STATEMENT = "SELECT id, name FROM probe.customers LIMIT 3";
+  const CHECK_ROLES = "LIST ROLES OF 'agent_ro'";
+  const CHECK_PERMISSIONS = "LIST ALL PERMISSIONS OF 'agent_ro'";
+  const CHECK_MASKS =
+    "SELECT keyspace_name, table_name, column_name, function_keyspace, function_name FROM system_schema.column_masks WHERE keyspace_name = 'probe'";
+  const BOOLEAN: ColumnType = { code: 4, info: null };
+
+  const roles = (...list: [string, boolean][]) =>
+    result(
+      declare(
+        ["role", TEXT],
+        ["super", BOOLEAN],
+        ["login", BOOLEAN],
+        ["options", MAP_TEXT_TEXT],
+        ["datacenters", TEXT],
+      ),
+      list.map(([role, superuser]) => ({ role, super: superuser, login: true, options: {}, datacenters: "ALL" })),
+    );
+  const permissions = (...list: [string, string][]) =>
+    result(
+      declare(["role", TEXT], ["username", TEXT], ["resource", TEXT], ["permission", TEXT]),
+      list.map(([resource, permission]) => ({ role: "agent_ro", username: "agent_ro", resource, permission })),
+    );
+
+  /** The check's answers for a role holding only SELECT on probe, as capture 04 recorded them on 5.0.9. */
+  function checkReplies(overrides: Record<string, Reply> = {}): Record<string, Reply> {
+    return {
+      "SELECT release_version FROM system.local": result(declare(["release_version", TEXT]), [
+        { release_version: "5.0.9" },
+      ]),
+      "SELECT key FROM system.versions": responseError(8704, "table versions does not exist"),
+      [CHECK_ROLES]: roles(["agent_ro", false]),
+      [CHECK_PERMISSIONS]: permissions(["<keyspace probe>", "SELECT"]),
+      [CHECK_MASKS]: VOID_RESULT,
+      ...overrides,
+    };
+  }
+
+  /** A session that answers like `fakeSession`, the probe by its shape, and records each statement's options. */
+  function agentSession(replies: Record<string, Reply>, probe: Reply) {
+    const asked: string[] = [];
+    const options: unknown[] = [];
+    const state = { connected: 0, shutdown: 0 };
+    const session: CassandraSession = {
+      connect: async () => {
+        state.connected += 1;
+      },
+      execute: async (cql: string, _params?: unknown[], queryOptions?: unknown) => {
+        asked.push(cql);
+        options.push(queryOptions);
+        const reply = PROBE.test(cql) ? probe : replies[cql];
+        if (reply === undefined) throw new Error(`unexpected statement: ${cql}`);
+        if (reply instanceof Error) throw reply;
+        return reply;
+      },
+      shutdown: async () => {
+        state.shutdown += 1;
+      },
+    };
+    return { session, asked, options, state };
+  }
+
+  const PROBE_REFUSED = responseError(
+    8448,
+    "User agent_ro has no DROP permission on <table probe.libredb_agent_probe> or any of its parents",
+  );
+
+  /**
+   * A provider over a primary session (the connect, its identity reads and the open-time check) and one session per
+   * agent call, each built from `perCall()` so a test can change what the server answers between calls.
+   */
+  async function agentProvider(
+    perCall: () => Record<string, Reply>,
+    { execution = AGENT_PROFILE as Record<string, boolean>, overrides = {}, probe = PROBE_REFUSED as Reply } = {},
+  ) {
+    const config = makeConnection({ user: "agent_ro", password: "not-a-real-password", ...overrides });
+    const primary = agentSession({ ...healthyReplies(), ...checkReplies() }, probe);
+    const calls: ReturnType<typeof agentSession>[] = [];
+    const timeouts: number[] = [];
+    const provider = new CassandraProvider(
+      config,
+      {},
+      execution,
+      new CassandraDriverTransport(config, 60_000, primary.session),
+      (readTimeoutMs) => {
+        timeouts.push(readTimeoutMs);
+        const call = agentSession({ ...checkReplies(), ...perCall() }, probe);
+        calls.push(call);
+        return new CassandraDriverTransport(config, readTimeoutMs, call.session);
+      },
+    );
+    return { provider, primary, calls, timeouts };
+  }
+
+  const CUSTOMERS = result(declare(["id", INT], ["name", TEXT]), [
+    { id: 1, name: "Ada" },
+    { id: 2, name: "Brian" },
+  ]);
+
+  test("the open of a handle that sends statements checks the role on its session, after the identity reads", async () => {
+    const { provider, primary } = await agentProvider(() => ({}));
+    await provider.connect();
+
+    expect(primary.asked.slice(0, 3)).toEqual([
+      CASSANDRA_IDENTITY_CQL,
+      CASSANDRA_VIRTUAL_KEYSPACE_CQL,
+      SCYLLA_IDENTITY_CQL,
+    ]);
+    expect(primary.asked.slice(3, 8)).toEqual([
+      "SELECT release_version FROM system.local",
+      "SELECT key FROM system.versions",
+      CHECK_ROLES,
+      CHECK_PERMISSIONS,
+      CHECK_MASKS,
+    ]);
+    expect(primary.asked[8]).toMatch(PROBE);
+    expect(primary.asked).toHaveLength(9);
+    expect(provider.isConnected()).toBe(true);
+  });
+
+  test("a handle that sends no statement opens without the check, so plan mode grounds on a privileged role", async () => {
+    const { provider, primary } = await agentProvider(() => ({}), { execution: { readOnly: true } });
+    await provider.connect();
+
+    expect(primary.asked).toEqual([CASSANDRA_IDENTITY_CQL, CASSANDRA_VIRTUAL_KEYSPACE_CQL, SCYLLA_IDENTITY_CQL]);
+  });
+
+  test("the open refuses a superuser, closes the session it opened, and stays disconnected", async () => {
+    const config = makeConnection({ user: "agent_ro", password: "not-a-real-password" });
+    const primary = agentSession(
+      { ...healthyReplies(), ...checkReplies({ [CHECK_ROLES]: roles(["agent_ro", true]) }) },
+      PROBE_REFUSED,
+    );
+    const provider = new CassandraProvider(
+      config,
+      {},
+      AGENT_PROFILE,
+      new CassandraDriverTransport(config, 60_000, primary.session),
+    );
+
+    const error = await provider.connect().catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect(primary.state.shutdown).toBe(1);
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("queryReadOnly refuses a handle opened for the editor, before anything is sent", async () => {
+    const { provider, primary, calls } = await agentProvider(() => ({}), { execution: {} });
+    await provider.connect();
+    const sent = primary.asked.length;
+
+    const error = await provider.queryReadOnly(STATEMENT, BUDGET).catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect((error as Error).message).toBe(
+      "Read-only execution requires a provider opened under the agent read-only profile",
+    );
+    expect(primary.asked).toHaveLength(sent);
+    expect(calls).toHaveLength(0);
+  });
+
+  test("queryReadOnly refuses an estimating plan before anything is sent", async () => {
+    const { provider, calls } = await agentProvider(() => ({}));
+    await provider.connect();
+
+    const error = await provider.queryReadOnly(STATEMENT, BUDGET, "estimate-plan").catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect((error as Error).message).toBe("Apache Cassandra composes no estimating plan for the agent");
+    expect(calls).toHaveLength(0);
+  });
+
+  test("queryReadOnly refuses a budget that is not one, before anything is sent", async () => {
+    const { provider, calls } = await agentProvider(() => ({}));
+    await provider.connect();
+
+    await expect(provider.queryReadOnly(STATEMENT, { ...BUDGET, maxResultRows: 0 })).rejects.toThrow(
+      "Read-only execution budget field maxResultRows must be a positive integer",
+    );
+    expect(calls).toHaveLength(0);
+  });
+
+  test("a statement runs on a session of its own, after the check on that session, and the session is closed", async () => {
+    const { provider, calls, timeouts } = await agentProvider(() => ({ [STATEMENT]: CUSTOMERS }));
+    await provider.connect();
+
+    const answer = await provider.queryReadOnly(STATEMENT, BUDGET);
+
+    expect(answer.rows).toEqual([
+      { id: 1, name: "Ada" },
+      { id: 2, name: "Brian" },
+    ]);
+    expect(answer.fields).toEqual(["id", "name"]);
+    expect(calls).toHaveLength(1);
+    const [call] = calls;
+    expect(call.asked.slice(0, 5)).toEqual([
+      "SELECT release_version FROM system.local",
+      "SELECT key FROM system.versions",
+      CHECK_ROLES,
+      CHECK_PERMISSIONS,
+      CHECK_MASKS,
+    ]);
+    expect(call.asked[5]).toMatch(PROBE);
+    expect(call.asked[6]).toBe(STATEMENT);
+    expect(call.asked).toHaveLength(7);
+    // One page, one row past the budget, the budget's own deadline, the consistency named, and never a retry.
+    const { retry, ...options } = call.options[6] as Record<string, unknown>;
+    expect(options).toEqual({
+      prepare: false,
+      fetchSize: 3,
+      readTimeout: 4_000,
+      consistency: types.consistencies.localOne,
+    });
+    expect(retry).toBeInstanceOf(policies.retry.FallthroughRetryPolicy);
+    expect(timeouts).toEqual([4_000]);
+    expect(call.state).toEqual({ connected: 1, shutdown: 1 });
+  });
+
+  test("each probe names a table of its own, so no table a person made can be the one it names", async () => {
+    const { provider, calls } = await agentProvider(() => ({ [STATEMENT]: CUSTOMERS }));
+    await provider.connect();
+    await provider.queryReadOnly(STATEMENT, BUDGET);
+    await provider.queryReadOnly(STATEMENT, BUDGET);
+
+    expect(calls[0].asked[5]).not.toBe(calls[1].asked[5]);
+  });
+
+  test("no verdict is kept: a grant added after one call refuses the next, and its revoke admits the one after", async () => {
+    let granted = false;
+    const { provider, calls } = await agentProvider(() => ({
+      [STATEMENT]: CUSTOMERS,
+      ...(granted
+        ? { [CHECK_PERMISSIONS]: permissions(["<keyspace probe>", "SELECT"], ["<keyspace other>", "MODIFY"]) }
+        : {}),
+    }));
+    await provider.connect();
+
+    await expect(provider.queryReadOnly(STATEMENT, BUDGET)).resolves.toMatchObject({ rowCount: 2 });
+    granted = true;
+    const error = await provider.queryReadOnly(STATEMENT, BUDGET).catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as Error).message).toContain("it holds MODIFY on <keyspace other> (granted to agent_ro)");
+    // Refused before the statement: the check is the last thing that call sent, and its session was closed.
+    expect(calls[1].asked).not.toContain(STATEMENT);
+    expect(calls[1].state.shutdown).toBe(1);
+    granted = false;
+    await expect(provider.queryReadOnly(STATEMENT, BUDGET)).resolves.toMatchObject({ rowCount: 2 });
+    expect(calls).toHaveLength(3);
+  });
+
+  test("nothing a statement sets on its session reaches the next call: each call opens and closes its own", async () => {
+    const { provider, calls } = await agentProvider(() => ({ [STATEMENT]: CUSTOMERS, "USE other": VOID_RESULT }));
+    await provider.connect();
+    await provider.queryReadOnly("USE other", BUDGET);
+    await provider.queryReadOnly(STATEMENT, BUDGET);
+
+    expect(calls).toHaveLength(2);
+    expect(calls.map((call) => call.state)).toEqual([
+      { connected: 1, shutdown: 1 },
+      { connected: 1, shutdown: 1 },
+    ]);
+    expect(calls[1].asked).not.toContain("USE other");
+  });
+
+  test("a result past the row budget is refused, not cut", async () => {
+    const three = result(declare(["id", INT]), [{ id: 1 }, { id: 2 }, { id: 3 }]);
+    const { provider } = await agentProvider(() => ({ [STATEMENT]: three }));
+    await provider.connect();
+
+    await expect(provider.queryReadOnly(STATEMENT, BUDGET)).rejects.toThrow(
+      "Read-only execution exceeded the row budget: 3 rows > 2 allowed",
+    );
+  });
+
+  test("an answer the server split across pages is refused, since the agent reads one page only", async () => {
+    // A Reply as the driver answers it, with the page state a page that is not the last carries.
+    const split = { ...result(declare(["id", INT]), [{ id: 1 }]), pageState: "0400000001" } as unknown as Reply;
+    const { provider } = await agentProvider(() => ({ [STATEMENT]: split }));
+    await provider.connect();
+
+    await expect(provider.queryReadOnly(STATEMENT, BUDGET)).rejects.toThrow(
+      "Read-only execution refused a partial answer: Apache Cassandra answered 1 row and said more remain on a later page, and the agent reads one page only. Narrow the statement with a partition key or a smaller LIMIT.",
+    );
+  });
+
+  test("a result past the byte budget is refused", async () => {
+    const { provider } = await agentProvider(() => ({ [STATEMENT]: CUSTOMERS }));
+    await provider.connect();
+
+    await expect(provider.queryReadOnly(STATEMENT, { ...BUDGET, maxResultBytes: 10 })).rejects.toThrow(
+      "Read-only execution exceeded the byte budget: 47 bytes > 10 allowed",
+    );
+  });
+
+  test("the client deadline is the shared time refusal, and the session that waited is closed", async () => {
+    const timedOut = new Error("The host 127.0.0.1:9042 did not reply before timeout 4000 ms");
+    timedOut.name = "OperationTimedOutError";
+    const { provider, calls } = await agentProvider(() => ({ [STATEMENT]: timedOut }));
+    await provider.connect();
+
+    const error = await provider.queryReadOnly(STATEMENT, BUDGET).catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toBe("Read-only execution exceeded the time budget: no answer within 4000ms");
+    expect(calls[0].state.shutdown).toBe(1);
+  });
+
+  test("a statement the server refuses answers with the server's own words", async () => {
+    const write = "INSERT INTO probe.customers (id, name) VALUES (99, 'x')";
+    const refused = responseError(
+      8448,
+      "User agent_ro has no MODIFY permission on <table probe.customers> or any of its parents",
+    );
+    const { provider } = await agentProvider(() => ({ [write]: refused }));
+    await provider.connect();
+
+    const error = await provider.queryReadOnly(write, BUDGET).catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toBe(
+      "User agent_ro has no MODIFY permission on <table probe.customers> or any of its parents",
+    );
+  });
+
+  test("a check that cannot reach the server fails the call as the environment's, and sends no statement", async () => {
+    const lost = noHostAvailable({ "127.0.0.1:9042": { name: "DriverError", message: "Connection timeout" } });
+    const { provider, calls } = await agentProvider(() => ({ [CHECK_ROLES]: lost, [STATEMENT]: CUSTOMERS }));
+    await provider.connect();
+
+    const error = await provider.queryReadOnly(STATEMENT, BUDGET).catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as Error).message).toBe(
+      "The agent read-only execution profile's check of the Cassandra role could not be read: Connection timeout",
+    );
+    expect(calls[0].asked).not.toContain(STATEMENT);
+    expect(calls[0].state.shutdown).toBe(1);
+  });
+
+  test("a call whose own session cannot open fails as a connection failure", async () => {
+    const config = makeConnection({ user: "agent_ro", password: "not-a-real-password" });
+    const primary = agentSession({ ...healthyReplies(), ...checkReplies() }, PROBE_REFUSED);
+    const call = agentSession(checkReplies(), PROBE_REFUSED);
+    call.session.connect = async () => {
+      throw noHostAvailable({
+        "127.0.0.1:9042": { name: "Error", code: "ECONNREFUSED", message: "connect ECONNREFUSED" },
+      });
+    };
+    const provider = new CassandraProvider(
+      config,
+      {},
+      AGENT_PROFILE,
+      new CassandraDriverTransport(config, 60_000, primary.session),
+      (readTimeoutMs) => new CassandraDriverTransport(config, readTimeoutMs, call.session),
+    );
+    await provider.connect();
+
+    await expect(provider.queryReadOnly(STATEMENT, BUDGET)).rejects.toThrow(ConnectionError);
+    expect(call.asked).toEqual([]);
+  });
+
+  test("by default a call's session is a driver session of its own, which closes even when the open fails", async () => {
+    // No agent seam: the provider builds a driver transport for the call, here against a host nothing listens on.
+    const config = makeConnection({ user: "agent_ro", password: "not-a-real-password", host: "127.0.0.1", port: 1 });
+    const primary = agentSession({ ...healthyReplies(), ...checkReplies() }, PROBE_REFUSED);
+    const provider = new CassandraProvider(
+      config,
+      {},
+      AGENT_PROFILE,
+      new CassandraDriverTransport(config, 60_000, primary.session),
+    );
+    await provider.connect();
+
+    await expect(provider.queryReadOnly(STATEMENT, { ...BUDGET, statementTimeoutMs: 500 })).rejects.toThrow(
+      ConnectionError,
+    );
   });
 });
