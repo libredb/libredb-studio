@@ -23,7 +23,6 @@ import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import golden from "../fixtures/kubernetes-discovery-golden.json";
 import { CNPG_CLUSTER, KUBERNETES_CONTRACT, mapKubernetesDatabase } from "@/lib/seed/kubernetes-discovery-contract";
 import {
   KUBERNETES_DISCOVERY_EXPORT_VERSION,
@@ -53,6 +52,7 @@ import {
   startFakeDiscoveryApi,
   statusBody,
 } from "../helpers/kubernetes-discovery/fake-api";
+import { GOLDEN_CASES } from "../helpers/kubernetes-discovery-fixture";
 import { eventually } from "../helpers/node-transport-fixtures";
 
 const T0 = Date.parse("2026-10-28T08:00:00.000Z");
@@ -64,6 +64,9 @@ const EXPORT_PATH = "/api/v1/namespaces/libredb-studio/secrets/libredb-studio-di
 delete process.env.SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN;
 
 let api: FakeDiscoveryApi;
+
+/** The golden CloudNativePG cases, which the exporter's CloudNativePG row serves. */
+const CNPG_CASES = GOLDEN_CASES.filter((c) => c.resource.apiVersion === "postgresql.cnpg.io/v1");
 
 /** scanOnce's answer, typed for the assertions: the exporter is JavaScript, so the union TypeScript infers is loose. */
 interface Scan {
@@ -245,7 +248,7 @@ describe("the reviewed constants", () => {
     }
   });
 
-  test.each(golden.cases.map((c) => [`${c.resource.metadata.namespace}/${c.resource.metadata.name}`, c] as const))(
+  test.each(CNPG_CASES.map((c) => [`${c.resource.metadata.namespace}/${c.resource.metadata.name}`, c] as const))(
     "the CloudNativePG row names the golden Secret of %s, as Studio's row does",
     (_, c) => {
       const [row] = CONTRACT;
@@ -1397,13 +1400,13 @@ describe("main", () => {
 
 describe("the golden fixture, end to end", () => {
   test("the exporter's export of the golden resources maps to the golden connections in Studio", async () => {
-    for (const c of golden.cases) {
+    for (const c of CNPG_CASES) {
       api.addCluster(c.resource.metadata.namespace, c.resource.metadata.name, c.resource.spec);
       const { namespace, name } = c.resource.metadata;
       if (c.secretName === `${name}-app`) api.addAppSecret(namespace, name, c.secretData as Record<string, string>);
       else api.addSecret(namespace, c.secretName, c.secretData as Record<string, string>);
     }
-    const namespaces = [...new Set(golden.cases.map((c) => c.resource.metadata.namespace))].join(",");
+    const namespaces = [...new Set(CNPG_CASES.map((c) => c.resource.metadata.namespace))].join(",");
     expect(
       await main({
         env: api.env({ KUBERNETES_DISCOVERY_NAMESPACES: namespaces }),
@@ -1420,7 +1423,7 @@ describe("the golden fixture, end to end", () => {
         entry,
       ]),
     );
-    for (const c of golden.cases) {
+    for (const c of CNPG_CASES) {
       const entry = byResource.get(`${c.resource.metadata.namespace}/${c.resource.metadata.name}`);
       if (entry === undefined) throw new Error("the golden resource was not exported");
       const mapped = mapKubernetesDatabase(entry);

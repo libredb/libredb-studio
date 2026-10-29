@@ -6,16 +6,43 @@
       "resource": {
         "apiVersion": "postgresql.cnpg.io/v1",
         "kind": "Cluster",
-        "metadata": { "namespace": "team-a", "name": "orders" },
-        "spec": { "bootstrap": { "initdb": { "database": "orders", "owner": "orders" } } }
+        "metadata": {
+          "namespace": "team-a",
+          "name": "orders",
+          "uid": "00000000-0000-4000-8000-00000000a001"
+        },
+        "spec": {
+          "bootstrap": {
+            "initdb": {
+              "database": "orders",
+              "owner": "orders"
+            }
+          }
+        }
+      },
+      "service": {
+        "name": "orders-rw",
+        "type": "ClusterIP",
+        "selector": {
+          "cnpg.io/cluster": "orders",
+          "cnpg.io/instanceRole": "primary"
+        },
+        "controller": true
       },
       "secretName": "orders-app",
+      "secretType": "kubernetes.io/basic-auth",
       "secretData": {
-        "username": "orders",
-        "password": "not-a-real-password-orders",
         "dbname": "orders",
+        "fqdn-jdbc-uri": "jdbc:postgresql://orders-rw.team-a.svc.cluster.local:5432/orders?password=not-a-real-password-orders&user=orders",
+        "fqdn-uri": "postgresql://orders:not-a-real-password-orders@orders-rw.team-a.svc.cluster.local:5432/orders",
+        "host": "orders-rw",
+        "jdbc-uri": "jdbc:postgresql://orders-rw.team-a:5432/orders?password=not-a-real-password-orders&user=orders",
+        "password": "not-a-real-password-orders",
+        "pgpass": "orders-rw:5432:orders:orders:not-a-real-password-orders\n",
         "port": "5432",
-        "host": "orders-rw"
+        "uri": "postgresql://orders:not-a-real-password-orders@orders-rw.team-a:5432/orders",
+        "user": "orders",
+        "username": "orders"
       },
       "connectionId": "k8s-cnpg-75c1a60b898072af828207cff435c7e5",
       "connection": {
@@ -27,7 +54,9 @@
         "database": "orders",
         "user": "orders",
         "password": "not-a-real-password-orders",
-        "ssl": { "mode": "require" }
+        "ssl": {
+          "mode": "require"
+        }
       },
       "toURL": "https://studio.example.com",
       "link": "https://studio.example.com/?connection=seed%3Ak8s-cnpg-75c1a60b898072af828207cff435c7e5"
@@ -36,15 +65,36 @@
       "resource": {
         "apiVersion": "postgresql.cnpg.io/v1",
         "kind": "Cluster",
-        "metadata": { "namespace": "team-b", "name": "analytics" },
+        "metadata": {
+          "namespace": "team-b",
+          "name": "analytics",
+          "uid": "00000000-0000-4000-8000-00000000b001"
+        },
         "spec": {}
       },
+      "service": {
+        "name": "analytics-rw",
+        "type": "ClusterIP",
+        "selector": {
+          "cnpg.io/cluster": "analytics",
+          "cnpg.io/instanceRole": "primary"
+        },
+        "controller": true
+      },
       "secretName": "analytics-app",
+      "secretType": "kubernetes.io/basic-auth",
       "secretData": {
-        "username": "app",
-        "password": "not-a-real-password-analytics",
         "dbname": "app",
-        "port": "5432"
+        "fqdn-jdbc-uri": "jdbc:postgresql://analytics-rw.team-b.svc.cluster.local:5432/app?password=not-a-real-password-analytics&user=app",
+        "fqdn-uri": "postgresql://app:not-a-real-password-analytics@analytics-rw.team-b.svc.cluster.local:5432/app",
+        "host": "analytics-rw",
+        "jdbc-uri": "jdbc:postgresql://analytics-rw.team-b:5432/app?password=not-a-real-password-analytics&user=app",
+        "password": "not-a-real-password-analytics",
+        "pgpass": "analytics-rw:5432:app:app:not-a-real-password-analytics\n",
+        "port": "5432",
+        "uri": "postgresql://app:not-a-real-password-analytics@analytics-rw.team-b:5432/app",
+        "user": "app",
+        "username": "app"
       },
       "connectionId": "k8s-cnpg-d0659002649870172fb93e83e6bfda2d",
       "connection": {
@@ -56,7 +106,9 @@
         "database": "app",
         "user": "app",
         "password": "not-a-real-password-analytics",
-        "ssl": { "mode": "require" }
+        "ssl": {
+          "mode": "require"
+        }
       },
       "toURL": "https://studio.example.com/",
       "link": "https://studio.example.com/?connection=seed%3Ak8s-cnpg-d0659002649870172fb93e83e6bfda2d"
@@ -65,10 +117,33 @@
       "resource": {
         "apiVersion": "postgresql.cnpg.io/v1",
         "kind": "Cluster",
-        "metadata": { "namespace": "prod", "name": "billing-db" },
-        "spec": { "bootstrap": { "initdb": { "database": "billing", "secret": { "name": "billing-owner" } } } }
+        "metadata": {
+          "namespace": "prod",
+          "name": "billing-db",
+          "uid": "00000000-0000-4000-8000-00000000c001"
+        },
+        "spec": {
+          "bootstrap": {
+            "initdb": {
+              "database": "billing",
+              "secret": {
+                "name": "billing-owner"
+              }
+            }
+          }
+        }
+      },
+      "service": {
+        "name": "billing-db-rw",
+        "type": "ClusterIP",
+        "selector": {
+          "cnpg.io/cluster": "billing-db",
+          "cnpg.io/instanceRole": "primary"
+        },
+        "controller": true
       },
       "secretName": "billing-owner",
+      "secretType": "kubernetes.io/basic-auth",
       "secretData": {
         "username": "billing_owner",
         "password": "not-a-real-password-billing"
@@ -83,10 +158,319 @@
         "database": "billing",
         "user": "billing_owner",
         "password": "not-a-real-password-billing",
-        "ssl": { "mode": "require" }
+        "ssl": {
+          "mode": "require"
+        }
       },
       "toURL": "https://tools.example.com/studio",
       "link": "https://tools.example.com/studio/?connection=seed%3Ak8s-cnpg-37c1c823437fce5734f68e0b5f65b3d3"
+    },
+    {
+      "resource": {
+        "apiVersion": "postgresql.k8s.enterprisedb.io/v1",
+        "kind": "Cluster",
+        "metadata": {
+          "namespace": "team-e",
+          "name": "ledger",
+          "uid": "00000000-0000-4000-8000-00000000e001"
+        },
+        "spec": {
+          "bootstrap": {
+            "initdb": {
+              "database": "ledger",
+              "owner": "ledger"
+            }
+          }
+        }
+      },
+      "service": {
+        "name": "ledger-rw",
+        "type": "ClusterIP",
+        "selector": {
+          "k8s.enterprisedb.io/cluster": "ledger",
+          "k8s.enterprisedb.io/instanceRole": "primary"
+        },
+        "controller": true
+      },
+      "secretName": "ledger-app",
+      "secretType": "kubernetes.io/basic-auth",
+      "secretData": {
+        "dbname": "ledger",
+        "fqdn-jdbc-uri": "jdbc:postgresql://ledger-rw.team-e.svc.cluster.local:5432/ledger?password=not-a-real-password-ledger&user=ledger",
+        "fqdn-uri": "postgresql://ledger:not-a-real-password-ledger@ledger-rw.team-e.svc.cluster.local:5432/ledger",
+        "host": "ledger-rw",
+        "jdbc-uri": "jdbc:postgresql://ledger-rw.team-e:5432/ledger?password=not-a-real-password-ledger&user=ledger",
+        "password": "not-a-real-password-ledger",
+        "pgpass": "ledger-rw:5432:ledger:ledger:not-a-real-password-ledger\n",
+        "port": "5432",
+        "uri": "postgresql://ledger:not-a-real-password-ledger@ledger-rw.team-e:5432/ledger",
+        "user": "ledger",
+        "username": "ledger"
+      },
+      "connectionId": "k8s-edbpg-eef887546ead3f8b9acd0a650782eaac",
+      "connection": {
+        "name": "team-e/ledger (EDB Postgres for Kubernetes)",
+        "group": "team-e",
+        "type": "postgres",
+        "host": "ledger-rw.team-e.svc.cluster.local.",
+        "port": 5432,
+        "database": "ledger",
+        "user": "ledger",
+        "password": "not-a-real-password-ledger",
+        "ssl": {
+          "mode": "require"
+        }
+      },
+      "toURL": "https://studio.example.com",
+      "link": "https://studio.example.com/?connection=seed%3Ak8s-edbpg-eef887546ead3f8b9acd0a650782eaac"
+    },
+    {
+      "resource": {
+        "apiVersion": "postgres-operator.crunchydata.com/v1beta1",
+        "kind": "PostgresCluster",
+        "metadata": {
+          "namespace": "team-b",
+          "name": "analytics",
+          "uid": "00000000-0000-4000-8000-00000000b002"
+        },
+        "spec": {
+          "postgresVersion": 17,
+          "users": [
+            {
+              "name": "analyst",
+              "databases": [
+                "analytics"
+              ]
+            },
+            {
+              "name": "reporter",
+              "databases": [
+                "analytics"
+              ]
+            }
+          ]
+        }
+      },
+      "user": "analyst",
+      "service": {
+        "name": "analytics-primary",
+        "type": "ClusterIP",
+        "selector": null,
+        "controller": true
+      },
+      "secretName": "analytics-pguser-analyst",
+      "secretType": "Opaque",
+      "secretData": {
+        "dbname": "analytics",
+        "host": "analytics-primary.team-b.svc",
+        "jdbc-uri": "jdbc:postgresql://analytics-primary.team-b.svc:5432/analytics?password=not-a-real-password-analytics-analyst&user=analyst",
+        "password": "not-a-real-password-analytics-analyst",
+        "port": "5432",
+        "uri": "postgresql://analyst:not-a-real-password-analytics-analyst@analytics-primary.team-b.svc:5432/analytics",
+        "user": "analyst",
+        "verifier": "SCRAM-SHA-256$4096:not-a-real-salt$not-a-real-stored-key:not-a-real-server-key"
+      },
+      "connectionId": "k8s-pgo-08ddbec864884242a67b9c2ec28ca05a",
+      "connection": {
+        "name": "team-b/analytics/analyst (Crunchy PGO)",
+        "group": "team-b",
+        "type": "postgres",
+        "host": "analytics-primary.team-b.svc.cluster.local.",
+        "port": 5432,
+        "database": "analytics",
+        "user": "analyst",
+        "password": "not-a-real-password-analytics-analyst",
+        "ssl": {
+          "mode": "require"
+        }
+      },
+      "toURL": "https://studio.example.com",
+      "link": "https://studio.example.com/?connection=seed%3Ak8s-pgo-08ddbec864884242a67b9c2ec28ca05a"
+    },
+    {
+      "resource": {
+        "apiVersion": "postgres-operator.crunchydata.com/v1beta1",
+        "kind": "PostgresCluster",
+        "metadata": {
+          "namespace": "team-b",
+          "name": "analytics",
+          "uid": "00000000-0000-4000-8000-00000000b002"
+        },
+        "spec": {
+          "postgresVersion": 17,
+          "users": [
+            {
+              "name": "analyst",
+              "databases": [
+                "analytics"
+              ]
+            },
+            {
+              "name": "reporter",
+              "databases": [
+                "analytics"
+              ]
+            }
+          ]
+        }
+      },
+      "user": "reporter",
+      "service": {
+        "name": "analytics-primary",
+        "type": "ClusterIP",
+        "selector": null,
+        "controller": true
+      },
+      "secretName": "analytics-pguser-reporter",
+      "secretType": "Opaque",
+      "secretData": {
+        "dbname": "analytics",
+        "host": "analytics-primary.team-b.svc",
+        "jdbc-uri": "jdbc:postgresql://analytics-primary.team-b.svc:5432/analytics?password=not-a-real-password-analytics-reporter&user=reporter",
+        "password": "not-a-real-password-analytics-reporter",
+        "port": "5432",
+        "uri": "postgresql://reporter:not-a-real-password-analytics-reporter@analytics-primary.team-b.svc:5432/analytics",
+        "user": "reporter",
+        "verifier": "SCRAM-SHA-256$4096:not-a-real-salt$not-a-real-stored-key:not-a-real-server-key"
+      },
+      "connectionId": "k8s-pgo-d106fe4159e2b5c6f6ea56a502555372",
+      "connection": {
+        "name": "team-b/analytics/reporter (Crunchy PGO)",
+        "group": "team-b",
+        "type": "postgres",
+        "host": "analytics-primary.team-b.svc.cluster.local.",
+        "port": 5432,
+        "database": "analytics",
+        "user": "reporter",
+        "password": "not-a-real-password-analytics-reporter",
+        "ssl": {
+          "mode": "require"
+        }
+      },
+      "toURL": "https://studio.example.com",
+      "link": "https://studio.example.com/?connection=seed%3Ak8s-pgo-d106fe4159e2b5c6f6ea56a502555372"
+    },
+    {
+      "resource": {
+        "apiVersion": "postgres-operator.crunchydata.com/v1beta1",
+        "kind": "PostgresCluster",
+        "metadata": {
+          "namespace": "team-b",
+          "name": "metrics",
+          "uid": "00000000-0000-4000-8000-00000000b003"
+        },
+        "spec": {
+          "postgresVersion": 17
+        }
+      },
+      "user": "metrics",
+      "service": {
+        "name": "metrics-primary",
+        "type": "ClusterIP",
+        "selector": null,
+        "controller": true
+      },
+      "secretName": "metrics-pguser-metrics",
+      "secretType": "Opaque",
+      "secretData": {
+        "dbname": "metrics",
+        "host": "metrics-primary.team-b.svc",
+        "jdbc-uri": "jdbc:postgresql://metrics-primary.team-b.svc:5432/metrics?password=not-a-real-password-metrics-metrics&user=metrics",
+        "password": "not-a-real-password-metrics-metrics",
+        "port": "5432",
+        "uri": "postgresql://metrics:not-a-real-password-metrics-metrics@metrics-primary.team-b.svc:5432/metrics",
+        "user": "metrics",
+        "verifier": "SCRAM-SHA-256$4096:not-a-real-salt$not-a-real-stored-key:not-a-real-server-key"
+      },
+      "connectionId": "k8s-pgo-3909600ead761ce65d5d61de7b7e6188",
+      "connection": {
+        "name": "team-b/metrics/metrics (Crunchy PGO)",
+        "group": "team-b",
+        "type": "postgres",
+        "host": "metrics-primary.team-b.svc.cluster.local.",
+        "port": 5432,
+        "database": "metrics",
+        "user": "metrics",
+        "password": "not-a-real-password-metrics-metrics",
+        "ssl": {
+          "mode": "require"
+        }
+      },
+      "toURL": "https://studio.example.com",
+      "link": "https://studio.example.com/?connection=seed%3Ak8s-pgo-3909600ead761ce65d5d61de7b7e6188"
+    },
+    {
+      "resource": {
+        "apiVersion": "mongodbcommunity.mongodb.com/v1",
+        "kind": "MongoDBCommunity",
+        "metadata": {
+          "namespace": "team-m",
+          "name": "catalog",
+          "uid": "00000000-0000-4000-8000-00000000d001"
+        },
+        "spec": {
+          "members": 1,
+          "type": "ReplicaSet",
+          "version": "8.0.12",
+          "security": {
+            "authentication": {
+              "modes": [
+                "SCRAM"
+              ]
+            }
+          },
+          "users": [
+            {
+              "name": "appuser",
+              "db": "admin",
+              "passwordSecretRef": {
+                "name": "appuser-password"
+              },
+              "roles": [
+                {
+                  "name": "readWrite",
+                  "db": "catalog"
+                }
+              ],
+              "scramCredentialsSecretName": "appuser-scram"
+            }
+          ]
+        }
+      },
+      "user": "appuser",
+      "service": {
+        "name": "catalog-svc",
+        "type": "ClusterIP",
+        "selector": {
+          "app": "catalog-svc"
+        },
+        "controller": true
+      },
+      "secretName": "catalog-admin-appuser",
+      "secretType": "Opaque",
+      "secretData": {
+        "connectionString.standard": "mongodb://appuser:not-a-real-password-catalog@catalog-0.catalog-svc.team-m.svc.cluster.local:27017/admin?replicaSet=catalog&ssl=false",
+        "connectionString.standardSrv": "mongodb+srv://appuser:not-a-real-password-catalog@catalog-svc.team-m.svc.cluster.local/admin?replicaSet=catalog&ssl=false",
+        "password": "not-a-real-password-catalog",
+        "username": "appuser"
+      },
+      "connectionId": "k8s-mongo-298f87d830642523c9d1ace3afe70694",
+      "connection": {
+        "name": "team-m/catalog/appuser (MongoDB Community)",
+        "group": "team-m",
+        "type": "mongodb",
+        "host": "catalog-0.catalog-svc.team-m.svc.cluster.local.",
+        "port": 27017,
+        "database": "catalog",
+        "user": "appuser",
+        "password": "not-a-real-password-catalog",
+        "authSource": "admin",
+        "ssl": {
+          "mode": "disable"
+        }
+      },
+      "toURL": "https://studio.example.com",
+      "link": "https://studio.example.com/?connection=seed%3Ak8s-mongo-298f87d830642523c9d1ace3afe70694"
     }
   ]
 }
