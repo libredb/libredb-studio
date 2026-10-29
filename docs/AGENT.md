@@ -2533,7 +2533,7 @@ A muted line under **Start** used to ask that question in words, and it is gone:
 strip's own headline and qualifier joined, about 200 pixels below the strip (L7, measured 2026-08-21),
 so one 384-pixel panel carried the same sentence twice. The strip is permanent and states it for the
 selected mode already. The login hero's claim — *plan mode drafts one statement, runs nothing* /
-*agent mode runs read-only on \<engines\>* — was the considered alternative and was not taken: it
+*agent mode runs read-only on \<N\> engines* — was the considered alternative and was not taken: it
 describes both modes at once, for a visitor who has selected neither.
 
 The strip exists because the rail answered this question in six places at once — a mode description, a

@@ -527,6 +527,9 @@ describe("LoginPage showcase (issue #425)", () => {
         if (allowed.has(db.label)) continue;
         expect(agentSentence).not.toContain(db.label);
       }
+      // A count, not the names: every engine that joins agent mode would otherwise add a word
+      // to the hero, and the hero must fit a 1280x800 screen without scrolling.
+      expect(agentSentence).toContain(`runs read-only on ${AGENT_EXECUTION_ENGINES.length} engines`);
     }
   });
 

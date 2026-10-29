@@ -1,5 +1,4 @@
-import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
-import { getDBConfig } from "@/lib/db-ui-config";
+import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { LIVE_CHANNELS, LIVE_PLATFORMS } from "@/lib/distribution/channels.generated";
 import { DEPLOY_GROUP_LABELS, DEPLOY_GROUP_ORDER } from "@/lib/distribution/deploy-groups";
@@ -9,13 +8,13 @@ import { DEPLOY_GROUP_LABELS, DEPLOY_GROUP_ORDER } from "@/lib/distribution/depl
  *
  * The descriptions are pinned to `docs/AGENT.md` and the split is load-bearing: plan mode
  * executes nothing on any engine, agent mode executes read-only and only where the provider
- * implements `queryReadOnly`. The engine names in the second line come from
+ * implements `queryReadOnly`. The engine count in the second line is the length of
  * `AGENT_EXECUTION_ENGINES`, so an engine that gains that method updates this claim without
- * a copy edit - and the count below is this array's length, never a typed "2".
+ * a copy edit - and the mode count below is this array's length, never a typed "2".
  *
- * They are joined by `namedList` rather than by `join(" and ")`, which is what this file
- * used to do: with three engines that printed "PostgreSQL and SQLite and DuckDB" on the
- * login page. The helper is shared with the posture popover, which had the same join.
+ * A count rather than the engine names: the names used to be listed here, and each engine
+ * that joined agent mode added a word until the hero no longer fit a 1280x800 screen
+ * without scrolling. The names stay in the posture popover and in docs/AGENT.md.
  *
  * `tests/components/LoginPage.test.tsx` pins the claim rather than the wording: dropping a
  * mode, or naming an engine agent mode cannot execute on, fails CI.
@@ -25,7 +24,7 @@ const AGENT_MODES: readonly { key: string; label: string; detail: string }[] = [
   {
     key: "agent",
     label: "agent mode",
-    detail: `runs read-only on ${namedList(AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label))}`,
+    detail: `runs read-only on ${AGENT_EXECUTION_ENGINES.length} engines`,
   },
 ];
 
