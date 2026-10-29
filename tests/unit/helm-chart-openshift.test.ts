@@ -257,6 +257,62 @@ describe("charts/libredb-studio PostgreSQL subchart contracts (#152)", () => {
     expect(statefulSet).toContain("fsGroup: 1001");
   });
 
+  /**
+   * The OpenShift console's Topology view draws an arrow from the Studio
+   * Deployment to the bundled PostgreSQL when the Deployment names it in
+   * app.openshift.io/connects-to, a JSON array of {apiVersion, kind, name}
+   * (probe OP19). Only the bundled subchart is a workload the chart knows.
+   */
+  const CONNECTS_TO = "app.openshift.io/connects-to";
+
+  interface Workload {
+    kind: string;
+    metadata: { name: string; annotations?: Record<string, string> };
+  }
+
+  function studioDeployment(args: string[], chartDir: string): Workload & { statefulSets: string[] } {
+    const run = helmTemplate(args, chartDir);
+    if (run.exitCode !== 0) {
+      throw new Error(`helm template ${howItFailed(run)}: ${run.stderr}`);
+    }
+    const docs = parseAllDocuments(run.stdout).map((doc) => doc.toJSON() as Workload);
+    const deployment = docs.find((doc) => doc?.kind === "Deployment");
+    if (!deployment) {
+      throw new Error("Studio Deployment not found in render output");
+    }
+    const statefulSets = docs.filter((doc) => doc?.kind === "StatefulSet").map((doc) => doc.metadata.name);
+    return { ...deployment, statefulSets };
+  }
+
+  test("connects-to is absent by default and with postgresql disabled", () => {
+    for (const args of [[], ["--set", "postgresql.enabled=false"], OPENSHIFT_API]) {
+      expect(studioDeployment(args, pgChartDir).metadata.annotations ?? {}).not.toHaveProperty(CONNECTS_TO);
+    }
+  });
+
+  test("connects-to names the bundled PostgreSQL StatefulSet when it is enabled", () => {
+    const deployment = studioDeployment(PG_ARGS, pgChartDir);
+    expect(deployment.metadata.annotations?.[CONNECTS_TO]).toBe(
+      '[{"apiVersion":"apps/v1","kind":"StatefulSet","name":"release-under-test-postgresql"}]',
+    );
+    expect(deployment.statefulSets).toEqual(["release-under-test-postgresql"]);
+  });
+
+  test("connects-to follows the subchart's name, not the Studio nameOverride or fullnameOverride", () => {
+    for (const override of [
+      ["--set", "nameOverride=studio"],
+      ["--set", "fullnameOverride=studio"],
+      ["--set", "nameOverride=studio", "--set", "fullnameOverride=studio-app"],
+    ]) {
+      const deployment = studioDeployment([...PG_ARGS, ...override], pgChartDir);
+      const [target] = JSON.parse(deployment.metadata.annotations?.[CONNECTS_TO] ?? "[]") as Array<{
+        name: string;
+      }>;
+      expect(target).toEqual({ apiVersion: "apps/v1", kind: "StatefulSet", name: "release-under-test-postgresql" });
+      expect(deployment.statefulSets).toEqual([target?.name]);
+    }
+  });
+
   test("every subchart image is pulled from bitnamilegacy (none from the frozen bitnami namespace)", () => {
     const run = helmTemplate([
       ...PG_ARGS,

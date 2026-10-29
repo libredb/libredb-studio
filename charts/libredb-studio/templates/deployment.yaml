@@ -76,6 +76,13 @@ metadata:
     {{- with include "libredb-studio.topologyLabels" . }}
     {{- . | nindent 4 }}
     {{- end }}
+  {{- /* The OpenShift console's Topology view draws the Studio-to-database arrow from this
+         annotation, a JSON array of {apiVersion, kind, name}; the bundled subchart is the only
+         workload the chart knows. */}}
+  {{- if .Values.postgresql.enabled }}
+  annotations:
+    app.openshift.io/connects-to: {{ list (dict "apiVersion" "apps/v1" "kind" "StatefulSet" "name" (include "libredb-studio.postgresql.fullname" .)) | toJson | squote }}
+  {{- end }}
 spec:
   {{- if not (include "libredb-studio.autoscalingEnabled" .) }}
   replicas: {{ .Values.replicaCount }}
