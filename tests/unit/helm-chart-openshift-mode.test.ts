@@ -543,3 +543,13 @@ describe("discovery in openshift mode: the list refresh and custom connections",
     expect(configData(docs)).not.toHaveProperty("ALLOW_CUSTOM_CONNECTIONS");
   });
 });
+
+describe("the cluster domain of discovered hosts", () => {
+  test("discovery.kubernetes.clusterDomain writes SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN on Studio, which maps the rows", () => {
+    const docs = render([...OPENSHIFT, ...DISCOVERY, ...set("discovery.kubernetes.clusterDomain=corp.example")]);
+    expect(envOf(docs).SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN).toBe("corp.example");
+    expect(envOf(render([...OPENSHIFT, ...DISCOVERY]))).not.toHaveProperty("SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN");
+    const local = render([...DISCOVERY, ...set(`fullnameOverride=${RELEASE}`, "discovery.kubernetes.clusterDomain=corp.example")]);
+    expect(envOf(local).SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN).toBe("corp.example");
+  });
+});

@@ -365,6 +365,12 @@ spec:
             - name: SEED_KUBERNETES_DISCOVERY_MAX_AGE_MS
               value: {{ $maxAge | int64 | toString | quote }}
             {{- end }}
+            {{- /* Studio maps the export to rows, so the cluster domain is read here, not by the exporter. */}}
+            {{- $clusterDomain := get .Values.discovery.kubernetes "clusterDomain" }}
+            {{- if and (not (kindIs "invalid" $clusterDomain)) (ne (toString $clusterDomain) "") }}
+            - name: SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN
+              value: {{ $clusterDomain | quote }}
+            {{- end }}
             {{- end }}
             {{- /* The Kubernetes access review: its switch, Studio's own Deployment as the admin review's
                    target, and the projected token and CA mounted below. */}}

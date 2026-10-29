@@ -1276,7 +1276,7 @@ A MongoDB connection is built from these fields, never from the connection strin
 The driver still follows the replica set members the server advertises, by the names the server gives, which [docs/SECURITY.md](./SECURITY.md) row 3.34 describes.
 Discovered hosts are fully qualified names with a trailing dot, so the pod's DNS search path never applies.
 A resource whose name has a dot, or whose host would be over 253 characters or have a label that is not 1 to 63 characters, is skipped with a reason that names the field.
-The cluster domain is `SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN`, which the Studio server reads, `cluster.local` by default; set it when the cluster's kubelets run with another `--cluster-domain`, with the Helm chart through `extraEnv`.
+The cluster domain is `SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN`, which the Studio server reads, `cluster.local` by default; set it when the cluster's kubelets run with another `--cluster-domain`, with the Helm chart through `discovery.kubernetes.clusterDomain`, because the chart refuses an `extraEnv` entry named `SEED_KUBERNETES_DISCOVERY*`.
 While it is not a DNS name, Studio lists no Kubernetes-discovered database and reports each one as skipped, with a reason that names the variable.
 A value whose first label is `svc`, such as `svc.cluster.local`, is refused the same way, because every host already carries that label: name the cluster domain itself, such as `cluster.local`.
 The PostgreSQL operators serve TLS with CAs of their own, whose Secrets also hold the CAs' private keys, so the exporter never reads them, and Studio connects with `ssl: { mode: "require" }`, which encrypts without verifying the server's certificate; Crunchy PGO refuses a connection without TLS.
