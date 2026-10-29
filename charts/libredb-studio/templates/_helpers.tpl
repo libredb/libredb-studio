@@ -880,6 +880,14 @@ instead, naming the value to fix. Included from deployment.yaml.
 {{- if and (include "libredb-studio.discoveryEnabled" .) (eq $account (include "libredb-studio.discoveryName" .)) }}
 {{- fail (printf "authProvider=openshift refuses serviceAccount.name=%s: that is the discovery exporter's account, which may read Secrets in the discovered namespaces, and Studio's own process never holds a token that can read a database Secret" $account) }}
 {{- end }}
+{{- /* The OAuth server accepts every redirect any oauth-redirect annotation of the account names, so
+       one more reference or URI would let it send the code past Studio's callback. The chart's own
+       two keys may still collide: serviceaccount.yaml lets the chart's value win. */}}
+{{- range $key, $_ := .Values.serviceAccount.annotations | default dict }}
+{{- if and (hasPrefix "serviceaccounts.openshift.io/oauth-redirect" $key) (not (has $key (list "serviceaccounts.openshift.io/oauth-redirectreference.first" "serviceaccounts.openshift.io/oauth-redirecturi.first"))) }}
+{{- fail (printf "authProvider=openshift refuses the serviceAccount.annotations entry %s: the chart registers Studio's one callback itself, and another redirect annotation would let the OAuth server send the code elsewhere, so remove it" $key) }}
+{{- end }}
+{{- end }}
 {{- if .Values.serviceAccount.automountServiceAccountToken }}
 {{- fail "authProvider=openshift refuses serviceAccount.automountServiceAccountToken=true: Studio's process holds only the OAuth client token, whose audience the API server rejects, and reviews every request with the signed-in user's own token; leave it false" }}
 {{- end }}

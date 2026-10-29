@@ -347,6 +347,37 @@ describe("the ServiceAccount as the OAuth client", () => {
   });
 
   test.each([
+    [
+      "serviceaccounts.openshift.io/oauth-redirectreference.studio",
+      '{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"v1os"}}',
+    ],
+    ["serviceaccounts.openshift.io/oauth-redirecturi.other", "https://elsewhere.example.com/cb"],
+  ])(
+    "a user redirect annotation %s fails naming it, so the OAuth server accepts the one callback only",
+    (key, value) => {
+      refused(
+        [...OPENSHIFT, "--set-json", `serviceAccount.annotations=${JSON.stringify({ [key]: value })}`],
+        "serviceAccount.annotations",
+        key,
+      );
+    },
+  );
+
+  test("outside openshift mode a user redirect annotation is the user's own", () => {
+    const key = "serviceaccounts.openshift.io/oauth-redirecturi.other";
+    const account = one(
+      render([
+        ...set(`fullnameOverride=${RELEASE}`),
+        "--set-json",
+        `serviceAccount.annotations=${JSON.stringify({ [key]: "https://elsewhere.example.com/cb" })}`,
+      ]),
+      "ServiceAccount",
+      RELEASE,
+    );
+    expect(account.metadata.annotations?.[key]).toBe("https://elsewhere.example.com/cb");
+  });
+
+  test.each([
     ["local", set("authProvider=local")],
     ["oidc", set("authProvider=oidc")],
   ])("%s mode renders neither annotation", (_, mode) => {
