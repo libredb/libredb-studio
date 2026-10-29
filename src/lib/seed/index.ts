@@ -177,11 +177,6 @@ export function getPendingSeeds(): string[] {
   return [];
 }
 
-export async function getSeedConnectionById(seedId: string, roles: string[]): Promise<ManagedConnection | null> {
-  const all = await getManagedConnections(roles);
-  return all.find((c) => c.seedId === seedId) ?? null;
-}
-
 /**
  * The operator entries only: no discovered connection and no sample, so a 403 never confirms a discovered id. Under
  * governance none at all, because no source is read (see getManagedConnections).

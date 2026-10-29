@@ -3,10 +3,11 @@
  * `GET /api/connections/managed` and `resolveConnection` ask, so the list a browser shows and the connection a route
  * opens can never disagree.
  *
- * Without governance it answers the seed connections the caller's role may see, through `getManagedConnections` and
- * `getSeedConnectionById`, less any connection the Kubernetes access review keeps from the caller
- * (src/lib/kubernetes-access/gate.ts), which touches only a connection that names its Kubernetes Secret; the options
- * change nothing.
+ * Without governance it answers from `getSeedListing`: the seed connections the caller's role may see, in their order,
+ * with the rows only the Kubernetes access review may list (`pendingReview`, each naming its Kubernetes Secret) handed
+ * to the review in their place and kept only where it lets the caller use them (src/lib/kubernetes-access/gate.ts). No
+ * other row is ever reviewed, an open reviews only the row it names, and an id no section holds sends no review; the
+ * options change nothing.
  *
  * Under governance (`GOVERNANCE_SOURCE`, docs/GOVERNANCE.md) it answers from the governance snapshot alone, for the
  * identity provider subject of the session:
@@ -30,7 +31,7 @@
  */
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { connectionsUnderAccessReview, connectionUnderAccessReview } from "@/lib/kubernetes-access/gate";
-import { getManagedConnections, getSeedConnectionById, seedRolesOf, type ManagedConnection } from "@/lib/seed";
+import { getSeedListing, seedRolesOf, type ManagedConnection } from "@/lib/seed";
 import { governanceEnabled } from "./config";
 import { governanceServable } from "./freshness";
 import { runtimeSetting } from "./settings";
@@ -125,7 +126,8 @@ export async function visibleConnections(
   options: VisibilityOptions = {},
 ): Promise<ManagedConnection[]> {
   if (!governanceEnabled()) {
-    return connectionsUnderAccessReview(principal, await getManagedConnections(seedRolesOf(principal)));
+    const { before, pendingReview, after } = await getSeedListing(seedRolesOf(principal));
+    return [...before, ...(await connectionsUnderAccessReview(principal, pendingReview)), ...after];
   }
   const nowMs = Date.now();
   const snapshot = servableSnapshot(nowMs);
@@ -150,7 +152,10 @@ export async function visibleConnectionById(
   options: VisibilityOptions = {},
 ): Promise<ManagedConnection | null> {
   if (!governanceEnabled()) {
-    return connectionUnderAccessReview(principal, await getSeedConnectionById(id, seedRolesOf(principal)));
+    const { before, pendingReview, after } = await getSeedListing(seedRolesOf(principal));
+    const listed = [...before, ...after].find((connection) => connection.seedId === id);
+    if (listed !== undefined) return listed;
+    return connectionUnderAccessReview(principal, pendingReview.find((connection) => connection.seedId === id) ?? null);
   }
   const nowMs = Date.now();
   const snapshot = servableSnapshot(nowMs);
