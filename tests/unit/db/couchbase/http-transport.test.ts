@@ -12,6 +12,7 @@ import type { AddressInfo } from "node:net";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import type { DatabaseConnection, DatabaseType } from "@/lib/db/types";
 import type { SSLConfig } from "@/lib/types";
+import type { NodeRequest, NodeTransportOptions } from "@/lib/db/http/node-transport";
 import { CouchbaseError } from "@/lib/db/providers/document/couchbase/transport";
 import {
   CouchbaseHttpTransport,
@@ -1002,5 +1003,191 @@ describe("nodeRequestJson", () => {
     expect(error).toBeInstanceOf(CouchbaseError);
     expect(error.code).toBe(0);
     expect(error.retriable).toBe(true);
+  });
+});
+
+// ============================================================================
+// The agent path: node-transport, the caller's signal and byte cap
+// ============================================================================
+
+describe("CouchbaseHttpTransport agent path", () => {
+  interface Built {
+    options: NodeTransportOptions;
+    requests: NodeRequest[];
+    closed: number;
+  }
+
+  /** A createNodeTransport that records what each transport was built with and sent, and answers by URL path. */
+  function nodeDeps(
+    answer: (request: NodeRequest) => { status: number; text: string } | Error,
+    built: Built[],
+  ): CouchbaseHttpTransportDeps {
+    return {
+      resolveSrv: async () => [],
+      createNodeTransport: (options) => {
+        const record: Built = { options, requests: [], closed: 0 };
+        built.push(record);
+        return {
+          request: async (request) => {
+            record.requests.push(request);
+            const reply = answer(request);
+            if (reply instanceof Error) throw reply;
+            return { status: reply.status, contentType: "application/json", retryAfter: null, text: reply.text };
+          },
+          close: () => {
+            record.closed++;
+          },
+        };
+      },
+    };
+  }
+
+  const WHOAMI = { roles: [{ role: "query_select", bucket_name: "travel", scope_name: "*", collection_name: "*" }] };
+
+  function cluster(query: { status: number; text: string } = { status: 200, text: JSON.stringify(successPayload()) }) {
+    return (request: NodeRequest) => {
+      const path = new URL(request.url).pathname;
+      if (path === "/whoami") return { status: 200, text: JSON.stringify(WHOAMI) };
+      if (path === "/pools/default/nodeServices") return { status: 200, text: JSON.stringify(NODE_SERVICES) };
+      return query;
+    };
+  }
+
+  const bounds = () => ({ signal: new AbortController().signal, maxResponseBytes: 65536 });
+
+  test("reads GET /whoami on the management port through node-transport, never fetch", async () => {
+    const built: Built[] = [];
+    const transport = makeTransport({}, nodeDeps(cluster(), built));
+    const request = bounds();
+
+    expect(await transport.whoami(request)).toEqual(WHOAMI);
+
+    expect(calls).toHaveLength(0);
+    expect(built).toHaveLength(1);
+    expect(built[0].options).toEqual({
+      origin: { scheme: "http", host: "127.0.0.1", port: 8091 },
+      tls: null,
+      maxSockets: 4,
+      headers: {
+        accept: "application/json",
+        authorization: `Basic ${Buffer.from("Administrator:password123").toString("base64")}`,
+      },
+      requestHeaderNames: ["content-type"],
+    });
+    expect(built[0].requests).toEqual([
+      { method: "GET", url: "http://127.0.0.1:8091/whoami", signal: request.signal, maxResponseBytes: 65536 },
+    ]);
+  });
+
+  test("maps a refused GET /whoami like any management failure", async () => {
+    const transport = makeTransport({}, nodeDeps(() => ({ status: 401, text: "" }), []));
+    await expect(transport.whoami(bounds())).rejects.toMatchObject({ name: "CouchbaseError", code: 401 });
+  });
+
+  test("sends one agent statement with its full request text: no args, no transaction, no prepared name", async () => {
+    const built: Built[] = [];
+    const transport = makeTransport({}, nodeDeps(cluster(), built));
+    const request = bounds();
+
+    const result = await transport.agentQuery("SELECT 1 AS a", { ...request, timeoutMs: 5000, readonly: true });
+
+    expect(result.rows).toEqual([{ id: "hotel::1", city: "Bursa" }]);
+    expect(built.map((record) => record.options.origin)).toEqual([
+      { scheme: "http", host: "127.0.0.1", port: 8091 },
+      { scheme: "http", host: "node1.local", port: 8093 },
+    ]);
+    expect(built[0].requests.map((sent) => sent.url)).toEqual(["http://127.0.0.1:8091/pools/default/nodeServices"]);
+    expect(built[0].requests[0].signal).toBe(request.signal);
+    expect(built[1].requests).toEqual([
+      {
+        method: "POST",
+        url: "http://node1.local:8093/query/service",
+        body: '{"statement":"SELECT 1 AS a","timeout":"5000ms","readonly":true,"scan_consistency":"request_plus","query_context":"default:`travel`"}',
+        headers: { "content-type": "application/json" },
+        signal: request.signal,
+        maxResponseBytes: 65536,
+      },
+    ]);
+  });
+
+  test("sends the readonly flag as the caller asks, and discovers the query port once", async () => {
+    const built: Built[] = [];
+    const transport = makeTransport({}, nodeDeps(cluster(), built));
+
+    await transport.agentQuery("SELECT 1 AS a", { ...bounds(), timeoutMs: 1000, readonly: true });
+    await transport.agentQuery("DELETE FROM `_default` USE KEYS \"k\"", { ...bounds(), timeoutMs: 1000, readonly: false });
+
+    expect(built[0].requests).toHaveLength(1);
+    expect(built[1].requests.map((sent) => JSON.parse(sent.body ?? "{}").readonly)).toEqual([true, false]);
+  });
+
+  test("does not keep a failed discovery, and asks again on the next call", async () => {
+    let failing = true;
+    const built: Built[] = [];
+    const transport = makeTransport(
+      {},
+      nodeDeps((request) => {
+        if (new URL(request.url).pathname === "/pools/default/nodeServices" && failing) {
+          failing = false;
+          return { status: 503, text: "" };
+        }
+        return cluster()(request);
+      }, built),
+    );
+
+    await expect(transport.agentQuery("SELECT 1", { ...bounds(), timeoutMs: 1000, readonly: true })).rejects.toMatchObject(
+      { code: 503 },
+    );
+    await transport.agentQuery("SELECT 1", { ...bounds(), timeoutMs: 1000, readonly: true });
+    expect(built[0].requests.map((sent) => new URL(sent.url).pathname)).toEqual([
+      "/pools/default/nodeServices",
+      "/pools/default/nodeServices",
+    ]);
+  });
+
+  test("reads a statement the cluster refused inside its answer, as the editor path does", async () => {
+    const refused = {
+      status: 401,
+      text: JSON.stringify({ errors: [{ code: 13014, msg: "User does not have credentials" }], status: "fatal" }),
+    };
+    const transport = makeTransport({}, nodeDeps(cluster(refused), []));
+    await expect(
+      transport.agentQuery("SELECT 1", { ...bounds(), timeoutMs: 1000, readonly: true }),
+    ).rejects.toMatchObject({ name: "CouchbaseError", code: 13014, message: "User does not have credentials" });
+  });
+
+  test("lets a transport failure leave as it came", async () => {
+    const lost = new Error("socket destroyed");
+    const transport = makeTransport({}, nodeDeps(() => lost, []));
+    await expect(transport.whoami(bounds())).rejects.toBe(lost);
+  });
+
+  test("takes the panel's TLS material and the secure ports", async () => {
+    const built: Built[] = [];
+    const transport = makeTransport({ ssl: { mode: "require" }, port: undefined }, nodeDeps(cluster(), built));
+
+    await transport.agentQuery("SELECT 1", { ...bounds(), timeoutMs: 1000, readonly: true });
+
+    expect(built.map((record) => [record.options.origin, record.options.tls])).toEqual([
+      [{ scheme: "https", host: "127.0.0.1", port: 18091 }, { rejectUnauthorized: false, identity: "127.0.0.1" }],
+      [{ scheme: "https", host: "node1.local", port: 18093 }, { rejectUnauthorized: false, identity: "127.0.0.1" }],
+    ]);
+  });
+
+  test("keeps one transport per origin, and close() closes each and forgets the discovery", async () => {
+    const built: Built[] = [];
+    const transport = makeTransport({}, nodeDeps(cluster(), built));
+
+    await transport.whoami(bounds());
+    await transport.agentQuery("SELECT 1", { ...bounds(), timeoutMs: 1000, readonly: true });
+    await transport.whoami(bounds());
+    expect(built).toHaveLength(2);
+
+    await transport.close();
+    expect(built.map((record) => record.closed)).toEqual([1, 1]);
+
+    await transport.agentQuery("SELECT 1", { ...bounds(), timeoutMs: 1000, readonly: true });
+    expect(built).toHaveLength(4);
+    expect(built[2].requests.map((sent) => new URL(sent.url).pathname)).toEqual(["/pools/default/nodeServices"]);
   });
 });

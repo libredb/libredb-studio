@@ -52,6 +52,13 @@ function createTransport(options: FakeTransportOptions = {}) {
 
   const transport: CouchbaseTransport = {
     kind: "http",
+    // The agent path is not introspection's: reaching it here is a bug in the test.
+    agentQuery: async () => {
+      throw new Error("introspection never sends an agent statement");
+    },
+    whoami: async () => {
+      throw new Error("introspection never reads the user's roles");
+    },
     query: async (statement: string, opts?: QueryOpts) => {
       calls.push({ statement, opts });
       if (statement.startsWith("INFER")) {

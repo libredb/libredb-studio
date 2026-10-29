@@ -84,6 +84,22 @@ export interface QueryOpts {
 }
 
 /**
+ * The bounds of one request on the agent path: the caller's signal, which carries the deadline and any cancel and ends
+ * the wait the moment it fires, and the most bytes the answer may hold, past which the request fails rather than
+ * reading on.
+ */
+export interface AgentRequestOpts {
+  readonly signal: AbortSignal;
+  readonly maxResponseBytes: number;
+}
+
+/** One agent statement's request: its bounds, the server-side timeout, and the `readonly` request flag. */
+export interface AgentQueryOpts extends AgentRequestOpts {
+  readonly timeoutMs: number;
+  readonly readonly: boolean;
+}
+
+/**
  * The seam itself.
  *
  * `manage()` stays HTTP permanently: cluster and bucket runtime statistics
@@ -96,6 +112,14 @@ export interface CouchbaseTransport {
   manage<T>(path: string): Promise<T>;
   /** SDK extension point: KV range scan. Not available over HTTP. */
   scanDocuments?(ks: Keyspace, limit: number, skip: number): Promise<CouchbaseRow[]>;
+  /**
+   * The agent path: one statement on a request of its own, carrying everything it runs with (the statement, its
+   * timeout, the `readonly` flag, the scan consistency and the bucket's query context) and nothing a previous request
+   * set, bounded by the caller's signal and byte cap.
+   */
+  agentQuery(stmt: string, o: AgentQueryOpts): Promise<CouchbaseQueryResult>;
+  /** The roles of the connection's user, as the cluster answers them, on the agent path's bounds. */
+  whoami(o: AgentRequestOpts): Promise<unknown>;
   close(): Promise<void>;
 }
 

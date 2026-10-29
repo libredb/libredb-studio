@@ -16,20 +16,33 @@
  *   `node:https` is a built-in that takes `ca`/`cert`/`key`/`rejectUnauthorized`
  *   directly, so self-signed self-hosted clusters work on the Node runtime that
  *   ships in the Docker image.
+ *
+ * The agent path (`agentQuery`, `whoami`) goes through neither: it takes the shared `createNodeTransport`
+ * (`src/lib/db/http/node-transport.ts`), one per origin, so every agent request carries the caller's signal, which ends
+ * the wait at the deadline or a cancel, and a byte cap that destroys the socket the moment the answer passes it,
+ * plaintext and TLS alike. Its query port is discovered on the same path.
  */
 
 import { promises as dns, type SrvRecord } from "node:dns";
 import { request as httpRequest, type RequestOptions as HttpRequestOptions } from "node:http";
 import { request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
-import { endpointUrl, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
+import { endpointUrl, type HttpOrigin, httpOrigin, rejectRedirect } from "@/lib/db/http/endpoint";
 import { DatabaseConfigError } from "@/lib/db/errors";
 import { guardedNodeOptions, httpTransportFetch } from "@/lib/db/http/egress-policy";
 import { describeFetchFailure } from "@/lib/db/http/fetch-failure";
+import {
+  createNodeTransport,
+  type NodeTransport,
+  type NodeTransportOptions,
+  nodeTlsMaterial,
+} from "@/lib/db/http/node-transport";
 import type { DatabaseConnection } from "@/lib/db/types";
 import type { SSLConfig } from "@/lib/types";
 import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
 import { quoteIdentifier } from "./keyspace";
 import {
+  type AgentQueryOpts,
+  type AgentRequestOpts,
   CouchbaseError,
   type CouchbaseQueryResult,
   type CouchbaseRow,
@@ -50,6 +63,10 @@ const DEFAULT_QUERY_PORT = 8093;
 const DEFAULT_QUERY_TLS_PORT = 18093;
 const QUERY_PATH = "/query/service";
 const NODE_SERVICES_PATH = "/pools/default/nodeServices";
+const WHOAMI_PATH = "/whoami";
+
+/** Sockets an agent transport may hold open to one origin: agent calls run one at a time. */
+const AGENT_MAX_SOCKETS = 4;
 
 /** Capella endpoints are SRV records under this prefix. */
 const SRV_PREFIX = "_couchbases._tcp.";
@@ -127,6 +144,8 @@ export type SrvResolver = (hostname: string) => Promise<SrvRecord[]>;
 export interface CouchbaseHttpTransportDeps {
   resolveSrv?: SrvResolver;
   requestJson?: SecureJsonRequest;
+  /** Builds the agent path's transport for one origin. */
+  createNodeTransport?: (options: NodeTransportOptions) => NodeTransport;
 }
 
 interface NodeServicesEntry {
@@ -373,6 +392,8 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
   private readonly authorization: string;
   private readonly resolveSrv: SrvResolver;
   private readonly requestJson: SecureJsonRequest;
+  private readonly createNodeTransport: (options: NodeTransportOptions) => NodeTransport;
+  private readonly ssl: SSLConfig | undefined;
   /** `default:<bucket>`, or undefined when the connection pins no bucket. */
   private readonly queryContext: string | undefined;
 
@@ -380,6 +401,9 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
   // fresh transport would otherwise each run their own discovery round-trip.
   private hostLookup: Promise<string> | null = null;
   private endpointLookup: Promise<string> | null = null;
+  /** The agent path's transports, one per origin, and the query origin it discovered; both cleared by close(). */
+  private readonly agentTransports = new Map<string, NodeTransport>();
+  private agentQueryOrigin: HttpOrigin | null = null;
 
   constructor(config: DatabaseConnection, deps: CouchbaseHttpTransportDeps = {}) {
     this.host = config.host ?? DEFAULT_HOST;
@@ -394,6 +418,8 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
     this.authorization = `Basic ${Buffer.from(`${config.user ?? ""}:${config.password ?? ""}`).toString("base64")}`;
     this.resolveSrv = deps.resolveSrv ?? dns.resolveSrv.bind(dns);
     this.requestJson = deps.requestJson ?? nodeRequestJson;
+    this.createNodeTransport = deps.createNodeTransport ?? createNodeTransport;
+    this.ssl = config.ssl;
     this.queryContext = config.database ? `default:${quoteIdentifier(config.database)}` : undefined;
   }
 
@@ -436,9 +462,40 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
     return response.payload as T;
   }
 
+  public async agentQuery(stmt: string, o: AgentQueryOpts): Promise<CouchbaseQueryResult> {
+    const origin = await this.getAgentQueryOrigin(o);
+    // Every field the statement runs with, in this order and nothing else: no args, no transaction id, no prepared
+    // name, so nothing one request sets reaches the next.
+    const body: Record<string, unknown> = {
+      statement: stmt,
+      timeout: `${o.timeoutMs}ms`,
+      readonly: o.readonly,
+      scan_consistency: DEFAULT_SCAN_CONSISTENCY,
+    };
+    if (this.queryContext) body.query_context = this.queryContext;
+    const response = await this.agentTransport(origin).request({
+      method: "POST",
+      url: endpointUrl(origin, QUERY_PATH),
+      body: JSON.stringify(body),
+      headers: { "content-type": "application/json" },
+      signal: o.signal,
+      maxResponseBytes: o.maxResponseBytes,
+    });
+    const answer = { httpCode: response.status, payload: parseJsonBody(response.text) };
+    throwIfFailed(answer);
+    return toQueryResult(answer.payload);
+  }
+
+  public async whoami(o: AgentRequestOpts): Promise<unknown> {
+    return this.agentManage(WHOAMI_PATH, o);
+  }
+
   public async close(): Promise<void> {
     this.hostLookup = null;
     this.endpointLookup = null;
+    this.agentQueryOrigin = null;
+    for (const transport of this.agentTransports.values()) transport.close();
+    this.agentTransports.clear();
   }
 
   // --------------------------------------------------------------------------
@@ -447,6 +504,47 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
 
   private baseHeaders(): Record<string, string> {
     return { accept: "application/json", authorization: this.authorization };
+  }
+
+  /** A management read on the agent path. */
+  private async agentManage(path: string, o: AgentRequestOpts): Promise<unknown> {
+    const origin = httpOrigin(this.scheme, await this.getHost(), this.managementPort);
+    const response = await this.agentTransport(origin).request({
+      method: "GET",
+      url: endpointUrl(origin, path),
+      signal: o.signal,
+      maxResponseBytes: o.maxResponseBytes,
+    });
+    const answer = { httpCode: response.status, payload: parseJsonBody(response.text) };
+    throwIfFailed(answer);
+    return answer.payload;
+  }
+
+  /** The agent path's transport to `origin`, built on first use with the connection's TLS panel and credential. */
+  private agentTransport(origin: HttpOrigin): NodeTransport {
+    const key = `${origin.scheme}://${origin.host}:${origin.port}`;
+    let transport = this.agentTransports.get(key);
+    if (transport === undefined) {
+      transport = this.createNodeTransport({
+        origin,
+        tls: this.tls ? nodeTlsMaterial(this.ssl, this.host) : null,
+        maxSockets: AGENT_MAX_SOCKETS,
+        headers: { accept: "application/json", authorization: this.authorization },
+        requestHeaderNames: ["content-type"],
+      });
+      this.agentTransports.set(key, transport);
+    }
+    return transport;
+  }
+
+  /** The query origin, discovered on the agent path under the caller's bounds and kept only once it is read. */
+  private async getAgentQueryOrigin(o: AgentRequestOpts): Promise<HttpOrigin> {
+    if (this.agentQueryOrigin === null) {
+      const host = await this.getHost();
+      const payload = (await this.agentManage(NODE_SERVICES_PATH, o)) as NodeServicesPayload;
+      this.agentQueryOrigin = this.pickQueryOrigin(payload ?? {}, host);
+    }
+    return this.agentQueryOrigin;
   }
 
   private send(url: string, init: JsonRequestInit): Promise<JsonResponse> {
@@ -491,6 +589,10 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
   }
 
   private pickQueryEndpoint(payload: NodeServicesPayload, host: string): string {
+    return endpointUrl(this.pickQueryOrigin(payload, host), QUERY_PATH);
+  }
+
+  private pickQueryOrigin(payload: NodeServicesPayload, host: string): HttpOrigin {
     const nodes = Array.isArray(payload.nodesExt) ? payload.nodesExt : [];
     const serviceKey = this.tls ? "n1qlSSL" : "n1ql";
 
@@ -500,17 +602,13 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
       const external = node.alternateAddresses?.external;
       const externalPort = external?.ports?.[serviceKey];
       if (typeof externalPort === "number") {
-        return this.queryUrl(external?.hostname ?? node.hostname ?? host, externalPort);
+        return httpOrigin(this.scheme, external?.hostname ?? node.hostname ?? host, externalPort);
       }
 
       const port = node.services?.[serviceKey];
-      if (typeof port === "number") return this.queryUrl(node.hostname ?? host, port);
+      if (typeof port === "number") return httpOrigin(this.scheme, node.hostname ?? host, port);
     }
 
-    return this.queryUrl(host, this.tls ? DEFAULT_QUERY_TLS_PORT : DEFAULT_QUERY_PORT);
-  }
-
-  private queryUrl(host: string, port: number): string {
-    return endpointUrl(httpOrigin(this.scheme, host, port), QUERY_PATH);
+    return httpOrigin(this.scheme, host, this.tls ? DEFAULT_QUERY_TLS_PORT : DEFAULT_QUERY_PORT);
   }
 }
