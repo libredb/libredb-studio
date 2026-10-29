@@ -19,6 +19,18 @@ import {
 } from "@/lib/kubernetes-access/gate";
 import { recordGroups, resetGroupRecords } from "@/lib/kubernetes-access/groups";
 import { logger } from "@/lib/logger";
+import {
+  endOpenShiftSession,
+  openShiftBearerToken,
+  resetOpenShiftSessions,
+  storeOpenShiftSession,
+} from "@/lib/openshift-auth/token-store";
+import {
+  ACCESS_TOKEN,
+  type FakeCluster,
+  type RecordedRequest,
+  startFakeCluster,
+} from "../../../helpers/openshift-auth/fake-cluster";
 import { KUBERNETES_REVIEWED_ROLE } from "@/lib/seed/roles";
 import type { ManagedConnection } from "@/lib/seed/types";
 
@@ -415,5 +427,159 @@ describe("the role at sign-in", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+describe("connections, in openshift sign-in mode", () => {
+  const ISSUER_OS = "https://oauth-openshift.apps.example.com";
+  const TOKEN_B = "sha256~not-a-real-token-b";
+  const H = "handle-h-not-a-real-handle-0000000000000000";
+  const K = "handle-k-not-a-real-handle-0000000000000000";
+  const UID_A = "0b6f5c1e-4d2a-4c55-9e1f-7a3b2c1d0e9f";
+  const UID_B = "6a1c2d3e-0000-4c55-9e1f-7a3b2c1d0e9f";
+  const SESSION_A = { role: "user", username: "dev-a", idpSubject: UID_A, idpIssuer: ISSUER_OS, sessionHandle: H };
+  const SESSION_B = { role: "admin", username: "dev-b", idpSubject: UID_B, idpIssuer: ISSUER_OS, sessionHandle: K };
+  const grant = (user: string, namespace: string, name: string) => ({
+    user,
+    verb: "get",
+    apiGroup: "",
+    resource: "secrets",
+    namespace,
+    name,
+  });
+  const askedSecret = (request: RecordedRequest) =>
+    (JSON.parse(request.body) as { spec: { resourceAttributes: { name: string } } }).spec.resourceAttributes.name;
+  let cluster: FakeCluster;
+
+  beforeAll(async () => {
+    cluster = await startFakeCluster();
+  });
+
+  afterAll(async () => {
+    await cluster.close();
+  });
+
+  beforeEach(() => {
+    cluster.reset();
+    cluster.useEnv();
+    delete process.env.KUBERNETES_ACCESS_REVIEW;
+    cluster.tokens[TOKEN_B] = { user: "dev-b", groups: ["system:authenticated"] };
+    resetOpenShiftSessions();
+    const expiresAtMs = Date.now() + 3_600_000;
+    storeOpenShiftSession(H, { token: ACCESS_TOKEN, uid: UID_A, name: "dev-a", issuer: ISSUER_OS, expiresAtMs });
+    storeOpenShiftSession(K, { token: TOKEN_B, uid: UID_B, name: "dev-b", issuer: ISSUER_OS, expiresAtMs });
+  });
+
+  afterEach(() => {
+    cluster.restoreEnv();
+    resetOpenShiftSessions();
+  });
+
+  test("reviews each row with the session's own token, never the ServiceAccount's or a groups record", async () => {
+    cluster.grants = [grant("dev-a", "team-a", "orders-app")];
+    expect(await connectionsUnderAccessReview(SESSION_A, [ORDERS, ANALYTICS, PLAIN])).toEqual([ORDERS]);
+    expect(await connectionUnderAccessReview(SESSION_A, ANALYTICS)).toBeNull();
+    expect(cluster.selfReviews().map((request) => request.headers.authorization)).toEqual([
+      `Bearer ${ACCESS_TOKEN}`,
+      `Bearer ${ACCESS_TOKEN}`,
+    ]);
+    expect(api.seen).toHaveLength(0);
+  });
+
+  test("denies without a request a session with no handle, no live record, or a record bound to another person", async () => {
+    cluster.grants = [grant("dev-a", "team-a", "orders-app")];
+    const { sessionHandle: _handle, ...unkeyed } = SESSION_A;
+    for (const session of [
+      unkeyed,
+      { ...SESSION_A, sessionHandle: "handle-without-a-record-00000000000000000" },
+      { ...SESSION_A, idpSubject: UID_B },
+      { ...SESSION_A, username: "dev-b" },
+      { ...SESSION_A, idpIssuer: "https://another-issuer.example.com" },
+    ]) {
+      expect(await connectionsUnderAccessReview(session, [ORDERS])).toEqual([]);
+      expect(await connectionUnderAccessReview(session, ORDERS)).toBeNull();
+    }
+    expect(cluster.requests).toEqual([]);
+  });
+
+  test("two sessions asking at once send two reviews, each with its own bearer, and share no decision", async () => {
+    cluster.grants = [grant("dev-a", "team-a", "orders-app")];
+    const [a, b] = await Promise.all([
+      connectionsUnderAccessReview(SESSION_A, [ORDERS]),
+      connectionsUnderAccessReview(SESSION_B, [ORDERS]),
+    ]);
+    expect(a).toEqual([ORDERS]);
+    expect(b).toEqual([]);
+    expect(
+      cluster
+        .selfReviews()
+        .map((request) => request.headers.authorization)
+        .sort(),
+    ).toEqual([`Bearer ${ACCESS_TOKEN}`, `Bearer ${TOKEN_B}`].sort());
+    expect(await connectionUnderAccessReview(SESSION_B, ORDERS)).toBeNull();
+  });
+
+  test("a cached allowed answer is not served after the session's record ends, and nothing is asked", async () => {
+    cluster.grants = [grant("dev-a", "team-a", "orders-app")];
+    expect(await connectionUnderAccessReview(SESSION_A, ORDERS)).toBe(ORDERS);
+    expect(await connectionUnderAccessReview(SESSION_A, ORDERS)).toBe(ORDERS);
+    expect(cluster.selfReviews()).toHaveLength(1);
+    expect(endOpenShiftSession(H)).toBe(true);
+    expect(await connectionUnderAccessReview(SESSION_A, ORDERS)).toBeNull();
+    expect(await connectionsUnderAccessReview(SESSION_A, [ORDERS])).toEqual([]);
+    expect(cluster.selfReviews()).toHaveLength(1);
+  });
+
+  test("the first 401 ends the record, logs one line, and the rest of the list is denied without a request", async () => {
+    delete cluster.tokens[ACCESS_TOKEN];
+    cluster.grants = [grant("dev-a", "team-a", "orders-app")];
+    const rows = Array.from({ length: 20 }, (_, n) => reviewed(`k8s-cnpg-db${n}`, "team-a", `db${n}-app`));
+    const info = spyOn(logger, "info").mockImplementation(() => {});
+    try {
+      expect(await connectionsUnderAccessReview(SESSION_A, rows)).toEqual([]);
+      // The 16 reviews in flight when the first 401 came back were sent; the four after it were not.
+      expect(cluster.selfReviews()).toHaveLength(16);
+      expect(openShiftBearerToken({ sessionHandle: H, uid: UID_A, name: "dev-a", issuer: ISSUER_OS })).toBeNull();
+      expect(info.mock.calls).toEqual([
+        [
+          "Kubernetes access review: the API server refused a session's token (HTTP 401), so that session signs in again",
+          { route: "kubernetes-access" },
+        ],
+      ]);
+      expect(JSON.stringify(info.mock.calls)).not.toContain("sha256~");
+      // A later open of the same session asks nothing: its record is gone.
+      expect(await connectionUnderAccessReview(SESSION_A, ORDERS)).toBeNull();
+      expect(cluster.selfReviews()).toHaveLength(16);
+    } finally {
+      info.mockRestore();
+    }
+  });
+
+  test("an open that meets a 401 ends the record too, and denies", async () => {
+    delete cluster.tokens[ACCESS_TOKEN];
+    const info = spyOn(logger, "info").mockImplementation(() => {});
+    try {
+      expect(await connectionUnderAccessReview(SESSION_A, ORDERS)).toBeNull();
+      expect(info).toHaveBeenCalledTimes(1);
+      expect(endOpenShiftSession(H)).toBe(false);
+    } finally {
+      info.mockRestore();
+    }
+  });
+
+  test("two rows of one name in one namespace are reviewed against their own Secrets", async () => {
+    const cnpg = reviewed("k8s-cnpg-analytics", "team-b", "analytics-app");
+    const pgo = reviewed("k8s-pgo-analytics", "team-b", "analytics-pguser-analytics");
+    cluster.grants = [grant("dev-a", "team-b", "analytics-pguser-analytics")];
+    expect(await connectionsUnderAccessReview(SESSION_A, [cnpg, pgo])).toEqual([pgo]);
+    expect(cluster.selfReviews().map(askedSecret).sort()).toEqual(["analytics-app", "analytics-pguser-analytics"]);
+    expect(await connectionUnderAccessReview(SESSION_A, cnpg)).toBeNull();
+    expect(await connectionUnderAccessReview(SESSION_A, pgo)).toBe(pgo);
+  });
+
+  test("the switch set off changes nothing: the review stays on in this mode", async () => {
+    process.env.KUBERNETES_ACCESS_REVIEW = "off";
+    cluster.grants = [grant("dev-a", "team-a", "orders-app")];
+    expect(await connectionsUnderAccessReview(SESSION_A, [ORDERS])).toEqual([ORDERS]);
   });
 });

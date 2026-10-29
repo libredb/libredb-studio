@@ -46,6 +46,8 @@ export interface Principal {
   readonly idpSubject?: string;
   /** The identity provider's issuer, which keys the Kubernetes access review's groups record with the subject. */
   readonly idpIssuer?: string;
+  /** openshift sign-in only: the handle of the session's token record, which the access review's self review reads. */
+  readonly sessionHandle?: string;
   readonly claimRoles?: readonly string[];
 }
 
