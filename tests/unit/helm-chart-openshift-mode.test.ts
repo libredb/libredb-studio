@@ -230,7 +230,10 @@ describe("authProvider openshift and the openshift sign-in values", () => {
 
 describe("the ServiceAccount the OAuth client id names", () => {
   test("serviceAccount.create=false fails naming serviceAccount.create", () => {
-    refused([...OPENSHIFT, ...set("serviceAccount.create=false", "serviceAccount.name=studio")], "serviceAccount.create");
+    refused(
+      [...OPENSHIFT, ...set("serviceAccount.create=false", "serviceAccount.name=studio")],
+      "serviceAccount.create",
+    );
   });
 
   test("serviceAccount.name=default fails naming serviceAccount.name", () => {
@@ -255,16 +258,22 @@ describe("the operator namespace guard on discovery (O14)", () => {
     ["openshift", OPENSHIFT],
   ];
 
-  test.each(MODES)("%s: operator-managed discovery of another namespace with no cluster Studio namespace fails", (_, mode) => {
-    refused([...mode, ...DISCOVERY, ...set("operator.managed=true")], "operator.clusterStudioNamespace");
-  });
+  test.each(MODES)(
+    "%s: operator-managed discovery of another namespace with no cluster Studio namespace fails",
+    (_, mode) => {
+      refused([...mode, ...DISCOVERY, ...set("operator.managed=true")], "operator.clusterStudioNamespace");
+    },
+  );
 
-  test.each(MODES)("%s: operator-managed discovery from a namespace other than the cluster Studio's fails", (_, mode) => {
-    refused(
-      [...mode, ...DISCOVERY, ...set("operator.managed=true", "operator.clusterStudioNamespace=studio")],
-      "operator.clusterStudioNamespace",
-    );
-  });
+  test.each(MODES)(
+    "%s: operator-managed discovery from a namespace other than the cluster Studio's fails",
+    (_, mode) => {
+      refused(
+        [...mode, ...DISCOVERY, ...set("operator.managed=true", "operator.clusterStudioNamespace=studio")],
+        "operator.clusterStudioNamespace",
+      );
+    },
+  );
 
   test.each(MODES)("%s: the cluster Studio's namespace discovers other namespaces", (_, mode) => {
     const docs = render([
@@ -282,7 +291,11 @@ describe("the operator namespace guard on discovery (O14)", () => {
   test.each(MODES)("%s: an operator-managed release may discover its own namespace", (_, mode) => {
     render([
       ...mode,
-      ...set("discovery.kubernetes.enabled=true", `discovery.kubernetes.namespaces={${NAMESPACE}}`, "operator.managed=true"),
+      ...set(
+        "discovery.kubernetes.enabled=true",
+        `discovery.kubernetes.namespaces={${NAMESPACE}}`,
+        "operator.managed=true",
+      ),
     ]);
   });
 
@@ -362,14 +375,22 @@ describe("the OAuth client token and the cluster CA", () => {
   test("one projected volume holds the client token with its own audience and the kube-root-ca.crt CA", () => {
     const pod = studioPod(render(OPENSHIFT));
     expect(pod.volumes?.find((volume) => volume.name === "openshift-oauth")).toEqual(PROJECTED);
-    expect(pod.containers[0].volumeMounts).toContainEqual({ name: "openshift-oauth", mountPath: SIGN_IN_DIR, readOnly: true });
+    expect(pod.containers[0].volumeMounts).toContainEqual({
+      name: "openshift-oauth",
+      mountPath: SIGN_IN_DIR,
+      readOnly: true,
+    });
   });
 
   test("the token lifetime comes from openshift.signIn.tokenExpirationSeconds", () => {
     const pod = studioPod(render([...OPENSHIFT, ...set("openshift.signIn.tokenExpirationSeconds=3600")]));
     const volume = pod.volumes?.find((entry) => entry.name === "openshift-oauth");
     expect(volume?.projected?.sources[0]).toEqual({
-      serviceAccountToken: { audience: "libredb-studio-oauth-client", expirationSeconds: 3600, path: "oauth-client-token" },
+      serviceAccountToken: {
+        audience: "libredb-studio-oauth-client",
+        expirationSeconds: 3600,
+        path: "oauth-client-token",
+      },
     });
   });
 
@@ -423,7 +444,12 @@ describe("the openshift sign-in environment", () => {
 
   test("operator-managed, the admin target is the LibreDBStudio resource, named by the release", () => {
     const docs = render(
-      set(...OPENSHIFT_PAIRS, "nameOverride=studio", "operator.managed=true", `operator.clusterStudioNamespace=${NAMESPACE}`),
+      set(
+        ...OPENSHIFT_PAIRS,
+        "nameOverride=studio",
+        "operator.managed=true",
+        `operator.clusterStudioNamespace=${NAMESPACE}`,
+      ),
     );
     const env = envOf(docs, "v1os-studio");
     expect(env.KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO).toBe(`${NAMESPACE}/${RELEASE}`);
@@ -480,7 +506,9 @@ describe("the openshift sign-in environment", () => {
         ...set("extraEnv[0].name=OPENSHIFT_PUBLIC_URL", "extraEnv[0].value=https://studio.example.com"),
       ]),
     );
-    const at = list.map((entry, index) => [entry.name, index] as const).filter(([name]) => name === "OPENSHIFT_PUBLIC_URL");
+    const at = list
+      .map((entry, index) => [entry.name, index] as const)
+      .filter(([name]) => name === "OPENSHIFT_PUBLIC_URL");
     expect(at).toHaveLength(2);
     expect(list[at[1][1]].value).toBe("https://studio.example.com");
     expect(at[1][1]).toBe(list.length - 1);
@@ -499,9 +527,9 @@ describe("the openshift sign-in environment", () => {
     ["oidc", set("authProvider=oidc")],
   ])("%s mode writes no OPENSHIFT_* variable and no admin target", (_, mode) => {
     const names = envList(render([...mode, ...set(`fullnameOverride=${RELEASE}`)])).map((entry) => entry.name);
-    expect(names.filter((name) => name.startsWith("OPENSHIFT_") || name.startsWith("KUBERNETES_ACCESS_REVIEW"))).toEqual(
-      [],
-    );
+    expect(
+      names.filter((name) => name.startsWith("OPENSHIFT_") || name.startsWith("KUBERNETES_ACCESS_REVIEW")),
+    ).toEqual([]);
   });
 });
 
@@ -516,19 +544,25 @@ describe("discovery in openshift mode: the list refresh and custom connections",
   test("seedConnections.cacheTTL is ignored in this mode, with a seed file too", () => {
     const docs = render([
       ...OPENSHIFT,
-      ...set("seedConnections.enabled=true", "seedConnections.existingConfigMap=seeds", "seedConnections.cacheTTL=5000"),
+      ...set(
+        "seedConnections.enabled=true",
+        "seedConnections.existingConfigMap=seeds",
+        "seedConnections.cacheTTL=5000",
+      ),
     ]);
     expect(envOf(docs)).not.toHaveProperty("SEED_CACHE_TTL_MS");
     expect(envOf(docs).SEED_CONFIG_PATH).toBe("/app/config/seed-connections.yaml");
   });
 
   test("an explicit config.allowCustomConnections is honoured, true included", () => {
-    expect(configData(render([...OPENSHIFT, ...DISCOVERY, ...set("config.allowCustomConnections=true")])).ALLOW_CUSTOM_CONNECTIONS).toBe(
-      "true",
-    );
-    expect(configData(render([...OPENSHIFT, ...DISCOVERY, ...set("config.allowCustomConnections=false")])).ALLOW_CUSTOM_CONNECTIONS).toBe(
-      "false",
-    );
+    expect(
+      configData(render([...OPENSHIFT, ...DISCOVERY, ...set("config.allowCustomConnections=true")]))
+        .ALLOW_CUSTOM_CONNECTIONS,
+    ).toBe("true");
+    expect(
+      configData(render([...OPENSHIFT, ...DISCOVERY, ...set("config.allowCustomConnections=false")]))
+        .ALLOW_CUSTOM_CONNECTIONS,
+    ).toBe("false");
   });
 
   test("openshift mode without discovery leaves custom connections to the app", () => {
@@ -539,7 +573,11 @@ describe("discovery in openshift mode: the list refresh and custom connections",
     ["local", set("authProvider=local")],
     ["oidc", set("authProvider=oidc")],
   ])("%s mode with discovery still writes SEED_CACHE_TTL_MS and leaves custom connections alone", (_, mode) => {
-    const docs = render([...mode, ...DISCOVERY, ...set(`fullnameOverride=${RELEASE}`, "seedConnections.cacheTTL=10000")]);
+    const docs = render([
+      ...mode,
+      ...DISCOVERY,
+      ...set(`fullnameOverride=${RELEASE}`, "seedConnections.cacheTTL=10000"),
+    ]);
     expect(envOf(docs).SEED_CACHE_TTL_MS).toBe("10000");
     expect(configData(docs)).not.toHaveProperty("ALLOW_CUSTOM_CONNECTIONS");
   });
@@ -550,7 +588,10 @@ describe("the cluster domain of discovered hosts", () => {
     const docs = render([...OPENSHIFT, ...DISCOVERY, ...set("discovery.kubernetes.clusterDomain=corp.example")]);
     expect(envOf(docs).SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN).toBe("corp.example");
     expect(envOf(render([...OPENSHIFT, ...DISCOVERY]))).not.toHaveProperty("SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN");
-    const local = render([...DISCOVERY, ...set(`fullnameOverride=${RELEASE}`, "discovery.kubernetes.clusterDomain=corp.example")]);
+    const local = render([
+      ...DISCOVERY,
+      ...set(`fullnameOverride=${RELEASE}`, "discovery.kubernetes.clusterDomain=corp.example"),
+    ]);
     expect(envOf(local).SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN).toBe("corp.example");
   });
 });
@@ -561,7 +602,9 @@ describe("the cluster domain of discovered hosts", () => {
  */
 describe("database egress confined to the discovered namespaces", () => {
   const DATABASE_PORTS = [5432, 3306, 1521, 1433, 27017, 6379].map((port) => ({ port, protocol: "TCP" }));
-  const namespaceTo = (name: string) => ({ namespaceSelector: { matchLabels: { "kubernetes.io/metadata.name": name } } });
+  const namespaceTo = (name: string) => ({
+    namespaceSelector: { matchLabels: { "kubernetes.io/metadata.name": name } },
+  });
 
   function policies(args: string[]): Manifest[] {
     // The bundled PostgreSQL subchart renders a NetworkPolicy of its own, named after it.
@@ -630,7 +673,10 @@ describe("database egress confined to the discovered namespaces", () => {
       "--set-json",
       'networkPolicy.additionalEgress=[{"to":[{"ipBlock":{"cidr":"10.0.0.5/32"}}],"ports":[{"port":5432,"protocol":"TCP"}]}]',
     ]);
-    expect(rules.at(-1)).toEqual({ to: [{ ipBlock: { cidr: "10.0.0.5/32" } }], ports: [{ port: 5432, protocol: "TCP" }] });
+    expect(rules.at(-1)).toEqual({
+      to: [{ ipBlock: { cidr: "10.0.0.5/32" } }],
+      ports: [{ port: 5432, protocol: "TCP" }],
+    });
   });
 
   test("networkPolicy.enabled=true confines it the same way", () => {
@@ -703,7 +749,10 @@ describe("the openshift-mode guards", () => {
   });
 
   describe("the image floor: release 1.1.0 and earlier have no openshift sign-in", () => {
-    const withoutTag = set(...OPENSHIFT_PAIRS.filter((pair) => !pair.startsWith("image.tag")), `fullnameOverride=${RELEASE}`);
+    const withoutTag = set(
+      ...OPENSHIFT_PAIRS.filter((pair) => !pair.startsWith("image.tag")),
+      `fullnameOverride=${RELEASE}`,
+    );
 
     test("the default image, appVersion 1.1.0, fails naming image.tag", () => {
       refused(withoutTag, "image.tag", "1.1.0");
@@ -865,7 +914,11 @@ describe("the Tier 0 ConsoleLink", () => {
   });
 
   test("a NamespaceDashboard link names its namespaces, with a release-derived name and no locator label", () => {
-    const [link] = consoleLinks([...OPENSHIFT, ...DASHBOARD, ...set("openshift.consoleLink.namespaces={team-a,team-b}")]);
+    const [link] = consoleLinks([
+      ...OPENSHIFT,
+      ...DASHBOARD,
+      ...set("openshift.consoleLink.namespaces={team-a,team-b}"),
+    ]);
     expect(link.metadata.name).toBe(RELEASE_DERIVED);
     expect(link.metadata.labels).not.toHaveProperty("app.kubernetes.io/name");
     expect(link.spec).toEqual({
@@ -887,7 +940,11 @@ describe("the Tier 0 ConsoleLink", () => {
   });
 
   test("a NamespaceDashboard link with neither namespaces nor a selector fails", () => {
-    refused([...OPENSHIFT, ...DASHBOARD], "openshift.consoleLink.namespaces", "openshift.consoleLink.namespaceSelector");
+    refused(
+      [...OPENSHIFT, ...DASHBOARD],
+      "openshift.consoleLink.namespaces",
+      "openshift.consoleLink.namespaceSelector",
+    );
   });
 
   test("a NamespaceDashboard link with discovery on fails, so a team link never takes the locator's place", () => {
@@ -898,7 +955,11 @@ describe("the Tier 0 ConsoleLink", () => {
   });
 
   test("the link without openshiftRoute.host fails naming it", () => {
-    refused([...LINK, ...set("global.compatibility.openshift.apis=force")], "openshift.consoleLink", "openshiftRoute.host");
+    refused(
+      [...LINK, ...set("global.compatibility.openshift.apis=force")],
+      "openshift.consoleLink",
+      "openshiftRoute.host",
+    );
   });
 
   test("without console.openshift.io/v1 and without force it fails naming the force switch", () => {
@@ -930,7 +991,11 @@ describe("the Tier 0 ConsoleLink", () => {
       "operator.clusterStudioNamespace",
     );
     expect(
-      consoleLinks([...OPENSHIFT, ...LINK, ...set("operator.managed=true", `operator.clusterStudioNamespace=${NAMESPACE}`)]),
+      consoleLinks([
+        ...OPENSHIFT,
+        ...LINK,
+        ...set("operator.managed=true", `operator.clusterStudioNamespace=${NAMESPACE}`),
+      ]),
     ).toHaveLength(1);
   });
 
@@ -987,7 +1052,11 @@ describe("the default render is unchanged", () => {
       "LOG_LEVEL",
       "STORAGE_PROVIDER",
     ]);
-    expect((studioPod(docs, FULLNAME).volumes ?? []).map((volume) => volume.name)).toEqual(["next-cache", "tmp", "data"]);
+    expect((studioPod(docs, FULLNAME).volumes ?? []).map((volume) => volume.name)).toEqual([
+      "next-cache",
+      "tmp",
+      "data",
+    ]);
     expect(one(docs, "ServiceAccount", FULLNAME).metadata.annotations).toBeUndefined();
   });
 });
@@ -1025,7 +1094,9 @@ describe("install notes in openshift mode", () => {
   test("names the mode, where people sign in, the admin rule and that the console plugin is not in this release", () => {
     const text = notes(OPENSHIFT);
     expect(text).toContain("Auth Provider:    openshift");
-    expect(text).toContain("Access LibreDB Studio via the OpenShift Route:\n  https://v1os-os-lab-v1.apps-crc.testing\n");
+    expect(text).toContain(
+      "Access LibreDB Studio via the OpenShift Route:\n  https://v1os-os-lab-v1.apps-crc.testing\n",
+    );
     expect(text).toContain("OpenShift sign-in:");
     expect(text).toContain(`whoever may update the Deployment ${NAMESPACE}/${RELEASE}`);
     expect(text).toContain("The OpenShift console plugin is not part of this release");
@@ -1051,7 +1122,10 @@ describe("install notes in openshift mode", () => {
 
 describe("the chart README documents openshift mode", () => {
   const readme = readFileSync(join(CHART_DIR, "README.md"), "utf8");
-  const section = readme.slice(readme.indexOf("### OpenShift sign-in"), readme.indexOf("### The cluster's trusted CA bundle"));
+  const section = readme.slice(
+    readme.indexOf("### OpenShift sign-in"),
+    readme.indexOf("### The cluster's trusted CA bundle"),
+  );
 
   test.each([
     "authProvider=openshift",
