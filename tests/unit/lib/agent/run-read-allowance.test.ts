@@ -218,6 +218,9 @@ describe("the run read allowance", () => {
     // the database's error, and followed by what to do about it.
     expect(promptText(next)).not.toContain("database error; operation");
     expect(promptText(next)).toContain("refused by this server before it was sent; the database was not asked");
+    // The allowance's own advice, not the advice for any other statement refused before it was sent: the repair is a
+    // smaller read.
+    expect(promptText(next)).toContain("ask for a smaller one that fits what is left");
   });
 
   test("a refusal asked again is answered from the ledger as refused before it was sent, not as the database's", async () => {
