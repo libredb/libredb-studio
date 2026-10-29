@@ -2164,6 +2164,235 @@
           "message": "no verified profile composition for provider type \"influxdb3\""
         }
       }
+    },
+    "elasticsearch": {
+      "catalogRead": {
+        "columns": [
+          {
+            "selector": {},
+            "sql": {
+              "reasonCode": "UNSUPPORTED_DIALECT",
+              "message": "no verified catalog composition for provider type \"elasticsearch\""
+            }
+          },
+          {
+            "selector": {
+              "schema": "Sales"
+            },
+            "sql": {
+              "reasonCode": "UNSUPPORTED_DIALECT",
+              "message": "no verified catalog composition for provider type \"elasticsearch\""
+            }
+          },
+          {
+            "selector": {
+              "schema": "MAIN"
+            },
+            "sql": {
+              "reasonCode": "UNSUPPORTED_DIALECT",
+              "message": "no verified catalog composition for provider type \"elasticsearch\""
+            }
+          },
+          {
+            "selector": {
+              "schema": "public",
+              "table": "orders"
+            },
+            "sql": {
+              "reasonCode": "UNSUPPORTED_DIALECT",
+              "message": "no verified catalog composition for provider type \"elasticsearch\""
+            }
+          }
+        ],
+        "relations": [
+          {
+            "selector": {},
+            "sql": {
+              "reasonCode": "UNSUPPORTED_DIALECT",
+              "message": "no verified catalog composition for provider type \"elasticsearch\""
+            }
+          },
+          {
+            "selector": {
+              "schema": "Sales"
+            },
+            "sql": {
+              "reasonCode": "UNSUPPORTED_DIALECT",
+              "message": "no verified catalog composition for provider type \"elasticsearch\""
+            }
+          },
+          {
+            "selector": {
+              "schema": "MAIN"
+            },
+            "sql": {
+              "reasonCode": "UNSUPPORTED_DIALECT",
+              "message": "no verified catalog composition for provider type \"elasticsearch\""
+            }
+          },
+          {
+            "selector": {
+              "schema": "public",
+              "table": "orders"
+            },
+            "sql": {
+              "reasonCode": "UNSUPPORTED_DIALECT",
+              "message": "no verified catalog composition for provider type \"elasticsearch\""
+            }
+          }
+        ],
+        "indexes": [
+          {
+            "selector": {},
+            "sql": {
+              "reasonCode": "UNSUPPORTED_DIALECT",
+              "message": "no verified catalog composition for provider type \"elasticsearch\""
+            }
+          },
+          {
+            "selector": {
+              "schema": "Sales"
+            },
+            "sql": {
+              "reasonCode": "UNSUPPORTED_DIALECT",
+              "message": "no verified catalog composition for provider type \"elasticsearch\""
+            }
+          },
+          {
+            "selector": {
+              "schema": "MAIN"
+            },
+            "sql": {
+              "reasonCode": "UNSUPPORTED_DIALECT",
+              "message": "no verified catalog composition for provider type \"elasticsearch\""
+            }
+          },
+          {
+            "selector": {
+              "schema": "public",
+              "table": "orders"
+            },
+            "sql": {
+              "reasonCode": "UNSUPPORTED_DIALECT",
+              "message": "no verified catalog composition for provider type \"elasticsearch\""
+            }
+          }
+        ],
+        "statistics": [
+          {
+            "selector": {},
+            "sql": {
+              "reasonCode": "UNSUPPORTED_DIALECT",
+              "message": "no verified catalog composition for provider type \"elasticsearch\""
+            }
+          },
+          {
+            "selector": {
+              "schema": "Sales"
+            },
+            "sql": {
+              "reasonCode": "UNSUPPORTED_DIALECT",
+              "message": "no verified catalog composition for provider type \"elasticsearch\""
+            }
+          },
+          {
+            "selector": {
+              "schema": "MAIN"
+            },
+            "sql": {
+              "reasonCode": "UNSUPPORTED_DIALECT",
+              "message": "no verified catalog composition for provider type \"elasticsearch\""
+            }
+          },
+          {
+            "selector": {
+              "schema": "public",
+              "table": "orders"
+            },
+            "sql": {
+              "reasonCode": "UNSUPPORTED_DIALECT",
+              "message": "no verified catalog composition for provider type \"elasticsearch\""
+            }
+          }
+        ]
+      },
+      "estimatingExplain": [
+        {
+          "sql": "SELECT 1",
+          "composed": {
+            "reasonCode": "UNSUPPORTED_DIALECT",
+            "message": "no verified estimating EXPLAIN for provider type \"elasticsearch\""
+          }
+        },
+        {
+          "sql": "  explain select 1",
+          "composed": {
+            "reasonCode": "UNSUPPORTED_DIALECT",
+            "message": "no verified estimating EXPLAIN for provider type \"elasticsearch\""
+          }
+        },
+        {
+          "sql": "EXPLAIN QUERY PLAN SELECT 1",
+          "composed": {
+            "reasonCode": "UNSUPPORTED_DIALECT",
+            "message": "no verified estimating EXPLAIN for provider type \"elasticsearch\""
+          }
+        },
+        {
+          "sql": "EXPLAIN (FORMAT JSON) SELECT 1",
+          "composed": {
+            "reasonCode": "UNSUPPORTED_DIALECT",
+            "message": "no verified estimating EXPLAIN for provider type \"elasticsearch\""
+          }
+        },
+        {
+          "sql": "EXPLAIN FORMAT=JSON SELECT 1",
+          "composed": {
+            "reasonCode": "UNSUPPORTED_DIALECT",
+            "message": "no verified estimating EXPLAIN for provider type \"elasticsearch\""
+          }
+        },
+        {
+          "sql": "EXPLAIN ANALYZE SELECT 1",
+          "composed": {
+            "reasonCode": "UNSUPPORTED_DIALECT",
+            "message": "no verified estimating EXPLAIN for provider type \"elasticsearch\""
+          }
+        },
+        {
+          "sql": "",
+          "composed": {
+            "reasonCode": "INVALID_STATEMENT",
+            "message": "there is no statement to explain"
+          }
+        }
+      ],
+      "statisticsAvailabilityProbe": {
+        "reasonCode": "UNSUPPORTED_DIALECT",
+        "message": "no verified statistics composition for provider type \"elasticsearch\""
+      },
+      "tableProfile": {
+        "basic": {
+          "reasonCode": "UNSUPPORTED_DIALECT",
+          "message": "no verified profile composition for provider type \"elasticsearch\""
+        },
+        "distribution": {
+          "reasonCode": "UNSUPPORTED_DIALECT",
+          "message": "no verified profile composition for provider type \"elasticsearch\""
+        },
+        "pattern": {
+          "reasonCode": "UNSUPPORTED_DIALECT",
+          "message": "no verified profile composition for provider type \"elasticsearch\""
+        },
+        "noColumns": {
+          "reasonCode": "UNSUPPORTED_DIALECT",
+          "message": "no verified profile composition for provider type \"elasticsearch\""
+        },
+        "noSegments": {
+          "reasonCode": "UNSUPPORTED_DIALECT",
+          "message": "no verified profile composition for provider type \"elasticsearch\""
+        }
+      }
     }
   },
   "withoutExtensionOwnershipTest": {

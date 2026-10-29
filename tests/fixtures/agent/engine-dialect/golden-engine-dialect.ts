@@ -8,8 +8,8 @@
  * per depth over one column of each type the profile composer decides on. Beside them, the statistics block as packed
  * for each dialect at both details, and the plan-mode posture body, which names the engines whose grounding capture is
  * a catalog read. The engines are the first five SQL engines, the two other families' engines, Oracle and Redis, which
- * have no family, so a refusal is pinned as exactly as a statement, and libSQL and InfluxDB 3, which joined the SQL
- * family later.
+ * have no family, so a refusal is pinned as exactly as a statement, and libSQL, InfluxDB 3 and Elasticsearch, which
+ * joined the SQL family later, Elasticsearch composing nothing.
  *
  * `golden-engine-dialect.json` beside this file is this module's output on the commit before the engine overlays
  * existed, except where a later change moved an answer on purpose and said why in its commit, and
@@ -50,6 +50,7 @@ const ENGINES: readonly DatabaseType[] = [
   "redis",
   "libsql",
   "influxdb3",
+  "elasticsearch",
 ];
 
 const KINDS: readonly AgentCatalogKind[] = ["columns", "relations", "indexes", "statistics"];
