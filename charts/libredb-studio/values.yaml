@@ -677,7 +677,8 @@ openshift:
   # The Tier 0 link to Studio in the OpenShift web console, a console.openshift.io/v1
   # ConsoleLink to https://<openshiftRoute.host><config.basePath>. Cluster-scoped, so
   # installing it needs a cluster admin. Needs console.openshift.io/v1 (or
-  # global.compatibility.openshift.apis=force) and openshiftRoute.host. Every
+  # global.compatibility.openshift.apis=force) and openshiftRoute.host, served by the
+  # release's Route (openshiftRoute.enabled) or one of its ingress.hosts. Every
   # authenticated user can read ConsoleLinks, so it carries the link and nothing else.
   consoleLink:
     # -- Render the ConsoleLink.

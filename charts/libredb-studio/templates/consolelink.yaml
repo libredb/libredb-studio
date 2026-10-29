@@ -21,6 +21,19 @@ app.kubernetes.io/name, so two releases never collide and neither passes for the
 {{- if not $host }}
 {{- fail "openshift.consoleLink.enabled requires openshiftRoute.host: the link points at https://<openshiftRoute.host><config.basePath>, so set the host the Route serves" }}
 {{- end }}
+{{- /* A host no object of the release serves is one anybody who may set a Route's spec.host could
+       claim, and the cluster-wide link would send every console user there. */}}
+{{- $served := get (.Values.openshiftRoute | default dict) "enabled" }}
+{{- if and (not $served) .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+{{- if eq (.host | default "" | toString) ($host | toString) }}
+{{- $served = true }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if not $served }}
+{{- fail (printf "openshift.consoleLink.enabled requires openshiftRoute.enabled=true, or ingress.enabled with an ingress.hosts entry of %s: the link points at openshiftRoute.host, and a host no Route or Ingress of this release serves could be claimed by anyone who may create a Route" $host) }}
+{{- end }}
 {{- $location := get $link "location" | default "ApplicationMenu" }}
 {{- $discovery := include "libredb-studio.discoveryEnabled" . }}
 {{- $namespaces := get $link "namespaces" | default list }}

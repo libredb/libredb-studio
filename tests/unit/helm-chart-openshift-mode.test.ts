@@ -1155,6 +1155,28 @@ describe("the Tier 0 ConsoleLink", () => {
     );
   });
 
+  test("a host no Route or Ingress of the release serves fails naming openshiftRoute.enabled", () => {
+    const local = [...LINK, ...set("global.compatibility.openshift.apis=force", `openshiftRoute.host=${HOST}`)];
+    refused(local, "openshift.consoleLink", "openshiftRoute.enabled");
+    refused(
+      [...local, ...set("ingress.enabled=true", "ingress.hosts[0].host=other.example.com")],
+      "openshiftRoute.enabled",
+    );
+    refused([...local, ...set(`ingress.hosts[0].host=${HOST}`)], "openshiftRoute.enabled");
+    const [link] = consoleLinks([
+      ...local,
+      ...set(
+        "ingress.enabled=true",
+        "ingress.hosts[0].host=other.example.com",
+        `ingress.hosts[1].host=${HOST}`,
+        "ingress.hosts[1].paths[0].path=/",
+        "ingress.hosts[1].paths[0].pathType=Prefix",
+      ),
+    ]);
+    expect(link.spec?.href).toBe(`https://${HOST}`);
+    expect(consoleLinks([...local, ...set("openshiftRoute.enabled=true")])).toHaveLength(1);
+  });
+
   test("without console.openshift.io/v1 and without force it fails naming the force switch", () => {
     const pairs = OPENSHIFT_PAIRS.filter((pair) => !pair.startsWith("global.compatibility"));
     refused(

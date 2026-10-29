@@ -1029,7 +1029,7 @@ A team's own Studio runs without discovery, behind a `NamespaceDashboard` link.
 
 ### The console link
 
-`openshift.consoleLink.enabled` renders a cluster-scoped `console.openshift.io/v1` ConsoleLink to `https://<openshiftRoute.host><config.basePath>`, so installing it needs a cluster admin; it needs `console.openshift.io/v1` (or `apis=force`) and `openshiftRoute.host`.
+`openshift.consoleLink.enabled` renders a cluster-scoped `console.openshift.io/v1` ConsoleLink to `https://<openshiftRoute.host><config.basePath>`, so installing it needs a cluster admin; it needs `console.openshift.io/v1` (or `apis=force`) and `openshiftRoute.host`, served by this release's Route (`openshiftRoute.enabled`) or by one of its `ingress.hosts`, so the link never points at a host anyone else could claim.
 Every authenticated user can read ConsoleLinks, so the chart ships no reader role and the link carries nothing but its address.
 `ApplicationMenu` lists it in the console's application launcher under `openshift.consoleLink.section`, with `openshift.consoleLink.imageUrl` as its icon.
 With discovery on, that link is named `libredb-studio` and labelled `app.kubernetes.io/name: libredb-studio`, which locates the cluster's Studio; any other link is named `<namespace>.<fullname>` and carries no such label.
