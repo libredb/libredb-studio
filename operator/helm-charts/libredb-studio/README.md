@@ -355,6 +355,7 @@ extraEnv:
 ```
 
 Without it the OIDC login fails with a TLS error such as `UNABLE_TO_VERIFY_LEAF_SIGNATURE`.
+From the first application release after 1.1.0, Studio refuses to boot when the file `NODE_EXTRA_CA_CERTS` names is missing, unreadable, empty, whitespace only or holds no PEM certificate, where Node itself would only warn and trust nothing extra.
 
 When the CA sits in a Secret that also holds a private key, such as a cert-manager or Elasticsearch certificate Secret, project only the CA key so the private key never reaches the pod:
 
@@ -894,7 +895,7 @@ helm uninstall libredb
 | `podDisruptionBudget.enabled` | Enable PDB | `false` |
 | `podDisruptionBudget.minAvailable` | Min available pods (set only one of minAvailable/maxUnavailable) | `1` |
 | `podDisruptionBudget.maxUnavailable` | Max unavailable pods (unset minAvailable with `null` to use) | unset |
-| `networkPolicy.enabled` | Enable NetworkPolicy | `false` |
+| `networkPolicy.enabled` | Enable NetworkPolicy; on OpenShift it also allows egress on UDP and TCP 5353 (DNS) and TCP 6443 (API server) | `false` |
 | `serviceAccount.create` | Create a ServiceAccount for the pod; `false` runs it as `serviceAccount.name`, or the namespace's `default` account when that is empty | `true` |
 | `serviceAccount.automountServiceAccountToken` | Mount an API token into the pod. Set on the pod spec as well as on the created ServiceAccount, so it also holds for an account the chart does not create; only `true` mounts one. Studio reads the token only for Vault Kubernetes auth (`VAULT_ROLE`) | `false` |
 | `postgresql.enabled` | Deploy PostgreSQL subchart | `false` |
@@ -956,7 +957,10 @@ With `openshiftRoute.host` empty the router generates a host; setting one needs 
 The router cuts a request after 30s by default, so the chart sets `haproxy.router.openshift.io/timeout` to `120s`: `openshiftRoute.timeout` must exceed the largest per-connection `queryTimeout` an admin allows, or a long query is cut at the router while the database still runs it.
 `openshiftRoute.hstsHeader` adds the router's `hsts_header` annotation, for example `max-age=31536000`.
 
-Each OpenShift object checks that its API is served and the render fails otherwise, naming the value to change.
+The Route and the trusted CA bundle each check that their OpenShift API is served, and the render fails otherwise, naming the value to change; the Topology labels render on any cluster.
+
+With `networkPolicy.enabled` on OpenShift the policy also allows egress on UDP and TCP 5353, where the `dns-default` Service forwards DNS to the CoreDNS pods, and on TCP 6443, where `kubernetes.default.svc` lands on the API server.
+An existing OpenShift install with the policy on gains these two egress ports on the upgrade to 0.1.110 without setting any new value.
 
 ### The cluster's trusted CA bundle
 
@@ -964,8 +968,8 @@ Each OpenShift object checks that its API is served and the render fails otherwi
 The chart mounts it read-only at `/etc/libredb-studio/trusted-ca` and sets `NODE_EXTRA_CA_CERTS=/etc/libredb-studio/trusted-ca/ca-bundle.crt`, so Studio trusts every CA the cluster trusts.
 Choose it when the private CA is already in the cluster's trusted bundle; otherwise use the recipe in [Trusting a private CA](#trusting-a-private-ca).
 The two do not combine: `NODE_EXTRA_CA_CERTS` takes one file, so the render fails when `extraEnv` also sets it.
-Studio refuses to boot while `NODE_EXTRA_CA_CERTS` names a missing, empty or certificate-less file, so a first start that races the injection exits and the restart picks the bundle up.
-That boot check is application code that needs an application release after 1.1.0; with the default `appVersion` 1.1.0 the bundle is mounted, but a first start that races the injection runs without it until the pod restarts.
+Studio refuses to boot while `NODE_EXTRA_CA_CERTS` names a file that is missing, unreadable, empty, whitespace only or holds no PEM certificate, so a first start that races the injection exits and the restart picks the bundle up.
+That boot check is application code that needs an application release after 1.1.0; with the default `appVersion` 1.1.0 the bundle is mounted, but a first start that races the injection runs without it, with no error, and nothing restarts the pod on its own: run `oc rollout restart` on the Deployment once the ConfigMap holds `ca-bundle.crt`.
 
 ### Topology
 
