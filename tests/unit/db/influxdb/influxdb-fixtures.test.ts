@@ -17,6 +17,7 @@ import {
   loadDifferentialCorpus,
   loadInfluxCapture,
   loadInfluxManifest,
+  loadWriteRefusalCaptures,
 } from "../../../helpers/influxdb-fixtures";
 import { recordingInfluxTransport } from "../../../helpers/influxdb-transport";
 
@@ -106,6 +107,19 @@ describe("loadDifferentialCorpus", () => {
 
   test("3.12.0-core also holds the two-statement capture", () => {
     expect(loadDifferentialCorpus("3.12.0-core").map((entry) => entry.name)).toContain("differential/two-statements");
+  });
+});
+
+describe("loadWriteRefusalCaptures", () => {
+  test("reads every write-refusal capture of 3.12.0 Core, sorted by name, each a query_sql request as the admin", () => {
+    const captures = loadWriteRefusalCaptures();
+    expect(captures.length).toBe(45);
+    const names = captures.map((entry) => entry.name);
+    expect(names).toEqual([...names].sort());
+    for (const entry of captures) {
+      expect(entry.name.startsWith("write-refusal/")).toBe(true);
+      expect(entry.request.auth).toBe("bearer");
+    }
   });
 });
 

@@ -67,6 +67,18 @@ export function loadDifferentialCorpus(version: InfluxFixtureVersion): readonly 
     .map((file) => loadInfluxCapture(version, `differential/${file.slice(0, -".json".length)}`));
 }
 
+/**
+ * Every capture of 3.12.0 Core's write refusals, sorted by name: what `/api/v3/query_sql` answered each write, DDL,
+ * COPY, SET and transaction statement sent raw by tests/live/influxdb3-write-refusals.ts, and the two token captures.
+ */
+export function loadWriteRefusalCaptures(): readonly InfluxCapture[] {
+  return readdirSync(join(INFLUX_FIXTURES_DIR, "3.12.0-core", "write-refusal"))
+    .filter((file) => file.endsWith(".json"))
+    .map((file) => file.slice(0, -".json".length))
+    .sort()
+    .map((name) => loadInfluxCapture("3.12.0-core", `write-refusal/${name}`));
+}
+
 /** tests/fixtures/influxdb/manifest.json: the tested lines and digests the provider docs name. */
 export function loadInfluxManifest(): InfluxManifest {
   return JSON.parse(readFileSync(join(INFLUX_FIXTURES_DIR, "manifest.json"), "utf8")) as InfluxManifest;
