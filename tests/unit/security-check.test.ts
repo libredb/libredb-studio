@@ -68,20 +68,20 @@ describe("parseTables and findControlTable", () => {
     expect(table?.rows).toHaveLength(PROGRAMME_CONTROL_IDS.length);
   });
 
-  test("the programme ends with the Oxia read-only client, the DuckDB extension and external-access controls, the S3 controls, the Kubernetes request allowlist, the RabbitMQ read path, the Apache Spark session and answer bounds, then the governance sealed credentials and query event capture, then the Weaviate console", () => {
+  test("the programme ends with the Kubernetes request allowlist, the RabbitMQ read path, the Apache Spark session and answer bounds, the governance sealed credentials and query event capture, the Weaviate console, then the Kubernetes discovery controls", () => {
     expect(PROGRAMME_CONTROL_IDS.slice(-10)).toEqual([
-      "3.16",
-      "3.17",
-      "3.18",
-      "3.19",
       "3.20",
       "3.21",
       "3.22",
       "3.23",
       "3.24",
       "3.25",
+      "3.32",
+      "3.33",
+      "3.34",
+      "3.35",
     ]);
-    expect(PROGRAMME_CONTROL_IDS).toHaveLength(50);
+    expect(PROGRAMME_CONTROL_IDS).toHaveLength(54);
   });
 
   test("ignores a table that is not the control table", () => {
