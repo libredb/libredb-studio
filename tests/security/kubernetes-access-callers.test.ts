@@ -81,7 +81,7 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   },
   getSeedConnectionByIdUnfiltered: {
     "src/lib/seed/resolve-connection.ts":
-      "the miss path that tells 403 from 404, run only with governance and the review off; it reads operator entries only, never a discovered connection",
+      "the miss path that tells 403 from 404, run only while governance and the review are both off; it reads operator entries only, never a discovered connection",
   },
   getKubernetesDiscoveredConnections: {
     "src/lib/seed/index.ts":
