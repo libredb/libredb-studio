@@ -535,6 +535,7 @@ So the check reads the trusted contexts first.
    A grant on every routine of a schema is refused when any routine there is not admitted.
    They may read or write no global variable that is not IBM's, whose default can call code (`SYSCAT.VARIABLEAUTH`).
 4. They may read no table object that is not IBM's and is a nickname, which reads another server, or a view that is not valid, which a `SELECT` revalidates and runs as it reads now, or a view whose dependencies (`SYSCAT.TABDEP`) hold anything but a table, a function that is IBM's and admitted by item 3, a variable that is IBM's, a view that is IBM's or one this check also examines, or an alias of a table object this check examines.
+   A view that calls a routine of an IBM module depends on the module itself, so it is refused whatever the routine reads, `DBMS_UTILITY.GET_HASH_VALUE` included.
 5. `SYSCAT.CONTROLS` lists no row permission or column mask anywhere in the database that is not IBM's, enabled or not: Db2 evaluates it for any reader of the table it guards, through a view included, and it can call a secured function with its owner's authority. A database that holds one is refused whatever the user is granted, since which tables the user reaches through views is not proven.
 
 Each finding is collected, and one `PROFILE_PRIVILEGES_TOO_BROAD` refusal names them all, as the statements that lift them or, for a trusted context or a control, as the object itself.

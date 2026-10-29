@@ -3940,6 +3940,7 @@ Found 2026-10-27 in the review of the change that added MCP `run_kubectl_read` (
 
 A Db2 statement is bounded only on Studio's side: a transaction statement past the query timeout, and an agent statement past its budget, closes its connection, and `close()` returns only once the statement has ended on the server, so the work runs to its end; `query()` on the shared client is not bounded at all.
 `db2-node` 1.0.24 offers `Client.cancel()` and a `queryTimeout` that cancel the statement on the server through `SYSPROC.WLM_CANCEL_ACTIVITY` on a second session, which needs activity-monitoring privileges and `EXECUTE` on that procedure, so a plain application user may not be able to cancel at all.
+Asked upstream as [gurungabit/db2-node#39](https://github.com/gurungabit/db2-node/issues/39): a `destroy()` that drops the socket without waiting for the running statement, since `close()` takes the same lock as `query()`.
 
 Found 2026-10-28 when Db2 gained transactions and a client-side deadline.
 
