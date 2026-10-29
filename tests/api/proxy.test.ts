@@ -866,14 +866,20 @@ describe("proxy in openshift sign-in mode", () => {
     });
   });
 
-  test("when the public URL does not read, the redirect is the login route's path, which shows the configuration message", async () => {
-    delete process.env.OPENSHIFT_PUBLIC_URL;
-    await withAutoRedirectEnv("openshift", undefined, async () => {
-      const res = await proxy(createNextRequest("/login"));
-      expect(res.status).toBe(307);
-      expect(getRedirectLocation(res)).toBe("/api/auth/openshift/login");
-      expect(res.headers.get("cache-control")).toBe("no-store");
-    });
+  // A relative Location from the proxy is parsed by Next's proxy adapter with `new NextURL(location)` and no base, so
+  // the real server would answer 500. The page renders instead, and its sign-in button reaches the login route, which
+  // answers /login?error=openshift_config (tests/api/auth/openshift-login.test.ts).
+  test("when the public URL does not read, the login page renders with no redirect, relative or absolute", async () => {
+    for (const unreadable of [undefined, "http://not-https.example.com"]) {
+      if (unreadable === undefined) delete process.env.OPENSHIFT_PUBLIC_URL;
+      else process.env.OPENSHIFT_PUBLIC_URL = unreadable;
+      await withAutoRedirectEnv("openshift", undefined, async () => {
+        const res = await proxy(createNextRequest("/login?next=%2Fsql"));
+        expect(isRedirect(res)).toBe(false);
+        expect(getRedirectLocation(res)).toBeNull();
+        expect(res.headers.get("x-middleware-next")).toBe("1");
+      });
+    }
   });
 
   test("the redirect keeps the base path", async () => {

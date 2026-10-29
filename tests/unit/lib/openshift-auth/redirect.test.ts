@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AuditReason } from "@/lib/audit";
-import { type OpenShiftSignInCode, openShiftLoginPageLocation } from "@/lib/openshift-auth/redirect";
+import {
+  type OpenShiftSignInCode,
+  openShiftLoginPageLocation,
+  openShiftPublicLocation,
+} from "@/lib/openshift-auth/redirect";
 
 const CODES = [
   "openshift_config",
@@ -33,6 +37,21 @@ afterEach(() => {
     if (saved[key] === undefined) delete process.env[key];
     else process.env[key] = saved[key];
   }
+});
+
+describe("openShiftPublicLocation", () => {
+  test("is the path at the public URL's origin", () => {
+    expect(openShiftPublicLocation("/api/auth/openshift/login")).toBe(
+      "https://studio.apps.example.com/api/auth/openshift/login",
+    );
+  });
+
+  test("is null, never a relative path, when the public URL does not read", () => {
+    process.env.OPENSHIFT_PUBLIC_URL = "http://not-https.example.com";
+    expect(openShiftPublicLocation("/api/auth/openshift/login")).toBeNull();
+    delete process.env.OPENSHIFT_PUBLIC_URL;
+    expect(openShiftPublicLocation("/api/auth/openshift/login")).toBeNull();
+  });
 });
 
 describe("openShiftLoginPageLocation", () => {

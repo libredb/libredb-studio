@@ -376,7 +376,10 @@ function oidcAutoRedirect(request: NextRequest): NextResponse | null {
 /**
  * In openshift sign-in mode the cluster's OAuth server is the only way in, so a signed-out GET /login always goes to
  * the OpenShift login route, with no variable to turn it off, carrying `next` only when safeReturnPath accepts it. With
- * `error` present the page renders, so a failed sign-in shows its message instead of looping.
+ * `error` present the page renders, so a failed sign-in shows its message instead of looping. When
+ * OPENSHIFT_PUBLIC_URL does not read the page renders too: Next parses a proxy's Location with no base, so a relative
+ * one would fail the request, and the page's sign-in button reaches the login route, which shows the configuration
+ * message.
  */
 function openShiftAutoRedirect(request: NextRequest): NextResponse | null {
   if (request.method !== "GET" || authProvider() !== "openshift") return null;
@@ -386,6 +389,7 @@ function openShiftAutoRedirect(request: NextRequest): NextResponse | null {
   const query = returnPath === null ? "" : `?${new URLSearchParams({ [RETURN_PATH_PARAM]: returnPath })}`;
   // Built from OPENSHIFT_PUBLIC_URL, never from the request URL or its Host headers, and never cached.
   const location = openShiftPublicLocation(withBasePath(`${OPENSHIFT_LOGIN_PATH}${query}`));
+  if (location === null) return null;
   return new NextResponse(null, { status: 307, headers: { location, "cache-control": "no-store" } });
 }
 
