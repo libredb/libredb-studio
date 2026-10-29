@@ -523,6 +523,7 @@ helm install libredb libredb/libredb-studio \
 
 `openshiftRoute.*` renders an OpenShift Route with edge TLS and a 120s router timeout, `openshift.trustedCABundle.enabled` mounts the cluster's injected trusted CA bundle as `NODE_EXTRA_CA_CERTS`, and `openshift.topology.*` adds the console's Topology labels; every one is off by default, and the Route and the trusted CA bundle check that their OpenShift API is served.
 The chart README's "OpenShift" section covers the three exposure mechanisms, the timeout, the GitOps render with `global.compatibility.openshift.apis=force`, and `helm test`.
+A JSON parse error in the query UI after about 30 seconds means the router cut the request: `openshiftRoute.timeout` must exceed the query timeout, and an empty value leaves the router's 30s default in force.
 
 ### External Secrets (Vault / ESO)
 ```bash

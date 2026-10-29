@@ -955,6 +955,7 @@ The Route terminates TLS at the router (`edge`) and redirects plain HTTP.
 `openshiftRoute.tls.termination` accepts `edge` only; re-encrypt and passthrough need a TLS listener in the image, which it does not have.
 With `openshiftRoute.host` empty the router generates a host; setting one needs the `routes/custom-host` permission in the namespace.
 The router cuts a request after 30s by default, so the chart sets `haproxy.router.openshift.io/timeout` to `120s`: `openshiftRoute.timeout` must exceed the largest per-connection `queryTimeout` an admin allows, or a long query is cut at the router while the database still runs it.
+The symptom of a cut is a JSON parse error in the query UI after about 30 seconds: the router answers with its own 504 page instead of Studio's JSON, so raise `openshiftRoute.timeout` above the query timeout.
 `openshiftRoute.hstsHeader` adds the router's `hsts_header` annotation, for example `max-age=31536000`.
 
 The Route and the trusted CA bundle each check that their OpenShift API is served, and the render fails otherwise, naming the value to change; the Topology labels render on any cluster.
@@ -976,6 +977,7 @@ That boot check is application code that needs an application release after 1.1.
 `openshift.topology.partOf` sets `app.kubernetes.io/part-of`, which groups workloads in the console's Topology view, and `openshift.topology.runtime` sets `app.openshift.io/runtime`, the node icon.
 Both land on every Deployment the chart renders and on its pod template; empty renders no label.
 The bundled PostgreSQL joins the group through the subchart's own `postgresql.commonLabels`, for example `--set 'postgresql.commonLabels.app\.kubernetes\.io/part-of=libredb'`.
+With `postgresql.enabled` the Studio Deployment also carries `app.openshift.io/connects-to` naming the PostgreSQL StatefulSet, so Topology draws the arrow from Studio to its storage database.
 
 ### GitOps and offline rendering
 
