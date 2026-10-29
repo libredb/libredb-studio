@@ -857,6 +857,15 @@
               }
             }
           }
+        },
+        "tls": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Serve the bundled PostgreSQL over TLS; off, the chart writes sslmode=disable into STORAGE_POSTGRES_URL"
+            }
+          }
         }
       }
     },

@@ -82,6 +82,15 @@ describe("charts/libredb-studio STORAGE_POSTGRES_URL for the bundled PostgreSQL"
     expect(pgSslConfig(expanded(url ?? ""))).toEqual({ rejectUnauthorized: false });
   });
 
+  test("a non-boolean postgresql.tls.enabled fails schema validation instead of reading as truthy", () => {
+    const run = Bun.spawnSync(
+      ["helm", "template", "release-under-test", CHART_DIR, "--set-json", 'postgresql.tls.enabled="false"'],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stderr.toString()).toContain("tls");
+  });
+
   test("an external secrets.storagePostgresUrl still comes from the Secret, untouched", () => {
     const env = renderEnv([
       "--set",
