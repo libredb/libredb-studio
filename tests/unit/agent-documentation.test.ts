@@ -620,6 +620,30 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
   });
 
   /**
+   * A sentence that lists the files defining `queryReadOnly` (it names both `postgres.ts` and `sqlite.ts`) names every
+   * read-only provider file, in every README translation and agent page, so a list closed with "and nowhere else"
+   * cannot leave out an engine the same sentence's heading names.
+   */
+  test.each(ENGINE_CLAIM_FILES)(
+    "every list of queryReadOnly's files in %s names each read-only provider file",
+    (file) => {
+      const lists = sentencesOf(read(file)).filter(
+        (sentence) => sentence.includes("`postgres.ts`") && sentence.includes("`sqlite.ts`"),
+      );
+      for (const sentence of lists) {
+        for (const provider of Object.values(READ_ONLY_PROVIDER_FILES)) {
+          const [parent, base] = provider.split("/").slice(-2);
+          expect(sentence).toContain(base === "index.ts" ? `${parent}/index.ts\`` : `${base}\``);
+        }
+      }
+    },
+  );
+
+  test("docs/FEATURES.md no longer says the search providers implement no queryReadOnly", () => {
+    expect(read("docs/FEATURES.md")).not.toContain("The search providers implement no `queryReadOnly`");
+  });
+
+  /**
    * The copy that names the engines agent mode executes on, in prose and in five languages. A sentence is selected by
    * what it claims rather than by where it sits: it names three or more of the engines on the list beside one of the
    * phrases each file uses for agent mode, or beside `queryReadOnly`, the method a sentence naming its implementers

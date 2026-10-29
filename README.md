@@ -220,7 +220,7 @@ what comes back, and finishes by composing a report whose every claim cites the 
   (`src/app/api/db/query/route.ts:312`) and are neither policy-checked nor audited this way.
 - **Agent mode reads PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL) and Elasticsearch.** The read-only profile
   exists only where a provider implements it: `queryReadOnly` on
-  `postgres.ts`, `sqlite.ts`, `duckdb/index.ts`, `mssql.ts`, `mysql.ts`, `kubernetes/index.ts`, `mongodb/index.ts`, `clickhouse/index.ts`, `libsql/index.ts` and `influxdb/sql-provider.ts`, and nowhere else.
+  `postgres.ts`, `sqlite.ts`, `duckdb/index.ts`, `mssql.ts`, `mysql.ts`, `kubernetes/index.ts`, `mongodb/index.ts`, `clickhouse/index.ts`, `libsql/index.ts`, `influxdb/sql-provider.ts` and `search/index.ts`, and nowhere else.
   On Kubernetes the boundary is Studio's request allowlist plus the agent identity's RBAC.
   On MongoDB it is the connection's user: before a run that sends commands reaches its first model turn, the server must show that the user holds only read privileges on the bound database and must refuse a write from it.
   On any
