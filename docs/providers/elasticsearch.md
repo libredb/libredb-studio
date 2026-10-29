@@ -848,16 +848,19 @@ The shared mechanics live on `SearchProvider` as `readOnlyStatement`, and they r
 
 The factory passes the execution context to the constructor.
 `queryReadOnly` answers only on a handle opened with both `readOnly` and `sendsStatements`, the agent and hand-over profiles, and refuses any other, an editor handle included, before it sends anything.
-No open-time proof runs: the boundary is a property of the grammar every 9.1.4 node serves, not of the connection's principal, so the operations profile and plan mode open exactly as an editor connection does, and a plan run grounds under the operations profile and never asks for the read-only one.
+The boundary is a property of the grammar the server's release serves, not of the connection's principal, and the grammar was measured on 9.1.4 alone.
+So the open of a handle that sends statements reads the server's version (`GET /`) after the connect probe, and admits only Elasticsearch of a release line whose write refusals were captured, 9.1 today (`SearchProduct.checkedSqlReleases`); another release, an OpenSearch server behind an Elasticsearch connection, and a version that cannot be read each refuse the profile with `PROFILE_UNSUPPORTED_TARGET` before any statement is sent.
+The operations profile and plan mode read no version and open exactly as an editor connection does, and a plan run grounds under the operations profile and never asks for the read-only one.
 
 #### The agent credential
 
 The agent credential takes the user-and-password form, sent as `Basic` in place of the connection's own; this type has no connection string, so an agent credential is never beside one.
 The credential is not the boundary, but a least-privilege user is still the right one for the agent: with security on, a role holding only `read` and `view_index_metadata` on the indices the agent may read is enough for every statement this path sends, and a document write by that user through the document API is refused 403.
+The open's version read needs one cluster action more, `cluster:monitor/main`, named on its own rather than through the `monitor` privilege: measured on 9.1.4, a user without it is refused `GET /` with 403, and a user holding it alone still reads no cluster health and no task list.
 
 ```bash
 curl -u elastic -XPUT -H 'content-type: application/json' 'https://<node>:9200/_security/role/libredb_agent_read' \
-  -d '{"indices":[{"names":["probe_*"],"privileges":["read","view_index_metadata"]}]}'
+  -d '{"cluster":["cluster:monitor/main"],"indices":[{"names":["probe_*"],"privileges":["read","view_index_metadata"]}]}'
 curl -u elastic -XPUT -H 'content-type: application/json' 'https://<node>:9200/_security/user/libredb_agent' \
   -d '{"password":"<agent password>","roles":["libredb_agent_read"]}'
 ```
@@ -871,7 +874,8 @@ The profile's refusal and the mode's are `RefusedBeforeSendError`s, so the agent
 The request asks for a page of one row past the row budget (`fetch_size`), clamped to 10,000, since a hit query past `index.max_result_window`, 10,000 by default, fails ("Result window is too large", measured on 9.1.4); a budget past that is reached by following the cursor.
 The pages are followed while the rows read and their bytes, counted as the JSON array of the rows, stay inside both budgets; an answer past either is refused in the shared row or byte sentence of [`read-only-budget.ts`](../../src/lib/db/providers/sql/read-only-budget.ts), never cut.
 The cursor matters here: asking for a page size opens a search context on the node that only reading to the end, `POST /_sql/close` or the keep-alive releases (measured: `open_contexts` 1 while a cursor is held, 0 after the close), so a refusal closes the cursor it read before it throws.
-A page whose body is past three times the byte budget plus 64 KiB is abandoned unread and refused as over the byte budget; its cursor was never read, so that one context waits for the engine's keep-alive.
+A later page that fails, past its byte cap, refused by the engine, unreadable, or ended by the deadline or a cancel, closes the cursor the page before it left open, on a signal of its own, which releases the same context (measured: `open_contexts` back to 0 after closing the earlier page's cursor).
+A page whose body is past three times the byte budget plus 64 KiB is abandoned unread and refused as over the byte budget; on the first page no cursor was read yet, so that one context waits for the engine's keep-alive.
 The deadline is the budget's and the client's alone, refused in the shared time-budget sentence: a cancel ends the wait, not the work, as [§3.8](#38-the-deadline-is-the-clients-and-only-the-clients) records for the editor.
 
 #### Agent language pack
@@ -896,15 +900,15 @@ MCP's statement read stays closed on Elasticsearch (`MCP_STATEMENT_READ.elastics
 
 #### Boundary record
 
-`bun tests/live/elasticsearch-agent-boundary.ts`, run on 2026-10-29 against single 9.1.4 nodes seeded per [§11.4](#114-optional-reproducing-the-live-pass), passes 48 checks with security off and 51 with security on, through the production path (`createDatabaseProvider` with the profile's execution context, `connect`, `queryReadOnly`) and with no admission of Studio's in front:
+`bun tests/live/elasticsearch-agent-boundary.ts`, run on 2026-10-29 against single 9.1.4 nodes seeded per [§11.4](#114-optional-reproducing-the-live-pass), passes 48 checks with security off and 54 with security on, through the production path (`createDatabaseProvider` with the profile's execution context, `connect`, `queryReadOnly`) and with no admission of Studio's in front:
 
-- the agent and operations profiles both open the node, and an editor handle's `queryReadOnly` refuses with nothing sent;
+- the agent profile reads the node's version (9.1.4) and opens it, the operations profile opens it too, and an editor handle's `queryReadOnly` refuses with nothing sent;
 - 15 write and DDL texts (INSERT, UPDATE, DELETE, CREATE TABLE and INDEX, DROP, ALTER, TRUNCATE, MERGE, `SELECT ... INTO`, a write behind `EXPLAIN`, `DEBUG` and `WITH`, a second statement) are each sent by `queryReadOnly` and refused by the grammar in its own words, and sent raw each answer 400 `parsing_exception`;
 - the index listing with its document counts, every mapping, the aliases, the templates and the pipelines read back the same afterwards;
 - the positive control: a document written through the document API, a route the provider does not send to, into a scratch index the agent then reads (security off) and the script deletes;
 - a plain read and an aggregation past the row budget (`101 rows > 100 allowed`), a read past the byte budget and a statement past a 1 ms deadline are each refused, never truncated, and after each refusal the node holds no open search context;
 - the estimate-plan mode is refused, and a count, an answer of exactly the row budget (1,500 rows) and an aggregation within the budget each answer whole;
-- with security on, the script creates the `libredb_agent_read` role and an agent user holding it alone: that user's document write is refused 403, an index outside its role answers "Unknown index", and every check above holds signed in as it.
+- with security on, the script creates the `libredb_agent_read` role and an agent user holding it alone: without `cluster:monitor/main` the open cannot read the version and refuses the agent profile; with that action added, the user still reads no cluster health (403), its document write is refused 403, an index outside its role answers "Unknown index", and every check above holds signed in as it.
 
 ## 6. Schema introspection
 

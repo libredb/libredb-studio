@@ -959,7 +959,7 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   product enforces.
 - **Agent mode runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL) and Elasticsearch only.** The read-only profile has to
   be implemented by the provider, and only those providers do: `queryReadOnly` exists on `postgres.ts`,
-  `sqlite.ts`, `duckdb/index.ts`, `mssql.ts`, `mysql.ts`, `kubernetes/index.ts`, `mongodb/index.ts`, `clickhouse/index.ts` and `libsql/index.ts`.
+  `sqlite.ts`, `duckdb/index.ts`, `mssql.ts`, `mysql.ts`, `kubernetes/index.ts`, `mongodb/index.ts`, `clickhouse/index.ts`, `libsql/index.ts`, `influxdb/sql-provider.ts` and `search/index.ts`.
   They do not draw the boundary the same way.
   Kubernetes has no read-only session at all, so there the boundary is Studio's request allowlist, checked on the
   final method and path of every request before it is sent, together with the RBAC of the identity the agent runs as.

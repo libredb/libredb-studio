@@ -8189,7 +8189,7 @@ Found 2026-10-29 with agent execution on InfluxDB 3.
 
 ### B144. Elasticsearch runs no statement workflow but operations, because its dialect composes nothing
 
-Agent mode executes statements on Elasticsearch, and its engine overlay (`src/lib/agent/languages/sql/engines/elasticsearch.ts`) declares all five dialect members `"unsupported"`: the catalog read, the estimating plan, the profile composition, the statistics reading and the grounding capture.
+Elasticsearch implements the agent read-only statement path, yet no agent workflow there sends a statement: its engine overlay (`src/lib/agent/languages/sql/engines/elasticsearch.ts`) declares all five dialect members `"unsupported"`: the catalog read, the estimating plan, the profile composition, the statistics reading and the grounding capture.
 The engine's SQL reads its catalog through `SHOW`, `DESCRIBE` and `SYS` commands, whose columns no statement can rename into the rows a catalog read composes, and its `EXPLAIN` answers the engine's own plan text, which no explain strategy reads (`supportsExplain: false`).
 So the `sql-composers` requirement holds the investigation, query-optimization, database-assessment and data-analysis workflows out on Elasticsearch, and an agent-mode run there opens only the operations workflow; plan mode drafts there and grounds under the operations profile.
 Kept so that the engine joined on the members measured on it, and nothing composed from another engine's rule.

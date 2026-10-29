@@ -611,6 +611,14 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
     for (const file of Object.values(READ_ONLY_PROVIDER_FILES)) expect(existsSync(path.join(ROOT, file))).toBe(true);
   });
 
+  test("the guide's list of the files that define queryReadOnly names each read-only provider file", () => {
+    const sentence = read("docs/AGENT_GUIDE.md").split("`queryReadOnly` exists on ")[1]?.split(/\.\n/)[0] ?? "";
+    for (const file of Object.values(READ_ONLY_PROVIDER_FILES)) {
+      const [parent, base] = file.split("/").slice(-2);
+      expect(sentence).toContain(base === "index.ts" ? `\`${parent}/index.ts\`` : base);
+    }
+  });
+
   /**
    * The copy that names the engines agent mode executes on, in prose and in five languages. A sentence is selected by
    * what it claims rather than by where it sits: it names three or more of the engines on the list beside one of the
