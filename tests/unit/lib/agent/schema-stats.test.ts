@@ -422,6 +422,15 @@ describe("readSchemaStatistics: libSQL", () => {
     expect(absent.statements()).toHaveLength(1);
   });
 
+  test("in plan mode, sends the probe and the read under the operations profile, never the read-only one", async () => {
+    // libSQL grounds through its provider, and a token that can write cannot open the read-only profile.
+    const h = harness("libsql", answerSqlite(true));
+
+    expect((await readOf(h)).kind).toBe("read");
+    expect(h.profiles()).toEqual(["agent-operations", "agent-operations"]);
+    expect(h.methods()).toEqual(["query", "query"]);
+  });
+
   test("takes the first estimate a table carries, keeps a table with none, and holds no column statistics", async () => {
     const h = harness("libsql", async (sql) =>
       sql.includes("name = 'sqlite_stat1'")
@@ -618,6 +627,24 @@ describe("readStatisticsForGrounding", () => {
     expect(operations.profiles()).toEqual(["agent-operations"]);
     expect(readOnly.profiles()).toEqual([]);
     expect(operationsLabel).toBe("estimated statistics inventory");
+    expect(operationsLabel).toBe(await labelOf(readOnly));
+    expect(readOnly.profiles()).toEqual(["agent-read-only"]);
+  });
+
+  test("the operations-profile availability probe carries the same label as the read-only one", async () => {
+    const labelOf = async (h: Harness): Promise<string | undefined> => {
+      const outcome = await readStatisticsForGrounding(h.context, "availability");
+      if (outcome.kind !== "completed") throw new Error(`expected a completed read, got ${outcome.kind}`);
+      return /\u2014 (.+), \d+ row\(s\); operation /.exec(outcome.modelText)?.[1];
+    };
+    const operations = harness("libsql", answerSqlite(true));
+    const readOnly = harness("libsql", answerSqlite(true), "agent", "sql");
+
+    const operationsLabel = await labelOf(operations);
+
+    expect(operations.profiles()).toEqual(["agent-operations"]);
+    expect(operations.statements()[0]).toContain("name = 'sqlite_stat1'");
+    expect(operationsLabel).toBe("statistics availability");
     expect(operationsLabel).toBe(await labelOf(readOnly));
     expect(readOnly.profiles()).toEqual(["agent-read-only"]);
   });

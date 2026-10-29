@@ -29,6 +29,7 @@ import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import { MongoDBProvider } from "@/lib/db/providers/document/mongodb";
 import { MSSQLProvider } from "@/lib/db/providers/sql/mssql";
 import { MySQLProvider } from "@/lib/db/providers/sql/mysql";
+import { LibSQLProvider } from "@/lib/db/providers/sql/libsql";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes";
 import { CLUSTER_USAGE_FIELDS, WORKLOAD_PROFILE_FIELDS } from "@/lib/db/providers/platform/kubernetes/agent-readings";
 import { kubectlStatementLanguage } from "@/lib/db/providers/platform/kubernetes/labels";
@@ -1424,6 +1425,37 @@ describe("a plan run's statistics follow the profile it grounds under", () => {
     expect(reused.statements).toHaveLength(1);
     expect(reused.statements[0]).toContain("SUM(p.rows)");
     expect(reused.opening).toContain("Estimated table statistics follow");
+  });
+
+  test("libSQL: the availability probe and the statistics are read under the operations profile, never the read-only one", async () => {
+    // A writable token cannot open the read-only profile on libSQL: its open refuses a token that can write. The
+    // dialect grounds through its provider and reads its statistics after an availability probe, so both statements
+    // go through the operations profile.
+    const connection: DatabaseConnection = {
+      id: "conn_libsql",
+      name: "libSQL",
+      type: "libsql",
+      host: "127.0.0.1",
+      port: 8080,
+      password: "not-a-real-token",
+      createdAt: new Date(0),
+    };
+    const engine = new LibSQLProvider(connection);
+
+    const drive = await planDriveRefusingReadOnly(
+      connection,
+      { capabilities: engine.getCapabilities(), labels: engine.getLabels() },
+      [{ name: "sqlite_stat1", table_name: "orders", index_name: "orders_total_idx", stat: "1234 1" }],
+    );
+
+    expect(drive.status).toBe("succeeded");
+    expect(drive.requested).not.toContain("agent-read-only");
+    expect(drive.events.some((event) => event.kind === "context-captured")).toBe(true);
+    expect(drive.statements).toHaveLength(2);
+    expect(drive.statements[0]).toContain("name = 'sqlite_stat1'");
+    expect(drive.statements[1]).toContain("LEFT JOIN sqlite_stat1");
+    expect(drive.opening).toContain("Estimated table statistics follow");
+    expect(drive.opening).toContain("1234");
   });
 
   test("an engine whose inventory comes from its provider and that holds no statistics is grounded the same way", async () => {
