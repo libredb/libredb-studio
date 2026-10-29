@@ -1,7 +1,9 @@
 {{- /*
-The openshift-mode guards come first, so a values set that mode refuses names the openshift reason
-rather than one of the general guards below.
+The sign-in mode guard comes first, as every mode guard keys on authProvider, then the openshift-mode
+guards, so a values set that mode refuses names the openshift reason rather than one of the general
+guards below.
 */}}
+{{- include "libredb-studio.authProviderGuard" . }}
 {{- include "libredb-studio.openshiftModeGuards" . }}
 {{- include "libredb-studio.discoveryOnOpenShiftGuard" . }}
 {{- /*

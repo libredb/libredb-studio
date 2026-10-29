@@ -935,6 +935,29 @@ instead, naming the value to fix. Included from deployment.yaml.
 {{- end }}
 
 {{/*
+Every mode guard and mode object keys on authProvider, but the app reads its sign-in mode from
+NEXT_PUBLIC_AUTH_PROVIDER, which the ConfigMap writes from authProvider and an extraEnv entry of the
+same name overrides. So an extraEnv NEXT_PUBLIC_AUTH_PROVIDER must name the same mode (trimmed and
+lower-cased, as the app reads it), and the two variables only openshift sign-in reads are refused in
+every other mode: the hand wiring of the first verify windows (authProvider local and openshift in
+extraEnv) would otherwise run openshift sign-in with none of the mode's guards, egress policy or
+custom-connection default. Every mode, so included from deployment.yaml before the mode guards. An
+extraEnvFrom source carrying the name is a blind spot, as in effectiveBindAddress.
+*/}}
+{{- define "libredb-studio.authProviderGuard" -}}
+{{- $provider := .Values.authProvider | toString | trim | lower }}
+{{- range .Values.extraEnv }}
+{{- $name := .name | default "" | toString }}
+{{- if and (eq $name "NEXT_PUBLIC_AUTH_PROVIDER") (ne (.value | default "" | toString | trim | lower) $provider) }}
+{{- fail (printf "extraEnv entry NEXT_PUBLIC_AUTH_PROVIDER must name the same sign-in mode as authProvider (%q): set the mode in authProvider, which every mode guard and object keys on, and remove the extraEnv entry" $provider) }}
+{{- end }}
+{{- if and (has $name (list "OPENSHIFT_OAUTH_CLIENT_ID" "OPENSHIFT_OAUTH_TOKEN_FILE")) (ne $provider "openshift") }}
+{{- fail (printf "extraEnv entry %s is read only by openshift sign-in, and authProvider is %q: set authProvider=openshift, which writes it, and remove the hand-wired extraEnv entries" $name $provider) }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
 Kubernetes discovery on OpenShift (config.openshift.io/v1 served, or global.compatibility.openshift.apis=force)
 needs openshift or local sign-in: with oidc the review would ask about the identity provider's subject,
 which the cluster's RBAC does not know. Every mode, so included from deployment.yaml beside the

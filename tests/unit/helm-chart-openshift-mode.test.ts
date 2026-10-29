@@ -814,6 +814,109 @@ describe("the openshift-mode guards", () => {
   });
 });
 
+/**
+ * Every openshift-mode control keys on authProvider, but the app reads its mode from NEXT_PUBLIC_AUTH_PROVIDER, and an
+ * extraEnv entry wins over the ConfigMap. The V1 and V2 hand wiring is exactly that: authProvider local and an extraEnv
+ * NEXT_PUBLIC_AUTH_PROVIDER=openshift, which would run openshift sign-in with none of the mode's guards, no egress
+ * policy and custom connections on.
+ */
+describe("extraEnv cannot move the sign-in mode away from authProvider", () => {
+  let handWired: string;
+
+  beforeAll(() => {
+    handWired = mkdtempSync(join(tmpdir(), "libredb-openshift-mode-hand-wired-"));
+    // The V2 lab's values-openshift-mode.yaml, unchanged but for the image, which an offline render cannot pull.
+    writeFileSync(
+      join(handWired, "values.yaml"),
+      JSON.stringify({
+        fullnameOverride: RELEASE,
+        image: { tag: "1.1.0" },
+        authProvider: "local",
+        secrets: { adminPassword: "", userPassword: "" },
+        serviceAccount: {
+          annotations: {
+            "serviceaccounts.openshift.io/oauth-redirectreference.first": `{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"${RELEASE}"}}`,
+            "serviceaccounts.openshift.io/oauth-redirecturi.first": "api/auth/openshift/callback",
+          },
+        },
+        openshiftRoute: { enabled: true, host: HOST },
+        extraEnv: [
+          { name: "NEXT_PUBLIC_AUTH_PROVIDER", value: "openshift" },
+          { name: "OPENSHIFT_OAUTH_CLIENT_ID", value: `system:serviceaccount:${NAMESPACE}:${RELEASE}` },
+          { name: "OPENSHIFT_PUBLIC_URL", value: `https://${HOST}` },
+          { name: "OPENSHIFT_OAUTH_TOKEN_FILE", value: `${SIGN_IN_DIR}/oauth-client-token` },
+          { name: "OPENSHIFT_API_CA_FILE", value: `${SIGN_IN_DIR}/ca.crt` },
+          { name: "KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT", value: `${NAMESPACE}/${RELEASE}` },
+        ],
+        extraVolumes: [
+          {
+            name: "openshift-oauth",
+            projected: {
+              sources: [
+                {
+                  serviceAccountToken: {
+                    audience: "libredb-studio-oauth-client",
+                    expirationSeconds: 600,
+                    path: "oauth-client-token",
+                  },
+                },
+                { configMap: { name: "kube-root-ca.crt", items: [{ key: "ca.crt", path: "ca.crt" }] } },
+              ],
+            },
+          },
+        ],
+        extraVolumeMounts: [{ name: "openshift-oauth", mountPath: SIGN_IN_DIR, readOnly: true }],
+        discovery: { kubernetes: { enabled: true, namespaces: ["team-a", "team-b", "team-m"], kinds: ["cnpg"] } },
+      }),
+    );
+  });
+
+  afterAll(() => rmSync(handWired, { recursive: true, force: true }));
+
+  test("the V2 hand wiring fails naming authProvider and NEXT_PUBLIC_AUTH_PROVIDER", () => {
+    refused(
+      ["-f", join(handWired, "values.yaml"), ...set("global.compatibility.openshift.apis=force")],
+      "authProvider",
+      "NEXT_PUBLIC_AUTH_PROVIDER",
+    );
+  });
+
+  test.each([
+    [
+      "local mode, openshift in extraEnv",
+      set("extraEnv[0].name=NEXT_PUBLIC_AUTH_PROVIDER", "extraEnv[0].value=openshift"),
+    ],
+    [
+      "openshift mode, local in extraEnv",
+      [...OPENSHIFT, ...set("extraEnv[0].name=NEXT_PUBLIC_AUTH_PROVIDER", "extraEnv[0].value=local")],
+    ],
+    [
+      "an extraEnv entry read from elsewhere",
+      [
+        ...OPENSHIFT,
+        "--set-json",
+        'extraEnv=[{"name":"NEXT_PUBLIC_AUTH_PROVIDER","valueFrom":{"configMapKeyRef":{"name":"mode","key":"provider"}}}]',
+      ],
+    ],
+  ])("%s fails naming authProvider", (_, args) => {
+    refused(args, "authProvider", "NEXT_PUBLIC_AUTH_PROVIDER");
+  });
+
+  test("an extraEnv entry naming the same mode renders, trimmed and lower-cased as the app reads it", () => {
+    render([...OPENSHIFT, ...set("extraEnv[0].name=NEXT_PUBLIC_AUTH_PROVIDER", "extraEnv[0].value= OpenShift ")]);
+    render(set("extraEnv[0].name=NEXT_PUBLIC_AUTH_PROVIDER", "extraEnv[0].value=local"));
+  });
+
+  test.each(["OPENSHIFT_OAUTH_CLIENT_ID", "OPENSHIFT_OAUTH_TOKEN_FILE"])(
+    "outside openshift mode, an extraEnv %s fails naming authProvider",
+    (name) => {
+      for (const mode of [[], set("authProvider=oidc")]) {
+        refused([...mode, ...set(`extraEnv[0].name=${name}`, "extraEnv[0].value=x")], "authProvider", name);
+      }
+    },
+  );
+});
+
 /** OT22: on OpenShift, discovery with oidc sign-in would review the identity provider's subject, not the cluster's. */
 describe("discovery on OpenShift needs openshift or local sign-in", () => {
   const OIDC = set("authProvider=oidc", "config.oidcIssuer=https://sso.example.com");
