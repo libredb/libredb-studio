@@ -660,3 +660,151 @@ describe("database egress confined to the discovered namespaces", () => {
     expect(policies(set("global.compatibility.openshift.apis=force"))).toEqual([]);
   });
 });
+
+describe("the openshift-mode guards", () => {
+  test.each([
+    ["openshiftRoute.enabled=false", "openshiftRoute.enabled"],
+    ["openshiftRoute.host=", "openshiftRoute.host"],
+    ["replicaCount=2", "replicaCount"],
+    ["autoscaling.enabled=true", "autoscaling.enabled"],
+    ["config.oidcRoleClaim=groups", "config.oidcRoleClaim"],
+    ["agent.enabled=true", "agent.enabled"],
+    ["accessReview.enabled=true", "accessReview.enabled"],
+    ["accessReview.cacheSeconds=10", "accessReview.cacheSeconds"],
+    ["secrets.adminPassword=not-a-real-password", "secrets.adminPassword"],
+    ["secrets.userPassword=not-a-real-password", "secrets.userPassword"],
+    ["governance.enabled=true", "governance.enabled"],
+  ])("%s fails naming %s", (pair, value) => {
+    refused([...OPENSHIFT, ...set(pair)], value, "authProvider=openshift");
+  });
+
+  test("mcp.enabled fails naming mcp.enabled", () => {
+    refused(
+      [...OPENSHIFT, ...set("mcp.enabled=true", "mcp.url=https://studio.example.com/api/mcp", "mcp.tokenLabel=one")],
+      "mcp.enabled",
+    );
+  });
+
+  test("a non-empty accessReview.signIn fails naming it", () => {
+    refused([...OPENSHIFT, "--set-string", "accessReview.signIn=list pods"], "accessReview.signIn");
+  });
+
+  test("the default accessReview.tokenExpirationSeconds does not fail, and nothing grants a review", () => {
+    expect(values.accessReview.tokenExpirationSeconds).toBe(3600);
+    const docs = render([...OPENSHIFT, ...DISCOVERY]);
+    expect(all(docs, "ClusterRole")).toEqual([]);
+    expect(all(docs, "ClusterRoleBinding")).toEqual([]);
+    for (const doc of docs) {
+      for (const rule of doc.rules ?? []) expect(rule.resources).not.toContain("subjectaccessreviews");
+      for (const subject of doc.subjects ?? []) expect(subject.name).not.toBe("system:auth-delegator");
+      expect(doc.roleRef?.name).not.toBe("system:auth-delegator");
+    }
+  });
+
+  describe("the image floor: release 1.1.0 and earlier have no openshift sign-in", () => {
+    const withoutTag = set(...OPENSHIFT_PAIRS.filter((pair) => !pair.startsWith("image.tag")), `fullnameOverride=${RELEASE}`);
+
+    test("the default image, appVersion 1.1.0, fails naming image.tag", () => {
+      refused(withoutTag, "image.tag", "1.1.0");
+    });
+
+    test.each(["1.1.0", "v1.1.0", "1.0.0", "0.18.3", "1.1.0-rc.1", "1.1.0+build.7"])("image.tag=%s fails", (tag) => {
+      refused([...withoutTag, "--set-string", `image.tag=${tag}`], "image.tag");
+    });
+
+    test.each(["1.1.1", "1.2.0", "v2.0.0", "1.2.0-rc.1", "latest", "v1-83fd4765c", "main", "sha-5b9f5a051"])(
+      "image.tag=%s renders",
+      (tag) => {
+        render([...withoutTag, "--set-string", `image.tag=${tag}`]);
+      },
+    );
+  });
+
+  describe("a hand-wired install moved to openshift mode", () => {
+    const HAND_WIRED_VOLUME =
+      'extraVolumes=[{"name":"openshift-oauth","projected":{"sources":[{"serviceAccountToken":{"audience":"libredb-studio-oauth-client","expirationSeconds":600,"path":"oauth-client-token"}}]}}]';
+    const HAND_WIRED_MOUNT = `extraVolumeMounts=[{"name":"openshift-oauth","mountPath":"${SIGN_IN_DIR}","readOnly":true}]`;
+
+    test("an extraVolumes entry named openshift-oauth fails naming extraVolumes", () => {
+      refused([...OPENSHIFT, "--set-json", HAND_WIRED_VOLUME], "extraVolumes", "openshift-oauth");
+    });
+
+    test("an extraVolumeMounts entry at the sign-in directory fails naming extraVolumeMounts", () => {
+      refused(
+        [...OPENSHIFT, "--set-json", `extraVolumeMounts=[{"name":"own","mountPath":"${SIGN_IN_DIR}/"}]`],
+        "extraVolumeMounts",
+        SIGN_IN_DIR,
+      );
+    });
+
+    test("the V2 hand wiring's volume, mount and variable fail instead of rendering a duplicate volume", () => {
+      refused(
+        [
+          ...OPENSHIFT,
+          "--set-json",
+          HAND_WIRED_VOLUME,
+          "--set-json",
+          HAND_WIRED_MOUNT,
+          "--set-json",
+          `extraEnv=[{"name":"OPENSHIFT_OAUTH_CLIENT_ID","value":"system:serviceaccount:${NAMESPACE}:${RELEASE}"}]`,
+        ],
+        "openshift-oauth",
+      );
+    });
+
+    test("other extra volumes still render", () => {
+      render([
+        ...OPENSHIFT,
+        "--set-json",
+        'extraVolumes=[{"name":"internal-ca","configMap":{"name":"internal-ca"}}]',
+        "--set-json",
+        'extraVolumeMounts=[{"name":"internal-ca","mountPath":"/etc/ssl/internal"}]',
+      ]);
+    });
+  });
+});
+
+/** OT22: on OpenShift, discovery with oidc sign-in would review the identity provider's subject, not the cluster's. */
+describe("discovery on OpenShift needs openshift or local sign-in", () => {
+  const OIDC = set("authProvider=oidc", "config.oidcIssuer=https://sso.example.com");
+
+  test("oidc with discovery fails naming authProvider where config.openshift.io/v1 is served", () => {
+    refused([...OIDC, ...DISCOVERY, "--api-versions", "config.openshift.io/v1"], "authProvider");
+  });
+
+  test("and with apis=force", () => {
+    refused([...OIDC, ...DISCOVERY, ...set("global.compatibility.openshift.apis=force")], "authProvider");
+  });
+
+  test("oidc with discovery still renders on a cluster without the API, the Rancher path", () => {
+    render([...OIDC, ...DISCOVERY]);
+  });
+
+  test("local with discovery renders on OpenShift", () => {
+    render([...DISCOVERY, "--api-versions", "config.openshift.io/v1"]);
+  });
+
+  test("oidc without discovery renders on OpenShift", () => {
+    render([...OIDC, "--api-versions", "config.openshift.io/v1"]);
+  });
+});
+
+/** Design OS4: the exporter's pod drops the fixed IDs under the restricted-v2 SCC and keeps them elsewhere. */
+describe("the discovery exporter under the OpenShift SCC", () => {
+  function exporterContext(args: string[]): Record<string, unknown> {
+    return studioPod(render([...args, ...DISCOVERY]), `${RELEASE}-discovery`).securityContext ?? {};
+  }
+
+  test("drops runAsUser, runAsGroup and fsGroup where security.openshift.io/v1 is served", () => {
+    const context = exporterContext([...OPENSHIFT, "--api-versions", "security.openshift.io/v1"]);
+    expect(context).not.toHaveProperty("runAsUser");
+    expect(context).not.toHaveProperty("fsGroup");
+    expect(context.runAsNonRoot).toBe(true);
+  });
+
+  test("keeps them on vanilla Kubernetes", () => {
+    const context = exporterContext(set(`fullnameOverride=${RELEASE}`));
+    expect(context.runAsUser).toBe(1001);
+    expect(context.fsGroup).toBe(1001);
+  });
+});

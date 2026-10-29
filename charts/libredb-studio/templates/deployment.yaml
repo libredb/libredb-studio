@@ -1,4 +1,10 @@
 {{- /*
+The openshift-mode guards come first, so a values set that mode refuses names the openshift reason
+rather than one of the general guards below.
+*/}}
+{{- include "libredb-studio.openshiftModeGuards" . }}
+{{- include "libredb-studio.discoveryOnOpenShiftGuard" . }}
+{{- /*
 Zero-config bootstrap generates JWT_SECRET per pod on its own data volume, so
 two replicas would sign sessions with different keys (intermittent 401s behind
 the Service). Refuse the combination instead of shipping it broken.
@@ -14,7 +20,6 @@ that does not exist and never start. Refuse the combination instead.
 {{- if and .Values.seedConnections.enabled (not .Values.seedConnections.config) (not .Values.seedConnections.existingConfigMap) (not (get .Values.seedConnections "existingSecret")) }}
 {{- fail "seedConnections.enabled requires seedConnections.config (inline), seedConnections.existingConfigMap or seedConnections.existingSecret - with none, the pod would mount a ConfigMap that does not exist" }}
 {{- end }}
-{{- include "libredb-studio.openshiftModeGuards" . }}
 {{- include "libredb-studio.rancherModeGuards" . }}
 {{- /*
 The permission-fix init container needs root, which OpenShift's restricted-v2
