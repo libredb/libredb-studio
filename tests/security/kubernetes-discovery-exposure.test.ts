@@ -76,6 +76,14 @@ function keySecret(namespace: string, name: string, type = "kubernetes.io/tls") 
   api.addSecret(namespace, name, { "tls.key": key, "tls.crt": "not-a-real-certificate" }, type);
 }
 
+/** An operator's Secret for each of four reserved suffixes, as [namespace, suffix, name]. */
+const BYSTANDERS = [
+  ["team-a", "-pooler", "orders-pooler"],
+  ["team-b", "-monitoring", "analytics-monitoring"],
+  ["team-b", "-pguser", "metrics-pguser"],
+  ["team-m", "-pem", "agent-certs-pem"],
+] as const;
+
 function seedAdversaries(): void {
   // An ExternalName Service in place of the read-write Service.
   const alias = api.addResource("cnpg", "team-a", "alias");
@@ -124,6 +132,13 @@ function seedAdversaries(): void {
     { username: "postgres", password: "not-a-real-password-keeper-root" },
     "kubernetes.io/basic-auth",
   );
+  // initdb Secrets that name an operator's Secret by a reserved suffix alone: a Pooler's certificate, PGO's monitoring
+  // and deprecated user credentials, and the MongoDB agent's certificate with its key. Each is of the type the Cluster
+  // asks for, so only its suffix keeps it out of every request.
+  for (const [namespace, suffix, secretName] of BYSTANDERS) {
+    api.addCluster(namespace, `asks${suffix}`, { bootstrap: { initdb: { secret: { name: secretName } } } });
+    keySecret(namespace, secretName, "kubernetes.io/basic-auth");
+  }
   // A PGO Secret whose host was moved; the exporter keeps it, Studio refuses to map it.
   const moved = api.addResource("pgo", "team-f", "moved");
   api.addService("team-f", "moved-primary", { selector: null, owners: [ownerReference(moved)] });
@@ -181,6 +196,7 @@ const NEVER_REQUESTED = [
   "orders-superuser",
   "trust-store",
   "keeper-root",
+  ...BYSTANDERS.map(([, , name]) => name),
 ];
 
 let written = "";
@@ -238,6 +254,9 @@ describe("Kubernetes discovery exposure", () => {
     ];
     expect([...requested].sort()).toEqual([...new Set(expected)].sort());
     expect(exportedSecret("thief")).toEqual({ name: "keeper-root", problem: "reserved_name" });
+    for (const [, suffix, name] of BYSTANDERS) {
+      expect(exportedSecret(`asks${suffix}`)).toEqual({ name, problem: "reserved_name" });
+    }
   });
 
   test("Secrets and Services are never listed or watched, and nothing but the export is written (row 3.32)", () => {
@@ -299,6 +318,7 @@ describe("Kubernetes discovery exposure", () => {
         "team-a/sneaky-ca",
         "team-a/thief",
         "team-a/keeper",
+        ...BYSTANDERS.map(([namespace, suffix]) => `${namespace}/asks${suffix}`),
         "team-b/a/b-cluster-cert",
         "team-m/vault/password",
         "team-m/vault/appuser",

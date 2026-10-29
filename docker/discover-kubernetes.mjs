@@ -387,21 +387,26 @@ export const CONTRACT = Object.freeze([
 
 /**
  * The ends of the Secret names the first-release operators give their key material and internal credentials: CA,
- * server, replication and superuser Secrets (CloudNativePG, EDB), cluster, replication and instance certificates,
- * pgBackRest and PgBouncer Secrets (Crunchy PGO), keyfiles, agent passwords, automation configs, SCRAM credentials and
- * certificates (MongoDB Community). A credential Secret whose name ends in one is never requested, whatever the
- * resource says: RBAC cannot narrow `get secrets` by name, and resource editors choose part of every per-user name.
+ * server, replication, superuser and Pooler certificate Secrets (CloudNativePG, EDB), cluster, replication and instance
+ * certificates, pgBackRest and PgBouncer Secrets, and the monitoring and the deprecated default user's credentials
+ * (Crunchy PGO), keyfiles, agent passwords, automation configs, SCRAM credentials, certificates, and the agent's
+ * certificate with its private key in PEM form (MongoDB). A credential Secret whose name ends in one is never
+ * requested, whatever the resource says: RBAC cannot narrow `get secrets` by name, and resource editors choose part of
+ * every per-user name.
  */
 export const RESERVED_SECRET_SUFFIXES = Object.freeze([
   "-ca",
   "-server",
   "-replication",
   "-superuser",
+  "-pooler",
   "-cluster-cert",
   "-replication-cert",
   "-certs",
   "-pgbackrest",
   "-pgbouncer",
+  "-monitoring",
+  "-pguser",
   "-keyfile",
   "-agent-password",
   "-config",
@@ -409,6 +414,7 @@ export const RESERVED_SECRET_SUFFIXES = Object.freeze([
   "-ca-certificate",
   "-server-certificate-key",
   "-prometheus-certificate-key",
+  "-pem",
 ]);
 
 /** Whole names that are never requested: Crunchy PGO's root certificate authority. */

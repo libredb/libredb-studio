@@ -1431,11 +1431,14 @@ describe("reserved names", () => {
     "-server",
     "-replication",
     "-superuser",
+    "-pooler",
     "-cluster-cert",
     "-replication-cert",
     "-certs",
     "-pgbackrest",
     "-pgbouncer",
+    "-monitoring",
+    "-pguser",
     "-keyfile",
     "-agent-password",
     "-config",
@@ -1443,6 +1446,7 @@ describe("reserved names", () => {
     "-ca-certificate",
     "-server-certificate-key",
     "-prometheus-certificate-key",
+    "-pem",
   ];
 
   test("the reserved suffixes and names, and the rule that applies them", () => {
