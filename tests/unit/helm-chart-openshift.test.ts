@@ -261,7 +261,7 @@ describe("charts/libredb-studio PostgreSQL subchart contracts (#152)", () => {
    * The OpenShift console's Topology view draws an arrow from the Studio
    * Deployment to the bundled PostgreSQL when the Deployment names it in
    * app.openshift.io/connects-to, a JSON array of {apiVersion, kind, name}
-   * (probe OP19). Only the bundled subchart is a workload the chart knows.
+   * (checked on OpenShift 4.22). Only the bundled subchart is a workload the chart knows.
    */
   const CONNECTS_TO = "app.openshift.io/connects-to";
 
