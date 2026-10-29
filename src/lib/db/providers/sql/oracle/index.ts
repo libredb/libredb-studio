@@ -1632,16 +1632,10 @@ export class OracleProvider extends SQLBaseProvider {
   /**
    * Whether this provider was opened to send an agent's statements: under an execution profile (`readOnly`) whose
    * acquisition calls `queryReadOnly` (`sendsStatements`). Only then does `queryReadOnly` answer, and only after the
-   * user is proved at first use (`verifyAgentPrincipal` in `agent-read.ts`). The operations profile sends no
-   * statement, so plan mode keeps grounding on a connection whose user is privileged.
+   * user is proved on the statement's own session (`verifyAgentPrincipal` in `agent-read.ts`). The operations profile
+   * sends no statement, so plan mode keeps grounding on a connection whose user is privileged.
    */
   private readonly readOnlyProfile: boolean;
-
-  /**
-   * The check of the agent user, run once at first use and shared by every call after it, so a refusal is the answer
-   * to every call. A check that failed to read is dropped, so the next call checks again; nothing is admitted on it.
-   */
-  private agentPrincipal: Promise<void> | null = null;
 
   constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
     super(config, options);
@@ -2047,8 +2041,10 @@ export class OracleProvider extends SQLBaseProvider {
    * One agent statement under the read-only profile.
    *
    * The boundary is the agent user's: it is set READ ONLY, under which Oracle refuses every write with ORA-28194, and
-   * the check at first use proved it reaches nothing READ ONLY leaves open (`agent-read.ts`). Each call takes a session
-   * of its own, opens `SET TRANSACTION READ ONLY` on it, sends the statement in one execute with `autoCommit: false`
+   * the check proves it reaches nothing READ ONLY leaves open (`agent-read.ts`). Each call takes a session of its own,
+   * opens `SET TRANSACTION READ ONLY` on it, runs the check on that session, keeping no verdict between calls, so a
+   * policy or grant added after one call refuses the next and a lifted refusal admits it, then sends the statement in
+   * one execute with `autoCommit: false`
    * (the constructor sets the process-wide default to true for the editor), ends with the driver's `rollback()`, which
    * ends the read-only transaction where the SQL `ROLLBACK` is refused (capture 10), and returns the session to the
    * pool. A failure drops the session instead.
@@ -2078,12 +2074,12 @@ export class OracleProvider extends SQLBaseProvider {
     if (mode !== "execute") {
       throw new QueryError("Oracle composes no estimating plan for the agent", this.type, sql);
     }
-    await this.verifiedAgentPrincipal(budget);
 
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(() =>
         this.withAgentSession(budget, async (conn) => {
           await conn.execute("SET TRANSACTION READ ONLY", [], { autoCommit: false });
+          await this.verifyAgentPrincipalOn(conn);
           // A result set, so the metadata is read before any row: without one the driver fetches every row, and
           // expands every nested cursor in full, before the execute returns.
           const answered = await conn.execute(sql, [], {
@@ -2105,6 +2101,8 @@ export class OracleProvider extends SQLBaseProvider {
             await resultSet.close();
           }
         }).catch((error: unknown) => {
+          // The check's own answers leave as they came: a refusal, or the environment's failure to read it.
+          if (error instanceof ExecutionProfileError || error instanceof ConnectionError) throw error;
           throw agentDeadlineRefusal(error, budget, sql) ?? mapDatabaseError(error, "oracle", sql);
         }),
       );
@@ -2112,23 +2110,21 @@ export class OracleProvider extends SQLBaseProvider {
     });
   }
 
-  /** The check of the agent user, run on the first call and shared after it (`agentPrincipal`). */
-  private verifiedAgentPrincipal(budget: ReadOnlyStatementBudget): Promise<void> {
-    this.agentPrincipal ??= this.withAgentSession(budget, (conn) =>
-      verifyAgentPrincipal(async (check) => {
+  /** The check of the agent user, on the statement's own session, before the statement. */
+  private async verifyAgentPrincipalOn(conn: oracledb.Connection): Promise<void> {
+    try {
+      await verifyAgentPrincipal(async (check) => {
         const answered = await conn.execute(check, [], { outFormat: oracledb.OUT_FORMAT_OBJECT, autoCommit: false });
         return (answered.rows ?? []) as Record<string, unknown>[];
-      }),
-    ).catch((error: unknown) => {
+      });
+    } catch (error) {
       if (error instanceof ExecutionProfileError) throw error;
-      this.agentPrincipal = null;
       // The environment's failure, not the statement's: the agent must not offer it to the model as one to repair.
       throw new ConnectionError(
         `The agent read-only execution profile's check of the Oracle user could not be read: ${mapDatabaseError(error, "oracle").message}`,
         "oracle",
       );
-    });
-    return this.agentPrincipal;
+    }
   }
 
   /**

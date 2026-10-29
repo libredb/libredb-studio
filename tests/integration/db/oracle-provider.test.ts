@@ -6502,34 +6502,30 @@ describe("OracleProvider.queryReadOnly", () => {
     expect(connectionLog).toEqual([]);
   });
 
-  test("proves the user once, at first use, on a connection it rolls back and releases, before the statement", async () => {
+  test("proves the user before every statement, on the statement's own session, inside its read-only transaction", async () => {
     await provider.queryReadOnly("SELECT id, name FROM app_owner.t1", BUDGET);
     await provider.queryReadOnly("SELECT id, name FROM app_owner.t1", BUDGET);
     const checks = Object.values(AGENT_PRINCIPAL_STATEMENTS);
+    // No verdict is kept between calls: a policy or grant added after one call is read by the next, and a refusal
+    // lifted between them admits it, on the same handle.
     expect(executed()).toEqual([
+      "SET TRANSACTION READ ONLY",
       ...checks,
-      "SET TRANSACTION READ ONLY",
       "SELECT id, name FROM app_owner.t1",
       "SET TRANSACTION READ ONLY",
+      ...checks,
       "SELECT id, name FROM app_owner.t1",
     ]);
-    expect(events()).toEqual([
+    const call = [
+      "execute",
       ...checks.map(() => "execute"),
-      "rollback",
-      "close",
-      "execute",
       "execute",
       `getRows ${BUDGET.maxResultRows + 1}`,
       "closeResultSet",
       "rollback",
       "close",
-      "execute",
-      "execute",
-      `getRows ${BUDGET.maxResultRows + 1}`,
-      "closeResultSet",
-      "rollback",
-      "close",
-    ]);
+    ];
+    expect(events()).toEqual([...call, ...call]);
     for (const entry of connectionLog.filter((logged) => logged.event === "execute")) {
       expect(entry.opts?.autoCommit).toBe(false);
       expect(entry.callTimeout).toBe(BUDGET.statementTimeoutMs);
@@ -6630,18 +6626,45 @@ describe("OracleProvider.queryReadOnly", () => {
     expect(events().at(-1)).toBe("drop");
   });
 
-  test("a user the check refuses is refused on every call, the statement never sent and the check never resent", async () => {
+  test("a user the check refuses is refused, the statement never sent and the session dropped", async () => {
     answer = (sql) =>
       sql === AGENT_PRINCIPAL_STATEMENTS.links ? { rows: [{ OWNER: "PUBLIC", DB_LINK: "LOOPLINK" }] } : undefined;
     const first = await provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET).catch((e: unknown) => e);
     expect(first).toBeInstanceOf(ExecutionProfileError);
     expect((first as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
     expect((first as Error).message).toContain('DROP PUBLIC DATABASE LINK "LOOPLINK"');
-    const sent = connectionLog.length;
-    await expect(provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET)).rejects.toBe(first);
-    expect(connectionLog.length).toBe(sent);
     expect(executed()).not.toContain("SELECT 1 FROM DUAL");
     expect(events().slice(-2)).toEqual(["rollback", "drop"]);
+  });
+
+  test("a policy added after a call on the same handle refuses the next call", async () => {
+    await provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET);
+    answer = (sql) =>
+      sql === AGENT_PRINCIPAL_STATEMENTS.policies
+        ? { rows: [{ OWNER: "SYSTEM", NAME: "HELP", POLICY: "LATE_P" }] }
+        : CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY"
+          ? undefined
+          : ROWS;
+    connectionLog = [];
+    const error = await provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as Error).message).toContain('"SYSTEM"."HELP" policy "LATE_P"');
+    expect(executed()).not.toContain("SELECT 1 FROM DUAL");
+  });
+
+  test("a refusal lifted after a call on the same handle admits the next call", async () => {
+    let linked = true;
+    answer = (sql) =>
+      sql === AGENT_PRINCIPAL_STATEMENTS.links && linked
+        ? { rows: [{ OWNER: "PUBLIC", DB_LINK: "LOOPLINK" }] }
+        : CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY"
+          ? undefined
+          : ROWS;
+    await expect(provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET)).rejects.toBeInstanceOf(ExecutionProfileError);
+    linked = false;
+    connectionLog = [];
+    await expect(provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET)).resolves.toMatchObject({ rowCount: 1 });
+    expect(executed().at(-1)).toBe("SELECT 1 FROM DUAL");
   });
 
   test("a check that fails to read is mapped and retried on the next call, never admitting the profile", async () => {
