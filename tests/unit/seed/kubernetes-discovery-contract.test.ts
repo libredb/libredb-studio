@@ -22,6 +22,9 @@ const CLUSTER_DOMAIN = "SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN";
 const INVALID_CLUSTER_DOMAIN =
   "SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN is not a DNS name: name the cluster's domain, such as cluster.local, in lowercase letters, digits and hyphens, with dots between its labels and none at either end";
 
+const SVC_CLUSTER_DOMAIN =
+  "SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN starts with the Services' subdomain, which every discovered host already carries: name the cluster domain itself, such as cluster.local";
+
 const savedClusterDomain = process.env[CLUSTER_DOMAIN];
 
 beforeEach(() => {
@@ -183,6 +186,13 @@ describe("mapKubernetesDatabase", () => {
       const reason = refusalOf(database());
       expect(reason).toBe(INVALID_CLUSTER_DOMAIN);
       expect(reason).not.toContain(value);
+    }
+    // A domain whose first label is svc would put the Services' subdomain in the host twice.
+    for (const value of ["svc", "svc.cluster.local", " svc.corp.internal "]) {
+      process.env[CLUSTER_DOMAIN] = value;
+      const reason = refusalOf(database());
+      expect(reason).toBe(SVC_CLUSTER_DOMAIN);
+      expect(reason).not.toContain(value.trim());
     }
   });
 

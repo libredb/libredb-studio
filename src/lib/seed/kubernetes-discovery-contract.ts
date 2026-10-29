@@ -74,16 +74,22 @@ const DNS_NAME_MAX_CHARS = 253;
 const DNS_LABEL = /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/;
 const INVALID_CLUSTER_DOMAIN =
   "SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN is not a DNS name: name the cluster's domain, such as cluster.local, in lowercase letters, digits and hyphens, with dots between its labels and none at either end";
+/** The label every Service's name carries before the cluster domain, `<service>.<namespace>.svc.<domain>`. */
+const SERVICES_LABEL = "svc";
+const SVC_CLUSTER_DOMAIN =
+  "SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN starts with the Services' subdomain, which every discovered host already carries: name the cluster domain itself, such as cluster.local";
 
 /**
  * The cluster's DNS domain, which every discovered host ends in: SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN, trimmed, or
  * `cluster.local` while it is unset or blank. It is read on every mapping, never cached with the export. A value that
- * is not a DNS name is refused, naming the variable and not the value.
+ * is not a DNS name, or whose first label is `svc`, is refused, naming the variable and not the value.
  */
 function kubernetesClusterDomain(): { ok: true; domain: string } | { ok: false; reason: string } {
   const domain = process.env.SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN?.trim() || DEFAULT_CLUSTER_DOMAIN;
   const isDnsName = domain.length <= DNS_NAME_MAX_CHARS && domain.split(".").every((label) => DNS_LABEL.test(label));
-  return isDnsName ? { ok: true, domain } : { ok: false, reason: INVALID_CLUSTER_DOMAIN };
+  if (!isDnsName) return { ok: false, reason: INVALID_CLUSTER_DOMAIN };
+  if (domain.split(".")[0] === SERVICES_LABEL) return { ok: false, reason: SVC_CLUSTER_DOMAIN };
+  return { ok: true, domain };
 }
 
 /**

@@ -1223,6 +1223,7 @@ The host is the Cluster's read-write Service by its fully qualified name, becaus
 Discovered hosts are fully qualified names with a trailing dot, so the pod's DNS search path never applies.
 The cluster domain is `SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN`, which the Studio server reads, `cluster.local` by default; set it when the cluster's kubelets run with another `--cluster-domain`, with the Helm chart through `extraEnv`.
 While it is not a DNS name, Studio lists no Kubernetes-discovered database and reports each one as skipped, with a reason that names the variable.
+A value whose first label is `svc`, such as `svc.cluster.local`, is refused the same way, because every host already carries that label: name the cluster domain itself, such as `cluster.local`.
 CloudNativePG serves TLS with a CA of its own, whose Secret also holds that CA's private key, so the exporter never reads it, and Studio connects with `ssl: { mode: "require" }`, which encrypts without verifying the server's certificate.
 The table is data in three places that must agree: the exporter, Studio's mapping in `src/lib/seed/kubernetes-discovery-contract.ts`, and the LibreDB Rancher extension, which builds the link that opens a database.
 The golden fixture `tests/fixtures/kubernetes-discovery-golden.json` pins the three together, and the extension copies it from a released Studio tag.
