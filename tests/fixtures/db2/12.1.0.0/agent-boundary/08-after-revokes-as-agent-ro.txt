@@ -1,0 +1,49 @@
+CALL SYSPROC.ADMIN_CMD('EXPORT TO /tmp/agent_ro_after.del OF DEL SELECT * FROM APP.ORDERS')
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "EXECUTE". Object: "SYSPROC.ADMIN_CMD".  
+SQLSTATE=42501
+
+CREATE FUNCTION SYSTOOLS.AGENT_PROBE () RETURNS INTEGER LANGUAGE SQL RETURN 1
+DB21034E  The command was processed as an SQL statement because it was not a 
+valid Command Line Processor command.  During SQL processing it returned:
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "CREATE FUNCTION". Object: "SYSTOOLS.AGENT_PROBE". 
+LINE NUMBER=1.  SQLSTATE=42501
+
+SELECT * FROM TABLE (APP.WRITE_LEDGER()) AS T
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "EXECUTE". Object: "APP.WRITE_LEDGER".  
+SQLSTATE=42501
+
+VALUES NEXT VALUE FOR APP.ORDER_SEQ
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "USAGE". Object: "APP.ORDER_SEQ".  SQLSTATE=42501
+
+SELECT V FROM APP.CALLS_CODE
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "SELECT". Object: "APP.CALLS_CODE".  
+SQLSTATE=42501
+
+SELECT ID, NAME FROM APP.CUSTOMERS ORDER BY ID
+
+ID          NAME                                                                                                
+----------- ----------------------------------------------------------------------------------------------------
+          1 Ada                                                                                                 
+          2 Grace                                                                                               
+
+  2 record(s) selected.
+
+
+UPDATE SYSSTAT.TABLES SET CARD = 7 WHERE TABSCHEMA = 'APP' AND TABNAME = 'ORDERS'
+DB21034E  The command was processed as an SQL statement because it was not a 
+valid Command Line Processor command.  During SQL processing it returned:
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "UPDATE". Object: "SYSSTAT.TABLES".  
+SQLSTATE=42501
+

@@ -1,0 +1,117 @@
+VALUES (SESSION_USER, CURRENT SCHEMA)
+
+1                                                                                                                                2                                                                                                                               
+-------------------------------------------------------------------------------------------------------------------------------- --------------------------------------------------------------------------------------------------------------------------------
+AGENT_RO                                                                                                                         AGENT_RO                                                                                                                        
+
+  1 record(s) selected.
+
+
+INSERT INTO APP.CUSTOMERS VALUES (99, 'x')
+DB21034E  The command was processed as an SQL statement because it was not a 
+valid Command Line Processor command.  During SQL processing it returned:
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "INSERT". Object: "APP.CUSTOMERS".  SQLSTATE=42501
+
+SELECT * FROM FINAL TABLE (INSERT INTO APP.CUSTOMERS VALUES (99, 'x'))
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "INSERT". Object: "APP.CUSTOMERS".  SQLSTATE=42501
+
+BEGIN ATOMIC INSERT INTO APP.CUSTOMERS VALUES (99, 'x'); END
+DB21034E  The command was processed as an SQL statement because it was not a 
+valid Command Line Processor command.  During SQL processing it returned:
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "INSERT". Object: "APP.CUSTOMERS".  SQLSTATE=42501
+
+CREATE TABLE AGENT_RO.T (ID INTEGER)
+DB21034E  The command was processed as an SQL statement because it was not a 
+valid Command Line Processor command.  During SQL processing it returned:
+SQL0552N  "AGENT_RO" does not have the privilege to perform operation "CREATE 
+TABLE".  SQLSTATE=42502
+
+DECLARE GLOBAL TEMPORARY TABLE SESSION.T (ID INTEGER) ON COMMIT PRESERVE ROWS NOT LOGGED
+DB21034E  The command was processed as an SQL statement because it was not a 
+valid Command Line Processor command.  During SQL processing it returned:
+SQL0286N  A table space could not be found with a page size of at least "4096" 
+that authorization ID "AGENT_RO" is authorized to use.  SQLSTATE=42727
+
+CREATE FUNCTION SYSTOOLS.AGENT_PROBE () RETURNS INTEGER LANGUAGE SQL RETURN 1
+DB20000I  The SQL command completed successfully.
+
+CALL SYSPROC.ADMIN_CMD('EXPORT TO /tmp/agent_ro_export.del OF DEL SELECT * FROM APP.ORDERS')
+
+
+  Result set 1
+  --------------
+
+  ROWS_EXPORTED        MSG_RETRIEVAL                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    MSG_REMOVAL                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     
+  -------------------- -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+                     2 -                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                -                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
+
+  1 record(s) selected.
+
+  Return Status = 0
+
+VALUES NEXT VALUE FOR APP.ORDER_SEQ
+
+1          
+-----------
+        100
+
+  1 record(s) selected.
+
+
+SELECT * FROM TABLE (APP.WRITE_LEDGER()) AS T
+
+N          
+-----------
+          1
+
+  1 record(s) selected.
+
+
+SELECT V FROM APP.CALLS_CODE
+
+V                   
+--------------------
+owner-only          
+
+  1 record(s) selected.
+
+
+SELECT V FROM APP.SECRET
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "SELECT". Object: "APP.SECRET".  SQLSTATE=42501
+
+SELECT ID, NAME FROM APP.CUSTOMERS ORDER BY ID
+
+ID          NAME                                                                                                
+----------- ----------------------------------------------------------------------------------------------------
+          1 owner-only                                                                                          
+          2 owner-only                                                                                          
+
+  2 record(s) selected.
+
+
+LOCK TABLE APP.ORDERS IN EXCLUSIVE MODE
+DB20000I  The SQL command completed successfully.
+
+SET CURRENT SCHEMA = 'APP'
+DB20000I  The SQL command completed successfully.
+
+SET CURRENT PATH = 'APP', SYSTEM PATH
+DB20000I  The SQL command completed successfully.
+
+VALUES (CURRENT SCHEMA, CURRENT PATH)
+
+1                                                                                                                                2                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
+-------------------------------------------------------------------------------------------------------------------------------- --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+APP                                                                                                                              "APP","SYSIBM","SYSFUN","SYSPROC","SYSIBMADM","SYSHADOOP"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       
+
+  1 record(s) selected.
+
+

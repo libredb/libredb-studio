@@ -159,6 +159,10 @@ services:
       # Connect as db2inst1 / Password123 to TESTDB.
       - ./docker/db2-init/01-object-fixture.sh:/var/custom/01-object-fixture.sh:ro
       - ./docker/db2-init/01-object-fixture.sql:/var/custom-fixture/01-object-fixture.sql:ro
+      # The agent's least-privilege user AGENT_RO (password not-a-real-password) and the PUBLIC revokes its check
+      # needs on a fresh database (docs/providers/db2.md section 10.1). This revokes from every user of TESTDB.
+      - ./docker/db2-init/02-agent-principal.sh:/var/custom/02-agent-principal.sh:ro
+      - ./docker/db2-init/02-agent-principal.sql:/var/custom-fixture/02-agent-principal.sql:ro
     healthcheck:
       # The first start creates the instance and the database, which takes minutes.
       test: ["CMD-SHELL", "su - db2inst1 -c 'db2gcf -s' | grep -q Available"]

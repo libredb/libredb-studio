@@ -1,0 +1,37 @@
+SELECT COUNT(*) AS LEDGER_ROWS FROM APP.LEDGER
+
+LEDGER_ROWS
+-----------
+          1
+
+  1 record(s) selected.
+
+
+SELECT VARCHAR(SEQNAME, 10) AS SEQNAME, NEXTCACHEFIRSTVALUE FROM SYSCAT.SEQUENCES WHERE SEQSCHEMA = 'APP'
+
+SEQNAME    NEXTCACHEFIRSTVALUE              
+---------- ---------------------------------
+ORDER_SEQ                               120.
+
+  1 record(s) selected.
+
+
+SELECT COUNT(*) AS CUSTOMERS FROM APP.CUSTOMERS
+
+CUSTOMERS  
+-----------
+          2
+
+  1 record(s) selected.
+
+
+SELECT VARCHAR(ROUTINENAME, 16) AS ROUTINENAME FROM SYSCAT.ROUTINES WHERE ROUTINESCHEMA = 'SYSTOOLS' AND ROUTINENAME = 'AGENT_PROBE'
+
+ROUTINENAME     
+----------------
+AGENT_PROBE     
+
+  1 record(s) selected.
+
+
+-rw-r--r-- db2fenc1 db2fadm1 47 /tmp/agent_ro_export.del

@@ -1,0 +1,28 @@
+INSERT INTO APP.CUSTOMERS VALUES (99, 'x')
+DB20000I  The SQL command completed successfully.
+
+SELECT * FROM FINAL TABLE (INSERT INTO APP.CUSTOMERS VALUES (98, 'y'))
+
+ID          NAME                                                                                                
+----------- ----------------------------------------------------------------------------------------------------
+         98 owner-only                                                                                          
+
+  1 record(s) selected.
+
+
+SELECT * FROM ( SELECT 1 AS A FROM SYSIBM.SYSDUMMY1) AS X, FINAL TABLE (INSERT INTO APP.CUSTOMERS VALUES (97, 'z')) AS Y, (SELECT 1 AS B FROM SYSIBM.SYSDUMMY1 ) AS LIBREDB_AGENT_READ ORDER BY ORDER OF LIBREDB_AGENT_READ FETCH FIRST 2 ROWS ONLY
+SQL20165N  An SQL data change statement within a FROM  clause is not allowed 
+in the context in which it was specified.  SQLSTATE=428FL
+
+ROLLBACK
+DB20000I  The SQL command completed successfully.
+
+SELECT COUNT(*) AS CUSTOMERS FROM APP.CUSTOMERS
+
+CUSTOMERS  
+-----------
+          2
+
+  1 record(s) selected.
+
+

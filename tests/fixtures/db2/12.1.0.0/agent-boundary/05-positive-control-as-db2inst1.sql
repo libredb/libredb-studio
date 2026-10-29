@@ -1,0 +1,9 @@
+-- The writes 04 sent, run by the writable instance owner inside one unit of work that is rolled back, to show
+-- each would have worked; and the breakout form, which the owner's privileges admit.
+INSERT INTO APP.CUSTOMERS VALUES (99, 'x');
+SELECT * FROM FINAL TABLE (INSERT INTO APP.CUSTOMERS VALUES (98, 'y'));
+SELECT * FROM (
+SELECT 1 AS A FROM SYSIBM.SYSDUMMY1) AS X, FINAL TABLE (INSERT INTO APP.CUSTOMERS VALUES (97, 'z')) AS Y, (SELECT 1 AS B FROM SYSIBM.SYSDUMMY1
+) AS LIBREDB_AGENT_READ ORDER BY ORDER OF LIBREDB_AGENT_READ FETCH FIRST 2 ROWS ONLY;
+ROLLBACK;
+SELECT COUNT(*) AS CUSTOMERS FROM APP.CUSTOMERS;

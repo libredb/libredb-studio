@@ -1,0 +1,233 @@
+SELECT VARCHAR(GRANTEE, 12) AS GRANTEE, CONNECTAUTH, CREATETABAUTH, BINDADDAUTH, IMPLSCHEMAAUTH, DBADMAUTH FROM SYSCAT.DBAUTH ORDER BY 1
+
+GRANTEE      CONNECTAUTH CREATETABAUTH BINDADDAUTH IMPLSCHEMAAUTH DBADMAUTH
+------------ ----------- ------------- ----------- -------------- ---------
+DB2INST1     N           N             N           N              Y        
+
+  1 record(s) selected.
+
+
+SELECT VARCHAR(TABSCHEMA, 10) AS TABSCHEMA, COUNT(*) AS N, MAX(SELECTAUTH) AS S, MAX(INSERTAUTH) AS I, MAX(UPDATEAUTH) AS U, MAX(DELETEAUTH) AS D, MAX(CONTROLAUTH) AS C FROM SYSCAT.TABAUTH WHERE GRANTEE = 'PUBLIC' GROUP BY TABSCHEMA ORDER BY 1
+
+TABSCHEMA  N           S I U D C
+---------- ----------- - - - - -
+SYSCAT             197 Y N N N N
+SYSIBM             202 Y N N N N
+SYSIBMADM           64 Y N N N N
+SYSSTAT             14 Y N Y N N
+
+  4 record(s) selected.
+
+
+SELECT VARCHAR(TABNAME, 24) AS SYSSTAT_UPDATE_TO_PUBLIC FROM SYSCAT.TABAUTH WHERE GRANTEE = 'PUBLIC' AND TABSCHEMA = 'SYSSTAT' AND UPDATEAUTH <> 'N' ORDER BY 1
+
+SYSSTAT_UPDATE_TO_PUBLIC
+------------------------
+COLDIST                 
+COLDISTPARTITIONSTATS   
+COLGROUPDIST            
+COLGROUPDISTCOUNTS      
+COLGROUPPARTITIONSTATS  
+COLGROUPS               
+COLPARTITIONSTATS       
+COLUMNS                 
+DATAPARTITIONS          
+FUNCTIONS               
+INDEXES                 
+INDEXPARTITIONS         
+ROUTINES                
+TABLES                  
+
+  14 record(s) selected.
+
+
+SELECT VARCHAR(SCHEMANAME, 10) AS SCHEMANAME, ALTERINAUTH, CREATEINAUTH, DROPINAUTH FROM SYSCAT.SCHEMAAUTH WHERE GRANTEE = 'PUBLIC' ORDER BY 1
+
+SCHEMANAME ALTERINAUTH CREATEINAUTH DROPINAUTH
+---------- ----------- ------------ ----------
+SYSPUBLIC  N           Y            Y         
+SYSTOOLS   N           Y            N         
+
+  2 record(s) selected.
+
+
+SELECT VARCHAR(SCHEMA, 10) AS SCHEMA, ROUTINETYPE, COUNT(*) AS N FROM SYSCAT.ROUTINEAUTH WHERE GRANTEE = 'PUBLIC' GROUP BY SCHEMA, ROUTINETYPE ORDER BY 1, 2
+
+SCHEMA     ROUTINETYPE N          
+---------- ----------- -----------
+SQLJ       P                     8
+SYSFUN     P                     4
+SYSIBM     P                    20
+SYSIBMADM  P                     2
+SYSPROC    F                   324
+SYSPROC    P                   132
+SYSTOOLS   F                     8
+
+  7 record(s) selected.
+
+
+SELECT VARCHAR(a.SPECIFICNAME, 20) AS PUBLIC_EXECUTES, VARCHAR(r.OWNER, 8) AS OWNER, r.OWNERTYPE FROM SYSCAT.ROUTINEAUTH a JOIN SYSCAT.ROUTINES r ON r.ROUTINESCHEMA = a.SCHEMA AND r.SPECIFICNAME = a.SPECIFICNAME WHERE a.GRANTEE = 'PUBLIC' AND a.SCHEMA = 'SYSPROC' AND r.ROUTINENAME IN ('ADMIN_CMD', 'SYSTS_ADMIN_CMD', 'ADMIN_TASK_ADD', 'ADMIN_TASK_UPDATE', 'SNAP_WRITE_FILE', 'REMOTE_QUERY', 'DB2LOAD') ORDER BY 1
+
+PUBLIC_EXECUTES      OWNER    OWNERTYPE
+-------------------- -------- ---------
+ADMIN_CMD            SYSIBM   S        
+ADMIN_TASK_ADD       SYSIBM   S        
+ADMIN_TASK_UPDATE    SYSIBM   S        
+DB2LOAD              SYSIBM   S        
+REMOTE_QUERY         SYSIBM   S        
+SNAP_WRITE_FILE      SYSIBM   S        
+SYSTS_ADMIN_CMD      SYSIBM   S        
+
+  7 record(s) selected.
+
+
+SELECT VARCHAR(m.MODULESCHEMA, 10) AS MODULESCHEMA, VARCHAR(m.MODULENAME, 22) AS MODULENAME, VARCHAR(m.OWNER, 8) AS OWNER, m.OWNERTYPE, CASE WHEN EXISTS (SELECT 1 FROM SYSCAT.MODULEAUTH a WHERE a.MODULEID = m.MODULEID AND a.GRANTEE = 'PUBLIC') THEN 'Y' ELSE 'N' END AS PUBLIC_EXECUTES FROM SYSCAT.MODULES m WHERE m.MODULESCHEMA = 'SYSIBMADM' ORDER BY 2
+
+MODULESCHEMA MODULENAME             OWNER    OWNERTYPE PUBLIC_EXECUTES
+------------ ---------------------- -------- --------- ---------------
+SYSIBMADM    DBMS_ALERT             SYSIBM   S         N              
+SYSIBMADM    DBMS_APPLICATION_INFO  SYSIBM   S         Y              
+SYSIBMADM    DBMS_DDL               SYSIBM   S         Y              
+SYSIBMADM    DBMS_JOB               SYSIBM   S         Y              
+SYSIBMADM    DBMS_LOB               SYSIBM   S         Y              
+SYSIBMADM    DBMS_LOCK              SYSIBM   S         Y              
+SYSIBMADM    DBMS_OUTPUT            SYSIBM   S         Y              
+SYSIBMADM    DBMS_PIPE              SYSIBM   S         N              
+SYSIBMADM    DBMS_RANDOM            SYSIBM   S         Y              
+SYSIBMADM    DBMS_SQL               SYSIBM   S         Y              
+SYSIBMADM    DBMS_STANDARD          SYSIBM   S         Y              
+SYSIBMADM    DBMS_STATS             SYSIBM   S         Y              
+SYSIBMADM    DBMS_UTILITY           SYSIBM   S         Y              
+SYSIBMADM    MONREPORT              SYSIBM   S         N              
+SYSIBMADM    STORAGE_ACCESS_ALIAS   SYSIBM   S         N              
+SYSIBMADM    UTL_DIR                SYSIBM   S         N              
+SYSIBMADM    UTL_ENCODE             SYSIBM   S         N              
+SYSIBMADM    UTL_FILE               SYSIBM   S         N              
+SYSIBMADM    UTL_MAIL               SYSIBM   S         N              
+SYSIBMADM    UTL_RAW                SYSIBM   S         N              
+SYSIBMADM    UTL_SMTP               SYSIBM   S         N              
+SYSIBMADM    UTL_TCP                SYSIBM   S         N              
+
+  22 record(s) selected.
+
+
+SELECT VARCHAR(p.PKGSCHEMA, 8) AS PKGSCHEMA, p.OWNERTYPE, p.BOUNDBYTYPE, p.DYNAMICRULES, COUNT(*) AS N, MAX(a.BINDAUTH) AS PUBLIC_BIND, MAX(a.EXECUTEAUTH) AS PUBLIC_EXECUTE FROM SYSCAT.PACKAGES p LEFT JOIN SYSCAT.PACKAGEAUTH a ON a.PKGSCHEMA = p.PKGSCHEMA AND a.PKGNAME = p.PKGNAME AND a.GRANTEE = 'PUBLIC' GROUP BY p.PKGSCHEMA, p.OWNERTYPE, p.BOUNDBYTYPE, p.DYNAMICRULES ORDER BY 1, 4
+
+PKGSCHEMA OWNERTYPE BOUNDBYTYPE DYNAMICRULES N           PUBLIC_BIND PUBLIC_EXECUTE
+--------- --------- ----------- ------------ ----------- ----------- --------------
+APP       U         U           R                      2 -           -             
+SQL0445W  Value "SYSIBMADM" has been truncated.  SQLSTATE=01004
+
+NULLID    S         S           B                      1 Y           Y             
+NULLID    S         S           I                      5 Y           Y             
+NULLID    S         S           R                     85 Y           Y             
+NULLID    U         U           R                      1 -           -             
+SYSIBMAD  S         S           B                    272 -           -             
+SYSIBMAD  S         S           R                     29 -           -             
+SYSIBMIN  S         S           R                      1 -           -             
+SYSPROC   S         S           R                      1 -           -             
+
+  9 record(s) selected with 1 warning messages printed.
+
+
+SELECT VARCHAR(PKGNAME, 10) AS DRIVER_PACKAGE, OWNERTYPE, BOUNDBYTYPE, DYNAMICRULES FROM SYSCAT.PACKAGES WHERE PKGSCHEMA = 'NULLID' AND PKGNAME IN ('SYSSH200', 'SYSLH200') ORDER BY 1
+
+DRIVER_PACKAGE OWNERTYPE BOUNDBYTYPE DYNAMICRULES
+-------------- --------- ----------- ------------
+SYSLH200       S         S           R           
+SYSSH200       S         S           R           
+
+  2 record(s) selected.
+
+
+SELECT VARCHAR(SEQSCHEMA, 10) AS SEQSCHEMA, COUNT(*) AS PUBLIC_SEQUENCE_GRANTS FROM SYSCAT.SEQUENCEAUTH WHERE GRANTEE = 'PUBLIC' GROUP BY SEQSCHEMA
+
+SEQSCHEMA  PUBLIC_SEQUENCE_GRANTS
+---------- ----------------------
+
+  0 record(s) selected.
+
+
+SELECT VARCHAR(VARNAME, 26) AS VARNAME, READAUTH, WRITEAUTH FROM SYSCAT.VARIABLEAUTH WHERE GRANTEE = 'PUBLIC' AND WRITEAUTH <> 'N' ORDER BY 1
+
+VARNAME                    READAUTH WRITEAUTH
+-------------------------- -------- ---------
+LOCAL_DATE_FORMAT          Y        Y        
+NLS_STRING_UNITS           Y        Y        
+SQL_COMPAT                 Y        Y        
+
+  3 record(s) selected.
+
+
+SELECT VARCHAR(GRANTEE, 10) AS GRANTEE, GRANTEETYPE, VARCHAR(ROLENAME, 16) AS ROLENAME, ADMIN FROM SYSCAT.ROLEAUTH ORDER BY 3
+
+GRANTEE    GRANTEETYPE ROLENAME         ADMIN
+---------- ----------- ---------------- -----
+DB2INST1   U           SYSDEBUG         N    
+DB2INST1   U           SYSDEBUGPRIVATE  N    
+DB2INST1   U           SYSTS_ADM        N    
+DB2INST1   U           SYSTS_MGR        N    
+PUBLIC     G           SYSTS_USR        N    
+
+  5 record(s) selected.
+
+
+SELECT VARCHAR(CONTROLNAME, 48) AS CONTROLNAME, VARCHAR(OWNER, 8) AS OWNER, OWNERTYPE, CONTROLTYPE FROM SYSCAT.CONTROLS ORDER BY 1
+
+CONTROLNAME                                      OWNER    OWNERTYPE CONTROLTYPE
+------------------------------------------------ -------- --------- -----------
+SYS_DEFAULT_COLUMN_MASK__SYSCOLDIST_COLVALUE     SYSIBM   S         C          
+SQL0445W  Value "SYS_DEFAULT_COLUMN_MASK__SYSSERVEROPTIONS_SETTING" has been 
+truncated.  SQLSTATE=01004
+
+SYS_DEFAULT_COLUMN_MASK__SYSCOLUMNS_HIGH2KEY     SYSIBM   S         C          
+SYS_DEFAULT_COLUMN_MASK__SYSCOLUMNS_LOW2KEY      SYSIBM   S         C          
+SYS_DEFAULT_COLUMN_MASK__SYSSERVEROPTIONS_SETTIN SYSIBM   S         C          
+SYS_DEFAULT_COLUMN_MASK__SYSUSEROPTIONS_SETTING  SYSIBM   S         C          
+
+  5 record(s) selected with 1 warning messages printed.
+
+
+SELECT OWNERTYPE, COUNT(*) AS ROUTINES FROM SYSCAT.ROUTINES GROUP BY OWNERTYPE ORDER BY 1
+
+OWNERTYPE ROUTINES   
+--------- -----------
+S                3947
+U                  89
+
+  2 record(s) selected.
+
+
+CREATE FUNCTION SYSPROC.LIBREDB_PROBE () RETURNS INTEGER LANGUAGE SQL RETURN 1
+DB21034E  The command was processed as an SQL statement because it was not a 
+valid Command Line Processor command.  During SQL processing it returned:
+SQL0553N  An object cannot be created with the schema name "SYSPROC ".  LINE 
+NUMBER=1.  SQLSTATE=42939
+
+CREATE TABLE SYSCAT.LIBREDB_PROBE (ID INTEGER)
+DB21034E  The command was processed as an SQL statement because it was not a 
+valid Command Line Processor command.  During SQL processing it returned:
+SQL0553N  An object cannot be created with the schema name "SYSCAT  ".  
+SQLSTATE=42939
+
+CREATE TABLE SYSIBMADM.LIBREDB_PROBE (ID INTEGER)
+DB21034E  The command was processed as an SQL statement because it was not a 
+valid Command Line Processor command.  During SQL processing it returned:
+SQL0553N  An object cannot be created with the schema name "SYSIBMADM".  
+SQLSTATE=42939
+
+CREATE FUNCTION SYSTOOLS.LIBREDB_PROBE () RETURNS INTEGER LANGUAGE SQL RETURN 1
+DB20000I  The SQL command completed successfully.
+
+SELECT VARCHAR(ROUTINESCHEMA, 10) AS ROUTINESCHEMA, VARCHAR(ROUTINENAME, 16) AS ROUTINENAME, VARCHAR(OWNER, 10) AS OWNER, OWNERTYPE FROM SYSCAT.ROUTINES WHERE ROUTINENAME = 'LIBREDB_PROBE'
+
+ROUTINESCHEMA ROUTINENAME      OWNER      OWNERTYPE
+------------- ---------------- ---------- ---------
+SYSTOOLS      LIBREDB_PROBE    DB2INST1   U        
+
+  1 record(s) selected.
+
+
+DROP FUNCTION SYSTOOLS.LIBREDB_PROBE
+DB20000I  The SQL command completed successfully.
+
