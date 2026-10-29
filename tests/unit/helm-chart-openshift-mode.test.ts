@@ -535,6 +535,35 @@ describe("the openshift sign-in environment", () => {
     expect(env).not.toHaveProperty("KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT");
   });
 
+  test.each(["KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO", "KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT"])(
+    "operator-managed, an extraEnv %s fails, so the resource cannot move the admin target",
+    (name) => {
+      refused(
+        [
+          ...OPENSHIFT,
+          ...set(
+            "operator.managed=true",
+            `operator.clusterStudioNamespace=${NAMESPACE}`,
+            `extraEnv[0].name=${name}`,
+            "extraEnv[0].value=dev-a-project/mine",
+          ),
+        ],
+        "operator.managed",
+        name,
+      );
+    },
+  );
+
+  test("a Helm install may still move the admin target through extraEnv", () => {
+    const env = envList(
+      render([
+        ...OPENSHIFT,
+        ...set("extraEnv[0].name=KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT", "extraEnv[0].value=os-lab-v1/other"),
+      ]),
+    );
+    expect(env.at(-1)).toEqual({ name: "KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT", value: "os-lab-v1/other" });
+  });
+
   test("operator-managed in a namespace other than the cluster Studio's, the admin target is still its own resource", () => {
     const env = envOf(render([...OPENSHIFT, ...set("operator.managed=true")]));
     expect(env.KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO).toBe(`${NAMESPACE}/${RELEASE}`);

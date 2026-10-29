@@ -888,6 +888,13 @@ instead, naming the value to fix. Included from deployment.yaml.
 {{- fail (printf "authProvider=openshift refuses the serviceAccount.annotations entry %s: the chart registers Studio's one callback itself, and another redirect annotation would let the OAuth server send the code elsewhere, so remove it" $key) }}
 {{- end }}
 {{- end }}
+{{- if include "libredb-studio.operatorManaged" . }}
+{{- range .Values.extraEnv }}
+{{- if hasPrefix "KUBERNETES_ACCESS_REVIEW_ADMIN_" (.name | default "" | toString) }}
+{{- fail (printf "authProvider=openshift with operator.managed refuses extraEnv entry %s: under the operator a Studio admin is whoever may update this LibreDBStudio, and the resource may not move that target" .name) }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- if .Values.serviceAccount.automountServiceAccountToken }}
 {{- fail "authProvider=openshift refuses serviceAccount.automountServiceAccountToken=true: Studio's process holds only the OAuth client token, whose audience the API server rejects, and reviews every request with the signed-in user's own token; leave it false" }}
 {{- end }}

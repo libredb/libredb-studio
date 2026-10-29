@@ -1011,7 +1011,7 @@ helm install studio libredb/libredb-studio --version 0.1.114 --namespace data -f
 The chart annotates the ServiceAccount with `serviceaccounts.openshift.io/oauth-redirectreference.first`, naming the Route, and `serviceaccounts.openshift.io/oauth-redirecturi.first`, the callback path under `config.basePath`, so the OAuth server accepts that one callback.
 It mounts a projected token of that account with the audience `libredb-studio-oauth-client`, never the API server's, for `openshift.signIn.tokenExpirationSeconds` (600), and the cluster's CA from the `kube-root-ca.crt` ConfigMap, read-only at `/var/run/secrets/libredb/openshift`; the pod's own API token mount stays off.
 It writes `OPENSHIFT_OAUTH_CLIENT_ID` (`system:serviceaccount:<namespace>:<account>`), `OPENSHIFT_PUBLIC_URL` (`https://<openshiftRoute.host><config.basePath>`), `OPENSHIFT_OAUTH_TOKEN_FILE` and `OPENSHIFT_API_CA_FILE`, all before `extraEnv`, so an `extraEnv` entry of the same name wins.
-A Studio admin is whoever may `update` Studio's Deployment, or, under the OLM operator, the `LibreDBStudio` resource.
+A Studio admin is whoever may `update` Studio's Deployment, or, under the OLM operator, the `LibreDBStudio` resource, which may not move that target through a `KUBERNETES_ACCESS_REVIEW_ADMIN_*` entry of `extraEnv`.
 The session lasts the app's 28800 seconds in this mode unless `config.sessionTtlSeconds` is set, and the review cache the app's 15 seconds unless `openshift.signIn.reviewCacheSeconds` is.
 No `ADMIN_PASSWORD`, `USER_EMAIL`, `USER_PASSWORD` or `SEED_CACHE_TTL_MS` is written, so `seedConnections.cacheTTL` is ignored in this mode: the browser refreshes the connection list every 10 seconds instead.
 
