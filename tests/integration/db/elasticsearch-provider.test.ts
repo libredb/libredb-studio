@@ -3882,6 +3882,65 @@ describe("Elasticsearch 9.1.4's write refusals, replayed", () => {
 });
 
 // ============================================================================
+// The agent's catalog read, replayed
+// ============================================================================
+
+/** One capture of tests/fixtures/elasticsearch/9.1.4/catalog-read/, written by tests/live/elasticsearch-catalog-captures.ts. */
+interface CatalogReadCapture {
+  readonly version: string;
+  readonly name: string;
+  readonly request: { readonly body: { readonly query: string } };
+  readonly status: number;
+  readonly body: string;
+}
+
+const CATALOG_READ_DIR = join(import.meta.dir, "../../fixtures/elasticsearch/9.1.4/catalog-read");
+
+const CATALOG_READS: readonly CatalogReadCapture[] = readdirSync(CATALOG_READ_DIR)
+  .filter((file) => file.endsWith(".json"))
+  .sort()
+  .map((file) => JSON.parse(readFileSync(join(CATALOG_READ_DIR, file), "utf8")) as CatalogReadCapture);
+
+/**
+ * The agent's catalog read is a `SYS COLUMNS` command the agent composes (its Elasticsearch overlay), and the provider
+ * path has no statement fence of its own: the query-only endpoint takes the command as it takes a SELECT. Each capture
+ * is what 9.1.4 answered the composed statement (tests/live/elasticsearch-catalog-captures.ts, 2026-10-29), replayed
+ * through `queryReadOnly` under the agent profile.
+ */
+describe("Elasticsearch 9.1.4's catalog-read answers, replayed through queryReadOnly", () => {
+  test("four composed SYS COLUMNS statements were captured, each a 200", () => {
+    expect(CATALOG_READS).toHaveLength(4);
+    for (const entry of CATALOG_READS) {
+      expect(entry.version).toBe("9.1.4");
+      expect(entry.status).toBe(200);
+      expect(entry.request.body.query.startsWith("SYS COLUMNS")).toBe(true);
+    }
+  });
+
+  test.each(CATALOG_READS.map((entry) => [entry.name, entry] as const))(
+    "%s: the provider sends the composed command unchanged and answers the engine's rows",
+    async (_name, entry) => {
+      const agent = new ElasticsearchProvider(makeConnection(), {}, AGENT_PROFILE);
+      await agent.connect();
+      overrideSql(ok(entry.body));
+
+      const result = await agent.queryReadOnly(entry.request.body.query, AGENT_BUDGET);
+
+      const answer = JSON.parse(entry.body) as { columns: { name: string }[]; rows: unknown[][] };
+      expect(result.fields).toEqual(answer.columns.map((column) => column.name));
+      expect(result.rowCount).toBe(answer.rows.length);
+      expect(result.rows.map((row) => row.TABLE_NAME)).toEqual(answer.rows.map((row) => row[2]));
+      expect(sqlRequests().at(-1)?.body).toEqual({
+        query: entry.request.body.query,
+        fetch_size: AGENT_BUDGET.maxResultRows + 1,
+        ...SQL_QUERY_OPTIONS,
+      });
+      await agent.disconnect();
+    },
+  );
+});
+
+// ============================================================================
 // queryReadOnly: the agent read-only profile's statement path
 // ============================================================================
 
