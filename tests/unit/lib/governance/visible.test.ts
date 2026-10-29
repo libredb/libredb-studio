@@ -2,12 +2,13 @@
  * Which connections a caller may see and open (docs/GOVERNANCE.md#grants-and-the-connection-list): the dispatcher
  * behind the managed route and `resolveConnection`.
  *
- * Without governance it answers what the seed connections always answered for the caller's role. Under governance
- * it answers from the snapshot alone, for the caller's identity provider subject, whatever the role, and only while
- * the snapshot can be served. Snapshots are built directly with tests/helpers/governance/granted-snapshot.ts, so each
+ * Without governance it answers what the seed connections always answered for the caller's role, with the rows only
+ * the Kubernetes access review may list handed to the review in their place, and an open reviewing only the row it
+ * names. Under governance it answers from the snapshot alone, for the caller's identity provider subject, whatever the
+ * role, and only while the snapshot can be served. Snapshots are built directly with tests/helpers/governance/granted-snapshot.ts, so each
  * case states which subject holds which grant.
  */
-import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, setSystemTime, spyOn, test } from "bun:test";
 import path from "node:path";
 import { SETTINGS_REGISTRY } from "@/lib/governance/settings-registry";
 import { recordGovernanceFailure, recordGovernanceSnapshot, resetGovernanceState } from "@/lib/governance/state";
@@ -17,7 +18,11 @@ import {
   visibleConnectionById,
   visibleConnections,
 } from "@/lib/governance/visible";
-import { getManagedConnections, getSeedConnectionById, type ManagedConnection, resetCache } from "@/lib/seed";
+import * as decisions from "@/lib/kubernetes-access/decisions";
+import * as gate from "@/lib/kubernetes-access/gate";
+import * as seedIndex from "@/lib/seed";
+import { getManagedConnections, type ManagedConnection, resetCache, type SeedListing } from "@/lib/seed";
+import { KUBERNETES_REVIEWED_ROLE } from "@/lib/seed/roles";
 import {
   admittedConnection,
   grantedSnapshot,
@@ -82,8 +87,10 @@ describe("without governance", () => {
     expect(await visibleConnections(ADMIN, { credential: "read" })).toEqual(await getManagedConnections(["admin"]));
   });
 
-  test("finds exactly what getSeedConnectionById finds for the caller's role", async () => {
-    expect(await visibleConnectionById(ALICE, "everyone")).toEqual(await getSeedConnectionById("everyone", ["user"]));
+  test("finds exactly the row getManagedConnections lists for the caller's role", async () => {
+    const everyone = (await getManagedConnections(["user"])).find((connection) => connection.seedId === "everyone");
+    expect(everyone).toBeDefined();
+    expect(await visibleConnectionById(ALICE, "everyone")).toEqual(everyone ?? null);
     expect(await visibleConnectionById(ALICE, "admin-only")).toBeNull();
     expect((await visibleConnectionById(ADMIN, "admin-only", { credential: "read" }))?.host).toBe("admin-pg.internal");
   });
@@ -104,6 +111,124 @@ describe("without governance", () => {
       expect(await visibleConnections(principal)).toEqual(await getManagedConnections(["user", "team-billing"]));
     } finally {
       delete process.env.OIDC_ROLE_PREFIX;
+    }
+  });
+});
+
+describe("without governance, with rows only the Kubernetes access review may list", () => {
+  const row = (seedId: string): ManagedConnection => ({
+    id: `seed:${seedId}`,
+    seedId,
+    name: seedId,
+    type: "postgres",
+    host: `${seedId}.internal`,
+    port: 5432,
+    managed: true,
+    roles: ["*"],
+    createdAt: new Date(T),
+  });
+  const reviewedRow = (seedId: string, secret: string): ManagedConnection => ({
+    ...row(seedId),
+    roles: [KUBERNETES_REVIEWED_ROLE],
+    literal: true,
+    kubernetesSecret: { namespace: "team-a", name: secret },
+  });
+  const FILE = row("file-pg");
+  const ORDERS = reviewedRow("k8s-orders", "orders-app");
+  const BILLING = reviewedRow("k8s-billing", "billing-app");
+  const SAMPLE = row("sample");
+  // Rows the listing never puts outside pendingReview while the review is on: a projection that lost the reserved role.
+  const STRAY_BEFORE: ManagedConnection = {
+    ...row("k8s-stray-before"),
+    kubernetesSecret: { namespace: "team-a", name: "a" },
+  };
+  const STRAY_AFTER: ManagedConnection = {
+    ...row("k8s-stray-after"),
+    kubernetesSecret: { namespace: "team-a", name: "b" },
+  };
+  let listing: SeedListing;
+
+  beforeEach(() => {
+    listing = { before: [FILE], pendingReview: [ORDERS, BILLING], after: [SAMPLE] };
+    spyOn(seedIndex, "getSeedListing").mockImplementation(async () => listing);
+  });
+
+  afterEach(() => {
+    mock.restore();
+  });
+
+  test("lists before, then the reviewed rows the review keeps, then after, handing the review exactly pendingReview", async () => {
+    const review = spyOn(gate, "connectionsUnderAccessReview").mockImplementation(async (_principal, rows) =>
+      rows.filter((connection) => connection.seedId === "k8s-billing"),
+    );
+    expect((await visibleConnections(ALICE)).map((connection) => connection.seedId)).toEqual([
+      "file-pg",
+      "k8s-billing",
+      "sample",
+    ]);
+    expect(review.mock.calls).toEqual([[ALICE, [ORDERS, BILLING]]]);
+  });
+
+  test("opens a row of before or after as listed, with no review", async () => {
+    const review = spyOn(gate, "connectionUnderAccessReview");
+    expect(await visibleConnectionById(ALICE, "file-pg")).toBe(FILE);
+    expect(await visibleConnectionById(ALICE, "sample")).toBe(SAMPLE);
+    expect(review).not.toHaveBeenCalled();
+  });
+
+  test("reviews only the reviewed row an open names", async () => {
+    const review = spyOn(gate, "connectionUnderAccessReview").mockImplementation(
+      async (_principal, connection) => connection,
+    );
+    expect(await visibleConnectionById(ALICE, "k8s-billing")).toBe(BILLING);
+    expect(review.mock.calls).toEqual([[ALICE, BILLING]]);
+  });
+
+  test("while the review is on, reviews a row of before or after that names a Secret in its place", async () => {
+    listing = { before: [FILE, STRAY_BEFORE], pendingReview: [ORDERS], after: [SAMPLE, STRAY_AFTER] };
+    process.env.KUBERNETES_ACCESS_REVIEW = "on";
+    try {
+      const list = spyOn(gate, "connectionsUnderAccessReview").mockImplementation(async (_principal, rows) =>
+        rows.filter((connection) => connection.seedId === "k8s-stray-after"),
+      );
+      expect((await visibleConnections(ALICE)).map((connection) => connection.seedId)).toEqual([
+        "file-pg",
+        "sample",
+        "k8s-stray-after",
+      ]);
+      expect(list.mock.calls).toEqual([[ALICE, [STRAY_BEFORE, ORDERS, STRAY_AFTER]]]);
+
+      const open = spyOn(gate, "connectionUnderAccessReview").mockImplementation(async () => null);
+      expect(await visibleConnectionById(ALICE, "k8s-stray-before")).toBeNull();
+      expect(await visibleConnectionById(ALICE, "k8s-stray-after")).toBeNull();
+      expect(await visibleConnectionById(ALICE, "file-pg")).toBe(FILE);
+      expect(open.mock.calls).toEqual([
+        [ALICE, STRAY_BEFORE],
+        [ALICE, STRAY_AFTER],
+      ]);
+    } finally {
+      delete process.env.KUBERNETES_ACCESS_REVIEW;
+    }
+  });
+
+  test("while the review is off, lists and opens a row of before or after that names a Secret as listed", async () => {
+    listing = { before: [FILE, STRAY_BEFORE], pendingReview: [], after: [SAMPLE, STRAY_AFTER] };
+    const list = spyOn(gate, "connectionsUnderAccessReview");
+    const open = spyOn(gate, "connectionUnderAccessReview");
+    expect(await visibleConnections(ADMIN)).toEqual([FILE, STRAY_BEFORE, SAMPLE, STRAY_AFTER]);
+    expect(list.mock.calls).toEqual([[ADMIN, []]]);
+    expect(await visibleConnectionById(ADMIN, "k8s-stray-before")).toBe(STRAY_BEFORE);
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  test("sends no review for an id no section holds", async () => {
+    process.env.KUBERNETES_ACCESS_REVIEW = "on";
+    const allows = spyOn(decisions, "accessReviewAllows");
+    try {
+      expect(await visibleConnectionById(ALICE, "k8s-unknown")).toBeNull();
+      expect(allows).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.KUBERNETES_ACCESS_REVIEW;
     }
   });
 });
