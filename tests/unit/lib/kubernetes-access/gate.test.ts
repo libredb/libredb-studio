@@ -489,16 +489,20 @@ describe("connections, in openshift sign-in mode", () => {
   test("denies without a request a session with no handle, no live record, or a record bound to another person", async () => {
     cluster.grants = [grant("dev-a", "team-a", "orders-app")];
     const { sessionHandle: _handle, ...unkeyed } = SESSION_A;
-    for (const session of [
+    const sessions = [
       unkeyed,
       { ...SESSION_A, sessionHandle: "handle-without-a-record-00000000000000000" },
       { ...SESSION_A, idpSubject: UID_B },
       { ...SESSION_A, username: "dev-b" },
       { ...SESSION_A, idpIssuer: "https://another-issuer.example.com" },
-    ]) {
-      expect(await connectionsUnderAccessReview(session, [ORDERS])).toEqual([]);
-      expect(await connectionUnderAccessReview(session, ORDERS)).toBeNull();
-    }
+    ];
+    const answers = await Promise.all(
+      sessions.map(async (session) => [
+        await connectionsUnderAccessReview(session, [ORDERS]),
+        await connectionUnderAccessReview(session, ORDERS),
+      ]),
+    );
+    expect(answers).toEqual(sessions.map(() => [[], null]));
     expect(cluster.requests).toEqual([]);
   });
 

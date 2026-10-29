@@ -225,13 +225,12 @@ describe("the Kubernetes access review holds MCP and the agent off", () => {
     const { POST: login } = await import("@/app/api/auth/login/route");
     const { isSampleEnabled } = await import("@/lib/seed/libredb-sample");
     try {
-      const response = await login(
-        new Request("http://localhost:3000/api/auth/login", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ email: "admin@libredb.org", password: "not-a-real-password-holds" }),
-        }),
-      );
+      const request = new Request("http://localhost:3000/api/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: "admin@libredb.org", password: "not-a-real-password-holds" }),
+      });
+      const response = await login(request as never);
       expect(response.status).toBe(403);
       expect(await response.json()).toMatchObject({ success: false });
       delete process.env.LIBREDB_EMBEDDED_SAMPLE;
