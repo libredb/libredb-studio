@@ -3,11 +3,13 @@
  * statements.
  *
  * The boundary is the credential's: a token the server marks read-only (`"a": "ro"` in a JWT a self-hosted sqld checks
- * against `SQLD_AUTH_JWT_KEY`, or a token Turso mints with `--read-only`). sqld classifies every statement before it
- * runs it and refuses a write from such a token for the whole request with HTTP 403 ("Authorization forbidden"), on
- * every HTTP statement route, so the refusal does not depend on how the statement is spelled (all measured on
- * sqld 0.24.33): `INSERT ... RETURNING`, a `WITH ... DELETE`, `REINDEX`, `PRAGMA user_version = 5` and a write inside a
- * batch, a sequence or a stored statement all answered 403, and the table read back the same. `PRAGMA query_only`, the
+ * against `SQLD_AUTH_JWT_KEY`, or a token Turso mints with `--read-only`). The marker alone is not the whole grant: sqld
+ * also reads a permission claim (`"p"`), and a token carrying `"a": "ro"` with a `"p"` granting `rw` on the namespace
+ * writes (measured). sqld classifies every statement before it runs it and refuses a write from a read-only token for
+ * the whole request with HTTP 403 ("Authorization forbidden"), on every HTTP statement route, so the refusal does not
+ * depend on how the statement is spelled (all measured on sqld 0.24.33): `INSERT ... RETURNING`, a `WITH ... DELETE`,
+ * `REINDEX`, `PRAGMA user_version = 5` and a write inside a batch, a sequence or a stored statement all answered 403,
+ * and the table read back the same. `PRAGMA query_only`, the
  * lever the SQLite provider uses, is refused by the server for every credential, so the token is the only lever.
  *
  * The open proves it with the server's own answers, and reads the token's claims on top of them:
@@ -22,9 +24,9 @@
  *    server with no credential check run the first and answer the other two "no such table" (measured). Only that 403
  *    with that refusal admits a probe, a 403 with any other body included (a proxy's is not the server's), and every
  *    probe must be admitted.
- * 3. **The token declares read-only access** (`assertReadOnlyClaims`). Its JWT claims must carry `"a": "ro"`, the claim
- *    sqld reads; Studio cannot verify the signature, so this checks the token's own statement against the server's
- *    answers above, never instead of them.
+ * 3. **The token declares read-only access** (`assertReadOnlyClaims`). Its JWT claims must carry `"a": "ro"` and no
+ *    `"p"` claim, which could widen it; Studio cannot verify the signature, so this checks the token's own statement
+ *    against the server's answers above, never instead of them.
  */
 import { randomUUID } from "node:crypto";
 import { ExecutionProfileError } from "@/lib/db/errors";
@@ -120,15 +122,22 @@ function jwtClaims(token: string): unknown {
 }
 
 /**
- * Refuses a token whose claims do not declare read-only access: `"a": "ro"`, the claim sqld reads. Anything else, a
- * token that is no JWT included, is refused, fail closed.
+ * Refuses a token whose claims do not declare read-only access: `"a": "ro"`, with no `"p"` permission claim, which sqld
+ * reads on top of `"a"` and can grant writes with. Anything else, a token that is no JWT included, is refused, fail
+ * closed.
  */
 export function assertReadOnlyClaims(token: string): void {
   const claims = jwtClaims(token);
-  const access = typeof claims === "object" && claims !== null ? (claims as { a?: unknown }).a : undefined;
-  if (access !== "ro") {
+  const record = typeof claims === "object" && claims !== null ? (claims as { a?: unknown }) : {};
+  if (record.a !== "ro") {
     throw new ExecutionProfileError(
       'The libSQL token does not declare read-only access (a JWT whose claims carry "a": "ro"), so the agent read-only profile is refused',
+      "PROFILE_PRIVILEGES_TOO_BROAD",
+    );
+  }
+  if (Object.hasOwn(record, "p")) {
+    throw new ExecutionProfileError(
+      'The libSQL token carries a permission claim ("p"), which the server reads on top of "a": "ro" and can grant writes with, so the agent read-only profile is refused',
       "PROFILE_PRIVILEGES_TOO_BROAD",
     );
   }

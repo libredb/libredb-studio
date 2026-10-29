@@ -256,4 +256,20 @@ describe("assertReadOnlyClaims", () => {
       );
     }
   });
+
+  test("refuses a read-only token that also carries a permission claim, which the server lets widen it to writes", async () => {
+    for (const token of [
+      fakeToken({ a: "ro", p: { rw: { ns: ["default"] } } }),
+      fakeToken({ a: "ro", p: { ro: { ns: ["default"] } } }),
+      fakeToken({ a: "ro", p: null }),
+      fakeToken({ a: "ro", p: {} }),
+    ]) {
+      const error = await refusal(() => assertReadOnlyClaims(token));
+
+      expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+      expect(error.message).toBe(
+        'The libSQL token carries a permission claim ("p"), which the server reads on top of "a": "ro" and can grant writes with, so the agent read-only profile is refused',
+      );
+    }
+  });
 });

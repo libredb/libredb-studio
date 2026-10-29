@@ -236,7 +236,7 @@ first day.
 `sqlite.ts` implements `queryReadOnly` by setting `query_only` and verifying the readback, per statement.
 libSQL has no such lever: the pragma is refused on both deployments, for every credential.
 So the boundary here is credential-enforced: a token the server refuses every write for.
-A self-hosted sqld started with `SQLD_AUTH_JWT_KEY` checks a JWT signed by that key, and refuses a write from one whose claims carry `"a": "ro"`; Turso mints the same kind of token with `turso db tokens create --read-only`.
+A self-hosted sqld started with `SQLD_AUTH_JWT_KEY` checks a JWT signed by that key, and refuses a write from one whose claims carry `"a": "ro"` unless a permission claim (`"p"`) widens it: a token carrying `"a": "ro"` and a `"p"` that grants `rw` on the namespace writes, which the open refuses; Turso mints the same kind of token with `turso db tokens create --read-only`.
 sqld classifies every statement before it runs it, and refuses a request that carries a write from such a token as a whole, with HTTP 403 (`Authorization forbidden: Current session doesn't not have Write permission to namespace default`), on each HTTP statement route measured (`/v2/pipeline`, `/v3/pipeline`, `/v1/execute`, `/v1/batch` and `/`); Hrana over WebSocket was not measured, and this provider never speaks it.
 Agent mode executes statements on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse and libSQL; on libSQL the provider implements `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/sql/libsql/index.ts), with the open's proof in [`agent-boundary.ts`](../../src/lib/db/providers/sql/libsql/agent-boundary.ts) and the reading of an answer in [`agent-read.ts`](../../src/lib/db/providers/sql/libsql/agent-read.ts).
 
@@ -249,10 +249,10 @@ Any answer the proof cannot read refuses the profile.
 
 1. The connection must send a bearer token. A connection that names a user signs in with HTTP Basic, which sqld (`SQLD_HTTP_AUTH`) grants every statement and has no read-only form for, and is refused `PROFILE_PRIVILEGES_TOO_BROAD`. A connection with no token reaches only a server that checks no credential, and is refused `PROFILE_SERVER_UNENFORCED`. Both are refused before anything is sent.
 2. After the connect probe, three writes go with the agent's token, each on a name made fresh for the open (`libredb_agent_probe_<32 hex digits>`), so none changes anything on any outcome: `DROP TABLE IF EXISTS "<name>"`, `DELETE FROM "<name>" WHERE 0` and `INSERT INTO "<name>" SELECT 1 WHERE 0`. sqld classifies each as a write before it looks for the table. Each must be answered 403 with the server's own authorization refusal (`Authorization forbidden: ...`); a 403 with any other body, such as a proxy's, does not count. A probe the server runs, which is what a writable token and a server with no credential check both do with the first, refuses the profile `PROFILE_SERVER_UNENFORCED`; any other answer, a statement error such as "no such table" included, refuses it `PROFILE_UNSUPPORTED_TARGET`.
-3. The token's own claims must declare read-only access: it must be a JWT whose claims carry `"a": "ro"`, the claim sqld reads, or the profile is refused `PROFILE_PRIVILEGES_TOO_BROAD`. Studio cannot verify the signature, so this checks the token's statement against the server's answers above, never instead of them.
+3. The token's own claims must declare read-only access: it must be a JWT whose claims carry `"a": "ro"` and no `"p"` permission claim, which sqld reads on top of `"a"` and can grant writes with, or the profile is refused `PROFILE_PRIVILEGES_TOO_BROAD`. Studio cannot verify the signature, so this checks the token's statement against the server's answers above, never instead of them.
 
 The proof runs at open only: a token whose rights change after the open is seen at the next open of a profiled handle.
-Turso Cloud was not measured for this profile: a Turso read-only token is admitted only when Turso answers every probe with the same 403 and refusal wording and the token carries `"a": "ro"`, and refused otherwise.
+Turso Cloud was not measured for this profile: a Turso read-only token is admitted only when Turso answers every probe with the same 403 and refusal wording and the token carries `"a": "ro"` and no `"p"` claim, and refused otherwise.
 
 #### The agent token
 
@@ -289,8 +289,8 @@ The read-only token can read `GET /dump`, which is a read of the whole database,
 
 #### Boundary record
 
-Measured on `ghcr.io/tursodatabase/libsql-server:v0.24.33` (`sqld 0.24.33 (40a151bd 2025-12-19)`, SQLite 3.45.1) on 2026-10-29, by [`tests/live/libsql-agent-boundary.ts`](../../tests/live/libsql-agent-boundary.ts), with Studio's agent admission bypassed: 89 checks, all passing.
-Three servers: one checking JWTs with a read-only and a writable token signed by its key, one started with HTTP Basic, and one checking no credential.
+Measured on `ghcr.io/tursodatabase/libsql-server:v0.24.33` (`sqld 0.24.33 (40a151bd 2025-12-19)`, SQLite 3.45.1) on 2026-10-29, by [`tests/live/libsql-agent-boundary.ts`](../../tests/live/libsql-agent-boundary.ts), with Studio's agent admission bypassed: 93 checks, all passing.
+Three servers: one checking JWTs with a read-only token, a writable token and a read-only token whose permission claim grants writes, all signed by its key, one started with HTTP Basic, and one checking no credential.
 
 | Probe | Read-only token, through `queryReadOnly` | Writable token, positive control on a scratch table |
 | --- | --- | --- |
@@ -311,6 +311,7 @@ An editor handle refused `queryReadOnly` before sending anything.
 The catalog reads, the statistics probe, the estimating plan and the pattern table profile the agent composes each answered the read-only token.
 The budgets: 51 rows under a budget of 50, 100,000 bytes of hex under 65,536, and a statement past a one-second deadline were each refused, and the server answered the next statement.
 A token whose permission claims the server cannot read is refused 401 at connect, before the proof.
+A token carrying `"a": "ro"` and `"p": {"rw": {"ns": ["default"]}}` ran `INSERT`, `DELETE ... WHERE 0` and `DROP TABLE IF EXISTS` on the server; the open refused it (`PROFILE_SERVER_UNENFORCED`, the first probe ran), and its claims alone are refused `PROFILE_PRIVILEGES_TOO_BROAD`.
 
 Run it against servers you may write to; it creates tables with the `libredb_lb_` prefix and drops them on exit:
 
@@ -319,6 +320,7 @@ docker run -d -e SQLD_NODE=primary -e SQLD_AUTH_JWT_KEY=<public key> -p 18181:80
 docker run -d -e SQLD_NODE=primary -e SQLD_HTTP_AUTH=basic:<base64 of user:password> -p 18182:8080 ghcr.io/tursodatabase/libsql-server:v0.24.33
 docker run -d -e SQLD_NODE=primary -p 18183:8080 ghcr.io/tursodatabase/libsql-server:v0.24.33
 LIBREDB_LIVE_LIBSQL_JWT_PORT=18181 LIBREDB_LIVE_LIBSQL_RO_TOKEN=<ro token> LIBREDB_LIVE_LIBSQL_RW_TOKEN=<rw token> \
+  LIBREDB_LIVE_LIBSQL_WIDENED_TOKEN=<ro token with a p claim granting rw> \
   LIBREDB_LIVE_LIBSQL_BASIC_PORT=18182 LIBREDB_LIVE_LIBSQL_BASIC_USER=<user> LIBREDB_LIVE_LIBSQL_BASIC_PASSWORD=<password> \
   LIBREDB_LIVE_LIBSQL_OPEN_PORT=18183 bun tests/live/libsql-agent-boundary.ts
 ```

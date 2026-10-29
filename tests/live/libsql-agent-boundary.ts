@@ -10,8 +10,9 @@
  *
  *  - the open's three probes: each is refused the read-only token with the server's authorization refusal, and the
  *    writable token runs the first and is told the table does not exist by the other two, so none changes anything;
- *  - the open: the read-only token is admitted; the writable token, a user name and password on a server started with
- *    HTTP Basic, and a server that checks no credential (with no token and with a token) are each refused; the
+ *  - the open: the read-only token is admitted; the writable token, a read-only token whose permission claim widens it
+ *    to writes (it writes, measured here), a user name and password on a server started with HTTP Basic, and a server
+ *    that checks no credential (with no token and with a token) are each refused; the
  *    operations profile opens the writable token unproven and reads the object surface, which is what plan mode grounds
  *    on; an editor handle refuses `queryReadOnly` before sending anything;
  *  - the boundary, with Studio's client admission bypassed: each write, DDL, writing pragma, attach, vacuum, extension
@@ -32,11 +33,13 @@
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name. Run it against servers you may write to:
  *
  *   LIBREDB_LIVE_LIBSQL_JWT_PORT=18181 LIBREDB_LIVE_LIBSQL_RO_TOKEN=... LIBREDB_LIVE_LIBSQL_RW_TOKEN=... \
+ *     LIBREDB_LIVE_LIBSQL_WIDENED_TOKEN=... \
  *     LIBREDB_LIVE_LIBSQL_BASIC_PORT=18182 LIBREDB_LIVE_LIBSQL_BASIC_USER=... LIBREDB_LIVE_LIBSQL_BASIC_PASSWORD=... \
  *     LIBREDB_LIVE_LIBSQL_OPEN_PORT=18183 bun tests/live/libsql-agent-boundary.ts
  *
- * The first server checks JWTs (`SQLD_AUTH_JWT_KEY`), and the two tokens are signed by its key, one carrying
- * `"a": "ro"` and one `"a": "rw"`; the second checks HTTP Basic (`SQLD_HTTP_AUTH`); the third checks nothing.
+ * The first server checks JWTs (`SQLD_AUTH_JWT_KEY`), and the three tokens are signed by its key, one carrying
+ * `"a": "ro"`, one `"a": "rw"`, and one `"a": "ro"` with `"p": {"rw": {"ns": ["default"]}}`; the second checks HTTP
+ * Basic (`SQLD_HTTP_AUTH`); the third checks nothing.
  * `docs/providers/libsql.md` section 3.6 shows how to start the three and mint the tokens.
  *
  * Every table it creates carries the `libredb_lb_` prefix and is dropped on exit. Each check prints one line, and a
@@ -51,7 +54,11 @@ import {
   composeStatisticsAvailabilityProbe,
 } from "@/lib/agent/composed-sql";
 import { composeTableProfile } from "@/lib/agent/table-profile";
-import { agentProbeStatements, probeTableName } from "@/lib/db/providers/sql/libsql/agent-boundary";
+import {
+  agentProbeStatements,
+  assertReadOnlyClaims,
+  probeTableName,
+} from "@/lib/db/providers/sql/libsql/agent-boundary";
 import { LibSQLHranaTransport } from "@/lib/db/providers/sql/libsql/hrana-transport";
 import { LibSQLTransportError } from "@/lib/db/providers/sql/libsql/transport";
 import type { DatabaseProvider } from "@/lib/db/types";
@@ -75,6 +82,7 @@ const HOST = process.env.LIBREDB_LIVE_LIBSQL_HOST ?? "127.0.0.1";
 const JWT_PORT = Number(env("LIBREDB_LIVE_LIBSQL_JWT_PORT"));
 const RO = env("LIBREDB_LIVE_LIBSQL_RO_TOKEN");
 const RW = env("LIBREDB_LIVE_LIBSQL_RW_TOKEN");
+const WIDENED = env("LIBREDB_LIVE_LIBSQL_WIDENED_TOKEN");
 const BASIC_PORT = Number(env("LIBREDB_LIVE_LIBSQL_BASIC_PORT"));
 const BASIC = { user: env("LIBREDB_LIVE_LIBSQL_BASIC_USER"), password: env("LIBREDB_LIVE_LIBSQL_BASIC_PASSWORD") };
 const OPEN_PORT = Number(env("LIBREDB_LIVE_LIBSQL_OPEN_PORT"));
@@ -249,6 +257,43 @@ async function main(): Promise<void> {
   check(
     (await opening(connection(JWT_PORT, { password: RW }), "agent-read-only")) === "PROFILE_SERVER_UNENFORCED",
     "open: the writable token is refused (PROFILE_SERVER_UNENFORCED)",
+  );
+  // A read-only token whose permission claim grants writes on the namespace: the server runs its writes, the open's
+  // probes refuse it, and its claims alone are refused too.
+  const widened = new LibSQLHranaTransport(connection(JWT_PORT, { password: WIDENED }));
+  const widenedAnswers: string[] = [];
+  for (const sql of [
+    `INSERT INTO "${SCRATCH}" (id, v) VALUES (200, 'w')`,
+    `DELETE FROM "${SCRATCH}" WHERE 0`,
+    `DROP TABLE IF EXISTS "${PREFIX}widened"`,
+  ]) {
+    try {
+      await widened.execute(sql, { timeoutMs: 30_000 });
+      widenedAnswers.push("ran");
+    } catch (error) {
+      widenedAnswers.push(error instanceof LibSQLTransportError ? String(error.status) : String(error));
+    }
+  }
+  check(
+    widenedAnswers.every((answer) => answer === "ran"),
+    `widened token: INSERT / DELETE ... WHERE 0 / DROP TABLE IF EXISTS -> ${widenedAnswers.join(" / ")}`,
+  );
+  check(
+    (await opening(connection(JWT_PORT, { password: WIDENED }), "agent-read-only")) === "PROFILE_SERVER_UNENFORCED",
+    "open: the widened token is refused, since the probe ran (PROFILE_SERVER_UNENFORCED)",
+  );
+  const claimAnswer = (token: string): string => {
+    try {
+      assertReadOnlyClaims(token);
+      return "admitted";
+    } catch (error) {
+      return error instanceof ExecutionProfileError ? error.reasonCode : String(error);
+    }
+  };
+  check(claimAnswer(RO) === "admitted", "claims: the read-only token's claims are admitted");
+  check(
+    claimAnswer(WIDENED) === "PROFILE_PRIVILEGES_TOO_BROAD",
+    "claims: the widened token's claims are refused (PROFILE_PRIVILEGES_TOO_BROAD)",
   );
   check(
     (await opening(connection(BASIC_PORT, BASIC), "agent-read-only")) === "PROFILE_PRIVILEGES_TOO_BROAD",
