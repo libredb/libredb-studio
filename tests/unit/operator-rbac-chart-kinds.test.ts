@@ -131,7 +131,7 @@ test("route.main.enabled renders an HTTPRoute, so the route render above checks 
 
 test("the Gateway API rule grants httproutes only", () => {
   const gatewayResources = roleRules()
-    .filter((rule) => rule.apiGroups?.includes("gateway.networking.k8s.io"))
+    .filter((rule) => (rule.apiGroups ?? []).some((group) => group === "gateway.networking.k8s.io"))
     .flatMap((rule) => rule.resources ?? []);
   expect(gatewayResources).toEqual(["httproutes"]);
 });
