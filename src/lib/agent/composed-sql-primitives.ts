@@ -101,10 +101,17 @@ export interface AgentCatalogSelector {
   readonly table?: string;
 }
 
+/** Catalog rows as a catalog read answers them: the columns in order, and each row keyed by those columns. */
+export interface AgentCatalogRows {
+  readonly fields: readonly string[];
+  readonly rows: readonly Record<string, unknown>[];
+}
+
 /**
  * How an engine reads its catalog (`composeCatalogRead` in `composed-sql.ts`, `readCatalog` in `tools.ts`): one
  * composer per kind; the fold from a selector's schema to the name a policy target declares, absent when the name is
- * declared as written; and the one retry a refused read may take, absent when there is none.
+ * declared as written; the one retry a refused read may take, absent when there is none; and the row mapper, absent
+ * when the composed statement answers the catalog rows itself.
  */
 export interface AgentCatalogRead {
   readonly compose: Readonly<Record<AgentCatalogKind, (selector: AgentCatalogSelector) => string>>;
@@ -115,6 +122,16 @@ export interface AgentCatalogRead {
     /** The statement to send instead. A rewrite that changes nothing is not sent. */
     readonly rewrite: (sql: string) => string;
   };
+  /**
+   * The rows of one kind as the engine answered them, turned into the catalog rows that kind reads as, for an engine
+   * whose catalog statement answers under column names no SELECT can rename. Applied to the engine's answer before
+   * the run keeps it, so the model, the capture and the statistics reading all read the mapped rows.
+   *
+   * Pure, and held to it by `engine-pack-contract.test.ts`: it never throws on an engine answer, never writes into
+   * it, answers the same rows twice, keeps no row it was not given (the budget was spent on the engine's rows), and
+   * keys every row by the columns it declares.
+   */
+  readonly mapRows?: (kind: AgentCatalogKind, rows: readonly Record<string, unknown>[]) => AgentCatalogRows;
 }
 /**
  * Validates one selector value and returns it.

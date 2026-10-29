@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { AGENT_STATEMENT_LANGUAGE, workflowAvailability } from "@/lib/agent/agent-manifest";
+import type { AgentCatalogKind, AgentCatalogRead } from "@/lib/agent/composed-sql-primitives";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { verifyRunGoal } from "@/lib/agent/goal-verifier";
@@ -57,6 +58,93 @@ const UNSERVED_OFFERS: Readonly<Partial<Record<DatabaseType, readonly AgentToolN
   clickhouse: ["profile_table"],
   influxdb3: ["profile_table"],
 };
+
+/**
+ * The engines whose catalog read maps the engine's own rows into the catalog rows the core reads, exactly: an engine
+ * whose catalog statement answers under column names no SELECT can rename. Held both ways, so an engine that gains a
+ * mapper is named here and held to the mapper contract below.
+ */
+const MAPPED_CATALOG_READS: readonly DatabaseType[] = [];
+
+const CATALOG_KINDS: readonly AgentCatalogKind[] = ["columns", "relations", "indexes", "statistics"];
+
+/** Engine answers no mapper may throw on: none, an empty row, and a row of names it never asked for. */
+const MAPPER_CORPUS: readonly (readonly Record<string, unknown>[])[] = [[], [{}], [{ unexpected: 1, other: null }]];
+
+/** A row set no mapper can write into: the rows and the array are frozen, so a write throws. */
+const frozenRows = (rows: readonly Record<string, unknown>[]): readonly Record<string, unknown>[] =>
+  Object.freeze(rows.map((row) => Object.freeze({ ...row })));
+
+/**
+ * What a catalog read's row mapper gets wrong over every kind and the corpus; empty when it holds. A mapper is pure:
+ * it never throws on an engine answer, never writes into it, answers the same rows twice, keeps no row it was not given
+ * (the budget was spent on the engine's rows), and keys every row by the columns it declares, which are named and
+ * distinct like any `QueryResult`'s.
+ */
+function catalogMapperViolations(mapRows: NonNullable<AgentCatalogRead["mapRows"]>): string[] {
+  const violations: string[] = [];
+  for (const kind of CATALOG_KINDS) {
+    for (const rows of MAPPER_CORPUS) {
+      const where = `${kind} ${JSON.stringify(rows)}`;
+      let first: ReturnType<typeof mapRows>;
+      try {
+        first = mapRows(kind, frozenRows(rows));
+      } catch (error) {
+        violations.push(`${where}: throws ${(error as Error).message}`);
+        continue;
+      }
+      if (first.fields.length === 0 || first.fields.some((field) => field.length === 0)) {
+        violations.push(`${where}: an unnamed column`);
+      }
+      if (new Set(first.fields).size !== first.fields.length) violations.push(`${where}: a repeated column`);
+      if (first.rows.length > rows.length) violations.push(`${where}: more rows than it was given`);
+      for (const row of first.rows) {
+        for (const key of Object.keys(row)) {
+          if (!first.fields.includes(key)) violations.push(`${where}: a cell under an undeclared column ${key}`);
+        }
+      }
+      if (JSON.stringify(mapRows(kind, frozenRows(rows))) !== JSON.stringify(first)) {
+        violations.push(`${where}: a second call answers differently`);
+      }
+    }
+  }
+  return violations;
+}
+
+describe("the catalog row mapper contract", () => {
+  test("holds for a mapper that renames the engine's own columns", () => {
+    const renaming: NonNullable<AgentCatalogRead["mapRows"]> = (_kind, rows) => ({
+      fields: ["table_name", "column_name"],
+      rows: rows.map((row) => ({ table_name: row.TABLE_NAME ?? null, column_name: row.COLUMN_NAME ?? null })),
+    });
+    expect(catalogMapperViolations(renaming)).toEqual([]);
+  });
+
+  test("names each way a mapper can break it", () => {
+    let calls = 0;
+    const broken: NonNullable<AgentCatalogRead["mapRows"]> = (kind, rows) => {
+      calls += 1;
+      if (kind === "statistics") throw new Error("no statistics");
+      if (kind === "indexes" && rows.length > 0) (rows[0] as Record<string, unknown>).written = true;
+      return {
+        fields: kind === "relations" ? ["", "name", "name"] : ["name"],
+        rows: [...rows.map(() => ({ name: "t", extra: calls })), { name: "invented" }],
+      };
+    };
+    const violations = catalogMapperViolations(broken);
+    expect(violations).toContain("statistics []: throws no statistics");
+    expect(violations.some((violation) => violation.startsWith("indexes [{}]: throws"))).toBe(true);
+    expect(violations).toContain("relations []: an unnamed column");
+    expect(violations).toContain("relations []: a repeated column");
+    expect(violations).toContain("columns []: more rows than it was given");
+    expect(violations).toContain("columns [{}]: a cell under an undeclared column extra");
+    expect(violations).toContain("columns [{}]: a second call answers differently");
+  });
+});
+
+test("the mapped catalog reads name only engines that speak a language", () => {
+  for (const type of MAPPED_CATALOG_READS) expect(ENGINES).toContain(type);
+});
 
 /** Inputs no adapter may throw on: a statement, the empty one, and every non-string a ledger or a model can send. */
 const ADAPTER_CORPUS: readonly unknown[] = ["", "SELECT 1", {}, { a: 1 }, null, 42, []];
@@ -129,6 +217,13 @@ describe.each(ENGINES)("%s", (type) => {
       }
     }
     expect([...unserved].sort()).toEqual([...(UNSERVED_OFFERS[type] ?? [])].sort());
+  });
+
+  test("declares a catalog row mapper exactly where it is listed, and that mapper holds the contract", () => {
+    const catalogRead = pack.server.dialect?.catalogRead;
+    const mapRows = catalogRead === undefined || catalogRead === "unsupported" ? undefined : catalogRead.mapRows;
+    expect(mapRows !== undefined).toBe(MAPPED_CATALOG_READS.includes(type));
+    if (mapRows !== undefined) expect(catalogMapperViolations(mapRows)).toEqual([]);
   });
 
   test("its adapter is total over the corpus", () => {

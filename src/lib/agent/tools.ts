@@ -148,6 +148,7 @@ import { composeCatalogRead, composeEstimatingExplain, composeStatisticsAvailabi
 import {
   type AgentCatalogKind,
   type AgentCatalogRead,
+  type AgentCatalogRows,
   AgentComposedSqlError,
   type AgentEstimatingExplain,
 } from "./composed-sql-primitives";
@@ -588,6 +589,11 @@ export interface AgentOperationRequest {
    * and still refused by the same policy — and the model is still handed no tools.
    */
   readonly grounding?: boolean;
+  /**
+   * The engine's answer turned into the rows the call reads as, before the run keeps it: only the catalog read sets
+   * it, from its engine's row mapper (`AgentCatalogRead.mapRows`). Absent keeps the answer as the engine gave it.
+   */
+  readonly mapRows?: (rows: readonly Record<string, unknown>[]) => AgentCatalogRows;
 }
 
 // ============================================================================
@@ -1431,9 +1437,31 @@ export async function executeAgentOperation(
     ...(request.label === undefined ? {} : { label: request.label }),
     ...(request.target === undefined ? {} : { target: request.target }),
     ...(request.grounding === undefined ? {} : { grounding: request.grounding }),
-    invoke: (validatedInput, budget, phase) =>
-      runStatement(context, validatedInput, budget, phase, argument, request.mode),
+    invoke: (validatedInput, budget, phase) => {
+      const answered = runStatement(context, validatedInput, budget, phase, argument, request.mode);
+      const { mapRows } = request;
+      return mapRows === undefined ? answered : answered.then((result) => withMappedRows(result, mapRows));
+    },
   });
+}
+
+/** `result` with the rows `mapRows` turns its rows into, and the columns and the count those rows carry. */
+function withMappedRows(
+  result: QueryResult,
+  mapRows: (rows: readonly Record<string, unknown>[]) => AgentCatalogRows,
+): QueryResult {
+  const mapped = mapRows(result.rows);
+  return { ...result, rows: [...mapped.rows], fields: [...mapped.fields], rowCount: mapped.rows.length };
+}
+
+/** The row mapper of `dialect`'s catalog read for one kind, or undefined where its statement answers the rows itself. */
+function catalogRowMapper(
+  dialect: DatabaseConnection["type"],
+  kind: AgentCatalogKind,
+): ((rows: readonly Record<string, unknown>[]) => AgentCatalogRows) | undefined {
+  // Supplied: every caller has already composed this dialect's catalog statement, which refuses an unsupported one.
+  const { mapRows } = engineServerDialect(dialect).catalogRead as AgentCatalogRead;
+  return mapRows === undefined ? undefined : (rows) => mapRows(kind, rows);
 }
 
 /**
@@ -2929,10 +2957,14 @@ export async function readStatisticsForGrounding(
       if (read.rows.length > budget.maxResultRows || JSON.stringify(read.rows).length > budget.maxResultBytes) {
         throw new AgentCuratedReadError("READING_OVER_BUDGET");
       }
+      // The estimates are a catalog kind, so they are kept as that kind's mapped rows, mapped once the engine's own
+      // answer is inside the budget, as on the read-only path; the probe is no catalog kind.
+      const mapRows = statement === "estimates" ? catalogRowMapper(dialect, "statistics") : undefined;
+      const kept = mapRows === undefined ? read : withMappedRows(read, mapRows);
       return {
-        rows: read.rows,
-        fields: read.fields,
-        rowCount: read.rows.length,
+        rows: kept.rows,
+        fields: kept.fields,
+        rowCount: kept.rows.length,
         executionTime: (context.clock?.() ?? Date.now()) - startedAtMs,
       };
     },
@@ -2965,11 +2997,13 @@ async function readCatalog(
   }
   // Supplied: `composeCatalogRead` refuses an engine whose catalog read is unsupported.
   const { declaredSchema, retry } = engineServerDialect(context.connection.type).catalogRead as AgentCatalogRead;
+  const mapRows = catalogRowMapper(context.connection.type, selector.kind ?? "columns");
   const request: AgentOperationRequest = {
     operationId: "sql.query.read",
     sql,
     grounding,
     label: CATALOG_LABELS[selector.kind ?? "columns"],
+    ...(mapRows === undefined ? {} : { mapRows }),
     // Declared, so a scope carrying a schema allowlist bounds which schema may be
     // inspected. A raw read cannot declare its schema, which is why an allowlist
     // denies one, and it is not worked around here.

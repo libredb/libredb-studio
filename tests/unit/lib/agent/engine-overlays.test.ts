@@ -257,14 +257,15 @@ describe("engineServerDialect", () => {
     }
   });
 
-  test("only SQLite and libSQL fold the declared schema, and only PostgreSQL retries a failed catalog read", () => {
-    const supplied = (member: "declaredSchema" | "retry") =>
+  test("only SQLite and libSQL fold the declared schema, only PostgreSQL retries a failed catalog read, and no engine maps its catalog rows", () => {
+    const supplied = (member: "declaredSchema" | "retry" | "mapRows") =>
       SQL_ENGINES.filter((type) => {
         const catalogRead = engineServerDialect(type).catalogRead;
         return catalogRead !== "unsupported" && catalogRead[member] !== undefined;
       });
     expect(supplied("declaredSchema")).toEqual(["sqlite", "libsql"]);
     expect(supplied("retry")).toEqual(["postgres"]);
+    expect(supplied("mapRows")).toEqual([]);
     const sqlite = engineServerDialect("sqlite").catalogRead;
     const postgres = engineServerDialect("postgres").catalogRead;
     if (sqlite === "unsupported" || postgres === "unsupported") throw new Error("catalog read missing");
