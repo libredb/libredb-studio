@@ -222,9 +222,10 @@ spec:
                   key: {{ .Values.secrets.existingSecretKeys.adminEmail }}
                   optional: true
             {{- end }}
-            {{- /* Never under governance or the access review, whose boot checks refuse ADMIN_PASSWORD and
-                   USER_PASSWORD: the guards refuse the inline values, and an existingSecret is not read for them. */}}
-            {{- $passwordsOff := or (include "libredb-studio.governanceEnabled" .) (include "libredb-studio.accessReviewEnabled" .) }}
+            {{- /* Never under governance, the access review or openshift sign-in, whose boot checks refuse
+                   ADMIN_PASSWORD and USER_PASSWORD: the guards refuse the inline values, and an existingSecret is
+                   not read for them. */}}
+            {{- $passwordsOff := or (include "libredb-studio.governanceEnabled" .) (include "libredb-studio.accessReviewEnabled" .) (include "libredb-studio.openshiftSignIn" .) }}
             {{- if and (or .Values.secrets.adminPassword .Values.secrets.existingSecret) (not $passwordsOff) }}
             - name: ADMIN_PASSWORD
               valueFrom:
@@ -449,6 +450,41 @@ spec:
             {{- if include "libredb-studio.trustedCABundleEnabled" . }}
             - name: NODE_EXTRA_CA_CERTS
               value: /etc/libredb-studio/trusted-ca/ca-bundle.crt
+            {{- end }}
+            {{- /* openshift sign-in (src/lib/openshift-auth/config.ts): the ServiceAccount client, the Route's
+                   public URL, the client token and CA mounted below, and the self review's admin target
+                   (src/lib/kubernetes-access/config.ts): Studio's Deployment for a Helm install, the
+                   LibreDBStudio resource, which the operator names after the release, under the operator. No
+                   OPENSHIFT_API_URL (the app keeps https://kubernetes.default.svc), no AUTH_SESSION_TTL_SECONDS
+                   unless config.sessionTtlSeconds is set, and no review cache unless
+                   openshift.signIn.reviewCacheSeconds is: the app's defaults for this mode stand. Written before
+                   extraEnv, so an extraEnv entry of the same name still wins. */}}
+            {{- if include "libredb-studio.openshiftSignIn" . }}
+            {{- $signIn := dig "signIn" dict (.Values.openshift | default dict) }}
+            - name: OPENSHIFT_OAUTH_CLIENT_ID
+              value: {{ include "libredb-studio.openshiftClientId" . | quote }}
+            - name: OPENSHIFT_PUBLIC_URL
+              value: {{ printf "https://%s%s" (get (.Values.openshiftRoute | default dict) "host") (.Values.config.basePath | default "") | quote }}
+            - name: OPENSHIFT_OAUTH_TOKEN_FILE
+              value: "{{ include "libredb-studio.openshiftSignInDir" . }}/oauth-client-token"
+            - name: OPENSHIFT_API_CA_FILE
+              value: "{{ include "libredb-studio.openshiftSignInDir" . }}/ca.crt"
+            {{- if include "libredb-studio.operatorManaged" . }}
+            - name: KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO
+              value: {{ printf "%s/%s" .Release.Namespace .Release.Name | quote }}
+            {{- else }}
+            - name: KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT
+              value: {{ printf "%s/%s" .Release.Namespace (include "libredb-studio.fullname" .) | quote }}
+            {{- end }}
+            {{- $cache := get $signIn "reviewCacheSeconds" }}
+            {{- if and (not (kindIs "invalid" $cache)) (ne (toString $cache) "") }}
+            - name: KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS
+              value: {{ $cache | int64 | toString | quote }}
+            {{- end }}
+            {{- with get $signIn "review" }}
+            - name: KUBERNETES_ACCESS_REVIEW_SIGN_IN
+              value: {{ . | quote }}
+            {{- end }}
             {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}

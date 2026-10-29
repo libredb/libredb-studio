@@ -393,3 +393,113 @@ describe("the OAuth client token and the cluster CA", () => {
     expect((pod.containers[0].volumeMounts ?? []).map((mount) => mount.mountPath)).not.toContain(SIGN_IN_DIR);
   });
 });
+
+describe("the openshift sign-in environment", () => {
+  test("writes the four OPENSHIFT_* variables the V1 hand wiring set, and the Helm admin target", () => {
+    const env = envOf(render(OPENSHIFT));
+    expect(env.OPENSHIFT_OAUTH_CLIENT_ID).toBe(`system:serviceaccount:${NAMESPACE}:${RELEASE}`);
+    expect(env.OPENSHIFT_PUBLIC_URL).toBe(`https://${HOST}`);
+    expect(env.OPENSHIFT_OAUTH_TOKEN_FILE).toBe(`${SIGN_IN_DIR}/oauth-client-token`);
+    expect(env.OPENSHIFT_API_CA_FILE).toBe(`${SIGN_IN_DIR}/ca.crt`);
+    expect(env.KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT).toBe(`${NAMESPACE}/${RELEASE}`);
+    expect(env).not.toHaveProperty("KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO");
+    expect(env).not.toHaveProperty("OPENSHIFT_API_URL");
+  });
+
+  test("the client id and the admin target follow the fullname and a named ServiceAccount", () => {
+    const docs = render(set(...OPENSHIFT_PAIRS, "nameOverride=studio", "serviceAccount.name=studio-oauth"));
+    const env = envOf(docs, "v1os-studio");
+    expect(env.OPENSHIFT_OAUTH_CLIENT_ID).toBe(`system:serviceaccount:${NAMESPACE}:studio-oauth`);
+    expect(env.KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT).toBe(`${NAMESPACE}/v1os-studio`);
+    one(docs, "ServiceAccount", "studio-oauth");
+  });
+
+  test("the public URL carries config.basePath", () => {
+    expect(envOf(render([...OPENSHIFT, ...set("config.basePath=/studio")])).OPENSHIFT_PUBLIC_URL).toBe(
+      `https://${HOST}/studio`,
+    );
+  });
+
+  test("operator-managed, the admin target is the LibreDBStudio resource, named by the release", () => {
+    const docs = render(
+      set(...OPENSHIFT_PAIRS, "nameOverride=studio", "operator.managed=true", `operator.clusterStudioNamespace=${NAMESPACE}`),
+    );
+    const env = envOf(docs, "v1os-studio");
+    expect(env.KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO).toBe(`${NAMESPACE}/${RELEASE}`);
+    expect(env).not.toHaveProperty("KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT");
+  });
+
+  test("operator-managed in a namespace other than the cluster Studio's, the admin target is still its own resource", () => {
+    const env = envOf(render([...OPENSHIFT, ...set("operator.managed=true")]));
+    expect(env.KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO).toBe(`${NAMESPACE}/${RELEASE}`);
+  });
+
+  test("no password, user account or ServiceAccount review variable, even with secrets.existingSecret", () => {
+    const names = envList(render([...OPENSHIFT, ...set("secrets.existingSecret=studio-secrets")])).map((e) => e.name);
+    for (const name of [
+      "ADMIN_PASSWORD",
+      "USER_PASSWORD",
+      "USER_EMAIL",
+      "KUBERNETES_ACCESS_REVIEW",
+      "KUBERNETES_ACCESS_REVIEW_API_URL",
+      "KUBERNETES_ACCESS_REVIEW_TOKEN_PATH",
+      "KUBERNETES_ACCESS_REVIEW_CA_PATH",
+      "KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS",
+      "KUBERNETES_ACCESS_REVIEW_SIGN_IN",
+      "AUTH_SESSION_TTL_SECONDS",
+    ]) {
+      expect(names).not.toContain(name);
+    }
+    expect(configData(render(OPENSHIFT))).not.toHaveProperty("AUTH_SESSION_TTL_SECONDS");
+  });
+
+  test("openshift.signIn.reviewCacheSeconds and review write their variables when set", () => {
+    const env = envOf(
+      render([
+        ...OPENSHIFT,
+        ...set("openshift.signIn.reviewCacheSeconds=0"),
+        "--set-string",
+        "openshift.signIn.review=get projects.project.openshift.io",
+      ]),
+    );
+    expect(env.KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS).toBe("0");
+    expect(env.KUBERNETES_ACCESS_REVIEW_SIGN_IN).toBe("get projects.project.openshift.io");
+  });
+
+  test("config.sessionTtlSeconds still writes AUTH_SESSION_TTL_SECONDS", () => {
+    expect(configData(render([...OPENSHIFT, ...set("config.sessionTtlSeconds=3600")])).AUTH_SESSION_TTL_SECONDS).toBe(
+      "3600",
+    );
+  });
+
+  test("every chart variable comes before extraEnv, so an extraEnv entry of the same name wins", () => {
+    const list = envList(
+      render([
+        ...OPENSHIFT,
+        ...set("extraEnv[0].name=OPENSHIFT_PUBLIC_URL", "extraEnv[0].value=https://studio.example.com"),
+      ]),
+    );
+    const at = list.map((entry, index) => [entry.name, index] as const).filter(([name]) => name === "OPENSHIFT_PUBLIC_URL");
+    expect(at).toHaveLength(2);
+    expect(list[at[1][1]].value).toBe("https://studio.example.com");
+    expect(at[1][1]).toBe(list.length - 1);
+    for (const name of [
+      "OPENSHIFT_OAUTH_CLIENT_ID",
+      "OPENSHIFT_OAUTH_TOKEN_FILE",
+      "OPENSHIFT_API_CA_FILE",
+      "KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT",
+    ]) {
+      expect(list.findIndex((entry) => entry.name === name)).toBeLessThan(at[1][1]);
+    }
+  });
+
+  test.each([
+    ["local", set("authProvider=local")],
+    ["oidc", set("authProvider=oidc")],
+  ])("%s mode writes no OPENSHIFT_* variable and no admin target", (_, mode) => {
+    const names = envList(render([...mode, ...set(`fullnameOverride=${RELEASE}`)])).map((entry) => entry.name);
+    expect(names.filter((name) => name.startsWith("OPENSHIFT_") || name.startsWith("KUBERNETES_ACCESS_REVIEW"))).toEqual(
+      [],
+    );
+  });
+});
