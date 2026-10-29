@@ -3389,11 +3389,31 @@ describe("LibSQLProvider agent read-only profile", () => {
   test("stops reading an answer past the wire cap and refuses it as over the byte budget", async () => {
     readOnlyToken();
     const provider = await opened();
-    server = () => result([["blob", null]], [[text("x".repeat(20_000))]]);
+    // An answer that never ends: only the cap can stop the read, so a refusal at all proves the cap made it.
+    let cancelled = false;
+    const chunk = new TextEncoder().encode("x".repeat(64 * 1024));
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              controller.enqueue(chunk);
+            },
+            cancel() {
+              cancelled = true;
+            },
+          }),
+          { status: 200 },
+        ),
+      )) as unknown as typeof fetch;
 
-    await expect(provider.queryReadOnly("SELECT big", { ...BUDGET, maxResultBytes: 1 })).rejects.toThrow(
-      /^Read-only execution exceeded the byte budget: \d+ bytes > 1 allowed$/,
-    );
+    const error = await refusal(() => provider.queryReadOnly("SELECT big", { ...BUDGET, maxResultBytes: 1 }));
+
+    expect(error).toBeInstanceOf(QueryError);
+    const counted = /^Read-only execution exceeded the byte budget: (\d+) bytes > 1 allowed$/.exec(error.message);
+    // Six bytes for the budget and the 1 MiB envelope, stopped at the 64 KiB chunk that crossed them.
+    expect(Number(counted?.[1])).toBe(17 * 64 * 1024);
+    expect(cancelled).toBe(true);
     await provider.disconnect();
   });
 

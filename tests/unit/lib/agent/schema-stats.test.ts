@@ -404,6 +404,46 @@ describe("readSchemaStatistics — SQLite", () => {
   });
 });
 
+/**
+ * libSQL embeds SQLite, so its reading is SQLite's: the probe first, the row estimate from the first field of `stat`,
+ * no column statistics. The server refuses `ANALYZE` for every token, so a database without `sqlite_stat1` is the
+ * common case and reads as never collected.
+ */
+describe("readSchemaStatistics — libSQL", () => {
+  test("probes for sqlite_stat1 first, and reads it only when it is there", async () => {
+    const present = harness("libsql", answerSqlite(true));
+    const absent = harness("libsql", answerSqlite(false));
+
+    await readOf(present);
+
+    expect(present.statements()).toHaveLength(2);
+    expect(present.statements()[0]).toContain("name = 'sqlite_stat1'");
+    expect(await readOf(absent)).toEqual({ kind: "unavailable", reasonCode: "STATISTICS_NEVER_COLLECTED" });
+    expect(absent.statements()).toHaveLength(1);
+  });
+
+  test("takes the first estimate a table carries, keeps a table with none, and holds no column statistics", async () => {
+    const h = harness("libsql", async (sql) =>
+      sql.includes("name = 'sqlite_stat1'")
+        ? result([{ name: "sqlite_stat1" }])
+        : result([
+            { table_name: "orders", index_name: "orders_customer_idx", stat: "1000 4" },
+            { table_name: "orders", index_name: "orders_total_idx", stat: null },
+            { table_name: "notes", index_name: null, stat: null },
+            { table_name: "lines", index_name: "lines_idx", stat: null },
+            { table_name: "lines", index_name: "lines_order_idx", stat: "40 2" },
+          ]),
+    );
+
+    const statistics = await readOf(h);
+
+    if (statistics.kind !== "read") throw new Error("expected a reading");
+    expect(statistics.byTable.get("orders")).toEqual({ estimatedRows: 1000, columns: [] });
+    expect(statistics.byTable.get("notes")).toEqual({ estimatedRows: null, columns: [] });
+    expect(statistics.byTable.get("lines")).toEqual({ estimatedRows: 40, columns: [] });
+  });
+});
+
 describe("readSchemaStatistics — SQL Server", () => {
   /**
    * `ESTIMATE_BUILDERS` had arms for PostgreSQL and SQLite only, so every SQL Server run
