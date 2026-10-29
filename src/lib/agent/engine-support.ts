@@ -12,7 +12,7 @@ import type { DatabaseType } from "@/lib/types";
  * `providers/sql/duckdb/`, `providers/sql/mssql.ts`, `providers/sql/mysql.ts`,
  * `providers/platform/kubernetes/`, `providers/document/mongodb/index.ts`,
  * `providers/sql/clickhouse/index.ts`, `providers/sql/libsql/index.ts`,
- * `providers/timeseries/influxdb/sql-provider.ts`), and that probe
+ * `providers/timeseries/influxdb/sql-provider.ts`, `providers/sql/search/index.ts`), and that probe
  * stays the real rule: replacing it with this list would let the list go stale against the
  * drivers.
  *
@@ -35,7 +35,9 @@ import type { DatabaseType } from "@/lib/types";
  * writes that change nothing and that the server must refuse, and by the token's own read-only
  * claim. InfluxDB 3's boundary is the engine's: the 3.12 Core planner refuses every write and DDL
  * statement on the one route that carries statement text, whatever the token, and the open
- * checks the server is that line. Each provider's own `queryReadOnly` argues its own case.
+ * checks the server is that line. Elasticsearch's boundary is the engine's too: the grammar of
+ * its SQL endpoint, the one route that carries statement text, holds no write or DDL statement,
+ * and every one sent raw there is refused. Each provider's own `queryReadOnly` argues its own case.
  * `tests/unit/lib/agent/engine-support.test.ts` is what keeps the two equal - it walks EVERY
  * id in the `DatabaseType` union, reads `queryReadOnly` off the real provider class the
  * factory would construct, and fails if this array and the drivers diverge in either direction.
@@ -61,6 +63,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "clickhouse",
   "libsql",
   "influxdb3",
+  "elasticsearch",
 ];
 
 /**

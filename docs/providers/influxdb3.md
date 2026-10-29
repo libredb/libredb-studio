@@ -87,7 +87,7 @@ Plan mode drafts statements in the language section 5.1 names.
 
 ### 3.5 The agent read-only profile rests on the planner
 
-Agent mode executes statements on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL and InfluxDB 3 (SQL); here the provider implements `queryReadOnly` in [`sql-provider.ts`](../../src/lib/db/providers/timeseries/influxdb/sql-provider.ts), with its own rules in [`sql-agent-read.ts`](../../src/lib/db/providers/timeseries/influxdb/sql-agent-read.ts).
+Agent mode executes statements on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL) and Elasticsearch; here the provider implements `queryReadOnly` in [`sql-provider.ts`](../../src/lib/db/providers/timeseries/influxdb/sql-provider.ts), with its own rules in [`sql-agent-read.ts`](../../src/lib/db/providers/timeseries/influxdb/sql-agent-read.ts).
 The boundary is engine-enforced, by the planner.
 `POST /api/v3/query_sql` carries free statement text, so the closed route table alone proves nothing about it, and Core mints only admin tokens, so no credential can carry the boundary either.
 What holds it is InfluxDB 3.12 Core's planner, which refuses every write, DDL, `COPY`, `SET`, `PREPARE` and transaction statement on that route, whatever the token.

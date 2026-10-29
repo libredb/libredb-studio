@@ -615,6 +615,7 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   druid: false,
   trino: false,
   cassandra: false,
+  // Agent mode executes statements on Elasticsearch, and MCP read stays closed on it until a change of its own opens it.
   elasticsearch: false,
   opensearch: false,
   mongodb: true,

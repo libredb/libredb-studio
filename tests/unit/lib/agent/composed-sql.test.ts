@@ -9,12 +9,18 @@ import { AgentComposedSqlError, MAX_CATALOG_SELECTOR_LENGTH } from "@/lib/agent/
 import { engineServerDialect } from "@/lib/agent/languages/engines/server";
 import { withoutExtensionOwnershipTest } from "@/lib/agent/languages/sql/engines/postgres";
 import { agentReadSqlInput, inspectAgentStatement } from "@/lib/db/operations/statement-guard";
-import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
+import {
+  AGENT_REQUIREMENT_ENGINES,
+  AGENT_STATEMENT_LANGUAGE,
+  AGENT_WORKFLOW_VARIANTS,
+  workflowAvailability,
+} from "@/lib/agent/agent-manifest";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { quoteLiteral } from "@/lib/sql/values";
+import type { AgentRunWorkflowType } from "@/lib/agent/types";
 
 /**
  * The SQL the SERVER composes (#329 T6, planning decision P1).
@@ -1217,7 +1223,21 @@ describe("the composers are reachable, which is the defect that put this file he
    * is executed through its own tools and is not walked here.
    */
   test("every SQL execution engine composes every kind rather than refusing UNSUPPORTED_DIALECT", () => {
+    const composers = AGENT_REQUIREMENT_ENGINES["sql-composers"];
     for (const dialect of SHIPPED_DATABASE_TYPES.filter((type) => AGENT_STATEMENT_LANGUAGE[type] === "sql")) {
+      if (!composers.includes(dialect)) {
+        // An engine that declares no catalog read is held out of every workflow that requires the composers, so no run
+        // there is offered a tool that could only refuse; its declaration is what refuses here.
+        expect(() => composeCatalogRead(dialect, { kind: "columns" }), dialect).toThrow(AgentComposedSqlError);
+        for (const [workflow, variant] of Object.entries(AGENT_WORKFLOW_VARIANTS.sql)) {
+          if (!variant.requires.includes("sql-composers")) continue;
+          expect(workflowAvailability("agent", workflow as AgentRunWorkflowType, dialect)).toMatchObject({
+            open: false,
+            cause: "requirement-unmet",
+          });
+        }
+        continue;
+      }
       for (const kind of ["columns", "relations", "indexes", "statistics"] as const) {
         expect(() => composeCatalogRead(dialect, { kind }), `${dialect}/${kind}`).not.toThrow(AgentComposedSqlError);
       }

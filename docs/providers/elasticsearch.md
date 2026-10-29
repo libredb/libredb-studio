@@ -833,6 +833,78 @@ There is no alternate quoting: `SELECT q'{it's}'` is a `parsing_exception`.
 `readsSqlText` is `true`, deliberately: both search engines answer `POST`ed statements with columns and rows, and both providers extend `SQLBaseProvider` and call `prepareQuery`, so reading the text as not SQL would switch the SQL checks off for text that is SQL.
 Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
 
+### 5.9 The agent read-only profile rests on the grammar
+
+Agent mode executes statements on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL) and Elasticsearch; here `ElasticsearchProvider` implements `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/sql/search/index.ts).
+The boundary is engine-enforced, by the grammar of the SQL endpoint.
+`POST /_sql` carries free statement text, so the provider's fixed set of endpoints proves nothing about it on its own; what holds it is the grammar, which has no write and no DDL statement, so every one sent there is refused with `parsing_exception` before anything runs ([§5.6](#56-this-grammar-does-not-write) and its checked-in captures).
+Studio's statement admission in front of it is defence in depth: the boundary does not rest on it.
+
+The method is declared on `ElasticsearchProvider` alone.
+The module also serves OpenSearch, whose grammar holds a `DELETE` that the `plugins.sql.delete.enabled` setting turns on, so its endpoint is query-only only on a cluster that keeps the setting off, which nothing here proves.
+The shared mechanics live on `SearchProvider` as `readOnlyStatement`, and they read `SearchProduct.queryOnlySqlEndpoint`, true for this product and false for the fork, so the fork keeps no `queryReadOnly`, a null statement language, and every one of its tests unchanged.
+
+#### The open and the profile
+
+The factory passes the execution context to the constructor.
+`queryReadOnly` answers only on a handle opened with both `readOnly` and `sendsStatements`, the agent and hand-over profiles, and refuses any other, an editor handle included, before it sends anything.
+No open-time proof runs: the boundary is a property of the grammar every 9.1.4 node serves, not of the connection's principal, so the operations profile and plan mode open exactly as an editor connection does, and a plan run grounds under the operations profile and never asks for the read-only one.
+
+#### The agent credential
+
+The agent credential takes the user-and-password form, sent as `Basic` in place of the connection's own; this type has no connection string, so an agent credential is never beside one.
+The credential is not the boundary, but a least-privilege user is still the right one for the agent: with security on, a role holding only `read` and `view_index_metadata` on the indices the agent may read is enough for every statement this path sends, and a document write by that user through the document API is refused 403.
+
+```bash
+curl -u elastic -XPUT -H 'content-type: application/json' 'https://<node>:9200/_security/role/libredb_agent_read' \
+  -d '{"indices":[{"names":["probe_*"],"privileges":["read","view_index_metadata"]}]}'
+curl -u elastic -XPUT -H 'content-type: application/json' 'https://<node>:9200/_security/user/libredb_agent' \
+  -d '{"password":"<agent password>","roles":["libredb_agent_read"]}'
+```
+
+An index outside the role answers as if it did not exist ("Unknown index"), measured on 9.1.4.
+
+#### The statement path
+
+Each call is one statement on the SQL endpoint, never through `query()`, in order: the profile is checked, the budget is checked, and the estimate-plan session mode is refused, because no estimating plan is composed for this engine.
+The request asks for a page of one row past the row budget (`fetch_size`), clamped to 10,000, since a hit query past `index.max_result_window`, 10,000 by default, fails ("Result window is too large", measured on 9.1.4); a budget past that is reached by following the cursor.
+The pages are followed while the rows read and their bytes, counted as the JSON array of the rows, stay inside both budgets; an answer past either is refused in the shared row or byte sentence of [`read-only-budget.ts`](../../src/lib/db/providers/sql/read-only-budget.ts), never cut.
+The cursor matters here: asking for a page size opens a search context on the node that only reading to the end, `POST /_sql/close` or the keep-alive releases (measured: `open_contexts` 1 while a cursor is held, 0 after the close), so a refusal closes the cursor it read before it throws.
+A page whose body is past three times the byte budget plus 64 KiB is abandoned unread and refused as over the byte budget; its cursor was never read, so that one context waits for the engine's keep-alive.
+The deadline is the budget's and the client's alone, refused in the shared time-budget sentence: a cancel ends the wait, not the work, as [§3.8](#38-the-deadline-is-the-clients-and-only-the-clients) records for the editor.
+
+#### Agent language pack
+
+Statement-language family: `sql`.
+Overlay: [`src/lib/agent/languages/sql/engines/elasticsearch.ts`](../../src/lib/agent/languages/sql/engines/elasticsearch.ts), with its client row in [`src/lib/agent/languages/sql/engines/client.ts`](../../src/lib/agent/languages/sql/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`, and the dialect through `engineServerDialect`.
+
+| Member | Kind | Value |
+| --- | --- | --- |
+| `catalogRead` | Dialect-bound | `"unsupported"` |
+| `planEstimate` | Dialect-bound | `"unsupported"` |
+| `profileComposition` | Dialect-bound | `"unsupported"` |
+| `statistics` | Dialect-bound | `"unsupported"` |
+| `catalogCapture` | Dialect-bound | `"unsupported"` |
+
+This overlay overrides no Shared member, so every Shared member is the `sql` statement-language family's own.
+Every member is unsupported, each for a measured reason: the engine reads its catalog through `SHOW`, `DESCRIBE` and `SYS` commands, whose columns no statement can rename into the rows a catalog read composes, and it keeps no foreign key, no secondary index object and no row estimate; its `EXPLAIN` answers the engine's own plan text, which no explain strategy reads ([§3.10](#310-no-explain-even-though-elasticsearch-answers-one)).
+So the `sql-composers` requirement holds the investigation, query-optimization, database-assessment and data-analysis workflows out here, and an agent-mode run opens only the operations workflow; plan mode drafts here as on every engine ([B144](../BACKLOG.md)).
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+MCP's statement read stays closed on Elasticsearch (`MCP_STATEMENT_READ.elasticsearch` is false) until a change of its own opens it.
+
+#### Boundary record
+
+`bun tests/live/elasticsearch-agent-boundary.ts`, run on 2026-10-29 against single 9.1.4 nodes seeded per [§11.4](#114-optional-reproducing-the-live-pass), passes 48 checks with security off and 51 with security on, through the production path (`createDatabaseProvider` with the profile's execution context, `connect`, `queryReadOnly`) and with no admission of Studio's in front:
+
+- the agent and operations profiles both open the node, and an editor handle's `queryReadOnly` refuses with nothing sent;
+- 15 write and DDL texts (INSERT, UPDATE, DELETE, CREATE TABLE and INDEX, DROP, ALTER, TRUNCATE, MERGE, `SELECT ... INTO`, a write behind `EXPLAIN`, `DEBUG` and `WITH`, a second statement) are each sent by `queryReadOnly` and refused by the grammar in its own words, and sent raw each answer 400 `parsing_exception`;
+- the index listing with its document counts, every mapping, the aliases, the templates and the pipelines read back the same afterwards;
+- the positive control: a document written through the document API, a route the provider does not send to, into a scratch index the agent then reads (security off) and the script deletes;
+- a plain read and an aggregation past the row budget (`101 rows > 100 allowed`), a read past the byte budget and a statement past a 1 ms deadline are each refused, never truncated, and after each refusal the node holds no open search context;
+- the estimate-plan mode is refused, and a count, an answer of exactly the row budget (1,500 rows) and an aggregation within the budget each answer whole;
+- with security on, the script creates the `libredb_agent_read` role and an agent user holding it alone: that user's document write is refused 403, an index outside its role answers "Unknown index", and every check above holds signed in as it.
+
 ## 6. Schema introspection
 
 Everything this provider knows about an index's contents is read through the OBJECT SURFACE, and this
@@ -1680,6 +1752,11 @@ for i in $(seq 1 1500); do printf '{"index":{}}\n{"k":"k%s"}\n' "$i"; done \
 `probe_buckets` is the one that matters most: any smaller cardinality keeps the whole `GROUP BY` on
 one page and makes the paging defect invisible.
 
+Two scripts under `tests/live/` run against the seeded node, and neither is part of `bun run test`.
+`bun tests/live/elasticsearch-write-refusals.ts` rewrites the write-refusal captures of [§5.6](#56-this-grammar-does-not-write), and stops without writing any when a statement is not refused or the cluster reads back changed.
+`bun tests/live/elasticsearch-agent-boundary.ts` is the live boundary check of [§5.9](#59-the-agent-read-only-profile-rests-on-the-grammar).
+Both read `LIBREDB_ES_ORIGIN` (default `http://127.0.0.1:9200`); the boundary check runs its security-on pass when `LIBREDB_ES_ADMIN_USER`, `LIBREDB_ES_ADMIN_PASSWORD`, `LIBREDB_ES_AGENT_USER` and `LIBREDB_ES_AGENT_PASSWORD` are set, against a node started with `xpack.security.enabled=true`.
+
 ---
 
 ## 12. Usage examples
@@ -1765,6 +1842,8 @@ because the provider exposes no `cancelQuery` ([§3.8](#38-the-deadline-is-the-c
   The column stays listed in the schema tree so the view reflects the index mapping faithfully.
   Measured: Elasticsearch SQL refuses `flattened` with "Cannot use field [blob] with unsupported type [flattened]", so introspection marks it as unprojectable.
   Generate Query omits it from the SELECT list so the starter statement runs (#1459).
+- **Agent mode opens only the operations workflow here.** The engine's overlay composes no catalog read
+  and no estimating plan, so the four statement workflows are held out ([§5.9](#59-the-agent-read-only-profile-rests-on-the-grammar), B144).
 - **The whole result body is buffered** before it is parsed
   ([§3.1](#31-http-only--no-driver-and-what-that-costs)).
 

@@ -31,6 +31,7 @@ import { MSSQLProvider } from "@/lib/db/providers/sql/mssql";
 import { MySQLProvider } from "@/lib/db/providers/sql/mysql";
 import { LibSQLProvider } from "@/lib/db/providers/sql/libsql";
 import { InfluxDB3Provider } from "@/lib/db/providers/timeseries/influxdb/sql-provider";
+import { ElasticsearchProvider } from "@/lib/db/providers/sql/search";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes";
 import { CLUSTER_USAGE_FIELDS, WORKLOAD_PROFILE_FIELDS } from "@/lib/db/providers/platform/kubernetes/agent-readings";
 import { kubectlStatementLanguage } from "@/lib/db/providers/platform/kubernetes/labels";
@@ -1497,6 +1498,31 @@ describe("a plan run's statistics follow the profile it grounds under", () => {
       createdAt: new Date(0),
     };
     const engine = new InfluxDB3Provider(connection);
+
+    const drive = await planDriveRefusingReadOnly(
+      connection,
+      { capabilities: engine.getCapabilities(), labels: engine.getLabels() },
+      [],
+    );
+
+    expect(drive.status).toBe("succeeded");
+    expect(drive.requested).not.toContain("agent-read-only");
+    expect(drive.events.some((event) => event.kind === "context-captured")).toBe(true);
+    expect(drive.statements).toHaveLength(0);
+    expect(drive.opening).toContain("No estimated table statistics are available");
+  });
+
+  test("Elasticsearch: a plan run grounds under the operations profile, sends no statement and never asks for the read-only one", async () => {
+    // Its dialect composes no catalog read and reads no statistics, so grounding is the provider's object surface alone.
+    const connection: DatabaseConnection = {
+      id: "conn_elasticsearch",
+      name: "Elasticsearch",
+      type: "elasticsearch",
+      host: "127.0.0.1",
+      port: 9200,
+      createdAt: new Date(0),
+    };
+    const engine = new ElasticsearchProvider(connection);
 
     const drive = await planDriveRefusingReadOnly(
       connection,

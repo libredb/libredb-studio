@@ -476,6 +476,7 @@ const READ_ONLY_PROVIDER_FILES: Readonly<Record<string, string>> = {
   clickhouse: "src/lib/db/providers/sql/clickhouse/index.ts",
   libsql: "src/lib/db/providers/sql/libsql/index.ts",
   influxdb3: "src/lib/db/providers/timeseries/influxdb/sql-provider.ts",
+  elasticsearch: "src/lib/db/providers/sql/search/index.ts",
 };
 
 /**
@@ -584,9 +585,9 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
   const list = namedList(AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label));
   const prose = (relative: string) => read(relative).replace(/\n[ \t]*(?:\*|\/\/|#)?[ \t]*/g, " ");
 
-  test("the derived list is today's ten engines", () => {
+  test("the derived list is today's eleven engines", () => {
     expect(list).toBe(
-      "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL and InfluxDB 3 (SQL)",
+      "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL) and Elasticsearch",
     );
   });
 

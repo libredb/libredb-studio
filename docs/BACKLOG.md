@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B143 · 73
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B144 · 74
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -8186,6 +8186,17 @@ The statistics reading and the grounding capture are unsupported too: the engine
 Found 2026-10-29 with agent execution on InfluxDB 3.
 
 **Done when:** the InfluxDB 3 overlay gains a profile composition bounded in time and measured on the engine, or its SQL variants stop offering `profile_table` through a requirement, and a DataFusion explain strategy with an `agentReading` verified against the engine's plans exists, with tests for both; cited in `docs/AGENT.md`.
+
+### B144. Elasticsearch runs no statement workflow but operations, because its dialect composes nothing
+
+Agent mode executes statements on Elasticsearch, and its engine overlay (`src/lib/agent/languages/sql/engines/elasticsearch.ts`) declares all five dialect members `"unsupported"`: the catalog read, the estimating plan, the profile composition, the statistics reading and the grounding capture.
+The engine's SQL reads its catalog through `SHOW`, `DESCRIBE` and `SYS` commands, whose columns no statement can rename into the rows a catalog read composes, and its `EXPLAIN` answers the engine's own plan text, which no explain strategy reads (`supportsExplain: false`).
+So the `sql-composers` requirement holds the investigation, query-optimization, database-assessment and data-analysis workflows out on Elasticsearch, and an agent-mode run there opens only the operations workflow; plan mode drafts there and grounds under the operations profile.
+Kept so that the engine joined on the members measured on it, and nothing composed from another engine's rule.
+
+Found 2026-10-29 with agent execution on Elasticsearch.
+
+**Done when:** the Elasticsearch overlay gains a catalog read and an estimating plan measured on the engine (a `SELECT` over a catalog source it answers, or a reading of `SYS COLUMNS` the core accepts), and an explain strategy with an `agentReading` verified against its plans, so the statement workflows open there, with tests for both; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 
