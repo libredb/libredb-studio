@@ -16,6 +16,7 @@ import {
   kubernetesConnectionId,
   kubernetesIdKey,
   mapKubernetesDatabase,
+  MONGODB_COMMUNITY,
   PGO_POSTGRES_CLUSTER,
 } from "@/lib/seed/kubernetes-discovery-contract";
 import {
@@ -787,6 +788,261 @@ describe("the Crunchy PGO row", () => {
     expect(refusal({ name: "analytics-pguser-analyst", problem: "unexpected_key" })).toBe(
       "the credential Secret analytics-pguser-analyst holds a key outside the Crunchy PGO contract, so the exporter discarded it whole",
     );
+  });
+});
+
+describe("the MongoDB Community row", () => {
+  const HOST_0 = "catalog-0.catalog-svc.team-m.svc.cluster.local";
+  const URI = `mongodb://appuser:${PASSWORD}@${HOST_0}:27017,catalog-1.catalog-svc.team-m.svc.cluster.local:27017/admin?replicaSet=catalog&ssl=false`;
+  const MONGO_DATA = { "connectionString.standard": URI, username: "appuser", password: PASSWORD };
+
+  /** A MongoDB row of `catalog` in team-m for user appuser, read through the parser; `spec` and `user` add to it. */
+  function mongo(
+    data: Record<string, string> = MONGO_DATA,
+    user: Record<string, unknown> = {},
+    spec: Record<string, unknown> = {},
+  ) {
+    return parsedEntry({
+      kind: "mongo",
+      resource: {
+        metadata: { namespace: "team-m", name: "catalog" },
+        spec: { users: [{ name: "appuser", db: "admin", roles: [{ db: "catalog" }], ...user }], ...spec },
+      },
+      secret: {
+        name:
+          (user.connectionStringSecretName as string | undefined) ??
+          `catalog-${"db" in user ? ((user.db as string | undefined) ?? "admin") : "admin"}-appuser`,
+        data,
+      },
+    });
+  }
+
+  const withUri = (uri: string) => mongo({ ...MONGO_DATA, "connectionString.standard": uri });
+
+  it("is a per-user MongoDB row of MongoDBCommunity resources with Opaque Secrets", () => {
+    expect(KUBERNETES_CONTRACT[3]).toBe(MONGODB_COMMUNITY);
+    expect(MONGODB_COMMUNITY).toMatchObject({
+      slug: "mongo",
+      label: "MongoDB Community",
+      group: "mongodbcommunity.mongodb.com",
+      version: "v1",
+      kind: "MongoDBCommunity",
+      plural: "mongodbcommunity",
+      type: "mongodb",
+      perUser: true,
+      secretType: "Opaque",
+      secretKeys: ["connectionString.standard", "username", "password"],
+    });
+    const { resource } = mongo();
+    expect(MONGODB_COMMUNITY.user(resource)).toBe("appuser");
+    expect(MONGODB_COMMUNITY.serviceName(resource)).toBe("catalog-svc");
+    expect(MONGODB_COMMUNITY.secretName(resource)).toBe("catalog-admin-appuser");
+    expect(
+      MONGODB_COMMUNITY.serviceName(
+        mongo(MONGO_DATA, {}, { statefulSet: { spec: { serviceName: "catalog-hl" } } }).resource,
+      ),
+    ).toBe("catalog-hl");
+    expect(
+      MONGODB_COMMUNITY.secretName(mongo(MONGO_DATA, { connectionStringSecretName: "catalog-app" }).resource),
+    ).toBe("catalog-app");
+    // The user's database defaults to admin, as the operator's does.
+    expect(MONGODB_COMMUNITY.secretName(mongo(MONGO_DATA, { db: undefined }).resource)).toBe("catalog-admin-appuser");
+  });
+
+  it("the first pod-record host and port of the URI, user db as authSource, first non-admin role db as database", () => {
+    const result = mapKubernetesDatabase(mongo());
+    expect(result).toEqual({
+      ok: true,
+      key: "team-m/catalog/appuser",
+      connection: {
+        id: `k8s-mongo-${sha256Prefix("team-m/catalog/appuser")}`,
+        name: "team-m/catalog/appuser (MongoDB Community)",
+        type: "mongodb",
+        host: `${HOST_0}.`,
+        port: 27017,
+        database: "catalog",
+        user: "appuser",
+        password: PASSWORD,
+        authSource: "admin",
+        group: "team-m",
+        ssl: { mode: "disable" },
+        managed: true,
+        roles: ["admin"],
+      },
+      secret: { namespace: "team-m", name: "catalog-admin-appuser" },
+    });
+    const second = withUri(`mongodb://appuser:x@catalog-2.catalog-svc.team-m.svc:27018,${HOST_0}:27017/admin`);
+    expect(connectionOf(second)).toMatchObject({
+      host: "catalog-2.catalog-svc.team-m.svc.cluster.local.",
+      port: 27018,
+    });
+  });
+
+  it("binds the first role database that is not admin, else the user's own database", () => {
+    const database = (user: Record<string, unknown>) => connectionOf(mongo(MONGO_DATA, user));
+    expect(database({ roles: [{ db: "admin" }, { db: "orders" }, { db: "catalog" }] })).toMatchObject({
+      database: "orders",
+      authSource: "admin",
+    });
+    expect(database({ roles: [{ db: "admin" }] })).toMatchObject({ database: "admin", authSource: "admin" });
+    expect(database({ db: "appdb", roles: [] }).database).toBe("appdb");
+    expect(database({ db: "appdb", roles: [] }).authSource).toBe("appdb");
+    expect(database({ db: undefined, roles: [] })).toMatchObject({ database: "admin", authSource: "admin" });
+  });
+
+  it(".svc and .svc.cluster.local are accepted and both connect to the absolute pod name with the trailing dot", () => {
+    for (const host of ["catalog-0.catalog-svc.team-m.svc", HOST_0]) {
+      expect(connectionOf(withUri(`mongodb://appuser:x@${host}:27017/admin`)).host).toBe(`${HOST_0}.`);
+    }
+    process.env[CLUSTER_DOMAIN] = "corp.internal";
+    for (const host of ["catalog-0.catalog-svc.team-m.svc", "catalog-0.catalog-svc.team-m.svc.corp.internal"]) {
+      expect(connectionOf(withUri(`mongodb://appuser:x@${host}:27017/admin`)).host).toBe(
+        "catalog-0.catalog-svc.team-m.svc.corp.internal.",
+      );
+    }
+    expect(refusalOf(withUri(`mongodb://appuser:x@${HOST_0}:27017/admin`))).toBe(
+      "the credential Secret catalog-admin-appuser names a host outside catalog-svc.team-m.svc",
+    );
+  });
+
+  it("takes the hosts after the last @ of an authority that ends at the first / or ?, with or without credentials", () => {
+    const hostOf = (uri: string) => connectionOf(withUri(uri)).host;
+    expect(hostOf(`mongodb://${HOST_0}:27017/admin`)).toBe(`${HOST_0}.`);
+    expect(hostOf(`mongodb://app@user:p@ss@${HOST_0}:27017?replicaSet=catalog`)).toBe(`${HOST_0}.`);
+    expect(hostOf(`mongodb://appuser:x@${HOST_0}`)).toBe(`${HOST_0}.`);
+    // A raw / in the credentials ends the authority early, so no host is the row's and it is refused.
+    expect(refusalOf(withUri(`mongodb://appuser:pa/ss@${HOST_0}:27017/admin`))).toBe(
+      "the credential Secret catalog-admin-appuser names a host outside catalog-svc.team-m.svc",
+    );
+  });
+
+  it("follows a statefulSet serviceName override", () => {
+    const entry = mongo(
+      { ...MONGO_DATA, "connectionString.standard": "mongodb://appuser:x@catalog-0.catalog-hl.team-m.svc:27017/admin" },
+      {},
+      { statefulSet: { spec: { serviceName: "catalog-hl" } } },
+    );
+    expect(connectionOf(entry).host).toBe("catalog-0.catalog-hl.team-m.svc.cluster.local.");
+    expect(refusalOf(mongo(MONGO_DATA, {}, { statefulSet: { spec: { serviceName: "catalog-hl" } } }))).toBe(
+      "the credential Secret catalog-admin-appuser names a host outside catalog-hl.team-m.svc",
+    );
+  });
+
+  it("27017 when the port is absent", () => {
+    expect(connectionOf(withUri(`mongodb://appuser:x@${HOST_0}/admin`)).port).toBe(27017);
+  });
+
+  it("refuses a URI that is not mongodb://, names no host, or names a host or port outside the row", () => {
+    const outside = "the credential Secret catalog-admin-appuser names a host outside catalog-svc.team-m.svc";
+    const cases: [string, string][] = [
+      [
+        `mongodb+srv://appuser:x@catalog-svc.team-m.svc.cluster.local/admin`,
+        "the credential Secret catalog-admin-appuser is not a mongodb:// connection string",
+      ],
+      [
+        `MONGODB://appuser:x@${HOST_0}/admin`,
+        "the credential Secret catalog-admin-appuser is not a mongodb:// connection string",
+      ],
+      [
+        `postgresql://appuser:x@${HOST_0}/admin`,
+        "the credential Secret catalog-admin-appuser is not a mongodb:// connection string",
+      ],
+      ["mongodb:///admin", "the credential Secret catalog-admin-appuser names no host"],
+      ["mongodb://appuser:x@/admin", "the credential Secret catalog-admin-appuser names no host"],
+      ["mongodb://appuser:x@?replicaSet=catalog", "the credential Secret catalog-admin-appuser names no host"],
+      ["mongodb://appuser:x@catalog-0.other-svc.team-m.svc:27017/admin", outside],
+      ["mongodb://appuser:x@catalog-0.catalog-svc.team-x.svc:27017/admin", outside],
+      ["mongodb://appuser:x@catalog-x.catalog-svc.team-m.svc:27017/admin", outside],
+      ["mongodb://appuser:x@catalog-01.catalog-svc.team-m.svc:27017/admin", outside],
+      ["mongodb://appuser:x@other-0.catalog-svc.team-m.svc:27017/admin", outside],
+      ["mongodb://appuser:x@catalog-0xcatalog-svc.team-m.svc:27017/admin", outside],
+      ["mongodb://appuser:x@catalog-0.catalog-svc.team-m.svc.cluster.local.:27017/admin", outside],
+      ["mongodb://appuser:x@catalog-0.catalog-svc.team-m.svc.evil.example.com:27017/admin", outside],
+      ["mongodb://appuser:x@10.0.0.5:27017/admin", outside],
+      ["mongodb://appuser:x@[::1]:27017/admin", outside],
+      [`mongodb://appuser:x@${HOST_0}:27017,10.0.0.5:27017/admin`, outside],
+      [`mongodb://appuser:x@${HOST_0}:27017,/admin`, outside],
+      [`mongodb://appuser:x@${HOST_0}:0/admin`, "the credential Secret catalog-admin-appuser has no valid port"],
+      [`mongodb://appuser:x@${HOST_0}:65536/admin`, "the credential Secret catalog-admin-appuser has no valid port"],
+      [`mongodb://appuser:x@${HOST_0}:/admin`, outside],
+      [
+        `mongodb://appuser:x@${HOST_0}:27017,${HOST_0}:99999/admin`,
+        "the credential Secret catalog-admin-appuser has no valid port",
+      ],
+    ];
+    for (const [uri, reason] of cases) {
+      const refused = refusalOf(withUri(uri));
+      expect(refused).toBe(reason);
+      expect(refused).not.toContain("evil");
+    }
+  });
+
+  it("refuses a Secret whose username is not the row's user, or without a username, password or connection string", () => {
+    expect(refusalOf(mongo({ ...MONGO_DATA, username: "admin" }))).toBe(
+      "the credential Secret catalog-admin-appuser holds a username other than appuser",
+    );
+    expect(refusalOf(mongo({ ...MONGO_DATA, username: "" }))).toBe(
+      "the credential Secret catalog-admin-appuser has no username",
+    );
+    expect(refusalOf(mongo({ ...MONGO_DATA, password: "" }))).toBe(
+      "the credential Secret catalog-admin-appuser has no password",
+    );
+    expect(refusalOf(mongo({ username: "appuser", password: PASSWORD }))).toBe(
+      "the credential Secret catalog-admin-appuser has no connectionString.standard",
+    );
+  });
+
+  it("no connectionString, and URI options leave no trace", () => {
+    const entry = withUri(
+      `mongodb://appuser:x@${HOST_0}:27017/admin?replicaSet=catalog&proxyHost=evil.example.com&tlsCertificateKeyFile=/etc/evil.pem&authMechanism=PLAIN`,
+    );
+    const connection = connectionOf(entry);
+    expect(connection).not.toHaveProperty("connectionString");
+    const text = JSON.stringify(connection);
+    for (const trace of ["evil", "proxyHost", "tlsCertificateKeyFile", "PLAIN", "replicaSet", "mongodb://"]) {
+      expect(text).not.toContain(trace);
+    }
+  });
+
+  it("MongoDB is require with TLS enabled and disable otherwise", () => {
+    const sslOf = (spec: Record<string, unknown>) => connectionOf(mongo(MONGO_DATA, {}, spec)).ssl;
+    expect(sslOf({ security: { tls: { enabled: true } } })).toEqual({ mode: "require" });
+    expect(sslOf({ security: { tls: { enabled: false } } })).toEqual({ mode: "disable" });
+    expect(sslOf({})).toEqual({ mode: "disable" });
+    expect(MONGODB_COMMUNITY.ssl(mongo(MONGO_DATA, {}, { security: { tls: { enabled: true } } }).resource)).toEqual({
+      mode: "require",
+    });
+  });
+
+  it("names the user and the MongoDBCommunity in its own refusals", () => {
+    const refusal = (secret: Record<string, unknown>) =>
+      refusalOf({ ...mongo(), secret } as KubernetesDiscoveredDatabase);
+    expect(refusal({ problem: "unsupported_name" })).toBe(
+      "the connection string Secret name of user appuser needs the operator's name normalization, which discovery does not compute: set connectionStringSecretName on the user",
+    );
+    expect(refusal({ name: "catalog-admin-appuser", problem: "other_namespace" })).toBe(
+      "the user appuser keeps its connection string Secret in another namespace, which discovery does not read",
+    );
+    expect(refusal({ name: "catalog-admin-appuser", problem: "not_owned" })).toBe(
+      "the credential Secret catalog-admin-appuser is not owned by the MongoDBCommunity catalog, so the exporter did not export it",
+    );
+    expect(refusal({ name: "catalog-admin-appuser", problem: "service_not_found" })).toBe(
+      "the Service catalog-svc does not exist, so the exporter did not read the credential Secret",
+    );
+  });
+});
+
+describe("every row", () => {
+  it("the contract table has the four first-release rows with their kinds, slugs, labels and types", () => {
+    expect(KUBERNETES_CONTRACT).toEqual([CNPG_CLUSTER, EDB_CLUSTER, PGO_POSTGRES_CLUSTER, MONGODB_COMMUNITY]);
+    expect(KUBERNETES_CONTRACT.map((row) => [row.slug, row.kind, row.label, row.type])).toEqual([
+      ["cnpg", "Cluster", "CloudNativePG", "postgres"],
+      ["edbpg", "Cluster", "EDB Postgres for Kubernetes", "postgres"],
+      ["pgo", "PostgresCluster", "Crunchy PGO", "postgres"],
+      ["mongo", "MongoDBCommunity", "MongoDB Community", "mongodb"],
+    ]);
+    expect(Object.isFrozen(KUBERNETES_CONTRACT)).toBe(true);
+    for (const row of KUBERNETES_CONTRACT) expect(Object.isFrozen(row)).toBe(true);
   });
 });
 

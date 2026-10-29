@@ -41,6 +41,7 @@ type SecretData = Partial<Record<(typeof KUBERNETES_DISCOVERY_SECRET_KEYS)[numbe
 
 type CnpgResource = Extract<KubernetesDiscoveredDatabase, { kind: "cnpg" | "edbpg" }>["resource"];
 type PgoResource = Extract<KubernetesDiscoveredDatabase, { kind: "pgo" }>["resource"];
+type MongoResource = Extract<KubernetesDiscoveredDatabase, { kind: "mongo" }>["resource"];
 
 type Fields =
   | { ok: true; fields: Pick<SeedConnection, "host" | "port" | "database" | "user" | "password" | "authSource"> }
@@ -85,6 +86,8 @@ export interface KubernetesContractRow {
 
 /** Every PostgreSQL row is opened with TLS required: each operator serves TLS, and Crunchy PGO refuses anything else. */
 const REQUIRE: RowSsl = Object.freeze({ mode: "require" });
+/** A MongoDB row without TLS on its resource: MongoDB Community serves no TLS unless the resource enables it. */
+const DISABLE: RowSsl = Object.freeze({ mode: "disable" });
 
 /** The PostgreSQL port CloudNativePG serves on, the port of a Secret the user supplied. */
 const CNPG_PORT = 5432;
@@ -303,11 +306,134 @@ export const PGO_POSTGRES_CLUSTER: KubernetesContractRow = Object.freeze({
   },
 });
 
+/** The MongoDB port, when a connection string's host names none. */
+const MONGO_DEFAULT_PORT = 27017;
+/** The database MongoDB Community authenticates a user against when the user names none. */
+const MONGO_ADMIN_DATABASE = "admin";
+const MONGO_SCHEME = "mongodb://";
+
+/** A MongoDBCommunity's user: the one user of its row. */
+function mongoUser(resource: MongoResource): MongoResource["spec"]["users"][number] {
+  return resource.spec.users[0];
+}
+
+/** The headless Service of a MongoDBCommunity's pods: spec.statefulSet.spec.serviceName, else `<name>-svc`. */
+function mongoServiceName(resource: MongoResource): string {
+  return resource.spec.statefulSet?.spec.serviceName ?? `${resource.metadata.name}-svc`;
+}
+
+/** `text` with every character a regular expression gives a meaning escaped. */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * The first host of a MongoDB connection string, as the pod name and the port of the member it names, when every host
+ * is a pod record of the row's resource under its Service: `<name>-<ordinal>.<service>.<namespace>.svc`, or that in the
+ * cluster domain. The authority ends at the first `/` or `?`, and its hosts follow its last `@`. The string's options
+ * and its credentials are never read, and a refusal never quotes it.
+ */
+function mongoFirstHost(
+  uri: string,
+  resource: MongoResource,
+  secretName: string,
+  clusterDomain: string,
+): { ok: true; pod: string; port: number } | { ok: false; reason: string } {
+  if (!uri.startsWith(MONGO_SCHEME)) {
+    return { ok: false, reason: `the credential Secret ${secretName} is not a mongodb:// connection string` };
+  }
+  const rest = uri.slice(MONGO_SCHEME.length);
+  const end = rest.search(/[/?]/);
+  const authority = end === -1 ? rest : rest.slice(0, end);
+  const hosts = authority.slice(authority.lastIndexOf("@") + 1);
+  if (hosts === "") return { ok: false, reason: `the credential Secret ${secretName} names no host` };
+  const { name, namespace } = resource.metadata;
+  const service = mongoServiceName(resource);
+  const member = new RegExp(
+    `^(${escapeRegExp(name)}-(?:0|[1-9][0-9]*))\\.${escapeRegExp(service)}\\.${escapeRegExp(namespace)}\\.${SERVICES_LABEL}(?:\\.${escapeRegExp(clusterDomain)})?(?::(\\d{1,5}))?$`,
+  );
+  const members: { pod: string; port: number }[] = [];
+  for (const entry of hosts.split(",")) {
+    const match = member.exec(entry);
+    if (match === null) {
+      return {
+        ok: false,
+        reason: `the credential Secret ${secretName} names a host outside ${service}.${namespace}.${SERVICES_LABEL}`,
+      };
+    }
+    const port = match[2] === undefined ? MONGO_DEFAULT_PORT : validPort(match[2]);
+    if (port === undefined) return { ok: false, reason: `the credential Secret ${secretName} has no valid port` };
+    members.push({ pod: match[1], port });
+  }
+  return { ok: true, ...members[0] };
+}
+
+/**
+ * A MongoDB Community `MongoDBCommunity`, one row per user of `spec.users`. Its Secret is the user's
+ * connectionStringSecretName, else `<name>-<db>-<user>`, of type Opaque and owned by the resource. The Secret's
+ * username must be the row's user, and every host of its standard connection string a pod record of the resource
+ * under its Service; the connection is then built from fields: the first host's pod by its fully qualified name with
+ * the trailing dot and its port, the user's first role database that is not admin (else the user's own database), and
+ * the user's database as authSource. The connection string itself never reaches the driver, so none of the options
+ * the operator appends from the resource does, and an SRV string is refused. TLS follows the resource.
+ */
+export const MONGODB_COMMUNITY: KubernetesContractRow = Object.freeze({
+  slug: "mongo",
+  label: "MongoDB Community",
+  group: "mongodbcommunity.mongodb.com",
+  version: "v1",
+  kind: "MongoDBCommunity",
+  plural: "mongodbcommunity",
+  type: "mongodb",
+  perUser: true,
+  secretType: "Opaque",
+  secretKeys: Object.freeze(["connectionString.standard", "username", "password"]),
+  user(resource: MongoResource): string {
+    return mongoUser(resource).name;
+  },
+  serviceName: mongoServiceName,
+  ssl(resource: MongoResource): RowSsl {
+    return resource.spec.security?.tls.enabled === true ? REQUIRE : DISABLE;
+  },
+  secretName(resource: MongoResource): string {
+    const user = mongoUser(resource);
+    return (
+      user.connectionStringSecretName ?? `${resource.metadata.name}-${user.db ?? MONGO_ADMIN_DATABASE}-${user.name}`
+    );
+  },
+  notOwned(resource: MongoResource, secretName: string): string {
+    return `the credential Secret ${secretName} is not owned by the MongoDBCommunity ${resource.metadata.name}, so the exporter did not export it`;
+  },
+  fields(resource: MongoResource, secretName: string, data: SecretData, clusterDomain: string): Fields {
+    const rowUser = mongoUser(resource);
+    const user = present(data.username);
+    if (user === undefined) return { ok: false, reason: `the credential Secret ${secretName} has no username` };
+    if (user !== rowUser.name) {
+      return { ok: false, reason: `the credential Secret ${secretName} holds a username other than ${rowUser.name}` };
+    }
+    const password = present(data.password);
+    if (password === undefined) return { ok: false, reason: `the credential Secret ${secretName} has no password` };
+    const uri = present(data["connectionString.standard"]);
+    if (uri === undefined) {
+      return { ok: false, reason: `the credential Secret ${secretName} has no connectionString.standard` };
+    }
+    const first = mongoFirstHost(uri, resource, secretName, clusterDomain);
+    if (!first.ok) return first;
+    const { name, namespace } = resource.metadata;
+    const service = serviceHost(name, `${first.pod}.${mongoServiceName(resource)}`, namespace, clusterDomain);
+    if (!service.ok) return service;
+    const authSource = rowUser.db ?? MONGO_ADMIN_DATABASE;
+    const database = rowUser.roles.find((role) => role.db !== MONGO_ADMIN_DATABASE)?.db ?? authSource;
+    return { ok: true, fields: { host: service.host, port: first.port, database, user, password, authSource } };
+  },
+});
+
 /** The contract table: one row per supported kind, in the exporter's order. */
 export const KUBERNETES_CONTRACT: readonly KubernetesContractRow[] = Object.freeze([
   CNPG_CLUSTER,
   EDB_CLUSTER,
   PGO_POSTGRES_CLUSTER,
+  MONGODB_COMMUNITY,
 ]);
 
 /** SHA-256 over `key`, in hex: the id's digest. */
