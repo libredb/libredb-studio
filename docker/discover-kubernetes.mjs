@@ -8,11 +8,15 @@
  * Studio's Kubernetes discovery source reads. Studio's web process never holds this exporter's token.
  *
  * Its token reads the credentials of every opted-in namespace, so this file is kept small and dull on purpose:
- *   - it asks for three things only: a paged `list` of each contract kind per namespace, a `get` of each credential
- *     Secret by name, and a `get` and an `update` of the export Secret; it never lists Secrets and never watches;
- *   - it keeps a Secret only when it belongs to the resource that names it (an ownerReference or CloudNativePG's
- *     label naming it, or, for an initdb Secret tied to nothing, the basic-auth type), so a Cluster cannot point it at
- *     another workload's Secret;
+ *   - it asks for four things only: a paged `list` of each opted-in kind per namespace, a `get` of a Service by the name
+ *     its row computes, a `get` of each credential Secret by name, and a `get` and an `update` of the export Secret; it
+ *     never lists or watches Secrets or Services;
+ *   - it requests no Secret whose name is reserved for an operator's key material or internal credentials, and none
+ *     whose row's Service is an ExternalName, or has no selector and is not controlled by the row's resource: RBAC
+ *     cannot narrow `get secrets` by name, and resource editors choose part of every per-user name;
+ *   - it keeps a Secret only when it is of its row's type, belongs to the resource that names it (an ownerReference, or
+ *     for the CloudNativePG family its cluster label, or an initdb Secret tied to nothing), holds no key outside its
+ *     row's measured set and every key its row requires, so a resource cannot point it at another workload's Secret;
  *   - one namespace's answers never decide another's: a refusal, a list page over the size bound or a list that does
  *     not end withdraws that namespace alone, and the database and export bounds are shared fairly among the
  *     namespaces, so the editors of one namespace cannot push another's databases out of the export;
@@ -124,8 +128,8 @@ function cnpgFamilyRow({ slug, group, clusterLabel }) {
      * Whether `secret` belongs to the Cluster `resource` prunes, whose UID is `uid`, so a Cluster cannot point the
      * exporter at another workload's Secret of its namespace. A Secret tied to this Cluster, by an ownerReference to
      * its UID or the cluster label the operator writes, belongs to it. A Secret named by initdb that is tied to nothing
-     * at all, no ownerReference and no cluster label, belongs to it when it is of type kubernetes.io/basic-auth, as the
-     * operator requires. Any other Secret does not: another Cluster's `<name>-app` is basic-auth too, and owned by it.
+     * at all, no ownerReference and no cluster label, belongs to it too; its type, kubernetes.io/basic-auth as the
+     * operator requires, is checked before. Any other Secret does not: another Cluster's `<name>-app` is owned by it.
      */
     owns(secret, resource, uid) {
       const references = Array.isArray(secret?.metadata?.ownerReferences) ? secret.metadata.ownerReferences : [];
@@ -133,7 +137,7 @@ function cnpgFamilyRow({ slug, group, clusterLabel }) {
       const labelledHere = typeof label === "string" && label === resource.metadata.name;
       if (ownedBy(secret, uid) || labelledHere) return true;
       if (supplied(resource) === undefined) return false;
-      return secret?.type === "kubernetes.io/basic-auth" && references.length === 0 && label === undefined;
+      return references.length === 0 && label === undefined;
     },
     /**
      * The Cluster as one candidate, its resource pruned to the fields the contract reads, or left out when it has no
@@ -743,9 +747,20 @@ export function classifyApiError(error) {
   return { ok: false, code: "api_unreachable", message };
 }
 
-/** The Secret's contract keys, decoded, or the first key whose value is over the bound or not UTF-8 text. */
-function keepSecretData(row, secret) {
+/**
+ * The Secret's kept keys, decoded, or why none is kept: a key outside the row's measured set (never named, because
+ * whoever edits the Secret chooses the name), the first required key that is absent or empty, or the first kept key
+ * whose value is over the bound or not UTF-8 text.
+ */
+function keepSecretData(row, candidate, secret) {
   const data = secret?.data && typeof secret.data === "object" ? secret.data : {};
+  if (Object.keys(data).some((key) => !row.allowedKeys.includes(key))) return { problem: "unexpected_key" };
+  for (const key of row.requiredKeys(candidate)) {
+    const encoded = data[key];
+    if (typeof encoded !== "string" || Buffer.from(encoded, "base64").length === 0) {
+      return { problem: "missing_key", key };
+    }
+  }
   const decoder = new TextDecoder("utf-8", { fatal: true });
   const kept = {};
   for (const key of row.secretKeys) {
@@ -763,19 +778,23 @@ function keepSecretData(row, secret) {
 }
 
 /**
- * The credential Secret of a listed resource: its kept keys, or the problem that stopped the exporter keeping them. A
- * Secret that does not belong to the resource is kept whole out of the export.
+ * The credential Secret of a candidate whose Service passed: its kept keys, or the problem that stopped the exporter
+ * keeping them. A Secret of another type than its row's, not tied to the resource, or with a key outside the row's
+ * measured set is kept whole out of the export.
  */
-async function readCredentialSecret(client, { row, resource, uid, secretName }) {
+async function readCredentialSecret(client, candidate) {
+  const { row, resource, uid, secretName } = candidate;
+  let secret;
   try {
-    const secret = await client.get(`/api/v1/namespaces/${resource.metadata.namespace}/secrets/${secretName}`);
-    if (!row.owns(secret, resource, uid)) return { name: secretName, problem: "not_owned" };
-    return { name: secretName, ...keepSecretData(row, secret) };
+    secret = await client.get(`/api/v1/namespaces/${resource.metadata.namespace}/secrets/${secretName}`);
   } catch (error) {
     if (error?.statusCode === 404) return { name: secretName, problem: "not_found" };
     if (error?.statusCode === 403) return { name: secretName, problem: "forbidden" };
     throw error;
   }
+  if (secret?.type !== row.secretType) return { name: secretName, problem: "wrong_type" };
+  if (!row.owns(secret, resource, uid)) return { name: secretName, problem: "not_owned" };
+  return { name: secretName, ...keepSecretData(row, candidate, secret) };
 }
 
 /**

@@ -58,7 +58,7 @@ import {
   startFakeDiscoveryApi,
   statusBody,
 } from "../helpers/kubernetes-discovery/fake-api";
-import { GOLDEN_CASES, goldenEntry, goldenRow } from "../helpers/kubernetes-discovery-fixture";
+import { GOLDEN_CASES, type GoldenCase, goldenEntry, goldenRow } from "../helpers/kubernetes-discovery-fixture";
 import { eventually } from "../helpers/node-transport-fixtures";
 
 const T0 = Date.parse("2026-10-28T08:00:00.000Z");
@@ -71,8 +71,6 @@ delete process.env.SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN;
 
 let api: FakeDiscoveryApi;
 
-/** The golden CloudNativePG cases, which the exporter's CloudNativePG row serves. */
-const CNPG_CASES = GOLDEN_CASES.filter((c) => c.resource.apiVersion === "postgresql.cnpg.io/v1");
 
 /** scanOnce's answer, typed for the assertions: the exporter is JavaScript, so the union TypeScript infers is loose. */
 interface Scan {
@@ -1111,9 +1109,19 @@ describe("scanOnce", () => {
 
   test("records a kept value over 1024 bytes or not UTF-8 text as invalid_value, naming the key only", async () => {
     api.addCluster("team-a", "orders");
-    api.addAppSecret("team-a", "orders", { username: "orders", password: "p".repeat(1025), dbname: "orders" });
+    api.addAppSecret("team-a", "orders", {
+      username: "orders",
+      password: "p".repeat(1025),
+      dbname: "orders",
+      port: "5432",
+    });
     api.addCluster("team-b", "analytics");
-    api.addAppSecret("team-b", "analytics", { username: Buffer.from([0xc3, 0x28]), password: PASSWORD_B });
+    api.addAppSecret("team-b", "analytics", {
+      username: Buffer.from([0xc3, 0x28]),
+      password: PASSWORD_B,
+      dbname: "app",
+      port: "5432",
+    });
     const result = await scan({ client: client(), config: config() });
     expect(result.databases.map((entry: { secret: unknown }) => entry.secret)).toEqual([
       { name: "orders-app", problem: "invalid_value", key: "password" },
@@ -1121,7 +1129,7 @@ describe("scanOnce", () => {
     ]);
   });
 
-  test("keeps a Secret with no data, or a value that is not a string, as it is: Studio names what is missing", async () => {
+  test("names the first required key a Secret lacks, or holds empty or not as text, as missing_key", async () => {
     api.addCluster("team-a", "orders");
     api.addAppSecret("team-a", "orders", {});
     api.addCluster("team-b", "analytics");
@@ -1129,14 +1137,18 @@ describe("scanOnce", () => {
       status: 200,
       body: JSON.stringify({
         kind: "Secret",
+        type: "kubernetes.io/basic-auth",
         metadata: { labels: { "cnpg.io/cluster": "analytics" } },
         data: { username: 7, password: Buffer.from(PASSWORD_B).toString("base64") },
       }),
     });
+    api.addCluster("team-b", "reports");
+    api.addAppSecret("team-b", "reports", { username: "app", password: PASSWORD_B, dbname: "app", port: "" });
     const result = await scan({ client: client(), config: config() });
     expect(result.databases.map((entry: { secret: unknown }) => entry.secret)).toEqual([
-      { name: "orders-app", data: {} },
-      { name: "analytics-app", data: { password: PASSWORD_B } },
+      { name: "orders-app", problem: "missing_key", key: "username" },
+      { name: "analytics-app", problem: "missing_key", key: "username" },
+      { name: "reports-app", problem: "missing_key", key: "port" },
     ]);
   });
 
@@ -1338,11 +1350,12 @@ describe("Secret ownership", () => {
     const result = await scan({ client: client(), config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }) });
     expect(result.databases.map((entry: { secret: unknown }) => entry.secret)).toEqual([
       { name: "custom-owner", data: DATA },
-      { name: "app-settings", problem: "not_owned" },
+      { name: "app-settings", problem: "wrong_type" },
     ]);
   });
 
-  test("keeps an initdb Secret this Cluster owns or labels, whatever its type", async () => {
+  // CloudNativePG requires a basic-auth initdb Secret, so an Opaque one is not the operator's input, owned or not.
+  test("refuses an initdb Secret this Cluster owns or labels when it is not of type kubernetes.io/basic-auth", async () => {
     api.addCluster("team-a", "mine", { bootstrap: { initdb: { secret: { name: "mine-owner" } } } });
     api.addSecret("team-a", "mine-owner", DATA, "Opaque", { labels: { "cnpg.io/cluster": "mine" } });
     api.addCluster("team-a", "held", { bootstrap: { initdb: { secret: { name: "held-owner" } } } });
@@ -1351,8 +1364,8 @@ describe("Secret ownership", () => {
     });
     const result = await scan({ client: client(), config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }) });
     expect(result.databases.map((entry: { secret: unknown }) => entry.secret)).toEqual([
-      { name: "mine-owner", data: DATA },
-      { name: "held-owner", data: DATA },
+      { name: "mine-owner", problem: "wrong_type" },
+      { name: "held-owner", problem: "wrong_type" },
     ]);
   });
 
@@ -1646,6 +1659,271 @@ describe("the Service check", () => {
       "service_not_controlled",
     );
     expect(serviceProblem({}, row, "u")).toBe("service_not_controlled");
+  });
+});
+
+describe("Secret checks per kind", () => {
+  const caseOf = (slug: string, user?: string) =>
+    GOLDEN_CASES.find((c) => goldenRow(c).slug === slug && (user === undefined || c.user === user)) as GoldenCase;
+
+  /** Scans the golden case of `slug` alone, after `change` edits its stored Secret, and returns its Secret entry. */
+  async function goldenSecret(
+    slug: string,
+    change: (secret: { type?: string; metadata: Record<string, unknown>; data?: Record<string, string> }) => void,
+    user?: string,
+  ) {
+    const c = caseOf(slug, user);
+    api.addGoldenCase(c);
+    const { namespace } = c.resource.metadata;
+    change(api.secrets.get(`${namespace}/${c.secretName}`) as never);
+    const result = await scan({
+      client: client(),
+      config: config({ KUBERNETES_DISCOVERY_NAMESPACES: namespace, KUBERNETES_DISCOVERY_KINDS: slug }),
+    });
+    if (!result.ok) throw new Error(result.status.message);
+    const entry = result.databases.find((database) => database.secret.name === c.secretName);
+    return entry?.secret;
+  }
+
+  const encoded = (value: string) => Buffer.from(value).toString("base64");
+
+  test.each([["cnpg"], ["edbpg"], ["pgo"], ["mongo"]])("exports the golden %s Secret's kept keys", async (slug) => {
+    const c = caseOf(slug);
+    expect(await goldenSecret(slug, () => {})).toEqual({ name: c.secretName, data: goldenEntry(c).secret.data });
+  });
+
+  test.each([["cnpg"], ["edbpg"], ["pgo"], ["mongo"]])(
+    "refuses a %s Secret of another type as wrong_type",
+    async (slug) => {
+      const c = caseOf(slug);
+      const other = c.secretType === "Opaque" ? "kubernetes.io/basic-auth" : "Opaque";
+      for (const type of [other, undefined, "kubernetes.io/tls"]) {
+        api.reset();
+        expect(
+          await goldenSecret(slug, (secret) => {
+            secret.type = type;
+          }),
+        ).toEqual({ name: c.secretName, problem: "wrong_type" });
+      }
+    },
+  );
+
+  test("ties each kind's Secret to its resource by that kind's own rule", async () => {
+    const untie =
+      (labels?: Record<string, string>, owners?: unknown[]) => (secret: { metadata: Record<string, unknown> }) => {
+        delete secret.metadata.labels;
+        delete secret.metadata.ownerReferences;
+        if (labels !== undefined) secret.metadata.labels = labels;
+        if (owners !== undefined) secret.metadata.ownerReferences = owners;
+      };
+    const other = [{ apiVersion: "v1", kind: "X", name: "x", uid: "uid-someone-else", controller: true }];
+    expect(await goldenSecret("edbpg", untie({ "k8s.enterprisedb.io/cluster": "ledger" }))).toMatchObject({ data: {} });
+    api.reset();
+    expect(await goldenSecret("edbpg", untie({ "cnpg.io/cluster": "ledger" }))).toEqual({
+      name: "ledger-app",
+      problem: "not_owned",
+    });
+    api.reset();
+    expect(await goldenSecret("cnpg", untie({ "k8s.enterprisedb.io/cluster": "orders" }))).toEqual({
+      name: "orders-app",
+      problem: "not_owned",
+    });
+    for (const slug of ["pgo", "mongo"]) {
+      const c = caseOf(slug);
+      for (const change of [
+        untie({ "postgres-operator.crunchydata.com/cluster": c.resource.metadata.name }),
+        untie(undefined, other),
+        untie(),
+      ]) {
+        api.reset();
+        expect(await goldenSecret(slug, change)).toEqual({ name: c.secretName, problem: "not_owned" });
+      }
+    }
+  });
+
+  test("discards a Secret holding a key outside its row's measured set, whole, without naming the key", async () => {
+    const odd = "tls.key-not-in-any-contract";
+    for (const slug of ["cnpg", "edbpg", "pgo", "mongo"]) {
+      api.reset();
+      const secret = await goldenSecret(slug, (stored) => {
+        (stored.data as Record<string, string>)[odd] = encoded("not-a-real-private-key");
+      });
+      expect(secret).toEqual({ name: caseOf(slug).secretName, problem: "unexpected_key" });
+      expect(JSON.stringify(secret)).not.toContain(odd);
+    }
+    // PGO's PgBouncer keys are measured keys: allowed, never kept.
+    api.reset();
+    const pgbouncer = await goldenSecret("pgo", (stored) => {
+      (stored.data as Record<string, string>)["pgbouncer-host"] = encoded("analytics-pgbouncer.team-b.svc");
+    });
+    expect(Object.keys(pgbouncer?.data ?? {}).sort()).toEqual(["dbname", "host", "password", "port", "user"]);
+  });
+
+  test("names a missing required key of each kind", async () => {
+    const drop = (key: string) => (stored: { data?: Record<string, string> }) => {
+      delete (stored.data as Record<string, string>)[key];
+    };
+    expect(await goldenSecret("pgo", drop("dbname"))).toEqual({
+      name: "analytics-pguser-analyst",
+      problem: "missing_key",
+      key: "dbname",
+    });
+    api.reset();
+    expect(await goldenSecret("mongo", drop("connectionString.standard"))).toEqual({
+      name: "catalog-admin-appuser",
+      problem: "missing_key",
+      key: "connectionString.standard",
+    });
+    api.reset();
+    const billing = GOLDEN_CASES.find((c) => c.secretName === "billing-owner") as GoldenCase;
+    api.addGoldenCase(billing);
+    drop("password")(api.secrets.get("prod/billing-owner") as never);
+    const result = await scan({ client: client(), config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "prod" }) });
+    expect(result.databases[0].secret).toEqual({ name: "billing-owner", problem: "missing_key", key: "password" });
+  });
+
+  test("names a kept value over the bound or not UTF-8 text as invalid_value", async () => {
+    expect(
+      await goldenSecret("pgo", (stored) => {
+        (stored.data as Record<string, string>).password = encoded("p".repeat(LIMITS.valueBytes + 1));
+      }),
+    ).toEqual({ name: "analytics-pguser-analyst", problem: "invalid_value", key: "password" });
+    api.reset();
+    expect(
+      await goldenSecret("mongo", (stored) => {
+        (stored.data as Record<string, string>)["connectionString.standard"] = Buffer.from([0xc3, 0x28]).toString(
+          "base64",
+        );
+      }),
+    ).toEqual({ name: "catalog-admin-appuser", problem: "invalid_value", key: "connectionString.standard" });
+  });
+
+  test("no request outside the contract names on the golden namespace, <name>-cluster-cert and pgo-root-cacert among them", async () => {
+    for (const c of GOLDEN_CASES.filter((x) => ["team-b", "team-m"].includes(x.resource.metadata.namespace))) {
+      api.addGoldenCase(c);
+    }
+    const bystanders = [
+      ["team-b", "analytics-ca"],
+      ["team-b", "analytics-replication"],
+      ["team-b", "analytics-server"],
+      ["team-b", "analytics-superuser"],
+      ["team-b", "analytics-cluster-cert"],
+      ["team-b", "analytics-replication-cert"],
+      ["team-b", "analytics-instance1-rvh7-certs"],
+      ["team-b", "analytics-pgbackrest"],
+      ["team-b", "pgo-root-cacert"],
+      ["team-m", "catalog-keyfile"],
+      ["team-m", "catalog-agent-password"],
+      ["team-m", "catalog-config"],
+      ["team-m", "appuser-scram-scram-credentials"],
+      ["team-m", "appuser-password"],
+    ];
+    for (const [namespace, name] of bystanders)
+      api.addSecret(namespace, name, { "tls.key": "not-a-real-private-key" }, "Opaque");
+    const result = await scan({
+      client: client(),
+      config: config({
+        KUBERNETES_DISCOVERY_NAMESPACES: "team-b,team-m",
+        KUBERNETES_DISCOVERY_KINDS: "cnpg,pgo,mongo",
+      }),
+    });
+    expect(result.databases.every((entry) => entry.secret.data !== undefined)).toBe(true);
+    const secretPaths = api.seen.map((seen) => seen.path).filter((path) => path.includes("/secrets"));
+    expect(secretPaths.sort()).toEqual(
+      [
+        "/api/v1/namespaces/team-b/secrets/analytics-app",
+        "/api/v1/namespaces/team-b/secrets/analytics-pguser-analyst",
+        "/api/v1/namespaces/team-b/secrets/analytics-pguser-reporter",
+        "/api/v1/namespaces/team-b/secrets/metrics-pguser-metrics",
+        "/api/v1/namespaces/team-m/secrets/catalog-admin-appuser",
+      ].sort(),
+    );
+    // It never lists or watches Secrets or Services.
+    for (const seen of api.seen) {
+      expect(seen.method).toBe("GET");
+      expect(seen.path).not.toMatch(/\/(secrets|services)(\?|$)/);
+      expect(seen.path).not.toContain("watch");
+    }
+  });
+
+  test("never writes a Secret value or the token to a log line or the export, over every problem path", async () => {
+    const values: string[] = [];
+    const add = (name: string, data: Record<string, string>, type: string, metadata: Record<string, unknown>) => {
+      values.push(...Object.values(data));
+      api.addSecret("team-a", name, data, type, metadata);
+    };
+    const owned = (name: string) => ({
+      ownerReferences: [{ uid: `uid-team-a-${name}` }],
+      labels: { "cnpg.io/cluster": name },
+    });
+    const app = (name: string) => ({
+      username: `user-${name}`,
+      password: `not-a-real-password-${name}`,
+      dbname: "d",
+      port: "5432",
+    });
+    api.addCluster("team-a", "typed");
+    add("typed-app", app("typed"), "Opaque", owned("typed"));
+    api.addCluster("team-a", "foreign");
+    add("foreign-app", app("foreign"), "kubernetes.io/basic-auth", {});
+    api.addCluster("team-a", "extra");
+    add(
+      "extra-app",
+      { ...app("extra"), "tls.key": "not-a-real-private-key-extra" },
+      "kubernetes.io/basic-auth",
+      owned("extra"),
+    );
+    api.addCluster("team-a", "short");
+    add("short-app", { password: "not-a-real-password-short" }, "kubernetes.io/basic-auth", owned("short"));
+    api.addCluster("team-a", "long");
+    add(
+      "long-app",
+      { ...app("long"), password: `not-a-real-password-long-${"x".repeat(LIMITS.valueBytes)}` },
+      "kubernetes.io/basic-auth",
+      owned("long"),
+    );
+    api.addCluster("team-a", "alias", {}, { service: false });
+    api.addService("team-a", "alias-rw", { type: "ExternalName" });
+    add("alias-app", app("alias"), "kubernetes.io/basic-auth", owned("alias"));
+    api.addCluster("team-a", "reserved", { bootstrap: { initdb: { secret: { name: "reserved-superuser" } } } });
+    add("reserved-superuser", app("reserved"), "kubernetes.io/basic-auth", {});
+    const output = logs();
+    expect(
+      await main({
+        env: api.env({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }),
+        now: () => T0,
+        stdout: output.stdout,
+        stderr: output.stderr,
+      }),
+    ).toBe(0);
+    const written = JSON.stringify(api.writtenExport());
+    const problems = (api.writtenExport() as { databases: { secret: { problem?: string } }[] }).databases.map(
+      (entry) => entry.secret.problem,
+    );
+    expect(problems).toEqual([
+      "wrong_type",
+      "not_owned",
+      "unexpected_key",
+      "missing_key",
+      "invalid_value",
+      "service_external_name",
+      "reserved_name",
+    ]);
+    // The user names and passwords are distinct; the database name and port are not values worth hiding.
+    for (const value of values.filter((text) => text.startsWith("not-a-real") || text.startsWith("user-"))) {
+      expect(written).not.toContain(value);
+      expect(output.all()).not.toContain(value);
+    }
+    expect(written).not.toContain("tls.key");
+    expect(output.all()).not.toContain("tls.key");
+    expect(written).not.toContain(FAKE_DISCOVERY_TOKEN);
+    expect(output.all()).not.toContain(FAKE_DISCOVERY_TOKEN);
+    // The token travels in the Authorization header of every request, and nowhere else.
+    for (const seen of api.seen) {
+      expect(seen.authorization).toBe(`Bearer ${FAKE_DISCOVERY_TOKEN}`);
+      expect(seen.path).not.toContain(FAKE_DISCOVERY_TOKEN);
+      expect(JSON.stringify(seen.body ?? null)).not.toContain(FAKE_DISCOVERY_TOKEN);
+    }
   });
 });
 
@@ -2005,17 +2283,15 @@ describe("main", () => {
 });
 
 describe("the golden fixture, end to end", () => {
-  test("the exporter's export of the golden resources maps to the golden connections in Studio", async () => {
-    for (const c of CNPG_CASES) {
-      api.addCluster(c.resource.metadata.namespace, c.resource.metadata.name, c.resource.spec);
-      const { namespace, name } = c.resource.metadata;
-      if (c.secretName === `${name}-app`) api.addAppSecret(namespace, name, c.secretData as Record<string, string>);
-      else api.addSecret(namespace, c.secretName, c.secretData as Record<string, string>);
-    }
-    const namespaces = [...new Set(CNPG_CASES.map((c) => c.resource.metadata.namespace))].join(",");
+  test("the exporter's export of the golden resources of every kind maps to the golden connections in Studio", async () => {
+    for (const c of GOLDEN_CASES) api.addGoldenCase(c);
+    const namespaces = [...new Set(GOLDEN_CASES.map((c) => c.resource.metadata.namespace))].join(",");
     expect(
       await main({
-        env: api.env({ KUBERNETES_DISCOVERY_NAMESPACES: namespaces }),
+        env: api.env({
+          KUBERNETES_DISCOVERY_NAMESPACES: namespaces,
+          KUBERNETES_DISCOVERY_KINDS: "cnpg,edbpg,pgo,mongo",
+        }),
         now: () => T0,
         stdout: () => {},
         stderr: () => {},
@@ -2023,18 +2299,20 @@ describe("the golden fixture, end to end", () => {
     ).toBe(0);
     const parsed = parseKubernetesDiscoveryExport(JSON.stringify(api.writtenExport()));
     if (!parsed.ok) throw new Error(parsed.reason);
-    const byResource = new Map(
-      parsed.value.databases.map((entry) => [
-        `${entry.resource.metadata.namespace}/${entry.resource.metadata.name}`,
-        entry,
-      ]),
-    );
-    for (const c of CNPG_CASES) {
-      const entry = byResource.get(`${c.resource.metadata.namespace}/${c.resource.metadata.name}`);
-      if (entry === undefined) throw new Error("the golden resource was not exported");
+    expect(parsed.value.version).toBe(2);
+    expect(parsed.value.databases).toHaveLength(GOLDEN_CASES.length);
+    const ids = new Map<string, KubernetesDiscoveredDatabase>();
+    for (const entry of parsed.value.databases) {
       const mapped = mapKubernetesDatabase(entry);
       if (!mapped.ok) throw new Error(mapped.reason);
-      expect(mapped.connection.id).toBe(c.connectionId);
+      ids.set(mapped.connection.id, entry);
+    }
+    for (const c of GOLDEN_CASES) {
+      const entry = ids.get(c.connectionId);
+      if (entry === undefined) throw new Error(`the golden case ${c.connectionId} was not exported`);
+      expect(entry).toEqual(goldenEntry(c));
+      const mapped = mapKubernetesDatabase(entry);
+      if (!mapped.ok) throw new Error(mapped.reason);
       expect(mapped.connection).toMatchObject(c.connection);
       expect(mapped.secret.name).toBe(c.secretName);
     }
