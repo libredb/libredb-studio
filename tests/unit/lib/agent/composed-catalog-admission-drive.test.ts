@@ -270,6 +270,18 @@ describe("an engine whose catalog read is a composed command", () => {
     expect(outcome.refusal).toMatchObject(FENCE_REFUSAL);
   });
 
+  test("a retry whose rewrite is a read carries no admission, so the fence reads it as any read", async () => {
+    declaresCommand = true;
+    rewriteTo = () => "SELECT 1";
+    const { outcome, sent } = await readCatalogOnce((sql, attempt) => {
+      if (attempt === 1) throw new QueryError(RETRY_MESSAGE, "duckdb", sql);
+      return engineAnswer(sql);
+    });
+    rewriteTo = (sql) => sql;
+    expect(sent).toEqual([ENGINE_CATALOG, "SELECT 1"]);
+    expect(outcome.kind).toBe("completed");
+  });
+
   test("an overlay that does not declare its catalog read a command gets the ordinary refusal", async () => {
     declaresCommand = false;
     const { outcome, sent } = await readCatalogOnce(engineAnswer);

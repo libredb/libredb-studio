@@ -3075,7 +3075,9 @@ async function readCatalog(
   ) {
     const fallback = retry.rewrite(sql);
     if (fallback !== sql) {
-      outcome = await executeAgentOperation(context, { ...request, sql: fallback });
+      // The rewrite is another statement, so it goes without the admission minted for `sql`, which the fence would
+      // refuse on any other text.
+      outcome = await executeAgentOperation(context, { ...request, sql: fallback, composed: undefined });
     }
   }
   /*

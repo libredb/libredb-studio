@@ -378,19 +378,22 @@ function hasComment(sql: string): boolean {
   return false;
 }
 
-/**
- * Whether `admission` lifts this statement's `NON_READ_STATEMENT`: it is one the server minted, for exactly this text,
- * and the text carries no comment, no forbidden word and no plan execution. Every structural check came before the
- * verb, so a statement refused only for its verb is already one determinate statement.
- */
-function admitsByIdentity(sql: string, admission: unknown): boolean {
+/** Whether `admission` is one the server minted, for exactly this text. */
+function mintedFor(sql: string, admission: unknown): boolean {
   // `WeakSet.has` answers false for a primitive, so no value needs a type test before it.
   return (
     COMPOSED_ADMISSIONS.has(admission as ComposedStatementAdmission) &&
-    (admission as ComposedStatementAdmission).sql === sql &&
-    !hasComment(sql) &&
-    findSideEffectWord(sql, false) === null
+    (admission as ComposedStatementAdmission).sql === sql
   );
+}
+
+/**
+ * Whether a minted admission lifts this statement's `NON_READ_STATEMENT`: the text carries no comment, no forbidden
+ * word and no plan execution. Every structural check came before the verb, so a statement refused only for its verb is
+ * already one determinate statement.
+ */
+function admitsByIdentity(sql: string): boolean {
+  return !hasComment(sql) && findSideEffectWord(sql, false) === null;
 }
 
 /**
@@ -398,15 +401,26 @@ function admitsByIdentity(sql: string, admission: unknown): boolean {
  * are rejected (fail closed), and the violation travels as the issue message so
  * a denial can be diagnosed without re-running the guard. With `composed`, the
  * input may also carry a server-minted admission, which lifts the verb allowlist
- * for the one statement it was minted for (`admitComposedStatement`).
+ * for the one statement it was minted for (`admitComposedStatement`); any other
+ * value under that key is refused as `COMPOSED_ADMISSION_MISMATCH`.
  */
 function agentSqlInput(options: AgentStatementOptions, composed = false) {
   const shape = composed ? { sql: z.string().min(1), composed: z.unknown().optional() } : { sql: z.string().min(1) };
   return z.strictObject(shape).superRefine((value, ctx) => {
+    // Fail closed: a `composed` key is either the server's admission for exactly this text or a refusal, never a key
+    // read as if it were absent.
+    const admitted = "composed" in value && mintedFor(value.sql, value.composed);
+    if ("composed" in value && !admitted) {
+      ctx.addIssue({
+        code: "custom",
+        message: "agent statement refused: COMPOSED_ADMISSION_MISMATCH",
+        path: ["composed"],
+      });
+      return;
+    }
     const violation = inspectAgentStatement(value.sql, options);
     if (violation === null) return;
-    if (violation === "NON_READ_STATEMENT" && "composed" in value && admitsByIdentity(value.sql, value.composed))
-      return;
+    if (violation === "NON_READ_STATEMENT" && admitted && admitsByIdentity(value.sql)) return;
     ctx.addIssue({ code: "custom", message: `agent statement refused: ${violation}`, path: ["sql"] });
   });
 }

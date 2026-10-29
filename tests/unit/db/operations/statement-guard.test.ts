@@ -336,6 +336,23 @@ describe("a composed statement admitted by identity", () => {
     expect(agentQueryReadSqlInput.safeParse({ sql: "SELECT 1" }).success).toBe(true);
   });
 
+  test.each([
+    ["a forged admission", { sql: "SELECT 1", composed: { sql: "SELECT 1" } }],
+    ["an admission minted for another statement", { sql: "SELECT 1", composed: admitComposedStatement("SELECT 2") }],
+    ["an admission decoded from JSON", JSON.parse(JSON.stringify({ sql: "SELECT 1", composed: { sql: "SELECT 1" } }))],
+    ["a string", { sql: "SELECT 1", composed: "SELECT 1" }],
+    ["true", { sql: "SELECT 1", composed: true }],
+    ["null", { sql: "SELECT 1", composed: null }],
+    ["undefined", { sql: "SELECT 1", composed: undefined }],
+  ])("a read carrying %s under composed is refused, not read as if the key were absent", (_label, input) => {
+    const parsed = agentQueryReadSqlInput.safeParse(input);
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(parsed.error.issues[0]?.message).toBe("agent statement refused: COMPOSED_ADMISSION_MISMATCH");
+      expect(parsed.error.issues[0]?.path).toEqual(["composed"]);
+    }
+  });
+
   test("only the query read takes an admission: plan inspection and the profile keep the strict read input", () => {
     expect(agentReadSqlInput.safeParse({ sql: COMPOSED, composed: admitComposedStatement(COMPOSED) }).success).toBe(
       false,
