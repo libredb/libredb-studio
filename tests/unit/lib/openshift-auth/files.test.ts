@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pemCertificates, readCertificateFile, readTokenFile, tokenFileReady } from "@/lib/openshift-auth/files";
+import { MISSING_POSIX_FILE_MODES, testIf } from "../../../helpers/posix-tools";
 import { loadTlsFixtures } from "../../../helpers/tls-fixtures";
 
 const { ca, otherCa } = loadTlsFixtures();
@@ -47,6 +48,10 @@ describe("tokenFileReady", () => {
     expect(tokenFileReady(join(dir, "empty"))).toBe(false);
     expect(tokenFileReady(join(dir, "missing"))).toBe(false);
     expect(tokenFileReady(join(dir, "a-directory"))).toBe(false);
+  });
+
+  // POSIX only: NTFS has no mode bits, so chmod 000 there sets the read-only flag and the file stays readable.
+  testIf(MISSING_POSIX_FILE_MODES, "is false for a file its mode makes unreadable", () => {
     // Root reads any file, so the mode bit decides only for other users.
     if (process.getuid?.() !== 0) expect(tokenFileReady(join(dir, "unreadable"))).toBe(false);
   });
