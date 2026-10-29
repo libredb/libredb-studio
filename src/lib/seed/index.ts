@@ -19,7 +19,7 @@ import type { ManagedConnection } from "./types";
 
 export type { ManagedConnection } from "./types";
 export { resetCache } from "./operator-loader";
-export { seedRolesOf } from "./roles";
+export { KUBERNETES_REVIEWED_ROLE, seedRolesOf } from "./roles";
 
 /**
  * The operator entries these roles may see, in source order.

@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { sessionRequiredBody } from "@/lib/api/session-ended";
-import { getPendingSeeds, type ManagedConnection } from "@/lib/seed";
-import { KUBERNETES_REVIEWED_ROLE } from "@/lib/seed/roles";
+import { getPendingSeeds, KUBERNETES_REVIEWED_ROLE, type ManagedConnection } from "@/lib/seed";
 import { logger } from "@/lib/logger";
 import { withoutSecretFields } from "@/lib/storage/connection-secrets";
 import { SEED_CONFIG_UNREADABLE_REASON } from "@/hooks/use-connection-payload";
