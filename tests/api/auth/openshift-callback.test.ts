@@ -321,18 +321,22 @@ describe("GET /api/auth/openshift/callback, refusals", () => {
   });
 });
 
-// docs/OPENSHIFT.md: a CA file that cannot be read is openshift_config, and the server log names the variable.
+// docs/OPENSHIFT.md: a CA file that cannot be read is openshift_config, and the server log names the variable, never
+// the file's path or its content, at any level.
 describe("GET /api/auth/openshift/callback, a CA file that cannot be read or holds no certificate", () => {
   const CONTENT = "no certificate, only text that must never reach the log";
   let error: ReturnType<typeof spyOn<typeof logger, "error">>;
-  const logged = () => JSON.stringify(error.mock.calls);
+  let warn: ReturnType<typeof spyOn<typeof logger, "warn">>;
+  const logged = () => JSON.stringify([error.mock.calls, warn.mock.calls]);
 
   beforeEach(() => {
     error = spyOn(logger, "error").mockImplementation(() => {});
+    warn = spyOn(logger, "warn").mockImplementation(() => {});
   });
 
   afterEach(() => {
     error.mockRestore();
+    warn.mockRestore();
   });
 
   test("at the metadata step it is openshift_config, and the log names OPENSHIFT_API_CA_FILE", async () => {
@@ -343,9 +347,13 @@ describe("GET /api/auth/openshift/callback, a CA file that cannot be read or hol
     expect(lastAudit()).toMatchObject({ type: "login_failure", reason: "openshift_config" });
     expect(logged()).toContain("OPENSHIFT_API_CA_FILE");
     expect(logged()).not.toContain(CONTENT);
-    process.env.OPENSHIFT_API_CA_FILE = `${cluster.directory}/missing-ca.crt`;
+    expect(logged()).not.toContain(cluster.caFile);
+    const missing = `${cluster.directory}/missing-ca.crt`;
+    process.env.OPENSHIFT_API_CA_FILE = missing;
     const login = await loginGET(new Request("http://localhost:3000/api/auth/openshift/login"));
     expect(login.headers.get("location")).toBe(`${LOGIN_PAGE}openshift_config`);
+    expect(logged()).not.toContain(missing);
+    expect(logged()).not.toContain(cluster.directory);
     expect(cluster.received("api").filter((request) => request.path === METADATA_PATH)).toHaveLength(1);
     expect(minted()).toEqual([]);
   });
@@ -357,6 +365,7 @@ describe("GET /api/auth/openshift/callback, a CA file that cannot be read or hol
     expect(cluster.received("oauth").filter((request) => request.path === TOKEN_PATH)).toEqual([]);
     expect(logged()).toContain("OPENSHIFT_API_CA_FILE");
     expect(logged()).toContain("NODE_EXTRA_CA_CERTS");
+    expect(logged()).not.toContain(cluster.directory);
     expect(minted()).toEqual([]);
   });
 
@@ -375,6 +384,7 @@ describe("GET /api/auth/openshift/callback, a CA file that cannot be read or hol
     expect(cluster.received("api").filter((request) => request.path === USER_PATH)).toEqual([]);
     expect(logged()).toContain("OPENSHIFT_API_CA_FILE");
     expect(logged()).not.toContain(CONTENT);
+    expect(logged()).not.toContain(cluster.directory);
     expect(minted()).toEqual([]);
   });
 });
