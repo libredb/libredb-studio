@@ -464,7 +464,7 @@ describe("readSchemaStatistics — SQL Server", () => {
   });
 });
 
-describe("readSchemaStatistics — the profile it reads under", () => {
+describe("readSchemaStatistics: the profile it reads under", () => {
   /**
    * A plan run reads its statistics under the profile its inventory was read under. On an engine whose inventory comes
    * from its provider, that is the operations profile, and the read-only profile is never acquired: acquiring it runs

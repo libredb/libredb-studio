@@ -36,7 +36,7 @@
  *     the one wrong conclusion this whole block exists to prevent.
  *
  * The reads themselves are the server's own grounding calls through `tools.ts`
- * (`readStatisticsForGrounding`) — the same audited, budgeted, policy-gated path as
+ * (`readStatisticsForGrounding`): the same audited, budgeted, policy-gated path as
  * every catalog read, under the profile the run grounds under: the read-only profile
  * where the inventory is a composed catalog read, and the operations profile where it
  * is the provider's own, so a plan run on such an engine never asks for the read-only
