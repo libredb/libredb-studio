@@ -110,8 +110,9 @@ export interface AgentCatalogRows {
 /**
  * How an engine reads its catalog (`composeCatalogRead` in `composed-sql.ts`, `readCatalog` in `tools.ts`): one
  * composer per kind; the fold from a selector's schema to the name a policy target declares, absent when the name is
- * declared as written; the one retry a refused read may take, absent when there is none; and the row mapper, absent
- * when the composed statement answers the catalog rows itself.
+ * declared as written; the one retry a refused read may take, absent when there is none; whether the composed
+ * statement is a command rather than a SELECT; and the row mapper, absent when the composed statement answers the
+ * catalog rows itself.
  */
 export interface AgentCatalogRead {
   readonly compose: Readonly<Record<AgentCatalogKind, (selector: AgentCatalogSelector) => string>>;
@@ -122,6 +123,14 @@ export interface AgentCatalogRead {
     /** The statement to send instead. A rewrite that changes nothing is not sent. */
     readonly rewrite: (sql: string) => string;
   };
+  /**
+   * Declared by an engine whose catalog answers only to a command, such as `SHOW`, `SYS` or `DESCRIBE`, never to a
+   * SELECT. The statement fence admits such a command only by identity: on the catalog read alone, and only as exactly
+   * the statement `compose` answered (`admitComposedStatement` in `db/operations/statement-guard.ts`), so the same
+   * text written by the model is refused as before. A composer it covers answers one statement, carries no comment,
+   * and quotes every name it takes, which `engine-pack-contract.test.ts` holds.
+   */
+  readonly commandShaped?: true;
   /**
    * The rows of one kind as the engine answered them, turned into the catalog rows that kind reads as, for an engine
    * whose catalog statement answers under column names no SELECT can rename. Applied to the engine's answer before

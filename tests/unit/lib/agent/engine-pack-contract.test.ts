@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { AGENT_STATEMENT_LANGUAGE, workflowAvailability } from "@/lib/agent/agent-manifest";
-import type { AgentCatalogKind, AgentCatalogRead } from "@/lib/agent/composed-sql-primitives";
+import type { AgentCatalogKind, AgentCatalogRead, AgentCatalogSelector } from "@/lib/agent/composed-sql-primitives";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import { verifyRunGoal } from "@/lib/agent/goal-verifier";
@@ -11,6 +11,9 @@ import { REFERENCE_RECOMMENDATION_CARD } from "@/lib/agent/languages/server";
 import { type AgentToolName, agentToolDefinition } from "@/lib/agent/tools";
 import { AGENT_WORKFLOW_SENDS_STATEMENTS, type AgentRunWorkflowType } from "@/lib/agent/types";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
+import { admitComposedStatement, agentQueryReadSqlInput } from "@/lib/db/operations/statement-guard";
+import { DEFAULT_SQL_GRAMMAR } from "@/lib/sql/grammar";
+import { readSqlSpan } from "@/lib/sql/spans";
 import type { DatabaseType } from "@/lib/types";
 import { toolsNamedIn } from "../../../helpers/agent-tool-rules";
 
@@ -146,6 +149,116 @@ test("the mapped catalog reads name only engines that speak a language", () => {
   for (const type of MAPPED_CATALOG_READS) expect(ENGINES).toContain(type);
 });
 
+/**
+ * The engines whose catalog read is a command rather than a SELECT (`AgentCatalogRead.commandShaped`), exactly. Held
+ * both ways, so an engine that declares it is named here and held to the composer contract below.
+ */
+const COMMAND_CATALOG_READS: readonly DatabaseType[] = [];
+
+/** A name no composer writes on its own, so where it shows in a composed statement, a selector put it there. */
+const SENTINEL_NAME = "zq_sentinel_name";
+
+/** Names a composer is handed: the sentinel, and names that would end the statement or open a comment unquoted. */
+const COMMAND_NAMES: readonly string[] = [
+  SENTINEL_NAME,
+  `${SENTINEL_NAME}'; SHOW TABLES --`,
+  `${SENTINEL_NAME}"; SHOW TABLES /*`,
+];
+
+/** The statement's text outside every literal and quoted name, where an unquoted name would show. */
+function unquotedText(sql: string): string {
+  let text = "";
+  let i = 0;
+  while (i < sql.length) {
+    const span = readSqlSpan(sql, i, DEFAULT_SQL_GRAMMAR);
+    if (span === null) {
+      text += sql[i];
+      i++;
+      continue;
+    }
+    if (span.kind !== "string" && span.kind !== "quoted-identifier") text += sql.slice(i, span.end);
+    i = span.end;
+  }
+  return text;
+}
+
+/**
+ * What a command catalog read's composers get wrong over every kind and name; empty when they hold. Each statement it
+ * composes is one the fence admits by identity (one determinate statement, no comment, no forbidden word), and every
+ * name it takes is quoted. A composer that refuses a name, by throwing, holds: a refusal sends nothing.
+ */
+function commandComposerViolations(compose: AgentCatalogRead["compose"]): string[] {
+  const violations: string[] = [];
+  for (const kind of CATALOG_KINDS) {
+    for (const name of COMMAND_NAMES) {
+      for (const selector of [
+        { kind, table: name },
+        { kind, schema: name },
+        { kind, schema: name, table: name },
+      ]) {
+        let sql: string;
+        try {
+          sql = compose[kind](selector);
+        } catch {
+          continue;
+        }
+        const where = `${kind} ${JSON.stringify(selector)}`;
+        if (!agentQueryReadSqlInput.safeParse({ sql, composed: admitComposedStatement(sql) }).success) {
+          violations.push(`${where}: not one statement the fence admits by identity`);
+        }
+        if (unquotedText(sql).includes(SENTINEL_NAME)) violations.push(`${where}: a name it does not quote`);
+      }
+    }
+  }
+  return violations;
+}
+
+/** One composer for every kind. */
+const composingAll = (composer: (selector: AgentCatalogSelector) => string): AgentCatalogRead["compose"] => ({
+  columns: composer,
+  relations: composer,
+  indexes: composer,
+  statistics: composer,
+});
+
+/** The name quoted as an identifier, its own quotes doubled. */
+const quotedName = (name: string): string => `"${name.replaceAll('"', '""')}"`;
+
+describe("the command catalog read contract", () => {
+  test("holds for composers that quote every name, or refuse it", () => {
+    const quoting = composingAll((selector) =>
+      selector.table === undefined ? "SHOW TABLES" : `SHOW COLUMNS FROM ${quotedName(selector.table)}`,
+    );
+    expect(commandComposerViolations(quoting)).toEqual([]);
+    const refusing = composingAll(() => {
+      throw new Error("not a name this engine takes");
+    });
+    expect(commandComposerViolations(refusing)).toEqual([]);
+  });
+
+  test("names each way a composer can break it", () => {
+    const unquoting = composingAll((selector) => `SHOW COLUMNS FROM ${selector.table ?? selector.schema}`);
+    expect(commandComposerViolations(unquoting)).toContain(
+      `columns {"kind":"columns","table":"${SENTINEL_NAME}"}: a name it does not quote`,
+    );
+    expect(commandComposerViolations(unquoting)).toContain(
+      `columns {"kind":"columns","table":"${SENTINEL_NAME}'; SHOW TABLES --"}: not one statement the fence admits by identity`,
+    );
+    const commented = composingAll(() => "SHOW TABLES /* the catalog */");
+    expect(commandComposerViolations(commented)).toContain(
+      `relations {"kind":"relations","schema":"${SENTINEL_NAME}"}: not one statement the fence admits by identity`,
+    );
+    const twoStatements = composingAll(() => "SHOW TABLES; SHOW COLUMNS");
+    expect(commandComposerViolations(twoStatements)).toContain(
+      `indexes {"kind":"indexes","table":"${SENTINEL_NAME}"}: not one statement the fence admits by identity`,
+    );
+  });
+});
+
+test("the command catalog reads name only engines that speak a language", () => {
+  for (const type of COMMAND_CATALOG_READS) expect(ENGINES).toContain(type);
+});
+
 /** Inputs no adapter may throw on: a statement, the empty one, and every non-string a ledger or a model can send. */
 const ADAPTER_CORPUS: readonly unknown[] = ["", "SELECT 1", {}, { a: 1 }, null, 42, []];
 
@@ -232,6 +345,14 @@ describe.each(ENGINES)("%s", (type) => {
     const mapRows = catalogRead === undefined || catalogRead === "unsupported" ? undefined : catalogRead.mapRows;
     expect(mapRows !== undefined).toBe(MAPPED_CATALOG_READS.includes(type));
     if (mapRows !== undefined) expect(catalogMapperViolations(mapRows)).toEqual([]);
+  });
+
+  test("declares its catalog read a command exactly where it is listed, and its composers hold the contract", () => {
+    const catalogRead = pack.server.dialect?.catalogRead;
+    const commandShaped =
+      catalogRead !== undefined && catalogRead !== "unsupported" && catalogRead.commandShaped === true;
+    expect(commandShaped).toBe(COMMAND_CATALOG_READS.includes(type));
+    if (commandShaped) expect(commandComposerViolations(catalogRead.compose)).toEqual([]);
   });
 
   test("its adapter is total over the corpus", () => {
