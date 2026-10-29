@@ -204,6 +204,15 @@ describe("what the client hands the transport", () => {
     expect(wire.requests[0].maxResponseBytes).toBe(4096);
   });
 
+  test("a request may lower its own cap below the connection's, and never raise it above", async () => {
+    const wire = recording();
+    const capped: InfluxConnectionOptions = { ...SQL, responseCapBytes: 4096 };
+    const client = createInfluxClient(capped, SQL_ROUTES, wire.factory);
+    await client.send({ route: "ping", values: {} }, signal(), 1024);
+    await client.send({ route: "ping", values: {} }, signal(), 8192);
+    expect(wire.requests.map((request) => request.maxResponseBytes)).toEqual([1024, 4096]);
+  });
+
   test("the answer is the status, the content type and the text, whatever the status, and no header", async () => {
     const wire = recording(() => ({
       status: 401,

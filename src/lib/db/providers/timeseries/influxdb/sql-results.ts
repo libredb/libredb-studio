@@ -12,7 +12,8 @@
  * I9 known limit), and no column type is reported.
  *
  * The row cut and the cell budget (rows times columns) stop the read and set `cut`; a row the budget drops adds no
- * column. A line that is not a JSON object, or one nested deeper than `MAX_LINE_DEPTH` (R47), is an
+ * column. In the `refuse` mode, the agent path's, either bound throws `InfluxShapeOverflowError` instead, so no caller
+ * can return rows that are not the whole answer. A line that is not a JSON object, or one nested deeper than `MAX_LINE_DEPTH` (R47), is an
  * `InfluxAnswerShapeError("not-json")`, worded by errors.ts. A line that names a top-level key twice is an
  * `InfluxAnswerShapeError("repeated-column")` naming the key: measured on 3.12 Core, the engine refuses a projection
  * of two columns of one name, yet `SELECT c1.usage, c2.usage FROM cpu c1 CROSS JOIN cpu c2` answers
@@ -80,6 +81,35 @@ function repeatedKey(keys: readonly string[]): string | undefined {
   return keys.find((key) => seen.has(key) || !seen.add(key));
 }
 
+/**
+ * What the `refuse` mode throws when an answer does not fit its bounds: the bound it crossed, the rows the answer holds
+ * (its non-blank lines, counted, never parsed, past the point where the bound stopped the read), and the most rows the
+ * bound admits. For the cell budget that is the rows that fit at the width the answer had reached.
+ */
+export class InfluxShapeOverflowError extends Error {
+  constructor(
+    readonly bound: "rows" | "cells",
+    readonly rows: number,
+    readonly allowedRows: number,
+  ) {
+    super(`The answer holds ${rows} rows, past the ${bound} bound of ${allowedRows} rows`);
+    this.name = "InfluxShapeOverflowError";
+  }
+}
+
+/** The non-blank lines of `text` from `cursor` on: one forward walk, no line parsed. */
+function countLinesFrom(text: string, cursor: number): number {
+  let count = 0;
+  let index = cursor;
+  while (index < text.length) {
+    const newline = text.indexOf("\n", index);
+    const end = newline === -1 ? text.length : newline;
+    if (text.slice(index, end).trim() !== "") count++;
+    index = end + 1;
+  }
+  return count;
+}
+
 /** One line as an object, its integers beyond 2^53 kept as exact digits; anything else is not a row. */
 function parseLine(line: string): { readonly row: Readonly<Record<string, unknown>>; readonly text: string } {
   const text = quoteUnsafeIntegers(line);
@@ -95,8 +125,11 @@ function parseLine(line: string): { readonly row: Readonly<Record<string, unknow
   return { row: parsed as Readonly<Record<string, unknown>>, text };
 }
 
-/** A jsonl body as fields and rows: blank lines skipped, the ordered key union, the row cut and the cell budget. */
-export function shapeJsonlBody(text: string, limits: InfluxShapeLimits): ShapedResult {
+/**
+ * A jsonl body as fields and rows: blank lines skipped, the ordered key union, the row cut and the cell budget. `cut`,
+ * the editor's mode, keeps the rows within the bounds and sets `cut`; `refuse` throws `InfluxShapeOverflowError`.
+ */
+export function shapeJsonlBody(text: string, limits: InfluxShapeLimits, mode: "cut" | "refuse" = "cut"): ShapedResult {
   const fields = new Map<string, true>();
   const parsedRows: Readonly<Record<string, unknown>>[] = [];
   let cut = false;
@@ -109,6 +142,9 @@ export function shapeJsonlBody(text: string, limits: InfluxShapeLimits): ShapedR
     cursor = end + 1;
     if (line.trim() === "") continue;
     if (parsedRows.length >= limits.rowCut) {
+      if (mode === "refuse") {
+        throw new InfluxShapeOverflowError("rows", parsedRows.length + 1 + countLinesFrom(text, cursor), limits.rowCut);
+      }
       cut = true;
       break;
     }
@@ -119,6 +155,10 @@ export function shapeJsonlBody(text: string, limits: InfluxShapeLimits): ShapedR
     const newKeys = keys.filter((key) => !fields.has(key));
     const columns = fields.size + newKeys.length;
     if ((parsedRows.length + 1) * columns > limits.cellBudget) {
+      if (mode === "refuse") {
+        const rows = parsedRows.length + 1 + countLinesFrom(text, cursor);
+        throw new InfluxShapeOverflowError("cells", rows, Math.floor(limits.cellBudget / columns));
+      }
       cut = true;
       break;
     }

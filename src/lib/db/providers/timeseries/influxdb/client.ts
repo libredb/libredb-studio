@@ -38,7 +38,11 @@ export interface InfluxAnswer {
 }
 
 export interface InfluxClient<Id extends string> {
-  send(request: InfluxRequest<Id>, signal: AbortSignal): Promise<InfluxAnswer>;
+  /**
+   * `maxResponseBytes` lowers this request's response cap below the connection's (the agent path's cap, taken from
+   * its byte budget); a value above the connection's cap leaves the connection's in force.
+   */
+  send(request: InfluxRequest<Id>, signal: AbortSignal, maxResponseBytes?: number): Promise<InfluxAnswer>;
   close(): void;
 }
 
@@ -112,7 +116,7 @@ export function createInfluxClient<Id extends string>(
   }
 
   return {
-    async send(request: InfluxRequest<Id>, signal: AbortSignal): Promise<InfluxAnswer> {
+    async send(request: InfluxRequest<Id>, signal: AbortSignal, maxResponseBytes?: number): Promise<InfluxAnswer> {
       if (!Object.hasOwn(routes, request.route)) {
         refuse("The request names a route this client does not send, so nothing was sent.");
       }
@@ -130,7 +134,7 @@ export function createInfluxClient<Id extends string>(
           : { body: JSON.stringify(Object.fromEntries(filled(route.body, request.values))) }),
         ...(route.form === undefined ? {} : { form: Object.fromEntries(filled(route.form, request.values)) }),
         signal,
-        maxResponseBytes: options.responseCapBytes,
+        maxResponseBytes: Math.min(options.responseCapBytes, maxResponseBytes ?? options.responseCapBytes),
       });
       return { status: answer.status, contentType: answer.contentType, text: answer.text };
     },

@@ -7,7 +7,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { INFLUX_CELL_BUDGET, INFLUX_ROW_CUT } from "@/lib/db/providers/timeseries/influxdb/connection-options";
 import { InfluxAnswerShapeError } from "@/lib/db/providers/timeseries/influxdb/errors";
-import { shapeJsonlBody } from "@/lib/db/providers/timeseries/influxdb/sql-results";
+import { InfluxShapeOverflowError, shapeJsonlBody } from "@/lib/db/providers/timeseries/influxdb/sql-results";
 import { loadInfluxCapture } from "../../../helpers/influxdb-fixtures";
 
 const LIMITS = { rowCut: INFLUX_ROW_CUT, cellBudget: INFLUX_CELL_BUDGET };
@@ -256,6 +256,50 @@ describe("shapeJsonlBody, the row cut and the cell budget", () => {
     );
     expect(shaped.rows).toHaveLength(1243);
     expect(shaped.cut).toBe(true);
+  });
+});
+
+describe("shapeJsonlBody in refuse mode: an overflow is thrown, never cut", () => {
+  const lines = (count: number, row: (index: number) => string) =>
+    Array.from({ length: count }, (_, index) => row(index)).join("\n");
+
+  function overflowOf(text: string, limits: { rowCut: number; cellBudget: number }): InfluxShapeOverflowError {
+    try {
+      shapeJsonlBody(text, limits, "refuse");
+    } catch (error) {
+      if (error instanceof InfluxShapeOverflowError) return error;
+      throw error;
+    }
+    throw new Error("shapeJsonlBody did not throw");
+  }
+
+  test("a row past the row cut throws with every row the answer holds, blank lines not counted", () => {
+    const overflow = overflowOf(`${lines(5, (index) => `{"i":${index}}`)}\n\n`, { rowCut: 3, cellBudget: 1000 });
+    expect([overflow.bound, overflow.rows, overflow.allowedRows]).toEqual(["rows", 5, 3]);
+  });
+
+  test("a row past the cell budget throws with the rows the budget admits at the answer's width", () => {
+    // Two columns and a budget of 7 cells: three rows fit, the fourth would make eight cells.
+    const overflow = overflowOf(
+      lines(6, (index) => `{"a":${index},"b":${index}}`),
+      { rowCut: 100, cellBudget: 7 },
+    );
+    expect([overflow.bound, overflow.rows, overflow.allowedRows]).toEqual(["cells", 6, 3]);
+  });
+
+  test("exactly at both bounds is an answer, not an overflow", () => {
+    const shaped = shapeJsonlBody(
+      lines(4, (index) => `{"a":${index},"b":${index}}`),
+      { rowCut: 4, cellBudget: 8 },
+      "refuse",
+    );
+    expect(shaped.rows).toHaveLength(4);
+    expect(shaped.cut).toBe(false);
+  });
+
+  test("a line past the row cut is counted, never parsed: text that is not JSON there still reads as an overflow", () => {
+    const overflow = overflowOf(`${lines(3, (index) => `{"i":${index}}`)}\nnot json`, { rowCut: 3, cellBudget: 1000 });
+    expect([overflow.bound, overflow.rows]).toEqual(["rows", 4]);
   });
 });
 
