@@ -2,8 +2,9 @@
  * IBM's functions in SYSPROC the agent check admits although their own catalog row reads `EXTERNAL_ACTION` E, by
  * specific name: the 81 a fresh 12.1.0.0 database still lets `PUBLIC` execute after the seed's revokes, monitor and
  * catalog readers (capture 10 in `tests/fixtures/db2/12.1.0.0/agent-boundary/`, which a unit test holds this list equal
- * to). Called in the derived table the agent's statement is sent in, each sampled one answered or was refused by its
- * own authority check (the snapshot functions need a monitoring authority the agent user lacks), and none wrote.
+ * to). Called in the derived table the agent's statement is sent in, the sampled ones answered, were refused by their
+ * own authority check (the snapshot functions need a monitoring authority the agent user lacks) or failed on their
+ * input (`ADMIN_LIST_DB_PATHS`, `LOGICAL_BACKUP_DETAILS_TAB`, `ST_ASSDEBINARY`), and none wrote.
  *
  * Exact names, no patterns: a function IBM adds in another release is refused until it is measured, so another Db2
  * release may need this list measured again. Data only; the rule that reads it is `agent-read.ts`.
