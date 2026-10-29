@@ -7,7 +7,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { decodeJwt, SignJWT } from "jose";
-import { CookieJar } from "../../helpers/openshift-auth/cookie-jar";
+import { CookieJar, type CookieWrite } from "../../helpers/openshift-auth/cookie-jar";
 import {
   ACCESS_TOKEN,
   type FakeCluster,
@@ -32,7 +32,7 @@ const { logger } = await import("@/lib/logger");
 
 const SECRET = "a-test-secret-that-is-32-chars!!";
 const LOGIN_PAGE = "https://studio.apps.example.com/login?error=";
-const STATE_DELETE = {
+const STATE_DELETE: CookieWrite = {
   op: "delete",
   name: "openshift-state",
   options: { name: "openshift-state", path: "/api/auth/openshift" },

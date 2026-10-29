@@ -157,11 +157,12 @@ describe("exchangeOpenShiftCode", () => {
       kind: "failed",
       reason: "rejected",
     });
-    for (const answer of [
+    const answers: { status: number; body?: string; headers?: Record<string, string> }[] = [
       { status: 500, body: '{"error":"server_error"}', headers: { "content-type": "application/json" } },
       { status: 503, body: "unavailable" },
       { status: 302, headers: { location: "https://elsewhere.example.com/" } },
-    ]) {
+    ];
+    for (const answer of answers) {
       cluster.reset();
       cluster.script(TOKEN_PATH, answer);
       expect((await signIn()).outcome, String(answer.status)).toEqual({ kind: "failed", reason: "unreachable" });
