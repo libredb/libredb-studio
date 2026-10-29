@@ -17,6 +17,7 @@ import { getJwtSecret } from "@/lib/config/auth-env";
 import { readOidcAutoRedirect } from "@/lib/config/oidc-auto-redirect";
 import { authProvider } from "@/lib/config/auth-provider";
 import { OPENSHIFT_LOGIN_PATH } from "@/lib/openshift-auth/config";
+import { openShiftPublicLocation } from "@/lib/openshift-auth/redirect";
 import { governanceEnabled } from "@/lib/governance/config";
 import { withSecurityHeaders } from "@/lib/security/config";
 import { RETURN_PATH_PARAM, safeReturnPath, sessionRequiredBody, signInPath } from "@/lib/api/session-ended";
@@ -383,7 +384,9 @@ function openShiftAutoRedirect(request: NextRequest): NextResponse | null {
   if (searchParams.has("error")) return null;
   const returnPath = safeReturnPath(searchParams.get(RETURN_PATH_PARAM));
   const query = returnPath === null ? "" : `?${new URLSearchParams({ [RETURN_PATH_PARAM]: returnPath })}`;
-  return NextResponse.redirect(new URL(withBasePath(`${OPENSHIFT_LOGIN_PATH}${query}`), request.url));
+  // Built from OPENSHIFT_PUBLIC_URL, never from the request URL or its Host headers, and never cached.
+  const location = openShiftPublicLocation(withBasePath(`${OPENSHIFT_LOGIN_PATH}${query}`));
+  return new NextResponse(null, { status: 307, headers: { location, "cache-control": "no-store" } });
 }
 
 /**

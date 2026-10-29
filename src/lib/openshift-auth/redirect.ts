@@ -1,7 +1,8 @@
 /**
- * Where a refused openshift sign-in lands: the login page with the reason code, under OPENSHIFT_PUBLIC_URL. Never built
- * from `Host`, `X-Forwarded-Host` or the request URL, which a client controls; when the public URL itself does not
- * read, the path under the base path, so the page still shows the configuration message.
+ * Where openshift sign-in redirects: a refused sign-in to the login page with the reason code, and a signed-out visit
+ * of the login page to the OpenShift login route, both under OPENSHIFT_PUBLIC_URL. Never built from `Host`,
+ * `X-Forwarded-Host` or the request URL, which a client controls; when the public URL itself does not read, the path
+ * under the base path, so the page still shows the configuration message.
  */
 
 import { getBasePath } from "@/lib/config/base-path";
@@ -21,11 +22,15 @@ export type OpenShiftSignInCode =
   | "openshift_failed"
   | "openshift_session_lost";
 
-export function openShiftLoginPageLocation(code: OpenShiftSignInCode): string {
-  const path = `${getBasePath()}/login?error=${code}`;
+/** `path`, already under the base path, at OPENSHIFT_PUBLIC_URL's origin; the path alone when it does not read. */
+export function openShiftPublicLocation(path: string): string {
   try {
     return `${openShiftPublicUrl().origin}${path}`;
   } catch {
     return path;
   }
+}
+
+export function openShiftLoginPageLocation(code: OpenShiftSignInCode): string {
+  return openShiftPublicLocation(`${getBasePath()}/login?error=${code}`);
 }
