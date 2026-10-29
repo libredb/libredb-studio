@@ -255,6 +255,21 @@ describe("verifyAgentProfile", () => {
     }
   });
 
+  test("refuses sqld's full refusal wording under any status other than 403", async () => {
+    for (const status of [401, 500, 200]) {
+      const error = await refusal(() =>
+        verifyAgentProfile(async () => {
+          throw new LibSQLTransportError(FORBIDDEN.message, status);
+        }, NAME),
+      );
+
+      expect(error.reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
+      expect(error.message).toBe(
+        `libSQL answered the agent's write probe with status ${status} (${FORBIDDEN.message}), not the refusal a read-only token is refused a write with, so the agent read-only profile is refused`,
+      );
+    }
+  });
+
   test("refuses the profile when a statement failed for a reason of its own rather than the token's", async () => {
     const error = await refusal(() =>
       verifyAgentProfile(async () => {
