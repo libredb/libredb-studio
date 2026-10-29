@@ -563,6 +563,24 @@ describe("readStatisticsForGrounding", () => {
     );
     expect(h.profiles()).toEqual([]);
   });
+
+  test("the operations-profile read carries the same label as the read-only one, so the model reads it the same way", async () => {
+    const labelOf = async (h: Harness): Promise<string | undefined> => {
+      const outcome = await readStatisticsForGrounding(h.context, "estimates");
+      if (outcome.kind !== "completed") throw new Error(`expected a completed read, got ${outcome.kind}`);
+      return /\u2014 (.+), \d+ row\(s\); operation /.exec(outcome.modelText)?.[1];
+    };
+    const operations = harness("mssql", answerMssql);
+    const readOnly = harness("mssql", answerMssql, "agent", "sql");
+
+    const operationsLabel = await labelOf(operations);
+
+    expect(operations.profiles()).toEqual(["agent-operations"]);
+    expect(readOnly.profiles()).toEqual([]);
+    expect(operationsLabel).toBe("estimated statistics inventory");
+    expect(operationsLabel).toBe(await labelOf(readOnly));
+    expect(readOnly.profiles()).toEqual(["agent-read-only"]);
+  });
 });
 
 describe("readSchemaStatistics — what it will not do", () => {

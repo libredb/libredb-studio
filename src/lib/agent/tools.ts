@@ -5,7 +5,7 @@
  * so through exactly one path: `executeAuditedOperation` (`src/lib/db/operations/`)
  * against a provider acquired under the agent read-only execution profile. There is
  * no second path, no `provider.query()` with a statement anyone but this server
- * composed, and no provider method reached outside a registered operation — a reach
+ * composed, and no provider method reached outside a registered operation: a reach
  * that skipped this module would be a defect by the milestone's own constraint, not a
  * shortcut. The one `provider.query()` is `readStatisticsForGrounding` under the
  * operations profile, which sends a statement it composes itself.
