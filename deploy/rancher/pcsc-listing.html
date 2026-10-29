@@ -1,9 +1,9 @@
-LibreDB Studio brings a SQL IDE to Rancher-managed Kubernetes clusters: browse schemas, run queries across forty-two engines with no desktop app. Where an engine cannot edit data, the controls say so.
+LibreDB Studio brings a SQL IDE to Rancher-managed Kubernetes clusters: browse schemas, query forty-two engines with no desktop app. Where an engine cannot edit data, the controls say so.
 
 Installs from the Rancher Apps catalog: first-run admin credentials are generated and logged; production can supply its own secrets. Developed and commercially supported by LibreDB.
 <ul>
 <li>Forty-two engines: PostgreSQL, MySQL, Oracle, Db2 LUW, SQL Server, SQLite, libSQL, DuckDB, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, Databend, BigQuery, Snowflake, Apache Spark, Apache Cassandra, Prometheus, InfluxDB (InfluxQL), InfluxDB 3 (SQL), Apache Kafka, etcd, Neo4j, Milvus, Qdrant, Weaviate, Oxia, S3-compatible object storage, Kubernetes, MQTT, RabbitMQ, OPC UA, MTConnect, Modbus, NETCONF, SNMP, Sparkplug B</li>
-<li>Optional AI, off by default (your own key): a plain-English EXPLAIN plan reading on PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Couchbase, ClickHouse, Apache Druid, Trino, Databend, BigQuery, Snowflake and Apache Spark. A read-only agent on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse and libSQL never writes</li>
+<li>Optional AI, off by default (your own key): plain-English EXPLAIN reading on PostgreSQL, MySQL, SQLite, libSQL, DuckDB, Couchbase, ClickHouse, Apache Druid, Trino, Databend, BigQuery, Snowflake and Apache Spark. A read-only agent on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL and InfluxDB 3 (SQL) never writes</li>
 <li>Hardened defaults: non-root, read-only root filesystem, NetworkPolicy, PDB, HPA, Ingress/TLS</li>
 <li>Self-hosted, air-gap friendly: no external services</li>
 <li>amd64/arm64 images; Rancher, RKE2/K3s and Kubernetes versions validated per release</li>
