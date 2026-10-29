@@ -20,7 +20,9 @@
  *    INSERT on a table; CREATEIN on a schema; CREATETAB and IMPLICIT_SCHEMA on the database, to PUBLIC; DBADM; a view
  *    that calls a function of the owner's; a view over a view it may not read; a view over an alias of a table it may
  *    not read; a view left inoperative; a column mask anywhere in the database; SETSESSIONUSER; a role with its ADMIN
- *    OPTION; and on one handle a grant added after a call refuses the next call, and its revoke admits the one after;
+ *    OPTION; a trusted context naming the user as its system authorization ID, on the address the server sees this
+ *    script at, whose default role a raw connection of the user is first shown to hold, and the same context
+ *    disabled; and on one handle a grant added after a call refuses the next call, and its revoke admits the one after;
  *  - it admits a view over a table, a view over a view it may read, and a view calling IBM's own function;
  *  - each call has a connection of its own: what one call's session holds is not the next one's;
  *  - the operations profile opens the instance owner unproven; an editor handle refuses `queryReadOnly`;
@@ -176,6 +178,7 @@ const CLEANUP = [
   "DROP VARIABLE APP.LIBREDB_AB_VAR",
   "DROP TABLE APP.LIBREDB_AB_LEDGER",
   "DROP TABLE APP.LIBREDB_AB_SECRET",
+  "DROP TRUSTED CONTEXT LIBREDB_AB_CTX",
   "DROP ROLE LIBREDB_AB_ROLE",
   "DROP SEQUENCE APP.LIBREDB_AB_SEQ",
   "DROP TABLE LIBREDB_AB_IMPLICIT.T",
@@ -540,6 +543,57 @@ try {
     ["DROP MASK APP.LIBREDB_AB_MASK"],
     '"APP"."LIBREDB_AB_MASK" on "APP"."LIBREDB_AB_SECRET"',
   );
+  // Measured first: a connection from the address a trusted context names becomes trusted without asking, and holds
+  // the context's default role, which AUTH_LIST_ROLES_FOR_AUTHID does not list.
+  const address = String(
+    (
+      await rows(
+        "SELECT CLIENT_IPADDR FROM TABLE (MON_GET_CONNECTION(MON_GET_APPLICATION_HANDLE(), -1)) AS M FETCH FIRST 1 ROW ONLY",
+      )
+    )[0].CLIENT_IPADDR,
+  ).trim();
+  const context =
+    "CREATE TRUSTED CONTEXT LIBREDB_AB_CTX BASED UPON CONNECTION USING SYSTEM AUTHID AGENT_RO " +
+    `ATTRIBUTES (ADDRESS '${address}') DEFAULT ROLE LIBREDB_AB_ROLE ENABLE`;
+  await setup(["GRANT INSERT ON APP.LIBREDB_AB_LEDGER TO ROLE LIBREDB_AB_ROLE", context]);
+  {
+    const agentRaw = await raw("agent_ro", AGENT_PASSWORD);
+    const listed = (
+      await agentRaw.query(
+        "SELECT ROLENAME FROM TABLE (SYSPROC.AUTH_LIST_ROLES_FOR_AUTHID(SESSION_USER, 'U')) AS R " +
+          "WHERE ROLENAME = 'LIBREDB_AB_ROLE'",
+      )
+    ).rows.length;
+    let inserted = true;
+    try {
+      await agentRaw.query("INSERT INTO APP.LIBREDB_AB_LEDGER VALUES (2)");
+    } catch {
+      inserted = false;
+    }
+    await agentRaw.close();
+    await setup(["DELETE FROM APP.LIBREDB_AB_LEDGER WHERE N = 2"]);
+    check(
+      inserted && listed === 0,
+      `a trusted context on ${address} gave the agent user's raw connection its default role's INSERT, unlisted (${inserted}, ${listed})`,
+    );
+  }
+  await setup(["DROP TRUSTED CONTEXT LIBREDB_AB_CTX"]);
+  await refusedUntilLifted(
+    provider,
+    "a trusted context naming the user as its system authorization ID",
+    [context],
+    ["DROP TRUSTED CONTEXT LIBREDB_AB_CTX"],
+    '"LIBREDB_AB_CTX" (default role "LIBREDB_AB_ROLE")',
+  );
+  await refusedUntilLifted(
+    provider,
+    "the same trusted context, disabled",
+    [context, "ALTER TRUSTED CONTEXT LIBREDB_AB_CTX ALTER DISABLE"],
+    ["DROP TRUSTED CONTEXT LIBREDB_AB_CTX"],
+    '"LIBREDB_AB_CTX" (default role "LIBREDB_AB_ROLE")',
+  );
+  await setup(["REVOKE INSERT ON APP.LIBREDB_AB_LEDGER FROM ROLE LIBREDB_AB_ROLE"]);
+
   // Admitted: a view over a table, a view over a view the user may read, and a view calling IBM's own function.
   await setup([
     "CREATE VIEW APP.LIBREDB_AB_PLAIN AS SELECT ID FROM APP.ORDERS",

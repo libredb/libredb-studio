@@ -1,0 +1,26 @@
+SELECT VARCHAR(CONTEXTNAME, 16) AS CONTEXTNAME, VARCHAR(SYSTEMAUTHID, 10) AS SYSTEMAUTHID, VARCHAR(DEFAULTCONTEXTROLE, 10) AS DEFAULTROLE, ENABLED FROM SYSCAT.CONTEXTS ORDER BY 1
+
+CONTEXTNAME      SYSTEMAUTHID DEFAULTROLE ENABLED
+---------------- ------------ ----------- -------
+SYSATSCONTEXT    SYSATS       -           Y      
+
+  1 record(s) selected.
+
+
+SELECT VARCHAR(TRUSTEDID, 16) AS TRUSTEDID, TRUSTEDIDTYPE, VARCHAR(SURROGATEAUTHID, 10) AS SURROGATEAUTHID, SURROGATEAUTHIDTYPE FROM SYSCAT.SURROGATEAUTHIDS ORDER BY 1
+
+TRUSTEDID        TRUSTEDIDTYPE SURROGATEAUTHID SURROGATEAUTHIDTYPE
+---------------- ------------- --------------- -------------------
+SYSATSCONTEXT    C             PUBLIC          G                  
+
+  1 record(s) selected.
+
+
+SELECT CONTEXTNAME AS NAME, COALESCE(DEFAULTCONTEXTROLE, '') AS ROLE FROM SYSCAT.CONTEXTS WHERE SYSTEMAUTHID = SESSION_USER ORDER BY 1
+
+NAME                                                                                                                             ROLE                                                                                                                            
+-------------------------------------------------------------------------------------------------------------------------------- --------------------------------------------------------------------------------------------------------------------------------
+
+  0 record(s) selected.
+
+

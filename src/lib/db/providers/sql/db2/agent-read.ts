@@ -21,8 +21,14 @@
  * administrator (measured).
  *
  * The session's grantees are the user, PUBLIC, the user's groups (`AUTH_LIST_GROUPS_FOR_AUTHID`) and every role it
- * holds directly, through a group, through PUBLIC or through another role (`AUTH_LIST_ROLES_FOR_AUTHID`).
+ * holds directly, through a group, through PUBLIC or through another role (`AUTH_LIST_ROLES_FOR_AUTHID`). That list
+ * leaves out the one role a session can hold without a grant to the user: a trusted context's default role. Db2 makes
+ * a connection trusted without being asked when its system authorization ID and address match an enabled context, and
+ * the session then holds the context's default role; a function granted to that role ran for the agent user with its
+ * owner's authority (measured). So the first check comes before the others:
  *
+ * 0. No trusted context, enabled or not, names the user as its system authorization ID (`SYSCAT.CONTEXTS`). A
+ *    disabled one is refused too, since enabling it takes no change the user's own grants would show.
  * 1. The user holds no database or instance authority but CONNECT, in any of those ways
  *    (`AUTH_LIST_AUTHORITIES_FOR_AUTHID`).
  * 2. Its grantees hold no table, column or index privilege but SELECT, no schema or tablespace privilege, no
@@ -112,6 +118,9 @@ function spread(alias: string, pairs: readonly (readonly [string, string])[]): s
 /** The check's statements, in the order they are sent. Each is one SELECT the agent user may run on 12.1. */
 export const AGENT_PRINCIPAL_STATEMENTS = Object.freeze({
   user: "SELECT CAST(SESSION_USER AS VARCHAR(128)) AS USERNAME FROM SYSIBM.SYSDUMMY1",
+  contexts:
+    "SELECT CONTEXTNAME AS NAME, COALESCE(DEFAULTCONTEXTROLE, '') AS ROLE FROM SYSCAT.CONTEXTS " +
+    "WHERE SYSTEMAUTHID = SESSION_USER ORDER BY 1",
   authorities:
     "SELECT a.AUTHORITY, a.D_USER, a.D_GROUP, a.D_PUBLIC, a.ROLE_USER, a.ROLE_GROUP, a.ROLE_PUBLIC " +
     "FROM TABLE (SYSPROC.AUTH_LIST_AUTHORITIES_FOR_AUTHID(SESSION_USER, 'U')) AS a " +
@@ -286,6 +295,22 @@ interface Finding {
   readonly statements: readonly string[];
 }
 
+function contextsFinding(rows: Rows): Finding | null {
+  if (rows.length === 0) return null;
+  const named = rows.map((row) => {
+    const [name, role] = text(row, "contexts", ["NAME", "ROLE"], ["ROLE"]);
+    return role === "" ? quoted(name) : `${quoted(name)} (default role ${quoted(role)})`;
+  });
+  return {
+    what:
+      "it is the system authorization ID of a trusted context, and Db2 makes a connection that matches the " +
+      "context's attributes trusted without being asked, giving it the context's default role, which the role list " +
+      "the other checks read does not show, so agent mode is not offered for this user while the context exists: " +
+      named.join(", "),
+    statements: [],
+  };
+}
+
 function authoritiesFinding(rows: Rows, user: string): Finding | null {
   if (rows.length === 0) return null;
   return {
@@ -407,6 +432,7 @@ export async function verifyAgentPrincipal(read: Db2AgentReader): Promise<void> 
   if (users.length !== 1) throw unreadable(`the user read answered ${users.length} rows`);
   const [user] = text(users[0], "user", ["USERNAME"]);
   const findings = [
+    contextsFinding(await read(AGENT_PRINCIPAL_STATEMENTS.contexts)),
     authoritiesFinding(await read(AGENT_PRINCIPAL_STATEMENTS.authorities), user),
     privilegesFinding(await read(AGENT_PRINCIPAL_STATEMENTS.privileges)),
     codeFinding(await read(AGENT_PRINCIPAL_STATEMENTS.code)),

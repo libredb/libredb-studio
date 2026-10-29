@@ -516,16 +516,20 @@ Every `queryReadOnly` call runs the check on its own connection, as the agent us
 Each catalog view is named `SYSCAT.<view>` and each function `SYSPROC.<name>`: an unqualified name resolves through the session's schema and path, and an object in the user's schema or a public alias, which `PUBLIC` may create on a fresh database, could stand in for it.
 An object is IBM's only when its own catalog row says the system owns it, `OWNERTYPE` S, and for a package `BOUNDBYTYPE` S as well, never by its schema.
 The session's grantees are the user, `PUBLIC`, the user's operating-system groups (`AUTH_LIST_GROUPS_FOR_AUTHID`) and every role it holds, directly or through a group, `PUBLIC` or another role (`AUTH_LIST_ROLES_FOR_AUTHID`).
+That list leaves out the one role a session can hold without a grant to the user: a trusted context's default role.
+Db2 makes a connection trusted without being asked when its system authorization ID and its address match an enabled trusted context, and the session then holds the context's default role, which `AUTH_LIST_ROLES_FOR_AUTHID` does not list (measured: a function granted only to that role ran for the agent user with its owner's authority, and the user's raw `INSERT` through that role ran).
+So the check reads the trusted contexts first.
 
+0. No trusted context, enabled or not, names the user as its system authorization ID (`SYSCAT.CONTEXTS`). A disabled one is refused too, since enabling it changes nothing the user's own grants would show. The refusal names each context and its default role; dropping the context, or giving the agent its own user that no context names, lifts it. A fresh database holds one context, IBM's `SYSATSCONTEXT`, whose system authorization ID is `SYSATS`, and `PUBLIC` may read `SYSCAT.CONTEXTS` (capture 09).
 1. The user holds no database or instance authority but `CONNECT`, in any of those ways (`AUTH_LIST_AUTHORITIES_FOR_AUTHID`).
 2. Its grantees hold no table, column or index privilege but `SELECT`, no schema privilege (`CREATEIN` and `SELECTIN` included), no tablespace `USE`, no sequence privilege, since `NEXT VALUE FOR` advances a sequence and the rollback does not take that back, no role's `ADMIN OPTION`, no `PASSTHRU` and no `SETSESSIONUSER` (`SYSCAT.TABAUTH`, `COLAUTH`, `INDEXAUTH`, `SCHEMAAUTH`, `TBSPACEAUTH`, `SEQUENCEAUTH`, `ROLEAUTH`, `PASSTHRUAUTH`, `SURROGATEAUTHIDS`).
 3. They may execute no routine, module or package that is not IBM's, since that code runs with its owner's authority, and none of IBM's routines and modules that write a server file, reach another server or another session, or schedule work outside the call: `SYSPROC.ADMIN_CMD`, `ADMIN_TASK_ADD`, `ADMIN_TASK_UPDATE`, `DB2LOAD`, `REMOTE_QUERY`, `SNAP_WRITE_FILE` and `SYSTS_ADMIN_CMD`, and the `SYSIBMADM` modules `DBMS_ALERT`, `DBMS_JOB`, `DBMS_PIPE`, `UTL_DIR`, `UTL_FILE`, `UTL_MAIL`, `UTL_SMTP` and `UTL_TCP`; a grant on every routine of a schema is refused when any routine there is not admitted. They may read or write no global variable that is not IBM's, whose default can call code (`SYSCAT.ROUTINEAUTH`, `MODULEAUTH`, `PACKAGEAUTH`, `VARIABLEAUTH`).
 4. They may read no table object that is not IBM's and is a nickname, which reads another server, or a view that is not valid, which a `SELECT` revalidates and runs as it reads now, or a view whose dependencies (`SYSCAT.TABDEP`) hold anything but a table, a function or variable that is IBM's, a view that is IBM's or one this check also examines, or an alias of a table object this check examines.
 5. `SYSCAT.CONTROLS` lists no row permission or column mask anywhere in the database that is not IBM's, enabled or not: Db2 evaluates it for any reader of the table it guards, through a view included, and it can call a secured function with its owner's authority. A database that holds one is refused whatever the user is granted, since which tables the user reaches through views is not proven.
 
-Each finding is collected, and one `PROFILE_PRIVILEGES_TOO_BROAD` refusal names them all, as the statements that lift them or, for a control, as the control.
+Each finding is collected, and one `PROFILE_PRIVILEGES_TOO_BROAD` refusal names them all, as the statements that lift them or, for a trusted context or a control, as the object itself.
 A check read that fails is reported as a connection failure rather than as a failure of the model's statement, so the agent does not offer it to the model to repair.
-On the measured database the check's six reads take about 170 ms, and a whole call, its own connection included, about 260 ms.
+On the measured database the check's seven reads take about 200 ms, and a whole call, its own connection included, about 280 ms.
 
 #### Each statement
 
@@ -583,11 +587,10 @@ What the agent reads beyond the tables needs no grant: the catalog reads below a
 
 - IBM's own routines, modules and packages that `PUBLIC` may execute, apart from those item 3 names, and IBM's views are trusted as the vendor's boundary. Inside the derived table only a function can be invoked, so no procedure, IBM's or not, is reachable from an agent statement, whatever the grants.
 - `LOCK TABLE` and `SET` are not residuals: the user may run them raw, and neither fits inside the derived table.
-- A role a trusted connection would acquire is not read: db2-node opens no trusted connection, so the agent's session holds none.
 
 #### Boundary record
 
-Measured on 12.1.0.0 (the digest `run.sh` pins, 2026-10-29) by [`tests/live/db2-agent-boundary.ts`](../../tests/live/db2-agent-boundary.ts), with Studio's agent admission bypassed: 85 checks, all passing.
+Measured on 12.1.0.0 (the digest `run.sh` pins, 2026-10-29) by [`tests/live/db2-agent-boundary.ts`](../../tests/live/db2-agent-boundary.ts), with Studio's agent admission bypassed: 90 checks, all passing.
 
 | Probe | Admitted agent user, through `queryReadOnly` | The same user, raw | Instance owner, positive control |
 | --- | --- | --- | --- |
@@ -601,7 +604,7 @@ Measured on 12.1.0.0 (the digest `run.sh` pins, 2026-10-29) by [`tests/live/db2-
 | `CREATE TABLE`, a function in `SYSTOOLS`, `UPDATE SYSSTAT.TABLES` | not sent | `SQL0552N`, `SQL0551N`, `SQL0551N` | not sent |
 
 The rows and `APP.ORDER_SEQ` read back the same before and after.
-The check refused, and admitted again once the grant or the object was gone: `EXECUTE` on an SQL table function that writes, granted to the user, to `PUBLIC`, to a role and through a grant on every function of its schema, measured to write a row for the user; `EXECUTE` on a module and on a package of the owner's; `READ` on a variable of the owner's; `USAGE` on a sequence; `INSERT` on a table; `CREATEIN` on a schema; `CREATETAB` and `IMPLICIT_SCHEMA` to `PUBLIC`; `DBADM`; `SETSESSIONUSER`; a role's `ADMIN OPTION`; `SELECT` on a view that calls a function of the owner's, on a view over a view the user may not read, lifted by granting the inner view, on a view over an alias of a table the user may not read, and on a view left inoperative by a dropped table; and a column mask on a table the user may not read.
+The check refused, and admitted again once the grant or the object was gone: `EXECUTE` on an SQL table function that writes, granted to the user, to `PUBLIC`, to a role and through a grant on every function of its schema, measured to write a row for the user; `EXECUTE` on a module and on a package of the owner's; `READ` on a variable of the owner's; `USAGE` on a sequence; `INSERT` on a table; `CREATEIN` on a schema; `CREATETAB` and `IMPLICIT_SCHEMA` to `PUBLIC`; `DBADM`; `SETSESSIONUSER`; a role's `ADMIN OPTION`; `SELECT` on a view that calls a function of the owner's, on a view over a view the user may not read, lifted by granting the inner view, on a view over an alias of a table the user may not read, and on a view left inoperative by a dropped table; a column mask on a table the user may not read; and a trusted context naming the agent user as its system authorization ID on the address the server saw the script at, enabled and then disabled, after a raw connection of the agent user was shown to hold its default role's `INSERT` with that role absent from `AUTH_LIST_ROLES_FOR_AUTHID`.
 It admitted a view over a table, a view over a view the user may read, and a view calling `UPPER` and `LENGTH`.
 On one handle a call ran, an `INSERT` granted after it refused the next call, and the call after its revoke ran; each call read the agent user's own `CURRENT SCHEMA`.
 The operations profile opened the instance owner unchecked and listed its tables; it and an editor handle refused `queryReadOnly` before sending anything.

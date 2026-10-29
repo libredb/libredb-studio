@@ -48,3 +48,4 @@ in_container chmod 644 /tmp/07-public-revokes-as-db2inst1.sql
 in_container su - db2inst1 -c "db2 connect to testdb >/dev/null; db2 -tvf /tmp/07-public-revokes-as-db2inst1.sql; db2 terminate >/dev/null" \
   > "$dir/07-public-revokes-as-db2inst1.txt" || true
 clp agent-ro 08-after-revokes-as-agent-ro
+clp agent-ro 09-trusted-contexts-as-agent-ro

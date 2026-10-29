@@ -3,8 +3,9 @@
  * statement is sent in, the column refusal and the reading of an answer against the budget. The provider wiring is in
  * tests/integration/db/db2-provider.test.ts, the live boundary in tests/live/db2-agent-boundary.ts.
  *
- * The check refuses the profile, fail closed, unless the user, its groups, its roles and PUBLIC hold nothing but CONNECT
- * and SELECT that reaches past the read: no other authority; no write, DDL, schema, tablespace, sequence, role-admin,
+ * The check refuses the profile, fail closed, while a trusted context names the user as its system authorization ID,
+ * whose default role a matching connection takes without asking, and unless the user, its groups, its roles and PUBLIC
+ * hold nothing but CONNECT and SELECT that reaches past the read: no other authority; no write, DDL, schema, tablespace, sequence, role-admin,
  * pass-through or session-user privilege; no EXECUTE on code that is not IBM's, which runs with its owner's authority,
  * nor on IBM's code that reaches the server's files, the network or work outside the call; no view that calls such
  * code, reads a view or alias the check cannot follow or a nickname, or is not valid; and no row permission or column
@@ -45,6 +46,9 @@ const admittedRoutine = (alias: string) =>
 
 const PINNED: Record<Statement, string> = {
   user: "SELECT CAST(SESSION_USER AS VARCHAR(128)) AS USERNAME FROM SYSIBM.SYSDUMMY1",
+  contexts:
+    "SELECT CONTEXTNAME AS NAME, COALESCE(DEFAULTCONTEXTROLE, '') AS ROLE FROM SYSCAT.CONTEXTS " +
+    "WHERE SYSTEMAUTHID = SESSION_USER ORDER BY 1",
   authorities:
     "SELECT a.AUTHORITY, a.D_USER, a.D_GROUP, a.D_PUBLIC, a.ROLE_USER, a.ROLE_GROUP, a.ROLE_PUBLIC " +
     "FROM TABLE (SYSPROC.AUTH_LIST_AUTHORITIES_FOR_AUTHID(SESSION_USER, 'U')) AS a " +
@@ -130,7 +134,7 @@ const PINNED: Record<Statement, string> = {
     "WHERE OWNERTYPE <> 'S' ORDER BY 3, 4, 1, 2",
 };
 
-const ORDER: readonly Statement[] = ["user", "authorities", "privileges", "code", "reach", "controls"];
+const ORDER: readonly Statement[] = ["user", "contexts", "authorities", "privileges", "code", "reach", "controls"];
 
 /** A reader answering each check from `answers`, the user AGENT_RO by default, recording what it was sent. */
 function reader(answers: Partial<Record<Statement, Rows>> = {}) {
@@ -335,6 +339,22 @@ describe("verifyAgentPrincipal", () => {
     );
   });
 
+  test("a trusted context whose system authorization ID is the user refuses it, enabled or not, naming each", async () => {
+    const contexts = [
+      { NAME: "AUDIT_CTX ", ROLE: "" },
+      { NAME: "APP_CTX", ROLE: "WRITER " },
+    ];
+    const error = await refusal({ contexts });
+    expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect(error.message).toBe(
+      "The agent read-only execution profile refuses the Db2 user AGENT_RO: it is the system authorization ID of a " +
+        "trusted context, and Db2 makes a connection that matches the context's attributes trusted without being " +
+        "asked, giving it the context's default role, which the role list the other checks read does not show, so " +
+        'agent mode is not offered for this user while the context exists: "AUDIT_CTX", "APP_CTX" (default role ' +
+        '"WRITER").',
+    );
+  });
+
   test("findings are named together, each statement once, at most twenty listed and the rest counted", async () => {
     const rows = Array.from({ length: 23 }, (_, index) =>
       privilege("AGENT_RO", "U", "INSERT", "TABLE", "APP", `T${String(index).padStart(2, "0")}`),
@@ -358,6 +378,8 @@ describe("verifyAgentPrincipal", () => {
     const cases: [Partial<Record<Statement, Rows>>, string][] = [
       [{ user: [] }, "the user read answered 0 rows"],
       [{ user: [{ USERNAME: "" }] }, "user: USERNAME"],
+      [{ contexts: [{ NAME: "C", ROLE: null }] }, "contexts: ROLE"],
+      [{ contexts: [{ NAME: "", ROLE: "" }] }, "contexts: NAME"],
       [{ authorities: [{ AUTHORITY: 7 }] }, "authorities: AUTHORITY"],
       [{ privileges: [{ ...privilege("A", "U", "INSERT", "TABLE", "APP", "T"), NAME: null }] }, "privileges: NAME"],
       [{ privileges: [privilege("A", "X", "INSERT", "TABLE", "APP", "T")] }, "privileges: GRANTEETYPE X"],
@@ -386,6 +408,7 @@ describe("verifyAgentPrincipal", () => {
     expect(caught).toBe(failure);
     expect(sent).toEqual([
       AGENT_PRINCIPAL_STATEMENTS.user,
+      AGENT_PRINCIPAL_STATEMENTS.contexts,
       AGENT_PRINCIPAL_STATEMENTS.authorities,
       AGENT_PRINCIPAL_STATEMENTS.privileges,
     ]);
