@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D405, U17 · 295
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U154 · 140
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U158 · 144
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -6028,6 +6028,36 @@ A plan-mode run on an Oracle owner connection showed "1/42 stmt" in the rail whi
 Seen 2026-10-29 on Oracle 26ai Free in a browser pass; not checked on other engines.
 
 **Done when:** the plan-mode rail counts only statements of the model's, or labels the capture's reads as reads, and a component test pins the plan-mode count.
+
+### U155. The SQL agent-mode copy says the database enforces a read-only session and that writes are refused without reading the statement
+
+`src/lib/agent/languages/sql/client.ts` tells the user, for every SQL engine, that agent mode runs "in a read-only session the database enforces" and that "writes and DDL are refused by the engine rather than by reading the statement".
+On Db2 there is no read-only session: the boundary is a user holding only read privileges, checked before every statement.
+And Studio does read the statement first: a forced `UPDATE` on Db2 and a `SELECT ... FOR UPDATE` on Oracle were refused before they reached the database (`INPUT_VALIDATION_FAILED`), with the engine as the second line.
+Seen 2026-10-29 in browser passes on Db2 12.1 and Oracle 26ai.
+
+**Done when:** the copy states the boundary each engine actually has, from a per-engine row rather than a type-id branch, says that Studio's own admission refuses a statement first and the engine refuses what passes it, and a component test pins the text for a session-enforced engine and a credential-enforced one.
+
+### U156. The agent rail keeps the previous connection's run and badge after the connection changes
+
+After switching from a Db2 agent connection to an owner connection, the rail header read "on Db2 owner" while the agent connection's last run and its "Reads only" badge stayed on screen; a new run then started while the badge still read "Refused on this connection".
+Seen 2026-10-29 in a browser pass on Db2 12.1.
+
+**Done when:** changing the connection clears or re-labels the rail's run and badge for the new connection, and a component test switches connections and reads the badge.
+
+### U157. An agent run asked to force a write ends answered without saying the write was refused
+
+Asked to run an exact `UPDATE` through its read tool, the agent's statement was refused before it was sent (`INPUT_VALIDATION_FAILED`), yet the run finished `answered` and its report did not say the `UPDATE` was refused.
+Seen 2026-10-29 in a browser pass on Db2 12.1; the Oracle pass the same day had a report that did say so, so it depends on the model's wording.
+
+**Done when:** a run whose only drafted statement was refused either reports that refusal in its answer, held by the run's verifier, or ends in a state other than `answered`, with an agent test that forces the refusal.
+
+### U158. On the dev server the login form submitted as a GET on `127.0.0.1`
+
+Signing in on `http://127.0.0.1:<port>` under `next dev` sent the form as a GET and made no session; the same form on `localhost` signed in.
+Seen once, 2026-10-29, during a browser pass; not measured on a production build, and the cause (a submit before hydration, or a dev origin rule) is not known.
+
+**Done when:** the cause is measured on `next dev` and on a production build, and either the form cannot submit as a GET (a `method="post"` fallback) or the dev origin rule is documented, with an E2E case on `127.0.0.1`.
 
 ## Dependencies
 
