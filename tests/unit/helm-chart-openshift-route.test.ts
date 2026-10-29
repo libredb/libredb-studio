@@ -9,7 +9,9 @@
  * The timeout annotation matters: the router cuts a request after 30s by default,
  * and a Studio query may run for 60s or more, so the chart sets 120s.
  */
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseAllDocuments } from "yaml";
 import { howItFailed } from "../helpers/spawn-outcome";
@@ -175,5 +177,100 @@ describe("charts/libredb-studio OpenShift Route", () => {
 
   test("a values set without openshiftRoute renders no Route", () => {
     expect(renderDocs([...ROUTE_API, "--set", "openshiftRoute=null"]).some((doc) => doc.kind === "Route")).toBe(false);
+  });
+});
+
+/**
+ * The install notes say where Studio answers. With a Route, that is its host:
+ * the one set in openshiftRoute.host, or the one the router generates, which
+ * exists only after the install, so the notes say how to read it.
+ */
+describe("install notes about the OpenShift Route", () => {
+  // helm template never emits NOTES.txt, so the real file is wrapped in a named
+  // template inside a private copy of the chart and rendered into a ConfigMap.
+  const PROBE_TEMPLATE = "templates/zz-notes-probe.yaml";
+  let notesChart: string;
+
+  beforeAll(() => {
+    notesChart = mkdtempSync(join(tmpdir(), "libredb-openshift-route-notes-probe-"));
+    cpSync(CHART_DIR, notesChart, { recursive: true });
+    writeFileSync(
+      join(notesChart, PROBE_TEMPLATE),
+      `{{- define "notesProbe" -}}\n${readFileSync(join(CHART_DIR, "templates/NOTES.txt"), "utf8")}\n{{- end -}}\n` +
+        'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: notes-probe\ndata:\n  notes: {{ include "notesProbe" . | quote }}\n',
+    );
+  });
+
+  afterAll(() => rmSync(notesChart, { recursive: true, force: true }));
+
+  function notes(args: string[]): string {
+    const run = Bun.spawnSync(
+      ["helm", "template", "release-under-test", notesChart, "--show-only", PROBE_TEMPLATE, ...args],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    if (run.exitCode !== 0) {
+      throw new Error(`helm template of the notes probe ${howItFailed(run)}: ${run.stderr.toString()}`);
+    }
+    const rendered = parseAllDocuments(run.stdout.toString())
+      .map((document) => document.toJS() as { data?: { notes?: string } } | null)
+      .find((document) => document?.data?.notes !== undefined);
+    if (!rendered) {
+      throw new Error(`the notes probe rendered no ConfigMap: ${run.stdout.toString()}`);
+    }
+    return rendered.data?.notes ?? "";
+  }
+
+  const READ_HOST = `oc get route --namespace default ${FULLNAME} -o jsonpath='{.spec.host}'`;
+
+  test("a set host is named as the HTTPS address", () => {
+    const text = notes([...ROUTE_API, ...ENABLED, "--set", "openshiftRoute.host=studio.apps.example.com"]);
+    expect(text).toContain("Access LibreDB Studio via the OpenShift Route:\n  https://studio.apps.example.com\n");
+    expect(text).not.toContain(READ_HOST);
+  });
+
+  test("a set host carries config.basePath", () => {
+    const text = notes([
+      ...ROUTE_API,
+      ...ENABLED,
+      "--set",
+      "openshiftRoute.host=studio.apps.example.com",
+      "--set",
+      "config.basePath=/studio",
+    ]);
+    expect(text).toContain("  https://studio.apps.example.com/studio\n");
+  });
+
+  test("a generated host is read with oc get route", () => {
+    const text = notes([...ROUTE_API, ...ENABLED]);
+    expect(text).toContain("Access LibreDB Studio via the OpenShift Route:");
+    expect(text).toContain(READ_HOST);
+  });
+
+  test("without an enabled Route the notes do not mention it", () => {
+    for (const args of [[], ROUTE_API, [...ROUTE_API, "--set", "openshiftRoute=null"]]) {
+      const text = notes(args);
+      expect(text).not.toContain("OpenShift Route");
+      expect(text).not.toContain("oc get route");
+      expect(text).toContain("Access LibreDB Studio via port-forward:");
+    }
+  });
+
+  test("an Ingress and a Route are both named", () => {
+    const text = notes([
+      ...ROUTE_API,
+      ...ENABLED,
+      "--set",
+      "openshiftRoute.host=studio.apps.example.com",
+      "--set",
+      "ingress.enabled=true",
+      "--set",
+      "ingress.hosts[0].host=libredb.example.com",
+      "--set",
+      "ingress.hosts[0].paths[0].path=/",
+      "--set",
+      "ingress.hosts[0].paths[0].pathType=Prefix",
+    ]);
+    expect(text).toContain("Access LibreDB Studio via Ingress:\n  http://libredb.example.com/");
+    expect(text).toContain("  https://studio.apps.example.com\n");
   });
 });

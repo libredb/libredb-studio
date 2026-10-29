@@ -33,6 +33,18 @@ Access LibreDB Studio via port-forward:
 
 {{- end }}
 
+{{- $openshiftRoute := .Values.openshiftRoute | default dict }}
+{{- if $openshiftRoute.enabled }}
+
+Access LibreDB Studio via the OpenShift Route:
+{{- with $openshiftRoute.host }}
+  https://{{ . }}{{ $.Values.config.basePath | default "" }}
+{{- else }}
+  The router generates the host. Read it with:
+    oc get route --namespace {{ .Release.Namespace }} {{ include "libredb-studio.fullname" . }} -o jsonpath='{.spec.host}'
+{{- end }}
+{{- end }}
+
 Configuration:
   Auth Provider:    {{ .Values.authProvider }}
   Storage Provider: {{ include "libredb-studio.storageProvider" . }}
