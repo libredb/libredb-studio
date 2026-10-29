@@ -2,6 +2,8 @@
 
 LibreDB Studio supports vendor-agnostic OpenID Connect (OIDC) authentication. This document is split into two parts: a **Setup Guide** for operators configuring SSO against a provider, and an **Architecture & Internals** reference for contributors working on the auth subsystem.
 
+For the built-in OAuth server of an OpenShift cluster, which is not an OpenID Connect provider, see [OPENSHIFT.md](OPENSHIFT.md) and `NEXT_PUBLIC_AUTH_PROVIDER=openshift` instead.
+
 LibreDB Studio uses the **Authorization Code Flow with PKCE** (S256). After OIDC authentication, a local JWT session is created — the rest of the app (middleware, hooks, protected routes, RBAC) works identically to local email/password login.
 
 ```
@@ -411,7 +413,7 @@ No Studio code is specific to Rancher: it is the ordinary OIDC mode with the val
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `NEXT_PUBLIC_AUTH_PROVIDER` | No | `local` | Auth mode: `local` or `oidc` |
+| `NEXT_PUBLIC_AUTH_PROVIDER` | No | `local` | Auth mode: `local`, `oidc` or `openshift` ([OPENSHIFT.md](OPENSHIFT.md)); any other value stops the server at boot |
 | `OIDC_ISSUER` | When `oidc` | — | Issuer URL (must be `https://` and serve `/.well-known/openid-configuration`) |
 | `OIDC_CLIENT_ID` | When `oidc` | — | OAuth client ID |
 | `OIDC_CLIENT_SECRET` | When `oidc` | — | OAuth client secret |
@@ -742,7 +744,7 @@ With Keycloak:
 
 ## Switching Between Auth Modes
 
-You can switch between local and OIDC authentication by changing a single environment variable:
+You can switch between local, OIDC and OpenShift sign-in by changing a single environment variable:
 
 ```env
 # Local email/password login
@@ -750,9 +752,15 @@ NEXT_PUBLIC_AUTH_PROVIDER=local
 
 # OIDC Single Sign-On
 NEXT_PUBLIC_AUTH_PROVIDER=oidc
+
+# The OpenShift cluster's built-in OAuth server (docs/OPENSHIFT.md)
+NEXT_PUBLIC_AUTH_PROVIDER=openshift
 ```
 
+Any other value stops the server at boot, so a typo never falls back to local sign-in.
+
 Both modes use the same JWT session after authentication. The middleware, hooks, protected routes, and RBAC all work identically regardless of the auth mode.
+A session minted in `openshift` mode reads as signed out in the other modes, and a local or OIDC session reads as signed out in `openshift` mode, so switching to or from it signs everyone out once.
 
 ---
 

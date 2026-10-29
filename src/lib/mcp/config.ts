@@ -11,6 +11,7 @@
  * rebinding is the attacker's name.
  */
 import { governanceEnabled } from "@/lib/governance/config";
+import { authProviderSetting } from "@/lib/config/auth-provider";
 import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
 
 export const MCP_PATH = "/api/mcp";
@@ -31,6 +32,7 @@ const OFF_VALUES = new Set(["false", "off", "0", ""]);
 const SWITCH_OFF_PROBLEM = `${MCP_ENABLED_ENV} is off: set it to true, on or 1 to enable MCP`;
 const GOVERNANCE_HOLD_PROBLEM = `GOVERNANCE_SOURCE is set: this version of Studio does not run MCP under governance, so MCP stays off whatever ${MCP_ENABLED_ENV} says`;
 const ACCESS_REVIEW_HOLD_PROBLEM = `KUBERNETES_ACCESS_REVIEW is on: this version of Studio does not run MCP under the Kubernetes access review, so MCP stays off whatever ${MCP_ENABLED_ENV} says`;
+const SIGN_IN_MODE_HOLD_PROBLEM = `NEXT_PUBLIC_AUTH_PROVIDER is not local or oidc: this version of Studio does not run MCP with OpenShift sign-in, so MCP stays off whatever ${MCP_ENABLED_ENV} says`;
 const URL_FIX = "set it to the address clients use, such as https://studio.example.com/api/mcp";
 
 export type McpSwitchReading =
@@ -70,9 +72,16 @@ export function isMcpHeldByGovernance(): boolean {
  * Whether the Kubernetes access review holds MCP off (docs/SEED_CONNECTIONS.md, "Kubernetes access review"). An MCP
  * token carries no groups record, so no review could decide what its tools open; the hold answers off before the
  * switch is read, as governance's does, also where the boot preflight that refuses LIBREDB_MCP_ENABLED was bypassed.
+ * It holds in every sign-in mode other than local and oidc as well (openshift, and an unknown value, which counts as
+ * it): an MCP token cannot carry the user's cluster sign-in, which every request there is reviewed with.
  */
 function isMcpHeldByAccessReview(): boolean {
-  return accessReviewEnabled();
+  return accessReviewEnabled() || heldBySignInMode();
+}
+
+function heldBySignInMode(): boolean {
+  const mode = authProviderSetting();
+  return mode !== "local" && mode !== "oidc";
 }
 
 export function readMcpSwitch(): McpSwitchReading {
@@ -133,7 +142,8 @@ export function mcpChannelStatus(): McpChannelStatus {
     return { state: "off", problems: [GOVERNANCE_HOLD_PROBLEM], url: null, tokenTtlDays: null };
   }
   if (isMcpHeldByAccessReview()) {
-    return { state: "off", problems: [ACCESS_REVIEW_HOLD_PROBLEM], url: null, tokenTtlDays: null };
+    const problem = accessReviewEnabled() ? ACCESS_REVIEW_HOLD_PROBLEM : SIGN_IN_MODE_HOLD_PROBLEM;
+    return { state: "off", problems: [problem], url: null, tokenTtlDays: null };
   }
   const reading = readMcpSwitch();
   const url = readMcpUrl();

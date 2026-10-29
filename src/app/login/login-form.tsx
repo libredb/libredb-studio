@@ -16,6 +16,7 @@ import { DatabaseShowcase } from "@/components/login/database-showcase";
 import { HeroProof, HERO_CLAIMS } from "@/components/login/hero-proof";
 import { WireCompatibleLine } from "@/components/login/wire-compatible-line";
 import type { AuditReason } from "@/lib/audit";
+import { OPENSHIFT_LOGIN_PATH } from "@/lib/openshift-auth/config";
 import type { PasskeySignInOffer } from "@/lib/passkey/api-types";
 import { passkeysUsableHere, signInWithPasskey } from "@/lib/passkey/client";
 import { RETURN_PATH_PARAM, safeReturnPath } from "@/lib/api/session-ended";
@@ -55,6 +56,38 @@ function oidcErrorMessage(code: string): string {
   }
 }
 
+/**
+ * One fixed sentence per `openshift_*` code the OpenShift routes redirect with, as `oidcErrorMessage` does for OIDC:
+ * nothing the cluster said is shown, an unknown value gets the generic sentence, and the labels are pinned to the audit
+ * union.
+ */
+function openShiftErrorMessage(code: string): string {
+  switch (code) {
+    case "openshift_config" satisfies AuditReason:
+      return "OpenShift sign-in is not configured correctly on this server. Contact your administrator.";
+    case "openshift_unreachable" satisfies AuditReason:
+      return "The OpenShift API or OAuth server could not be reached. Try again later, or contact your administrator if this continues.";
+    case "openshift_external_oidc" satisfies AuditReason:
+      return "This cluster signs in through an external identity provider, so OpenShift sign-in cannot run here. Ask your administrator to use OIDC sign-in instead.";
+    case "openshift_state_missing" satisfies AuditReason:
+    case "openshift_state_invalid" satisfies AuditReason:
+      return "Your sign-in expired or was started in another browser. Sign in again.";
+    case "openshift_denied" satisfies AuditReason:
+      return "You declined the permissions LibreDB Studio asked for. Sign in again and allow them to continue.";
+    case "openshift_scope" satisfies AuditReason:
+      return "Sign-in needs both permissions on the OpenShift Authorize Access page. Sign in again and keep user:info and user:check-access checked; if the page no longer appears, ask your administrator to delete your oauthclientauthorization for LibreDB Studio.";
+    case "openshift_no_uid" satisfies AuditReason:
+      return "This OpenShift account cannot sign in to LibreDB Studio because the cluster gives it no user id, as for a virtual account such as kube:admin. Sign in with a regular user.";
+    case "openshift_no_access" satisfies AuditReason:
+      return "Your OpenShift account has no access to this LibreDB Studio. Ask your administrator.";
+    case "openshift_session_lost" satisfies AuditReason:
+      return "This server could not keep your sign-in. Sign in again, and ask your administrator if this repeats; Studio must run as one replica.";
+    case "openshift_failed" satisfies AuditReason:
+    default:
+      return "OpenShift sign-in failed. Please try again.";
+  }
+}
+
 const noSubscription = () => () => {};
 
 interface LoginFormProps {
@@ -71,6 +104,7 @@ interface LoginFormProps {
  */
 export default function LoginForm({ authProvider, passkey }: LoginFormProps) {
   const isOIDC = authProvider === "oidc";
+  const isOpenShift = authProvider === "openshift";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [totp, setTotp] = useState("");
@@ -349,7 +383,42 @@ export default function LoginForm({ authProvider, passkey }: LoginFormProps) {
             </CardHeader>
 
             <CardContent className="space-y-6">
-              {isOIDC ? (
+              {isOpenShift ? (
+                <>
+                  {oidcError && (
+                    <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
+                      {openShiftErrorMessage(oidcError)}
+                    </div>
+                  )}
+
+                  <div className="flex flex-col items-center text-center space-y-3 py-2">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
+                      <ShieldCheck className="h-6 w-6 text-primary" />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium text-foreground">OpenShift</p>
+                      <p className="text-xs text-muted-foreground">Sign in with your OpenShift account</p>
+                    </div>
+                  </div>
+
+                  <Button
+                    className="w-full h-11 text-base font-medium shadow-lg shadow-primary/20 active:scale-[0.98] transition-all gap-2"
+                    onClick={() => {
+                      setIsLoading(true);
+                      // The return path rides through the cluster in the signed state cookie.
+                      window.location.href = withBasePath(
+                        returnPath === null
+                          ? OPENSHIFT_LOGIN_PATH
+                          : `${OPENSHIFT_LOGIN_PATH}?${RETURN_PATH_PARAM}=${encodeURIComponent(returnPath)}`,
+                      );
+                    }}
+                    disabled={isLoading}
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    {isLoading ? "Redirecting..." : "Sign in with OpenShift"}
+                  </Button>
+                </>
+              ) : isOIDC ? (
                 <>
                   {oidcError && (
                     <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">

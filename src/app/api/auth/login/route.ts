@@ -1,3 +1,4 @@
+import { authProvider } from "@/lib/config/auth-provider";
 import { login } from "@/lib/auth";
 import { AuthConfigError } from "@/lib/auth-errors";
 import { rehashStoredPassword, resolveLocalAuthUsers } from "@/lib/local-accounts";
@@ -43,11 +44,12 @@ export async function POST(request: NextRequest) {
     enforceLoginLimit("login_client", clientKey, "anonymous", ip, ROUTE);
 
     // Under governance the identity provider is the only way in (docs/GOVERNANCE.md), and so it is with the Kubernetes
-    // access review on, where every sign-in passes the review and admin comes only from it (docs/SEED_CONNECTIONS.md).
+    // access review on, where every sign-in passes the review and admin comes only from it (docs/SEED_CONNECTIONS.md),
+    // and in openshift sign-in mode, where the cluster's OAuth server is (docs/OPENSHIFT.md).
     // So every caller is refused here, before the body is read, even when the boot check that refuses ADMIN_PASSWORD
     // was bypassed. The refusal is a wasted attempt from this address, as a malformed body is: it spends the client
     // bucket, so a flood is refused with 429 and its audit lines stay bounded.
-    if (governanceEnabled() || accessReviewEnabled()) {
+    if (governanceEnabled() || accessReviewEnabled() || authProvider() === "openshift") {
       consumeRateLimit("login_client", clientKey);
       // Isolated like every other emit in this route: the 403 below is already decided.
       try {

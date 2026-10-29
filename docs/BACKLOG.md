@@ -1190,11 +1190,12 @@ test pins the behaviour that was chosen.
 
 ### D85. The `@/lib/auth` mock is hand-copied across a layer, untyped, and already misses four exports
 
-`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 54 hits, re-measured 2026-10-17.
+`grep -rl 'mock.module("@/lib/auth"' tests/` returns exactly 55 hits, re-measured 2026-10-29; the breakdown below is the one measured at 54 on 2026-10-17.
 Twenty of them spread the real module and replace one function (`{ ...realAuth, getSession: mockGetSession }`, the agent routes' pattern).
 Thirty-one write out the same five-key object - `getSession`, `signJWT`, `verifyJWT`, `login`, `logout` - down to the same `mock(async () => "mock-token")` for a token nothing reads, and one of those thirty-one is `tests/helpers/object-edit-route-harness.ts`, a shared harness that could have been the factory and copied the stub instead.
 The remaining three write a shorter stub of their own, two with two keys and one with a single `getSession`.
 The count moved from 53 to 54 between 2026-10-12 and 2026-10-14: `tests/api/db-test-connection-modbus.test.ts`, added by `1ab0d88ff`, is the fifty-fourth, and it is a five-key copy down to the `mock(async () => "mock-token")` for a token nothing reads. The copying this entry describes continued after the entry was written, which is the argument for the factory rather than against it.
+The count moved from 54 to 55 on 2026-10-29: `tests/api/auth/openshift-callback-role.test.ts` is the fifty-fifth, and it spreads the real module and replaces only `login`, so it adds no copy of the five-key stub.
 
 `src/lib/auth.ts` exports nine names. The four that all but one hand-written stub lack are
 `shouldMarkCookieSecure`, `resetCookieSecurityWarning`, `readCookieSecureOverride` and
@@ -2562,7 +2563,7 @@ Found in the round-2 review of #1552, which introduced the first two edges; the 
 
 ### D244. A broken operator seed file makes the built-in sample connections fail as well
 
-`getSeedConnectionById` in `src/lib/seed/index.ts` finds one id by building the whole managed list, and `getManagedConnections` starts with `loadOperatorSources()`, which throws when an operator source fails.
+`visibleConnectionById` in `src/lib/governance/visible.ts` finds one id by building the whole seed listing, and `getSeedListing` in `src/lib/seed/index.ts` starts with `loadOperatorSources()`, which throws when an operator source fails.
 So a seed file that does not parse, does not validate or cannot be read makes every `seed:` id fail, including `seed:sqlite-embedded-sample` and `seed:libredb-embedded-sample`, which no operator source declares (`src/lib/seed/sqlite-sample.ts`, `src/lib/seed/libredb-sample.ts`).
 `resolveConnection` in `src/lib/seed/resolve-connection.ts` rethrows it, so `/api/db/provider-meta`, `/api/db/health`, `/api/db/query` and every other route that resolves a connection answer 500 for both samples and for every role, and a user's 404 for the admin-only SQLite sample becomes the same 500.
 Measured with the CI image of 715cca4 and an invalid `color` in the seed file: the sidebar showed "This connection could not be read" with the seed error while the active connection was Sample (Employees), and a bun probe on `main` reproduced it for an invalid and for an unreadable file.

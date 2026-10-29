@@ -14,6 +14,7 @@
  * the one the routes read.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { KUBERNETES_REVIEWED_ROLE } from "@/lib/seed/roles";
 import type { ManagedConnection } from "@/lib/seed/types";
 import { type FakeKubernetesApi, startFakeKubernetesApi } from "../helpers/kubernetes-access/fake-api";
 
@@ -64,7 +65,7 @@ function reviewed(id: string, namespace: string, secret: string): ManagedConnect
     user: "app",
     password: "example-only-password",
     managed: true,
-    roles: ["*"],
+    roles: [KUBERNETES_REVIEWED_ROLE],
     createdAt: new Date(0),
     literal: true,
     kubernetesSecret: { namespace, name: secret },
@@ -118,11 +119,11 @@ beforeEach(async () => {
     groups: { value: FORGED },
   };
   spies.push(
-    spyOn(seedIndex, "getSeedConnectionById").mockImplementation(async (id: string) => {
-      const found = REVIEWED[id];
-      return found === undefined ? null : { ...found };
-    }),
-    spyOn(seedIndex, "getManagedConnections").mockImplementation(async () => structuredClone(Object.values(REVIEWED))),
+    spyOn(seedIndex, "getSeedListing").mockImplementation(async () => ({
+      before: [],
+      pendingReview: structuredClone(Object.values(REVIEWED)),
+      after: [],
+    })),
     spyOn(logger, "warn").mockImplementation(() => {}),
   );
 });

@@ -9,6 +9,7 @@
  */
 
 import { isIP } from "node:net";
+import { authProvider } from "@/lib/config/auth-provider";
 import { logger } from "@/lib/logger";
 import { getStorageProviderType } from "@/lib/storage/provider-type";
 import type { PasskeySignInOffer } from "@/lib/passkey/api-types";
@@ -16,6 +17,7 @@ import type { PasskeySignInOffer } from "@/lib/passkey/api-types";
 const PASSKEY_ORIGIN_ENV = "PASSKEY_ORIGIN";
 
 const PASSKEYS_OIDC = "Passkeys for this sign-in are managed by your identity provider.";
+const PASSKEYS_OPENSHIFT = "Passkeys are not used with OpenShift sign-in: the OpenShift OAuth server signs you in.";
 const PASSKEYS_LOCAL =
   "Passkeys need STORAGE_PROVIDER=sqlite or postgres: with STORAGE_PROVIDER=local there is no account registry to keep them in.";
 const PASSKEYS_OFF =
@@ -36,7 +38,7 @@ export interface RelyingParty {
 }
 
 export type PasskeyAvailability =
-  | { readonly state: "no-store"; readonly mode: "oidc" | "local-storage"; readonly reason: string }
+  | { readonly state: "no-store"; readonly mode: "oidc" | "openshift" | "local-storage"; readonly reason: string }
   | { readonly state: "off"; readonly reason: string }
   | { readonly state: "misconfigured"; readonly reason: string }
   | ({ readonly state: "ready" } & RelyingParty);
@@ -69,8 +71,9 @@ function parseOrigin(raw: string): PasskeyAvailability {
 }
 
 export function passkeyAvailability(): PasskeyAvailability {
-  if (process.env.NEXT_PUBLIC_AUTH_PROVIDER === "oidc")
-    return { state: "no-store", mode: "oidc", reason: PASSKEYS_OIDC };
+  const mode = authProvider();
+  if (mode === "oidc") return { state: "no-store", mode: "oidc", reason: PASSKEYS_OIDC };
+  if (mode === "openshift") return { state: "no-store", mode: "openshift", reason: PASSKEYS_OPENSHIFT };
   if (getStorageProviderType() === "local") {
     return { state: "no-store", mode: "local-storage", reason: PASSKEYS_LOCAL };
   }

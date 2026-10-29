@@ -46,20 +46,36 @@ function armedAt(marker: string | undefined): number | null {
   return marker !== undefined && /^\d{1,12}$/.test(marker) ? Number(marker) : null;
 }
 
+/**
+ * Whether a verified session's server-side record is live, missing, or the session is bound to none (no subject here,
+ * no session handle in openshift sign-in mode, src/lib/openshift-auth/session.ts).
+ */
+export type SessionRecordState = "live" | "missing" | "unbound";
+
+/** The retry marker state machine above, for a session whose record is in `state`, minted at `iat`. */
+export function sessionRecordCheck(
+  state: SessionRecordState,
+  iat: number | undefined,
+  marker: string | undefined,
+  nowMs = Date.now(),
+): GroupsRecordCheck {
+  if (state === "unbound") return { kind: "refused", marker: null };
+  if (state === "live") return { kind: "kept", clearMarker: marker !== undefined };
+  if (marker === LOOP) return { kind: "refused", marker: null };
+  const armed = armedAt(marker);
+  if (armed === null) return { kind: "refused", marker: String(Math.floor(nowMs / 1000)) };
+  return { kind: "refused", marker: (iat ?? 0) >= armed ? LOOP : null };
+}
+
 /** What `readSession` does with a verified session while the review is on, given the retry marker it carries. */
 export function groupsRecordCheck(
   session: CheckedSession,
   marker: string | undefined,
   nowMs = Date.now(),
 ): GroupsRecordCheck {
-  if (!session.idpSubject) return { kind: "refused", marker: null };
-  if (recordedGroups(session.idpIssuer, session.idpSubject, nowMs) !== null) {
-    return { kind: "kept", clearMarker: marker !== undefined };
-  }
-  if (marker === LOOP) return { kind: "refused", marker: null };
-  const armed = armedAt(marker);
-  if (armed === null) return { kind: "refused", marker: String(Math.floor(nowMs / 1000)) };
-  return { kind: "refused", marker: (session.iat ?? 0) >= armed ? LOOP : null };
+  const recorded = session.idpSubject ? recordedGroups(session.idpIssuer, session.idpSubject, nowMs) !== null : false;
+  const state: SessionRecordState = !session.idpSubject ? "unbound" : recorded ? "live" : "missing";
+  return sessionRecordCheck(state, session.iat, marker, nowMs);
 }
 
 /** Whether the OIDC login route shows the sign-in page instead of going to the provider. */

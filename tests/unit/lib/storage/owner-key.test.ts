@@ -10,18 +10,23 @@ import type { UserPayload } from "@/lib/auth";
 import { storageOwnerKey } from "@/lib/storage/owner-key";
 
 const ISSUER = "https://idp.example/realms/libredb";
-const SUBJECT_MISSING = "Server storage under governance is keyed by the identity provider's subject";
+const SUBJECT_MISSING = "is keyed by the identity provider's subject, and this session carries none";
 
 let savedSource: string | undefined;
+let savedMode: string | undefined;
 
 beforeEach(() => {
   savedSource = process.env.GOVERNANCE_SOURCE;
+  savedMode = process.env.NEXT_PUBLIC_AUTH_PROVIDER;
   delete process.env.GOVERNANCE_SOURCE;
+  delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
 });
 
 afterEach(() => {
   if (savedSource === undefined) delete process.env.GOVERNANCE_SOURCE;
   else process.env.GOVERNANCE_SOURCE = savedSource;
+  if (savedMode === undefined) delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+  else process.env.NEXT_PUBLIC_AUTH_PROVIDER = savedMode;
 });
 
 /** A session the OIDC callback mints: the username for display, the provider's subject and issuer for identity. */
@@ -79,5 +84,44 @@ describe("storageOwnerKey", () => {
     );
     // openid-client accepts `sub: ""`, so an empty subject counts as missing.
     expect(() => storageOwnerKey(oidcSession({ idpSubject: "" }))).toThrow(SUBJECT_MISSING);
+  });
+});
+
+// In openshift sign-in mode the rows are filed under the user's uid, so a user deleted and re-created under the same
+// name, or an OpenShift name equal to a username of an earlier mode, never reads another person's rows.
+describe("storageOwnerKey in openshift sign-in mode", () => {
+  const openShiftSession = (overrides: Partial<UserPayload> = {}): UserPayload => ({
+    role: "user",
+    username: "dev-a",
+    idpSubject: "0b6f5c1e-4d2a-4c55-9e1f-7a3b2c1d0e9f",
+    idpIssuer: "https://oauth-openshift.apps.example.com",
+    sessionHandle: "h".repeat(43),
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "openshift";
+  });
+
+  test("keys by sub: and the user's uid, never by the name", () => {
+    expect(storageOwnerKey(openShiftSession())).toBe("sub:0b6f5c1e-4d2a-4c55-9e1f-7a3b2c1d0e9f");
+  });
+
+  test("two sessions of one name and two uids get two keys", () => {
+    const first = storageOwnerKey(openShiftSession({ idpSubject: "uid-before-re-creation" }));
+    const second = storageOwnerKey(openShiftSession({ idpSubject: "uid-after-re-creation" }));
+    expect(first).not.toBe(second);
+  });
+
+  test("throws for a session without a uid instead of falling back to the name", () => {
+    expect(() => storageOwnerKey(openShiftSession({ idpSubject: undefined }))).toThrow(SUBJECT_MISSING);
+    expect(() => storageOwnerKey(openShiftSession({ idpSubject: "" }))).toThrow(SUBJECT_MISSING);
+  });
+
+  test("local and oidc without governance keep the username", () => {
+    for (const mode of ["local", "oidc"]) {
+      process.env.NEXT_PUBLIC_AUTH_PROVIDER = mode;
+      expect(storageOwnerKey(oidcSession())).toBe("alice@example.com");
+    }
   });
 });

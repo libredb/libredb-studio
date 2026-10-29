@@ -1,11 +1,13 @@
 /**
  * The access review's two decisions (src/lib/kubernetes-access/gate.ts), against a fake API server.
  *
- * A connection that names its Kubernetes Secret has roles `*`, so the review is its only gate: it is kept only when
- * the review allows the session's subject, in the groups the store recorded for it, to `get` that Secret, for admins
- * and users alike. The groups come from the store alone; a session without a subject, an issuer or a record is denied
- * without a request. With the review off such a connection is the admin role's only. A connection without the marker
- * is never reviewed. The admin role is a fresh review of `update` on Studio's Deployment at sign-in.
+ * The gate is handed the connections the seed listing sets apart for it, each carrying the reserved role the role
+ * filter never selects and naming its Kubernetes Secret, and, while the review is on, any other row that names one, so
+ * the review is their only gate: one is kept only when the review allows the session's subject, in the groups the store
+ * recorded for it, to `get` that Secret, for admins and users alike. The groups come from the store alone; a session
+ * without a subject, an issuer or a record is denied without a request. A connection without the Secret marker, and
+ * every connection while the review is off, is denied without a request. The admin role is a fresh review of `update`
+ * on Studio's Deployment at sign-in.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { type FakeKubernetesApi, startFakeKubernetesApi } from "../../../helpers/kubernetes-access/fake-api";
@@ -17,6 +19,7 @@ import {
 } from "@/lib/kubernetes-access/gate";
 import { recordGroups, resetGroupRecords } from "@/lib/kubernetes-access/groups";
 import { logger } from "@/lib/logger";
+import { KUBERNETES_REVIEWED_ROLE } from "@/lib/seed/roles";
 import type { ManagedConnection } from "@/lib/seed/types";
 
 const ISSUER = "https://rancher.example.com/oidc";
@@ -36,7 +39,7 @@ function reviewed(id: string, namespace: string, secret: string): ManagedConnect
     user: "app",
     password: "example-only-password",
     managed: true,
-    roles: ["*"],
+    roles: [KUBERNETES_REVIEWED_ROLE],
     createdAt: new Date(0),
     literal: true,
     kubernetesSecret: { namespace, name: secret },
@@ -45,6 +48,7 @@ function reviewed(id: string, namespace: string, secret: string): ManagedConnect
 
 const ORDERS = reviewed("k8s-cnpg-orders", "team-a", "orders-app");
 const ANALYTICS = reviewed("k8s-cnpg-analytics", "team-b", "analytics-app");
+/** A connection without the Secret marker: the listing never hands one to the gate, so one that arrives is denied. */
 const PLAIN: ManagedConnection = {
   id: "seed:shared-pg",
   seedId: "shared-pg",
@@ -103,7 +107,7 @@ afterEach(() => {
 describe("connections, with the review on", () => {
   test("keeps a reviewed connection only where the review allows get on its Secret, and never reviews another", async () => {
     api.grants = [getSecret("u-rjs2h", "team-a", "orders-app")];
-    expect(await connectionsUnderAccessReview(DEV_A, [ORDERS, ANALYTICS, PLAIN])).toEqual([ORDERS, PLAIN]);
+    expect(await connectionsUnderAccessReview(DEV_A, [ORDERS, ANALYTICS, PLAIN])).toEqual([ORDERS]);
     // The reviews of one list run together, so they reach the server in either order.
     expect(
       api.seen
@@ -116,16 +120,16 @@ describe("connections, with the review on", () => {
     expect(api.seen.every((seen) => seen.body.spec?.user === "u-rjs2h")).toBe(true);
   });
 
-  test("a Read Only subject sees none of the roles * connections whose Secret its role cannot get", async () => {
+  test("a Read Only subject sees none of the reviewed connections whose Secret its role cannot get", async () => {
     api.grants = [getSecret("u-rjs2h", "team-a", "orders-app"), getSecret("u-rjs2h", "team-b", "analytics-app")];
-    expect(await connectionsUnderAccessReview(READ_ONLY, [ORDERS, ANALYTICS, PLAIN])).toEqual([PLAIN]);
+    expect(await connectionsUnderAccessReview(READ_ONLY, [ORDERS, ANALYTICS, PLAIN])).toEqual([]);
   });
 
   test("reviews an admin like everyone else", async () => {
-    expect(await connectionsUnderAccessReview(ADMIN, [ORDERS, PLAIN])).toEqual([PLAIN]);
+    expect(await connectionsUnderAccessReview(ADMIN, [ORDERS, PLAIN])).toEqual([]);
     api.grants = [getSecret("user-mf77b", "team-a", "orders-app")];
     resetAccessReviewDecisions();
-    expect(await connectionsUnderAccessReview(ADMIN, [ORDERS, PLAIN])).toEqual([ORDERS, PLAIN]);
+    expect(await connectionsUnderAccessReview(ADMIN, [ORDERS, PLAIN])).toEqual([ORDERS]);
   });
 
   test("takes the groups from the store only, whatever else the session object carries", async () => {
@@ -158,7 +162,7 @@ describe("connections, with the review on", () => {
     ],
   ])("a session with %s is denied without a request", async (_case, principal) => {
     api.grants = [getSecret("u-rjs2h", "team-a", "orders-app"), getSecret("u-no-record", "team-a", "orders-app")];
-    expect(await connectionsUnderAccessReview(principal, [ORDERS, PLAIN])).toEqual([PLAIN]);
+    expect(await connectionsUnderAccessReview(principal, [ORDERS, PLAIN])).toEqual([]);
     expect(api.seen).toHaveLength(0);
   });
 
@@ -166,7 +170,7 @@ describe("connections, with the review on", () => {
     api.answer = { status: 503, body: "{}" };
     const warn = spyOn(logger, "warn").mockImplementation(() => {});
     try {
-      expect(await connectionsUnderAccessReview(DEV_A, [ORDERS, PLAIN])).toEqual([PLAIN]);
+      expect(await connectionsUnderAccessReview(DEV_A, [ORDERS, PLAIN])).toEqual([]);
     } finally {
       warn.mockRestore();
     }
@@ -181,25 +185,51 @@ describe("connections, with the review on", () => {
     const allowed = connections.filter((_, index) => index % 3 !== 1);
     api.grants = allowed.map((connection) => getSecret("u-rjs2h", "team-a", connection.kubernetesSecret?.name ?? ""));
     api.delayMs = 50;
-    expect(await connectionsUnderAccessReview(DEV_A, [PLAIN, ...connections])).toEqual([PLAIN, ...allowed]);
+    expect(await connectionsUnderAccessReview(DEV_A, [PLAIN, ...connections])).toEqual(allowed);
     expect(api.seen).toHaveLength(40);
     expect(api.maxOpen).toBeLessThanOrEqual(16);
     expect(api.maxOpen).toBeGreaterThan(1);
   });
 
+  // The dispatcher (src/lib/governance/visible.ts) keeps what the gate returns in a Set and filters its listing by it,
+  // so a copy of an allowed row would be dropped from the list.
+  test("returns the very objects it was handed, never a copy", async () => {
+    api.grants = [getSecret("u-rjs2h", "team-a", "orders-app"), getSecret("u-rjs2h", "team-b", "analytics-app")];
+    const kept = await connectionsUnderAccessReview(DEV_A, [ORDERS, ANALYTICS]);
+    expect(kept).toHaveLength(2);
+    expect(kept[0]).toBe(ORDERS);
+    expect(kept[1]).toBe(ANALYTICS);
+    expect(await connectionUnderAccessReview(DEV_A, ANALYTICS)).toBe(ANALYTICS);
+  });
+
   test("an invalid switch counts as on", async () => {
     process.env.KUBERNETES_ACCESS_REVIEW = "enabled";
-    expect(await connectionsUnderAccessReview(ADMIN, [ORDERS, PLAIN])).toEqual([PLAIN]);
+    expect(await connectionsUnderAccessReview(ADMIN, [ORDERS, PLAIN])).toEqual([]);
     expect(api.seen).toHaveLength(1);
   });
 });
 
 describe("connections, with the review off", () => {
-  test("a reviewed connection is the admin role's only, and nothing is asked", async () => {
+  // The listing sets nothing apart while the review is off, so the gate is never handed a connection then; one that
+  // arrives anyway is denied, for the admin role too, because the role filter is what lists it to admins.
+  test("every connection is denied by both functions, for every role, and nothing is asked", async () => {
     process.env.KUBERNETES_ACCESS_REVIEW = "off";
-    api.grants = [getSecret("u-rjs2h", "team-a", "orders-app")];
-    expect(await connectionsUnderAccessReview(DEV_A, [ORDERS, PLAIN])).toEqual([PLAIN]);
-    expect(await connectionsUnderAccessReview(ADMIN, [ORDERS, PLAIN])).toEqual([ORDERS, PLAIN]);
+    api.grants = [getSecret("u-rjs2h", "team-a", "orders-app"), getSecret("user-mf77b", "team-a", "orders-app")];
+    expect(await connectionsUnderAccessReview(DEV_A, [ORDERS, PLAIN])).toEqual([]);
+    expect(await connectionsUnderAccessReview(ADMIN, [ORDERS, PLAIN])).toEqual([]);
+    expect(await connectionUnderAccessReview(DEV_A, ORDERS)).toBeNull();
+    expect(await connectionUnderAccessReview(ADMIN, ORDERS)).toBeNull();
+    expect(api.seen).toHaveLength(0);
+  });
+});
+
+describe("a connection without the Secret marker", () => {
+  test("is denied by both functions without a request, whatever the session", async () => {
+    api.grants = [getSecret("u-rjs2h", "team-a", "orders-app"), getSecret("user-mf77b", "team-a", "orders-app")];
+    expect(await connectionsUnderAccessReview(DEV_A, [PLAIN])).toEqual([]);
+    expect(await connectionsUnderAccessReview(ADMIN, [PLAIN])).toEqual([]);
+    expect(await connectionUnderAccessReview(DEV_A, PLAIN)).toBeNull();
+    expect(await connectionUnderAccessReview(ADMIN, PLAIN)).toBeNull();
     expect(api.seen).toHaveLength(0);
   });
 });
@@ -209,7 +239,7 @@ describe("one connection", () => {
     api.grants = [getSecret("u-rjs2h", "team-a", "orders-app")];
     expect(await connectionUnderAccessReview(DEV_A, ORDERS)).toBe(ORDERS);
     expect(await connectionUnderAccessReview(DEV_A, ANALYTICS)).toBeNull();
-    expect(await connectionUnderAccessReview(DEV_A, PLAIN)).toBe(PLAIN);
+    expect(await connectionUnderAccessReview(DEV_A, PLAIN)).toBeNull();
     const asked = api.seen.length;
     expect(await connectionUnderAccessReview(DEV_A, null)).toBeNull();
     expect(api.seen).toHaveLength(asked);

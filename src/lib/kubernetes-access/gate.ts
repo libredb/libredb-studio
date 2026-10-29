@@ -3,11 +3,16 @@
  *
  * Connections: a connection that names the Kubernetes Secret its credentials come from (`kubernetesSecret`, set in
  * code by a Kubernetes discovery source, never read from a file) is listed and opened only for a session the review
- * allows to `get` that Secret. Its roles are `*`, so the review is its only gate, for admins and users alike. The
- * review's `user` is the signed session's identity provider subject and its `groups` the groups store's record of that
- * subject (groups.ts); a session without a subject, an issuer or a record is denied without a request. With the review
- * off no review can run, so such a connection is shown to the admin role only, the rule platform discovery uses. A
- * connection without `kubernetesSecret` is untouched either way.
+ * allows to `get` that Secret. While the review is on, the seed listing sets every such connection apart
+ * (`pendingReview` of src/lib/seed/index.ts) carrying KUBERNETES_REVIEWED_ROLE, which the role filter refuses whatever
+ * the caller holds, so this gate is the only way one is listed or opened, for admins and users alike. The review's
+ * `user` is the signed session's identity provider subject and its `groups` the groups store's record of that subject
+ * (groups.ts); a session without a subject, an issuer or a record is denied without a request. The dispatcher
+ * (src/lib/governance/visible.ts) hands the gate those connections and, while the review is on, any other row that
+ * names a Secret, so it denies, without a request, a connection without `kubernetesSecret` (a defect: a projection
+ * lost the marker) and every connection while the review is off (the listing sets none apart then, and lists them to
+ * the admin role only through the role filter, the rule platform discovery uses). Both functions return the very
+ * connection objects they were handed, never a copy, because the dispatcher keeps the rows they allow by identity.
  *
  * Sign-in: while the review is on, a verified sign-in may use this Studio only when its subject can be asserted at
  * all and a fresh review of `KUBERNETES_ACCESS_REVIEW_SIGN_IN` allows it, by default `list` on Rancher's NavLinks at
@@ -40,8 +45,8 @@ export interface ReviewedPrincipal {
 /** Whether `principal` may list and open `connection`. */
 async function mayUse(principal: ReviewedPrincipal, connection: ManagedConnection): Promise<boolean> {
   const secret = connection.kubernetesSecret;
-  if (secret === undefined) return true;
-  if (!accessReviewEnabled()) return principal.role === "admin";
+  if (secret === undefined) return false;
+  if (!accessReviewEnabled()) return false;
   const groups = recordedGroups(principal.idpIssuer, principal.idpSubject);
   if (groups === null) return false;
   return accessReviewAllows(

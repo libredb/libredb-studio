@@ -1,15 +1,19 @@
 /**
  * GET /api/connections/managed with the Kubernetes access review on: the list a browser receives.
  *
- * The seed sources are replaced by a list holding two connections that name their Kubernetes Secret, as a Kubernetes
- * discovery source builds them (roles `*`, literal, the Secret marker), and one ordinary seed; the gate, the decision
- * cache, the groups store and the review client are the real ones, against a fake API server. A subject sees only
- * the reviewed connections whose Secret the review lets it get, with no credential, and neither the Secret marker nor
- * the literal marker ever leaves the server.
+ * The seed listing is replaced by one holding one ordinary seed and two connections that name their Kubernetes Secret,
+ * as src/lib/seed/index.ts builds them from a Kubernetes discovery source: with the review on set apart for the review
+ * (the reserved role, literal, the Secret marker), with it off listed under `admin` for the roles that may see them.
+ * The gate, the decision cache, the groups store and the review client are the real ones, against a fake API server.
+ * A subject sees only the reviewed connections whose Secret the review lets it get, with no credential, and neither
+ * the Secret marker, the literal marker nor the reserved role ever leaves the server.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import * as auth from "@/lib/auth";
+import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
 import * as seedIndex from "@/lib/seed";
+import { rolesMatch } from "@/lib/seed/connection-filter";
+import { KUBERNETES_REVIEWED_ROLE } from "@/lib/seed/roles";
 import type { ManagedConnection } from "@/lib/seed/types";
 import { type FakeKubernetesApi, startFakeKubernetesApi } from "../../helpers/kubernetes-access/fake-api";
 
@@ -31,16 +35,18 @@ function reviewed(id: string, namespace: string, secret: string): ManagedConnect
     user: "app",
     password: "example-only-password",
     managed: true,
-    roles: ["*"],
+    roles: [KUBERNETES_REVIEWED_ROLE],
     createdAt: new Date(0),
     literal: true,
     kubernetesSecret: { namespace, name: secret },
   };
 }
 
-const SOURCE: ManagedConnection[] = [
+const REVIEWED: ManagedConnection[] = [
   reviewed("k8s-cnpg-orders", "team-a", "orders-app"),
   reviewed("k8s-cnpg-analytics", "team-b", "analytics-app"),
+];
+const ORDINARY: ManagedConnection[] = [
   {
     id: "seed:shared-pg",
     seedId: "shared-pg",
@@ -55,6 +61,21 @@ const SOURCE: ManagedConnection[] = [
     createdAt: new Date(0),
   },
 ];
+
+/**
+ * The listing getSeedListing builds for `roles` from these rows, as copies, as the real loader hands out: with the
+ * review on the reviewed rows set apart for the review, with it off listed under `admin` through the role filter.
+ */
+function listingOf(roles: string[]): seedIndex.SeedListing {
+  const [ordinary, reviewedRows] = structuredClone([ORDINARY, REVIEWED]);
+  if (accessReviewEnabled()) return { before: ordinary, pendingReview: reviewedRows, after: [] };
+  const forAdmin = reviewedRows.map((connection) => Object.assign(connection, { roles: ["admin"] }));
+  return {
+    before: [...ordinary, ...forAdmin.filter((connection) => rolesMatch(connection.roles, roles))],
+    pendingReview: [],
+    after: [],
+  };
+}
 
 const { GET } = await import("@/app/api/connections/managed/route");
 const { recordGroups, resetGroupRecords } = await import("@/lib/kubernetes-access/groups");
@@ -89,9 +110,7 @@ beforeEach(() => {
       session ? { kind: "authenticated", session } : { kind: "anonymous" },
     ),
     // Copies, as the real loader hands out: the route must not depend on a shared object.
-    spyOn(seedIndex, "getManagedConnections").mockImplementation(async () =>
-      SOURCE.map((connection) => ({ ...connection })),
-    ),
+    spyOn(seedIndex, "getSeedListing").mockImplementation(async (roles: string[]) => listingOf(roles)),
   );
 });
 
@@ -112,13 +131,25 @@ async function listed(): Promise<Record<string, unknown>[]> {
 
 describe("GET /api/connections/managed under the access review", () => {
   test("lists a reviewed connection only where the review allows its Secret, beside the ordinary seed", async () => {
-    expect((await listed()).map((connection) => connection.id)).toEqual(["seed:k8s-cnpg-orders", "seed:shared-pg"]);
+    expect((await listed()).map((connection) => connection.id)).toEqual(["seed:shared-pg", "seed:k8s-cnpg-orders"]);
   });
 
   test("sends no credential and neither server-only marker", async () => {
     for (const connection of await listed()) {
       for (const field of ["password", "kubernetesSecret", "literal"]) expect(field in connection).toBe(false);
     }
+  });
+
+  test("sends a reviewed connection the review allows with no role: the reserved role never leaves the server", async () => {
+    const response = await GET();
+    const body = await response.text();
+    const { connections } = JSON.parse(body) as { connections: Record<string, unknown>[] };
+    const orders = connections.find((connection) => connection.id === "seed:k8s-cnpg-orders");
+    expect(orders?.roles).toEqual([]);
+    expect(connections.find((connection) => connection.id === "seed:shared-pg")?.roles).toEqual(["*"]);
+    expect(body).not.toContain("\u0000");
+    expect(body).not.toContain("\\u0000");
+    expect(body).not.toContain("kubernetes-access-review");
   });
 
   test("a subject the review allows nothing lists only the ordinary seed", async () => {
@@ -148,9 +179,9 @@ describe("GET /api/connections/managed under the access review", () => {
     expect((await listed()).map((connection) => connection.id)).toEqual(["seed:shared-pg"]);
     session = { ...DEV_A, role: "admin" };
     expect((await listed()).map((connection) => connection.id)).toEqual([
+      "seed:shared-pg",
       "seed:k8s-cnpg-orders",
       "seed:k8s-cnpg-analytics",
-      "seed:shared-pg",
     ]);
     expect(api.seen).toHaveLength(0);
   });

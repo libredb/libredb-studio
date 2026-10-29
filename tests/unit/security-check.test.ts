@@ -68,20 +68,20 @@ describe("parseTables and findControlTable", () => {
     expect(table?.rows).toHaveLength(PROGRAMME_CONTROL_IDS.length);
   });
 
-  test("the programme ends with the Kubernetes request allowlist, the RabbitMQ read path, the Apache Spark session and answer bounds, the governance sealed credentials and query event capture, the Weaviate console, then the Kubernetes discovery controls", () => {
+  test("the programme ends with the governance sealed credentials and query event capture, the Weaviate console, OpenShift sign-in's token custody and fail-closed sign-in, the reserved role for Kubernetes-discovered connections, then the Kubernetes discovery controls", () => {
     expect(PROGRAMME_CONTROL_IDS.slice(-10)).toEqual([
-      "3.20",
-      "3.21",
-      "3.22",
       "3.23",
       "3.24",
       "3.25",
+      "3.26",
+      "3.27",
+      "3.28",
       "3.32",
       "3.33",
       "3.34",
       "3.35",
     ]);
-    expect(PROGRAMME_CONTROL_IDS).toHaveLength(54);
+    expect(PROGRAMME_CONTROL_IDS).toHaveLength(57);
   });
 
   test("ignores a table that is not the control table", () => {

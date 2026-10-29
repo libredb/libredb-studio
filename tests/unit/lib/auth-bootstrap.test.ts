@@ -156,6 +156,30 @@ describe("auth-bootstrap bootstrapAuth()", () => {
     expect(stored.adminPassword).toBeUndefined();
   });
 
+  // openshift mode signs in through the cluster only, and an unknown mode value is refused at boot; neither may leave a
+  // generated or stored admin password in the environment for the password route to compare against.
+  for (const mode of ["openshift", "OpenShift"]) {
+    test(`mode ${mode} bootstraps the JWT secret but never generates a password`, () => {
+      process.env.NEXT_PUBLIC_AUTH_PROVIDER = mode;
+
+      bootstrapAuth();
+
+      expect(process.env.JWT_SECRET).toBeDefined();
+      expect(process.env.ADMIN_PASSWORD).toBeUndefined();
+      expect(readStored().adminPassword).toBeUndefined();
+    });
+
+    test(`mode ${mode} never loads a stored admin password`, () => {
+      fs.writeFileSync(resolveBootstrapPath(), JSON.stringify({ adminPassword: "stored-password-not-real" }));
+      process.env.NEXT_PUBLIC_AUTH_PROVIDER = mode;
+
+      bootstrapAuth();
+
+      expect(process.env.ADMIN_PASSWORD).toBeUndefined();
+      expect(process.env.JWT_SECRET).toBeDefined();
+    });
+  }
+
   test("does not read the bootstrap file at all when both env vars are set", () => {
     fs.mkdirSync(tmpDir, { recursive: true });
     fs.writeFileSync(resolveBootstrapPath(), "{not json");

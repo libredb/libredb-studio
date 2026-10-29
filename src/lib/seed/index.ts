@@ -1,11 +1,12 @@
 import * as fs from "fs";
 import { governanceEnabled } from "@/lib/governance/config";
 import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
-import { filterByRoles } from "./connection-filter";
+import { filterByRoles, projectSeedConnection } from "./connection-filter";
 import { getDiscoveredConnections } from "./discovery-loader";
 import { getKubernetesDiscoveredConnections } from "./kubernetes-discovery-loader";
 import { isSampleEnabled, resolveSamplePath, buildSampleConnection } from "./libredb-sample";
 import { loadOperatorSources } from "./operator-loader";
+import { KUBERNETES_REVIEWED_ROLE } from "./roles";
 import type { OperatorEntry } from "./sources/types";
 import {
   isSqliteSampleEnabled,
@@ -18,7 +19,7 @@ import type { ManagedConnection } from "./types";
 
 export type { ManagedConnection } from "./types";
 export { resetCache } from "./operator-loader";
-export { seedRolesOf } from "./roles";
+export { KUBERNETES_REVIEWED_ROLE, seedRolesOf } from "./roles";
 
 /**
  * The operator entries these roles may see, in source order.
@@ -40,16 +41,38 @@ function projectOperatorEntries(entries: readonly OperatorEntry[], roles: string
 }
 
 /**
- * The seed connections these roles may see: the operator entries, then the discovered connections of CapRover and of
- * Kubernetes, then the samples.
+ * What getManagedConnections lists, in its order, with the rows only the Kubernetes access review may list set apart in
+ * their place.
+ */
+export interface SeedListing {
+  /**
+   * The operator entries, then the CapRover-discovered rows, then, with the review off, the Kubernetes-discovered rows
+   * the roles may see.
+   */
+  readonly before: ManagedConnection[];
+  /**
+   * With the review on, every Kubernetes-discovered row, carrying KUBERNETES_REVIEWED_ROLE; empty with it off. Only the
+   * gate lists one.
+   */
+  readonly pendingReview: ManagedConnection[];
+  /** The built-in samples, the SQLite one first. */
+  readonly after: ManagedConnection[];
+}
+
+/**
+ * The seed connections these roles may see, in getManagedConnections' order, with the rows only the Kubernetes access
+ * review may list set apart in `pendingReview`, their place in that order: the operator entries, then the discovered
+ * connections of CapRover and of Kubernetes, then the samples. Outside this module only src/lib/governance/visible.ts
+ * reads it, and it hands `pendingReview` to the review and nowhere else; getManagedConnections, below, reads only
+ * `before` and `after`.
  *
  * Governance mode (`GOVERNANCE_SOURCE`, docs/GOVERNANCE.md) replaces all three with the governance source, so under it
- * this reads no source at all and answers an empty list, whatever the environment says: not the seed file at its
- * default path, which Studio reads while SEED_CONFIG_PATH is unset, not the discovery export and not a sample. The
+ * this reads no source at all and answers three empty sections, whatever the environment says: not the seed file at
+ * its default path, which Studio reads while SEED_CONFIG_PATH is unset, not the discovery exports and not a sample. The
  * boot preflight refuses an environment that turns any of them on, and this holds on a server where it was bypassed.
  */
-export async function getManagedConnections(roles: string[]): Promise<ManagedConnection[]> {
-  if (governanceEnabled()) return [];
+export async function getSeedListing(roles: string[]): Promise<SeedListing> {
+  if (governanceEnabled()) return { before: [], pendingReview: [], after: [] };
   const operator = await loadOperatorSources();
   const fromOperators = projectOperatorEntries(operator.entries, roles);
 
@@ -74,23 +97,35 @@ export async function getManagedConnections(roles: string[]): Promise<ManagedCon
   /*
     Kubernetes-discovered connections (docs/SEED_CONNECTIONS.md, "Platform discovery (Kubernetes)") come after the
     CapRover ones. Each names the Secret its credentials came from. With the Kubernetes access review on, a review of
-    `get` on that Secret is its only gate (src/lib/kubernetes-access/gate.ts), so its roles are `*`; with the review off
-    no review can run, so its roles are `admin`, the rule CapRover's discovered connections follow. The roles, the
-    literal marker and the Secret marker are set here together, the markers after filterByRoles for the reason
-    projectOperatorEntries gives, so no connection leaves with roles `*` and without the marker its gate reads. The
-    roles are read from the switch on every call, never cached with the export. An id an operator source declares is
-    dropped, as above.
+    `get` on that Secret is its only gate (src/lib/kubernetes-access/gate.ts), so every one is set apart in
+    `pendingReview`, never passed through the role filter, carrying KUBERNETES_REVIEWED_ROLE, which rolesMatch refuses
+    whatever the caller holds: no caller of getManagedConnections ever receives one, and the server-side record still
+    reads as shared, so every requester gets one posture and one provider pool. With the review off no review can run,
+    so its roles are `admin`, the rule CapRover's discovered connections follow, and it is listed in `before` through
+    the role filter. The literal marker and the Secret marker are set with the roles, after the projection for the
+    reason projectOperatorEntries gives, so no connection leaves without the marker its gate reads. The switch is read
+    on every call, never cached with the export. An id an operator source declares is dropped, as above.
   */
-  const reviewedRoles = accessReviewEnabled() ? ["*"] : ["admin"];
+  const reviewed = accessReviewEnabled();
   const kubernetes = (await getKubernetesDiscoveredConnections())
     .flatMap(({ connection, secret }) =>
-      filterByRoles([{ ...connection, roles: reviewedRoles }], roles).map((conn) =>
-        Object.assign(conn, { literal: true as const, kubernetesSecret: secret }),
-      ),
+      reviewed
+        ? [
+            {
+              ...projectSeedConnection({ ...connection, roles: [KUBERNETES_REVIEWED_ROLE] }, []),
+              roles: [KUBERNETES_REVIEWED_ROLE],
+              literal: true as const,
+              kubernetesSecret: secret,
+            },
+          ]
+        : filterByRoles([{ ...connection, roles: ["admin"] }], roles).map((conn) =>
+            Object.assign(conn, { literal: true as const, kubernetesSecret: secret }),
+          ),
     )
     .filter((conn) => !operator.declaredIds.has(conn.seedId));
 
-  const out = [...fromOperators, ...discovered, ...kubernetes];
+  const before = reviewed ? [...fromOperators, ...discovered] : [...fromOperators, ...discovered, ...kubernetes];
+  const after: ManagedConnection[] = [];
 
   /*
     The SQLite sample leads the built-ins, and the order is the point: a client with
@@ -100,7 +135,7 @@ export async function getManagedConnections(roles: string[]): Promise<ManagedCon
     implements no read-only statement path, so leading with it put every
     zero-config administrator on the one connection an agent run can never execute
     against. An operator's own seed config
-    still leads both — those are already in `out`.
+    still leads both: those are already in `before`.
 
     In a test run, only consider a sample when its explicit path override is set, so
     an uncontrolled real ./data/sample.* cannot perturb unrelated suites.
@@ -108,15 +143,25 @@ export async function getManagedConnections(roles: string[]): Promise<ManagedCon
   */
   const sqliteSampleConsidered = process.env.NODE_ENV !== "test" || !!process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
   if (isSqliteSampleEnabled() && sqliteSampleConsidered && roles.includes("admin")) {
-    if (fs.existsSync(resolveSqliteSamplePath())) out.push(buildSqliteSampleConnection());
+    if (fs.existsSync(resolveSqliteSamplePath())) after.push(buildSqliteSampleConnection());
   }
 
   const libredbSampleConsidered = process.env.NODE_ENV !== "test" || !!process.env.LIBREDB_EMBEDDED_SAMPLE_PATH;
   if (isSampleEnabled() && libredbSampleConsidered) {
-    if (fs.existsSync(resolveSamplePath())) out.push(buildSampleConnection());
+    if (fs.existsSync(resolveSamplePath())) after.push(buildSampleConnection());
   }
 
-  return out;
+  return { before, pendingReview: reviewed ? kubernetes : [], after };
+}
+
+/**
+ * The seed connections these roles may see: getSeedListing's `before`, then its `after`. While the Kubernetes access
+ * review is on it never holds a Kubernetes-discovered connection, whatever the roles, because those are only ever in
+ * `pendingReview`. Under governance it is empty and reads no source.
+ */
+export async function getManagedConnections(roles: string[]): Promise<ManagedConnection[]> {
+  const { before, after } = await getSeedListing(roles);
+  return [...before, ...after];
 }
 
 /**
@@ -131,11 +176,6 @@ export function getPendingSeeds(): string[] {
     return [SQLITE_SAMPLE_SEED_ID];
   }
   return [];
-}
-
-export async function getSeedConnectionById(seedId: string, roles: string[]): Promise<ManagedConnection | null> {
-  const all = await getManagedConnections(roles);
-  return all.find((c) => c.seedId === seedId) ?? null;
 }
 
 /**

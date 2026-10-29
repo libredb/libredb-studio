@@ -1,4 +1,5 @@
 import { withBasePath } from "@/lib/config/base-path";
+import { authProvider } from "@/lib/config/auth-provider";
 import { getSession, logout } from "@/lib/auth";
 import { OIDC_LOGOUT_HINT_COOKIE, oidcLogoutHintCookiePath, readOidcLogoutHint } from "@/lib/config/oidc-logout-hint";
 import { buildLogoutUrl, getPublicOrigin } from "@/lib/oidc";
@@ -9,6 +10,7 @@ import { createErrorResponse } from "@/lib/api/errors";
 import { clientAddress } from "@/lib/api/client-address";
 import { emitAuditEvent } from "@/lib/audit";
 import { logger } from "@/lib/logger";
+import { endOpenShiftSession } from "@/lib/openshift-auth/token-store";
 
 const ROUTE = "POST /api/auth/logout";
 
@@ -64,6 +66,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
+    // An openshift session's token record ends here, at once, and nothing is sent: the scoped token cannot delete its
+    // own useroauthaccesstoken, and the cluster's OAuth server keeps no session Studio could end.
+    if (session?.sessionHandle !== undefined) endOpenShiftSession(session.sessionHandle);
     await logout();
 
     // Read once and deleted with the path it was set with, whatever happens to it below, so a hint never outlives
@@ -77,8 +82,7 @@ export async function POST(request: NextRequest) {
     // unauthenticated caller flood the audit trail for free.
     if (session) recordLogout(request, session.username);
 
-    const authProvider = process.env.NEXT_PUBLIC_AUTH_PROVIDER || "local";
-    if (authProvider === "oidc") {
+    if (authProvider() === "oidc") {
       const origin = getPublicOrigin(request);
       const returnTo = `${origin}${withBasePath("/login")}`;
       const idTokenHint = readOidcLogoutHint() ? hintForSession(hint, session?.idpSubject) : undefined;

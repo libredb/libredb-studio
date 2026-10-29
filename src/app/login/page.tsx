@@ -1,3 +1,4 @@
+import { authProvider } from "@/lib/config/auth-provider";
 import { passkeySignInOffer } from "@/lib/passkey/config";
 import LoginForm from "./login-form";
 
@@ -7,6 +8,5 @@ import LoginForm from "./login-form";
 export const dynamic = "force-dynamic";
 
 export default function LoginPage() {
-  const authProvider = process.env.NEXT_PUBLIC_AUTH_PROVIDER || "local";
-  return <LoginForm authProvider={authProvider} passkey={passkeySignInOffer()} />;
+  return <LoginForm authProvider={authProvider()} passkey={passkeySignInOffer()} />;
 }

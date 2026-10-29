@@ -2,8 +2,8 @@
  * Threat: a signed-in account opening a Kubernetes-discovered database whose credential Secret its Kubernetes roles do
  * not let it read, or learning that such a database exists (docs/SECURITY.md, control 0.10).
  *
- * With `KUBERNETES_ACCESS_REVIEW` on, a connection that names its Kubernetes Secret has roles `*`, so the review is
- * its only gate. This file proves the gate on the routes themselves: every route that turns a request body into a
+ * With `KUBERNETES_ACCESS_REVIEW` on, a connection that names its Kubernetes Secret carries the reserved role the role
+ * filter never selects, so the review is its only gate. This file proves the gate on the routes themselves: every route that turns a request body into a
  * connection answers a reviewed connection the review keeps from the caller, an id that does not exist and a seed the
  * caller's role may not see with the same 404 CONNECTION_NOT_FOUND, and builds no provider for any of them, for an
  * admin as for a user; the admin fleet health check reports each one as that item's error without building one; and
@@ -12,7 +12,7 @@
  *
  * The gate, the decision cache, the groups store and the review client are the real ones, against a fake API server
  * (tests/helpers/kubernetes-access/fake-api.ts). The seed file is the multi-role fixture, and the two reviewed
- * connections are added beside it through the seed lookups, as a Kubernetes discovery source would add them. A
+ * connections are added beside it in the seed listing's `pendingReview`, where a Kubernetes discovery source puts them. A
  * provider is counted where it is built: the factory logs `[DB] Creating <type> provider` for every one, and the
  * control at the end sees that line for a connection the review allows.
  */
@@ -20,6 +20,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, te
 import path from "node:path";
 import * as auth from "@/lib/auth";
 import * as seedIndex from "@/lib/seed";
+import { KUBERNETES_REVIEWED_ROLE } from "@/lib/seed/roles";
 import type { ManagedConnection } from "@/lib/seed/types";
 import { type FakeKubernetesApi, startFakeKubernetesApi } from "../helpers/kubernetes-access/fake-api";
 import { CONNECTION_ROUTES, PROVIDER_ROUTES } from "./helpers/provider-routes";
@@ -41,7 +42,7 @@ function reviewed(id: string, namespace: string, secret: string): ManagedConnect
     user: "app",
     password: "example-only-password",
     managed: true,
-    roles: ["*"],
+    roles: [KUBERNETES_REVIEWED_ROLE],
     createdAt: new Date(0),
     literal: true,
     kubernetesSecret: { namespace, name: secret },
@@ -75,8 +76,7 @@ const { resetAccessReviewDecisions } = await import("@/lib/kubernetes-access/dec
 const { recordGroups, resetGroupRecords } = await import("@/lib/kubernetes-access/groups");
 const { GET: listManaged } = await import("@/app/api/connections/managed/route");
 
-const getSeedConnectionById = seedIndex.getSeedConnectionById;
-const getManagedConnections = seedIndex.getManagedConnections;
+const getSeedListing = seedIndex.getSeedListing;
 
 let api: FakeKubernetesApi;
 let getSession: ReturnType<typeof spyOn>;
@@ -115,14 +115,11 @@ beforeEach(() => {
     return s ? { kind: "authenticated", session: s } : { kind: "anonymous" };
   });
   lookups.push(
-    spyOn(seedIndex, "getSeedConnectionById").mockImplementation(async (id: string, roles: string[]) => {
-      const found = REVIEWED[id];
-      return found === undefined ? getSeedConnectionById(id, roles) : { ...found };
+    spyOn(seedIndex, "getSeedListing").mockImplementation(async (roles: string[]) => {
+      const listing = await getSeedListing(roles);
+      const reviewedRows = structuredClone(Object.values(REVIEWED));
+      return { ...listing, pendingReview: [...listing.pendingReview, ...reviewedRows] };
     }),
-    spyOn(seedIndex, "getManagedConnections").mockImplementation(async (roles: string[]) => [
-      ...(await getManagedConnections(roles)),
-      ...Object.values(REVIEWED).map((connection) => ({ ...connection })),
-    ]),
   );
 });
 

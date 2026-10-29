@@ -4,6 +4,7 @@
  */
 import { parseDocument, YAMLError } from "yaml";
 import type { ZodError } from "zod";
+import { authProvider } from "@/lib/config/auth-provider";
 import { mergeDefaults } from "../connection-filter";
 import { SeedConfigSchema, type SeedConfig } from "../types";
 import { OperatorSourceError, type OperatorEntry } from "./types";
@@ -53,7 +54,7 @@ const STANDARD_ROLES = new Set(["*", "admin", "user"]);
 const RESERVED_ROLES = new Set(["*", "admin", "user"]);
 
 function validateCustomRoles(config: SeedConfig, origin: string): void {
-  const isOidc = process.env.NEXT_PUBLIC_AUTH_PROVIDER === "oidc";
+  const isOidc = authProvider() === "oidc";
   const prefix = process.env.OIDC_ROLE_PREFIX;
 
   for (const conn of config.connections) {

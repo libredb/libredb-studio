@@ -3,14 +3,18 @@ import { SignJWT, jwtVerify } from "jose";
 import { cookies, headers } from "next/headers";
 import { logger } from "@/lib/logger";
 import { getJwtSecret, sessionTtlSeconds } from "@/lib/config/auth-env";
+import { AUTH_PROVIDER_INVALID_MESSAGE, authProvider, authProviderSetting } from "@/lib/config/auth-provider";
 import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
 import {
   ACCESS_REVIEW_RETRY_COOKIE,
   ACCESS_REVIEW_RETRY_MAX_AGE_SECONDS,
+  type GroupsRecordCheck,
   groupsRecordCheck,
 } from "@/lib/kubernetes-access/session-guard";
+import { AuthConfigError } from "@/lib/auth-errors";
 import { storedAccountAllows } from "@/lib/local-accounts";
 import { authenticateBearer } from "@/lib/oidc-bearer";
+import { openShiftRecordCheck } from "@/lib/openshift-auth/session";
 
 // getJwtSecret is called per sign/verify rather than at module load, so a
 // misconfigured JWT_SECRET surfaces as an AuthConfigError the login route can turn
@@ -43,6 +47,12 @@ export interface UserPayload {
   /** The ID token's `iss`, set together with `idpSubject`. */
   idpIssuer?: string;
   /**
+   * Set only on sessions openshift sign-in mints (src/lib/openshift-auth/), where `idpSubject` is the user's uid and
+   * `idpIssuer` the OAuth issuer: the random key of the server-side record that holds the user's access token. Never
+   * returned by /api/auth/me. A session carrying one reads as signed out in every other mode.
+   */
+  sessionHandle?: string;
+  /**
    * Set only on a session an identity provider's access token stands for (src/lib/oidc-bearer.ts), never signed into
    * a cookie. A route that would write the session cookie or mint a credential from the session reads it.
    */
@@ -54,11 +64,13 @@ export interface UserPayload {
   claimRoles?: string[];
 }
 
-export async function signJWT(payload: UserPayload) {
+export async function signJWT(payload: UserPayload, lifetimeSeconds = sessionTtlSeconds()) {
+  // One clock reading for both claims, so exp minus iat is exactly the lifetime.
+  const issuedAt = Math.floor(Date.now() / 1000);
   return await new SignJWT({ ...payload })
     .setProtectedHeader({ alg: "HS256" })
-    .setIssuedAt()
-    .setExpirationTime(`${sessionTtlSeconds()}s`)
+    .setIssuedAt(issuedAt)
+    .setExpirationTime(issuedAt + lifetimeSeconds)
     .sign(getJwtSecret());
 }
 
@@ -83,6 +95,18 @@ export type SessionReading =
   | { readonly kind: "anonymous" }
   | { readonly kind: "store_unavailable"; readonly error: unknown };
 
+/**
+ * The log line of an account check that threw; the session fails closed either way. Under an unknown sign-in mode the
+ * check refuses before any registry is read, so the line names the setting instead of reporting a store outage.
+ */
+function logAccountCheckFailure(error: unknown): void {
+  if (error instanceof AuthConfigError && authProviderSetting() === "invalid") {
+    logger.error(`Refusing every session: ${AUTH_PROVIDER_INVALID_MESSAGE}`, undefined, { route: "auth" });
+    return;
+  }
+  logger.error("Could not read the account registry, store unavailable", error, { route: "auth" });
+}
+
 export async function readSession(): Promise<SessionReading> {
   // A Bearer header decides alone while the channel is on, even next to a valid cookie, and with it on or off the
   // cookie is never touched here. Absent, the cookie decides as it always did.
@@ -100,7 +124,7 @@ export async function readSession(): Promise<SessionReading> {
       const allowed = await storedAccountAllows(bearer.session);
       return allowed ? { kind: "authenticated", session: bearer.session } : { kind: "anonymous" };
     } catch (error) {
-      logger.error("Could not read the account registry, store unavailable", error, { route: "auth" });
+      logAccountCheckFailure(error);
       return { kind: "store_unavailable", error };
     }
   }
@@ -118,38 +142,74 @@ export async function readSession(): Promise<SessionReading> {
   try {
     allowed = await storedAccountAllows(session);
   } catch (error) {
-    logger.error("Could not read the account registry, store unavailable", error, { route: "auth" });
+    logAccountCheckFailure(error);
     return { kind: "store_unavailable", error };
   }
-  if (allowed && !accessReviewEnabled()) return { kind: "authenticated", session };
-  if (allowed) {
-    // With the Kubernetes access review on, no review runs without the groups record of the session's subject, which
-    // only this process's memory holds: a session that lost it signs in again, and one without a subject has none
-    // (src/lib/kubernetes-access/session-guard.ts).
-    const check = groupsRecordCheck(session, cookieStore.get(ACCESS_REVIEW_RETRY_COOKIE)?.value);
-    const markerPath = getBasePath() || "/";
-    if (check.kind === "kept") {
-      if (check.clearMarker) cookieStore.delete({ name: ACCESS_REVIEW_RETRY_COOKIE, path: markerPath });
-      return { kind: "authenticated", session };
-    }
-    if (check.marker !== null) {
-      cookieStore.set(ACCESS_REVIEW_RETRY_COOKIE, check.marker, {
-        httpOnly: true,
-        secure: await shouldMarkCookieSecure(),
-        sameSite: "lax",
-        maxAge: ACCESS_REVIEW_RETRY_MAX_AGE_SECONDS,
-        path: markerPath,
-      });
-    }
-    logger.info("Kubernetes access review: the session has no groups record, so it signs in again", {
-      route: "auth",
-      loop: check.marker === "loop",
-    });
-  }
+  if (allowed && (await sessionRecordAllows(cookieStore, session))) return { kind: "authenticated", session };
   // The proxy verifies only the signature, so a refused cookie would keep sending /login back to
   // the editor. Clearing it here, on the route's response, lets the next navigation reach login.
   await logout();
   return { kind: "anonymous" };
+}
+
+/** Whether the server-side record a verified session needs in this mode is there, settling the retry marker. */
+async function sessionRecordAllows(
+  cookieStore: Awaited<ReturnType<typeof cookies>>,
+  session: UserPayload & { iat?: number },
+): Promise<boolean> {
+  const marker = cookieStore.get(ACCESS_REVIEW_RETRY_COOKIE)?.value;
+  if (authProvider() === "openshift") {
+    // Signed in only while the token record under the session's handle is live and bound to its uid, name and issuer;
+    // a session of another mode has no handle, and the groups check never runs here (src/lib/openshift-auth/session.ts).
+    return settleRecordCheck(cookieStore, openShiftRecordCheck(session, marker), OPENSHIFT_RECORD_MISS_MESSAGE);
+  }
+  // A session openshift sign-in minted reads as signed out in every other mode: no marker, the cookie cleared.
+  if (session.sessionHandle !== undefined) return false;
+  if (!accessReviewEnabled()) return true;
+  // With the Kubernetes access review on, no review runs without the groups record of the session's subject, which
+  // only this process's memory holds: a session that lost it signs in again, and one without a subject has none
+  // (src/lib/kubernetes-access/session-guard.ts).
+  return settleRecordCheck(cookieStore, groupsRecordCheck(session, marker), GROUPS_RECORD_MISS_MESSAGE);
+}
+
+const GROUPS_RECORD_MISS_MESSAGE = "Kubernetes access review: the session has no groups record, so it signs in again";
+const OPENSHIFT_RECORD_MISS_MESSAGE = "OpenShift sign-in: the session has no live token record, so it signs in again";
+
+/**
+ * Applies a record check to the retry marker: a kept session clears a marker an earlier miss left and answers true; a
+ * refused one sets the marker the check asks for, logs the miss and answers false, so the caller clears its cookie.
+ */
+async function settleRecordCheck(
+  cookieStore: Awaited<ReturnType<typeof cookies>>,
+  check: GroupsRecordCheck,
+  missMessage: string,
+): Promise<boolean> {
+  const markerPath = getBasePath() || "/";
+  if (check.kind === "kept") {
+    if (check.clearMarker) cookieStore.delete({ name: ACCESS_REVIEW_RETRY_COOKIE, path: markerPath });
+    return true;
+  }
+  if (check.marker !== null) {
+    cookieStore.set(ACCESS_REVIEW_RETRY_COOKIE, check.marker, {
+      httpOnly: true,
+      secure: await shouldMarkCookieSecure(),
+      sameSite: "lax",
+      maxAge: ACCESS_REVIEW_RETRY_MAX_AGE_SECONDS,
+      path: markerPath,
+    });
+  }
+  logger.info(missMessage, { route: "auth", loop: check.marker === "loop" });
+  return false;
+}
+
+/**
+ * The session the request's own cookie carries, verified by its signature alone: no account registry, governance or
+ * record check. Only the OpenShift callback uses it, to end the token record a replaced cookie names, so a copy of
+ * that cookie stops working; it is never a route's session check, which is readSession.
+ */
+export async function verifiedSessionCookie(): Promise<UserPayload | null> {
+  const token = (await cookies()).get("auth-token")?.value;
+  return token === undefined ? null : verifyJWT(token);
 }
 
 export async function getSession(): Promise<UserPayload | null> {
@@ -253,13 +313,20 @@ export async function login(
   role: Role,
   username?: string,
   sessionVersion?: number,
-  identity?: { subject: string; issuer: string },
+  identity?: { subject: string; issuer: string; sessionHandle?: string },
   claimRoles?: string[],
+  lifetimeSeconds?: number,
 ) {
-  // Only the OIDC callback passes an identity, so every other sign-in signs exactly the claims it did before.
+  // Only the OIDC and OpenShift callbacks pass an identity, so every other sign-in signs exactly the claims it did
+  // before; only the OpenShift callback passes a session handle and a lifetime (the token's expiry caps it).
   const idp = identity ? { idpSubject: identity.subject, idpIssuer: identity.issuer } : {};
+  const handle = identity?.sessionHandle === undefined ? {} : { sessionHandle: identity.sessionHandle };
   const claims = claimRoles && claimRoles.length > 0 ? { claimRoles } : {};
-  const token = await signJWT({ role, username: username || role, sessionVersion, ...idp, ...claims });
+  const lifetime = lifetimeSeconds ?? sessionTtlSeconds();
+  const token = await signJWT(
+    { role, username: username || role, sessionVersion, ...idp, ...handle, ...claims },
+    lifetime,
+  );
   const cookieStore = await cookies();
   cookieStore.set("auth-token", token, {
     httpOnly: true,
@@ -269,7 +336,7 @@ export async function login(
     // notably a cross-site POST /api/auth/login, where there is no pre-existing cookie to withhold
     // - are covered by the Origin check in src/proxy.ts (src/lib/api/origin-check.ts).
     sameSite: "lax",
-    maxAge: sessionTtlSeconds(),
+    maxAge: lifetime,
     path: getBasePath() || "/",
   });
 }

@@ -485,7 +485,8 @@ export function PasskeySettings({ reloadSignal, onChange }: { reloadSignal: numb
     const status = view.status;
     // Loaded state exists only after mount, so reading the page's own address here never runs on the server.
     const blocker = passkeyPageBlocker();
-    if (!status.available && status.mode === "oidc") {
+    // A sign-in mode that turns passkeys off is named before a page blocker: no other address would help.
+    if (!status.available && (status.mode === "oidc" || status.mode === "openshift")) {
       body = <Reason text={status.reason} />;
     } else if (blocker !== null) {
       body = <Reason text={blocker === "ip-address" ? PAGE_IP_ADDRESS : PAGE_PLAIN_HTTP} />;

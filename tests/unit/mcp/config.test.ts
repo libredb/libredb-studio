@@ -287,3 +287,38 @@ describe("McpConfigError", () => {
     expect(error.name).toBe("McpConfigError");
   });
 });
+
+// openshift sign-in mode, and an unknown mode value, hold MCP off whatever its switch says: an MCP token cannot carry
+// the user's cluster sign-in, which every request is reviewed with.
+describe("the openshift sign-in hold", () => {
+  const SIGN_IN_HOLD =
+    "NEXT_PUBLIC_AUTH_PROVIDER is not local or oidc: this version of Studio does not run MCP with OpenShift sign-in, so MCP stays off whatever LIBREDB_MCP_ENABLED says";
+  const savedMode = process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+
+  afterEach(() => {
+    if (savedMode === undefined) delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+    else process.env.NEXT_PUBLIC_AUTH_PROVIDER = savedMode;
+  });
+
+  test.each(["openshift", "OpenShift"])("NEXT_PUBLIC_AUTH_PROVIDER=%p holds MCP off with both switches on", (mode) => {
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = mode;
+    process.env[MCP_ENABLED_ENV] = "true";
+    process.env[MCP_URL_ENV] = "https://mcp-host.test/api/mcp";
+    process.env[MCP_TOKEN_LABEL_ENV] = "label-one";
+    expect(readMcpSwitch()).toEqual({ state: "off" });
+    expect(mcpChannelStatus()).toEqual({ state: "off", problems: [SIGN_IN_HOLD], url: null, tokenTtlDays: null });
+  });
+
+  test("the review's hold is named when the review is on as well", () => {
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "openshift";
+    process.env.KUBERNETES_ACCESS_REVIEW = "on";
+    process.env[MCP_ENABLED_ENV] = "true";
+    expect(mcpChannelStatus().problems[0]).toStartWith("KUBERNETES_ACCESS_REVIEW is on");
+  });
+
+  test.each(["local", "oidc"])("NEXT_PUBLIC_AUTH_PROVIDER=%p answers the switch as before", (mode) => {
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = mode;
+    process.env[MCP_ENABLED_ENV] = "true";
+    expect(readMcpSwitch()).toEqual({ state: "on" });
+  });
+});

@@ -13,6 +13,7 @@
  */
 
 import { AuthConfigError } from "@/lib/auth-errors";
+import { authProviderSetting } from "@/lib/config/auth-provider";
 
 /**
  * Minimum accepted JWT_SECRET length. Single source of truth: the boot preflight
@@ -88,19 +89,27 @@ export async function derivedSigningKey(label: string, options: JwtSecretOptions
 export const SESSION_TTL_MIN_SECONDS = 300;
 export const SESSION_TTL_MAX_SECONDS = 86400;
 export const SESSION_TTL_DEFAULT_SECONDS = 86400;
+/**
+ * The default under NEXT_PUBLIC_AUTH_PROVIDER=openshift, 8 hours: the cluster's OAuth server asks for the password on
+ * every sign-in, and every gated request is reviewed with the user's own token, so a shorter session buys nothing.
+ */
+export const SESSION_TTL_OPENSHIFT_DEFAULT_SECONDS = 28800;
 
 const SESSION_TTL_INVALID_MESSAGE = `AUTH_SESSION_TTL_SECONDS must be a whole number of seconds from ${SESSION_TTL_MIN_SECONDS} to ${SESSION_TTL_MAX_SECONDS}.`;
 
 /**
  * The session lifetime in seconds: the JWT's expiry and the auth-token cookie's Max-Age.
  *
- * Reads AUTH_SESSION_TTL_SECONDS on every call; unset or blank keeps the 24-hour default. A set value that is not a
+ * Reads AUTH_SESSION_TTL_SECONDS on every call; unset or blank keeps the 24-hour default, or 8 hours in openshift
+ * sign-in mode (where the access token's expiry also caps a session, src/lib/openshift-auth/session.ts). A set value that is not a
  * plain integer inside the range throws AuthConfigError rather than falling back, and the boot preflight
  * (auth-preflight.ts) stops a standalone start on the same value before any login reaches here.
  */
 export function sessionTtlSeconds(): number {
   const raw = process.env.AUTH_SESSION_TTL_SECONDS?.trim();
-  if (!raw) return SESSION_TTL_DEFAULT_SECONDS;
+  if (!raw) {
+    return authProviderSetting() === "openshift" ? SESSION_TTL_OPENSHIFT_DEFAULT_SECONDS : SESSION_TTL_DEFAULT_SECONDS;
+  }
   const seconds = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
   if (!(seconds >= SESSION_TTL_MIN_SECONDS && seconds <= SESSION_TTL_MAX_SECONDS)) {
     throw new AuthConfigError(SESSION_TTL_INVALID_MESSAGE);

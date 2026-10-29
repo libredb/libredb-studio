@@ -524,3 +524,94 @@ describe("config/auth-preflight OIDC_BEARER_AUDIENCE", () => {
     }
   });
 });
+
+describe("config/auth-preflight sign-in mode", () => {
+  const KEYS = [
+    "NEXT_PUBLIC_AUTH_PROVIDER",
+    "OPENSHIFT_OAUTH_CLIENT_ID",
+    "OPENSHIFT_OAUTH_TOKEN_FILE",
+    "OPENSHIFT_PUBLIC_URL",
+    "OPENSHIFT_API_CA_FILE",
+    "ADMIN_PASSWORD",
+  ] as const;
+  const saved: Record<string, string | undefined> = {};
+
+  afterEach(() => {
+    for (const key of KEYS) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  });
+
+  function run(env: Partial<Record<(typeof KEYS)[number], string>>) {
+    for (const key of KEYS) {
+      saved[key] = process.env[key];
+      if (env[key] === undefined) delete process.env[key];
+      else process.env[key] = env[key];
+    }
+    const errorSpy = spyOn(console, "error").mockImplementation(() => {});
+    const originalExit = process.exit;
+    const exitCalls: Array<number | undefined> = [];
+    process.exit = ((code?: number) => {
+      exitCalls.push(code);
+    }) as unknown as typeof process.exit;
+    try {
+      const result = verifyAuthEnvAtBoot();
+      return { result, exitCalls, banners: errorSpy.mock.calls.length, banner: errorSpy.mock.calls.flat().join("\n") };
+    } finally {
+      process.exit = originalExit;
+      errorSpy.mockRestore();
+    }
+  }
+
+  test("an unknown mode value stops the boot with one banner naming the accepted values", () => {
+    const { result, exitCalls, banners, banner } = run({ NEXT_PUBLIC_AUTH_PROVIDER: "OpenShift" });
+    expect(result).toBe(false);
+    expect(exitCalls).toEqual([1]);
+    expect(banners).toBe(1);
+    expect(banner).toContain("LibreDB Studio cannot start: NEXT_PUBLIC_AUTH_PROVIDER is invalid");
+    expect(banner).toContain("NEXT_PUBLIC_AUTH_PROVIDER must be local, oidc or openshift, or unset for local");
+  });
+
+  test("an openshift variable set outside openshift mode stops the boot with one banner", () => {
+    const { result, exitCalls, banners, banner } = run({
+      NEXT_PUBLIC_AUTH_PROVIDER: "local",
+      OPENSHIFT_PUBLIC_URL: "https://studio.apps.example.com",
+    });
+    expect(result).toBe(false);
+    expect(exitCalls).toEqual([1]);
+    expect(banners).toBe(1);
+    expect(banner).toContain("LibreDB Studio cannot start: OpenShift sign-in variables are set");
+    expect(banner).toContain("OPENSHIFT_PUBLIC_URL");
+    expect(banner).not.toContain("studio.apps.example.com");
+  });
+
+  test("an openshift configuration with two problems prints one banner naming both", () => {
+    const { result, exitCalls, banners, banner } = run({
+      NEXT_PUBLIC_AUTH_PROVIDER: "openshift",
+      OPENSHIFT_OAUTH_CLIENT_ID: "system:serviceaccount:os-lab-studio:studio",
+      OPENSHIFT_OAUTH_TOKEN_FILE: "/nonexistent/libredb/oauth-client-token",
+      OPENSHIFT_PUBLIC_URL: "https://studio.apps.example.com",
+      OPENSHIFT_API_CA_FILE: "/nonexistent/libredb/ca.crt",
+      ADMIN_PASSWORD: "not-a-real-password-admin",
+    });
+    expect(result).toBe(false);
+    expect(exitCalls).toEqual([1]);
+    expect(banners).toBe(1);
+    expect(banner).toContain("LibreDB Studio cannot start: the environment contradicts openshift sign-in");
+    expect(banner).toContain("   - OPENSHIFT_OAUTH_TOKEN_FILE ");
+    expect(banner).toContain("   - OPENSHIFT_API_CA_FILE ");
+    expect(banner).toContain("   - ADMIN_PASSWORD ");
+    expect(banner).not.toContain("not-a-real-password-admin");
+    expect(banner).not.toContain("/nonexistent/");
+  });
+
+  test("local and oidc modes without openshift variables boot as before", () => {
+    for (const mode of [undefined, "local", "oidc"]) {
+      const { result, exitCalls, banner } = run({ NEXT_PUBLIC_AUTH_PROVIDER: mode });
+      expect(result).toBe(true);
+      expect(exitCalls).toEqual([]);
+      expect(banner).toBe("");
+    }
+  });
+});

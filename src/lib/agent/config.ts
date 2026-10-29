@@ -2,6 +2,7 @@ import { access, constants, mkdir, readFile, unlink, writeFile } from "fs/promis
 import * as path from "path";
 import { governanceEnabled } from "@/lib/governance/config";
 import { runtimeSetting } from "@/lib/governance/settings";
+import { authProviderSetting } from "@/lib/config/auth-provider";
 import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
 import { resolveConfig, validateConfig } from "@/lib/llm/utils/config";
 import { AGENT_MODEL_TURN_TIMEOUT_MS, AGENT_WORKFLOW_BUDGETS } from "./execution-policy";
@@ -283,7 +284,15 @@ const governanceHoldMessage = (): string =>
   "GOVERNANCE_SOURCE is set: this version of Studio does not run the agent under governance, so this server runs no agent whatever else is configured";
 
 const accessReviewHoldMessage = (): string =>
-  "KUBERNETES_ACCESS_REVIEW is on: this version of Studio does not run the agent under the Kubernetes access review, so this server runs no agent whatever else is configured";
+  accessReviewEnabled()
+    ? "KUBERNETES_ACCESS_REVIEW is on: this version of Studio does not run the agent under the Kubernetes access review, so this server runs no agent whatever else is configured"
+    : "NEXT_PUBLIC_AUTH_PROVIDER is not local or oidc: this version of Studio does not run the agent with OpenShift sign-in, so this server runs no agent whatever else is configured";
+
+/** Every sign-in mode other than local and oidc holds the agent too: a run cannot carry the user's cluster sign-in. */
+function heldBySignInMode(): boolean {
+  const mode = authProviderSetting();
+  return mode !== "local" && mode !== "oidc";
+}
 
 const ledgerUnwritableMessage = (directory: string, cause: string): string =>
   `the agent's durable ledger cannot be written at "${directory}" (${cause}); point ${AGENT_LOCAL_DATA_DIR_ENV} at a writable directory`;
@@ -332,7 +341,7 @@ export function isAgentHeldByGovernance(): boolean {
  */
 function readAgentEnableFlag(): "held" | "review-held" | "runtime-off" | "off" | "auto" {
   if (isAgentHeldByGovernance()) return "held";
-  if (accessReviewEnabled()) return "review-held";
+  if (accessReviewEnabled() || heldBySignInMode()) return "review-held";
   // A valid runtime value from the control plane wins over the variable (docs/GOVERNANCE.md#runtime-settings), and true
   // still needs a model. Only governance sets one, and governance holds the agent above, so in this version the value
   // has no effect.

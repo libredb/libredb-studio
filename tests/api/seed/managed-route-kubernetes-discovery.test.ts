@@ -138,6 +138,14 @@ describe("Kubernetes-discovered connections under the access review", () => {
     for (const field of ["password", "kubernetesSecret", "literal"]) expect(field in orders).toBe(false);
   });
 
+  test("sends an allowed database with no role: the reserved role that sets it apart never leaves the server", async () => {
+    const body = await (await GET()).text();
+    const { connections } = JSON.parse(body) as { connections: Record<string, unknown>[] };
+    expect(connections.map((connection) => [connection.id, connection.roles])).toEqual([[`seed:${ORDERS}`, []]]);
+    expect(body).not.toContain("\\u0000");
+    expect(body).not.toContain("kubernetes-access-review");
+  });
+
   test("opens an allowed id with its credentials, and answers a denied id exactly like an unknown one", async () => {
     const opened = await resolveConnection({ connectionId: `seed:${ORDERS}` }, DEV_A);
     expect(opened).toMatchObject({

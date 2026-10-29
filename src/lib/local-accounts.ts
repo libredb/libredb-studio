@@ -14,6 +14,7 @@ import { randomBytes, randomInt } from "node:crypto";
 import { emitAuditEvent, type AuditReason } from "@/lib/audit";
 import type { Role, UserPayload } from "@/lib/auth";
 import { hmacHex } from "@/lib/auth-compare";
+import { authProvider } from "@/lib/config/auth-provider";
 import { governanceEnabled } from "@/lib/governance/config";
 import { governanceServable } from "@/lib/governance/freshness";
 import { governanceState, sessionRevoked } from "@/lib/governance/state";
@@ -230,7 +231,7 @@ export async function confirmOwner(
 
 /** The reconciled server store, or 409 in OIDC and local mode; the passkey services reuse it. */
 export async function requireAccountStore(): Promise<ServerStorageProvider> {
-  if (process.env.NEXT_PUBLIC_AUTH_PROVIDER === "oidc") throw new AccountError(409, OIDC_MODE);
+  if (authProvider() !== "local") throw new AccountError(409, OIDC_MODE);
   const provider = await getStorageProvider();
   if (!provider) throw new AccountError(409, LOCAL_MODE);
   await reconcileOnce(provider);
@@ -404,7 +405,7 @@ function reconcileOnce(provider: ServerStorageProvider): Promise<void> {
  */
 export async function resolveLocalAuthUsers(): Promise<AuthUser[]> {
   // OIDC returns before the store is opened, so a stored role cannot affect an issuer session.
-  if (process.env.NEXT_PUBLIC_AUTH_PROVIDER === "oidc") return getAuthUsers();
+  if (authProvider() !== "local") return getAuthUsers();
   const provider = await getStorageProvider();
   // local mode: no server database, so the env accounts stay the registry.
   if (!provider) return getAuthUsers();
@@ -482,7 +483,7 @@ export async function storedAccountAllows(session: VerifiedSession): Promise<boo
     // The rule accepts a non-empty string subject only.
     return governedIdentityAccepted(idpSubject, idpIssuer) && !governanceRevoked(idpSubject as string, iat);
   }
-  if (process.env.NEXT_PUBLIC_AUTH_PROVIDER === "oidc") return true;
+  if (authProvider() !== "local") return true;
   const provider = await getStorageProvider();
   if (!provider) return true;
   await reconcileOnce(provider);
@@ -607,7 +608,7 @@ async function insertLaunchAccount(provider: ServerStorageProvider, launch: Laun
  * the role change would leave no enabled admin or the account changed while it was read, and 409 under OIDC.
  */
 export async function provisionLaunchAccount(launch: LaunchIdentity): Promise<LaunchAccount> {
-  if (process.env.NEXT_PUBLIC_AUTH_PROVIDER === "oidc") throw new AccountError(409, OIDC_MODE);
+  if (authProvider() !== "local") throw new AccountError(409, OIDC_MODE);
   const environmentAccounts = getAuthUsers();
   // The break-glass address (contract A3.2) is never a launch account, in either mode, even while its row is missing.
   if (sameEmail(environmentAccounts[0].email, launch.email)) throw new AccountError(403, LAUNCH_NOT_LINKED);
@@ -804,7 +805,7 @@ export type OwnFactorStatus = { available: false; reason: string } | { available
 
 /** What the authenticator screen offers the signed-in account, and why when it offers nothing. */
 export async function ownFactorStatus(email: string): Promise<OwnFactorStatus> {
-  if (process.env.NEXT_PUBLIC_AUTH_PROVIDER === "oidc") return { available: false, reason: FACTOR_OIDC };
+  if (authProvider() !== "local") return { available: false, reason: FACTOR_OIDC };
   const provider = await getStorageProvider();
   if (!provider) return { available: false, reason: FACTOR_LOCAL };
   const current = await provider.getAccount(email);

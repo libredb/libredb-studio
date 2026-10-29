@@ -18,6 +18,7 @@
  * Runs only on standalone boot, right after `verifyAuthEnvAtBoot()` in `src/instrumentation.ts`, and checks nothing
  * while governance is off, so a Studio without GOVERNANCE_SOURCE starts exactly as before.
  */
+import { authProviderSetting, authProviderValue } from "@/lib/config/auth-provider";
 import { SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import {
   governanceAllowedEngines,
@@ -79,9 +80,9 @@ function governanceEnvProblems(): string[] {
   }
 
   // Sign-in through the identity provider only, with the admin and user roles of its role claim.
-  if (process.env.NEXT_PUBLIC_AUTH_PROVIDER !== "oidc") {
+  if (authProviderSetting() !== "oidc") {
     problems.push(
-      `NEXT_PUBLIC_AUTH_PROVIDER is ${shown(process.env.NEXT_PUBLIC_AUTH_PROVIDER)}: governance mode signs in through the identity provider only, so set it to oidc`,
+      `NEXT_PUBLIC_AUTH_PROVIDER is ${shown(authProviderValue())}: governance mode signs in through the identity provider only, so set it to oidc`,
     );
   }
   if (!process.env.OIDC_ROLE_CLAIM?.trim()) {

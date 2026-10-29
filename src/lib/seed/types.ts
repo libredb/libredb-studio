@@ -23,9 +23,13 @@ const SSLConfigSchema = z
 
 const ConnectionEnvironmentSchema = z.enum(["production", "staging", "development", "local", "other"]);
 
-// Allowed roles: standard roles ('*', 'admin', 'user') or custom roles from OIDC role claim
-const CONTROL_CHAR_REGEX = /[\x00-\x1f\x7f-\x9f]/;
+/**
+ * A C0 or C1 control character or DEL. A seed role name may hold none (AllowedRoleSchema), and seedRolesOf
+ * (src/lib/seed/roles.ts) drops a claim role holding one, so the two refuse one class.
+ */
+export const CONTROL_CHAR_REGEX = /[\x00-\x1f\x7f-\x9f]/;
 
+// Allowed roles: standard roles ('*', 'admin', 'user') or custom roles from OIDC role claim
 const AllowedRoleSchema = z
   .string()
   .min(1, "Role cannot be empty")
@@ -428,9 +432,10 @@ export interface ManagedConnection extends DatabaseConnection {
   /**
    * The Kubernetes Secret this connection's credentials come from. Set in code after the role filter, by a Kubernetes
    * discovery source, as `literal` is; never read from a file, because SeedConnectionSchema does not declare it;
-   * stripped by GET /api/connections/managed. With the Kubernetes access review on, the connection is listed and opened
-   * only for a session the review allows to `get` this Secret, and with it off for the admin role only
-   * (src/lib/kubernetes-access/gate.ts).
+   * stripped by GET /api/connections/managed. With the Kubernetes access review on, the connection carries
+   * KUBERNETES_REVIEWED_ROLE and is listed and opened only for a session the review allows to `get` this Secret
+   * (src/lib/kubernetes-access/gate.ts), and with it off for the admin role only, through the role filter
+   * (src/lib/seed/index.ts).
    */
   kubernetesSecret?: { readonly namespace: string; readonly name: string };
   /**

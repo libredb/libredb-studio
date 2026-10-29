@@ -41,6 +41,32 @@ describe("GET /api/auth/me", () => {
     expect(data.user).toEqual({ role: "admin", username: "admin" });
   });
 
+  test("never returns the session handle of an openshift session", async () => {
+    mockReadSession.mockResolvedValueOnce({
+      kind: "authenticated",
+      session: {
+        role: "user",
+        username: "dev-a",
+        idpSubject: "0b6f5c1e-4d2a-4c55-9e1f-7a3b2c1d0e9f",
+        idpIssuer: "https://oauth-openshift.apps.example.com",
+        sessionHandle: "handle-not-a-real-value-0000000000000000000",
+      },
+    });
+
+    const res = await GET();
+    const text = await res.text();
+
+    expect(res.status).toBe(200);
+    expect(text).not.toContain("sessionHandle");
+    expect(text).not.toContain("handle-not-a-real-value");
+    expect(JSON.parse(text).user).toEqual({
+      role: "user",
+      username: "dev-a",
+      idpSubject: "0b6f5c1e-4d2a-4c55-9e1f-7a3b2c1d0e9f",
+      idpIssuer: "https://oauth-openshift.apps.example.com",
+    });
+  });
+
   test("returns 401 with authenticated false when no session", async () => {
     mockReadSession.mockResolvedValueOnce({ kind: "anonymous" });
 

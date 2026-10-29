@@ -686,3 +686,40 @@ describe("POST /api/auth/login", () => {
     });
   });
 });
+
+// In openshift sign-in mode the cluster is the only way in: the password route refuses every caller before it reads
+// the body, with the governance refusal's message and audit reason.
+describe("POST /api/auth/login in openshift sign-in mode", () => {
+  const DISABLED_MESSAGE = "Password sign-in is disabled: this server signs in through the identity provider only";
+  const savedMode = process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+  let logSpy: ReturnType<typeof spyOn<Console, "log">>;
+
+  beforeEach(() => {
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "openshift";
+    logSpy = spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    logSpy.mockRestore();
+    if (savedMode === undefined) delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+    else process.env.NEXT_PUBLIC_AUTH_PROVIDER = savedMode;
+  });
+
+  test("answers 403 before the body is read, and audits password_login_disabled", async () => {
+    const request = new Request("http://localhost:3000/api/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-forwarded-for": "203.0.113.91" },
+      body: JSON.stringify({ email: "admin@libredb.org", password: "LibreDB.2026" }),
+    });
+    const res = await POST(request as never);
+    expect(res.status).toBe(403);
+    expect(await parseResponseJSON<{ success: boolean; message: string }>(res)).toEqual({
+      success: false,
+      message: DISABLED_MESSAGE,
+    });
+    expect(request.bodyUsed).toBe(false);
+    expect(mockLogin).not.toHaveBeenCalled();
+    const lines = logSpy.mock.calls.map((call) => JSON.parse(String(call[0])) as Record<string, unknown>);
+    expect(lines.map((line) => line.reason)).toEqual(["password_login_disabled"]);
+  });
+});

@@ -410,6 +410,8 @@ describe("routes that reach a provider require a session", () => {
     "@/lib/auth-errors": "the auth failure taxonomy",
     "@/lib/config/auth-env": "reads JWT_SECRET and AUTH_SESSION_TTL_SECONDS from process.env; opens nothing",
     "@/lib/config/base-path": "prefixes redirect URLs and cookie paths; these routes use no fetch or provider",
+    "@/lib/config/auth-provider":
+      "reads NEXT_PUBLIC_AUTH_PROVIDER from process.env, the one reader of the sign-in mode; opens nothing",
     "@/lib/config/custom-connections":
       "reads ALLOW_CUSTOM_CONNECTIONS from process.env and logs an unrecognised value once; opens nothing",
     "@/lib/config/oidc-logout-hint":
@@ -446,6 +448,24 @@ describe("routes that reach a provider require a session", () => {
     "@/lib/passkey/policy": "passkey limits and constants; data only",
     "@/lib/passkey/sign-in": "passkey sign-in against the app's own account store; no user database or LLM provider",
     "@/lib/passkey/webauthn": "WebAuthn verification through @simplewebauthn/server; computation only",
+    "@/lib/openshift-auth/config":
+      "reads the OPENSHIFT_* sign-in settings from process.env and checks their shape; opens nothing",
+    "@/lib/openshift-auth/files": "checks and reads the client secret file and the CA file on disk; opens nothing",
+    "@/lib/openshift-auth/flow":
+      "the OAuth 2.0 code exchange with the cluster's OAuth server through openid-client and @/lib/openshift-auth/http; never a database or LLM provider",
+    "@/lib/openshift-auth/identity":
+      "reads users/~ from the cluster's API server through @/lib/openshift-auth/http; never a database or LLM provider",
+    "@/lib/openshift-auth/metadata":
+      "reads the OAuth metadata from the cluster's API server through @/lib/openshift-auth/http; never a database or LLM provider",
+    "@/lib/openshift-auth/redirect": "builds the login page location from OPENSHIFT_PUBLIC_URL; string checks only",
+    "@/lib/openshift-auth/responses":
+      "the 404, redirect and audit answers of the OpenShift sign-in routes; opens nothing",
+    "@/lib/openshift-auth/role": "the sign-in role seam; answers user and opens nothing",
+    "@/lib/openshift-auth/session":
+      "the session handle, lifetime and record check of OpenShift sign-in over the in-process token store; opens nothing",
+    "@/lib/openshift-auth/state": "signs and verifies the OpenShift sign-in state cookie with jose; computation only",
+    "@/lib/openshift-auth/token-store":
+      "the in-process store of the OpenShift users' access tokens; data only, opens nothing",
     "@/lib/password-hash": "scrypt for stored account passwords; no provider",
     "@/lib/logger": "structured logging",
     "@/lib/non-finite": "writes NaN and the infinities in held rows as words; pure, imports nothing",

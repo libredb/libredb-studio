@@ -34,6 +34,8 @@ import {
   sessionTtlSeconds,
 } from "@/lib/config/auth-env";
 import { isBootstrapEnabled } from "@/lib/auth-bootstrap";
+import { AUTH_PROVIDER_INVALID_MESSAGE, authProviderSetting, authProviderValue } from "@/lib/config/auth-provider";
+import { openShiftAuthEnvProblems, strayOpenShiftVariables } from "@/lib/openshift-auth/preflight";
 import { readBearerAudience } from "@/lib/oidc-bearer";
 import { isServerStorageEnabled } from "@/lib/storage/factory";
 import { getStorageProviderType } from "@/lib/storage/provider-type";
@@ -62,6 +64,64 @@ function verifyStorageEncryptionKeyAtBoot(): boolean {
       " Fix it either way:",
       "   1. Set a strong key: STORAGE_ENCRYPTION_KEY=$(openssl rand -base64 32)",
       "   2. Unset STORAGE_ENCRYPTION_KEY and let it derive from JWT_SECRET",
+      "============================================================",
+      "",
+    ].join("\n"),
+  );
+  process.exit(1);
+  return false;
+}
+
+/**
+ * Validate `NEXT_PUBLIC_AUTH_PROVIDER`: an unknown value would otherwise run local sign-in with a generated admin
+ * password, and an OpenShift identity variable set in another mode means the operator meant openshift sign-in.
+ */
+function verifyAuthProviderAtBoot(): boolean {
+  if (authProviderSetting() === "invalid") {
+    console.error(
+      [
+        "",
+        "============================================================",
+        " LibreDB Studio cannot start: NEXT_PUBLIC_AUTH_PROVIDER is invalid",
+        ` Got ${JSON.stringify(authProviderValue())}. ${AUTH_PROVIDER_INVALID_MESSAGE}.`,
+        " The value is case-sensitive; any other value would leave the sign-in mode undecided, so boot stops here.",
+        "============================================================",
+        "",
+      ].join("\n"),
+    );
+    process.exit(1);
+    return false;
+  }
+  const stray = strayOpenShiftVariables();
+  if (stray.length === 0) return true;
+  console.error(
+    [
+      "",
+      "============================================================",
+      " LibreDB Studio cannot start: OpenShift sign-in variables are set, but NEXT_PUBLIC_AUTH_PROVIDER is not openshift",
+      ...stray.map((name) => `   - ${name} is set`),
+      " Set NEXT_PUBLIC_AUTH_PROVIDER=openshift to sign in through the cluster, or unset these variables.",
+      "============================================================",
+      "",
+    ].join("\n"),
+  );
+  process.exit(1);
+  return false;
+}
+
+/** In openshift sign-in mode, one banner naming every variable to fix (src/lib/openshift-auth/preflight.ts). */
+function verifyOpenShiftAuthAtBoot(): boolean {
+  if (authProviderSetting() !== "openshift") return true;
+  const problems = openShiftAuthEnvProblems();
+  if (problems.length === 0) return true;
+  console.error(
+    [
+      "",
+      "============================================================",
+      " LibreDB Studio cannot start: the environment contradicts openshift sign-in",
+      " NEXT_PUBLIC_AUTH_PROVIDER=openshift signs people in through the cluster, and these variables have to change:",
+      ...problems.map((problem) => `   - ${problem}`),
+      " docs/OPENSHIFT.md lists every check.",
       "============================================================",
       "",
     ].join("\n"),
@@ -165,6 +225,7 @@ function verifyBearerAudienceAtBoot(): boolean {
  * is stubbed (tests) rather than terminating the process immediately.
  */
 export function verifyAuthEnvAtBoot(): boolean {
+  if (!verifyAuthProviderAtBoot() || !verifyOpenShiftAuthAtBoot()) return false;
   if (!verifySessionTtlAtBoot() || !verifyBearerAudienceAtBoot()) return false;
 
   const secret = process.env.JWT_SECRET;

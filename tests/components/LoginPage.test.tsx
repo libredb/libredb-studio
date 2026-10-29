@@ -275,6 +275,15 @@ describe("LoginPage route (app/login/page)", () => {
     expect(dynamic).toBe("force-dynamic");
   });
 
+  test("renders the OpenShift sign-in action in openshift mode, read when the page renders", async () => {
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "openshift";
+    const { default: LoginPageRoute } = await import("@/app/login/page");
+
+    const { container, getByText } = render(<LoginPageRoute />);
+    expect(getByText("Sign in with OpenShift")).not.toBeNull();
+    expect(container.querySelector("form")).toBeNull();
+  });
+
   test("defaults to the local login form when no auth provider is set", async () => {
     delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
     const { default: LoginPageRoute } = await import("@/app/login/page");

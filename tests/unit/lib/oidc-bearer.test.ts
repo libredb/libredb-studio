@@ -84,6 +84,18 @@ describe("readBearerAudience", () => {
     expect(() => readBearerAudience()).toThrow(AuthConfigError);
   });
 
+  test("refuses an audience under NEXT_PUBLIC_AUTH_PROVIDER=openshift with the unchanged message", () => {
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "openshift";
+    expect(() => readBearerAudience()).toThrow(
+      "OIDC_BEARER_AUDIENCE is set, but bearer access tokens need NEXT_PUBLIC_AUTH_PROVIDER=oidc",
+    );
+  });
+
+  test("throws the invalid-mode message under an unknown NEXT_PUBLIC_AUTH_PROVIDER value", () => {
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "Oidc";
+    expect(() => readBearerAudience()).toThrow("NEXT_PUBLIC_AUTH_PROVIDER must be local, oidc or openshift");
+  });
+
   test("refuses the web client's own id as the audience, because every ID token Studio receives carries it", () => {
     process.env.OIDC_BEARER_AUDIENCE = WEB_CLIENT;
     expect(() => readBearerAudience()).toThrow(AuthConfigError);

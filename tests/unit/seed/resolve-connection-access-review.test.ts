@@ -6,13 +6,15 @@
  * off and so would confirm that the id exists. No unfiltered lookup runs, and each miss is audited as
  * `permission_denied` / `connection_not_granted` on target `kubernetes-access/connection`, metered per account.
  *
- * The seed file is the multi-role fixture; two connections that name their Kubernetes Secret are added beside it through
- * the seed lookup, as a Kubernetes discovery source would add them. The review runs against a fake API server.
+ * The seed file is the multi-role fixture; two connections that name their Kubernetes Secret, carrying the reserved role
+ * the role filter never selects, are added beside it in the seed listing's `pendingReview`, where a Kubernetes discovery
+ * source puts them. The review runs against a fake API server.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import path from "node:path";
 import { type FakeKubernetesApi, startFakeKubernetesApi } from "../../helpers/kubernetes-access/fake-api";
 import * as seedIndex from "@/lib/seed";
+import { KUBERNETES_REVIEWED_ROLE } from "@/lib/seed/roles";
 import type { ManagedConnection } from "@/lib/seed/types";
 import { resolveConnection, SeedConnectionError } from "@/lib/seed/resolve-connection";
 import { resetAccessReviewDecisions } from "@/lib/kubernetes-access/decisions";
@@ -36,7 +38,7 @@ function reviewed(id: string, namespace: string, secret: string): ManagedConnect
     user: "app",
     password: "example-only-password",
     managed: true,
-    roles: ["*"],
+    roles: [KUBERNETES_REVIEWED_ROLE],
     createdAt: new Date(0),
     literal: true,
     kubernetesSecret: { namespace, name: secret },
@@ -65,7 +67,7 @@ const ENV: Readonly<Record<string, string>> = {
   AUTH_SESSION_TTL_SECONDS: "900",
 };
 
-const original = seedIndex.getSeedConnectionById;
+const original = seedIndex.getSeedListing;
 let api: FakeKubernetesApi;
 let lookup: ReturnType<typeof spyOn>;
 let unfiltered: ReturnType<typeof spyOn>;
@@ -98,9 +100,10 @@ beforeEach(() => {
   resetGroupRecords();
   clearRateLimitState();
   recordGroups(ISSUER, "u-alice", []);
-  lookup = spyOn(seedIndex, "getSeedConnectionById").mockImplementation(async (id: string, roles: string[]) => {
-    const found = REVIEWED[id];
-    return found === undefined ? original(id, roles) : { ...found };
+  lookup = spyOn(seedIndex, "getSeedListing").mockImplementation(async (roles: string[]) => {
+    const listing = await original(roles);
+    const reviewedRows = structuredClone(Object.values(REVIEWED));
+    return { ...listing, pendingReview: [...listing.pendingReview, ...reviewedRows] };
   });
   unfiltered = spyOn(seedIndex, "getSeedConnectionByIdUnfiltered");
   log = spyOn(console, "log").mockImplementation(() => {});

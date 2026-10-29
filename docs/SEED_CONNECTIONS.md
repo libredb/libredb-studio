@@ -1291,8 +1291,8 @@ The golden fixture `tests/fixtures/kubernetes-discovery-golden.json` pins the th
 - when the name would be over the seed schema's 128 characters, the start of the key is cut to `…`, keeping the resource's name and user at its end, and the group still shows the namespace whole;
 - the link `/?connection=seed%3A<id>` opens it ([Linking to a Connection](#linking-to-a-connection));
 - its row's TLS mode (`require` for every PostgreSQL row), and for MongoDB its `authSource`, `managed: true`, no `mcp`, no `readOnly` and no `connectionString`, all set in code and never read from the export;
-- roles `*` while `KUBERNETES_ACCESS_REVIEW` is on, so the review is its only gate, and `admin` while it is off, read from the switch on every request;
-- the Secret its credentials came from, which the review asks about, and the literal marker, so a value written as `${NAME}` or `${vault:...}` is used as written, as for CapRover; `GET /api/connections/managed` strips both markers.
+- while `KUBERNETES_ACCESS_REVIEW` is on, a role reserved for the review, which no seed file, session or claim role can hold and the role filter never selects, so the review is its only gate and the browser sees no role for it; `admin` while it is off; read from the switch on every request;
+- the Secret its credentials came from, which the review asks about, and the literal marker, so a value written as `${NAME}` or `${vault:...}` is used as written, as for CapRover; `GET /api/connections/managed` strips both markers and the reserved role.
 
 ### Kubernetes precedence
 
@@ -1345,7 +1345,7 @@ It is off by default, and with it off nothing on this page changes.
 
 A reviewed connection is one that names the Kubernetes Secret its credentials come from.
 Only the [Kubernetes discovery source](#platform-discovery-kubernetes) sets that, in code; a seed file cannot, because the seed schema has no such field.
-Its roles are `*`, so the review is its only gate, for admins and users alike:
+It carries a role reserved for the review, which the role filter never selects, so the review is its only gate, for admins and users alike, and the browser receives it with no role:
 
 - It is listed, and opened by any route, only for a session the review allows to `get` that Secret.
 - The review is a SubjectAccessReview with `user` set to the session's identity provider subject, the ID token's `sub`, and `groups` set to the groups of the ID token's `groups` claim at sign-in, and nothing else: no header, cookie field or display name reaches it.
@@ -1708,8 +1708,9 @@ seed-connections.yaml (SEED_CONFIG_PATH)
         │         └───────────────────────────────────────┘
         │         ┌───────────────────────────────────────┐
         ├─────────┤ Kubernetes discovery (kubernetes-      │  Appended after CapRover when it is
-        │         │ discovery-*.ts, reads                  │  set; roles * under the access review,
-        │         │ SEED_KUBERNETES_DISCOVERY_PATH)        │  else admin; literal, Secret marker
+        │         │ discovery-*.ts, reads                  │  set; set apart for the access review
+        │         │ SEED_KUBERNETES_DISCOVERY_PATH)        │  under a reserved role while it is on,
+        │         │                                        │  else admin; literal, Secret marker
         │         └───────────────────────────────────────┘
         │         ┌───────────────────────────────────────┐
         ├─────────┤ Embedded samples (libredb-sample.ts,   │  Appended if enabled and the
@@ -1748,8 +1749,8 @@ seed-connections.yaml (SEED_CONFIG_PATH)
 | `resolve-connection.ts` | Shared utility for all API routes |
 | `libredb-sample.ts` | Built-in "Sample (LibreDB)" connection: file seeding + descriptor |
 | `sqlite-sample.ts` | Built-in "Sample (Employees)" connection: vendored template copy + descriptor |
-| `index.ts` | Public API: `getManagedConnections()`, `getPendingSeeds()`, `getSeedConnectionById()`, `getSeedConnectionByIdUnfiltered()` and `resetCache()` |
-| `roles.ts` | `seedRolesOf()`: the session's role and the claim roles that carry `OIDC_ROLE_PREFIX`, which seed roles are matched against |
+| `index.ts` | Public API: `getManagedConnections()`, `getSeedListing()`, `getPendingSeeds()`, `getSeedConnectionByIdUnfiltered()` and `resetCache()` |
+| `roles.ts` | `seedRolesOf()`: the session's role and the claim roles that carry `OIDC_ROLE_PREFIX`, which seed roles are matched against; `KUBERNETES_REVIEWED_ROLE`, the role reserved for Kubernetes-discovered connections while the access review is on, which the role filter never selects |
 | `discovery-export.ts` | Zod schema and parser of the platform discovery export file, with its 2 MiB cap |
 | `discovery-fingerprint.ts` | Image repository parsing, engine detection and credential mapping of discovered services |
 | `discovery-probe.ts` | TCP probe for environment-matched candidates: 1 s timeout, 30 s positive cache, 16 at a time |

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { sessionRequiredBody } from "@/lib/api/session-ended";
-import { getPendingSeeds, type ManagedConnection } from "@/lib/seed";
+import { getPendingSeeds, KUBERNETES_REVIEWED_ROLE, type ManagedConnection } from "@/lib/seed";
 import { logger } from "@/lib/logger";
 import { withoutSecretFields } from "@/lib/storage/connection-secrets";
 import { SEED_CONFIG_UNREADABLE_REASON } from "@/hooks/use-connection-payload";
@@ -19,14 +19,16 @@ const GOVERNED_CACHE_HINT_MS = 10_000;
 /**
  * The server-only markers are not part of this response's shape, so they are removed before anything reaches the
  * browser: the literal marker (src/lib/seed/types.ts) tells the server how to resolve a connection's values, the
- * Kubernetes Secret marker which Secret the access review asks about, and the grant level
- * (src/lib/governance/visible.ts) which credential a governed record carries. The level itself is no secret and goes
- * out as `access`, so a client can say a connection is read only before a write fails.
+ * Kubernetes Secret marker which Secret the access review asks about, the reserved role (src/lib/seed/roles.ts) that
+ * sets a connection apart for that review, so a reviewed connection reaches the browser with no role, and the grant
+ * level (src/lib/governance/visible.ts) which credential a governed record carries. The level itself is no secret and
+ * goes out as `access`, so a client can say a connection is read only before a write fails.
  */
 function withoutServerMarkers(conn: GovernedRecord): ManagedConnection {
   const { grantLevel, ...copy } = conn;
   delete copy.literal;
   delete copy.kubernetesSecret;
+  copy.roles = copy.roles.filter((role) => role !== KUBERNETES_REVIEWED_ROLE);
   return grantLevel === undefined ? copy : { ...copy, access: grantLevel };
 }
 
