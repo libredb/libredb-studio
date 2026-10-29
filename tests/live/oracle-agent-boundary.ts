@@ -8,25 +8,27 @@
  * production path (`createDatabaseProvider` with the profile's execution context, then `connect` and `queryReadOnly`):
  *
  *  - the fresh database refuses its own read-only user, because PUBLIC holds EXECUTE on the network and file
- *    packages; the revoke script the refusal names, run as SYS, lifts it;
+ *    packages and the user may not read the policy and auditing catalog; the revoke script and the two catalog grants
+ *    the refusal names, run as SYS, lift it;
  *  - the check refuses a user that is not READ ONLY, one granted EXECUTE on a definer's-rights function, one granted a
  *    view that calls it directly, through a private or PUBLIC synonym or through a chain of two synonyms, one granted a
  *    view over a synonym it cannot resolve, over a view it may not read, or over an invoker's-rights function, one
  *    granted a view left invalid, a table with a virtual column or a hidden one of a function-based index, a table or
- *    a synonym a row-level policy guards, one granted a sequence, one holding a role that is not a default role, one
+ *    a synonym a row-level policy guards, a view over a table one guards, a table or a view over a table with a
+ *    fine-grained auditing handler, a view over a view granted only DEBUG, a table of its own with a virtual column,
+ *    one that may no longer read the catalog, one granted a sequence, one holding a role that is not a default role, one
  *    granted a directory, one holding ALTER SYSTEM, one owning a private database link, and any user while a PUBLIC
- *    database link exists, and admits each again once the grant is gone, the view compiled, the synonym dropped or the
+ *    database link exists, and admits each again once the grant is gone, the synonym or the table dropped or the
  *    private link dropped by its owner set READ WRITE; it admits a view over DBMS_LOB through Oracle's PUBLIC synonym,
  *    one over a synonym for a granted table, a view leaving out a hidden virtual column, and a view over a view once
- *    both are granted;
+ *    both are granted, the inner one INSERT only included;
  *  - the boundary, with Studio's client admission bypassed: every write, DDL, temporary table, lock, transaction
  *    statement, PL/SQL write and second statement is sent through `queryReadOnly` as the admitted user and refused,
  *    each classified by its ORA- code; the same writes run as the schema owner through the editor path, the positive
  *    control that shows each one would work; the tables, the sequence and the parameter read back the same before and
  *    after;
- *  - what reaches past READ ONLY and is not refused: a PUBLIC sequence Oracle maintains, a row-level policy on a table
- *    read only through a view and a fine-grained auditing handler, which the check cannot see, each recorded as the
- *    server answered, and `ALTER SESSION SET EDITION` refused inside the call's transaction;
+ *  - what reaches past READ ONLY and is not refused: a PUBLIC sequence Oracle maintains, recorded as the server
+ *    answered, and `ALTER SESSION SET EDITION` refused inside the call's transaction;
  *  - the operations profile opens the schema owner, a writable user, unproven, and reads its objects, which is what
  *    plan mode grounds on; an editor handle refuses `queryReadOnly` before sending anything;
  *  - the catalog reads the overlay composes, each answered as the admitted user;
@@ -215,6 +217,7 @@ const SETUP_AS_SYSTEM: readonly string[] = [
   `CREATE OR REPLACE VIEW ${OWNER}.${PREFIX}BEHIND_VIEW AS SELECT ID FROM ${OWNER}.${PREFIX}BEHIND`,
   `CREATE TABLE ${OWNER}.${PREFIX}AUDITED (ID NUMBER)`,
   `INSERT INTO ${OWNER}.${PREFIX}AUDITED VALUES (1)`,
+  `CREATE OR REPLACE VIEW ${OWNER}.${PREFIX}AUDITED_VIEW AS SELECT ID FROM ${OWNER}.${PREFIX}AUDITED`,
   `BEGIN DBMS_RLS.ADD_POLICY(object_schema => '${OWNER}', object_name => '${PREFIX}POL', policy_name => '${PREFIX}POL_P', function_schema => '${OWNER}', policy_function => '${PREFIX}POL_FN', statement_types => 'SELECT'); END;`,
   `BEGIN DBMS_RLS.ADD_POLICY(object_schema => '${OWNER}', object_name => '${PREFIX}BEHIND', policy_name => '${PREFIX}BEHIND_P', function_schema => '${OWNER}', policy_function => '${PREFIX}POL_FN', statement_types => 'SELECT'); END;`,
   `BEGIN DBMS_FGA.ADD_POLICY(object_schema => '${OWNER}', object_name => '${PREFIX}AUDITED', policy_name => '${PREFIX}FGA_P', handler_schema => '${OWNER}', handler_module => '${PREFIX}FGA_FN', statement_types => 'SELECT'); END;`,
@@ -253,6 +256,12 @@ const REVOKES_AS_SYS: readonly string[] = [
   "XDB.DBMS_XSLPROCESSOR",
 ].map((name) => `REVOKE EXECUTE ON ${name} FROM PUBLIC`);
 
+/** The two catalog views the check reads for row-level policies and auditing handlers; only SYS may grant them. */
+const CATALOG_GRANTS_AS_SYS: readonly string[] = [
+  `GRANT SELECT ON SYS.DBA_POLICIES TO ${RO}`,
+  `GRANT SELECT ON SYS.DBA_AUDIT_POLICIES TO ${RO}`,
+];
+
 async function cleanup(): Promise<void> {
   await setup(
     "SYSTEM",
@@ -280,6 +289,7 @@ async function cleanup(): Promise<void> {
       `DROP TABLE ${OWNER}.${PREFIX}SYNPOL PURGE`,
       `DROP VIEW ${OWNER}.${PREFIX}BEHIND_VIEW`,
       `DROP TABLE ${OWNER}.${PREFIX}BEHIND PURGE`,
+      `DROP VIEW ${OWNER}.${PREFIX}AUDITED_VIEW`,
       `DROP TABLE ${OWNER}.${PREFIX}AUDITED PURGE`,
       `DROP FUNCTION ${OWNER}.${PREFIX}POL_FN`,
       `DROP PROCEDURE ${OWNER}.${PREFIX}FGA_FN`,
@@ -375,14 +385,18 @@ async function main(): Promise<void> {
   await cleanup();
   await setup("SYSTEM", SETUP_AS_SYSTEM);
 
-  // The fresh database refuses its own read-only user: PUBLIC holds EXECUTE on the network and file packages.
+  // The fresh database refuses its own read-only user: PUBLIC holds EXECUTE on the network and file packages, and the
+  // user, which reads granted tables, may not read the catalog of row-level policies and auditing handlers.
   const fresh = await verdict(RO);
   check(
     fresh.startsWith("PROFILE_PRIVILEGES_TOO_BROAD") &&
-      fresh.includes('REVOKE EXECUTE ON "SYS"."UTL_HTTP" FROM PUBLIC'),
-    `a fresh database refuses its READ ONLY user until PUBLIC's grants are revoked: ${fresh}`,
+      fresh.includes('REVOKE EXECUTE ON "SYS"."UTL_HTTP" FROM PUBLIC') &&
+      fresh.includes(`GRANT SELECT ON SYS.DBA_POLICIES TO "${RO}" (as SYS)`) &&
+      fresh.includes(`GRANT SELECT ON SYS.DBA_AUDIT_POLICIES TO "${RO}" (as SYS)`),
+    `a fresh database refuses its READ ONLY user until PUBLIC's grants are revoked and the catalog granted: ${fresh}`,
   );
   await setup("SYS", REVOKES_AS_SYS, ["ORA-01927"]);
+  await setup("SYS", CATALOG_GRANTS_AS_SYS);
   check((await verdict(RO)) === "admitted", "after the revoke script the READ ONLY user is admitted");
 
   // Each grant the check refuses, refused and then lifted.
@@ -391,7 +405,7 @@ async function main(): Promise<void> {
     grant: string[];
     revoke: string[];
     names: string;
-    user?: string;
+    admin?: string;
   }[] = [
     {
       label: "a user that is not READ ONLY",
@@ -514,8 +528,51 @@ async function main(): Promise<void> {
         `ALTER TABLE ${OWNER}.${PREFIX}STALE DROP COLUMN N`,
         `ALTER TABLE ${OWNER}.${PREFIX}STALE ADD (N NUMBER)`,
       ],
-      revoke: [`ALTER VIEW ${OWNER}.${PREFIX}STALE_VIEW COMPILE`],
-      names: `ALTER VIEW "${OWNER}"."${PREFIX}STALE_VIEW" COMPILE`,
+      revoke: [`REVOKE SELECT ON ${OWNER}.${PREFIX}STALE_VIEW FROM ${RO}`],
+      names: `REVOKE ALL ON "${OWNER}"."${PREFIX}STALE_VIEW" FROM "${RO}"`,
+    },
+    {
+      label: "a granted view over a table a row-level policy guards, which ALL_POLICIES does not list",
+      grant: [`GRANT SELECT ON ${OWNER}.${PREFIX}BEHIND_VIEW TO ${RO}`],
+      revoke: [`REVOKE SELECT ON ${OWNER}.${PREFIX}BEHIND_VIEW FROM ${RO}`],
+      names: `REVOKE ALL ON "${OWNER}"."${PREFIX}BEHIND_VIEW" FROM "${RO}"`,
+    },
+    {
+      label: "a granted table with a fine-grained auditing handler",
+      grant: [`GRANT SELECT ON ${OWNER}.${PREFIX}AUDITED TO ${RO}`],
+      revoke: [`REVOKE SELECT ON ${OWNER}.${PREFIX}AUDITED FROM ${RO}`],
+      names: `REVOKE ALL ON "${OWNER}"."${PREFIX}AUDITED" FROM "${RO}"`,
+    },
+    {
+      label: "a granted view over a table with a fine-grained auditing handler",
+      grant: [`GRANT SELECT ON ${OWNER}.${PREFIX}AUDITED_VIEW TO ${RO}`],
+      revoke: [`REVOKE SELECT ON ${OWNER}.${PREFIX}AUDITED_VIEW FROM ${RO}`],
+      names: `REVOKE ALL ON "${OWNER}"."${PREFIX}AUDITED_VIEW" FROM "${RO}"`,
+    },
+    {
+      label: "a granted view over a view granted only DEBUG, which ALL_OBJECTS hides and the check does not examine",
+      grant: [
+        `GRANT SELECT ON ${OWNER}.${PREFIX}PLAIN_OUTER TO ${RO}`,
+        `GRANT DEBUG ON ${OWNER}.${PREFIX}PLAIN_INNER TO ${RO}`,
+      ],
+      revoke: [
+        `REVOKE SELECT ON ${OWNER}.${PREFIX}PLAIN_OUTER FROM ${RO}`,
+        `REVOKE DEBUG ON ${OWNER}.${PREFIX}PLAIN_INNER FROM ${RO}`,
+      ],
+      names: `REVOKE ALL ON "${OWNER}"."${PREFIX}PLAIN_OUTER" FROM "${RO}"`,
+    },
+    {
+      label: "a table of its own with a virtual column, which no revoke takes from it",
+      grant: [`CREATE TABLE ${RO}.${PREFIX}MINE (ID NUMBER, V NUMBER GENERATED ALWAYS AS (ID + 1) VIRTUAL)`],
+      revoke: [`DROP TABLE ${RO}.${PREFIX}MINE PURGE`],
+      names: `move "${RO}"."${PREFIX}MINE" out of the agent user's own schema`,
+    },
+    {
+      label: "a user that reads a granted table and may no longer read DBA_POLICIES",
+      grant: [`REVOKE SELECT ON SYS.DBA_POLICIES FROM ${RO}`],
+      revoke: [`GRANT SELECT ON SYS.DBA_POLICIES TO ${RO}`],
+      names: `GRANT SELECT ON SYS.DBA_POLICIES TO "${RO}" (as SYS)`,
+      admin: "SYS",
     },
     {
       label: "a granted sequence",
@@ -532,14 +589,14 @@ async function main(): Promise<void> {
       names: `DROP PUBLIC DATABASE LINK "${PREFIX}LINK"`,
     },
   ];
-  for (const { label, grant, revoke, names } of refusedThenLifted) {
-    await setup("SYSTEM", grant);
+  for (const { label, grant, revoke, names, admin = "SYSTEM" } of refusedThenLifted) {
+    await setup(admin, grant);
     const refused = await verdict(RO);
     check(
       refused.startsWith("PROFILE_PRIVILEGES_TOO_BROAD") && refused.includes(names),
       `the check refuses ${label}, naming ${names}: ${refused}`,
     );
-    await setup("SYSTEM", revoke);
+    await setup(admin, revoke);
     check((await verdict(RO)) === "admitted", `with ${label} gone the user is admitted again`);
   }
   // Views whose synonyms resolve to no code are admitted: DBMS_LOB through Oracle's PUBLIC synonym, a granted table.
@@ -565,8 +622,20 @@ async function main(): Promise<void> {
       views.map((view) => `REVOKE SELECT ON ${OWNER}.${view} FROM ${RO}`),
     );
   }
-  // The stale view, compiled as the refusal named, kept its grant until here.
-  await setup("SYSTEM", [`REVOKE SELECT ON ${OWNER}.${PREFIX}STALE_VIEW FROM ${RO}`]);
+  // An inner view granted only INSERT is one the check starts from, so it reads that view's dependencies and admits it.
+  await setup("SYSTEM", [
+    `GRANT SELECT ON ${OWNER}.${PREFIX}PLAIN_OUTER TO ${RO}`,
+    `GRANT INSERT ON ${OWNER}.${PREFIX}PLAIN_INNER TO ${RO}`,
+  ]);
+  const insertOnly = await verdict(RO);
+  check(
+    insertOnly === "admitted",
+    `the check admits a view over a view granted only INSERT, whose dependencies it reads: ${insertOnly}`,
+  );
+  await setup("SYSTEM", [
+    `REVOKE SELECT ON ${OWNER}.${PREFIX}PLAIN_OUTER FROM ${RO}`,
+    `REVOKE INSERT ON ${OWNER}.${PREFIX}PLAIN_INNER FROM ${RO}`,
+  ]);
   // A private link the user owns: only its owner drops it, and READ ONLY refuses the owner the DROP.
   await setup("SYSTEM", [`ALTER USER ${RO} READ WRITE`, `GRANT CREATE DATABASE LINK TO ${RO}`]);
   await setup(RO, [
@@ -691,27 +760,10 @@ async function main(): Promise<void> {
   const edition = await agentAnswer(agent, "ALTER SESSION SET EDITION = ORA$BASE");
   check(/ORA-38814/.test(edition), `ALTER SESSION SET EDITION as the admitted user is refused: ${edition}`);
 
-  // What reaches past READ ONLY: an Oracle-maintained PUBLIC sequence, and what the check cannot see: a row-level
-  // policy on a table the user reads only through a view, and a fine-grained auditing handler.
+  // What reaches past READ ONLY: an Oracle-maintained PUBLIC sequence.
   const sequence = await agentAnswer(agent, "SELECT SYS.SCHEDULER$_JOBSUFFIX_S.NEXTVAL AS N FROM DUAL");
   check(sequence === "ran", `residual: a PUBLIC sequence Oracle maintains advances for the admitted user: ${sequence}`);
-  let seqAfter = await snapshot();
-  for (const [label, object] of [
-    ["a row-level policy on a table read only through a granted view", `${PREFIX}BEHIND_VIEW`],
-    ["a fine-grained auditing handler on a granted table", `${PREFIX}AUDITED`],
-  ] as const) {
-    await setup("SYSTEM", [`GRANT SELECT ON ${OWNER}.${object} TO ${RO}`]);
-    const unseen = await agentFor(RO);
-    const seqBefore = await snapshot();
-    const answer = await agentAnswer(unseen, `SELECT ID FROM ${OWNER}.${object}`);
-    seqAfter = await snapshot();
-    check(
-      answer === "ran" && seqAfter !== seqBefore,
-      `residual: ${label} is admitted and its function advances the sequence: ${answer}; before ${seqBefore}, after ${seqAfter}`,
-    );
-    await unseen.disconnect();
-    await setup("SYSTEM", [`REVOKE SELECT ON ${OWNER}.${object} FROM ${RO}`]);
-  }
+  const seqAfter = await snapshot();
 
   // What the agent composes: each catalog kind answered as the admitted user.
   for (const kind of ["columns", "relations", "indexes", "statistics"] as const) {

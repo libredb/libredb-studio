@@ -5,7 +5,8 @@
  * The check refuses the profile, fail closed, unless the user is set READ ONLY and nothing it can reach runs outside
  * that: no role that is not enabled at sign-in, no EXECUTE on code owned by a schema Oracle does not maintain, no view
  * of such a schema that calls such code or reads a view it cannot examine, no such view that is not valid, no virtual
- * column and no row-level security policy of such a schema on what it reads, no sequence of such a schema and none of
+ * column and no row-level security policy of such a schema on what it reads, no such policy or auditing handler behind
+ * it, read from a catalog the user must be able to read, no sequence of such a schema and none of
  * its own, no network or server-file package and no directory, no system privilege but CREATE SESSION, and no database
  * link. Each refusal names the statements that would lift it.
  */
@@ -32,6 +33,8 @@ const CLEAN: Readonly<Record<Statement, Rows>> = {
   invalidViews: [],
   virtualColumns: [],
   policies: [],
+  reachable: [],
+  catalogPolicies: [],
   sequences: [],
   reach: [],
   systemPrivileges: [],
@@ -68,12 +71,15 @@ describe("verifyAgentPrincipal", () => {
   test("admits a READ ONLY user that holds nothing beyond CREATE SESSION, sending every check once, in order", async () => {
     const { read, sent } = reader();
     await verifyAgentPrincipal(read);
-    expect(sent).toEqual(Object.values(AGENT_PRINCIPAL_STATEMENTS));
+    // With nothing of a schema Oracle does not maintain reachable, the policy and auditing catalog is not read.
+    expect(sent).toEqual(
+      Object.values(AGENT_PRINCIPAL_STATEMENTS).filter((sql) => sql !== AGENT_PRINCIPAL_STATEMENTS.catalogPolicies),
+    );
   });
 
-  test("every check statement is one SELECT with no terminator and no bind", () => {
+  test("every check statement is one query with no terminator and no bind", () => {
     for (const sql of Object.values(AGENT_PRINCIPAL_STATEMENTS)) {
-      expect(sql.startsWith("SELECT ")).toBe(true);
+      expect(sql.startsWith("SELECT ") || sql.startsWith("WITH r AS (SELECT ")).toBe(true);
       expect(sql).not.toContain(";");
       expect(sql).not.toContain(":");
     }
@@ -185,8 +191,8 @@ describe("verifyAgentPrincipal", () => {
       );
       expect(sql).toContain("LEFT JOIN ALL_USERS su ON su.USERNAME = s.TABLE_OWNER");
       expect(sql).toContain(
-        "d.REFERENCED_TYPE = 'SYNONYM' AND NVL(su.ORACLE_MAINTAINED, 'N') <> 'Y' AND NOT EXISTS (SELECT 1 FROM ALL_OBJECTS o " +
-          "WHERE o.OWNER = s.TABLE_OWNER AND o.OBJECT_NAME = s.TABLE_NAME AND o.OBJECT_TYPE IN ('TABLE', 'VIEW', 'MATERIALIZED VIEW'))",
+        "d.REFERENCED_TYPE = 'SYNONYM' AND NVL(su.ORACLE_MAINTAINED, 'N') <> 'Y' AND NOT EXISTS (SELECT 1 FROM r o " +
+          "WHERE o.OWNER = s.TABLE_OWNER AND o.NAME = s.TABLE_NAME)",
       );
     });
 
@@ -199,14 +205,44 @@ describe("verifyAgentPrincipal", () => {
   });
 
   describe("no granted view that reads a view the user cannot examine", () => {
-    test("the check refuses a view dependency of a schema Oracle does not maintain that ALL_OBJECTS does not show the user", () => {
+    test("the check admits an inner view of a schema Oracle does not maintain only when it examines that view itself", () => {
       // A view reached only through another view lists the outer view's dependency on the inner one, never the inner
-      // view's own calls, and the user can read those only for a view it may read itself (measured).
-      expect(AGENT_PRINCIPAL_STATEMENTS.views).toContain("LEFT JOIN ALL_USERS ru ON ru.USERNAME = d.REFERENCED_OWNER");
-      expect(AGENT_PRINCIPAL_STATEMENTS.views).toContain(
-        "OR d.REFERENCED_TYPE = 'VIEW' AND NVL(ru.ORACLE_MAINTAINED, 'N') <> 'Y' AND NOT EXISTS (SELECT 1 FROM ALL_OBJECTS v " +
-          "WHERE v.OWNER = d.REFERENCED_OWNER AND v.OBJECT_NAME = d.REFERENCED_NAME AND v.OBJECT_TYPE = 'VIEW')",
+      // view's own calls. The check reads a view's dependencies only for the objects it starts from, those granted to
+      // the session's grantees or owned by the user, so an inner view is admitted only when it is one of them; that
+      // ALL_OBJECTS shows it is not enough.
+      const sql = AGENT_PRINCIPAL_STATEMENTS.views;
+      expect(sql).toContain("LEFT JOIN ALL_USERS ru ON ru.USERNAME = d.REFERENCED_OWNER");
+      expect(sql).toContain(
+        "OR d.REFERENCED_TYPE = 'VIEW' AND NVL(ru.ORACLE_MAINTAINED, 'N') <> 'Y' AND NOT EXISTS (SELECT 1 FROM r v " +
+          "WHERE v.OWNER = d.REFERENCED_OWNER AND v.NAME = d.REFERENCED_NAME)",
       );
+      expect(sql).toContain("FROM ALL_DEPENDENCIES d JOIN r p ON p.OWNER = d.OWNER AND p.NAME = d.NAME");
+      expect(sql).not.toContain("FROM ALL_OBJECTS v");
+    });
+
+    test("the objects the check starts from are those granted to the session's grantees and those the user owns", () => {
+      const sql = AGENT_PRINCIPAL_STATEMENTS.reachable;
+      expect(sql).toContain(
+        "WITH r AS (SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME FROM ALL_TAB_PRIVS p",
+      );
+      // A grant ALL_OBJECTS does not show the user the object for, such as DEBUG on a view, shows it none of the
+      // object's dependencies either (measured), so such an object is not one the check examines.
+      expect(sql).toContain("JOIN ALL_OBJECTS o ON o.OWNER = p.TABLE_SCHEMA AND o.OBJECT_NAME = p.TABLE_NAME");
+      expect(sql).toContain("NVL(p.TYPE, '-') <> 'USER'");
+      expect(sql).toContain("SESSION_ROLES");
+      expect(sql).toContain(
+        "UNION SELECT NULL, USER, OBJECT_NAME FROM USER_OBJECTS WHERE OBJECT_TYPE IN ('TABLE', 'VIEW', 'MATERIALIZED VIEW'))",
+      );
+      for (const name of ["views", "invalidViews", "catalogPolicies"] as const) {
+        expect(AGENT_PRINCIPAL_STATEMENTS[name].startsWith(sql.slice(0, sql.indexOf(") SELECT") + 1))).toBe(true);
+      }
+    });
+
+    test("refuses a view the user owns that calls code, naming the move a revoke cannot make", async () => {
+      const error = await refusal({
+        views: [{ GRANTEE: null, OWNER: "APP_RO", NAME: "MINE_V", CALLS: "APP_OWNER.NEXT_ID" }],
+      });
+      expect(error.message).toContain('move "APP_RO"."MINE_V" out of the agent user\'s own schema');
     });
 
     test("refuses a granted view over a view it cannot examine, naming the outer view's revoke", async () => {
@@ -218,7 +254,7 @@ describe("verifyAgentPrincipal", () => {
   });
 
   describe("no granted view that is not valid", () => {
-    test("refuses a view whose dependencies are stale until it is compiled, naming the compile", async () => {
+    test("refuses a view whose dependencies are stale, naming the revoke rather than a compile", async () => {
       // An invalid view lists the dependencies it had before, and the user's SELECT compiles it and runs what it calls
       // now (measured: a dropped column re-added as a virtual column over a function advanced its sequence).
       const error = await refusal({
@@ -226,12 +262,13 @@ describe("verifyAgentPrincipal", () => {
       });
       expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
       expect(error.message).toContain("it may read a view that is not valid");
-      expect(error.message).toContain('ALTER VIEW "APP_OWNER"."V4" COMPILE');
+      expect(error.message).toContain('REVOKE ALL ON "APP_OWNER"."V4" FROM "APP_RO"');
+      expect(error.message).not.toContain("COMPILE");
     });
 
     test("the check reads the status of every granted view of a schema Oracle does not maintain", () => {
       const sql = AGENT_PRINCIPAL_STATEMENTS.invalidViews;
-      expect(sql).toContain("FROM ALL_OBJECTS o JOIN ALL_TAB_PRIVS p");
+      expect(sql).toContain("FROM ALL_OBJECTS o JOIN r p ON p.OWNER = o.OWNER AND p.NAME = o.OBJECT_NAME");
       expect(sql).toContain("o.OBJECT_TYPE = 'VIEW' AND o.STATUS <> 'VALID'");
       expect(sql).toContain("NVL(u.ORACLE_MAINTAINED, 'N') <> 'Y'");
       expect(sql).toContain("SESSION_ROLES");
@@ -263,11 +300,19 @@ describe("verifyAgentPrincipal", () => {
       expect(error.message.split('REVOKE ALL ON "APP_OWNER"."VT" FROM "APP_RO"').length).toBe(2);
     });
 
-    test("a table the user reads through no grant it can name is still refused, its grantee left open", async () => {
+    test("a table the agent user owns is refused naming its move, since no revoke reaches the user's own object", async () => {
       const error = await refusal({
         virtualColumns: [{ GRANTEE: null, OWNER: "APP_RO", NAME: "MINE", COLUMN_NAME: "N" }],
       });
-      expect(error.message).toContain('REVOKE ALL ON "APP_RO"."MINE" FROM <its grantee>');
+      expect(error.message).toContain('move "APP_RO"."MINE" out of the agent user\'s own schema');
+      expect(error.message).not.toContain("<its grantee>");
+    });
+
+    test("a table of another schema read through no grant it can name is still refused, its grantee left open", async () => {
+      const error = await refusal({
+        virtualColumns: [{ GRANTEE: null, OWNER: "APP_OWNER", NAME: "VT", COLUMN_NAME: "N" }],
+      });
+      expect(error.message).toContain('REVOKE ALL ON "APP_OWNER"."VT" FROM <its grantee>');
     });
 
     test("the check reads every virtual column ALL_TAB_COLS lists, hidden ones included, on objects of such schemas", () => {
@@ -301,9 +346,64 @@ describe("verifyAgentPrincipal", () => {
       expect(error.message).toContain('DROP PUBLIC SYNONYM "PST"');
     });
 
-    test("a table policy with no grant it can name is still refused, its grantee left open", async () => {
+    test("a policy on a table the agent user owns is refused naming its move", async () => {
       const error = await refusal({ policies: [{ GRANTEE: null, OWNER: "APP_RO", NAME: "MINE", IS_SYNONYM: "N" }] });
-      expect(error.message).toContain('REVOKE ALL ON "APP_RO"."MINE" FROM <its grantee>');
+      expect(error.message).toContain('move "APP_RO"."MINE" out of the agent user\'s own schema');
+    });
+  });
+
+  describe("no row-level policy or auditing handler a schema Oracle does not maintain owns, behind what it reads", () => {
+    const reachable = [{ OWNER: "APP_OWNER", NAME: "BEHIND_VIEW" }];
+
+    test("refuses a policy or a handler on what a granted view reads, which ALL_POLICIES does not list", async () => {
+      const error = await refusal({
+        reachable,
+        catalogPolicies: [
+          { GRANTEE: "APP_RO", OWNER: "APP_OWNER", NAME: "BEHIND_VIEW" },
+          { GRANTEE: null, OWNER: "APP_RO", NAME: "MINE" },
+        ],
+      });
+      expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+      expect(error.message).toContain("fine-grained auditing handler");
+      expect(error.message).toContain('REVOKE ALL ON "APP_OWNER"."BEHIND_VIEW" FROM "APP_RO"');
+      expect(error.message).toContain('move "APP_RO"."MINE" out of the agent user\'s own schema');
+    });
+
+    test("admits a user whose reachable objects no such policy or handler guards, having read the catalog", async () => {
+      const { read, sent } = reader({ reachable });
+      await verifyAgentPrincipal(read);
+      expect(sent).toContain(AGENT_PRINCIPAL_STATEMENTS.catalogPolicies);
+    });
+
+    test("refuses, fail closed, a user that reaches anything while it may not read the catalog, naming the grants", async () => {
+      const error = await refusal({
+        reachable,
+        catalogPolicies: new Error('ORA-00942: table or view "SYS"."DBA_POLICIES" does not exist'),
+      });
+      expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+      expect(error.message).toContain("cannot read DBA_POLICIES and DBA_AUDIT_POLICIES");
+      expect(error.message).toContain('GRANT SELECT ON SYS.DBA_POLICIES TO "APP_RO" (as SYS)');
+      expect(error.message).toContain('GRANT SELECT ON SYS.DBA_AUDIT_POLICIES TO "APP_RO" (as SYS)');
+    });
+
+    test("refuses an unreadable catalog row rather than skipping it", async () => {
+      const error = await refusal({ reachable, catalogPolicies: [{ GRANTEE: "APP_RO", OWNER: "A" }] });
+      expect(error.message).toContain("could not be read");
+    });
+
+    test("an other failure of the catalog read leaves as it came", async () => {
+      const failure = new Error("ORA-03113: end-of-file on communication channel");
+      await expect(verifyAgentPrincipal(reader({ reachable, catalogPolicies: failure }).read)).rejects.toBe(failure);
+    });
+
+    test("the check reads both catalogs for every object it starts from and every object those depend on", () => {
+      const sql = AGENT_PRINCIPAL_STATEMENTS.catalogPolicies;
+      expect(sql).toContain("JOIN ALL_DEPENDENCIES d ON d.OWNER = r.OWNER AND d.NAME = r.NAME");
+      expect(sql).toContain("FROM DBA_POLICIES a");
+      expect(sql).toContain("FROM DBA_AUDIT_POLICIES f WHERE f.PF_FUNCTION IS NOT NULL OR f.PF_PACKAGE IS NOT NULL");
+      expect(sql).toContain("LEFT JOIN ALL_USERS u ON u.USERNAME = g.F_OWNER");
+      expect(sql).toContain("NVL(u.ORACLE_MAINTAINED, 'N') <> 'Y'");
+      expect(sql).not.toContain("ENABLE");
     });
 
     test("the check reads ALL_POLICIES, enabled or not, keyed on the policy function's owner", () => {
