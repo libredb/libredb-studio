@@ -9,7 +9,7 @@
  * statement change settings, so the value is pinned to 1, never 2. What `readonly` does not restrict is the
  * principal's to hold, and is proved at open (`agent-boundary.ts`).
  */
-import { QueryError } from "@/lib/db/errors";
+import { QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import type { QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { SqlGrammar } from "@/lib/sql/grammar";
 import { readSqlSpan } from "@/lib/sql/spans";
@@ -121,14 +121,15 @@ function callFollows(sql: string, index: number, grammar: SqlGrammar): boolean {
  * Refuses a statement that calls a fenced table function, read with ClickHouse's own grammar (`resolveSqlGrammar`),
  * so a name inside a string or a comment is not a call and a call after a `#` line comment is not missed. A subscript
  * is read into rather than skipped, because an array can hold a scalar subquery. A statement whose literal or comment
- * never closes is refused too, since what follows it cannot be read.
+ * never closes is refused too, since what follows it cannot be read. Both refusals are `RefusedBeforeSendError`: the
+ * fence runs before the request, so the server never sees the statement.
  */
 export function assertNoRemoteTableFunction(sql: string, grammar: SqlGrammar): void {
   let i = 0;
   while (i < sql.length) {
     const span = readSqlSpan(sql, i, grammar);
     if (span !== null && !span.terminated) {
-      throw new QueryError(
+      throw new RefusedBeforeSendError(
         "Read-only execution refused a statement whose literal or comment does not close",
         "clickhouse",
         sql,
@@ -137,7 +138,7 @@ export function assertNoRemoteTableFunction(sql: string, grammar: SqlGrammar): v
     const called = nameAt(sql, i, grammar);
     if (called !== null) {
       if (CLICKHOUSE_FENCED_TABLE_FUNCTIONS.includes(called.name) && callFollows(sql, called.end, grammar)) {
-        throw new QueryError(
+        throw new RefusedBeforeSendError(
           `Read-only execution refused the table function ${sql.slice(i, called.end)}(), which reaches another server`,
           "clickhouse",
           sql,

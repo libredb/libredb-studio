@@ -953,6 +953,8 @@ Grant the `SELECT` to the user itself: a user whose only `SELECT` comes through 
 #### What only the fence or the operator stops
 
 - `cluster()` and `clusterAllReplicas()` answer an unrestricted user under `readonly = 1`, measured; a least-privilege user is refused them with `497` (`READ ON REMOTE`), and the open refuses any REMOTE grant. The provider fence (`assertNoRemoteTableFunction`) refuses `remote`, `remoteSecure`, `cluster` and `clusterAllReplicas` before anything is sent, quoted names and `\xHH` escapes included, reading the statement with this engine's registered grammar (`resolveSqlGrammar`), so it is defence in depth, lexer-only on its own.
+  It also refuses a statement whose literal or comment never closes, since what follows cannot be read.
+  Both refusals are `RefusedBeforeSendError`, so the agent rail shows them as refused before the database, in Studio's words, never as the server's error.
 - `KILL QUERY` is not refused by `readonly`, for a user's own statements at any `readonly` value. On 26.7 it reads `system.processes`, so the least-privilege user is refused even its own (`497`, `SELECT ON system.processes`), and the KILL QUERY grant that would reach other users' statements is refused at open.
 - `DESCRIBE TABLE` over a table function runs under `readonly = 1` and may reach the source to infer a schema; it needs the source's grant, which the open refuses.
 - Two statements in one request are refused by the server as a syntax error (`62`, "Multi-statements are not allowed"), the one refusal that is not a read-only or authorization code.

@@ -43,6 +43,7 @@ import {
   ExecutionProfileError,
   QueryCancelledError,
   QueryError,
+  RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
 import { comparePaths } from "@/lib/db/object-path";
@@ -4423,7 +4424,19 @@ describe("ClickHouseProvider agent read-only profile", () => {
       provider.queryReadOnly("SELECT * FROM cluster('default', demo.orders)", AGENT_BUDGET),
     );
 
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
     expect(error.message).toContain("reaches another server");
+    expect(sentSql).toEqual([]);
+  });
+
+  test("a statement whose literal or comment never closes is refused before anything is sent", async () => {
+    const provider = await agentProvider();
+    sentSql = [];
+
+    const error = await readOnlyRefusal(provider.queryReadOnly("SELECT 'unclosed FROM demo.orders", AGENT_BUDGET));
+
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect(error.message).toBe("Read-only execution refused a statement whose literal or comment does not close");
     expect(sentSql).toEqual([]);
   });
 
