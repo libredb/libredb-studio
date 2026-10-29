@@ -974,9 +974,10 @@ That boot check is application code that needs an application release after 1.1.
 
 ### Topology
 
-`openshift.topology.partOf` sets `app.kubernetes.io/part-of`, which groups workloads in the console's Topology view, and `openshift.topology.runtime` sets `app.openshift.io/runtime`, the node icon.
+`openshift.topology.partOf` sets `app.kubernetes.io/part-of`, and `openshift.topology.runtime` sets `app.openshift.io/runtime`, the node icon.
 Both land on every Deployment the chart renders and on its pod template; empty renders no label.
-The bundled PostgreSQL joins the group through the subchart's own `postgresql.commonLabels`, for example `--set 'postgresql.commonLabels.app\.kubernetes\.io/part-of=libredb'`.
+In a Helm install the console's Topology view groups the workloads by the Helm release, not by `app.kubernetes.io/part-of`: the part-of value appears only as an application in the Application selector.
+The bundled PostgreSQL carries the same label through the subchart's own `postgresql.commonLabels`, for example `--set 'postgresql.commonLabels.app\.kubernetes\.io/part-of=libredb'`.
 With `postgresql.enabled` the Studio Deployment also carries `app.openshift.io/connects-to` naming the PostgreSQL StatefulSet, so Topology draws the arrow from Studio to its storage database.
 
 ### GitOps and offline rendering

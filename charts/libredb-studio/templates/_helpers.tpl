@@ -315,9 +315,9 @@ as off.
 {{- end }}
 
 {{/*
-OpenShift Topology labels, each only when set: app.kubernetes.io/part-of groups
-workloads in the console's Topology view and app.openshift.io/runtime picks the
-node icon. Added to the metadata and pod template labels of every Deployment the
+OpenShift Topology labels, each only when set: app.kubernetes.io/part-of names
+the console's Topology application (a Helm install is still grouped by its
+release) and app.openshift.io/runtime picks the node icon. Added to the metadata and pod template labels of every Deployment the
 chart renders, never to a selector. A key that podLabels also sets fails the
 render: the pod template would carry it twice. Read with dig over a defaulted dict, never
 `with .Values.openshift.topology.partOf`, which fails on a nil openshift block
