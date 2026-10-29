@@ -1042,6 +1042,17 @@ describe("queryReadOnly, the agent read-only profile's statement path", () => {
     const error = await rejection(made.provider.queryReadOnly("SELECT * FROM system.queries", BUDGET));
     expect(error.message).toContain("The agent reads no table of InfluxDB 3's system schema");
     expect(queries(made)).toEqual([]);
+    // The read policy admits a subquery inside a subscript, so the fence alone stops this route.
+    for (const sql of [
+      "SELECT [(SELECT count(*) FROM system.queries)][1] AS n",
+      "SELECT [[(SELECT count(*) FROM system.parquet_files)]][1][1] AS n",
+    ]) {
+      expect(evaluateInfluxSql(sql)).toMatchObject({ allowed: true });
+      // oxlint-disable-next-line no-await-in-loop -- each text is checked in turn.
+      const subscript = await rejection(made.provider.queryReadOnly(sql, BUDGET));
+      expect(subscript.message).toContain("The agent reads no table of InfluxDB 3's system schema");
+    }
+    expect(queries(made)).toEqual([]);
     const schema = await made.provider.queryReadOnly("SELECT * FROM system.influxdb_schema", BUDGET);
     expect(schema.rows).toHaveLength(1);
   });

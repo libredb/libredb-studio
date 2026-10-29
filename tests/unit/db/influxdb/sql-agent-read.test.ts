@@ -62,6 +62,8 @@ describe("assertNoSystemTable", () => {
     "DESCRIBE system.queries",
     "SHOW COLUMNS FROM system.processing_engine_logs",
     "SELECT [1][1] AS a FROM system.queries",
+    "SELECT [(SELECT count(*) FROM system.queries)][1] AS n",
+    "SELECT [[(SELECT count(*) FROM system.parquet_files)]][1][1] AS n",
     "WITH q AS (SELECT * FROM system.queries) SELECT * FROM q",
     "SELECT * FROM system.influxdb_schemas",
     'SELECT * FROM system."influxdb_schema "',
