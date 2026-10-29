@@ -1,3 +1,10 @@
+GRANT SELECT ON SYS.DBA_POLICIES TO APP_R3
+                    *
+ERROR at line 1:
+ORA-01031: insufficient privileges
+Help: https://docs.oracle.com/error-help/db/ora-01031/
+
+
 
 Session altered.
 

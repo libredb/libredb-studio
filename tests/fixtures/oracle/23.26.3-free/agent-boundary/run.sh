@@ -10,7 +10,8 @@
 # APP_USER makes the image create the schema owner APP_OWNER in FREEPDB1; 01 creates the rest.
 # Run it from the repository root once the container logs "DATABASE IS READY TO USE!", so 10
 # resolves oracledb from the root node_modules. Sequence values in 04 to 08 depend on this order;
-# 11 to 15 use a user and sequences of their own; 14 runs as SYS, the one user that may grant the DBA_ views.
+# 00 reads the policy catalogs before anything is created; 11 to 15 use a user and sequences of their own; 14 runs as
+# SYS, the one user that may grant the DBA_ views, after SYSTEM is refused that grant.
 set -euo pipefail
 name="$1"
 port="$2"
@@ -21,6 +22,8 @@ sql() {
   docker exec -i "$name" sqlplus -s -l "$user/$pw@//localhost:1521/FREEPDB1" \
     < <(cat "$dir/$file.sql"; printf '\nexit\n') > "$dir/$file.txt"
 }
+docker exec -i "$name" sqlplus -s -l "SYS/$pw@//localhost:1521/FREEPDB1 as sysdba" \
+  < <(cat "$dir/00-policy-catalog-fresh-as-sys.sql"; printf '\nexit\n') > "$dir/00-policy-catalog-fresh-as-sys.txt"
 sql SYSTEM 01-setup-as-system
 sql SYSTEM 02-public-grants-as-system
 sql APP_RO 03-writes-as-app-ro
