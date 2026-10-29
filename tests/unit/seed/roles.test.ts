@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { getManagedConnections, resetCache } from "@/lib/seed";
 import { KUBERNETES_REVIEWED_ROLE, seedRolesOf } from "@/lib/seed/roles";
+import { SeedConnectionSchema } from "@/lib/seed/types";
 
 describe("seedRolesOf", () => {
   const originalEnv = process.env.OIDC_ROLE_PREFIX;
@@ -148,6 +149,26 @@ describe("KUBERNETES_REVIEWED_ROLE", () => {
     });
     expect(roles).toEqual(["user", "libredb:kubernetes-access-review", "libredb:nbsp\u00a0"]);
     expect(roles).not.toContain(KUBERNETES_REVIEWED_ROLE);
+  });
+
+  test("seedRolesOf drops exactly the claim roles whose characters the seed schema refuses in a role name", () => {
+    process.env.OIDC_ROLE_PREFIX = "libredb:";
+    const notable = [0x061c, 0x180e, 0x200b, 0x200e, 0x2028, 0x2029, 0x202e, 0x2066, 0xfeff, 0xfff9, 0xffff];
+    const verdicts = [...Array.from({ length: 0x300 }, (_, codePoint) => codePoint), ...notable].map((codePoint) => {
+      const role = `libredb:a${String.fromCodePoint(codePoint)}b`;
+      return {
+        codePoint,
+        kept: seedRolesOf({ role: "user", claimRoles: [role] }).includes(role),
+        accepted: SeedConnectionSchema.safeParse({ id: "parity", name: "Parity", type: "postgres", roles: [role] })
+          .success,
+      };
+    });
+    expect(verdicts.filter(({ kept, accepted }) => kept !== accepted)).toEqual([]);
+    // C0, then DEL and C1: the parity above is not two filters that both keep everything.
+    expect(verdicts.filter(({ kept }) => !kept).map(({ codePoint }) => codePoint)).toEqual([
+      ...Array.from({ length: 0x20 }, (_, codePoint) => codePoint),
+      ...Array.from({ length: 0x21 }, (_, offset) => 0x7f + offset),
+    ]);
   });
 
   test("a seed file declaring it is refused at load", async () => {

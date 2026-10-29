@@ -23,9 +23,13 @@ const SSLConfigSchema = z
 
 const ConnectionEnvironmentSchema = z.enum(["production", "staging", "development", "local", "other"]);
 
-// Allowed roles: standard roles ('*', 'admin', 'user') or custom roles from OIDC role claim
-const CONTROL_CHAR_REGEX = /[\x00-\x1f\x7f-\x9f]/;
+/**
+ * A C0 or C1 control character or DEL. A seed role name may hold none (AllowedRoleSchema), and seedRolesOf
+ * (src/lib/seed/roles.ts) drops a claim role holding one, so the two refuse one class.
+ */
+export const CONTROL_CHAR_REGEX = /[\x00-\x1f\x7f-\x9f]/;
 
+// Allowed roles: standard roles ('*', 'admin', 'user') or custom roles from OIDC role claim
 const AllowedRoleSchema = z
   .string()
   .min(1, "Role cannot be empty")
