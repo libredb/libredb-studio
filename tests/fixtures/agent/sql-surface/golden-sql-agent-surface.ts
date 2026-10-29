@@ -103,6 +103,8 @@ async function driveFirstTurn(
   if (listed === undefined) throw new Error(`${engine} declares no object kind to list`);
   const provider = {
     queryReadOnly: async (): Promise<QueryResult> => ({ rows: [], fields: [], rowCount: 0, executionTime: 1 }),
+    // The statistics read a plan run takes under the operations profile, which arrives here rather than above.
+    query: async (): Promise<QueryResult> => ({ rows: [], fields: [], rowCount: 0, executionTime: 1 }),
     listContainers: async () => [],
     countObjects: async () => ({ [listed.id]: { count: 1 } }),
     listObjects: async (_container: readonly string[], kind: string) =>
