@@ -55,7 +55,13 @@ import {
 } from "@/lib/db/providers/sql/duckdb/objects";
 import { openDuckDBClient } from "@/lib/db/providers/sql/duckdb/client";
 import { DUCKDB_CREATE_TABLE } from "@/lib/db/providers/sql/duckdb/create-table";
-import { ConnectionError, DatabaseConfigError, ExecutionProfileError, QueryError } from "@/lib/db/errors";
+import {
+  ConnectionError,
+  DatabaseConfigError,
+  ExecutionProfileError,
+  QueryError,
+  RefusedBeforeSendError,
+} from "@/lib/db/errors";
 import { isSourcePartUnavailable, sourceBoundTruncationReason } from "@/lib/db/object-kinds";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
@@ -1716,6 +1722,23 @@ describe("queryReadOnly()", () => {
       await expect(provider.queryReadOnly(sql, GENEROUS_BUDGET)).rejects.toThrow(/Read-only execution refused/);
     },
   );
+
+  test.each([
+    ["a forbidden word", "INSTALL httpfs"],
+    ["a file read", "SELECT * FROM read_text('/etc/hostname')"],
+    ["an unterminated literal", "SELECT 'unterminated"],
+  ])("the guard's refusal of %s is refused before sending, and the engine is never called", async (_name, sql) => {
+    provider = await readOnlyProvider();
+    const client = (provider as unknown as { client: { run(sql: string): Promise<unknown> } }).client;
+    const run = spyOn(client, "run");
+
+    const error = await provider.queryReadOnly(sql, GENEROUS_BUDGET).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect((error as Error).message).toMatch(/^Read-only execution refused /);
+    expect(run).not.toHaveBeenCalled();
+    run.mockRestore();
+  });
 
   test("reading a file outside the database is refused, so nothing is returned from it", async () => {
     // Measured: `read_text('/etc/hostname')` returns the file's contents through a

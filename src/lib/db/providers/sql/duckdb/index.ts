@@ -92,6 +92,7 @@ import {
   ExecutionProfileError,
   QueryCancelledError,
   QueryError,
+  RefusedBeforeSendError,
 } from "../../../errors";
 import { mapDatabaseError } from "../../../map-database-error";
 import {
@@ -389,12 +390,15 @@ function fileSizeOrUndefined(file: string): number | undefined {
  * scanner has no reliable view of what follows it (`spans.ts` reports the run as
  * reaching the end of the input), and a guard that guesses there is a guard that can
  * be walked past.
+ *
+ * Every refusal is a `RefusedBeforeSendError`: the engine is never asked, so the
+ * sentence is this server's, not DuckDB's.
  */
 export function assertReadOnlyStatementIsBounded(sql: string): void {
   const grammar = resolveSqlGrammar("duckdb");
 
   if (hasUnterminatedSpan(sql, grammar)) {
-    throw new QueryError(
+    throw new RefusedBeforeSendError(
       "Read-only execution refused a statement with an unterminated string or comment: it cannot be read reliably, and this boundary does not guess",
       "duckdb",
       sql,
@@ -403,7 +407,7 @@ export function assertReadOnlyStatementIsBounded(sql: string): void {
 
   for (const { word, reason } of READ_ONLY_FORBIDDEN_WORDS) {
     if (findCodeWord(sql, word, 0, grammar) !== null) {
-      throw new QueryError(
+      throw new RefusedBeforeSendError(
         `Read-only execution refused ${word}: ${reason}. DuckDB's read-only access mode governs this database only, not the filesystem around it, which is why this profile also opens the handle with external access disabled.`,
         "duckdb",
         sql,

@@ -387,6 +387,8 @@ Its spill files land there rather than in `<file>.tmp` beside the database, and 
 The SQL denylist stays, as **defence in depth** rather than as the boundary: it names the construct
 and says why, which the engine's sentence does not, and it costs nothing to run first. §14 records
 the three bypasses that proved a text guard cannot be the boundary here.
+Its refusals, an unterminated literal or comment included, are `RefusedBeforeSendError`, since the engine is never asked.
+The agent rail shows them as refused before the database and MCP answers them in Studio's words, never as DuckDB's error.
 
 ### 3.11 A multi-statement string runs the first statement only
 
