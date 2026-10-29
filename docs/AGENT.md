@@ -654,6 +654,10 @@ What a grounded plan run is given, and where each part comes from:
   untouched. Statistics are **not** folded into the snapshot: an estimate is not schema, and the
   snapshot's fingerprint is its identity, so an `ANALYZE` would otherwise change the identity of a
   schema nobody changed.
+  They are read under the profile the inventory is read under (`readStatisticsForGrounding` in `src/lib/agent/tools.ts`), on a fresh capture and on a reused one alike.
+  On PostgreSQL and SQLite that is `agent-read-only`, where their composed catalog is read.
+  On SQL Server, and on every engine whose inventory comes from its provider, a plan run reads them under `agent-operations`: the server sends the overlay's composed statement through `provider.query`, audits it as `db.schema.read` like the inventory read, and refuses a result over the run's row or byte budget or past its time as `STATISTICS_READ_REFUSED`.
+  Such a plan run never acquires `agent-read-only`, so a login that can write is not refused by a read-only open the run does not need, and an engine whose read-only open probes for a write is not sent that probe.
 
 **The statistics are estimates, and the text says so at every point it could be mistaken for a
 measurement.** A number reaching the model is labelled the engine's own estimate; `pg_stats.n_distinct`
@@ -769,7 +773,7 @@ Three consequences worth stating plainly, because each is easy to assume the oth
    statistics read (two on SQLite: the `sqlite_stat1` availability probe has to be its own statement,
    because SQLite resolves table names at prepare time). On the other forty-one it is **one**, the
    single `db.schema.read` call, except on SQL Server, which adds the one statistics read
-   its overlay's `statistics` supplies without a `catalogCapture`; the other forty hold no statistics this run
+   its overlay's `statistics` supplies without a `catalogCapture`, audited as a `db.schema.read` too; the other forty hold no statistics this run
    knows how to read. Since #789 an engine that declares object kinds costs **one more**, the
    object-surface reading above; an engine that declares none is charged nothing extra, because a read
    that cannot exist is never admitted. They come out of the same per-run statement budget every other read does,

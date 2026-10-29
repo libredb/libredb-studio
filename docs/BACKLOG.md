@@ -3438,6 +3438,8 @@ Not fixed in #1629: a new provider PR changes no other provider.
 
 Amended 2026-10-17 (#1614): the factory now hands every provider `sendsStatements` beside `readOnly` (`executionContextFor` in `src/lib/db/factory.ts`), true under `agent-read-only` and `agent-handover` and false under `agent-operations`, and the MongoDB provider proves its principal only where it is true.
 SQL Server can close this entry by reading the same flag in `connect()`.
+Amended 2026-10-29: a plan run's statistics read now follows the profile the run grounds under (`readStatisticsForGrounding` in `src/lib/agent/tools.ts`), so a plan run on SQL Server reads them under `agent-operations` and never acquires `agent-read-only`.
+Before that, the `connect()` fix alone would have left a plan run as `sa` grounded and then refused at its statistics read; what remains is the `connect()` check itself.
 PostgreSQL refuses a superuser seed under all three profiles the same way (`assertAgentRoleIsUnprivileged` in `src/lib/db/providers/sql/postgres.ts`), and `docs/MCP.md` states that refusal for MCP `inspect_schema` (#1462), so whether PostgreSQL reads the flag too is a decision of its own: it changes what that tool answers on such a seed.
 
 **Done when:** a plan run and an operations run on a SQL Server connection as `sa` read the schema, an Agent-mode run on it is still refused before its first statement with `PROFILE_PRIVILEGES_TOO_BROAD`, a provider test pins both, and `docs/providers/mssql.md` says where the check runs.
