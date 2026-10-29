@@ -147,6 +147,20 @@ rules:
   - patch
   - update
   - watch
+# The chart renders an HTTPRoute per enabled route.<name> (route.main.enabled);
+# without this rule the release fails with "cannot get resource httproutes"
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - httproutes
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
 # (postgresql.metrics.serviceMonitor / prometheusRule flags; rules for CRDs
 # that may not exist on the cluster are harmless)
 - apiGroups:
