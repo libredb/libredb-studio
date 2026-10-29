@@ -458,10 +458,11 @@ function reservedEntry(name, reserved) {
  * Why the Service `service` cannot carry a connection to `row`'s resource whose UID is `uid`, or null when it can. An
  * ExternalName Service is a DNS alias anyone who may create Services can point outside the namespace, so it never can.
  * A Service with a selector routes to the namespace's own pods. A selector-less Service routes to whatever endpoints
- * were written for it, which the edit and admin roles cannot write themselves, so it can only when the resource
- * controls it, as Crunchy PGO controls its primary Service: an ownerReference with controller true and the resource's
- * UID, kind and group. Neither is a boundary (docs/SECURITY.md, the note to row 3.34): an editor may forge the
- * reference, or write endpoints with the ServiceAccount of a database pod they can exec into.
+ * were written for it, which the edit and admin roles cannot write themselves on a cluster created at Kubernetes 1.22
+ * or later (an upgraded cluster keeps that right in both), so it can only when the resource controls it, as Crunchy
+ * PGO controls its primary Service: an ownerReference with controller true and the resource's UID, kind and group.
+ * Neither is a boundary (docs/SECURITY.md, the note to row 3.34): an editor may forge the reference, write endpoints
+ * on an upgraded cluster, or write them with the ServiceAccount of a database pod they can exec into.
  */
 export function serviceProblem(service, row, uid) {
   if (service?.spec?.type === "ExternalName") return "service_external_name";
