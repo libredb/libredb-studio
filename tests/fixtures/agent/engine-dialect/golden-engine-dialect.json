@@ -1986,6 +1986,184 @@
           "message": "a profile needs one table name of a usable length"
         }
       }
+    },
+    "influxdb3": {
+      "catalogRead": {
+        "columns": [
+          {
+            "selector": {},
+            "sql": "SELECT table_schema, table_name, column_name, data_type, is_nullable, ordinal_position + 1 AS ordinal_position FROM information_schema.columns WHERE table_schema = 'iox' ORDER BY table_schema, table_name, ordinal_position"
+          },
+          {
+            "selector": {
+              "schema": "Sales"
+            },
+            "sql": "SELECT table_schema, table_name, column_name, data_type, is_nullable, ordinal_position + 1 AS ordinal_position FROM information_schema.columns WHERE table_schema = 'iox' AND table_schema = 'Sales' ORDER BY table_schema, table_name, ordinal_position"
+          },
+          {
+            "selector": {
+              "schema": "MAIN"
+            },
+            "sql": "SELECT table_schema, table_name, column_name, data_type, is_nullable, ordinal_position + 1 AS ordinal_position FROM information_schema.columns WHERE table_schema = 'iox' AND table_schema = 'MAIN' ORDER BY table_schema, table_name, ordinal_position"
+          },
+          {
+            "selector": {
+              "schema": "public",
+              "table": "orders"
+            },
+            "sql": "SELECT table_schema, table_name, column_name, data_type, is_nullable, ordinal_position + 1 AS ordinal_position FROM information_schema.columns WHERE table_schema = 'iox' AND table_schema = 'public' AND table_name = 'orders' ORDER BY table_schema, table_name, ordinal_position"
+          }
+        ],
+        "relations": [
+          {
+            "selector": {},
+            "sql": "SELECT table_schema, table_name, column_name, '' AS referenced_schema, '' AS referenced_table, '' AS referenced_column FROM information_schema.columns WHERE false AND table_schema = 'iox' ORDER BY table_schema, table_name"
+          },
+          {
+            "selector": {
+              "schema": "Sales"
+            },
+            "sql": "SELECT table_schema, table_name, column_name, '' AS referenced_schema, '' AS referenced_table, '' AS referenced_column FROM information_schema.columns WHERE false AND table_schema = 'iox' AND table_schema = 'Sales' ORDER BY table_schema, table_name"
+          },
+          {
+            "selector": {
+              "schema": "MAIN"
+            },
+            "sql": "SELECT table_schema, table_name, column_name, '' AS referenced_schema, '' AS referenced_table, '' AS referenced_column FROM information_schema.columns WHERE false AND table_schema = 'iox' AND table_schema = 'MAIN' ORDER BY table_schema, table_name"
+          },
+          {
+            "selector": {
+              "schema": "public",
+              "table": "orders"
+            },
+            "sql": "SELECT table_schema, table_name, column_name, '' AS referenced_schema, '' AS referenced_table, '' AS referenced_column FROM information_schema.columns WHERE false AND table_schema = 'iox' AND table_schema = 'public' AND table_name = 'orders' ORDER BY table_schema, table_name"
+          }
+        ],
+        "indexes": [
+          {
+            "selector": {},
+            "sql": "SELECT table_schema, table_name, '' AS index_name, false AS is_unique, false AS is_primary FROM information_schema.tables WHERE false AND table_schema = 'iox' ORDER BY table_schema, table_name"
+          },
+          {
+            "selector": {
+              "schema": "Sales"
+            },
+            "sql": "SELECT table_schema, table_name, '' AS index_name, false AS is_unique, false AS is_primary FROM information_schema.tables WHERE false AND table_schema = 'iox' AND table_schema = 'Sales' ORDER BY table_schema, table_name"
+          },
+          {
+            "selector": {
+              "schema": "MAIN"
+            },
+            "sql": "SELECT table_schema, table_name, '' AS index_name, false AS is_unique, false AS is_primary FROM information_schema.tables WHERE false AND table_schema = 'iox' AND table_schema = 'MAIN' ORDER BY table_schema, table_name"
+          },
+          {
+            "selector": {
+              "schema": "public",
+              "table": "orders"
+            },
+            "sql": "SELECT table_schema, table_name, '' AS index_name, false AS is_unique, false AS is_primary FROM information_schema.tables WHERE false AND table_schema = 'iox' AND table_schema = 'public' AND table_name = 'orders' ORDER BY table_schema, table_name"
+          }
+        ],
+        "statistics": [
+          {
+            "selector": {},
+            "sql": "SELECT table_schema, table_name, 0 AS estimated_rows FROM information_schema.tables WHERE false AND table_schema = 'iox' ORDER BY table_schema, table_name"
+          },
+          {
+            "selector": {
+              "schema": "Sales"
+            },
+            "sql": "SELECT table_schema, table_name, 0 AS estimated_rows FROM information_schema.tables WHERE false AND table_schema = 'iox' AND table_schema = 'Sales' ORDER BY table_schema, table_name"
+          },
+          {
+            "selector": {
+              "schema": "MAIN"
+            },
+            "sql": "SELECT table_schema, table_name, 0 AS estimated_rows FROM information_schema.tables WHERE false AND table_schema = 'iox' AND table_schema = 'MAIN' ORDER BY table_schema, table_name"
+          },
+          {
+            "selector": {
+              "schema": "public",
+              "table": "orders"
+            },
+            "sql": "SELECT table_schema, table_name, 0 AS estimated_rows FROM information_schema.tables WHERE false AND table_schema = 'iox' AND table_schema = 'public' AND table_name = 'orders' ORDER BY table_schema, table_name"
+          }
+        ]
+      },
+      "estimatingExplain": [
+        {
+          "sql": "SELECT 1",
+          "composed": {
+            "sql": "EXPLAIN SELECT 1",
+            "mode": "execute"
+          }
+        },
+        {
+          "sql": "  explain select 1",
+          "composed": {
+            "sql": "EXPLAIN select 1",
+            "mode": "execute"
+          }
+        },
+        {
+          "sql": "EXPLAIN QUERY PLAN SELECT 1",
+          "composed": {
+            "sql": "EXPLAIN SELECT 1",
+            "mode": "execute"
+          }
+        },
+        {
+          "sql": "EXPLAIN (FORMAT JSON) SELECT 1",
+          "composed": {
+            "sql": "EXPLAIN SELECT 1",
+            "mode": "execute"
+          }
+        },
+        {
+          "sql": "EXPLAIN FORMAT=JSON SELECT 1",
+          "composed": {
+            "sql": "EXPLAIN SELECT 1",
+            "mode": "execute"
+          }
+        },
+        {
+          "sql": "EXPLAIN ANALYZE SELECT 1",
+          "composed": {
+            "sql": "EXPLAIN EXPLAIN ANALYZE SELECT 1",
+            "mode": "execute"
+          }
+        },
+        {
+          "sql": "",
+          "composed": {
+            "reasonCode": "INVALID_STATEMENT",
+            "message": "there is no statement to explain"
+          }
+        }
+      ],
+      "statisticsAvailabilityProbe": null,
+      "tableProfile": {
+        "basic": {
+          "reasonCode": "UNSUPPORTED_DIALECT",
+          "message": "no verified profile composition for provider type \"influxdb3\""
+        },
+        "distribution": {
+          "reasonCode": "UNSUPPORTED_DIALECT",
+          "message": "no verified profile composition for provider type \"influxdb3\""
+        },
+        "pattern": {
+          "reasonCode": "UNSUPPORTED_DIALECT",
+          "message": "no verified profile composition for provider type \"influxdb3\""
+        },
+        "noColumns": {
+          "reasonCode": "UNSUPPORTED_DIALECT",
+          "message": "no verified profile composition for provider type \"influxdb3\""
+        },
+        "noSegments": {
+          "reasonCode": "UNSUPPORTED_DIALECT",
+          "message": "no verified profile composition for provider type \"influxdb3\""
+        }
+      }
     }
   },
   "withoutExtensionOwnershipTest": {
