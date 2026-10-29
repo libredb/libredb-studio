@@ -1513,7 +1513,7 @@ describe("a plan run's statistics follow the profile it grounds under", () => {
   });
 
   test("Elasticsearch: a plan run grounds under the operations profile, sends no statement and never asks for the read-only one", async () => {
-    // Its dialect composes no catalog read and reads no statistics, so grounding is the provider's object surface alone.
+    // Its dialect declares no grounding capture and reads no statistics, so grounding is the provider's object surface alone.
     const connection: DatabaseConnection = {
       id: "conn_elasticsearch",
       name: "Elasticsearch",
