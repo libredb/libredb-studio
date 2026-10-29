@@ -48,7 +48,11 @@ import {
   sqlQueryReadDescriptor,
   sqlTableProfileDescriptor,
 } from "@/lib/db/operations/descriptors";
-import { agentPlanExecutionSqlInput, agentReadSqlInput } from "@/lib/db/operations/statement-guard";
+import {
+  agentPlanExecutionSqlInput,
+  agentQueryReadSqlInput,
+  agentReadSqlInput,
+} from "@/lib/db/operations/statement-guard";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import * as errorModule from "@/lib/db/errors";
 import {
@@ -334,7 +338,9 @@ describe("selectAgentTools — the server decides, from the persisted mode and w
       ]
         .filter(
           (descriptor) =>
-            descriptor.inputSchema === agentReadSqlInput || descriptor.inputSchema === agentPlanExecutionSqlInput,
+            descriptor.inputSchema === agentReadSqlInput ||
+            descriptor.inputSchema === agentQueryReadSqlInput ||
+            descriptor.inputSchema === agentPlanExecutionSqlInput,
         )
         .map((descriptor) => descriptor.id),
     );

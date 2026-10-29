@@ -1,6 +1,9 @@
 import { describe, test, expect } from "bun:test";
+import { readdirSync, readFileSync } from "node:fs";
 import {
+  admitComposedStatement,
   agentPlanExecutionSqlInput,
+  agentQueryReadSqlInput,
   agentReadSqlInput,
   inspectAgentStatement,
 } from "@/lib/db/operations/statement-guard";
@@ -279,4 +282,76 @@ describe("agent SQL input schemas", () => {
     expect(agentPlanExecutionSqlInput.safeParse({ sql: "EXPLAIN ANALYZE SELECT 1" }).success).toBe(true);
     expect(agentPlanExecutionSqlInput.safeParse({ sql: "DROP TABLE t" }).success).toBe(false);
   });
+});
+
+describe("a composed statement admitted by identity", () => {
+  const COMPOSED = 'SHOW COLUMNS FROM "orders"';
+
+  test("the query read admits the statement the server composed, though its verb is no read", () => {
+    expect(inspectAgentStatement(COMPOSED)).toBe("NON_READ_STATEMENT");
+    expect(
+      agentQueryReadSqlInput.safeParse({ sql: COMPOSED, composed: admitComposedStatement(COMPOSED) }).success,
+    ).toBe(true);
+  });
+
+  test("the same text with no admission is refused as it always was", () => {
+    const parsed = agentQueryReadSqlInput.safeParse({ sql: COMPOSED });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) expect(parsed.error.issues[0]?.message).toContain("NON_READ_STATEMENT");
+  });
+
+  test("an admission a caller wrote itself is refused, as any text a model sends would be", () => {
+    expect(agentQueryReadSqlInput.safeParse({ sql: COMPOSED, composed: { sql: COMPOSED } }).success).toBe(false);
+    expect(
+      agentQueryReadSqlInput.safeParse(
+        JSON.parse(JSON.stringify({ sql: COMPOSED, composed: admitComposedStatement(COMPOSED) })),
+      ).success,
+    ).toBe(false);
+  });
+
+  test.each([
+    ["one character altered", 'SHOW COLUMNS FROM "orderz"'],
+    ["a second statement appended", `${COMPOSED}; DROP TABLE "orders"`],
+    ["a trailing comment", `${COMPOSED} -- note`],
+  ])("a statement other than the composed one is refused: %s", (_label, sql) => {
+    expect(agentQueryReadSqlInput.safeParse({ sql, composed: admitComposedStatement(COMPOSED) }).success).toBe(false);
+  });
+
+  test.each([
+    ["a second statement", `${COMPOSED}; SHOW TABLES`],
+    ["a block comment", `SHOW /* note */ TABLES`],
+    ["a line comment", "SHOW TABLES -- note\n"],
+    ["a side-effect word", 'DROP TABLE "orders"'],
+    ["plan execution", "ANALYZE orders"],
+    ["text no single reading settles", "SHOW TABLES LIKE $x$a$x$"],
+    ["no statement", ";"],
+  ])("a composed statement carrying %s is refused, admission or not", (_label, sql) => {
+    expect(agentQueryReadSqlInput.safeParse({ sql, composed: admitComposedStatement(sql) }).success).toBe(false);
+  });
+
+  test("an admitted SELECT reads as it would without one", () => {
+    expect(
+      agentQueryReadSqlInput.safeParse({ sql: "SELECT 1", composed: admitComposedStatement("SELECT 1") }).success,
+    ).toBe(true);
+    expect(agentQueryReadSqlInput.safeParse({ sql: "SELECT 1" }).success).toBe(true);
+  });
+
+  test("only the query read takes an admission: plan inspection and the profile keep the strict read input", () => {
+    expect(agentReadSqlInput.safeParse({ sql: COMPOSED, composed: admitComposedStatement(COMPOSED) }).success).toBe(
+      false,
+    );
+    expect(agentReadSqlInput.safeParse({ sql: "SELECT 1", composed: admitComposedStatement("SELECT 1") }).success).toBe(
+      false,
+    );
+  });
+});
+
+test("only the catalog read mints an admission", () => {
+  const minting = readdirSync("src", { recursive: true, encoding: "utf8" })
+    .map((file) => `src/${file.replaceAll("\\", "/")}`)
+    .filter((file) => /\.tsx?$/.test(file) && readFileSync(file, "utf8").includes("admitComposedStatement("))
+    .sort();
+  expect(minting).toEqual(["src/lib/agent/tools.ts", "src/lib/db/operations/statement-guard.ts"]);
+  const tools = readFileSync("src/lib/agent/tools.ts", "utf8");
+  expect(tools.split("admitComposedStatement(").length - 1).toBe(1);
 });

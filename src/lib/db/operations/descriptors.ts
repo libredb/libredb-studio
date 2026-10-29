@@ -26,7 +26,7 @@ import { readMongoCommand } from "@/lib/db/providers/document/mongodb/envelope";
 import { OperationRegistry } from "./registry";
 import { kubectlAgentReadInput } from "./kubectl-admission";
 import { mongoAgentReadInput } from "./mongo-admission";
-import { agentPlanExecutionSqlInput, agentReadSqlInput } from "./statement-guard";
+import { agentPlanExecutionSqlInput, agentQueryReadSqlInput, agentReadSqlInput } from "./statement-guard";
 import type { RegistrableOperationDescriptor } from "./types";
 
 type ExplainOperationId = `sql.explain.${ExplainMode}`;
@@ -54,7 +54,8 @@ export const sqlQueryReadDescriptor: RegistrableOperationDescriptor = {
   supportsDryRun: false,
   requiresApproval: false,
   modelStatement: true,
-  inputSchema: agentReadSqlInput,
+  // The read input, plus the admission only a composed catalog read carries (`admitComposedStatement`).
+  inputSchema: agentQueryReadSqlInput,
   verification: {
     reviewedBy: "issue #328 acceptance bar (epic #325 product decisions)",
     boundary: BOUNDED_READ_BOUNDARY,

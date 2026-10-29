@@ -337,18 +337,81 @@ export function inspectAgentStatement(
 }
 
 /**
+ * A statement the server composed itself, for a catalog read whose engine answers its catalog only to a command such
+ * as `SHOW`, `SYS` or `DESCRIBE` (`admitComposedStatement`).
+ */
+export interface ComposedStatementAdmission {
+  readonly sql: string;
+}
+
+/**
+ * Every admission `admitComposedStatement` minted. Membership is the identity: an object a caller writes, and any
+ * value a model's JSON decodes to, is never in it, so no text from outside the server can carry one.
+ */
+const COMPOSED_ADMISSIONS = new WeakSet<ComposedStatementAdmission>();
+
+/**
+ * Admits the one statement the server composed, word for word, past the read-keyword allowlist and nothing else.
+ *
+ * For a catalog read only: the agent tool layer mints one right after composing an engine's catalog statement, and
+ * only for an engine whose overlay declares that statement is no SELECT. The model's own statements never carry one,
+ * so a `SHOW` the model writes is refused exactly as before.
+ */
+export function admitComposedStatement(sql: string): ComposedStatementAdmission {
+  const admission: ComposedStatementAdmission = Object.freeze({ sql });
+  COMPOSED_ADMISSIONS.add(admission);
+  return admission;
+}
+
+/** Whether this statement carries a comment anywhere, where a composed statement never needs one. */
+function hasComment(sql: string): boolean {
+  let i = 0;
+  while (i < sql.length) {
+    const span = readSqlSpan(sql, i, DEFAULT_SQL_GRAMMAR);
+    if (span === null) {
+      i++;
+      continue;
+    }
+    if (span.kind === "line-comment" || span.kind === "block-comment") return true;
+    i = span.end;
+  }
+  return false;
+}
+
+/**
+ * Whether `admission` lifts this statement's `NON_READ_STATEMENT`: it is one the server minted, for exactly this text,
+ * and the text carries no comment, no forbidden word and no plan execution. Every structural check came before the
+ * verb, so a statement refused only for its verb is already one determinate statement.
+ */
+function admitsByIdentity(sql: string, admission: unknown): boolean {
+  // `WeakSet.has` answers false for a primitive, so no value needs a type test before it.
+  return (
+    COMPOSED_ADMISSIONS.has(admission as ComposedStatementAdmission) &&
+    (admission as ComposedStatementAdmission).sql === sql &&
+    !hasComment(sql) &&
+    findSideEffectWord(sql, false) === null
+  );
+}
+
+/**
  * Exactly one SQL statement string, shaped like a bounded read. Unknown keys
  * are rejected (fail closed), and the violation travels as the issue message so
- * a denial can be diagnosed without re-running the guard.
+ * a denial can be diagnosed without re-running the guard. With `composed`, the
+ * input may also carry a server-minted admission, which lifts the verb allowlist
+ * for the one statement it was minted for (`admitComposedStatement`).
  */
-function agentSqlInput(options: AgentStatementOptions) {
-  return z.strictObject({ sql: z.string().min(1) }).superRefine((value, ctx) => {
+function agentSqlInput(options: AgentStatementOptions, composed = false) {
+  const shape = composed ? { sql: z.string().min(1), composed: z.unknown().optional() } : { sql: z.string().min(1) };
+  return z.strictObject(shape).superRefine((value, ctx) => {
     const violation = inspectAgentStatement(value.sql, options);
-    if (violation !== null) {
-      ctx.addIssue({ code: "custom", message: `agent statement refused: ${violation}`, path: ["sql"] });
-    }
+    if (violation === null) return;
+    if (violation === "NON_READ_STATEMENT" && "composed" in value && admitsByIdentity(value.sql, value.composed))
+      return;
+    ctx.addIssue({ code: "custom", message: `agent statement refused: ${violation}`, path: ["sql"] });
   });
 }
 
 export const agentReadSqlInput = agentSqlInput({});
+/** The bounded read's input: the read input, plus the admission a composed catalog read carries. */
+export const agentQueryReadSqlInput = agentSqlInput({}, true);
 export const agentPlanExecutionSqlInput = agentSqlInput({ allowPlanExecution: true });
