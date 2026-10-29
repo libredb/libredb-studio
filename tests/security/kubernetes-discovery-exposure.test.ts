@@ -112,6 +112,18 @@ function seedAdversaries(): void {
     bootstrap: { initdb: { secret: { name: "trust-store" } } },
   });
   keySecret("team-a", "trust-store", "kubernetes.io/basic-auth");
+  // An initdb Secret that names the superuser Secret another Cluster's spec names, which no reserved suffix marks: an
+  // untied basic-auth Secret, so only its reservation keeps it out. The Cluster that asks is listed first, and the one
+  // that names it stops at its missing Service, before any Secret read.
+  api.addCluster("team-a", "thief", { bootstrap: { initdb: { secret: { name: "keeper-root" } } } });
+  api.addCluster("team-a", "keeper", { superuserSecret: { name: "keeper-root" } }, { service: false });
+  REFUSED_VALUES.push("not-a-real-password-keeper-root");
+  api.addSecret(
+    "team-a",
+    "keeper-root",
+    { username: "postgres", password: "not-a-real-password-keeper-root" },
+    "kubernetes.io/basic-auth",
+  );
   // A PGO Secret whose host was moved; the exporter keeps it, Studio refuses to map it.
   const moved = api.addResource("pgo", "team-f", "moved");
   api.addService("team-f", "moved-primary", { selector: null, owners: [ownerReference(moved)] });
@@ -168,10 +180,19 @@ const NEVER_REQUESTED = [
   "catalog-keyfile",
   "orders-superuser",
   "trust-store",
+  "keeper-root",
 ];
 
 let written = "";
 let exportText = "";
+
+/** The Secret entry the export holds for the resource named `name`. */
+function exportedSecret(name: string): unknown {
+  const exported = JSON.parse(exportText) as {
+    databases: { resource: { metadata: { name: string } }; secret: unknown }[];
+  };
+  return exported.databases.find((entry) => entry.resource.metadata.name === name)?.secret;
+}
 
 beforeAll(async () => {
   api = await startFakeDiscoveryApi();
@@ -216,6 +237,7 @@ describe("Kubernetes discovery exposure", () => {
       "srv-admin-outuser",
     ];
     expect([...requested].sort()).toEqual([...new Set(expected)].sort());
+    expect(exportedSecret("thief")).toEqual({ name: "keeper-root", problem: "reserved_name" });
   });
 
   test("Secrets and Services are never listed or watched, and nothing but the export is written (row 3.32)", () => {
@@ -275,6 +297,8 @@ describe("Kubernetes discovery exposure", () => {
         "team-a/forged",
         "team-a/sneaky",
         "team-a/sneaky-ca",
+        "team-a/thief",
+        "team-a/keeper",
         "team-b/a/b-cluster-cert",
         "team-m/vault/password",
         "team-m/vault/appuser",

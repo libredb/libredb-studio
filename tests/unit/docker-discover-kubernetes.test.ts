@@ -80,7 +80,6 @@ interface ExporterCandidate {
   };
   uid?: string;
   secretName?: string;
-  exact: string[];
   precheck?: string;
 }
 
@@ -97,6 +96,7 @@ interface ExporterRow {
   requiredKeys(candidate: unknown): string[];
   serviceName(resource: unknown): string;
   expand(item: unknown): { candidates: ExporterCandidate[]; leftOut: number };
+  reserves(item: unknown): string[];
 }
 
 const EXPORTER_ROWS = CONTRACT as unknown as readonly ExporterRow[];
@@ -357,7 +357,7 @@ describe("the reviewed constants", () => {
     },
   );
 
-  test("the CloudNativePG family prunes a resource to the contract's fields and names the operator's reserved Secrets", () => {
+  test("the CloudNativePG family prunes a resource to the contract's fields", () => {
     for (const slug of ["cnpg", "edbpg"]) {
       const row = exporterRow(slug);
       expect(
@@ -381,15 +381,6 @@ describe("the reviewed constants", () => {
             },
             uid: "u",
             secretName: "billing-owner",
-            exact: [
-              "billing-db-ca",
-              "billing-db-server",
-              "billing-db-replication",
-              "billing-db-superuser",
-              "my-ca",
-              "my-tls",
-              "my-superuser",
-            ],
           },
         ],
         leftOut: 0,
@@ -451,14 +442,12 @@ describe("expansion", () => {
         resource: { metadata: { namespace: "team-b", name: "analytics" }, spec: { users: [{ name: "analyst" }] } },
         uid: "uid-analytics",
         secretName: "analytics-pguser-analyst",
-        exact: [],
       },
       {
         row: pgo,
         resource: { metadata: { namespace: "team-b", name: "analytics" }, spec: { users: [{ name: "reporter" }] } },
         uid: "uid-analytics",
         secretName: "analytics-pguser-reporter",
-        exact: [],
       },
     ]);
   });
@@ -473,7 +462,6 @@ describe("expansion", () => {
           resource: { metadata: { namespace: "team-b", name: "metrics" } },
           uid: "uid-analytics",
           secretName: "metrics-pguser-metrics",
-          exact: [],
         },
       ]);
     }
@@ -539,7 +527,6 @@ describe("expansion", () => {
         },
         uid: "uid-catalog",
         secretName: "catalog-admin-appuser",
-        exact: [],
       },
       {
         row: mongo,
@@ -552,7 +539,6 @@ describe("expansion", () => {
         },
         uid: "uid-catalog",
         secretName: "catalog-reader",
-        exact: [],
       },
     ]);
     expect(mongo.expand({ metadata: MONGO_METADATA, spec: {} })).toEqual({ candidates: [], leftOut: 0 });
@@ -1253,7 +1239,7 @@ describe("scanOnce", () => {
     ]);
   });
 
-  test("stops reading a namespace once it holds more databases than the bound could export from it", async () => {
+  test("keeps no database past the bound, but lists every page, since a resource past it still reserves", async () => {
     for (let index = 0; index < 5; index += 1) api.addCluster("team-a", `db-${index}`);
     api.pageSize = 1;
     const result = await scan({
@@ -1263,7 +1249,7 @@ describe("scanOnce", () => {
     });
     expect(result).toMatchObject({ ok: true, truncated: true });
     expect(result.databases.map((entry) => entry.resource.metadata.name)).toEqual(["db-0", "db-1"]);
-    expect(api.seen.filter((seen) => seen.path.includes("/clusters")).length).toBe(3);
+    expect(api.seen.filter((seen) => seen.path.includes("/clusters")).length).toBe(5);
   });
 
   test("does not report a cut when every namespace fits its share", async () => {
@@ -1463,9 +1449,9 @@ describe("reserved names", () => {
     expect([...RESERVED_SECRET_SUFFIXES]).toEqual(SUFFIXES);
     expect([...RESERVED_SECRET_NAMES]).toEqual(["pgo-root-cacert"]);
     expect(Object.isFrozen(RESERVED_SECRET_SUFFIXES) && Object.isFrozen(RESERVED_SECRET_NAMES)).toBe(true);
-    for (const suffix of SUFFIXES) expect(isReservedSecretName(`orders${suffix}`, [])).toBe(true);
-    expect(isReservedSecretName("pgo-root-cacert", [])).toBe(true);
-    expect(isReservedSecretName("my-root", ["my-root"])).toBe(true);
+    for (const suffix of SUFFIXES) expect(isReservedSecretName(`orders${suffix}`, new Set())).toBe(true);
+    expect(isReservedSecretName("pgo-root-cacert", new Set())).toBe(true);
+    expect(isReservedSecretName("my-root", new Set(["my-root"]))).toBe(true);
     for (const name of [
       "orders-app",
       "billing-owner",
@@ -1474,7 +1460,7 @@ describe("reserved names", () => {
       "ca",
       "orders-cax",
     ]) {
-      expect(isReservedSecretName(name, ["my-root"])).toBe(false);
+      expect(isReservedSecretName(name, new Set(["my-root"]))).toBe(false);
     }
   });
 
@@ -1540,6 +1526,137 @@ describe("reserved names", () => {
       { name: "pgo-root-cacert", problem: "reserved_name" },
       { name: "catalog-x-keyfile", problem: "reserved_name" },
     ]);
+  });
+  test("each row names the Secrets its resource's spec gives key material and other credentials", () => {
+    const cnpgSpec = {
+      certificates: { serverCASecret: "a", serverTLSSecret: "b", replicationTLSSecret: "c", clientCASecret: "d" },
+      superuserSecret: { name: "e" },
+      managed: {
+        roles: [{ name: "r", passwordSecret: { name: "f" } }, { name: "s" }, null, { passwordSecret: { name: "g" } }],
+      },
+      bootstrap: { initdb: { secret: { name: "own" } } },
+    };
+    for (const slug of ["cnpg", "edbpg"]) {
+      expect(exporterRow(slug).reserves({ metadata: { name: "x" }, spec: cnpgSpec })).toEqual([
+        "a",
+        "b",
+        "c",
+        "d",
+        "e",
+        "f",
+        "g",
+      ]);
+      expect(exporterRow(slug).reserves({ spec: { managed: { roles: "r" }, superuserSecret: { name: 7 } } })).toEqual(
+        [],
+      );
+    }
+    expect(
+      exporterRow("pgo").reserves({
+        spec: { customTLSSecret: { name: "h" }, customReplicationTLSSecret: { name: "i" } },
+      }),
+    ).toEqual(["h", "i"]);
+    expect(
+      exporterRow("mongo").reserves({
+        spec: {
+          security: {
+            tls: { enabled: true, certificateKeySecretRef: { name: "j" }, caCertificateSecretRef: { name: "k" } },
+            authentication: { modes: ["SCRAM"], agentCertificateSecretRef: { name: "l" } },
+          },
+        },
+      }),
+    ).toEqual(["j", "k", "l"]);
+    for (const slug of ["cnpg", "edbpg", "pgo", "mongo"]) {
+      for (const item of [null, "x", {}, { spec: null }, { spec: { certificates: null, security: { tls: null } } }]) {
+        expect(exporterRow(slug).reserves(item)).toEqual([]);
+      }
+    }
+  });
+
+  test("a Secret any listed resource's spec names is refused for every row of its namespace, with no request", async () => {
+    const asked = [
+      "su-login",
+      "trust-root",
+      "tls-pair",
+      "repl-pair",
+      "client-trust",
+      "role-a-login",
+      "role-b-login",
+      "left-login",
+      "pg-tls-pair",
+      "pg-repl-pair",
+      "mongo-key-pair",
+      "mongo-trust",
+      "mongo-agent-pair",
+    ];
+    // Every row that asks is listed before the resource whose spec names its Secret.
+    for (const [index, name] of asked.entries()) {
+      api.addCluster("team-a", `asks-${index}`, { bootstrap: { initdb: { secret: { name } } } });
+    }
+    api.addResource("mongo", "team-a", "asks-mongo", {
+      users: [{ name: "u", db: "admin", connectionStringSecretName: "role-b-login", roles: [] }],
+    });
+    // This Cluster's initdb names its own superuser Secret, so its own row is refused as well.
+    api.addCluster("team-a", "keeper", {
+      certificates: {
+        serverCASecret: "trust-root",
+        serverTLSSecret: "tls-pair",
+        replicationTLSSecret: "repl-pair",
+        clientCASecret: "client-trust",
+      },
+      superuserSecret: { name: "su-login" },
+      managed: {
+        roles: [
+          { name: "a", passwordSecret: { name: "role-a-login" } },
+          { name: "b", passwordSecret: { name: "role-b-login" } },
+        ],
+      },
+      bootstrap: { initdb: { secret: { name: "su-login" } } },
+    });
+    // A Cluster left out for a database Studio refuses still reserves what its spec names.
+    api.addCluster("team-a", "odd", {
+      superuserSecret: { name: "left-login" },
+      bootstrap: { initdb: { database: 1 } },
+    });
+    api.addResource("pgo", "team-a", "pg", {
+      users: [{ name: "u" }],
+      customTLSSecret: { name: "pg-tls-pair" },
+      customReplicationTLSSecret: { name: "pg-repl-pair" },
+    });
+    api.addResource("mongo", "team-a", "mdb", {
+      security: {
+        tls: {
+          enabled: true,
+          certificateKeySecretRef: { name: "mongo-key-pair" },
+          caCertificateSecretRef: { name: "mongo-trust" },
+        },
+        authentication: { modes: ["SCRAM"], agentCertificateSecretRef: { name: "mongo-agent-pair" } },
+      },
+    });
+    for (const name of asked) api.addSecret("team-a", name, { username: "u", password: "not-a-real-password-x" });
+    expect<unknown>(await scanWithoutRequests("cnpg,pgo,mongo")).toEqual([
+      ...asked.map((name) => ({ name, problem: "reserved_name" })),
+      { name: "su-login", problem: "reserved_name" },
+      { name: "pg-pguser-u", problem: "no_database" },
+      { name: "role-b-login", problem: "reserved_name" },
+    ]);
+  });
+
+  test("a resource past the database bound still reserves its Secrets for the rows within it", async () => {
+    api.addCluster("team-a", "first", { bootstrap: { initdb: { secret: { name: "late-login" } } } });
+    api.addCluster("team-a", "second");
+    api.addCluster("team-a", "third", { superuserSecret: { name: "late-login" } });
+    api.addSecret("team-a", "late-login", { username: "u", password: "not-a-real-password-x" });
+    api.pageSize = 1;
+    const result = await scan({
+      client: client(),
+      config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }),
+      limits: limitsWith({ databases: 1 }),
+    });
+    expect(result).toMatchObject({ ok: true, truncated: true });
+    expect<unknown>(result.databases.map((entry) => entry.secret)).toEqual([
+      { name: "late-login", problem: "reserved_name" },
+    ]);
+    expect(api.seen.some((seen) => seen.path.includes("/secrets/") || seen.path.includes("/services/"))).toBe(false);
   });
 });
 

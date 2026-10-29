@@ -1222,11 +1222,12 @@ A Secret that fails the rule is exported as `wrong_type` or `not_owned`, without
 
 RBAC cannot narrow `get secrets` by name, and resource editors choose part of every per-user Secret name, so the exporter never requests a Secret whose name is reserved for an operator's key material or internal credentials, whatever the resource says:
 
-- a Cluster's own `<name>-ca`, `<name>-server`, `<name>-replication` and `<name>-superuser`, and every Secret its `spec.certificates` (`serverCASecret`, `serverTLSSecret`, `replicationTLSSecret`, `clientCASecret`) or `spec.superuserSecret.name` names;
+- every Secret that the spec of any listed resource of the namespace names for key material or another credential, whichever resource asks for it: a CloudNativePG or EDB Cluster's `spec.certificates` (`serverCASecret`, `serverTLSSecret`, `replicationTLSSecret`, `clientCASecret`), `spec.superuserSecret.name` and each `spec.managed.roles[].passwordSecret.name`, a PGO PostgresCluster's `spec.customTLSSecret.name` and `spec.customReplicationTLSSecret.name`, and a MongoDBCommunity's `spec.security.tls.certificateKeySecretRef.name`, `spec.security.tls.caCertificateSecretRef.name` and `spec.security.authentication.agentCertificateSecretRef.name`;
 - `pgo-root-cacert`;
-- every name ending in `-ca`, `-server`, `-replication`, `-superuser`, `-cluster-cert`, `-replication-cert`, `-certs`, `-pgbackrest`, `-pgbouncer`, `-keyfile`, `-agent-password`, `-config`, `-scram-credentials`, `-ca-certificate`, `-server-certificate-key` or `-prometheus-certificate-key`.
+- every name ending in `-ca`, `-server`, `-replication`, `-superuser`, `-cluster-cert`, `-replication-cert`, `-certs`, `-pgbackrest`, `-pgbouncer`, `-keyfile`, `-agent-password`, `-config`, `-scram-credentials`, `-ca-certificate`, `-server-certificate-key` or `-prometheus-certificate-key`, which cover a Cluster's own `<name>-ca`, `<name>-server`, `<name>-replication` and `<name>-superuser`.
 
 No default name (`<name>-app`, `<name>-pguser-<user>`, `<name>-<db>-<user>`) ends in one of these unless the resource's editor chose a user or database name that makes it so, which is what the rule stops; an initdb Secret you name yourself must avoid them too.
+The exporter lists every page of every kind in a namespace before it requests any Secret there, so list order decides nothing, and a resource left out for its names, or past the database bound, still reserves the Secrets its spec names.
 
 A 403 on a namespace's list, where the exporter's Role is missing, and a 404, where the CloudNativePG CRD is not installed, are answers about that namespace: its databases are withdrawn, the export says why, and the other namespaces are exported.
 So are a list page over 16 MiB and a list that does not end within 100 pages, both `limit_exceeded`, because a namespace's editors decide how many and how large its Clusters are.
@@ -1239,7 +1240,7 @@ So is a Cluster whose `.spec.bootstrap.initdb.database` is not 1 to 63 character
 A PGO user whose name is not `^[A-Za-z0-9_.@+-]{1,63}$` and an RFC 1123 label, a MongoDB user whose name is not `^[A-Za-z0-9_.@+-]{1,63}$`, a MongoDB database or role database that is not `^[A-Za-z0-9_-]{1,63}$`, and every user of a MongoDBCommunity whose `spec.statefulSet.spec.serviceName` is not a DNS-1035 label are left out the same way; a MongoDB user keeps its first 64 roles.
 Past 500 databases, or past 983040 bytes of export (a Secret holds at most 1 MiB), the namespaces share the bound fairly and the status is `limit_exceeded`.
 Each namespace keeps its databases in list order up to its share, and a namespace that needs less than an equal share leaves the rest to the others, so the editors of one namespace cannot push another namespace's databases out of the export by creating Clusters.
-Only the databases within a share have their Secret read, and the exporter stops listing a namespace once it holds more databases than the bound could take.
+Only the databases within a share have their Secret read, though every page of a namespace is still listed, because a resource past the bound still reserves its Secrets.
 It reads its token and CA files again for every request, so a rotated projected token is used at once, and it refuses a CA file that holds no certificate before any connection.
 It never logs a value: its log has one summary line per changed scan outcome, and the API server's own message for a refusal.
 Its variables are listed in `.env.example` under "Kubernetes Discovery Exporter".

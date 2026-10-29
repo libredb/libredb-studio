@@ -11,9 +11,10 @@
  *   - it asks for four things only: a paged `list` of each opted-in kind per namespace, a `get` of a Service by the name
  *     its row computes, a `get` of each credential Secret by name, and a `get` and an `update` of the export Secret; it
  *     never lists or watches Secrets or Services;
- *   - it requests no Secret whose name is reserved for an operator's key material or internal credentials, and none
- *     whose row's Service is an ExternalName, or has no selector and is not controlled by the row's resource: RBAC
- *     cannot narrow `get secrets` by name, and resource editors choose part of every per-user name;
+ *   - it requests no Secret whose name is reserved for an operator's key material or internal credentials, none that
+ *     the spec of any listed resource of its namespace names for key material or another credential, and none whose
+ *     row's Service is an ExternalName, or has no selector and is not controlled by the row's resource: RBAC cannot
+ *     narrow `get secrets` by name, and resource editors choose part of every per-user name;
  *   - it keeps a Secret only when it is of its row's type, belongs to the resource that names it (an ownerReference, or
  *     for the CloudNativePG family its cluster label, or an initdb Secret tied to nothing), holds no key outside its
  *     row's measured set and every key its row requires, so a resource cannot point it at another workload's Secret;
@@ -84,6 +85,11 @@ const CNPG_ALLOWED_KEYS = Object.freeze([
   "username",
 ]);
 
+/** The non-empty strings of `values`: the Secret names a resource's spec gives, whatever its other fields hold. */
+function secretNames(values) {
+  return values.filter((value) => text(value) !== undefined);
+}
+
 /** The namespace and name of a listed item, or null when either is missing or the name is not an object name. */
 function namedMetadata(item) {
   const namespace = item?.metadata?.namespace;
@@ -143,8 +149,7 @@ function cnpgFamilyRow({ slug, group, clusterLabel }) {
      * The Cluster as one candidate, its resource pruned to the fields the contract reads, or left out when it has no
      * names, names an initdb database that is not 1 to 63 characters (PostgreSQL's identifier bound: Studio's schema
      * would refuse the whole export, and dropping it would connect to another database), or an initdb Secret that is
-     * not an object name. The candidate carries the exact names this Cluster reserves: the operator's CA, server,
-     * replication and superuser Secrets, and whichever the Cluster's spec names for them, read here and never exported.
+     * not an object name.
      */
     expand(item) {
       const metadata = namedMetadata(item);
@@ -164,22 +169,24 @@ function cnpgFamilyRow({ slug, group, clusterLabel }) {
       };
       const secretName = supplied(resource) ?? `${metadata.name}-app`;
       if (!isObjectName(secretName)) return { candidates: [], leftOut: 1 };
-      const certificates = item.spec?.certificates;
-      const named = [
-        certificates?.serverCASecret,
-        certificates?.serverTLSSecret,
-        certificates?.replicationTLSSecret,
-        certificates?.clientCASecret,
-        item.spec?.superuserSecret?.name,
-      ].filter((name) => text(name) !== undefined);
-      const exact = [
-        `${metadata.name}-ca`,
-        `${metadata.name}-server`,
-        `${metadata.name}-replication`,
-        `${metadata.name}-superuser`,
-        ...named,
-      ];
-      return { candidates: [{ row, resource, uid: text(item.metadata.uid), secretName, exact }], leftOut: 0 };
+      return { candidates: [{ row, resource, uid: text(item.metadata.uid), secretName }], leftOut: 0 };
+    },
+    /**
+     * The Secrets the Cluster's spec names for its certificates, its superuser and each managed role's password, which
+     * the operator reads and the exporter never exports: scanOnce reserves them for the whole namespace, so no other
+     * resource can name one as its own credential Secret. The operator's own names end in a reserved suffix.
+     */
+    reserves(item) {
+      const spec = item?.spec;
+      const roles = Array.isArray(spec?.managed?.roles) ? spec.managed.roles : [];
+      return secretNames([
+        spec?.certificates?.serverCASecret,
+        spec?.certificates?.serverTLSSecret,
+        spec?.certificates?.replicationTLSSecret,
+        spec?.certificates?.clientCASecret,
+        spec?.superuserSecret?.name,
+        ...roles.map((role) => role?.passwordSecret?.name),
+      ]);
     },
   };
   return Object.freeze(row);
@@ -235,7 +242,7 @@ const PGO_ROW = {
     if (users === undefined || users === null || (Array.isArray(users) && users.length === 0)) {
       const secretName = `${metadata.name}-pguser-${metadata.name}`;
       if (!isObjectName(secretName)) return { candidates: [], leftOut: 1 };
-      return { candidates: [{ row: PGO_ROW, resource: { metadata }, uid, secretName, exact: [] }], leftOut: 0 };
+      return { candidates: [{ row: PGO_ROW, resource: { metadata }, uid, secretName }], leftOut: 0 };
     }
     if (!Array.isArray(users)) return { candidates: [], leftOut: 1 };
     const candidates = [];
@@ -253,11 +260,14 @@ const PGO_ROW = {
         resource: { metadata, spec: { users: [{ name }] } },
         uid,
         secretName,
-        exact: [],
         ...(databases.length === 0 ? { precheck: "no_database" } : {}),
       });
     }
     return { candidates, leftOut };
+  },
+  /** The Secrets the cluster's spec names for its own certificates, reserved for its whole namespace (scanOnce). */
+  reserves(item) {
+    return secretNames([item?.spec?.customTLSSecret?.name, item?.spec?.customReplicationTLSSecret?.name]);
   },
 };
 Object.freeze(PGO_ROW);
@@ -333,7 +343,7 @@ const MONGO_ROW = {
       const computed = `${metadata.name}-${user.db ?? MONGO_ADMIN_DATABASE}-${user.name}`;
       const secretName = user.connectionStringSecretName ?? computed;
       if (user.connectionStringSecretName === undefined && !(computed.length <= MAX_SUBDOMAIN && PLAIN_SECRET_NAME.test(computed))) {
-        candidates.push({ row: MONGO_ROW, resource, uid, exact: [], precheck: "unsupported_name" });
+        candidates.push({ row: MONGO_ROW, resource, uid, precheck: "unsupported_name" });
         continue;
       }
       const otherNamespace =
@@ -343,11 +353,22 @@ const MONGO_ROW = {
         resource,
         uid,
         secretName,
-        exact: [],
         ...(otherNamespace ? { precheck: "other_namespace" } : {}),
       });
     }
     return { candidates, leftOut };
+  },
+  /**
+   * The Secrets the resource's spec names for its TLS certificate and key, its CA certificate and its agent's
+   * certificate, reserved for its whole namespace (scanOnce); the agent's default, agent-certs, ends in a reserved suffix.
+   */
+  reserves(item) {
+    const security = item?.spec?.security;
+    return secretNames([
+      security?.tls?.certificateKeySecretRef?.name,
+      security?.tls?.caCertificateSecretRef?.name,
+      security?.authentication?.agentCertificateSecretRef?.name,
+    ]);
   },
 };
 Object.freeze(MONGO_ROW);
@@ -393,10 +414,13 @@ export const RESERVED_SECRET_SUFFIXES = Object.freeze([
 /** Whole names that are never requested: Crunchy PGO's root certificate authority. */
 export const RESERVED_SECRET_NAMES = Object.freeze(["pgo-root-cacert"]);
 
-/** Whether a credential Secret named `name` must not be requested: one of `exact`, a reserved name or suffix. */
-export function isReservedSecretName(name, exact) {
+/**
+ * Whether a credential Secret named `name` must not be requested: one its namespace's listed resources reserve
+ * (`reserved`, a Set), a reserved name or one with a reserved suffix.
+ */
+export function isReservedSecretName(name, reserved) {
   return (
-    exact.includes(name) ||
+    reserved.has(name) ||
     RESERVED_SECRET_NAMES.includes(name) ||
     RESERVED_SECRET_SUFFIXES.some((suffix) => name.endsWith(suffix))
   );
@@ -822,13 +846,14 @@ async function checkService(client, { row, resource, uid }, services) {
 }
 
 /**
- * A candidate's Secret entry: the problem decided before any request, or a reserved name, or the Service check's
- * refusal, each without requesting the Secret; otherwise what reading the Secret gives.
+ * A candidate's Secret entry: the problem decided before any request, or a reserved name (`reserved` holds what its
+ * namespace's listed resources reserve), or the Service check's refusal, each without requesting the Secret;
+ * otherwise what reading the Secret gives.
  */
-async function readCandidate(client, candidate, services) {
-  const { secretName, precheck, exact } = candidate;
+async function readCandidate(client, candidate, services, reserved) {
+  const { secretName, precheck } = candidate;
   if (precheck !== undefined) return { ...(secretName === undefined ? {} : { name: secretName }), problem: precheck };
-  if (isReservedSecretName(secretName, exact)) return { name: secretName, problem: "reserved_name" };
+  if (isReservedSecretName(secretName, reserved)) return { name: secretName, problem: "reserved_name" };
   const problem = await checkService(client, candidate, services);
   if (problem !== null) return { name: secretName, problem };
   return readCredentialSecret(client, candidate);
@@ -886,14 +911,17 @@ function namespaceRefusal(error, row, namespace) {
 }
 
 /**
- * One namespace's resources of every kind, in list order: at most `limits.databases` of them, and whether it holds
- * more, which ends its reading, since no share of the bound could take them. A 403, a 404, a page over the response
- * bound and a list that does not end within `limits.pages` answer for this namespace alone, whose editors decide how
- * many and how large its resources are: the namespace gets that status and none of its resources, those of earlier
- * pages included. Any other failure throws and fails the scan.
+ * One namespace's resources of every kind, in list order: at most `limits.databases` of them, whether it holds more,
+ * and the Secret names every listed resource's spec reserves for the namespace (`reserved`). It lists every page past
+ * the bound too, since a resource past it still reserves its Secrets, and one left out for its names as well. A 403, a
+ * 404, a page over the response bound and a list that does not end within `limits.pages` answer for this namespace
+ * alone, whose editors decide how many and how large its resources are: the namespace gets that status and none of its
+ * resources, those of earlier pages included. Any other failure throws and fails the scan.
  */
 async function listNamespace({ client, config, namespace, limits }) {
   const found = [];
+  const reserved = new Set();
+  let more = false;
   let leftOut = 0;
   for (const row of config.kinds) {
     const path = `/apis/${row.group}/${row.version}/namespaces/${namespace}/${row.plural}`;
@@ -917,6 +945,7 @@ async function listNamespace({ client, config, namespace, limits }) {
         throw codedError(`GET ${path} answered with something other than a list`, "EBADLIST");
       }
       for (const item of list.items) {
+        for (const name of row.reserves(item)) reserved.add(name);
         const expanded = row.expand(item);
         leftOut += expanded.leftOut;
         for (const candidate of expanded.candidates) {
@@ -924,23 +953,24 @@ async function listNamespace({ client, config, namespace, limits }) {
             leftOut += 1;
             continue;
           }
-          if (found.length === limits.databases) return { status: { ok: true }, found, more: true, leftOut };
-          found.push(candidate);
+          if (found.length === limits.databases) more = true;
+          else found.push(candidate);
         }
       }
       continueToken = typeof list.metadata?.continue === "string" ? list.metadata.continue : "";
       if (continueToken === "") break;
     }
   }
-  return { status: { ok: true }, found, more: false, leftOut };
+  return { status: { ok: true }, found, more, leftOut, reserved };
 }
 
 /**
  * One listing of every namespace and kind. Never throws; a failure comes back as a status. An answer about one
  * namespace withdraws its databases and leaves the others (listNamespace); any other failure fails the whole scan,
  * and the caller keeps its last good one. A resource without Kubernetes names is left out and counted, and no request
- * is built from one. Past `limits.databases` the namespaces share the bound fairly (fairShares), only the databases
- * within a share have their Secret read, and `truncated` is set.
+ * is built from one. Every namespace is listed in full before any Secret is requested, so a name any of its resources
+ * reserves is refused for all of its rows, whichever is listed first. Past `limits.databases` the namespaces share the
+ * bound fairly (fairShares), only the databases within a share have their Secret read, and `truncated` is set.
  */
 export async function scanOnce({ client, config, limits = LIMITS }) {
   const namespaces = [];
@@ -966,7 +996,7 @@ export async function scanOnce({ client, config, limits = LIMITS }) {
     for (const [index, listing] of listings.entries()) {
       for (const candidate of listing.found.slice(0, shares[index])) {
         // oxlint-disable-next-line no-await-in-loop -- one request at a time keeps the API server's load flat.
-        const secret = await readCandidate(client, candidate, services);
+        const secret = await readCandidate(client, candidate, services, listing.reserved);
         databases.push({ kind: candidate.row.slug, resource: candidate.resource, secret });
       }
     }
