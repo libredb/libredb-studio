@@ -3,9 +3,11 @@
  *
  * With `KUBERNETES_ACCESS_REVIEW` on, or set to a value Studio does not know, an environment that contradicts the
  * review refuses to start, naming every variable to fix in one banner and never quoting a secret: governance beside
- * it, a sign-in that is not OIDC, a password, a role claim, the bearer channel, MCP or the agent switched on, a session
- * longer than 900 seconds, a setting of the review that is missing or invalid, and a token or CA file that cannot be
- * used. With the review off it checks nothing.
+ * it, a sign-in that is neither OIDC nor openshift, a password, a role claim, the bearer channel, MCP or the agent
+ * switched on, a session longer than 900 seconds, a setting of the review that is missing or invalid, and a token or
+ * CA file that cannot be used. With the review off it checks nothing. openshift sign-in always runs the review: it
+ * refuses an explicit off, drops the session bound and the ServiceAccount token and CA checks, and refuses the
+ * ServiceAccount backend's API, token and CA settings.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -58,6 +60,7 @@ const UNSET = [
   "KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS",
   "KUBERNETES_ACCESS_REVIEW_SIGN_IN",
   "KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO",
+  "OPENSHIFT_API_URL",
 ] as const;
 
 const KEYS = [...Object.keys(reviewed()), ...UNSET];
@@ -112,7 +115,6 @@ const REFUSED: readonly { readonly variable: string; readonly value: string | un
   { variable: "GOVERNANCE_SOURCE", value: "postgres", says: "GOVERNANCE_SOURCE is set" },
   { variable: "NEXT_PUBLIC_AUTH_PROVIDER", value: "local", says: 'NEXT_PUBLIC_AUTH_PROVIDER is "local"' },
   { variable: "NEXT_PUBLIC_AUTH_PROVIDER", value: undefined, says: "NEXT_PUBLIC_AUTH_PROVIDER is unset" },
-  { variable: "NEXT_PUBLIC_AUTH_PROVIDER", value: "openshift", says: 'NEXT_PUBLIC_AUTH_PROVIDER is "openshift"' },
   { variable: "NEXT_PUBLIC_AUTH_PROVIDER", value: "OIDC", says: 'NEXT_PUBLIC_AUTH_PROVIDER is "OIDC"' },
   { variable: "ADMIN_PASSWORD", value: PASSWORD, says: "ADMIN_PASSWORD is set" },
   { variable: "USER_PASSWORD", value: PASSWORD, says: "USER_PASSWORD is set" },
@@ -206,7 +208,7 @@ describe("verifyAccessReviewEnvAtBoot", () => {
       "AUTH_SESSION_TTL_SECONDS",
       "KUBERNETES_ACCESS_REVIEW_API_URL",
     ]);
-    expect(run.banner).toContain("KUBERNETES_ACCESS_REVIEW switches the Kubernetes access review on");
+    expect(run.banner).toContain(" KUBERNETES_ACCESS_REVIEW switches the Kubernetes access review on, and these");
     for (const secret of [SECRET, TOKEN, PASSWORD]) expect(run.banner).not.toContain(secret);
   });
 
@@ -235,5 +237,95 @@ describe("verifyAccessReviewEnvAtBoot", () => {
     process.env.LIBREDB_MCP_ENABLED = "false";
     process.env.LIBREDB_AGENT_ENABLED = " OFF ";
     expect(runPreflight().passed).toBe(true);
+  });
+});
+
+describe("verifyAccessReviewEnvAtBoot, in openshift sign-in mode", () => {
+  /** An openshift-mode install: the review on by the mode, no ServiceAccount backend setting, the default session. */
+  function openShift(): void {
+    for (const key of KEYS) delete process.env[key];
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "openshift";
+    process.env.KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT = "os-lab-studio/studio";
+  }
+
+  test("an openshift-mode install passes, silently, with no token or CA file and the switch unset", () => {
+    openShift();
+    expect(runPreflight()).toEqual({ passed: true, exitCalls: [], banner: "", problems: [] });
+  });
+
+  test("runs with the switch unset: the review is on by the mode", () => {
+    openShift();
+    process.env.ADMIN_PASSWORD = PASSWORD;
+    const run = runPreflight();
+    expect(run.problems).toEqual([
+      "ADMIN_PASSWORD is set: with the access review on, every sign-in goes through the identity provider and its reviews, and a Studio admin is whoever may update Studio's Deployment or LibreDBStudio resource, so unset it",
+    ]);
+    expect(run.banner).toContain(" openshift sign-in always runs the Kubernetes access review, and these");
+    expect(run.banner).not.toContain(PASSWORD);
+  });
+
+  test.each(["off", "false", "0", " OFF "])("refuses KUBERNETES_ACCESS_REVIEW=%p, an explicit off", (value) => {
+    openShift();
+    process.env.KUBERNETES_ACCESS_REVIEW = value;
+    expect(runPreflight().problems).toEqual([
+      `KUBERNETES_ACCESS_REVIEW is ${JSON.stringify(value)}: openshift sign-in always reviews database access and admin rights with the signed-in user's own token, so unset it or set it to on`,
+    ]);
+  });
+
+  test.each(["", "  ", "on", "true"])("takes KUBERNETES_ACCESS_REVIEW=%p, empty counting as unset", (value) => {
+    openShift();
+    process.env.KUBERNETES_ACCESS_REVIEW = value;
+    expect(runPreflight().passed).toBe(true);
+  });
+
+  test("keeps no 900-second bound: the session lasts as openshift sign-in sets it", () => {
+    openShift();
+    process.env.AUTH_SESSION_TTL_SECONDS = "28800";
+    expect(runPreflight().passed).toBe(true);
+  });
+
+  test.each([
+    "KUBERNETES_ACCESS_REVIEW_API_URL",
+    "KUBERNETES_ACCESS_REVIEW_TOKEN_PATH",
+    "KUBERNETES_ACCESS_REVIEW_CA_PATH",
+  ])("refuses %p, a ServiceAccount backend setting, when it is set", (name) => {
+    openShift();
+    process.env[name] = "  ";
+    expect(runPreflight().passed).toBe(true);
+    process.env[name] = name.endsWith("API_URL") ? "https://kubernetes.default.svc" : path.join(dir, "token");
+    expect(runPreflight().problems).toEqual([
+      `${name} is set: openshift sign-in reviews with the signed-in user's own token through OPENSHIFT_API_URL and OPENSHIFT_API_CA_FILE, so unset it`,
+    ]);
+  });
+
+  test("still refuses what contradicts the review, naming every problem in one banner", () => {
+    openShift();
+    process.env.KUBERNETES_ACCESS_REVIEW = "off";
+    process.env.GOVERNANCE_SOURCE = "postgres";
+    process.env.OIDC_ROLE_CLAIM = "groups";
+    process.env.LIBREDB_MCP_ENABLED = "true";
+    process.env.KUBERNETES_ACCESS_REVIEW_SIGN_IN = "list";
+    process.env.KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS = "61";
+    process.env.KUBERNETES_ACCESS_REVIEW_CA_PATH = path.join(dir, "ca.crt");
+    delete process.env.KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT;
+    const run = runPreflight();
+    expect(run.exitCalls).toEqual([1]);
+    expect(run.problems.map((problem) => problem.split(" ")[0])).toEqual([
+      "KUBERNETES_ACCESS_REVIEW",
+      "GOVERNANCE_SOURCE",
+      "OIDC_ROLE_CLAIM",
+      "LIBREDB_MCP_ENABLED",
+      "KUBERNETES_ACCESS_REVIEW_ADMIN_DEPLOYMENT",
+      "KUBERNETES_ACCESS_REVIEW_SIGN_IN",
+      "KUBERNETES_ACCESS_REVIEW_CACHE_SECONDS",
+      "KUBERNETES_ACCESS_REVIEW_CA_PATH",
+    ]);
+  });
+
+  test("names a sign-in mode that is neither oidc nor openshift with the reworded message", () => {
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "local";
+    expect(runPreflight().problems).toEqual([
+      `NEXT_PUBLIC_AUTH_PROVIDER is "local": the access review asks about the person an OIDC or openshift sign-in gives a session, so set it to oidc or openshift`,
+    ]);
   });
 });

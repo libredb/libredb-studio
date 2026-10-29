@@ -2,17 +2,24 @@
  * Boot-time Kubernetes access review preflight (docs/SEED_CONNECTIONS.md, "Kubernetes access review").
  *
  * With the review on, a connection that names its Kubernetes Secret is the review's alone and a Studio admin is
- * whoever may update Studio's Deployment. An environment that also runs governance, signs in without OIDC, keeps a
- * password account, maps an admin role from an identity provider claim, takes bearer access tokens, runs MCP or the
- * agent, keeps a session longer than 900 seconds, or leaves a setting of the review unusable contradicts that, and each
- * would surface later as a way around the review or as a review that denies everyone while the health check stays
- * green. So this check refuses to start instead, naming every variable to fix in one banner and never quoting a secret.
+ * whoever may update Studio's Deployment or LibreDBStudio resource. An environment that also runs governance, signs in
+ * with neither OIDC nor openshift, keeps a password account, maps an admin role from an identity provider claim, takes
+ * bearer access tokens, runs MCP or the agent, keeps an OIDC session longer than 900 seconds, or leaves a setting of
+ * the review unusable contradicts that, and each would surface later as a way around the review or as a review that
+ * denies everyone while the health check stays green. So this check refuses to start instead, naming every variable to
+ * fix in one banner and never quoting a secret.
  *
- * The session bound is the owner's rule for this mode: signing out of the identity provider does not end a Studio
+ * The session bound is the owner's rule for OIDC mode: signing out of the identity provider does not end a Studio
  * session, and a review asserts the groups the session's sign-in recorded, so the session lifetime is how long a
  * removed group or a signed-out user keeps Studio. It reads each variable as written, as the governance preflight does,
  * and reads the token and CA files only to see that they can be used. A value that `verifyAuthEnvAtBoot()` refuses
  * first, an invalid session lifetime, is not reported twice.
+ *
+ * openshift sign-in always runs the review, with the signed-in user's own token through OPENSHIFT_API_URL and
+ * OPENSHIFT_API_CA_FILE (whose file the openshift preflight checks), so in that mode it refuses an explicit off value of
+ * KUBERNETES_ACCESS_REVIEW and any ServiceAccount backend setting (its API URL, token and CA paths), which would let an
+ * admin believe the reviews go elsewhere, and it neither bounds the session (every gated request is reviewed with the
+ * live token) nor reads a token or CA file of its own.
  *
  * Runs only on standalone boot, after the governance preflight in `src/instrumentation.ts`, and checks nothing while
  * the review is off.
@@ -90,13 +97,36 @@ function parsesAsCertificate(text: string): boolean {
   }
 }
 
+/** The ServiceAccount backend's settings, which openshift sign-in refuses: its reviews never use them. */
+const SERVICE_ACCOUNT_SETTINGS = [
+  "KUBERNETES_ACCESS_REVIEW_API_URL",
+  "KUBERNETES_ACCESS_REVIEW_TOKEN_PATH",
+  "KUBERNETES_ACCESS_REVIEW_CA_PATH",
+] as const;
+
+/** Why openshift sign-in refuses a ServiceAccount backend setting, or null while it is unset or blank. */
+function serviceAccountSettingProblem(name: (typeof SERVICE_ACCOUNT_SETTINGS)[number]): string | null {
+  return (process.env[name] ?? "").trim() === ""
+    ? null
+    : `${name} is set: openshift sign-in reviews with the signed-in user's own token through OPENSHIFT_API_URL and OPENSHIFT_API_CA_FILE, so unset it`;
+}
+
 /** Every reason this environment contradicts the review, each starting with the variable to fix. */
 function accessReviewEnvProblems(): string[] {
   const problems: (string | null)[] = [];
+  const provider = authProviderSetting();
+  const openshift = provider === "openshift";
+  const switchValue = process.env[ACCESS_REVIEW_ENV];
 
   if (accessReviewSwitch() === "invalid") {
     problems.push(
-      `${ACCESS_REVIEW_ENV} is ${shown(process.env[ACCESS_REVIEW_ENV])}: set it to on, true or 1 to keep the review, or off, false or 0 to run without it; any other value counts as on, so the server fails closed`,
+      `${ACCESS_REVIEW_ENV} is ${shown(switchValue)}: set it to on, true or 1 to keep the review, or off, false or 0 to run without it; any other value counts as on, so the server fails closed`,
+    );
+  }
+  // An empty value counts as unset; only an explicit off contradicts the mode.
+  if (openshift && accessReviewSwitch() === "off" && (switchValue ?? "").trim() !== "") {
+    problems.push(
+      `${ACCESS_REVIEW_ENV} is ${shown(switchValue)}: openshift sign-in always reviews database access and admin rights with the signed-in user's own token, so unset it or set it to on`,
     );
   }
   if ((process.env.GOVERNANCE_SOURCE ?? "") !== "") {
@@ -104,22 +134,22 @@ function accessReviewEnvProblems(): string[] {
       "GOVERNANCE_SOURCE is set: governance mode decides who opens a connection from its own grants, so the Kubernetes access review cannot run beside it; unset one of the two",
     );
   }
-  if (authProviderSetting() !== "oidc") {
+  if (provider !== "oidc" && !openshift) {
     problems.push(
-      `NEXT_PUBLIC_AUTH_PROVIDER is ${shown(authProviderValue())}: the access review asks about the identity provider subject an OIDC sign-in gives a session, so set it to oidc`,
+      `NEXT_PUBLIC_AUTH_PROVIDER is ${shown(authProviderValue())}: the access review asks about the person an OIDC or openshift sign-in gives a session, so set it to oidc or openshift`,
     );
   }
   // An empty password counts as unset, as it does for sign-in (src/lib/local-auth.ts).
   for (const name of ["ADMIN_PASSWORD", "USER_PASSWORD"] as const) {
     if (process.env[name]) {
       problems.push(
-        `${name} is set: with the access review on, every sign-in goes through the identity provider and its reviews, and a Studio admin is whoever may update Studio's Deployment, so unset it`,
+        `${name} is set: with the access review on, every sign-in goes through the identity provider and its reviews, and a Studio admin is whoever may update Studio's Deployment or LibreDBStudio resource, so unset it`,
       );
     }
   }
   if (process.env.OIDC_ROLE_CLAIM?.trim()) {
     problems.push(
-      "OIDC_ROLE_CLAIM is set: with the access review on, a Studio admin is whoever may update Studio's Deployment, and no identity provider claim may grant it, so unset it",
+      "OIDC_ROLE_CLAIM is set: with the access review on, a Studio admin is whoever may update Studio's Deployment or LibreDBStudio resource, and no identity provider claim may grant it, so unset it",
     );
   }
   if (process.env.OIDC_BEARER_AUDIENCE?.trim()) {
@@ -139,20 +169,18 @@ function accessReviewEnvProblems(): string[] {
       );
     }
   }
-  if (refusalOf(sessionTtlSeconds) === null && sessionTtlSeconds() > MAX_SESSION_SECONDS) {
+  if (!openshift && refusalOf(sessionTtlSeconds) === null && sessionTtlSeconds() > MAX_SESSION_SECONDS) {
     problems.push(
       `AUTH_SESSION_TTL_SECONDS is ${shown(process.env.AUTH_SESSION_TTL_SECONDS)}: with the access review on a session lasts at most ${MAX_SESSION_SECONDS} seconds, because signing out of the identity provider does not end it and its groups are those of its sign-in; set it to ${MAX_SESSION_SECONDS} or less`,
     );
   }
 
-  problems.push(
-    refusalOf(accessReviewAdminTarget),
-    refusalOf(accessReviewSignIn),
-    refusalOf(accessReviewApiUrl),
-    refusalOf(accessReviewCacheMs),
-    tokenProblem(),
-    caProblem(),
-  );
+  problems.push(refusalOf(accessReviewAdminTarget), refusalOf(accessReviewSignIn));
+  if (openshift) {
+    problems.push(refusalOf(accessReviewCacheMs), ...SERVICE_ACCOUNT_SETTINGS.map(serviceAccountSettingProblem));
+  } else {
+    problems.push(refusalOf(accessReviewApiUrl), refusalOf(accessReviewCacheMs), tokenProblem(), caProblem());
+  }
   return problems.filter((problem): problem is string => problem !== null);
 }
 
@@ -173,7 +201,9 @@ export function verifyAccessReviewEnvAtBoot(): boolean {
       "",
       "============================================================",
       " LibreDB Studio cannot start: the environment contradicts the Kubernetes access review",
-      ` ${ACCESS_REVIEW_ENV} switches the Kubernetes access review on, and these variables have to change:`,
+      authProviderSetting() === "openshift"
+        ? " openshift sign-in always runs the Kubernetes access review, and these variables have to change:"
+        : ` ${ACCESS_REVIEW_ENV} switches the Kubernetes access review on, and these variables have to change:`,
       ...problems.map((problem) => `   - ${problem}`),
       ' docs/SEED_CONNECTIONS.md lists every check under "Kubernetes access review".',
       "============================================================",
