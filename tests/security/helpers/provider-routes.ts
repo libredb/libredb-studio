@@ -74,6 +74,10 @@ export const ROUTES_WITHOUT_A_PROVIDER: Record<string, string> = {
   "auth/me": "reads the caller's own session claims only (GET, no POST export)",
   "auth/oidc/callback": "completes the OIDC exchange that CREATES the session (GET, no POST export)",
   "auth/oidc/login": "starts the OIDC redirect before a session exists (GET, no POST export)",
+  "auth/openshift/callback":
+    "completes the OpenShift OAuth exchange that CREATES the session; it calls only the cluster's API and OAuth servers, never a user database or LLM provider (GET, no POST export)",
+  "auth/openshift/login":
+    "starts the OpenShift OAuth redirect before a session exists; it reads only the cluster's OAuth metadata (GET, no POST export)",
   "connections/managed":
     "reads seed config metadata and the CapRover discovery export, or under governance the in-process governance snapshot; never opens a database connection, and its only network use is a bare node:net reachability probe for built-image candidates when SEED_DISCOVERY_PATH is set and, with KUBERNETES_ACCESS_REVIEW on, one SubjectAccessReview to the Kubernetes API per connection that names its Kubernetes Secret (GET, no POST export)",
   "connections/policy":

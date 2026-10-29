@@ -15,7 +15,7 @@ import { cookies } from "next/headers";
 import type { NextResponse } from "next/server";
 import { clientAddress } from "@/lib/api/client-address";
 import { safeReturnPath } from "@/lib/api/session-ended";
-import { login, verifyJWT } from "@/lib/auth";
+import { login, verifiedSessionCookie } from "@/lib/auth";
 import { AuthConfigError } from "@/lib/auth-errors";
 import { authProviderSetting } from "@/lib/config/auth-provider";
 import { withBasePath } from "@/lib/config/base-path";
@@ -44,7 +44,6 @@ import { endOpenShiftSession, storeOpenShiftSession } from "@/lib/openshift-auth
 
 const ROUTE = "GET /api/auth/openshift/callback";
 
-type CookieStore = Awaited<ReturnType<typeof cookies>>;
 /** Where the sign-in ends: a refusal code (with the user name once users/~ answered), or the page to land on. */
 type SignInResult = { readonly code: OpenShiftSignInCode; readonly user?: string } | { readonly location: string };
 
@@ -94,18 +93,12 @@ function identityFailureCode(reading: Exclude<IdentityReading, { kind: "ok" }>):
 }
 
 /** Ends the record a verified session cookie of this browser names, so a copy of the replaced cookie stops working. */
-async function endReplacedSession(cookieStore: CookieStore): Promise<void> {
-  const current = cookieStore.get("auth-token")?.value;
-  const replaced = current === undefined ? null : await verifyJWT(current);
+async function endReplacedSession(): Promise<void> {
+  const replaced = await verifiedSessionCookie();
   if (replaced?.sessionHandle !== undefined) endOpenShiftSession(replaced.sessionHandle);
 }
 
-async function completeSignIn(
-  request: Request,
-  cookieStore: CookieStore,
-  stateCookie: string,
-  ip: string,
-): Promise<SignInResult> {
+async function completeSignIn(request: Request, stateCookie: string, ip: string): Promise<SignInResult> {
   let state: OpenShiftState;
   try {
     state = await decryptOpenShiftState(stateCookie);
@@ -129,7 +122,7 @@ async function completeSignIn(
   const role = await openShiftSignInRole(identity.identity, exchange.accessToken);
   if (role === null) return { code: "openshift_no_access", user: name };
 
-  await endReplacedSession(cookieStore);
+  await endReplacedSession();
   const handle = newSessionHandle();
   const lifetime = openShiftSessionLifetimeSeconds(exchange.expiresIn);
   const issuer = metadata.metadata.issuer;
@@ -169,7 +162,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       result = { code: "openshift_state_missing" };
     } else {
       try {
-        result = await completeSignIn(request, cookieStore, stateCookie, ip);
+        result = await completeSignIn(request, stateCookie, ip);
       } finally {
         cookieStore.delete({ name: OPENSHIFT_STATE_COOKIE, path: openShiftStateCookiePath() });
       }

@@ -189,6 +189,16 @@ async function settleRecordCheck(
   return false;
 }
 
+/**
+ * The session the request's own cookie carries, verified by its signature alone: no account registry, governance or
+ * record check. Only the OpenShift callback uses it, to end the token record a replaced cookie names, so a copy of
+ * that cookie stops working; it is never a route's session check, which is readSession.
+ */
+export async function verifiedSessionCookie(): Promise<UserPayload | null> {
+  const token = (await cookies()).get("auth-token")?.value;
+  return token === undefined ? null : verifyJWT(token);
+}
+
 export async function getSession(): Promise<UserPayload | null> {
   const reading = await readSession();
   return reading.kind === "authenticated" ? reading.session : null;

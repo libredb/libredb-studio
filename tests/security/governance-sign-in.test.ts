@@ -73,6 +73,10 @@ const READS_NO_SESSION: Record<string, string> = {
   "POST /api/auth/login": "refuses every caller under governance before it reads a body or a session",
   "GET /api/auth/oidc/callback": "completes the OIDC exchange that mints the governed session",
   "GET /api/auth/oidc/login": "starts the OIDC redirect before a session exists",
+  "GET /api/auth/openshift/callback":
+    "answers the 404 of an unknown path outside openshift sign-in mode, and governance signs in only under oidc",
+  "GET /api/auth/openshift/login":
+    "answers the 404 of an unknown path outside openshift sign-in mode, and governance signs in only under oidc",
   "POST /api/auth/passkey/sign-in":
     "authenticates a passkey assertion before a session exists, and the session it mints carries no identity provider subject, which getSession() refuses",
   "GET /api/db/health": "the public liveness answer of the database health route; its POST requires a session",
