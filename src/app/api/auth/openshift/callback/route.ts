@@ -150,9 +150,17 @@ async function completeSignIn(request: Request, stateCookie: string, ip: string)
   return { location: `${openShiftPublicUrl().origin}${withBasePath(landing)}` };
 }
 
+/**
+ * The callback's own path and nothing longer. Next removes the base path from the request URL before a route handler
+ * runs, so the callback arrives without it; the prefixed form is the same path and is accepted too.
+ */
+function isCallbackPath(pathname: string): boolean {
+  return pathname === OPENSHIFT_CALLBACK_PATH || pathname === withBasePath(OPENSHIFT_CALLBACK_PATH);
+}
+
 export async function GET(request: Request): Promise<NextResponse> {
   if (authProviderSetting() !== "openshift") return notFound();
-  if (new URL(request.url).pathname !== withBasePath(OPENSHIFT_CALLBACK_PATH)) return notFound();
+  if (!isCallbackPath(new URL(request.url).pathname)) return notFound();
   const ip = clientAddress(request);
   let result: SignInResult;
   try {

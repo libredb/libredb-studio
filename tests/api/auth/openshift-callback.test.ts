@@ -335,9 +335,48 @@ describe("GET /api/auth/openshift/callback, the exact path only", () => {
       expect(res.status, `${mode} ${path}`).toBe(404);
       expect(await res.json()).toEqual({ error: "Not found" });
     }
-    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "openshift";
+    expect(jar.reads).toEqual([]);
+    expect(jar.writes).toEqual([]);
+    expect(cluster.requests).toEqual([]);
+  });
+});
+
+// Next removes the base path from the request URL before a route handler runs
+// (next/dist/server/route-modules/route-module.js), so the callback a browser sends to
+// /studio/api/auth/openshift/callback reaches the handler as /api/auth/openshift/callback.
+describe("GET /api/auth/openshift/callback under a base path", () => {
+  beforeEach(() => {
     process.env.NEXT_PUBLIC_BASE_PATH = "/studio";
-    expect((await GET(callbackRequest("code=x&state=y"))).status).toBe(404);
+    process.env.OPENSHIFT_PUBLIC_URL = "https://studio.apps.example.com/studio";
+  });
+
+  test("a callback whose URL Next stripped of the prefix signs in and lands under the base path", async () => {
+    const res = await signIn();
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toBe("https://studio.apps.example.com/studio/");
+    expect(minted()).toHaveLength(1);
+    expect(lastAudit()).toMatchObject({ type: "login_success", user: "dev-a" });
+  });
+
+  test("a callback whose URL still carries the prefix signs in too", async () => {
+    const { params } = await approvedSignIn(loginGET, cluster);
+    const res = await GET(callbackRequest(params, "/studio/api/auth/openshift/callback"));
+    expect(res.headers.get("location")).toBe("https://studio.apps.example.com/studio/");
+    expect(minted()).toHaveLength(1);
+  });
+
+  test("any other path is still the 404, with or without the prefix, with no cookie read and nothing sent", async () => {
+    const paths = [
+      "/api/auth/openshift/callback/extra",
+      "/studio/api/auth/openshift/callback/extra",
+      "/studio/studio/api/auth/openshift/callback",
+      "/other/api/auth/openshift/callback",
+    ];
+    for (const path of paths) {
+      const res = await GET(callbackRequest("code=x&state=y", path));
+      expect(res.status, path).toBe(404);
+      expect(await res.json()).toEqual({ error: "Not found" });
+    }
     expect(jar.reads).toEqual([]);
     expect(jar.writes).toEqual([]);
     expect(cluster.requests).toEqual([]);
