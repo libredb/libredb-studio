@@ -39,6 +39,11 @@ const CATALOG_READ: AgentCatalogRead = Object.freeze({
   }),
   mapRows: (kind: AgentCatalogKind, rows: readonly Record<string, unknown>[]) => {
     mappedKinds.push(kind);
+    // A relation is one row per table, so the mapper answers fewer rows than the engine did.
+    if (kind === "relations") {
+      const tables = [...new Set(rows.map((row) => String(row.TABLE_NAME)))];
+      return { fields: ["table_name"], rows: tables.map((table) => ({ table_name: table })) };
+    }
     return {
       fields: ["table_name", "column_name", "data_type"],
       rows: rows.map((row) => ({ table_name: row.TABLE_NAME, column_name: row.COLUMN_NAME, data_type: row.TYPE_NAME })),
@@ -199,6 +204,17 @@ describe("an engine that composes its catalog read through a row mapper and no e
       columnNames: ["table_name", "column_name", "data_type"],
     });
     expect(completed[1]?.summary).toMatchObject({ rowCount: 1, columnNames: ["n"] });
+  });
+
+  test("a mapper that answers fewer rows than the engine did is read at the mapped count", async () => {
+    mappedKinds.length = 0;
+    const { events, sent } = await drive("investigation", [
+      callsTool("inspect_schema", { kind: "relations" }, "call_1"),
+    ]);
+    expect(sent).toEqual([ENGINE_CATALOG]);
+    expect(mappedKinds).toEqual(["relations"]);
+    const completed = events.flatMap((event) => (event.kind === "tool-completed" ? [event.artifact] : []));
+    expect(completed[0]?.summary).toMatchObject({ rowCount: 1, columnNames: ["table_name"] });
   });
 
   test("an analysis asking for a plan is refused by inspect_plan alone, before anything is sent", async () => {

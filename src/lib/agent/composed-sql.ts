@@ -137,7 +137,10 @@ export function composeEstimatingExplain(dialect: DatabaseType, sql: string): Ag
   return { sql: `${estimate.prefix} ${withoutEstimatingPrefix(statement)}`, mode: "execute" };
 }
 
-/** Whether this dialect has a verified catalog composition for every kind. The manifest's `sql-composers` mirror is pinned to it. */
+/**
+ * Whether this dialect has a verified catalog composition for every kind. The manifest's `sql-catalog` mirror is
+ * pinned to it, and its `sql-composers` mirror to it together with `composesEstimatingExplainFor`.
+ */
 export function composesCatalogFor(dialect: DatabaseType): boolean {
   return engineServerDialect(dialect).catalogRead !== "unsupported";
 }
