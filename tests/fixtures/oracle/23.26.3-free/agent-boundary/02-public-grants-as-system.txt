@@ -1,3 +1,4 @@
+
 GRANTEE    TABLE_NAME		    PRIVILEGE
 ---------- ------------------------ ----------
 PUBLIC	   DBMS_ADVISOR 	    EXECUTE
@@ -12,10 +13,12 @@ PUBLIC	   UTL_HTTP		    EXECUTE
 PUBLIC	   UTL_INADDR		    EXECUTE
 PUBLIC	   UTL_SMTP		    EXECUTE
 PUBLIC	   UTL_TCP		    EXECUTE
+
 USERNAME															 REA
 -------------------------------------------------------------------------------------------------------------------------------- ---
 APP_OWNER															 NO
 APP_RO																 YES
+
 DIRS_PUBLIC
 -----------
 	  0

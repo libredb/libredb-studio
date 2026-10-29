@@ -1,0 +1,42 @@
+
+SEQUENCE_OWN SEQUENCE_NAME
+------------ --------------------------------
+APP_OWNER    SEQ1
+SYS	     DM$EXPIMP_ID_SEQ
+SYS	     PLSQL_CODE_COVERAGE_RUNNUMBER
+SYS	     SCHEDULER$_JOBSUFFIX_S
+XDB	     XDB$NAMESUFF_SEQ
+
+5 rows selected.
+
+
+PRIVILEGE
+----------------------------------------
+CREATE SESSION
+
+1 row selected.
+
+
+Transaction set.
+
+
+APP_OWNER.NEXT_ID()
+-------------------
+		  1
+
+1 row selected.
+
+
+APP_OWNER.NEXT_ID()
+-------------------
+		  2
+
+1 row selected.
+
+
+APP_OWNER.BUMP()
+----------------
+	       1
+
+1 row selected.
+

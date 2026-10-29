@@ -1,101 +1,174 @@
+
 USER																 RO
 -------------------------------------------------------------------------------------------------------------------------------- ---
 APP_RO																 YES
+
 1 row selected.
+
 INSERT INTO APP_OWNER.SCRATCH VALUES (1)
                       *
 ERROR at line 1:
 ORA-28194: Can perform read operations only
+Help: https://docs.oracle.com/error-help/db/ora-28194/
+
+
 UPDATE APP_OWNER.SCRATCH SET ID = 2
                  *
 ERROR at line 1:
 ORA-28194: Can perform read operations only
+Help: https://docs.oracle.com/error-help/db/ora-28194/
+
+
 DELETE FROM APP_OWNER.SCRATCH
                       *
 ERROR at line 1:
 ORA-28194: Can perform read operations only
+Help: https://docs.oracle.com/error-help/db/ora-28194/
+
+
 MERGE INTO APP_OWNER.SCRATCH s USING (SELECT 5 ID FROM DUAL) d ON (s.ID = d.ID) WHEN NOT MATCHED THEN INSERT VALUES (d.ID)
                      *
 ERROR at line 1:
 ORA-28194: Can perform read operations only
+Help: https://docs.oracle.com/error-help/db/ora-28194/
+
+
 INSERT INTO APP_OWNER.T1 (ID, NAME) VALUES (9, 'x')
                       *
 ERROR at line 1:
 ORA-41900: missing INSERT privilege on "APP_OWNER"."T1"
+Help: https://docs.oracle.com/error-help/db/ora-41900/
+
+
 CREATE TABLE RO_T (ID NUMBER)
 *
 ERROR at line 1:
 ORA-28194: Can perform read operations only
+Help: https://docs.oracle.com/error-help/db/ora-28194/
+
+
 CREATE GLOBAL TEMPORARY TABLE RO_GTT (ID NUMBER)
 *
 ERROR at line 1:
 ORA-28194: Can perform read operations only
+Help: https://docs.oracle.com/error-help/db/ora-28194/
+
+
 CREATE PRIVATE TEMPORARY TABLE ORA$PTT_X (ID NUMBER)
 *
 ERROR at line 1:
 ORA-28194: Can perform read operations only
+Help: https://docs.oracle.com/error-help/db/ora-28194/
+
+
 SELECT APP_OWNER.WRITE_AUTON() FROM DUAL
        *
 ERROR at line 1:
 ORA-28194: Can perform read operations only
 ORA-06512: at "APP_OWNER.WRITE_AUTON", line 4
+Help: https://docs.oracle.com/error-help/db/ora-28194/
+
+
+
   COUNT(*)
 ----------
 	 0
+
 1 row selected.
+
+
 Session altered.
+
 INSERT INTO APP_OWNER.SCRATCH VALUES (3)
                       *
 ERROR at line 1:
 ORA-28194: Can perform read operations only
+Help: https://docs.oracle.com/error-help/db/ora-28194/
+
+
 SELECT APP_OWNER.WRITE_AUTON() FROM DUAL
        *
 ERROR at line 1:
 ORA-28194: Can perform read operations only
 ORA-06512: at "APP_OWNER.WRITE_AUTON", line 4
+Help: https://docs.oracle.com/error-help/db/ora-28194/
+
+
 LOCK TABLE APP_OWNER.SCRATCH IN EXCLUSIVE MODE NOWAIT
 *
 ERROR at line 1:
 ORA-28194: Can perform read operations only
+Help: https://docs.oracle.com/error-help/db/ora-28194/
+
+
 ROLLBACK
 *
 ERROR at line 1:
 ORA-28194: Can perform read operations only
+Help: https://docs.oracle.com/error-help/db/ora-28194/
+
+
 LOCK TABLE APP_OWNER.T1 IN EXCLUSIVE MODE NOWAIT
 *
 ERROR at line 1:
 ORA-28194: Can perform read operations only
+Help: https://docs.oracle.com/error-help/db/ora-28194/
+
+
 ROLLBACK
 *
 ERROR at line 1:
 ORA-28194: Can perform read operations only
+Help: https://docs.oracle.com/error-help/db/ora-28194/
+
+
+
 Transaction set.
+
+
   COUNT(*)
 ----------
 	 2
+
 1 row selected.
+
 BEGIN INSERT INTO APP_OWNER.SCRATCH VALUES (4); END;
 *
 ERROR at line 1:
 ORA-28194: Can perform read operations only
 ORA-06512: at line 1
+Help: https://docs.oracle.com/error-help/db/ora-28194/
+
+
 ROLLBACK
 *
 ERROR at line 1:
 ORA-28194: Can perform read operations only
+Help: https://docs.oracle.com/error-help/db/ora-28194/
+
+
 SET TRANSACTION READ ONLY
 *
 ERROR at line 1:
 ORA-01453: SET TRANSACTION must be first statement of transaction
+Help: https://docs.oracle.com/error-help/db/ora-01453/
+
+
 BEGIN EXECUTE IMMEDIATE 'SELECT 1 FROM DUAL'; INSERT INTO APP_OWNER.SCRATCH VALUES (6); END;
 *
 ERROR at line 1:
 ORA-28194: Can perform read operations only
 ORA-06512: at line 1
+Help: https://docs.oracle.com/error-help/db/ora-28194/
+
+
 ROLLBACK
 *
 ERROR at line 1:
 ORA-28194: Can perform read operations only
+Help: https://docs.oracle.com/error-help/db/ora-28194/
+
+
 SELECT UTL_HTTP.REQUEST('http://127.0.0.1:9/') FROM DUAL
        *
 ERROR at line 1:
@@ -105,6 +178,9 @@ ORA-24247: network access denied by access control list (ACL)
 ORA-06512: at "SYS.UTL_HTTP", line 380
 ORA-06512: at "SYS.UTL_HTTP", line 1534
 ORA-06512: at line 1
+Help: https://docs.oracle.com/error-help/db/ora-29273/
+
+
 SELECT UTL_INADDR.GET_HOST_ADDRESS('localhost') FROM DUAL
        *
 ERROR at line 1:
@@ -112,6 +188,9 @@ ORA-24247: network access denied by access control list (ACL)
 ORA-06512: at "SYS.UTL_INADDR", line 19
 ORA-06512: at "SYS.UTL_INADDR", line 40
 ORA-06512: at line 1
+Help: https://docs.oracle.com/error-help/db/ora-24247/
+
+
 DECLARE f UTL_FILE.FILE_TYPE; BEGIN f := UTL_FILE.FOPEN('DATA_PUMP_DIR','x.txt','w'); END;
 *
 ERROR at line 1:
@@ -119,6 +198,9 @@ ORA-29280: invalid directory object
 ORA-06512: at "SYS.UTL_FILE", line 45
 ORA-06512: at "SYS.UTL_FILE", line 497
 ORA-06512: at line 1
+Help: https://docs.oracle.com/error-help/db/ora-29280/
+
+
 BEGIN DBMS_SCHEDULER.CREATE_JOB(job_name=>'RO_JOB', job_type=>'PLSQL_BLOCK', job_action=>'BEGIN NULL; END;', enabled=>FALSE); END;
 *
 ERROR at line 1:
@@ -126,6 +208,9 @@ ORA-27486: insufficient privileges
 ORA-06512: at "SYS.DBMS_ISCHED", line 191
 ORA-06512: at "SYS.DBMS_SCHEDULER", line 332
 ORA-06512: at line 1
+Help: https://docs.oracle.com/error-help/db/ora-27486/
+
+
 DECLARE r NUMBER; BEGIN r := DBMS_PIPE.SEND_MESSAGE('p'); END;
                              *
 ERROR at line 1:
@@ -133,8 +218,16 @@ ORA-06550: line 1, column 30:
 PLS-00201: identifier 'DBMS_PIPE' must be declared
 ORA-06550: line 1, column 25:
 PL/SQL: Statement ignored
+Help: https://docs.oracle.com/error-help/db/ora-06550/
+
+
+
 PRIVILEGE
 ----------------------------------------
 CREATE SESSION
+
 1 row selected.
+
+
 no rows selected
+
