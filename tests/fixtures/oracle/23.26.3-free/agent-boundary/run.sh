@@ -9,7 +9,8 @@
 #
 # APP_USER makes the image create the schema owner APP_OWNER in FREEPDB1; 01 creates the rest.
 # Run it from the repository root once the container logs "DATABASE IS READY TO USE!", so 10
-# resolves oracledb from the root node_modules. Sequence values in 04 to 08 depend on this order.
+# resolves oracledb from the root node_modules. Sequence values in 04 to 08 depend on this order;
+# 11 to 13 use a user and sequences of their own.
 set -euo pipefail
 name="$1"
 port="$2"
@@ -31,3 +32,6 @@ sql APP_RO 08-definer-rights-units-as-app-ro
 sql SYSTEM 09-definer-rights-effects-as-system
 node "$dir/10-driver-transaction-end-as-app-ro.mjs" "127.0.0.1:$port/FREEPDB1" \
   > "$dir/10-driver-transaction-end-as-app-ro.txt"
+sql SYSTEM 11-residuals-setup-as-system
+sql APP_R3 12-residuals-as-app-r3
+sql SYSTEM 13-residuals-effects-as-system

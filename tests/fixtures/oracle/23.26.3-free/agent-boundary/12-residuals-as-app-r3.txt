@@ -1,0 +1,128 @@
+
+TABLE_NAME   COLUMN_NAME    HID DATA_DEFAULT
+------------ -------------- --- --------------------------------
+R3_FBI	     SYS_NC00003$   YES UPPER("NAME")
+R3_FBI	     SYS_NC00004$   YES "APP_OWNER"."F_FBI"("ID")
+R3_VC	     N		    NO	"APP_OWNER"."F_VC"("ID")
+R3_VC	     U		    NO	UPPER('a'||TO_CHAR("ID"))
+
+4 rows selected.
+
+
+OBJECT_OWN OBJECT_NAME	POLICY_NAME  PF_OWNER	FUNCTION   SEL
+---------- ------------ ------------ ---------- ---------- ---
+APP_OWNER  R3_POL	R3_POL_P     APP_OWNER	F_POL	   YES
+APP_OWNER  R3_SYNPOL_S	R3_SYN_P     APP_OWNER	F_POL	   YES
+PUBLIC	   R3_SYNPOL_P	R3_PSYN_P    APP_OWNER	F_POL	   YES
+
+3 rows selected.
+
+SELECT OBJECT_NAME, POLICY_NAME FROM ALL_AUDIT_POLICIES
+                                     *
+ERROR at line 1:
+ORA-00942: table or view "SYS"."ALL_AUDIT_POLICIES" does not exist
+Help: https://docs.oracle.com/error-help/db/ora-00942/
+
+
+
+NAME	     REFERENCED_N REFERENCED_TYPE
+------------ ------------ ----------------
+R3_BEHIND_V  R3_BEHIND	  TABLE
+R3_INV_V     R3_INV	  TABLE
+R3_OUTER     R3_INNER	  VIEW
+
+3 rows selected.
+
+
+OBJECT_NAME  STATUS
+------------ --------
+R3_INV_V     INVALID
+R3_OUTER     VALID
+
+2 rows selected.
+
+
+	ID U
+---------- --------------------------------------------------
+	 1 A1
+
+1 row selected.
+
+
+	 N
+----------
+	 1
+
+1 row selected.
+
+
+SYS_NC00004$
+------------
+	   2
+
+1 row selected.
+
+
+	ID
+----------
+	 1
+
+1 row selected.
+
+
+	ID
+----------
+	 1
+
+1 row selected.
+
+
+	ID
+----------
+	 1
+
+1 row selected.
+
+
+	ID
+----------
+	 1
+
+1 row selected.
+
+
+	ID
+----------
+	 1
+
+1 row selected.
+
+
+	 N
+----------
+	 1
+
+1 row selected.
+
+
+	 N
+----------
+	 1
+
+1 row selected.
+
+
+OBJECT_NAME  STATUS
+------------ --------
+R3_INV_V     VALID
+
+1 row selected.
+
+
+Transaction set.
+
+ERROR:
+ORA-38814: ALTER SESSION SET EDITION must be first statement of transaction
+Help: https://docs.oracle.com/error-help/db/ora-38814/
+
+
