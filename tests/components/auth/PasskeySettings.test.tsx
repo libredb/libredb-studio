@@ -31,6 +31,7 @@ const ORIGIN = "http://localhost:3000";
 const OFF =
   "Passkeys are off on this server. An administrator turns them on by setting PASSKEY_ORIGIN to the address people open Studio at, such as https://studio.example.com.";
 const OIDC = "Passkeys for this sign-in are managed by your identity provider.";
+const OPENSHIFT = "Passkeys are not used with OpenShift sign-in: the OpenShift OAuth server signs you in.";
 const LOCAL_STORAGE =
   "Passkeys need STORAGE_PROVIDER=sqlite or postgres: with STORAGE_PROVIDER=local there is no account registry to keep them in.";
 const RETRY_TEXT = "An error occurred. Please try again.";
@@ -194,6 +195,18 @@ describe("PasskeySettings", () => {
     const oidc = render(<PasskeySettings reloadSignal={0} />);
     await waitFor(() => expect(oidc.getByText(OIDC)).toBeTruthy());
     expect(oidc.queryByText(real.PAGE_IP_ADDRESS)).toBeNull();
+  });
+
+  test("openshift sign-in, which turns passkeys off like OIDC, names its reason before a page blocker", async () => {
+    for (const blocker of ["ip-address", "plain-http"] as const) {
+      pageBlocker.mockImplementation(() => blocker);
+      serve(() => ({ available: false, mode: "openshift", reason: OPENSHIFT }));
+      const view = render(<PasskeySettings reloadSignal={0} />);
+      await waitFor(() => expect(view.getByText(OPENSHIFT)).toBeTruthy());
+      expect(view.queryByText(real.PAGE_IP_ADDRESS)).toBeNull();
+      expect(view.queryByText(real.PAGE_PLAIN_HTTP)).toBeNull();
+      cleanup();
+    }
   });
 
   test("lists passkeys with name, dates, sync state and usability", async () => {
