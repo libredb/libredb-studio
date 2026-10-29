@@ -305,9 +305,9 @@ describe("charts/libredb-studio PostgreSQL subchart contracts (#152)", () => {
       ["--set", "nameOverride=studio", "--set", "fullnameOverride=studio-app"],
     ]) {
       const deployment = studioDeployment([...PG_ARGS, ...override], pgChartDir);
-      const [target] = JSON.parse(deployment.metadata.annotations?.[CONNECTS_TO] ?? "[]") as Array<{
-        name: string;
-      }>;
+      const [target] = JSON.parse(deployment.metadata.annotations?.[CONNECTS_TO] ?? "[]") as Array<
+        Record<string, string>
+      >;
       expect(target).toEqual({ apiVersion: "apps/v1", kind: "StatefulSet", name: "release-under-test-postgresql" });
       expect(deployment.statefulSets).toEqual([target?.name]);
     }
