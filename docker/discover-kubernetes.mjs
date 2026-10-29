@@ -360,6 +360,68 @@ export const CONTRACT = Object.freeze([
   MONGO_ROW,
 ]);
 
+/**
+ * The ends of the Secret names the first-release operators give their key material and internal credentials: CA,
+ * server, replication and superuser Secrets (CloudNativePG, EDB), cluster, replication and instance certificates,
+ * pgBackRest and PgBouncer Secrets (Crunchy PGO), keyfiles, agent passwords, automation configs, SCRAM credentials and
+ * certificates (MongoDB Community). A credential Secret whose name ends in one is never requested, whatever the
+ * resource says: RBAC cannot narrow `get secrets` by name, and resource editors choose part of every per-user name.
+ */
+export const RESERVED_SECRET_SUFFIXES = Object.freeze([
+  "-ca",
+  "-server",
+  "-replication",
+  "-superuser",
+  "-cluster-cert",
+  "-replication-cert",
+  "-certs",
+  "-pgbackrest",
+  "-pgbouncer",
+  "-keyfile",
+  "-agent-password",
+  "-config",
+  "-scram-credentials",
+  "-ca-certificate",
+  "-server-certificate-key",
+  "-prometheus-certificate-key",
+]);
+
+/** Whole names that are never requested: Crunchy PGO's root certificate authority. */
+export const RESERVED_SECRET_NAMES = Object.freeze(["pgo-root-cacert"]);
+
+/** Whether a credential Secret named `name` must not be requested: one of `exact`, a reserved name or suffix. */
+export function isReservedSecretName(name, exact) {
+  return (
+    exact.includes(name) ||
+    RESERVED_SECRET_NAMES.includes(name) ||
+    RESERVED_SECRET_SUFFIXES.some((suffix) => name.endsWith(suffix))
+  );
+}
+
+/**
+ * Why the Service `service` cannot carry a connection to `row`'s resource whose UID is `uid`, or null when it can. An
+ * ExternalName Service is a DNS alias anyone who may create Services can point outside the namespace, so it never can.
+ * A Service with a selector routes to the namespace's own pods. A selector-less Service routes to whatever endpoints
+ * were written for it, which namespace editors cannot write, so it can only when the resource controls it, as Crunchy
+ * PGO controls its primary Service: an ownerReference with controller true and the resource's UID, kind and group.
+ */
+export function serviceProblem(service, row, uid) {
+  if (service?.spec?.type === "ExternalName") return "service_external_name";
+  const selector = service?.spec?.selector;
+  if (selector !== null && typeof selector === "object" && Object.keys(selector).length > 0) return null;
+  const references = Array.isArray(service?.metadata?.ownerReferences) ? service.metadata.ownerReferences : [];
+  const controlled = references.some(
+    (reference) =>
+      reference?.controller === true &&
+      uid !== undefined &&
+      reference.uid === uid &&
+      reference.kind === row.kind &&
+      typeof reference.apiVersion === "string" &&
+      reference.apiVersion.split("/")[0] === row.group,
+  );
+  return controlled ? null : "service_not_controlled";
+}
+
 /** What every KUBERNETES_DISCOVERY_* variable means when it is unset or blank. */
 export const DEFAULTS = Object.freeze({
   intervalMs: 30000,
@@ -717,6 +779,43 @@ async function readCredentialSecret(client, { row, resource, uid, secretName }) 
 }
 
 /**
+ * The Service check of a candidate: null when its row's Service may carry the connection, else the problem. Each
+ * Service is got once per scan (`services`, keyed `<namespace>/<name>`, holds the Service or the refusal), so the
+ * users of one resource cost one request. A 403 or a 404 answers for this row alone; any other failure throws and
+ * fails the scan.
+ */
+async function checkService(client, { row, resource, uid }, services) {
+  const name = row.serviceName(resource);
+  if (!SERVICE_LABEL.test(name)) return "service_invalid_name";
+  const key = `${resource.metadata.namespace}/${name}`;
+  if (!services.has(key)) {
+    try {
+      const service = await client.get(`/api/v1/namespaces/${resource.metadata.namespace}/services/${name}`);
+      services.set(key, { service });
+    } catch (error) {
+      if (error?.statusCode === 404) services.set(key, { problem: "service_not_found" });
+      else if (error?.statusCode === 403) services.set(key, { problem: "service_forbidden" });
+      else throw error;
+    }
+  }
+  const answer = services.get(key);
+  return answer.problem ?? serviceProblem(answer.service, row, uid);
+}
+
+/**
+ * A candidate's Secret entry: the problem decided before any request, or a reserved name, or the Service check's
+ * refusal, each without requesting the Secret; otherwise what reading the Secret gives.
+ */
+async function readCandidate(client, candidate, services) {
+  const { secretName, precheck, exact } = candidate;
+  if (precheck !== undefined) return { ...(secretName === undefined ? {} : { name: secretName }), problem: precheck };
+  if (isReservedSecretName(secretName, exact)) return { name: secretName, problem: "reserved_name" };
+  const problem = await checkService(client, candidate, services);
+  if (problem !== null) return { name: secretName, problem };
+  return readCredentialSecret(client, candidate);
+}
+
+/**
  * How many of each group's items to keep under `budget`, shared max-min fairly: `sizes[g]` lists the sizes of group
  * g's items in order, and each group keeps the longest prefix of them its share holds. The groups are served from the
  * smallest total up, each with an equal part of what is left, so a group that needs less than its part leaves the rest
@@ -844,13 +943,11 @@ export async function scanOnce({ client, config, limits = LIMITS }) {
       limits.databases,
     );
     const databases = [];
+    const services = new Map();
     for (const [index, listing] of listings.entries()) {
       for (const candidate of listing.found.slice(0, shares[index])) {
-        const secret =
-          candidate.precheck === undefined
-            ? // oxlint-disable-next-line no-await-in-loop -- one request at a time keeps the API server's load flat.
-              await readCredentialSecret(client, candidate)
-            : { ...(candidate.secretName === undefined ? {} : { name: candidate.secretName }), problem: candidate.precheck };
+        // oxlint-disable-next-line no-await-in-loop -- one request at a time keeps the API server's load flat.
+        const secret = await readCandidate(client, candidate, services);
         databases.push({ kind: candidate.row.slug, resource: candidate.resource, secret });
       }
     }

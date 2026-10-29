@@ -23,7 +23,7 @@ import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { CNPG_CLUSTER, KUBERNETES_CONTRACT, mapKubernetesDatabase } from "@/lib/seed/kubernetes-discovery-contract";
+import { KUBERNETES_CONTRACT, mapKubernetesDatabase } from "@/lib/seed/kubernetes-discovery-contract";
 import {
   KUBERNETES_DISCOVERY_EXPORT_VERSION,
   parseKubernetesDiscoveryExport,
@@ -42,13 +42,19 @@ import {
   LIMITS,
   main,
   readConfig,
+  RESERVED_SECRET_NAMES,
+  RESERVED_SECRET_SUFFIXES,
+  isReservedSecretName,
   scanOnce,
+  serviceProblem,
   serializeExport,
   writeExport,
 } from "../../docker/discover-kubernetes.mjs";
 import {
   FAKE_DISCOVERY_TOKEN,
   type FakeDiscoveryApi,
+  ownerReference,
+  type ServiceShape,
   startFakeDiscoveryApi,
   statusBody,
 } from "../helpers/kubernetes-discovery/fake-api";
@@ -1327,12 +1333,12 @@ describe("Secret ownership", () => {
   test("keeps a plain basic-auth initdb Secret with no owner and no label, and refuses one of another type", async () => {
     api.addCluster("team-a", "custom", { bootstrap: { initdb: { secret: { name: "custom-owner" } } } });
     api.addSecret("team-a", "custom-owner", DATA);
-    api.addCluster("team-a", "opaque", { bootstrap: { initdb: { secret: { name: "app-config" } } } });
-    api.addSecret("team-a", "app-config", DATA, "Opaque");
+    api.addCluster("team-a", "opaque", { bootstrap: { initdb: { secret: { name: "app-settings" } } } });
+    api.addSecret("team-a", "app-settings", DATA, "Opaque");
     const result = await scan({ client: client(), config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }) });
     expect(result.databases.map((entry: { secret: unknown }) => entry.secret)).toEqual([
       { name: "custom-owner", data: DATA },
-      { name: "app-config", problem: "not_owned" },
+      { name: "app-settings", problem: "not_owned" },
     ]);
   });
 
@@ -1378,6 +1384,268 @@ describe("Secret ownership", () => {
     expect(JSON.stringify(api.writtenExport())).not.toContain(DATA.password);
     expect(JSON.stringify(api.writtenExport())).toContain("not_owned");
     expect(out.all()).not.toContain(DATA.password);
+  });
+});
+
+describe("reserved names", () => {
+  const SUFFIXES = [
+    "-ca",
+    "-server",
+    "-replication",
+    "-superuser",
+    "-cluster-cert",
+    "-replication-cert",
+    "-certs",
+    "-pgbackrest",
+    "-pgbouncer",
+    "-keyfile",
+    "-agent-password",
+    "-config",
+    "-scram-credentials",
+    "-ca-certificate",
+    "-server-certificate-key",
+    "-prometheus-certificate-key",
+  ];
+
+  test("the reserved suffixes and names, and the rule that applies them", () => {
+    expect([...RESERVED_SECRET_SUFFIXES]).toEqual(SUFFIXES);
+    expect([...RESERVED_SECRET_NAMES]).toEqual(["pgo-root-cacert"]);
+    expect(Object.isFrozen(RESERVED_SECRET_SUFFIXES) && Object.isFrozen(RESERVED_SECRET_NAMES)).toBe(true);
+    for (const suffix of SUFFIXES) expect(isReservedSecretName(`orders${suffix}`, [])).toBe(true);
+    expect(isReservedSecretName("pgo-root-cacert", [])).toBe(true);
+    expect(isReservedSecretName("my-root", ["my-root"])).toBe(true);
+    for (const name of [
+      "orders-app",
+      "billing-owner",
+      "analytics-pguser-analyst",
+      "catalog-admin-appuser",
+      "ca",
+      "orders-cax",
+    ]) {
+      expect(isReservedSecretName(name, ["my-root"])).toBe(false);
+    }
+  });
+
+  /** Scans team-a and returns its rows' Secret entries; asserts that no Service and no Secret was requested. */
+  async function scanWithoutRequests(kinds = "cnpg") {
+    const result = await scan({
+      client: client(),
+      config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a", KUBERNETES_DISCOVERY_KINDS: kinds }),
+    });
+    expect(api.seen.some((seen) => seen.path.includes("/secrets/") || seen.path.includes("/services/"))).toBe(false);
+    return result.databases.map((entry) => entry.secret);
+  }
+
+  test("each suffix refuses a supplied initdb Secret as reserved_name, with no request", async () => {
+    for (const suffix of SUFFIXES) {
+      api.addCluster("team-a", `db${SUFFIXES.indexOf(suffix)}`, {
+        bootstrap: { initdb: { secret: { name: `x${suffix}` } } },
+      });
+      api.addSecret("team-a", `x${suffix}`, { username: "u", password: "not-a-real-password-x" });
+    }
+    expect(await scanWithoutRequests()).toEqual(
+      SUFFIXES.map((suffix) => ({ name: `x${suffix}`, problem: "reserved_name" })),
+    );
+  });
+
+  test("each exact rule refuses: the Cluster's own, its spec-named certificates and superuser, and pgo-root-cacert", async () => {
+    const named = {
+      certificates: {
+        serverCASecret: "named-1",
+        serverTLSSecret: "named-2",
+        replicationTLSSecret: "named-3",
+        clientCASecret: "named-4",
+      },
+      superuserSecret: { name: "named-5" },
+    };
+    const supplied = ["named-1", "named-2", "named-3", "named-4", "named-5", "pgo-root-cacert"];
+    for (const [index, name] of supplied.entries()) {
+      api.addCluster("team-a", `db-${index}`, { ...named, bootstrap: { initdb: { secret: { name } } } });
+    }
+    for (const kind of ["cnpg", "edbpg"]) {
+      api.addResource(kind, "team-a", "own", { bootstrap: { initdb: { secret: { name: "own-superuser" } } } });
+    }
+    const expected = supplied.map((name) => ({ name, problem: "reserved_name" }));
+    expect(await scanWithoutRequests("cnpg,edbpg")).toEqual([
+      ...expected,
+      { name: "own-superuser", problem: "reserved_name" },
+      { name: "own-superuser", problem: "reserved_name" },
+    ]);
+  });
+
+  test("a PGO user or a MongoDB user and database that would name another resource's key Secret are refused", async () => {
+    api.addResource("pgo", "team-a", "a", { users: [{ name: "b-cluster-cert", databases: ["a"] }] });
+    api.addResource("mongo", "team-a", "catalog", {
+      users: [
+        { name: "password", db: "agent", roles: [] },
+        { name: "appuser", db: "admin", connectionStringSecretName: "pgo-root-cacert", roles: [] },
+        { name: "keyfile", db: "x", roles: [] },
+      ],
+    });
+    expect(await scanWithoutRequests("pgo,mongo")).toEqual([
+      { name: "a-pguser-b-cluster-cert", problem: "reserved_name" },
+      { name: "catalog-agent-password", problem: "reserved_name" },
+      { name: "pgo-root-cacert", problem: "reserved_name" },
+      { name: "catalog-x-keyfile", problem: "reserved_name" },
+    ]);
+  });
+});
+
+describe("the Service check", () => {
+  const DATA = { username: "orders", password: PASSWORD_A, dbname: "orders", port: "5432" };
+  const SERVICE_PATH = "/api/v1/namespaces/team-a/services/orders-rw";
+
+  /** The Cluster orders in team-a with its <name>-app Secret, and the read-write Service `shape` describes. */
+  function ordersWith(shape: ServiceShape | null) {
+    api.addCluster("team-a", "orders", {}, { service: false });
+    api.addAppSecret("team-a", "orders", DATA);
+    const resource = api.addResource("cnpg", "team-a", "orders");
+    if (shape !== null) api.addService("team-a", "orders-rw", shape);
+    return resource;
+  }
+
+  async function ordersSecret() {
+    const result = await scan({ client: client(), config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }) });
+    if (!result.ok) throw new Error(result.status.message);
+    return result.databases[0].secret;
+  }
+
+  const secretRequests = () => api.seen.filter((seen) => seen.path.includes("/secrets/")).length;
+
+  test("passes a Service with a selector, and reads the Secret after it", async () => {
+    ordersWith({ selector: { "cnpg.io/cluster": "orders" } });
+    expect(await ordersSecret()).toEqual({ name: "orders-app", data: DATA });
+    const paths = api.seen.map((seen) => seen.path);
+    expect(paths.indexOf(SERVICE_PATH)).toBeLessThan(paths.indexOf("/api/v1/namespaces/team-a/secrets/orders-app"));
+  });
+
+  test("passes a selector-less Service controlled by the row's resource, as PGO's primary Service is", async () => {
+    const resource = ordersWith(null);
+    api.addService("team-a", "orders-rw", { selector: null, owners: [ownerReference(resource)] });
+    expect(await ordersSecret()).toEqual({ name: "orders-app", data: DATA });
+  });
+
+  test("refuses an ExternalName Service, whatever else it holds", async () => {
+    const resource = ordersWith(null);
+    api.addService("team-a", "orders-rw", {
+      type: "ExternalName",
+      selector: { "cnpg.io/cluster": "orders" },
+      owners: [ownerReference(resource)],
+    });
+    expect(await ordersSecret()).toEqual({ name: "orders-app", problem: "service_external_name" });
+    expect(secretRequests()).toBe(0);
+  });
+
+  test.each([
+    ["no owner", () => []],
+    ["another uid", (r: Record<string, unknown>) => [{ ...r, uid: "uid-team-a-other" }]],
+    ["another kind", (r: Record<string, unknown>) => [{ ...r, kind: "Pooler" }]],
+    ["another group", (r: Record<string, unknown>) => [{ ...r, apiVersion: "postgresql.k8s.enterprisedb.io/v1" }]],
+    ["controller false", (r: Record<string, unknown>) => [{ ...r, controller: false }]],
+    ["controller absent", (r: Record<string, unknown>) => [{ ...r, controller: undefined }]],
+  ])("refuses a selector-less Service with %s", async (_, owners) => {
+    const resource = ordersWith(null);
+    api.addService("team-a", "orders-rw", { selector: null, owners: owners(ownerReference(resource)) });
+    expect(await ordersSecret()).toEqual({ name: "orders-app", problem: "service_not_controlled" });
+    // An empty selector selects nothing, as no selector does.
+    api.addService("team-a", "orders-rw", { selector: {}, owners: owners(ownerReference(resource)) });
+    expect(await ordersSecret()).toEqual({ name: "orders-app", problem: "service_not_controlled" });
+    expect(secretRequests()).toBe(0);
+  });
+
+  test("refuses a Service name that is not a DNS-1035 label as service_invalid_name, with no request", async () => {
+    const name = "a".repeat(61);
+    api.addCluster("team-a", name, {}, { service: false });
+    api.addCluster("team-a", "9lives", {}, { service: false });
+    const result = await scan({ client: client(), config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }) });
+    expect(result.databases.map((entry) => entry.secret)).toEqual([
+      { name: `${name}-app`, problem: "service_invalid_name" },
+      { name: "9lives-app", problem: "service_invalid_name" },
+    ]);
+    expect(api.seen.some((seen) => seen.path.includes("/services/") || seen.path.includes("/secrets/"))).toBe(false);
+  });
+
+  test("refuses a Service it may not get as service_forbidden, and one that does not exist as service_not_found", async () => {
+    ordersWith(null);
+    api.scripted.set(SERVICE_PATH, { status: 403, body: statusBody(403, "Forbidden", "services is forbidden") });
+    expect(await ordersSecret()).toEqual({ name: "orders-app", problem: "service_forbidden" });
+    api.scripted.clear();
+    expect(await ordersSecret()).toEqual({ name: "orders-app", problem: "service_not_found" });
+    expect(secretRequests()).toBe(0);
+  });
+
+  test("fails the scan on any other answer to a Service GET, and the exporter keeps its last good export", async () => {
+    ordersWith({ selector: { "cnpg.io/cluster": "orders" } });
+    const exporter = createExporter({
+      config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }),
+      client: client(),
+      now: () => T0,
+      info: () => {},
+      warn: () => {},
+    });
+    expect(await exporter.scanAndWrite()).toBe(true);
+    const good = api.writtenExport() as { databases: unknown[] };
+    api.scripted.set(SERVICE_PATH, { status: 500, body: statusBody(500, "InternalError", "etcd is sad") });
+    const before = secretRequests();
+    const result = await scan({ client: client(), config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a" }) });
+    expect(result).toMatchObject({ ok: false, status: { code: "api_error", httpStatus: 500 } });
+    expect(await exporter.scanAndWrite()).toBe(true);
+    expect((api.writtenExport() as { databases: unknown[]; status: { ok: boolean } }).databases).toEqual(
+      good.databases,
+    );
+    expect((api.writtenExport() as { status: { ok: boolean } }).status.ok).toBe(false);
+    expect(secretRequests() - before).toBe(2);
+  });
+
+  test("gets each Service once per scan, for every user of one resource", async () => {
+    const resource = api.addResource("pgo", "team-a", "analytics", {
+      users: [
+        { name: "analyst", databases: ["analytics"] },
+        { name: "reporter", databases: ["analytics"] },
+      ],
+    });
+    api.addService("team-a", "analytics-primary", { selector: null, owners: [ownerReference(resource)] });
+    for (const user of ["analyst", "reporter"]) {
+      api.addSecret(
+        "team-a",
+        `analytics-pguser-${user}`,
+        { user, password: PASSWORD_B, host: "analytics-primary.team-a.svc", port: "5432", dbname: "analytics" },
+        "Opaque",
+        { ownerReferences: [ownerReference(resource)] },
+      );
+    }
+    const result = await scan({
+      client: client(),
+      config: config({ KUBERNETES_DISCOVERY_NAMESPACES: "team-a", KUBERNETES_DISCOVERY_KINDS: "pgo" }),
+    });
+    expect(result.databases.map((entry) => entry.secret.name)).toEqual([
+      "analytics-pguser-analyst",
+      "analytics-pguser-reporter",
+    ]);
+    expect(result.databases.every((entry) => entry.secret.data !== undefined)).toBe(true);
+    expect(
+      api.seen.filter((seen) => seen.path === "/api/v1/namespaces/team-a/services/analytics-primary"),
+    ).toHaveLength(1);
+  });
+
+  test("serviceProblem: the rule itself", () => {
+    const [row] = CONTRACT;
+    const owner = { apiVersion: "postgresql.cnpg.io/v1", kind: "Cluster", name: "orders", uid: "u", controller: true };
+    const service = (spec: Record<string, unknown>, owners?: unknown) => ({
+      metadata: { name: "orders-rw", ...(owners === undefined ? {} : { ownerReferences: owners }) },
+      spec,
+    });
+    expect(serviceProblem(service({ type: "ClusterIP", selector: { a: "b" } }), row, "u")).toBeNull();
+    expect(serviceProblem(service({ type: "ClusterIP" }, [owner]), row, "u")).toBeNull();
+    expect(serviceProblem(service({ type: "ExternalName", selector: { a: "b" } }, [owner]), row, "u")).toBe(
+      "service_external_name",
+    );
+    expect(serviceProblem(service({ type: "ClusterIP" }, [owner]), row, undefined)).toBe("service_not_controlled");
+    expect(serviceProblem(service({ type: "ClusterIP" }, "x"), row, "u")).toBe("service_not_controlled");
+    expect(serviceProblem(service({ type: "ClusterIP" }, [{ ...owner, apiVersion: "v1" }]), row, "u")).toBe(
+      "service_not_controlled",
+    );
+    expect(serviceProblem({}, row, "u")).toBe("service_not_controlled");
   });
 });
 
