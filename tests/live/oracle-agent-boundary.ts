@@ -27,7 +27,8 @@
  *    measured to run the owner's function for the READ ONLY user's plain SELECT; a policy function, an auditing
  *    handler, a function granted to PUBLIC, a view and a sequence an administrator made in SYSTEM, a schema Oracle
  *    maintains, are refused, the first two measured to run for that user; and on one handle a policy added after a
- *    call refuses the next call, and the call after its drop runs;
+ *    call refuses the next call, the call after its drop runs, and a schema one call switched to with
+ *    `ALTER SESSION SET CURRENT_SCHEMA` is not the next call's;
  *  - the boundary, with Studio's client admission bypassed: every write, DDL, temporary table, lock, transaction
  *    statement, PL/SQL write and second statement is sent through `queryReadOnly` as the admitted user and refused,
  *    each classified by its ORA- code; the same writes run as the schema owner through the editor path, the positive
@@ -915,6 +916,21 @@ async function main(): Promise<void> {
   const timedAt = Date.now();
   for (let i = 0; i < 10; i++) await agentAnswer(pooled, "SELECT 1 FROM DUAL");
   console.log(`INFO one agent statement with its check, on a warm handle: ${(Date.now() - timedAt) / 10} ms`);
+  // A session keeps what a statement set on it, and the USER_* views the check reads follow CURRENT_SCHEMA: each call's
+  // session is dropped, so a schema one call switched to is not the next call's, however many calls follow.
+  const switched = await agentAnswer(pooled, `ALTER SESSION SET CURRENT_SCHEMA = ${OWNER}`);
+  const schemas: string[] = [];
+  for (let i = 0; i < 4; i++) {
+    const read = await pooled.queryReadOnly?.(
+      "SELECT SYS_CONTEXT('USERENV', 'CURRENT_SCHEMA') AS S, (SELECT COUNT(*) FROM USER_TABLES) AS T FROM DUAL",
+      BUDGET,
+    );
+    schemas.push(`${read?.rows[0]?.S}/${read?.rows[0]?.T}`);
+  }
+  check(
+    switched === "ran" && schemas.every((schema) => schema === `${RO}/0`),
+    `ALTER SESSION SET CURRENT_SCHEMA = ${OWNER} ran, and the next calls read the agent's own schema and its USER_TABLES (${schemas.join(", ")}): ${switched}`,
+  );
   await pooled.disconnect();
   // A private link the user owns: only its owner drops it, and READ ONLY refuses the owner the DROP.
   await setup("SYSTEM", [`ALTER USER ${RO} READ WRITE`, `GRANT CREATE DATABASE LINK TO ${RO}`]);
