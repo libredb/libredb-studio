@@ -1,4 +1,4 @@
-resolveSqlGrammar("cassandra") => {"hash":"code","bracket":"subscript","blockComment":"flat","alternateQuoting":false,"doubleSlashComment":true,"backslashAlwaysEscapes":false,"script":{"blocks":"none","separatorLine":null,"unit":"statement"},"trailingLimitClauses":["/\\s+ALLOW\\s+FILTERING\\s*$/i","/\\s+BYPASS\\s+CACHE\\s*$/i","/\\s+USING\\s+TIMEOUT\\s+[^()\\s]+\\s*$/i"]}
+resolveSqlGrammar("cassandra") => {"hash":"code","bracket":"subscript","blockComment":"flat","alternateQuoting":false,"doubleSlashComment":true,"lineCommentEndsAtCarriageReturn":true,"backslashAlwaysEscapes":false,"script":{"blocks":"none","separatorLine":null,"unit":"statement"},"trailingLimitClauses":["/\\s+ALLOW\\s+FILTERING\\s*$/i","/\\s+BYPASS\\s+CACHE\\s*$/i","/\\s+USING\\s+TIMEOUT\\s+[^()\\s]+\\s*$/i"]}
 readsSqlText("cassandra") => true
 hashRunIsAmbiguous(resolveSqlGrammar("cassandra")) => false
 readSqlSpan walk("SELECT 1 # c\nFROM t") => [["whitespace",6,7],["whitespace",8,9],["whitespace",10,11],["whitespace",12,13],["whitespace",17,18]]
@@ -21,7 +21,7 @@ readSqlSpan walk("SELECT 1\nGO\nSELECT 2") => [["whitespace",6,7],["whitespace",
 splitStatements("SELECT 1\nGO\nSELECT 2") => [{"sql":"SELECT 1\nGO\nSELECT 2","startLine":0,"start":0,"end":20}]
 readSqlSpan walk("BEGIN NULL; END;\n/\nSELECT 1") => [["whitespace",5,6],["whitespace",11,12],["whitespace",16,17],["whitespace",18,19],["whitespace",25,26]]
 splitStatements("BEGIN NULL; END;\n/\nSELECT 1") => [{"sql":"BEGIN NULL","startLine":0,"start":0,"end":10},{"sql":"END","startLine":0,"start":12,"end":15},{"sql":"/\nSELECT 1","startLine":1,"start":17,"end":27}]
-readSqlSpan walk("SELECT 1 -- x\rDROP TABLE t") => [["whitespace",6,7],["whitespace",8,9],["line-comment",9,26]]
+readSqlSpan walk("SELECT 1 -- x\rDROP TABLE t") => [["whitespace",6,7],["whitespace",8,9],["line-comment",9,14],["whitespace",18,19],["whitespace",24,25]]
 splitStatements("SELECT 1 -- x\rDROP TABLE t") => [{"sql":"SELECT 1 -- x\rDROP TABLE t","startLine":0,"start":0,"end":26}]
 resolveUpdateTarget("SELECT id, note FROM products", "cassandra") => {"kind":"table","table":"products"}
 resolveUpdateTarget("SELECT id FROM products --x", "cassandra") => {"kind":"table","table":"products"}

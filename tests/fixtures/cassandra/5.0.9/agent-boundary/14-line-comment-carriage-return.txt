@@ -1,0 +1,32 @@
+== as cassandra: does a lone carriage return end a line comment?
+> "SELECT id FROM fence14.t -- x\nWHERE id = 2"
+  ok, 0 rows
+> "SELECT id FROM fence14.t -- x\rWHERE id = 2"
+  ok, 0 rows
+> "SELECT id FROM fence14.t // x\rWHERE id = 2"
+  ok, 0 rows
+> "SELECT id FROM fence14.t -- x\r\nWHERE id = 2"
+  ok, 0 rows
+> "-- x\rSELECT id FROM fence14.t"
+  ok, 1 rows
+> "// x\rSELECT id FROM fence14.t"
+  ok, 1 rows
+> "SELECT id FROM fence14.t -- x\r"
+  ok, 1 rows
+> "/* x\r */ SELECT id FROM fence14.t"
+  ok, 1 rows
+> "SELECT id FROM fence14.t -- x"
+  error ResponseError code=8192: line 1:29 mismatched character '<EOF>' expecting set null
+== as fence14_agent, holding only SELECT on fence14: a statement after the carriage return
+> "SELECT * FROM fence14.t -- x\rALTER ROLE fence14_agent WITH PASSWORD = 'changed-by-a-comment'"
+  error ResponseError code=8192: line 1:29 mismatched input 'ALTER' expecting EOF (... * FROM fence14.t -- x[ALTER]...)
+> "SELECT * FROM fence14.t // x\rALTER ROLE fence14_agent WITH PASSWORD = 'changed-by-a-comment'"
+  error ResponseError code=8192: line 1:29 mismatched input 'ALTER' expecting EOF (... * FROM fence14.t // x[ALTER]...)
+> "-- x\rALTER ROLE fence14_agent WITH PASSWORD = '\nSELECT id FROM fence14.t WHERE name = ' -- '\n"
+  ok, no result columns
+> "-- x\rALTER ROLE fence14_agent WITH PASSWORD = 'changed-by-a-comment'"
+  ok, no result columns
+== which password signs in afterwards
+  "not-a-real-password": refused (AuthenticationError)
+  "\nSELECT id FROM fence14.t WHERE name = ": refused (AuthenticationError)
+  "changed-by-a-comment": signs in

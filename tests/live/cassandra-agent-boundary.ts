@@ -29,7 +29,11 @@
  *  - the budgets: a result past the row budget and one past the byte budget are refused;
  *  - the password: the admitted role's change of its own password through `queryReadOnly` is refused before it is sent
  *    and the old password still signs in, while the same statement on a driver session of its own is accepted, the
- *    write no grant stops and the reason the fence exists.
+ *    write no grant stops and the reason the fence exists;
+ *  - the carriage return: a text that is one SELECT to a reader that runs a `--` comment on to the line feed, and an
+ *    ALTER ROLE of the role's own password to the server, which ends the comment at a lone carriage return, is refused
+ *    through `queryReadOnly` before it is sent, while on a driver session of its own the server runs it as the
+ *    password change and the new password signs in.
  *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name. Run it against a Cassandra 5.0 node with
  * PasswordAuthenticator and CassandraAuthorizer, user-defined functions and dynamic data masking on, as a superuser
@@ -561,6 +565,35 @@ async function main(): Promise<void> {
   check(
     own === null,
     `control: on a driver session of its own the server accepts the change: ${own === null ? "accepted" : own.message}`,
+  );
+
+  // The carriage return: one SELECT to a reader that runs the comment on to the line feed, an ALTER ROLE to the server.
+  const hidden = `\nSELECT id FROM ${KS}.customers WHERE name = `;
+  const crText = `-- x\rALTER ROLE ${PREFIX}ro WITH PASSWORD = '${hidden}' -- '\n`;
+  await sleep(PASSWORD_INTERVAL_MS);
+  const crReader = await open(`${PREFIX}ro`);
+  const crFenced = await readOnly(crReader, crText);
+  await crReader.disconnect();
+  check(
+    crFenced.error instanceof RefusedBeforeSendError && crFenced.error.message.includes("carriage return"),
+    `a password change after a carriage return in a comment is refused before it is sent: ${crFenced.error?.message ?? "ran"}`,
+  );
+  check(
+    (await asRole(`${PREFIX}ro`, `SELECT id FROM ${KS}.customers WHERE id = 1`)) === null,
+    "the old password still signs in after the refused carriage-return text",
+  );
+  const crOwn = await asRole(`${PREFIX}ro`, crText);
+  // The server reads a sign-in from its credentials cache for credentials_validity (2000ms in the image).
+  await sleep(3_000);
+  const changed = new CassandraDriverTransport(connection(`${PREFIX}ro`, hidden), 30_000);
+  const signsIn = await changed.connect().then(
+    () => true,
+    () => false,
+  );
+  await changed.close();
+  check(
+    crOwn === null && signsIn,
+    `control: on a driver session of its own the server runs that text as the password change: ${crOwn === null ? "accepted" : crOwn.message}, the new password ${signsIn ? "signs in" : "does not sign in"}`,
   );
 }
 

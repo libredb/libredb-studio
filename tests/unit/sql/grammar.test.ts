@@ -679,8 +679,8 @@ describe("dollarTags and doubleQuoteBackslashEscapes", () => {
 
 // Four facts Spark's lexer has, each absent (false) on every other row but one: raw strings (`rawStrings`), optimizer
 // hints lexed as code (`hintsAreCode`), a `--` comment a backslash continues (`lineCommentBackslashContinues`) and one
-// a lone carriage return ends (`lineCommentEndsAtCarriageReturn`). The SQL++ lexer shares the fourth; Druid's Calcite
-// lexer shares the second and fourth.
+// a lone carriage return ends (`lineCommentEndsAtCarriageReturn`). The SQL++ lexer and CQL's share the fourth; Druid's
+// Calcite lexer shares the second and fourth.
 describe("the reader facts Spark's row declares", () => {
   test("the compatibility default declares none of the four", () => {
     expect(DEFAULT_SQL_GRAMMAR.rawStrings).toBeUndefined();
@@ -691,7 +691,7 @@ describe("the reader facts Spark's row declares", () => {
 
   test.each(
     (Object.keys(GRAMMAR_COVERAGE) as DatabaseType[]).filter(
-      (type) => type !== "spark" && type !== "couchbase" && type !== "druid",
+      (type) => type !== "spark" && type !== "couchbase" && type !== "druid" && type !== "cassandra",
     ),
   )("%s declares none of the four", (type) => {
     expect(resolveSqlGrammar(type).rawStrings).toBeUndefined();
@@ -706,6 +706,15 @@ describe("the reader facts Spark's row declares", () => {
     expect(resolveSqlGrammar("couchbase").hintsAreCode).toBeUndefined();
     expect(resolveSqlGrammar("couchbase").lineCommentBackslashContinues).toBeUndefined();
     expect(resolveSqlGrammar("couchbase").lineCommentEndsAtCarriageReturn).toBe(true);
+  });
+
+  test("cassandra declares only that a carriage return ends a `--` or `//` comment", () => {
+    // Measured on 5.0.9 (tests/fixtures/cassandra/5.0.9/agent-boundary/14-line-comment-carriage-return.txt): a clause
+    // after `-- x<CR>` or `// x<CR>` filters the row out, and a statement after one runs.
+    expect(resolveSqlGrammar("cassandra").rawStrings).toBeUndefined();
+    expect(resolveSqlGrammar("cassandra").hintsAreCode).toBeUndefined();
+    expect(resolveSqlGrammar("cassandra").lineCommentBackslashContinues).toBeUndefined();
+    expect(resolveSqlGrammar("cassandra").lineCommentEndsAtCarriageReturn).toBe(true);
   });
 
   test("druid declares that a hint is code and that a carriage return ends a line comment", () => {

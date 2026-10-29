@@ -662,6 +662,7 @@ describe("the statement fence: one statement, a SELECT, before anything is sent"
   const UNREADABLE = `${PREFIX}; this text ends inside a comment, a string or a quoted name, so where it ends cannot be read, and it was not sent.`;
   const TAGGED = `${PREFIX}; this text holds a tagged dollar-quoted run ($tag$ ... $tag$), which CQL does not have, so where its strings end cannot be read, and it was not sent.`;
   const EMPTY = `${PREFIX}; this text holds no statement, so nothing was sent.`;
+  const CARRIAGE_RETURN = `${PREFIX}; this text holds a carriage return inside a -- or // comment with more text after it, and the server ends the comment at that carriage return, so the server could read a statement other than the one checked here, and it was not sent. End a comment with a line feed.`;
 
   test.each([
     ["a plain SELECT", "SELECT id FROM probe.customers"],
@@ -679,6 +680,10 @@ describe("the statement fence: one statement, a SELECT, before anything is sent"
     ["a semicolon inside a $$ string", "SELECT id FROM probe.customers WHERE name = $$a; DROP TABLE probe.x$$"],
     ["a string inside a subscript", "SELECT m['a;b'] FROM probe.t"],
     ["comment markers inside a string", "SELECT id FROM probe.customers WHERE url = 'http://x/* -- '"],
+    ["a comment ended by a carriage return and a line feed", "-- the customers\r\nSELECT id FROM probe.customers"],
+    ["a carriage return closing a trailing comment", "SELECT id FROM probe.customers -- done\r"],
+    ["a carriage return inside a block comment", "/* a\rb */ SELECT id FROM probe.customers"],
+    ["a carriage return inside a string", "SELECT id FROM probe.customers WHERE name = 'a -- b\rc'"],
   ])("admits %s", (_, sql) => {
     expect(cassandraAgentStatementRefusal(sql)).toBeNull();
   });
@@ -721,6 +726,39 @@ describe("the statement fence: one statement, a SELECT, before anything is sent"
     ["nothing", "", EMPTY],
     ["whitespace only", " \n\t ", EMPTY],
     ["comments only", "-- SELECT\n/* SELECT */ // x\n", EMPTY],
+    // Capture 14: the server ends a `--` or `//` comment at a lone carriage return, and runs what follows it.
+    [
+      "a SELECT, then ALTER ROLE after a carriage return in a -- comment",
+      "SELECT * FROM probe.customers -- x\rALTER ROLE agent_ro WITH PASSWORD = 'x'",
+      CARRIAGE_RETURN,
+    ],
+    [
+      "a SELECT, then ALTER ROLE after a carriage return in a // comment",
+      "SELECT * FROM probe.customers // x\rALTER ROLE agent_ro WITH PASSWORD = 'x'",
+      CARRIAGE_RETURN,
+    ],
+    [
+      "ALTER ROLE after a carriage return in a leading -- comment",
+      "-- x\rALTER ROLE agent_ro WITH PASSWORD = 'x'",
+      CARRIAGE_RETURN,
+    ],
+    [
+      "ALTER ROLE after a carriage return in a leading // comment",
+      "// x\rALTER ROLE agent_ro WITH PASSWORD = 'x'",
+      CARRIAGE_RETURN,
+    ],
+    [
+      "a clause after a carriage return in a comment",
+      "SELECT id FROM probe.customers -- x\rWHERE id = 2",
+      CARRIAGE_RETURN,
+    ],
+    [
+      // Read to the line feed this is a comment and one SELECT whose string holds ` -- `; the server read an ALTER ROLE
+      // that set the role's password, and its trailing ` -- '` as a comment (capture 14).
+      "an ALTER ROLE that reads as a SELECT when the comment runs on to the line feed",
+      "-- x\rALTER ROLE agent_ro WITH PASSWORD = '\nSELECT id FROM probe.customers WHERE name = ' -- '\n",
+      CARRIAGE_RETURN,
+    ],
   ])("refuses %s", (_, sql, reason) => {
     expect(cassandraAgentStatementRefusal(sql)).toBe(reason);
   });

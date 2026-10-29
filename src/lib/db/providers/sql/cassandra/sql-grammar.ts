@@ -77,6 +77,14 @@ const CASSANDRA_GRAMMAR: SqlGrammar = {
   //     -> "line 2:0 mismatched input 'DROP' expecting EOF", so the run ended at the
   //        newline: a LINE comment, not a to-end-of-input one.
   doubleSlashComment: true,
+  // A lone carriage return ENDS a `--` or `//` comment as a line feed does, measured on 5.0.9 on 2026-10-30
+  // (`tests/fixtures/cassandra/5.0.9/agent-boundary/14-line-comment-carriage-return.txt`):
+  //   `SELECT id FROM fence14.t -- x<CR>WHERE id = 2`, and the same with `//`
+  //     -> 0 rows, against 1 row with no WHERE, so the clause after the CR ran.
+  //   `-- x<CR>ALTER ROLE fence14_agent WITH PASSWORD = '...'`, sent as a role holding only SELECT
+  //     -> accepted, and the new password signs in.
+  // A reader that ran the comment on to the next line feed would hide code the server runs.
+  lineCommentEndsAtCarriageReturn: true,
   backslashAlwaysEscapes: false,
   script: DEFAULT_SQL_GRAMMAR.script,
   // Clauses that must follow the row bound (#1398), measured on ScyllaDB 2026.3.2

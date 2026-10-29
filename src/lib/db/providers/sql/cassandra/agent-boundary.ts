@@ -46,7 +46,7 @@
  * shows the revoke at once (capture 05). A fresh role, rather than a revoke, is the remedy.
  */
 import { ExecutionProfileError } from "../../../errors";
-import { readSqlSpan } from "@/lib/sql/spans";
+import { hasLoneCarriageReturnInLineComment, readSqlSpan } from "@/lib/sql/spans";
 import { CASSANDRA_SQL_GRAMMAR } from "./sql-grammar";
 import { type CassandraQueryResult, CassandraTransportError, type CassandraFaultCategory } from "./transport";
 
@@ -304,9 +304,17 @@ const SELECT_KEYWORD = /^select(?![\w$])/i;
  * A subscript's brackets are read as code, a literal inside them still opaque, so a semicolon there ends the
  * statement too. Text that ends inside a comment, string or quoted name, and a tagged dollar run, which CQL does not
  * have, cannot be bounded and are refused.
+ *
+ * A lone carriage return inside a `--` or `//` comment with more text after it is refused before the walk. The server
+ * ends the comment there (capture 14), and so does the grammar the walk reads, but a reader that runs the comment on
+ * to the line feed reads a different statement: `-- x<CR>ALTER ROLE ... = '<LF>SELECT ... = ' -- '<LF>` is a SELECT to
+ * it, and the server ran it as the role's password change. Such text is refused whichever reading is the walk's.
  */
 export function cassandraAgentStatementRefusal(cql: string): string | null {
   const grammar = CASSANDRA_SQL_GRAMMAR.grammar;
+  if (hasLoneCarriageReturnInLineComment(cql, grammar)) {
+    return `${FENCE}; this text holds a carriage return inside a -- or // comment with more text after it, and the server ends the comment at that carriage return, so the server could read a statement other than the one checked here, and it was not sent. End a comment with a line feed.`;
+  }
   let opened = false;
   let ended = false;
   for (let at = 0; at < cql.length; ) {
