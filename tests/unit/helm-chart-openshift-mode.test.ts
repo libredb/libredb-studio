@@ -1,0 +1,226 @@
+// @requires helm
+/**
+ * The chart's openshift sign-in mode (authProvider: openshift) and the Tier 0 ConsoleLink.
+ *
+ * openshift mode renders what the first verify window wired by hand through extraEnv, extraVolumes and
+ * serviceAccount.annotations: the ServiceAccount as the OAuth client (two redirect annotations naming the Route),
+ * a projected token with its own audience as the client secret, the cluster's CA from kube-root-ca.crt, the four
+ * OPENSHIFT_* variables Studio's openshift sign-in reads (src/lib/openshift-auth/config.ts), and the admin target of
+ * the self review (src/lib/kubernetes-access/config.ts). It refuses, naming the value, every values set Studio's
+ * openshift preflight would refuse, and the operator-managed guard (operator.managed and
+ * operator.clusterStudioNamespace) keeps every cross-namespace or cluster-scoped object to the one Studio the
+ * cluster admin named.
+ *
+ * Every case runs the real `helm template` against the chart, never a reimplementation of the templating.
+ */
+import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { parse, parseAllDocuments } from "yaml";
+import { howItFailed } from "../helpers/spawn-outcome";
+
+const CHART_DIR = join(import.meta.dir, "../../charts/libredb-studio");
+const RELEASE = "v1os";
+const NAMESPACE = "os-lab-v1";
+const HOST = "v1os-os-lab-v1.apps-crc.testing";
+const SIGN_IN_DIR = "/var/run/secrets/libredb/openshift";
+
+interface EnvVar {
+  name: string;
+  value?: string;
+  valueFrom?: unknown;
+}
+
+interface Volume {
+  name: string;
+  projected?: { sources: Array<Record<string, unknown>> };
+  [key: string]: unknown;
+}
+
+interface PodSpec {
+  serviceAccountName?: string;
+  automountServiceAccountToken?: boolean;
+  securityContext?: Record<string, unknown>;
+  containers: Array<{
+    name: string;
+    env?: EnvVar[];
+    volumeMounts?: Array<{ name: string; mountPath: string; readOnly?: boolean }>;
+  }>;
+  volumes?: Volume[];
+}
+
+interface EgressRule {
+  ports?: Array<{ port: number; protocol: string }>;
+  to?: Array<Record<string, unknown>>;
+}
+
+interface Manifest {
+  apiVersion: string;
+  kind: string;
+  automountServiceAccountToken?: boolean;
+  data?: Record<string, string>;
+  metadata: {
+    name: string;
+    namespace?: string;
+    labels?: Record<string, string>;
+    annotations?: Record<string, string>;
+  };
+  rules?: Array<{ apiGroups: string[]; resources: string[]; verbs: string[] }>;
+  subjects?: Array<{ kind: string; name: string; namespace?: string }>;
+  roleRef?: { kind: string; name: string };
+  spec?: {
+    template?: { spec: PodSpec };
+    egress?: EgressRule[];
+    location?: string;
+    href?: string;
+    text?: string;
+    applicationMenu?: { section?: string; imageURL?: string };
+    namespaceDashboard?: { namespaces?: string[]; namespaceSelector?: Record<string, unknown> };
+  };
+}
+
+function template(args: string[]): { exitCode: number; stdout: string; stderr: string } {
+  const run = Bun.spawnSync(["helm", "template", RELEASE, CHART_DIR, "--namespace", NAMESPACE, ...args], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  return { exitCode: run.exitCode, stdout: run.stdout.toString(), stderr: run.stderr.toString() };
+}
+
+function render(args: string[]): Manifest[] {
+  const run = template(args);
+  if (run.exitCode !== 0) throw new Error(`helm template ${howItFailed(run)}: ${run.stderr}`);
+  return parseAllDocuments(run.stdout)
+    .map((doc) => doc.toJSON() as Manifest)
+    .filter(Boolean);
+}
+
+function refused(args: string[], ...needles: string[]): void {
+  const run = template(args);
+  expect(run.exitCode).not.toBe(0);
+  for (const needle of needles) expect(run.stderr).toContain(needle);
+}
+
+function all(docs: Manifest[], kind: string): Manifest[] {
+  return docs.filter((doc) => doc.kind === kind);
+}
+
+function one(docs: Manifest[], kind: string, name: string): Manifest {
+  const found = docs.filter((doc) => doc.kind === kind && doc.metadata.name === name);
+  expect(found).toHaveLength(1);
+  return found[0];
+}
+
+function studioPod(docs: Manifest[], name = RELEASE): PodSpec {
+  const spec = one(docs, "Deployment", name).spec?.template?.spec;
+  if (!spec) throw new Error(`no pod spec in Deployment ${name}`);
+  return spec;
+}
+
+function envList(docs: Manifest[], name = RELEASE): EnvVar[] {
+  return studioPod(docs, name).containers[0].env ?? [];
+}
+
+function envOf(docs: Manifest[], name = RELEASE): Record<string, string | undefined> {
+  return Object.fromEntries(envList(docs, name).map((entry) => [entry.name, entry.value]));
+}
+
+function configData(docs: Manifest[], name = `${RELEASE}-config`): Record<string, string> {
+  return one(docs, "ConfigMap", name).data ?? {};
+}
+
+function set(...pairs: string[]): string[] {
+  return pairs.flatMap((pair) => ["--set", pair]);
+}
+
+/**
+ * A workable openshift-mode values set, the V1 hand wiring's: the Route with its host fixed at install time, the
+ * OpenShift APIs forced (an offline render has no cluster to ask), and an image past 1.1.0, the last release with no
+ * openshift sign-in.
+ */
+const OPENSHIFT = set(
+  "authProvider=openshift",
+  `fullnameOverride=${RELEASE}`,
+  "openshiftRoute.enabled=true",
+  `openshiftRoute.host=${HOST}`,
+  "global.compatibility.openshift.apis=force",
+  "image.tag=1.2.0",
+);
+
+const DISCOVERY = set("discovery.kubernetes.enabled=true", "discovery.kubernetes.namespaces={team-a,team-b}");
+
+const values = parse(readFileSync(join(CHART_DIR, "values.yaml"), "utf8"));
+
+describe("authProvider openshift and the openshift sign-in values", () => {
+  test("authProvider openshift passes the schema and reaches NEXT_PUBLIC_AUTH_PROVIDER", () => {
+    expect(configData(render(OPENSHIFT)).NEXT_PUBLIC_AUTH_PROVIDER).toBe("openshift");
+  });
+
+  test("an unknown authProvider is still refused by the schema", () => {
+    refused(set("authProvider=openshift4"), "authProvider");
+  });
+
+  test("operator.managed and operator.clusterStudioNamespace default off and empty", () => {
+    expect(values.operator).toEqual({ managed: false, clusterStudioNamespace: "" });
+  });
+
+  test("openshift.signIn defaults: a 600-second client token, no review cache override, no sign-in review", () => {
+    expect(values.openshift.signIn).toEqual({ tokenExpirationSeconds: 600, reviewCacheSeconds: null, review: "" });
+  });
+
+  test("openshift.consoleLink defaults off, in the application menu", () => {
+    expect(values.openshift.consoleLink).toEqual({
+      enabled: false,
+      location: "ApplicationMenu",
+      section: "LibreDB",
+      text: "LibreDB Studio",
+      imageUrl: "",
+      namespaces: [],
+      namespaceSelector: {},
+    });
+  });
+
+  test("discovery.kubernetes.clusterDomain defaults unset", () => {
+    expect(values.discovery.kubernetes.clusterDomain).toBeNull();
+  });
+
+  test("networkPolicy.enabled defaults unset, so only openshift discovery mode renders the policy unasked", () => {
+    expect(values.networkPolicy.enabled).toBeNull();
+  });
+
+  test.each([
+    ["openshift.signIn.tokenExpirationSeconds=599", "tokenExpirationSeconds"],
+    ["openshift.signIn.tokenExpirationSeconds=86401", "tokenExpirationSeconds"],
+    ["openshift.signIn.reviewCacheSeconds=61", "reviewCacheSeconds"],
+    ["openshift.signIn.reviewCacheSeconds=-1", "reviewCacheSeconds"],
+    ["openshift.signIn.review=not a review", "review"],
+    ["openshift.consoleLink.location=Everywhere", "location"],
+    ["openshift.consoleLink.imageUrl=http://example.com/icon.png", "imageUrl"],
+    ["openshift.consoleLink.namespaces={Team_A}", "namespaces"],
+    ["operator.clusterStudioNamespace=Not_A_Namespace", "clusterStudioNamespace"],
+    ["discovery.kubernetes.clusterDomain=Cluster.Local", "clusterDomain"],
+    ["discovery.kubernetes.clusterDomain=svc.cluster.local", "clusterDomain"],
+    ["discovery.kubernetes.clusterDomain=.cluster.local", "clusterDomain"],
+  ])("the schema refuses %s", (pair, key) => {
+    refused(set(pair), key);
+  });
+
+  test.each([
+    ["operator.unknown=true", "operator"],
+    ["openshift.signIn.unknown=true", "signIn"],
+    ["openshift.consoleLink.unknown=true", "consoleLink"],
+  ])("the schema refuses an unknown key: %s", (pair, key) => {
+    refused(set(pair), key);
+  });
+
+  test("the schema accepts the boundary values", () => {
+    render([
+      ...OPENSHIFT,
+      ...set(
+        "openshift.signIn.tokenExpirationSeconds=86400",
+        "openshift.signIn.reviewCacheSeconds=0",
+        "discovery.kubernetes.clusterDomain=corp.example",
+      ),
+    ]);
+  });
+});
