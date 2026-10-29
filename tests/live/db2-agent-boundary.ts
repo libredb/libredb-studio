@@ -178,6 +178,8 @@ const CLEANUP = [
   "DROP TABLE APP.LIBREDB_AB_SECRET",
   "DROP ROLE LIBREDB_AB_ROLE",
   "DROP SEQUENCE APP.LIBREDB_AB_SEQ",
+  "DROP TABLE LIBREDB_AB_IMPLICIT.T",
+  "DROP SCHEMA LIBREDB_AB_IMPLICIT RESTRICT",
 ];
 
 try {
@@ -215,11 +217,6 @@ try {
   const writes: [string, string, number[]][] = [
     ["INSERT", "INSERT INTO APP.CUSTOMERS VALUES (99, 'x')", [-104]],
     ["FINAL TABLE", "SELECT * FROM FINAL TABLE (INSERT INTO APP.CUSTOMERS VALUES (99, 'x'))", [-20165]],
-    [
-      "FINAL TABLE in the outer FROM",
-      "SELECT 1 AS A FROM SYSIBM.SYSDUMMY1) AS X, FINAL TABLE (INSERT INTO APP.CUSTOMERS VALUES (99, 'x')) AS Y, (SELECT 1 AS B FROM SYSIBM.SYSDUMMY1",
-      [-20165],
-    ],
     ["NEXT VALUE FOR", "VALUES NEXT VALUE FOR APP.ORDER_SEQ", [-348]],
     ["BEGIN ATOMIC", "BEGIN ATOMIC INSERT INTO APP.CUSTOMERS VALUES (99, 'x'); END", [-104]],
     [
@@ -241,6 +238,26 @@ try {
       `${label}: refused by the server through queryReadOnly (SQLCODE ${code})`,
     );
   }
+  // Closing the derived table early to put the data change in the outer FROM is refused before it is sent; sent raw by
+  // the instance owner, the same wrapped text is refused by the server too, since the change is joined to the table.
+  const outerFinal =
+    "SELECT 1 AS A FROM SYSIBM.SYSDUMMY1) AS X, FINAL TABLE (INSERT INTO APP.CUSTOMERS VALUES (99, 'x')) AS Y, " +
+    "(SELECT 1 AS B FROM SYSIBM.SYSDUMMY1";
+  const outerRefused = await refusalOf(provider, outerFinal);
+  let outerRaw: unknown;
+  try {
+    await admin.query(
+      `SELECT * FROM (\n${outerFinal}\n) AS LIBREDB_AGENT_READ ORDER BY ORDER OF LIBREDB_AGENT_READ FETCH FIRST 2 ROWS ONLY`,
+    );
+  } catch (error) {
+    outerRaw = error;
+  }
+  check(
+    outerRefused instanceof Error &&
+      outerRefused.message.includes("it closes a parenthesis it did not open") &&
+      sqlcode(outerRaw) === -20165,
+    `FINAL TABLE in the outer FROM: refused before it is sent, and raw by the server (SQLCODE ${sqlcode(outerRaw)})`,
+  );
   // The same, raw as the agent user: its privileges refuse each one the parser would let through.
   const agent = await raw("agent_ro", AGENT_PASSWORD);
   const rawRefusals: [string, string, number][] = [
@@ -301,6 +318,44 @@ try {
   check(
     after.customers === before.customers && after.seq === before.seq,
     "the rows and APP.ORDER_SEQ read back the same",
+  );
+
+  // ---- The row bound holds: a statement that closes the derived table early is refused before it is sent ------------
+  const breakouts: [string, string][] = [
+    ["a lateral read", "SELECT 1 AS A FROM SYSIBM.SYSDUMMY1) AS X, LATERAL (SELECT COLNAME FROM SYSCAT.COLUMNS"],
+    ["a union", "SELECT COLNAME FROM SYSCAT.COLUMNS) AS X UNION ALL SELECT * FROM (SELECT COLNAME FROM SYSCAT.COLUMNS"],
+    ["a table expression", "SELECT 1 AS A FROM SYSIBM.SYSDUMMY1) AS X, TABLE (SELECT COLNAME FROM SYSCAT.COLUMNS"],
+  ];
+  for (const [label, sql] of breakouts) {
+    const refused = await refusalOf(provider, sql);
+    check(
+      refused instanceof Error && refused.message.includes("it closes a parenthesis it did not open"),
+      `closing the derived table early to add ${label}: refused before it is sent`,
+    );
+  }
+  // Measured raw, the same wrapped text: the lateral and table forms still end under the outer FETCH FIRST, and the union
+  // form is refused by the server, whose outer ORDER BY ORDER OF cannot name the derived table there.
+  const wrap = (sql: string) =>
+    `SELECT * FROM (\n${sql}\n) AS LIBREDB_AGENT_READ ORDER BY ORDER OF LIBREDB_AGENT_READ FETCH FIRST 2 ROWS ONLY`;
+  const lateral = (await admin.query(wrap(breakouts[0][1]))).rows.length;
+  const tableForm = (await admin.query(wrap(breakouts[2][1]))).rows.length;
+  let union: unknown;
+  try {
+    await admin.query(wrap(breakouts[1][1]));
+  } catch (error) {
+    union = error;
+  }
+  check(
+    lateral === 2 && tableForm === 2 && sqlcode(union) === -204,
+    `raw, the lateral and table forms answer at most 2 rows (${lateral}, ${tableForm}) and the union form is refused (SQLCODE ${sqlcode(union)})`,
+  );
+  const quoted = await provider.queryReadOnly?.(
+    "SELECT ')' AS P, ID FROM APP.ORDERS -- )\nWHERE ID IN (1, 2) /* ( */ ORDER BY ID",
+    BUDGET,
+  );
+  check(
+    quoted?.rows.length === 2,
+    "a parenthesis inside a literal or a comment is read past, and the statement answers",
   );
 
   // ---- The check, before every statement -------------------------------------------------------------------------
@@ -570,6 +625,32 @@ try {
       `catalog ${kind}: answered as the agent user${answered instanceof Error ? ` (got: ${answered.message.slice(0, 200)})` : ""}`,
     );
   }
+
+  // A schema made implicitly, by a CREATE in a schema that does not exist, is owned by SYSIBM; its table is still read.
+  await setup([
+    "CREATE TABLE LIBREDB_AB_IMPLICIT.T (ID INTEGER)",
+    "GRANT SELECT ON LIBREDB_AB_IMPLICIT.T TO USER AGENT_RO",
+  ]);
+  const implicitOwner = String(
+    (await rows("SELECT OWNERTYPE FROM SYSCAT.SCHEMATA WHERE SCHEMANAME = 'LIBREDB_AB_IMPLICIT'"))[0]?.OWNERTYPE,
+  );
+  // An implicit schema grants PUBLIC CREATEIN, which the check refuses until it is revoked.
+  const implicitRefused = await refusalOf(provider, "SELECT ID FROM APP.ORDERS");
+  check(
+    implicitRefused instanceof ExecutionProfileError &&
+      implicitRefused.message.includes('REVOKE CREATEIN ON SCHEMA "LIBREDB_AB_IMPLICIT" FROM PUBLIC'),
+    "a schema made implicitly gives PUBLIC CREATEIN, and the check refuses it",
+  );
+  await setup(["REVOKE CREATEIN ON SCHEMA LIBREDB_AB_IMPLICIT FROM PUBLIC"]);
+  const implicitColumns = await provider.queryReadOnly?.(
+    composeCatalogRead("db2", { kind: "columns", schema: "LIBREDB_AB_IMPLICIT" }),
+    BUDGET,
+  );
+  check(
+    implicitOwner === "S" && implicitColumns?.rows.length === 1,
+    `a table in a schema made implicitly, owned by the system (${implicitOwner}), is in the catalog read`,
+  );
+  await setup(["DROP TABLE LIBREDB_AB_IMPLICIT.T", "DROP SCHEMA LIBREDB_AB_IMPLICIT RESTRICT"]);
 
   // ---- The budgets -----------------------------------------------------------------------------------------------------
   const rowsOver = await refusalOf(provider, "SELECT COLNAME FROM SYSCAT.COLUMNS", { ...BUDGET, maxResultRows: 3 });

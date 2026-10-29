@@ -533,7 +533,8 @@ On the measured database the check's six reads take about 170 ms, and a whole ca
 
 - the connection begins a unit of work, runs the check above in it, then describes the statement in a derived table under `WHERE 1 = 0`, so its column types are read before any row is fetched, and a `CLOB`, `DBCLOB`, `BLOB` or `XML` column is refused unread, since db2-node fetches each value whole and a row can carry up to 2 GB of one;
 - the statement is then sent inside `SELECT * FROM (` ... `) AS LIBREDB_AGENT_READ ORDER BY ORDER OF LIBREDB_AGENT_READ FETCH FIRST n ROWS ONLY`, where n is one past the row budget, its own text on lines of its own with its terminator and trailing comments left out, so a result past the budget is refused rather than cut, and its own order is kept;
-- only a fullselect fits there, `WITH` and `VALUES` included: a `CALL`, a `SET`, `COMMIT`, `LOCK TABLE`, a declared temporary table and a compound block are refused by the server's parser with `SQL0104N`, a data change with `SQL20165N`, also when the statement closes the derived table early to put it in the outer `FROM`, and `NEXT VALUE FOR` with `SQL0348N` (capture 04, and the live check); the privileges the check proves are the boundary behind that, measured raw (capture 08);
+- before any connection opens, the statement is refused unless that derived table provably holds it whole: its end must be readable under Db2's grammar, no literal, quoted name or comment left open to swallow what follows, and every parenthesis outside a literal, a quoted name or a comment must close one the statement opened, all of them closing; a statement that closed the derived table early could put a lateral read, a table expression or a union beside it, and measured raw, the lateral and table forms still ended under the outer `FETCH FIRST` and the union form was refused (`SQL0204N`, since the outer `ORDER OF` cannot name the derived table there), but the bound is not left to that;
+- only a fullselect fits there, `WITH` and `VALUES` included: a `CALL`, a `SET`, `COMMIT`, `LOCK TABLE`, a declared temporary table and a compound block are refused by the server's parser with `SQL0104N`, a data change with `SQL20165N`, and `NEXT VALUE FOR` with `SQL0348N` (capture 04, and the live check); the privileges the check proves are the boundary behind that, measured raw (capture 08);
 - every value is counted against the byte budget;
 - the unit of work is rolled back and the connection closed on every path, an answered call included, so nothing one call set on its session, a special register included, reaches the next.
 
@@ -572,6 +573,7 @@ REVOKE EXECUTE ON MODULE SYSIBMADM.DBMS_JOB FROM PUBLIC;
 ```
 
 Revoking from `PUBLIC` reaches every user of the database: grant a privilege back to each user or role that needs it before revoking.
+A schema Db2 creates implicitly, for a `CREATE` in a schema that does not exist, gives `PUBLIC` `CREATEIN` on it (measured), which the check refuses with the revoke that lifts it.
 Grant `SELECT` on tables, or on views whose definitions read only tables, views the user may also read, and IBM's functions: a view that calls a function of yours refuses the user.
 A table with a row permission or a column mask anywhere in the database refuses every agent user; dropping the control, at the cost of what it protects, is the one remedy.
 
@@ -585,12 +587,13 @@ What the agent reads beyond the tables needs no grant: the catalog reads below a
 
 #### Boundary record
 
-Measured on 12.1.0.0 (the digest `run.sh` pins, 2026-10-29) by [`tests/live/db2-agent-boundary.ts`](../../tests/live/db2-agent-boundary.ts), with Studio's agent admission bypassed: 78 checks, all passing.
+Measured on 12.1.0.0 (the digest `run.sh` pins, 2026-10-29) by [`tests/live/db2-agent-boundary.ts`](../../tests/live/db2-agent-boundary.ts), with Studio's agent admission bypassed: 85 checks, all passing.
 
 | Probe | Admitted agent user, through `queryReadOnly` | The same user, raw | Instance owner, positive control |
 | --- | --- | --- | --- |
 | `INSERT` | `SQL0104N` | `SQL0551N` | ran |
-| a data change in `FINAL TABLE`, and in the outer `FROM` | `SQL20165N` | `SQL0551N` | ran |
+| a data change in `FINAL TABLE` | `SQL20165N` | `SQL0551N` | ran |
+| the same in the outer `FROM`, the derived table closed early | refused before it is sent | not sent | `SQL20165N` raw |
 | `NEXT VALUE FOR` | `SQL0348N` | `SQL0551N` | ran |
 | `BEGIN ATOMIC` with an `INSERT` | `SQL0104N` | `SQL0551N` | ran |
 | `CALL SYSPROC.ADMIN_CMD('EXPORT ...')` | `SQL0104N` | `SQL0551N` after the revoke | not sent |
@@ -602,7 +605,8 @@ The check refused, and admitted again once the grant or the object was gone: `EX
 It admitted a view over a table, a view over a view the user may read, and a view calling `UPPER` and `LENGTH`.
 On one handle a call ran, an `INSERT` granted after it refused the next call, and the call after its revoke ran; each call read the agent user's own `CURRENT SCHEMA`.
 The operations profile opened the instance owner unchecked and listed its tables; it and an editor handle refused `queryReadOnly` before sending anything.
-The four catalog kinds answered as the agent user.
+The four catalog kinds answered as the agent user, and the column kind read a table in a schema made implicitly, which `SYSIBM` owns; that schema gave `PUBLIC` `CREATEIN`, which the check refused until it was revoked.
+A lateral read, a union and a table expression put beside the derived table by closing it early were each refused before they were sent, and a parenthesis inside a literal or a comment was read past.
 The budgets: a result of more than 3 rows under a budget of 3 was refused at the 4th, a result past a 20-byte budget was refused, a `CLOB`, a `BLOB` and an `XML` column were refused before any row was read, and a cross join under a 1.5-second deadline was refused at 1.5 seconds, the next call answering.
 
 The script creates objects carrying the `LIBREDB_AB` prefix and drops them on exit; run it on a disposable database holding the fixture and the seeded agent user, such as the compose service:
@@ -626,7 +630,7 @@ The agent reads it through `runServerPack` and `agentEnginePack`, and the dialec
 | `catalogCapture` | Dialect-bound | `"unsupported"` |
 
 This overlay overrides no Shared member, so every Shared member is the `sql` statement-language family's own.
-The catalog read takes `SYSCAT.COLUMNS` for the column kind, `SYSCAT.REFERENCES` and `SYSCAT.KEYCOLUSE` for the foreign keys, `SYSCAT.INDEXES` and `SYSCAT.INDEXCOLUSE` for the indexes, and `SYSCAT.TABLES.CARD` for the row estimates, which the last `RUNSTATS` recorded; every kind leaves out the schemas the system owns (`SYSCAT.SCHEMATA.OWNERTYPE` S), names are trimmed, and a selector's schema and table are compared as string literals, exactly as the catalog spells them, an undelimited name in upper case.
+The catalog read takes `SYSCAT.COLUMNS` for the column kind, `SYSCAT.REFERENCES` and `SYSCAT.KEYCOLUSE` for the foreign keys, `SYSCAT.INDEXES` and `SYSCAT.INDEXCOLUSE` for the indexes, and `SYSCAT.TABLES.CARD` for the row estimates, which the last `RUNSTATS` recorded; every kind leaves out the system's own tables (`SYSCAT.TABLES.OWNERTYPE` S), by that fact rather than by a schema name, since a schema created implicitly is itself owned by `SYSIBM` (measured), names are trimmed, and a selector's schema and table are compared as string literals, exactly as the catalog spells them, an undelimited name in upper case.
 Each kind was run as the agent user through `queryReadOnly`.
 Investigation, database assessment and data analysis open on Db2; assessment cannot pass there, because its verdict needs a table profile and the engine composes none (B146); query optimization stays closed, and `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`, because the engine composes no estimating plan and no table profile (B148).
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
