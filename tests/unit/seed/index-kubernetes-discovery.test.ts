@@ -1,6 +1,7 @@
 /**
  * How src/lib/seed/index.ts merges the Kubernetes-discovered connections into the seed listing: after the seed file
- * and CapRover, before the samples. While the Kubernetes access review is on they are set apart in `pendingReview`,
+ * and CapRover, before the samples. While the Kubernetes access review is on, as it always is in openshift sign-in
+ * mode, they are set apart in `pendingReview`,
  * carrying the reserved role the role filter never selects, so the review is their only gate and no caller of
  * getManagedConnections ever receives one; with it off they are in `before` under `admin`. Either way they carry the
  * literal marker and the Secret marker the review reads. The export is read through the real loader from a temporary
@@ -39,6 +40,9 @@ const KUBERNETES_IDS = [ORDERS, ANALYTICS, BILLING];
 
 // The hosts below are those of the default cluster domain.
 delete process.env.SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN;
+
+/** The sign-in mode tests/setup.ts sets, which one case below overrides. */
+const SETUP_AUTH_PROVIDER = process.env.NEXT_PUBLIC_AUTH_PROVIDER;
 
 let kubernetes: KubernetesDiscoveryExportFixture;
 let caprover: DiscoveryExportFixture;
@@ -83,6 +87,8 @@ describe("seed/index with the Kubernetes discovery source", () => {
     delete process.env.SQLITE_EMBEDDED_SAMPLE_PATH;
     delete process.env.LIBREDB_EMBEDDED_SAMPLE_PATH;
     delete process.env.LIBREDB_EMBEDDED_SAMPLE;
+    if (SETUP_AUTH_PROVIDER === undefined) delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+    else process.env.NEXT_PUBLIC_AUTH_PROVIDER = SETUP_AUTH_PROVIDER;
     resetCache();
     resetDiscoveryCache();
     resetKubernetesDiscoveryCache();
@@ -134,6 +140,21 @@ describe("seed/index with the Kubernetes discovery source", () => {
       expect((await getManagedConnections(roles)).filter((c) => c.seedId.startsWith("k8s-"))).toEqual([]);
     },
   );
+
+  it("in openshift sign-in mode with the review switch unset, sets every one apart with the reserved role, and the admin role's list holds none", async () => {
+    // tests/setup.ts signs in locally; openshift sign-in runs the review whatever KUBERNETES_ACCESS_REVIEW says.
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "openshift";
+    delete process.env.KUBERNETES_ACCESS_REVIEW;
+    const { before, pendingReview, after } = await getSeedListing(["admin"]);
+    expect(pendingReview.map((c) => [c.seedId, c.roles])).toEqual(
+      KUBERNETES_IDS.map((seedId) => [seedId, [KUBERNETES_REVIEWED_ROLE]]),
+    );
+    expect(seedIds(before)).toEqual(["file-pg", "caprover-pg"]);
+    expect(after.filter((c) => c.seedId.startsWith("k8s-"))).toEqual([]);
+    const admin = seedIds(await getManagedConnections(["admin"]));
+    expect(admin).toContain("file-pg");
+    expect(admin.filter((seedId) => seedId.startsWith("k8s-"))).toEqual([]);
+  });
 
   it("keeps the list's order: before, then the rows set apart, then the samples", async () => {
     const sqliteSample = path.join(scratch, "sample-employees.db");
