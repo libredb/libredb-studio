@@ -100,13 +100,25 @@ function withoutTrailingSlashes(path: string): string {
   return path.slice(0, end);
 }
 
+/** A Windows absolute path: a leading separator, or a drive letter, a colon and a separator (`C:x` is drive-relative). */
+const WINDOWS_ABSOLUTE_PATH = /^(?:[\\/]|[A-Za-z]:[\\/])/;
+
+/**
+ * Whether `path` is absolute on the platform the server runs on, answered as `path.isAbsolute` answers it there, which
+ * this module cannot import. A leading slash alone would refuse every Windows path, so openshift sign-in could not run
+ * from npx or the Windows launcher.
+ */
+function isAbsolutePath(path: string): boolean {
+  return process.platform === "win32" ? WINDOWS_ABSOLUTE_PATH.test(path) : path.startsWith("/");
+}
+
 /**
  * The projected token file used as the client secret. No default: the default ServiceAccount token carries the API
  * audience, which a dedicated audience replaces.
  */
 export function openShiftTokenFilePath(): string {
   const value = trimmed(process.env[OPENSHIFT_TOKEN_FILE_ENV]);
-  if (!value.startsWith("/")) throw new OpenShiftConfigError(TOKEN_FILE_MESSAGE);
+  if (!isAbsolutePath(value)) throw new OpenShiftConfigError(TOKEN_FILE_MESSAGE);
   return value;
 }
 

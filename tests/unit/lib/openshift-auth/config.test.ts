@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { posix, win32 } from "node:path";
 import { AuthConfigError } from "@/lib/auth-errors";
 import {
   OPENSHIFT_API_CA_FILE_ENV,
@@ -199,6 +200,44 @@ describe("openShiftTokenFilePath", () => {
   test("returns the absolute path, trimmed", () => {
     set(OPENSHIFT_TOKEN_FILE_ENV, " /var/run/secrets/libredb/openshift/oauth-client-token ");
     expect(openShiftTokenFilePath()).toBe("/var/run/secrets/libredb/openshift/oauth-client-token");
+  });
+
+  // Studio also runs on Windows (npx, the Windows launcher), where a temporary or program-data path starts with a drive.
+  test("is absolute as path.isAbsolute answers on the platform the server runs on", () => {
+    const values = [
+      "/var/run/secrets/libredb/openshift/oauth-client-token",
+      "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\libredb-openshift-auth-x\\oauth-client-token",
+      "d:/libredb/oauth-client-token",
+      "\\\\server\\share\\oauth-client-token",
+      "\\oauth-client-token",
+      "C:oauth-client-token",
+      "C:",
+      "1:\\oauth-client-token",
+      ".\\oauth-client-token",
+      "oauth-client-token",
+    ];
+    const answers = { win32: win32.isAbsolute, linux: posix.isAbsolute, darwin: posix.isAbsolute } as const;
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform") as PropertyDescriptor;
+    try {
+      for (const [platform, isAbsolute] of Object.entries(answers)) {
+        Object.defineProperty(process, "platform", { value: platform, configurable: true });
+        for (const value of values) {
+          set(OPENSHIFT_TOKEN_FILE_ENV, value);
+          let accepted = true;
+          try {
+            openShiftTokenFilePath();
+          } catch {
+            accepted = false;
+          }
+          expect(accepted, `${platform}: ${value}`).toBe(isAbsolute(value));
+        }
+      }
+    } finally {
+      Object.defineProperty(process, "platform", descriptor);
+    }
+    // The table holds both answers on each platform, so the parity above is not vacuous.
+    expect(values.filter((value) => win32.isAbsolute(value))).toHaveLength(5);
+    expect(values.filter((value) => posix.isAbsolute(value))).toHaveLength(1);
   });
 });
 
