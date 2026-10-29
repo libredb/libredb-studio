@@ -523,6 +523,7 @@ they arrive, exactly as before.
 | `Refused by policy` | The operation layer denied it. Shown by deny code — there is no engine text, because a denial produced none |
 | `Approval required` | The operation needs a human approval this run does not have |
 | `The database refused the statement` | The engine's own message, quoted |
+| `Refused before the database` | Studio refused the call before anything reached the database: arguments or a command it would not send, or a statement the connection's read-only fence or the run's read allowance refused. The reason is shown as Studio's own sentence, not quoted as the engine's |
 | `Plans compared` / `Index recommended` / `Rewrite recommended` | Optimize only |
 | `Profiled <table>` | Assess only: counts and findings |
 | `Result stored` … *"A moment, not a history"* | Operate only: an operational reading, with the caveat that it describes an instant already past |

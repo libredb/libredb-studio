@@ -852,6 +852,13 @@ export type AgentToolRefusal =
        * field existed carries none, and absent means unrecorded rather than `false`.
        */
       readonly answered?: boolean;
+      /**
+       * `false` when this server refused the statement before sending it (`RefusedBeforeSendError`: a provider's own
+       * fence, or the run's read allowance), so `message` is this server's sentence and the database never saw the
+       * statement. It is still a statement the run spent and a repair attempt, because the rewrite is the model's to
+       * author. Absent for a failure the database raised, and on every refusal recorded before this field existed.
+       */
+      readonly sent?: false;
     }
   | { readonly class: "reading-refused"; readonly reasonCode: AgentReadingDenyCode; readonly elapsedMs?: number }
   /**

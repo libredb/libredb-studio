@@ -1913,6 +1913,11 @@ function describeSettled(event: AgentSettledStepEvent, toolName: string): string
     // run-loop outcome instead of a refusal.
     return `Step ${event.stepId} (${toolName}) reached the database and its reading was not delivered: ${refusal.reasonCode}. Ask for a different reading rather than repeating this one.`;
   }
+  if (refusal.sent === false) {
+    // This server's own sentence, so said in its voice rather than fenced as the database's.
+    const reason = /[.!?]$/.test(refusal.message) ? refusal.message : `${refusal.message}.`;
+    return `Step ${event.stepId} (${toolName}) was refused before it was sent, so the database never saw it: ${reason} Draft a statement that does not do what the refusal names.`;
+  }
   // The engine's own words: untrusted, so fenced rather than quoted into the
   // server's voice. The fingerprint stands in for a correlation id, which a
   // statement that failed never produced.

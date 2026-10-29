@@ -419,6 +419,13 @@ before the engine. The rail shows it as "Refused before the database", it counts
 repair attempt, and a repeat of the call is answered from the ledger with the same reason. A step a
 dead process left with no outcome is still told apart: its outcome is unknowable, and it is said so.
 
+**A statement the provider refused before sending it stays a `database-error` refusal, marked `sent: false`.**
+A provider whose own read-only fence will not send a statement raises `RefusedBeforeSendError` (`src/lib/db/errors.ts`) rather than a plain `QueryError`, and the run read allowance's refusal is one.
+The tool layer records the provider's sentence as `message`, unfenced, because it is this server's and not the engine's, and tells the model the statement was refused before it was sent and the database was not asked.
+It still counts a statement and a repair attempt, because the run spent the execution and the rewrite is the model's to author.
+The rail shows it as "Refused before the database" with that sentence as the detail, not as "The database refused the statement", and a repeat of the call is answered from the ledger in the same words.
+MCP answers a fence's refusal as `mcp_statement_refused` and the allowance's as `mcp_result_too_large`, both in this server's words, never behind the untrusted-content notice as the database's error.
+
 **`driver-resolved` says what drove the run**, and it exists because a finished run used to say
 nothing about that: no event and no record field carried the model id, so "these settings were
 measured" — the product's whole claim about a model — was not checkable from the run that used them.
@@ -1979,7 +1986,7 @@ at least the longest deadline it wants to serve, and a stream cut mid-run has no
 | `maxResultRows` / `maxResultBytes` | 200 / 256 KiB | Compared after the driver has materialised the rows, so an oversized read is refused but still paid for at the database. |
 | `maxConcurrentExecutions` | 1 | The loop is sequential; a run cannot fan out — and a second consequence rides on the same 1: a failed statement's recorded span is a DELTA over the run's charged total, so an execution in flight alongside it would have its time attributed to whichever one failed. |
 | One model call | 90 s | Whichever of this and the run's remaining time is smaller applies. Not per workflow: how long one request may hang is a property of the transport, not of the question. |
-| Repair attempts | 3 | Statements that failed **at the database**, and reads the run read allowance refused before sending. |
+| Repair attempts | 3 | Statements that failed **at the database**, and statements a provider's fence or the run read allowance refused before sending. |
 | Billed reads | 10,000 per run | Every budget-taking read the run hands a provider (statements, `readCatalogReadOnly`, the cluster readings), grounding and sampling statements included, on an engine that bills each read; carried across resumes; no engine charges it yet. |
 
 The statement budget, the database time and the wall clock are enforced through the policy the run's
@@ -1996,7 +2003,7 @@ What a drive spends after its last settled step, when the process dies, is not r
 An engine that bills its reads charges it before each request it sends, with what that request may cost at most, retries included, and its provider doc says what one billed read is; every other engine ignores it, and no engine charges it yet.
 Two kinds of read a drive sends take no budget and so are never charged: the grounding's object-inventory walk (`listContainers`, `countObjects`, `listObjects`, `describeObjects`) and the curated operation reads (`getActiveSessions`, `getSlowQueries` and the rest).
 An engine that bills its reads must keep both off billed requests, or route them through a budget-taking read such as `readCatalogReadOnly`.
-A charge past what is left is refused before the request is sent, with `ReadAllowanceExceededError`, a `QueryError` whose sentence opens "Read-only execution exceeded the read allowance".
+A charge past what is left is refused before the request is sent, with `ReadAllowanceExceededError`, a `RefusedBeforeSendError` whose sentence opens "Read-only execution exceeded the read allowance".
 The run tells the model in this server's own voice, not fenced as the database's error, and adds that the database was not asked and a smaller read may fit.
 It is settled as a repairable statement failure and costs one of the three repair attempts, although it never reached the database, because the repair is a smaller read the model has to write.
 The 10,000 is 45 statements, the largest row's ceiling, times 201 rows, with room left: the allowance binds only where a request bills more than the rows it returns.

@@ -1063,6 +1063,9 @@ function describeRefusal(refusal: AgentToolRefusal): Omit<AgentTimelineItem, "id
       // engine's), so it is the detail rather than a quote.
       return { headline: "Refused before the database", detail: refusal.detail };
     default:
+      // A statement this server refused before sending it carries this server's sentence, so it is the detail rather
+      // than a quote attributed to the engine.
+      if (refusal.sent === false) return { headline: "Refused before the database", detail: refusal.message };
       return { headline: "The database refused the statement", quoted: refusal.message };
   }
 }

@@ -1475,6 +1475,34 @@ describe("foldLedgerEntries", () => {
     expect(view.items[0].quoted).toBe('relation "custmers" does not exist');
   });
 
+  test("a statement the provider refused before sending it says so, and quotes nothing as the engine's", () => {
+    const view = foldLedgerEntries([
+      event({
+        kind: "event",
+        event: {
+          kind: "tool-refused",
+          atMs: 10,
+          stepId: "s1",
+          refusal: {
+            class: "database-error",
+            statementFingerprint: "fp1",
+            message: "Read-only execution refused the statement before sending it: not-a-real-fence",
+            elapsedMs: 1,
+            answered: false,
+            sent: false,
+          },
+        },
+      }),
+    ]);
+
+    expect(view.items[0].headline).toBe("Refused before the database");
+    expect(view.items[0].detail).toBe("Read-only execution refused the statement before sending it: not-a-real-fence");
+    expect(view.items[0].quoted).toBeUndefined();
+    // The run still spent a statement and a repair attempt on it, as the tool layer charged them.
+    expect(view.budget.find((meter) => meter.id === "statements")?.used).toBe(1);
+    expect(view.budget.find((meter) => meter.id === "repairs")?.used).toBe(1);
+  });
+
   test("a refused reading is its own outcome, and quotes nothing, because no engine wrote it", () => {
     // The two reading refusals are the server's own decision about a curated reading
     // it will not deliver, so the item names what happened rather than fencing text.

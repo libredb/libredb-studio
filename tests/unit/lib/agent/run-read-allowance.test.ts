@@ -220,6 +220,23 @@ describe("the run read allowance", () => {
     expect(promptText(next)).toContain("refused by this server before it was sent; the database was not asked");
   });
 
+  test("a refusal asked again is answered from the ledger as refused before it was sent, not as the database's", async () => {
+    const { provider } = billingProvider((sql) => (sql === MODEL_SQL ? AGENT_RUN_READ_ALLOWANCE : 1));
+
+    const { turns, events } = await drive(provider, [countOrders("call_1"), countOrders("call_2")]);
+
+    expect(events.filter((event) => event.kind === "tool-refused")).toMatchObject([
+      { refusal: { class: "database-error", sent: false } },
+    ]);
+    const replay = turns[2];
+    if (replay === undefined) throw new Error("the run ended before the repeated call was answered");
+    expect(promptText(replay)).toContain("This exact call was already made in this run.");
+    expect(promptText(replay)).toContain(
+      "(run_read_query) was refused before it was sent, so the database never saw it:",
+    );
+    expect(promptText(replay)).not.toContain("failed at the database");
+  });
+
   test("is the run's, not the drive's: a resumed drive starts from what the ledger says the run spent", async () => {
     const { provider, reads } = billingProvider(() => 5);
     forgetHeldSnapshots();

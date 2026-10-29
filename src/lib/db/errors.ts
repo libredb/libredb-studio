@@ -168,11 +168,25 @@ export class OffsetUnsupportedError extends QueryError {
 }
 
 /**
- * A read refused because it would spend more billed reads than its run has left (`RunReadAllowance` in
- * `read-allowance.ts`). A QueryError of its own class, raised before the request is sent: a smaller read that fits
- * what is left is the repair, so every caller that settles a statement failure settles this one the same way.
+ * A statement this repository refused before sending it, so the database never saw it: a provider's own fence on what
+ * the read-only profile may run, or a charge the run's read allowance cannot pay. A QueryError, so every caller that
+ * settles a statement failure still settles this one, and a statement that avoids what the sentence names is the
+ * repair; its own class, so the agent and MCP say the statement was refused before it was sent, in this server's
+ * voice, rather than presenting the sentence as the database's error.
  */
-export class ReadAllowanceExceededError extends QueryError {
+export class RefusedBeforeSendError extends QueryError {
+  constructor(message: string, provider?: DatabaseType, query?: string) {
+    super(message, provider, query);
+    this.name = "RefusedBeforeSendError";
+    Object.setPrototypeOf(this, RefusedBeforeSendError.prototype);
+  }
+}
+
+/**
+ * A read refused because it would spend more billed reads than its run has left (`RunReadAllowance` in
+ * `read-allowance.ts`). Refused before the request is sent: a smaller read that fits what is left is the repair.
+ */
+export class ReadAllowanceExceededError extends RefusedBeforeSendError {
   constructor(message: string, provider?: DatabaseType) {
     super(message, provider);
     this.name = "ReadAllowanceExceededError";

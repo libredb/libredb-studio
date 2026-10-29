@@ -70,6 +70,7 @@ import {
   PoolExhaustedError,
   QueryError,
   ReadAllowanceExceededError,
+  RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
 import type { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
@@ -1604,6 +1605,9 @@ function columnsThatExist(message: string, connection: DatabaseConnection): stri
 const READ_ALLOWANCE_ADVICE =
   "That read was refused by this server before it was sent; the database was not asked. This run cannot pay for a read that large: ask for a smaller one that fits what is left, or answer from what you have already read.";
 
+const REFUSED_BEFORE_SEND_ADVICE =
+  "That statement was refused by this server before it was sent; the database was not asked, so this is not a database error. Draft a statement that does not do what the refusal names, or answer from what you have already read.";
+
 function otherStatementAdvice(
   message: string,
   engine: string,
@@ -1782,13 +1786,16 @@ export async function runAuditedAgentCall(
       So `columns` decides the cost, and the advice the model reads is still whichever of the three
       applies. `columnsThatExist` is computed once and used for both rather than called twice.
     */
-    // The run's read allowance refused this read before it was sent, so the sentence is this server's and the
-    // database never saw the statement: it is not fenced as the database's words, and its advice is the server's.
-    // It still costs a repair attempt, because the repair is a smaller read the model has to author.
-    const ownRefusal = error instanceof ReadAllowanceExceededError;
+    // This server refused the statement before it was sent (a provider's own fence, or the run's read allowance), so
+    // the sentence is this server's and the database never saw the statement: it is not fenced as the database's
+    // words, the refusal records it as not sent, and its advice is the server's. It still costs a repair attempt,
+    // because the repair is a statement the model has to author.
+    const ownRefusal = error instanceof RefusedBeforeSendError;
     const columns = ownRefusal ? undefined : columnsThatExist(error.message, context.connection);
     const advice = ownRefusal
-      ? READ_ALLOWANCE_ADVICE
+      ? error instanceof ReadAllowanceExceededError
+        ? READ_ALLOWANCE_ADVICE
+        : REFUSED_BEFORE_SEND_ADVICE
       : (columns ??
         otherStatementAdvice(
           error.message,
@@ -1813,6 +1820,7 @@ export async function runAuditedAgentCall(
         // this failure cost, and it depends on a process-wide cache a run cannot see. See the
         // field's own note in `types.ts`.
         answered,
+        ...(ownRefusal ? { sent: false as const } : {}),
       },
       // The engine's own words: untrusted, so fenced. The fingerprint stands in for
       // a correlation id, which a failed execution never produced.
