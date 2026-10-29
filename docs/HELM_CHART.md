@@ -41,6 +41,7 @@ charts/libredb-studio/
     ├── navlink.yaml           # Rancher NavLink (rancher.navLink, default off)
     ├── access-review.yaml     # ClusterRole and binding for the Kubernetes access review (default off)
     ├── kubernetes-discovery.yaml # Discovery exporter, its RBAC and the export Secret (default off)
+    ├── consolelink.yaml       # OpenShift console link (openshift.consoleLink, default off)
     └── NOTES.txt              # Post-install usage instructions
 ```
 
@@ -309,6 +310,26 @@ With the review on the chart writes no `ADMIN_PASSWORD`, `USER_EMAIL` or `USER_P
 
 `tests/unit/helm-chart-rancher-mode.test.ts`, `helm-chart-rancher-access-review.test.ts` and `helm-chart-rancher-discovery.test.ts` pin these rules.
 
+### 13. OpenShift sign-in mode
+
+`authProvider: openshift` renders what Studio's openshift sign-in reads (`src/lib/openshift-auth/config.ts`), keyed on that one value rather than a separate switch ([chart README](../charts/libredb-studio/README.md#openshift-sign-in)).
+
+- Studio's ServiceAccount is the OAuth client: the chart annotates it with the redirect reference naming the Route and the callback path under `config.basePath`, and writes `OPENSHIFT_OAUTH_CLIENT_ID` as `system:serviceaccount:<namespace>:<account>`.
+  So it must be an account the chart creates and never the namespace's `default`.
+- The client secret is a projected token of that account with the audience `libredb-studio-oauth-client`, which the API server does not accept, beside the cluster's CA from `kube-root-ca.crt`, which also signs the OAuth route's certificate.
+  Both are mounted read-only at `/var/run/secrets/libredb/openshift`; the pod's own token mount stays off.
+- The admin target of the self review is Studio's Deployment for a Helm install and the `LibreDBStudio` resource, named after the release, under the operator; no ServiceAccount review variable, ClusterRole or `system:auth-delegator` binding renders, because every review runs with the signed-in user's own token.
+- The chart writes no session lifetime, review cache or `SEED_CACHE_TTL_MS` unless a value asks, so the app's defaults for the mode (28800 s, 15 s and a 10 s list refresh in the browser) stand and the chart never restates them.
+- With discovery on, `ALLOW_CUSTOM_CONNECTIONS` defaults to `false` and the NetworkPolicy renders unless `networkPolicy.enabled` is `false`, confining the database ports to the discovered namespaces, plus the release namespace while the bundled PostgreSQL holds the storage; 5353 and 6443 render whenever the mode is on, not only when the OpenShift API is detected.
+
+**Render guards.** `openshiftModeGuards` in `_helpers.tpl`, included first in `deployment.yaml`, refuses every values set the openshift preflight refuses or the mode cannot run, naming the value: no Route or no fixed Route host, an account the chart does not create, more than one replica, an identity provider role claim, MCP, the agent, the ServiceAccount review's own values, inline passwords, governance, a hand-wired `openshift-oauth` volume or mount, and an effective image tag that is a version at or below 1.1.0, the last release without the mode.
+Two guards hold in every sign-in mode: `discoveryOnOpenShiftGuard` refuses discovery with `oidc` sign-in where `config.openshift.io/v1` is served, and under `operator.managed` the discovery template and the ConsoleLink render a cross-namespace or cluster-scoped object only for the release in `operator.clusterStudioNamespace` (`clusterStudioNamespaceGuard`), because any namespace editor may create a `LibreDBStudio` that the cluster-wide operator reconciles.
+
+**ConsoleLink.** `consolelink.yaml` renders the Tier 0 link only where `console.openshift.io/v1` is served or forced; with discovery on, the `ApplicationMenu` link is the locator, named `libredb-studio` with the label `app.kubernetes.io/name: libredb-studio`, and any other link takes the release-derived name `<namespace>.<fullname>` without that label.
+No reader role ships: the console already lets every authenticated user read ConsoleLinks.
+
+`tests/unit/helm-chart-openshift-mode.test.ts` pins these rules.
+
 ## Release Pipeline
 
 The chart never releases before the image it deploys exists (#161), and the
@@ -525,6 +546,19 @@ helm install libredb libredb/libredb-studio \
 In a Helm install Topology groups the workloads by the Helm release, so `openshift.topology.partOf` shows as an application in the Application selector rather than as a group on the canvas.
 The chart README's "OpenShift" section covers the three exposure mechanisms, the timeout, the GitOps render with `global.compatibility.openshift.apis=force`, and `helm test`.
 A JSON parse error in the query UI after about 30 seconds means the router cut the request: `openshiftRoute.timeout` must exceed the query timeout, and an empty value leaves the router's 30s default in force.
+
+With openshift sign-in, people sign in with their OpenShift account and no password is set:
+
+```bash
+helm install libredb libredb/libredb-studio \
+  --set authProvider=openshift \
+  --set image.tag="$STUDIO_TAG" \
+  --set openshiftRoute.enabled=true \
+  --set openshiftRoute.host=studio-data.apps.example.com \
+  --set openshift.consoleLink.enabled=true
+```
+
+`$STUDIO_TAG` is a release after 1.1.0, which the render requires until `appVersion` moves past it; the chart README's "OpenShift sign-in" section lists what the mode renders and refuses, and section 13 above explains why.
 
 ### External Secrets (Vault / ESO)
 ```bash

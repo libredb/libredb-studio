@@ -13,8 +13,9 @@
  *
  * Every case runs the real `helm template` against the chart, never a reimplementation of the templating.
  */
-import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse, parseAllDocuments } from "yaml";
 import { howItFailed } from "../helpers/spawn-outcome";
@@ -944,5 +945,144 @@ describe("the Tier 0 ConsoleLink", () => {
   test("off by default: no ConsoleLink, on OpenShift too", () => {
     expect(consoleLinks(OPENSHIFT)).toEqual([]);
     expect(consoleLinks([...OPENSHIFT, ...DISCOVERY])).toEqual([]);
+  });
+});
+
+/**
+ * With every new value at its default, the render keeps the objects, variables and volumes it had before openshift
+ * mode existed, on vanilla Kubernetes and on OpenShift. Compared in structure, not byte for byte: the chart version
+ * is in every object's helm.sh/chart label.
+ */
+describe("the default render is unchanged", () => {
+  const FULLNAME = `${RELEASE}-libredb-studio`;
+  const OPENSHIFT_APIS = [
+    "security.openshift.io/v1",
+    "config.openshift.io/v1",
+    "route.openshift.io/v1",
+    "console.openshift.io/v1",
+  ].flatMap((api) => ["--api-versions", api]);
+
+  test.each([
+    ["vanilla Kubernetes", []],
+    ["OpenShift", OPENSHIFT_APIS],
+    ["OpenShift with apis=force", set("global.compatibility.openshift.apis=force")],
+  ])("on %s: the same objects, variables, ConfigMap keys and volumes", (_, args) => {
+    const docs = render(args);
+    expect(docs.map((doc) => `${doc.kind}/${doc.metadata.name}`)).toEqual([
+      `ServiceAccount/${FULLNAME}`,
+      `Secret/${FULLNAME}`,
+      `ConfigMap/${FULLNAME}-config`,
+      `Service/${FULLNAME}`,
+      `Deployment/${FULLNAME}`,
+      `Pod/${FULLNAME}-test-health`,
+    ]);
+    expect(envList(docs, FULLNAME).map((entry) => entry.name)).toEqual(["ADMIN_EMAIL", "WORKFLOW_LOCAL_DATA_DIR"]);
+    expect(Object.keys(configData(docs, `${FULLNAME}-config`))).toEqual([
+      "NODE_ENV",
+      "PORT",
+      "HOSTNAME",
+      "NEXT_TELEMETRY_DISABLED",
+      "NODE_OPTIONS",
+      "NEXT_PUBLIC_AUTH_PROVIDER",
+      "LOG_LEVEL",
+      "STORAGE_PROVIDER",
+    ]);
+    expect((studioPod(docs, FULLNAME).volumes ?? []).map((volume) => volume.name)).toEqual(["next-cache", "tmp", "data"]);
+    expect(one(docs, "ServiceAccount", FULLNAME).metadata.annotations).toBeUndefined();
+  });
+});
+
+describe("install notes in openshift mode", () => {
+  // helm template never emits NOTES.txt, so the real file is wrapped in a named template inside a private copy of the
+  // chart and rendered into a ConfigMap, as tests/unit/helm-chart-openshift-route.test.ts does.
+  const PROBE_TEMPLATE = "templates/zz-notes-probe.yaml";
+  let notesChart: string;
+
+  beforeAll(() => {
+    notesChart = mkdtempSync(join(tmpdir(), "libredb-openshift-mode-notes-probe-"));
+    cpSync(CHART_DIR, notesChart, { recursive: true });
+    writeFileSync(
+      join(notesChart, PROBE_TEMPLATE),
+      `{{- define "notesProbe" -}}\n${readFileSync(join(CHART_DIR, "templates/NOTES.txt"), "utf8")}\n{{- end -}}\n` +
+        'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: notes-probe\ndata:\n  notes: {{ include "notesProbe" . | quote }}\n',
+    );
+  });
+
+  afterAll(() => rmSync(notesChart, { recursive: true, force: true }));
+
+  function notes(args: string[]): string {
+    const run = Bun.spawnSync(
+      ["helm", "template", RELEASE, notesChart, "--namespace", NAMESPACE, "--show-only", PROBE_TEMPLATE, ...args],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    if (run.exitCode !== 0) throw new Error(`helm template of the notes probe ${howItFailed(run)}: ${run.stderr}`);
+    const rendered = parseAllDocuments(run.stdout.toString())
+      .map((doc) => doc.toJS() as { data?: { notes?: string } } | null)
+      .find((doc) => doc?.data?.notes !== undefined);
+    return rendered?.data?.notes ?? "";
+  }
+
+  test("names the mode, where people sign in, the admin rule and that the console plugin is not in this release", () => {
+    const text = notes(OPENSHIFT);
+    expect(text).toContain("Auth Provider:    openshift");
+    expect(text).toContain("Access LibreDB Studio via the OpenShift Route:\n  https://v1os-os-lab-v1.apps-crc.testing\n");
+    expect(text).toContain("OpenShift sign-in:");
+    expect(text).toContain(`whoever may update the Deployment ${NAMESPACE}/${RELEASE}`);
+    expect(text).toContain("The OpenShift console plugin is not part of this release");
+    expect(text).not.toContain("First-run credentials");
+  });
+
+  test("operator-managed, the admin rule names the LibreDBStudio resource", () => {
+    const text = notes([...OPENSHIFT, ...set("operator.managed=true")]);
+    expect(text).toContain(`whoever may update the LibreDBStudio ${NAMESPACE}/${RELEASE}`);
+  });
+
+  test("with discovery, names the egress policy and custom connections off", () => {
+    const text = notes([...OPENSHIFT, ...DISCOVERY]);
+    expect(text).toContain("database egress only to team-a, team-b");
+    expect(text).toContain("networkPolicy.enabled=false");
+    expect(text).toContain("ALLOW_CUSTOM_CONNECTIONS=false");
+  });
+
+  test("local mode carries none of it", () => {
+    expect(notes(set(`fullnameOverride=${RELEASE}`))).not.toContain("OpenShift sign-in:");
+  });
+});
+
+describe("the chart README documents openshift mode", () => {
+  const readme = readFileSync(join(CHART_DIR, "README.md"), "utf8");
+  const section = readme.slice(readme.indexOf("### OpenShift sign-in"), readme.indexOf("### The cluster's trusted CA bundle"));
+
+  test.each([
+    "authProvider=openshift",
+    "openshiftRoute.host",
+    "replicaCount",
+    "ALLOW_CUSTOM_CONNECTIONS",
+    "networkPolicy.additionalEgress",
+    "networkPolicy.enabled=false",
+    "seedConnections.cacheTTL",
+    "openshift.consoleLink",
+    "NamespaceDashboard",
+    "operator.clusterStudioNamespace",
+    "image.tag",
+    "extraVolumes",
+  ])("names %s", (needle) => {
+    expect(section.length).toBeGreaterThan(0);
+    expect(section).toContain(needle);
+  });
+
+  test("every new value is in the configuration reference", () => {
+    for (const key of [
+      "openshift.signIn.tokenExpirationSeconds",
+      "openshift.signIn.reviewCacheSeconds",
+      "openshift.signIn.review",
+      "openshift.consoleLink.enabled",
+      "openshift.consoleLink.location",
+      "operator.managed",
+      "operator.clusterStudioNamespace",
+      "discovery.kubernetes.clusterDomain",
+    ]) {
+      expect(readme).toContain(`| \`${key}\` |`);
+    }
   });
 });

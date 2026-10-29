@@ -52,6 +52,30 @@ Configuration:
   PostgreSQL:       Built-in (subchart)
 {{- end }}
 
+{{- if include "libredb-studio.openshiftSignIn" . }}
+
+OpenShift sign-in:
+  People sign in with their OpenShift account at https://{{ get (.Values.openshiftRoute | default dict) "host" }}{{ .Values.config.basePath | default "" }};
+  the first sign-in asks each person once to allow Studio's two permissions.
+{{- if include "libredb-studio.operatorManaged" . }}
+  A Studio admin is whoever may update the LibreDBStudio {{ .Release.Namespace }}/{{ .Release.Name }}.
+{{- else }}
+  A Studio admin is whoever may update the Deployment {{ .Release.Namespace }}/{{ include "libredb-studio.fullname" . }}.
+{{- end }}
+{{- if include "libredb-studio.discoveryEnabled" . }}
+  Each person lists only the discovered databases whose credential Secret they may get.
+{{- if include "libredb-studio.networkPolicyEnabled" . }}
+  The NetworkPolicy {{ include "libredb-studio.fullname" . }} allows database egress only to {{ join ", " .Values.discovery.kubernetes.namespaces }}{{ if .Values.postgresql.enabled }} and {{ .Release.Namespace }}{{ end }};
+  add other destinations in networkPolicy.additionalEgress, or set networkPolicy.enabled=false.
+{{- end }}
+{{- $customConnections := get .Values.config "allowCustomConnections" }}
+{{- if or (kindIs "invalid" $customConnections) (eq (toString $customConnections) "") }}
+  ALLOW_CUSTOM_CONNECTIONS=false: people open discovered and seeded connections only.
+{{- end }}
+{{- end }}
+  The OpenShift console plugin is not part of this release; openshift.consoleLink.enabled adds a link to Studio in the console.
+{{- end }}
+
 {{- if include "libredb-studio.governanceEnabled" . }}
 
 Governance (docs/GOVERNANCE.md):
