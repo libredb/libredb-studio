@@ -8,8 +8,10 @@
  * production path (`createDatabaseProvider` with the profile's execution context, then `connect` and `queryReadOnly`):
  *
  *  - the fresh database refuses its own read-only user, because PUBLIC holds EXECUTE on the network and file
- *    packages and the user may not read the policy and auditing catalog; the revoke script and the two catalog grants
- *    the refusal names, run as SYS, lift it;
+ *    packages and on four objects Oracle keeps local to the database that the check cannot prove, and the user may not
+ *    read the policy and auditing catalog; the revoke script and the two catalog grants the refusal names, run as SYS,
+ *    lift it; the admitted user then reads a local view and a local operator of Oracle's, a job class is reachable only
+ *    through DBMS_SCHEDULER, which it is refused, and a domain's expressions refuse a user function;
  *  - the check refuses a user that is not READ ONLY, one granted EXECUTE on a definer's-rights function, one granted a
  *    view that calls it directly, through a private or PUBLIC synonym or through a chain of two synonyms, one granted a
  *    view over a synonym it cannot resolve, over a view it may not read, or over an invoker's-rights function, one
@@ -26,7 +28,9 @@
  *    once both are granted, the inner one INSERT only included; and a policy on SYSTEM.HELP and an audit condition are
  *    measured to run the owner's function for the READ ONLY user's plain SELECT; a policy function, an auditing
  *    handler, a function granted to PUBLIC, a view and a sequence an administrator made in SYSTEM, a schema Oracle
- *    maintains, are refused, the first two measured to run for that user; and on one handle a policy added after a
+ *    maintains, are refused, the first two measured to run for that user; a function and an operator made under
+ *    `_oracle_script`, which Oracle marks its own, granted to PUBLIC, and SYSTEM.PRODUCT_PRIVS replaced to call a
+ *    function, keeping its flag, are refused, each measured to run for that user; and on one handle a policy added after a
  *    call refuses the next call, the call after its drop runs, and a schema one call switched to with
  *    `ALTER SESSION SET CURRENT_SCHEMA` is not the next call's;
  *  - the boundary, with Studio's client admission bypassed: every write, DDL, temporary table, lock, transaction
@@ -250,6 +254,13 @@ const SETUP_AS_SYSTEM: readonly string[] = [
   `CREATE OR REPLACE PROCEDURE SYSTEM.${PREFIX}SYS_H(s VARCHAR2, o VARCHAR2, p VARCHAR2) AS n NUMBER; BEGIN n := SYSTEM.${PREFIX}SYS_SEQ.NEXTVAL; END;`,
   `CREATE OR REPLACE FUNCTION SYSTEM.${PREFIX}SYS_NEXT RETURN NUMBER AS BEGIN RETURN SYSTEM.${PREFIX}SYS_SEQ.NEXTVAL; END;`,
   `CREATE OR REPLACE VIEW SYSTEM.${PREFIX}SYS_VIEW AS SELECT SYSTEM.${PREFIX}SYS_NEXT() AS N FROM DUAL`,
+  `CREATE OR REPLACE FUNCTION SYSTEM.${PREFIX}OP_FN(x NUMBER) RETURN NUMBER AS BEGIN RETURN SYSTEM.${PREFIX}SYS_SEQ.NEXTVAL; END;`,
+  // Made under _oracle_script, which Oracle then marks Oracle-maintained, local to the database: a function, and an
+  // operator bound to the unmarked function above.
+  `BEGIN EXECUTE IMMEDIATE 'ALTER SESSION SET "_oracle_script" = TRUE'; ` +
+    `EXECUTE IMMEDIATE 'CREATE OR REPLACE FUNCTION SYSTEM.${PREFIX}OS_NEXT RETURN NUMBER AS BEGIN RETURN SYSTEM.${PREFIX}SYS_SEQ.NEXTVAL; END;'; ` +
+    `EXECUTE IMMEDIATE 'CREATE OR REPLACE OPERATOR SYSTEM.${PREFIX}OS_OP BINDING (NUMBER) RETURN NUMBER USING SYSTEM.${PREFIX}OP_FN'; ` +
+    `EXECUTE IMMEDIATE 'ALTER SESSION SET "_oracle_script" = FALSE'; END;`,
   `CREATE ROLE ${PREFIX}ROLE`,
   `GRANT SELECT ON ${OWNER}.${PREFIX}DATA TO ${RO}`,
   `GRANT SELECT ON ${OWNER}.${PREFIX}CHILD TO ${RO}`,
@@ -301,6 +312,15 @@ async function sequenceNumber(owner = OWNER, name = `${PREFIX}SEQ`): Promise<num
   return Number(row?.N);
 }
 
+/**
+ * SYSTEM.PRODUCT_PRIVS as Oracle ships it, an object it marks Oracle-maintained that is local to the database and that
+ * PUBLIC may read, and as an administrator could replace it, keeping the flag and the grant (measured).
+ */
+const PRODUCT_PRIVS_SHIPPED =
+  "CREATE OR REPLACE VIEW SYSTEM.PRODUCT_PRIVS AS SELECT PRODUCT, USERID, ATTRIBUTE, SCOPE, NUMERIC_VALUE, CHAR_VALUE, " +
+  "DATE_VALUE, LONG_VALUE FROM SYSTEM.SQLPLUS_PRODUCT_PROFILE WHERE USERID = 'PUBLIC' OR USERID LIKE SYS_CONTEXT('USERENV', 'CURRENT_USER')";
+const PRODUCT_PRIVS_REPLACED = `CREATE OR REPLACE VIEW SYSTEM.PRODUCT_PRIVS AS SELECT SYSTEM.${PREFIX}SYS_NEXT() AS X FROM DUAL`;
+
 /** PUBLIC's default EXECUTE grants on the packages the check refuses, as the doc's revoke script lifts them. */
 const REVOKES_AS_SYS: readonly string[] = [
   "SYS.UTL_HTTP",
@@ -312,7 +332,17 @@ const REVOKES_AS_SYS: readonly string[] = [
   "SYS.DBMS_LDAP",
   "SYS.DBMS_SCHEDULER",
   "XDB.DBMS_XSLPROCESSOR",
-].map((name) => `REVOKE EXECUTE ON ${name} FROM PUBLIC`);
+  // Oracle's own, but local to the database and not proven by what they run: a procedure, an indextype whose
+  // implementation type the user cannot see, and an operator bound to that type.
+  "SYS.SCHEDULER$NTFY_SVC_METRICS",
+  "XDB.XMLINDEX",
+  "XDB.XMLINDEX_NOOP",
+]
+  .map((name) => `REVOKE EXECUTE ON ${name} FROM PUBLIC`)
+  // An evaluation context names a function DBMS_RULE runs; its grant is taken through DBMS_RULE_ADM.
+  .concat(
+    `BEGIN DBMS_RULE_ADM.REVOKE_OBJECT_PRIVILEGE(DBMS_RULE_ADM.EXECUTE_ON_EVALUATION_CONTEXT, '"SYS"."STREAMS$_EVALUATION_CONTEXT"', 'PUBLIC'); END;`,
+  );
 
 /** The two catalog views the check reads for row-level policies and auditing handlers; only SYS may grant them. */
 const CATALOG_GRANTS_AS_SYS: readonly string[] = [
@@ -387,6 +417,16 @@ async function cleanup(): Promise<void> {
     ["ORA-"],
   );
   await setup("SYS", [`DROP DIRECTORY ${PREFIX}DIR`], ["ORA-"]);
+  await setup(
+    "SYS",
+    [
+      `DROP OPERATOR SYSTEM.${PREFIX}OS_OP FORCE`,
+      `DROP FUNCTION SYSTEM.${PREFIX}OS_NEXT`,
+      `DROP FUNCTION SYSTEM.${PREFIX}OP_FN`,
+    ],
+    ["ORA-"],
+  );
+  await setup("SYSTEM", [PRODUCT_PRIVS_SHIPPED, `DROP DOMAIN ${OWNER}.${PREFIX}D`], ["ORA-"]);
 }
 
 /** The writes sent as the read-only user, and the same write as the schema owner sends it on its own scratch objects. */
@@ -462,12 +502,52 @@ async function main(): Promise<void> {
     fresh.startsWith("PROFILE_PRIVILEGES_TOO_BROAD") &&
       fresh.includes('REVOKE EXECUTE ON "SYS"."UTL_HTTP" FROM PUBLIC') &&
       fresh.includes(`GRANT SELECT ON SYS.DBA_POLICIES TO "${RO}" (as SYS)`) &&
-      fresh.includes(`GRANT SELECT ON SYS.DBA_AUDIT_POLICIES TO "${RO}" (as SYS)`),
+      fresh.includes(`GRANT SELECT ON SYS.DBA_AUDIT_POLICIES TO "${RO}" (as SYS)`) &&
+      fresh.includes('REVOKE EXECUTE ON "XDB"."XMLINDEX" FROM PUBLIC') &&
+      fresh.includes(`'"SYS"."STREAMS$_EVALUATION_CONTEXT"', 'PUBLIC'); END;`) &&
+      // Oracle's local domains, job classes, consumer groups and operators bound to linked code are its own.
+      !/"(EMAIL_D|DEFAULT_JOB_CLASS|LOW_GROUP|XMLSEQUENCE|OLAP_EXPRESSION)"/.test(fresh),
     `a fresh database refuses its READ ONLY user until PUBLIC's grants are revoked and the catalog granted: ${fresh}`,
   );
   await setup("SYS", REVOKES_AS_SYS, ["ORA-01927"]);
   await setup("SYS", CATALOG_GRANTS_AS_SYS);
   check((await verdict(RO)) === "admitted", "after the revoke script the READ ONLY user is admitted");
+  // The control: what Oracle ships local to the database and is its own reads as such, through the agent path.
+  const control = await agentFor(RO);
+  for (const sql of [
+    "SELECT COUNT(*) AS N FROM SYSTEM.PRODUCT_PRIVS",
+    "SELECT COUNT(*) AS N FROM TABLE(XMLSEQUENCE(XMLTYPE('<a/>')))",
+  ]) {
+    const answer = await agentAnswer(control, sql);
+    check(answer === "ran", `the admitted user reads Oracle's own local objects: ${sql}: ${answer}`);
+  }
+  // A job class is used only through DBMS_SCHEDULER, which the revoke script takes from PUBLIC.
+  const job = await agentAnswer(
+    control,
+    `BEGIN DBMS_SCHEDULER.CREATE_JOB(job_name => '${PREFIX}JOB', job_type => 'PLSQL_BLOCK', job_action => 'NULL;', job_class => 'DEFAULT_JOB_CLASS'); END;`,
+  );
+  check(job.includes("PLS-00201"), `a job class is reached only through DBMS_SCHEDULER, refused: ${job}`);
+  await control.disconnect();
+  // A domain runs no function: its check, display and order expressions refuse one, so a local domain is Oracle's.
+  for (const [clause, form] of [
+    ["CONSTRAINT CHECK", `(${OWNER}.${PREFIX}NEXT_DET(${PREFIX}D) > 0)`],
+    ["DISPLAY", `${OWNER}.${PREFIX}NEXT_DET(${PREFIX}D)`],
+    ["ORDER", `${OWNER}.${PREFIX}NEXT_DET(${PREFIX}D)`],
+  ]) {
+    const domain = await as(OWNER, `CREATE DOMAIN ${PREFIX}D AS NUMBER ${clause} ${form}`)
+      .then(() => "created")
+      .catch((error: Error) => error.message);
+    check(/ORA-00904/.test(domain), `a domain's ${clause} expression refuses a user function: ${domain}`);
+  }
+  // What an administrator's local objects read as: Oracle-maintained, and local to the database.
+  const marked = await as(
+    "SYS",
+    `SELECT OBJECT_NAME, ORACLE_MAINTAINED AS M, SHARING AS S FROM DBA_OBJECTS WHERE OWNER = 'SYSTEM' AND OBJECT_NAME IN ('${PREFIX}OS_NEXT', '${PREFIX}OS_OP') ORDER BY 1`,
+  );
+  check(
+    marked.length === 2 && marked.every((row) => row.M === "Y" && row.S === "NONE"),
+    `objects made under _oracle_script read Oracle-maintained and local: ${JSON.stringify(marked)}`,
+  );
 
   // Each grant the check refuses, refused and then lifted.
   const refusedThenLifted: readonly {
@@ -618,6 +698,25 @@ async function main(): Promise<void> {
       grant: [`GRANT SELECT ON SYSTEM.${PREFIX}SYS_SEQ TO ${RO}`],
       revoke: [`REVOKE SELECT ON SYSTEM.${PREFIX}SYS_SEQ FROM ${RO}`],
       names: `REVOKE ALL ON "SYSTEM"."${PREFIX}SYS_SEQ" FROM "${RO}"`,
+    },
+    {
+      label: "EXECUTE through PUBLIC on a function made in SYSTEM under _oracle_script, which Oracle marks its own",
+      grant: [`GRANT EXECUTE ON SYSTEM.${PREFIX}OS_NEXT TO PUBLIC`],
+      revoke: [`REVOKE EXECUTE ON SYSTEM.${PREFIX}OS_NEXT FROM PUBLIC`],
+      names: `REVOKE EXECUTE ON "SYSTEM"."${PREFIX}OS_NEXT" FROM PUBLIC`,
+    },
+    {
+      label:
+        "EXECUTE through PUBLIC on an operator made under _oracle_script, bound to a function that is not Oracle's",
+      grant: [`GRANT EXECUTE ON SYSTEM.${PREFIX}OS_OP TO PUBLIC`],
+      revoke: [`REVOKE EXECUTE ON SYSTEM.${PREFIX}OS_OP FROM PUBLIC`],
+      names: `REVOKE EXECUTE ON "SYSTEM"."${PREFIX}OS_OP" FROM PUBLIC`,
+    },
+    {
+      label: "SYSTEM.PRODUCT_PRIVS, which PUBLIC reads, replaced to call a function made in SYSTEM, keeping its flag",
+      grant: [PRODUCT_PRIVS_REPLACED],
+      revoke: [PRODUCT_PRIVS_SHIPPED],
+      names: 'REVOKE ALL ON "SYSTEM"."PRODUCT_PRIVS" FROM PUBLIC',
     },
     {
       label: "an auditing policy whose audit condition calls a function of the owner's, with no handler",
@@ -807,6 +906,27 @@ async function main(): Promise<void> {
       add: [fgaPolicy("SYSTEM", "HELP", `${PREFIX}SYSHELP_H`, null, `SYSTEM.${PREFIX}SYS_H`)],
       drop: [dropFgaPolicy("SYSTEM", "HELP", `${PREFIX}SYSHELP_H`)],
       read: "SELECT COUNT(*) AS N FROM SYSTEM.HELP",
+      seq: ["SYSTEM", `${PREFIX}SYS_SEQ`],
+    },
+    {
+      label: "a function made under _oracle_script, granted to PUBLIC",
+      add: [`GRANT EXECUTE ON SYSTEM.${PREFIX}OS_NEXT TO PUBLIC`],
+      drop: [`REVOKE EXECUTE ON SYSTEM.${PREFIX}OS_NEXT FROM PUBLIC`],
+      read: `SELECT SYSTEM.${PREFIX}OS_NEXT() AS N FROM DUAL`,
+      seq: ["SYSTEM", `${PREFIX}SYS_SEQ`],
+    },
+    {
+      label: "an operator made under _oracle_script, granted to PUBLIC",
+      add: [`GRANT EXECUTE ON SYSTEM.${PREFIX}OS_OP TO PUBLIC`],
+      drop: [`REVOKE EXECUTE ON SYSTEM.${PREFIX}OS_OP FROM PUBLIC`],
+      read: `SELECT SYSTEM.${PREFIX}OS_OP(1) AS N FROM DUAL`,
+      seq: ["SYSTEM", `${PREFIX}SYS_SEQ`],
+    },
+    {
+      label: "SYSTEM.PRODUCT_PRIVS replaced to call a function made in SYSTEM",
+      add: [PRODUCT_PRIVS_REPLACED],
+      drop: [PRODUCT_PRIVS_SHIPPED],
+      read: "SELECT X FROM SYSTEM.PRODUCT_PRIVS",
       seq: ["SYSTEM", `${PREFIX}SYS_SEQ`],
     },
     {
