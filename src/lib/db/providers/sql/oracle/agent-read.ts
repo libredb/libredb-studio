@@ -14,16 +14,19 @@
  * synonym, either of which could stand in for the view and hide what it lists.
  *
  * Code, a view, a table or a sequence is Oracle's own only when `ALL_OBJECTS` shows the user every object of its owner
- * and name as `ORACLE_MAINTAINED`; one the user cannot see is not. The schema's flag proves nothing: an administrator
- * can create a function in SYSTEM, a schema Oracle maintains, which is not marked, and a row-level policy calling it on
- * SYSTEM.HELP, which PUBLIC may read, ran it with SYSTEM's rights for a READ ONLY user (measured).
+ * and name as `ORACLE_MAINTAINED` and linked from the root container (`SHARING` other than NONE); one the user cannot
+ * see is not. The schema's flag proves nothing: an administrator can create a function in SYSTEM, a schema Oracle
+ * maintains, which is not marked, and a row-level policy calling it on SYSTEM.HELP, which PUBLIC may read, ran it with
+ * SYSTEM's rights for a READ ONLY user. Nor does the object's flag alone: an object made under `_oracle_script` is
+ * marked, and a local one Oracle marked, SYSTEM.PRODUCT_PRIVS, keeps its flag and PUBLIC's grant when replaced; each is
+ * local, and each ran a SYSTEM function for that user (all measured). Item 3 alone admits a local object by its kind.
  *
  * 1. `USER_USERS.READ_ONLY` reads YES. A server without the column (ORA-00904) is older than 23ai and is refused.
  * 2. Every role granted to it, directly or through PUBLIC, is a default role. `SET ROLE` is permitted under READ ONLY,
  *    while `ALL_TAB_PRIVS` lists only the grants of enabled roles, so a role the check cannot see the grants of is
  *    refused.
  * 3. It, its roles and PUBLIC hold EXECUTE on no PL/SQL unit, type, Java class or library that is not Oracle's, since
- *    such code runs with its owner's rights.
+ *    such code runs with its owner's rights; a local object Oracle marked is admitted by its kind (`oraclesByKind`).
  * 4. They may read no view that is not Oracle's whose definition calls code, a function, package or type, rather than a
  *    table or view: a plain SELECT on such a view runs the code with its owner's rights, and advanced a sequence for a
  *    READ ONLY user (measured). A view that calls the code through a synonym lists only the synonym, and `ALL_SYNONYMS`
@@ -76,14 +79,79 @@ export type OracleAgentReader = (sql: string) => Promise<Rows>;
 const SESSION_GRANTEES = "(p.GRANTEE IN (USER, 'PUBLIC') OR p.GRANTEE IN (SELECT ROLE FROM SYS.SESSION_ROLES))";
 
 /**
- * Whether the object `owner`.`name` is not proven Oracle's own: `ALL_OBJECTS` shows the user no object of that owner
- * and name, or one that Oracle does not maintain. The object's own flag, not its schema's: an administrator can create
- * a function in SYSTEM, a schema Oracle maintains, and it is not marked (measured). An object the user cannot see counts
- * as not Oracle's, fail closed.
+ * Oracle maintains the `ALL_OBJECTS` row `alias`, and it is linked from the root container rather than local to the
+ * database (`SHARING` other than NONE). Two-valued: a missing flag or sharing reads as not linked.
  */
-function notOracles(owner: string, name: string): string {
+function linked(alias: string): string {
+  return `NVL(${alias}.ORACLE_MAINTAINED, 'N') = 'Y' AND NVL(${alias}.SHARING, 'NONE') <> 'NONE'`;
+}
+
+/** Some `ALL_OBJECTS` row matches `where`, written over the alias `x`, and every one that does is linked. */
+function allLinked(...readings: string[]): string {
+  const exists = readings.map((where) => `EXISTS (SELECT 1 FROM SYS.ALL_OBJECTS x WHERE ${where})`);
+  const local = readings.map(
+    (where) => `NOT EXISTS (SELECT 1 FROM SYS.ALL_OBJECTS x WHERE ${where} AND NOT (${linked("x")}))`,
+  );
+  return `(${exists.join(" OR ")}) AND ${local.join(" AND ")}`;
+}
+
+/**
+ * 'Y' when the `ALL_OBJECTS` row `alias` is Oracle's own, 'N' otherwise: it is marked and linked (see the module
+ * docblock). The one fragment every check reads the proof through, item 3's included.
+ */
+function oracles(alias: string): string {
+  return `CASE WHEN ${linked(alias)} THEN 'Y' ELSE 'N' END`;
+}
+
+/**
+ * Item 3's proof, for what a grant may execute: `oracles`, or a local object Oracle marked that is one of:
+ *
+ * - a domain, a job class or a consumer group, which runs no function: a domain's check, display, order and default
+ *   expressions refuse a user function (ORA-00904, ORA-04044), and a job class or a consumer group names no code
+ *   (measured). An evaluation context names a function, which DBMS_RULE runs, so it is held to the link;
+ * - an operator whose every binding's function and implementation type are linked (`ALL_OPBINDINGS`). A function name
+ *   of one part is in the operator's schema, of two parts either `owner.function` or `package.function` there, and both
+ *   readings must be linked; of three, `owner.package.function`;
+ * - an indextype whose implementation type is linked (`ALL_INDEXTYPES`).
+ *
+ * A fresh 26ai keeps 5,913 marked objects local to the pluggable database, 133 of them granted to PUBLIC to execute,
+ * domains and operators most (measured). This leaves four refused there, in the doc's revoke list: a procedure, the
+ * evaluation context, and an indextype and an operator whose implementation type the user cannot see. The other checks
+ * hold every object to the link, which on a fresh database refuses nothing more (measured), and keeps their statements
+ * small: the kinds' subqueries in every proof made each call take seconds, re-optimized by statistics feedback.
+ */
+function oraclesByKind(alias: string): string {
+  const fn = "REPLACE(b.FUNCTION_NAME, '\"')";
+  const part = (n: number) => `REGEXP_SUBSTR(${fn}, '[^.]+', 1, ${n})`;
+  const readings = [
+    `x.OWNER = ${part(1)} AND x.OBJECT_NAME = ${part(2)}`,
+    `x.OWNER = b.OWNER AND x.OBJECT_NAME = ${part(1)} AND ${part(3)} IS NULL`,
+  ];
+  const binding = `b.OWNER = ${alias}.OWNER AND b.OPERATOR_NAME = ${alias}.OBJECT_NAME`;
+  const indextype = `i.OWNER = ${alias}.OWNER AND i.INDEXTYPE_NAME = ${alias}.OBJECT_NAME`;
+  // Searched CASE stops at the first true WHEN, so the subqueries run only for a local operator or indextype.
   return (
-    "NVL((SELECT MIN(NVL(m.ORACLE_MAINTAINED, 'N')) FROM SYS.ALL_OBJECTS m " +
+    `CASE WHEN ${oracles(alias)} = 'Y' THEN 'Y' ` +
+    `WHEN NVL(${alias}.ORACLE_MAINTAINED, 'N') <> 'Y' THEN 'N' ` +
+    `WHEN ${alias}.OBJECT_TYPE IN ('DOMAIN', 'JOB CLASS', 'CONSUMER GROUP') THEN 'Y' ` +
+    `WHEN ${alias}.OBJECT_TYPE = 'OPERATOR' AND EXISTS (SELECT 1 FROM SYS.ALL_OPBINDINGS b WHERE ${binding}) ` +
+    `AND NOT EXISTS (SELECT 1 FROM SYS.ALL_OPBINDINGS b WHERE ${binding} AND NOT (${allLinked(...readings)} ` +
+    "AND (b.IMPLEMENTATION_TYPE IS NULL OR " +
+    `${allLinked("x.OWNER = b.IMPLEMENTATION_TYPE_SCHEMA AND x.OBJECT_NAME = b.IMPLEMENTATION_TYPE")}))) THEN 'Y' ` +
+    `WHEN ${alias}.OBJECT_TYPE = 'INDEXTYPE' AND EXISTS (SELECT 1 FROM SYS.ALL_INDEXTYPES i WHERE ${indextype}) ` +
+    `AND NOT EXISTS (SELECT 1 FROM SYS.ALL_INDEXTYPES i WHERE ${indextype} AND NOT (` +
+    `${allLinked("x.OWNER = i.IMPLEMENTATION_SCHEMA AND x.OBJECT_NAME = i.IMPLEMENTATION_NAME")})) THEN 'Y' ELSE 'N' END`
+  );
+}
+
+/**
+ * Whether the object `owner`.`name` is not proven Oracle's own: `ALL_OBJECTS` shows the user no object of that owner
+ * and name, or one that `proof` does not prove Oracle's. An object the user cannot see counts as not Oracle's, fail
+ * closed.
+ */
+function notOracles(owner: string, name: string, proof: (alias: string) => string = oracles): string {
+  return (
+    `NVL((SELECT MIN(${proof("m")}) FROM SYS.ALL_OBJECTS m ` +
     `WHERE m.OWNER = ${owner} AND m.OBJECT_NAME = ${name}), 'N') <> 'Y'`
   );
 }
@@ -98,7 +166,7 @@ function notOracles(owner: string, name: string): string {
 const ROOTS =
   "WITH r AS (SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME FROM SYS.ALL_TAB_PRIVS p " +
   "JOIN SYS.ALL_OBJECTS o ON o.OWNER = p.TABLE_SCHEMA AND o.OBJECT_NAME = p.TABLE_NAME " +
-  "WHERE NVL(p.TYPE, '-') <> 'USER' AND NVL(o.ORACLE_MAINTAINED, 'N') <> 'Y' " +
+  `WHERE NVL(p.TYPE, '-') <> 'USER' AND ${oracles("o")} <> 'Y' ` +
   `AND ${SESSION_GRANTEES} ` +
   "UNION SELECT NULL, USER, OBJECT_NAME FROM SYS.USER_OBJECTS WHERE OBJECT_TYPE IN ('TABLE', 'VIEW', 'MATERIALIZED VIEW'))";
 
@@ -123,9 +191,11 @@ export const AGENT_PRINCIPAL_STATEMENTS = Object.freeze({
     "SELECT USERNAME AS GRANTEE, GRANTED_ROLE FROM SYS.USER_ROLE_PRIVS WHERE NVL(DEFAULT_ROLE, 'NO') <> 'YES' " +
     "ORDER BY 2, 1",
   units:
-    "SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME, p.TYPE AS OBJECT_TYPE " +
+    "SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME, " +
+    "NVL((SELECT MIN(k.OBJECT_TYPE) FROM SYS.ALL_OBJECTS k WHERE k.OWNER = p.TABLE_SCHEMA " +
+    "AND k.OBJECT_NAME = p.TABLE_NAME AND k.OBJECT_TYPE = 'EVALUATION CONTEXT'), p.TYPE) AS OBJECT_TYPE " +
     "FROM SYS.ALL_TAB_PRIVS p WHERE p.PRIVILEGE = 'EXECUTE' AND NVL(p.TYPE, '-') <> 'DIRECTORY' " +
-    `AND ${notOracles("p.TABLE_SCHEMA", "p.TABLE_NAME")} AND ${SESSION_GRANTEES} ORDER BY 2, 3, 1`,
+    `AND ${notOracles("p.TABLE_SCHEMA", "p.TABLE_NAME", oraclesByKind)} AND ${SESSION_GRANTEES} ORDER BY 2, 3, 1`,
   views:
     `${ROOTS} SELECT p.GRANTEE, d.OWNER, d.NAME, d.REFERENCED_OWNER || '.' || d.REFERENCED_NAME AS CALLS ` +
     "FROM SYS.ALL_DEPENDENCIES d JOIN r p ON p.OWNER = d.OWNER AND p.NAME = d.NAME " +
@@ -226,13 +296,23 @@ function rolesFinding(rows: Rows): Finding | null {
   };
 }
 
+/** A string as an Oracle literal. */
+function literal(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
 function unitsFinding(rows: Rows): Finding | null {
   if (rows.length === 0) return null;
   return {
     what: "it holds EXECUTE on code Oracle does not maintain, which runs with its owner's rights",
     statements: rows.map((row) => {
       const [to, owner, name] = text(row, "ALL_TAB_PRIVS", "GRANTEE", "OWNER", "NAME");
-      return `REVOKE EXECUTE ON ${quoted(owner)}.${quoted(name)} FROM ${grantee(to)}`;
+      const object = `${quoted(owner)}.${quoted(name)}`;
+      // An evaluation context's grant is taken through DBMS_RULE_ADM: a REVOKE statement answers ORA-04042 (measured).
+      if (row.OBJECT_TYPE === "EVALUATION CONTEXT") {
+        return `BEGIN DBMS_RULE_ADM.REVOKE_OBJECT_PRIVILEGE(DBMS_RULE_ADM.EXECUTE_ON_EVALUATION_CONTEXT, ${literal(object)}, ${literal(to)}); END;`;
+      }
+      return `REVOKE EXECUTE ON ${object} FROM ${grantee(to)}`;
     }),
   };
 }
