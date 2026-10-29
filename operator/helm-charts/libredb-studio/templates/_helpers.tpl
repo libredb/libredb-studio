@@ -876,6 +876,28 @@ instead, naming the value to fix. Included from deployment.yaml.
 {{- fail "authProvider=openshift requires openshiftRoute.host: OPENSHIFT_PUBLIC_URL and the ConsoleLink need the public host at install time, so set the host the router serves, such as studio-<namespace>.apps.<cluster domain>" }}
 {{- end }}
 {{- $_ := include "libredb-studio.openshiftClientId" . }}
+{{- $account := include "libredb-studio.serviceAccountName" . }}
+{{- if and (include "libredb-studio.discoveryEnabled" .) (eq $account (include "libredb-studio.discoveryName" .)) }}
+{{- fail (printf "authProvider=openshift refuses serviceAccount.name=%s: that is the discovery exporter's account, which may read Secrets in the discovered namespaces, and Studio's own process never holds a token that can read a database Secret" $account) }}
+{{- end }}
+{{- /* The OAuth server accepts every redirect any oauth-redirect annotation of the account names, so
+       one more reference or URI would let it send the code past Studio's callback. The chart's own
+       two keys may still collide: serviceaccount.yaml lets the chart's value win. */}}
+{{- range $key, $_ := .Values.serviceAccount.annotations | default dict }}
+{{- if and (hasPrefix "serviceaccounts.openshift.io/oauth-redirect" $key) (not (has $key (list "serviceaccounts.openshift.io/oauth-redirectreference.first" "serviceaccounts.openshift.io/oauth-redirecturi.first"))) }}
+{{- fail (printf "authProvider=openshift refuses the serviceAccount.annotations entry %s: the chart registers Studio's one callback itself, and another redirect annotation would let the OAuth server send the code elsewhere, so remove it" $key) }}
+{{- end }}
+{{- end }}
+{{- if include "libredb-studio.operatorManaged" . }}
+{{- range .Values.extraEnv }}
+{{- if hasPrefix "KUBERNETES_ACCESS_REVIEW_ADMIN_" (.name | default "" | toString) }}
+{{- fail (printf "authProvider=openshift with operator.managed refuses extraEnv entry %s: under the operator a Studio admin is whoever may update this LibreDBStudio, and the resource may not move that target" .name) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if .Values.serviceAccount.automountServiceAccountToken }}
+{{- fail "authProvider=openshift refuses serviceAccount.automountServiceAccountToken=true: Studio's process holds only the OAuth client token, whose audience the API server rejects, and reviews every request with the signed-in user's own token; leave it false" }}
+{{- end }}
 {{- if gt (int .Values.replicaCount) 1 }}
 {{- fail "authProvider=openshift requires replicaCount=1: the OpenShift tokens of signed-in users, the review cache and the export cache live in one process" }}
 {{- end }}
@@ -930,6 +952,29 @@ instead, naming the value to fix. Included from deployment.yaml.
 {{- if semverCompare "<=1.1.0" (regexReplaceAll "[-+].*$" (trimPrefix "v" $tag) "") }}
 {{- fail (printf "authProvider=openshift needs an application image after 1.1.0, and image.tag is %s: release 1.1.0 and earlier have no openshift sign-in and would sign people in with a generated password; set image.tag to a later release" $tag) }}
 {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+Every mode guard and mode object keys on authProvider, but the app reads its sign-in mode from
+NEXT_PUBLIC_AUTH_PROVIDER, which the ConfigMap writes from authProvider and an extraEnv entry of the
+same name overrides. So an extraEnv NEXT_PUBLIC_AUTH_PROVIDER must name the same mode (trimmed and
+lower-cased, as the app reads it), and the two variables only openshift sign-in reads are refused in
+every other mode: the hand wiring of the first verify windows (authProvider local and openshift in
+extraEnv) would otherwise run openshift sign-in with none of the mode's guards, egress policy or
+custom-connection default. Every mode, so included from deployment.yaml before the mode guards. An
+extraEnvFrom source carrying the name is a blind spot, as in effectiveBindAddress.
+*/}}
+{{- define "libredb-studio.authProviderGuard" -}}
+{{- $provider := .Values.authProvider | toString | trim | lower }}
+{{- range .Values.extraEnv }}
+{{- $name := .name | default "" | toString }}
+{{- if and (eq $name "NEXT_PUBLIC_AUTH_PROVIDER") (ne (.value | default "" | toString | trim | lower) $provider) }}
+{{- fail (printf "extraEnv entry NEXT_PUBLIC_AUTH_PROVIDER must name the same sign-in mode as authProvider (%q): set the mode in authProvider, which every mode guard and object keys on, and remove the extraEnv entry" $provider) }}
+{{- end }}
+{{- if and (has $name (list "OPENSHIFT_OAUTH_CLIENT_ID" "OPENSHIFT_OAUTH_TOKEN_FILE")) (ne $provider "openshift") }}
+{{- fail (printf "extraEnv entry %s is read only by openshift sign-in, and authProvider is %q: set authProvider=openshift, which writes it, and remove the hand-wired extraEnv entries" $name $provider) }}
 {{- end }}
 {{- end }}
 {{- end }}

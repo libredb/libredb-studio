@@ -246,7 +246,7 @@ config:
   # verifying it against the identity provider.
   oidcLogoutHint: false
   # -- Session lifetime in seconds, from 300 to 86400. null (the default) writes nothing and
-  # the app keeps 86400; governance installs use 28800.
+  # the app keeps 86400, or 28800 with authProvider=openshift; governance installs use 28800.
   sessionTtlSeconds: null
   # -- ALLOW_CUSTOM_CONNECTIONS, whether a signed-in user may open a connection of their own,
   # one that is not a seed connection. null (the default) writes nothing and the app keeps
@@ -677,8 +677,10 @@ openshift:
   # The Tier 0 link to Studio in the OpenShift web console, a console.openshift.io/v1
   # ConsoleLink to https://<openshiftRoute.host><config.basePath>. Cluster-scoped, so
   # installing it needs a cluster admin. Needs console.openshift.io/v1 (or
-  # global.compatibility.openshift.apis=force) and openshiftRoute.host. Every
-  # authenticated user can read ConsoleLinks, so it carries the link and nothing else.
+  # global.compatibility.openshift.apis=force) and openshiftRoute.host, served by the
+  # release's Route (openshiftRoute.enabled) or one of its ingress.hosts. Every
+  # authenticated user can read ConsoleLinks, so it carries the link, its name and the
+  # chart's common labels, never a discovered namespace.
   consoleLink:
     # -- Render the ConsoleLink.
     enabled: false
@@ -960,7 +962,8 @@ discovery:
 operator:
   # -- Set by the operator for every LibreDBStudio it reconciles. With it set, the chart
   # renders a cross-namespace or cluster-scoped object (a discovered namespace other than
-  # the release namespace, the ConsoleLink) only for the release in
+  # the release namespace, the ConsoleLink, the access review's ClusterRole and
+  # ClusterRoleBinding, the Rancher NavLink) only for the release in
   # operator.clusterStudioNamespace, and fails the render otherwise.
   managed: false
   # -- The namespace of the one LibreDBStudio a cluster admin allows cross-namespace and

@@ -2,8 +2,8 @@
 The Tier 0 link to Studio in the OpenShift web console, a console.openshift.io/v1 ConsoleLink to
 https://<openshiftRoute.host><config.basePath>, the address OPENSHIFT_PUBLIC_URL names. A
 ConsoleLink is cluster-scoped and every authenticated user can read it (the console grants get and
-list to system:authenticated), so it carries the link and nothing else, and the chart ships no
-reader role.
+list to system:authenticated), so it carries the link, its name and the chart's common labels,
+never a discovered namespace, and the chart ships no reader role.
 
 With discovery on, the ApplicationMenu link is the locator of the cluster's Studio: named
 libredb-studio and labelled app.kubernetes.io/name=libredb-studio, whatever nameOverride says, and
@@ -20,6 +20,19 @@ app.kubernetes.io/name, so two releases never collide and neither passes for the
 {{- $host := get (.Values.openshiftRoute | default dict) "host" }}
 {{- if not $host }}
 {{- fail "openshift.consoleLink.enabled requires openshiftRoute.host: the link points at https://<openshiftRoute.host><config.basePath>, so set the host the Route serves" }}
+{{- end }}
+{{- /* A host no object of the release serves is one anybody who may set a Route's spec.host could
+       claim, and the cluster-wide link would send every console user there. */}}
+{{- $served := get (.Values.openshiftRoute | default dict) "enabled" }}
+{{- if and (not $served) .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+{{- if eq (.host | default "" | toString) ($host | toString) }}
+{{- $served = true }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- if not $served }}
+{{- fail (printf "openshift.consoleLink.enabled requires openshiftRoute.enabled=true, or ingress.enabled with an ingress.hosts entry of %s: the link points at openshiftRoute.host, and a host no Route or Ingress of this release serves could be claimed by anyone who may create a Route" $host) }}
 {{- end }}
 {{- $location := get $link "location" | default "ApplicationMenu" }}
 {{- $discovery := include "libredb-studio.discoveryEnabled" . }}

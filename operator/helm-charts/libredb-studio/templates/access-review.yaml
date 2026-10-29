@@ -6,6 +6,7 @@ The projected token and CA the reviews use are mounted by deployment.yaml; the g
 _helpers.tpl.
 */}}
 {{- if include "libredb-studio.accessReviewEnabled" . }}
+{{- include "libredb-studio.clusterStudioNamespaceGuard" (dict "ctx" $ "what" "accessReview.enabled renders a cluster-scoped ClusterRole and ClusterRoleBinding") }}
 {{- $name := include "libredb-studio.accessReviewName" . }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

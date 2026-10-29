@@ -65,9 +65,12 @@ spec:
         - port: 6379
           protocol: TCP
       {{- /* openshift sign-in with discovery: only the discovered namespaces, and the release
-             namespace while the bundled PostgreSQL holds Studio's storage, so even a forged
-             Service in a discovered namespace cannot point Studio elsewhere. Any other database
-             Studio needs, such as an external storage database, goes in additionalEgress. */}}
+             namespace while the bundled PostgreSQL holds Studio's storage, so a forged Service
+             in a discovered namespace cannot point Studio at a database port elsewhere. The DNS,
+             443 and 6443 rules above keep no destination, and a policy matches after the Service
+             rewrite, so whoever may write EndpointSlices there could still reach another address
+             on those ports. Any other database Studio needs, such as an external storage
+             database, goes in additionalEgress. */}}
       {{- if and $openshiftSignIn (include "libredb-studio.discoveryEnabled" .) }}
       {{- $namespaces := .Values.discovery.kubernetes.namespaces }}
       {{- if .Values.postgresql.enabled }}
