@@ -149,7 +149,7 @@ export interface MaintenanceResult {
  *
  * `maintenanceOperations` says only that an operation EXISTS here, and #427 measured
  * what a surface built on that alone offers. Oracle declares `optimize`, so the
- * per-table button sent `optimize` with a TABLE name - and `oracle.ts` built
+ * per-table button sent `optimize` with a TABLE name - and `oracle/index.ts` built
  * `ALTER INDEX "<target>" REBUILD` from it, so every click answered ORA-01418
  * (reproduced 2026-08-25 against Oracle AI Database 26ai Free before this change). The target
  * grammar differs between engines that declare the SAME `MaintenanceType`, so a
@@ -3131,7 +3131,7 @@ export interface ObjectKindSpec {
    * role would never withhold a twisty a relation deserved; it would withhold those five and
    * grant one it should not. Oracle's `sequence` is that one, and it is the case that settles the
    * whole question: same kind id as PostgreSQL's, opposite answer, because that provider gates on
-   * the role in `OracleProvider.describeObject()` (`src/lib/db/providers/sql/oracle.ts`) and
+   * the role in `OracleProvider.describeObject()` (`src/lib/db/providers/sql/oracle/index.ts`) and
    * PostgreSQL gates on `RELKIND_BY_KIND` in `PostgresProvider.describeObject()`
    * (`src/lib/db/providers/sql/postgres.ts`).
    * A rule written above the providers is wrong for at least one engine whichever way it is

@@ -263,7 +263,7 @@ D18 names two engines that lose digits and three that keep them as strings. Whic
 the family falls on was never measured, and the gap read as the same defect, unrecorded, on five
 more engines. Measured 2026-09-19, each through the seam the product itself uses - the ClickHouse
 HTTP transport, the Cassandra driver transport, `openDuckDBClient`, `mssql` under the options
-`buildConfig` sets, and `oracledb` with the only settings `oracle.ts` applies
+`buildConfig` sets, and `oracledb` with the only settings `oracle/index.ts` applies
 (`OUT_FORMAT_OBJECT`, and no `fetchAsString` for a NUMBER) - over a table holding 9007199254740993
 beside its neighbour 9007199254740992:
 
@@ -437,7 +437,7 @@ facts. The round closed the first field on three providers. The second is unclos
 **The rest fabricate.** Measured by reading every `databaseSizeBytes` assignment under
 `src/lib/db/providers/`:
 - Self-contradicting within one object, and the clearest cases, because the sibling string field already says the figure is unavailable: `sql/trino/introspect.ts` pairs a literal `0` with `databaseSize: TRINO_UNAVAILABLE_TEXT`, and `sql/search/index.ts` pairs `sizeBytes ?? 0` with `databaseSize: SEARCH_UNKNOWN_TEXT` for both `elasticsearch` and `opensearch`.
-- Swallowed into an initialiser the way D40's connection counts were: `sql/mssql.ts`, `sql/oracle.ts`, `sql/sqlite.ts`.
+- Swallowed into an initialiser the way D40's connection counts were: `sql/mssql.ts`, `sql/oracle/index.ts`, `sql/sqlite.ts`.
 - Coerced by a helper that returns 0 for an absent row: `sql/druid/introspect.ts` and `sql/clickhouse/index.ts` through their local `asNumber`.
 - Coerced inline: `sql/postgres.ts` and `sql/mysql.ts` (`parseInt(... || "0")`), `sql/libsql/introspect.ts` and `document/couchbase/index.ts` (`?? 0`), `keyvalue/redis.ts`, and `embedded/libredb.ts`, whose `fileSizeBytes()` returns 0 when the `statSync` throws.
 
@@ -456,7 +456,7 @@ publishes a measured-looking zero - see D51, which is the same shape on the fiel
 
 **Seven of the eleven are closed on main since** - they now leave `databaseSizeBytes` out when the size is unknown.
 PostgreSQL and MySQL in #627, SQLite and LibreDB in #1050 (for #546), SQL Server and Oracle in #579, and libSQL in #569.
-The symbols are `getOverview()` in `src/lib/db/providers/sql/postgres.ts`, `src/lib/db/providers/sql/mysql.ts`, `src/lib/db/providers/sql/sqlite.ts`, `src/lib/db/providers/sql/mssql.ts` and `src/lib/db/providers/sql/oracle.ts`, `readOverview()` in `src/lib/db/providers/sql/libsql/introspect.ts`, and `getOverview()` in `src/lib/db/providers/embedded/libredb.ts`.
+The symbols are `getOverview()` in `src/lib/db/providers/sql/postgres.ts`, `src/lib/db/providers/sql/mysql.ts`, `src/lib/db/providers/sql/sqlite.ts`, `src/lib/db/providers/sql/mssql.ts` and `src/lib/db/providers/sql/oracle/index.ts`, `readOverview()` in `src/lib/db/providers/sql/libsql/introspect.ts`, and `getOverview()` in `src/lib/db/providers/embedded/libredb.ts`.
 
 **The counts moved for a second reason.** DuckDB arrived as a seventeenth type-id in #516 and gets this
 right without being asked: `duckdb/introspect.ts` spreads the key conditionally and spells the string
@@ -864,7 +864,7 @@ multi-line entry for an unmapped kind fails it.
 ### D67. `assertObjectPathShape` is written out eight times, and four more shapes twice or three times
 
 Measured in the tree on 2026-09-13: `assertObjectPathShape` is DEFINED, not imported, in eight
-provider files (`postgres.ts`, `mysql.ts`, `oracle.ts`, `sqlite.ts`, `libsql/objects.ts`,
+provider files (`postgres.ts`, `mysql.ts`, `oracle/index.ts`, `sqlite.ts`, `libsql/objects.ts`,
 `clickhouse/objects.ts`, `cassandra/objects.ts`, `document/mongodb/index.ts`). It belongs beside
 `containerDepth` in `src/lib/db/object-kinds.ts`, which is where `comparePaths` already went: that
 one was written four times, was hoisted to `src/lib/db/object-path.ts`, and is now imported by every
@@ -6253,7 +6253,7 @@ Not fixed in #1085: that PR edits another provider's doc only where a shared sur
 ### DOC7. Four translated READMEs still say the SSL/TLS panel takes effect on nine engines
 
 The transport paragraph of `README_es.md`, `README_ja.md`, `README_hi.md` and `README_ur.md` carries wording `README.md` replaced in #466: it names the engines the SSL/TLS panel takes effect on, PostgreSQL to Trino, and says that Oracle, MongoDB and Redis ignore the option.
-`README.md` says instead that the panel is honoured by every engine that shows it, which is every engine but SQLite, DuckDB and the embedded LibreDB, and the three named as ignoring it read `config.ssl` (`src/lib/db/providers/document/mongodb/index.ts`, `src/lib/db/providers/keyvalue/redis.ts`, `src/lib/db/providers/sql/oracle.ts`), while libSQL and Cassandra, which honour it, are not in the list, and libSQL is not in the connection-string list beside it either.
+`README.md` says instead that the panel is honoured by every engine that shows it, which is every engine but SQLite, DuckDB and the embedded LibreDB, and the three named as ignoring it read `config.ssl` (`src/lib/db/providers/document/mongodb/index.ts`, `src/lib/db/providers/keyvalue/redis.ts`, `src/lib/db/providers/sql/oracle/index.ts`), while libSQL and Cassandra, which honour it, are not in the list, and libSQL is not in the connection-string list beside it either.
 #1085 added Prometheus to that list in all four files, because each file's new Prometheus row tells the reader to enable TLS, and changed nothing else there.
 `README_zh.md` already carries the English wording.
 Each file's translation-lag banner names `README.md` as the one that wins, and `bun run readme:check` reads no prose, so nothing flags the paragraph.
@@ -6299,7 +6299,7 @@ Two halves, and the second is what stops it recurring:
    resolves each, and fails on a miss, so a coordinate cannot go stale silently again.
 
 DOC4 is the same class in the provider docs.
-More instances, found stale at `8f2fc5c81` during the PR #1575 review (2026-10-07): `tests/integration/db/mssql-provider.test.ts` (`mssql.ts:1798`), `docs/providers/opensearch.md` (`http-transport.ts` `:806`, `:883-935`, `:913`, `:999`, `:1127`, `:1128`, `:1283`), `docs/providers/elasticsearch.md` (`http-transport.ts:1194`), `docs/BACKLOG.md` (`http-transport.ts:1556`), `tests/components/studio/BottomPanel.test.tsx` (`BottomPanel.tsx:574`), `docs/BACKLOG.md` (`BottomPanel.tsx:445`), and the `oracle.ts:1492`, `:2000` and `:2015` citations in `oracle.ts`, `tests/integration/db/oracle-provider.test.ts` and `tests/api/db-objects.test.ts`.
+More instances, found stale at `8f2fc5c81` during the PR #1575 review (2026-10-07): `tests/integration/db/mssql-provider.test.ts` (`mssql.ts:1798`), `docs/providers/opensearch.md` (`http-transport.ts` `:806`, `:883-935`, `:913`, `:999`, `:1127`, `:1128`, `:1283`), `docs/providers/elasticsearch.md` (`http-transport.ts:1194`), `docs/BACKLOG.md` (`http-transport.ts:1556`), `tests/components/studio/BottomPanel.test.tsx` (`BottomPanel.tsx:574`), `docs/BACKLOG.md` (`BottomPanel.tsx:445`), and the `oracle/index.ts:1492`, `:2000` and `:2015` citations in `oracle/index.ts`, `tests/integration/db/oracle-provider.test.ts` and `tests/api/db-objects.test.ts`.
 Each should become a symbol anchor rather than a corrected number.
 This entry was first written as a second "D94 (proposed)" block, which reused the id of D94 and was not a heading the structure guard reads.
 
@@ -8445,7 +8445,7 @@ No privilege boundary is crossed: on these engines the credential's grants bound
 Under governance a definition can carry `ssl.caCert` or `ssl.rejectUnauthorized` without `ssl.mode` (`DEFINITION_ALLOWLIST` in `src/lib/governance/contract.ts`), and a sealed client certificate pair alone builds a panel with no mode (`mergedRecord` in `src/lib/governance/admission.ts`).
 The providers read an absent mode three ways.
 PostgreSQL, MySQL, SQL Server, MongoDB, Redis and the shared HTTP and gRPC transports verify the chain and the host name.
-Oracle verifies the chain only (`buildTLSAttributes` in `src/lib/db/providers/sql/oracle.ts` sets `sslServerDNMatch` for `verify-full` and `verify-system` alone).
+Oracle verifies the chain only (`buildTLSAttributes` in `src/lib/db/providers/sql/oracle/index.ts` sets `sslServerDNMatch` for `verify-full` and `verify-system` alone).
 Cassandra (`src/lib/db/providers/sql/cassandra/driver-transport.ts`) and MQTT connect without TLS, and Db2 refuses the connection.
 So the same `{"ssl":{"caCert":"<PEM>"}}` checks the host name on PostgreSQL, does not on Oracle, and sends a Cassandra password in cleartext.
 `docs/SEED_CONNECTIONS.md` documents `ssl.caCert` and the client pair but not `ssl.mode`.
@@ -8456,7 +8456,7 @@ So the same `{"ssl":{"caCert":"<PEM>"}}` checks the host name on PostgreSQL, doe
 
 `buildConnectionString` in `src/lib/db/providers/document/mongodb.ts` builds `mongodb://user:password@host:port/database` from the fields, encoding the user, the password and `authSource` but not the database name or the host.
 The driver percent-decodes the path into the database name and also uses it as the default authentication database, so a name with `?` fails to parse, one with `#` loses its tail and the appended `?authSource=` with it, and one with `%` is decoded or throws, although MongoDB allows those characters in a database name.
-`getConnectString` in `src/lib/db/providers/sql/oracle.ts` writes `host:port/serviceName` as Easy Connect, which node-oracledb never percent-decodes, so encoding is not the fix there: a `?` in the service name starts Easy Connect parameters, `/` and `:` change the instance name or the server mode, and an IPv6 host without brackets does not parse.
+`getConnectString` in `src/lib/db/providers/sql/oracle/index.ts` writes `host:port/serviceName` as Easy Connect, which node-oracledb never percent-decodes, so encoding is not the fix there: a `?` in the service name starts Easy Connect parameters, `/` and `:` change the instance name or the server mode, and an IPv6 host without brackets does not parse.
 No privilege boundary is crossed, because whoever writes the fields chooses the target anyway.
 The cost is MongoDB databases that cannot be opened from the fields, and on Oracle connection settings that a field adds without saying so.
 

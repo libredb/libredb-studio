@@ -111,7 +111,7 @@ export const DRUID_UNKNOWN_TEXT = "unknown";
  * Druid's cache statistics reach a metrics emitter (statsd, Kafka, the log) and
  * never a SQL-readable table, so any number here would be invented, and a low
  * one would trip the cache-ratio threshold alert into reporting a fault that does
- * not exist. `sqlite.ts` and `oracle.ts` already spell an unavailable ratio this
+ * not exist. `sqlite.ts` and `oracle/index.ts` already spell an unavailable ratio this
  * way, so this is the repo's existing word for it rather than a new one.
  */
 export const DRUID_CACHE_HIT_RATIO_UNAVAILABLE = "N/A";

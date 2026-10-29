@@ -202,7 +202,7 @@ const SEARCH_SCHEMA_NAME = "";
 /**
  * What a value the cluster does not publish is called on screen.
  *
- * "N/A" is the spelling `sqlite.ts`, `oracle.ts`, `mssql.ts` and `druid` already use
+ * "N/A" is the spelling `sqlite.ts`, `oracle/index.ts`, `mssql.ts` and `druid` already use
  * for a reading they cannot take, so this is the repo's existing word rather than a
  * new one. Used for the two `DatabaseOverview` strings a search cluster has no
  * source for; every numeric field says so with a documented zero instead, because
@@ -1857,7 +1857,7 @@ abstract class SearchProvider extends SQLBaseProvider {
         // which is not part of this seam, and the shard and node counts that ARE here
         // would be a different number wearing this field's name. So nothing was read,
         // and `DatabaseOverview.activeConnections` is optional precisely so that can be
-        // said - `mssql.ts`, `oracle.ts`, `mongodb/index.ts` and `cassandra` all omit it for
+        // said - `mssql.ts`, `oracle/index.ts`, `mongodb/index.ts` and `cassandra` all omit it for
         // the same reason, and this provider held the last unconditional
         // `activeConnections: 0` in the codebase - but not the last zero of any kind.
         // Trino, Druid, ClickHouse and Couchbase still coerce a REFUSED read to 0. Each

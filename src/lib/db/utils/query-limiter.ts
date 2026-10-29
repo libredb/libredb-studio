@@ -366,7 +366,7 @@ function analyzeUnderGrammar(sql: string, grammar: SqlGrammar): ParsedQueryInfo 
   // statement WRITES, committing at most `limit` of them while the UI reported a
   // truncated result set (#287). The operative keyword is reported as its own type
   // rather than as a blanket OTHER: all three consumers of `type` outside this
-  // module - `sql-base.ts`, `oracle.ts` and `mssql.ts` - test `=== "SELECT"` and
+  // module - `sql-base.ts`, `oracle/index.ts` and `mssql.ts` - test `=== "SELECT"` and
   // nothing else, so the honest answer costs nothing.
   // `MERGE`, which the union cannot name, falls through to OTHER.
   //

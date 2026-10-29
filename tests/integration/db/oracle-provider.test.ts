@@ -121,8 +121,8 @@ mock.module("oracledb", () => {
 
 // Load the provider via dynamic import AFTER the mock is registered. A static
 // import is hoisted above mock.module(), which evaluates the real oracledb
-// driver first and drops oracle.ts from bun's lcov attribution entirely.
-const { OracleProvider } = await import("@/lib/db/providers/sql/oracle");
+// driver first and drops oracle/index.ts from bun's lcov attribution entirely.
+const { OracleProvider } = await import("@/lib/db/providers/sql/oracle/index");
 
 // ---------------------------------------------------------------------------
 // Default mock execute implementation
@@ -3655,7 +3655,7 @@ describe("object surface", () => {
         .sort(),
     ).toEqual(["materialized_view", "table", "view"]);
     // The other direction, and `sequence` is the entry that matters. This provider gates
-    // describeObject on the ROLE (`oracle.ts:2000`), so an Oracle sequence answers no
+    // describeObject on the ROLE (`oracle/index.ts:2000`), so an Oracle sequence answers no
     // columns at all - the opposite of PostgreSQL's sequence, which answers last_value,
     // log_cnt and is_called. Same kind id, opposite answer, which is why the fact is
     // declared per provider and never derived from the role or from the id (#789).
@@ -3877,9 +3877,9 @@ describe("object surface", () => {
       //
       // After the bulk block, because `SCHEMA_COLUMNS_SQL` also reads `ALL_TAB_COLUMNS`.
       //
-      // The rows are the DRIVER'S rows and the naming is left to `oracle.ts`, which spells
+      // The rows are the DRIVER'S rows and the naming is left to `oracle/index.ts`, which spells
       // a flat name BARE: the read is scoped to the connection owner by `WHERE OWNER = :1`
-      // (`oracle.ts:1492`), so the owner is a fact about the statement rather than a
+      // (`oracle/index.ts:1492`), so the owner is a fact about the statement rather than a
       // qualifier on the answer, and every name comes back unqualified against a
       // `[owner, name]` path. A fixture that returned `APP.APP_ORDERS` would assert a
       // spelling this provider never produces.

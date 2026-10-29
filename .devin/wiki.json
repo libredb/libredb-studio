@@ -54,7 +54,7 @@
     },
     {
       "title": "SQL Database Providers",
-      "purpose": "Document the SQL database providers: PostgreSQL (src/lib/db/providers/sql/postgres.ts), MySQL (src/lib/db/providers/sql/mysql.ts), SQLite (src/lib/db/providers/sql/sqlite.ts), Oracle (src/lib/db/providers/sql/oracle.ts), and SQL Server/MSSQL (src/lib/db/providers/sql/mssql.ts). Cover connection handling, query execution, schema introspection, and provider-specific features and limitations. Each extends SQLBaseProvider.",
+      "purpose": "Document the SQL database providers: PostgreSQL (src/lib/db/providers/sql/postgres.ts), MySQL (src/lib/db/providers/sql/mysql.ts), SQLite (src/lib/db/providers/sql/sqlite.ts), Oracle (src/lib/db/providers/sql/oracle/index.ts), and SQL Server/MSSQL (src/lib/db/providers/sql/mssql.ts). Cover connection handling, query execution, schema introspection, and provider-specific features and limitations. Each extends SQLBaseProvider.",
       "parent": "Database Provider System",
       "page_notes": [
         "SQLite has two distinct layers: bun:sqlite is the DB provider driver, while better-sqlite3 is used by the storage layer - do not conflate them.",

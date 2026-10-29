@@ -84,7 +84,7 @@ export const TRINO_UNKNOWN_TEXT = "unknown";
  * Both fields are STRINGS, so they can say "not measured" - which is the truth
  * rather than a hedge. Trino caches nothing at this layer (a connector may cache,
  * and publishes no ratio for it), and it stores nothing at all. `sqlite.ts`,
- * `oracle.ts` and `druid/introspect.ts` already spell an unavailable reading this
+ * `oracle/index.ts` and `druid/introspect.ts` already spell an unavailable reading this
  * way, so this is the repo's existing word for it.
  */
 export const TRINO_UNAVAILABLE_TEXT = "N/A";

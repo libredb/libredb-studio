@@ -4,9 +4,9 @@
  */
 
 import oracledb from "oracledb";
-import { SQLBaseProvider } from "./sql-base";
-import { ORACLE_CREATE_TABLE } from "./oracle-create-table";
-import { oracleColumnTypes } from "./column-types";
+import { SQLBaseProvider } from "../sql-base";
+import { ORACLE_CREATE_TABLE } from "../oracle-create-table";
+import { oracleColumnTypes } from "../column-types";
 import {
   type DatabaseConnection,
   type QueryResult,
@@ -41,7 +41,7 @@ import {
   type IndexSchema,
   type ForeignKeySchema,
   type ProviderExecutionContext,
-} from "../../types";
+} from "../../../types";
 import {
   applySourceBound,
   assertContainerPathShape,
@@ -52,14 +52,14 @@ import {
   type ContainerPathShapeEngine,
   declaredKinds,
   findKind,
-} from "../../object-kinds";
-import { comparePaths } from "../../object-path";
-import { DatabaseConfigError, ConnectionError, QueryError, NO_ACTIVE_TRANSACTION } from "../../errors";
-import { mapDatabaseError } from "../../map-database-error";
-import { describeOracleClientLoadFailure } from "./oracle-driver-errors";
-import { formatBytes } from "../../utils/pool-manager";
-import { analyzeQuery, assertRowBounds, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
-import { measuredNullableAggregate } from "../../utils/measured-aggregate";
+} from "../../../object-kinds";
+import { comparePaths } from "../../../object-path";
+import { DatabaseConfigError, ConnectionError, QueryError, NO_ACTIVE_TRANSACTION } from "../../../errors";
+import { mapDatabaseError } from "../../../map-database-error";
+import { describeOracleClientLoadFailure } from "../oracle-driver-errors";
+import { formatBytes } from "../../../utils/pool-manager";
+import { analyzeQuery, assertRowBounds, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../../utils/query-limiter";
+import { measuredNullableAggregate } from "../../../utils/measured-aggregate";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
@@ -1709,7 +1709,7 @@ export class OracleProvider extends SQLBaseProvider {
       objectKinds: [
         // `hasColumns` on the three kinds and no more, and it is written out rather than
         // derived from `role === "relation"` even though the two agree here (#789).
-        // `describeObject` gates on the role at `oracle.ts:2015`, so a sequence answers no
+        // `describeObject` gates on the role at `oracle/index.ts:2015`, so a sequence answers no
         // columns at all - the opposite of PostgreSQL's sequence, which answers last_value,
         // log_cnt and is_called. Same kind id, opposite answer, so the fact is the
         // provider's to state and the tree draws a twisty on nothing else.

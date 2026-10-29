@@ -85,7 +85,7 @@ declare module "oracledb" {
     /**
      * One statement's answer. `rows` and `metaData` are ABSENT for a non-SELECT and
      * `rowsAffected` is absent for a SELECT - the optionality is the contract, not
-     * defensiveness (see `buildQueryResult` in providers/sql/oracle.ts).
+     * defensiveness (see `buildQueryResult` in providers/sql/oracle/index.ts).
      */
     interface Result {
       rows?: unknown[];

@@ -68,7 +68,7 @@ export function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  *   `{ ...baseConfig, connectionString }` and never reaches the `host`/`port`/`user`/`database`
  *   branch below it. URI handling is also in
  *   `MySQLProvider.buildPoolConfig()` in `src/lib/db/providers/sql/mysql.ts` (`uri`),
- *   `OracleProvider.getConnectString()` in `src/lib/db/providers/sql/oracle.ts`,
+ *   `OracleProvider.getConnectString()` in `src/lib/db/providers/sql/oracle/index.ts`,
  *   `SQLiteProvider.getDatabasePath()` in `src/lib/db/providers/sql/sqlite.ts`,
  *   `MongoDBProvider.buildConnectionString()` in `src/lib/db/providers/document/mongodb/index.ts`,
  *   `resolveConnection()` in `src/lib/db/providers/sql/libsql/index.ts` and
@@ -84,7 +84,7 @@ export function tunnelRoute(tunnel: SSHTunnelConfig | undefined): string {
  *   `memory.app.plus_one`, so the case needs a user edit that drops the qualification, which the
  *   pane cannot stop and the seal is not entitled to assume away.
  * - `serviceName` is Oracle's connect-string tail, `OracleProvider.getConnectString()` in
- *   `src/lib/db/providers/sql/oracle.ts` building `host:port/serviceName`, so it selects WHICH
+ *   `src/lib/db/providers/sql/oracle/index.ts` building `host:port/serviceName`, so it selects WHICH
  *   DATABASE on that listener.
  * - `sshTunnel` is the ROUTE and not a credential. `getOrCreateProvider`
  *   (`src/lib/db/factory.ts`) REWRITES `host` and `port` to the tunnel's local endpoint

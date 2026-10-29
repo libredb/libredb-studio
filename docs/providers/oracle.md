@@ -20,7 +20,7 @@
 | **Transactions** | Yes: explicit begin/commit/rollback (5-minute auto-rollback on an owned provider only, see §3.4) |
 | **Query cancellation** | Yes — tracked connection + `connection.break()` |
 | **SSL** | Yes — `connection.ssl` selects TCPS, the DN match and the wallet ([§4.3](#43-ssl--tls)) |
-| **Source** | [`src/lib/db/providers/sql/oracle.ts`](../../src/lib/db/providers/sql/oracle.ts) |
+| **Source** | [`src/lib/db/providers/sql/oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts) |
 | **Base** | [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts) |
 | **Tests** | [`tests/integration/db/oracle-provider.test.ts`](../../tests/integration/db/oracle-provider.test.ts) |
 
@@ -47,7 +47,7 @@ providers, with several Oracle-isms that are worth knowing before reading the co
 
 ### Thin mode
 
-The constructor ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) uses pure-JS Thin mode by
+The constructor ([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)) uses pure-JS Thin mode by
 default, sets `outFormat = OUT_FORMAT_OBJECT` (rows as objects), and `autoCommit = true` globally.
 Thin mode means **no native Oracle client** has to be installed in the container — a real deployment
 win.
@@ -79,7 +79,7 @@ Loaded on demand by the factory ([`factory.ts`](../../src/lib/db/factory.ts)):
 
 ```ts
 case 'oracle': {
-  const { OracleProvider } = await import('./providers/sql/oracle');
+  const { OracleProvider } = await import('./providers/sql/oracle/index');
   return new OracleProvider(connection, options);
 }
 ```
@@ -91,14 +91,14 @@ case 'oracle': {
 ### 3.1 EZConnect connect string (service name, not database)
 
 Oracle connects to a **service**, not a database name. `getConnectString()`
-([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) returns the raw `connectionString` if
+([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)) returns the raw `connectionString` if
 given, otherwise builds `host:port/serviceName` where `serviceName = config.serviceName ??
 config.database ?? 'ORCL'`. Accordingly, `validate()` requires only `host` (not `database`) when no
 connection string is present.
 
 ### 3.2 `FETCH FIRST` instead of `LIMIT`
 
-Oracle has no `LIMIT`, so `prepareQuery()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts))
+Oracle has no `LIMIT`, so `prepareQuery()` ([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts))
 overrides the base and appends `FETCH FIRST n ROWS ONLY` (or `OFFSET m ROWS FETCH NEXT n ROWS ONLY`
 when an offset is set) to bare `SELECT`s that don't already have a limit. Default page size
 `DEFAULT_QUERY_LIMIT = 500`; unlimited caps at `MAX_UNLIMITED_ROWS = 100000`.
@@ -201,7 +201,7 @@ from `NUM_ROWS`, an optimizer estimate that can be stale or `NULL`.
 
 ### 3.4 Transaction auto-rollback timeout on an owned provider only
 
-`beginTransaction()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) checks out a connection and marks the transaction active.
+`beginTransaction()` ([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)) checks out a connection and marks the transaction active.
 A provider created with an `owner` in its execution context, which only governance does (`ProviderExecutionContext.owner`, see [Per-user providers](../GOVERNANCE.md#per-user-providers)), also arms the 5-minute auto-rollback timer of the Postgres and MySQL providers there.
 `createDatabaseProvider` hands the execution context to `OracleProvider` for this.
 When the timer fires, `expireTransaction()` rolls the transaction back and closes the held connection, which releases it to the pool; a rollback or a close that fails is logged, and the transaction is released all the same.
@@ -273,12 +273,12 @@ const b = { id: 'or-1', name: 'XE', type: 'oracle',
   user: 'app', password: 'secret', createdAt: new Date() };
 ```
 
-`validate()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) requires `host` only when no
+`validate()` ([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)) requires `host` only when no
 `connectionString` is given; `database` is **not** required (Oracle uses the service name).
 
 ### 4.2 Connection pooling
 
-`connect()` builds an `oracledb` pool ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)):
+`connect()` builds an `oracledb` pool ([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)):
 
 | `oracledb` pool option | Value | Source |
 |------------------------|-------|--------|
@@ -290,13 +290,13 @@ const b = { id: 'or-1', name: 'XE', type: 'oracle',
 > `ProviderOptions` option, defaulting to `DEFAULT_QUERY_TIMEOUT`) are **not** mapped — there is no
 > provider-driven server-side query timeout (cancellation is explicit, [§5.2](#52-query-cancellation)).
 
-`connect()` is idempotent; `getPoolStats()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts))
+`connect()` is idempotent; `getPoolStats()` ([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts))
 exposes `{ total: connectionsOpen, idle, active: connectionsInUse, waiting: 0 }`.
 
 ### 4.3 SSL / TLS
 
 `getConnectString()` and `buildTLSAttributes()`
-([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) map `connection.ssl` onto the three
+([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)) map `connection.ssl` onto the three
 things the driver understands:
 
 | `ssl.mode` | Connect string | `sslServerDNMatch` | Chain verified |
@@ -517,7 +517,7 @@ How `mapDatabaseError` classifies its driver's errors, its Thin-mode refusals, i
 
 ### 5.1 Execution
 
-`query(sql, params?, queryId?)` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) checks
+`query(sql, params?, queryId?)` ([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)) checks
 out a pooled connection, optionally stores the **connection object** under `queryId` for
 cancellation, runs `conn.execute(sql, binds, { outFormat: OUT_FORMAT_OBJECT, autoCommit: true, fetchTypeHandler })`
 ([§5.3](#53-what-each-oracle-type-arrives-as) says what the handler is for),
@@ -600,7 +600,7 @@ failed with `ORA-04098`.
 ### 5.2 Query cancellation
 
 A query issued with a `queryId` stores its connection in a `Map`. `cancelQuery(queryId)`
-([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) calls `connection.break()` on it —
+([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)) calls `connection.break()` on it —
 interrupting the in-flight OCI call — and returns `true` on success (it does not verify a query was
 actually running). Exposed via `POST /api/db/cancel`.
 
@@ -632,7 +632,7 @@ summary all read.
 #### A LOB used to fail the whole query, not just the cell
 
 `query()` and `queryInTransaction()` pass a per-call **`fetchTypeHandler`**
-([oracle.ts](../../src/lib/db/providers/sql/oracle.ts)) that maps `CLOB` and `NCLOB` to
+([oracle/index.ts](../../src/lib/db/providers/sql/oracle/index.ts)) that maps `CLOB` and `NCLOB` to
 `oracledb.STRING` and `BLOB` to `oracledb.BUFFER`. Apart from `DATE` and `TIMESTAMP`, which it gives a
 converter ([below](#a-date-and-a-timestamp-read-as-the-stored-wall-clock-in-every-server-time-zone-1131)),
 every other column keeps the driver's own default:
@@ -1082,7 +1082,7 @@ Redaction is `sql` with `"` as its name quote: a redacted statement keeps its wo
 ## 6. Transactions
 
 Explicit lifecycle on a dedicated connection checked out from the pool (`beginTransaction()`,
-[`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)). Oracle starts a transaction implicitly on
+[`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)). Oracle starts a transaction implicitly on
 the first DML, so `beginTransaction()` just holds the connection. A 5-minute auto-rollback on an owned provider only (see
 [§3.4](#34-transaction-auto-rollback-timeout-on-an-owned-provider-only)).
 Surfaced via `POST /api/db/transaction`.
@@ -1099,7 +1099,7 @@ Surfaced via `POST /api/db/transaction`.
 The providers that implement `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)) end a transaction a statement run through `query()` left behind on the session the next request borrows; the set is read from the type rather than listed here, because a list repeated across provider docs goes stale the moment it grows.
 This provider does not, and the reason is that on this path **the engine has no transaction to leave open**.
 
-Two independent facts in `query()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) make that true, and neither is an inference about the engine's name:
+Two independent facts in `query()` ([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)) make that true, and neither is an inference about the engine's name:
 
 - Every statement executes with `autoCommit: true`, so Oracle ends the transaction that statement implicitly started, at that statement. A statement that FAILS ends it too: Oracle rolls a failed statement back to its own implicit savepoint, and the statement before it was already committed. `BEGIN` does not change this — in Oracle it opens a PL/SQL block, not a transaction.
 - The pooled connection is closed in the `finally` of every call, so nothing survives the statement for a later caller to inherit. `oracledb` 6.10.0 in Thin mode also rolls back inside that close: `ThinConnectionImpl.close()` issues a rollback when `_protocol.txnInProgress` is set, before the session goes back to the pool.
@@ -1131,7 +1131,7 @@ reads, so the app showed exactly one schema on Oracle with no way to reach anoth
 surface is five container-aware methods
 (`listContainers`, `countObjects`, `listObjects`, `describeObject`, `describeObjects`) declared in
 [`types.ts`](../../src/lib/db/types.ts) and implemented in
-[`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts). Both surfaces are live through Phase 1;
+[`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts). Both surfaces are live through Phase 1;
 the flat reading it replaced is deleted.
 
 #### Nine kinds, and the dictionary that answers for each
@@ -1169,7 +1169,7 @@ badge, and expand to nothing. `listObjects(container, 'package')` returns the pa
 `ALL_OBJECTS.OBJECT_TYPE` writes the type names with spaces; the `object_type` argument
 `DBMS_METADATA.GET_DDL` takes writes them with underscores. They are not interchangeable, and Phase
 2 (the Source tab) reads the second column, so both are written once in `ORACLE_OBJECT_TYPES` in
-[`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts) rather than typed out twice:
+[`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts) rather than typed out twice:
 
 | Kind | `ALL_OBJECTS.OBJECT_TYPE` | `DBMS_METADATA.GET_DDL` |
 |---|---|---|
@@ -1509,7 +1509,7 @@ A bare `CHAR` or `NUMBER` is worse, because Oracle accepts it and creates a diff
 `CHAR(1)`, or a `NUMBER` with no precision or scale.
 
 Both column reads therefore also select `DATA_LENGTH`, `DATA_PRECISION`, `DATA_SCALE`, `CHAR_LENGTH`
-and `CHAR_USED`, and `declaredType()` in `oracle.ts` builds the declaration with this rule:
+and `CHAR_USED`, and `declaredType()` in `oracle/index.ts` builds the declaration with this rule:
 
 | `DATA_TYPE` | Declaration |
 | --- | --- |
@@ -2162,7 +2162,7 @@ A table stored in a `CLUSTER` has no segment of its own (the cluster holds it), 
 
 ## 9. Maintenance
 
-`runMaintenance(type, target?, container?)` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)):
+`runMaintenance(type, target?, container?)` ([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)):
 
 A `container` is the OWNER the row carries as `schemaName` (#772). It moves every read off the
 `USER_*` catalogs and onto their `ALL_*` twins with the owner bound, passes that owner as the
@@ -2258,7 +2258,7 @@ is what lets the Operations tab render those words and send an operation Oracle 
 
 ## 10. Capabilities & labels
 
-### `getCapabilities()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts))
+### `getCapabilities()` ([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts))
 
 | Capability | Value |
 |------------|-------|
@@ -2302,7 +2302,7 @@ A `BOOLEAN` table column is 23ai and later, so a true/false column is `NUMBER(1)
 JSON is `CLOB` for the same reason: the native `JSON` type is 21c and later.
 A row that reads like the old shared list is Oracle agreeing with it, not a row nobody looked at.
 
-### Labels — overridden (`getLabels()`, [`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts))
+### Labels — overridden (`getLabels()`, [`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts))
 
 Oracle **overrides** the default SQL labels so the UI uses Oracle vocabulary:
 `analyzeAction` → *"Gather Statistics"*, `vacuumAction` → *"Rebuild Indexes"*, and the matching
@@ -2663,7 +2663,7 @@ It prints no refusal reason.
 ## 15. References
 
 - Driver: [`node-oracledb`](https://github.com/oracle/node-oracledb) (Thin mode)
-- Source: [`src/lib/db/providers/sql/oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)
+- Source: [`src/lib/db/providers/sql/oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)
 - SQL base: [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts)
 - Query limiter: [`src/lib/db/utils/query-limiter.ts`](../../src/lib/db/utils/query-limiter.ts)
 - Interface & DTOs: [`src/lib/db/types.ts`](../../src/lib/db/types.ts)

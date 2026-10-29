@@ -3,7 +3,7 @@ import { sandboxRefusal } from "@/lib/editor/sandbox-refusal";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { MySQLProvider } from "@/lib/db/providers/sql/mysql";
 import { PostgresProvider } from "@/lib/db/providers/sql/postgres";
-import { OracleProvider } from "@/lib/db/providers/sql/oracle";
+import { OracleProvider } from "@/lib/db/providers/sql/oracle/index";
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 
 /**

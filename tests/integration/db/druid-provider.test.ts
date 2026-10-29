@@ -1557,7 +1557,7 @@ describe("DruidProvider monitoring", () => {
   test("getHealth says the cache ratio is unavailable rather than inventing one", async () => {
     // The field is a STRING, so it can say so - and a fabricated low number would
     // trip the cache-ratio threshold into reporting a fault that does not exist.
-    // sqlite.ts and oracle.ts already spell an unavailable ratio this way.
+    // sqlite.ts and oracle/index.ts already spell an unavailable ratio this way.
     const provider = await connectProvider();
     overrideSurface(DRUID_ACTIVE_TASK_SQL, ok(ACTIVE_TASKS_BODY));
 

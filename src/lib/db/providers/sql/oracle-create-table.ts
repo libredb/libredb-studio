@@ -1,7 +1,7 @@
 import type { CreateTableSpec } from "@/lib/db/types";
 
 /**
- * The Create Table form's Oracle grammar (#1822), kept out of `oracle.ts` so a test reads it without `oracledb`.
+ * The Create Table form's Oracle grammar (#1822), kept out of `oracle/index.ts` so a test reads it without `oracledb`.
  *
  * `VARCHAR2` is the one Oracle documents (`VARCHAR` is reserved for a future meaning), there is no
  * `TEXT`/`BIGINT`/`UUID`, a `BOOLEAN` column is 23ai and later so `NUMBER(1)`, and native `JSON` is 21c so `CLOB`.

@@ -122,7 +122,7 @@ const ENGINES = [
   "src/lib/db/providers/sql/spark/index.ts",
   "src/lib/db/providers/sql/mssql.ts",
   "src/lib/db/providers/sql/mysql.ts",
-  "src/lib/db/providers/sql/oracle.ts",
+  "src/lib/db/providers/sql/oracle/index.ts",
   "src/lib/db/providers/sql/postgres.ts",
   "src/lib/db/providers/sql/sqlite.ts",
   "src/lib/db/providers/sql/trino/objects.ts",
