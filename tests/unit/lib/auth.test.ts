@@ -206,6 +206,28 @@ describe("auth", () => {
       }
     });
 
+    test("under an invalid sign-in mode it fails closed, and the log names NEXT_PUBLIC_AUTH_PROVIDER, not the registry", async () => {
+      const token = await signJWT({ role: "user", username: "user" });
+      mockCookieStore["auth-token"] = { value: token };
+      const savedMode = process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+      process.env.NEXT_PUBLIC_AUTH_PROVIDER = "OpenShift";
+      const errorSpy = spyOn(logger, "error").mockImplementation(() => {});
+      try {
+        expect((await readSession()).kind).toBe("store_unavailable");
+        expect(await getSession()).toBeNull();
+        const messages = errorSpy.mock.calls.map(([message]) => String(message));
+        expect(messages.length).toBeGreaterThan(0);
+        for (const message of messages) {
+          expect(message).toContain("NEXT_PUBLIC_AUTH_PROVIDER");
+          expect(message).not.toContain("account registry");
+        }
+      } finally {
+        errorSpy.mockRestore();
+        if (savedMode === undefined) delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
+        else process.env.NEXT_PUBLIC_AUTH_PROVIDER = savedMode;
+      }
+    });
+
     test("returns store_unavailable when storedAccountAllows throws, and keeps cookie (#1942)", async () => {
       const token = await signJWT({ role: "user", username: "user" });
       mockCookieStore["auth-token"] = { value: token };

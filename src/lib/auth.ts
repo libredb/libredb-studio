@@ -3,7 +3,7 @@ import { SignJWT, jwtVerify } from "jose";
 import { cookies, headers } from "next/headers";
 import { logger } from "@/lib/logger";
 import { getJwtSecret, sessionTtlSeconds } from "@/lib/config/auth-env";
-import { authProvider } from "@/lib/config/auth-provider";
+import { AUTH_PROVIDER_INVALID_MESSAGE, authProvider, authProviderSetting } from "@/lib/config/auth-provider";
 import { accessReviewEnabled } from "@/lib/kubernetes-access/config";
 import {
   ACCESS_REVIEW_RETRY_COOKIE,
@@ -11,6 +11,7 @@ import {
   type GroupsRecordCheck,
   groupsRecordCheck,
 } from "@/lib/kubernetes-access/session-guard";
+import { AuthConfigError } from "@/lib/auth-errors";
 import { storedAccountAllows } from "@/lib/local-accounts";
 import { authenticateBearer } from "@/lib/oidc-bearer";
 import { openShiftRecordCheck } from "@/lib/openshift-auth/session";
@@ -94,6 +95,18 @@ export type SessionReading =
   | { readonly kind: "anonymous" }
   | { readonly kind: "store_unavailable"; readonly error: unknown };
 
+/**
+ * The log line of an account check that threw; the session fails closed either way. Under an unknown sign-in mode the
+ * check refuses before any registry is read, so the line names the setting instead of reporting a store outage.
+ */
+function logAccountCheckFailure(error: unknown): void {
+  if (error instanceof AuthConfigError && authProviderSetting() === "invalid") {
+    logger.error(`Refusing every session: ${AUTH_PROVIDER_INVALID_MESSAGE}`, undefined, { route: "auth" });
+    return;
+  }
+  logger.error("Could not read the account registry, store unavailable", error, { route: "auth" });
+}
+
 export async function readSession(): Promise<SessionReading> {
   // A Bearer header decides alone while the channel is on, even next to a valid cookie, and with it on or off the
   // cookie is never touched here. Absent, the cookie decides as it always did.
@@ -111,7 +124,7 @@ export async function readSession(): Promise<SessionReading> {
       const allowed = await storedAccountAllows(bearer.session);
       return allowed ? { kind: "authenticated", session: bearer.session } : { kind: "anonymous" };
     } catch (error) {
-      logger.error("Could not read the account registry, store unavailable", error, { route: "auth" });
+      logAccountCheckFailure(error);
       return { kind: "store_unavailable", error };
     }
   }
@@ -129,7 +142,7 @@ export async function readSession(): Promise<SessionReading> {
   try {
     allowed = await storedAccountAllows(session);
   } catch (error) {
-    logger.error("Could not read the account registry, store unavailable", error, { route: "auth" });
+    logAccountCheckFailure(error);
     return { kind: "store_unavailable", error };
   }
   if (allowed && (await sessionRecordAllows(cookieStore, session))) return { kind: "authenticated", session };
