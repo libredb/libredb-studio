@@ -50,6 +50,7 @@
     "genhtml",
     "java",
     "kubectl",
+    "oc",
     "openssl",
     "ss"
   ],
