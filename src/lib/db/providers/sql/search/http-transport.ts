@@ -460,6 +460,8 @@ const ERROR_FIELDS = Object.freeze({
    * "For input string: \"abc\"".
    */
   DETAILS: "details",
+  /** The refusal's own HTTP status, beside the envelope; read when the response's status is a success. */
+  STATUS: "status",
 } as const);
 
 /**
@@ -566,6 +568,14 @@ interface SearchDialectSpec {
   readonly boundedFetchSize: boolean;
   /** The DELETE the SQL plugin holds behind a cluster setting, or null where the grammar holds none. */
   readonly sqlDelete: SqlDeleteSwitch | null;
+  /**
+   * The cluster setting that caps how many rows the SQL plugin answers, or null where none is declared.
+   *
+   * OpenSearch: `plugins.query.size_limit`, 10000 by default. Measured on 3.8.0 with it at 1000: a 1,500-row
+   * `SELECT k FROM probe_buckets` answers 1,000 rows and a cursor whose next page holds no row, and a 1,500-group
+   * `GROUP BY` answers 1,000 rows and no cursor, so the cut carries no sign at all.
+   */
+  readonly sqlResultLimit: string | null;
 }
 
 /**
@@ -628,6 +638,7 @@ const DIALECTS: Readonly<Record<SearchDialectId, SearchDialectSpec>> = Object.fr
     boundedFetchSize: true,
     // The grammar has no DELETE at all: every one sent raw is a `parsing_exception` (9.1.4).
     sqlDelete: null,
+    sqlResultLimit: null,
   },
   opensearch: {
     label: "OpenSearch",
@@ -692,6 +703,7 @@ const DIALECTS: Readonly<Record<SearchDialectId, SearchDialectSpec>> = Object.fr
      * - 2.19.4 with the setting off (its default): `SQLFeatureDisabledException`, the sentence below. With it on, the
      *   same DELETE answers HTTP 200 with an `IndexNotFoundException` body, and a DELETE on a real index deletes.
      */
+    sqlResultLimit: "plugins.query.size_limit",
     sqlDelete: {
       setting: "plugins.sql.delete.enabled",
       refusals: [
@@ -1529,26 +1541,41 @@ export class SearchHttpTransport implements SearchTransport {
   }
 
   public async sqlDeleteSetting(signal?: AbortSignal): Promise<{ setting: string; enabled: boolean | null }> {
-    const deletion = this.sqlDeleteSwitch();
-    const answer = asRecord(
-      await this.request(
-        this.url(CLUSTER_SETTINGS_PATH, `include_defaults=true&filter_path=*.${deletion.setting}`),
-        signal,
-      ),
-    );
-    if (answer === null) throw unreadableBody(this.spec, `the ${deletion.setting} setting`);
+    const { setting } = this.sqlDeleteSwitch();
+    const value = await this.clusterSetting(setting, signal);
+    if (value === undefined) return { setting, enabled: null };
+    if (value === true || value === "true") return { setting, enabled: true };
+    if (value === false || value === "false") return { setting, enabled: false };
+    throw unreadableBody(this.spec, `the ${setting} setting`);
+  }
 
-    // A setting set at one level hides the levels below it, and the answer lists only the levels that hold it, so
-    // an empty answer is a setting the server does not recognize.
-    for (const level of SETTING_LEVELS) {
-      if (answer[level] === undefined) continue;
-      let value: unknown = answer[level];
-      for (const key of deletion.setting.split(".")) value = asRecord(value)?.[key];
-      if (value === true || value === "true") return { setting: deletion.setting, enabled: true };
-      if (value === false || value === "false") return { setting: deletion.setting, enabled: false };
-      throw unreadableBody(this.spec, `the ${deletion.setting} setting`);
+  public async sqlResultLimit(signal?: AbortSignal): Promise<{ setting: string; rows: number }> {
+    const setting = this.spec.sqlResultLimit;
+    if (setting === null) {
+      throw new SearchTransportError("unsupported", `${this.spec.label} SQL declares no result limit setting`);
     }
-    return { setting: deletion.setting, enabled: null };
+    const value = await this.clusterSetting(setting, signal);
+    const rows = typeof value === "number" || typeof value === "string" ? Number(value) : Number.NaN;
+    if (!Number.isSafeInteger(rows) || rows < 1) throw unreadableBody(this.spec, `the ${setting} setting`);
+    return { setting, rows };
+  }
+
+  /**
+   * One cluster setting's effective value, or undefined when the server does not recognize it. A setting set at one
+   * level hides the levels below it, and the answer lists only the levels that hold it, so an empty answer is a
+   * setting the server does not know.
+   */
+  private async clusterSetting(setting: string, signal?: AbortSignal): Promise<unknown> {
+    const answer = asRecord(
+      await this.request(this.url(CLUSTER_SETTINGS_PATH, `include_defaults=true&filter_path=*.${setting}`), signal),
+    );
+    if (answer === null) throw unreadableBody(this.spec, `the ${setting} setting`);
+    const level = SETTING_LEVELS.find((name) => answer[name] !== undefined);
+    if (level === undefined) return undefined;
+    let value: unknown = answer[level];
+    for (const key of setting.split(".")) value = asRecord(value)?.[key];
+    if (value === undefined) throw unreadableBody(this.spec, `the ${setting} setting`);
+    return value;
   }
 
   public async unrefusedSqlDelete(signal?: AbortSignal): Promise<string | null> {
@@ -1882,6 +1909,17 @@ export class SearchHttpTransport implements SearchTransport {
     }
     if (!response.ok) throw responseFailure(this.spec, response.status, text);
 
-    return parse(text);
+    // A 2xx can still carry a refusal: OpenSearch's SQL plugin answers some with HTTP 200, its error envelope and the
+    // refusal's own status in the body (measured on 3.8.0: `DESCRIBE TABLES LIKE %` by a user missing
+    // `indices:admin/get` on an index it names, `OpenSearchSecurityException` with `"status": 403`; on 2.19.4, a
+    // DELETE on a missing index with the delete setting on, `IndexNotFoundException` with `"status": 404`). Read as a
+    // success, the envelope would be an answer with no rows.
+    const parsed = parse(text);
+    const answer = asRecord(parsed);
+    const status = answer?.[ERROR_FIELDS.STATUS];
+    if (asRecord(answer?.[ERROR_FIELDS.ENVELOPE]) !== null && typeof status === "number" && status >= 400) {
+      throw responseFailure(this.spec, status, text);
+    }
+    return parsed;
   }
 }

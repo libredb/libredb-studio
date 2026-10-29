@@ -691,3 +691,143 @@ describe("SearchHttpTransport (opensearch) DELETE switch", () => {
 function sqlFaultBody(type: string, details: string): string {
   return JSON.stringify({ error: { reason: "Invalid SQL query", details, type }, status: 400 });
 }
+
+/**
+ * The result limit: OpenSearch's SQL plugin answers at most `plugins.query.size_limit` rows and cuts the rest with no
+ * sign of the cut (measured on 3.8.0 with the setting at 1000: a 1,500-row read answers 1,000 rows and a cursor whose
+ * next page is empty, and a 1,500-group aggregation answers 1,000 rows and no cursor), so the open of an agent
+ * read-only connection reads the limit, and an answer that reaches it is refused rather than returned cut.
+ */
+describe("SearchHttpTransport (opensearch) result limit", () => {
+  let reply: { status: number; body: string } = { status: 200, body: "{}" };
+
+  beforeEach(() => {
+    handler = () => new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } });
+  });
+
+  function transport(): SearchHttpTransport {
+    return new SearchHttpTransport("opensearch", makeConnection("opensearch"));
+  }
+
+  test("reads the setting from the cluster settings, defaults included, filtered to the one key", async () => {
+    reply = { status: 200, body: '{"defaults":{"plugins":{"query":{"size_limit":"10000"}}}}' };
+
+    expect(await transport().sqlResultLimit()).toEqual({ setting: "plugins.query.size_limit", rows: 10_000 });
+    const url = new URL(calls[0]?.url ?? "");
+    expect(url.pathname).toBe("/_cluster/settings");
+    expect(url.searchParams.get("filter_path")).toBe("*.plugins.query.size_limit");
+  });
+
+  test("a transient value wins over the default, as a JSON number too", async () => {
+    reply = {
+      status: 200,
+      body: '{"transient":{"plugins":{"query":{"size_limit":1000}}},"defaults":{"plugins":{"query":{"size_limit":"10000"}}}}',
+    };
+
+    expect(await transport().sqlResultLimit()).toEqual({ setting: "plugins.query.size_limit", rows: 1_000 });
+  });
+
+  test.each([
+    ["an empty answer", "{}"],
+    ["a value that is not a whole number", '{"defaults":{"plugins":{"query":{"size_limit":"ten"}}}}'],
+    ["a value below one", '{"defaults":{"plugins":{"query":{"size_limit":"0"}}}}'],
+  ])("refuses %s as unreadable", async (_name, body) => {
+    reply = { status: 200, body };
+
+    const caught = await transport()
+      .sqlResultLimit()
+      .catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as Error).message).toBe(
+      "OpenSearch answered the plugins.query.size_limit setting the client could not read",
+    );
+  });
+
+  test("Elasticsearch, which declares no such limit, refuses before any request", async () => {
+    const caught = await new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch"))
+      .sqlResultLimit()
+      .catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as Error).message).toBe("Elasticsearch SQL declares no result limit setting");
+    expect(calls).toHaveLength(0);
+  });
+});
+
+/**
+ * A refusal inside a 200: OpenSearch's SQL plugin answers some refusals with HTTP 200 and its error envelope, the
+ * refusal's own status in the body. Read as a success, the envelope would be an answer with no rows.
+ */
+describe("SearchHttpTransport (opensearch) refusal inside a 200", () => {
+  /** Measured on 3.8.0 with security on: `DESCRIBE TABLES LIKE %` by a user missing `indices:admin/get` on an index. */
+  const SECURITY_IN_200 = JSON.stringify({
+    error: {
+      reason:
+        "Error occurred in OpenSearch engine: no permissions for [indices:admin/get] and User [name=libredb_agent, backend_roles=[], requestedTenant=null]",
+      details:
+        "OpenSearchSecurityException[no permissions for [indices:admin/get] and User [name=libredb_agent, backend_roles=[], requestedTenant=null]]\nFor more details, please send request for Json format to see the raw response from OpenSearch engine.",
+      type: "OpenSearchSecurityException",
+    },
+    status: 403,
+  });
+
+  beforeEach(() => {
+    handler = () => new Response(SECURITY_IN_200, { status: 200, headers: { "content-type": "application/json" } });
+  });
+
+  const transport = (): SearchHttpTransport => new SearchHttpTransport("opensearch", makeConnection("opensearch"));
+
+  test.each([
+    ["query", () => transport().query("DESCRIBE TABLES LIKE %")],
+    ["queryBounded", () => transport().queryBounded("DESCRIBE TABLES LIKE %", { maxRows: 10, maxBytes: 1_000 })],
+  ] as const)("%s throws the refusal the body carries, by the body's status", async (_name, run) => {
+    const caught = await run().catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as SearchTransportError).category).toBe("auth");
+    expect((caught as Error).message).toBe("OpenSearch refused the credentials (HTTP 403)");
+  });
+
+  test("a 2.19.4 DELETE with the setting on, answered 200 with a missing-index fault, is that fault", async () => {
+    // The body 2.19.4 answered `DELETE FROM libredb_wr_no_such_index` with the setting on (tests/fixtures/opensearch/).
+    handler = () =>
+      new Response(
+        JSON.stringify({
+          error: {
+            reason: "Error occurred in OpenSearch engine: no such index [x]",
+            details: "[x] IndexNotFoundException[no such index [x]]",
+            type: "IndexNotFoundException",
+          },
+          status: 404,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+
+    const caught = await transport()
+      .query("DELETE FROM x")
+      .catch((error: unknown) => error);
+
+    expect((caught as SearchTransportError).category).toBe("unknown-object");
+    expect((caught as SearchTransportError).engineType).toBe("IndexNotFoundException");
+  });
+
+  test("a 200 whose status member is a success, or whose error member is not an envelope, is an answer", async () => {
+    handler = () =>
+      new Response(JSON.stringify({ schema: [{ name: "error", type: "keyword" }], datarows: [["x"]], status: 200 }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    expect((await transport().query("SELECT error FROM t")).rows).toEqual([{ error: "x" }]);
+
+    handler = () =>
+      new Response(
+        JSON.stringify({ schema: [{ name: "k", type: "keyword" }], datarows: [], error: "x", status: 500 }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        },
+      );
+    expect((await transport().query("SELECT k FROM t")).rows).toEqual([]);
+  });
+});

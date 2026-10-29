@@ -650,7 +650,11 @@ function defaultReply(path: string, body: Record<string, unknown> | null): Reply
   }
 
   if (path === "/") return ok(ROOT_BODY);
-  // 3.8.0 does not recognize the DELETE setting, so the filtered read answers nothing (measured).
+  // 3.8.0 does not recognize the DELETE setting, so the filtered read answers nothing, and its result limit is the
+  // default (both measured).
+  if (path.startsWith("/_cluster/settings") && path.endsWith("plugins.query.size_limit")) {
+    return ok('{"defaults":{"plugins":{"query":{"size_limit":"10000"}}}}');
+  }
   if (path.startsWith("/_cluster/settings")) return ok("{}");
   if (path.startsWith("/_cat/indices")) return ok(CAT_INDICES_BODY);
   if (path === "/_cluster/health") return ok(HEALTH_BODY);
@@ -2531,8 +2535,21 @@ describe("OpenSearchProvider agent profile open", () => {
       "/_plugins/_sql SELECT 1",
       "/_cluster/settings?include_defaults=true&filter_path=*.plugins.sql.delete.enabled",
       "/_plugins/_sql DELETE FROM libredb_delete_probe_<nonce>",
+      "/_cluster/settings?include_defaults=true&filter_path=*.plugins.query.size_limit",
       "/",
     ]);
+  });
+
+  test("refuses a result limit it cannot read", async () => {
+    overridePath("plugins.query.size_limit", ok("{}"));
+
+    const error = await openAgent();
+
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_SERVER_UNENFORCED");
+    expect((error as Error).message).toStartWith(
+      "The agent read-only profile needs OpenSearch SQL's result limit, past which the engine cuts an answer without saying so, and it could not be read, so this server is refused (a user needs the cluster privilege cluster:monitor/state to read it): ",
+    );
   });
 
   test("a patch release of the measured line is admitted", async () => {
@@ -2542,13 +2559,13 @@ describe("OpenSearchProvider agent profile open", () => {
   });
 
   test("a setting that reads false is admitted, as the probe is still refused", async () => {
-    overridePath("/_cluster/settings", deleteSettingReply("2.19.4", "setting-default"));
+    overridePath("plugins.sql.delete.enabled", deleteSettingReply("2.19.4", "setting-default"));
 
     expect(await openAgent()).toBeInstanceOf(OpenSearchProvider);
   });
 
   test("refuses a server whose DELETE setting reads true, and sends no DELETE", async () => {
-    overridePath("/_cluster/settings", deleteSettingReply("2.19.4", "setting-after-on-write"));
+    overridePath("plugins.sql.delete.enabled", deleteSettingReply("2.19.4", "setting-after-on-write"));
 
     const error = await openAgent();
 
@@ -2579,7 +2596,7 @@ describe("OpenSearchProvider agent profile open", () => {
   });
 
   test.each([
-    ["the settings read", "/_cluster/settings"],
+    ["the settings read", "plugins.sql.delete.enabled"],
     ["the DELETE probe", "DELETE FROM"],
   ])("refuses when %s is refused by the cluster, naming what the user needs", async (name, match) => {
     replyFor = (path, body) =>
@@ -2600,7 +2617,7 @@ describe("OpenSearchProvider agent profile open", () => {
   });
 
   test("refuses an unreadable setting", async () => {
-    overridePath("/_cluster/settings", ok('{"defaults":{"plugins":{"sql":{"delete":{"enabled":"maybe"}}}}}'));
+    overridePath("plugins.sql.delete.enabled", ok('{"defaults":{"plugins":{"sql":{"delete":{"enabled":"maybe"}}}}}'));
 
     const error = await openAgent();
 
@@ -2698,6 +2715,29 @@ describe("OpenSearchProvider.queryReadOnly", () => {
     expect(result.rowCount).toBe(5);
   });
 
+  test("refuses an answer that reaches the engine's result limit, which may have been cut", async () => {
+    overridePath("plugins.query.size_limit", ok('{"transient":{"plugins":{"query":{"size_limit":"1"}}}}'));
+    const provider = await agentProvider();
+
+    const error = await refusal(provider.queryReadOnly("SELECT id, customer, total FROM probe_orders", AGENT_BUDGET));
+
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error.message).toBe(
+      "Read-only execution exceeded the row budget: OpenSearch answers at most 1 rows (plugins.query.size_limit) and cuts the rest without saying so, so an answer that reaches it is refused",
+    );
+  });
+
+  test("a result limit past the row budget leaves the row budget's own refusal", async () => {
+    overridePath("plugins.query.size_limit", ok('{"transient":{"plugins":{"query":{"size_limit":"3"}}}}'));
+    const provider = await agentProvider();
+
+    const error = await refusal(
+      provider.queryReadOnly("SELECT id FROM top_queries-2026.08.18-74305", { ...AGENT_BUDGET, maxResultRows: 1 }),
+    );
+
+    expect(error.message).toBe("Read-only execution exceeded the row budget: 2 rows > 1 allowed");
+  });
+
   test("refuses an answer past the byte budget", async () => {
     const provider = await agentProvider();
 
@@ -2754,5 +2794,68 @@ describe("OpenSearchProvider.queryReadOnly", () => {
     expect(error).toBeInstanceOf(QueryError);
     expect(error.message).toContain(captureError(entry).details);
     expect(sentBodies.at(-1)).toEqual(entry.request.body);
+  });
+});
+
+// ============================================================================
+// The agent's catalog read, replayed
+// ============================================================================
+
+/** One capture of tests/fixtures/opensearch/3.8.0/catalog-read/, written by tests/live/opensearch-catalog-captures.ts. */
+interface CatalogReadCapture {
+  readonly name: string;
+  readonly request: { readonly body: { readonly query: string } };
+  readonly status: number;
+  readonly body: string;
+}
+
+const CATALOG_READS = readCaptures<CatalogReadCapture>("3.8.0/catalog-read");
+
+/**
+ * The agent's catalog read is a `DESCRIBE TABLES` command the agent composes (its OpenSearch overlay), and the provider
+ * path has no statement fence of its own: the SQL plugin takes the command as it takes a SELECT. Each capture is what
+ * 3.8.0 answered the composed statement (tests/live/opensearch-catalog-captures.ts, 2026-10-29), replayed through
+ * `queryReadOnly` under the agent profile.
+ */
+describe("OpenSearch 3.8.0's catalog-read answers, replayed through queryReadOnly", () => {
+  test("four composed DESCRIBE TABLES statements were captured", () => {
+    expect(CATALOG_READS.map((entry) => [entry.name, entry.status])).toEqual([
+      ["catalog-read/columns-alias", 200],
+      ["catalog-read/columns-missing", 404],
+      ["catalog-read/columns-table", 200],
+      ["catalog-read/columns", 200],
+    ]);
+    for (const entry of CATALOG_READS) expect(entry.request.body.query).toStartWith("DESCRIBE TABLES LIKE ");
+  });
+
+  test.each(CATALOG_READS.filter((entry) => entry.status === 200).map((entry) => [entry.name, entry] as const))(
+    "%s: the provider sends the composed command unchanged and answers the engine's rows",
+    async (_name, entry) => {
+      const agent = new OpenSearchProvider(makeConnection(), {}, AGENT_PROFILE);
+      await agent.connect();
+      overridePath("/_plugins/_sql", ok(entry.body));
+
+      const result = await agent.queryReadOnly(entry.request.body.query, { ...AGENT_BUDGET, maxResultRows: 1_000 });
+
+      const answer = JSON.parse(entry.body) as { schema: { name: string }[]; datarows: unknown[][] };
+      expect(result.fields).toEqual(answer.schema.map((column) => column.name));
+      expect(result.rowCount).toBe(answer.datarows.length);
+      expect(result.rows.map((row) => row.TABLE_NAME)).toEqual(answer.datarows.map((row) => row[2]));
+      expect(sentBodies.at(-1)).toEqual({ query: entry.request.body.query });
+      await agent.disconnect();
+    },
+  );
+
+  test("a name the node does not hold is the engine's refusal, in its words", async () => {
+    const entry = CATALOG_READS.find((capture) => capture.name === "catalog-read/columns-missing");
+    if (entry === undefined) throw new Error("no capture");
+    const agent = new OpenSearchProvider(makeConnection(), {}, AGENT_PROFILE);
+    await agent.connect();
+    overridePath("/_plugins/_sql", { status: entry.status, body: entry.body });
+
+    const error = await agent.queryReadOnly(entry.request.body.query, AGENT_BUDGET).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toContain("no such index [zq_no_such_index]");
   });
 });

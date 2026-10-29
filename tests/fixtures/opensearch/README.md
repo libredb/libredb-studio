@@ -29,3 +29,14 @@ The script resets the setting and removes the scratch index afterwards.
   The read answers `{}`, the write is refused 400 `settings_exception`, "transient setting [plugins.sql.delete.enabled], not recognized", and both DELETEs are refused before and after with `SQLFeatureNotSupportedException`; the scratch index keeps its document.
 - 2.19.4: the setting reads `false` by default, and both DELETEs are refused with `SQLFeatureDisabledException`.
   Turned on, the setting reads `true`, the DELETE on the scratch index answers 200 with `deleted_rows` 1 and the index is left with no document, and the DELETE on the missing name answers HTTP 200 carrying an `IndexNotFoundException` error body.
+
+## Catalog read (`3.8.0/catalog-read/`)
+
+Captured 2026-10-29 by `tests/live/opensearch-catalog-captures.ts` on the same 3.8.0 node: 4 statements, 4 captures.
+Request: each statement as the agent's OpenSearch overlay composes it, sent raw as `POST /_plugins/_sql` with the JSON body `{"query":<statement>}`, the body the provider's bounded read sends, and no credential.
+
+- `columns`: `DESCRIBE TABLES LIKE %`, every table's columns, one row per column in the engine's JDBC shape (`TABLE_NAME`, `COLUMN_NAME`, `TYPE_NAME`, `IS_NULLABLE`, `ORDINAL_POSITION` among them), each under its own table's name and counted from 1.
+- `columns-table`: `DESCRIBE TABLES LIKE 'probe_shapes'`, one index, answered by the plugin's older engine: the name taken as written, the positions counted from 0, and an object field listed beside its leaves.
+- `columns-alias`: `DESCRIBE TABLES LIKE 'probe_orders_alias'`, an alias, answered under the alias's own name.
+- `columns-missing`: `DESCRIBE TABLES LIKE 'zq_no_such_index'`, a name the node does not hold, answered 404 `IndexNotFoundException`.
+- None left a cursor open, and the index listing and the aliases read back unchanged after the run.

@@ -370,6 +370,13 @@ export interface SearchTransport {
    */
   unrefusedSqlDelete(signal?: AbortSignal): Promise<string | null>;
 
+  /**
+   * The cluster setting that caps how many rows the SQL plugin answers, by name, and its value: the plugin cuts an
+   * answer at that many rows with no sign of the cut. Only a product that declares such a setting answers; another
+   * refuses before any request.
+   */
+  sqlResultLimit(signal?: AbortSignal): Promise<{ setting: string; rows: number }>;
+
   /** Every index, alias and data stream the credentials can see. */
   indices(signal?: AbortSignal): Promise<SearchIndexInfo[]>;
 

@@ -1,0 +1,17 @@
+{
+  "version": "3.8.0",
+  "name": "catalog-read/columns-missing",
+  "image": "opensearchproject/opensearch:3.8.0",
+  "capturedAt": "2026-10-29",
+  "request": {
+    "method": "POST",
+    "path": "/_plugins/_sql",
+    "body": {
+      "query": "DESCRIBE TABLES LIKE 'zq_no_such_index'"
+    },
+    "auth": "none"
+  },
+  "status": 404,
+  "contentType": "text/plain; charset=UTF-8",
+  "body": "{\n  \"error\": {\n    \"reason\": \"Error occurred in OpenSearch engine: no such index [zq_no_such_index]\",\n    \"details\": \"[zq_no_such_index] IndexNotFoundException[no such index [zq_no_such_index]]\\nFor more details, please send request for Json format to see the raw response from OpenSearch engine.\",\n    \"type\": \"IndexNotFoundException\"\n  },\n  \"status\": 404\n}"
+}
