@@ -840,9 +840,8 @@ The boundary is engine-enforced, by the grammar of the SQL endpoint.
 `POST /_sql` carries free statement text, so the provider's fixed set of endpoints proves nothing about it on its own; what holds it is the grammar, which has no write and no DDL statement, so every one sent there is refused with `parsing_exception` before anything runs ([§5.6](#56-this-grammar-does-not-write) and its checked-in captures).
 Studio's statement admission in front of it is defence in depth: the boundary does not rest on it.
 
-The method is declared on `ElasticsearchProvider` alone.
-The module also serves OpenSearch, whose grammar holds a `DELETE` that the `plugins.sql.delete.enabled` setting turns on, so its endpoint is query-only only on a cluster that keeps the setting off, which nothing here proves.
-The shared mechanics live on `SearchProvider` as `readOnlyStatement`, and they read `SearchProduct.queryOnlySqlEndpoint`, true for this product and false for the fork, so the fork keeps no `queryReadOnly`, a null statement language, and every one of its tests unchanged.
+The shared mechanics live on `SearchProvider` as `readOnlyStatement`, and each product class declares `queryReadOnly` over them.
+The module also serves OpenSearch, whose grammar holds a `DELETE` that a cluster setting turns on, so its open proves that `DELETE` off before it admits the profile ([opensearch.md §5.9](./opensearch.md#59-the-agent-read-only-profile-rests-on-the-plugins-refusals)); `SearchProduct.sqlDeleteSwitch` is false here, since this grammar holds no `DELETE` at all.
 
 #### The open and the profile
 

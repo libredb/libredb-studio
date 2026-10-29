@@ -207,10 +207,11 @@ const SEARCH_UNKNOWN_TEXT = "N/A";
 /**
  * The one statement that can change what the schema tree shows.
  *
- * `DELETE` is in OpenSearch's SQL grammar and off by default - measured,
- * `DELETE FROM probe_orders WHERE id = 99` is refused with
- * `SQLFeatureNotSupportedException` on a stock node - and a cluster that switches
- * it on really does change the document counts this provider reports per index.
+ * `DELETE` is in OpenSearch's SQL grammar behind a cluster setting - measured on
+ * 2.19.4, off by default and refused with `SQLFeatureDisabledException`, and turned
+ * on, a DELETE really does change the document counts this provider reports per
+ * index. 3.8.0 refuses every DELETE (`SQLFeatureNotSupportedException`) and no longer
+ * recognizes the setting (`tests/fixtures/opensearch/`).
  * Elasticsearch's grammar has no DELETE at all, so on that product this pattern
  * never fires, exactly as Druid's `INSERT|REPLACE` never fires against its native
  * engine. Nothing else applies: mappings and indices are created and dropped
@@ -308,28 +309,33 @@ interface SearchProduct {
   readonly statementLanguage: string;
 
   /**
-   * Whether the product's SQL endpoint answers queries alone, whatever statement it is sent: the boundary the agent
-   * read-only profile runs on, since that endpoint carries free statement text and no credential is asked to hold it.
+   * Whether the product's SQL grammar holds a DELETE that a cluster setting turns on. The agent read-only profile runs
+   * on the SQL endpoint's own refusal of every write, since that endpoint carries free statement text and no
+   * credential is asked to hold it, so where a setting can turn a DELETE on, the open of a connection that sends agent
+   * statements proves it off twice before admitting the server: the setting must not read true, and one DELETE on a
+   * fresh name no index holds must be refused in one of the measured ways.
    *
-   * Elasticsearch 9.1.4: true, and checked in rather than asserted. Twenty write and DDL statements sent raw to the
-   * endpoint on a node with security disabled (INSERT, UPDATE, DELETE, CREATE, DROP, ALTER, TRUNCATE, MERGE, a write
-   * behind EXPLAIN, DEBUG or WITH, SELECT ... INTO, a second statement) each answered 400 `parsing_exception`, and the
-   * cluster read back unchanged after each (`tests/fixtures/elasticsearch/9.1.4/write-refusal/`).
+   * Elasticsearch: false. Twenty write and DDL statements sent raw to the endpoint on a 9.1.4 node with security
+   * disabled each answered 400 `parsing_exception`, and the cluster read back unchanged after each
+   * (`tests/fixtures/elasticsearch/9.1.4/write-refusal/`).
    *
-   * OpenSearch 3.8.0: false. Its grammar holds a DELETE that the `plugins.sql.delete.enabled` setting turns on, so
-   * the endpoint is query-only only on a cluster that keeps the setting off, which nothing here proves.
+   * OpenSearch: true. On 2.19.4 the setting reads false by default and, turned on, a DELETE deletes documents; 3.8.0
+   * no longer recognizes the setting and refuses every DELETE as it refuses an INSERT, but a release that brings the
+   * setting back would turn it on again, and a version check alone would not see it
+   * (`tests/fixtures/opensearch/`).
    *
-   * `readOnlyStatement` is the only reader.
+   * `connect` is the only reader.
    */
-  readonly queryOnlySqlEndpoint: boolean;
+  readonly sqlDeleteSwitch: boolean;
 
   /**
    * The release lines, as the version's first two numbers, on which the SQL endpoint's write refusals were captured
    * from a live server: the only lines the open of an agent read-only connection admits, since the boundary is the
    * grammar of the release the server runs, and a release never measured is an unknown server that refuses the profile.
    *
-   * Elasticsearch: 9.1 (9.1.4, `tests/fixtures/elasticsearch/9.1.4/write-refusal/`). OpenSearch: none, since its
-   * endpoint is not query-only.
+   * Elasticsearch: 9.1 (9.1.4, `tests/fixtures/elasticsearch/9.1.4/write-refusal/`). OpenSearch: 3.8 (3.8.0,
+   * `tests/fixtures/opensearch/3.8.0/write-refusal/`); 2.19.4's refusals were captured too, but its catalog commands
+   * answer a wildcard's columns under the wildcard rather than under each table, so it is not admitted.
    */
   readonly checkedSqlReleases: readonly string[];
 }
@@ -342,7 +348,7 @@ export const ELASTICSEARCH_PRODUCT: SearchProduct = Object.freeze({
   unprojectableTypes: Object.freeze(["flattened"]),
   statementLanguage:
     "Elasticsearch SQL, the product's own SQL endpoint - NOT the JSON query DSL, NOT an aggregation body, and NOT ES|QL",
-  queryOnlySqlEndpoint: true,
+  sqlDeleteSwitch: false,
   checkedSqlReleases: Object.freeze(["9.1"]),
 });
 
@@ -354,8 +360,8 @@ export const OPENSEARCH_PRODUCT: SearchProduct = Object.freeze({
   unprojectableTypes: Object.freeze(["flat_object", "unsigned_long", "version"]),
   statementLanguage:
     "OpenSearch SQL, the SQL plugin's own dialect - NOT the JSON query DSL, NOT an aggregation body, and NOT PPL",
-  queryOnlySqlEndpoint: false,
-  checkedSqlReleases: Object.freeze([]),
+  sqlDeleteSwitch: true,
+  checkedSqlReleases: Object.freeze(["3.8"]),
 });
 
 // ============================================================================
@@ -958,10 +964,52 @@ abstract class SearchProvider extends SQLBaseProvider {
       this.setError(failure);
       throw failure;
     }
-    if (this.readOnlyProfile) await this.assertCheckedServer(transport);
+    if (this.readOnlyProfile) {
+      if (this.product.sqlDeleteSwitch) await this.assertSqlDeleteOff(transport);
+      await this.assertCheckedServer(transport);
+    }
 
     this.transport = transport;
     this.setConnected(true);
+  }
+
+  /**
+   * Proves the SQL plugin's DELETE off, before the version is read and before any agent statement is sent: the
+   * setting that turns it on must not read true, and a DELETE on a fresh name no index holds must be refused in one
+   * of the measured ways. A setting read or a probe the cluster refuses, and an answer that cannot be read, refuse the
+   * profile, so a server that cannot be shown to refuse a DELETE is never admitted. The setting is read with
+   * `GET /_cluster/settings`, which a least-privilege user reads with the cluster action `cluster:monitor/state`.
+   */
+  private async assertSqlDeleteOff(transport: SearchHttpTransport): Promise<void> {
+    const refuse = (step: string, error: unknown): ExecutionProfileError =>
+      new ExecutionProfileError(
+        `The agent read-only profile needs ${this.product.label} SQL's DELETE proved off, and ${step} failed, so this server is refused (a user needs the cluster privilege cluster:monitor/state to read the setting): ${error instanceof Error ? error.message : String(error)}`,
+        "PROFILE_SERVER_UNENFORCED",
+      );
+    let setting: { setting: string; enabled: boolean | null };
+    try {
+      setting = await transport.sqlDeleteSetting(this.deadline());
+    } catch (error) {
+      throw refuse("the settings read", error);
+    }
+    if (setting.enabled === true) {
+      throw new ExecutionProfileError(
+        `The agent read-only profile needs ${this.product.label} SQL's DELETE off, and this server's ${setting.setting} reads true, so it is refused`,
+        "PROFILE_SERVER_UNENFORCED",
+      );
+    }
+    let unrefused: string | null;
+    try {
+      unrefused = await transport.unrefusedSqlDelete(this.deadline());
+    } catch (error) {
+      throw refuse("the DELETE probe", error);
+    }
+    if (unrefused !== null) {
+      throw new ExecutionProfileError(
+        `The agent read-only profile needs ${this.product.label} SQL's DELETE off, and a DELETE on a name no index holds was not refused, so this server is refused: ${unrefused}`,
+        "PROFILE_SERVER_UNENFORCED",
+      );
+    }
   }
 
   /**
@@ -1094,13 +1142,12 @@ abstract class SearchProvider extends SQLBaseProvider {
   }
 
   /**
-   * The agent read-only profile's statement path, shared so a second product can reach it, and named so that only a
-   * product class that declares `queryReadOnly` offers it: `engine-support.test.ts` and `agent-manifest.test.ts` read
-   * that method off each class, and OpenSearch, which shares this module, must keep answering "none" there.
+   * The agent read-only profile's statement path, shared by the two product classes, each of which declares
+   * `queryReadOnly` over it: `engine-support.test.ts` and `agent-manifest.test.ts` read that method off each class.
    *
-   * The boundary is the engine's, and it holds only where {@link SearchProduct.queryOnlySqlEndpoint} says it does:
-   * the endpoint's grammar refuses every write and DDL statement, so the statement goes out as written. Studio's own
-   * admission in front of it is defence in depth.
+   * The boundary is the engine's: the endpoint refuses every write and DDL statement, so the statement goes out as
+   * written, and where a cluster setting can turn a DELETE on, the open proved it off
+   * ({@link SearchProduct.sqlDeleteSwitch}). Studio's own admission in front of it is defence in depth.
    *
    * Budgets refuse rather than truncate: the transport asks for one row past the row budget per page, follows the
    * cursor only while the rows and their bytes stay inside both budgets, and closes the cursor before refusing. The
@@ -1108,7 +1155,7 @@ abstract class SearchProvider extends SQLBaseProvider {
    * working on a statement whose wait ended.
    *
    * Refused outside the profile: a provider opened for the editor has no business running agent semantics. Each
-   * refusal raised before the request, the profile's, the endpoint's and the estimate-plan mode's, is a
+   * refusal raised before the request, the profile's and the estimate-plan mode's, is a
    * `RefusedBeforeSendError`, so the agent and MCP say nothing reached the cluster.
    */
   protected async readOnlyStatement(
@@ -1120,13 +1167,6 @@ abstract class SearchProvider extends SQLBaseProvider {
     if (!this.readOnlyProfile) {
       throw new RefusedBeforeSendError(
         "Read-only execution requires a provider opened under the agent read-only profile",
-        this.type,
-        sql,
-      );
-    }
-    if (!this.product.queryOnlySqlEndpoint) {
-      throw new RefusedBeforeSendError(
-        `${this.product.label} SQL is not a query-only endpoint, so the agent read-only profile has no boundary to run on here`,
         this.type,
         sql,
       );
@@ -1946,10 +1986,7 @@ export class ElasticsearchProvider extends SearchProvider {
     super(ELASTICSEARCH_PRODUCT, config, options, execution);
   }
 
-  /**
-   * The agent read-only profile's statement path, over the shared mechanics in `readOnlyStatement`. Declared here and
-   * never on `SearchProvider`, so OpenSearch, whose endpoint is not query-only, keeps no `queryReadOnly`.
-   */
+  /** The agent read-only profile's statement path, over the shared mechanics in `readOnlyStatement`. */
   public queryReadOnly(
     sql: string,
     budget: ReadOnlyStatementBudget,
@@ -1968,7 +2005,19 @@ export class ElasticsearchProvider extends SearchProvider {
  * branched on.
  */
 export class OpenSearchProvider extends SearchProvider {
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
-    super(OPENSEARCH_PRODUCT, config, options);
+  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
+    super(OPENSEARCH_PRODUCT, config, options, execution);
+  }
+
+  /**
+   * The agent read-only profile's statement path, over the shared mechanics in `readOnlyStatement`. The open of a
+   * handle under the profile proved the SQL plugin's DELETE off and the server a measured release.
+   */
+  public queryReadOnly(
+    sql: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    return this.readOnlyStatement(sql, budget, mode);
   }
 }

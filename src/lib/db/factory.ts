@@ -358,7 +358,7 @@ export async function createDatabaseProvider(
 
     case "opensearch": {
       const { OpenSearchProvider } = await import("./providers/sql/search/index");
-      return new OpenSearchProvider(connection, options);
+      return new OpenSearchProvider(connection, options, execution);
     }
 
     // Document Databases - dynamically imported. The execution context reaches the

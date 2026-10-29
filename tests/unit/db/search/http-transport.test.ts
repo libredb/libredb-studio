@@ -11,6 +11,8 @@
  * is deliberately not used, since it is process-wide in bun.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { ConnectionError, DatabaseConfigError } from "@/lib/db/errors";
 import { SearchHttpTransport } from "@/lib/db/providers/sql/search/http-transport";
 import { SearchBoundsError, SearchTransportError } from "@/lib/db/providers/sql/search/transport";
@@ -251,15 +253,33 @@ describe.each(["elasticsearch", "opensearch"] as const)("SearchHttpTransport (%s
     return caught as SearchBoundsError;
   }
 
-  test("asks for one row past the row bound, and returns an answer inside both bounds whole", async () => {
+  test("returns an answer inside both bounds whole, in one request", async () => {
     pages = [page(["a", "b"])];
     const result = await transport().queryBounded("SELECT k FROM t", { maxRows: 3, maxBytes: 1_000 });
 
     expect(result.rows).toEqual([{ k: "a" }, { k: "b" }]);
     expect(result.fieldNames).toEqual(["k"]);
-    expect(bodies()[0]).toMatchObject({ query: "SELECT k FROM t", fetch_size: 4 });
+    expect(bodies()[0]).toMatchObject({ query: "SELECT k FROM t" });
     expect(calls).toHaveLength(1);
   });
+
+  if (dialect === "elasticsearch") {
+    test("asks for one row past the row bound", async () => {
+      pages = [page(["a", "b"])];
+      await transport().queryBounded("SELECT k FROM t", { maxRows: 3, maxBytes: 1_000 });
+
+      expect(bodies()[0]).toMatchObject({ query: "SELECT k FROM t", fetch_size: 4 });
+    });
+  } else {
+    test("asks for no page size, since one breaks the engine's aggregations", async () => {
+      // Measured on 3.8.0: with `fetch_size`, a GROUP BY fails ("invalid value operation on MISSING_VALUE") or is
+      // answered by the older engine, which cuts it at 200 rows with no cursor; without one, both answer whole.
+      pages = [page(["a", "b"])];
+      await transport().queryBounded("SELECT k FROM t", { maxRows: 3, maxBytes: 1_000 });
+
+      expect(bodies()[0]).toEqual({ query: "SELECT k FROM t" });
+    });
+  }
 
   test("an answer at exactly the row bound is returned", async () => {
     pages = [page(["a", "b", "c"])];
@@ -268,12 +288,14 @@ describe.each(["elasticsearch", "opensearch"] as const)("SearchHttpTransport (%s
     expect(result.rows).toHaveLength(3);
   });
 
-  test("never asks for a page past the cluster's default result window", async () => {
-    pages = [page([])];
-    await transport().queryBounded("SELECT k FROM t", { maxRows: 50_000, maxBytes: 1_000 });
+  if (dialect === "elasticsearch") {
+    test("never asks for a page past the cluster's default result window", async () => {
+      pages = [page([])];
+      await transport().queryBounded("SELECT k FROM t", { maxRows: 50_000, maxBytes: 1_000 });
 
-    expect(bodies()[0]?.fetch_size).toBe(10_000);
-  });
+      expect(bodies()[0]?.fetch_size).toBe(10_000);
+    });
+  }
 
   test("a page past the row bound closes the cursor it carries, then refuses with the rows read", async () => {
     pages = [page(["a", "b", "c", "d"], "c1")];
@@ -481,3 +503,191 @@ describe.each(["elasticsearch", "opensearch"] as const)("SearchHttpTransport (%s
     expect(caught).toBeInstanceOf(SearchTransportError);
   });
 });
+
+/** One capture of tests/fixtures/opensearch/<version>/delete-setting/, written by tests/live/opensearch-write-refusals.ts. */
+function deleteSettingCapture(version: string, name: string): { status: number; body: string } {
+  const file = join(import.meta.dir, "../../../fixtures/opensearch", version, "delete-setting", `${name}.json`);
+  return JSON.parse(readFileSync(file, "utf8")) as { status: number; body: string };
+}
+
+/**
+ * The DELETE switch: OpenSearch's SQL grammar holds a DELETE that the `plugins.sql.delete.enabled` setting turns on
+ * (2.19.4, measured; 3.8.0 no longer recognizes the setting), so the open of an agent read-only connection reads the
+ * setting and sends one DELETE on a fresh name. The answers below are the captured ones.
+ */
+describe("SearchHttpTransport (opensearch) DELETE switch", () => {
+  let reply: { status: number; body: string } = { status: 200, body: "{}" };
+
+  beforeEach(() => {
+    reply = { status: 200, body: "{}" };
+    handler = () => new Response(reply.body, { status: reply.status, headers: { "content-type": "application/json" } });
+  });
+
+  function transport(): SearchHttpTransport {
+    return new SearchHttpTransport("opensearch", makeConnection("opensearch"));
+  }
+
+  test("reads the setting from the cluster settings, defaults included, filtered to the one key", async () => {
+    await transport().sqlDeleteSetting();
+
+    const url = new URL(calls[0]?.url ?? "");
+    expect(url.pathname).toBe("/_cluster/settings");
+    expect(url.searchParams.get("include_defaults")).toBe("true");
+    expect(url.searchParams.get("filter_path")).toBe("*.plugins.sql.delete.enabled");
+    expect(calls[0]?.init?.method ?? "GET").toBe("GET");
+  });
+
+  test.each([
+    ["3.8.0", "setting-default", null],
+    ["3.8.0", "setting-after-on-write", null],
+    ["2.19.4", "setting-default", false],
+    ["2.19.4", "setting-after-on-write", true],
+  ] as const)("%s %s reads %p", async (version, name, value) => {
+    reply = deleteSettingCapture(version, name);
+
+    expect(await transport().sqlDeleteSetting()).toEqual({ setting: "plugins.sql.delete.enabled", enabled: value });
+  });
+
+  test.each([
+    [
+      "a transient value over the persistent and the default",
+      { transient: "true", persistent: "false", defaults: "false" },
+      true,
+    ],
+    ["a persistent value over the default", { persistent: "true", defaults: "false" }, true],
+    ["a transient false over a persistent true", { transient: "false", persistent: "true" }, false],
+    ["a JSON boolean", { defaults: false }, false],
+  ] as const)("reads %s", async (_name, levels, value) => {
+    const body = Object.fromEntries(
+      Object.entries(levels).map(([level, enabled]) => [level, { plugins: { sql: { delete: { enabled } } } }]),
+    );
+    reply = { status: 200, body: JSON.stringify(body) };
+
+    expect(await transport().sqlDeleteSetting()).toEqual({ setting: "plugins.sql.delete.enabled", enabled: value });
+  });
+
+  test.each([
+    [
+      "a value that is not a boolean",
+      JSON.stringify({ defaults: { plugins: { sql: { delete: { enabled: "maybe" } } } } }),
+    ],
+    ["a level that is not an object", JSON.stringify({ defaults: "false" })],
+    ["a body that is not an object", "[]"],
+  ])("refuses %s as unreadable", async (_name, body) => {
+    reply = { status: 200, body };
+
+    const caught = await transport()
+      .sqlDeleteSetting()
+      .catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as Error).message).toBe(
+      "OpenSearch answered the plugins.sql.delete.enabled setting the client could not read",
+    );
+  });
+
+  test("a 403 on the settings read is the cluster's refusal, not a value", async () => {
+    reply = { status: 403, body: SECURITY_BODY };
+
+    const caught = await transport()
+      .sqlDeleteSetting()
+      .catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as SearchTransportError).category).toBe("auth");
+  });
+
+  test("sends one DELETE on a fresh name no index holds, to the SQL endpoint", async () => {
+    reply = deleteSettingCapture("3.8.0", "missing-index-setting-off");
+    const probe = transport();
+    await probe.unrefusedSqlDelete();
+    await probe.unrefusedSqlDelete();
+
+    const statements = calls.map((call) => (JSON.parse(String(call.init?.body)) as { query: string }).query);
+    expect(calls.map((call) => new URL(call.url).pathname)).toEqual(["/_plugins/_sql", "/_plugins/_sql"]);
+    for (const statement of statements) expect(statement).toMatch(/^DELETE FROM libredb_delete_probe_[0-9a-f]{32}$/);
+    expect(statements[0]).not.toBe(statements[1]);
+  });
+
+  test.each([
+    ["3.8.0", "missing-index-setting-off"],
+    ["3.8.0", "missing-index-setting-on"],
+    ["2.19.4", "missing-index-setting-off"],
+  ] as const)("%s %s: a measured refusal answers null", async (version, name) => {
+    const captured = deleteSettingCapture(version, name);
+    // The capture's statement named the capture's index; the probe names its own, and the refusal quotes it.
+    handler = (_url) => {
+      const statement = (JSON.parse(String(calls.at(-1)?.init?.body)) as { query: string }).query;
+      return new Response(captured.body.replaceAll("DELETE FROM libredb_wr_no_such_index", statement), {
+        status: captured.status,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    expect(await transport().unrefusedSqlDelete()).toBeNull();
+  });
+
+  test("2.19.4 with the setting on: the missing-index answer is not a refusal, and is returned", async () => {
+    reply = deleteSettingCapture("2.19.4", "missing-index-setting-on");
+
+    expect(await transport().unrefusedSqlDelete()).toContain("IndexNotFoundException");
+  });
+
+  test("a DELETE that answered rows is not a refusal, and is returned", async () => {
+    reply = deleteSettingCapture("2.19.4", "scratch-index-setting-on");
+
+    expect(await transport().unrefusedSqlDelete()).toContain("deleted_rows");
+  });
+
+  test.each([
+    ["another fault name", sqlFaultBody("ParserException", "Illegal SQL expression")],
+    [
+      "the measured fault name with another statement in its detail",
+      sqlFaultBody(
+        "SQLFeatureNotSupportedException",
+        "Query must start with SELECT, DELETE, SHOW or DESCRIBE: DELETE FROM x",
+      ),
+    ],
+    ["a missing index", sqlFaultBody("IndexNotFoundException", "no such index")],
+  ])("%s is not a refusal, and is returned", async (_name, body) => {
+    reply = { status: 400, body };
+
+    const answer = await transport().unrefusedSqlDelete();
+
+    expect(answer).not.toBeNull();
+    expect(answer).toContain(JSON.parse(body).error.type);
+  });
+
+  test.each([
+    ["a 403", 403, SECURITY_BODY, "auth"],
+    ["a 401", 401, SECURITY_BODY, "auth"],
+  ] as const)(
+    "%s on the DELETE is the cluster's refusal of the request, thrown",
+    async (_name, status, body, category) => {
+      reply = { status, body };
+
+      const caught = await transport()
+        .unrefusedSqlDelete()
+        .catch((error: unknown) => error);
+
+      expect(caught).toBeInstanceOf(SearchTransportError);
+      expect((caught as SearchTransportError).category).toBe(category);
+    },
+  );
+
+  test("Elasticsearch, whose grammar holds no DELETE, refuses both before any request", async () => {
+    const elasticsearch = new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch"));
+
+    for (const call of [() => elasticsearch.sqlDeleteSetting(), () => elasticsearch.unrefusedSqlDelete()]) {
+      const caught = await call().catch((error: unknown) => error);
+      expect(caught).toBeInstanceOf(SearchTransportError);
+      expect((caught as Error).message).toBe("Elasticsearch SQL holds no DELETE behind a setting");
+    }
+    expect(calls).toHaveLength(0);
+  });
+});
+
+/** An OpenSearch SQL plugin fault body. */
+function sqlFaultBody(type: string, details: string): string {
+  return JSON.stringify({ error: { reason: "Invalid SQL query", details, type }, status: 400 });
+}
