@@ -258,7 +258,10 @@ describe("a refusal", () => {
   test("a watch is refused by the provider's machine read, and nothing is listed", async () => {
     const result = await kubectl("get pods -n shop -w");
     expect(result.isError).toBe(true);
-    expect(result.content.map((block) => block.text).join("\n")).toContain(MACHINE_WATCH_SENTENCE);
+    expect(result.content.map((block) => block.text).join("\n")).toContain(
+      `The statement was refused before it reached the database: ${MACHINE_WATCH_SENTENCE}`,
+    );
+    expect(mcpEvents().at(-1)).toMatchObject({ target: "mcp/execution", reason: "mcp_statement_refused" });
     expect(asked("/api/v1/namespaces/shop/pods")).toBe(false);
   });
 

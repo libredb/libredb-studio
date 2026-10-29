@@ -5,7 +5,7 @@
  * A type the server stopped serving since discovery was read (a `text/plain` 404) reads discovery again once and
  * runs the statement once more, as kubectl refreshes its cache on an unknown type.
  */
-import { QueryError } from "@/lib/db/errors";
+import { RefusedBeforeSendError } from "@/lib/db/errors";
 import { withTypeRefresh } from "../discovery";
 import { KUBERNETES_TYPE } from "../limits";
 import { apiResources, apiVersions, version } from "./api";
@@ -61,15 +61,16 @@ export const MACHINE_WATCH_SENTENCE =
 
 /**
  * The grid one statement answers, or the sentence it is refused with before anything is sent. An agent read (a
- * context with `machine`) also refuses the paging clause and a watch, before any request.
+ * context with `machine`) also refuses the paging clause and a watch, before any request. Each of these refusals is a
+ * `RefusedBeforeSendError`.
  */
 export async function runKubectl(context: KubectlContext, text: string): Promise<KubectlGrid> {
   const run = readKubectlRun(text);
-  if (!run.ok) throw new QueryError(run.message, KUBERNETES_TYPE);
+  if (!run.ok) throw new RefusedBeforeSendError(run.message, KUBERNETES_TYPE);
   if (context.machine !== undefined) {
-    if (run.page !== undefined) throw new QueryError(AGENT_PAGING_SENTENCE, KUBERNETES_TYPE);
+    if (run.page !== undefined) throw new RefusedBeforeSendError(AGENT_PAGING_SENTENCE, KUBERNETES_TYPE);
     if (run.statement.command === "get" && run.statement.watch)
-      throw new QueryError(MACHINE_WATCH_SENTENCE, KUBERNETES_TYPE);
+      throw new RefusedBeforeSendError(MACHINE_WATCH_SENTENCE, KUBERNETES_TYPE);
   }
   // On the agent path the read stops one row past the budget, so the refusal costs 201 rows, not 5,000.
   const window =

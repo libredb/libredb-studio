@@ -17,7 +17,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { QueryError } from "@/lib/db/errors";
+import { QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { DISCOVERY_FLOOR_SENTENCE } from "@/lib/db/providers/platform/kubernetes/discovery";
 import { forbiddenSentence } from "@/lib/db/providers/platform/kubernetes/errors";
 import { KubernetesProvider } from "@/lib/db/providers/platform/kubernetes/index";
@@ -206,6 +206,22 @@ describe("v1.35.5, the reader: the agent's reads of a real server's answers are 
       await provider.disconnect();
     },
   );
+});
+
+describe("v1.35.5, the reader: a statement the agent's read refuses is refused before anything is sent", () => {
+  test.each([
+    ["a command the console does not take", "kubectl delete pod web -n shop"],
+    ["a watch", "kubectl get pods -n shop -w"],
+    ["the paging clause", "kubectl get pods -n shop\n# libredb:page offset=0 limit=5"],
+  ])("%s", async (_name, text) => {
+    const { provider, replay } = replayed("v1.35.5", "reader", { readOnly: true });
+    await provider.connect();
+    const asked = replay.asked.length;
+    const error = await provider.queryReadOnly(text, AGENT_BUDGET).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect(replay.asked.length).toBe(asked);
+    await provider.disconnect();
+  });
 });
 
 describe("v1.35.5, the other personas", () => {

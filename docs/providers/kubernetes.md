@@ -374,6 +374,7 @@ Plan mode:
 Agent mode:
 - Agent mode runs every workflow on Kubernetes, each as its kubectl variant.
 - The agent reads through `kubectl.query.read`, one kubectl read of at most 4,096 characters under the statement row cap; a watch and the paging clause `# libredb:page` are refused.
+- A statement the console cannot read, a watch and the paging clause are refused before any request as `RefusedBeforeSendError`, so the rail shows them as refused before the database and MCP answers them in Studio's words.
 - Resource efficiency adds `inspect_usage` (`cluster.usage.read`), one row per container of a namespace with its metrics-server usage against its requests and limits.
 - Cluster health adds `profile_workloads` (`cluster.workloads.read`), one row per workload of a namespace with its desired and ready counts, restarts, missing requests, limits and probes, and its Warning events.
 - A workload is a Deployment, StatefulSet, DaemonSet, Job, CronJob or bare Pod, or any other controller that owns a pod there, such as an operator's custom resource, a Rollout or an orphan ReplicaSet, whose row has no desired count.
