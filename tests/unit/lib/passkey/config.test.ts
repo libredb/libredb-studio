@@ -15,6 +15,7 @@ const VARS = ["PASSKEY_ORIGIN", "STORAGE_PROVIDER", "NEXT_PUBLIC_AUTH_PROVIDER"]
 const saved: Record<string, string | undefined> = {};
 
 const PASSKEYS_OIDC = "Passkeys for this sign-in are managed by your identity provider.";
+const PASSKEYS_OPENSHIFT = "Passkeys are not used with OpenShift sign-in: the OpenShift OAuth server signs you in.";
 const PASSKEYS_LOCAL =
   "Passkeys need STORAGE_PROVIDER=sqlite or postgres: with STORAGE_PROVIDER=local there is no account registry to keep them in.";
 const PASSKEYS_OFF =
@@ -53,6 +54,19 @@ describe("passkeyAvailability", () => {
     process.env.NEXT_PUBLIC_AUTH_PROVIDER = "oidc";
     withStore("https://studio.example.com");
     expect(passkeyAvailability()).toEqual({ state: "no-store", mode: "oidc", reason: PASSKEYS_OIDC });
+  });
+
+  test("openshift mode reports that the cluster signs people in, so no passkey is offered", () => {
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "openshift";
+    withStore("https://studio.example.com");
+    expect(passkeyAvailability()).toEqual({ state: "no-store", mode: "openshift", reason: PASSKEYS_OPENSHIFT });
+    expect(passkeySignInOffer()).toBeNull();
+  });
+
+  test("an unknown NEXT_PUBLIC_AUTH_PROVIDER value throws instead of offering passkeys", () => {
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "passkey";
+    withStore("https://studio.example.com");
+    expect(() => passkeyAvailability()).toThrow("NEXT_PUBLIC_AUTH_PROVIDER must be local, oidc or openshift");
   });
 
   test("STORAGE_PROVIDER=local reports that passkeys need a server store", () => {
@@ -200,7 +214,13 @@ describe("module boundary", () => {
     const imports = [...config.matchAll(/^(import|export)\s+(type\s+)?(?:[^;"]*?from\s+)?"([^"]+)";/gm)];
     const valueImports = imports.filter((match) => !match[2]).map((match) => match[3]);
     const typeImports = imports.filter((match) => match[2]).map((match) => match[3]);
-    expect(valueImports.sort()).toEqual(["@/lib/logger", "@/lib/storage/provider-type", "node:net"]);
+    // The mode reader imports only AuthConfigError (tests/unit/lib/config/auth-provider.test.ts pins that).
+    expect(valueImports.sort()).toEqual([
+      "@/lib/config/auth-provider",
+      "@/lib/logger",
+      "@/lib/storage/provider-type",
+      "node:net",
+    ]);
     expect(typeImports).toEqual(["@/lib/passkey/api-types"]);
     expect(config).not.toMatch(/\brequire\(|\bimport\(/);
     expect(providerType).not.toMatch(/^\s*import\b|\brequire\(|\bimport\(/m);

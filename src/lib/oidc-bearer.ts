@@ -12,6 +12,7 @@ import {
 } from "jose/errors";
 import type { UserPayload } from "@/lib/auth";
 import { AuthConfigError } from "@/lib/auth-errors";
+import { authProvider } from "@/lib/config/auth-provider";
 import { getOIDCConfig, mapOIDCRole } from "@/lib/oidc";
 import { comparableIssuer, oidcUsername } from "@/lib/oidc-identity";
 
@@ -108,7 +109,7 @@ export function bearerTokenFrom(authorization: string | null): string | null {
 export function readBearerAudience(): string | null {
   const audience = process.env.OIDC_BEARER_AUDIENCE?.trim();
   if (!audience) return null;
-  if (process.env.NEXT_PUBLIC_AUTH_PROVIDER !== "oidc") throw new AuthConfigError(BEARER_NEEDS_OIDC_MESSAGE);
+  if (authProvider() !== "oidc") throw new AuthConfigError(BEARER_NEEDS_OIDC_MESSAGE);
   if (audience === process.env.OIDC_CLIENT_ID?.trim()) throw new AuthConfigError(BEARER_AUDIENCE_IS_CLIENT_MESSAGE);
   return audience;
 }

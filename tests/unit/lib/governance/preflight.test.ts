@@ -133,6 +133,8 @@ function runPreflight(): Run {
 const REFUSED: readonly { readonly variable: string; readonly value: string | undefined }[] = [
   { variable: "NEXT_PUBLIC_AUTH_PROVIDER", value: "local" },
   { variable: "NEXT_PUBLIC_AUTH_PROVIDER", value: undefined },
+  { variable: "NEXT_PUBLIC_AUTH_PROVIDER", value: "openshift" },
+  { variable: "NEXT_PUBLIC_AUTH_PROVIDER", value: "OIDC" },
   { variable: "OIDC_ROLE_CLAIM", value: undefined },
   { variable: "OIDC_ROLE_CLAIM", value: "  " },
   { variable: "OIDC_USER_ROLES", value: undefined },

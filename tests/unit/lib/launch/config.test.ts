@@ -140,6 +140,28 @@ describe("readLaunchConfig", () => {
     }
   });
 
+  test("is unavailable under NEXT_PUBLIC_AUTH_PROVIDER=openshift, whether or not the launch variables are set", () => {
+    const errorSpy = spyOn(logger, "error").mockImplementation(() => {});
+    try {
+      process.env.NEXT_PUBLIC_AUTH_PROVIDER = "openshift";
+      const unavailable = {
+        state: "misconfigured",
+        problem: "Launch sign-in is not available when NEXT_PUBLIC_AUTH_PROVIDER=openshift.",
+      } as const;
+      expect(readLaunchConfig()).toEqual(unavailable);
+      configure(SECRET);
+      expect(readLaunchConfig()).toEqual(unavailable);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  test("throws under an unknown NEXT_PUBLIC_AUTH_PROVIDER value instead of offering launch sign-in", () => {
+    process.env.NEXT_PUBLIC_AUTH_PROVIDER = "Local";
+    configure(SECRET);
+    expect(() => readLaunchConfig()).toThrow("NEXT_PUBLIC_AUTH_PROVIDER must be local, oidc or openshift");
+  });
+
   test("logs each distinct problem once per process and never the secret itself", () => {
     const errorSpy = spyOn(logger, "error").mockImplementation(() => {});
     try {

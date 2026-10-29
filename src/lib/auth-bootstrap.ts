@@ -10,6 +10,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { getDataDir } from "@/lib/data-dir";
 import { JWT_SECRET_MIN_LENGTH } from "@/lib/config/auth-env";
+import { authProviderSetting } from "@/lib/config/auth-provider";
 
 export const BOOTSTRAP_FILE_NAME = "auth-bootstrap.json";
 export const BOOTSTRAP_JWT_SECRET_INVALID_MESSAGE = `bootstrap file jwtSecret is not a string of at least ${JWT_SECRET_MIN_LENGTH} chars`;
@@ -150,7 +151,8 @@ export function bootstrapAuth(): void {
   if (!isBootstrapEnabled()) return;
 
   const needSecret = !process.env.JWT_SECRET;
-  const needPassword = !process.env.ADMIN_PASSWORD && process.env.NEXT_PUBLIC_AUTH_PROVIDER !== "oidc";
+  // Only local sign-in compares a password: oidc, openshift and an unknown mode value (refused at boot) never get one.
+  const needPassword = !process.env.ADMIN_PASSWORD && authProviderSetting() === "local";
   if (!needSecret && !needPassword) return;
 
   try {

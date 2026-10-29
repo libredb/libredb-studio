@@ -226,6 +226,32 @@ describe("parseSeedConfigText", () => {
       else delete process.env.OIDC_ROLE_PREFIX;
     });
 
+    it("refuses a custom role under NEXT_PUBLIC_AUTH_PROVIDER=openshift, prefix or not, with the unchanged message", () => {
+      process.env.NEXT_PUBLIC_AUTH_PROVIDER = "openshift";
+      process.env.OIDC_ROLE_PREFIX = "team-";
+
+      const text = JSON.stringify({
+        version: "1",
+        connections: [connection("analytics", { roles: ["team-data"] })],
+      });
+      const error = sourceErrorOf(() => parseSeedConfigText(text, "/seed/custom.json", "json"));
+      expect(error.code).toBe("invalid");
+      expect(error.message).toContain('requires NEXT_PUBLIC_AUTH_PROVIDER="oidc" and OIDC_ROLE_PREFIX to be set');
+    });
+
+    it("throws the invalid-mode message under an unknown NEXT_PUBLIC_AUTH_PROVIDER value", () => {
+      process.env.NEXT_PUBLIC_AUTH_PROVIDER = "oidc2";
+      process.env.OIDC_ROLE_PREFIX = "team-";
+
+      const text = JSON.stringify({
+        version: "1",
+        connections: [connection("analytics", { roles: ["team-data"] })],
+      });
+      expect(() => parseSeedConfigText(text, "/seed/custom.json", "json")).toThrow(
+        "NEXT_PUBLIC_AUTH_PROVIDER must be local, oidc or openshift",
+      );
+    });
+
     it("refuses a custom role when NEXT_PUBLIC_AUTH_PROVIDER is not oidc", () => {
       delete process.env.NEXT_PUBLIC_AUTH_PROVIDER;
       process.env.OIDC_ROLE_PREFIX = "team-";

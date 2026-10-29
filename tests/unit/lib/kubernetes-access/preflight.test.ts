@@ -111,6 +111,8 @@ const REFUSED: readonly { readonly variable: string; readonly value: string | un
   { variable: "GOVERNANCE_SOURCE", value: "postgres", says: "GOVERNANCE_SOURCE is set" },
   { variable: "NEXT_PUBLIC_AUTH_PROVIDER", value: "local", says: 'NEXT_PUBLIC_AUTH_PROVIDER is "local"' },
   { variable: "NEXT_PUBLIC_AUTH_PROVIDER", value: undefined, says: "NEXT_PUBLIC_AUTH_PROVIDER is unset" },
+  { variable: "NEXT_PUBLIC_AUTH_PROVIDER", value: "openshift", says: 'NEXT_PUBLIC_AUTH_PROVIDER is "openshift"' },
+  { variable: "NEXT_PUBLIC_AUTH_PROVIDER", value: "OIDC", says: 'NEXT_PUBLIC_AUTH_PROVIDER is "OIDC"' },
   { variable: "ADMIN_PASSWORD", value: PASSWORD, says: "ADMIN_PASSWORD is set" },
   { variable: "USER_PASSWORD", value: PASSWORD, says: "USER_PASSWORD is set" },
   { variable: "OIDC_ROLE_CLAIM", value: "groups", says: "OIDC_ROLE_CLAIM is set" },

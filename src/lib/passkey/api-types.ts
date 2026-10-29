@@ -18,7 +18,7 @@ export interface PublicPasskey {
 }
 
 export type PasskeyStatus =
-  | { available: false; mode: "oidc" | "local-storage"; reason: string }
+  | { available: false; mode: "oidc" | "openshift" | "local-storage"; reason: string }
   | { available: true; canAdd: true; origin: string; rpId: string; totpEnabled: boolean; passkeys: PublicPasskey[] }
   | { available: true; canAdd: false; reason: string; totpEnabled: boolean; passkeys: PublicPasskey[] };
 

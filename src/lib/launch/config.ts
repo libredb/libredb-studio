@@ -26,12 +26,14 @@
  * under the fallback and throws in production when JWT_SECRET is missing; sign-in reports that itself.
  */
 import { DEV_FALLBACK_SECRET } from "@/lib/config/auth-env";
+import { authProvider } from "@/lib/config/auth-provider";
 import { logger } from "@/lib/logger";
 
 /** The shortest LAUNCH_TOKEN_SECRET accepted, the floor JWT_SECRET has for the same HMAC. */
 export const LAUNCH_SECRET_MIN_LENGTH = 32;
 
 const OIDC_PROBLEM = "Launch sign-in is not available when NEXT_PUBLIC_AUTH_PROVIDER=oidc.";
+const OPENSHIFT_PROBLEM = "Launch sign-in is not available when NEXT_PUBLIC_AUTH_PROVIDER=openshift.";
 const TOO_SHORT_PROBLEM = `LAUNCH_TOKEN_SECRET must be at least ${LAUNCH_SECRET_MIN_LENGTH} characters: launch sign-in is unavailable until it is fixed.`;
 const AUDIENCE_PROBLEM =
   "LAUNCH_TOKEN_AUDIENCE must be set when LAUNCH_TOKEN_SECRET is set: launch sign-in is unavailable until it is.";
@@ -66,7 +68,9 @@ function unavailable(problem: string): LaunchConfig {
 }
 
 export function readLaunchConfig(): LaunchConfig {
-  if (process.env.NEXT_PUBLIC_AUTH_PROVIDER === "oidc") return unavailable(OIDC_PROBLEM);
+  const mode = authProvider();
+  if (mode === "oidc") return unavailable(OIDC_PROBLEM);
+  if (mode === "openshift") return unavailable(OPENSHIFT_PROBLEM);
   const secret = process.env.LAUNCH_TOKEN_SECRET ?? "";
   if (secret === "") return { state: "off" };
   const audience = (process.env.LAUNCH_TOKEN_AUDIENCE ?? "").trim();

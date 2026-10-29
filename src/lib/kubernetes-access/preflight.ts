@@ -20,6 +20,7 @@
 import { X509Certificate } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { sessionTtlSeconds } from "@/lib/config/auth-env";
+import { authProviderSetting, authProviderValue } from "@/lib/config/auth-provider";
 import {
   ACCESS_REVIEW_ENV,
   accessReviewAdminDeployment,
@@ -103,9 +104,9 @@ function accessReviewEnvProblems(): string[] {
       "GOVERNANCE_SOURCE is set: governance mode decides who opens a connection from its own grants, so the Kubernetes access review cannot run beside it; unset one of the two",
     );
   }
-  if (process.env.NEXT_PUBLIC_AUTH_PROVIDER !== "oidc") {
+  if (authProviderSetting() !== "oidc") {
     problems.push(
-      `NEXT_PUBLIC_AUTH_PROVIDER is ${shown(process.env.NEXT_PUBLIC_AUTH_PROVIDER)}: the access review asks about the identity provider subject an OIDC sign-in gives a session, so set it to oidc`,
+      `NEXT_PUBLIC_AUTH_PROVIDER is ${shown(authProviderValue())}: the access review asks about the identity provider subject an OIDC sign-in gives a session, so set it to oidc`,
     );
   }
   // An empty password counts as unset, as it does for sign-in (src/lib/local-auth.ts).
