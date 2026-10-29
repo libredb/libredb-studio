@@ -709,7 +709,7 @@ const DIALECTS: Readonly<Record<SearchDialectId, SearchDialectSpec>> = Object.fr
       refusals: [
         {
           type: "SQLFeatureNotSupportedException",
-          details: (statement) => `Query must start with SELECT, DELETE, SHOW or DESCRIBE: ${statement}`,
+          details: (statement: string) => `Query must start with SELECT, DELETE, SHOW or DESCRIBE: ${statement}`,
         },
         {
           type: "SQLFeatureDisabledException",

@@ -154,6 +154,15 @@ function createTransport(options: FakeOptions = {}) {
     version: (): Promise<{ version: string; product: string }> => {
       throw new Error("introspection read the version");
     },
+    sqlDeleteSetting: (): Promise<{ setting: string; enabled: boolean | null }> => {
+      throw new Error("introspection read a cluster setting");
+    },
+    unrefusedSqlDelete: (): Promise<string | null> => {
+      throw new Error("introspection sent a DELETE probe");
+    },
+    sqlResultLimit: (): Promise<{ setting: string; rows: number }> => {
+      throw new Error("introspection read a cluster setting");
+    },
     health: (): Promise<SearchClusterHealth> => {
       throw new Error("introspection read cluster health");
     },
