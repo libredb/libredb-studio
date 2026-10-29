@@ -9,12 +9,14 @@
  */
 import { describe, expect, it } from "bun:test";
 import {
+  KUBERNETES_DISCOVERY_EXPORT_VERSION,
   KUBERNETES_DISCOVERY_FILE_MAX_BYTES,
+  KUBERNETES_DISCOVERY_PROBLEMS,
   KUBERNETES_DISCOVERY_SECRET_KEYS,
   parseKubernetesDiscoveryExport,
   type KubernetesDiscoveryExport,
 } from "@/lib/seed/kubernetes-discovery-export";
-import { CONTRACT, LIMITS } from "../../../docker/discover-kubernetes.mjs";
+import { buildExport, CONTRACT, LIMITS } from "../../../docker/discover-kubernetes.mjs";
 
 const NOW = "2026-10-28T08:00:00.000Z";
 const PASSWORD = "not-a-real-password-orders";
@@ -28,9 +30,48 @@ function database(overrides: Record<string, unknown> = {}): Record<string, unkno
   };
 }
 
+/** A Crunchy PGO PostgresCluster's row for its user analyst, as the exporter writes it. */
+function pgoDatabase(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    kind: "pgo",
+    resource: { metadata: { namespace: "team-b", name: "analytics" }, spec: { users: [{ name: "analyst" }] } },
+    secret: {
+      name: "analytics-pguser-analyst",
+      data: {
+        user: "analyst",
+        password: PASSWORD,
+        host: "analytics-primary.team-b.svc",
+        port: "5432",
+        dbname: "analytics",
+      },
+    },
+    ...overrides,
+  };
+}
+
+/** A MongoDB Community resource's row for its user appuser, as the exporter writes it. */
+function mongoDatabase(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    kind: "mongo",
+    resource: {
+      metadata: { namespace: "team-m", name: "catalog" },
+      spec: { users: [{ name: "appuser", db: "admin", roles: [{ db: "catalog" }] }] },
+    },
+    secret: {
+      name: "catalog-admin-appuser",
+      data: {
+        "connectionString.standard": "mongodb://catalog-0.catalog-svc.team-m.svc.cluster.local:27017/admin",
+        username: "appuser",
+        password: PASSWORD,
+      },
+    },
+    ...overrides,
+  };
+}
+
 function document(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    version: 1,
+    version: 2,
     platform: "kubernetes",
     generatedAt: NOW,
     checkedAt: NOW,
@@ -154,9 +195,251 @@ describe("parseKubernetesDiscoveryExport", () => {
     );
   });
 
-  it("refuses an unknown version", () => {
-    expect(refusal(document({ version: 2 }))).toBe(
-      "the file does not match the export schema at version (invalid_value)",
+  // A version 1 export was written by an exporter that checks no Service and no Secret type, owner or key set.
+  it("refuses version 1, and any other version than 2", () => {
+    expect(KUBERNETES_DISCOVERY_EXPORT_VERSION).toBe(2);
+    for (const version of [1, 3, "2"]) {
+      expect(refusal(document({ version }))).toContain("version (invalid_value)");
+    }
+  });
+
+  it("is the version the exporter writes", () => {
+    const written = buildExport({
+      now: Date.parse(NOW),
+      status: { ok: true },
+      generatedAt: NOW,
+      namespaces: [],
+      databases: [],
+    });
+    expect(written.version).toBe(KUBERNETES_DISCOVERY_EXPORT_VERSION);
+  });
+
+  it("accepts each kind with its own kept keys and strips others", () => {
+    const cnpgData = { username: "orders", password: PASSWORD, dbname: "orders", port: "5432" };
+    const pgoData = {
+      user: "analyst",
+      password: PASSWORD,
+      host: "analytics-primary.team-b.svc",
+      port: "5432",
+      dbname: "analytics",
+    };
+    const mongoData = {
+      "connectionString.standard": "mongodb://catalog-0.catalog-svc.team-m.svc.cluster.local:27017/admin",
+      username: "appuser",
+      password: PASSWORD,
+    };
+    // Every row's own keys, plus every other row's, plus keys no row keeps; the rows share no value here.
+    const extra = {
+      ...cnpgData,
+      ...pgoData,
+      ...mongoData,
+      "connectionString.standardSrv": "x",
+      uri: "x",
+      verifier: "x",
+    };
+    const pick = (keys: string[]) => Object.fromEntries(keys.map((key) => [key, extra[key as keyof typeof extra]]));
+    const result = parse(
+      document({
+        databases: [
+          database({ secret: { name: "orders-app", data: extra } }),
+          database({ kind: "edbpg", secret: { name: "orders-app", data: extra } }),
+          pgoDatabase({ secret: { name: "analytics-pguser-analyst", data: extra } }),
+          mongoDatabase({ secret: { name: "catalog-admin-appuser", data: extra } }),
+        ],
+      }),
+    );
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.value.databases.map((entry) => [entry.kind, entry.secret.data])).toEqual([
+      ["cnpg", pick(Object.keys(cnpgData))],
+      ["edbpg", pick(Object.keys(cnpgData))],
+      ["pgo", pick(Object.keys(pgoData))],
+      ["mongo", pick(Object.keys(mongoData))],
+    ]);
+  });
+
+  it("keeps each kind's resource fields and drops every other field", () => {
+    const result = parse(
+      document({
+        databases: [
+          pgoDatabase({
+            resource: {
+              metadata: { namespace: "team-b", name: "analytics", uid: "u" },
+              spec: { users: [{ name: "analyst", databases: ["analytics"], options: "SUPERUSER" }], port: 5433 },
+            },
+          }),
+          pgoDatabase({ resource: { metadata: { namespace: "team-b", name: "metrics" } } }),
+          mongoDatabase({
+            resource: {
+              metadata: { namespace: "team-m", name: "catalog" },
+              spec: {
+                members: 3,
+                users: [
+                  {
+                    name: "appuser",
+                    db: "admin",
+                    connectionStringSecretName: "catalog-app",
+                    passwordSecretRef: { name: "appuser-password" },
+                    roles: [{ name: "readWrite", db: "catalog" }],
+                    additionalConnectionStringConfig: { proxyHost: "x" },
+                  },
+                ],
+                security: { tls: { enabled: true, certificateKeySecretRef: { name: "x" } }, authentication: {} },
+                statefulSet: { spec: { serviceName: "catalog-hl", replicas: 3 } },
+              },
+            },
+          }),
+        ],
+      }),
+    );
+    if (!result.ok) throw new Error(result.reason);
+    expect(result.value.databases.map((entry) => entry.resource)).toEqual([
+      { metadata: { namespace: "team-b", name: "analytics" }, spec: { users: [{ name: "analyst" }] } },
+      { metadata: { namespace: "team-b", name: "metrics" } },
+      {
+        metadata: { namespace: "team-m", name: "catalog" },
+        spec: {
+          users: [
+            { name: "appuser", db: "admin", connectionStringSecretName: "catalog-app", roles: [{ db: "catalog" }] },
+          ],
+          security: { tls: { enabled: true } },
+          statefulSet: { spec: { serviceName: "catalog-hl" } },
+        },
+      },
+    ]);
+  });
+
+  it("refuses an unknown kind", () => {
+    for (const kind of ["mysql", "CNPG", ""]) {
+      expect(refusal(document({ databases: [database({ kind })] }))).toBe(
+        "the file does not match the export schema at databases.0.kind (invalid_union)",
+      );
+    }
+  });
+
+  it("refuses a user name outside the pattern or with a slash", () => {
+    const pgoUser = (name: string) =>
+      pgoDatabase({ resource: { metadata: { namespace: "team-b", name: "analytics" }, spec: { users: [{ name }] } } });
+    const mongoUser = (name: string) =>
+      mongoDatabase({
+        resource: { metadata: { namespace: "team-m", name: "catalog" }, spec: { users: [{ name, roles: [] }] } },
+      });
+    // PGO's user names are also DNS labels: lowercase letters, digits and inner hyphens.
+    for (const name of ["ana/lyst", "", "a".repeat(64), "Analyst", "ana_lyst", "ana lyst"]) {
+      expect(refusal(document({ databases: [pgoUser(name)] }))).toBe(
+        "the file does not match the export schema at databases.0.resource.spec.users.0.name (invalid_format)",
+      );
+    }
+    expect(parse(document({ databases: [pgoUser("a".repeat(63))] })).ok).toBe(true);
+    for (const name of ["app/user", "", "a".repeat(64), "app user", "app:user"]) {
+      expect(refusal(document({ databases: [mongoUser(name)] }))).toBe(
+        "the file does not match the export schema at databases.0.resource.spec.users.0.name (invalid_format)",
+      );
+    }
+    for (const name of ["App_User.1@corp+x-y", "a".repeat(63)]) {
+      expect(parse(document({ databases: [mongoUser(name)] })).ok).toBe(true);
+    }
+  });
+
+  it("refuses a MongoDB database name outside its pattern, a Service name that is not a DNS-1035 label, and over 64 roles", () => {
+    const mongo = (user: Record<string, unknown>, spec: Record<string, unknown> = {}) =>
+      document({
+        databases: [
+          mongoDatabase({
+            resource: {
+              metadata: { namespace: "team-m", name: "catalog" },
+              spec: { users: [{ name: "appuser", roles: [], ...user }], ...spec },
+            },
+          }),
+        ],
+      });
+    expect(refusal(mongo({ db: "ad.min" }))).toBe(
+      "the file does not match the export schema at databases.0.resource.spec.users.0.db (invalid_format)",
+    );
+    expect(refusal(mongo({ roles: [{ db: "cat/alog" }] }))).toBe(
+      "the file does not match the export schema at databases.0.resource.spec.users.0.roles.0.db (invalid_format)",
+    );
+    expect(refusal(mongo({ roles: Array.from({ length: 65 }, () => ({ db: "catalog" })) }))).toBe(
+      "the file does not match the export schema at databases.0.resource.spec.users.0.roles (too_big)",
+    );
+    expect(parse(mongo({ roles: Array.from({ length: 64 }, () => ({ db: "catalog" })) })).ok).toBe(true);
+    for (const serviceName of ["1catalog", "Catalog", "catalog.svc", "a".repeat(64)]) {
+      expect(refusal(mongo({}, { statefulSet: { spec: { serviceName } } }))).toBe(
+        "the file does not match the export schema at databases.0.resource.spec.statefulSet.spec.serviceName (invalid_format)",
+      );
+    }
+  });
+
+  it("refuses a row that names more or fewer than its one user", () => {
+    const users = (list: unknown[]) =>
+      document({
+        databases: [
+          pgoDatabase({ resource: { metadata: { namespace: "team-b", name: "analytics" }, spec: { users: list } } }),
+        ],
+      });
+    expect(refusal(users([]))).toBe(
+      "the file does not match the export schema at databases.0.resource.spec.users (too_small)",
+    );
+    expect(refusal(users([{ name: "a" }, { name: "b" }]))).toBe(
+      "the file does not match the export schema at databases.0.resource.spec.users (too_big)",
+    );
+    expect(
+      refusal(
+        document({ databases: [mongoDatabase({ resource: { metadata: { namespace: "team-m", name: "catalog" } } })] }),
+      ),
+    ).toBe("the file does not match the export schema at databases.0.resource.spec (invalid_type)");
+  });
+
+  it("accepts every problem code, and a key only from the kept keys", () => {
+    expect([...KUBERNETES_DISCOVERY_PROBLEMS]).toEqual([
+      "not_found",
+      "forbidden",
+      "not_owned",
+      "invalid_value",
+      "reserved_name",
+      "wrong_type",
+      "unexpected_key",
+      "missing_key",
+      "no_database",
+      "other_namespace",
+      "unsupported_name",
+      "service_not_found",
+      "service_forbidden",
+      "service_external_name",
+      "service_not_controlled",
+      "service_invalid_name",
+    ]);
+    for (const problem of KUBERNETES_DISCOVERY_PROBLEMS) {
+      const secret = problem === "unsupported_name" ? { problem } : { name: "catalog-admin-appuser", problem };
+      expect(parse(document({ databases: [mongoDatabase({ secret })] })).ok).toBe(true);
+    }
+    expect(refusal(document({ databases: [database({ secret: { name: "orders-app", problem: "gone" } })] }))).toBe(
+      "the file does not match the export schema at databases.0.secret.problem (invalid_value)",
+    );
+    for (const key of KUBERNETES_DISCOVERY_SECRET_KEYS) {
+      const secret = { name: "catalog-admin-appuser", problem: "missing_key", key };
+      expect(parse(document({ databases: [mongoDatabase({ secret })] })).ok).toBe(true);
+    }
+    expect(
+      refusal(
+        document({
+          databases: [mongoDatabase({ secret: { name: "catalog-admin-appuser", problem: "missing_key", key: "uri" } })],
+        }),
+      ),
+    ).toBe("the file does not match the export schema at databases.0.secret.key (invalid_value)");
+  });
+
+  // MongoDB Community names a user's Secret <name>-<db>-<user> after normalizing it, which discovery does not compute.
+  it("name is absent exactly with unsupported_name", () => {
+    const secret = (value: Record<string, unknown>) => document({ databases: [mongoDatabase({ secret: value })] });
+    expect(parse(secret({ problem: "unsupported_name" })).ok).toBe(true);
+    expect(refusal(secret({ name: "catalog-admin-appuser", problem: "unsupported_name" }))).toBe(
+      "the file does not match the export schema at databases.0.secret (custom)",
+    );
+    expect(refusal(secret({ problem: "not_found" }))).toBe(
+      "the file does not match the export schema at databases.0.secret (custom)",
+    );
+    expect(refusal(secret({ data: { username: "appuser" } }))).toBe(
+      "the file does not match the export schema at databases.0.secret (custom)",
     );
   });
 
@@ -195,7 +478,7 @@ describe("parseKubernetesDiscoveryExport", () => {
     ).toBe("the file does not match the export schema at databases.0.resource.metadata.name (invalid_format)");
   });
 
-  it("refuses a Secret entry with both data and a problem, or with neither", () => {
+  it("data and problem never together: refuses a Secret entry with both, or with neither", () => {
     expect(
       refusal(document({ databases: [database({ secret: { name: "orders-app", data: {}, problem: "not_found" } })] })),
     ).toBe("the file does not match the export schema at databases.0.secret (custom)");
@@ -247,9 +530,19 @@ describe("parseKubernetesDiscoveryExport", () => {
       expect(parse(document({ status: status("m".repeat(LIMITS.messageChars + 1)) })).ok).toBe(false);
     });
 
-    it("reads a file of the exporter's size bound, and keeps exactly the keys its contract row keeps", () => {
+    it("reads a file of the exporter's size bound, and keeps only keys some contract row keeps", () => {
       expect(LIMITS.exportBytes).toBeLessThanOrEqual(KUBERNETES_DISCOVERY_FILE_MAX_BYTES);
-      expect<string[]>([...KUBERNETES_DISCOVERY_SECRET_KEYS]).toEqual([...CONTRACT[0].secretKeys]);
+      expect<string[]>([...KUBERNETES_DISCOVERY_SECRET_KEYS]).toEqual([
+        "username",
+        "password",
+        "dbname",
+        "port",
+        "user",
+        "host",
+        "connectionString.standard",
+      ]);
+      const kept: string[] = CONTRACT.flatMap((row: { secretKeys: readonly string[] }) => [...row.secretKeys]);
+      for (const key of kept) expect<string[]>([...KUBERNETES_DISCOVERY_SECRET_KEYS]).toContain(key);
     });
   });
 

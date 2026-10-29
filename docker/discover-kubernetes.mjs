@@ -137,6 +137,12 @@ export const LIMITS = Object.freeze({
   messageChars: 512,
 });
 
+/**
+ * The export format, Studio's KUBERNETES_DISCOVERY_EXPORT_VERSION, which a unit test holds equal. Studio reads this
+ * version only, so an exporter and a Studio of different versions fail closed: no discovered connection is listed.
+ */
+export const EXPORT_VERSION = 2;
+
 /** The longest delay setTimeout honours: a longer one, and Infinity, becomes 1 ms, a back-to-back rescan. */
 const MAX_TIMER_DELAY_MS = 2147483647;
 const LOG_PREFIX = "libredb-kubernetes-discovery:";
@@ -616,12 +622,12 @@ function normalizeStatus(status) {
 }
 
 /**
- * The export's content (version 1). `now` is the epoch milliseconds of this attempt; `generatedAt` is the ISO time of
- * the last successful scan, or null before the first, in which case no namespace and no database is exported.
+ * The export's content, at EXPORT_VERSION. `now` is the epoch milliseconds of this attempt; `generatedAt` is the ISO
+ * time of the last successful scan, or null before the first, in which case no namespace and no database is exported.
  */
 export function buildExport({ now, status, generatedAt, namespaces, databases }) {
   return {
-    version: 1,
+    version: EXPORT_VERSION,
     platform: "kubernetes",
     generatedAt,
     checkedAt: new Date(now).toISOString(),

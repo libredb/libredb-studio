@@ -65,7 +65,7 @@ export function kubernetesExport(
     .sort()
     .map((name) => ({ name, status: { ok: true as const } }));
   return {
-    version: 1,
+    version: 2,
     platform: "kubernetes",
     generatedAt: at,
     checkedAt: at,

@@ -26,6 +26,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import golden from "../fixtures/kubernetes-discovery-golden.json";
 import { CNPG_CLUSTER, KUBERNETES_CONTRACT, mapKubernetesDatabase } from "@/lib/seed/kubernetes-discovery-contract";
 import {
+  KUBERNETES_DISCOVERY_EXPORT_VERSION,
   parseKubernetesDiscoveryExport,
   type KubernetesDiscoveredDatabase,
 } from "@/lib/seed/kubernetes-discovery-export";
@@ -36,6 +37,7 @@ import {
   createApiClient,
   createExporter,
   DEFAULTS,
+  EXPORT_VERSION,
   fairShares,
   isDirectExecution,
   LIMITS,
@@ -216,6 +218,12 @@ describe("the reviewed constants", () => {
 
   // etcd refuses a request over 1.5 MiB by default (--max-request-bytes), so no object a list returns is larger, and a
   // full page of the largest objects a namespace's editors can make stays under the response bound.
+  test("the export version is Studio's", () => {
+    expect(EXPORT_VERSION).toBe(KUBERNETES_DISCOVERY_EXPORT_VERSION);
+    const data = buildExport({ now: T0, status: { ok: true }, generatedAt: null, namespaces: [], databases: [] });
+    expect(data.version).toBe(KUBERNETES_DISCOVERY_EXPORT_VERSION);
+  });
+
   test("a full page of the largest objects etcd keeps fits the response bound", () => {
     const etcdMaxRequestBytes = 1.5 * 1024 * 1024;
     expect(LIMITS.pageSize * etcdMaxRequestBytes).toBeLessThan(LIMITS.responseBytes);
@@ -1039,7 +1047,7 @@ describe("buildExport and serializeExport", () => {
   test("writes the last good scan with this attempt's status and time", () => {
     const data = buildExport({ now: T0, status, generatedAt: "2026-10-28T07:59:00.000Z", namespaces, databases: [] });
     expect(data).toEqual({
-      version: 1,
+      version: 2,
       platform: "kubernetes",
       generatedAt: "2026-10-28T07:59:00.000Z",
       checkedAt: new Date(T0).toISOString(),
