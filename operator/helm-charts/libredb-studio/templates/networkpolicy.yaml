@@ -1,4 +1,5 @@
 {{- if .Values.networkPolicy.enabled }}
+{{- $onOpenShift := include "libredb-studio.openshiftApiServed" (dict "ctx" $ "api" "security.openshift.io/v1") }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -26,15 +27,25 @@ spec:
           protocol: UDP
         - port: 53
           protocol: TCP
+        {{- if $onOpenShift }}
+        # OpenShift's dns-default Service listens on 53 and forwards to the CoreDNS pods on 5353;
+        # a policy is matched after that rewrite, so 53 alone leaves resolution failing there.
+        - port: 5353
+          protocol: UDP
+        - port: 5353
+          protocol: TCP
+        {{- end }}
     # Allow HTTPS outbound (for database connections, AI APIs, OIDC)
     - ports:
         - port: 443
           protocol: TCP
-    {{- if include "libredb-studio.accessReviewEnabled" . }}
+    {{- if or (include "libredb-studio.accessReviewEnabled" .) $onOpenShift }}
     # The access review calls https://kubernetes.default.svc, which kube-proxy rewrites to the
     # API server's endpoint port, 6443 on RKE2, k3s and kubeadm. A policy is matched after that
-    # rewrite, so 443 alone leaves every review failing closed. An API server on another port
-    # goes in networkPolicy.additionalEgress.
+    # rewrite, so 443 alone leaves every review failing closed. On OpenShift the API server
+    # also listens on 6443 behind that Service, and sign-in, self reviews and discovery reach
+    # it there. One rule serves both, so 6443 appears once. An API server on another
+    # port goes in networkPolicy.additionalEgress.
     - ports:
         - port: 6443
           protocol: TCP

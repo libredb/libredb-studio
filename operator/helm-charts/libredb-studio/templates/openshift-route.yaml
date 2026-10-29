@@ -1,0 +1,45 @@
+{{- /*
+  OpenShift Route (route.openshift.io/v1): the native way to expose the Service
+  on OpenShift, beside ingress.* (which the OpenShift router also translates)
+  and the Gateway API route.* above. Read through a defaulted dict, so a
+  --reuse-values upgrade from a chart without the block renders nothing.
+*/ -}}
+{{- $r := .Values.openshiftRoute | default dict }}
+{{- if $r.enabled }}
+{{- if not (include "libredb-studio.openshiftApiServed" (dict "ctx" $ "api" "route.openshift.io/v1")) }}
+{{- fail "openshiftRoute.enabled is true but this cluster does not serve route.openshift.io/v1: install on OpenShift, or set global.compatibility.openshift.apis=force to render the Route without API detection (GitOps, offline helm template)" }}
+{{- end }}
+{{- $tls := $r.tls | default dict }}
+{{- $annotations := dict }}
+{{- with $r.timeout }}
+{{- $_ := set $annotations "haproxy.router.openshift.io/timeout" (toString .) }}
+{{- end }}
+{{- with $r.hstsHeader }}
+{{- $_ := set $annotations "haproxy.router.openshift.io/hsts_header" (toString .) }}
+{{- end }}
+{{- $annotations = merge (deepCopy ($r.annotations | default dict)) $annotations }}
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "libredb-studio.fullname" . }}
+  {{- /* Merged, chart labels winning, so a colliding key is never a duplicate mapping key. */}}
+  labels:
+    {{- toYaml (merge (include "libredb-studio.labels" . | fromYaml) (deepCopy ($r.labels | default dict))) | nindent 4 }}
+  {{- with $annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $r.host }}
+  host: {{ . | quote }}
+  {{- end }}
+  to:
+    kind: Service
+    name: {{ include "libredb-studio.fullname" . }}
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: {{ $tls.termination | default "edge" }}
+    insecureEdgeTerminationPolicy: {{ $tls.insecureEdgeTerminationPolicy | default "Redirect" }}
+{{- end }}

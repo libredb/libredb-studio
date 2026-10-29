@@ -14,6 +14,14 @@ global:
       # "disabled" never does. The Bitnami postgresql subchart honours the
       # same value.
       adaptSecurityContext: auto
+      # -- How the chart decides that an OpenShift API is served, for every
+      # OpenShift-only object it renders (openshiftRoute,
+      # openshift.trustedCABundle, the NetworkPolicy's OpenShift DNS and API
+      # server ports): "auto" detects each API through the API server, "force"
+      # renders them without detection, for GitOps or an offline
+      # `helm template` that has no cluster to ask. Separate from
+      # adaptSecurityContext, which a GitOps render sets to "force" as well.
+      apis: auto
 
 # -- Number of replicas. Note: SQLite storage mode only supports 1 replica.
 # The agent runtime carries a second single-instance constraint: its zero-config
@@ -597,6 +605,55 @@ route:
 
     ## httpsRedirect adds a filter for redirecting to https (HTTP 301 Moved Permanently).
     httpsRedirect: false
+
+# OpenShift Route (route.openshift.io/v1), independent of ingress.* and route.*.
+# Needs a cluster that serves route.openshift.io/v1, or
+# global.compatibility.openshift.apis=force; otherwise the render fails.
+openshiftRoute:
+  # -- Render an OpenShift Route to the Service's http port
+  enabled: false
+  # -- Route host; empty lets the router generate one. Setting a host needs the
+  # routes/custom-host permission in the namespace.
+  host: ""
+  tls:
+    # -- TLS termination. Only "edge" is accepted: the router terminates TLS,
+    # because the image serves plain HTTP and has no TLS listener for
+    # reencrypt or passthrough.
+    termination: edge
+    # -- What the router does with plain HTTP: Redirect, Allow or None
+    insecureEdgeTerminationPolicy: Redirect
+  # -- haproxy.router.openshift.io/timeout. The router cuts a request after 30s
+  # by default; this must exceed the largest per-connection queryTimeout an
+  # admin allows (Studio's default query timeout is 60s). Empty omits it.
+  timeout: 120s
+  # -- haproxy.router.openshift.io/hsts_header, e.g. "max-age=31536000";
+  # empty omits it
+  hstsHeader: ""
+  # -- Extra Route annotations (an entry with the same key as the timeout or
+  # HSTS annotation wins)
+  annotations: {}
+  # -- Extra Route labels (the chart's own labels win on a collision)
+  labels: {}
+
+# OpenShift-only settings beside openshiftRoute.
+openshift:
+  trustedCABundle:
+    # -- Mount the cluster's trusted CA bundle (the proxy's trustedCA plus the
+    # system roots), which the Cluster Network Operator injects into a labelled
+    # ConfigMap, and point NODE_EXTRA_CA_CERTS at it, so Studio trusts the
+    # private CAs the cluster trusts. Needs config.openshift.io/v1 (or
+    # global.compatibility.openshift.apis=force) and refuses an extraEnv
+    # NODE_EXTRA_CA_CERTS. See "Trusting a private CA" for other clusters.
+    enabled: false
+  topology:
+    # -- app.kubernetes.io/part-of on every Deployment the chart renders and its
+    # pod template, grouping them in the OpenShift console's Topology view, e.g.
+    # "libredb". Empty renders no label. The bundled PostgreSQL joins the group
+    # through postgresql.commonLabels.
+    partOf: ""
+    # -- app.openshift.io/runtime on the same objects, the Topology node icon,
+    # e.g. "nodejs". Empty renders no label.
+    runtime: ""
 
 networkPolicy:
   # -- Enable NetworkPolicy

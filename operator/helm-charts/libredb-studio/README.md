@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.109 \
+  --version 0.1.110 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -902,6 +902,18 @@ helm uninstall libredb
 | `extraVolumeMounts` | Additional volume mounts for the app container (Kubernetes `VolumeMount` objects). With a CA mounted, set `NODE_EXTRA_CA_CERTS` to the file through `extraEnv` so an OIDC issuer or Vault on an internal CA is trusted | `[]` |
 | `extraObjects` | Additional Kubernetes manifests deployed with the release, each rendered through `tpl` so it can use release values and the chart's helpers; a string item is taken as a template as it is. Write a literal `{{`, such as one in a Prometheus alert, as `{{ "{{" }}`, or the install fails. Not available through the OpenShift operator, whose CRD refuses it | `[]` |
 | `global.compatibility.openshift.adaptSecurityContext` | Drop fixed UID/GID fields for the OpenShift SCC: `auto`, `force`, or `disabled` | `auto` |
+| `global.compatibility.openshift.apis` | How OpenShift objects detect their API: `auto` asks the API server, `force` renders them without detection (GitOps, offline `helm template`) | `auto` |
+| `openshiftRoute.enabled` | Render an OpenShift Route to the Service's `http` port; needs `route.openshift.io/v1` or `apis=force` | `false` |
+| `openshiftRoute.host` | Route host; empty lets the router generate one. A set host needs `routes/custom-host` | `""` |
+| `openshiftRoute.tls.termination` | TLS termination; only `edge` (schema-enforced) | `edge` |
+| `openshiftRoute.tls.insecureEdgeTerminationPolicy` | Plain HTTP handling: `Redirect`, `Allow` or `None` | `Redirect` |
+| `openshiftRoute.timeout` | `haproxy.router.openshift.io/timeout`; must exceed the largest `queryTimeout` an admin allows. Empty omits it and the router's 30s applies | `120s` |
+| `openshiftRoute.hstsHeader` | `haproxy.router.openshift.io/hsts_header`; empty omits it | `""` |
+| `openshiftRoute.annotations` | Extra Route annotations | `{}` |
+| `openshiftRoute.labels` | Extra Route labels (chart labels win on a collision) | `{}` |
+| `openshift.trustedCABundle.enabled` | Mount the cluster's injected trusted CA bundle and set `NODE_EXTRA_CA_CERTS`; needs `config.openshift.io/v1` or `apis=force`, and refuses an `extraEnv` `NODE_EXTRA_CA_CERTS` | `false` |
+| `openshift.topology.partOf` | `app.kubernetes.io/part-of` on every Deployment and pod template; empty renders none | `""` |
+| `openshift.topology.runtime` | `app.openshift.io/runtime` on every Deployment and pod template; empty renders none | `""` |
 
 See [values.yaml](values.yaml) for the complete list of configurable parameters.
 
@@ -916,6 +928,67 @@ fixed `runAsUser`/`runAsGroup`/`fsGroup` so the SCC can assign valid IDs;
 UIDs: every writable path is a volume mount. Set `force` to always adapt (for
 example when templating manifests offline for an OpenShift cluster) or
 `disabled` to keep the fixed IDs everywhere.
+
+### Exposing Studio on OpenShift
+
+Three ways expose the Service, each independent of the others:
+
+| Values | Object | Where it works |
+|--------|--------|----------------|
+| `ingress.*` | Ingress | Any cluster with an Ingress controller; the OpenShift router also turns an Ingress into a Route, and reads `route.openshift.io/termination` from its annotations |
+| `route.*` | Gateway API HTTPRoute | Any cluster with a Gateway API implementation |
+| `openshiftRoute.*` | OpenShift Route (`route.openshift.io/v1`) | OpenShift |
+
+A typical OpenShift install, with the Route, the cluster's trusted CA bundle and the Topology labels:
+
+```bash
+helm install studio libredb/libredb-studio \
+  --version 0.1.110 \
+  --set openshiftRoute.enabled=true \
+  --set openshift.trustedCABundle.enabled=true \
+  --set openshift.topology.partOf=libredb \
+  --set openshift.topology.runtime=nodejs
+```
+
+The Route terminates TLS at the router (`edge`) and redirects plain HTTP.
+`openshiftRoute.tls.termination` accepts `edge` only; re-encrypt and passthrough need a TLS listener in the image, which it does not have.
+With `openshiftRoute.host` empty the router generates a host; setting one needs the `routes/custom-host` permission in the namespace.
+The router cuts a request after 30s by default, so the chart sets `haproxy.router.openshift.io/timeout` to `120s`: `openshiftRoute.timeout` must exceed the largest per-connection `queryTimeout` an admin allows, or a long query is cut at the router while the database still runs it.
+`openshiftRoute.hstsHeader` adds the router's `hsts_header` annotation, for example `max-age=31536000`.
+
+Each OpenShift object checks that its API is served and the render fails otherwise, naming the value to change.
+
+### The cluster's trusted CA bundle
+
+`openshift.trustedCABundle.enabled` renders an empty ConfigMap labelled `config.openshift.io/inject-trusted-cabundle: "true"`, which the Cluster Network Operator fills with the cluster's trusted bundle (the proxy's `trustedCA` plus the system roots).
+The chart mounts it read-only at `/etc/libredb-studio/trusted-ca` and sets `NODE_EXTRA_CA_CERTS=/etc/libredb-studio/trusted-ca/ca-bundle.crt`, so Studio trusts every CA the cluster trusts.
+Choose it when the private CA is already in the cluster's trusted bundle; otherwise use the recipe in [Trusting a private CA](#trusting-a-private-ca).
+The two do not combine: `NODE_EXTRA_CA_CERTS` takes one file, so the render fails when `extraEnv` also sets it.
+Studio refuses to boot while `NODE_EXTRA_CA_CERTS` names a missing, empty or certificate-less file, so a first start that races the injection exits and the restart picks the bundle up.
+That boot check is application code that needs an application release after 1.1.0; with the default `appVersion` 1.1.0 the bundle is mounted, but a first start that races the injection runs without it until the pod restarts.
+
+### Topology
+
+`openshift.topology.partOf` sets `app.kubernetes.io/part-of`, which groups workloads in the console's Topology view, and `openshift.topology.runtime` sets `app.openshift.io/runtime`, the node icon.
+Both land on every Deployment the chart renders and on its pod template; empty renders no label.
+The bundled PostgreSQL joins the group through the subchart's own `postgresql.commonLabels`, for example `--set 'postgresql.commonLabels.app\.kubernetes\.io/part-of=libredb'`.
+
+### GitOps and offline rendering
+
+`helm template` without a cluster cannot detect OpenShift, so set both switches explicitly:
+
+```bash
+helm template studio libredb/libredb-studio \
+  --set global.compatibility.openshift.apis=force \
+  --set global.compatibility.openshift.adaptSecurityContext=force \
+  --set openshiftRoute.enabled=true
+```
+
+`apis=force` treats every OpenShift API as served for the OpenShift objects; `adaptSecurityContext=force` drops the fixed IDs.
+
+### Checking an install
+
+`helm test studio` runs one pod that asks `/api/db/health` through the Service, with the Deployment's image, security context, pull secrets, scheduling and resources.
 
 ## Deployment under a subpath
 

@@ -286,6 +286,53 @@ security.openshift.io/v1, "force" always adapts, "disabled" never does.
 {{- end }}
 
 {{/*
+Whether an OpenShift API is served, for the OpenShift-only objects the chart
+renders. Called as
+  include "libredb-studio.openshiftApiServed" (dict "ctx" $ "api" "route.openshift.io/v1")
+and returns "true" or empty. global.compatibility.openshift.apis "auto" asks
+.Capabilities.APIVersions for the named API; "force" treats every OpenShift API
+as served, so a GitOps or offline `helm template` with no cluster to ask can
+still render the objects. Independent of adaptSecurityContext above, which
+speaks only of the pod security context. Read with dig over a defaulted dict,
+so a --reuse-values upgrade from a chart without the value behaves as "auto".
+*/}}
+{{- define "libredb-studio.openshiftApiServed" -}}
+{{- $mode := dig "compatibility" "openshift" "apis" "auto" (.ctx.Values.global | default dict) }}
+{{- if or (eq $mode "force") (.ctx.Capabilities.APIVersions.Has .api) }}
+{{- true }}
+{{- end }}
+{{- end }}
+
+{{/*
+Whether openshift.trustedCABundle is on. Read with dig over a defaulted dict,
+so a --reuse-values upgrade from a chart without the openshift block renders
+as off.
+*/}}
+{{- define "libredb-studio.trustedCABundleEnabled" -}}
+{{- if dig "trustedCABundle" "enabled" false (.Values.openshift | default dict) }}
+{{- true }}
+{{- end }}
+{{- end }}
+
+{{/*
+OpenShift Topology labels, each only when set: app.kubernetes.io/part-of groups
+workloads in the console's Topology view and app.openshift.io/runtime picks the
+node icon. Added to the metadata and pod template labels of every Deployment the
+chart renders, never to a selector. Read with dig over a defaulted dict, never
+`with .Values.openshift.topology.partOf`, which fails on a nil openshift block
+under --reuse-values.
+*/}}
+{{- define "libredb-studio.topologyLabels" -}}
+{{- $openshift := .Values.openshift | default dict }}
+{{- with dig "topology" "partOf" "" $openshift }}
+app.kubernetes.io/part-of: {{ . | quote }}
+{{- end }}
+{{- with dig "topology" "runtime" "" $openshift }}
+app.openshift.io/runtime: {{ . | quote }}
+{{- end }}
+{{- end }}
+
+{{/*
 Pod security context with OpenShift adaptation applied: the fixed
 runAsUser/runAsGroup/fsGroup are omitted so the SCC can inject range-valid
 IDs (runAsNonRoot and seccompProfile are kept). The app image supports

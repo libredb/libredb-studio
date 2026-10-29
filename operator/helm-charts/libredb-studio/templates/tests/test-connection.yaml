@@ -1,0 +1,49 @@
+{{- /*
+  `helm test`: one pod that asks the health route through the Service. It runs
+  Studio's own image, which already has node, so no extra image is pulled, and
+  takes the Deployment's security context, pull secrets, scheduling and
+  resources, so a private registry, restricted-v2 or a namespace ResourceQuota
+  admits it as it admits the app. Its app.kubernetes.io/name carries a -test
+  suffix, so neither the Service nor the NetworkPolicy selects it. A hook
+  object: helm install and upgrade never create it, and
+  `helm template --skip-tests` leaves it out.
+*/ -}}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "libredb-studio.fullname" . }}-test-health
+  labels:
+    {{- toYaml (merge (dict "app.kubernetes.io/name" (printf "%s-test" (include "libredb-studio.name" .))) (include "libredb-studio.labels" . | fromYaml)) | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  {{- with .Values.imagePullSecrets }}
+  imagePullSecrets:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  securityContext:
+    {{- include "libredb-studio.podSecurityContext" . | nindent 4 }}
+  containers:
+    - name: health
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      image: {{ include "libredb-studio.image" . }}
+      imagePullPolicy: {{ .Values.image.pullPolicy }}
+      command:
+        - node
+        - -e
+        - "fetch(process.argv[1]).then(r=>process.exit(r.ok?0:1),e=>{console.error(e.message);process.exit(1)})"
+        - {{ printf "http://%s:%v%s/api/db/health" (include "libredb-studio.fullname" .) .Values.service.port (.Values.config.basePath | default "") | quote }}
+      resources:
+        {{- toYaml .Values.resources | nindent 8 }}
+  {{- with .Values.nodeSelector }}
+  nodeSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .Values.tolerations }}
+  tolerations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
