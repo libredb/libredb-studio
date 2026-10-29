@@ -52,6 +52,8 @@ import type {
   ReadOnlyStatementBudget,
 } from "@/lib/db/types";
 import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { comparePaths } from "@/lib/db/object-path";
 
@@ -3236,14 +3238,15 @@ describe("LibSQLProvider agent read-only profile", () => {
     await provider.disconnect();
   });
 
-  test("refuses a token the server lets write, and stays closed", async () => {
-    // No 403 anywhere: the fixture runs the probe as it runs every statement, as a writable token's server does.
+  test("refuses a server that lets a read-only token write, and stays closed", async () => {
+    // No 403 anywhere: the fixture runs the probe as it runs every statement, as a server that checks no token does.
     const provider = new LibSQLProvider(connection({ password: READ_ONLY_TOKEN }), {}, AGENT);
 
     const error = await refusal(() => provider.connect());
 
     expect(error).toBeInstanceOf(ExecutionProfileError);
     expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_SERVER_UNENFORCED");
+    expect(error.message).toContain("so the server does not hold the token to them");
     expect(provider.isConnected()).toBe(false);
     await expect(provider.queryReadOnly("SELECT 1", BUDGET)).rejects.toThrow();
   });
@@ -3272,15 +3275,108 @@ describe("LibSQLProvider agent read-only profile", () => {
     await provider.disconnect();
   });
 
-  test("refuses a token whose claims do not say read-only, even when the server refused every probe", async () => {
+  test("refuses a token that can write as one, before sending anything with it", async () => {
     readOnlyToken();
-    for (const password of [fakeToken({ a: "rw" }), "not-a-real-token"]) {
+    for (const password of [fakeToken({ a: "rw" }), fakeToken({ iat: 1 }), "not-a-real-token"]) {
+      calls = [];
       const provider = new LibSQLProvider(connection({ password }), {}, AGENT);
 
       const error = await refusal(() => provider.connect());
 
       expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+      expect(error.message).toBe(
+        'The libSQL token is not a read-only token (a JWT whose claims carry "a": "ro"), so it can write, and the agent read-only profile is refused: use a read-only token',
+      );
       expect(provider.isConnected()).toBe(false);
+      expect(calls).toEqual([]);
+    }
+  });
+
+  test("refuses a read-only token that carries another claim, before sending anything with it", async () => {
+    readOnlyToken();
+    for (const password of [fakeToken({ a: "ro", p: { rw: { ns: ["default"] } } }), fakeToken({ a: "ro", perm: [] })]) {
+      calls = [];
+      const provider = new LibSQLProvider(connection({ password }), {}, AGENT);
+
+      const error = await refusal(() => provider.connect());
+
+      expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+      expect(error.message).toContain("so it can write, and the agent read-only profile is refused");
+      expect(calls).toEqual([]);
+    }
+  });
+
+  /**
+   * A local server answering as Turso Cloud does (measured): every request 200, and a write sent with a read-only token
+   * refused in its own step, code BLOCKED, while a read answers. `refusal` is the step's message. No token reaches
+   * Turso: the server is on 127.0.0.1 and the token is a fake one.
+   */
+  async function tursoShapedServer(refusalMessage: string): Promise<{ readonly port: number; close(): Promise<void> }> {
+    const server = createServer((request, response) => {
+      let body = "";
+      request.on("data", (chunk: Buffer) => {
+        body += chunk.toString("utf8");
+      });
+      request.on("end", () => {
+        const requests = (JSON.parse(body || "{}") as { requests?: { type: string; stmt?: { sql?: string } }[] })
+          .requests;
+        const results = (requests ?? []).map((step) => {
+          if (step.type !== "execute") return { type: "ok", response: { type: step.type } };
+          const sql = String(step.stmt?.sql ?? "");
+          if (/^\s*(DROP|INSERT|DELETE|UPDATE|CREATE)\b/i.test(sql)) {
+            return { type: "error", error: { message: refusalMessage, code: "BLOCKED" } };
+          }
+          return result([["1", null]], [[int(1)]]);
+        });
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ baton: null, base_url: null, results }));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const port = (server.address() as AddressInfo).port;
+    return { port, close: () => new Promise<void>((resolve) => server.close(() => resolve())) };
+  }
+
+  test("opens on a Turso Cloud shaped server that refuses every probe in-band for the token", async () => {
+    globalThis.fetch = originalFetch;
+    const turso = await tursoShapedServer(
+      "Operation was blocked: SQL write operations are forbidden (current session doesn't have write permission)",
+    );
+    try {
+      const provider = new LibSQLProvider(
+        connection({ port: turso.port, password: fakeToken({ a: "ro", iat: 1, id: "x", kid: "x", rid: "x" }) }),
+        {},
+        AGENT,
+      );
+      await provider.connect();
+
+      expect(provider.isConnected()).toBe(true);
+      expect((await provider.queryReadOnly("SELECT 1", BUDGET)).rowCount).toBe(1);
+      const error = await refusal(() => provider.queryReadOnly("DELETE FROM probe_orders", BUDGET));
+      expect(error).toBeInstanceOf(QueryError);
+      expect(error.message).toContain(
+        "SQL write operations are forbidden (current session doesn't have write permission)",
+      );
+      await provider.disconnect();
+    } finally {
+      await turso.close();
+    }
+  });
+
+  test("refuses Turso's answer for a database whose writes are blocked, which a token that can write gets", async () => {
+    globalThis.fetch = originalFetch;
+    const turso = await tursoShapedServer(
+      "Operation was blocked: SQL write operations are forbidden (writes are blocked, do you need to upgrade your plan?)",
+    );
+    try {
+      const provider = new LibSQLProvider(connection({ port: turso.port, password: READ_ONLY_TOKEN }), {}, AGENT);
+
+      const error = await refusal(() => provider.connect());
+
+      expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
+      expect(provider.isConnected()).toBe(false);
+    } finally {
+      await turso.close();
     }
   });
 

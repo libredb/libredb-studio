@@ -2,10 +2,11 @@
  * The libSQL agent read-only profile's boundary, proven at open (`agent-boundary.ts`).
  *
  * The proof is three write-shaped statements that change nothing on any outcome, sent with the agent's own token: the
- * server must refuse each with 403 and its own authorization refusal ("Authorization forbidden", measured on sqld
- * 0.24.33). Every other answer refuses the profile, fail closed, a 403 with any other body included. The credential
- * check runs before them: a user name and password (HTTP Basic) and a connection with no token are refused without
- * asking the server. After them, the token's own claims must declare read-only access.
+ * server must refuse each with its own read-only refusal, in full: sqld's 403 "Authorization forbidden" (measured on
+ * sqld 0.24.33) or Turso Cloud's in-band BLOCKED step (measured). Every other answer refuses the profile, fail closed,
+ * a 403 with any other body and Turso's refusal of a write-blocked database included. The credential checks run before
+ * them, without asking the server: a user name and password (HTTP Basic) and a connection with no token are refused,
+ * and the token's own claims must declare read-only access and carry nothing else that could grant a write.
  */
 import { describe, expect, test } from "bun:test";
 import { ExecutionProfileError } from "@/lib/db/errors";
@@ -100,6 +101,18 @@ const FORBIDDEN = new LibSQLTransportError(
   403,
 );
 
+/**
+ * Turso Cloud's own refusal of a read-only token's write, as the transport reports it: the request answers 200 and the
+ * step carries the error, code BLOCKED (measured on Turso Cloud).
+ */
+const TURSO_READ_ONLY =
+  "Operation was blocked: SQL write operations are forbidden (current session doesn't have write permission)";
+const TURSO_BLOCKED = new LibSQLTransportError(TURSO_READ_ONLY, 200, "BLOCKED");
+
+/** What Turso answers a token that CAN write on a database whose writes are blocked: never a read-only token's answer. */
+const TURSO_WRITES_BLOCKED =
+  "Operation was blocked: SQL write operations are forbidden (writes are blocked, do you need to upgrade your plan?)";
+
 /** A token shaped like a JWT, built here so no literal token sits in the source; the signature is not one. */
 function fakeToken(claims: unknown): string {
   const part = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -130,13 +143,68 @@ describe("verifyAgentProfile", () => {
     expect(sent).toEqual([...agentProbeStatements(NAME)]);
   });
 
-  test("refuses the profile when the server ran a probe: a token that writes, or a server that checks none", async () => {
+  test("refuses the profile when the server ran a probe sent with a token that declares read-only access", async () => {
     const error = await refusal(() => verifyAgentProfile(async () => EMPTY, NAME));
 
     expect(error.reasonCode).toBe("PROFILE_SERVER_UNENFORCED");
     expect(error.message).toBe(
-      `libSQL ran the write probe DROP TABLE IF EXISTS "${NAME}" sent with the agent's token, so the token is not read-only or the server checks no token, and the agent read-only profile is refused`,
+      `libSQL ran the write probe DROP TABLE IF EXISTS "${NAME}" sent with a token whose claims declare read-only access, so the server does not hold the token to them (it checks no token, or admits one it did not sign), and the agent read-only profile is refused`,
     );
+  });
+
+  test("admits the profile when Turso Cloud refuses every probe in-band with its read-only refusal", async () => {
+    const sent: string[] = [];
+
+    await verifyAgentProfile(async (sql) => {
+      sent.push(sql);
+      throw TURSO_BLOCKED;
+    }, NAME);
+
+    expect(sent).toEqual([...agentProbeStatements(NAME)]);
+  });
+
+  test("refuses Turso's refusal of a write-blocked database, which a token that can write is answered with", async () => {
+    const error = await refusal(() =>
+      verifyAgentProfile(async () => {
+        throw new LibSQLTransportError(TURSO_WRITES_BLOCKED, 200, "BLOCKED");
+      }, NAME),
+    );
+
+    expect(error.reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
+    expect(error.message).toBe(
+      `libSQL answered the agent's write probe with status 200 (${TURSO_WRITES_BLOCKED}), not the refusal a read-only token is refused a write with, so the agent read-only profile is refused`,
+    );
+  });
+
+  test("refuses Turso's read-only wording under any other code or status, or with anything around it", async () => {
+    for (const answer of [
+      new LibSQLTransportError(TURSO_READ_ONLY, 200, null),
+      new LibSQLTransportError(TURSO_READ_ONLY, 200, "SQLITE_UNKNOWN"),
+      new LibSQLTransportError(TURSO_READ_ONLY, 403, "BLOCKED"),
+      new LibSQLTransportError(`libSQL request failed: ${TURSO_READ_ONLY}`, 403),
+      new LibSQLTransportError(`${TURSO_READ_ONLY}.`, 200, "BLOCKED"),
+      new LibSQLTransportError(`proxy: ${TURSO_READ_ONLY}`, 200, "BLOCKED"),
+      new LibSQLTransportError("Operation was blocked", 200, "BLOCKED"),
+    ]) {
+      const error = await refusal(() =>
+        verifyAgentProfile(async () => {
+          throw answer;
+        }, NAME),
+      );
+
+      expect(error.reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
+    }
+  });
+
+  test("refuses a set of answers that mixes the two servers' refusals: one server answers every probe", async () => {
+    const error = await refusal(() =>
+      verifyAgentProfile(async (sql) => {
+        throw sql.startsWith("DROP") ? FORBIDDEN : TURSO_BLOCKED;
+      }, NAME),
+    );
+
+    expect(error.reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
+    expect(error.message).toContain(`status 200 (${TURSO_READ_ONLY})`);
   });
 
   test("refuses the profile on a mixed answer set: one probe refused, a later one run", async () => {
@@ -171,6 +239,8 @@ describe("verifyAgentProfile", () => {
       "libSQL request failed: Forbidden",
       "libSQL request failed: <html>403</html>",
       "Authorization forbidden",
+      "libSQL request failed: Authorization forbidden: something else",
+      "libSQL request failed: Authorization forbidden: Current session doesn't not have Write permission to namespace default and more",
     ]) {
       const error = await refusal(() =>
         verifyAgentProfile(async () => {
@@ -180,7 +250,7 @@ describe("verifyAgentProfile", () => {
 
       expect(error.reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
       expect(error.message).toBe(
-        `libSQL answered the agent's write probe with status 403 (${message}), not the authorization refusal a read-only token is refused a write with, so the agent read-only profile is refused`,
+        `libSQL answered the agent's write probe with status 403 (${message}), not the refusal a read-only token is refused a write with, so the agent read-only profile is refused`,
       );
     }
   });
@@ -194,7 +264,7 @@ describe("verifyAgentProfile", () => {
 
     expect(error.reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
     expect(error.message).toBe(
-      "libSQL answered the agent's write probe with status 200 (unsupported statement), not the authorization refusal a read-only token is refused a write with, so the agent read-only profile is refused",
+      "libSQL answered the agent's write probe with status 200 (unsupported statement), not the refusal a read-only token is refused a write with, so the agent read-only profile is refused",
     );
   });
 
@@ -232,14 +302,27 @@ describe("verifyAgentProfile", () => {
 });
 
 describe("assertReadOnlyClaims", () => {
-  test("admits a token whose claims carry a = ro", () => {
-    expect(() => assertReadOnlyClaims(fakeToken({ a: "ro", iat: 1 }))).not.toThrow();
+  test("admits a token whose claims carry a = ro and nothing else", () => {
+    expect(() => assertReadOnlyClaims(fakeToken({ a: "ro" }))).not.toThrow();
   });
 
-  test("refuses a token whose claims grant writes, grant everything, or say nothing it can read", async () => {
+  test("admits a = ro beside each standard claim and each id the two servers mint", () => {
+    for (const claim of ["exp", "iat", "nbf", "id", "kid", "rid", "iss", "sub", "aud", "jti"]) {
+      expect(() => assertReadOnlyClaims(fakeToken({ a: "ro", [claim]: "x" }))).not.toThrow();
+    }
+  });
+
+  test("admits the claims a Turso Cloud read-only token carries (measured)", () => {
+    expect(() =>
+      assertReadOnlyClaims(fakeToken({ a: "ro", exp: 1, iat: 1, id: "not-a-real-id", kid: "x", rid: "x" })),
+    ).not.toThrow();
+  });
+
+  test("refuses a token that is not a read-only token, saying it can write and a read-only token is needed", async () => {
     for (const token of [
       fakeToken({ a: "rw" }),
       fakeToken({}),
+      fakeToken({ iat: 1 }),
       fakeToken({ a: ["ro"] }),
       fakeToken(["ro"]),
       fakeToken(null),
@@ -252,23 +335,25 @@ describe("assertReadOnlyClaims", () => {
 
       expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
       expect(error.message).toBe(
-        'The libSQL token does not declare read-only access (a JWT whose claims carry "a": "ro"), so the agent read-only profile is refused',
+        'The libSQL token is not a read-only token (a JWT whose claims carry "a": "ro"), so it can write, and the agent read-only profile is refused: use a read-only token',
       );
     }
   });
 
-  test("refuses a read-only token that also carries a permission claim, which the server lets widen it to writes", async () => {
-    for (const token of [
-      fakeToken({ a: "ro", p: { rw: { ns: ["default"] } } }),
-      fakeToken({ a: "ro", p: { ro: { ns: ["default"] } } }),
-      fakeToken({ a: "ro", p: null }),
-      fakeToken({ a: "ro", p: {} }),
-    ]) {
-      const error = await refusal(() => assertReadOnlyClaims(token));
+  test("refuses a read-only token that carries any other claim, which the server may read to grant writes", async () => {
+    for (const [claims, named] of [
+      [{ a: "ro", p: { rw: { ns: ["default"] } } }, '"p"'],
+      [{ a: "ro", p: { ro: { ns: ["default"] } } }, '"p"'],
+      [{ a: "ro", p: null }, '"p"'],
+      [{ a: "ro", perm: ["data_write"] }, '"perm"'],
+      [{ a: "ro", iat: 1, something_new: true }, '"something_new"'],
+      [{ a: "ro", perm: [], p: {} }, '"p", "perm"'],
+    ] as const) {
+      const error = await refusal(() => assertReadOnlyClaims(fakeToken(claims)));
 
       expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
       expect(error.message).toBe(
-        'The libSQL token carries a permission claim ("p"), which the server reads on top of "a": "ro" and can grant writes with, so the agent read-only profile is refused',
+        `The libSQL token carries claims beyond the read-only marker and the standard ones (${named}), which the server may read to grant writes, so it can write, and the agent read-only profile is refused: use a read-only token that carries no other claim`,
       );
     }
   });

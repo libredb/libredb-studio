@@ -316,6 +316,9 @@ export class LibSQLProvider extends SQLBaseProvider {
     if (this.readOnlyProfile) {
       try {
         assertAgentConnection(this.connection);
+        // `assertAgentConnection` admitted only a connection with a token. A token that can write is refused here,
+        // before a probe is sent with it.
+        assertReadOnlyClaims(this.connection.password as string);
       } catch (error) {
         this.setError(error as Error);
         throw error;
@@ -328,8 +331,6 @@ export class LibSQLProvider extends SQLBaseProvider {
       await transport.execute(CONNECT_PROBE_SQL, { timeoutMs: this.queryTimeout });
       if (this.readOnlyProfile) {
         await verifyAgentProfile((sql) => transport.execute(sql, { timeoutMs: AGENT_PROOF_TIMEOUT_MS }));
-        // `assertAgentConnection` above admitted only a connection with a token.
-        assertReadOnlyClaims(this.connection.password as string);
       }
     } catch (error) {
       await transport.close();
