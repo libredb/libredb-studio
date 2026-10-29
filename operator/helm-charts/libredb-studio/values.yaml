@@ -886,8 +886,13 @@ discovery:
     namespaces: []
     # -- Time between scans in milliseconds, at least 5000 (KUBERNETES_DISCOVERY_INTERVAL_MS).
     intervalMs: 30000
-    # -- The kinds to discover. Empty (the default) writes nothing and the exporter
-    # reads every supported kind; cnpg is the only one today.
+    # -- The kinds to discover: cnpg (CloudNativePG), edbpg (EDB Postgres for
+    # Kubernetes), pgo (Crunchy PGO) and mongo (MongoDB Community). Empty (the
+    # default) writes nothing and the exporter discovers cnpg alone. Each kind needs
+    # its CRD on the cluster, or every discovered namespace reports crd_missing and is
+    # withdrawn; the exporter's Roles list exactly these kinds. mongo lets the MongoDB
+    # driver follow the replica set members the server advertises, which only an
+    # egress policy confines.
     kinds: []
     # -- SEED_KUBERNETES_DISCOVERY_MAX_AGE_MS: age of the last good scan after which
     # the discovered connections are withdrawn. null (the default) writes nothing and

@@ -1,0 +1,230 @@
+
+BANNER_FULL
+--------------------------------------------------------------------------------
+Oracle AI Database 26ai Free Release 23.26.3.0.0 - Develop, Learn, and Run for F
+ree
+Version 23.26.3.0.0
+
+
+
+User created.
+
+
+Grant succeeded.
+
+
+User altered.
+
+
+Table created.
+
+
+1 row created.
+
+
+1 row created.
+
+
+Commit complete.
+
+
+Table created.
+
+
+Grant succeeded.
+
+
+Grant succeeded.
+
+
+Function created.
+
+
+Grant succeeded.
+
+
+REA
+---
+NO
+YES
+
+
+GRANTEE
+--------------------------------------------------------------------------------
+TABLE_NAME
+--------------------------------------------------------------------------------
+PRIVILEGE
+----------------------------------------
+PUBLIC
+DBMS_LOB
+EXECUTE
+
+PUBLIC
+UTL_TCP
+EXECUTE
+
+GRANTEE
+--------------------------------------------------------------------------------
+TABLE_NAME
+--------------------------------------------------------------------------------
+PRIVILEGE
+----------------------------------------
+
+PUBLIC
+UTL_HTTP
+EXECUTE
+
+PUBLIC
+DBMS_SQL
+
+GRANTEE
+--------------------------------------------------------------------------------
+TABLE_NAME
+--------------------------------------------------------------------------------
+PRIVILEGE
+----------------------------------------
+EXECUTE
+
+PUBLIC
+UTL_FILE
+EXECUTE
+
+PUBLIC
+
+GRANTEE
+--------------------------------------------------------------------------------
+TABLE_NAME
+--------------------------------------------------------------------------------
+PRIVILEGE
+----------------------------------------
+HTTPURITYPE
+EXECUTE
+
+PUBLIC
+DBMS_ADVISOR
+EXECUTE
+
+
+GRANTEE
+--------------------------------------------------------------------------------
+TABLE_NAME
+--------------------------------------------------------------------------------
+PRIVILEGE
+----------------------------------------
+PUBLIC
+DBMS_SCHEDULER
+EXECUTE
+
+PUBLIC
+UTL_INADDR
+EXECUTE
+
+GRANTEE
+--------------------------------------------------------------------------------
+TABLE_NAME
+--------------------------------------------------------------------------------
+PRIVILEGE
+----------------------------------------
+
+PUBLIC
+UTL_SMTP
+EXECUTE
+
+PUBLIC
+DBMS_LDAP
+
+GRANTEE
+--------------------------------------------------------------------------------
+TABLE_NAME
+--------------------------------------------------------------------------------
+PRIVILEGE
+----------------------------------------
+EXECUTE
+
+PUBLIC
+DBMS_XSLPROCESSOR
+EXECUTE
+
+
+12 rows selected.
+
+
+  COUNT(*)
+----------
+	 0
+
+
+DIRECTORY_NAME
+--------------------------------------------------------------------------------
+SDO_DIR_ADMIN
+XMLDIR
+XSDDIR
+ORACLE_BASE
+ORACLE_HOME
+OPATCH_INST_DIR
+DATA_PUMP_DIR
+DBMS_OPTIM_LOGDIR
+DBMS_OPTIM_ADMINDIR
+OPATCH_SCRIPT_DIR
+OPATCH_LOG_DIR
+
+DIRECTORY_NAME
+--------------------------------------------------------------------------------
+JAVA$JOX$CUJS$DIRECTORY$
+
+12 rows selected.
+
+
+Table created.
+
+
+Grant succeeded.
+
+
+Sequence created.
+
+
+Grant succeeded.
+
+
+User created.
+
+
+Grant succeeded.
+
+
+User altered.
+
+
+Role created.
+
+
+Grant succeeded.
+
+
+Grant succeeded.
+
+
+User altered.
+
+
+Database link created.
+
+
+Sequence created.
+
+
+Function created.
+
+
+Grant succeeded.
+
+
+Grant succeeded.
+
+
+Function created.
+
+
+Grant succeeded.
+

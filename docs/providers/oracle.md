@@ -20,7 +20,7 @@
 | **Transactions** | Yes: explicit begin/commit/rollback (5-minute auto-rollback on an owned provider only, see §3.4) |
 | **Query cancellation** | Yes — tracked connection + `connection.break()` |
 | **SSL** | Yes — `connection.ssl` selects TCPS, the DN match and the wallet ([§4.3](#43-ssl--tls)) |
-| **Source** | [`src/lib/db/providers/sql/oracle.ts`](../../src/lib/db/providers/sql/oracle.ts) |
+| **Source** | [`src/lib/db/providers/sql/oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts) |
 | **Base** | [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts) |
 | **Tests** | [`tests/integration/db/oracle-provider.test.ts`](../../tests/integration/db/oracle-provider.test.ts) |
 
@@ -47,7 +47,7 @@ providers, with several Oracle-isms that are worth knowing before reading the co
 
 ### Thin mode
 
-The constructor ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) uses pure-JS Thin mode by
+The constructor ([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)) uses pure-JS Thin mode by
 default, sets `outFormat = OUT_FORMAT_OBJECT` (rows as objects), and `autoCommit = true` globally.
 Thin mode means **no native Oracle client** has to be installed in the container — a real deployment
 win.
@@ -79,7 +79,7 @@ Loaded on demand by the factory ([`factory.ts`](../../src/lib/db/factory.ts)):
 
 ```ts
 case 'oracle': {
-  const { OracleProvider } = await import('./providers/sql/oracle');
+  const { OracleProvider } = await import('./providers/sql/oracle/index');
   return new OracleProvider(connection, options);
 }
 ```
@@ -91,14 +91,14 @@ case 'oracle': {
 ### 3.1 EZConnect connect string (service name, not database)
 
 Oracle connects to a **service**, not a database name. `getConnectString()`
-([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) returns the raw `connectionString` if
+([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)) returns the raw `connectionString` if
 given, otherwise builds `host:port/serviceName` where `serviceName = config.serviceName ??
 config.database ?? 'ORCL'`. Accordingly, `validate()` requires only `host` (not `database`) when no
 connection string is present.
 
 ### 3.2 `FETCH FIRST` instead of `LIMIT`
 
-Oracle has no `LIMIT`, so `prepareQuery()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts))
+Oracle has no `LIMIT`, so `prepareQuery()` ([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts))
 overrides the base and appends `FETCH FIRST n ROWS ONLY` (or `OFFSET m ROWS FETCH NEXT n ROWS ONLY`
 when an offset is set) to bare `SELECT`s that don't already have a limit. Default page size
 `DEFAULT_QUERY_LIMIT = 500`; unlimited caps at `MAX_UNLIMITED_ROWS = 100000`.
@@ -201,7 +201,7 @@ from `NUM_ROWS`, an optimizer estimate that can be stale or `NULL`.
 
 ### 3.4 Transaction auto-rollback timeout on an owned provider only
 
-`beginTransaction()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) checks out a connection and marks the transaction active.
+`beginTransaction()` ([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)) checks out a connection and marks the transaction active.
 A provider created with an `owner` in its execution context, which only governance does (`ProviderExecutionContext.owner`, see [Per-user providers](../GOVERNANCE.md#per-user-providers)), also arms the 5-minute auto-rollback timer of the Postgres and MySQL providers there.
 `createDatabaseProvider` hands the execution context to `OracleProvider` for this.
 When the timer fires, `expireTransaction()` rolls the transaction back and closes the held connection, which releases it to the pool; a rollback or a close that fails is logged, and the transaction is released all the same.
@@ -273,12 +273,12 @@ const b = { id: 'or-1', name: 'XE', type: 'oracle',
   user: 'app', password: 'secret', createdAt: new Date() };
 ```
 
-`validate()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) requires `host` only when no
+`validate()` ([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)) requires `host` only when no
 `connectionString` is given; `database` is **not** required (Oracle uses the service name).
 
 ### 4.2 Connection pooling
 
-`connect()` builds an `oracledb` pool ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)):
+`connect()` builds an `oracledb` pool ([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)):
 
 | `oracledb` pool option | Value | Source |
 |------------------------|-------|--------|
@@ -290,13 +290,13 @@ const b = { id: 'or-1', name: 'XE', type: 'oracle',
 > `ProviderOptions` option, defaulting to `DEFAULT_QUERY_TIMEOUT`) are **not** mapped — there is no
 > provider-driven server-side query timeout (cancellation is explicit, [§5.2](#52-query-cancellation)).
 
-`connect()` is idempotent; `getPoolStats()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts))
+`connect()` is idempotent; `getPoolStats()` ([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts))
 exposes `{ total: connectionsOpen, idle, active: connectionsInUse, waiting: 0 }`.
 
 ### 4.3 SSL / TLS
 
 `getConnectString()` and `buildTLSAttributes()`
-([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) map `connection.ssl` onto the three
+([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)) map `connection.ssl` onto the three
 things the driver understands:
 
 | `ssl.mode` | Connect string | `sslServerDNMatch` | Chain verified |
@@ -517,7 +517,7 @@ How `mapDatabaseError` classifies its driver's errors, its Thin-mode refusals, i
 
 ### 5.1 Execution
 
-`query(sql, params?, queryId?)` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) checks
+`query(sql, params?, queryId?)` ([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)) checks
 out a pooled connection, optionally stores the **connection object** under `queryId` for
 cancellation, runs `conn.execute(sql, binds, { outFormat: OUT_FORMAT_OBJECT, autoCommit: true, fetchTypeHandler })`
 ([§5.3](#53-what-each-oracle-type-arrives-as) says what the handler is for),
@@ -600,7 +600,7 @@ failed with `ORA-04098`.
 ### 5.2 Query cancellation
 
 A query issued with a `queryId` stores its connection in a `Map`. `cancelQuery(queryId)`
-([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) calls `connection.break()` on it —
+([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)) calls `connection.break()` on it —
 interrupting the in-flight OCI call — and returns `true` on success (it does not verify a query was
 actually running). Exposed via `POST /api/db/cancel`.
 
@@ -632,7 +632,7 @@ summary all read.
 #### A LOB used to fail the whole query, not just the cell
 
 `query()` and `queryInTransaction()` pass a per-call **`fetchTypeHandler`**
-([oracle.ts](../../src/lib/db/providers/sql/oracle.ts)) that maps `CLOB` and `NCLOB` to
+([oracle/index.ts](../../src/lib/db/providers/sql/oracle/index.ts)) that maps `CLOB` and `NCLOB` to
 `oracledb.STRING` and `BLOB` to `oracledb.BUFFER`. Apart from `DATE` and `TIMESTAMP`, which it gives a
 converter ([below](#a-date-and-a-timestamp-read-as-the-stored-wall-clock-in-every-server-time-zone-1131)),
 every other column keeps the driver's own default:
@@ -1079,10 +1079,224 @@ The update-target reader takes `MINUS` as a set operator here alone, since it is
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
 Redaction is `sql` with `"` as its name quote: a redacted statement keeps its words and every name in that quote, and every literal becomes `?`.
 
+### 5.7 Agent read-only execution profile
+
+Agent mode executes statements on Oracle through `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/sql/oracle/index.ts), on Oracle Database 23ai and 26ai.
+The boundary is credential-enforced: the agent signs in as a local user set `ALTER USER ... READ ONLY`, which the server refuses every write with `ORA-28194: Can perform read operations only`.
+What READ ONLY does not stop is what the user can reach through others, so before every statement the user is checked, as itself, to reach none of it ([`agent-read.ts`](../../src/lib/db/providers/sql/oracle/agent-read.ts)).
+Studio's agent admission in front of the provider is defence in depth on top of those two.
+
+The factory passes the execution context as the constructor's third argument.
+`queryReadOnly` answers only when that context sets both `readOnly` and `sendsStatements`, the agent and hand-over profiles; it refuses on any other handle, an ordinary editor handle and the operations profile's included, before it sends anything.
+The operations profile and plan mode send no statement of the model's, so they open unchecked, and plan mode keeps grounding on a privileged connection.
+
+#### What READ ONLY refuses, and what it does not
+
+Measured on Oracle AI Database 26ai Free Release 23.26.3.0.0 (`gvenzl/oracle-free:slim`, digest pinned in `run.sh`), with the scripts and their answers in [`tests/fixtures/oracle/23.26.3-free/agent-boundary/`](../../tests/fixtures/oracle/23.26.3-free/agent-boundary/):
+
+- A READ ONLY user is refused `INSERT`, `UPDATE`, `DELETE` and `MERGE` on a table it holds those grants on, `CREATE TABLE`, a global and a private temporary table, `SELECT ... FOR UPDATE`, `LOCK TABLE`, a write through `DBMS_SQL`, a write in a PL/SQL block after a read, a write over a public database link, and a granted definer's-rights function that writes in an autonomous transaction, each with `ORA-28194` (captures 03 and 04).
+- `ALTER SESSION SET READ_ONLY = FALSE` answers "Session altered" and every write after it is still refused the same way (capture 03); inside the read-only transaction each agent call opens, the same statement answers `ORA-65023` instead.
+- The SQL statements `COMMIT` and `ROLLBACK` are refused with `ORA-28194` too; the node-oracledb Thin calls `connection.commit()` and `connection.rollback()` are not, and end the read-only transaction (capture 10).
+- A READ ONLY user that holds `ALTER SYSTEM` still runs `ALTER SYSTEM SET`, inside `SET TRANSACTION READ ONLY` as well (capture 05).
+- `SELECT <sequence>.NEXTVAL` advances the sequence, inside `SET TRANSACTION READ ONLY` too (capture 06).
+- A granted definer's-rights function runs with its owner's privileges: a user holding only `CREATE SESSION` advanced a sequence `ALL_SEQUENCES` does not list for it, and ran `ALTER SYSTEM SET OPEN_CURSORS`, through two granted functions (captures 08 and 09).
+- A `SELECT` runs code of the object's owner in five more places, each measured as a READ ONLY user holding only `CREATE SESSION` and `SELECT` grants, with a sequence of its own (captures 11 to 13): a virtual column over a function, selected by name, the hidden virtual column of a function-based index over a function, selected by its `SYS_NC` name, a row-level security policy function, on the table, on a private synonym and on a `PUBLIC` synonym, and on a table the user reads only through a granted view, a fine-grained auditing handler, and a granted view over a view the user may not read, replaced to call a function after the outer view was created.
+  `ALL_TAB_COLS` lists the user both virtual columns, a hidden one included, and `ALL_POLICIES` the three policies on what it may read, but not the one behind the view; `ALL_AUDIT_POLICIES` answers `ORA-00942`; `ALL_DEPENDENCIES` lists the outer view's dependency on the inner view only.
+  Granted `SELECT` on `DBA_POLICIES` and `DBA_AUDIT_POLICIES` by SYS (SYSTEM is refused that grant with `ORA-01031`, capture 14), the same user reads the policy behind the view in the first and the handler in the second (captures 14 and 15).
+- A row-level policy whose function the schema owner owns, put on `SYSTEM.HELP`, which `PUBLIC` may read, ran for the READ ONLY user's plain `SELECT` and advanced the owner's sequence; so did a fine-grained auditing policy with no handler whose audit condition calls the owner's function, once the policy's creator could execute that function (without that, the read answers `ORA-28112` and runs nothing) (measured, `tests/live/oracle-agent-boundary.ts`).
+- A fresh database holds twelve row-level policies, on four `XDB` tables, every one calling `XDB.DBMS_XDBZ0`, which `PUBLIC` may execute and `ALL_OBJECTS` marks `ORACLE_MAINTAINED`, and no fine-grained auditing policy (capture 00).
+  Every object a `PUBLIC` grant names in a schema Oracle maintains is itself marked `ORACLE_MAINTAINED`, and no unmarked table there has a virtual column (measured).
+- A function an administrator creates in SYSTEM, a schema `ALL_USERS` marks Oracle-maintained, is not marked itself in `DBA_OBJECTS`, and it runs with SYSTEM's rights: a row-level policy calling it on `SYSTEM.HELP`, and a fine-grained auditing handler made there on the same table, each advanced a SYSTEM sequence for the READ ONLY user's plain `SELECT` (measured).
+- A fresh database keeps 5,913 objects it marks `ORACLE_MAINTAINED` local to the pluggable database, `SHARING` reading `NONE`, against 23,257 linked from the root container; `PUBLIC` may execute 133 of the local ones: 109 domains, 14 operators, 3 job classes, 2 indextypes, 2 consumer groups, an evaluation context, a procedure and a package body (measured).
+- An object an administrator makes under `_oracle_script` is marked `ORACLE_MAINTAINED`, and `SYSTEM.PRODUCT_PRIVS`, a local view Oracle marks that `PUBLIC` may read, keeps its flag and that grant when SYSTEM replaces it; each reads `SHARING` `NONE`.
+  A function and an operator made that way and granted to `PUBLIC`, and the replaced view calling a SYSTEM function, each advanced a SYSTEM sequence for the READ ONLY user's plain `SELECT` (measured).
+- A domain's check, display and order expressions refuse a user function with `ORA-00904`, and its default with `ORA-04044` (measured).
+- An unqualified `DBA_POLICIES` read by the user resolves to a private synonym of that name in its own schema before Oracle's `PUBLIC` synonym: an administrator's synonym over an empty table hid a policy from it, while `SYS.DBA_POLICIES` still listed it (measured).
+- `ALL_OBJECTS` and `ALL_DEPENDENCIES` show the user a view, and that view's own dependencies, for any grant that makes `ALL_OBJECTS` list it, `INSERT` alone included, and for none of `DEBUG`, `FLASHBACK` and `MERGE VIEW` alone (measured).
+- A view over a table the user may not read, which has a virtual column over a function, lists that function in `ALL_DEPENDENCIES` whether it selects the column, selects `*` or leaves the column out (measured).
+- A column group made by `DBMS_STATS.CREATE_EXTENDED_STATS` adds a hidden virtual column named `SYS_STU...` to a plain table, and `ALL_TAB_COLS` lists it to the user (captures 14 and 15).
+- A granted view left invalid, by a column it reads dropped and added again as a virtual column over a function, lists its old dependencies, and the READ ONLY user's `SELECT` compiled it and ran the function (captures 11 to 13).
+- `ALTER SESSION SET EDITION` inside `SET TRANSACTION READ ONLY` is refused with `ORA-38814`, so a call cannot switch the edition its views are read in (capture 12).
+- The fresh database grants `PUBLIC` `EXECUTE` on `DBMS_LDAP`, `DBMS_SCHEDULER`, `DBMS_XSLPROCESSOR`, `HTTPURITYPE`, `UTL_FILE`, `UTL_HTTP`, `UTL_INADDR`, `UTL_SMTP` and `UTL_TCP` among the packages that reach the network or the server's files, and `SELECT` on four sequences Oracle maintains (captures 02 and 07).
+
+#### The check before each statement
+
+Every `queryReadOnly` call runs the check on the statement's own session, as the agent user, inside its `SET TRANSACTION READ ONLY` and before the statement, and keeps no verdict: a grant or a policy added after one call refuses the next call on the same handle, and a refusal lifted between two calls admits the second (measured).
+What remains is a window from `SET TRANSACTION READ ONLY` to the statement, the whole check included: the check reads the dictionary as of the transaction's start, so a grant or a policy added after `SET TRANSACTION` is not seen by that call's check, and a policy added there ran for the statement (measured); the next call sees it.
+The check costs more as the database holds more grants and objects the user can see.
+On the measured 26ai Free a call with its check and a `SELECT 1 FROM DUAL` took about 200 ms with nothing granted beyond the two catalog views, about 20 ms of it opening and closing the call's own session, about 250 ms with 3,000 extra views granted to the user, and 315 to 370 ms with 7,000.
+The first call after the server last optimized the check's statements took about 0.8 s.
+Each finding is collected, and one `PROFILE_PRIVILEGES_TOO_BROAD` refusal names them all, as the statements that lift them or, for a policy, as the policy.
+A revoke can uncover the next finding: a granted view over a view the refusal names is refused once the inner grant is gone, so revoke the outer grant as well; the next call's check reads the database as it is then.
+Every dictionary view the check and the catalog read name is written `SYS.<view>`: an unqualified name resolves first to an object or a private synonym in the user's own schema, then to a `PUBLIC` synonym, and either could stand in for the view.
+An object is Oracle's only when `ALL_OBJECTS` shows the user every object of its owner and name as `ORACLE_MAINTAINED` and linked from the root container, `SHARING` other than `NONE`; one the user cannot see is not.
+The schema's flag in `ALL_USERS` proves nothing: an administrator can create objects in SYSTEM or SYS, which are not marked.
+Nor does the object's own flag alone: an object made under `_oracle_script` is marked, and a local object Oracle marked keeps its flag when replaced; the `SHARING` rule refuses both, since each is local.
+Below, "not Oracle's" means that; item 3 alone admits some local objects by their kind.
+
+1. `USER_USERS.READ_ONLY` must read `YES`. A server without the column (`ORA-00904`) is older than 23ai and is refused `PROFILE_UNSUPPORTED_TARGET`.
+2. Every role granted to the user, directly or through `PUBLIC` (`USER_ROLE_PRIVS`), must be a default role. `SET ROLE` is permitted under READ ONLY, while `ALL_TAB_PRIVS` lists only the grants of enabled roles, so a role whose grants the check cannot see is refused.
+3. The user, its enabled roles and `PUBLIC` must hold `EXECUTE` on no unit (PL/SQL, type, Java class, library) that is not Oracle's, an administrator's function in SYSTEM included.
+   Here alone a local object Oracle marks is admitted by its kind: a domain, a job class or a consumer group, which runs no function (a domain's expressions refuse one, and a job class or a consumer group names no code, measured; a job class is used only through `DBMS_SCHEDULER`, item 10); an operator whose every binding's function and implementation type are linked (`ALL_OPBINDINGS`); an indextype whose implementation type is linked (`ALL_INDEXTYPES`).
+   An evaluation context names a function that `DBMS_RULE`, which `PUBLIC` may execute, runs, so it is held to the link; the refusal names `DBMS_RULE_ADM.REVOKE_OBJECT_PRIVILEGE` for it, since a `REVOKE` statement answers `ORA-04042` (measured).
+4. They may read no view that is not Oracle's whose own definition calls code rather than a table or view (`ALL_DEPENDENCIES`): a plain `SELECT` on such a view runs that code with its owner's rights, and advanced a sequence for a READ ONLY user (measured).
+   A view that calls the code through a synonym, private or `PUBLIC`, lists only the synonym, and `ALL_SYNONYMS` does not show the user another schema's private synonym (measured), so a synonym is admitted only when `ALL_SYNONYMS` resolves it to a table or view the check starts from, or to an object that is Oracle's, as `PUBLIC.DUAL` and `PUBLIC.DBMS_LOB` are; any other is refused, a private synonym for a table the user is not granted, and one for another synonym, included.
+   The check reads dependencies for the objects it starts from: those that are not Oracle's granted to the user, an enabled role or `PUBLIC` that `ALL_OBJECTS` shows the user, and the tables and views the user owns.
+   A view over another view lists only the inner view, and `ALL_DEPENDENCIES` lists the inner view's own dependencies only when `ALL_OBJECTS` shows the user the inner view, any object grant on it that does so included, so a view over a view that is not Oracle's is admitted only when the inner view is one of the objects the check starts from, held to this same item; a synonym that does not resolve to an object that is Oracle's is admitted only when it resolves to one of them.
+5. They may read no such view that is not valid (`ALL_OBJECTS.STATUS`): an invalid view lists the dependencies it had, and the user's `SELECT` compiles it and runs what it calls now (measured). The refusal names the revoke; compiling the view lifts it as well, since the next call's check then reads what the view calls now.
+6. No table or view that is not Oracle's that `ALL_TAB_COLS` shows the user has a virtual column, hidden or not: selecting one evaluates its expression, which can call a function with its owner's rights, and the hidden column of a function-based index can be selected by its `SYS_NC` name (measured). The expression is not parsed to prove it built-in, so every one is refused, `UPPER(NAME)` and the hidden `SYS_STU` column of extended statistics (a column group or an expression statistic) included.
+7. `SYS.DBA_POLICIES` must list no row-level security policy anywhere in the database, enabled or not, whose function is not Oracle's, on any object, one Oracle maintains included: a `SELECT` of what it guards runs the function with its owner's rights, and the user reaches guarded objects the check cannot follow it to, a table behind a view or Oracle's own `SYSTEM.HELP` (measured). `ALL_POLICIES` does not list the user a policy behind a view, so the rule is database wide rather than per object.
+8. `SYS.DBA_AUDIT_POLICIES` must list no fine-grained auditing policy anywhere, enabled or not, with an audit condition, which a read evaluates and which can call a function with its owner's rights (measured), or with a handler that is not Oracle's, which a read runs; `ALL_AUDIT_POLICIES` answers the user `ORA-00942`. The condition is not parsed to prove it built-in, so every one is refused, `ID > 0` included.
+   A user that may not read either view is refused, naming its grant, which only SYS may run. The fresh database's own rows, all calling `XDB.DBMS_XDBZ0`, are admitted (capture 00); a policy function or handler an administrator made in SYSTEM is refused (measured).
+9. They must hold no privilege on a sequence that is not Oracle's, and the user must own no sequence.
+10. They must hold `EXECUTE` on none of `UTL_HTTP`, `UTL_TCP`, `UTL_SMTP`, `UTL_FILE`, `UTL_INADDR`, `HTTPURITYPE`, `DBMS_LDAP`, `DBMS_SCHEDULER`, `DBMS_PIPE` and `DBMS_XSLPROCESSOR`, in any schema, and no privilege on a directory, which `BFILENAME` reads server files through.
+11. `SESSION_PRIVS` must hold no system privilege but `CREATE SESSION`; the grantee is read from `USER_SYS_PRIVS` and `ROLE_SYS_PRIVS` where they list it.
+12. `ALL_DB_LINKS` must list no link, `PUBLIC` or the user's own, since a link reaches another database under its stored credential.
+   Only its owner drops a private link, and READ ONLY refuses the owner that `DROP` with `ORA-28194` (measured), so the refusal names it between `ALTER USER ... READ WRITE` and `ALTER USER ... READ ONLY`.
+
+A check read that fails, past the deadline included, is reported as a connection failure rather than as a failure of the model's statement, so the agent does not offer it to the model to repair.
+
+#### Each statement
+
+[`index.ts`](../../src/lib/db/providers/sql/oracle/index.ts) runs each call on a session opened for it alone, with the profile's user, connect string and TLS settings, never one from the pool:
+
+- the driver's `callTimeout` is set to the statement budget, so a round trip past it ends with `NJS-123`, refused in the shared time sentence, and the session is signed off; that ends the wait at the deadline, and this record does not measure when the server stops the statement;
+- `SET TRANSACTION READ ONLY` opens the transaction, the check above runs on the same session, and the statement follows in one execute, with `autoCommit: false` on all of them, because the constructor sets the process-wide default to `true` for the editor;
+- the statement is executed as a result set, so its column types are read before any row is fetched: without one the driver fetches every row, and expands every nested cursor in full, before the execute returns;
+- a column of type `BFILE` is then refused unread, since its locator reads a server file, and so are an object and a cursor column, whose values the byte budget cannot measure: measured, three nested `CURSOR()` levels of 1,000 rows each were refused with no growth of the process;
+- otherwise at most one row past the row budget is fetched, and a result past it is refused rather than cut;
+- `CLOB` and `NCLOB` are fetched as strings and `BLOB` as buffers by the call's own `fetchTypeHandler`, never the process-wide settings, so no LOB locator outlives the call, and every value is counted against the byte budget;
+- the session is then rolled back with the driver's `rollback()` and closed, which signs it off, on every path, an answered call included.
+  A session keeps what a statement set on it, and the `USER_*` views the check reads follow `CURRENT_SCHEMA`: measured, an agent's `ALTER SESSION SET CURRENT_SCHEMA = APP_OWNER` ran, and on a pooled session the next calls read `APP_OWNER` as their schema.
+  The Thin driver of node-oracledb 6.10 returns a pooled session to its pool even when `close({ drop: true })` asks it to drop it (measured), so the session is never taken from the pool at all.
+
+Every refusal is a sentence of [`read-only-budget.ts`](../../src/lib/db/providers/sql/read-only-budget.ts) or the server's own error.
+The estimate-plan session mode is refused: `EXPLAIN PLAN` writes its rows into `PLAN_TABLE`, a write the READ ONLY user is refused, so the agent composes no estimating plan here (B147).
+The run read allowance is not charged: Oracle does not bill per read.
+
+#### The agent user
+
+The agent credential takes a user and a password, both required, the form every engine without an `agentCredential` declaration takes.
+An agent credential beside a connection string is refused (`AGENT_CREDENTIAL_WITH_CONNECTION_STRING`); with no agent credential the agent signs in as the connection's own user, which the check must admit.
+Create the user in the pluggable database, grant it `SELECT` on the tables it may read and, as SYS, on the two catalog views of items 7 and 8, and set it READ ONLY:
+
+```sql
+CREATE USER libredb_agent IDENTIFIED BY "<secret>";
+GRANT CREATE SESSION TO libredb_agent;
+GRANT SELECT ON app.orders TO libredb_agent;
+GRANT SELECT ON app.customers TO libredb_agent;
+GRANT SELECT ON SYS.DBA_POLICIES TO libredb_agent;        -- as SYS
+GRANT SELECT ON SYS.DBA_AUDIT_POLICIES TO libredb_agent;  -- as SYS
+ALTER USER libredb_agent READ ONLY;
+```
+
+The two grants stay on the agent credential, since each seed carries one credential and a non-default role is refused: so the agent's own statements can read, through them, every row-level policy's function name and every fine-grained auditing policy's handler and audit condition text in the database.
+That is metadata, not table data, and it is what proving that no such code runs on the agent's reads costs.
+
+A fresh database refuses that user, because `PUBLIC` holds `EXECUTE` on the network and file packages and on four local objects of Oracle's that the check cannot prove.
+Run the revoke the refusal names, as SYS; on the measured 26ai Free it is:
+
+```sql
+REVOKE EXECUTE ON SYS.DBMS_LDAP FROM PUBLIC;
+REVOKE EXECUTE ON SYS.DBMS_SCHEDULER FROM PUBLIC;
+REVOKE EXECUTE ON XDB.DBMS_XSLPROCESSOR FROM PUBLIC;
+REVOKE EXECUTE ON SYS.HTTPURITYPE FROM PUBLIC;
+REVOKE EXECUTE ON SYS.UTL_FILE FROM PUBLIC;
+REVOKE EXECUTE ON SYS.UTL_HTTP FROM PUBLIC;
+REVOKE EXECUTE ON SYS.UTL_INADDR FROM PUBLIC;
+REVOKE EXECUTE ON SYS.UTL_SMTP FROM PUBLIC;
+REVOKE EXECUTE ON SYS.UTL_TCP FROM PUBLIC;
+REVOKE EXECUTE ON SYS.SCHEDULER$NTFY_SVC_METRICS FROM PUBLIC;
+REVOKE EXECUTE ON XDB.XMLINDEX FROM PUBLIC;
+REVOKE EXECUTE ON XDB.XMLINDEX_NOOP FROM PUBLIC;
+BEGIN DBMS_RULE_ADM.REVOKE_OBJECT_PRIVILEGE(DBMS_RULE_ADM.EXECUTE_ON_EVALUATION_CONTEXT, '"SYS"."STREAMS$_EVALUATION_CONTEXT"', 'PUBLIC'); END;
+```
+
+The last four are objects Oracle keeps local to the database that item 3 cannot prove: a procedure, an evaluation context, and an indextype and an operator whose implementation type, `XDB.XMLINDEXMETHODS`, the user cannot see.
+
+Revoking from `PUBLIC` reaches every user of the database: grant `EXECUTE` back to each user or role that calls one of these packages, before revoking, and recompile what the revoke invalidates.
+Grant the `SELECT` on tables, or on views whose definitions read only tables and views: a view that calls a function refuses the user, unless the view is Oracle's.
+
+The check refuses some grants that run no code, since it cannot prove that they do not; each refusal names a statement that lifts it, and each has a remedy that keeps the read:
+
+- A table with a virtual column, with a function-based index, whose hidden column is a virtual column, even over a built-in such as `UPPER`, or with extended statistics, whose column group or expression adds a hidden `SYS_STU` virtual column: grant a view that leaves the column out instead of the table, or drop statistics that are not needed with `DBMS_STATS.DROP_EXTENDED_STATS`. The view does not show the user the table's columns, and a view over a table with a virtual column over a function lists that function and is refused under item 4.
+- A view over a view the check does not start from: grant the inner view as well, so the check reads its dependencies, or define the outer view over the tables directly; once a refusal names the inner view, revoke the outer one with it. A `DEBUG`, `FLASHBACK` or `MERGE VIEW` grant on the inner view is not enough, since `ALL_OBJECTS` then does not show it.
+- A view that is not valid: revoke the grant the refusal names, or compile it with `ALTER VIEW ... COMPILE` as its owner or an administrator, so the dictionary lists what it reads now and the next call's check reads that.
+- A user that may not read `SYS.DBA_POLICIES` or `SYS.DBA_AUDIT_POLICIES`: grant both as SYS.
+- An object the agent user owns: no revoke takes its own object from it, so the refusal names the object's move to another schema.
+
+One refusal has no remedy short of changing the database: a row-level security policy whose function is not Oracle's, or a fine-grained auditing policy with an audit condition or with such a handler, anywhere in the database, on any object, disabled ones included.
+Oracle runs that code with its owner's rights when any user reads what it guards, the agent user included, and the check cannot prove the agent user outside every object it guards, so agent mode is not offered on such a database; the refusal names the policies rather than a statement.
+Dropping the policy, or for auditing replacing its condition and handler with none, lifts it, at the cost of what the policy protects; a fine-grained auditing policy with neither condition nor handler runs no code and is admitted.
+
+What the agent reads beyond the tables needs no grant: the catalog reads below and plan-mode grounding read the `ALL_*` views, which list what the user may see.
+Measured with the agent credential set, under the operations profile: the READ ONLY user listed and described the four tables it held `SELECT` on.
+Its operations readings come back degraded, as section 3.7 describes for a user that cannot read the `V$` and `DBA_` views: the database size read `0 MB` and the cache hit ratio `N/A`.
+
+#### What only the operator stops
+
+- A sequence of Oracle's that `PUBLIC` may select is advanced by `NEXTVAL`, measured: `SYS.SCHEDULER$_JOBSUFFIX_S` answered for the admitted user. Four are granted on a fresh database (capture 07); advancing one moves a counter and changes no data. Oracle's own definer's-rights packages granted to `PUBLIC`, and Oracle's own views, are trusted as the vendor's boundary in the same way: the check trusts an object Oracle marks `ORACLE_MAINTAINED` and links from the root container, and, for what a grant may execute, a local one of a kind item 3 admits.
+- `ALL_OBJECTS` does not list a package body to the agent user, so the check reads only a package's specification: on a fresh database `SYS.DBMS_MEMOPTIMIZE`'s specification is linked and its body local, the one such package `PUBLIC` may execute (measured), and a body an administrator replaced there would not be seen.
+- `LOCK TABLE` is not a residual: the READ ONLY user is refused it (capture 03).
+
+#### Boundary record
+
+Measured on 26ai Free 23.26.3 (the digest `run.sh` pins, 2026-10-29) by [`tests/live/oracle-agent-boundary.ts`](../../tests/live/oracle-agent-boundary.ts), with Studio's agent admission bypassed: 168 checks, all passing.
+
+| Probe | Admitted READ ONLY user, through `queryReadOnly` | Writable schema owner, positive control |
+| --- | --- | --- |
+| `INSERT`, `UPDATE`, `DELETE`, `MERGE` on a table it holds those grants on | `ORA-28194` | ran |
+| `CREATE TABLE`, a global and a private temporary table | `ORA-28194` | ran |
+| `SELECT ... FOR UPDATE`, `LOCK TABLE` | `ORA-28194` | ran |
+| a write in a PL/SQL block after a read, a write through `DBMS_SQL` | `ORA-28194` | ran |
+| `ALTER SESSION SET READ_ONLY = FALSE` then a write, in one block | `ORA-65023` | ran |
+| `COMMIT`, `ROLLBACK` | `ORA-28194` | ran |
+| `GRANT` | `ORA-28194` | not sent |
+| `ALTER SYSTEM SET` | `ORA-01031` | not sent |
+| a second statement | `ORA-03405` | not sent |
+| `ALTER SESSION SET EDITION` | `ORA-38814` | not sent |
+
+The table rows, the sequence, `open_cursors`, the owner's objects and the database links read back the same before and after the refused statements.
+The fresh database refused its READ ONLY user, naming the thirteen revokes above and the two catalog grants, and none of its local domains, job classes, consumer groups or operators bound to linked code, and admitted it once they ran.
+The admitted user then read `SYSTEM.PRODUCT_PRIVS` and `XMLSEQUENCE`, Oracle's local view and operator, was refused `DBMS_SCHEDULER.CREATE_JOB` naming a job class with `PLS-00201`, and a domain's check, display and order expressions each refused a user function with `ORA-00904`.
+The check refused, and admitted again once the grant was gone: a user set `READ WRITE`; `EXECUTE` on a definer's-rights function granted to the user, to `PUBLIC` and to a default role; a role set `DEFAULT ROLE NONE`; `SELECT` on a view over that function, on a view that calls it through a private synonym, through a `PUBLIC` synonym and through a chain of two private synonyms, on a view over a private synonym for a table the user is not granted, on a view over an invoker's-rights function, and on a view over a view the user may not read, one that calls that function and one that calls nothing; `SELECT` on a table with a virtual column over that function and on one with a function-based index over `UPPER`; `SELECT` on a view left invalid by a dropped column; `SELECT` on a view over a view granted only `DEBUG`; a table the user owns with a virtual column, lifted by dropping the table; each lifted by dropping the policy: a row-level policy of the owner's on a granted table, on a table the user is not granted at all, on a table read only through a granted view, and on `SYSTEM.HELP`, a policy on a private and on a `PUBLIC` synonym, lifted by dropping the synonym, a fine-grained auditing handler of the owner's on a granted table, behind a granted view and on `SYSTEM.SQLPLUS_PRODUCT_PROFILE`, and an audit condition calling the owner's function and one of built-ins only, `ID > 0`; a row-level policy and a fine-grained auditing handler on `SYSTEM.HELP` whose function an administrator made in SYSTEM, `EXECUTE` through `PUBLIC` on such a function, a granted view made in SYSTEM that calls it, and `SELECT` on a sequence made in SYSTEM; `EXECUTE` through `PUBLIC` on a function made in SYSTEM under `_oracle_script`, and on an operator made there bound to a SYSTEM function, which Oracle marks its own, and `SYSTEM.PRODUCT_PRIVS` replaced to call a SYSTEM function, lifted by restoring it, each measured to run its function for the READ ONLY user; a row-level policy while the user's own schema held a private synonym `DBA_POLICIES` over an empty table, which hid the policy from an unqualified read; the grant on `DBA_POLICIES` and on `DBA_AUDIT_POLICIES`, each revoked, lifted by granting it again; `SELECT` on a sequence; a private database link the user owns, which the user, READ ONLY, was refused the `DROP` of with `ORA-28194` and dropped once set READ WRITE; a `PUBLIC` database link; `READ` on a directory. It refused a READ ONLY user holding `ALTER SYSTEM`, and admitted the fresh database's twelve `XDB` row-level policies, a fine-grained auditing policy with no condition and no handler, a view over `DBMS_LOB` through Oracle's `PUBLIC` synonym, a view over a private synonym for a table the user is granted, a view that leaves out the function-based index's hidden column, a view over a view once both were granted, and a view over a view granted only `INSERT`.
+On one handle, a call ran, a row-level policy added on `SYSTEM.HELP` refused the next call without running its function, and the call after the policy was dropped ran.
+On the same handle the agent's `ALTER SESSION SET CURRENT_SCHEMA = APP_OWNER` ran, and each of the four calls after it read the agent user's own schema and its own empty `USER_TABLES`.
+The operations profile opened the writable schema owner unchecked and listed its tables; it and an editor handle refused `queryReadOnly` before sending anything.
+The four catalog kinds answered as the admitted user.
+The budgets: 60 rows under a budget of 50 were refused at the 51st, a 30,000-character `CLOB` under a byte budget of 10,000 was refused, a `CLOB` under the budgets came back as a string, a `BFILE` column was refused, three nested `CURSOR()` levels of 1,000 rows each were refused in 2 ms with no growth of the process, and `DBMS_SESSION.SLEEP(5)` under a one-second deadline was refused, the next statement answering.
+
+The script revokes `PUBLIC`'s grants and does not grant them back, so run it on a disposable database such as the container `run.sh` names:
+
+```sh
+LIBREDB_LIVE_ORACLE_PORT=15217 LIBREDB_LIVE_ORACLE_PASSWORD=<SYS and SYSTEM password> bun tests/live/oracle-agent-boundary.ts
+```
+
+#### Agent language pack
+
+Statement-language family: `sql`.
+Overlay: [`src/lib/agent/languages/sql/engines/oracle.ts`](../../src/lib/agent/languages/sql/engines/oracle.ts), with its client row in [`src/lib/agent/languages/sql/engines/client.ts`](../../src/lib/agent/languages/sql/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`, and the dialect through `engineServerDialect`.
+
+| Member | Kind | Value |
+| --- | --- | --- |
+| `catalogRead` | Dialect-bound | Supplied |
+| `planEstimate` | Dialect-bound | `"unsupported"` |
+| `profileComposition` | Dialect-bound | `"unsupported"` |
+| `statistics` | Dialect-bound | `"unsupported"` |
+| `catalogCapture` | Dialect-bound | `"unsupported"` |
+
+This overlay overrides no Shared member, so every Shared member is the `sql` statement-language family's own.
+The catalog read takes `ALL_TAB_COLUMNS` for the column kind, `ALL_CONSTRAINTS` and `ALL_CONS_COLUMNS` for the foreign keys, `ALL_INDEXES` and `ALL_IND_COLUMNS` for the indexes, and `ALL_TABLES.NUM_ROWS` for the row estimates, which the last statistics gathering recorded, each named `SYS.<view>` so nothing in the user's schema stands in for it; every kind leaves out the schemas Oracle maintains, and a selector's schema and table are compared as string literals, exactly as the dictionary spells them, an unquoted name in upper case.
+Each kind was run as the admitted READ ONLY user.
+Investigation, database assessment and data analysis open on Oracle; assessment cannot pass there, because its verdict needs a table profile and the engine composes none (B146); query optimization stays closed, and `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`, because the engine composes no estimating plan and no table profile (B147).
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+MCP's statement read stays closed on Oracle (`MCP_STATEMENT_READ.oracle` is false) until a change of its own opens it.
+
 ## 6. Transactions
 
 Explicit lifecycle on a dedicated connection checked out from the pool (`beginTransaction()`,
-[`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)). Oracle starts a transaction implicitly on
+[`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)). Oracle starts a transaction implicitly on
 the first DML, so `beginTransaction()` just holds the connection. A 5-minute auto-rollback on an owned provider only (see
 [§3.4](#34-transaction-auto-rollback-timeout-on-an-owned-provider-only)).
 Surfaced via `POST /api/db/transaction`.
@@ -1099,7 +1313,7 @@ Surfaced via `POST /api/db/transaction`.
 The providers that implement `endOpenQueryTransaction()` ([`types.ts`](../../src/lib/db/types.ts)) end a transaction a statement run through `query()` left behind on the session the next request borrows; the set is read from the type rather than listed here, because a list repeated across provider docs goes stale the moment it grows.
 This provider does not, and the reason is that on this path **the engine has no transaction to leave open**.
 
-Two independent facts in `query()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)) make that true, and neither is an inference about the engine's name:
+Two independent facts in `query()` ([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)) make that true, and neither is an inference about the engine's name:
 
 - Every statement executes with `autoCommit: true`, so Oracle ends the transaction that statement implicitly started, at that statement. A statement that FAILS ends it too: Oracle rolls a failed statement back to its own implicit savepoint, and the statement before it was already committed. `BEGIN` does not change this — in Oracle it opens a PL/SQL block, not a transaction.
 - The pooled connection is closed in the `finally` of every call, so nothing survives the statement for a later caller to inherit. `oracledb` 6.10.0 in Thin mode also rolls back inside that close: `ThinConnectionImpl.close()` issues a rollback when `_protocol.txnInProgress` is set, before the session goes back to the pool.
@@ -1131,7 +1345,7 @@ reads, so the app showed exactly one schema on Oracle with no way to reach anoth
 surface is five container-aware methods
 (`listContainers`, `countObjects`, `listObjects`, `describeObject`, `describeObjects`) declared in
 [`types.ts`](../../src/lib/db/types.ts) and implemented in
-[`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts). Both surfaces are live through Phase 1;
+[`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts). Both surfaces are live through Phase 1;
 the flat reading it replaced is deleted.
 
 #### Nine kinds, and the dictionary that answers for each
@@ -1169,7 +1383,7 @@ badge, and expand to nothing. `listObjects(container, 'package')` returns the pa
 `ALL_OBJECTS.OBJECT_TYPE` writes the type names with spaces; the `object_type` argument
 `DBMS_METADATA.GET_DDL` takes writes them with underscores. They are not interchangeable, and Phase
 2 (the Source tab) reads the second column, so both are written once in `ORACLE_OBJECT_TYPES` in
-[`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts) rather than typed out twice:
+[`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts) rather than typed out twice:
 
 | Kind | `ALL_OBJECTS.OBJECT_TYPE` | `DBMS_METADATA.GET_DDL` |
 |---|---|---|
@@ -1509,7 +1723,7 @@ A bare `CHAR` or `NUMBER` is worse, because Oracle accepts it and creates a diff
 `CHAR(1)`, or a `NUMBER` with no precision or scale.
 
 Both column reads therefore also select `DATA_LENGTH`, `DATA_PRECISION`, `DATA_SCALE`, `CHAR_LENGTH`
-and `CHAR_USED`, and `declaredType()` in `oracle.ts` builds the declaration with this rule:
+and `CHAR_USED`, and `declaredType()` in `oracle/index.ts` builds the declaration with this rule:
 
 | `DATA_TYPE` | Declaration |
 | --- | --- |
@@ -2162,7 +2376,7 @@ A table stored in a `CLUSTER` has no segment of its own (the cluster holds it), 
 
 ## 9. Maintenance
 
-`runMaintenance(type, target?, container?)` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)):
+`runMaintenance(type, target?, container?)` ([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)):
 
 A `container` is the OWNER the row carries as `schemaName` (#772). It moves every read off the
 `USER_*` catalogs and onto their `ALL_*` twins with the owner bound, passes that owner as the
@@ -2258,7 +2472,7 @@ is what lets the Operations tab render those words and send an operation Oracle 
 
 ## 10. Capabilities & labels
 
-### `getCapabilities()` ([`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts))
+### `getCapabilities()` ([`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts))
 
 | Capability | Value |
 |------------|-------|
@@ -2302,7 +2516,7 @@ A `BOOLEAN` table column is 23ai and later, so a true/false column is `NUMBER(1)
 JSON is `CLOB` for the same reason: the native `JSON` type is 21c and later.
 A row that reads like the old shared list is Oracle agreeing with it, not a row nobody looked at.
 
-### Labels — overridden (`getLabels()`, [`oracle.ts`](../../src/lib/db/providers/sql/oracle.ts))
+### Labels — overridden (`getLabels()`, [`oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts))
 
 Oracle **overrides** the default SQL labels so the UI uses Oracle vocabulary:
 `analyzeAction` → *"Gather Statistics"*, `vacuumAction` → *"Rebuild Indexes"*, and the matching
@@ -2533,6 +2747,7 @@ the object tree's own routes under `POST /api/db/objects/*`
 
 ## 14. Known limitations & future work
 
+- **Agent mode reaches what READ ONLY does not stop only where the operator grants it.** A sequence Oracle maintains, a row-level policy on a table the user reads only through a view, or a fine-grained auditing handler can run code or advance a counter for the agent user; [section 5.7](#57-agent-read-only-execution-profile) names each one and what the operator does about it.
 - **A LOB is fetched whole.** `CLOB`/`NCLOB`/`BLOB` are read into a string or a `Buffer` in one
   piece rather than streamed, so a single very large cell is held in memory and then in the JSON
   response. Measured: 16 MB of `CLOB` costs 66 ms and 16.4 MB of JSON; V8 refuses a string past
@@ -2647,7 +2862,7 @@ It prints no refusal reason.
 ## 15. References
 
 - Driver: [`node-oracledb`](https://github.com/oracle/node-oracledb) (Thin mode)
-- Source: [`src/lib/db/providers/sql/oracle.ts`](../../src/lib/db/providers/sql/oracle.ts)
+- Source: [`src/lib/db/providers/sql/oracle/index.ts`](../../src/lib/db/providers/sql/oracle/index.ts)
 - SQL base: [`src/lib/db/providers/sql/sql-base.ts`](../../src/lib/db/providers/sql/sql-base.ts)
 - Query limiter: [`src/lib/db/utils/query-limiter.ts`](../../src/lib/db/utils/query-limiter.ts)
 - Interface & DTOs: [`src/lib/db/types.ts`](../../src/lib/db/types.ts)

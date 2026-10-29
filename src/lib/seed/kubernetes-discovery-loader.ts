@@ -32,7 +32,7 @@ import type { SeedConnection } from "./types";
 const ROUTE = "seed/kubernetes-discovery-loader";
 const DEFAULT_MAX_AGE_MS = 180_000;
 const ID_TAKEN = "id taken by the seed file";
-const ID_DUPLICATE = "id taken by another discovered database";
+const ID_SHARED = "id shared with another discovered database, so both are left out";
 const OK_MESSAGE = "The Kubernetes discovery exporter's last scan is current";
 const WAITING_MESSAGE = "Waiting for the Kubernetes discovery exporter's export";
 const PLACEMENT_HINT =
@@ -59,9 +59,11 @@ export interface KubernetesDiscoveredConnection {
   readonly secret: KubernetesSecretRef;
 }
 
-/** The seams of the shared source, and the seed-file ids, which tests pin. */
+/** The seams of the shared source, the seed-file ids and the id's digest, which tests pin. */
 export interface KubernetesDiscoveryDeps extends DiscoverySourceDeps {
   fileSeedIds?: () => Promise<ReadonlySet<string>>;
+  /** The digest a connection's id is cut from, SHA-256 unless a test makes two keys share an id. */
+  digest?: (key: string) => string;
 }
 
 // A type and not an interface: the shared source's log line spreads it, so it must read as a record of strings.
@@ -79,34 +81,38 @@ function maxAgeMs(): number {
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_AGE_MS;
 }
 
+/**
+ * The export's databases as connections, and the skipped ones with their id key and reason, in the export's order. A
+ * connection whose id the seed file uses is skipped, and so is every connection whose id another discovered database
+ * also maps to: list order is the namespaces' editors' to choose, so neither of two such rows may win.
+ */
 async function buildConnections(
   data: KubernetesDiscoveryExport,
   deps: KubernetesDiscoveryDeps,
 ): Promise<{ connections: KubernetesDiscoveredConnection[]; skipped: Skipped[] }> {
   const taken = await (deps.fileSeedIds ?? operatorSeedIds)();
+  const results = data.databases.map((entry) => mapKubernetesDatabase(entry, deps.digest));
+  const holders = new Map<string, number>();
+  for (const result of results) {
+    if (result.ok) holders.set(result.connection.id, (holders.get(result.connection.id) ?? 0) + 1);
+  }
   const connections: KubernetesDiscoveredConnection[] = [];
   const skipped: Skipped[] = [];
-  const accepted = new Set<string>();
-  for (const entry of data.databases) {
-    const resource = `${entry.resource.metadata.namespace}/${entry.resource.metadata.name}`;
-    const mapped = mapKubernetesDatabase(entry);
-    if (!mapped.ok) {
-      skipped.push({ resource, reason: mapped.reason });
+  for (const result of results) {
+    if (!result.ok) {
+      skipped.push({ resource: result.key, reason: result.reason });
       continue;
     }
-    const { id } = mapped.connection;
+    const { id } = result.connection;
     if (taken.has(id)) {
-      skipped.push({ resource, reason: ID_TAKEN });
+      skipped.push({ resource: result.key, reason: ID_TAKEN });
       continue;
     }
-    // The exporter lists each resource once; an export that lists one twice keeps the first, as the operator
-    // loader refuses a repeated id.
-    if (accepted.has(id)) {
-      skipped.push({ resource, reason: ID_DUPLICATE });
+    if ((holders.get(id) as number) > 1) {
+      skipped.push({ resource: result.key, reason: ID_SHARED });
       continue;
     }
-    accepted.add(id);
-    connections.push({ connection: mapped.connection, secret: mapped.secret });
+    connections.push({ connection: result.connection, secret: result.secret });
   }
   return { connections, skipped };
 }

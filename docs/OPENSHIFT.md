@@ -125,3 +125,22 @@ Every such request is a SelfSubjectAccessReview the sign-in scope `user:check-ac
 
 The review is always on in this mode; setting `KUBERNETES_ACCESS_REVIEW` to `off` stops the server at boot, and so does `KUBERNETES_ACCESS_REVIEW_API_URL`, `KUBERNETES_ACCESS_REVIEW_TOKEN_PATH` or `KUBERNETES_ACCESS_REVIEW_CA_PATH`, which only configure the review of OIDC mode.
 [SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md#on-openshift-openshift-sign-in) has the detail: which failures deny, what is logged, and the known limits.
+
+## Supported database operators
+
+Studio's Kubernetes discovery lists the databases of four operators as managed connections, read by an exporter with a ServiceAccount of its own, so Studio's pod never holds a token that can read a database Secret.
+
+| Operator | Kind in `KUBERNETES_DISCOVERY_KINDS` | Resource | TLS |
+| --- | --- | --- | --- |
+| CloudNativePG | `cnpg` (the default) | `postgresql.cnpg.io/v1` `Cluster` | `require` |
+| EDB Postgres for Kubernetes | `edbpg` | `postgresql.k8s.enterprisedb.io/v1` `Cluster` | `require` |
+| Crunchy PGO | `pgo` | `postgres-operator.crunchydata.com/v1beta1` `PostgresCluster` | `require` |
+| MongoDB Community | `mongo` | `mongodbcommunity.mongodb.com/v1` `MongoDBCommunity` | `require` when `spec.security.tls.enabled` is true, else `disable` |
+
+CloudNativePG alone is discovered by default; each other kind is opt-in, because a kind whose CRD the cluster does not serve withdraws every discovered namespace.
+Name only the operators the cluster runs, and every operator kind that runs in a discovered namespace.
+The PostgreSQL rows encrypt without verifying the server's certificate, because each operator signs it with a CA of its own whose Secret also holds the CA's private key; Crunchy PGO refuses a connection without TLS.
+The EDB row was checked against the discovery contract and its tests, but not run on a live EDB cluster.
+For each opted-in kind the exporter's Role needs `list` on that kind, `get` on `secrets`, which it requests only by name, and `get` on `services`, in each discovered namespace.
+
+The exporter, its RBAC, the contract per kind and the checks it runs are in [docs/SEED_CONNECTIONS.md](SEED_CONNECTIONS.md#platform-discovery-kubernetes).

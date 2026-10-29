@@ -908,7 +908,7 @@ describe("POST /api/db/objects/describe", () => {
     // `hasColumns` declaration and never on the answer, so a caller that asks anyway must get an
     // answer it can render as "none" instead of the engine's-fault path. Two providers reach this
     // shape without touching the wire at all - oracle returns it for any kind whose role is not
-    // `relation` (`OracleProvider.describeObject` in `src/lib/db/providers/sql/oracle.ts`) and
+    // `relation` (`OracleProvider.describeObject` in `src/lib/db/providers/sql/oracle/index.ts`) and
     // mysql for any kind its own `hasColumns` predicate rejects (`MySQLProvider.describeObject`
     // in `src/lib/db/providers/sql/mysql.ts`).
     const describeObject = mock(async () => emptyDetail(["app", "order_total(integer)"]));

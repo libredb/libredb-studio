@@ -64,6 +64,8 @@ const UNSERVED_OFFERS: Readonly<Partial<Record<DatabaseType, readonly AgentToolN
   elasticsearch: ["inspect_plan", "profile_table"],
   // The same on OpenSearch, for the same reasons.
   opensearch: ["inspect_plan", "profile_table"],
+  // And on Oracle, whose EXPLAIN PLAN writes into PLAN_TABLE, refused to its read-only user.
+  oracle: ["inspect_plan", "profile_table"],
 };
 
 /**

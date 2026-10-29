@@ -1,0 +1,76 @@
+ROLLBACK
+*
+ERROR at line 1:
+ORA-28194: Can perform read operations only
+Help: https://docs.oracle.com/error-help/db/ora-28194/
+
+
+COMMIT
+*
+ERROR at line 1:
+ORA-28194: Can perform read operations only
+Help: https://docs.oracle.com/error-help/db/ora-28194/
+
+
+
+   NEXTVAL
+----------
+	 1
+
+1 row selected.
+
+SELECT * FROM APP_OWNER.SCRATCH FOR UPDATE
+                        *
+ERROR at line 1:
+ORA-28194: Can perform read operations only
+Help: https://docs.oracle.com/error-help/db/ora-28194/
+
+
+
+no rows selected
+
+
+Role set.
+
+
+ROLE
+--------------------------------------------------------------------------------------------------------------------------------
+RO_ROLE
+
+1 row selected.
+
+
+Session altered.
+
+
+DB_LINK
+--------------------------------------------------------------------------------------------------------------------------------
+OWNER
+--------------------------------------------------------------------------------------------------------------------------------
+LOOPLINK
+PUBLIC
+
+
+1 row selected.
+
+
+  COUNT(*)
+----------
+	 2
+
+1 row selected.
+
+INSERT INTO APP_OWNER.SCRATCH@LOOPLINK VALUES (77)
+                                               *
+ERROR at line 1:
+ORA-28194: Can perform read operations only
+Help: https://docs.oracle.com/error-help/db/ora-28194/
+
+
+COMMIT
+*
+ERROR at line 1:
+ORA-28194: Can perform read operations only
+Help: https://docs.oracle.com/error-help/db/ora-28194/
+
+

@@ -1,0 +1,29 @@
+GRANT SELECT ON SYS.DBA_POLICIES TO APP_R3
+                    *
+ERROR at line 1:
+ORA-01031: insufficient privileges
+Help: https://docs.oracle.com/error-help/db/ora-01031/
+
+
+
+Session altered.
+
+
+Grant succeeded.
+
+
+Grant succeeded.
+
+
+Table created.
+
+
+EXTENSION
+----------------------------------------------------------------------------------------------------------------------------------------------------------------
+SYS_STUNA$6DVXJXTP05EH56DTIR0X
+
+1 row selected.
+
+
+Grant succeeded.
+

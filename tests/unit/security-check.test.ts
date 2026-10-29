@@ -68,20 +68,20 @@ describe("parseTables and findControlTable", () => {
     expect(table?.rows).toHaveLength(PROGRAMME_CONTROL_IDS.length);
   });
 
-  test("the programme ends with the Apache Spark session and answer bounds, then the governance sealed credentials and query event capture, then the Weaviate console, then OpenShift sign-in's token custody and fail-closed sign-in, then the reserved role for Kubernetes-discovered connections, then the openshift self review, the openshift admin rule and the ServiceAccount review's refusal on OpenShift", () => {
+  test("the programme ends with the governance sealed credentials and query event capture, the Weaviate console, OpenShift sign-in's token custody and fail-closed sign-in, the reserved role for Kubernetes-discovered connections, the OpenShift self review, admin rule and platform check, then the Kubernetes discovery controls", () => {
     expect(PROGRAMME_CONTROL_IDS.slice(-10)).toEqual([
-      "3.22",
-      "3.23",
-      "3.24",
-      "3.25",
       "3.26",
       "3.27",
       "3.28",
       "3.29",
       "3.30",
       "3.31",
+      "3.32",
+      "3.33",
+      "3.34",
+      "3.35",
     ]);
-    expect(PROGRAMME_CONTROL_IDS).toHaveLength(56);
+    expect(PROGRAMME_CONTROL_IDS).toHaveLength(60);
   });
 
   test("ignores a table that is not the control table", () => {

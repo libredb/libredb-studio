@@ -1500,7 +1500,7 @@ The honest empties, each with its reason:
   which is a different and false claim.
 - **`getHealth().cacheHitRatio` is the string `"N/A"`.** That field is a `string`, so it can say
   "not measured" — which is the truth. A fabricated low number would trip the cache-ratio threshold
-  alert into reporting a fault that does not exist. `sqlite.ts` and `oracle.ts` already spell an
+  alert into reporting a fault that does not exist. `sqlite.ts` and `oracle/index.ts` already spell an
   unavailable ratio this way.
 - **`getSlowQueries()` is `[]`** because there is nothing to ask. This is not a switched-off feature
   and not a permission gate, unlike ClickHouse's `system.query_log`: no `sys` table, no endpoint and

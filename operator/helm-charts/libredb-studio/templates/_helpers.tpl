@@ -628,6 +628,32 @@ that predates the block, as an upgrade with --reuse-values carries, rendering as
 {{- end }}
 {{- end }}
 
+{{/*
+The discovery exporter's kinds, in the contract's order (src/lib/seed/kubernetes-discovery-contract.ts and CONTRACT in
+docker/discover-kubernetes.mjs): each slug with the API group and resource its Role lists. A unit test holds this table
+to the contract.
+*/}}
+{{- define "libredb-studio.discoveryKindRules" -}}
+- slug: cnpg
+  group: postgresql.cnpg.io
+  resource: clusters
+- slug: edbpg
+  group: postgresql.k8s.enterprisedb.io
+  resource: clusters
+- slug: pgo
+  group: postgres-operator.crunchydata.com
+  resource: postgresclusters
+- slug: mongo
+  group: mongodbcommunity.mongodb.com
+  resource: mongodbcommunity
+{{- end }}
+
+{{/* The kinds the exporter discovers: discovery.kubernetes.kinds, else cnpg alone, the exporter's own default. */}}
+{{- define "libredb-studio.discoveryKinds" -}}
+{{- $kinds := get (get (.Values.discovery | default dict) "kubernetes" | default dict) "kinds" | default (list "cnpg") }}
+{{- toYaml $kinds }}
+{{- end }}
+
 {{/* The ClusterRole and ClusterRoleBinding of the access review: cluster-scoped, so the namespace keeps two releases apart. */}}
 {{- define "libredb-studio.accessReviewName" -}}
 {{- printf "%s.%s-access-review" .Release.Namespace (include "libredb-studio.fullname" .) }}

@@ -51,7 +51,7 @@
  * user the URL names.
  */
 import oracledb from "oracledb";
-import { OracleProvider } from "../../src/lib/db/providers/sql/oracle";
+import { OracleProvider } from "../../src/lib/db/providers/sql/oracle/index";
 import { diffSchemas } from "../../src/lib/schema-diff/diff-engine";
 import { generateMigrationSQL } from "../../src/lib/schema-diff/migration-generator";
 import type { StoredObject } from "../../src/lib/db/detailed-object";

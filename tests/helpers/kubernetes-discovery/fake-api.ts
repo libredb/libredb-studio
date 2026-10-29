@@ -1,8 +1,8 @@
 /**
  * A fake Kubernetes API server for the Kubernetes discovery exporter's tests: an https listener on 127.0.0.1 with the
- * committed test certificate (tests/fixtures/tls), which answers the three things the exporter asks the way a
- * kube-apiserver does: a paged list of a contract kind in a namespace, a get of a Secret, and a get and a put of the
- * export Secret with optimistic concurrency on its resourceVersion.
+ * committed test certificate (tests/fixtures/tls), which answers the four things the exporter asks the way a
+ * kube-apiserver does: a paged list of a contract kind in a namespace, a get of a Service, a get of a Secret, and a get
+ * and a put of the export Secret with optimistic concurrency on its resourceVersion.
  *
  * It holds its objects in memory, and a test can script any path's answer instead. It writes a token file and the test
  * CA into a temporary directory, so the exporter reads them as it reads a pod's projected token and CA. Every request
@@ -13,6 +13,8 @@ import { createServer, type Server } from "node:https";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { KUBERNETES_CONTRACT } from "@/lib/seed/kubernetes-discovery-contract";
+import { type GoldenCase, goldenRow } from "../kubernetes-discovery-fixture";
 import { loadTlsFixtures } from "../tls-fixtures";
 
 /** Clearly not a credential: gitleaks scans every commit. */
@@ -34,22 +36,51 @@ interface StoredSecret {
   data?: Record<string, string>;
 }
 
-const CLUSTERS = /^\/apis\/postgresql\.cnpg\.io\/v1\/namespaces\/([^/]+)\/clusters$/;
+interface StoredService {
+  metadata: Record<string, unknown> & { namespace: string; name: string };
+  spec: Record<string, unknown>;
+}
+
+/** How a Service is stored: its type, its selector (none when null or absent) and its ownerReferences. */
+export interface ServiceShape {
+  readonly type?: string;
+  readonly selector?: Record<string, string> | null;
+  readonly owners?: readonly Record<string, unknown>[];
+}
+
+const LIST = /^\/apis\/([^/]+)\/([^/]+)\/namespaces\/([^/]+)\/([^/]+)$/;
 const SECRET = /^\/api\/v1\/namespaces\/([^/]+)\/secrets\/([^/]+)$/;
+const SERVICE = /^\/api\/v1\/namespaces\/([^/]+)\/services\/([^/]+)$/;
 
 /** A Kubernetes Status body, as the API server answers a refusal. */
 export function statusBody(code: number, reason: string, message: string): string {
   return JSON.stringify({ kind: "Status", apiVersion: "v1", status: "Failure", message, reason, code });
 }
 
+/** An ownerReference to `resource`, as an operator writes one on what it controls. */
+export function ownerReference(
+  resource: { apiVersion: string; kind: string; metadata: { name: string; uid: string } },
+  controller = true,
+): Record<string, unknown> {
+  return {
+    apiVersion: resource.apiVersion,
+    kind: resource.kind,
+    name: resource.metadata.name,
+    uid: resource.metadata.uid,
+    controller,
+  };
+}
+
 export class FakeDiscoveryApi {
-  /** CloudNativePG Clusters per namespace, in list order. */
-  readonly clusters = new Map<string, Record<string, unknown>[]>();
+  /** Each contract kind's resources per namespace, in list order, by slug. */
+  readonly resources = new Map<string, Map<string, Record<string, unknown>[]>>();
   /** Secrets by `<namespace>/<name>`. */
   readonly secrets = new Map<string, StoredSecret>();
+  /** Services by `<namespace>/<name>`. */
+  readonly services = new Map<string, StoredService>();
   /** Answers by path (without the query), taken before any stored object. */
   readonly scripted = new Map<string, ScriptedAnswer | ScriptedAnswer[]>();
-  /** Namespaces whose Cluster list answers 403, and the CRD's absence, which answers 404 for every list. */
+  /** Namespaces whose lists answer 403, and the CRDs' absence, which answers 404 for every list. */
   readonly forbiddenNamespaces = new Set<string>();
   crdMissing = false;
   /** How many items one list page holds at most, whatever the request's limit says, when smaller. */
@@ -66,6 +97,21 @@ export class FakeDiscoveryApi {
     readonly ca: string,
     readonly otherCa: string,
   ) {}
+
+  /** CloudNativePG Clusters per namespace, in list order. */
+  get clusters(): Map<string, Record<string, unknown>[]> {
+    return this.kindResources("cnpg");
+  }
+
+  /** The resources of the kind `slug` per namespace. */
+  kindResources(slug: string): Map<string, Record<string, unknown>[]> {
+    let byNamespace = this.resources.get(slug);
+    if (byNamespace === undefined) {
+      byNamespace = new Map();
+      this.resources.set(slug, byNamespace);
+    }
+    return byNamespace;
+  }
 
   get tokenPath(): string {
     return join(this.directory, "token");
@@ -97,8 +143,9 @@ export class FakeDiscoveryApi {
   }
 
   reset(): void {
-    this.clusters.clear();
+    this.resources.clear();
     this.secrets.clear();
+    this.services.clear();
     this.scripted.clear();
     this.forbiddenNamespaces.clear();
     this.crdMissing = false;
@@ -113,16 +160,101 @@ export class FakeDiscoveryApi {
     });
   }
 
-  addCluster(namespace: string, name: string, spec: Record<string, unknown> = {}): void {
-    const list = this.clusters.get(namespace) ?? [];
-    list.push({
-      apiVersion: "postgresql.cnpg.io/v1",
-      kind: "Cluster",
-      metadata: { namespace, name, uid: `uid-${namespace}-${name}`, labels: { team: namespace } },
-      spec: { instances: 1, ...spec },
-      status: { phase: "Cluster in healthy state" },
+  /**
+   * Stores a CloudNativePG Cluster and its read-write Service as the operator writes it: a ClusterIP Service with a
+   * selector, controlled by the Cluster. `service: false` leaves the Service out.
+   */
+  addCluster(
+    namespace: string,
+    name: string,
+    spec: Record<string, unknown> = {},
+    options: { service?: boolean } = {},
+  ): void {
+    const resource = this.addResource("cnpg", namespace, name, { instances: 1, ...spec });
+    if (options.service === false) return;
+    this.addService(namespace, `${name}-rw`, {
+      selector: { "cnpg.io/cluster": name, "cnpg.io/instanceRole": "primary" },
+      owners: [ownerReference(resource)],
     });
-    this.clusters.set(namespace, list);
+  }
+
+  /**
+   * Stores a resource of the contract kind `slug`, once: a second call for the same namespace and name returns the one
+   * already stored.
+   */
+  addResource(
+    slug: string,
+    namespace: string,
+    name: string,
+    spec: Record<string, unknown> = {},
+    uid = `uid-${namespace}-${name}`,
+  ): { apiVersion: string; kind: string; metadata: { namespace: string; name: string; uid: string } } {
+    const row = KUBERNETES_CONTRACT.find((candidate) => candidate.slug === slug);
+    if (row === undefined) throw new Error(`no contract row has the slug ${slug}`);
+    const byNamespace = this.kindResources(slug);
+    const list = byNamespace.get(namespace) ?? [];
+    const found = list.find((item) => (item.metadata as { name?: string } | undefined)?.name === name);
+    if (found !== undefined) return found as ReturnType<FakeDiscoveryApi["addResource"]>;
+    const resource = {
+      apiVersion: `${row.group}/${row.version}`,
+      kind: row.kind,
+      metadata: { namespace, name, uid, labels: { team: namespace } },
+      spec,
+      status: { phase: "healthy" },
+    };
+    list.push(resource);
+    byNamespace.set(namespace, list);
+    return resource;
+  }
+
+  /** Stores a Service; a selector of null or {} is none, as on a selector-less Service. */
+  addService(namespace: string, name: string, shape: ServiceShape = {}): void {
+    const { type = "ClusterIP", selector = null, owners = [] } = shape;
+    this.version += 1;
+    this.services.set(`${namespace}/${name}`, {
+      metadata: {
+        namespace,
+        name,
+        resourceVersion: String(this.version),
+        ...(owners.length === 0 ? {} : { ownerReferences: structuredClone([...owners]) }),
+      },
+      spec: {
+        type,
+        ...(type === "ExternalName" ? { externalName: "db.example.com" } : { clusterIP: "None" }),
+        ...(selector === null ? {} : { selector }),
+      },
+    });
+  }
+
+  /**
+   * Stores a golden case as its operator would: the resource, its Service and its credential Secret, the Secret tied to
+   * the resource unless it is a CloudNativePG or EDB initdb Secret the user supplied.
+   */
+  addGoldenCase(c: GoldenCase): void {
+    const row = goldenRow(c);
+    const { namespace, name, uid } = c.resource.metadata;
+    const resource = this.addResource(row.slug, namespace, name, c.resource.spec, uid);
+    this.addService(namespace, c.service.name, {
+      type: c.service.type,
+      selector: c.service.selector,
+      owners: c.service.controller ? [ownerReference(resource)] : [],
+    });
+    const labels: Record<string, string> = { cnpg: "cnpg.io/cluster", edbpg: "k8s.enterprisedb.io/cluster" };
+    const label = labels[row.slug];
+    // An initdb Secret the user supplied is tied to nothing; every Secret an operator writes is owned by its resource.
+    const supplied = label !== undefined && c.secretName !== `${name}-app`;
+    this.addSecret(
+      namespace,
+      c.secretName,
+      c.secretData,
+      c.secretType,
+      supplied
+        ? {}
+        : {
+            ...(label === undefined ? {} : { labels: { [label]: name } }),
+            ownerReferences: [ownerReference(resource)],
+          },
+    );
   }
 
   /**
@@ -198,15 +330,20 @@ export class FakeDiscoveryApi {
       if (scripted.length === 0) this.scripted.delete(url.pathname);
       if (next !== undefined) return next;
     }
-    const clusters = CLUSTERS.exec(url.pathname);
-    if (clusters !== null && method === "GET") return this.list(clusters[1], url);
+    const list = LIST.exec(url.pathname);
+    if (list !== null && method === "GET") return this.list(list[1], list[2], list[3], list[4], url);
+    const service = SERVICE.exec(url.pathname);
+    if (service !== null && method === "GET") return this.service(`${service[1]}/${service[2]}`);
     const secret = SECRET.exec(url.pathname);
     if (secret !== null) return this.secret(method, `${secret[1]}/${secret[2]}`, body);
     return { status: 404, body: statusBody(404, "NotFound", "the server could not find the requested resource") };
   }
 
-  private list(namespace: string, url: URL): ScriptedAnswer {
-    if (this.crdMissing) {
+  private list(group: string, version: string, namespace: string, plural: string, url: URL): ScriptedAnswer {
+    const row = KUBERNETES_CONTRACT.find(
+      (candidate) => candidate.group === group && candidate.version === version && candidate.plural === plural,
+    );
+    if (this.crdMissing || row === undefined) {
       return { status: 404, body: statusBody(404, "NotFound", "the server could not find the requested resource") };
     }
     if (this.forbiddenNamespaces.has(namespace)) {
@@ -215,11 +352,11 @@ export class FakeDiscoveryApi {
         body: statusBody(
           403,
           "Forbidden",
-          `clusters.postgresql.cnpg.io is forbidden: User "system:serviceaccount:libredb-studio:discovery" cannot list resource "clusters" in API group "postgresql.cnpg.io" in the namespace "${namespace}"`,
+          `${plural}.${group} is forbidden: User "system:serviceaccount:libredb-studio:discovery" cannot list resource "${plural}" in API group "${group}" in the namespace "${namespace}"`,
         ),
       };
     }
-    const all = this.clusters.get(namespace) ?? [];
+    const all = this.kindResources(row.slug).get(namespace) ?? [];
     const limit = Math.min(Number(url.searchParams.get("limit") ?? all.length) || all.length, this.pageSize);
     const start = Number(url.searchParams.get("continue") ?? "0");
     const items = all.slice(start, start + limit);
@@ -227,12 +364,20 @@ export class FakeDiscoveryApi {
     return {
       status: 200,
       body: JSON.stringify({
-        apiVersion: "postgresql.cnpg.io/v1",
-        kind: "ClusterList",
+        apiVersion: `${group}/${version}`,
+        kind: `${row.kind}List`,
         metadata: { resourceVersion: "1", ...(next === "" ? {} : { continue: next }) },
         items,
       }),
     };
+  }
+
+  private service(key: string): ScriptedAnswer {
+    const stored = this.services.get(key);
+    if (stored === undefined) {
+      return { status: 404, body: statusBody(404, "NotFound", `services "${key.split("/")[1]}" not found`) };
+    }
+    return { status: 200, body: JSON.stringify({ kind: "Service", apiVersion: "v1", ...stored }) };
   }
 
   private secret(method: string, key: string, body: unknown): ScriptedAnswer {

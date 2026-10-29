@@ -1,0 +1,177 @@
+
+User created.
+
+
+Grant succeeded.
+
+
+User altered.
+
+
+Sequence created.
+
+
+Sequence created.
+
+
+Sequence created.
+
+
+Sequence created.
+
+
+Sequence created.
+
+
+Sequence created.
+
+
+Sequence created.
+
+
+Function created.
+
+
+Function created.
+
+
+Function created.
+
+
+Function created.
+
+
+Function created.
+
+
+Function created.
+
+
+Procedure created.
+
+
+Table created.
+
+
+1 row created.
+
+
+Table created.
+
+
+1 row created.
+
+
+Index created.
+
+
+Index created.
+
+
+Table created.
+
+
+1 row created.
+
+
+Table created.
+
+
+1 row created.
+
+
+Synonym created.
+
+
+Synonym created.
+
+
+Table created.
+
+
+1 row created.
+
+
+View created.
+
+
+Table created.
+
+
+1 row created.
+
+
+View created.
+
+
+View created.
+
+
+View created.
+
+
+Table created.
+
+
+1 row created.
+
+
+View created.
+
+
+Commit complete.
+
+
+PL/SQL procedure successfully completed.
+
+
+Grant succeeded.
+
+
+Grant succeeded.
+
+
+Grant succeeded.
+
+
+Grant succeeded.
+
+
+Grant succeeded.
+
+
+Grant succeeded.
+
+
+Grant succeeded.
+
+
+Grant succeeded.
+
+
+Table altered.
+
+
+Table altered.
+
+
+OBJECT_NAME	 STATUS
+---------------- -------
+R3_INV_V	 INVALID
+R3_OUTER	 VALID
+
+2 rows selected.
+
+
+SEQUENCE_NAM LAST_NUMBER
+------------ -----------
+S_BEHIND	       1
+S_FBI		       2
+S_FGA		       1
+S_INV		       1
+S_NEST		       1
+S_POL		       1
+S_VC		       1
+
+7 rows selected.
+

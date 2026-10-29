@@ -43,7 +43,7 @@ src/lib/db/
 │   │   │   ├── client.ts       #   The one file that imports @duckdb/node-api (instance, connection, interrupt)
 │   │   │   ├── introspect.ts   #   duckdb_* table functions + pragma_storage_info -> schema, sizes, health
 │   │   │   └── values.ts       #   result -> QueryResult and DuckDB type text -> the product's own names
-│   │   ├── oracle.ts           # Oracle Strategy
+│   │   ├── oracle/index.ts     # Oracle Strategy
 │   │   ├── db2/                # Db2 LUW Strategy (DRDA through db2-node, a native N-API driver)
 │   │   │   ├── index.ts        #   Db2Provider
 │   │   │   ├── driver.ts       #   The one file that imports db2-node

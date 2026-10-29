@@ -45,9 +45,10 @@ import { answersProse, modelOver, scriptedModel } from "../../../isolated/fixtur
 
 /**
  * Two engines with no statement family on the base commit, a key-value store and a SQL engine whose dialect has no
- * agent language, frozen here rather than read from `AGENT_STATEMENT_LANGUAGE`, which gains families.
+ * agent language, frozen here rather than read from `AGENT_STATEMENT_LANGUAGE`, which gains families. The SQL engine
+ * is Spark, which has no read-only boundary to join a family on; Oracle held the place until it joined.
  */
-const ENGINES: readonly DatabaseType[] = ["redis", "oracle"];
+const ENGINES: readonly DatabaseType[] = ["redis", "spark"];
 
 /** The (mode, workflow) pairs recorded per engine: every agent-mode run such an engine opens, and two plans. */
 const CASES: readonly { readonly mode: AgentRunMode; readonly workflowType: AgentRunWorkflowType }[] = [

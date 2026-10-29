@@ -21,7 +21,7 @@ const providerModule = (name: string, exportName: string) => () => {
 mock.module("@/lib/db/providers/sql/sqlite", providerModule("sqlite", "SQLiteProvider"));
 mock.module("@/lib/db/providers/sql/duckdb", providerModule("duckdb", "DuckDBProvider"));
 mock.module("@/lib/db/providers/sql/db2/index", providerModule("db2", "Db2Provider"));
-mock.module("@/lib/db/providers/sql/oracle", providerModule("oracle", "OracleProvider"));
+mock.module("@/lib/db/providers/sql/oracle/index", providerModule("oracle", "OracleProvider"));
 mock.module("@/lib/db/providers/sql/postgres", providerModule("postgres", "PostgresProvider"));
 
 const createSSHTunnel = mock(async () => {

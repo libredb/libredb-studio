@@ -1,0 +1,589 @@
+/**
+ * The agent read-only execution profile's statement path on Oracle: the check of the agent user, run before every
+ * statement on the statement's own session, and the reading of an answer against the budget.
+ *
+ * The boundary is the credential's. A local user set `ALTER USER ... READ ONLY` (Oracle Database 23ai and later) is
+ * refused every write with ORA-28194: DML, DDL, temporary tables, `SELECT ... FOR UPDATE`, `LOCK TABLE`, `DBMS_SQL`,
+ * a write over a database link, a granted definer's-rights function that writes in an autonomous transaction, the SQL
+ * `COMMIT` and `ROLLBACK`, and every one of them again after `ALTER SESSION SET READ_ONLY = FALSE` (measured on 26ai
+ * Free 23.26.3, `tests/fixtures/oracle/23.26.3-free/agent-boundary/`). What READ ONLY does not stop is what the user
+ * can reach through others: a sequence's `NEXTVAL` advances, and a granted definer's-rights function runs with its
+ * owner's privileges, `ALTER SYSTEM` and `NEXTVAL` included (captures 05 to 09). So the user is proved to reach none
+ * of that before each statement, from the dictionary views it reads as itself. Each is named `SYS.<view>`: an
+ * unqualified name resolves first to an object or a private synonym in the user's own schema, then to a PUBLIC
+ * synonym, either of which could stand in for the view and hide what it lists.
+ *
+ * Code, a view, a table or a sequence is Oracle's own only when `ALL_OBJECTS` shows the user every object of its owner
+ * and name as `ORACLE_MAINTAINED` and linked from the root container (`SHARING` other than NONE); one the user cannot
+ * see is not. The schema's flag proves nothing: an administrator can create a function in SYSTEM, a schema Oracle
+ * maintains, which is not marked, and a row-level policy calling it on SYSTEM.HELP, which PUBLIC may read, ran it with
+ * SYSTEM's rights for a READ ONLY user. Nor does the object's flag alone: an object made under `_oracle_script` is
+ * marked, and a local one Oracle marked, SYSTEM.PRODUCT_PRIVS, keeps its flag and PUBLIC's grant when replaced; each is
+ * local, and each ran a SYSTEM function for that user (all measured). Item 3 alone admits a local object by its kind.
+ *
+ * 1. `USER_USERS.READ_ONLY` reads YES. A server without the column (ORA-00904) is older than 23ai and is refused.
+ * 2. Every role granted to it, directly or through PUBLIC, is a default role. `SET ROLE` is permitted under READ ONLY,
+ *    while `ALL_TAB_PRIVS` lists only the grants of enabled roles, so a role the check cannot see the grants of is
+ *    refused.
+ * 3. It, its roles and PUBLIC hold EXECUTE on no PL/SQL unit, type, Java class or library that is not Oracle's, since
+ *    such code runs with its owner's rights; a local object Oracle marked is admitted by its kind (`oraclesByKind`).
+ * 4. They may read no view that is not Oracle's whose definition calls code, a function, package or type, rather than a
+ *    table or view: a plain SELECT on such a view runs the code with its owner's rights, and advanced a sequence for a
+ *    READ ONLY user (measured). A view that calls the code through a synonym lists only the synonym, and `ALL_SYNONYMS`
+ *    does not show the user another schema's private synonym, so a synonym is admitted only when it resolves to an
+ *    object the check starts from (`ROOTS`), or to an object that is Oracle's (`PUBLIC.DUAL`), and is
+ *    refused otherwise, a private synonym for a table included. `ALL_DEPENDENCIES` lists the user the view's own
+ *    dependencies only, and an inner view's only when `ALL_OBJECTS` shows the user the inner view, any object grant
+ *    that does so included, so a view over a view that is not Oracle's is admitted only when the inner view is one the
+ *    check starts from: measured, an outer view over an inner view the user could not see listed only the inner one
+ *    and its SELECT ran the inner view's function.
+ * 5. They may read no such view that is not valid: an invalid view lists the dependencies it had, and the user's SELECT
+ *    compiles it and runs what it calls now (measured).
+ * 6. No table or view that is not Oracle's the user can see in `ALL_TAB_COLS` has a virtual column, hidden ones included:
+ *    a SELECT of the column evaluates its expression, which can call a function with its owner's rights, and a hidden
+ *    column of a function-based index can be selected by name (both measured). Every one is refused, a built-in
+ *    expression such as `UPPER(NAME)` and the hidden column extended statistics add included, since the expression is
+ *    not proved; a granted view that leaves it out is the remedy.
+ * 7. `DBA_POLICIES` lists no row-level security policy anywhere in the database whose function is not Oracle's,
+ *    on any object, one Oracle maintains included: a SELECT of what it guards runs the function with its owner's
+ *    rights, and the user can reach a guarded object the check cannot follow it to, behind a view or among Oracle's
+ *    own tables (measured). A database that holds one is refused whatever the user is granted.
+ * 8. `DBA_AUDIT_POLICIES` lists no fine-grained auditing policy anywhere with an audit condition, which a read
+ *    evaluates and which can call a function with its owner's rights (measured), or with a handler that is not
+ *    Oracle's, which a read runs. The condition is not parsed to prove it built-in. A fresh 26ai database holds no
+ *    auditing policy, and twelve row-level policies whose function is XDB.DBMS_XDBZ0, which PUBLIC may execute and
+ *    `ALL_OBJECTS` marks Oracle's (capture 00). A user that may not read either view is refused, naming its grant.
+ * 9. They hold no privilege on a sequence that is not Oracle's, and the user owns no sequence.
+ * 10. They hold EXECUTE on none of the packages that reach the network or the server's files, and no privilege on a
+ *    directory, which `BFILENAME` reads server files through.
+ * 11. The session holds no system privilege but CREATE SESSION.
+ * 12. `ALL_DB_LINKS` lists no link, PUBLIC or its own, since a link reaches another database under its stored
+ *    credential.
+ *
+ * Every finding is collected and named in one refusal, as the statements that lift it, or, for a policy, as the
+ * policy. A revoke can uncover the next finding: a granted view over a view the refusal names is refused once that
+ * inner grant is gone; the next call's check reads the database as it is then. Oracle's own objects granted to
+ * PUBLIC are the vendor's boundary and are not refused: four of its sequences can still be advanced, which moves a
+ * counter and changes no data (capture 07).
+ */
+import { ExecutionProfileError, QueryError } from "@/lib/db/errors";
+import type { QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
+import { byteBudgetSentence, measureResultBytes, rowBudgetSentence, TIME_BUDGET_PREFIX } from "../read-only-budget";
+
+type Rows = readonly Record<string, unknown>[];
+
+/** Runs one dictionary read as the agent user and answers its rows, keyed by the upper-case column names. */
+export type OracleAgentReader = (sql: string) => Promise<Rows>;
+
+/** The grantees whose privileges the session holds: the user, the roles enabled in it, and PUBLIC. */
+const SESSION_GRANTEES = "(p.GRANTEE IN (USER, 'PUBLIC') OR p.GRANTEE IN (SELECT ROLE FROM SYS.SESSION_ROLES))";
+
+/**
+ * Oracle maintains the `ALL_OBJECTS` row `alias`, and it is linked from the root container rather than local to the
+ * database (`SHARING` other than NONE). Two-valued: a missing flag or sharing reads as not linked.
+ */
+function linked(alias: string): string {
+  return `NVL(${alias}.ORACLE_MAINTAINED, 'N') = 'Y' AND NVL(${alias}.SHARING, 'NONE') <> 'NONE'`;
+}
+
+/** Some `ALL_OBJECTS` row matches `where`, written over the alias `x`, and every one that does is linked. */
+function allLinked(...readings: string[]): string {
+  const exists = readings.map((where) => `EXISTS (SELECT 1 FROM SYS.ALL_OBJECTS x WHERE ${where})`);
+  const local = readings.map(
+    (where) => `NOT EXISTS (SELECT 1 FROM SYS.ALL_OBJECTS x WHERE ${where} AND NOT (${linked("x")}))`,
+  );
+  return `(${exists.join(" OR ")}) AND ${local.join(" AND ")}`;
+}
+
+/**
+ * 'Y' when the `ALL_OBJECTS` row `alias` is Oracle's own, 'N' otherwise: it is marked and linked (see the module
+ * docblock). The one fragment every check reads the proof through, item 3's included.
+ */
+function oracles(alias: string): string {
+  return `CASE WHEN ${linked(alias)} THEN 'Y' ELSE 'N' END`;
+}
+
+/**
+ * Item 3's proof, for what a grant may execute: `oracles`, or a local object Oracle marked that is one of:
+ *
+ * - a domain, a job class or a consumer group, which runs no function: a domain's check, display, order and default
+ *   expressions refuse a user function (ORA-00904, ORA-04044), and a job class or a consumer group names no code
+ *   (measured). An evaluation context names a function, which DBMS_RULE runs, so it is held to the link;
+ * - an operator whose every binding's function and implementation type are linked (`ALL_OPBINDINGS`). A function name
+ *   of one part is in the operator's schema, of two parts either `owner.function` or `package.function` there, and both
+ *   readings must be linked; of three, `owner.package.function`;
+ * - an indextype whose implementation type is linked (`ALL_INDEXTYPES`).
+ *
+ * A fresh 26ai keeps 5,913 marked objects local to the pluggable database, 133 of them granted to PUBLIC to execute,
+ * domains and operators most (measured). This leaves four refused there, in the doc's revoke list: a procedure, the
+ * evaluation context, and an indextype and an operator whose implementation type the user cannot see. The other checks
+ * hold every object to the link, which on a fresh database refuses nothing more (measured), and keeps their statements
+ * small: the kinds' subqueries in every proof made each call take seconds, re-optimized by statistics feedback.
+ */
+function oraclesByKind(alias: string): string {
+  const fn = "REPLACE(b.FUNCTION_NAME, '\"')";
+  const part = (n: number) => `REGEXP_SUBSTR(${fn}, '[^.]+', 1, ${n})`;
+  const readings = [
+    `x.OWNER = ${part(1)} AND x.OBJECT_NAME = ${part(2)}`,
+    `x.OWNER = b.OWNER AND x.OBJECT_NAME = ${part(1)} AND ${part(3)} IS NULL`,
+  ];
+  const binding = `b.OWNER = ${alias}.OWNER AND b.OPERATOR_NAME = ${alias}.OBJECT_NAME`;
+  const indextype = `i.OWNER = ${alias}.OWNER AND i.INDEXTYPE_NAME = ${alias}.OBJECT_NAME`;
+  // Searched CASE stops at the first true WHEN, so the subqueries run only for a local operator or indextype.
+  return (
+    `CASE WHEN ${oracles(alias)} = 'Y' THEN 'Y' ` +
+    `WHEN NVL(${alias}.ORACLE_MAINTAINED, 'N') <> 'Y' THEN 'N' ` +
+    `WHEN ${alias}.OBJECT_TYPE IN ('DOMAIN', 'JOB CLASS', 'CONSUMER GROUP') THEN 'Y' ` +
+    `WHEN ${alias}.OBJECT_TYPE = 'OPERATOR' AND EXISTS (SELECT 1 FROM SYS.ALL_OPBINDINGS b WHERE ${binding}) ` +
+    `AND NOT EXISTS (SELECT 1 FROM SYS.ALL_OPBINDINGS b WHERE ${binding} AND NOT (${allLinked(...readings)} ` +
+    "AND (b.IMPLEMENTATION_TYPE IS NULL OR " +
+    `${allLinked("x.OWNER = b.IMPLEMENTATION_TYPE_SCHEMA AND x.OBJECT_NAME = b.IMPLEMENTATION_TYPE")}))) THEN 'Y' ` +
+    `WHEN ${alias}.OBJECT_TYPE = 'INDEXTYPE' AND EXISTS (SELECT 1 FROM SYS.ALL_INDEXTYPES i WHERE ${indextype}) ` +
+    `AND NOT EXISTS (SELECT 1 FROM SYS.ALL_INDEXTYPES i WHERE ${indextype} AND NOT (` +
+    `${allLinked("x.OWNER = i.IMPLEMENTATION_SCHEMA AND x.OBJECT_NAME = i.IMPLEMENTATION_NAME")})) THEN 'Y' ELSE 'N' END`
+  );
+}
+
+/**
+ * Whether the object `owner`.`name` is not proven Oracle's own: `ALL_OBJECTS` shows the user no object of that owner
+ * and name, or one that `proof` does not prove Oracle's. An object the user cannot see counts as not Oracle's, fail
+ * closed.
+ */
+function notOracles(owner: string, name: string, proof: (alias: string) => string = oracles): string {
+  return (
+    `NVL((SELECT MIN(${proof("m")}) FROM SYS.ALL_OBJECTS m ` +
+    `WHERE m.OWNER = ${owner} AND m.OBJECT_NAME = ${name}), 'N') <> 'Y'`
+  );
+}
+
+/**
+ * The objects the check starts from, as a common table expression named `r`: every object Oracle does not maintain
+ * granted to a grantee the session holds that `ALL_OBJECTS` shows the user, and every table or view the user owns,
+ * with the grantee a revoke names (none for the user's own). A view's dependencies are read only for these, so an
+ * object outside them is one the check has not examined: a grant `ALL_OBJECTS` does not show the object for, such as
+ * DEBUG on a view, shows the user none of its dependencies either (measured).
+ */
+const ROOTS =
+  "WITH r AS (SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME FROM SYS.ALL_TAB_PRIVS p " +
+  "JOIN SYS.ALL_OBJECTS o ON o.OWNER = p.TABLE_SCHEMA AND o.OBJECT_NAME = p.TABLE_NAME " +
+  `WHERE NVL(p.TYPE, '-') <> 'USER' AND ${oracles("o")} <> 'Y' ` +
+  `AND ${SESSION_GRANTEES} ` +
+  "UNION SELECT NULL, USER, OBJECT_NAME FROM SYS.USER_OBJECTS WHERE OBJECT_TYPE IN ('TABLE', 'VIEW', 'MATERIALIZED VIEW'))";
+
+/** The packages and types whose EXECUTE reaches the network or the server's files. */
+const REACHING_PACKAGES: readonly string[] = [
+  "UTL_HTTP",
+  "UTL_TCP",
+  "UTL_SMTP",
+  "UTL_FILE",
+  "UTL_INADDR",
+  "HTTPURITYPE",
+  "DBMS_LDAP",
+  "DBMS_SCHEDULER",
+  "DBMS_PIPE",
+  "DBMS_XSLPROCESSOR",
+];
+
+/** The check's statements, in the order they are sent. Each is one SELECT the agent user may run on any 23ai. */
+export const AGENT_PRINCIPAL_STATEMENTS = Object.freeze({
+  readOnly: "SELECT USERNAME, READ_ONLY FROM SYS.USER_USERS",
+  roles:
+    "SELECT USERNAME AS GRANTEE, GRANTED_ROLE FROM SYS.USER_ROLE_PRIVS WHERE NVL(DEFAULT_ROLE, 'NO') <> 'YES' " +
+    "ORDER BY 2, 1",
+  units:
+    "SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME, " +
+    "NVL((SELECT MIN(k.OBJECT_TYPE) FROM SYS.ALL_OBJECTS k WHERE k.OWNER = p.TABLE_SCHEMA " +
+    "AND k.OBJECT_NAME = p.TABLE_NAME AND k.OBJECT_TYPE = 'EVALUATION CONTEXT'), p.TYPE) AS OBJECT_TYPE " +
+    "FROM SYS.ALL_TAB_PRIVS p WHERE p.PRIVILEGE = 'EXECUTE' AND NVL(p.TYPE, '-') <> 'DIRECTORY' " +
+    `AND ${notOracles("p.TABLE_SCHEMA", "p.TABLE_NAME", oraclesByKind)} AND ${SESSION_GRANTEES} ORDER BY 2, 3, 1`,
+  views:
+    `${ROOTS} SELECT p.GRANTEE, d.OWNER, d.NAME, d.REFERENCED_OWNER || '.' || d.REFERENCED_NAME AS CALLS ` +
+    "FROM SYS.ALL_DEPENDENCIES d JOIN r p ON p.OWNER = d.OWNER AND p.NAME = d.NAME " +
+    "LEFT JOIN SYS.ALL_SYNONYMS s ON s.OWNER = d.REFERENCED_OWNER AND s.SYNONYM_NAME = d.REFERENCED_NAME " +
+    "AND s.DB_LINK IS NULL " +
+    "WHERE d.TYPE = 'VIEW' AND (d.REFERENCED_TYPE NOT IN ('TABLE', 'VIEW', 'SYNONYM', 'MATERIALIZED VIEW', 'NON-EXISTENT') " +
+    `OR d.REFERENCED_TYPE = 'VIEW' AND ${notOracles("d.REFERENCED_OWNER", "d.REFERENCED_NAME")} ` +
+    "AND NOT EXISTS (SELECT 1 FROM r v WHERE v.OWNER = d.REFERENCED_OWNER AND v.NAME = d.REFERENCED_NAME) " +
+    `OR d.REFERENCED_TYPE = 'SYNONYM' AND ${notOracles("s.TABLE_OWNER", "s.TABLE_NAME")} ` +
+    "AND NOT EXISTS (SELECT 1 FROM r o WHERE o.OWNER = s.TABLE_OWNER AND o.NAME = s.TABLE_NAME)) ORDER BY 2, 3, 1, 4",
+  invalidViews:
+    `${ROOTS} SELECT p.GRANTEE, o.OWNER, o.OBJECT_NAME AS NAME, o.STATUS ` +
+    "FROM SYS.ALL_OBJECTS o JOIN r p ON p.OWNER = o.OWNER AND p.NAME = o.OBJECT_NAME " +
+    "WHERE o.OBJECT_TYPE = 'VIEW' AND o.STATUS <> 'VALID' ORDER BY 2, 3, 1",
+  virtualColumns:
+    "SELECT p.GRANTEE, c.OWNER, c.TABLE_NAME AS NAME, c.COLUMN_NAME FROM SYS.ALL_TAB_COLS c " +
+    `LEFT JOIN SYS.ALL_TAB_PRIVS p ON p.TABLE_SCHEMA = c.OWNER AND p.TABLE_NAME = c.TABLE_NAME AND ${SESSION_GRANTEES} ` +
+    `WHERE c.VIRTUAL_COLUMN = 'YES' AND ${notOracles("c.OWNER", "c.TABLE_NAME")} ORDER BY 2, 3, 1, 4`,
+  policies:
+    "SELECT a.OBJECT_OWNER AS OWNER, a.OBJECT_NAME AS NAME, a.POLICY_NAME AS POLICY FROM SYS.DBA_POLICIES a " +
+    `WHERE ${notOracles("a.PF_OWNER", "NVL(a.PACKAGE, a.FUNCTION)")} ORDER BY 1, 2, 3`,
+  auditPolicies:
+    "SELECT f.OBJECT_SCHEMA AS OWNER, f.OBJECT_NAME AS NAME, f.POLICY_NAME AS POLICY FROM SYS.DBA_AUDIT_POLICIES f " +
+    "WHERE f.POLICY_TEXT IS NOT NULL OR (f.PF_PACKAGE IS NOT NULL OR f.PF_FUNCTION IS NOT NULL) " +
+    `AND ${notOracles("f.PF_SCHEMA", "NVL(f.PF_PACKAGE, f.PF_FUNCTION)")} ORDER BY 1, 2, 3`,
+  sequences:
+    "SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME, 'N' AS OWNED FROM SYS.ALL_TAB_PRIVS p " +
+    `WHERE p.TYPE = 'SEQUENCE' AND ${notOracles("p.TABLE_SCHEMA", "p.TABLE_NAME")} AND ${SESSION_GRANTEES} ` +
+    "UNION ALL SELECT USER, USER, SEQUENCE_NAME, 'Y' FROM SYS.USER_SEQUENCES ORDER BY 2, 3, 1",
+  reach:
+    "SELECT p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME, p.PRIVILEGE, p.TYPE AS OBJECT_TYPE " +
+    "FROM SYS.ALL_TAB_PRIVS p " +
+    `WHERE ((p.PRIVILEGE = 'EXECUTE' AND p.TABLE_NAME IN (${REACHING_PACKAGES.map((name) => `'${name}'`).join(", ")})) ` +
+    `OR p.TYPE = 'DIRECTORY') AND ${SESSION_GRANTEES} ORDER BY 3, 4, 1`,
+  systemPrivileges:
+    "SELECT p.PRIVILEGE, g.GRANTEE FROM SYS.SESSION_PRIVS p LEFT JOIN " +
+    "(SELECT USERNAME AS GRANTEE, PRIVILEGE FROM SYS.USER_SYS_PRIVS UNION ALL SELECT ROLE, PRIVILEGE FROM SYS.ROLE_SYS_PRIVS) g " +
+    "ON g.PRIVILEGE = p.PRIVILEGE WHERE p.PRIVILEGE <> 'CREATE SESSION' ORDER BY 1, 2",
+  links: "SELECT OWNER, DB_LINK FROM SYS.ALL_DB_LINKS ORDER BY 1, 2",
+});
+
+/** At most this many statements are listed in a refusal; the rest are counted. */
+const LISTED_STATEMENTS = 20;
+
+/** At most this many policies are named in one finding; the rest are counted. */
+const LISTED_POLICIES = 10;
+
+/** An identifier as a quoted Oracle name, exactly as the dictionary spells it. */
+function quoted(name: string): string {
+  return `"${name.replaceAll('"', '""')}"`;
+}
+
+/** A grantee as a REVOKE names it: PUBLIC bare, any other quoted. */
+function grantee(name: string): string {
+  return name === "PUBLIC" ? "PUBLIC" : quoted(name);
+}
+
+function unreadable(what: string): ExecutionProfileError {
+  return new ExecutionProfileError(
+    `The agent read-only execution profile's check of the Oracle user could not be read (${what}), so the boundary is unproven and the connection is refused.`,
+    "PROFILE_PRIVILEGES_TOO_BROAD",
+  );
+}
+
+/** The named columns of `row` as strings, or a refusal when one is not a non-empty string. */
+function text(row: Record<string, unknown>, check: string, ...columns: string[]): string[] {
+  return columns.map((column) => {
+    const value = row[column];
+    if (typeof value !== "string" || value === "") throw unreadable(`${check}: ${column}`);
+    return value;
+  });
+}
+
+/** One check's findings: what it found, and the statements that lift it. */
+interface Finding {
+  readonly what: string;
+  readonly statements: readonly string[];
+}
+
+function readOnlyFinding(rows: Rows): { user: string; finding: Finding | null } {
+  if (rows.length !== 1) throw unreadable(`USER_USERS answered ${rows.length} rows`);
+  const [user, readOnly] = text(rows[0], "USER_USERS", "USERNAME", "READ_ONLY");
+  if (readOnly === "YES") return { user, finding: null };
+  return {
+    user,
+    finding: { what: `${user} is not set READ ONLY`, statements: [`ALTER USER ${quoted(user)} READ ONLY`] },
+  };
+}
+
+function rolesFinding(rows: Rows): Finding | null {
+  if (rows.length === 0) return null;
+  return {
+    what: "it holds a role that is not enabled at sign-in, whose grants SET ROLE would add",
+    statements: rows.map((row) => {
+      const [to, role] = text(row, "USER_ROLE_PRIVS", "GRANTEE", "GRANTED_ROLE");
+      return `REVOKE ${quoted(role)} FROM ${grantee(to)}`;
+    }),
+  };
+}
+
+/** A string as an Oracle literal. */
+function literal(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+function unitsFinding(rows: Rows): Finding | null {
+  if (rows.length === 0) return null;
+  return {
+    what: "it holds EXECUTE on code Oracle does not maintain, which runs with its owner's rights",
+    statements: rows.map((row) => {
+      const [to, owner, name] = text(row, "ALL_TAB_PRIVS", "GRANTEE", "OWNER", "NAME");
+      const object = `${quoted(owner)}.${quoted(name)}`;
+      // An evaluation context's grant is taken through DBMS_RULE_ADM: a REVOKE statement answers ORA-04042 (measured).
+      if (row.OBJECT_TYPE === "EVALUATION CONTEXT") {
+        return `BEGIN DBMS_RULE_ADM.REVOKE_OBJECT_PRIVILEGE(DBMS_RULE_ADM.EXECUTE_ON_EVALUATION_CONTEXT, ${literal(object)}, ${literal(to)}); END;`;
+      }
+      return `REVOKE EXECUTE ON ${object} FROM ${grantee(to)}`;
+    }),
+  };
+}
+
+/** A grantee a revoke can name, or the open placeholder when the check read the object through no grant it can name. */
+function optionalGrantee(row: Record<string, unknown>): string {
+  return typeof row.GRANTEE === "string" && row.GRANTEE !== "" ? grantee(row.GRANTEE) : "<its grantee>";
+}
+
+/**
+ * What takes `owner.name` from the user: the revoke of the grant the row names, or, for an object the user owns, which
+ * no revoke takes from it, its move out of the user's schema.
+ */
+function lift(row: Record<string, unknown>, user: string, owner: string, name: string): string {
+  const object = `${quoted(owner)}.${quoted(name)}`;
+  if (owner === user && optionalGrantee(row) === "<its grantee>") {
+    return `move ${object} out of the agent user's own schema`;
+  }
+  return `REVOKE ALL ON ${object} FROM ${optionalGrantee(row)}`;
+}
+
+function viewsFinding(rows: Rows, user: string): Finding | null {
+  if (rows.length === 0) return null;
+  return {
+    what: "it may read a view Oracle does not maintain that calls code, or a synonym or view the check cannot follow to its end, which a SELECT runs with its owner's rights",
+    statements: rows.map((row) => {
+      const [owner, name] = text(row, "ALL_DEPENDENCIES", "OWNER", "NAME", "CALLS");
+      return lift(row, user, owner, name);
+    }),
+  };
+}
+
+function invalidViewsFinding(rows: Rows, user: string): Finding | null {
+  if (rows.length === 0) return null;
+  return {
+    what: "it may read a view that is not valid, whose dependencies the dictionary lists only once it is compiled, while a SELECT compiles it and runs what it calls",
+    statements: rows.map((row) => {
+      const [owner, name] = text(row, "ALL_OBJECTS", "OWNER", "NAME", "STATUS");
+      return lift(row, user, owner, name);
+    }),
+  };
+}
+
+function virtualColumnsFinding(rows: Rows, user: string): Finding | null {
+  if (rows.length === 0) return null;
+  return {
+    what: "it may read a table or view with a virtual column, whose expression a SELECT evaluates and which can call code with its owner's rights (grant a view that leaves it out instead)",
+    statements: rows.map((row) => {
+      const [owner, name] = text(row, "ALL_TAB_COLS", "OWNER", "NAME", "COLUMN_NAME");
+      return lift(row, user, owner, name);
+    }),
+  };
+}
+
+/** Whether `error` is the server's answer that the user may not read a catalog view. */
+function isUnreadableCatalog(error: unknown): boolean {
+  return error instanceof Error && /\bORA-00942\b/.test(error.message);
+}
+
+/** The two policy catalogs the check reads database wide, each with what its finding says. */
+const POLICY_CATALOGS = {
+  policies: {
+    view: "DBA_POLICIES",
+    lists: "the row-level security policies of the database",
+    holds:
+      "a row-level security policy whose function is not one Oracle maintains, which Oracle runs with its owner's rights when any user reads what it guards",
+  },
+  auditPolicies: {
+    view: "DBA_AUDIT_POLICIES",
+    lists: "the fine-grained auditing policies of the database",
+    holds:
+      "a fine-grained auditing policy with an audit condition, which Oracle evaluates when any user reads what it audits and which can call a function, or with a handler that is not one Oracle maintains, which Oracle runs with its owner's rights",
+  },
+} as const;
+
+/**
+ * The policies a catalog lists that no user of the database can be proven outside (see the module docblock, items 7
+ * and 8). No revoke of the user's grants lifts one, so the finding names the policies rather than a statement; a user
+ * that may not read the catalog is refused, naming the grant, which only SYS may run.
+ */
+async function policyCatalogFinding(
+  read: OracleAgentReader,
+  catalog: keyof typeof POLICY_CATALOGS,
+  user: string,
+): Promise<Finding | null> {
+  const { view, lists, holds } = POLICY_CATALOGS[catalog];
+  let rows: Rows;
+  try {
+    rows = await read(AGENT_PRINCIPAL_STATEMENTS[catalog]);
+  } catch (error) {
+    if (!isUnreadableCatalog(error)) throw error;
+    return {
+      what: `the check cannot read SYS.${view}, which lists ${lists}`,
+      statements: [`GRANT SELECT ON SYS.${view} TO ${quoted(user)} (as SYS)`],
+    };
+  }
+  if (rows.length === 0) return null;
+  const named = rows.map((row) => {
+    const [owner, name, policy] = text(row, view, "OWNER", "NAME", "POLICY");
+    return `${quoted(owner)}.${quoted(name)} policy ${quoted(policy)}`;
+  });
+  const rest = named.length - LISTED_POLICIES;
+  return {
+    what: `the database holds ${holds}, so agent mode is not offered on this database while it exists: ${named
+      .slice(0, LISTED_POLICIES)
+      .join(", ")}${rest > 0 ? `, and ${rest} more` : ""}`,
+    statements: [],
+  };
+}
+
+function sequencesFinding(rows: Rows): Finding | null {
+  if (rows.length === 0) return null;
+  return {
+    what: "it can reach a sequence NEXTVAL would advance",
+    statements: rows.map((row) => {
+      const [to, owner, name, owned] = text(row, "sequences", "GRANTEE", "OWNER", "NAME", "OWNED");
+      return owned === "Y"
+        ? `DROP SEQUENCE ${quoted(owner)}.${quoted(name)}`
+        : `REVOKE ALL ON ${quoted(owner)}.${quoted(name)} FROM ${grantee(to)}`;
+    }),
+  };
+}
+
+function reachFinding(rows: Rows): Finding | null {
+  if (rows.length === 0) return null;
+  return {
+    what: "it holds a package that reaches the network or the server's files, or a directory",
+    statements: rows.map((row) => {
+      const [to, owner, name, privilege, type] = text(
+        row,
+        "ALL_TAB_PRIVS",
+        "GRANTEE",
+        "OWNER",
+        "NAME",
+        "PRIVILEGE",
+        "OBJECT_TYPE",
+      );
+      const object = type === "DIRECTORY" ? `DIRECTORY ${quoted(name)}` : `${quoted(owner)}.${quoted(name)}`;
+      return `REVOKE ${privilege} ON ${object} FROM ${grantee(to)}`;
+    }),
+  };
+}
+
+function systemPrivilegesFinding(rows: Rows): Finding | null {
+  if (rows.length === 0) return null;
+  return {
+    what: "it holds a system privilege beyond CREATE SESSION",
+    statements: rows.map((row) => {
+      const [privilege] = text(row, "SESSION_PRIVS", "PRIVILEGE");
+      // A privilege the session holds through a grantee neither view lists is still refused, its grantee left open.
+      return `REVOKE ${privilege} FROM ${optionalGrantee(row)}`;
+    }),
+  };
+}
+
+function linksFinding(rows: Rows): Finding | null {
+  if (rows.length === 0) return null;
+  return {
+    what: "it can use a database link, which reaches another database under its stored credential",
+    statements: rows.flatMap((row, index) => {
+      const [owner, link] = text(row, "ALL_DB_LINKS", "OWNER", "DB_LINK");
+      if (owner === "PUBLIC") return [`DROP PUBLIC DATABASE LINK ${quoted(link)}`];
+      // Only its owner drops a private link, and the owner is the agent user, whose READ ONLY refuses the DROP: it is
+      // set READ WRITE around its drops. The rows are ordered by owner, so its links are consecutive.
+      const first = rows[index - 1]?.OWNER !== owner;
+      const last = rows[index + 1]?.OWNER !== owner;
+      return [
+        ...(first ? [`ALTER USER ${quoted(owner)} READ WRITE`] : []),
+        `DROP DATABASE LINK ${quoted(link)} (as ${owner})`,
+        ...(last ? [`ALTER USER ${quoted(owner)} READ ONLY`] : []),
+      ];
+    }),
+  };
+}
+
+/** Whether `error` is the server's answer that `USER_USERS` has no `READ_ONLY` column. */
+function isMissingReadOnlyColumn(error: unknown): boolean {
+  return error instanceof Error && /\bORA-00904\b/.test(error.message);
+}
+
+/**
+ * Proves the agent user before a statement, sending each check through `read` in order and refusing the
+ * profile when any finds anything (see the module docblock). A failure of the first read other than ORA-00904, or of
+ * any later read, leaves as it came, so the call fails and no statement is sent.
+ */
+export async function verifyAgentPrincipal(read: OracleAgentReader): Promise<void> {
+  let readOnlyRows: Rows;
+  try {
+    readOnlyRows = await read(AGENT_PRINCIPAL_STATEMENTS.readOnly);
+  } catch (error) {
+    if (!isMissingReadOnlyColumn(error)) throw error;
+    throw new ExecutionProfileError(
+      "The agent read-only execution profile requires Oracle Database 23ai or later, where a user can be set READ ONLY; this server answered ORA-00904 for USER_USERS.READ_ONLY, so the connection is refused.",
+      "PROFILE_UNSUPPORTED_TARGET",
+    );
+  }
+  const { user, finding } = readOnlyFinding(readOnlyRows);
+  const findings = [
+    finding,
+    rolesFinding(await read(AGENT_PRINCIPAL_STATEMENTS.roles)),
+    unitsFinding(await read(AGENT_PRINCIPAL_STATEMENTS.units)),
+    viewsFinding(await read(AGENT_PRINCIPAL_STATEMENTS.views), user),
+    invalidViewsFinding(await read(AGENT_PRINCIPAL_STATEMENTS.invalidViews), user),
+    virtualColumnsFinding(await read(AGENT_PRINCIPAL_STATEMENTS.virtualColumns), user),
+    await policyCatalogFinding(read, "policies", user),
+    await policyCatalogFinding(read, "auditPolicies", user),
+    sequencesFinding(await read(AGENT_PRINCIPAL_STATEMENTS.sequences)),
+    reachFinding(await read(AGENT_PRINCIPAL_STATEMENTS.reach)),
+    systemPrivilegesFinding(await read(AGENT_PRINCIPAL_STATEMENTS.systemPrivileges)),
+    linksFinding(await read(AGENT_PRINCIPAL_STATEMENTS.links)),
+  ].filter((found): found is Finding => found !== null);
+  if (findings.length === 0) return;
+
+  // A view or table found through several of its columns or calls is named once.
+  const statements = [...new Set(findings.flatMap((found) => found.statements))];
+  const listed = statements.slice(0, LISTED_STATEMENTS).join("; ");
+  const rest = statements.length - LISTED_STATEMENTS;
+  const run =
+    statements.length === 0 ? "" : ` Run, as an administrator: ${listed}${rest > 0 ? `; and ${rest} more` : ""}.`;
+  throw new ExecutionProfileError(
+    `The agent read-only execution profile refuses the Oracle user ${user}: ${findings
+      .map((found) => found.what)
+      .join("; ")}.${run}`,
+    "PROFILE_PRIVILEGES_TOO_BROAD",
+  );
+}
+
+/** One column of a result, as much of the driver's metadata as the type refusal reads. */
+interface AgentColumn {
+  readonly name: string;
+  readonly dbType?: unknown;
+  readonly dbTypeName?: string;
+}
+
+/**
+ * Refuses an answer holding a column of a type the agent does not read: a BFILE, whose locator reads a server file,
+ * and an object or a cursor, which carry values the byte budget cannot measure. Checked on the metadata before any
+ * value is read.
+ */
+export function assertAgentColumnTypes(
+  metaData: readonly AgentColumn[] | undefined,
+  refused: readonly unknown[],
+  sql: string,
+): void {
+  const column = metaData?.find((candidate) => refused.includes(candidate.dbType));
+  if (column === undefined) return;
+  throw new QueryError(
+    `Read-only execution refused column ${column.name} of type ${column.dbTypeName ?? "unknown"}: the agent reads scalar and LOB values only`,
+    "oracle",
+    sql,
+  );
+}
+
+/**
+ * The agent's result, or the shared refusal: the execute fetched at most one row past the row budget (`maxRows`), so a
+ * result past it is refused rather than cut, and every value, a LOB fetched whole as a string or a buffer included, is
+ * counted against the byte budget.
+ */
+export function readAgentAnswer(result: QueryResult, budget: ReadOnlyStatementBudget, sql: string): QueryResult {
+  if (result.rows.length > budget.maxResultRows) {
+    throw new QueryError(rowBudgetSentence(result.rows.length, budget.maxResultRows), "oracle", sql);
+  }
+  const bytes = measureResultBytes(result.rows);
+  if (bytes > budget.maxResultBytes) {
+    throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), "oracle", sql);
+  }
+  return result;
+}
+
+/** The driver's call timeout (NJS-123, the Thick client's DPI-1067) as the shared time refusal, or null. */
+export function agentDeadlineRefusal(error: unknown, budget: ReadOnlyStatementBudget, sql: string): QueryError | null {
+  if (!(error instanceof Error) || !/\b(?:NJS-123|DPI-1067)\b/.test(error.message)) return null;
+  return new QueryError(`${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`, "oracle", sql);
+}

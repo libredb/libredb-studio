@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S10 · 7
-- [Drivers and connections](#drivers-and-connections) — D1-D403, U17 · 293
+- [Drivers and connections](#drivers-and-connections) — D1-D405, U17 · 295
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U151 · 137
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U154 · 140
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B146 · 76
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B147 · 77
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -263,7 +263,7 @@ D18 names two engines that lose digits and three that keep them as strings. Whic
 the family falls on was never measured, and the gap read as the same defect, unrecorded, on five
 more engines. Measured 2026-09-19, each through the seam the product itself uses - the ClickHouse
 HTTP transport, the Cassandra driver transport, `openDuckDBClient`, `mssql` under the options
-`buildConfig` sets, and `oracledb` with the only settings `oracle.ts` applies
+`buildConfig` sets, and `oracledb` with the only settings `oracle/index.ts` applies
 (`OUT_FORMAT_OBJECT`, and no `fetchAsString` for a NUMBER) - over a table holding 9007199254740993
 beside its neighbour 9007199254740992:
 
@@ -437,7 +437,7 @@ facts. The round closed the first field on three providers. The second is unclos
 **The rest fabricate.** Measured by reading every `databaseSizeBytes` assignment under
 `src/lib/db/providers/`:
 - Self-contradicting within one object, and the clearest cases, because the sibling string field already says the figure is unavailable: `sql/trino/introspect.ts` pairs a literal `0` with `databaseSize: TRINO_UNAVAILABLE_TEXT`, and `sql/search/index.ts` pairs `sizeBytes ?? 0` with `databaseSize: SEARCH_UNKNOWN_TEXT` for both `elasticsearch` and `opensearch`.
-- Swallowed into an initialiser the way D40's connection counts were: `sql/mssql.ts`, `sql/oracle.ts`, `sql/sqlite.ts`.
+- Swallowed into an initialiser the way D40's connection counts were: `sql/mssql.ts`, `sql/oracle/index.ts`, `sql/sqlite.ts`.
 - Coerced by a helper that returns 0 for an absent row: `sql/druid/introspect.ts` and `sql/clickhouse/index.ts` through their local `asNumber`.
 - Coerced inline: `sql/postgres.ts` and `sql/mysql.ts` (`parseInt(... || "0")`), `sql/libsql/introspect.ts` and `document/couchbase/index.ts` (`?? 0`), `keyvalue/redis.ts`, and `embedded/libredb.ts`, whose `fileSizeBytes()` returns 0 when the `statSync` throws.
 
@@ -456,7 +456,7 @@ publishes a measured-looking zero - see D51, which is the same shape on the fiel
 
 **Seven of the eleven are closed on main since** - they now leave `databaseSizeBytes` out when the size is unknown.
 PostgreSQL and MySQL in #627, SQLite and LibreDB in #1050 (for #546), SQL Server and Oracle in #579, and libSQL in #569.
-The symbols are `getOverview()` in `src/lib/db/providers/sql/postgres.ts`, `src/lib/db/providers/sql/mysql.ts`, `src/lib/db/providers/sql/sqlite.ts`, `src/lib/db/providers/sql/mssql.ts` and `src/lib/db/providers/sql/oracle.ts`, `readOverview()` in `src/lib/db/providers/sql/libsql/introspect.ts`, and `getOverview()` in `src/lib/db/providers/embedded/libredb.ts`.
+The symbols are `getOverview()` in `src/lib/db/providers/sql/postgres.ts`, `src/lib/db/providers/sql/mysql.ts`, `src/lib/db/providers/sql/sqlite.ts`, `src/lib/db/providers/sql/mssql.ts` and `src/lib/db/providers/sql/oracle/index.ts`, `readOverview()` in `src/lib/db/providers/sql/libsql/introspect.ts`, and `getOverview()` in `src/lib/db/providers/embedded/libredb.ts`.
 
 **The counts moved for a second reason.** DuckDB arrived as a seventeenth type-id in #516 and gets this
 right without being asked: `duckdb/introspect.ts` spreads the key conditionally and spells the string
@@ -864,7 +864,7 @@ multi-line entry for an unmapped kind fails it.
 ### D67. `assertObjectPathShape` is written out eight times, and four more shapes twice or three times
 
 Measured in the tree on 2026-09-13: `assertObjectPathShape` is DEFINED, not imported, in eight
-provider files (`postgres.ts`, `mysql.ts`, `oracle.ts`, `sqlite.ts`, `libsql/objects.ts`,
+provider files (`postgres.ts`, `mysql.ts`, `oracle/index.ts`, `sqlite.ts`, `libsql/objects.ts`,
 `clickhouse/objects.ts`, `cassandra/objects.ts`, `document/mongodb/index.ts`). It belongs beside
 `containerDepth` in `src/lib/db/object-kinds.ts`, which is where `comparePaths` already went: that
 one was written four times, was hoisted to `src/lib/db/object-path.ts`, and is now imported by every
@@ -4056,6 +4056,25 @@ Found 2026-10-29 while reading Windows job failures on `main` and its branches.
 
 **Done when:** the cross-runtime comparison treats a peer's admitted set as one outcome, or the peer is built so that only one bound can trip, and the file passes repeated runs on the Windows job.
 
+### D404. The Oracle Thin driver keeps a pooled session that `close({ drop: true })` asks it to drop
+
+Measured on node-oracledb 6.10 in Thin mode: a session closed with `close({ drop: true })` came back from the pool with the same session ID and the `CURRENT_SCHEMA` the previous call set.
+The agent profile no longer pools its sessions, so it is not exposed (`docs/providers/oracle.md` section 5.7), but every other path that drops a failed pooled session gets that session back.
+Newer driver lines (7.x) exist and were not measured.
+
+Found 2026-10-29 while reviewing the Oracle agent profile.
+
+**Done when:** the behaviour is re-measured on the driver version the lockfile pins, and either the drop works or every pooled path that means to drop a session closes it another way, with a live case that reads the session ID after the drop.
+
+### D405. An Oracle agent refusal may name a plain `REVOKE` for a rule or rule set that only `DBMS_RULE_ADM` can revoke
+
+A plain `REVOKE EXECUTE` on an evaluation context fails with `ORA-04042`, so the Oracle agent check names `DBMS_RULE_ADM.REVOKE_OBJECT_PRIVILEGE` for one (measured).
+Rules and rule sets are rules engine objects of the same kind, and the check still names a plain `REVOKE` for a grant on one; that was not measured.
+
+Found 2026-10-29 while reviewing the Oracle agent profile.
+
+**Done when:** a grant on a rule and on a rule set is measured live, and the refusal names the statement that lifts each, with a unit case per kind.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -5985,6 +6004,29 @@ Elasticsearch grounds plan mode through the same object surface, so it likely sh
 
 **Done when:** a refused plan-mode catalog read shows a sentence in the rail that names the read that was refused and, where the engine's refusal says so, the privilege it lacked, with the code kept beside it; the sentence comes from the shared refusal path, not a type-id branch; and a component test pins the rail text for a `CATALOG_READ_REFUSED` run.
 
+### U152. A refused agent principal shows no remedy in the rail, and the sentence is wrong for a database-wide refusal
+
+When the execution profile refuses the run's principal, the agent rail shows one generic sentence (`src/components/agent/timeline.ts`): the credential "holds privileges the read-only boundary cannot contain".
+The engine's refusal carries the statements that lift it, on Oracle for example `REVOKE EXECUTE ON "APP_OWNER"."BV_FN" FROM "LIBREDB_AGENT_BV"`, but they reach only the server log, so the user cannot act on the rail.
+On Oracle a refusal can also name a row-level security or fine-grained auditing policy anywhere in the database, where the user holds nothing extra, and there the sentence is false.
+Seen 2026-10-29 on Oracle 26ai Free in a browser pass, for a granted function and for a row-level policy.
+
+**Done when:** the rail shows the refusal's own remedies (statements or policy names) beside its code, from the shared refusal path rather than a type-id branch, the generic sentence no longer claims the credential holds privileges when the refusal is about the database, and a component test pins both texts.
+
+### U153. A statement Studio refuses before sending shows the bare code `INPUT_VALIDATION_FAILED` in the agent rail
+
+An agent statement the provider refuses before it is sent, such as Oracle's `SELECT ... FOR UPDATE`, appears in the rail as `INPUT_VALIDATION_FAILED` with no sentence saying what was refused or why.
+Seen 2026-10-29 on Oracle 26ai Free in a browser pass.
+
+**Done when:** the rail shows the refusal's sentence with the code beside it, and a component test pins it.
+
+### U154. A plan-mode run shows a statement count although it executed nothing
+
+A plan-mode run on an Oracle owner connection showed "1/42 stmt" in the rail while its own copy says it executed nothing; the count appears to be the schema capture's reads, not a statement of the model's.
+Seen 2026-10-29 on Oracle 26ai Free in a browser pass; not checked on other engines.
+
+**Done when:** the plan-mode rail counts only statements of the model's, or labels the capture's reads as reads, and a component test pins the plan-mode count.
+
 ## Dependencies
 
 ### P1. The desktop shell's `glib` advisory has no reachable fix while Tauri v2 targets GTK 3
@@ -6253,7 +6295,7 @@ Not fixed in #1085: that PR edits another provider's doc only where a shared sur
 ### DOC7. Four translated READMEs still say the SSL/TLS panel takes effect on nine engines
 
 The transport paragraph of `README_es.md`, `README_ja.md`, `README_hi.md` and `README_ur.md` carries wording `README.md` replaced in #466: it names the engines the SSL/TLS panel takes effect on, PostgreSQL to Trino, and says that Oracle, MongoDB and Redis ignore the option.
-`README.md` says instead that the panel is honoured by every engine that shows it, which is every engine but SQLite, DuckDB and the embedded LibreDB, and the three named as ignoring it read `config.ssl` (`src/lib/db/providers/document/mongodb/index.ts`, `src/lib/db/providers/keyvalue/redis.ts`, `src/lib/db/providers/sql/oracle.ts`), while libSQL and Cassandra, which honour it, are not in the list, and libSQL is not in the connection-string list beside it either.
+`README.md` says instead that the panel is honoured by every engine that shows it, which is every engine but SQLite, DuckDB and the embedded LibreDB, and the three named as ignoring it read `config.ssl` (`src/lib/db/providers/document/mongodb/index.ts`, `src/lib/db/providers/keyvalue/redis.ts`, `src/lib/db/providers/sql/oracle/index.ts`), while libSQL and Cassandra, which honour it, are not in the list, and libSQL is not in the connection-string list beside it either.
 #1085 added Prometheus to that list in all four files, because each file's new Prometheus row tells the reader to enable TLS, and changed nothing else there.
 `README_zh.md` already carries the English wording.
 Each file's translation-lag banner names `README.md` as the one that wins, and `bun run readme:check` reads no prose, so nothing flags the paragraph.
@@ -6299,7 +6341,7 @@ Two halves, and the second is what stops it recurring:
    resolves each, and fails on a miss, so a coordinate cannot go stale silently again.
 
 DOC4 is the same class in the provider docs.
-More instances, found stale at `8f2fc5c81` during the PR #1575 review (2026-10-07): `tests/integration/db/mssql-provider.test.ts` (`mssql.ts:1798`), `docs/providers/opensearch.md` (`http-transport.ts` `:806`, `:883-935`, `:913`, `:999`, `:1127`, `:1128`, `:1283`), `docs/providers/elasticsearch.md` (`http-transport.ts:1194`), `docs/BACKLOG.md` (`http-transport.ts:1556`), `tests/components/studio/BottomPanel.test.tsx` (`BottomPanel.tsx:574`), `docs/BACKLOG.md` (`BottomPanel.tsx:445`), and the `oracle.ts:1492`, `:2000` and `:2015` citations in `oracle.ts`, `tests/integration/db/oracle-provider.test.ts` and `tests/api/db-objects.test.ts`.
+More instances, found stale at `8f2fc5c81` during the PR #1575 review (2026-10-07): `tests/integration/db/mssql-provider.test.ts` (`mssql.ts:1798`), `docs/providers/opensearch.md` (`http-transport.ts` `:806`, `:883-935`, `:913`, `:999`, `:1127`, `:1128`, `:1283`), `docs/providers/elasticsearch.md` (`http-transport.ts:1194`), `docs/BACKLOG.md` (`http-transport.ts:1556`), `tests/components/studio/BottomPanel.test.tsx` (`BottomPanel.tsx:574`), `docs/BACKLOG.md` (`BottomPanel.tsx:445`), and the `oracle/index.ts:1492`, `:2000` and `:2015` citations in `oracle/index.ts`, `tests/integration/db/oracle-provider.test.ts` and `tests/api/db-objects.test.ts`.
 Each should become a symbol anchor rather than a corrected number.
 This entry was first written as a second "D94 (proposed)" block, which reused the id of D94 and was not a heading the structure guard reads.
 
@@ -8249,9 +8291,22 @@ The database assessment workflow requires only `sql-catalog` of the dialect, so 
 Its verdict also needs a table profile, which only `profile_table` records, and on an engine whose overlay declares `profileComposition` `"unsupported"` that call answers `UNSUPPORTED_DIALECT`, so the verdict can never be met there.
 Measured 2026-10-29 on OpenSearch 3.8.0 in a browser pass: the run ends with "No table was profiled".
 Elasticsearch has no profile composition either and opens assessment by the same requirement, so it likely ends the same way; that was reasoned from the code, not measured.
+Oracle is in the same position: its overlay supplies the catalog read and declares `profileComposition` `"unsupported"`, so assessment opens there and its verdict can never be met; also reasoned from the code, not measured.
 `docs/AGENT.md` records the choice to leave that need unheld (B111, B140, B143, B144); this entry is the claim that it should change, since a workflow offered on an engine where it cannot pass reads as a broken one.
 
-**Done when:** the database assessment workflow's requirement admits an engine only where its pass check can be met, derived from a dialect capability such as a supplied profile composition rather than a type-id branch, so it is not offered on OpenSearch or Elasticsearch until they gain one, with a test that holds the requirement to the pass check; cited in `docs/AGENT.md`.
+**Done when:** the database assessment workflow's requirement admits an engine only where its pass check can be met, derived from a dialect capability such as a supplied profile composition rather than a type-id branch, so it is not offered on OpenSearch, Elasticsearch or Oracle until they gain one, with a test that holds the requirement to the pass check; cited in `docs/AGENT.md`.
+
+### B147. Oracle composes no estimating plan, profile, statistics reading or grounding capture
+
+Oracle's engine overlay (`src/lib/agent/languages/sql/engines/oracle.ts`) supplies the catalog read alone, over the `ALL_*` dictionary views.
+The other four dialect members are `"unsupported"`: the estimating plan, the profile composition, the statistics reading and the grounding capture.
+`EXPLAIN PLAN` writes its rows into `PLAN_TABLE`, a write the READ ONLY agent user is refused, so no estimating plan can be composed the way the editor asks for one; `DBMS_XPLAN.DISPLAY_CURSOR` reads a plan without writing but needs `SELECT` on `V$` views the agent user is not granted, never measured.
+So investigation, database assessment and data analysis open on Oracle, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`, and database assessment, which needs a table profile, opens but cannot pass (B146); the `sql-composers` requirement holds query optimization out; plan mode drafts there and grounds under the operations profile.
+Kept so that the engine joined on the members measured on it, and nothing composed from another engine's rule.
+
+Found 2026-10-29 with agent execution on Oracle.
+
+**Done when:** the Oracle overlay gains an estimating plan measured as a READ ONLY user and an explain strategy with an `agentReading` verified against its plans, so query optimization opens there, and a profile composition measured on it, or a recorded decision that it keeps none, with tests for each; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 
@@ -8445,7 +8500,7 @@ No privilege boundary is crossed: on these engines the credential's grants bound
 Under governance a definition can carry `ssl.caCert` or `ssl.rejectUnauthorized` without `ssl.mode` (`DEFINITION_ALLOWLIST` in `src/lib/governance/contract.ts`), and a sealed client certificate pair alone builds a panel with no mode (`mergedRecord` in `src/lib/governance/admission.ts`).
 The providers read an absent mode three ways.
 PostgreSQL, MySQL, SQL Server, MongoDB, Redis and the shared HTTP and gRPC transports verify the chain and the host name.
-Oracle verifies the chain only (`buildTLSAttributes` in `src/lib/db/providers/sql/oracle.ts` sets `sslServerDNMatch` for `verify-full` and `verify-system` alone).
+Oracle verifies the chain only (`buildTLSAttributes` in `src/lib/db/providers/sql/oracle/index.ts` sets `sslServerDNMatch` for `verify-full` and `verify-system` alone).
 Cassandra (`src/lib/db/providers/sql/cassandra/driver-transport.ts`) and MQTT connect without TLS, and Db2 refuses the connection.
 So the same `{"ssl":{"caCert":"<PEM>"}}` checks the host name on PostgreSQL, does not on Oracle, and sends a Cassandra password in cleartext.
 `docs/SEED_CONNECTIONS.md` documents `ssl.caCert` and the client pair but not `ssl.mode`.
@@ -8456,7 +8511,7 @@ So the same `{"ssl":{"caCert":"<PEM>"}}` checks the host name on PostgreSQL, doe
 
 `buildConnectionString` in `src/lib/db/providers/document/mongodb.ts` builds `mongodb://user:password@host:port/database` from the fields, encoding the user, the password and `authSource` but not the database name or the host.
 The driver percent-decodes the path into the database name and also uses it as the default authentication database, so a name with `?` fails to parse, one with `#` loses its tail and the appended `?authSource=` with it, and one with `%` is decoded or throws, although MongoDB allows those characters in a database name.
-`getConnectString` in `src/lib/db/providers/sql/oracle.ts` writes `host:port/serviceName` as Easy Connect, which node-oracledb never percent-decodes, so encoding is not the fix there: a `?` in the service name starts Easy Connect parameters, `/` and `:` change the instance name or the server mode, and an IPv6 host without brackets does not parse.
+`getConnectString` in `src/lib/db/providers/sql/oracle/index.ts` writes `host:port/serviceName` as Easy Connect, which node-oracledb never percent-decodes, so encoding is not the fix there: a `?` in the service name starts Easy Connect parameters, `/` and `:` change the instance name or the server mode, and an IPv6 host without brackets does not parse.
 No privilege boundary is crossed, because whoever writes the fields chooses the target anyway.
 The cost is MongoDB databases that cannot be opened from the fields, and on Oracle connection settings that a field adds without saying so.
 

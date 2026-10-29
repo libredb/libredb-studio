@@ -11,6 +11,7 @@ import {
   ConnectionError,
   DatabaseConfigError,
   DatabaseError,
+  ExecutionProfileError,
   PermissionDeniedError,
   QueryError,
 } from "@/lib/db/errors";
@@ -26,6 +27,7 @@ import { buildResultExport } from "@/lib/export/result-export";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { generateTableQuery, generateSelectQuery } from "@/lib/query-generators";
 import { ORACLE_CREATE_TABLE } from "@/lib/db/providers/sql/oracle-create-table";
+import { AGENT_PRINCIPAL_STATEMENTS } from "@/lib/db/providers/sql/oracle/agent-read";
 
 // ---------------------------------------------------------------------------
 // Mock oracledb BEFORE loading the provider
@@ -45,19 +47,50 @@ let lastPoolAttrs: Record<string, unknown> = {};
 // nowhere else: it is a per-call option and the provider keeps no copy.
 let lastExecuteOpts: Record<string, unknown> = {};
 
-const createMockConnection = () => ({
-  execute: (sql: string, params?: unknown[], opts?: unknown) => {
-    lastExecuteOpts = (opts ?? {}) as Record<string, unknown>;
-    return mockExecuteFn(sql, params, opts);
-  },
-  close: () => mockConnCloseFn(),
-  break: () => mockBreakFn(),
-  commit: async () => {},
-  rollback: async () => {},
-});
+// What happened to each connection, in order, across every connection the pool handed out and every standalone one
+// (`connect`, with the attributes it was opened with, and `acquire` for one taken from a pool): each execute's
+// statement, options and the connection's `callTimeout` at the time, and each `rollback` and `close` (`drop` for a
+// close that drops the session). The agent's read-only path is observable nowhere else.
+let connectionLog: {
+  event: string;
+  sql?: string;
+  opts?: Record<string, unknown>;
+  callTimeout?: number;
+  attrs?: Record<string, unknown>;
+}[] = [];
+let mockRollbackFn: () => Promise<void> = async () => {};
+
+const createMockConnection = () => {
+  const conn = {
+    callTimeout: 0,
+    execute: (sql: string, params?: unknown[], opts?: unknown) => {
+      lastExecuteOpts = (opts ?? {}) as Record<string, unknown>;
+      connectionLog.push({ event: "execute", sql, opts: lastExecuteOpts, callTimeout: conn.callTimeout });
+      return mockExecuteFn(sql, params, opts);
+    },
+    close: (opts?: { drop?: boolean }) => {
+      connectionLog.push({ event: opts?.drop === true ? "drop" : "close" });
+      return mockConnCloseFn();
+    },
+    break: () => mockBreakFn(),
+    commit: async () => {},
+    rollback: () => {
+      connectionLog.push({ event: "rollback" });
+      return mockRollbackFn();
+    },
+  };
+  return conn;
+};
+
+// A standalone connection, as `oracledb.getConnection` opens one: the agent's read-only path opens one per call.
+let mockStandaloneConnectFn: () => Promise<ReturnType<typeof createMockConnection>> = async () =>
+  createMockConnection();
 
 const createMockPool = () => ({
-  getConnection: async () => createMockConnection(),
+  getConnection: async () => {
+    connectionLog.push({ event: "acquire" });
+    return createMockConnection();
+  },
   close: () => mockPoolCloseFn(),
   connectionsOpen: 5,
   connectionsInUse: 2,
@@ -89,6 +122,10 @@ const DB_TYPE_DATE: oracledb.DbType = { num: 2011, name: "DB_TYPE_DATE" };
 const DB_TYPE_TIMESTAMP: oracledb.DbType = { num: 2012, name: "DB_TYPE_TIMESTAMP" };
 const DB_TYPE_TIMESTAMP_TZ: oracledb.DbType = { num: 2013, name: "DB_TYPE_TIMESTAMP_TZ" };
 const DB_TYPE_TIMESTAMP_LTZ: oracledb.DbType = { num: 2014, name: "DB_TYPE_TIMESTAMP_LTZ" };
+// The three types the agent's read-only path refuses (oracledb/lib/types.js: 2020, 2021 and 2023).
+const DB_TYPE_BFILE: oracledb.DbType = { num: 2020, name: "DB_TYPE_BFILE" };
+const DB_TYPE_CURSOR: oracledb.DbType = { num: 2021, name: "DB_TYPE_CURSOR" };
+const DB_TYPE_OBJECT: oracledb.DbType = { num: 2023, name: "DB_TYPE_OBJECT" };
 const STRING = 2001;
 const BUFFER = 2005;
 
@@ -106,6 +143,9 @@ mock.module("oracledb", () => {
     DB_TYPE_TIMESTAMP,
     DB_TYPE_TIMESTAMP_TZ,
     DB_TYPE_TIMESTAMP_LTZ,
+    DB_TYPE_BFILE,
+    DB_TYPE_CURSOR,
+    DB_TYPE_OBJECT,
     STRING,
     BUFFER,
     initOracleClient: mockInitOracleClientFn,
@@ -115,14 +155,18 @@ mock.module("oracledb", () => {
       lastPoolAttrs = attrs;
       return mockCreatePoolFn();
     },
+    getConnection: async (attrs: Record<string, unknown>) => {
+      connectionLog.push({ event: "connect", attrs });
+      return mockStandaloneConnectFn();
+    },
   };
   return { default: oracledbMock };
 });
 
 // Load the provider via dynamic import AFTER the mock is registered. A static
 // import is hoisted above mock.module(), which evaluates the real oracledb
-// driver first and drops oracle.ts from bun's lcov attribution entirely.
-const { OracleProvider } = await import("@/lib/db/providers/sql/oracle");
+// driver first and drops oracle/index.ts from bun's lcov attribution entirely.
+const { OracleProvider } = await import("@/lib/db/providers/sql/oracle/index");
 
 // ---------------------------------------------------------------------------
 // Default mock execute implementation
@@ -3655,7 +3699,7 @@ describe("object surface", () => {
         .sort(),
     ).toEqual(["materialized_view", "table", "view"]);
     // The other direction, and `sequence` is the entry that matters. This provider gates
-    // describeObject on the ROLE (`oracle.ts:2000`), so an Oracle sequence answers no
+    // describeObject on the ROLE (`oracle/index.ts:2000`), so an Oracle sequence answers no
     // columns at all - the opposite of PostgreSQL's sequence, which answers last_value,
     // log_cnt and is_called. Same kind id, opposite answer, which is why the fact is
     // declared per provider and never derived from the role or from the id (#789).
@@ -3877,9 +3921,9 @@ describe("object surface", () => {
       //
       // After the bulk block, because `SCHEMA_COLUMNS_SQL` also reads `ALL_TAB_COLUMNS`.
       //
-      // The rows are the DRIVER'S rows and the naming is left to `oracle.ts`, which spells
+      // The rows are the DRIVER'S rows and the naming is left to `oracle/index.ts`, which spells
       // a flat name BARE: the read is scoped to the connection owner by `WHERE OWNER = :1`
-      // (`oracle.ts:1492`), so the owner is a fact about the statement rather than a
+      // (`oracle/index.ts:1492`), so the owner is a fact about the statement rather than a
       // qualifier on the answer, and every name comes back unqualified against a
       // `[owner, name]` path. A fixture that returned `APP.APP_ORDERS` would assert a
       // spelling this provider never produces.
@@ -6376,5 +6420,347 @@ describe("endOpenQueryTransaction()", () => {
     expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual([
       "the engine has no transaction to leave open",
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The agent read-only execution profile (queryReadOnly)
+// ---------------------------------------------------------------------------
+
+describe("OracleProvider.queryReadOnly", () => {
+  const AGENT = { readOnly: true, sendsStatements: true } as const;
+  const BUDGET = { statementTimeoutMs: 2_500, maxResultRows: 2, maxResultBytes: 400 };
+  const CHECKS = new Set<string>(Object.values(AGENT_PRINCIPAL_STATEMENTS));
+  const CLEAN_USER = { rows: [{ USERNAME: "APP_RO", READ_ONLY: "YES" }], metaData: [] };
+  const ROWS = {
+    rows: [{ ID: 1, NAME: "one" }],
+    metaData: [
+      { name: "ID", dbType: DB_TYPE_VARCHAR, dbTypeName: "NUMBER" },
+      { name: "NAME", dbType: DB_TYPE_VARCHAR, dbTypeName: "VARCHAR2" },
+    ],
+  };
+  let provider: InstanceType<typeof OracleProvider>;
+  /** What each statement answers; a check statement answers a clean principal unless this says otherwise. */
+  let answer: (sql: string) => unknown;
+
+  const executed = () => connectionLog.filter((entry) => entry.event === "execute").map((entry) => entry.sql);
+  const events = () => connectionLog.map((entry) => entry.event);
+
+  beforeEach(async () => {
+    connectionLog = [];
+    answer = () => ROWS;
+    mockExecuteFn = async (sql: string, _params?: unknown[], opts?: unknown) => {
+      const answered = answer(sql);
+      if (answered instanceof Error) throw answered;
+      if (answered === undefined) {
+        return sql === AGENT_PRINCIPAL_STATEMENTS.readOnly ? CLEAN_USER : { rows: [], metaData: [] };
+      }
+      if ((opts as { resultSet?: boolean } | undefined)?.resultSet !== true || !("rows" in (answered as object))) {
+        return answered;
+      }
+      // A result set, as the driver hands one back: the metadata at once, the rows only when fetched.
+      const { rows, metaData } = answered as { rows: unknown[]; metaData: unknown[] };
+      return {
+        metaData,
+        resultSet: {
+          getRows: async (count: number) => {
+            connectionLog.push({ event: `getRows ${count}` });
+            return rows.slice(0, count);
+          },
+          close: async () => {
+            connectionLog.push({ event: "closeResultSet" });
+          },
+        },
+      };
+    };
+    mockConnCloseFn = async () => {};
+    mockRollbackFn = async () => {};
+    mockBreakFn = async () => {};
+    mockPoolCloseFn = async () => {};
+    mockCreatePoolFn = async () => createMockPool();
+    mockStandaloneConnectFn = async () => createMockConnection();
+    provider = new OracleProvider(baseConfig, {}, AGENT);
+    await provider.connect();
+    connectionLog = [];
+    answer = (sql) => (CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY" ? undefined : ROWS);
+  });
+
+  afterEach(async () => {
+    if (provider?.isConnected()) await provider.disconnect();
+  });
+
+  test("refuses a handle not opened under the agent read-only profile, sending nothing", async () => {
+    const editor = new OracleProvider(baseConfig);
+    await editor.connect();
+    connectionLog = [];
+    await expect(editor.queryReadOnly("SELECT 1 FROM DUAL", BUDGET)).rejects.toThrow(
+      "Read-only execution requires a provider opened under the agent read-only profile",
+    );
+    expect(connectionLog).toEqual([]);
+    await editor.disconnect();
+  });
+
+  test("refuses the operations profile's handle too, which sends no statement", async () => {
+    const operations = new OracleProvider(baseConfig, {}, { readOnly: true, sendsStatements: false });
+    await operations.connect();
+    connectionLog = [];
+    await expect(operations.queryReadOnly("SELECT 1 FROM DUAL", BUDGET)).rejects.toThrow(
+      "Read-only execution requires a provider opened under the agent read-only profile",
+    );
+    expect(connectionLog).toEqual([]);
+    await operations.disconnect();
+  });
+
+  test("refuses an invalid budget and the estimate-plan mode before anything is sent", async () => {
+    await expect(provider.queryReadOnly("SELECT 1 FROM DUAL", { ...BUDGET, maxResultRows: 0 })).rejects.toThrow(
+      "Read-only execution budget field maxResultRows must be a positive integer",
+    );
+    await expect(provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET, "estimate-plan")).rejects.toThrow(
+      "Oracle composes no estimating plan for the agent",
+    );
+    expect(connectionLog).toEqual([]);
+  });
+
+  test("proves the user before every statement, on the statement's own session, inside its read-only transaction", async () => {
+    await provider.queryReadOnly("SELECT id, name FROM app_owner.t1", BUDGET);
+    await provider.queryReadOnly("SELECT id, name FROM app_owner.t1", BUDGET);
+    const checks = Object.values(AGENT_PRINCIPAL_STATEMENTS);
+    // No verdict is kept between calls: a policy or grant added after one call is read by the next, and a refusal
+    // lifted between them admits it, on the same handle.
+    expect(executed()).toEqual([
+      "SET TRANSACTION READ ONLY",
+      ...checks,
+      "SELECT id, name FROM app_owner.t1",
+      "SET TRANSACTION READ ONLY",
+      ...checks,
+      "SELECT id, name FROM app_owner.t1",
+    ]);
+    const call = [
+      "connect",
+      "execute",
+      ...checks.map(() => "execute"),
+      "execute",
+      `getRows ${BUDGET.maxResultRows + 1}`,
+      "closeResultSet",
+      "rollback",
+      "close",
+    ];
+    expect(events()).toEqual([...call, ...call]);
+    for (const entry of connectionLog.filter((logged) => logged.event === "execute")) {
+      expect(entry.opts?.autoCommit).toBe(false);
+      expect(entry.callTimeout).toBe(BUDGET.statementTimeoutMs);
+    }
+  });
+
+  test("sends the statement as given in one execute, never committing, fetching one row past the budget", async () => {
+    const result = await provider.queryReadOnly("SELECT id, name FROM app_owner.t1", BUDGET);
+    expect(result).toMatchObject({ rows: [{ ID: 1, NAME: "one" }], fields: ["ID", "NAME"], rowCount: 1 });
+    const statement = connectionLog.filter((entry) => entry.event === "execute").at(-1);
+    expect(statement?.opts).toMatchObject({ autoCommit: false, resultSet: true, outFormat: 4002 });
+    expect(events().slice(-4)).toEqual([`getRows ${BUDGET.maxResultRows + 1}`, "closeResultSet", "rollback", "close"]);
+    expect(typeof statement?.opts?.fetchTypeHandler).toBe("function");
+    expect(connectionLog.filter((entry) => entry.sql === "SET TRANSACTION READ ONLY")[0]?.opts?.autoCommit).toBe(false);
+  });
+
+  test("fetches a CLOB as a string per execute, and counts it against the byte budget", async () => {
+    answer = (sql) => (CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY" ? undefined : ROWS);
+    await provider.queryReadOnly("SELECT doc FROM app_owner.t1", BUDGET);
+    const handler = connectionLog.filter((entry) => entry.event === "execute").at(-1)?.opts
+      ?.fetchTypeHandler as oracledb.FetchTypeHandler;
+    expect(handler({ name: "DOC", dbType: DB_TYPE_CLOB })).toEqual({ type: STRING });
+    expect(handler({ name: "BIN", dbType: DB_TYPE_BLOB })).toEqual({ type: BUFFER });
+
+    answer = (sql) =>
+      CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY"
+        ? undefined
+        : { rows: [{ DOC: "x".repeat(500) }], metaData: [{ name: "DOC", dbType: DB_TYPE_CLOB, dbTypeName: "CLOB" }] };
+    await expect(provider.queryReadOnly("SELECT doc FROM app_owner.t1", BUDGET)).rejects.toThrow(
+      "Read-only execution exceeded the byte budget: 512 bytes > 400 allowed",
+    );
+    expect(events().slice(-2)).toEqual(["rollback", "close"]);
+  });
+
+  test("refuses the row maxRows + 1 let through, rather than cutting the answer", async () => {
+    answer = (sql) =>
+      CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY"
+        ? undefined
+        : { rows: [{ ID: 1 }, { ID: 2 }, { ID: 3 }], metaData: [{ name: "ID", dbType: DB_TYPE_VARCHAR }] };
+    await expect(provider.queryReadOnly("SELECT id FROM app_owner.t1", BUDGET)).rejects.toThrow(
+      "Read-only execution exceeded the row budget: 3 rows > 2 allowed",
+    );
+  });
+
+  test.each([
+    ["BFILE", DB_TYPE_BFILE],
+    ["OBJECT", DB_TYPE_OBJECT],
+    ["CURSOR", DB_TYPE_CURSOR],
+  ])("refuses a %s column from the metadata, fetching no row of it", async (typeName, dbType) => {
+    answer = (sql) =>
+      CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY"
+        ? undefined
+        : { rows: [{ F: {} }], metaData: [{ name: "F", dbType, dbTypeName: typeName }] };
+    await expect(provider.queryReadOnly("SELECT f FROM app_owner.files", BUDGET)).rejects.toThrow(
+      `Read-only execution refused column F of type ${typeName}`,
+    );
+    // Without a result set the driver would fetch every row, and expand every nested cursor in full, before the
+    // metadata could be read.
+    expect(connectionLog.filter((entry) => entry.event === "execute").at(-1)?.opts?.resultSet).toBe(true);
+    expect(events().filter((event) => event.startsWith("getRows"))).toEqual([]);
+    expect(events().slice(-3)).toEqual(["closeResultSet", "rollback", "close"]);
+  });
+
+  test("a statement the server answers with no result set reads as an empty answer", async () => {
+    answer = (sql) => (CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY" ? undefined : { rowsAffected: 0 });
+    const result = await provider.queryReadOnly("CALL app_owner.noop()", BUDGET);
+    expect(result).toMatchObject({ rows: [], fields: [], rowCount: 0 });
+    expect(events().slice(-2)).toEqual(["rollback", "close"]);
+  });
+
+  test("a write the server refuses arrives as the database's refusal, and the session is ended", async () => {
+    answer = (sql) =>
+      CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY"
+        ? undefined
+        : Object.assign(new Error("ORA-28194: Can perform read operations only"), { errorNum: 28194 });
+    const error = await provider.queryReadOnly("DELETE FROM app_owner.t1", BUDGET).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(DatabaseError);
+    expect((error as Error).message).toContain("ORA-28194");
+    expect(events().slice(-2)).toEqual(["rollback", "close"]);
+  });
+
+  test("a call past its deadline is refused in the shared time sentence, and the session is ended", async () => {
+    answer = (sql) =>
+      CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY"
+        ? undefined
+        : new Error("NJS-123: call timeout of 2500 ms exceeded");
+    await expect(provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET)).rejects.toThrow(
+      "Read-only execution exceeded the time budget: no answer within 2500ms",
+    );
+    expect(events().slice(-2)).toEqual(["rollback", "close"]);
+  });
+
+  test("every call opens a session of its own and ends it after the rollback, never taking one from the pool", async () => {
+    // A session keeps what the statement set on it, ALTER SESSION SET CURRENT_SCHEMA included, which the USER_* views
+    // the check reads follow: a pooled session would hand the next call another schema's answers (measured), and the
+    // Thin driver returns a session to its pool even when `close({ drop: true })` asks it not to (node-oracledb 6.10).
+    await provider.queryReadOnly("ALTER SESSION SET CURRENT_SCHEMA = APP_OWNER", BUDGET);
+    await provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET);
+    expect(events()).not.toContain("acquire");
+    expect(events().filter((event) => ["connect", "rollback", "close", "drop"].includes(event))).toEqual([
+      "connect",
+      "rollback",
+      "close",
+      "connect",
+      "rollback",
+      "close",
+    ]);
+    // Opened as the pool is, the same user, password, connect string and TLS attributes, and no pool sizing.
+    const { poolMin, poolMax, poolTimeout, ...pooled } = lastPoolAttrs;
+    expect([poolMin, poolMax, poolTimeout].every((value) => value !== undefined)).toBe(true);
+    for (const entry of connectionLog.filter((logged) => logged.event === "connect")) {
+      expect(entry.attrs).toEqual(pooled);
+    }
+  });
+
+  test("a rollback that fails still ends the session, and the call answers", async () => {
+    mockRollbackFn = async () => {
+      throw new Error("DPI-1010: not connected");
+    };
+    await expect(provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET)).resolves.toMatchObject({ rowCount: 1 });
+    expect(events().slice(-2)).toEqual(["rollback", "close"]);
+  });
+
+  test("a session that cannot be opened fails the call, sending nothing", async () => {
+    mockStandaloneConnectFn = async () => {
+      throw new Error("ORA-12541: Cannot connect. No listener at host localhost port 1521.");
+    };
+    const error = await provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET).catch((e: unknown) => e);
+    expect((error as Error).message).toContain("ORA-12541");
+    expect(executed()).toEqual([]);
+  });
+
+  test("a user the check refuses is refused, the statement never sent and the session ended", async () => {
+    answer = (sql) =>
+      sql === AGENT_PRINCIPAL_STATEMENTS.links ? { rows: [{ OWNER: "PUBLIC", DB_LINK: "LOOPLINK" }] } : undefined;
+    const first = await provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET).catch((e: unknown) => e);
+    expect(first).toBeInstanceOf(ExecutionProfileError);
+    expect((first as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect((first as Error).message).toContain('DROP PUBLIC DATABASE LINK "LOOPLINK"');
+    expect(executed()).not.toContain("SELECT 1 FROM DUAL");
+    expect(events().slice(-2)).toEqual(["rollback", "close"]);
+  });
+
+  test("a policy added after a call on the same handle refuses the next call", async () => {
+    await provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET);
+    answer = (sql) =>
+      sql === AGENT_PRINCIPAL_STATEMENTS.policies
+        ? { rows: [{ OWNER: "SYSTEM", NAME: "HELP", POLICY: "LATE_P" }] }
+        : CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY"
+          ? undefined
+          : ROWS;
+    connectionLog = [];
+    const error = await provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as Error).message).toContain('"SYSTEM"."HELP" policy "LATE_P"');
+    expect(executed()).not.toContain("SELECT 1 FROM DUAL");
+  });
+
+  test("a refusal lifted after a call on the same handle admits the next call", async () => {
+    let linked = true;
+    answer = (sql) =>
+      sql === AGENT_PRINCIPAL_STATEMENTS.links && linked
+        ? { rows: [{ OWNER: "PUBLIC", DB_LINK: "LOOPLINK" }] }
+        : CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY"
+          ? undefined
+          : ROWS;
+    await expect(provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET)).rejects.toBeInstanceOf(ExecutionProfileError);
+    linked = false;
+    connectionLog = [];
+    await expect(provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET)).resolves.toMatchObject({ rowCount: 1 });
+    expect(executed().at(-1)).toBe("SELECT 1 FROM DUAL");
+  });
+
+  test("a check that fails to read is mapped and retried on the next call, never admitting the profile", async () => {
+    let failing = true;
+    answer = (sql) =>
+      sql === AGENT_PRINCIPAL_STATEMENTS.units && failing
+        ? new Error("ORA-03113: end-of-file on communication channel")
+        : CHECKS.has(sql) || sql === "SET TRANSACTION READ ONLY"
+          ? undefined
+          : ROWS;
+    const error = await provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET).catch((e: unknown) => e);
+    // An environment failure, so the agent never offers it to the model as a failure of its own statement.
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as Error).message).toContain("check of the Oracle user could not be read");
+    expect((error as Error).message).toContain("ORA-03113");
+    expect(executed()).not.toContain("SELECT 1 FROM DUAL");
+    expect(events().slice(-2)).toEqual(["rollback", "close"]);
+
+    failing = false;
+    connectionLog = [];
+    await provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET);
+    expect(executed()).toContain(AGENT_PRINCIPAL_STATEMENTS.readOnly);
+    expect(executed().at(-1)).toBe("SELECT 1 FROM DUAL");
+  });
+
+  test("a check read past the deadline is an environment failure too, never the statement's time refusal", async () => {
+    answer = (sql) =>
+      sql === AGENT_PRINCIPAL_STATEMENTS.views ? new Error("NJS-123: call timeout of 2500 ms exceeded") : undefined;
+    const error = await provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as Error).message).toContain("NJS-123");
+    expect(executed()).not.toContain("SELECT 1 FROM DUAL");
+  });
+
+  test("an Oracle older than 23ai is refused as an unsupported target", async () => {
+    answer = (sql) =>
+      sql === AGENT_PRINCIPAL_STATEMENTS.readOnly ? new Error('ORA-00904: "READ_ONLY": invalid identifier') : undefined;
+    const error = await provider.queryReadOnly("SELECT 1 FROM DUAL", BUDGET).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
+  });
+
+  test("the editor's own path still commits each statement, as it did", async () => {
+    await provider.query("SELECT 1 FROM DUAL");
+    expect(connectionLog.find((entry) => entry.event === "execute")?.opts?.autoCommit).toBe(true);
   });
 });

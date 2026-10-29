@@ -4,9 +4,9 @@
  */
 
 import oracledb from "oracledb";
-import { SQLBaseProvider } from "./sql-base";
-import { ORACLE_CREATE_TABLE } from "./oracle-create-table";
-import { oracleColumnTypes } from "./column-types";
+import { SQLBaseProvider } from "../sql-base";
+import { ORACLE_CREATE_TABLE } from "../oracle-create-table";
+import { oracleColumnTypes } from "../column-types";
 import {
   type DatabaseConnection,
   type QueryResult,
@@ -41,7 +41,9 @@ import {
   type IndexSchema,
   type ForeignKeySchema,
   type ProviderExecutionContext,
-} from "../../types";
+  type ReadOnlyStatementBudget,
+  type ReadOnlyStatementMode,
+} from "../../../types";
 import {
   applySourceBound,
   assertContainerPathShape,
@@ -52,14 +54,22 @@ import {
   type ContainerPathShapeEngine,
   declaredKinds,
   findKind,
-} from "../../object-kinds";
-import { comparePaths } from "../../object-path";
-import { DatabaseConfigError, ConnectionError, QueryError, NO_ACTIVE_TRANSACTION } from "../../errors";
-import { mapDatabaseError } from "../../map-database-error";
-import { describeOracleClientLoadFailure } from "./oracle-driver-errors";
-import { formatBytes } from "../../utils/pool-manager";
-import { analyzeQuery, assertRowBounds, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../utils/query-limiter";
-import { measuredNullableAggregate } from "../../utils/measured-aggregate";
+} from "../../../object-kinds";
+import { comparePaths } from "../../../object-path";
+import {
+  DatabaseConfigError,
+  ConnectionError,
+  ExecutionProfileError,
+  QueryError,
+  NO_ACTIVE_TRANSACTION,
+} from "../../../errors";
+import { mapDatabaseError } from "../../../map-database-error";
+import { describeOracleClientLoadFailure } from "../oracle-driver-errors";
+import { formatBytes } from "../../../utils/pool-manager";
+import { analyzeQuery, assertRowBounds, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS } from "../../../utils/query-limiter";
+import { measuredNullableAggregate } from "../../../utils/measured-aggregate";
+import { assertReadOnlyBudget } from "../read-only-budget";
+import { agentDeadlineRefusal, assertAgentColumnTypes, readAgentAnswer, verifyAgentPrincipal } from "./agent-read";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
@@ -1619,11 +1629,20 @@ export class OracleProvider extends SQLBaseProvider {
   // See `readColumns()`.
   private vectorInfo = true;
 
+  /**
+   * Whether this provider was opened to send an agent's statements: under an execution profile (`readOnly`) whose
+   * acquisition calls `queryReadOnly` (`sendsStatements`). Only then does `queryReadOnly` answer, and only after the
+   * user is proved on the statement's own session (`verifyAgentPrincipal` in `agent-read.ts`). The operations profile
+   * sends no statement, so plan mode keeps grounding on a connection whose user is privileged.
+   */
+  private readonly readOnlyProfile: boolean;
+
   constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
     super(config, options);
     // Server-injected only (see ProviderExecutionContext). Oracle reads the owner alone, for the
     // transaction timeout; the factory has already sized the pool of an owned provider.
     this.owned = execution.owner !== undefined;
+    this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
     // Thin mode (pure JS, no Oracle Instant Client) is the unconditional default.
     // Thick mode is an explicit opt-in for servers older than Oracle Database 12.1,
     // which Thin mode cannot connect to (node-oracledb NJS-138).
@@ -1709,7 +1728,7 @@ export class OracleProvider extends SQLBaseProvider {
       objectKinds: [
         // `hasColumns` on the three kinds and no more, and it is written out rather than
         // derived from `role === "relation"` even though the two agree here (#789).
-        // `describeObject` gates on the role at `oracle.ts:2015`, so a sequence answers no
+        // `describeObject` gates on the role at `oracle/index.ts:2015`, so a sequence answers no
         // columns at all - the opposite of PostgreSQL's sequence, which answers last_value,
         // log_cnt and is_called. Same kind id, opposite answer, so the fact is the
         // provider's to state and the tree draws a twisty on nothing else.
@@ -1864,6 +1883,16 @@ export class OracleProvider extends SQLBaseProvider {
     };
   }
 
+  /** What a session signs in with, pooled or standalone: the user, the password, the connect string and TLS. */
+  private sessionAttributes(): oracledb.PoolAttributes {
+    return {
+      user: this.config.user,
+      password: this.config.password,
+      connectString: this.getConnectString(),
+      ...this.buildTLSAttributes(),
+    };
+  }
+
   public async connect(): Promise<void> {
     if (this.pool) {
       return;
@@ -1876,13 +1905,10 @@ export class OracleProvider extends SQLBaseProvider {
       // the internal `_afterPoolClose` and `_allCheckedIn`, and nothing under `oracledb/lib`
       // emits `error` at all. Connection failures surface through the awaiting call.
       this.pool = await oracledb.createPool({
-        user: this.config.user,
-        password: this.config.password,
-        connectString: this.getConnectString(),
+        ...this.sessionAttributes(),
         poolMin: this.poolConfig.min,
         poolMax: this.poolConfig.max,
         poolTimeout: Math.floor(this.poolConfig.idleTimeout / 1000),
-        ...this.buildTLSAttributes(),
       });
 
       // Test the connection
@@ -2016,6 +2042,119 @@ export class OracleProvider extends SQLBaseProvider {
 
       return this.buildQueryResult(result, executionTime);
     });
+  }
+
+  /**
+   * One agent statement under the read-only profile.
+   *
+   * The boundary is the agent user's: it is set READ ONLY, under which Oracle refuses every write with ORA-28194, and
+   * the check proves it reaches nothing READ ONLY leaves open (`agent-read.ts`). Each call takes a session of its own,
+   * opens `SET TRANSACTION READ ONLY` on it, runs the check on that session, keeping no verdict between calls, so a
+   * policy or grant added after one call refuses the next and a lifted refusal admits it, then sends the statement in
+   * one execute with `autoCommit: false`
+   * (the constructor sets the process-wide default to true for the editor), ends with the driver's `rollback()`, which
+   * ends the read-only transaction where the SQL `ROLLBACK` is refused (capture 10), and signs the session off, on
+   * every path: the session is opened for the call alone, never taken from the pool, since a pooled session would
+   * carry what the statement set on it, `CURRENT_SCHEMA` included, into the next call.
+   *
+   * Budgets refuse rather than truncate: the execute fetches one row past the row budget (`maxRows`), every value, a
+   * CLOB or BLOB fetched whole as a string or a buffer included, is counted against the byte budget, and a column of a
+   * type the agent does not read (BFILE, object, cursor) is refused from the result set's metadata, before any row is
+   * fetched, so a nested cursor is never expanded. The deadline is the driver's `callTimeout`: it ends
+   * the wait, and the session that waited is signed off.
+   *
+   * Refused outside the profile: a provider opened without it has no proven user to run agent semantics on.
+   */
+  public async queryReadOnly(
+    sql: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    this.ensureConnected();
+    if (!this.readOnlyProfile) {
+      throw new QueryError(
+        "Read-only execution requires a provider opened under the agent read-only profile",
+        this.type,
+        sql,
+      );
+    }
+    assertReadOnlyBudget(budget, this.type);
+    if (mode !== "execute") {
+      throw new QueryError("Oracle composes no estimating plan for the agent", this.type, sql);
+    }
+
+    return this.trackQuery(async () => {
+      const { result, executionTime } = await this.measureExecution(() =>
+        this.withAgentSession(budget, async (conn) => {
+          await conn.execute("SET TRANSACTION READ ONLY", [], { autoCommit: false });
+          await this.verifyAgentPrincipalOn(conn);
+          // A result set, so the metadata is read before any row: without one the driver fetches every row, and
+          // expands every nested cursor in full, before the execute returns.
+          const answered = await conn.execute(sql, [], {
+            outFormat: oracledb.OUT_FORMAT_OBJECT,
+            autoCommit: false,
+            resultSet: true,
+            fetchTypeHandler: rowFetchTypeHandler,
+          });
+          const { resultSet, ...rest } = answered;
+          if (resultSet === undefined) return answered;
+          try {
+            assertAgentColumnTypes(
+              answered.metaData,
+              [oracledb.DB_TYPE_BFILE, oracledb.DB_TYPE_OBJECT, oracledb.DB_TYPE_CURSOR],
+              sql,
+            );
+            return { ...rest, rows: await resultSet.getRows(budget.maxResultRows + 1) };
+          } finally {
+            await resultSet.close();
+          }
+        }).catch((error: unknown) => {
+          // The check's own answers leave as they came: a refusal, or the environment's failure to read it.
+          if (error instanceof ExecutionProfileError || error instanceof ConnectionError) throw error;
+          throw agentDeadlineRefusal(error, budget, sql) ?? mapDatabaseError(error, "oracle", sql);
+        }),
+      );
+      return readAgentAnswer(this.buildQueryResult(result, executionTime), budget, sql);
+    });
+  }
+
+  /** The check of the agent user, on the statement's own session, before the statement. */
+  private async verifyAgentPrincipalOn(conn: oracledb.Connection): Promise<void> {
+    try {
+      await verifyAgentPrincipal(async (check) => {
+        const answered = await conn.execute(check, [], { outFormat: oracledb.OUT_FORMAT_OBJECT, autoCommit: false });
+        return (answered.rows ?? []) as Record<string, unknown>[];
+      });
+    } catch (error) {
+      if (error instanceof ExecutionProfileError) throw error;
+      // The environment's failure, not the statement's: the agent must not offer it to the model as one to repair.
+      throw new ConnectionError(
+        `The agent read-only execution profile's check of the Oracle user could not be read: ${mapDatabaseError(error, "oracle").message}`,
+        "oracle",
+      );
+    }
+  }
+
+  /**
+   * Runs `work` on a session opened for it alone under the budget's deadline, then rolls it back and ends it, on every
+   * path. The session is never pooled: a session keeps what a statement set on it, `ALTER SESSION SET CURRENT_SCHEMA`
+   * included, which the `USER_*` views the check reads follow, and the Thin driver returns a pooled session to its pool
+   * even when `close({ drop: true })` asks it to drop it (both measured, node-oracledb 6.10). A standalone session's
+   * `close()` signs it off, so nothing one call set reaches the next.
+   */
+  private async withAgentSession<T>(
+    budget: ReadOnlyStatementBudget,
+    work: (conn: oracledb.Connection) => Promise<T>,
+  ): Promise<T> {
+    const conn = await oracledb.getConnection(this.sessionAttributes());
+    conn.callTimeout = budget.statementTimeoutMs;
+    try {
+      return await work(conn);
+    } finally {
+      // A rollback that fails leaves the session to the sign-off, which ends its transaction all the same.
+      await conn.rollback().catch(() => {});
+      await conn.close().catch(() => {});
+    }
   }
 
   public async cancelQuery(queryId: string): Promise<boolean> {

@@ -7,10 +7,10 @@
  * tests), the estimating plan over a fixed set of statements, the statistics availability probe, and the table profile
  * per depth over one column of each type the profile composer decides on. Beside them, the statistics block as packed
  * for each dialect at both details, and the plan-mode posture body, which names the engines whose grounding capture is
- * a catalog read. The engines are the first five SQL engines, the two other families' engines, Oracle and Redis, which
- * have no family, so a refusal is pinned as exactly as a statement, and libSQL, InfluxDB 3, Elasticsearch and
+ * a catalog read. The engines are the first five SQL engines, the two other families' engines, Redis, which has no
+ * family, so a refusal is pinned as exactly as a statement, and Oracle, libSQL, InfluxDB 3, Elasticsearch and
  * OpenSearch, which joined the SQL family later, the two search engines composing their column read alone, as a
- * command.
+ * command. Oracle held the place of a SQL engine with no family until it joined.
  *
  * `golden-engine-dialect.json` beside this file is this module's output on the commit before the engine overlays
  * existed, except where a later change moved an answer on purpose and said why in its commit, and

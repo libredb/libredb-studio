@@ -1028,8 +1028,8 @@
               "type": "array",
               "uniqueItems": true,
               "default": [],
-              "items": { "type": "string", "enum": ["cnpg"] },
-              "description": "KUBERNETES_DISCOVERY_KINDS: empty (default) writes nothing and the exporter reads every supported kind"
+              "items": { "type": "string", "enum": ["cnpg", "edbpg", "pgo", "mongo"] },
+              "description": "KUBERNETES_DISCOVERY_KINDS: empty (default) writes nothing and the exporter discovers cnpg alone; each kind needs its CRD on the cluster"
             },
             "maxAgeMs": {
               "anyOf": [{ "type": "null" }, { "type": "string", "maxLength": 0 }, { "type": "integer", "minimum": 1 }],

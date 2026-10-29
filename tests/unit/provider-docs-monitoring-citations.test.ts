@@ -197,7 +197,7 @@ const NAMED_CITATIONS = [
   },
   {
     doc: "docs/providers/oracle.md",
-    source: "src/lib/db/providers/sql/oracle.ts",
+    source: "src/lib/db/providers/sql/oracle/index.ts",
     methods: [
       "getCapabilities",
       "getLabels",

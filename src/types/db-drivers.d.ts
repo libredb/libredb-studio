@@ -32,6 +32,10 @@ declare module "oracledb" {
     readonly DB_TYPE_INTERVAL_DS: oracledb.DbType;
     readonly DB_TYPE_DATE: oracledb.DbType;
     readonly DB_TYPE_TIMESTAMP: oracledb.DbType;
+    /** The three types the agent's read-only path refuses: a server-file locator, a cursor and an object. */
+    readonly DB_TYPE_BFILE: oracledb.DbType;
+    readonly DB_TYPE_CURSOR: oracledb.DbType;
+    readonly DB_TYPE_OBJECT: oracledb.DbType;
     /** Fetch-target identities, the value side of a `fetchTypeHandler` answer. */
     readonly STRING: number;
     readonly BUFFER: number;
@@ -42,6 +46,9 @@ declare module "oracledb" {
     fetchAsString: readonly oracledb.DbType[];
     initOracleClient(options: { libDir?: string }): void;
     createPool(attributes: oracledb.PoolAttributes): Promise<oracledb.Pool>;
+    /** A standalone connection, which `tests/live/oracle-agent-boundary.ts` opens as SYS with `privilege: SYSDBA`. */
+    getConnection(attributes: oracledb.PoolAttributes & { privilege?: number }): Promise<oracledb.Connection>;
+    readonly SYSDBA: number;
   };
 
   namespace oracledb {
@@ -80,17 +87,32 @@ declare module "oracledb" {
       outFormat?: number;
       autoCommit?: boolean;
       fetchTypeHandler?: FetchTypeHandler;
+      /** The most rows a query fetches; the driver stops there. */
+      maxRows?: number;
+      /**
+       * Answer a query as a `resultSet` that fetches on demand. Without it the driver fetches every row, and expands
+       * every nested cursor in full, before `execute` returns.
+       */
+      resultSet?: boolean;
+    }
+
+    /** A query's rows, fetched on demand; it must be closed. */
+    interface ResultSet {
+      getRows(count: number): Promise<unknown[]>;
+      close(): Promise<void>;
     }
 
     /**
      * One statement's answer. `rows` and `metaData` are ABSENT for a non-SELECT and
      * `rowsAffected` is absent for a SELECT - the optionality is the contract, not
-     * defensiveness (see `buildQueryResult` in providers/sql/oracle.ts).
+     * defensiveness (see `buildQueryResult` in providers/sql/oracle/index.ts).
      */
     interface Result {
       rows?: unknown[];
       metaData?: Metadata[];
       rowsAffected?: number;
+      /** Present, in place of `rows`, when the execute asked for `resultSet`. */
+      resultSet?: ResultSet;
     }
 
     /** `INTERVAL YEAR TO MONTH` as the driver builds it. Both fields carry the sign. */
@@ -109,8 +131,11 @@ declare module "oracledb" {
     }
 
     interface Connection {
+      /** Milliseconds each round trip may take before the driver ends it with NJS-123; 0 waits forever. */
+      callTimeout: number;
       execute(sql: string, binds?: unknown[], options?: ExecuteOptions): Promise<Result>;
-      close(): Promise<void>;
+      /** Returns the session to its pool, or with `drop` ends it rather than returning it. */
+      close(options?: { drop?: boolean }): Promise<void>;
       break(): Promise<void>;
       commit(): Promise<void>;
       rollback(): Promise<void>;

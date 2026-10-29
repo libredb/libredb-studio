@@ -64,11 +64,18 @@ metadata:
   labels:
     {{- include "libredb-studio.discoveryLabels" $ | nindent 4 }}
 rules:
-  - apiGroups: ["postgresql.cnpg.io"]
-    resources: ["clusters"]
+  {{- range $kind := include "libredb-studio.discoveryKindRules" $ | fromYamlArray }}
+  {{- if has $kind.slug (include "libredb-studio.discoveryKinds" $ | fromYamlArray) }}
+  - apiGroups: [{{ $kind.group | quote }}]
+    resources: [{{ $kind.resource | quote }}]
     verbs: ["list"]
+  {{- end }}
+  {{- end }}
   - apiGroups: [""]
     resources: ["secrets"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["services"]
     verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

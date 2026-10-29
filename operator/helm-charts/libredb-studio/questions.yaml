@@ -89,7 +89,7 @@ questions:
         group: Kubernetes discovery
       - variable: discovery.kubernetes.kinds
         label: Kinds
-        description: The kinds to discover. Empty reads every supported kind; cnpg (CloudNativePG) is the only one today.
+        description: The kinds to discover, each needing its CRD on the cluster - cnpg (CloudNativePG), edbpg (EDB Postgres for Kubernetes), pgo (Crunchy PGO), mongo (MongoDB Community). Empty discovers cnpg alone.
         type: array
         default: []
         group: Kubernetes discovery

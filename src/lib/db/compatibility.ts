@@ -607,6 +607,7 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // Agent mode executes statements on libSQL, and MCP read stays closed on it until a change of its own opens it.
   libsql: false,
   duckdb: true,
+  // Agent mode executes statements on Oracle, and MCP read stays closed on it until a change of its own opens it.
   oracle: false,
   db2: false,
   mssql: true,

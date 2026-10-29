@@ -36,7 +36,7 @@
  */
 import oracledb from "oracledb";
 import { randomBytes } from "node:crypto";
-import { OracleProvider } from "../../src/lib/db/providers/sql/oracle";
+import { OracleProvider } from "../../src/lib/db/providers/sql/oracle/index";
 import { buildResultExport } from "../../src/lib/export/result-export";
 import type { DatabaseConnection } from "../../src/lib/types";
 

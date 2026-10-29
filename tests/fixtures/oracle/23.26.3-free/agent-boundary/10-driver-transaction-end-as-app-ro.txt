@@ -1,0 +1,11 @@
+thin=true server=23.26.3.0.0
+SET TRANSACTION READ ONLY: ok null
+SELECT 1 FROM DUAL: ok [[1]]
+SET TRANSACTION READ ONLY again, same transaction: ORA-01453: SET TRANSACTION must be first statement of transaction
+connection.rollback(): ok null
+SET TRANSACTION READ ONLY after rollback(): ok null
+connection.commit(): ok null
+SET TRANSACTION READ ONLY after commit(): ok null
+execute ROLLBACK statement: ORA-28194: Can perform read operations only
+execute COMMIT statement: ORA-28194: Can perform read operations only
+connection.rollback() again: ok null

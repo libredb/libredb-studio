@@ -1,0 +1,13 @@
+
+SEQUENCE_NAM LAST_NUMBER
+------------ -----------
+S_BEHIND	       3
+S_FBI		       3
+S_FGA		       2
+S_INV		       2
+S_NEST		       2
+S_POL		       7
+S_VC		       2
+
+7 rows selected.
+

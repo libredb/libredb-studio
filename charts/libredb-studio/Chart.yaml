@@ -2,7 +2,7 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting forty-two engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Apache Cassandra, libSQL, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Weaviate, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B
 type: application
-version: 0.1.112
+version: 0.1.113
 appVersion: "1.1.0"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -331,6 +331,9 @@ annotations:
   # no longer fails with "server does not support SSL"; with postgresql.tls.enabled it adds nothing.
   # False: 0.1.112 describes the default route `route.main` in values.schema.json, so the
   # OpenShift console's Helm form view renders the route section. No value or default moves.
+  # False: 0.1.113 renders the discovery exporter's Role per opted-in kind and grants get on
+  # Services; the Service and Secret checks that use them are application code, which appVersion
+  # 1.1.0 does not carry, so edbpg, pgo and mongo and the 32-hex ids need the next Studio image.
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
@@ -346,7 +349,8 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "Describe the default route route.main in values.schema.json, so the OpenShift console's Helm form view renders the route section instead of a uiSchema order error"
+    - "Kubernetes discovery offers EDB Postgres for Kubernetes, Crunchy PGO and MongoDB Community beside CloudNativePG through discovery.kubernetes.kinds (cnpg alone by default), and the exporter's Role lists exactly the kinds named and gets Services in each discovered namespace; these kinds need the next Studio image"
+    - "Discovered connections get ids of 32 hex characters with the next Studio image, so existing seed:k8s-cnpg-<12 hex> links stop resolving"
 dependencies:
   - name: postgresql
     version: "16.x.x"

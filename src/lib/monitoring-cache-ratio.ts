@@ -17,7 +17,7 @@
 /**
  * What an unavailable ratio is called on screen.
  *
- * "N/A" is the spelling `sqlite.ts`, `oracle.ts`, `mssql.ts` and `mongodb/index.ts`
+ * "N/A" is the spelling `sqlite.ts`, `oracle/index.ts`, `mssql.ts` and `mongodb/index.ts`
  * already use for a ratio they cannot read, so this is the repo's existing word
  * for it rather than a new one.
  */

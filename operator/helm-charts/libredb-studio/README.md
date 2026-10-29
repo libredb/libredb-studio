@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.112 \
+  --version 0.1.113 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -289,9 +289,9 @@ With `networkPolicy.enabled`, the review also opens egress on port 6443, where `
 Switching `accessReview.enabled` on for an install that already signs people in through OIDC: rotate `secrets.jwtSecret` in the same upgrade, because an earlier session keeps its role until it expires.
 
 `discovery.kubernetes.enabled` runs the exporter as a Deployment `<fullname>-discovery` of one replica, from Studio's image and with a ServiceAccount of its own.
-It gets `list` on `clusters.postgresql.cnpg.io` and `get` on Secrets in each namespace of `discovery.kubernetes.namespaces`, through a Role and RoleBinding `<namespace>.<fullname>-discovery` there, named by the release namespace so two releases may discover one namespace, so those namespaces must exist first, and `get` and `update` on the export Secret by name; no rule lists or watches Secrets.
+It gets `list` on each kind it discovers (`clusters.postgresql.cnpg.io` for `cnpg`, `clusters.postgresql.k8s.enterprisedb.io` for `edbpg`, `postgresclusters.postgres-operator.crunchydata.com` for `pgo`, `mongodbcommunity.mongodbcommunity.mongodb.com` for `mongo`) and `get` on Secrets and Services in each namespace of `discovery.kubernetes.namespaces`, through a Role and RoleBinding `<namespace>.<fullname>-discovery` there, named by the release namespace so two releases may discover one namespace, so those namespaces must exist first, and `get` and `update` on the export Secret by name; no rule lists or watches Secrets or Services.
 The chart creates that Secret, `<fullname>-discovery-export`, with no data, so an upgrade keeps what the exporter wrote, and Studio mounts it read-only for `SEED_KUBERNETES_DISCOVERY_PATH`.
-`discovery.kubernetes.intervalMs` (30000), `discovery.kubernetes.kinds` (every supported kind when empty, `cnpg` today), `discovery.kubernetes.maxAgeMs` and `discovery.kubernetes.resources` tune it, and `seedConnections.cacheTTL` is written as `SEED_CACHE_TTL_MS` with discovery on.
+`discovery.kubernetes.intervalMs` (30000), `discovery.kubernetes.kinds` (`cnpg` alone when empty; `edbpg`, `pgo` and `mongo` are opted in, each needing its CRD on the cluster), `discovery.kubernetes.maxAgeMs` and `discovery.kubernetes.resources` tune it, and `seedConnections.cacheTTL` is written as `SEED_CACHE_TTL_MS` with discovery on.
 Without the access review, the discovered databases are listed for admins only.
 The render fails with no namespace, with `governance.enabled`, and with an `extraEnv` entry named `SEED_KUBERNETES_DISCOVERY*`.
 
@@ -948,7 +948,7 @@ A typical OpenShift install, with the Route, the cluster's trusted CA bundle and
 
 ```bash
 helm install studio libredb/libredb-studio \
-  --version 0.1.112 \
+  --version 0.1.113 \
   --set openshiftRoute.enabled=true \
   --set openshift.trustedCABundle.enabled=true \
   --set openshift.topology.partOf=libredb \

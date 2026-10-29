@@ -23,6 +23,7 @@ import {
   MSSQL_CLIENT_OVERLAY,
   MYSQL_CLIENT_OVERLAY,
   OPENSEARCH_CLIENT_OVERLAY,
+  ORACLE_CLIENT_OVERLAY,
   POSTGRES_CLIENT_OVERLAY,
   SQLITE_CLIENT_OVERLAY,
 } from "../sql/engines/client";
@@ -38,6 +39,7 @@ const CLIENT_OVERLAYS: AgentEngineClientOverlays = Object.freeze({
   influxdb3: Object.freeze({ family: "sql", overlay: dialectOnly(INFLUXDB3_CLIENT_OVERLAY) }),
   elasticsearch: Object.freeze({ family: "sql", overlay: dialectOnly(ELASTICSEARCH_CLIENT_OVERLAY) }),
   opensearch: Object.freeze({ family: "sql", overlay: dialectOnly(OPENSEARCH_CLIENT_OVERLAY) }),
+  oracle: Object.freeze({ family: "sql", overlay: dialectOnly(ORACLE_CLIENT_OVERLAY) }),
   mongodb: Object.freeze({ family: "mongo", overlay: dialectOnly(MONGODB_CLIENT_OVERLAY) }),
   kubernetes: Object.freeze({ family: "kubectl", overlay: dialectOnly(KUBERNETES_CLIENT_OVERLAY) }),
 } satisfies AgentEngineClientOverlays);

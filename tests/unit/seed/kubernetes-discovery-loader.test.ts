@@ -38,6 +38,7 @@ const WAITING = "Waiting for the Kubernetes discovery exporter's export";
 const HINT =
   "No export yet: the exporter may not be running, or its export Secret may not be mounted into Studio's pod";
 const PASSWORDS = goldenDatabases().map((entry) => entry.secret.data?.password as string);
+const SHARED = "id shared with another discovered database, so both are left out";
 
 let dir = "";
 let file = "";
@@ -99,9 +100,9 @@ describe("kubernetes-discovery-loader", () => {
       write();
       const listed = await getKubernetesDiscoveredConnections(deps());
       expect(listed.map((entry) => [entry.connection.id, entry.secret])).toEqual([
-        ["k8s-cnpg-75c1a60b8980", { namespace: "team-a", name: "orders-app" }],
-        ["k8s-cnpg-d06590026498", { namespace: "team-b", name: "analytics-app" }],
-        ["k8s-cnpg-37c1c823437f", { namespace: "prod", name: "billing-owner" }],
+        ["k8s-cnpg-75c1a60b898072af828207cff435c7e5", { namespace: "team-a", name: "orders-app" }],
+        ["k8s-cnpg-d0659002649870172fb93e83e6bfda2d", { namespace: "team-b", name: "analytics-app" }],
+        ["k8s-cnpg-37c1c823437fce5734f68e0b5f65b3d3", { namespace: "prod", name: "billing-owner" }],
       ]);
       expect(listed[0].connection).toMatchObject({ roles: ["admin"], managed: true, ssl: { mode: "require" } });
       expect(await statusNow()).toEqual({
@@ -141,7 +142,7 @@ describe("kubernetes-discovery-loader", () => {
         { name: "team-a", error: null },
         { name: "team-b", error: { code: "forbidden", message: "the exporter may not list clusters" } },
       ]);
-      expect(await ids()).toEqual(["k8s-cnpg-75c1a60b8980"]);
+      expect(await ids()).toEqual(["k8s-cnpg-75c1a60b898072af828207cff435c7e5"]);
     });
 
     it("waits while the export file is missing, then hints at its placement after twice the maximum age", async () => {
@@ -245,25 +246,89 @@ describe("kubernetes-discovery-loader", () => {
     it("skips a database whose mapping fails, by <namespace>/<name> with the reason, and lists the others", async () => {
       const [orders, ...rest] = goldenDatabases();
       write({ databases: [{ ...orders, secret: { name: "orders-app", problem: "not_found" } }, ...rest] });
-      expect(await ids()).toEqual(["k8s-cnpg-d06590026498", "k8s-cnpg-37c1c823437f"]);
+      expect(await ids()).toEqual([
+        "k8s-cnpg-d0659002649870172fb93e83e6bfda2d",
+        "k8s-cnpg-37c1c823437fce5734f68e0b5f65b3d3",
+      ]);
       expect((await statusNow()).skipped).toEqual([
         { resource: "team-a/orders", reason: "the credential Secret orders-app does not exist" },
       ]);
     });
 
     it("skips a discovered id the seed file already uses", async () => {
-      taken = new Set(["k8s-cnpg-75c1a60b8980"]);
+      taken = new Set(["k8s-cnpg-75c1a60b898072af828207cff435c7e5"]);
       write();
-      expect(await ids()).toEqual(["k8s-cnpg-d06590026498", "k8s-cnpg-37c1c823437f"]);
+      expect(await ids()).toEqual([
+        "k8s-cnpg-d0659002649870172fb93e83e6bfda2d",
+        "k8s-cnpg-37c1c823437fce5734f68e0b5f65b3d3",
+      ]);
       expect((await statusNow()).skipped).toEqual([{ resource: "team-a/orders", reason: "id taken by the seed file" }]);
     });
 
-    it("keeps the first of two entries for the same database and skips the second", async () => {
+    // A MongoDB row's key names its user but not the database the user authenticates against, so two users of one
+    // name in two databases of one resource share an id, and neither may stand for the other.
+    it("refuses both MongoDB users of one name that authenticate against different databases", async () => {
+      const [appuser] = goldenDatabases(["mongo"]);
+      const other = structuredClone(appuser);
+      (other.resource.spec as { users: { db?: string }[] }).users[0].db = "catalog";
+      other.secret = { ...other.secret, name: "catalog-catalog-appuser" };
+      write({ namespaces: [{ name: "team-m", status: { ok: true } }], databases: [appuser, other] });
+      expect(await ids()).toEqual([]);
+      expect((await statusNow()).skipped).toEqual([
+        { resource: "team-m/catalog/appuser", reason: SHARED },
+        { resource: "team-m/catalog/appuser", reason: SHARED },
+      ]);
+    });
+
+    it("refuses both of two entries for the same database", async () => {
       const [orders] = goldenDatabases();
       write({ databases: [orders, orders] });
-      expect(await ids()).toEqual(["k8s-cnpg-75c1a60b8980"]);
+      expect(await ids()).toEqual([]);
       expect((await statusNow()).skipped).toEqual([
-        { resource: "team-a/orders", reason: "id taken by another discovered database" },
+        { resource: "team-a/orders", reason: SHARED },
+        { resource: "team-a/orders", reason: SHARED },
+      ]);
+    });
+
+    // List order is the namespaces' editors' to choose, so neither of two rows sharing an id may win.
+    it("two rows with one id are both refused, with the digest seam forcing it", async () => {
+      write();
+      const digest = (key: string) => (key === "prod/billing-db" ? "b" : "a").repeat(64);
+      const listed = await getKubernetesDiscoveredConnections(deps({ digest }));
+      expect(listed.map((entry) => entry.connection.id)).toEqual([`k8s-cnpg-${"b".repeat(32)}`]);
+      expect((await statusNow({ digest })).skipped).toEqual([
+        { resource: "team-a/orders", reason: SHARED },
+        { resource: "team-b/analytics", reason: SHARED },
+      ]);
+    });
+
+    it("a seed-file id still wins over discovered rows that share it", async () => {
+      write();
+      const digest = () => "c".repeat(64);
+      taken = new Set([`k8s-cnpg-${"c".repeat(32)}`]);
+      expect(await getKubernetesDiscoveredConnections(deps({ digest }))).toEqual([]);
+      expect((await statusNow({ digest })).skipped).toEqual([
+        { resource: "team-a/orders", reason: "id taken by the seed file" },
+        { resource: "team-b/analytics", reason: "id taken by the seed file" },
+        { resource: "prod/billing-db", reason: "id taken by the seed file" },
+      ]);
+    });
+
+    it("skipped resource is the id key, in the export's order", async () => {
+      const [orders, ...rest] = goldenDatabases();
+      const analyst = {
+        kind: "pgo" as const,
+        resource: { metadata: { namespace: "team-b", name: "analytics" }, spec: { users: [{ name: "analyst" }] } },
+        secret: { name: "analytics-pguser-analyst", problem: "not_found" as const },
+      };
+      write({ databases: [orders, analyst, orders, ...rest] });
+      expect((await statusNow()).skipped).toEqual([
+        { resource: "team-a/orders", reason: SHARED },
+        {
+          resource: "team-b/analytics/analyst",
+          reason: "the credential Secret analytics-pguser-analyst does not exist",
+        },
+        { resource: "team-a/orders", reason: SHARED },
       ]);
     });
 
@@ -274,7 +339,7 @@ describe("kubernetes-discovery-loader", () => {
         [
           'version: "1"',
           "connections:",
-          "  - id: k8s-cnpg-75c1a60b8980",
+          "  - id: k8s-cnpg-75c1a60b898072af828207cff435c7e5",
           "    name: File seed",
           "    type: postgres",
           "    host: db.internal",

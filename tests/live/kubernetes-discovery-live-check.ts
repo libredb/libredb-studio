@@ -9,7 +9,9 @@
  * show the export in a pod.
  *
  * With the kubeconfig in LIBREDB_LIVE_KUBECONFIG, which must be allowed to create namespaces, Roles and RoleBindings,
- * and the namespaces of existing CloudNativePG Clusters in LIBREDB_LIVE_NAMESPACES (default `team-a,team-b`), the
+ * the kinds to discover in LIBREDB_LIVE_KINDS (default `cnpg`; any of cnpg, edbpg, pgo, mongo, which get the chart's
+ * Role rules: list on each kind, get on Secrets and on Services), and the namespaces of existing resources of those
+ * kinds in LIBREDB_LIVE_NAMESPACES (default `team-a,team-b`), the
  * script creates a throwaway namespace libredb-kd-live-<random> with the exporter's ServiceAccount, the export
  * Secret (with a Helm-style label and annotation) and the Role that may get and update it, and a Role and RoleBinding
  * of the same name in each discovered namespace. It mints a short-lived token with the TokenRequest API, takes the
@@ -33,7 +35,7 @@ import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { mapKubernetesDatabase } from "../../src/lib/seed/kubernetes-discovery-contract";
+import { KUBERNETES_CONTRACT, mapKubernetesDatabase } from "../../src/lib/seed/kubernetes-discovery-contract";
 import { parseKubernetesDiscoveryExport } from "../../src/lib/seed/kubernetes-discovery-export";
 
 const kubeconfig = process.env.LIBREDB_LIVE_KUBECONFIG;
@@ -47,6 +49,11 @@ const NAMESPACE = NAME;
 const SERVICE_ACCOUNT = "discovery";
 const EXPORT_SECRET = "discovery-export";
 const DISCOVERED = (process.env.LIBREDB_LIVE_NAMESPACES ?? "team-a,team-b").split(",").map((item) => item.trim());
+/** The kinds to discover, as KUBERNETES_DISCOVERY_KINDS takes them: cnpg alone by default, as the exporter's default. */
+const KINDS = (process.env.LIBREDB_LIVE_KINDS ?? "cnpg")
+  .split(",")
+  .map((item) => item.trim())
+  .filter((item) => item !== "");
 const SAMPLES = Number(process.env.LIBREDB_LIVE_KUBELET_DELAY_SAMPLES ?? "0");
 const BUSYBOX = process.env.LIBREDB_LIVE_BUSYBOX_IMAGE ?? "docker.io/rancher/mirrored-library-busybox:1.37.0";
 const EXPORTER = path.join(import.meta.dir, "..", "..", "docker", "discover-kubernetes.mjs");
@@ -111,10 +118,16 @@ function setUp(): Record<string, string> {
   role(NAMESPACE, [
     { apiGroups: [""], resources: ["secrets"], resourceNames: [EXPORT_SECRET], verbs: ["get", "update"] },
   ]);
+  // The chart's rules: list on each discovered kind, get on Secrets and on Services, nothing else.
   for (const namespace of DISCOVERED) {
     role(namespace, [
-      { apiGroups: ["postgresql.cnpg.io"], resources: ["clusters"], verbs: ["list"] },
+      ...KUBERNETES_CONTRACT.filter((row) => KINDS.includes(row.slug)).map((row) => ({
+        apiGroups: [row.group],
+        resources: [row.plural],
+        verbs: ["list"],
+      })),
       { apiGroups: [""], resources: ["secrets"], verbs: ["get"] },
+      { apiGroups: [""], resources: ["services"], verbs: ["get"] },
     ]);
   }
   const token = kubectl(["create", "token", SERVICE_ACCOUNT, "-n", NAMESPACE, "--duration=600s"]).trim();
@@ -135,6 +148,7 @@ function setUp(): Record<string, string> {
     KUBERNETES_DISCOVERY_CA_PATH: path.join(dir, "ca.crt"),
     KUBERNETES_DISCOVERY_NAMESPACES: [...DISCOVERED, NAMESPACE].join(","),
     KUBERNETES_DISCOVERY_EXPORT_SECRET: `${NAMESPACE}/${EXPORT_SECRET}`,
+    KUBERNETES_DISCOVERY_KINDS: KINDS.join(","),
     KUBERNETES_DISCOVERY_ONCE: "1",
   };
 }
@@ -172,10 +186,10 @@ function checkExport(env: Record<string, string>): void {
     DISCOVERED.every((ns) => value.databases.some((db) => db.resource.metadata.namespace === ns)),
   );
   for (const database of value.databases) {
-    const label = `${database.resource.metadata.namespace}/${database.resource.metadata.name}`;
     const mapped = mapKubernetesDatabase(database);
+    const label = `${database.kind} ${mapped.key}`;
     check(
-      `${label}: CloudNativePG's own Secret passes the ownership rule and maps to a connection`,
+      `${label}: the operator's own Service and Secret pass every exporter check and map to a connection`,
       mapped.ok,
       mapped.ok ? "" : mapped.reason,
     );

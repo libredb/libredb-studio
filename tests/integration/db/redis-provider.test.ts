@@ -3036,7 +3036,7 @@ describe("RedisProvider", () => {
       one that asserted the opposite (#789, the external review of PR #820). The old arm read
       `spec.sourceLanguage ?? "lua"`. Counted across the fleet at that point: nine of the
       eleven providers that read source threw here and exactly two fell back, this one and
-      `oracle.ts`. A fallback in two of eleven is not a safety net, because the census in
+      `oracle/index.ts`. A fallback in two of eleven is not a safety net, because the census in
       `tests/isolated/object-source-declarations.test.ts` pins every declared language, so the
       only way to reach the arm is a declaration somebody deleted - and the literal then hides
       that deletion behind a Source tab that still highlights.

@@ -1942,7 +1942,7 @@ could arrive twice.
 { "error": "previousRunId must be a non-empty string when provided" }
 { "error": "This connection reaches every database on its server: name the database the run reads in catalog" }
 {
-  "error": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch and OpenSearch. On Oracle a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.",
+  "error": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch and Oracle. On Apache Spark a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.",
   "refused": "engine-unsupported"
 }
 
@@ -2329,7 +2329,7 @@ It goes through the shared route guard: `401` with no session, `403` for a non-a
 It answers `{ "discovery": <CapRover status> | null, "kubernetesDiscovery": <Kubernetes status> | null }`, and adds `"transport": { "plainHttp", "cookieSecureOff" }` while either source is on.
 The CapRover status is null while `SEED_DISCOVERY_PATH` is unset, the Kubernetes status while `SEED_KUBERNETES_DISCOVERY_PATH` is unset, and both are null in governance mode (`GOVERNANCE_SOURCE` set), whatever those variables say ([`docs/SEED_CONNECTIONS.md`](./SEED_CONNECTIONS.md#governance-mode)).
 The CapRover status is `{ "platform": "caprover", "state", "message", "generatedAt", "checkedAt", "error": { "code", "message" } | null, "connected": [{ "name", "type" }], "skipped": [{ "appName", "reason" }] }`.
-The Kubernetes status is `{ "state", "message", "generatedAt", "checkedAt", "error": { "code", "message" } | null, "namespaces": [{ "name", "error": { "code", "message" } | null }], "connected": [{ "name", "type" }], "skipped": [{ "resource", "reason" }] }`, where `resource` is `<namespace>/<name>` and `namespaces` holds the namespaces of the export it serves.
+The Kubernetes status is `{ "state", "message", "generatedAt", "checkedAt", "error": { "code", "message" } | null, "namespaces": [{ "name", "error": { "code", "message" } | null }], "connected": [{ "name", "type" }], "skipped": [{ "resource", "reason" }] }`, where `resource` is the row's id key, `<namespace>/<name>`, or `<namespace>/<name>/<user>` for a Crunchy PGO or MongoDB user, and `namespaces` holds the namespaces of the export it serves.
 In both, `state` is `ok`, `waiting`, `stale` or `error`.
 It names apps, namespaces, databases and engine types only, never a host name, an environment value or a Secret value.
 `plainHttp` is true when the request arrived over http on a host that is not loopback; `X-Forwarded-Proto` and `X-Forwarded-Host` are read unless `TRUST_PROXY_HEADERS` is `false`, `off` or `0`, in any letter case.

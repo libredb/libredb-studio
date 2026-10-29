@@ -1,0 +1,47 @@
+
+SEQUENCE_OWN SEQUENCE_NAME		      LAST_NUMBER
+------------ -------------------------------- -----------
+APP_OWNER    SEQ1				       41
+SYS	     DM$EXPIMP_ID_SEQ				1
+SYS	     PLSQL_CODE_COVERAGE_RUNNUMBER		1
+SYS	     SCHEDULER$_JOBSUFFIX_S			1
+XDB	     XDB$NAMESUFF_SEQ			       21
+
+5 rows selected.
+
+
+Transaction set.
+
+
+   NEXTVAL
+----------
+	 1
+
+1 row selected.
+
+
+   NEXTVAL
+----------
+	 2
+
+1 row selected.
+
+DECLARE h VARCHAR2(128); BEGIN DBMS_LOCK.ALLOCATE_UNIQUE('libredb_probe', h); END;
+                               *
+ERROR at line 1:
+ORA-06550: line 1, column 32:
+PLS-00201: identifier 'DBMS_LOCK' must be declared
+ORA-06550: line 1, column 32:
+PL/SQL: Statement ignored
+Help: https://docs.oracle.com/error-help/db/ora-06550/
+
+
+DECLARE c INTEGER; n INTEGER; BEGIN c := DBMS_SQL.OPEN_CURSOR; DBMS_SQL.PARSE(c, 'INSERT INTO APP_OWNER.SCRATCH VALUES (8)', DBMS_SQL.NATIVE); n := DBMS_SQL.EXECUTE(c); END;
+*
+ERROR at line 1:
+ORA-28194: Can perform read operations only
+ORA-06512: at "SYS.DBMS_SQL", line 1251
+ORA-06512: at line 1
+Help: https://docs.oracle.com/error-help/db/ora-28194/
+
+
