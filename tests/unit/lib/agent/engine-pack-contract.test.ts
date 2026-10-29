@@ -68,6 +68,8 @@ const UNSERVED_OFFERS: Readonly<Partial<Record<DatabaseType, readonly AgentToolN
   oracle: ["inspect_plan", "profile_table"],
   // And on Db2, whose EXPLAIN writes into the explain tables, which the agent user may not write.
   db2: ["inspect_plan", "profile_table"],
+  // And on Cassandra, since CQL has no EXPLAIN.
+  cassandra: ["inspect_plan", "profile_table"],
 };
 
 /**

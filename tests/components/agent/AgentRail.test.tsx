@@ -4114,7 +4114,7 @@ describe("AgentRail", () => {
     describe("the hand-over follows the connection's statement language", () => {
       test("an engine with no statement language reaches no consent step", async () => {
         const fetchMock = mockAgentFetch([OPENED_LINE, STARTED_LINE]);
-        const view = analyze({ connectionType: "cassandra" });
+        const view = analyze({ connectionType: "trino" });
         fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "sales by region" } });
         await act(async () => {
           fireEvent.click(view.getByTestId("agent-start"));
@@ -5929,11 +5929,11 @@ describe("AgentRail", () => {
       });
 
       test("agent mode on an engine it cannot execute on says so, and plan mode is offered", () => {
-        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="cassandra" />);
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="trino" />);
         fireEvent.click(view.getByTestId("agent-mode-agent"));
 
         expect(view.getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("blocked");
-        expect(view.getByTestId("agent-safety-headline").textContent).toContain("Cassandra");
+        expect(view.getByTestId("agent-safety-headline").textContent).toContain("Trino");
         expect(view.getByTestId("agent-safety-qualifier").textContent).toContain("plan mode drafts here");
       });
 
@@ -6191,11 +6191,11 @@ describe("AgentRail", () => {
 
     describe("the engine notice", () => {
       test("agent mode on an engine with no read-only statement path is told, before Start", () => {
-        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="cassandra" />);
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="trino" />);
         fireEvent.click(view.getByTestId("agent-mode-agent"));
 
         const notice = view.getByTestId("agent-engine-unsupported-notice").textContent ?? "";
-        expect(notice).toContain("Cassandra");
+        expect(notice).toContain("Trino");
         expect(notice).toContain("no read-only statement path");
         // The two things that ARE open here, because a dead end is not what this is:
         // the operations workflow sends no statement at all, and plan mode drafts.
@@ -6204,7 +6204,7 @@ describe("AgentRail", () => {
       });
 
       test("it does not gate Start, because the refusal is the server's and one workflow is unaffected", () => {
-        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="cassandra" />);
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="trino" />);
         fireEvent.click(view.getByTestId("agent-mode-agent"));
         fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "what is blocked right now" } });
 
@@ -6215,7 +6215,7 @@ describe("AgentRail", () => {
       test("its way out selects plan mode and starts nothing", () => {
         const fetchMock = mock(async () => jsonResponse({}, 202));
         globalThis.fetch = fetchMock as unknown as typeof fetch;
-        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="cassandra" />);
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="trino" />);
         fireEvent.click(view.getByTestId("agent-mode-agent"));
 
         fireEvent.click(view.getByTestId("agent-engine-unsupported-plan"));
@@ -6250,7 +6250,7 @@ describe("AgentRail", () => {
       */
       test("its facts are the selection's, even while another run is describing the strip", async () => {
         mockAgentFetch([OPENED_LINE, STARTED_LINE]);
-        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="cassandra" />);
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="trino" />);
         fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "what is slow" } });
         await act(async () => {
           fireEvent.click(view.getByTestId("agent-start"));
@@ -6261,13 +6261,13 @@ describe("AgentRail", () => {
 
         const notice = view.getByTestId("agent-engine-unsupported-notice").textContent ?? "";
         expect(notice).toContain("no read-only statement path");
-        expect(view.getByTestId("agent-engine-unsupported-reason").textContent).toContain("On Apache Cassandra");
+        expect(view.getByTestId("agent-engine-unsupported-reason").textContent).toContain("On Trino");
         // The open plan run is still what the strip describes.
         expect(view.getByTestId("agent-safety-strip").getAttribute("data-tone")).toBe("safe");
       });
 
       test("plan mode is warned about nothing, on any engine", () => {
-        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="cassandra" />);
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="trino" />);
 
         expect(view.queryByTestId("agent-engine-unsupported-notice")).toBeNull();
       });

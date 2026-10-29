@@ -61,6 +61,7 @@ import { removeOwnerProviders } from "@/lib/db/owner-removal";
 import { logger } from "@/lib/logger";
 import { encryptSecret } from "@/lib/storage/encryption";
 import type { SSHTunnelConfig } from "@/lib/types";
+import { CassandraTransportError } from "@/lib/db/providers/sql/cassandra/transport";
 
 // The SQLite agent-profile tests below construct the read-only profile for its
 // query_only boundary, not to exercise the child transport. The worker's node:sqlite
@@ -697,6 +698,57 @@ describe("createDatabaseProvider", () => {
       "Failed to connect to Db2: no server here",
     );
     expect(opened).toEqual(["test"]);
+  });
+
+  test("the execution context rides along to cassandra: queryReadOnly answers only under the agent profile", async () => {
+    const conn = makeConnection("cassandra", {
+      port: 9042,
+      database: "probe",
+      localDataCenter: "datacenter1",
+      user: "agent_ro",
+      password: "not-a-real-password",
+    });
+    const profiled = await createDatabaseProvider(conn, {}, { readOnly: true, sendsStatements: true });
+    const editor = await createDatabaseProvider(conn);
+    if (profiled.queryReadOnly === undefined || editor.queryReadOnly === undefined) throw new Error("no queryReadOnly");
+    // A session of its own per agent call, answering the role check as a SELECT-only role and the statement with one
+    // row, so only the context tells the two apart.
+    const sent: string[] = [];
+    const answers: Record<string, { rows: Record<string, unknown>[]; fieldNames: string[] | null }> = {
+      "SELECT release_version FROM system.local": {
+        rows: [{ release_version: "5.0.9" }],
+        fieldNames: ["release_version"],
+      },
+      "LIST ROLES OF 'agent_ro'": { rows: [{ role: "agent_ro", super: false }], fieldNames: ["role", "super"] },
+      "LIST ALL PERMISSIONS OF 'agent_ro'": {
+        rows: [{ role: "agent_ro", resource: "<keyspace probe>", permission: "SELECT" }],
+        fieldNames: ["role", "resource", "permission"],
+      },
+      "SELECT 1": { rows: [{ x: 1 }], fieldNames: ["x"] },
+    };
+    const openAgentTransport = () => ({
+      kind: "native" as const,
+      connect: async () => {},
+      close: async () => {},
+      execute: async (cql: string) => {
+        sent.push(cql);
+        if (cql === "SELECT key FROM system.versions") {
+          throw new CassandraTransportError("table versions does not exist", "invalid", 8704);
+        }
+        if (cql.startsWith("DROP TABLE IF EXISTS")) throw new CassandraTransportError("no DROP", "permission", 8448);
+        const answer = answers[cql] ?? { rows: [], fieldNames: null };
+        return { ...answer, columnTypes: null, pageState: null };
+      },
+    });
+    for (const provider of [profiled, editor]) {
+      Object.assign(provider, { openAgentTransport, ensureConnected: () => undefined, transport: {} });
+    }
+    await expect(editor.queryReadOnly("SELECT 1", AGENT_BUDGET)).rejects.toThrow(
+      "Read-only execution requires a provider opened under the agent read-only profile",
+    );
+    expect(sent).toEqual([]);
+    await expect(profiled.queryReadOnly("SELECT 1", AGENT_BUDGET)).resolves.toMatchObject({ rows: [{ x: 1 }] });
+    expect(sent.at(-1)).toBe("SELECT 1");
   });
 
   test("the execution context rides along to clickhouse: queryReadOnly answers only under the agent profile", async () => {

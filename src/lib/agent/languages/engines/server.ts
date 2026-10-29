@@ -25,6 +25,7 @@ import type {
   FacetOverrides,
 } from "../pack";
 import { languageServerPack } from "../server";
+import { CASSANDRA_SERVER_OVERLAY } from "../sql/engines/cassandra";
 import { CLICKHOUSE_SERVER_OVERLAY } from "../sql/engines/clickhouse";
 import { DB2_SERVER_OVERLAY } from "../sql/engines/db2";
 import { DUCKDB_SERVER_OVERLAY } from "../sql/engines/duckdb";
@@ -52,6 +53,7 @@ const SERVER_OVERLAYS: AgentEngineServerOverlays = Object.freeze({
   opensearch: Object.freeze({ ...OPENSEARCH_SERVER_OVERLAY }),
   oracle: Object.freeze({ ...ORACLE_SERVER_OVERLAY }),
   db2: Object.freeze({ ...DB2_SERVER_OVERLAY }),
+  cassandra: Object.freeze({ ...CASSANDRA_SERVER_OVERLAY }),
   mongodb: Object.freeze({ ...MONGODB_SERVER_OVERLAY }),
   kubernetes: Object.freeze({ ...KUBERNETES_SERVER_OVERLAY }),
 } satisfies AgentEngineServerOverlays);

@@ -1805,3 +1805,52 @@ describe("composeCatalogRead — Db2", () => {
     expect(() => composeEstimatingExplain("db2", "SELECT 1")).toThrow(AgentComposedSqlError);
   });
 });
+
+/**
+ * Cassandra's catalog is `system_schema`, which every role may read and no user keyspace can shadow, since each table
+ * is named with its keyspace. CQL has no `NOT IN` to leave the system keyspaces out of a read of every keyspace, so the
+ * column read names one keyspace (measured on 5.0.9, `tests/fixtures/cassandra/5.0.9/agent-boundary/` capture 04), and
+ * the kinds CQL has nothing for are refused.
+ */
+describe("composeCatalogRead — Cassandra", () => {
+  test("the column kind is exactly the statement below, for a keyspace and for one of its tables", () => {
+    expect(composeCatalogRead("cassandra", { kind: "columns", schema: "probe" })).toBe(
+      "SELECT keyspace_name AS table_schema, table_name, column_name, type AS data_type, kind AS column_kind, " +
+        "position AS ordinal_position FROM system_schema.columns WHERE keyspace_name = 'probe'",
+    );
+    expect(composeCatalogRead("cassandra", { kind: "columns", schema: "probe", table: "customers" })).toBe(
+      "SELECT keyspace_name AS table_schema, table_name, column_name, type AS data_type, kind AS column_kind, " +
+        "position AS ordinal_position FROM system_schema.columns WHERE keyspace_name = 'probe' AND table_name = 'customers'",
+    );
+    expect(guardAccepts(composeCatalogRead("cassandra", { kind: "columns", schema: "probe" }))).toBe(true);
+  });
+
+  test("a name's single quote is doubled, the escape CQL reads inside a literal", () => {
+    expect(composeCatalogRead("cassandra", { kind: "columns", schema: "o'k" })).toContain("keyspace_name = 'o''k'");
+  });
+
+  test("a read of every keyspace is refused, naming the keyspace as what to give", () => {
+    expect(() => composeCatalogRead("cassandra", { kind: "columns" })).toThrow(
+      "Cassandra's catalog is read one keyspace at a time, so name the keyspace as the schema",
+    );
+    expect(() => composeCatalogRead("cassandra", { kind: "columns", table: "customers" })).toThrow(
+      AgentComposedSqlError,
+    );
+  });
+
+  test("the relation, index and statistics kinds are refused, each naming what CQL lacks", () => {
+    expect(() => composeCatalogRead("cassandra", { kind: "relations", schema: "probe" })).toThrow(
+      "Cassandra keeps no foreign key, so there is no such inventory to read",
+    );
+    expect(() => composeCatalogRead("cassandra", { kind: "indexes", schema: "probe" })).toThrow(
+      "Cassandra keeps no index a key read uses apart from the primary key, which the column inventory's column_kind names, so there is no such inventory to read",
+    );
+    expect(() => composeCatalogRead("cassandra", { kind: "statistics", schema: "probe" })).toThrow(
+      "Cassandra keeps no row count it can vouch for, so there is no such inventory to read",
+    );
+  });
+
+  test("it composes no estimating plan, since CQL has no EXPLAIN", () => {
+    expect(() => composeEstimatingExplain("cassandra", "SELECT 1")).toThrow(AgentComposedSqlError);
+  });
+});

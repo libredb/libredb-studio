@@ -14,6 +14,7 @@ import { MONGO_PACK } from "@/lib/agent/languages/mongo/index";
 import { defineOverlay, dialectOnly, ENGINE_OVERRIDABLE_SERVER_MEMBERS } from "@/lib/agent/languages/overlay";
 import type { AgentEngineClientDialect, AgentEngineServerDialect } from "@/lib/agent/languages/pack";
 import { languageServerPack } from "@/lib/agent/languages/server";
+import * as CASSANDRA from "@/lib/agent/languages/sql/engines/cassandra";
 import * as CLICKHOUSE from "@/lib/agent/languages/sql/engines/clickhouse";
 import * as ELASTICSEARCH from "@/lib/agent/languages/sql/engines/elasticsearch";
 import * as INFLUXDB3 from "@/lib/agent/languages/sql/engines/influxdb3";
@@ -72,6 +73,7 @@ const ENGINE_MODULES: Readonly<Record<string, Readonly<Record<string, unknown>>>
   "sql/engines/opensearch": OPENSEARCH,
   "sql/engines/oracle": ORACLE,
   "sql/engines/db2": DB2,
+  "sql/engines/cassandra": CASSANDRA,
   "sql/engines/client": SQL_CLIENT_OVERLAYS,
   "mongo/engines/mongodb": MONGODB,
   "mongo/engines/client": MONGO_CLIENT_OVERLAYS,
@@ -102,6 +104,7 @@ describe("the engine registry", () => {
       "db2",
       "mssql",
       "clickhouse",
+      "cassandra",
       "elasticsearch",
       "opensearch",
       "mongodb",
@@ -118,6 +121,7 @@ describe("the engine registry", () => {
       "db2",
       "mssql",
       "clickhouse",
+      "cassandra",
       "elasticsearch",
       "opensearch",
       "influxdb3",
@@ -151,7 +155,7 @@ describe("the engine registry", () => {
 
   test("every engine module's server overlay holds a dialect and overridable members, its client one a dialect alone (ruling 2)", () => {
     const exported = exportedOverlays();
-    expect(exported).toHaveLength(28);
+    expect(exported).toHaveLength(30);
     // The one other export is the PostgreSQL retry's rewrite, which its tests call directly.
     expect(
       Object.entries(ENGINE_MODULES)
@@ -165,13 +169,27 @@ describe("the engine registry", () => {
     }
   });
 
-  test("no shipped overlay overrides a Shared member (provisional: the first engine that does deletes this test)", () => {
-    for (const [, overlay] of exportedOverlays()) {
-      expect(Object.keys(overlay).filter((key) => key !== "dialect")).toEqual([]);
+  test("Cassandra's overlay alone overrides a Shared member, its grounding, which keeps the SQL grounding and adds CQL's limits", () => {
+    for (const [name, overlay] of exportedOverlays()) {
+      const shared = Object.keys(overlay).filter((key) => key !== "dialect");
+      expect(shared).toEqual(name === "sql/engines/cassandra#CASSANDRA_SERVER_OVERLAY" ? ["grounding"] : []);
     }
     for (const type of ENGINES) {
-      expect(Object.keys(engineServerOverlay(type)).filter((key) => key !== "dialect")).toEqual([]);
+      const shared = Object.keys(engineServerOverlay(type)).filter((key) => key !== "dialect");
+      expect(shared).toEqual(type === "cassandra" ? ["grounding"] : []);
     }
+    const base = languageServerPack("sql").grounding;
+    const grounding = agentEnginePack("cassandra").server.grounding;
+    expect(grounding).toEqual({
+      ...base,
+      relations: false,
+      planningRules: [
+        "CQL reads one table per statement: there is no JOIN, no subquery, no UNION and no OFFSET, and GROUP BY and ORDER BY take only primary key columns in key order.",
+        "Restrict the partition key with = or IN, then clustering columns in key order; a predicate on any other column needs ALLOW FILTERING, which scans the table, and ALLOW FILTERING goes last, after LIMIT.",
+        "Name each table with its keyspace, as keyspace.table.",
+      ],
+    });
+    expect(Object.isFrozen(grounding)).toBe(true);
   });
 });
 
@@ -186,10 +204,13 @@ describe("the engine packs", () => {
   test.each(SQL_ENGINES)("%s is the SQL pack member for member, with its own dialect on the server facet", (type) => {
     const pack = agentEnginePack(type);
     const server = languageServerPack("sql");
+    const overridden = Object.keys(engineServerOverlay(type)).filter((key) => key !== "dialect");
     expect(pack.id).toBe("sql");
     expect(pack.execution).toBe(SQL_PACK.execution);
     expect(Object.keys(without(pack.server, "dialect"))).toEqual(Object.keys(server));
     for (const [member, value] of Object.entries(without(pack.server, "dialect"))) {
+      // A member the engine's overlay overrides is its own, held by the test above; every other is the family's.
+      if (overridden.includes(member)) continue;
       expect(value).toBe((server as unknown as Record<string, unknown>)[member]);
     }
     const client = languageClientPack(AGENT_STATEMENT_LANGUAGE[type] as "sql");
@@ -256,6 +277,8 @@ describe("engineServerDialect", () => {
       oracle: "unsupported",
       // Its EXPLAIN writes into the explain tables, which the agent user may not write.
       db2: "unsupported",
+      // CQL has no EXPLAIN.
+      cassandra: "unsupported",
       libsql: { kind: "prefix", prefix: "EXPLAIN QUERY PLAN" },
       influxdb3: { kind: "prefix", prefix: "EXPLAIN" },
     });
@@ -421,6 +444,7 @@ describe("the client dialect", () => {
       opensearch: { catalogRead: "supported", planEstimate: "unsupported", catalogCapture: "unsupported" },
       oracle: { catalogRead: "supported", planEstimate: "unsupported", catalogCapture: "unsupported" },
       db2: { catalogRead: "supported", planEstimate: "unsupported", catalogCapture: "unsupported" },
+      cassandra: { catalogRead: "supported", planEstimate: "unsupported", catalogCapture: "unsupported" },
       libsql: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
       influxdb3: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
     });

@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B148 · 78
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B149 · 79
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -8380,6 +8380,7 @@ Its verdict also needs a table profile, which only `profile_table` records, and 
 Measured 2026-10-29 on OpenSearch 3.8.0 in a browser pass: the run ends with "No table was profiled".
 Elasticsearch has no profile composition either and opens assessment by the same requirement, so it likely ends the same way; that was reasoned from the code, not measured.
 Oracle and Db2 are in the same position: each overlay supplies the catalog read and declares `profileComposition` `"unsupported"`, so assessment opens there and its verdict can never be met; also reasoned from the code, not measured.
+Apache Cassandra is in the same position, for the same reason (B149); also reasoned from the code, not measured.
 `docs/AGENT.md` records the choice to leave that need unheld (B111, B140, B143, B144); this entry is the claim that it should change, since a workflow offered on an engine where it cannot pass reads as a broken one.
 
 **Done when:** the database assessment workflow's requirement admits an engine only where its pass check can be met, derived from a dialect capability such as a supplied profile composition rather than a type-id branch, so it is not offered on OpenSearch, Elasticsearch, Oracle or Db2 until they gain one, with a test that holds the requirement to the pass check; cited in `docs/AGENT.md`.
@@ -8407,6 +8408,18 @@ Kept so that the engine joined on the members measured on it, and nothing compos
 Found 2026-10-29 with agent execution on Db2.
 
 **Done when:** the Db2 overlay gains an estimating plan measured as the least-privilege agent user and an explain strategy with an `agentReading` verified against its plans, so query optimization opens there, and a profile composition measured on it, or a recorded decision that it keeps none, with tests for each; cited in `docs/AGENT.md`.
+
+### B149. Apache Cassandra composes no estimating plan, profile, statistics reading or grounding capture
+
+Apache Cassandra's engine overlay (`src/lib/agent/languages/sql/engines/cassandra.ts`) supplies the catalog read alone: the column kind is a SELECT on `system_schema.columns` for one keyspace, and the relation, index and statistics kinds are refused, since CQL has no foreign key, its index catalog names no column a key read could use, and the server keeps no row count it can vouch for.
+The other four dialect members are `"unsupported"`: the estimating plan, the profile composition, the statistics reading and the grounding capture.
+CQL has no `EXPLAIN` (`supportsExplain: false`), and a table profile would be an aggregate that scans a table, never measured; CQL has no `NOT IN`, so the catalog read names one keyspace and a read of every keyspace is refused.
+So investigation, database assessment and data analysis open on Cassandra, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`, and database assessment, which needs a table profile, opens but cannot pass (B146); the `sql-composers` requirement holds query optimization out; plan mode drafts there and grounds under the operations profile.
+Kept so that the engine joined on the members measured on it, and nothing composed from another engine's rule.
+
+Found 2026-10-30 with agent execution on Apache Cassandra.
+
+**Done when:** the Cassandra overlay gains a profile composition measured on 5.0, or a recorded decision that it keeps none, and a catalog read of every keyspace the connection may read, with tests for each; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

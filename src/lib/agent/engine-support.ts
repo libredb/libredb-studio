@@ -46,8 +46,11 @@ import type { DatabaseType } from "@/lib/types";
  * directory, system privilege or database link that runs outside it, with every statement in a read-only transaction
  * the driver rolls back. Db2's is the user's too: one holding CONNECT and SELECT, proven before every statement to hold
  * nothing else that writes and to reach no code, view, sequence or control that runs with another's authority, with
- * every statement a fullselect in a unit of work rolled back on a connection of its own. Each provider's own
- * `queryReadOnly` argues its own case.
+ * every statement a fullselect in a unit of work rolled back on a connection of its own. Cassandra's is the role's: one
+ * holding only SELECT on the connection's keyspace, which the server refuses every write, DDL and GRANT statement as
+ * Unauthorized, proven before every statement to be no superuser, to hold no other permission, and to reach no column
+ * masked with a user-defined function, on an Apache Cassandra 5.0 server whose own refusal of a DROP proves it
+ * enforces grants, each statement on a session of its own. Each provider's own `queryReadOnly` argues its own case.
  * `tests/unit/lib/agent/engine-support.test.ts` is what keeps the two equal - it walks EVERY
  * id in the `DatabaseType` union, reads `queryReadOnly` off the real provider class the
  * factory would construct, and fails if this array and the drivers diverge in either direction.
@@ -77,6 +80,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "opensearch",
   "oracle",
   "db2",
+  "cassandra",
 ];
 
 /**

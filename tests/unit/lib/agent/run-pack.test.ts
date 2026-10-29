@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { AGENT_STATEMENT_LANGUAGE, AGENT_WORKFLOW_VARIANTS } from "@/lib/agent/agent-manifest";
 import { DEFAULT_STATEMENT_LANGUAGE, statementFamilyOf } from "@/lib/agent/languages/client";
 import { engineFamily } from "@/lib/agent/languages/engines/client";
-import { engineServerDialect, runServerPack } from "@/lib/agent/languages/engines/server";
+import { engineServerDialect, engineServerOverlay, runServerPack } from "@/lib/agent/languages/engines/server";
 import { MONGO_SERVER_PACK } from "@/lib/agent/languages/mongo/server";
 import { CURATED_CALL_LANGUAGE, languageServerPack } from "@/lib/agent/languages/server";
 import { SQL_SERVER_PACK } from "@/lib/agent/languages/sql/server";
@@ -50,13 +50,19 @@ describe("engineFamily", () => {
 });
 
 describe("runServerPack", () => {
-  test("every member but the dialect is the family pack's own, for every language and every engine", () => {
+  test("every member but the dialect and the overlay's own overrides is the family pack's, for every language and engine", () => {
     for (const language of LANGUAGES) {
       const family = languageServerPack(statementFamilyOf(language));
       for (const type of ALL_TYPES) {
         const run = runServerPack(language, type);
+        // An engine of the run's family keeps the members its overlay overrides; held in engine-overlays.test.ts.
+        const overridden =
+          engineFamily(type) === statementFamilyOf(language)
+            ? Object.keys(engineServerOverlay(type)).filter((key) => key !== "dialect")
+            : [];
         for (const member of Object.keys(family) as (keyof typeof family)[]) {
-          expect(run[member]).toBe(family[member]);
+          if (overridden.includes(member)) expect(run[member]).not.toBe(family[member]);
+          else expect(run[member]).toBe(family[member]);
         }
         expect(Object.keys(run).filter((key) => !Object.hasOwn(family, key))).toEqual(
           "dialect" in run ? ["dialect"] : [],
