@@ -1079,6 +1079,152 @@ The update-target reader takes `MINUS` as a set operator here alone, since it is
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
 Redaction is `sql` with `"` as its name quote: a redacted statement keeps its words and every name in that quote, and every literal becomes `?`.
 
+### 5.7 Agent read-only execution profile
+
+Agent mode executes statements on Oracle through `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/sql/oracle/index.ts), on Oracle Database 23ai and 26ai.
+The boundary is credential-enforced: the agent signs in as a local user set `ALTER USER ... READ ONLY`, which the server refuses every write with `ORA-28194: Can perform read operations only`.
+What READ ONLY does not stop is what the user can reach through others, so before its first statement the user is checked, as itself, to reach none of it ([`agent-read.ts`](../../src/lib/db/providers/sql/oracle/agent-read.ts)).
+Studio's agent admission in front of the provider is defence in depth on top of those two.
+
+The factory passes the execution context as the constructor's third argument.
+`queryReadOnly` answers only when that context sets both `readOnly` and `sendsStatements`, the agent and hand-over profiles; it refuses on any other handle, an ordinary editor handle and the operations profile's included, before it sends anything.
+The operations profile and plan mode send no statement of the model's, so they open unchecked, and plan mode keeps grounding on a privileged connection.
+
+#### What READ ONLY refuses, and what it does not
+
+Measured on Oracle AI Database 26ai Free Release 23.26.3.0.0 (`gvenzl/oracle-free:slim`, digest pinned in `run.sh`), with the scripts and their answers in [`tests/fixtures/oracle/23.26.3-free/agent-boundary/`](../../tests/fixtures/oracle/23.26.3-free/agent-boundary/):
+
+- A READ ONLY user is refused `INSERT`, `UPDATE`, `DELETE` and `MERGE` on a table it holds those grants on, `CREATE TABLE`, a global and a private temporary table, `SELECT ... FOR UPDATE`, `LOCK TABLE`, a write through `DBMS_SQL`, a write in a PL/SQL block after a read, a write over a public database link, and a granted definer's-rights function that writes in an autonomous transaction, each with `ORA-28194` (captures 03 and 04).
+- `ALTER SESSION SET READ_ONLY = FALSE` answers "Session altered" and every write after it is still refused the same way (capture 03); inside the read-only transaction each agent call opens, the same statement answers `ORA-65023` instead.
+- The SQL statements `COMMIT` and `ROLLBACK` are refused with `ORA-28194` too; the node-oracledb Thin calls `connection.commit()` and `connection.rollback()` are not, and end the read-only transaction (capture 10).
+- A READ ONLY user that holds `ALTER SYSTEM` still runs `ALTER SYSTEM SET`, inside `SET TRANSACTION READ ONLY` as well (capture 05).
+- `SELECT <sequence>.NEXTVAL` advances the sequence, inside `SET TRANSACTION READ ONLY` too (capture 06).
+- A granted definer's-rights function runs with its owner's privileges: a user holding only `CREATE SESSION` advanced a sequence `ALL_SEQUENCES` does not list for it, and ran `ALTER SYSTEM SET OPEN_CURSORS`, through two granted functions (captures 08 and 09).
+- The fresh database grants `PUBLIC` `EXECUTE` on `DBMS_LDAP`, `DBMS_SCHEDULER`, `DBMS_XSLPROCESSOR`, `HTTPURITYPE`, `UTL_FILE`, `UTL_HTTP`, `UTL_INADDR`, `UTL_SMTP` and `UTL_TCP` among the packages that reach the network or the server's files, and `SELECT` on four sequences Oracle maintains (captures 02 and 07).
+
+#### The check at first use
+
+The first `queryReadOnly` call on a handle runs the check on a session of its own, as the agent user, and every later call shares its verdict; a check that failed to read is dropped, so the next call checks again, and nothing is admitted on it.
+Each finding is collected, and one `PROFILE_PRIVILEGES_TOO_BROAD` refusal names them all as the statements that lift them, so one round of revokes is enough.
+
+1. `USER_USERS.READ_ONLY` must read `YES`. A server without the column (`ORA-00904`) is older than 23ai and is refused `PROFILE_UNSUPPORTED_TARGET`.
+2. Every role granted to the user, directly or through `PUBLIC` (`USER_ROLE_PRIVS`), must be a default role. `SET ROLE` is permitted under READ ONLY and a pooled session keeps the role it enabled, while `ALL_TAB_PRIVS` lists only the grants of enabled roles, so a role whose grants the check cannot see is refused.
+3. The user, its enabled roles and `PUBLIC` must hold `EXECUTE` on no unit (PL/SQL, type, Java class, library) owned by a schema `ALL_USERS.ORACLE_MAINTAINED` does not mark `Y`; an owner it does not list counts as not maintained.
+4. They may read no view of such a schema whose own definition calls code rather than a table, view or synonym (`ALL_DEPENDENCIES`): a plain `SELECT` on such a view runs that code with its owner's rights, and advanced a sequence for a READ ONLY user (measured).
+5. They must hold no privilege on a sequence such a schema owns, and the user must own no sequence.
+6. They must hold `EXECUTE` on none of `UTL_HTTP`, `UTL_TCP`, `UTL_SMTP`, `UTL_FILE`, `UTL_INADDR`, `HTTPURITYPE`, `DBMS_LDAP`, `DBMS_SCHEDULER`, `DBMS_PIPE` and `DBMS_XSLPROCESSOR`, in any schema, and no privilege on a directory, which `BFILENAME` reads server files through.
+7. `SESSION_PRIVS` must hold no system privilege but `CREATE SESSION`; the grantee is read from `USER_SYS_PRIVS` and `ROLE_SYS_PRIVS` where they list it.
+8. `ALL_DB_LINKS` must list no link, `PUBLIC` or the user's own, since a link reaches another database under its stored credential.
+
+The check runs once per handle: a grant added after the first call is seen on the next handle, which the agent pool opens after 30 idle minutes or a restart.
+
+#### Each statement
+
+[`index.ts`](../../src/lib/db/providers/sql/oracle/index.ts) runs each call on a session of its own from the profile's pool:
+
+- the driver's `callTimeout` is set to the statement budget, so a round trip past it ends with `NJS-123`, refused in the shared time sentence, and the session is dropped; that ends the wait at the deadline, and this record does not measure when the server stops the statement;
+- `SET TRANSACTION READ ONLY` opens the transaction, and the statement follows in one execute, with `autoCommit: false` on both, because the constructor sets the process-wide default to `true` for the editor;
+- the execute fetches at most one row past the row budget (`maxRows`), and a result past it is refused rather than cut;
+- `CLOB` and `NCLOB` are fetched as strings and `BLOB` as buffers by the call's own `fetchTypeHandler`, never the process-wide settings, so no LOB locator outlives the call, and every value is counted against the byte budget;
+- a column of type `BFILE` is refused before any value is read, since its locator reads a server file, and so are an object and a cursor column, whose values the byte budget cannot measure;
+- the session is then rolled back with the driver's `rollback()`, its deadline cleared, and returned to the pool; a failure of the statement or of the rollback drops the session instead.
+
+Every refusal is a sentence of [`read-only-budget.ts`](../../src/lib/db/providers/sql/read-only-budget.ts) or the server's own error.
+The estimate-plan session mode is refused: `EXPLAIN PLAN` writes its rows into `PLAN_TABLE`, a write the READ ONLY user is refused, so the agent composes no estimating plan here (B147).
+The run read allowance is not charged: Oracle does not bill per read.
+
+#### The agent user
+
+The agent credential takes a user and a password, both required, the form every engine without an `agentCredential` declaration takes.
+An agent credential beside a connection string is refused (`AGENT_CREDENTIAL_WITH_CONNECTION_STRING`); with no agent credential the agent signs in as the connection's own user, which the check must admit.
+Create the user in the pluggable database, grant it `SELECT` on the tables it may read, and set it READ ONLY:
+
+```sql
+CREATE USER libredb_agent IDENTIFIED BY "<secret>";
+GRANT CREATE SESSION TO libredb_agent;
+GRANT SELECT ON app.orders TO libredb_agent;
+GRANT SELECT ON app.customers TO libredb_agent;
+ALTER USER libredb_agent READ ONLY;
+```
+
+A fresh database refuses that user, because `PUBLIC` holds `EXECUTE` on the network and file packages.
+Run the revoke the refusal names, as SYS; on the measured 26ai Free it is:
+
+```sql
+REVOKE EXECUTE ON SYS.DBMS_LDAP FROM PUBLIC;
+REVOKE EXECUTE ON SYS.DBMS_SCHEDULER FROM PUBLIC;
+REVOKE EXECUTE ON XDB.DBMS_XSLPROCESSOR FROM PUBLIC;
+REVOKE EXECUTE ON SYS.HTTPURITYPE FROM PUBLIC;
+REVOKE EXECUTE ON SYS.UTL_FILE FROM PUBLIC;
+REVOKE EXECUTE ON SYS.UTL_HTTP FROM PUBLIC;
+REVOKE EXECUTE ON SYS.UTL_INADDR FROM PUBLIC;
+REVOKE EXECUTE ON SYS.UTL_SMTP FROM PUBLIC;
+REVOKE EXECUTE ON SYS.UTL_TCP FROM PUBLIC;
+```
+
+Revoking from `PUBLIC` reaches every user of the database: grant `EXECUTE` back to each user or role that calls one of these packages, before revoking, and recompile what the revoke invalidates.
+Grant the `SELECT` on tables, or on views whose definitions read only tables and views: a view that calls a function of a schema Oracle does not maintain refuses the user.
+
+What the agent reads beyond the tables needs no grant: the catalog reads below and plan-mode grounding read the `ALL_*` views, which list what the user may see.
+Measured with the agent credential set, under the operations profile: the READ ONLY user listed and described the four tables it held `SELECT` on.
+Its operations readings come back degraded, as section 3.7 describes for a user that cannot read the `V$` and `DBA_` views: the database size read `0 MB` and the cache hit ratio `N/A`.
+
+#### What only the operator stops
+
+- A sequence of a schema Oracle maintains that `PUBLIC` may select is advanced by `NEXTVAL`, measured: `SYS.SCHEDULER$_JOBSUFFIX_S` answered for the admitted user. Four are granted on a fresh database (capture 07); advancing one moves a counter and changes no data. Oracle-maintained definer's-rights packages granted to `PUBLIC` are trusted as the vendor's boundary in the same way.
+- A table whose virtual column calls a definer's-rights function of a schema Oracle does not maintain runs that function on a plain `SELECT`: measured, the admitted user's `SELECT` advanced the function's sequence from 1 to 21 (one cache allocation). `ALL_DEPENDENCIES` does not show the user a table's dependency, so the check does not see it; a row-level security policy function on a table it reads, and a view reached only through another view, are in the same position. Grant `SELECT` only on tables and views that call no such code.
+- `LOCK TABLE` is not a residual: the READ ONLY user is refused it (capture 03).
+
+#### Boundary record
+
+Measured on 26ai Free 23.26.3 (the digest `run.sh` pins, 2026-10-29) by [`tests/live/oracle-agent-boundary.ts`](../../tests/live/oracle-agent-boundary.ts), with Studio's agent admission bypassed: 70 checks, all passing.
+
+| Probe | Admitted READ ONLY user, through `queryReadOnly` | Writable schema owner, positive control |
+| --- | --- | --- |
+| `INSERT`, `UPDATE`, `DELETE`, `MERGE` on a table it holds those grants on | `ORA-28194` | ran |
+| `CREATE TABLE`, a global and a private temporary table | `ORA-28194` | ran |
+| `SELECT ... FOR UPDATE`, `LOCK TABLE` | `ORA-28194` | ran |
+| a write in a PL/SQL block after a read, a write through `DBMS_SQL` | `ORA-28194` | ran |
+| `ALTER SESSION SET READ_ONLY = FALSE` then a write, in one block | `ORA-65023` | ran |
+| `COMMIT`, `ROLLBACK` | `ORA-28194` | ran |
+| `GRANT` | `ORA-28194` | not sent |
+| `ALTER SYSTEM SET` | `ORA-01031` | not sent |
+| a second statement | `ORA-03405` | not sent |
+
+The table rows, the sequence, `open_cursors`, the owner's objects and the database links read back the same before and after the refused statements.
+The fresh database refused its READ ONLY user, naming the nine revokes above, and admitted it once they ran.
+The check refused, and admitted again once the grant was gone: a user set `READ WRITE`; `EXECUTE` on a definer's-rights function granted to the user, to `PUBLIC` and to a default role; a role set `DEFAULT ROLE NONE`; `SELECT` on a view over that function; `SELECT` on a sequence; a `PUBLIC` database link; `READ` on a directory. It refused a READ ONLY user holding `ALTER SYSTEM`.
+The operations profile opened the writable schema owner unchecked and listed its tables; it and an editor handle refused `queryReadOnly` before sending anything.
+The four catalog kinds answered as the admitted user.
+The budgets: 60 rows under a budget of 50 were refused at the 51st, a 30,000-character `CLOB` under a byte budget of 10,000 was refused, a `CLOB` under the budgets came back as a string, a `BFILE` column was refused, and `DBMS_SESSION.SLEEP(5)` under a one-second deadline was refused, the next statement answering.
+
+The script revokes `PUBLIC`'s grants and does not grant them back, so run it on a disposable database such as the container `run.sh` names:
+
+```sh
+LIBREDB_LIVE_ORACLE_PORT=15217 LIBREDB_LIVE_ORACLE_PASSWORD=<SYS and SYSTEM password> bun tests/live/oracle-agent-boundary.ts
+```
+
+#### Agent language pack
+
+Statement-language family: `sql`.
+Overlay: [`src/lib/agent/languages/sql/engines/oracle.ts`](../../src/lib/agent/languages/sql/engines/oracle.ts), with its client row in [`src/lib/agent/languages/sql/engines/client.ts`](../../src/lib/agent/languages/sql/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`, and the dialect through `engineServerDialect`.
+
+| Member | Kind | Value |
+| --- | --- | --- |
+| `catalogRead` | Dialect-bound | Supplied |
+| `planEstimate` | Dialect-bound | `"unsupported"` |
+| `profileComposition` | Dialect-bound | `"unsupported"` |
+| `statistics` | Dialect-bound | `"unsupported"` |
+| `catalogCapture` | Dialect-bound | `"unsupported"` |
+
+This overlay overrides no Shared member, so every Shared member is the `sql` statement-language family's own.
+The catalog read takes `ALL_TAB_COLUMNS` for the column kind, `ALL_CONSTRAINTS` and `ALL_CONS_COLUMNS` for the foreign keys, `ALL_INDEXES` and `ALL_IND_COLUMNS` for the indexes, and `ALL_TABLES.NUM_ROWS` for the row estimates, which the last statistics gathering recorded; every kind leaves out the schemas Oracle maintains, and a selector's schema and table are compared as string literals, exactly as the dictionary spells them, an unquoted name in upper case.
+Each kind was run as the admitted READ ONLY user.
+Investigation, database assessment and data analysis open on Oracle; query optimization stays closed, and `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`, because the engine composes no estimating plan and no table profile (B147).
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+MCP's statement read stays closed on Oracle (`MCP_STATEMENT_READ.oracle` is false) until a change of its own opens it.
+
 ## 6. Transactions
 
 Explicit lifecycle on a dedicated connection checked out from the pool (`beginTransaction()`,
@@ -2533,22 +2679,7 @@ the object tree's own routes under `POST /api/db/objects/*`
 
 ## 14. Known limitations & future work
 
-- **Agent mode does not execute statements on Oracle, and a read-only user is not yet enough to let it.**
-  The candidate boundary is a local PDB user set `ALTER USER ... READ ONLY`, proved by `USER_USERS.READ_ONLY`, with every statement in a `SET TRANSACTION READ ONLY` transaction.
-  Measured in one run on Oracle AI Database 26ai Free Release 23.26.3.0.0 (`gvenzl/oracle-free:slim`, digest pinned in `run.sh`), with the scripts and their answers in [`tests/fixtures/oracle/23.26.3-free/agent-boundary/`](../../tests/fixtures/oracle/23.26.3-free/agent-boundary/):
-  - Such a user is refused `INSERT`, `UPDATE`, `DELETE` and `MERGE` on a table it holds those grants on, `CREATE TABLE`, a global and a private temporary table, `SELECT ... FOR UPDATE`, `LOCK TABLE`, a write through `DBMS_SQL`, a write in a PL/SQL block after a read, a write over a public database link, and a granted definer's-rights function that writes in an autonomous transaction, each with `ORA-28194: Can perform read operations only`.
-  - `ALTER SESSION SET READ_ONLY = FALSE` answers "Session altered" and every write after it is still refused the same way.
-  - The SQL statements `COMMIT` and `ROLLBACK` are refused the same way too.
-    The node-oracledb Thin calls `connection.commit()` and `connection.rollback()` are not: both succeed and end the read-only transaction, since a following `SET TRANSACTION READ ONLY` succeeds where it answers `ORA-01453` inside an open transaction.
-  - A user set read only that holds `ALTER SYSTEM` still runs `ALTER SYSTEM SET` and `ALTER SYSTEM FLUSH SHARED_POOL`, inside `SET TRANSACTION READ ONLY` as well.
-  - The same holds one step removed: a read-only user that holds only `CREATE SESSION` runs `ALTER SYSTEM SET OPEN_CURSORS` inside `SET TRANSACTION READ ONLY` by calling a granted definer's-rights function whose owner holds `ALTER SYSTEM`, and the parameter keeps the new value.
-    A check of the user's own privileges, its roles and `PUBLIC` does not see that, so a principal check would also have to cover the executable units granted to the user, its roles and `PUBLIC` whose owners hold system privileges.
-  - The fresh database grants `PUBLIC` `EXECUTE` on twelve of the packages and types the setup asks about: `DBMS_ADVISOR`, `DBMS_LDAP`, `DBMS_LOB`, `DBMS_SCHEDULER`, `DBMS_SQL`, `DBMS_XSLPROCESSOR`, `HTTPURITYPE`, `UTL_FILE`, `UTL_HTTP`, `UTL_INADDR`, `UTL_SMTP` and `UTL_TCP`.
-    `DBMS_XSLPROCESSOR` has server-file routines (`CLOB2FILE`, `READ2CLOB`) like `UTL_FILE`; both also need a directory grant, and `PUBLIC` holds none.
-    The network packages answered `ORA-24247` (no network ACL), `UTL_FILE` answered `ORA-29280` and `DBMS_SCHEDULER.CREATE_JOB` answered `ORA-27486`, all for want of a further grant, not because the user is read only.
-  - **The write that is not refused:** `SELECT <sequence>.NEXTVAL FROM DUAL` advances the sequence for the read-only user, inside `SET TRANSACTION READ ONLY` too, and the fresh database grants `PUBLIC` `SELECT` on four Oracle-maintained sequences (`SYS.DM$EXPIMP_ID_SEQ`, `SYS.PLSQL_CODE_COVERAGE_RUNNUMBER`, `SYS.SCHEDULER$_JOBSUFFIX_S`, `XDB.XDB$NAMESUFF_SEQ`), so every such user can advance them.
-    A granted definer's-rights function advances a sequence the user cannot see as well: `ALL_SEQUENCES` does not list it for the user, so neither a check of the visible sequences nor one of the sequence grants closes this.
-  Until it is decided whether an advanced sequence is a refused write or a named residual, and how far a principal check must follow granted code, the provider implements no `queryReadOnly`, and the agent runs only the operations workflow and plan mode here.
+- **Agent mode reaches what READ ONLY does not stop only where the operator grants it.** A sequence Oracle maintains, a virtual column, a row-level policy function or a nested view can run code or advance a counter for the agent user; [section 5.7](#57-agent-read-only-execution-profile) names each one and what the operator does about it.
 - **A LOB is fetched whole.** `CLOB`/`NCLOB`/`BLOB` are read into a string or a `Buffer` in one
   piece rather than streamed, so a single very large cell is held in memory and then in the JSON
   response. Measured: 16 MB of `CLOB` costs 66 ms and 16.4 MB of JSON; V8 refuses a string past

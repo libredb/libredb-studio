@@ -23,6 +23,7 @@ import * as DUCKDB from "@/lib/agent/languages/sql/engines/duckdb";
 import * as MSSQL from "@/lib/agent/languages/sql/engines/mssql";
 import * as MYSQL from "@/lib/agent/languages/sql/engines/mysql";
 import * as OPENSEARCH from "@/lib/agent/languages/sql/engines/opensearch";
+import * as ORACLE from "@/lib/agent/languages/sql/engines/oracle";
 import * as POSTGRES from "@/lib/agent/languages/sql/engines/postgres";
 import * as SQLITE from "@/lib/agent/languages/sql/engines/sqlite";
 import { SQL_PACK } from "@/lib/agent/languages/sql/index";
@@ -68,6 +69,7 @@ const ENGINE_MODULES: Readonly<Record<string, Readonly<Record<string, unknown>>>
   "sql/engines/influxdb3": INFLUXDB3,
   "sql/engines/elasticsearch": ELASTICSEARCH,
   "sql/engines/opensearch": OPENSEARCH,
+  "sql/engines/oracle": ORACLE,
   "sql/engines/client": SQL_CLIENT_OVERLAYS,
   "mongo/engines/mongodb": MONGODB,
   "mongo/engines/client": MONGO_CLIENT_OVERLAYS,
@@ -94,6 +96,7 @@ describe("the engine registry", () => {
       "sqlite",
       "libsql",
       "duckdb",
+      "oracle",
       "mssql",
       "clickhouse",
       "elasticsearch",
@@ -108,6 +111,7 @@ describe("the engine registry", () => {
       "sqlite",
       "libsql",
       "duckdb",
+      "oracle",
       "mssql",
       "clickhouse",
       "elasticsearch",
@@ -138,12 +142,12 @@ describe("the engine registry", () => {
   test("a name that is no engine has no pack, inherited names included", () => {
     expect(() => engineClientPack("toString" as DatabaseType)).toThrow(new Error("no engine pack for toString"));
     expect(() => agentEnginePack("toString" as DatabaseType)).toThrow(new Error("no engine pack for toString"));
-    expect(() => agentEnginePack("oracle")).toThrow(new Error("no engine pack for oracle"));
+    expect(() => agentEnginePack("spark")).toThrow(new Error("no engine pack for spark"));
   });
 
   test("every engine module's server overlay holds a dialect and overridable members, its client one a dialect alone (ruling 2)", () => {
     const exported = exportedOverlays();
-    expect(exported).toHaveLength(24);
+    expect(exported).toHaveLength(26);
     // The one other export is the PostgreSQL retry's rewrite, which its tests call directly.
     expect(
       Object.entries(ENGINE_MODULES)
@@ -210,7 +214,7 @@ describe("engineServerDialect", () => {
   });
 
   test("a type with no overlay holds an empty one, so its server facet is its family's own", () => {
-    for (const type of ["oracle", "toString", "mongodb", "kubernetes"] as DatabaseType[]) {
+    for (const type of ["spark", "toString", "mongodb", "kubernetes"] as DatabaseType[]) {
       expect(Object.keys(engineServerOverlay(type))).toEqual([]);
     }
     expect(engineServerOverlay("postgres").dialect).toBe(engineServerDialect("postgres"));
@@ -244,6 +248,8 @@ describe("engineServerDialect", () => {
       elasticsearch: "unsupported",
       // It answers no EXPLAIN the provider reads.
       opensearch: "unsupported",
+      // Its EXPLAIN PLAN writes into PLAN_TABLE, which the read-only user is refused.
+      oracle: "unsupported",
       libsql: { kind: "prefix", prefix: "EXPLAIN QUERY PLAN" },
       influxdb3: { kind: "prefix", prefix: "EXPLAIN" },
     });
@@ -405,6 +411,7 @@ describe("the client dialect", () => {
       clickhouse: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
       elasticsearch: { catalogRead: "supported", planEstimate: "unsupported", catalogCapture: "unsupported" },
       opensearch: { catalogRead: "supported", planEstimate: "unsupported", catalogCapture: "unsupported" },
+      oracle: { catalogRead: "supported", planEstimate: "unsupported", catalogCapture: "unsupported" },
       libsql: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
       influxdb3: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
     });

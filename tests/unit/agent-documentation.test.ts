@@ -478,6 +478,7 @@ const READ_ONLY_PROVIDER_FILES: Readonly<Record<string, string>> = {
   influxdb3: "src/lib/db/providers/timeseries/influxdb/sql-provider.ts",
   elasticsearch: "src/lib/db/providers/sql/search/index.ts",
   opensearch: "src/lib/db/providers/sql/search/index.ts",
+  oracle: "src/lib/db/providers/sql/oracle/index.ts",
 };
 
 /**
@@ -586,9 +587,9 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
   const list = namedList(AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label));
   const prose = (relative: string) => read(relative).replace(/\n[ \t]*(?:\*|\/\/|#)?[ \t]*/g, " ");
 
-  test("the derived list is today's twelve engines", () => {
+  test("the derived list is today's thirteen engines", () => {
     expect(list).toBe(
-      "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch and OpenSearch",
+      "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch and Oracle",
     );
   });
 
@@ -700,7 +701,7 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
   );
 
   test("docs/API_DOCS.md quotes the refusal the posture writes for an engine outside the list", () => {
-    const body = agentPosture({ mode: "agent", engine: "oracle", engineLabel: "Oracle", handover: false }).body;
+    const body = agentPosture({ mode: "agent", engine: "spark", engineLabel: "Apache Spark", handover: false }).body;
     expect(read("docs/API_DOCS.md")).toContain(`"error": "${body}"`);
   });
 });

@@ -245,14 +245,16 @@ describe("agentPosture in agent mode, where it cannot execute", () => {
   test("the hand-over tick cannot unblock an unsupported engine", () => {
     const posture = agentPosture({
       mode: "agent",
-      engine: "oracle",
-      engineLabel: getDBConfig("oracle").label,
+      engine: "spark",
+      engineLabel: getDBConfig("spark").label,
       handover: true,
     });
 
     expect(posture.tone).toBe("blocked");
-    expect(posture.headline).toBe("Cannot execute on Oracle");
-    expect(posture.body).toContain("On Oracle a run whose workflow sends a statement is refused when it is started");
+    expect(posture.headline).toBe("Cannot execute on Apache Spark");
+    expect(posture.body).toContain(
+      "On Apache Spark a run whose workflow sends a statement is refused when it is started",
+    );
   });
 
   test("no resolved connection claims nothing about an engine it has not seen", () => {

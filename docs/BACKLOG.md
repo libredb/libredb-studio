@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B146 · 76
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B147 · 77
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -8252,6 +8252,18 @@ Elasticsearch has no profile composition either and opens assessment by the same
 `docs/AGENT.md` records the choice to leave that need unheld (B111, B140, B143, B144); this entry is the claim that it should change, since a workflow offered on an engine where it cannot pass reads as a broken one.
 
 **Done when:** the database assessment workflow's requirement admits an engine only where its pass check can be met, derived from a dialect capability such as a supplied profile composition rather than a type-id branch, so it is not offered on OpenSearch or Elasticsearch until they gain one, with a test that holds the requirement to the pass check; cited in `docs/AGENT.md`.
+
+### B147. Oracle composes no estimating plan, profile, statistics reading or grounding capture
+
+Oracle's engine overlay (`src/lib/agent/languages/sql/engines/oracle.ts`) supplies the catalog read alone, over the `ALL_*` dictionary views.
+The other four dialect members are `"unsupported"`: the estimating plan, the profile composition, the statistics reading and the grounding capture.
+`EXPLAIN PLAN` writes its rows into `PLAN_TABLE`, a write the READ ONLY agent user is refused, so no estimating plan can be composed the way the editor asks for one; `DBMS_XPLAN.DISPLAY_CURSOR` reads a plan without writing but needs `SELECT` on `V$` views the agent user is not granted, never measured.
+So investigation, database assessment and data analysis open on Oracle, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`; the `sql-composers` requirement holds query optimization out; plan mode drafts there and grounds under the operations profile.
+Kept so that the engine joined on the members measured on it, and nothing composed from another engine's rule.
+
+Found 2026-10-29 with agent execution on Oracle.
+
+**Done when:** the Oracle overlay gains an estimating plan measured as a READ ONLY user and an explain strategy with an `agentReading` verified against its plans, so query optimization opens there, and a profile composition measured on it, or a recorded decision that it keeps none, with tests for each; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

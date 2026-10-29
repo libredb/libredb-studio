@@ -32,6 +32,10 @@ declare module "oracledb" {
     readonly DB_TYPE_INTERVAL_DS: oracledb.DbType;
     readonly DB_TYPE_DATE: oracledb.DbType;
     readonly DB_TYPE_TIMESTAMP: oracledb.DbType;
+    /** The three types the agent's read-only path refuses: a server-file locator, a cursor and an object. */
+    readonly DB_TYPE_BFILE: oracledb.DbType;
+    readonly DB_TYPE_CURSOR: oracledb.DbType;
+    readonly DB_TYPE_OBJECT: oracledb.DbType;
     /** Fetch-target identities, the value side of a `fetchTypeHandler` answer. */
     readonly STRING: number;
     readonly BUFFER: number;
@@ -42,6 +46,9 @@ declare module "oracledb" {
     fetchAsString: readonly oracledb.DbType[];
     initOracleClient(options: { libDir?: string }): void;
     createPool(attributes: oracledb.PoolAttributes): Promise<oracledb.Pool>;
+    /** A standalone connection, which `tests/live/oracle-agent-boundary.ts` opens as SYS with `privilege: SYSDBA`. */
+    getConnection(attributes: oracledb.PoolAttributes & { privilege?: number }): Promise<oracledb.Connection>;
+    readonly SYSDBA: number;
   };
 
   namespace oracledb {
@@ -80,6 +87,8 @@ declare module "oracledb" {
       outFormat?: number;
       autoCommit?: boolean;
       fetchTypeHandler?: FetchTypeHandler;
+      /** The most rows a query fetches; the driver stops there. */
+      maxRows?: number;
     }
 
     /**
@@ -109,8 +118,11 @@ declare module "oracledb" {
     }
 
     interface Connection {
+      /** Milliseconds each round trip may take before the driver ends it with NJS-123; 0 waits forever. */
+      callTimeout: number;
       execute(sql: string, binds?: unknown[], options?: ExecuteOptions): Promise<Result>;
-      close(): Promise<void>;
+      /** Returns the session to its pool, or with `drop` ends it rather than returning it. */
+      close(options?: { drop?: boolean }): Promise<void>;
       break(): Promise<void>;
       commit(): Promise<void>;
       rollback(): Promise<void>;

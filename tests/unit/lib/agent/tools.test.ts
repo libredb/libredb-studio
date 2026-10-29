@@ -3415,7 +3415,7 @@ describe("inspectSchemaTool — the server composes the catalog statement", () =
   });
 
   test("a dialect with no verified catalog composition is reported the same way", async () => {
-    const h = harness({ connection: { ...connection, type: "oracle" } });
+    const h = harness({ connection: { ...connection, type: "spark" } });
 
     const outcome = await inspectSchemaTool(h.context, {});
 
@@ -5387,7 +5387,7 @@ function curatedHarness(
     actor: { sessionId: "session-1", role: "user" },
     // A connection type with no read-only statement path at all, which is the whole
     // point: this is the engine the other tools are refused on.
-    connection: { ...connection, type: "oracle" },
+    connection: { ...connection, type: "spark" },
     capabilities,
     labels: TABLE_LABELS,
     registry: createCanonicalOperationRegistry(),

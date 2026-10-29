@@ -94,6 +94,7 @@ describe("the requirement mirrors", () => {
       "influxdb3",
       "elasticsearch",
       "opensearch",
+      "oracle",
     ]);
     expect(Object.isFrozen(AGENT_REQUIREMENT_ENGINES["sql-catalog"])).toBe(true);
     for (const type of AGENT_REQUIREMENT_ENGINES["sql-composers"]) {

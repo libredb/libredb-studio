@@ -434,7 +434,7 @@ describe("composeCatalogRead — the relation and index inventories (#329 T8)", 
 
   test("an unserved dialect is refused for every kind, never composed on a guess", () => {
     for (const kind of ["columns", "relations", "indexes", "statistics"] as const) {
-      expect(() => composeCatalogRead("oracle", { kind }), kind).toThrow(AgentComposedSqlError);
+      expect(() => composeCatalogRead("spark", { kind }), kind).toThrow(AgentComposedSqlError);
     }
   });
 
@@ -534,7 +534,7 @@ describe("composeCatalogRead — the statistics inventory", () => {
   });
 
   test("an unserved dialect is refused with UNSUPPORTED_DIALECT rather than composed on a guess", () => {
-    for (const dialect of ["oracle", "mongodb", "redis"] as const) {
+    for (const dialect of ["spark", "mongodb", "redis"] as const) {
       try {
         composeCatalogRead(dialect, { kind: "statistics" });
         throw new Error(`expected a refusal for ${dialect}`);
@@ -569,7 +569,7 @@ describe("composeStatisticsAvailabilityProbe", () => {
 
   test("an unserved dialect is refused rather than answered with null", () => {
     try {
-      composeStatisticsAvailabilityProbe("oracle");
+      composeStatisticsAvailabilityProbe("spark");
       throw new Error("expected a refusal");
     } catch (error) {
       expect(error).toBeInstanceOf(AgentComposedSqlError);
@@ -688,14 +688,14 @@ describe("composeCatalogRead — a hostile selector becomes a literal, never sta
 
 describe("composeCatalogRead — dialects this milestone does not serve", () => {
   test("refuses rather than composing SQL it has not verified", () => {
-    for (const dialect of ["oracle", "mongodb", "redis"] as const) {
+    for (const dialect of ["spark", "mongodb", "redis"] as const) {
       expect(() => composeCatalogRead(dialect, {}), dialect).toThrow(AgentComposedSqlError);
     }
   });
 
   test("the refusal carries the UNSUPPORTED_DIALECT code", () => {
     try {
-      composeCatalogRead("oracle", {});
+      composeCatalogRead("spark", {});
       throw new Error("expected a refusal");
     } catch (error) {
       expect((error as AgentComposedSqlError).reasonCode).toBe("UNSUPPORTED_DIALECT");

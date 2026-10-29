@@ -1341,149 +1341,101 @@
         "columns": [
           {
             "selector": {},
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"oracle\""
-            }
+            "sql": "SELECT c.OWNER AS \"table_schema\", c.TABLE_NAME AS \"table_name\", c.COLUMN_NAME AS \"column_name\", c.DATA_TYPE AS \"data_type\", c.NULLABLE AS \"is_nullable\", c.COLUMN_ID AS \"ordinal_position\" FROM ALL_TAB_COLUMNS c WHERE c.OWNER NOT IN (SELECT u.USERNAME FROM ALL_USERS u WHERE u.ORACLE_MAINTAINED = 'Y') ORDER BY c.OWNER, c.TABLE_NAME, c.COLUMN_ID"
           },
           {
             "selector": {
               "schema": "Sales"
             },
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"oracle\""
-            }
+            "sql": "SELECT c.OWNER AS \"table_schema\", c.TABLE_NAME AS \"table_name\", c.COLUMN_NAME AS \"column_name\", c.DATA_TYPE AS \"data_type\", c.NULLABLE AS \"is_nullable\", c.COLUMN_ID AS \"ordinal_position\" FROM ALL_TAB_COLUMNS c WHERE c.OWNER NOT IN (SELECT u.USERNAME FROM ALL_USERS u WHERE u.ORACLE_MAINTAINED = 'Y') AND c.OWNER = 'Sales' ORDER BY c.OWNER, c.TABLE_NAME, c.COLUMN_ID"
           },
           {
             "selector": {
               "schema": "MAIN"
             },
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"oracle\""
-            }
+            "sql": "SELECT c.OWNER AS \"table_schema\", c.TABLE_NAME AS \"table_name\", c.COLUMN_NAME AS \"column_name\", c.DATA_TYPE AS \"data_type\", c.NULLABLE AS \"is_nullable\", c.COLUMN_ID AS \"ordinal_position\" FROM ALL_TAB_COLUMNS c WHERE c.OWNER NOT IN (SELECT u.USERNAME FROM ALL_USERS u WHERE u.ORACLE_MAINTAINED = 'Y') AND c.OWNER = 'MAIN' ORDER BY c.OWNER, c.TABLE_NAME, c.COLUMN_ID"
           },
           {
             "selector": {
               "schema": "public",
               "table": "orders"
             },
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"oracle\""
-            }
+            "sql": "SELECT c.OWNER AS \"table_schema\", c.TABLE_NAME AS \"table_name\", c.COLUMN_NAME AS \"column_name\", c.DATA_TYPE AS \"data_type\", c.NULLABLE AS \"is_nullable\", c.COLUMN_ID AS \"ordinal_position\" FROM ALL_TAB_COLUMNS c WHERE c.OWNER NOT IN (SELECT u.USERNAME FROM ALL_USERS u WHERE u.ORACLE_MAINTAINED = 'Y') AND c.OWNER = 'public' AND c.TABLE_NAME = 'orders' ORDER BY c.OWNER, c.TABLE_NAME, c.COLUMN_ID"
           }
         ],
         "relations": [
           {
             "selector": {},
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"oracle\""
-            }
+            "sql": "SELECT c.OWNER AS \"table_schema\", c.TABLE_NAME AS \"table_name\", cc.COLUMN_NAME AS \"column_name\", r.OWNER AS \"referenced_schema\", r.TABLE_NAME AS \"referenced_table\", rc.COLUMN_NAME AS \"referenced_column\" FROM ALL_CONSTRAINTS c JOIN ALL_CONS_COLUMNS cc ON cc.OWNER = c.OWNER AND cc.CONSTRAINT_NAME = c.CONSTRAINT_NAME JOIN ALL_CONSTRAINTS r ON r.OWNER = c.R_OWNER AND r.CONSTRAINT_NAME = c.R_CONSTRAINT_NAME JOIN ALL_CONS_COLUMNS rc ON rc.OWNER = r.OWNER AND rc.CONSTRAINT_NAME = r.CONSTRAINT_NAME AND rc.POSITION = cc.POSITION WHERE c.CONSTRAINT_TYPE = 'R' AND c.OWNER NOT IN (SELECT u.USERNAME FROM ALL_USERS u WHERE u.ORACLE_MAINTAINED = 'Y') ORDER BY c.OWNER, c.TABLE_NAME, c.CONSTRAINT_NAME, cc.POSITION"
           },
           {
             "selector": {
               "schema": "Sales"
             },
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"oracle\""
-            }
+            "sql": "SELECT c.OWNER AS \"table_schema\", c.TABLE_NAME AS \"table_name\", cc.COLUMN_NAME AS \"column_name\", r.OWNER AS \"referenced_schema\", r.TABLE_NAME AS \"referenced_table\", rc.COLUMN_NAME AS \"referenced_column\" FROM ALL_CONSTRAINTS c JOIN ALL_CONS_COLUMNS cc ON cc.OWNER = c.OWNER AND cc.CONSTRAINT_NAME = c.CONSTRAINT_NAME JOIN ALL_CONSTRAINTS r ON r.OWNER = c.R_OWNER AND r.CONSTRAINT_NAME = c.R_CONSTRAINT_NAME JOIN ALL_CONS_COLUMNS rc ON rc.OWNER = r.OWNER AND rc.CONSTRAINT_NAME = r.CONSTRAINT_NAME AND rc.POSITION = cc.POSITION WHERE c.CONSTRAINT_TYPE = 'R' AND c.OWNER NOT IN (SELECT u.USERNAME FROM ALL_USERS u WHERE u.ORACLE_MAINTAINED = 'Y') AND c.OWNER = 'Sales' ORDER BY c.OWNER, c.TABLE_NAME, c.CONSTRAINT_NAME, cc.POSITION"
           },
           {
             "selector": {
               "schema": "MAIN"
             },
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"oracle\""
-            }
+            "sql": "SELECT c.OWNER AS \"table_schema\", c.TABLE_NAME AS \"table_name\", cc.COLUMN_NAME AS \"column_name\", r.OWNER AS \"referenced_schema\", r.TABLE_NAME AS \"referenced_table\", rc.COLUMN_NAME AS \"referenced_column\" FROM ALL_CONSTRAINTS c JOIN ALL_CONS_COLUMNS cc ON cc.OWNER = c.OWNER AND cc.CONSTRAINT_NAME = c.CONSTRAINT_NAME JOIN ALL_CONSTRAINTS r ON r.OWNER = c.R_OWNER AND r.CONSTRAINT_NAME = c.R_CONSTRAINT_NAME JOIN ALL_CONS_COLUMNS rc ON rc.OWNER = r.OWNER AND rc.CONSTRAINT_NAME = r.CONSTRAINT_NAME AND rc.POSITION = cc.POSITION WHERE c.CONSTRAINT_TYPE = 'R' AND c.OWNER NOT IN (SELECT u.USERNAME FROM ALL_USERS u WHERE u.ORACLE_MAINTAINED = 'Y') AND c.OWNER = 'MAIN' ORDER BY c.OWNER, c.TABLE_NAME, c.CONSTRAINT_NAME, cc.POSITION"
           },
           {
             "selector": {
               "schema": "public",
               "table": "orders"
             },
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"oracle\""
-            }
+            "sql": "SELECT c.OWNER AS \"table_schema\", c.TABLE_NAME AS \"table_name\", cc.COLUMN_NAME AS \"column_name\", r.OWNER AS \"referenced_schema\", r.TABLE_NAME AS \"referenced_table\", rc.COLUMN_NAME AS \"referenced_column\" FROM ALL_CONSTRAINTS c JOIN ALL_CONS_COLUMNS cc ON cc.OWNER = c.OWNER AND cc.CONSTRAINT_NAME = c.CONSTRAINT_NAME JOIN ALL_CONSTRAINTS r ON r.OWNER = c.R_OWNER AND r.CONSTRAINT_NAME = c.R_CONSTRAINT_NAME JOIN ALL_CONS_COLUMNS rc ON rc.OWNER = r.OWNER AND rc.CONSTRAINT_NAME = r.CONSTRAINT_NAME AND rc.POSITION = cc.POSITION WHERE c.CONSTRAINT_TYPE = 'R' AND c.OWNER NOT IN (SELECT u.USERNAME FROM ALL_USERS u WHERE u.ORACLE_MAINTAINED = 'Y') AND c.OWNER = 'public' AND c.TABLE_NAME = 'orders' ORDER BY c.OWNER, c.TABLE_NAME, c.CONSTRAINT_NAME, cc.POSITION"
           }
         ],
         "indexes": [
           {
             "selector": {},
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"oracle\""
-            }
+            "sql": "SELECT i.TABLE_OWNER AS \"table_schema\", i.TABLE_NAME AS \"table_name\", i.INDEX_NAME AS \"index_name\", CASE WHEN i.UNIQUENESS = 'UNIQUE' THEN 'YES' ELSE 'NO' END AS \"is_unique\", CASE WHEN EXISTS (SELECT 1 FROM ALL_CONSTRAINTS k WHERE k.CONSTRAINT_TYPE = 'P' AND k.OWNER = i.TABLE_OWNER AND k.TABLE_NAME = i.TABLE_NAME AND k.INDEX_NAME = i.INDEX_NAME) THEN 'YES' ELSE 'NO' END AS \"is_primary\", ic.COLUMN_NAME AS \"column_name\" FROM ALL_INDEXES i JOIN ALL_IND_COLUMNS ic ON ic.INDEX_OWNER = i.OWNER AND ic.INDEX_NAME = i.INDEX_NAME WHERE i.TABLE_OWNER NOT IN (SELECT u.USERNAME FROM ALL_USERS u WHERE u.ORACLE_MAINTAINED = 'Y') ORDER BY i.TABLE_OWNER, i.TABLE_NAME, i.INDEX_NAME, ic.COLUMN_POSITION"
           },
           {
             "selector": {
               "schema": "Sales"
             },
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"oracle\""
-            }
+            "sql": "SELECT i.TABLE_OWNER AS \"table_schema\", i.TABLE_NAME AS \"table_name\", i.INDEX_NAME AS \"index_name\", CASE WHEN i.UNIQUENESS = 'UNIQUE' THEN 'YES' ELSE 'NO' END AS \"is_unique\", CASE WHEN EXISTS (SELECT 1 FROM ALL_CONSTRAINTS k WHERE k.CONSTRAINT_TYPE = 'P' AND k.OWNER = i.TABLE_OWNER AND k.TABLE_NAME = i.TABLE_NAME AND k.INDEX_NAME = i.INDEX_NAME) THEN 'YES' ELSE 'NO' END AS \"is_primary\", ic.COLUMN_NAME AS \"column_name\" FROM ALL_INDEXES i JOIN ALL_IND_COLUMNS ic ON ic.INDEX_OWNER = i.OWNER AND ic.INDEX_NAME = i.INDEX_NAME WHERE i.TABLE_OWNER NOT IN (SELECT u.USERNAME FROM ALL_USERS u WHERE u.ORACLE_MAINTAINED = 'Y') AND i.TABLE_OWNER = 'Sales' ORDER BY i.TABLE_OWNER, i.TABLE_NAME, i.INDEX_NAME, ic.COLUMN_POSITION"
           },
           {
             "selector": {
               "schema": "MAIN"
             },
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"oracle\""
-            }
+            "sql": "SELECT i.TABLE_OWNER AS \"table_schema\", i.TABLE_NAME AS \"table_name\", i.INDEX_NAME AS \"index_name\", CASE WHEN i.UNIQUENESS = 'UNIQUE' THEN 'YES' ELSE 'NO' END AS \"is_unique\", CASE WHEN EXISTS (SELECT 1 FROM ALL_CONSTRAINTS k WHERE k.CONSTRAINT_TYPE = 'P' AND k.OWNER = i.TABLE_OWNER AND k.TABLE_NAME = i.TABLE_NAME AND k.INDEX_NAME = i.INDEX_NAME) THEN 'YES' ELSE 'NO' END AS \"is_primary\", ic.COLUMN_NAME AS \"column_name\" FROM ALL_INDEXES i JOIN ALL_IND_COLUMNS ic ON ic.INDEX_OWNER = i.OWNER AND ic.INDEX_NAME = i.INDEX_NAME WHERE i.TABLE_OWNER NOT IN (SELECT u.USERNAME FROM ALL_USERS u WHERE u.ORACLE_MAINTAINED = 'Y') AND i.TABLE_OWNER = 'MAIN' ORDER BY i.TABLE_OWNER, i.TABLE_NAME, i.INDEX_NAME, ic.COLUMN_POSITION"
           },
           {
             "selector": {
               "schema": "public",
               "table": "orders"
             },
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"oracle\""
-            }
+            "sql": "SELECT i.TABLE_OWNER AS \"table_schema\", i.TABLE_NAME AS \"table_name\", i.INDEX_NAME AS \"index_name\", CASE WHEN i.UNIQUENESS = 'UNIQUE' THEN 'YES' ELSE 'NO' END AS \"is_unique\", CASE WHEN EXISTS (SELECT 1 FROM ALL_CONSTRAINTS k WHERE k.CONSTRAINT_TYPE = 'P' AND k.OWNER = i.TABLE_OWNER AND k.TABLE_NAME = i.TABLE_NAME AND k.INDEX_NAME = i.INDEX_NAME) THEN 'YES' ELSE 'NO' END AS \"is_primary\", ic.COLUMN_NAME AS \"column_name\" FROM ALL_INDEXES i JOIN ALL_IND_COLUMNS ic ON ic.INDEX_OWNER = i.OWNER AND ic.INDEX_NAME = i.INDEX_NAME WHERE i.TABLE_OWNER NOT IN (SELECT u.USERNAME FROM ALL_USERS u WHERE u.ORACLE_MAINTAINED = 'Y') AND i.TABLE_OWNER = 'public' AND i.TABLE_NAME = 'orders' ORDER BY i.TABLE_OWNER, i.TABLE_NAME, i.INDEX_NAME, ic.COLUMN_POSITION"
           }
         ],
         "statistics": [
           {
             "selector": {},
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"oracle\""
-            }
+            "sql": "SELECT t.OWNER AS \"table_schema\", t.TABLE_NAME AS \"table_name\", t.NUM_ROWS AS \"estimated_rows\" FROM ALL_TABLES t WHERE t.OWNER NOT IN (SELECT u.USERNAME FROM ALL_USERS u WHERE u.ORACLE_MAINTAINED = 'Y') ORDER BY t.OWNER, t.TABLE_NAME"
           },
           {
             "selector": {
               "schema": "Sales"
             },
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"oracle\""
-            }
+            "sql": "SELECT t.OWNER AS \"table_schema\", t.TABLE_NAME AS \"table_name\", t.NUM_ROWS AS \"estimated_rows\" FROM ALL_TABLES t WHERE t.OWNER NOT IN (SELECT u.USERNAME FROM ALL_USERS u WHERE u.ORACLE_MAINTAINED = 'Y') AND t.OWNER = 'Sales' ORDER BY t.OWNER, t.TABLE_NAME"
           },
           {
             "selector": {
               "schema": "MAIN"
             },
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"oracle\""
-            }
+            "sql": "SELECT t.OWNER AS \"table_schema\", t.TABLE_NAME AS \"table_name\", t.NUM_ROWS AS \"estimated_rows\" FROM ALL_TABLES t WHERE t.OWNER NOT IN (SELECT u.USERNAME FROM ALL_USERS u WHERE u.ORACLE_MAINTAINED = 'Y') AND t.OWNER = 'MAIN' ORDER BY t.OWNER, t.TABLE_NAME"
           },
           {
             "selector": {
               "schema": "public",
               "table": "orders"
             },
-            "sql": {
-              "reasonCode": "UNSUPPORTED_DIALECT",
-              "message": "no verified catalog composition for provider type \"oracle\""
-            }
+            "sql": "SELECT t.OWNER AS \"table_schema\", t.TABLE_NAME AS \"table_name\", t.NUM_ROWS AS \"estimated_rows\" FROM ALL_TABLES t WHERE t.OWNER NOT IN (SELECT u.USERNAME FROM ALL_USERS u WHERE u.ORACLE_MAINTAINED = 'Y') AND t.OWNER = 'public' AND t.TABLE_NAME = 'orders' ORDER BY t.OWNER, t.TABLE_NAME"
           }
         ]
       },
@@ -1538,10 +1490,7 @@
           }
         }
       ],
-      "statisticsAvailabilityProbe": {
-        "reasonCode": "UNSUPPORTED_DIALECT",
-        "message": "no verified statistics composition for provider type \"oracle\""
-      },
+      "statisticsAvailabilityProbe": null,
       "tableProfile": {
         "basic": {
           "reasonCode": "UNSUPPORTED_DIALECT",

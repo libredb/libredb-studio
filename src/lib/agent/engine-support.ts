@@ -40,8 +40,10 @@ import type { DatabaseType } from "@/lib/types";
  * and every one sent raw there is refused, and the open checks the server is the measured 9.1 line. OpenSearch's is
  * the engine's as well, from the same module: its SQL plugin refuses every write and DDL statement sent raw, and since
  * a cluster setting can turn its DELETE on, the open proves that DELETE off (the setting reads off, and a DELETE on a
- * fresh name is refused) and checks the server is the measured 3.8 line. Each provider's own `queryReadOnly` argues
- * its own case.
+ * fresh name is refused) and checks the server is the measured 3.8 line. Oracle's is the user's: one set READ ONLY,
+ * which the server refuses every write for, proven at first use to reach no code, sequence, package, directory,
+ * system privilege or database link that runs outside it, with every statement in a read-only transaction the driver
+ * rolls back. Each provider's own `queryReadOnly` argues its own case.
  * `tests/unit/lib/agent/engine-support.test.ts` is what keeps the two equal - it walks EVERY
  * id in the `DatabaseType` union, reads `queryReadOnly` off the real provider class the
  * factory would construct, and fails if this array and the drivers diverge in either direction.
@@ -69,6 +71,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "influxdb3",
   "elasticsearch",
   "opensearch",
+  "oracle",
 ];
 
 /**

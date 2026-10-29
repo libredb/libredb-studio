@@ -102,7 +102,7 @@ no inventory and refuses to invent one.
 **What "Verified grounded" is claiming, and what it is not.** It says an inventory of that database's
 real objects reached the run and the run wrote something in that engine's own language that the editor
 accepts. It does NOT say the draft is good, and on one engine it demonstrably is not: see Redis.
-It says nothing at all about agent mode, which is still refused at the start of a statement-sending run everywhere but PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch and OpenSearch; that is pinned by a test rather than by this table, because a run refused before it opens is not a thing worth driving eleven times.
+It says nothing at all about agent mode, which is still refused at the start of a statement-sending run everywhere but PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch and Oracle; that is pinned by a test rather than by this table, because a run refused before it opens is not a thing worth driving eleven times.
 
 **Two runs that refused, and both refusals were right.** A Couchbase run asked "how many documents of
 each type in this bucket" named the three real collections back and asked which one was meant. A Druid
@@ -147,7 +147,7 @@ is not. That sentence is unchanged by #414 and is the reason it was written this
 is where the condition holds, not the rule — and it now holds on ten engines rather than two, which is
 a demo you can give rather than a caveat you have to make. Operate reads what the engine reports about itself, so it needs no SQL and reaches
 everything.
-The other four workflows send statements and need a read-only statement path the provider implements, which today only PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch and OpenSearch provide; everywhere else a run of one of them is refused when it is started, before a run is opened, with the reason the rail's amber card shows.
+The other four workflows send statements and need a read-only statement path the provider implements, which today only PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch and Oracle provide; everywhere else a run of one of them is refused when it is started, before a run is opened, with the reason the rail's amber card shows.
 
 **Grounding was engine-dependent and nothing else**, in every workflow — until #414, after which the
 engine decides only HOW a run is grounded and not whether. That much was not true even when this
@@ -409,7 +409,7 @@ figures match.
 
 **This is the case to show a sceptic.** Redis has no SQL at all, and agent mode's other workflows
 cannot reach it: they need a read-only statement path its provider implements, which only PostgreSQL, SQLite,
-DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch and OpenSearch provide. Operate writes no SQL and reads what the engine already reports about itself,
+DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch and Oracle provide. Operate writes no SQL and reads what the engine already reports about itself,
 so it answers the same operational questions on every provider Studio supports. Run case 9 against
 PostgreSQL and this one against Redis back to back, and the point makes itself.
 
@@ -805,7 +805,7 @@ grounding says so in words.
 
 **"Which databases?"** See the table at the top, and its #414 note. The short version: Operate works
 everywhere and was driven live on every engine the table marks Verified in its Operate column, Redis among them, which has no SQL at all; the
-other four workflows need a read-only statement path, which PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch and OpenSearch provide; plan mode has no engine limit and since
+other four workflows need a read-only statement path, which PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch and Oracle provide; plan mode has no engine limit and since
 #414 no grounding limit either: it composes catalog statements on PostgreSQL and SQLite and asks every other
 engine's own provider to describe itself, in every workflow, Operate included since #411 on a reduced
 inventory of table and index names.
@@ -826,7 +826,7 @@ would close it, so "not yet" means deferred with a reason, not overlooked.
 | **A verdict that fits a plan-only report on Investigate, Assess or Analyze** | An Optimize run citing only a plan is no longer marked wrong — B45 shipped that exemption — but the same report on any of the other three still ends `unanswered`, because a plan artifact is scored as an empty result there | B72 — the same exemption B45 gave `query-optimization`, extended to the other three verifiers |
 | **Causal questions** — "why are sales down?" | Answered from the schema alone, which cannot know which decomposition of a metric is the business one | A per-connection business note, held server-side — not yet designed |
 | **"This database cannot answer that"** | It does say so, but has to run a throwaway query to be scored as having answered — case 21 spends 5 tool invocations to report that an employees database holds no customer data | A second arm on the verdict, so a schema-only conclusion counts |
-| **Agent mode on Oracle, Redis…** | Only Operate. The other four workflows refuse, correctly and clearly | A read-only statement path per engine: the same `queryReadOnly` that PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch and OpenSearch implement |
+| **Agent mode on Oracle, Redis…** | Only Operate. The other four workflows refuse, correctly and clearly | A read-only statement path per engine: the same `queryReadOnly` that PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch and Oracle implement |
 | **A run you can watch from your own stack** | Everything is in the run's ledger and on the rail; nothing is exported | B33 — OpenTelemetry spans, designed in #332 and deliberately not built while the event model is still moving |
 | **Resuming a run after a restart** | A drive that dies leaves a durable ledger, but nothing picks it up | B9 — a queue and a re-attach path for the stream |
 | **A budget you can trust to the minute** | The ceilings are real and enforced; the *numbers* are a starting point nobody has measured | One instrumented long run per workflow |
