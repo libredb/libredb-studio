@@ -236,8 +236,10 @@ first day.
 `sqlite.ts` implements `queryReadOnly` by setting `query_only` and verifying the readback, per statement.
 libSQL has no such lever: the pragma is refused on both deployments, for every credential.
 So the boundary here is credential-enforced: a token the server refuses every write for.
-A self-hosted sqld started with `SQLD_AUTH_JWT_KEY` checks a JWT signed by that key, and refuses a write from one whose claims carry `"a": "ro"` unless a permission claim (`"p"`) widens it: a token carrying `"a": "ro"` and a `"p"` that grants `rw` on the namespace writes, which the open refuses; Turso mints the same kind of token with `turso db tokens create --read-only`.
+A self-hosted sqld started with `SQLD_AUTH_JWT_KEY` checks a JWT signed by that key, and refuses a write from one whose claims carry `"a": "ro"` unless a permission claim (`"p"`) widens it: a token carrying `"a": "ro"` and a `"p"` that grants `rw` on the namespace writes, which the open refuses.
+Turso Cloud mints the same kind of token with `turso db tokens create --read-only`.
 sqld classifies every statement before it runs it, and refuses a request that carries a write from such a token as a whole, with HTTP 403 (`Authorization forbidden: Current session doesn't not have Write permission to namespace default`), on each HTTP statement route measured (`/v2/pipeline`, `/v3/pipeline`, `/v1/execute`, `/v1/batch` and `/`); Hrana over WebSocket was not measured, and this provider never speaks it.
+Turso Cloud refuses the same write in-band instead: the request answers HTTP 200, and the statement's step carries the error, code `BLOCKED`, `Operation was blocked: SQL write operations are forbidden (current session doesn't have write permission)`.
 Agent mode executes statements on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse and libSQL; on libSQL the provider implements `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/sql/libsql/index.ts), with the open's proof in [`agent-boundary.ts`](../../src/lib/db/providers/sql/libsql/agent-boundary.ts) and the reading of an answer in [`agent-read.ts`](../../src/lib/db/providers/sql/libsql/agent-read.ts).
 
 #### The open's proof
@@ -247,12 +249,29 @@ The operations profile and plan mode send no statement of the model's, so they o
 `queryReadOnly` refuses on any handle opened without that context, an ordinary editor handle included, before it sends anything.
 Any answer the proof cannot read refuses the profile.
 
-1. The connection must send a bearer token. A connection that names a user signs in with HTTP Basic, which sqld (`SQLD_HTTP_AUTH`) grants every statement and has no read-only form for, and is refused `PROFILE_PRIVILEGES_TOO_BROAD`. A connection with no token reaches only a server that checks no credential, and is refused `PROFILE_SERVER_UNENFORCED`. Both are refused before anything is sent.
-2. After the connect probe, three writes go with the agent's token, each on a name made fresh for the open (`libredb_agent_probe_<32 hex digits>`), so none changes anything on any outcome: `DROP TABLE IF EXISTS "<name>"`, `DELETE FROM "<name>" WHERE 0` and `INSERT INTO "<name>" SELECT 1 WHERE 0`. sqld classifies each as a write before it looks for the table. Each must be answered 403 with the server's own authorization refusal (`Authorization forbidden: ...`); a 403 with any other body, such as a proxy's, does not count. A probe the server runs, which is what a writable token and a server with no credential check both do with the first, refuses the profile `PROFILE_SERVER_UNENFORCED`; any other answer, a statement error such as "no such table" included, refuses it `PROFILE_UNSUPPORTED_TARGET`.
-3. The token's own claims must declare read-only access: it must be a JWT whose claims carry `"a": "ro"` and no `"p"` permission claim, which sqld reads on top of `"a"` and can grant writes with, or the profile is refused `PROFILE_PRIVILEGES_TOO_BROAD`. Studio cannot verify the signature, so this checks the token's statement against the server's answers above, never instead of them.
+1. The connection must send a bearer token.
+   A connection that names a user signs in with HTTP Basic, which sqld (`SQLD_HTTP_AUTH`) grants every statement and has no read-only form for, and is refused `PROFILE_PRIVILEGES_TOO_BROAD`.
+   A connection with no token reaches only a server that checks no credential, and is refused `PROFILE_SERVER_UNENFORCED`.
+   Both are refused before anything is sent.
+2. The token must be a read-only token and carry nothing that could widen it.
+   It must be a JWT whose claims carry `"a": "ro"`, and its only other claims may be the standard ones and the ids the two servers mint: `exp`, `iat`, `nbf`, `id`, `kid`, `rid`, `iss`, `sub`, `aud` and `jti`.
+   Any other claim, sqld's `"p"` permission claim, a `perm` claim or one no server has minted yet, may be read by the server to grant writes.
+   A token that fails either test is refused `PROFILE_PRIVILEGES_TOO_BROAD` with a message that says it can write and that the profile needs a read-only token, so the run ends with the reason `agent-principal-refused`.
+   This check runs before anything is sent with the token, so a token that can write is never sent a probe.
+   Studio cannot verify the signature, so this reads the token's own statement, which the server's answers below must bear out, never instead of them.
+3. After the connect probe, three writes go with the agent's token, each on a name made fresh for the open (`libredb_agent_probe_<32 hex digits>`), so none changes anything on any outcome: `DROP TABLE IF EXISTS "<name>"`, `DELETE FROM "<name>" WHERE 0` and `INSERT INTO "<name>" SELECT 1 WHERE 0`.
+   Each server classifies each as a write before it looks for the table.
+   Each must be answered with one server's own read-only refusal, matched on its full measured wording, and the same server's refusal must answer all three: sqld's 403 `Authorization forbidden: Current session doesn't not have Write permission to namespace <name>`, or Turso Cloud's HTTP 200 step error with code `BLOCKED` and the wording above.
+   A 403 with any other body, such as a proxy's, does not count.
+   Turso's `BLOCKED` refusal that ends `(writes are blocked, do you need to upgrade your plan?)` is what a token that can write is answered on a database whose writes are blocked, and it refuses the profile.
+   A probe the server runs was sent with a token that declares read-only access, so the server does not hold tokens to their claims: it checks no token, or admits one it did not sign.
+   That refuses the profile `PROFILE_SERVER_UNENFORCED`, which ends the run with the reason `server-authorization-off`.
+   Any other answer, a statement error such as "no such table" included, refuses it `PROFILE_UNSUPPORTED_TARGET`.
 
 The proof runs at open only: a token whose rights change after the open is seen at the next open of a profiled handle.
-Turso Cloud was not measured for this profile: a Turso read-only token is admitted only when Turso answers every probe with the same 403 and refusal wording and the token carries `"a": "ro"` and no `"p"` claim, and refused otherwise.
+Turso Cloud was measured on 2026-10-29 on a scratch database with a read-only token and a full-access one.
+The read-only token carries the claims `a`, `exp`, `iat`, `id`, `kid` and `rid`, and Turso answered its writes with the in-band `BLOCKED` refusal above.
+The integration suite replays that answer from a local server that answers as Turso does, with no Turso token.
 
 #### The agent token
 
@@ -289,7 +308,7 @@ The read-only token can read `GET /dump`, which is a read of the whole database,
 
 #### Boundary record
 
-Measured on `ghcr.io/tursodatabase/libsql-server:v0.24.33` (`sqld 0.24.33 (40a151bd 2025-12-19)`, SQLite 3.45.1) on 2026-10-29, by [`tests/live/libsql-agent-boundary.ts`](../../tests/live/libsql-agent-boundary.ts), with Studio's agent admission bypassed: 93 checks, all passing.
+Measured on `ghcr.io/tursodatabase/libsql-server:v0.24.33` (`sqld 0.24.33 (40a151bd 2025-12-19)`, SQLite 3.45.1) on 2026-10-29, by [`tests/live/libsql-agent-boundary.ts`](../../tests/live/libsql-agent-boundary.ts), with Studio's agent admission bypassed: 96 checks, all passing.
 Three servers: one checking JWTs with a read-only token, a writable token and a read-only token whose permission claim grants writes, all signed by its key, one started with HTTP Basic, and one checking no credential.
 
 | Probe | Read-only token, through `queryReadOnly` | Writable token, positive control on a scratch table |
@@ -305,13 +324,17 @@ Three servers: one checking JWTs with a read-only token, a writable token and a 
 
 The tables, rows, indexes, views, triggers and `user_version` read back the same before and after the refused statements.
 Each of the open's three probes answered the read-only token 403 with `Authorization forbidden: Current session doesn't not have Write permission to namespace default`; the writable token ran the `DROP TABLE IF EXISTS` and was told "no such table" by the other two, so none changed anything.
-At open, the read-only token was admitted, and these were refused: the writable token (`PROFILE_SERVER_UNENFORCED`), a user name and password on the Basic server (`PROFILE_PRIVILEGES_TOO_BROAD`, nothing sent), the read-only token on the Basic server (its connect probe answered 401), and the server that checks no credential, with no token (`PROFILE_SERVER_UNENFORCED`, nothing sent) and with a token (`PROFILE_SERVER_UNENFORCED`, the probe ran).
+At open, the read-only token was admitted, and these were refused.
+The writable token, on the JWT server and on the server that checks no credential, was refused `PROFILE_PRIVILEGES_TOO_BROAD` before a probe was sent.
+A user name and password on the Basic server were refused `PROFILE_PRIVILEGES_TOO_BROAD`, with nothing sent.
+The read-only token on the Basic server failed its connect probe with 401, and so did a read-only token with a forged signature on the JWT server.
+The server that checks no credential was refused `PROFILE_SERVER_UNENFORCED` with no token (nothing sent), and with the read-only token and the forged one (the probe ran).
 The operations profile opened the writable token unproven, and read the object surface plan mode grounds on.
 An editor handle refused `queryReadOnly` before sending anything.
 The catalog reads, the statistics probe, the estimating plan and the pattern table profile the agent composes each answered the read-only token.
 The budgets: 51 rows under a budget of 50, 100,000 bytes of hex under 65,536, and a statement past a one-second deadline were each refused, and the server answered the next statement.
 A token whose permission claims the server cannot read is refused 401 at connect, before the proof.
-A token carrying `"a": "ro"` and `"p": {"rw": {"ns": ["default"]}}` ran `INSERT`, `DELETE ... WHERE 0` and `DROP TABLE IF EXISTS` on the server; the open refused it (`PROFILE_SERVER_UNENFORCED`, the first probe ran), and its claims alone are refused `PROFILE_PRIVILEGES_TOO_BROAD`.
+A token carrying `"a": "ro"` and `"p": {"rw": {"ns": ["default"]}}` ran `INSERT`, `DELETE ... WHERE 0` and `DROP TABLE IF EXISTS` on the server, and the open refused it on its claims (`PROFILE_PRIVILEGES_TOO_BROAD`) before a probe was sent.
 
 Run it against servers you may write to; it creates tables with the `libredb_lb_` prefix and drops them on exit:
 
@@ -343,6 +366,8 @@ This overlay overrides no Shared member, so every Shared member is the `sql` sta
 Every statement it composes is SQLite's, and each kind was run with the read-only token: the catalog reads off `sqlite_master`, the `sqlite_stat1` probe, `EXPLAIN QUERY PLAN`, and the table profile's `LIKE` and `GLOB` counts.
 The server refuses `ANALYZE` for every token, so `sqlite_stat1` exists only in a database that brought one with it, and the probe reads its absence as statistics absent.
 The grounding capture is unsupported because it reads through the read-only path, which a token that writes cannot open, and plan mode grounds on such a connection; grounding asks the provider to describe its schema instead.
+A plan run reads its statistics under the profile it grounds under, the operations profile here: the `sqlite_stat1` availability probe and the statistics read are composed by the server and sent through the provider's own query path, so a plan run on a token that can write succeeds, grounded, and never asks for the read-only profile.
+In agent mode these statements run only on a handle whose open admitted the token: a read-only token with none but the allowed claims, refused a write by sqld or Turso Cloud in that server's own words.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
 MCP's statement read stays closed on libSQL (`MCP_STATEMENT_READ.libsql` is false) until a change of its own opens it.
 
