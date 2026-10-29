@@ -35,7 +35,6 @@ None of it is a GitHub issue.
 - [Dependencies](#dependencies) — P1-P11 · 9
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
-- [Chart configuration surface](#chart-configuration-surface) — N1 · 1
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
 - [Security Phase 2 deferrals](#security-phase-2-deferrals) — C3–C11 · 6
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
@@ -6580,34 +6579,6 @@ Seen once, on 2026-10-16, in a local run of the E2E Tests job's suite in CI mode
 The cause above is a reading of the code, not a measurement: the run kept no trace of the second context's requests.
 
 **Done when:** the second context makes no request between the removal and its own navigation, for example because it waits for its editor to settle and then stays on `about:blank` until the check, or the check accepts either redirect and asserts what both prove, that the session is refused; and the test passes 20 of 20 runs with `--repeat-each=20`.
-
-## Chart configuration surface
-
-Found while reviewing #362 (the Gateway API `HTTPRoute` template) and its follow-up #366. None is
-caused by those changes. All share one failure shape: configuration the chart accepts that produces an
-install which succeeds while the app stays unreachable.
-
-### N1. The chart cannot expose the app on OpenShift, where `Route` is the native way in
-
-`grep -rl 'route.openshift.io' charts/ operator/` returns nothing. The chart renders an `Ingress`
-(`templates/ingress.yaml`) and, since #362, a Gateway API `HTTPRoute` (`templates/route.yaml`), but
-never a `route.openshift.io/v1` `Route`.
-
-Meanwhile the chart carries an OpenShift security-context adaptation and the repository publishes an
-OpenShift operator to OperatorHub. So OpenShift is a first-class target everywhere except the one
-object that makes the app reachable there.
-
-The consequence is the symptom #362 was opened to fix, one platform over: `helm install` succeeds, the
-pod runs, and the operator has to hand-write a `Route` outside the chart and keep it in sync across
-upgrades. An `Ingress` is *sometimes* served on OpenShift by the router's ingress translation, but that
-is a compatibility shim with its own annotation dialect, and it does not cover re-encrypt or
-passthrough TLS.
-
-Note the naming collision: `route.*` in `values.yaml` means Gateway API as of #362, so an OpenShift
-`Route` cannot reuse that key. `openshiftRoute.*` is the obvious alternative.
-
-**Done when:** an OpenShift cluster can be served by the chart alone, with TLS termination selectable,
-and the README says which of the three exposure mechanisms belongs to which platform.
 
 ---
 
