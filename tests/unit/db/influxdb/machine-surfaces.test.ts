@@ -3,8 +3,8 @@
  * (`readObjectInventoryForGrounding`) and MCP `inspect_schema` both read the object surface alone, so they see exactly
  * what the tree shows. On a 3.x server, through either type, that is never `_internal`, whose tables hold the server's
  * token table: it is not listed, and no request names it. On 1.x it is the operator's own monitoring database, listed
- * and read like any other. Neither provider has a read-only statement path, so agent execution and the MCP read tool
- * refuse both types.
+ * and read like any other. The InfluxQL provider has no read-only statement path, so agent execution and the MCP read
+ * tool refuse `influxdb`; agent mode executes statements on `influxdb3`, whose MCP read stays closed.
  *
  * Every answer is a committed capture of the pinned servers, or a listing built in a capture's shape for a database the
  * captures hold no listing of, served by the statement the provider sends, through the real client and a recording
@@ -179,7 +179,7 @@ async function connectedSql(): Promise<Connected> {
     ...repeat(sqlServer),
   ]);
   const factory: InfluxClientFactory = (options, routes) => createInfluxClient(options, routes, wire.factory);
-  const provider = new InfluxDB3Provider(SQL_CONNECTION, {}, factory);
+  const provider = new InfluxDB3Provider(SQL_CONNECTION, {}, {}, factory);
   await provider.connect();
   providers.push(provider);
   wire.requests.length = 0;
@@ -333,12 +333,18 @@ describe("MCP inspect_schema (InfluxDB spec 6.5, E13)", () => {
   });
 });
 
-describe("no statement of the model's runs against InfluxDB (InfluxDB spec 6.5)", () => {
-  test("neither provider has a read-only statement path, and neither type is an agent execution engine", async () => {
+describe("which InfluxDB statements of the model's run (InfluxDB spec 6.5)", () => {
+  test("the InfluxQL provider has no read-only statement path and is no agent execution engine", async () => {
     const engines: readonly string[] = AGENT_EXECUTION_ENGINES;
-    for (const connected of [await connectedInfluxql("3.12.0-core"), await connectedSql()]) {
-      expect("queryReadOnly" in connected.provider).toBe(false);
-      expect(engines).not.toContain(connected.connection.type);
-    }
+    const connected = await connectedInfluxql("3.12.0-core");
+    expect("queryReadOnly" in connected.provider).toBe(false);
+    expect(engines).not.toContain(connected.connection.type);
+  });
+
+  test("the InfluxDB 3 provider has one, and influxdb3 is an agent execution engine", async () => {
+    const engines: readonly string[] = AGENT_EXECUTION_ENGINES;
+    const connected = await connectedSql();
+    expect("queryReadOnly" in connected.provider).toBe(true);
+    expect(engines).toContain(connected.connection.type);
   });
 });

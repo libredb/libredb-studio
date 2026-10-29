@@ -11,14 +11,15 @@
  * inherited `prepareQuery`, which appends the preview's `LIMIT` and `OFFSET` under the DataFusion grammar row (I19).
  *
  * The closed route table and the 3.x planner are the boundary here (I8); the read policy runs on every text this
- * provider sends all the same, its own catalog texts included (E6, E17), and what it refuses sends nothing.
+ * provider sends all the same, its own catalog texts included (E6, E17), and what it refuses sends nothing. The agent
+ * read-only profile's statement path, `queryReadOnly`, keeps its own rules in `sql-agent-read.ts`.
  *
  * One limiter covers every client call (E16): the connect reads, the tree, monitoring and the runs, each taking one
  * permit of the engine key `influxdb3` per request in flight. A run's signal carries its deadline (the connection's
  * query timeout) and its cancel (`createRunRegistry`); every other read carries the surface deadline. A cancel or a
  * disconnect drops the socket, which frees the server's work (spec 5.6).
  */
-import { ConnectionError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { ConnectionError, DatabaseConfigError, ExecutionProfileError, QueryError } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
 import { callerBoundTruncationReason, findKind } from "@/lib/db/object-kinds";
 import { SQLBaseProvider } from "@/lib/db/providers/sql/sql-base";
@@ -37,9 +38,12 @@ import type {
   PerformanceMetrics,
   PreviewTimeWindow,
   ProviderCapabilities,
+  ProviderExecutionContext,
   ProviderLabels,
   ProviderOptions,
   QueryResult,
+  ReadOnlyStatementBudget,
+  ReadOnlyStatementMode,
   SlowQueryStats,
   StorageStats,
   TableStats,
@@ -72,6 +76,14 @@ import { INFLUX_ERROR_SENTENCES, InfluxAnswerError, type InfluxErrorContext, toI
 import { INFLUXDB3_LABELS } from "./labels";
 import { toInfluxHealth, toInfluxOverview } from "./monitoring";
 import { SQL_ROUTES, type SqlRouteId } from "./routes";
+import {
+  agentReadFailure,
+  agentResponseCap,
+  assertAgentBudget,
+  assertCheckedServer,
+  assertNoSystemTable,
+  shapeAgentAnswer,
+} from "./sql-agent-read";
 import { resolveSessionDatabase } from "./run-database";
 import {
   countInfluxdb3Tables,
@@ -205,13 +217,23 @@ export class InfluxDB3Provider extends SQLBaseProvider {
   private readonly limiter: ProviderLimiter = influxdb3Limiter();
   private readonly runs: RunRegistry = createRunRegistry();
 
+  /**
+   * Whether this provider was opened to send an agent's statements: under an execution profile (`readOnly`) whose
+   * acquisition calls `queryReadOnly` (`sendsStatements`). Only then does `connect()` check the server is the line the
+   * boundary was measured on, and only then does `queryReadOnly` answer. The operations profile's acquisitions send no
+   * statement, so they open unchecked, as an editor connection does.
+   */
+  private readonly readOnlyProfile: boolean;
+
   /** Validates nothing and opens nothing: the connection's rules run in `connect()`, before the factory. */
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
+    execution: ProviderExecutionContext = {},
     private readonly createClient: InfluxClientFactory = createInfluxClient,
   ) {
     super(config, options);
+    this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
   }
 
   // ==========================================================================
@@ -234,6 +256,8 @@ export class InfluxDB3Provider extends SQLBaseProvider {
       tablesAreDerivedGroupings: false,
       // The route table plus the engine (I8).
       enforcesReadOnly: true,
+      // The agent's own credential is a token alone, as the connection's is: this type takes no user.
+      agentCredential: "token",
       supportsMaintenance: false,
       maintenanceOperations: [],
       // `http://` and `https://` already parse as ClickHouse; Host takes the URI.
@@ -282,6 +306,7 @@ export class InfluxDB3Provider extends SQLBaseProvider {
       const send: InfluxSend<SqlRouteId> = (request, read) => this.send(opened, request, read);
       const version = await this.readVersion(send, options, signal);
       generation = version.generation;
+      if (this.readOnlyProfile) assertCheckedServer(version);
       const visible = await this.readListing(send, signal);
       const session = resolveSessionDatabase({
         connection: options.database,
@@ -307,7 +332,7 @@ export class InfluxDB3Provider extends SQLBaseProvider {
     } catch (error) {
       client?.close();
       const failure =
-        options === undefined
+        options === undefined || error instanceof ExecutionProfileError
           ? (error as Error)
           : toInfluxError(error, this.errorContext(options, "connect", generation));
       this.setError(failure);
@@ -375,11 +400,12 @@ export class InfluxDB3Provider extends SQLBaseProvider {
     return this.session!;
   }
 
-  /** One request under its own limiter permit, released when it settles. */
+  /** One request under its own limiter permit, released when it settles; `maxResponseBytes` lowers its cap. */
   private async send(
     client: InfluxClient<SqlRouteId>,
     request: InfluxRequest<SqlRouteId>,
     signal: AbortSignal,
+    maxResponseBytes?: number,
   ): Promise<InfluxAnswer> {
     let ticket: Awaited<ReturnType<ProviderLimiter["acquire"]>>;
     try {
@@ -388,7 +414,7 @@ export class InfluxDB3Provider extends SQLBaseProvider {
       throw waitFailure(error);
     }
     try {
-      return await client.send(request, signal);
+      return await client.send(request, signal, maxResponseBytes);
     } finally {
       ticket.release();
     }
@@ -461,6 +487,65 @@ export class InfluxDB3Provider extends SQLBaseProvider {
     } finally {
       handle.end();
     }
+  }
+
+  /**
+   * The agent read-only execution profile's statement path. Never `query()`: that path cuts an answer to its fixed
+   * bounds and reports the cut, which a check of the returned rows against the agent's budget could not see.
+   *
+   * The engine holds the boundary: InfluxDB 3.12 Core's planner refuses every write, DDL, COPY, SET and transaction
+   * statement on the query route, whatever the token, and the open checked the server is that line
+   * (`sql-agent-read.ts`). The read policy and the `system` schema fence run first, as parser-only defence, and what
+   * either refuses sends nothing.
+   *
+   * Budgets refuse rather than truncate: the request's response cap and deadline come from the budget, and the answer
+   * is shaped in the strict mode, which throws the shared row or byte refusal before anything is returned.
+   *
+   * Refused outside the profile: a provider opened without the check has no boundary to run agent semantics on.
+   */
+  public async queryReadOnly(
+    sql: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    const session = this.requireSession();
+    if (!this.readOnlyProfile) {
+      throw new QueryError(
+        "Read-only execution requires a provider opened under the agent read-only profile",
+        this.type,
+        sql,
+      );
+    }
+    assertAgentBudget(budget);
+    if (mode !== "execute") {
+      throw new QueryError(
+        "InfluxDB 3 composes its estimating plan as a statement, so the estimate-plan session mode is refused",
+        this.type,
+        sql,
+      );
+    }
+    const verdict = evaluateInfluxSql(sql);
+    if (!verdict.allowed) throw new QueryError(verdict.message, this.type, sql);
+    assertNoSystemTable(sql);
+
+    const { client, options, version, database } = session;
+    const context = this.errorContext(options, "query", version.generation, database, budget.statementTimeoutMs);
+    return this.trackQuery(async () => {
+      try {
+        const { result: answer, executionTime } = await this.measureExecution(() =>
+          this.send(
+            client,
+            { route: "query", values: { db: database, q: sql } },
+            AbortSignal.timeout(budget.statementTimeoutMs),
+            agentResponseCap(budget),
+          ),
+        );
+        const { fields, rows } = shapeAgentAnswer(acceptedText(answer), budget, sql);
+        return { fields, rows, rowCount: rows.length, executionTime };
+      } catch (error) {
+        throw agentReadFailure(error, budget, sql) ?? toInfluxError(error, context);
+      }
+    });
   }
 
   /** Aborts a running or waiting run by its id and answers true; an unknown id answers false (spec 5.6). */

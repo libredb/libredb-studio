@@ -17,6 +17,7 @@ import type { AgentEngineClientDialect, AgentEngineClientOverlays, AgentEnginePa
 import {
   CLICKHOUSE_CLIENT_OVERLAY,
   DUCKDB_CLIENT_OVERLAY,
+  INFLUXDB3_CLIENT_OVERLAY,
   LIBSQL_CLIENT_OVERLAY,
   MSSQL_CLIENT_OVERLAY,
   MYSQL_CLIENT_OVERLAY,
@@ -32,6 +33,7 @@ const CLIENT_OVERLAYS: AgentEngineClientOverlays = Object.freeze({
   mysql: Object.freeze({ family: "sql", overlay: dialectOnly(MYSQL_CLIENT_OVERLAY) }),
   clickhouse: Object.freeze({ family: "sql", overlay: dialectOnly(CLICKHOUSE_CLIENT_OVERLAY) }),
   libsql: Object.freeze({ family: "sql", overlay: dialectOnly(LIBSQL_CLIENT_OVERLAY) }),
+  influxdb3: Object.freeze({ family: "sql", overlay: dialectOnly(INFLUXDB3_CLIENT_OVERLAY) }),
   mongodb: Object.freeze({ family: "mongo", overlay: dialectOnly(MONGODB_CLIENT_OVERLAY) }),
   kubernetes: Object.freeze({ family: "kubectl", overlay: dialectOnly(KUBERNETES_CLIENT_OVERLAY) }),
 } satisfies AgentEngineClientOverlays);

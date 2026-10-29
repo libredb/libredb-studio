@@ -686,6 +686,39 @@ describe("createDatabaseProvider", () => {
     expect(sent).toEqual(["SELECT 1"]);
   });
 
+  test("the execution context rides along to influxdb3: queryReadOnly answers only under the agent profile", async () => {
+    const conn = makeConnection("influxdb3", { port: 18181, password: "not-a-real-token", database: "home" });
+    const profiled = await createDatabaseProvider(conn, {}, { readOnly: true, sendsStatements: true });
+    const editor = await createDatabaseProvider(conn);
+    if (profiled.queryReadOnly === undefined || editor.queryReadOnly === undefined) throw new Error("no queryReadOnly");
+    // A session in place of a connect, whose client answers one row, so only the context tells the two apart.
+    const sent: string[] = [];
+    const client = {
+      send: async (request: { values: { q: string } }) => {
+        sent.push(request.values.q);
+        return { status: 200, contentType: "application/jsonl", text: '{"x":1}\n' };
+      },
+      close: () => undefined,
+    };
+    for (const provider of [profiled, editor]) {
+      Object.assign(provider, {
+        session: {
+          client,
+          options: { surfaceTimeoutMs: 1_000, callTimeoutMs: 1_000, endpoint: {}, secretForms: [] },
+          version: { generation: "v3", reported: "3.12.0", build: "Core" },
+          database: "home",
+        },
+        ensureConnected: () => undefined,
+      });
+    }
+    await expect(editor.queryReadOnly("SELECT 1", AGENT_BUDGET)).rejects.toThrow(
+      "Read-only execution requires a provider opened under the agent read-only profile",
+    );
+    expect(sent).toEqual([]);
+    await expect(profiled.queryReadOnly("SELECT 1", AGENT_BUDGET)).resolves.toMatchObject({ rows: [{ x: 1 }] });
+    expect(sent).toEqual(["SELECT 1"]);
+  });
+
   test('creates provider for type "druid"', async () => {
     // No `database` field: Druid reports exactly one catalog, always named
     // `druid`, so the provider ignores the connection's database entirely.

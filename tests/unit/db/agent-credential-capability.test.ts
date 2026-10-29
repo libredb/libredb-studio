@@ -26,6 +26,7 @@ const DECLARED_FORMS: Readonly<Partial<Record<DatabaseType, AgentCredentialForm>
   qdrant: "token",
   weaviate: "token",
   libsql: "token",
+  influxdb3: "token",
   bigquery: "service-account-key",
   libredb: "none",
 };

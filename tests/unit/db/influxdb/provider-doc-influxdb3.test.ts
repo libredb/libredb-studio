@@ -44,6 +44,11 @@ import {
   INFLUX_SQL_POLICY_SENTENCES,
   type InfluxSqlKeyword,
 } from "@/lib/db/providers/timeseries/influxdb/sql-policy";
+import {
+  AGENT_ENVELOPE_ALLOWANCE_BYTES,
+  AGENT_WIRE_EXPANSION,
+  INFLUXDB3_CHECKED_RELEASES,
+} from "@/lib/db/providers/timeseries/influxdb/sql-agent-read";
 import { shapeJsonlBody } from "@/lib/db/providers/timeseries/influxdb/sql-results";
 import { readPing } from "@/lib/db/providers/timeseries/influxdb/versions";
 import { generateSelectQuery, generateTableQuery } from "@/lib/query-generators";
@@ -212,7 +217,7 @@ describe("docs/providers/influxdb3.md quotes what the code says", () => {
       loadInfluxCapture("2.9.1", "ping-auth"),
       loadInfluxCapture("2.9.1", "health-auth"),
     ]);
-    const misPicked = new InfluxDB3Provider(CONNECTION, {}, (options, routes) =>
+    const misPicked = new InfluxDB3Provider(CONNECTION, {}, {}, (options, routes) =>
       createInfluxClient(options, routes, wire.factory),
     );
     const refusal = await misPicked.connect().then(
@@ -487,9 +492,21 @@ describe("docs/providers/influxdb3.md quotes what the code says", () => {
     expect(running).toContain("[SEED_CONNECTIONS.md](../SEED_CONNECTIONS.md)");
   });
 
+  test("the agent profile section names the checked line, the response cap and the boundary record as the code has them", () => {
+    const section = flat(sectionOf(DOC, "### 3.5 The agent read-only profile rests on the planner"));
+    expect(section).toContain(`today ${INFLUXDB3_CHECKED_RELEASES.join(", ")}, the line the captures were taken on`);
+    expect(AGENT_WIRE_EXPANSION).toBe(3);
+    expect(AGENT_ENVELOPE_ALLOWANCE_BYTES).toBe(64 * 1024);
+    expect(section).toContain("its response cap is three times the byte budget plus 64 KiB");
+    expect(section).toContain("engine-enforced, by the planner");
+    expect(section).toContain("parser-only defence");
+    expect(section).toContain("passes 63 checks through the production path");
+    expect(section).toContain("`bun tests/live/influxdb3-write-refusals.ts` sent 43 statements");
+  });
+
   test("every backlog id the doc cites is an entry of docs/BACKLOG.md", () => {
     const cited = [...new Set([...DOC.matchAll(/\b([DUB]\d{2,3})\b/g)].map((match) => match[1]))];
-    for (const id of ["D196", "D197", "D198", "D200", "D201", "D202", "D204", "U79", "U80", "U81", "B94"]) {
+    for (const id of ["D196", "D197", "D198", "D200", "D201", "D202", "D204", "U79", "U80", "U81", "B143"]) {
       expect(cited).toContain(id);
     }
     for (const id of cited) expect(BACKLOG).toMatch(new RegExp(`^### ${id}\\. `, "m"));

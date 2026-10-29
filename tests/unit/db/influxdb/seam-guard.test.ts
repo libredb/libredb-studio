@@ -3,8 +3,10 @@
  * source of `src/lib/db/providers/timeseries/influxdb/` is parsed, so a file a later task adds is held by the same
  * rules without editing this list.
  *
- * 1. No file imports a module under `src/lib/db/providers/` outside this directory, with exactly one exception (R15):
- *    the specifier `@/lib/db/providers/sql/sql-base`, imported by `sql-provider.ts`.
+ * 1. No file imports a module under `src/lib/db/providers/` outside this directory, with exactly two exceptions: the
+ *    specifier `@/lib/db/providers/sql/sql-base`, imported by `sql-provider.ts` (R15), and
+ *    `@/lib/db/providers/sql/read-only-budget`, the budget refusals every agent read path shares, imported by
+ *    `sql-agent-read.ts`.
  * 2. No `influxql-*` module imports an `sql-*` module, and no `sql-*` module imports an `influxql-*` module.
  * 3. No shared-layer module imports an `influxql-*` or `sql-*` module.
  * 4. Only `client.ts` imports `createNodeTransport`, only `connection-options.ts` imports `nodeTlsMaterial`, and
@@ -38,6 +40,7 @@ const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const DIR = "src/lib/db/providers/timeseries/influxdb";
 const PROVIDERS = "src/lib/db/providers/";
 const SQL_BASE = "@/lib/db/providers/sql/sql-base";
+const READ_ONLY_BUDGET = "@/lib/db/providers/sql/read-only-budget";
 
 const SHARED = [
   "connection-options",
@@ -139,6 +142,7 @@ const OUTSIDE_VALUES: Readonly<Record<Layer, readonly string[]>> = {
     "src/lib/db/utils/result-fields.ts",
     "src/lib/db/object-kinds.ts",
     "src/lib/db/providers/sql/sql-base.ts",
+    "src/lib/db/providers/sql/read-only-budget.ts",
   ],
   grammar: ["src/lib/db/sql-grammar/"],
   contract: ["src/lib/db/migration-ddl/"],
@@ -273,7 +277,10 @@ function seamFindings(file: string, text: string): string[] {
     const target = resolved(specifier, file);
 
     if (target.startsWith(PROVIDERS) && !inDirectory(target)) {
-      if (!(name === "sql-provider" && specifier === SQL_BASE)) {
+      const excepted =
+        (name === "sql-provider" && specifier === SQL_BASE) ||
+        (name === "sql-agent-read" && specifier === READ_ONLY_BUDGET);
+      if (!excepted) {
         findings.push(`rule 1: ${file} imports ${specifier}, a module of another provider directory`);
       }
     }
@@ -366,6 +373,12 @@ describe("planted violations fail by name", () => {
       "sql-policy.ts",
       'import { readOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";\n',
       `rule 1: ${DIR}/sql-provider.ts imports @/lib/db/providers/sql/read-only-budget, a module of another provider directory`,
+    ],
+    [
+      "sql-agent-read.ts",
+      "sql-policy.ts",
+      'import { SQLBaseProvider } from "@/lib/db/providers/sql/sql-base";\n',
+      `rule 1: ${DIR}/sql-agent-read.ts imports @/lib/db/providers/sql/sql-base, a module of another provider directory`,
     ],
     [
       "sql-provider.ts",

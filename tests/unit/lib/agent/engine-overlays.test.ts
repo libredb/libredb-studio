@@ -15,6 +15,7 @@ import { defineOverlay, dialectOnly, ENGINE_OVERRIDABLE_SERVER_MEMBERS } from "@
 import type { AgentEngineClientDialect, AgentEngineServerDialect } from "@/lib/agent/languages/pack";
 import { languageServerPack } from "@/lib/agent/languages/server";
 import * as CLICKHOUSE from "@/lib/agent/languages/sql/engines/clickhouse";
+import * as INFLUXDB3 from "@/lib/agent/languages/sql/engines/influxdb3";
 import * as LIBSQL from "@/lib/agent/languages/sql/engines/libsql";
 import * as SQL_CLIENT_OVERLAYS from "@/lib/agent/languages/sql/engines/client";
 import * as DUCKDB from "@/lib/agent/languages/sql/engines/duckdb";
@@ -62,6 +63,7 @@ const ENGINE_MODULES: Readonly<Record<string, Readonly<Record<string, unknown>>>
   "sql/engines/mysql": MYSQL,
   "sql/engines/clickhouse": CLICKHOUSE,
   "sql/engines/libsql": LIBSQL,
+  "sql/engines/influxdb3": INFLUXDB3,
   "sql/engines/client": SQL_CLIENT_OVERLAYS,
   "mongo/engines/mongodb": MONGODB,
   "mongo/engines/client": MONGO_CLIENT_OVERLAYS,
@@ -91,9 +93,19 @@ describe("the engine registry", () => {
       "mssql",
       "clickhouse",
       "mongodb",
+      "influxdb3",
       "kubernetes",
     ]);
-    expect(SQL_ENGINES).toEqual(["postgres", "mysql", "sqlite", "libsql", "duckdb", "mssql", "clickhouse"]);
+    expect(SQL_ENGINES).toEqual([
+      "postgres",
+      "mysql",
+      "sqlite",
+      "libsql",
+      "duckdb",
+      "mssql",
+      "clickhouse",
+      "influxdb3",
+    ]);
   });
 
   test.each(ALL_TYPES)("%s has a client pack exactly when it speaks a language, over that language's facet", (type) => {
@@ -123,7 +135,7 @@ describe("the engine registry", () => {
 
   test("every engine module's server overlay holds a dialect and overridable members, its client one a dialect alone (ruling 2)", () => {
     const exported = exportedOverlays();
-    expect(exported).toHaveLength(18);
+    expect(exported).toHaveLength(20);
     // The one other export is the PostgreSQL retry's rewrite, which its tests call directly.
     expect(
       Object.entries(ENGINE_MODULES)
@@ -212,7 +224,7 @@ describe("engineServerDialect", () => {
     }
   });
 
-  test("planEstimate is supplied on every SQL engine: a prefix on six, SQL Server's session mode", () => {
+  test("planEstimate is supplied on every SQL engine: a prefix on seven, SQL Server's session mode", () => {
     expect(Object.fromEntries(SQL_ENGINES.map((type) => [type, engineServerDialect(type).planEstimate]))).toEqual({
       postgres: { kind: "prefix", prefix: "EXPLAIN (FORMAT JSON)" },
       mysql: { kind: "prefix", prefix: "EXPLAIN FORMAT=JSON" },
@@ -221,6 +233,7 @@ describe("engineServerDialect", () => {
       mssql: { kind: "session-mode", mode: "estimate-plan" },
       clickhouse: { kind: "prefix", prefix: "EXPLAIN json = 1, indexes = 1" },
       libsql: { kind: "prefix", prefix: "EXPLAIN QUERY PLAN" },
+      influxdb3: { kind: "prefix", prefix: "EXPLAIN" },
     });
     for (const type of SQL_ENGINES) expect(Object.isFrozen(engineServerDialect(type).planEstimate)).toBe(true);
   });
@@ -239,7 +252,7 @@ describe("engineServerDialect", () => {
     }
     expect(composers("sqlite").relations).toBe(composers("sqlite").columns);
     expect(composers("libsql").relations).toBe(composers("libsql").columns);
-    for (const type of ["postgres", "duckdb", "mssql", "mysql", "clickhouse"] as const) {
+    for (const type of ["postgres", "duckdb", "mssql", "mysql", "clickhouse", "influxdb3"] as const) {
       expect(composers(type).relations).not.toBe(composers(type).columns);
     }
   });
@@ -271,6 +284,7 @@ describe("engineServerDialect", () => {
     expect(engineServerDialect("duckdb").statistics).toBe("unsupported");
     expect(engineServerDialect("mysql").statistics).toBe("unsupported");
     expect(engineServerDialect("clickhouse").statistics).toBe("unsupported");
+    expect(engineServerDialect("influxdb3").statistics).toBe("unsupported");
     const reading = (type: DatabaseType) => {
       const statistics = engineServerDialect(type).statistics;
       if (statistics === "unsupported") throw new Error(`${type} has no statistics`);
@@ -300,7 +314,7 @@ describe("engineServerDialect", () => {
   test("catalogCapture is supplied on PostgreSQL and SQLite, each with its own kinds, builder and kind words", () => {
     const supplied = SQL_ENGINES.filter((type) => engineServerDialect(type).catalogCapture !== "unsupported");
     expect(supplied).toEqual(["postgres", "sqlite"]);
-    for (const type of ["duckdb", "mssql", "mysql", "clickhouse", "libsql"] as const) {
+    for (const type of ["duckdb", "mssql", "mysql", "clickhouse", "libsql", "influxdb3"] as const) {
       expect(engineServerDialect(type).catalogCapture).toBe("unsupported");
     }
     const capture = (type: DatabaseType) => {
@@ -353,6 +367,7 @@ describe("the client dialect", () => {
       mssql: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
       clickhouse: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
       libsql: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
+      influxdb3: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
     });
     for (const type of SQL_ENGINES) expect(Object.isFrozen(clientDialect(type))).toBe(true);
     for (const type of ["mongodb", "kubernetes"] as const) expect(engineClientPack(type).dialect).toBeUndefined();
@@ -374,7 +389,7 @@ describe("the client dialect", () => {
 
   test("enginesSupporting answers frozen, in registry order, the engines supplying every member asked", () => {
     const composers = enginesSupporting("catalogRead", "planEstimate");
-    expect(composers).toEqual(["postgres", "sqlite", "duckdb", "mssql", "mysql", "clickhouse", "libsql"]);
+    expect(composers).toEqual(["postgres", "sqlite", "duckdb", "mssql", "mysql", "clickhouse", "libsql", "influxdb3"]);
     expect(Object.isFrozen(composers)).toBe(true);
     const capture = enginesSupporting("catalogCapture");
     expect(capture).toEqual(["postgres", "sqlite"]);
@@ -404,6 +419,18 @@ describe("the estimating EXPLAIN agrees with the editor's strategy", () => {
       expect(composeEstimatingExplain(type, "SELECT 1").sql).toBe(strategy!.buildSql("SELECT 1", "estimate")!);
     },
   );
+
+  test("influxdb3 declares no EXPLAIN strategy, and its estimating plan is DataFusion's plain EXPLAIN", async () => {
+    const provider = await createDatabaseProvider(
+      CENSUS_CONNECTION.influxdb3,
+      {},
+      executionContextFor("agent-read-only"),
+    );
+    expect(provider.getCapabilities().supportsExplain).toBe(false);
+    expect(provider.getCapabilities().explainFormat).toBeUndefined();
+    expect(composeEstimatingExplain("influxdb3", "SELECT 1")).toEqual({ sql: "EXPLAIN SELECT 1", mode: "execute" });
+    expect(composeEstimatingExplain("influxdb3", "explain SELECT 1").sql).toBe("EXPLAIN SELECT 1");
+  });
 
   test("mssql declares no EXPLAIN, and its estimating plan is the session mode", async () => {
     const provider = await createDatabaseProvider(CENSUS_CONNECTION.mssql, {}, executionContextFor("agent-read-only"));

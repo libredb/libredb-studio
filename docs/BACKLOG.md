@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B142 · 72
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B143 · 73
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -7802,14 +7802,15 @@ Found 2026-10-03 while designing the Neo4j provider (spec 6.4).
 
 **Done when:** `Neo4jProvider` implements `queryReadOnly` through the same policy, gate and READ session as the editor, `AGENT_EXECUTION_ENGINES` names Neo4j, MCP serves its Cypher through its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) (`run_read_query` serves SQL engines alone), and an agent run and an MCP call each drive a `LOAD CSV` and a write to their refusal in a test.
 
-### B94. InfluxDB has no agent execution and no MCP `run_read_query`
+### B94. InfluxDB over InfluxQL has no agent execution and no MCP statement read
 
-Neither the `influxdb` nor the `influxdb3` provider implements `queryReadOnly`, so `AGENT_EXECUTION_ENGINES` names neither, agent auto mode refuses both, and MCP `run_read_query` answers that the engine is not served; plan mode and the MCP metadata tools work (`MCP_EXPOSABLE` in `src/lib/db/compatibility.ts`).
-Both execution paths guard a statement with SQL readers (`src/lib/db/operations/statement-guard.ts`), and each type needs a statement contract of its own: the InfluxQL read policy for `influxdb`, the DataFusion policy for `influxdb3`.
+The `influxdb` provider implements no `queryReadOnly`, so `AGENT_EXECUTION_ENGINES` does not name it, agent auto mode refuses it, and no MCP tool runs InfluxQL; plan mode and the MCP metadata tools work (`MCP_EXPOSABLE` in `src/lib/db/compatibility.ts`).
+Both execution paths guard a statement with SQL readers (`src/lib/db/operations/statement-guard.ts`), and InfluxQL needs a statement contract of its own, the InfluxQL read policy.
+`influxdb3` left this entry on 2026-10-29: agent mode executes its DataFusion SQL under the 3.12 Core planner's write refusals, and its MCP statement read stays closed until a change of its own opens it.
 
 Found 2026-10-04 while designing the InfluxDB provider (ruling R10).
 
-**Done when:** each type implements `queryReadOnly` under a statement contract of its own (the InfluxQL policy for `influxdb`, the DataFusion policy for `influxdb3`), agent execution serves both, and MCP serves `influxdb3` through `run_read_query` and `influxdb`'s InfluxQL through its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), with tests.
+**Done when:** `influxdb` implements `queryReadOnly` under the InfluxQL policy, agent execution serves it, and MCP serves its InfluxQL through its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), with tests.
 
 ### B100. Oxia has no agent execution and no MCP surface
 
@@ -8174,6 +8175,17 @@ The docblock above `buildMssqlEstimates` says the inventory uses the same key, w
 Measured 2026-10-29 on SQL Server 2022 with a least-privilege login, the same under the read-only and the operations grounding; pre-existing.
 
 **Done when:** the estimates and the inventory are joined on one key built by one function, and a test packs a SQL Server inventory with its estimates and finds the row counts; cited in `docs/AGENT.md`.
+
+### B143. InfluxDB 3 is offered profile_table and compare_plans with nothing to read them by
+
+Agent mode executes statements on InfluxDB 3 (SQL), and its engine overlay (`src/lib/agent/languages/sql/engines/influxdb3.ts`) supplies the catalog read and the `EXPLAIN` estimating plan only.
+`profile_table` is offered to the database-assessment and data-analysis workflows there, and the overlay declares its `profileComposition` `"unsupported"`, so every call answers `UNSUPPORTED_DIALECT`: a profile is one aggregate over every row of a table, which on a time-series table meets Core's file limit.
+`compare_plans` is offered to the query-optimization workflow, and the provider declares no explain strategy (`supportsExplain: false`), so `summarisePlan` has no agent reading of a DataFusion plan and a comparison reads both plans as `unknown`; the same missing reading keeps the data-analysis workflow from offering to run its answer, which fails closed.
+The statistics reading and the grounding capture are unsupported too: the engine keeps no row estimate outside the `system` schema, which the agent may not read beyond `system.influxdb_schema`.
+
+Found 2026-10-29 with agent execution on InfluxDB 3.
+
+**Done when:** the InfluxDB 3 overlay gains a profile composition bounded in time and measured on the engine, or its SQL variants stop offering `profile_table` through a requirement, and a DataFusion explain strategy with an `agentReading` verified against the engine's plans exists, with tests for both; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

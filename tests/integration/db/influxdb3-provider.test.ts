@@ -20,12 +20,19 @@
 import { describe, expect, test } from "bun:test";
 import { QueryError } from "@/lib/db/errors";
 import { createInfluxClient, type InfluxClientFactory } from "@/lib/db/providers/timeseries/influxdb/client";
+import { buildInfluxConnectionOptions } from "@/lib/db/providers/timeseries/influxdb/connection-options";
+import { SQL_ROUTES } from "@/lib/db/providers/timeseries/influxdb/routes";
 import { INFLUX_ERROR_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/errors";
 import { evaluateInfluxSql } from "@/lib/db/providers/timeseries/influxdb/sql-policy";
 import { InfluxDB3Provider } from "@/lib/db/providers/timeseries/influxdb/sql-provider";
-import type { DatabaseConnection } from "@/lib/db/types";
+import type { DatabaseConnection, ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { generateTableQuery } from "@/lib/query-generators";
-import { type InfluxCapture, loadInfluxCapture, loadInfluxManifest } from "../../helpers/influxdb-fixtures";
+import {
+  type InfluxCapture,
+  loadInfluxCapture,
+  loadInfluxManifest,
+  loadWriteRefusalCaptures,
+} from "../../helpers/influxdb-fixtures";
 import { type RecordedInfluxRequest, recordingInfluxTransport } from "../../helpers/influxdb-transport";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 
@@ -61,7 +68,7 @@ function ioxListing(): InfluxCapture {
 const IOX_TABLES = ["edge", "edge cases,m", "home", "numbers", "sparse", 'we"ird name;x'];
 
 /** The seeded server: each request answered by the capture of what it asks. */
-function recordedServer(extra: Readonly<Record<string, InfluxCapture>> = {}) {
+function recordedServer(extra: Readonly<Record<string, InfluxCapture>> = {}, execution: ProviderExecutionContext = {}) {
   const answer = (request: RecordedInfluxRequest): InfluxCapture => {
     const path = new URL(request.url).pathname;
     if (path === "/ping") return capture("ping-auth");
@@ -75,7 +82,7 @@ function recordedServer(extra: Readonly<Record<string, InfluxCapture>> = {}) {
   };
   const wire = recordingInfluxTransport(Array.from({ length: 200 }, () => answer));
   const factory: InfluxClientFactory = (options, routes) => createInfluxClient(options, routes, wire.factory);
-  return { provider: new InfluxDB3Provider(CONNECTION, {}, factory), wire };
+  return { provider: new InfluxDB3Provider(CONNECTION, {}, execution, factory), wire };
 }
 
 const body = (request: RecordedInfluxRequest): { db: string; q: string; format: string } =>
@@ -236,4 +243,113 @@ describe("InfluxDB 3.12.0 Core, replayed", () => {
       await provider.disconnect();
     },
   );
+});
+
+/**
+ * The agent read-only profile's boundary, replayed: what 3.12.0 Core answered each write, DDL, COPY, SET, PREPARE and
+ * transaction statement sent raw to `query_sql` (tests/live/influxdb3-write-refusals.ts, 2026-10-29). The read policy
+ * refuses every one of these texts before sending, so the boundary claim rests on the server's answers: each request
+ * is the one Studio's client builds for that text, each answer is a planner refusal, and each one reaches an agent
+ * read as a statement refusal, never as rows.
+ */
+describe("InfluxDB 3.12.0 Core's write refusals, replayed", () => {
+  const PROFILE: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
+  const BUDGET: ReadOnlyStatementBudget = { statementTimeoutMs: 5_000, maxResultRows: 100, maxResultBytes: 65_536 };
+  const STATEMENTS = loadWriteRefusalCaptures().filter((entry) => !entry.name.startsWith("write-refusal/token-"));
+  const REFUSAL = /^(Error during planning: (DML|DDL|Statement) not supported: |This feature is not implemented: )/;
+  const textOf = (entry: InfluxCapture): string => (entry.request.body as { q: string }).q;
+
+  test("43 statements were captured, every one refused by the planner with a 400 or a 405 and no rows", () => {
+    expect(STATEMENTS).toHaveLength(43);
+    for (const entry of STATEMENTS) {
+      expect([400, 405]).toContain(entry.status);
+      expect(entry.contentType).toBeNull();
+      expect(entry.body).toMatch(REFUSAL);
+    }
+  });
+
+  test("the captures cover every write and DDL verb the boundary names", () => {
+    const verbs = new Set(STATEMENTS.map((entry) => textOf(entry).split(" ")[0]));
+    for (const verb of ["INSERT", "CREATE", "DROP", "DELETE", "UPDATE", "COPY", "ALTER", "TRUNCATE", "MERGE", "SET"]) {
+      expect(verbs).toContain(verb);
+    }
+    expect(STATEMENTS.map(textOf)).toContain(
+      "CREATE EXTERNAL TABLE libredb_wr_x STORED AS CSV LOCATION '/tmp/libredb-wr.csv'",
+    );
+  });
+
+  test.each(STATEMENTS.map((entry) => [entry.name, entry] as const))(
+    "%s: the request is the one Studio's client builds, and the planner's answer is a statement refusal",
+    async (_name, entry) => {
+      // The client sends what the capture sent: the policy is the provider's, not the client's.
+      const wire = recordingInfluxTransport([entry]);
+      const options = buildInfluxConnectionOptions(CONNECTION, { type: "influxdb3", queryTimeout: 30_000 });
+      const client = createInfluxClient(options, SQL_ROUTES, wire.factory);
+      const answer = await client.send(
+        { route: "query", values: { db: "home", q: textOf(entry) } },
+        AbortSignal.timeout(5_000),
+      );
+      client.close();
+      expect(body(wire.requests[0])).toEqual(entry.request.body as { db: string; q: string; format: string });
+      expect(answer.status).toBe(entry.status);
+
+      // The provider refuses the text itself before sending it.
+      expect(evaluateInfluxSql(textOf(entry)).allowed).toBe(false);
+
+      // And an agent read the planner answers this way is refused in the server's own words.
+      const { provider } = recordedServer({ "SELECT 1": entry }, PROFILE);
+      await provider.connect();
+      const error = await rejection(provider.queryReadOnly("SELECT 1", BUDGET));
+      expect(error).toBeInstanceOf(QueryError);
+      expect(error.message).toContain(entry.body.replace(REFUSAL, "").slice(0, 40));
+      await provider.disconnect();
+    },
+  );
+
+  test("a Core token is an admin token: the token table holds *:*:*, and no route mints a scoped one", () => {
+    const tokens = capture("write-refusal/token-permissions");
+    expect(tokens.request.body).toEqual({
+      db: "_internal",
+      q: "SELECT name, permissions FROM system.tokens ORDER BY name",
+      format: "jsonl",
+    });
+    expect(tokens.body).toBe('{"name":"_admin","permissions":"*:*:*"}\n');
+    const scoped = capture("write-refusal/token-resource-route");
+    expect([scoped.request.path, scoped.status, scoped.body]).toEqual([
+      "/api/v3/enterprise/configure/token",
+      404,
+      "Not found",
+    ]);
+  });
+
+  test("system.queries is refused with nothing sent, and system.influxdb_schema is read", async () => {
+    const schema = capture("sql-schema-home");
+    const { provider, wire } = recordedServer({ "SELECT * FROM system.influxdb_schema": schema }, PROFILE);
+    await provider.connect();
+    const sent = wire.requests.length;
+    const error = await rejection(provider.queryReadOnly("SELECT * FROM system.queries", BUDGET));
+    expect(error.message).toContain("system.influxdb_schema");
+    expect(wire.requests.length).toBe(sent);
+    const result = await provider.queryReadOnly("SELECT * FROM system.influxdb_schema", BUDGET);
+    expect(result.rows.length).toBeGreaterThan(0);
+    await provider.disconnect();
+  });
+
+  test("a row-cut overflow and a cell-budget overflow of a captured answer are each refused, never truncated", async () => {
+    const preview = capture("sql-tables");
+    const q = (preview.request.body as { q: string }).q;
+    const { provider } = recordedServer({ [q]: preview }, PROFILE);
+    await provider.connect();
+    const rows = preview.body.split("\n").filter((line) => line.trim() !== "").length;
+    const cut = await rejection(provider.queryReadOnly(q, { ...BUDGET, maxResultRows: rows - 1 }));
+    expect(cut.message).toBe(`Read-only execution exceeded the row budget: ${rows} rows > ${rows - 1} allowed`);
+    await provider.disconnect();
+
+    const wide = `{${Array.from({ length: 125_001 }, (_, column) => `"c${column}":1`).join(",")}}\n`;
+    const cells = recordedServer({ [q]: { ...preview, name: "built", body: wide + wide } }, PROFILE);
+    await cells.provider.connect();
+    const overflow = await rejection(cells.provider.queryReadOnly(q, { ...BUDGET, maxResultBytes: 50_000_000 }));
+    expect(overflow.message).toBe("Read-only execution exceeded the row budget: 2 rows > 1 allowed");
+    await cells.provider.disconnect();
+  });
 });

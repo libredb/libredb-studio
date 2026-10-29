@@ -11,7 +11,8 @@ import type { DatabaseType } from "@/lib/types";
  * boundary it declares (`providers/sql/postgres.ts`, `providers/sql/sqlite.ts`,
  * `providers/sql/duckdb/`, `providers/sql/mssql.ts`, `providers/sql/mysql.ts`,
  * `providers/platform/kubernetes/`, `providers/document/mongodb/index.ts`,
- * `providers/sql/clickhouse/index.ts`, `providers/sql/libsql/index.ts`), and that probe
+ * `providers/sql/clickhouse/index.ts`, `providers/sql/libsql/index.ts`,
+ * `providers/timeseries/influxdb/sql-provider.ts`), and that probe
  * stays the real rule: replacing it with this list would let the list go stale against the
  * drivers.
  *
@@ -32,7 +33,9 @@ import type { DatabaseType } from "@/lib/types";
  * `readonly = 1`, and its user is proven at open to hold nothing that setting leaves usable.
  * libSQL's boundary is the token: one the server refuses every write for, proven at open by
  * writes that change nothing and that the server must refuse, and by the token's own read-only
- * claim. Each provider's own `queryReadOnly` argues its own case.
+ * claim. InfluxDB 3's boundary is the engine's: the 3.12 Core planner refuses every write and DDL
+ * statement on the one route that carries statement text, whatever the token, and the open
+ * checks the server is that line. Each provider's own `queryReadOnly` argues its own case.
  * `tests/unit/lib/agent/engine-support.test.ts` is what keeps the two equal - it walks EVERY
  * id in the `DatabaseType` union, reads `queryReadOnly` off the real provider class the
  * factory would construct, and fails if this array and the drivers diverge in either direction.
@@ -57,6 +60,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "mongodb",
   "clickhouse",
   "libsql",
+  "influxdb3",
 ];
 
 /**

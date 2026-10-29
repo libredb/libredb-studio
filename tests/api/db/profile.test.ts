@@ -184,8 +184,11 @@ async function connectedInfluxdb3(
     loadInfluxCapture("3.12.0-core", "sql-databases"),
     ...rest,
   ]);
-  const provider = new InfluxDB3Provider({ ...influxdb3Connection, createdAt: new Date(0) }, {}, (options, routes) =>
-    createInfluxClient(options, routes, wire.factory),
+  const provider = new InfluxDB3Provider(
+    { ...influxdb3Connection, createdAt: new Date(0) },
+    {},
+    {},
+    (options, routes) => createInfluxClient(options, routes, wire.factory),
   );
   await provider.connect();
   return { provider, requests: wire.requests };

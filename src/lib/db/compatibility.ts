@@ -406,6 +406,7 @@ export const READS_FILE_ACCESS_POSTURE: Readonly<Record<DatabaseType, boolean>> 
   qdrant: false,
   weaviate: false,
   influxdb: false,
+  // Agent mode executes statements on InfluxDB 3, and MCP read stays closed on it until a change of its own opens it.
   influxdb3: false,
   oxia: false,
   databend: false,

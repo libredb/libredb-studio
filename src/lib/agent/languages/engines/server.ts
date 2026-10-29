@@ -27,6 +27,7 @@ import type {
 import { languageServerPack } from "../server";
 import { CLICKHOUSE_SERVER_OVERLAY } from "../sql/engines/clickhouse";
 import { DUCKDB_SERVER_OVERLAY } from "../sql/engines/duckdb";
+import { INFLUXDB3_SERVER_OVERLAY } from "../sql/engines/influxdb3";
 import { LIBSQL_SERVER_OVERLAY } from "../sql/engines/libsql";
 import { MSSQL_SERVER_OVERLAY } from "../sql/engines/mssql";
 import { MYSQL_SERVER_OVERLAY } from "../sql/engines/mysql";
@@ -42,6 +43,7 @@ const SERVER_OVERLAYS: AgentEngineServerOverlays = Object.freeze({
   mysql: Object.freeze({ ...MYSQL_SERVER_OVERLAY }),
   clickhouse: Object.freeze({ ...CLICKHOUSE_SERVER_OVERLAY }),
   libsql: Object.freeze({ ...LIBSQL_SERVER_OVERLAY }),
+  influxdb3: Object.freeze({ ...INFLUXDB3_SERVER_OVERLAY }),
   mongodb: Object.freeze({ ...MONGODB_SERVER_OVERLAY }),
   kubernetes: Object.freeze({ ...KUBERNETES_SERVER_OVERLAY }),
 } satisfies AgentEngineServerOverlays);

@@ -71,7 +71,7 @@ The read-only mode is declared (`READ_ONLY_ENFORCED`, `enforcesReadOnly`), and e
 Three layers stand between a statement and a write.
 The closed route table holds four routes, of which `POST /api/v3/query_sql` is the only one that carries a statement, so no request can reach a write endpoint.
 The read policy (section 5.3) admits one statement that leads with a read keyword and holds no writing word, and refuses everything else before the request.
-InfluxDB 3 Core's planner refuses every SQL write form on the query route, measured on 3.12.0; the policy does not rest on that staying true.
+InfluxDB 3 Core's planner refuses every SQL write form on the query route, captured on 3.12.0 (section 3.5); the policy does not rest on that staying true.
 
 ### 3.3 Why not the vendor clients
 
@@ -82,7 +82,80 @@ Reading `query_sql` as jsonl keeps every integer exact and every request inside 
 ### 3.4 Machine access
 
 MCP is offered (`MCP_EXPOSABLE`): `list_connections` and `inspect_schema` see the session database's tables and columns, as the tree does, and never `_internal` or a `system.*` table.
-Neither agent execution nor MCP `run_read_query` runs a statement on this type, because the provider implements no read-only query path for them ([B94](../BACKLOG.md)); plan mode drafts statements in the language section 5.1 names.
+Agent mode executes statements on this type under the agent read-only profile (section 3.5); MCP `run_read_query` runs none, because MCP's statement read stays closed on `influxdb3` (`MCP_STATEMENT_READ.influxdb3` is false) until a change of its own opens it.
+Plan mode drafts statements in the language section 5.1 names.
+
+### 3.5 The agent read-only profile rests on the planner
+
+Agent mode executes statements on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL and InfluxDB 3 (SQL); here the provider implements `queryReadOnly` in [`sql-provider.ts`](../../src/lib/db/providers/timeseries/influxdb/sql-provider.ts), with its own rules in [`sql-agent-read.ts`](../../src/lib/db/providers/timeseries/influxdb/sql-agent-read.ts).
+The boundary is engine-enforced, by the planner.
+`POST /api/v3/query_sql` carries free statement text, so the closed route table alone proves nothing about it, and Core mints only admin tokens, so no credential can carry the boundary either.
+What holds it is InfluxDB 3.12 Core's planner, which refuses every write, DDL, `COPY`, `SET`, `PREPARE` and transaction statement on that route, whatever the token.
+The read policy (section 5.3) and the `system` schema fence below are parser-only defence in front of it: they refuse a text before it is sent, and the boundary does not rest on them.
+
+#### The captures
+
+`bun tests/live/influxdb3-write-refusals.ts` sent 43 statements raw to `query_sql` as the admin token, with no read policy in front, on 2026-10-29, and wrote each answer to [`tests/fixtures/influxdb/3.12.0-core/write-refusal/`](../../tests/fixtures/influxdb/3.12.0-core/write-refusal/).
+Every one is refused with a 400 `Error during planning: DML not supported: ...`, `DDL not supported: ...` or `Statement not supported: ...`, or a 405 `This feature is not implemented: ...`, and the server read back unchanged after each: its databases, every table and column, the seeded row counts, the token table, and no file at a path a `COPY` or an external table named.
+They cover INSERT (VALUES, SELECT, into `system.queries`), CREATE TABLE (plain, `AS`, `SELECT ... INTO`), CREATE EXTERNAL TABLE, VIEW, SCHEMA, DATABASE, FUNCTION and INDEX, DROP TABLE, VIEW, SCHEMA, DATABASE and FUNCTION, DELETE, UPDATE, TRUNCATE, MERGE, COPY of a table and of a query, ALTER TABLE, SET, SET TIME ZONE, RESET, PREPARE, EXECUTE, DEALLOCATE, BEGIN, START TRANSACTION, COMMIT, ROLLBACK, VACUUM and ANALYZE TABLE, and the forms behind a read keyword: `EXPLAIN INSERT`, `EXPLAIN ANALYZE INSERT`, `EXPLAIN ANALYZE COPY`, `WITH ... INSERT` and a second statement after a `;`.
+Two more captures record the token: the token table of `_internal` lists one token, with the permission `*:*:*`, and the Enterprise route that mints a database-scoped token answers 404 on Core.
+`tests/integration/db/influxdb3-provider.test.ts` replays every capture: the request is the one Studio's client builds for that text, the read policy refuses the text, and an agent read the planner answers that way is refused in the server's own words.
+
+#### The open
+
+The check runs in `connect()` only when the execution context sets both `readOnly` and `sendsStatements`, the agent and hand-over profiles.
+The server's `/ping` must name InfluxDB 3 Core on a line in `INFLUXDB3_CHECKED_RELEASES`, today 3.12, the line the captures were taken on; any other version, an Enterprise server, and a server that names no version (a resource token's `/ping` 403) are refused `PROFILE_UNSUPPORTED_TARGET` until their own refusals are captured.
+The operations profile and plan mode send no statement of the model's, so they open unchecked, and a plan run grounds under the operations profile and never asks for the read-only one.
+`queryReadOnly` refuses on any handle opened without that context, an editor handle included, before it sends anything.
+
+#### The agent token
+
+The agent credential takes the token form: the agent token alone, sent as the bearer credential in place of the connection's own, with an agent user beside it refused, since this type takes no user.
+This type has no connection string, so an agent token is never beside one.
+On Core every token is an admin token, so an agent token changes who the server logs, never what the planner refuses.
+
+#### The statement path
+
+Each call is one statement in one `query_sql` request, never through `query()`: that path cuts an answer to its fixed bounds and reports the cut, which a check of the returned rows against the agent's budget could not see.
+In order: the budget is checked, the estimate-plan session mode is refused (the estimating plan is the `EXPLAIN` prefix the agent composes, sent in the ordinary execute mode), the read policy runs, and the `system` schema fence runs.
+The fence refuses any name `system` followed by a `.` unless `influxdb_schema` follows it, whatever its case, its quoting or what stands before it (`public.system.queries`): `system.queries` holds the text of every query the server ran, `system.parquet_files` the store's file paths and `system.processing_engine_logs` the plugins' output, and the engine serves them to any Core token.
+The request's deadline is the budget's, and its response cap is three times the byte budget plus 64 KiB, since a jsonl line is at most three times the bytes of the row it becomes (a character outside ASCII written as a `\uXXXX` escape); an answer past the cap is refused as over the byte budget.
+The answer is shaped in the strict mode of `shapeJsonlBody`: a row past the row budget, or a row that takes the answer past the 250,000-cell budget, throws the shared row refusal of [`read-only-budget.ts`](../../src/lib/db/providers/sql/read-only-budget.ts), naming every row the answer holds and the rows the bound admits, and the shaped rows are held to the byte budget, all before anything is returned.
+A statement past its deadline is refused as over the time budget; the server's query is not cancelled (section 5.10).
+
+#### Boundary record
+
+`bun tests/live/influxdb3-agent-boundary.ts`, run on 2026-10-29 against the `influxdb3` and `influxdb3-filelimit` services of section 12, passes 63 checks through the production path:
+
+- the agent profile admits the 3.12.0 Core server, and the operations profile opens it;
+- 24 writes, DDL, `COPY`, `SET`, transaction and second-statement texts are each refused by `queryReadOnly` before sending and, sent raw through the route-table client with the same token, refused by the planner with a 400 or a 405;
+- the databases, tables, columns, rows and tokens read back the same afterwards;
+- the positive control: the same token writes a point through `/api/v3/write_lp`, a route the provider's table does not hold, into a scratch database the agent then reads, and which the script deletes;
+- `system.queries` is refused and `system.influxdb_schema` read;
+- a result past the row budget, one past the cell budget (`50000 rows > 41666 allowed` for six columns), one past the byte budget and a statement past its deadline are each refused, never truncated;
+- a read, an `EXPLAIN` and the catalog read answer their rows;
+- on the file-limit server, a read over more files than the limit is refused in the server's words.
+
+#### Agent language pack
+
+Statement-language family: `sql`.
+Overlay: [`src/lib/agent/languages/sql/engines/influxdb3.ts`](../../src/lib/agent/languages/sql/engines/influxdb3.ts), with its client row in [`src/lib/agent/languages/sql/engines/client.ts`](../../src/lib/agent/languages/sql/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`, and the dialect through `engineServerDialect`.
+
+| Member | Kind | Value |
+| --- | --- | --- |
+| `catalogRead` | Dialect-bound | Supplied |
+| `planEstimate` | Dialect-bound | Supplied |
+| `profileComposition` | Dialect-bound | `"unsupported"` |
+| `statistics` | Dialect-bound | `"unsupported"` |
+| `catalogCapture` | Dialect-bound | `"unsupported"` |
+
+This overlay overrides no Shared member, so every Shared member is the `sql` statement-language family's own.
+Every statement it composes is DataFusion's, run on 3.12.0 Core through the agent path: the catalog reads off `information_schema` in the `iox` schema, with DataFusion's 0-based column positions moved to 1-based, and the estimating plan is `EXPLAIN`, which plans without running.
+The engine keeps no foreign key, no index and no row estimate outside the `system` schema, so those three catalog kinds answer no rows.
+`profile_table` is offered and answers `UNSUPPORTED_DIALECT`, and `compare_plans` reads every plan as `unknown`, because the provider declares no explain strategy with an agent reading ([B143](../BACKLOG.md)).
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+MCP's statement read stays closed on InfluxDB 3 (`MCP_STATEMENT_READ.influxdb3` is false) until a change of its own opens it.
 
 ## 4. Connection
 
@@ -511,7 +584,8 @@ bun tests/run-tests.ts tests/integration/db/influxdb3-provider.test.ts
 bun run test
 ```
 
-The captures are written by `bun tests/live/influxdb-evidence.ts` against the compose services of section 12, and only by it: every statement of its plan passes the read policy before the first request, and `docker/influxdb/seed.sh` is the only writer.
+The captures are written by `bun tests/live/influxdb-evidence.ts` against the compose services of section 12: every statement of its plan passes the read policy before the first request, and `docker/influxdb/seed.sh` is the only writer.
+The write-refusal captures are the one exception, written by `bun tests/live/influxdb3-write-refusals.ts`, which sends each write raw and stops unless the server refuses it and reads back unchanged (section 3.5); `bun tests/live/influxdb3-agent-boundary.ts` is the live boundary check.
 [`tests/fixtures/influxdb/README.md`](../../tests/fixtures/influxdb/README.md) says what each capture holds.
 
 ## 12. Running InfluxDB 3 for Studio
@@ -554,9 +628,10 @@ The token goes in `password`, there is no `user`, and `allowInsecureAuth: true` 
 - One connection reads one database; a server with several needs one connection each ([U81](../BACKLOG.md)).
 - A page boundary inside a tie of `time` can repeat or skip a row; add the tag columns to `ORDER BY` for stable pages.
 - Count and Profile read the whole table and meet Core's file limit on a large one.
-- An admin token reads plugin secrets and other users' query text from `system.*` tables by name.
+- An admin token reads plugin secrets and other users' query text from `system.*` tables by name in the editor; the agent's `system` fence refuses every one but `system.influxdb_schema` (section 3.5).
 - InfluxDB 3 Enterprise is not tested, and Cloud Serverless and Dedicated cannot be reached by this type ([D201](../BACKLOG.md), [D202](../BACKLOG.md)).
-- No agent execution and no MCP `run_read_query` ([B94](../BACKLOG.md)).
+- No MCP `run_read_query`: MCP's statement read stays closed on this type (section 3.4).
+- Agent mode offers `profile_table` and `compare_plans` with nothing to read them by ([B143](../BACKLOG.md)), and admits only the 3.12 Core line its write refusals were captured on.
 
 ## Migration DDL
 

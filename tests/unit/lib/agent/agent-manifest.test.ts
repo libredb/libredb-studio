@@ -72,6 +72,7 @@ describe("the requirement mirrors", () => {
       "mysql",
       "clickhouse",
       "libsql",
+      "influxdb3",
     ]);
     expect(Object.isFrozen(AGENT_REQUIREMENT_ENGINES["sql-composers"])).toBe(true);
   });

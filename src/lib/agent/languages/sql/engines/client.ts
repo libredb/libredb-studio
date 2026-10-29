@@ -7,6 +7,7 @@
 import type { ClientDialectOf } from "../../pack";
 import type { CLICKHOUSE_SERVER_OVERLAY } from "./clickhouse";
 import type { DUCKDB_SERVER_OVERLAY } from "./duckdb";
+import type { INFLUXDB3_SERVER_OVERLAY } from "./influxdb3";
 import type { LIBSQL_SERVER_OVERLAY } from "./libsql";
 import type { MSSQL_SERVER_OVERLAY } from "./mssql";
 import type { MYSQL_SERVER_OVERLAY } from "./mysql";
@@ -62,3 +63,10 @@ export const LIBSQL_CLIENT_OVERLAY = {
     catalogCapture: "unsupported",
   } satisfies ClientDialectOf<(typeof LIBSQL_SERVER_OVERLAY)["dialect"]>),
 } as const satisfies { dialect: ClientDialectOf<(typeof LIBSQL_SERVER_OVERLAY)["dialect"]> };
+export const INFLUXDB3_CLIENT_OVERLAY = {
+  dialect: Object.freeze({
+    catalogRead: "supported",
+    planEstimate: "supported",
+    catalogCapture: "unsupported",
+  } satisfies ClientDialectOf<(typeof INFLUXDB3_SERVER_OVERLAY)["dialect"]>),
+} as const satisfies { dialect: ClientDialectOf<(typeof INFLUXDB3_SERVER_OVERLAY)["dialect"]> };

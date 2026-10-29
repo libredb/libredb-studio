@@ -15,6 +15,7 @@ import {
   ConnectionError,
   DatabaseConfigError,
   DatabaseError,
+  ExecutionProfileError,
   QueryCancelledError,
   QueryError,
   TimeoutError,
@@ -42,10 +43,12 @@ import { InfluxDB3Provider } from "@/lib/db/providers/timeseries/influxdb/sql-pr
 import {
   type DatabaseConnection,
   offersColumnProfiling,
+  type ProviderExecutionContext,
   offersCountQuery,
   offersSchemaDiagram,
   offersSqlExport,
   type ProviderOptions,
+  type ReadOnlyStatementBudget,
 } from "@/lib/db/types";
 import { DuplicateRunError } from "@/lib/db/utils/bounded-limiter";
 import {
@@ -126,6 +129,7 @@ function harness(
   config: Partial<DatabaseConnection> = {},
   options: ProviderOptions = {},
   wrap: (transport: NodeTransport) => NodeTransport = (transport) => transport,
+  execution: ProviderExecutionContext = {},
 ): Harness {
   const wire = recordingInfluxTransport(script);
   let closed = 0;
@@ -143,7 +147,7 @@ function harness(
   };
   const factory: InfluxClientFactory = (clientOptions, routes) => createInfluxClient(clientOptions, routes, transport);
   return {
-    provider: new InfluxDB3Provider({ ...CONNECTION, ...config }, options, factory),
+    provider: new InfluxDB3Provider({ ...CONNECTION, ...config }, options, execution, factory),
     requests: wire.requests,
     closed: () => closed,
     built: () => made,
@@ -158,8 +162,9 @@ async function connected(
   config: Partial<DatabaseConnection> = {},
   options: ProviderOptions = {},
   wrap?: (transport: NodeTransport) => NodeTransport,
+  execution: ProviderExecutionContext = {},
 ): Promise<Harness> {
-  const made = harness([...CONNECT, ...rest], config, options, wrap);
+  const made = harness([...CONNECT, ...rest], config, options, wrap, execution);
   await made.provider.connect();
   providers.push(made.provider);
   return made;
@@ -228,6 +233,7 @@ describe("declarations (spec 6.3)", () => {
       declaresForeignKeys: false,
       tablesAreDerivedGroupings: false,
       enforcesReadOnly: true,
+      agentCredential: "token",
       supportsMaintenance: false,
       maintenanceOperations: [],
       supportsConnectionString: false,
@@ -969,5 +975,142 @@ describe("E6: no trusted internal path", () => {
     const texts = made.requests.filter((request) => request.body !== undefined).map((request) => sent(request).q);
     expect(texts).toHaveLength(3);
     for (const q of texts) expect(evaluateInfluxSql(q).allowed).toBe(true);
+  });
+});
+
+describe("queryReadOnly, the agent read-only profile's statement path", () => {
+  const PROFILE: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
+  const BUDGET: ReadOnlyStatementBudget = { statementTimeoutMs: 5_000, maxResultRows: 3, maxResultBytes: 1_000 };
+  const agent = (rest: readonly ScriptedAnswer[] = [], wrap?: (transport: NodeTransport) => NodeTransport) =>
+    connected(rest, {}, {}, wrap, PROFILE);
+  const queries = (made: Harness) => made.requests.filter((request) => path(request) === "/api/v3/query_sql");
+
+  test("a read under the profile is sent as the editor sends it, and answers its fields and rows", async () => {
+    const made = await agent([jsonl([{ room: "Kitchen", temp: 22.2 }, { room: "Hall" }])]);
+    const result = await made.provider.queryReadOnly("SELECT room, temp FROM home", BUDGET);
+    expect(result.fields).toEqual(["room", "temp"]);
+    expect(result.rows).toEqual([
+      { room: "Kitchen", temp: 22.2 },
+      { room: "Hall", temp: null },
+    ]);
+    expect(result.rowCount).toBe(2);
+    expect(result.pagination).toBeUndefined();
+    expect(queries(made).map(sent)).toEqual([{ db: "home", q: "SELECT room, temp FROM home", format: "jsonl" }]);
+  });
+
+  test("a provider opened without the profile refuses before anything is sent", async () => {
+    for (const execution of [{}, { readOnly: true }, { sendsStatements: true }] as ProviderExecutionContext[]) {
+      // oxlint-disable-next-line no-await-in-loop -- each context is checked in turn.
+      const made = await connected([], {}, {}, undefined, execution);
+      // oxlint-disable-next-line no-await-in-loop -- as above.
+      const error = await rejection(made.provider.queryReadOnly("SELECT 1", BUDGET));
+      expect(error).toBeInstanceOf(QueryError);
+      expect(error.message).toBe("Read-only execution requires a provider opened under the agent read-only profile");
+      expect(queries(made)).toEqual([]);
+    }
+  });
+
+  test("before connect it is refused as not connected", async () => {
+    const { provider } = harness([], {}, {}, undefined, PROFILE);
+    expect(await rejection(provider.queryReadOnly("SELECT 1", BUDGET))).toBeInstanceOf(DatabaseError);
+  });
+
+  test("an invalid budget and the estimate-plan mode are refused with nothing sent", async () => {
+    const made = await agent();
+    const zero = await rejection(made.provider.queryReadOnly("SELECT 1", { ...BUDGET, maxResultRows: 0 }));
+    expect(zero.message).toContain("maxResultRows must be a positive integer");
+    const estimate = await rejection(made.provider.queryReadOnly("SELECT 1", BUDGET, "estimate-plan"));
+    expect(estimate.message).toBe(
+      "InfluxDB 3 composes its estimating plan as a statement, so the estimate-plan session mode is refused",
+    );
+    expect(queries(made)).toEqual([]);
+  });
+
+  test("the read policy runs first: a write, a second statement and a bound-parameter dollar send nothing", async () => {
+    const made = await agent();
+    for (const sql of ["INSERT INTO home VALUES (1)", "SELECT 1; SELECT 2", "SELECT $1"]) {
+      // oxlint-disable-next-line no-await-in-loop -- each text is checked in turn.
+      const error = await rejection(made.provider.queryReadOnly(sql, BUDGET));
+      expect(error).toBeInstanceOf(QueryError);
+      expect(error.message).toBe((evaluateInfluxSql(sql) as { message: string }).message);
+    }
+    expect(queries(made)).toEqual([]);
+  });
+
+  test("system.queries is refused with nothing sent, and system.influxdb_schema is read", async () => {
+    const made = await agent([jsonl([{ measurement: "home", key: "co", data_type: "integer" }])]);
+    const error = await rejection(made.provider.queryReadOnly("SELECT * FROM system.queries", BUDGET));
+    expect(error.message).toContain("The agent reads no table of InfluxDB 3's system schema");
+    expect(queries(made)).toEqual([]);
+    const schema = await made.provider.queryReadOnly("SELECT * FROM system.influxdb_schema", BUDGET);
+    expect(schema.rows).toHaveLength(1);
+  });
+
+  test("a row-cut overflow is refused, never truncated", async () => {
+    const made = await agent([jsonl([{ i: 1 }, { i: 2 }, { i: 3 }, { i: 4 }])]);
+    const error = await rejection(made.provider.queryReadOnly("SELECT i FROM t", BUDGET));
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error.message).toBe("Read-only execution exceeded the row budget: 4 rows > 3 allowed");
+  });
+
+  test("a cell-budget overflow is refused, never truncated", async () => {
+    const wide = Object.fromEntries(Array.from({ length: 125_001 }, (_, column) => [`c${column}`, 1]));
+    const budget = { ...BUDGET, maxResultBytes: 50_000_000 };
+    const made = await agent([jsonl([wide, wide])]);
+    const error = await rejection(made.provider.queryReadOnly("SELECT * FROM wide", budget));
+    expect(error.message).toBe("Read-only execution exceeded the row budget: 2 rows > 1 allowed");
+  });
+
+  test("rows past the byte budget are refused", async () => {
+    const made = await agent([jsonl([{ v: "x".repeat(1_200) }])]);
+    const error = await rejection(made.provider.queryReadOnly("SELECT v FROM t", BUDGET));
+    expect(error.message).toBe("Read-only execution exceeded the byte budget: 1210 bytes > 1000 allowed");
+  });
+
+  test("the request's response cap is taken from the byte budget, and an answer past it is the byte refusal", async () => {
+    const seen: number[] = [];
+    const capture = (transport: NodeTransport): NodeTransport => ({
+      request(request) {
+        seen.push(request.maxResponseBytes);
+        return transport.request(request);
+      },
+      close: () => transport.close(),
+    });
+    const made = await agent([built(200, `${"x".repeat(70_000)}\n`, "application/jsonl")], capture);
+    const error = await rejection(made.provider.queryReadOnly("SELECT v FROM t", BUDGET));
+    expect(seen.at(-1)).toBe(3_000 + 64 * 1024);
+    expect(error.message).toBe(
+      `Read-only execution exceeded the byte budget: ${3_000 + 64 * 1024 + 1} bytes > 1000 allowed`,
+    );
+  });
+
+  test("a statement past its deadline is the time refusal", async () => {
+    const hang = hangingAfter(2);
+    const made = await agent([], hang);
+    const error = await rejection(made.provider.queryReadOnly("SELECT 1", { ...BUDGET, statementTimeoutMs: 20 }));
+    expect(error.message).toBe("Read-only execution exceeded the time budget: no answer within 20ms");
+  });
+
+  test("a write the planner refuses reaches the caller as a statement refusal in the server's words", async () => {
+    // The policy refuses every captured write before sending, so the planner's answer is replayed behind a read.
+    const made = await agent([v3("write-refusal/insert-values")]);
+    const error = await rejection(made.provider.queryReadOnly("SELECT 1", BUDGET));
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error.message).toContain("DML not supported: Insert Into");
+  });
+
+  test("the open refuses a server outside the checked line under the profile, and opens it for the editor", async () => {
+    const ping = v3("ping-auth");
+    const later = { ...ping, body: ping.body.replace('"3.12.0"', '"3.13.0"') };
+    const refused = harness([later, v3("sql-databases")], {}, {}, undefined, PROFILE);
+    const error = await rejection(refused.provider.connect());
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect(error.message).toContain("this server is InfluxDB 3 Core 3.13.0");
+    expect(refused.provider.isConnected()).toBe(false);
+    expect(refused.closed()).toBe(1);
+    const editor = harness([later, v3("sql-databases")]);
+    providers.push(editor.provider);
+    await editor.provider.connect();
+    expect(editor.provider.isConnected()).toBe(true);
   });
 });

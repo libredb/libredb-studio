@@ -813,7 +813,13 @@ describe("composeEstimatingExplain", () => {
       return estimate !== "unsupported" && estimate.kind === "prefix" ? [estimate.prefix] : [];
     });
     expect(new Set(stripped)).toEqual(
-      new Set(["EXPLAIN (FORMAT JSON)", "EXPLAIN FORMAT=JSON", "EXPLAIN QUERY PLAN", "EXPLAIN json = 1, indexes = 1"]),
+      new Set([
+        "EXPLAIN (FORMAT JSON)",
+        "EXPLAIN FORMAT=JSON",
+        "EXPLAIN QUERY PLAN",
+        "EXPLAIN json = 1, indexes = 1",
+        "EXPLAIN",
+      ]),
     );
     for (const type of composing) {
       for (const prefix of stripped) {
