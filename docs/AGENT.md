@@ -3103,6 +3103,8 @@ the role's own grants are the whole boundary (A3).
 - **B138**: NETCONF has no agent execution and no MCP surface: `MCP_EXPOSABLE.netconf` is false and the provider implements no `queryReadOnly`; its agent path waits on prerequisite hardening work.
 - **B139**: SNMP has no agent execution and no MCP surface: `MCP_EXPOSABLE.snmp` is false and the provider implements no `queryReadOnly`; its object catalog, read from the bundled MIB modules, and its health read are in place.
 - **B140**: ClickHouse is offered `profile_table`, which answers `UNSUPPORTED_DIALECT` because its engine overlay declares no profile composition, and `compare_plans`, which reads every ClickHouse plan as `unknown` because the `clickhouse-json` explain strategy carries no `agentReading`; the same reading keeps auto-execute from offering to run a ClickHouse answer.
+- **B141**: on MySQL, an estimating plan request the model wrote as `EXPLAIN FORMAT=TREE SELECT 1` is composed as `EXPLAIN FORMAT=JSON FORMAT=TREE SELECT 1`, because `withoutEstimatingPrefix` (`src/lib/agent/composed-sql.ts`) strips only a declared prefix's tail.
+- **B142**: SQL Server plan-mode statistics are read and never shown: the inventory names a table `database.schema.table` while `buildMssqlEstimates` keys its estimates `schema.table`, so every table is packed as having no statistics recorded.
 
 **What machine redaction leaves unmasked on Kubernetes.**
 Agent reads on a cluster are masked by structural rules and by request target (see [On a Kubernetes connection](#on-a-kubernetes-connection)), and what those rules do not reach is stated here, in the same six lines as [`docs/providers/kubernetes.md`](./providers/kubernetes.md) section 9:

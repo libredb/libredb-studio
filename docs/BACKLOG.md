@@ -27,12 +27,12 @@ None of it is a GitHub issue.
 
 **Sections**
 
-- [SQL statement reading](#sql-statement-reading) — S2-S9 · 6
-- [Drivers and connections](#drivers-and-connections) — D1-D392, U17 · 282
+- [SQL statement reading](#sql-statement-reading) — S2-S10 · 7
+- [Drivers and connections](#drivers-and-connections) — D1-D403, U17 · 293
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U148 · 134
-- [Dependencies](#dependencies) — P1-P11 · 9
+- [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
@@ -40,9 +40,9 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B140 · 70
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B142 · 72
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
-- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP3 · 3
+- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
 
 ---
@@ -148,6 +148,16 @@ Neither `blocks` value fits: `pl-sql` and `trigger-body` read `BEGIN … END`, a
 Seen 2026-10-12 in the editor during other provider work; reproduced on this tree by calling `splitExecutionUnits` with the `cassandra` grammar.
 
 **Done when:** the `cassandra` row declares a body rule that keeps `BEGIN [UNLOGGED | COUNTER] BATCH … APPLY BATCH` as one unit, the rule is measured on Apache Cassandra and ScyllaDB, and `tests/unit/sql/statement-splitter.test.ts` pins a batch with several inner `;` as one unit beside a following statement as a second.
+
+### S10. A Druid `SET` statement is cut from the query it configures
+
+Druid takes several statements in one request when every one before the last is a `SET` (`docs/providers/druid.md`, the script row of the grammar table: `SELECT 1 AS a; SELECT 2 AS b` is 400 "Only SET statements can appear before the final statement in a statement list").
+`DRUID_GRAMMAR` (`src/lib/db/providers/sql/druid/sql-grammar.ts`) declares `script: DEFAULT_SQL_GRAMMAR.script`, one statement per cut, so `splitExecutionUnits` in `src/lib/sql/statement-splitter.ts` ends a unit at the `;` after a `SET`, and the multi-statement route sends the `SET` alone.
+Druid refuses a lone `SET` ("Statement list is missing a non-SET statement"), so a query context parameter cannot be set from the editor at all.
+
+Found 2026-10-28 while probing Druid's grammar row on Apache Druid 37.0.0.
+
+**Done when:** the `druid` row declares that a run of `SET` statements belongs to the statement after it, the splitter keeps the run and that statement as one unit, `tests/unit/sql/statement-splitter.test.ts` pins a `SET` and a `SELECT` as one unit beside a following `SELECT` as a second, and the pair is run once on a live Druid.
 
 ---
 
@@ -3730,7 +3740,13 @@ The runner runs one file per CPU, and a port just freed is soon handed out again
 Measured 2026-10-16 with eight copies of the Prometheus request test at a time, after the TLS failures of that file were fixed: 5 of 300 runs failed this way, with a "refused" request answered by another copy's redirect server or reset, or with a redirect test's server receiving a request it never sent.
 The other side of the same race may be behind a failure seen once in a full run on a loaded machine, where `tests/unit/db/http/node-transport-runtimes.test.ts` counted 6 connections on its keep-alive listener for the 2 its child opened, in both children; 100 runs under load never repeated it.
 
-**Done when:** one helper in `tests/helpers/` reserves a refusing port for the life of a test by holding a connected socket, whose own local port nothing listens on (measured 2026-10-16: a connection to it is refused, and a listen on it fails with `EADDRINUSE` under Bun and under Node), every closed-port helper uses it, and eight copies of the Prometheus file at a time fail none of 300 runs.
+Amended 2026-10-29 with three more failures of the class, each seen once in a local loaded run and passing alone:
+
+- `tests/integration/db/mongodb-server-selection.test.ts`, `a closed port is refused well under a minute, not after the pool acquire timeout`, takes its port the same way and was answered `connection <monitor> ... closed` after 30 s instead of `ECONNREFUSED` (2026-10-28, full coverage run). D361 is the same file's duration.
+- `tests/unit/db/etcd/tls-handshake.test.ts`, `a refused socket is a failure to connect`, dials `ports.closed` and failed under a load average of 23 (2026-10-28).
+- On the other side, `tests/unit/db/http/node-byte-transport.test.ts`, `a signer that cancels its own request sends nothing, and the next request completes`, counted 1 accepted connection on its fresh listener after a fixed 50 ms wait, where it expects 0 (2026-10-29, parallel coverage run). Whether a stray dial or its own request reached the listener was not measured.
+
+**Done when:** one helper in `tests/helpers/` reserves a refusing port for the life of a test by holding a connected socket, whose own local port nothing listens on (measured 2026-10-16: a connection to it is refused, and a listen on it fails with `EADDRINUSE` under Bun and under Node), every closed-port helper uses it, the MongoDB server-selection and etcd TLS cases above use it too, eight copies of the Prometheus file at a time fail none of 300 runs, and the node-byte-transport case is re-measured once they do.
 
 ### D375. Two requests during a timeout-change disconnect leave one provider connected outside the cache
 
@@ -3745,7 +3761,7 @@ Found 2026-10-17 while verifying an external review of #1785.
 
 **Done when:** concurrent requests for a stale entry share one retirement and one replacement, for example by taking the entry out of the cache before awaiting its disconnect, no provider is left connected outside the cache, and a test with a disconnect held open and two requests shows one replacement provider and the old one closed.
 
-### D377. Four test files do seconds of work inside bun's default five-second test timeout
+### D377. Test files do seconds of work inside bun's default five-second test timeout
 
 Each test below does its expensive work in the test body and passes no timeout of its own, so bun's default of 5000 ms bounds it.
 Each ran out of that default under load on a 20-core development machine during the engine contract series (#1845 to #1850), and each passes alone in under 2 s.
@@ -3761,6 +3777,13 @@ Each ran out of that default under load on a 20-core development machine during 
 
 Re-measured alone on 2026-10-20 on `main` at `6e611bf73`, three runs each through bun's JUnit reporter: 0.88 to 1.13 s, 0.52 to 0.53 s, 0.39 to 0.40 s and 0.38 to 0.39 s, in the order above.
 The etcd `seam-guard.test.ts` and `connection-options.test.ts` were the same class; #1855 made the one's slowest rule cheaper and gave the other's hook a budget.
+
+Amended 2026-10-29: more of the same class ran out of the default under load, each passing alone.
+
+- `tests/unit/db/query-limiter.test.ts`, `a long chain is read and refused in time linear in its length`, 5192 ms on the `Unit & Integration Tests` job of run 40804895440 on `main` on 2026-10-29, and once in a local full coverage run on 2026-10-28.
+- `tests/integration/db/sparkplug-provider.test.ts`, `a group the broker has nothing under answers no rows, and the filters say why`, once in a local full coverage run on 2026-10-28, beside another worktree's suite.
+- `tests/unit/db/snowflake/auth.test.ts`, `a 4096-bit key loads`, 5427 ms in a local full coverage run on 2026-10-28.
+- `tests/unit/db/sql-writing/document-insert.test.ts`, `tests/unit/docker-build-context.test.ts` and `tests/unit/lib/kubernetes/kubeconfig-import.test.ts` (`a 1 MiB paste of nests just under the cap is checked in time linear in its nodes`), together on the `Cross-platform Tests (macos-latest)` job of #2028 on 2026-10-28.
 
 Found on #1847, #1849 and #1850, none of which touches these tests.
 
@@ -3919,6 +3942,118 @@ A Db2 statement is bounded only on Studio's side: a transaction statement past t
 Found 2026-10-28 when Db2 gained transactions and a client-side deadline.
 
 **Done when:** the provider implements `cancelQuery` over `Client.cancel()`, a user without the cancel privileges gets a refusal that names them, and a live test cancels a long statement and sees it end on the server.
+
+### D393. The limiter writes a page `OFFSET` after a statement's own, and reads a leading `OFFSET` as none
+
+`applyQueryLimit` in `src/lib/db/utils/query-limiter.ts` reads a statement's own `OFFSET` only after a `LIMIT`.
+With a page offset of 100, `SELECT a FROM t OFFSET 5` is written `SELECT a FROM t OFFSET 5 LIMIT 500 OFFSET 100`, a statement with two `OFFSET` clauses, and reported as limited with `appliedOffset: 100`.
+`SELECT a FROM t OFFSET 5 LIMIT 10` is left alone and reported with `appliedOffset: 0`, while `SELECT a FROM t LIMIT 10 OFFSET 5` reports 5.
+Measured 2026-10-29 on `main` at `447556438` with the `postgres` and `mysql` grammars; the reading is the shared limiter's, so no dialect is expected to differ.
+
+Found 2026-10-28 in a review of the Couchbase grammar row; pre-existing.
+
+**Done when:** the limiter reads a statement's own `OFFSET` before or after its `LIMIT`, a statement that carries its own offset is not given a second one (left unpaged or refused, with the reason), `appliedOffset` reports the statement's own offset in both orders, and `tests/unit/db/query-limiter.test.ts` pins all three shapes.
+
+### D394. libSQL's health read fails on a read-only token
+
+`readHealth` in `src/lib/db/providers/sql/libsql/introspect.ts` sends `PRAGMA integrity_check` and `PRAGMA journal_mode` in one batch with the size read.
+sqld answers both with 403 for a connection whose JWT carries `a: "ro"`, so `POST /api/db/health` on a read-only-token connection answers 401 `AUTH_ERROR` ("Database auth error") and the header shows the connection degraded, though the token reads every table.
+The docblock above `readHealth` says both statements are accepted by both deployments, which holds for a writable token only.
+Turso Cloud was not measured for these two statements with a read-only token.
+
+Measured 2026-10-29 on sqld with the read-only-token seed while adding agent execution on libSQL (#2050); pre-existing.
+
+**Done when:** a health read on a read-only token answers, with each reading the token is refused named as unavailable rather than failing the whole read, the docblock says which token each statement needs, and a test with a recorded 403 for each `PRAGMA` pins it.
+
+### D395. A ClickHouse user whose profile sets `readonly = 1` cannot connect
+
+The HTTP transport sends `default_format`, `output_format_json_quote_64bit_integers`, `output_format_json_quote_decimals` and `output_format_json_quote_denormals` with every request (`src/lib/db/providers/sql/clickhouse/http-transport.ts`).
+A user whose settings profile sets `readonly = 1` may change no setting, so the server refuses every request and the connection never opens, in the editor as well as in agent mode.
+`readonly = 2` admits the settings, and the agent user recipe in `docs/providers/clickhouse.md` creates a user with no profile, so the documented path does not meet it; a reader who restricts a user the common ClickHouse way does.
+
+Measured 2026-10-29 while adding agent execution on ClickHouse (#2045); pre-existing.
+
+**Done when:** a `readonly = 1` user either connects, because the transport sends no setting such a user cannot set, or is refused at connect with a sentence that names `readonly = 1` and what to set instead, `docs/providers/clickhouse.md` says which, and a test with the recorded refusal pins it.
+
+### D396. SNMP reads ignore a response's error-status outside the health read
+
+`failureFromStatus` in `src/lib/db/providers/network/snmp/errors.ts` is called by `getHealth` alone.
+`query` and `getOverview` in `src/lib/db/providers/network/snmp/index.ts` read a response's varbinds without its error-status, and an agent that answers `genErr` or any other non-zero status sends the request's own varbinds back with NULL values.
+`query` renders those as rows and `getOverview` as the version and the uptime, so a refusal reaches the grid as values.
+
+Found 2026-10-28 in a review of the SNMP provider; pre-existing.
+
+**Done when:** both paths read the error-status before any varbind and answer the failure's sentence, as `getHealth` does, with a test per path on a recorded `genErr` response.
+
+### D397. A NETCONF subtree filter names every list key `name`
+
+`filterBody` in `src/lib/db/providers/network/netconf/requests.ts` writes a keyed node's key values under `PathNode.keyNames` (`src/lib/db/providers/network/netconf/keypath.ts`) and falls back to `name`, and no production caller sets `keyNames`.
+So every keyed subtree filter writes `<name>` as the key leaf, whatever the list's YANG `key` statement says, and a list keyed by another leaf, or by two, is asked for a leaf it does not key on.
+The reader already knows the keys (`keyNamesOf` in `src/lib/db/providers/network/netconf/yangkeys.ts`) and uses them to build rows, not filters.
+
+Found 2026-10-27 in a review of the NETCONF provider; pre-existing.
+
+**Done when:** every caller that builds a keyed `PathNode` sets `keyNames` from the module's `key` statement, or the filter is refused when the keys are unknown, and the request builder's tests pin a list keyed by a leaf other than `name` and one keyed by two leaves.
+
+### D398. PostgreSQL returns an unmeasured `activeConnections` as an own key
+
+`getHealth` and `getOverview` in `src/lib/db/providers/sql/postgres.ts` set `activeConnections` to `undefined` when the connections read is refused and still return it as a key, where `mssql.ts` spreads the key in only when it was measured.
+JSON drops the key, so the routes are unaffected, but an in-process consumer of the library sees `'activeConnections' in overview` answer `true` with no value behind it.
+Repro: refuse the connections statement in the PostgreSQL provider's mock and check `'activeConnections' in result`.
+
+Found 2026-10-28 while covering the SQL providers' lines; pre-existing.
+
+**Done when:** both methods omit the key when it was not measured, and a test for each asserts the key is absent.
+
+### D399. The MongoDB test helper builds a server error without its `codeName`
+
+`mongoServerError` in `tests/helpers/mongodb-driver.ts` sets `code` and not `codeName`.
+A real `MongoServerError` carries both, and `serverCode` in `src/lib/db/providers/document/mongodb/driver-errors.ts` reads `code` only beside a `codeName`, so a test built on the helper sees code 13 mapped to `DatabaseError` where the driver's own error maps to `PermissionDeniedError`.
+A test that asserts a mapped class through the helper therefore pins the helper's shape, not the driver's.
+
+Found 2026-10-28 while covering the provider lines; not a provider defect.
+
+**Done when:** the helper takes the `codeName` the driver sends for each code, every caller passes the real one, and each mapped-class assertion built on it is re-checked.
+
+### D400. The idle sweep swallows a failed SSH tunnel close
+
+`evictIdleProviders` in `src/lib/db/factory.ts` closes a connection's SSH tunnel with an empty `catch` in both of its loops, the shared providers and the profiled ones, so a tunnel that failed to close leaves no trace.
+The disconnect failure beside each of them is logged at warn, and so is the same tunnel failure in `removeProvider`.
+Repro: make `closeSSHTunnel` reject during `evictIdleProviders(0)`; nothing is logged.
+
+Found 2026-10-28 while covering `src/lib` lines; pre-existing.
+
+**Done when:** both catches log at warn as `removeProvider` does, with a test that reads the log line.
+
+### D401. `bun run lint` reports a `prefer-const` warning in the MQTT session
+
+ESLint warns `'dial' is never reassigned. Use 'const' instead` on `let dial` in `readTopics` (`src/lib/db/providers/keyvalue/mqtt/session.ts`): the variable is declared without a value, read by the listeners above it, and assigned once, at the end of the executor.
+The warning does not fail the gate, so it stays in every lint run.
+
+Found 2026-10-28; pre-existing.
+
+**Done when:** the file lints without a warning, the dial timer still starts where it does now, and the MQTT session tests pass unchanged.
+
+### D402. `toMatchObject` checks a repeated expected object only once, so a case is silently unchecked
+
+Measured on Bun 1.4.4, the pinned version, on 2026-10-29: `expect({ a: X, b: Y }).toMatchObject({ a: shared, b: shared })` passes when `X` matches `shared` and `Y` does not.
+`tests/unit/db/rabbitmq/dial-runtimes.test.ts` passes one `certificateFailure` object for both "tls wrong CA" and "tls wrong name", so the wrong-name outcome is not checked.
+Other tests may reuse an expected object inside one call the same way.
+
+Found 2026-10-28 on Bun 1.4.2 and re-measured on 1.4.4.
+
+**Done when:** the RabbitMQ case gives each outcome its own expected object, a sweep of `tests/` splits every other expected object reused inside one `toMatchObject` call, and the behaviour is reported to Bun with the one-line repro above.
+
+### D403. The RabbitMQ hostile-peer runtimes disagree on Windows about which bound stopped one peer
+
+`both runtimes come to the same outcome for every peer` in `tests/unit/db/rabbitmq/hostile-peers.test.ts` holds Node's label for each peer equal to Bun's.
+On `Cross-platform Tests (windows-latest)` the `header-heavy-bytes` peer ended `stop:deadline` under Bun and `stop:budget` under Node, twice: run 40731517642 on 2026-10-28 and attempt 1 of run 40803313969 on 2026-10-29, each passing on its rerun.
+The peer's own expectation in `tests/helpers/rabbitmq-fake-peer.ts` admits `stop:budget`, `stop:limit` and `stop:deadline`, so both outcomes are legitimate and only the equality fails: which bound trips first is a race on a slow runner.
+D360 is the same file's other load failure.
+
+Found 2026-10-29 while reading Windows job failures on `main` and its branches.
+
+**Done when:** the cross-runtime comparison treats a peer's admitted set as one outcome, or the peer is built so that only one bound can trip, and the file passes repeated runs on the Windows job.
 
 ## Value interpolation
 
@@ -5569,7 +5704,10 @@ The sentence is the dialog's own words in the shared descriptor table, not an en
 
 Found 2026-10-12 while reading the connection dialog for a new provider.
 
-**Done when:** the sentence under the schema box comes from the engine's declaration, or is drawn only for an engine whose declaration says it applies, Firestore's box carries no Create Table or `SHOW SCHEMAS` advice, and a component test renders the dialog for Firestore and for Trino and pins which of the two draws it.
+Amended 2026-10-29: the API-key row has the same shape.
+Its note, `apiKey.note` in `CONNECTION_FIELD_GROUP_ROWS` (`src/lib/db/connection-fields.ts`), names Kibana's "Beats" and "Logstash" key formats, which are Elasticsearch's, in the shared table; Elasticsearch is the only engine that takes the pair today, so no other engine draws it yet.
+
+**Done when:** the sentence under the schema box comes from the engine's declaration, or is drawn only for an engine whose declaration says it applies, Firestore's box carries no Create Table or `SHOW SCHEMAS` advice, the API-key note is Elasticsearch's own declaration rather than the shared group's, and a component test renders the dialog for Firestore and for Trino and pins which of the two draws it.
 
 ### U125. A Test Connection answer lands below the fold, so pressing the button looks like nothing happened
 
@@ -5979,6 +6117,16 @@ Reported upstream as gurungabit/db2-node#37.
 Found 2026-10-26 while measuring `db2-node` 1.0.27 for the Dependabot production group; the pin stays at 1.0.25.
 
 **Done when:** a `db2-node` release passes `tests/live/db2-live-check.ts` in 8 of 8 runs on each of Db2 12.1.0.0 and 11.5.9.0, and the pin moves to it with the measurement its `//dependencies` note asks for.
+
+### P12. Monaco's own copy of DOMPurify stays at 3.4.15 until a Monaco release takes 3.4.17
+
+monaco-editor 0.57.0, the latest release, inlines DOMPurify 3.4.15 in its `min/vs` bundle, which `scripts/copy-monaco.mjs` serves from `public/monaco/vs`, and in its `esm` tree.
+The `dompurify` override in `package.json` (#2043) lifts the npm package to 3.4.17 and cannot reach that copy, so the four advisories its `//overrides` note names stay in the code the browser runs.
+The note records why they are not reachable here: Monaco sanitizes markdown with `RETURN_DOM_FRAGMENT` or `RETURN_TRUSTED_TYPE`, never with `IN_PLACE` or an XHTML parser type, and the app hands it completion text built from schema names and one fixed hover.
+
+Found 2026-10-28 while closing the dependency advisories.
+
+**Done when:** a monaco-editor release whose `min/vs` and `esm` trees inline DOMPurify 3.4.17 or later is taken, and the `dompurify` override and its note are removed as the note says.
 
 ## Documentation
 
@@ -8007,6 +8155,26 @@ Found 2026-10-29 with agent execution on ClickHouse.
 
 **Done when:** the ClickHouse overlay gains a profile composition measured on the engine, or its SQL variants stop offering `profile_table` through a requirement, and the `clickhouse-json` strategy gains an `agentReading` verified against the engine's plans, with tests for both; cited in `docs/AGENT.md`.
 
+### B141. A MySQL estimating plan written with another `FORMAT` gets `FORMAT=JSON` in front of it
+
+`withoutEstimatingPrefix` in `src/lib/agent/composed-sql.ts` strips a restated estimating prefix's tail only when it is a declared one, so on MySQL `EXPLAIN FORMAT=TREE SELECT 1` loses only its `EXPLAIN` and is composed as `EXPLAIN FORMAT=JSON FORMAT=TREE SELECT 1`, and `FORMAT=TRADITIONAL` the same way.
+That is two `FORMAT` options on one `EXPLAIN`, which MySQL's grammar does not have, so the model's `inspect_plan` call fails with engine text it did not write.
+Measured 2026-10-29 through `composeEstimatingExplain` on `main` at `447556438`.
+
+Found 2026-10-28 when the restated `FORMAT=JSON` was composed once (#2044); outside that change.
+
+**Done when:** on MySQL a restated `EXPLAIN FORMAT=<any>` prefix is stripped whole, or refused with a sentence that names the one format composed, with composer tests for `TREE` and `TRADITIONAL`; cited in `docs/AGENT.md`.
+
+### B142. SQL Server plan-mode statistics never meet the inventory, so every table reads as unmeasured
+
+The inventory names a SQL Server table by its whole path, `database.schema.table` (`qualifiedName` in `src/lib/agent/context-snapshot.ts`), while `buildMssqlEstimates` in `src/lib/agent/languages/sql/engines/mssql.ts` keys its estimates `schema.table`, and `renderTable` in `src/lib/agent/schema-stats.ts` joins the two by that name alone.
+So `app.dbo.orders` finds no `dbo.orders` estimate, and every table is packed as "no statistics recorded for this table; its size is unknown" although the read returned its row count.
+The docblock above `buildMssqlEstimates` says the inventory uses the same key, which does not hold.
+
+Measured 2026-10-29 on SQL Server 2022 with a least-privilege login, the same under the read-only and the operations grounding; pre-existing.
+
+**Done when:** the estimates and the inventory are joined on one key built by one function, and a test packs a SQL Server inventory with its estimates and finds the row counts; cited in `docs/AGENT.md`.
+
 ## Passkey deferrals (#785)
 
 Each was decided when passkey sign-in was designed, not overlooked.
@@ -8114,6 +8282,15 @@ Found 2026-10-12 while designing the RabbitMQ provider.
 Found 2026-10-12 while designing the RabbitMQ provider.
 
 **Done when:** the chooser prefers an exact match and falls back to the case-insensitive one only when no exact match exists, for every provider, with a test on two names that differ by case.
+
+### MCP4. The shared MCP read-query module still writes SQL's words
+
+`src/lib/mcp/tools/read-query-limits.ts` is shared MCP code, and three of its texts are SQL's: `fenceRefusalText` says "run_read_query runs one read-only statement", `ROW_OVER_CAP_TEXT` advises fewer or narrower columns and "a substring of a long text column", and `offsetRefusalText` speaks of a query's "own LIMIT or TOP".
+Shared MCP code is meant to read the registries and name no statement language, and a language's MCP words belong to its facet (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), so a second language that reuses these helpers would answer in SQL's terms.
+
+Found 2026-10-28 while moving the SQL MCP surface into its language pack; left in place then to keep `tools/list` byte-identical.
+
+**Done when:** the three texts are the SQL facet's words and the shared module takes them from the facet, with `tools/list` and every SQL refusal unchanged byte for byte and a test that pins them through the facet.
 
 ---
 
