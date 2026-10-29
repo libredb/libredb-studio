@@ -27,7 +27,7 @@
  * server no longer takes the token, and a 403 `forbidden`, a token without the user:check-access scope.
  */
 import { readFile } from "node:fs/promises";
-import { request } from "node:https";
+import https from "node:https";
 import { isTlsFailureCode } from "@/lib/db/http/node-transport";
 import { OpenShiftConfigError } from "@/lib/openshift-auth/config";
 import { type OpenShiftCallResult, openShiftApiCall } from "@/lib/openshift-auth/http";
@@ -147,7 +147,8 @@ export interface ServiceAccountCall {
 /**
  * Sends one request of the ServiceAccount backend under the API URL's path, with the pod's token and the CA file as
  * the only trust, and collects the answer, up to the size cap and the deadline. A redirect is an answer, never
- * followed. Never throws: a failure on the way is a failed outcome.
+ * followed. Each request is a fresh one with `agent: false`, so no global agent and no environment proxy can carry the
+ * pod token. Never throws: a failure on the way is a failed outcome.
  */
 export function serviceAccountCall(call: ServiceAccountCall): Promise<RawAnswer | FailedReview> {
   const { url, token, ca, body } = call;
@@ -165,7 +166,7 @@ export function serviceAccountCall(call: ServiceAccountCall): Promise<RawAnswer 
       resolve(value);
     };
     try {
-      const outgoing = request(
+      const outgoing = https.request(
         {
           method: call.method,
           hostname: url.hostname.replace(/^\[|\]$/g, ""),
@@ -174,6 +175,7 @@ export function serviceAccountCall(call: ServiceAccountCall): Promise<RawAnswer 
           // trailing slash is gone already (accessReviewApiUrl).
           path: `${url.pathname === "/" ? "" : url.pathname}${call.path}`,
           ca,
+          agent: false,
           signal,
           headers,
         },

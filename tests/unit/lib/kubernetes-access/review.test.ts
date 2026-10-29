@@ -7,9 +7,10 @@
  * that cannot be read, fails, which every caller treats as a deny. The token and the CA are read again for every
  * review, so a rotated projected token is used at once.
  */
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { rmSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
+import https from "node:https";
+import { type AddressInfo, createServer } from "node:net";
 import { loadTlsFixtures } from "../../../helpers/tls-fixtures";
 import {
   FAKE_TOKEN,
@@ -17,6 +18,7 @@ import {
   REVIEW_PATH,
   startFakeKubernetesApi,
 } from "../../../helpers/kubernetes-access/fake-api";
+import { resetPlatformCheck } from "@/lib/kubernetes-access/platform-check";
 import { requestAccessReview, type ResourceAttributes } from "@/lib/kubernetes-access/review";
 
 const SECRET: ResourceAttributes = {
@@ -96,6 +98,54 @@ describe("the request", () => {
     api.setToken("not-a-real-token-2\n");
     await requestAccessReview(DEV_A, SECRET);
     expect(api.seen.map((seen) => seen.authorization)).toEqual([`Bearer ${FAKE_TOKEN}`, "Bearer not-a-real-token-2"]);
+  });
+});
+
+describe("no proxy and no global agent", () => {
+  const PROXY_KEYS = [
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "https_proxy",
+    "http_proxy",
+    "NODE_USE_ENV_PROXY",
+    "NO_PROXY",
+    "no_proxy",
+  ] as const;
+
+  test("with the proxy variables set, the proxy sees no connection and the check and the review get agent: false", async () => {
+    let connections = 0;
+    const proxy = createServer((socket) => {
+      connections += 1;
+      socket.destroy();
+    });
+    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+    const proxyUrl = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
+    const saved = Object.fromEntries(PROXY_KEYS.map((key) => [key, process.env[key]]));
+    for (const key of ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"]) process.env[key] = proxyUrl;
+    process.env.NODE_USE_ENV_PROXY = "1";
+    delete process.env.NO_PROXY;
+    delete process.env.no_proxy;
+    // A cold process, so the platform check is sent too.
+    resetPlatformCheck();
+    const request = spyOn(https, "request");
+    try {
+      api.grants = [
+        { user: "u-rjs2h", verb: "get", apiGroup: "", resource: "secrets", namespace: "team-a", name: "orders-app" },
+      ];
+      expect(await requestAccessReview(DEV_A, SECRET)).toEqual({ kind: "allowed" });
+      expect(request).toHaveBeenCalledTimes(2);
+      for (const [options] of request.mock.calls) expect((options as https.RequestOptions).agent).toBe(false);
+    } finally {
+      request.mockRestore();
+      for (const key of PROXY_KEYS) {
+        if (saved[key] === undefined) delete process.env[key];
+        else process.env[key] = saved[key];
+      }
+      await new Promise<void>((resolve) => proxy.close(() => resolve()));
+    }
+    expect(connections).toBe(0);
+    expect(api.platformChecks).toHaveLength(1);
+    expect(api.seen).toHaveLength(1);
   });
 });
 
