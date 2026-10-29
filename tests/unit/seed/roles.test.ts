@@ -1,5 +1,9 @@
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { seedRolesOf } from "@/lib/seed/roles";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { getManagedConnections, resetCache } from "@/lib/seed";
+import { KUBERNETES_REVIEWED_ROLE, seedRolesOf } from "@/lib/seed/roles";
 
 describe("seedRolesOf", () => {
   const originalEnv = process.env.OIDC_ROLE_PREFIX;
@@ -108,5 +112,61 @@ describe("seedRolesOf", () => {
       claimRoles: ["t-billing", "t-dev", "t-dev"],
     });
     expect(result).toEqual(["t-billing", "t-dev"]);
+  });
+});
+
+describe("KUBERNETES_REVIEWED_ROLE", () => {
+  const originalPrefix = process.env.OIDC_ROLE_PREFIX;
+  const originalSeedPath = process.env.SEED_CONFIG_PATH;
+
+  afterEach(() => {
+    if (originalPrefix === undefined) delete process.env.OIDC_ROLE_PREFIX;
+    else process.env.OIDC_ROLE_PREFIX = originalPrefix;
+    if (originalSeedPath === undefined) delete process.env.SEED_CONFIG_PATH;
+    else process.env.SEED_CONFIG_PATH = originalSeedPath;
+    resetCache();
+  });
+
+  test("is the review's name behind a NUL, so no file, variable or session can hold it", () => {
+    expect(KUBERNETES_REVIEWED_ROLE).toBe("\u0000libredb:kubernetes-access-review");
+  });
+
+  test("seedRolesOf never returns it, nor a claim role holding a C0 or C1 control character or DEL", () => {
+    process.env.OIDC_ROLE_PREFIX = "libredb:";
+    const roles = seedRolesOf({
+      role: "user",
+      claimRoles: [
+        "libredb:kubernetes-access-review",
+        KUBERNETES_REVIEWED_ROLE,
+        "libredb:ops\u007f",
+        "libredb:tab\tops",
+        "libredb:nul\u0000",
+        "libredb:c1\u0085",
+        "libredb:c1-last\u009f",
+        "libredb:nbsp\u00a0",
+      ],
+    });
+    expect(roles).toEqual(["user", "libredb:kubernetes-access-review", "libredb:nbsp\u00a0"]);
+    expect(roles).not.toContain(KUBERNETES_REVIEWED_ROLE);
+  });
+
+  test("a seed file declaring it is refused at load", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "reserved-role-"));
+    try {
+      const file = path.join(dir, "seed.json");
+      const connection = { id: "reserved", name: "Reserved", type: "postgres", host: "localhost" };
+      writeFileSync(
+        file,
+        JSON.stringify({ version: "1", connections: [{ ...connection, roles: [KUBERNETES_REVIEWED_ROLE] }] }),
+      );
+      process.env.SEED_CONFIG_PATH = file;
+      resetCache();
+
+      await expect(getManagedConnections(["admin"])).rejects.toThrow(
+        `Invalid seed config at ${file}: connections.0.roles.0: Role name cannot contain control characters`,
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
