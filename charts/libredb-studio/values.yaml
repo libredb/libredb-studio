@@ -635,6 +635,17 @@ openshiftRoute:
   # -- Extra Route labels (the chart's own labels win on a collision)
   labels: {}
 
+# OpenShift-only settings beside openshiftRoute.
+openshift:
+  trustedCABundle:
+    # -- Mount the cluster's trusted CA bundle (the proxy's trustedCA plus the
+    # system roots), which the Cluster Network Operator injects into a labelled
+    # ConfigMap, and point NODE_EXTRA_CA_CERTS at it, so Studio trusts the
+    # private CAs the cluster trusts. Needs config.openshift.io/v1 (or
+    # global.compatibility.openshift.apis=force) and refuses an extraEnv
+    # NODE_EXTRA_CA_CERTS. See "Trusting a private CA" for other clusters.
+    enabled: false
+
 networkPolicy:
   # -- Enable NetworkPolicy
   enabled: false

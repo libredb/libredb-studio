@@ -38,6 +38,23 @@ at all (docs/BACKLOG.md B16), so this is refused rather than rendered broken (#3
 {{- fail "persistence.fixPermissions cannot be combined with the OpenShift security-context adaptation: restricted-v2 rejects the root init container, and the pod's UID/GID come from the namespace range rather than podSecurityContext, so the chown would target the wrong owner. On OpenShift, use a storage class whose volumes the kubelet applies fsGroup to (or pre-chown the volume) and leave persistence.fixPermissions=false; set global.compatibility.openshift.adaptSecurityContext=disabled only if this is not an OpenShift cluster" }}
 {{- end }}
 {{- /*
+openshift.trustedCABundle needs the Cluster Network Operator (config.openshift.io/v1):
+without it the ConfigMap is never filled and the boot check would restart the pod
+forever. NODE_EXTRA_CA_CERTS takes one file, so a second one from extraEnv would
+silently replace the cluster bundle (an extraEnvFrom source carrying the name is a
+blind spot, as in effectiveBindAddress).
+*/}}
+{{- if include "libredb-studio.trustedCABundleEnabled" . }}
+{{- if not (include "libredb-studio.openshiftApiServed" (dict "ctx" $ "api" "config.openshift.io/v1")) }}
+{{- fail "openshift.trustedCABundle.enabled is true but this cluster does not serve config.openshift.io/v1, so nothing would ever fill the trusted CA bundle: install on OpenShift, or set global.compatibility.openshift.apis=force to render it without API detection (GitOps, offline helm template)" }}
+{{- end }}
+{{- range .Values.extraEnv }}
+{{- if eq (.name | default "") "NODE_EXTRA_CA_CERTS" }}
+{{- fail "openshift.trustedCABundle.enabled sets NODE_EXTRA_CA_CERTS, which takes one file, and extraEnv sets it too: remove the extraEnv entry and add your private CA to the cluster's trusted bundle, or turn openshift.trustedCABundle.enabled off and keep the extraVolumes recipe" }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- /*
 The MCP server (#246) accepts a token only when both channel values are set, and only the
 operator knows the public address and its basePath, so an enabled block without them is refused
 rather than rendered as an endpoint that accepts nothing. `default dict` keeps a values set that
@@ -412,6 +429,13 @@ spec:
                    Written before extraEnv, so an operator can still move it. */}}
             - name: WORKFLOW_LOCAL_DATA_DIR
               value: /app/data/workflow
+            {{- /* The cluster's trusted CA bundle, read by Node at start and checked at
+                   boot (src/lib/config/ca-bundle-preflight.ts). Written before extraEnv;
+                   the guard above refuses an extraEnv entry of the same name. */}}
+            {{- if include "libredb-studio.trustedCABundleEnabled" . }}
+            - name: NODE_EXTRA_CA_CERTS
+              value: /etc/libredb-studio/trusted-ca/ca-bundle.crt
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -459,6 +483,11 @@ spec:
             {{- if include "libredb-studio.accessReviewEnabled" . }}
             - name: access-review
               mountPath: {{ include "libredb-studio.accessReviewDir" . }}
+              readOnly: true
+            {{- end }}
+            {{- if include "libredb-studio.trustedCABundleEnabled" . }}
+            - name: trusted-ca
+              mountPath: /etc/libredb-studio/trusted-ca
               readOnly: true
             {{- end }}
             {{- with .Values.extraVolumeMounts }}
@@ -534,6 +563,13 @@ spec:
                   items:
                     - key: ca.crt
                       path: ca.crt
+        {{- end }}
+        {{- /* Whole, without items or subPath: the kubelet then refreshes the file once the
+               Cluster Network Operator has injected the bundle. */}}
+        {{- if include "libredb-studio.trustedCABundleEnabled" . }}
+        - name: trusted-ca
+          configMap:
+            name: {{ include "libredb-studio.fullname" . }}-trusted-ca
         {{- end }}
         {{- with .Values.extraVolumes }}
         {{- toYaml . | nindent 8 }}

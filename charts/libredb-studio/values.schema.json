@@ -606,6 +606,23 @@
         }
       }
     },
+    "openshift": {
+      "type": "object",
+      "description": "OpenShift-only settings",
+      "additionalProperties": false,
+      "properties": {
+        "trustedCABundle": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Mount the cluster's injected trusted CA bundle and set NODE_EXTRA_CA_CERTS; needs config.openshift.io/v1 or global.compatibility.openshift.apis=force"
+            }
+          }
+        }
+      }
+    },
     "autoscaling": {
       "type": "object",
       "properties": {

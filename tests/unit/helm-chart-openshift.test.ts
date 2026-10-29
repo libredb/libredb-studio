@@ -367,3 +367,163 @@ describe("charts/libredb-studio NetworkPolicy on OpenShift", () => {
     expect(with6443[0].ports?.filter((entry) => entry.port === 6443)).toHaveLength(1);
   });
 });
+
+/**
+ * openshift.trustedCABundle: an empty ConfigMap labelled for the Cluster Network
+ * Operator, which fills it with the cluster's trusted CA bundle (the proxy's
+ * trustedCA plus the system roots), mounted without items or subPath so the
+ * kubelet refreshes the file once injected, and named by NODE_EXTRA_CA_CERTS.
+ */
+describe("charts/libredb-studio OpenShift trusted CA bundle", () => {
+  const CONFIG_API = ["--api-versions", "config.openshift.io/v1"];
+  const ENABLED = ["--set", "openshift.trustedCABundle.enabled=true"];
+  const BUNDLE_DIR = "/etc/libredb-studio/trusted-ca";
+
+  interface PodSpec {
+    containers: Array<{
+      env?: Array<{ name: string; value?: string }>;
+      volumeMounts?: Array<{ name: string; mountPath: string; readOnly?: boolean; subPath?: string }>;
+    }>;
+    volumes?: Array<{ name: string; configMap?: { name: string; items?: unknown } }>;
+  }
+
+  interface Manifest {
+    kind: string;
+    metadata: { name: string; labels?: Record<string, string>; annotations?: Record<string, string> };
+    data?: unknown;
+    spec?: { template?: { spec?: PodSpec } };
+  }
+
+  const docs = (args: string[]) => renderDocs(args) as unknown as Manifest[];
+  const trustedCaConfigMap = (rendered: Manifest[]) =>
+    rendered.find(
+      (doc) => doc.kind === "ConfigMap" && doc.metadata.name === "release-under-test-libredb-studio-trusted-ca",
+    );
+  const podSpec = (rendered: Manifest[]): PodSpec => {
+    const spec = rendered.find((doc) => doc.kind === "Deployment")?.spec?.template?.spec;
+    if (!spec) throw new Error("Deployment pod spec not found in render output");
+    return spec;
+  };
+
+  test("default values render no trusted-CA ConfigMap", () => {
+    for (const args of [[], CONFIG_API]) {
+      const rendered = docs(args);
+      expect(trustedCaConfigMap(rendered)).toBeUndefined();
+      const pod = podSpec(rendered);
+      expect(pod.volumes?.map((volume) => volume.name)).not.toContain("trusted-ca");
+      expect(pod.containers[0].env?.map((entry) => entry.name)).not.toContain("NODE_EXTRA_CA_CERTS");
+    }
+  });
+
+  test("the trusted-CA ConfigMap carries the injection label and no data", () => {
+    const configMap = trustedCaConfigMap(docs([...CONFIG_API, ...ENABLED]));
+    expect(configMap).toBeDefined();
+    expect(configMap?.metadata.labels?.["config.openshift.io/inject-trusted-cabundle"]).toBe("true");
+    expect(configMap?.metadata.labels?.["app.kubernetes.io/name"]).toBe("libredb-studio");
+    expect(configMap?.data).toBeUndefined();
+    expect(configMap?.metadata.annotations ?? {}).not.toHaveProperty("service.beta.openshift.io/inject-cabundle");
+  });
+
+  test("the bundle is mounted read-only and named by NODE_EXTRA_CA_CERTS", () => {
+    const pod = podSpec(docs([...CONFIG_API, ...ENABLED]));
+    const container = pod.containers[0];
+    expect(container.volumeMounts?.find((mount) => mount.name === "trusted-ca")).toEqual({
+      name: "trusted-ca",
+      mountPath: BUNDLE_DIR,
+      readOnly: true,
+    });
+    expect(pod.volumes?.find((volume) => volume.name === "trusted-ca")).toEqual({
+      name: "trusted-ca",
+      configMap: { name: "release-under-test-libredb-studio-trusted-ca" },
+    });
+    expect(container.env?.find((entry) => entry.name === "NODE_EXTRA_CA_CERTS")).toEqual({
+      name: "NODE_EXTRA_CA_CERTS",
+      value: `${BUNDLE_DIR}/ca-bundle.crt`,
+    });
+  });
+
+  test("an extraEnv NODE_EXTRA_CA_CERTS conflicts with the trusted bundle", () => {
+    const run = helmTemplate([
+      ...CONFIG_API,
+      ...ENABLED,
+      "--set",
+      "extraEnv[0].name=NODE_EXTRA_CA_CERTS",
+      "--set",
+      "extraEnv[0].value=/x",
+    ]);
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stderr).toContain("openshift.trustedCABundle.enabled");
+    expect(run.stderr).toContain("NODE_EXTRA_CA_CERTS");
+  });
+
+  test("an extraEnv NODE_EXTRA_CA_CERTS without the trusted bundle still renders", () => {
+    const pod = podSpec(docs(["--set", "extraEnv[0].name=NODE_EXTRA_CA_CERTS", "--set", "extraEnv[0].value=/x"]));
+    expect(pod.containers[0].env?.filter((entry) => entry.name === "NODE_EXTRA_CA_CERTS")).toEqual([
+      { name: "NODE_EXTRA_CA_CERTS", value: "/x" },
+    ]);
+  });
+
+  test("without config.openshift.io/v1 the trusted bundle fails the render and names the force switch", () => {
+    const run = helmTemplate([...OPENSHIFT_API, ...ENABLED]);
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stderr).toContain("openshift.trustedCABundle.enabled");
+    expect(run.stderr).toContain("config.openshift.io/v1");
+    expect(run.stderr).toContain("global.compatibility.openshift.apis=force");
+  });
+
+  test("apis=force renders it without detection", () => {
+    const rendered = docs([...ENABLED, "--set", "global.compatibility.openshift.apis=force"]);
+    expect(trustedCaConfigMap(rendered)).toBeDefined();
+    expect(podSpec(rendered).volumes?.map((volume) => volume.name)).toContain("trusted-ca");
+  });
+
+  test("the trusted-ca volume name is unique beside governance and access review volumes", () => {
+    const governance = [
+      "--set",
+      "governance.enabled=true",
+      "--set",
+      "authProvider=oidc",
+      "--set",
+      "config.oidcIssuer=https://auth.example.com/realms/libredb",
+      "--set",
+      "config.oidcRoleClaim=libredb_roles",
+      "--set",
+      "config.oidcUserRoles=user",
+      "--set",
+      "config.storageProvider=postgres",
+      "--set",
+      "config.storagePostgresSchema=studio",
+      "--set",
+      "secrets.existingSecret=studio-installer-secret",
+    ];
+    const accessReview = [
+      "--set",
+      "authProvider=oidc",
+      "--set",
+      "config.oidcIssuer=https://rancher.example.com/oidc",
+      "--set",
+      "config.sessionTtlSeconds=900",
+      "--set",
+      "accessReview.enabled=true",
+    ];
+    for (const [args, other] of [
+      [governance, "governance-keyring"],
+      [accessReview, "access-review"],
+    ] as const) {
+      const pod = podSpec(docs([...CONFIG_API, ...ENABLED, ...args]));
+      const volumes = (pod.volumes ?? []).map((volume) => volume.name);
+      const mounts = (pod.containers[0].volumeMounts ?? []).map((mount) => mount.name);
+      expect(volumes).toContain(other);
+      expect(volumes.filter((name) => name === "trusted-ca")).toHaveLength(1);
+      expect(mounts.filter((name) => name === "trusted-ca")).toHaveLength(1);
+      expect(new Set(volumes).size).toBe(volumes.length);
+      expect(new Set(mounts).size).toBe(mounts.length);
+    }
+  });
+
+  test("an unknown openshift.trustedCABundle key fails schema validation", () => {
+    const run = helmTemplate([...CONFIG_API, "--set", "openshift.trustedCABundle.enable=true"]);
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stderr).toContain("trustedCABundle");
+  });
+});

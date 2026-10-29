@@ -304,6 +304,17 @@ so a --reuse-values upgrade from a chart without the value behaves as "auto".
 {{- end }}
 
 {{/*
+Whether openshift.trustedCABundle is on. Read with dig over a defaulted dict,
+so a --reuse-values upgrade from a chart without the openshift block renders
+as off.
+*/}}
+{{- define "libredb-studio.trustedCABundleEnabled" -}}
+{{- if dig "trustedCABundle" "enabled" false (.Values.openshift | default dict) }}
+{{- true }}
+{{- end }}
+{{- end }}
+
+{{/*
 Pod security context with OpenShift adaptation applied: the fixed
 runAsUser/runAsGroup/fsGroup are omitted so the SCC can inject range-valid
 IDs (runAsNonRoot and seccompProfile are kept). The app image supports

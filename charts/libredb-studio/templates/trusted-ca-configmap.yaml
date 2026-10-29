@@ -1,0 +1,16 @@
+{{- /*
+  The cluster's trusted CA bundle on OpenShift: the Cluster Network Operator
+  fills a ConfigMap carrying this label with key ca-bundle.crt (the proxy's
+  trustedCA plus the system roots) and keeps it current. It starts empty, so
+  the chart writes no data; the Deployment mounts it and names the file in
+  NODE_EXTRA_CA_CERTS. The API guard lives in deployment.yaml.
+*/ -}}
+{{- if include "libredb-studio.trustedCABundleEnabled" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "libredb-studio.fullname" . }}-trusted-ca
+  labels:
+    {{- include "libredb-studio.labels" . | nindent 4 }}
+    config.openshift.io/inject-trusted-cabundle: "true"
+{{- end }}
