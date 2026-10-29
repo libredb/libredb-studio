@@ -5,12 +5,12 @@
  * (preflight's RequiredAnnotations check), and each one must be a string. All seven are "false" in
  * this release: the bundle lists no relatedImages or digests (disconnected), the image is not
  * built for FIPS mode, Studio's token exchange and API calls do not go through a cluster proxy on
- * purpose (proxy-aware, O8), it does not follow the cluster's TLS profile, and it uses no cloud
+ * purpose (proxy-aware), it does not follow the cluster's TLS profile, and it uses no cloud
  * token authentication. They live in the base CSV, so make -C operator bundle carries them into
  * the bundle CSV. The console plugin annotation belongs to the plugin release and is absent.
  *
- * com.redhat.openshift.versions names the oldest OpenShift release the bundle is offered for (O3:
- * 4.16, since no 4.14 or 4.15 lab exists). operator-sdk rewrites bundle/metadata/annotations.yaml
+ * com.redhat.openshift.versions names the oldest OpenShift release the bundle is offered for:
+ * 4.16, since no lab runs 4.14 or 4.15, which stay untested. operator-sdk rewrites bundle/metadata/annotations.yaml
  * on every run, so the bundle target stamps it afterwards and checks it landed once; a missing or
  * unparseable value would only be warned about by the catalog tooling.
  */

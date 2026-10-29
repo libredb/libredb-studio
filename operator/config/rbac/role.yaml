@@ -178,7 +178,7 @@ rules:
   - watch
 # openshiftRoute.enabled renders a route.openshift.io Route, and openshift sign-in
 # fixes its host at install time; setting spec.host needs create on
-# routes/custom-host, or the API server refuses the Route (OP23)
+# routes/custom-host, or the API server refuses the Route
 - apiGroups:
   - route.openshift.io
   resources:

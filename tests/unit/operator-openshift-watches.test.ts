@@ -3,8 +3,8 @@
  * The values the operator sets on every LibreDBStudio win over the resource, and reach the chart
  * as the chart expects them.
  *
- * Any namespace editor may create a LibreDBStudio, and the cluster-wide operator reconciles it
- * (L23). So the chart values that decide where objects may go are not the resource's to choose:
+ * Any namespace editor may create a LibreDBStudio, and the cluster-wide operator reconciles it.
+ * So the chart values that decide where objects may go are not the resource's to choose:
  * operator/watches.yaml sets them as overrideValues. operator.managed turns on the chart's O14
  * guard, operator.clusterStudioNamespace names the one namespace whose resource may render
  * cross-namespace and cluster-scoped objects (LIBREDB_CLUSTER_STUDIO_NAMESPACE, which a cluster

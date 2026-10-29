@@ -8,7 +8,7 @@
  * namespace that lets the exporter list the database kinds. Kubernetes refuses to let anyone create
  * a Role that grants a verb the creator does not hold itself, so the manager role must hold every
  * (group, resource, verb) those Roles grant, and setting a Route's host needs create on
- * routes/custom-host (OP23).
+ * routes/custom-host, or the API server refuses the Route.
  *
  * Every rule the role holds is listed below as the reviewed list, so a rule added or removed is a
  * visible change to this file. The escalation test renders the chart the way the operator does in
