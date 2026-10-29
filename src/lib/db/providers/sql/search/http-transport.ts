@@ -355,6 +355,9 @@ const MAX_FETCH_SIZE = 10_000;
  */
 const PAGE_ENVELOPE_ALLOWANCE = 65_536;
 
+/** How long the close of a cursor a failed page left open may take, on a signal of its own. */
+const CURSOR_CLOSE_MS = 5_000;
+
 /**
  * The `_cat/indices` columns this transport reads, by their wire spelling.
  *
@@ -1363,9 +1366,11 @@ export class SearchHttpTransport implements SearchTransport {
    * The cursor matters here more than in {@link query}: asking for a page size opens a
    * search context on the cluster that only reading to the end, closing the cursor or the
    * keep-alive expiring releases (measured on 9.1.4: `open_contexts` 1 while the cursor is
-   * held, 0 after `/_sql/close`). So a refusal closes the cursor it read before it throws.
-   * A page past its byte cap is abandoned before its cursor could be read, and that one
-   * context waits for the engine's own keep-alive.
+   * held, 0 after `/_sql/close`). So a refusal closes the cursor it read before it throws, and
+   * a later page that fails (past its byte cap, an engine error, an unreadable page, a deadline
+   * or a cancel) closes the cursor the page before it left open, on a signal of its own, which
+   * releases the same context (measured on 9.1.4). A first page past its byte cap is abandoned
+   * before any cursor could be read, and that one context waits for the engine's own keep-alive.
    */
   public async queryBounded(sql: string, bounds: SearchQueryBounds, signal?: AbortSignal): Promise<SearchQueryResult> {
     const url = this.url(this.spec.sqlPath, this.spec.sqlQuery);
@@ -1404,8 +1409,18 @@ export class SearchHttpTransport implements SearchTransport {
       }
       if (cursor === null || cursor === "" || pages >= MAX_PAGES) break;
 
-      // oxlint-disable-next-line no-await-in-loop -- each page is asked for only after the one before it was checked.
-      const next = await readPage({ cursor }, "a SQL result page");
+      let next: Record<string, unknown>;
+      try {
+        // oxlint-disable-next-line no-await-in-loop -- each page is asked for only after the one before it was checked.
+        next = await readPage({ cursor }, "a SQL result page");
+      } catch (error) {
+        // The page before this one left its cursor open, and closing it releases the search context (measured on
+        // 9.1.4: the context a later page still holds goes back to 0). The caller's signal may be the one that ended
+        // this read, so the close goes out on a signal of its own.
+        // oxlint-disable-next-line no-await-in-loop -- the loop ends here: the cursor is closed, then the failure thrown.
+        await this.closeCursor(cursor, AbortSignal.timeout(CURSOR_CLOSE_MS));
+        throw error;
+      }
       for (const row of rebuildRows(this.spec, next, result.fieldNames)) {
         bytes += measureRowBytes(row) + (result.rows.length > 0 ? 1 : 0);
         result.rows.push(row);

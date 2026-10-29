@@ -335,6 +335,115 @@ describe.each(["elasticsearch", "opensearch"] as const)("SearchHttpTransport (%s
     expect(error.allowed).toBe(10);
   });
 
+  test("the cap alone refuses a body whose rows are inside the byte bound, and stops reading it", async () => {
+    // Row bytes stay far under the bound; the envelope carries the bulk, so only the body cap can refuse this page.
+    const padded = `${page(["a"]).slice(0, -1)},"pad":"${"x".repeat(200_000)}"}`;
+    const chunk = 40_000;
+    let pulled = 0;
+    handler = () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            const start = pulled * chunk;
+            if (start >= padded.length) {
+              controller.close();
+              return;
+            }
+            controller.enqueue(new TextEncoder().encode(padded.slice(start, start + chunk)));
+            pulled += 1;
+          },
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
+    // The cap is 100 * 3 + 65,536 = 65,836 bytes, crossed by the second 40,000-byte chunk.
+    const error = await refusal(transport().queryBounded("SELECT k FROM t", { maxRows: 10, maxBytes: 100 }));
+
+    expect([error.bound, error.measured, error.allowed]).toEqual(["byte", 80_000, 100]);
+    expect(pulled).toBeLessThan(Math.ceil(padded.length / chunk));
+  });
+
+  test("a body under its cap is read whole, even when its envelope alone is past the byte bound", async () => {
+    // 85,000 bytes of envelope: under the cap of 10,000 * 3 + 65,536, and past 10,000 + 65,536.
+    pages = [`${page(["a"]).slice(0, -1)},"pad":"${"x".repeat(85_000)}"}`];
+    const result = await transport().queryBounded("SELECT k FROM t", { maxRows: 10, maxBytes: 10_000 });
+
+    expect(result.rows).toEqual([{ k: "a" }]);
+  });
+
+  test("an empty first page adds no comma before the first row a later page brings", async () => {
+    pages = [page([], "c1"), page(["aaaa", "bbbb"], undefined, false)];
+    // [{"k":"aaaa"},{"k":"bbbb"}] is 27 bytes, exactly the bound.
+    const result = await transport().queryBounded("SELECT k FROM t", { maxRows: 10, maxBytes: 27 });
+
+    expect(result.rows).toHaveLength(2);
+  });
+
+  test("a later page the cluster refuses closes the cursor the page before it left open", async () => {
+    pages = [page(["a"], "c1")];
+    handler = (url) => {
+      if (new URL(url).pathname === CLOSE_PATH) {
+        return new Response('{"succeeded":true}', { headers: { "content-type": "application/json" } });
+      }
+      const next = pages.shift();
+      return next === undefined
+        ? new Response('{"error":{"type":"search_phase_execution_exception"}}', { status: 500 })
+        : new Response(next, { headers: { "content-type": "application/json" } });
+    };
+    const caught = await transport()
+      .queryBounded("SELECT k FROM t", { maxRows: 3, maxBytes: 1_000 })
+      .catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect(paths().at(-1)).toBe(CLOSE_PATH);
+    expect(bodies().at(-1)).toEqual({ cursor: "c1" });
+  });
+
+  test("an unreadable later page closes the cursor the page before it left open", async () => {
+    pages = [page(["a"], "c1"), "[]"];
+    await transport()
+      .queryBounded("SELECT k FROM t", { maxRows: 3, maxBytes: 1_000 })
+      .catch((error: unknown) => error);
+
+    expect(paths().at(-1)).toBe(CLOSE_PATH);
+    expect(bodies().at(-1)).toEqual({ cursor: "c1" });
+  });
+
+  test("a later page past its cap closes the cursor the page before it left open", async () => {
+    // Page one's rows measure 11 bytes, inside the bound of 20; page two is past the cap of 20 * 3 + 65,536.
+    pages = [page(["a"], "c1"), page(["x".repeat(70_000)], "c2", false)];
+    const error = await refusal(transport().queryBounded("SELECT k FROM t", { maxRows: 10, maxBytes: 20 }));
+
+    expect(error.bound).toBe("byte");
+    expect(error.measured).toBeGreaterThan(20 * 3 + 65_536);
+    expect(paths().at(-1)).toBe(CLOSE_PATH);
+    expect(bodies().at(-1)).toEqual({ cursor: "c1" });
+  });
+
+  test("a deadline that ends on a later page still closes the cursor, on a signal of its own", async () => {
+    const controller = new AbortController();
+    pages = [page(["a"], "c1")];
+    handler = (url) => {
+      if (new URL(url).pathname === CLOSE_PATH) {
+        return new Response('{"succeeded":true}', { headers: { "content-type": "application/json" } });
+      }
+      const next = pages.shift();
+      if (next === undefined) {
+        controller.abort(new DOMException("deadline", "TimeoutError"));
+        throw new DOMException("deadline", "TimeoutError");
+      }
+      return new Response(next, { headers: { "content-type": "application/json" } });
+    };
+    const caught = await transport()
+      .queryBounded("SELECT k FROM t", { maxRows: 3, maxBytes: 1_000 }, controller.signal)
+      .catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as SearchTransportError).category).toBe("timeout");
+    const close = calls.at(-1);
+    expect(new URL(close?.url ?? "").pathname).toBe(CLOSE_PATH);
+    expect(close?.init?.signal?.aborted).toBe(false);
+  });
+
   test("a refused cursor close does not hide the bound the answer went past", async () => {
     closeStatus = 500;
     pages = [page(["a", "b"], "c1")];
