@@ -1228,9 +1228,10 @@ RBAC cannot narrow `get secrets` by name, and resource editors choose part of ev
 
 No default name (`<name>-app`, `<name>-pguser-<user>`, `<name>-<db>-<user>`) ends in one of these unless the resource's editor chose a user or database name that makes it so, which is what the rule stops; an initdb Secret you name yourself must avoid them too.
 The exporter lists every page of every kind in a namespace before it requests any Secret there, so list order decides nothing, and a resource left out for its names, or past the database bound, still reserves the Secrets its spec names.
+A namespace whose listed resources name more than 4096 distinct Secrets in these fields is withdrawn as `limit_exceeded`, because its editors decide how many they name, and once a namespace is listed the exporter keeps only the reserved names its kept rows' Secrets have, so what it holds until it reads the Secrets does not grow with them.
 
 A 403 on a namespace's list, where the exporter's Role is missing, and a 404, where the CloudNativePG CRD is not installed, are answers about that namespace: its databases are withdrawn, the export says why, and the other namespaces are exported.
-So are a list page over 16 MiB and a list that does not end within 100 pages, both `limit_exceeded`, because a namespace's editors decide how many and how large its Clusters are.
+So are a list page over 16 MiB, a list that does not end within 100 pages and resources that name more than 4096 reserved Secrets, all `limit_exceeded`, because a namespace's editors decide how many and how large its resources are.
 A namespace that fails on a later page loses what its earlier pages found too.
 Any other failure fails the whole scan: an unreachable API server, a 401, a 5xx or an answer that is not a list.
 The export then keeps the namespaces, databases and `generatedAt` of the last good scan and updates only the status and `checkedAt`, as the CapRover exporter does.

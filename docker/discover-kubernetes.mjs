@@ -18,9 +18,10 @@
  *   - it keeps a Secret only when it is of its row's type, belongs to the resource that names it (an ownerReference, or
  *     for the CloudNativePG family its cluster label, or an initdb Secret tied to nothing), holds no key outside its
  *     row's measured set and every key its row requires, so a resource cannot point it at another workload's Secret;
- *   - one namespace's answers never decide another's: a refusal, a list page over the size bound or a list that does
- *     not end withdraws that namespace alone, and the database and export bounds are shared fairly among the
- *     namespaces, so the editors of one namespace cannot push another's databases out of the export;
+ *   - one namespace's answers never decide another's: a refusal, a list page over the size bound, a list that does not
+ *     end or resources that reserve more than LIMITS.reservedNames Secret names withdraws that namespace alone, and the
+ *     database and export bounds are shared fairly among the namespaces, so the editors of one namespace cannot push
+ *     another's databases out of the export;
  *   - it keeps only the contract's keys of a Secret, decoded, each at most LIMITS.valueBytes and valid UTF-8, and of a
  *     resource only the contract's fields; it interprets nothing else: the mapping to a connection, the id rule,
  *     staleness and validation live in src/lib/seed/, where the coverage gate measures them;
@@ -481,6 +482,8 @@ export const LIMITS = Object.freeze({
   // etcd keeps no object over 1.5 MiB by default, so a full page stays under responseBytes.
   pageSize: 10,
   pages: 100,
+  // The distinct Secret names one namespace's listed resources may reserve; real clusters name a few dozen.
+  reservedNames: 4096,
   requestTimeoutMs: 10000,
   messageChars: 512,
 });
@@ -920,13 +923,14 @@ function namespaceRefusal(error, row, namespace) {
 
 /**
  * One namespace's resources of every kind, in list order: at most `limits.databases` of them, whether it holds more,
- * and the Secret names every listed resource's spec reserves for the namespace (`reserved`). It lists every page past
- * the bound too, since a resource past it still reserves its Secrets, and one left out for its names as well. A 403, a
- * 404, a page over the response bound and a list that does not end within `limits.pages` answer for this namespace
+ * and of the Secret names its listed resources' specs reserve for the namespace, those a kept row's Secret has
+ * (`reserved`). It lists every page past the bound too, since a resource past it still reserves its Secrets, and one
+ * left out for its names as well. A 403, a 404, a page over the response bound, a list that does not end within
+ * `limits.pages` and resources that reserve more than `limits.reservedNames` distinct names answer for this namespace
  * alone, whose editors decide how many and how large its resources are: the namespace gets that status and none of its
  * resources, those of earlier pages included. Any other failure throws and fails the scan.
  */
-async function listNamespace({ client, config, namespace, limits }) {
+export async function listNamespace({ client, config, namespace, limits }) {
   const found = [];
   const reserved = new Set();
   let more = false;
@@ -953,7 +957,14 @@ async function listNamespace({ client, config, namespace, limits }) {
         throw codedError(`GET ${path} answered with something other than a list`, "EBADLIST");
       }
       for (const item of list.items) {
-        for (const name of row.reserves(item)) reserved.add(name);
+        for (const name of row.reserves(item)) {
+          if (reserved.has(name)) continue;
+          if (reserved.size === limits.reservedNames) {
+            const message = `the resources listed in ${namespace} name more than ${limits.reservedNames} distinct Secrets in the spec fields the exporter reserves, the most it keeps for one namespace`;
+            return { status: { ok: false, code: "limit_exceeded", message } };
+          }
+          reserved.add(name);
+        }
         const expanded = row.expand(item);
         leftOut += expanded.leftOut;
         for (const candidate of expanded.candidates) {
@@ -969,7 +980,11 @@ async function listNamespace({ client, config, namespace, limits }) {
       if (continueToken === "") break;
     }
   }
-  return { status: { ok: true }, found, more, leftOut, reserved };
+  // Only a kept row's Secret is checked against the names, so the rest go: what a namespace holds until its Secrets are
+  // read is bounded by its kept rows, not by how many names its editors write.
+  const hits = new Set();
+  for (const candidate of found) if (reserved.has(candidate.secretName)) hits.add(candidate.secretName);
+  return { status: { ok: true }, found, more, leftOut, reserved: hits };
 }
 
 /**

@@ -13,9 +13,9 @@
  *  - The contract row is the same data as Studio's table: a drift reads one Secret and makes Studio ask the review
  *    about another, or keeps a key Studio never reads.
  *  - Only the contract's keys leave a Secret, and no value reaches a log line.
- *  - 403, 404 and a list over the size or page bound are answers that withdraw one namespace's databases, and the
- *    database and export bounds are shared fairly, so one namespace's editors cannot crowd another out; every other
- *    failure keeps the last good scan.
+ *  - 403, 404 and a list over the size, page or reserved-name bound are answers that withdraw one namespace's
+ *    databases, and the database and export bounds are shared fairly, so one namespace's editors cannot crowd another
+ *    out; every other failure keeps the last good scan.
  *  - The write keeps the Secret's Helm metadata and fails over to one retry on a conflict, never to a blind write.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
@@ -45,6 +45,7 @@ import {
   RESERVED_SECRET_NAMES,
   RESERVED_SECRET_SUFFIXES,
   isReservedSecretName,
+  listNamespace,
   scanOnce,
   serviceProblem,
   serializeExport,
@@ -120,6 +121,17 @@ interface Scan {
 
 async function scan(options: { client: unknown; config: unknown; limits?: typeof LIMITS }): Promise<Scan> {
   return (await scanOnce(options as never)) as unknown as Scan;
+}
+
+/** listNamespace's answer, typed for the assertions: the reserved names it keeps after listing, among the rest. */
+interface Listing {
+  status: Record<string, unknown>;
+  found?: ExporterCandidate[];
+  reserved?: Map<string, unknown>;
+}
+
+async function listing(options: { client: unknown; config: unknown; namespace: string; limits: typeof LIMITS }) {
+  return (await listNamespace(options as never)) as unknown as Listing;
 }
 
 /** What a promise rejected with, awaited rather than waited for in place (see "the harness"); a fulfilment fails. */
@@ -253,6 +265,7 @@ describe("the reviewed constants", () => {
       responseBytes: 16777216,
       pageSize: 10,
       pages: 100,
+      reservedNames: 4096,
       requestTimeoutMs: 10000,
       messageChars: 512,
     });
@@ -1661,6 +1674,84 @@ describe("reserved names", () => {
       { name: "late-login", problem: "reserved_name" },
     ]);
     expect(api.seen.some((seen) => seen.path.includes("/secrets/") || seen.path.includes("/services/"))).toBe(false);
+  });
+
+  /**
+   * Resources in `namespace` that name `count` distinct Secrets in reserved fields, over five pages of one item and two
+   * kinds: a PGO PostgresCluster names two, two Clusters' managed roles the rest, and a name given twice counts once.
+   * The Cluster asks names one of them, orders has its own Secret.
+   */
+  function reserveNames(namespace: string, count: number): void {
+    const roles = Array.from({ length: count - 2 }, (_, index) => ({
+      name: `role${index}`,
+      passwordSecret: { name: `wide-${index}-login` },
+    }));
+    api.addCluster(namespace, "wide-a", { managed: { roles: roles.slice(0, 2000) } });
+    api.addCluster(namespace, "wide-b", {
+      managed: { roles: [...roles.slice(2000), roles[0]] },
+      superuserSecret: { name: "pg-tls-pair" },
+    });
+    api.addCluster(namespace, "asks", { bootstrap: { initdb: { secret: { name: "wide-7-login" } } } });
+    api.addCluster(namespace, "orders");
+    api.addAppSecret(namespace, "orders", { username: "orders", password: PASSWORD_A, dbname: "orders", port: "5432" });
+    api.addResource("pgo", namespace, "pg", {
+      users: [{ name: "u" }],
+      customTLSSecret: { name: "pg-tls-pair" },
+      customReplicationTLSSecret: { name: "pg-repl-pair" },
+    });
+    api.pageSize = 1;
+  }
+
+  test(`each namespace may reserve ${LIMITS.reservedNames} Secret names, across kinds and pages`, async () => {
+    reserveNames("team-a", LIMITS.reservedNames);
+    reserveNames("team-b", LIMITS.reservedNames);
+    const result = await scan({ client: client(), config: config({ KUBERNETES_DISCOVERY_KINDS: "cnpg,pgo" }) });
+    expect(result.ok).toBe(true);
+    expect(result.namespaces.map((namespace) => namespace.status)).toEqual([{ ok: true }, { ok: true }]);
+    const rows = [
+      { name: "wide-a-app", problem: "not_found" },
+      { name: "wide-b-app", problem: "not_found" },
+      { name: "wide-7-login", problem: "reserved_name" },
+      { name: "orders-app", data: { username: "orders", password: PASSWORD_A, dbname: "orders", port: "5432" } },
+      { name: "pg-pguser-u", problem: "no_database" },
+    ];
+    expect<unknown>(result.databases.map((entry) => entry.secret)).toEqual([...rows, ...rows]);
+  });
+
+  test(`a namespace whose resources reserve more than ${LIMITS.reservedNames} Secret names is withdrawn`, async () => {
+    reserveNames("team-a", LIMITS.reservedNames + 1);
+    api.addCluster("team-b", "analytics");
+    api.addAppSecret("team-b", "analytics", { username: "app", password: PASSWORD_B, dbname: "app", port: "5432" });
+    const result = await scan({ client: client(), config: config({ KUBERNETES_DISCOVERY_KINDS: "cnpg,pgo" }) });
+    expect(result.ok).toBe(true);
+    expect(result.namespaces).toEqual([
+      {
+        name: "team-a",
+        status: {
+          ok: false,
+          code: "limit_exceeded",
+          message:
+            "the resources listed in team-a name more than 4096 distinct Secrets in the spec fields the exporter reserves, the most it keeps for one namespace",
+        },
+      },
+      { name: "team-b", status: { ok: true } },
+    ]);
+    expect(result.databases.map((entry) => entry.resource.metadata.name)).toEqual(["analytics"]);
+    expect(api.seen.some((seen) => /\/namespaces\/team-a\/(secrets|services)\//.test(seen.path))).toBe(false);
+  });
+
+  test("after listing, a namespace keeps only the reserved names its kept rows' Secrets have", async () => {
+    reserveNames("team-a", LIMITS.reservedNames);
+    const settings = config({ KUBERNETES_DISCOVERY_KINDS: "cnpg,pgo" });
+    const full = await listing({ client: client(), config: settings, namespace: "team-a", limits: LIMITS });
+    expect(full.status).toEqual({ ok: true });
+    expect(full.found).toHaveLength(5);
+    expect([...(full.reserved?.keys() ?? [])]).toEqual(["wide-7-login"]);
+    // A row past the database bound is not kept, so the name it asks for is not kept either.
+    const bound = limitsWith({ databases: 2 });
+    const cut = await listing({ client: client(), config: settings, namespace: "team-a", limits: bound });
+    expect(cut.found?.map((candidate) => candidate.secretName)).toEqual(["wide-a-app", "wide-b-app"]);
+    expect([...(cut.reserved?.keys() ?? [])]).toEqual([]);
   });
 });
 
