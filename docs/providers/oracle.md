@@ -1118,8 +1118,10 @@ Measured on Oracle AI Database 26ai Free Release 23.26.3.0.0 (`gvenzl/oracle-fre
 #### The check before each statement
 
 Every `queryReadOnly` call runs the check on the statement's own session, as the agent user, inside its `SET TRANSACTION READ ONLY` and before the statement, and keeps no verdict: a grant or a policy added after one call refuses the next call on the same handle, and a refusal lifted between two calls admits the second (measured).
-On the measured 26ai Free the check and a `SELECT 1 FROM DUAL` together took about 97 ms on a warm handle.
-What remains is the time between the check's reads and the statement on one session.
+What remains is a window from `SET TRANSACTION READ ONLY` to the statement, the whole check included: the check reads the dictionary as of the transaction's start, so a grant or a policy added after `SET TRANSACTION` is not seen by that call's check, and a policy added there ran for the statement (measured); the next call sees it.
+The check costs more as the database holds more grants and objects the user can see.
+On the measured 26ai Free a call with its check and a `SELECT 1 FROM DUAL` took about 140 ms with nothing granted beyond the two catalog views, about 20 ms of it opening and closing the call's own session.
+With 3,000 and 7,000 extra views granted to the user it took from 0.3 s to 1 s, the figure moving with the plan the dictionary reads take (measured in two runs: about 560 ms and 280 to 335 ms in one, about 480 ms and 1.0 s in the other).
 Each finding is collected, and one `PROFILE_PRIVILEGES_TOO_BROAD` refusal names them all, as the statements that lift them or, for a policy, as the policy.
 A revoke can uncover the next finding: a granted view over a view the refusal names is refused once the inner grant is gone, so revoke the outer grant as well; the next call's check reads the database as it is then.
 Every dictionary view the check and the catalog read name is written `SYS.<view>`: an unqualified name resolves first to an object or a private synonym in the user's own schema, then to a `PUBLIC` synonym, and either could stand in for the view.
@@ -1128,7 +1130,7 @@ The schema's flag in `ALL_USERS` proves nothing, since an administrator can crea
 Below, "not Oracle's" means that.
 
 1. `USER_USERS.READ_ONLY` must read `YES`. A server without the column (`ORA-00904`) is older than 23ai and is refused `PROFILE_UNSUPPORTED_TARGET`.
-2. Every role granted to the user, directly or through `PUBLIC` (`USER_ROLE_PRIVS`), must be a default role. `SET ROLE` is permitted under READ ONLY and a pooled session keeps the role it enabled, while `ALL_TAB_PRIVS` lists only the grants of enabled roles, so a role whose grants the check cannot see is refused.
+2. Every role granted to the user, directly or through `PUBLIC` (`USER_ROLE_PRIVS`), must be a default role. `SET ROLE` is permitted under READ ONLY, while `ALL_TAB_PRIVS` lists only the grants of enabled roles, so a role whose grants the check cannot see is refused.
 3. The user, its enabled roles and `PUBLIC` must hold `EXECUTE` on no unit (PL/SQL, type, Java class, library) that is not Oracle's, an administrator's function in SYSTEM included.
 4. They may read no view that is not Oracle's whose own definition calls code rather than a table or view (`ALL_DEPENDENCIES`): a plain `SELECT` on such a view runs that code with its owner's rights, and advanced a sequence for a READ ONLY user (measured).
    A view that calls the code through a synonym, private or `PUBLIC`, lists only the synonym, and `ALL_SYNONYMS` does not show the user another schema's private synonym (measured), so a synonym is admitted only when `ALL_SYNONYMS` resolves it to a table or view the check starts from, or to an object that is Oracle's, as `PUBLIC.DUAL` and `PUBLIC.DBMS_LOB` are; any other is refused, a private synonym for a table the user is not granted, and one for another synonym, included.
@@ -1149,15 +1151,17 @@ A check read that fails, past the deadline included, is reported as a connection
 
 #### Each statement
 
-[`index.ts`](../../src/lib/db/providers/sql/oracle/index.ts) runs each call on a session of its own from the profile's pool:
+[`index.ts`](../../src/lib/db/providers/sql/oracle/index.ts) runs each call on a session opened for it alone, with the profile's user, connect string and TLS settings, never one from the pool:
 
-- the driver's `callTimeout` is set to the statement budget, so a round trip past it ends with `NJS-123`, refused in the shared time sentence, and the session is dropped; that ends the wait at the deadline, and this record does not measure when the server stops the statement;
+- the driver's `callTimeout` is set to the statement budget, so a round trip past it ends with `NJS-123`, refused in the shared time sentence, and the session is signed off; that ends the wait at the deadline, and this record does not measure when the server stops the statement;
 - `SET TRANSACTION READ ONLY` opens the transaction, the check above runs on the same session, and the statement follows in one execute, with `autoCommit: false` on all of them, because the constructor sets the process-wide default to `true` for the editor;
 - the statement is executed as a result set, so its column types are read before any row is fetched: without one the driver fetches every row, and expands every nested cursor in full, before the execute returns;
 - a column of type `BFILE` is then refused unread, since its locator reads a server file, and so are an object and a cursor column, whose values the byte budget cannot measure: measured, three nested `CURSOR()` levels of 1,000 rows each were refused with no growth of the process;
 - otherwise at most one row past the row budget is fetched, and a result past it is refused rather than cut;
 - `CLOB` and `NCLOB` are fetched as strings and `BLOB` as buffers by the call's own `fetchTypeHandler`, never the process-wide settings, so no LOB locator outlives the call, and every value is counted against the byte budget;
-- the session is then rolled back with the driver's `rollback()`, its deadline cleared, and returned to the pool; a failure of the statement or of the rollback drops the session instead.
+- the session is then rolled back with the driver's `rollback()` and closed, which signs it off, on every path, an answered call included.
+  A session keeps what a statement set on it, and the `USER_*` views the check reads follow `CURRENT_SCHEMA`: measured, an agent's `ALTER SESSION SET CURRENT_SCHEMA = APP_OWNER` ran, and on a pooled session the next calls read `APP_OWNER` as their schema.
+  The Thin driver of node-oracledb 6.10 returns a pooled session to its pool even when `close({ drop: true })` asks it to drop it (measured), so the session is never taken from the pool at all.
 
 Every refusal is a sentence of [`read-only-budget.ts`](../../src/lib/db/providers/sql/read-only-budget.ts) or the server's own error.
 The estimate-plan session mode is refused: `EXPLAIN PLAN` writes its rows into `PLAN_TABLE`, a write the READ ONLY user is refused, so the agent composes no estimating plan here (B147).
@@ -1223,7 +1227,7 @@ Its operations readings come back degraded, as section 3.7 describes for a user 
 
 #### Boundary record
 
-Measured on 26ai Free 23.26.3 (the digest `run.sh` pins, 2026-10-29) by [`tests/live/oracle-agent-boundary.ts`](../../tests/live/oracle-agent-boundary.ts), with Studio's agent admission bypassed: 151 checks, all passing.
+Measured on 26ai Free 23.26.3 (the digest `run.sh` pins, 2026-10-29) by [`tests/live/oracle-agent-boundary.ts`](../../tests/live/oracle-agent-boundary.ts), with Studio's agent admission bypassed: 152 checks, all passing.
 
 | Probe | Admitted READ ONLY user, through `queryReadOnly` | Writable schema owner, positive control |
 | --- | --- | --- |
@@ -1242,6 +1246,7 @@ The table rows, the sequence, `open_cursors`, the owner's objects and the databa
 The fresh database refused its READ ONLY user, naming the nine revokes above and the two catalog grants, and admitted it once they ran.
 The check refused, and admitted again once the grant was gone: a user set `READ WRITE`; `EXECUTE` on a definer's-rights function granted to the user, to `PUBLIC` and to a default role; a role set `DEFAULT ROLE NONE`; `SELECT` on a view over that function, on a view that calls it through a private synonym, through a `PUBLIC` synonym and through a chain of two private synonyms, on a view over a private synonym for a table the user is not granted, on a view over an invoker's-rights function, and on a view over a view the user may not read, one that calls that function and one that calls nothing; `SELECT` on a table with a virtual column over that function and on one with a function-based index over `UPPER`; `SELECT` on a view left invalid by a dropped column; `SELECT` on a view over a view granted only `DEBUG`; a table the user owns with a virtual column, lifted by dropping the table; each lifted by dropping the policy: a row-level policy of the owner's on a granted table, on a table the user is not granted at all, on a table read only through a granted view, and on `SYSTEM.HELP`, a policy on a private and on a `PUBLIC` synonym, lifted by dropping the synonym, a fine-grained auditing handler of the owner's on a granted table, behind a granted view and on `SYSTEM.SQLPLUS_PRODUCT_PROFILE`, and an audit condition calling the owner's function and one of built-ins only, `ID > 0`; a row-level policy and a fine-grained auditing handler on `SYSTEM.HELP` whose function an administrator made in SYSTEM, `EXECUTE` through `PUBLIC` on such a function, a granted view made in SYSTEM that calls it, and `SELECT` on a sequence made in SYSTEM; a row-level policy while the user's own schema held a private synonym `DBA_POLICIES` over an empty table, which hid the policy from an unqualified read; the grant on `DBA_POLICIES` and on `DBA_AUDIT_POLICIES`, each revoked, lifted by granting it again; `SELECT` on a sequence; a private database link the user owns, which the user, READ ONLY, was refused the `DROP` of with `ORA-28194` and dropped once set READ WRITE; a `PUBLIC` database link; `READ` on a directory. It refused a READ ONLY user holding `ALTER SYSTEM`, and admitted the fresh database's twelve `XDB` row-level policies, a fine-grained auditing policy with no condition and no handler, a view over `DBMS_LOB` through Oracle's `PUBLIC` synonym, a view over a private synonym for a table the user is granted, a view that leaves out the function-based index's hidden column, a view over a view once both were granted, and a view over a view granted only `INSERT`.
 On one handle, a call ran, a row-level policy added on `SYSTEM.HELP` refused the next call without running its function, and the call after the policy was dropped ran.
+On the same handle the agent's `ALTER SESSION SET CURRENT_SCHEMA = APP_OWNER` ran, and each of the four calls after it read the agent user's own schema and its own empty `USER_TABLES`.
 The operations profile opened the writable schema owner unchecked and listed its tables; it and an editor handle refused `queryReadOnly` before sending anything.
 The four catalog kinds answered as the admitted user.
 The budgets: 60 rows under a budget of 50 were refused at the 51st, a 30,000-character `CLOB` under a byte budget of 10,000 was refused, a `CLOB` under the budgets came back as a string, a `BFILE` column was refused, three nested `CURSOR()` levels of 1,000 rows each were refused in 2 ms with no growth of the process, and `DBMS_SESSION.SLEEP(5)` under a one-second deadline was refused, the next statement answering.
