@@ -337,8 +337,8 @@ interface SearchProduct {
   /**
    * Whether the product's SQL plugin answers at most a cluster-set number of rows and cuts the rest with no sign of
    * the cut. The agent read-only profile's budgets refuse rather than truncate, so where the engine cuts, the open of
-   * a connection that sends agent statements reads the limit, and an answer that reaches it is refused, since nothing
-   * in it tells a whole answer from a cut one.
+   * a connection that sends agent statements reads the limit, each agent statement reads it again before it is sent,
+   * and an answer that reaches it is refused, since nothing in it tells a whole answer from a cut one.
    *
    * Elasticsearch: false; its pages follow a cursor to the end. OpenSearch: true, `plugins.query.size_limit`, 10000 by
    * default (measured on 3.8.0 with it at 1000: a 1,500-row read answers 1,000 rows and a cursor whose next page holds
@@ -767,12 +767,6 @@ abstract class SearchProvider extends SQLBaseProvider {
    */
   private readonly readOnlyProfile: boolean;
 
-  /**
-   * The engine's result limit, read at the open of an agent read-only connection on a product that cuts there
-   * ({@link SearchProduct.cutsAtResultLimit}), or null.
-   */
-  private resultLimit: { setting: string; rows: number } | null = null;
-
   protected constructor(
     product: SearchProduct,
     config: DatabaseConnection,
@@ -992,7 +986,7 @@ abstract class SearchProvider extends SQLBaseProvider {
     }
     if (this.readOnlyProfile) {
       if (this.product.sqlDeleteSwitch) await this.assertSqlDeleteOff(transport);
-      if (this.product.cutsAtResultLimit) this.resultLimit = await this.readResultLimit(transport);
+      if (this.product.cutsAtResultLimit) await this.readResultLimit(transport);
       await this.assertCheckedServer(transport);
     }
 
@@ -1045,8 +1039,10 @@ abstract class SearchProvider extends SQLBaseProvider {
   }
 
   /**
-   * The engine's result limit, read before any agent statement is sent: an answer that reaches it is refused by
-   * `readOnlyStatement`. A limit that cannot be read refuses the profile, since an answer could then be cut unseen.
+   * The engine's result limit, read at the open so a server whose limit cannot be read is refused before any agent
+   * statement is sent. A limit that cannot be read refuses the profile, since an answer could then be cut unseen. The
+   * open's value is not kept: an administrator can lower the limit while the handle stays pooled, so
+   * `readOnlyStatement` reads it again before each statement.
    */
   private async readResultLimit(transport: SearchHttpTransport): Promise<{ setting: string; rows: number }> {
     try {
@@ -1055,6 +1051,25 @@ abstract class SearchProvider extends SQLBaseProvider {
       throw new ExecutionProfileError(
         `The agent read-only profile needs ${this.product.label} SQL's result limit, past which the engine cuts an answer without saying so, and it could not be read, so this server is refused (a user needs the cluster privilege cluster:monitor/state to read it): ${error instanceof Error ? error.message : String(error)}`,
         "PROFILE_SERVER_UNENFORCED",
+      );
+    }
+  }
+
+  /**
+   * The engine's result limit, read before one agent statement is sent. A limit that cannot be read refuses that
+   * statement before it is sent, since its answer could be cut unseen.
+   */
+  private async statementResultLimit(
+    transport: SearchTransport,
+    sql: string,
+  ): Promise<{ setting: string; rows: number }> {
+    try {
+      return await transport.sqlResultLimit(this.deadline());
+    } catch (error) {
+      throw new RefusedBeforeSendError(
+        `${this.product.label} SQL's result limit, past which the engine cuts an answer without saying so, could not be read, so the statement was not sent (a user needs the cluster privilege cluster:monitor/state to read it): ${error instanceof Error ? error.message : String(error)}`,
+        this.type,
+        sql,
       );
     }
   }
@@ -1228,8 +1243,9 @@ abstract class SearchProvider extends SQLBaseProvider {
     }
 
     // Where the engine cuts an answer at its result limit, an answer that reaches the limit cannot be told from a cut
-    // one, so the row bound stops one row short of it and the refusal names the limit.
-    const limit = this.resultLimit;
+    // one, so the row bound stops one row short of it and the refusal names the limit. The limit is read before every
+    // statement, never kept from the open: the handle is pooled, and a limit lowered meanwhile would cut unseen.
+    const limit = this.product.cutsAtResultLimit ? await this.statementResultLimit(transport, sql) : null;
     const cut = limit !== null && limit.rows <= budget.maxResultRows ? limit : null;
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {

@@ -794,7 +794,7 @@ The open of a handle that sends statements, after the connect probe and before a
 
 1. reads `plugins.sql.delete.enabled` (`GET /_cluster/settings?include_defaults=true&filter_path=*.plugins.sql.delete.enabled`): a value of `true` refuses the profile with `PROFILE_SERVER_UNENFORCED` and sends no `DELETE`; `false`, or no value because the server does not recognize the setting (3.8.0), goes on;
 2. sends one `DELETE FROM libredb_delete_probe_<32 random hex digits>`, a name no index holds, and admits only the refusals measured while the `DELETE` is off: `SQLFeatureNotSupportedException` with "Query must start with SELECT, DELETE, SHOW or DESCRIBE: " and that statement (3.8.0), or `SQLFeatureDisabledException` with the setting's own sentence (2.19.4); anything else, the HTTP 200 with a missing-index fault 2.19.4 answers with the setting on included, refuses the profile with `PROFILE_SERVER_UNENFORCED`;
-3. reads `plugins.query.size_limit` the same way, the number of rows past which the plugin cuts an answer ([The statement path](#the-statement-path)), and refuses the profile when it cannot;
+3. reads `plugins.query.size_limit` the same way, the number of rows past which the plugin cuts an answer ([The statement path](#the-statement-path)), and refuses the profile when it cannot; the value is not kept, since the statement path reads it again before every statement;
 4. reads the version (`GET /`) and admits only OpenSearch of a release line whose write refusals and catalog answers were captured, 3.8 today (`SearchProduct.checkedSqlReleases`); another release, an Elasticsearch server behind an OpenSearch connection, and a version that cannot be read each refuse the profile with `PROFILE_UNSUPPORTED_TARGET`.
 
 A settings read or a probe the cluster refuses, and an answer that cannot be read, refuse the profile: a server that cannot be shown to refuse a `DELETE` is never admitted.
@@ -809,7 +809,7 @@ The credential is not the boundary, but a least-privilege user is still the righ
 Measured on 3.8.0 with security on, the agent's role needs these, each refused without it:
 
 - the cluster action `cluster:monitor/main`, for the version read (`GET /` answers 403 without it);
-- the cluster action `cluster:monitor/state`, for the two settings reads (`GET /_cluster/settings` answers 403 without it); it also lets the user read the cluster state, every index's mappings among it, through the REST API, which the agent's statements cannot reach but a person holding the credential could;
+- the cluster action `cluster:monitor/state`, for the two settings reads at open and the result-limit read before each statement (`GET /_cluster/settings` answers 403 without it); it also lets the user read the cluster state, every index's mappings among it, through the REST API, which the agent's statements cannot reach but a person holding the credential could;
 - on the indices the agent may read, `read`, `indices:admin/mappings/get` and `indices:monitor/settings/get`: a `SELECT` is refused without either of the last two, and the one-table catalog read without the mappings one.
 
 The `DELETE` probe needs nothing: the plugin refuses it before it resolves any index.
@@ -846,8 +846,10 @@ curl -k -u admin -XPUT -H 'content-type: application/json' 'https://<node>:9200/
 
 #### The statement path
 
-Each call is one statement on the SQL endpoint, never through `query()`, in order: the profile is checked, the budget is checked, and the estimate-plan session mode is refused, because no estimating plan is composed for this engine.
-The profile's refusal and the mode's are `RefusedBeforeSendError`s, so the agent and MCP say the statement never reached the cluster rather than quoting Studio's sentence as the engine's.
+Each call is one statement on the SQL endpoint, never through `query()`, in order: the profile is checked, the budget is checked, the estimate-plan session mode is refused, because no estimating plan is composed for this engine, and `plugins.query.size_limit` is read again.
+The limit is read before every statement rather than kept from the open, because the factory pools an agent handle for up to 30 idle minutes: measured on 3.8.0, with the limit read only at open and then lowered to 50 while the handle was pooled, a 120-row read answered 50 rows as whole.
+A limit that cannot be read then refuses the statement before it is sent ("OpenSearch SQL's result limit, past which the engine cuts an answer without saying so, could not be read, so the statement was not sent"), with no fallback to the open's value.
+The profile's refusal, the mode's and the limit read's are `RefusedBeforeSendError`s, so the agent and MCP say the statement never reached the cluster rather than quoting Studio's sentence as the engine's.
 The request carries the statement alone and asks for no page size: measured on 3.8.0, with `fetch_size` a `GROUP BY` fails ("invalid value operation on MISSING_VALUE") or is answered by the plugin's older engine, which cuts it at 200 rows with no cursor, and without one both answer whole.
 An answer past the row or byte budget, counted as the JSON array of the rows, is refused in the shared row or byte sentence of [`read-only-budget.ts`](../../src/lib/db/providers/sql/read-only-budget.ts), never cut; a cursor the answer carries is closed first, and a page whose body is past three times the byte budget plus 64 KiB is abandoned unread.
 The plugin answers at most `plugins.query.size_limit` rows, 10,000 by default, and cuts the rest with no sign of the cut: measured on 3.8.0 with the limit at 1,000, a 1,500-row read answers 1,000 rows and a cursor whose next page holds no row, and a 1,500-group aggregation answers 1,000 rows and no cursor.
@@ -884,14 +886,14 @@ MCP's statement read stays closed on OpenSearch (`MCP_STATEMENT_READ.opensearch`
 
 #### Boundary record
 
-`bun tests/live/opensearch-agent-boundary.ts`, run on 2026-10-29 against single 3.8.0 nodes seeded per [§11.4](#114-optional-reproducing-the-live-pass), passes 49 checks with security off and 66 with security on, through the production path (`createDatabaseProvider` with the profile's execution context, `connect`, `queryReadOnly`) and with no admission of Studio's in front; against a 2.19.4 node with security off (`LIBREDB_OS_EXPECT_REFUSED=1`) it passes 5:
+`bun tests/live/opensearch-agent-boundary.ts`, run on 2026-10-29 against single 3.8.0 nodes seeded per [§11.4](#114-optional-reproducing-the-live-pass), passes 50 checks with security off and 67 with security on, through the production path (`createDatabaseProvider` with the profile's execution context, `connect`, `queryReadOnly`) and with no admission of Studio's in front; against a 2.19.4 node with security off (`LIBREDB_OS_EXPECT_REFUSED=1`) it passes 5:
 
 - the agent profile proves the `DELETE` off, reads the version (3.8.0) and opens the node, the operations profile opens it too, and an editor handle's `queryReadOnly` refuses with nothing sent;
 - 13 write and DDL texts (INSERT, UPDATE, DELETE, CREATE TABLE and INDEX, DROP, ALTER, TRUNCATE, MERGE, a write behind `EXPLAIN` and `WITH`, a second statement) are each sent by `queryReadOnly` and refused by the plugin in its own words, and sent raw each answer 400;
 - the index listing with its document counts, the probe mappings, the aliases and the templates read back the same afterwards;
 - the positive control: a document written through the document API, a route the provider does not send to, into a scratch index the agent then reads (security off) and the script deletes;
 - a plain read and an aggregation past the row budget (`1500 rows > 100 allowed`), a read past the byte budget and a statement past a 1 ms deadline are each refused, never truncated; the estimate-plan mode is refused; a count, an answer of exactly the row budget (1,500 rows) and an aggregation within the budget each answer whole;
-- with `plugins.query.size_limit` lowered to 1,000: a read past a 900-row budget is refused and the cursor it carried is closed (the node's open search contexts back where they were), a read and an aggregation the engine cuts at 1,000 rows under a 1,500-row budget are each refused as cut, and an answer of 999 rows is returned whole;
+- with `plugins.query.size_limit` lowered to 1,000: the agent handle opened at the default limit refuses a read the engine cuts at the lowered one, since the limit is read before every statement; a read past a 900-row budget is refused and the cursor it carried is closed (the node's open search contexts back where they were), a read and an aggregation the engine cuts at 1,000 rows under a 1,500-row budget are each refused as cut, and an answer of 999 rows is returned whole;
 - the agent's catalog read: the composed `DESCRIBE TABLES LIKE %` answers the column inventory (security off) and `DESCRIBE TABLES LIKE 'probe_orders'` that table's columns, through `queryReadOnly` and mapped into column rows, and the cluster reads back the same afterwards;
 - with security on, the script creates the `libredb_agent_read` role and an agent user holding it alone: without `cluster:monitor/state` the open cannot read the setting and refuses the agent profile, and without `cluster:monitor/main` it cannot read the version and refuses it; with both, the user reads no cluster health (403), its document write is refused 403, an index outside its role is refused, both a `SELECT` and its catalog read, the every-table catalog read is refused (403), and every check above holds signed in as it;
 - with security on, plan mode: the plan run's schema read, signed in as that user under the operations profile, is refused on the agent's role alone, captures once the role adds the eight privileges above, is refused again with any one of them taken away, and the agent profile still opens under the wider role;
@@ -1797,6 +1799,8 @@ is not refused or the cluster reads back changed.
 `LIBREDB_OS_ADMIN_USER`, `LIBREDB_OS_ADMIN_PASSWORD`, `LIBREDB_OS_AGENT_USER` and `LIBREDB_OS_AGENT_PASSWORD` are set,
 against a node started without `DISABLE_SECURITY_PLUGIN` (and with `OPENSEARCH_INITIAL_ADMIN_PASSWORD`), and its
 older-node pass with `LIBREDB_OS_EXPECT_REFUSED=1` against `opensearchproject/opensearch:2.19.4`.
+The security-on pass also needs one listed index outside `probe_*`: the agent's role already reads the mappings of `probe_*`, so with no other index the plan read still captures once `indices:admin/mappings/get` is taken from every index.
+A node that has run for a while holds a `top_queries-*` index; on a fresh one, write a document into any other index first (measured on 3.8.0, 2026-10-29).
 
 ---
 

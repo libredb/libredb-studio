@@ -2751,6 +2751,61 @@ describe("OpenSearchProvider.queryReadOnly", () => {
     );
   });
 
+  test("reads the result limit again before each statement, so a limit lowered on an open handle is honoured", async () => {
+    const provider = await agentProvider();
+    let limit = "10000";
+    const fifty = JSON.stringify({
+      schema: [{ name: "id", type: "long" }],
+      datarows: Array.from({ length: 50 }, (_, i) => [i]),
+      total: 50,
+      size: 50,
+      status: 200,
+    });
+    replyFor = (path, body) => {
+      if (path.endsWith("plugins.query.size_limit")) {
+        return ok(`{"transient":{"plugins":{"query":{"size_limit":"${limit}"}}}}`);
+      }
+      if (String(body?.query) === "SELECT id FROM probe_fifty") return ok(fifty);
+      return defaultReply(path, body);
+    };
+    const before = sentPaths.length;
+
+    expect((await provider.queryReadOnly("SELECT id FROM probe_fifty", AGENT_BUDGET)).rowCount).toBe(50);
+    limit = "50";
+    const error = await refusal(provider.queryReadOnly("SELECT id FROM probe_fifty", AGENT_BUDGET));
+
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error.message).toBe(
+      "Read-only execution exceeded the row budget: OpenSearch answers at most 50 rows (plugins.query.size_limit) and cuts the rest without saying so, so an answer that reaches it is refused",
+    );
+    expect(sentRequests().slice(before)).toEqual([
+      "/_cluster/settings?include_defaults=true&filter_path=*.plugins.query.size_limit",
+      "/_plugins/_sql SELECT id FROM probe_fifty",
+      "/_cluster/settings?include_defaults=true&filter_path=*.plugins.query.size_limit",
+      "/_plugins/_sql SELECT id FROM probe_fifty",
+    ]);
+  });
+
+  test("refuses a statement, before sending it, when the result limit can no longer be read", async () => {
+    const provider = await agentProvider();
+    overridePath("plugins.query.size_limit", {
+      status: 403,
+      body: JSON.stringify({ error: { type: "security_exception", reason: "no permissions" }, status: 403 }),
+    });
+    const before = sentPaths.length;
+
+    const error = await refusal(provider.queryReadOnly("SELECT id, customer, total FROM probe_orders", AGENT_BUDGET));
+
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect(error.message).toStartWith(
+      "OpenSearch SQL's result limit, past which the engine cuts an answer without saying so, could not be read, so the statement was not sent (a user needs the cluster privilege cluster:monitor/state to read it): ",
+    );
+    expect(error.message).toEndWith("(HTTP 403)");
+    expect(sentRequests().slice(before)).toEqual([
+      "/_cluster/settings?include_defaults=true&filter_path=*.plugins.query.size_limit",
+    ]);
+  });
+
   test("a result limit past the row budget leaves the row budget's own refusal", async () => {
     overridePath("plugins.query.size_limit", ok('{"transient":{"plugins":{"query":{"size_limit":"3"}}}}'));
     const provider = await agentProvider();

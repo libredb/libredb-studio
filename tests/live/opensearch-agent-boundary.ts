@@ -22,7 +22,8 @@
  *    past its deadline are each refused, never truncated; with the engine's `plugins.query.size_limit` lowered to 1000,
  *    a read past it answers 1000 rows and a cursor: past a smaller row budget it is refused and that cursor closed (the
  *    node's open search contexts go back to where they were), and past a larger one it is refused as cut at the limit,
- *    and so is an aggregation the engine cuts there;
+ *    and so is an aggregation the engine cuts there; the agent handle opened before the limit was lowered refuses the
+ *    same cut read, since the limit is read before every statement, never kept from the open;
  *  - the catalog read: the `DESCRIBE TABLES` command the agent's OpenSearch overlay composes, for every table and for
  *    one, sent through `queryReadOnly` and mapped into column rows, with the cluster unchanged afterwards;
  *  - with security on (LIBREDB_OS_AGENT_USER set): the agent user's role holds the cluster actions
@@ -466,9 +467,18 @@ async function checkBudgets(agent: DatabaseProvider): Promise<void> {
   check(grouped.rowCount === 1500, `read: an aggregation within the budget is returned whole -> ${grouped.rowCount}`);
 
   // The engine's result limit: a read past it answers that many rows and a cursor whose next page holds no row, so an
-  // answer that reaches the limit is refused. The limit is read at open, so a handle is opened after it is lowered.
+  // answer that reaches the limit is refused. The limit is read before every statement, so the handle opened before
+  // it was lowered sees the new limit as one opened after does.
   await setCluster(SIZE_LIMIT_SETTING, 1_000);
   try {
+    const stale = await refusalOf(() =>
+      agent.queryReadOnly!("SELECT k FROM probe_buckets", { ...BUDGET, maxResultRows: 1_500 }),
+    );
+    check(
+      stale?.message ===
+        `Read-only execution exceeded the row budget: OpenSearch answers at most 1000 rows (${SIZE_LIMIT_SETTING}) and cuts the rest without saying so, so an answer that reaches it is refused`,
+      `limit: a handle opened at the default limit refuses a read cut at the lowered one -> ${stale?.message}`,
+    );
     const limited = await open("agent-read-only");
     const contexts = await openContexts();
     const paged = await refusalOf(() =>

@@ -3981,6 +3981,15 @@ describe("ElasticsearchProvider.queryReadOnly", () => {
     expect(armedDeadlines.at(-1)).toBe(AGENT_BUDGET.statementTimeoutMs);
   });
 
+  test("reads no result limit before a statement: its pages follow a cursor to the end, never cut", async () => {
+    const provider = await agentProvider();
+    const before = sent.length;
+
+    await provider.queryReadOnly("SELECT id, customer FROM probe_orders", AGENT_BUDGET);
+
+    expect(sent.slice(before).map((request) => request.path)).toEqual([SQL_PATH]);
+  });
+
   test("refuses an answer past the row budget, after closing the cursor that answer left open", async () => {
     const provider = await agentProvider();
     overrideSql(ok(AGGREGATION_PAGE_ONE));

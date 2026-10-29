@@ -647,9 +647,11 @@ describe("createDatabaseProvider", () => {
     const profiled = await createDatabaseProvider(conn, {}, { readOnly: true, sendsStatements: true });
     const editor = await createDatabaseProvider(conn);
     if (profiled.queryReadOnly === undefined || editor.queryReadOnly === undefined) throw new Error("no queryReadOnly");
-    // A transport in place of a connection, answering one row, so only the context tells the two apart.
+    // A transport in place of a connection, answering one row, so only the context tells the two apart. OpenSearch
+    // reads its result limit before each agent statement, so the fake answers that read too.
     const sent: string[] = [];
     const transport = {
+      sqlResultLimit: async () => ({ setting: "plugins.query.size_limit", rows: 10_000 }),
       queryBounded: async (sql: string) => {
         sent.push(sql);
         return { rows: [{ x: 1 }], fieldNames: ["x"], columnTypes: null, totalHits: null };
