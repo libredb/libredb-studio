@@ -388,7 +388,8 @@ export type AgentRunFailureReason =
   /**
    * The database principal this run would have executed as holds privileges the
    * read-only boundary cannot contain, so the execution profile refused it. The engine
-   * IS supported and the credential WAS applied: what failed is the user it names.
+   * IS supported and the credential WAS applied: what failed is the principal it names,
+   * a database user or, on an engine that authenticates by token, the token.
    *
    * Split out of `engine-unsupported` the same way and for the same reason B47 split
    * `agent-credential-unusable` out of it. `PROFILE_PRIVILEGES_TOO_BROAD` is the one code
@@ -401,7 +402,7 @@ export type AgentRunFailureReason =
    * `libredb_agent` principal beside it is accepted.
    *
    * Ledgers written before the two reasons below existed recorded those causes here too,
-   * so this reason keeps its meaning for them: a user the profile would not run as.
+   * so this reason keeps its meaning for them: a principal the profile would not run as.
    */
   | "agent-principal-refused"
   /**
@@ -412,7 +413,7 @@ export type AgentRunFailureReason =
    * that authenticated no user at all, which holds no read privilege to run under.
    *
    * Its own reason because the repair is the opposite of `agent-principal-refused`'s:
-   * grant the user one privilege, or connect as a user, never narrow it.
+   * grant the credential one privilege, or connect with one that holds it, never narrow it.
    * `PROFILE_PRIVILEGES_TOO_NARROW` is the one code that reaches it.
    */
   | "agent-principal-underprivileged"

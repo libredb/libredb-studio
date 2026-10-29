@@ -233,8 +233,8 @@ describe("foldLedgerEntries", () => {
   /*
     Every reason against the sentence the rail shows for it, total over the reason union, so a reason added to
     `AgentRunFailureReason` does not compile here until its sentence is pinned. The four profile refusals each name
-    their own repair: a user holding too much, a user lacking a privilege, a server that enforces nothing, and a
-    target the profile is not measured against. One sentence for two of them could only ever give one repair.
+    their own repair: a credential holding too much, a credential lacking a privilege, a server that enforces nothing,
+    and a target the profile is not measured against. One sentence for two of them could only ever give one repair.
   */
   const FAILURE_SENTENCE_OF = {
     "model-unavailable": "The model provider is not configured or could not be reached.",
