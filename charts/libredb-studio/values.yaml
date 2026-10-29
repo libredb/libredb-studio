@@ -606,6 +606,35 @@ route:
     ## httpsRedirect adds a filter for redirecting to https (HTTP 301 Moved Permanently).
     httpsRedirect: false
 
+# OpenShift Route (route.openshift.io/v1), independent of ingress.* and route.*.
+# Needs a cluster that serves route.openshift.io/v1, or
+# global.compatibility.openshift.apis=force; otherwise the render fails.
+openshiftRoute:
+  # -- Render an OpenShift Route to the Service's http port
+  enabled: false
+  # -- Route host; empty lets the router generate one. Setting a host needs the
+  # routes/custom-host permission in the namespace.
+  host: ""
+  tls:
+    # -- TLS termination. Only "edge" is accepted: the router terminates TLS,
+    # because the image serves plain HTTP and has no TLS listener for
+    # reencrypt or passthrough.
+    termination: edge
+    # -- What the router does with plain HTTP: Redirect, Allow or None
+    insecureEdgeTerminationPolicy: Redirect
+  # -- haproxy.router.openshift.io/timeout. The router cuts a request after 30s
+  # by default; this must exceed the largest per-connection queryTimeout an
+  # admin allows (Studio's default query timeout is 60s). Empty omits it.
+  timeout: 120s
+  # -- haproxy.router.openshift.io/hsts_header, e.g. "max-age=31536000";
+  # empty omits it
+  hstsHeader: ""
+  # -- Extra Route annotations (an entry with the same key as the timeout or
+  # HSTS annotation wins)
+  annotations: {}
+  # -- Extra Route labels (the chart's own labels win on a collision)
+  labels: {}
+
 networkPolicy:
   # -- Enable NetworkPolicy
   enabled: false

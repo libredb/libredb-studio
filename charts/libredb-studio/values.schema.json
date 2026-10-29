@@ -552,6 +552,60 @@
         }
       }
     },
+    "openshiftRoute": {
+      "type": "object",
+      "description": "OpenShift Route (route.openshift.io/v1) to the Service's http port",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Render the Route; needs route.openshift.io/v1 or global.compatibility.openshift.apis=force"
+        },
+        "host": {
+          "type": "string",
+          "description": "Route host; empty lets the router generate one"
+        },
+        "tls": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "termination": {
+              "type": "string",
+              "enum": ["edge"],
+              "description": "TLS termination; only edge, since the image has no TLS listener"
+            },
+            "insecureEdgeTerminationPolicy": {
+              "type": "string",
+              "enum": ["Allow", "None", "Redirect"],
+              "description": "What the router does with plain HTTP"
+            }
+          }
+        },
+        "timeout": {
+          "type": "string",
+          "pattern": "^([1-9][0-9]*(us|ms|s|m|h|d))?$",
+          "description": "haproxy.router.openshift.io/timeout, e.g. 120s; empty omits the annotation"
+        },
+        "hstsHeader": {
+          "type": "string",
+          "description": "haproxy.router.openshift.io/hsts_header; empty omits the annotation"
+        },
+        "annotations": {
+          "type": "object",
+          "description": "Extra Route annotations",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "labels": {
+          "type": "object",
+          "description": "Extra Route labels",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "autoscaling": {
       "type": "object",
       "properties": {
