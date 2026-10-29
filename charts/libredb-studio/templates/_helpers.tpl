@@ -871,3 +871,20 @@ instead, naming the value to fix. Included from deployment.yaml.
 {{- $_ := include "libredb-studio.openshiftClientId" . }}
 {{- end }}
 {{- end }}
+
+{{/*
+Whether the NetworkPolicy renders: networkPolicy.enabled true always, false never, and unset (null,
+"" or absent, as Helm 4.2 drops a null default) only in openshift sign-in mode with Kubernetes
+discovery on, where it is the network control that holds even against a forged Service in a
+discovered namespace.
+*/}}
+{{- define "libredb-studio.networkPolicyEnabled" -}}
+{{- $enabled := get (.Values.networkPolicy | default dict) "enabled" }}
+{{- if or (kindIs "invalid" $enabled) (eq (toString $enabled) "") }}
+{{- if and (include "libredb-studio.openshiftSignIn" .) (include "libredb-studio.discoveryEnabled" .) }}
+{{- true }}
+{{- end }}
+{{- else if eq (toString $enabled) "true" }}
+{{- true }}
+{{- end }}
+{{- end }}

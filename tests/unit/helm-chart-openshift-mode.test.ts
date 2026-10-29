@@ -553,3 +553,110 @@ describe("the cluster domain of discovered hosts", () => {
     expect(envOf(local).SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN).toBe("corp.example");
   });
 });
+
+/**
+ * L35: in openshift mode with discovery on, the egress-confining NetworkPolicy renders unless networkPolicy.enabled
+ * is false, because it is the network control that holds even against a forged Service in a discovered namespace.
+ */
+describe("database egress confined to the discovered namespaces", () => {
+  const DATABASE_PORTS = [5432, 3306, 1521, 1433, 27017, 6379].map((port) => ({ port, protocol: "TCP" }));
+  const namespaceTo = (name: string) => ({ namespaceSelector: { matchLabels: { "kubernetes.io/metadata.name": name } } });
+
+  function policies(args: string[]): Manifest[] {
+    // The bundled PostgreSQL subchart renders a NetworkPolicy of its own, named after it.
+    return all(render(args), "NetworkPolicy").filter((policy) => policy.metadata.name === RELEASE);
+  }
+
+  function egress(args: string[]): EgressRule[] {
+    const [policy] = policies(args);
+    if (!policy?.spec?.egress) throw new Error("no NetworkPolicy egress in render output");
+    return policy.spec.egress;
+  }
+
+  function databaseRule(rules: EgressRule[]): EgressRule {
+    const found = rules.filter((rule) => (rule.ports ?? []).some((entry) => entry.port === 5432));
+    expect(found).toHaveLength(1);
+    return found[0];
+  }
+
+  test("renders by default in openshift discovery mode, the database rule naming each discovered namespace", () => {
+    const rules = egress([...OPENSHIFT, ...DISCOVERY]);
+    expect(databaseRule(rules)).toEqual({ ports: DATABASE_PORTS, to: [namespaceTo("team-a"), namespaceTo("team-b")] });
+  });
+
+  test("DNS, the API server and 443 stay open to every destination", () => {
+    const rules = egress([...OPENSHIFT, ...DISCOVERY]);
+    for (const port of [53, 5353, 443, 6443]) {
+      const rule = rules.find((entry) => (entry.ports ?? []).some((item) => item.port === port));
+      expect(rule).toBeDefined();
+      expect(rule?.to).toBeUndefined();
+    }
+  });
+
+  test("5353 and 6443 render in openshift mode without security.openshift.io detection", () => {
+    const pairs = OPENSHIFT_PAIRS.filter((pair) => !pair.startsWith("global.compatibility"));
+    const ports = egress([
+      ...set(...pairs, `fullnameOverride=${RELEASE}`),
+      ...DISCOVERY,
+      "--api-versions",
+      "route.openshift.io/v1",
+    ]).flatMap((rule) => rule.ports ?? []);
+    expect(ports).toContainEqual({ port: 5353, protocol: "UDP" });
+    expect(ports).toContainEqual({ port: 5353, protocol: "TCP" });
+    expect(ports).toContainEqual({ port: 6443, protocol: "TCP" });
+  });
+
+  test("the release namespace joins the list while the bundled PostgreSQL holds Studio's storage", () => {
+    const rule = databaseRule(egress([...OPENSHIFT, ...DISCOVERY, ...set("postgresql.enabled=true")]));
+    expect(rule.to).toEqual([namespaceTo("team-a"), namespaceTo("team-b"), namespaceTo(NAMESPACE)]);
+  });
+
+  test("a discovered release namespace is named once", () => {
+    const rule = databaseRule(
+      egress([
+        ...OPENSHIFT,
+        ...set("discovery.kubernetes.enabled=true", `discovery.kubernetes.namespaces={${NAMESPACE},team-a}`),
+        ...set("postgresql.enabled=true"),
+      ]),
+    );
+    expect(rule.to).toEqual([namespaceTo(NAMESPACE), namespaceTo("team-a")]);
+  });
+
+  test("networkPolicy.additionalEgress is kept for an external storage database", () => {
+    const rules = egress([
+      ...OPENSHIFT,
+      ...DISCOVERY,
+      "--set-json",
+      'networkPolicy.additionalEgress=[{"to":[{"ipBlock":{"cidr":"10.0.0.5/32"}}],"ports":[{"port":5432,"protocol":"TCP"}]}]',
+    ]);
+    expect(rules.at(-1)).toEqual({ to: [{ ipBlock: { cidr: "10.0.0.5/32" } }], ports: [{ port: 5432, protocol: "TCP" }] });
+  });
+
+  test("networkPolicy.enabled=true confines it the same way", () => {
+    const rule = databaseRule(egress([...OPENSHIFT, ...DISCOVERY, ...set("networkPolicy.enabled=true")]));
+    expect(rule.to).toEqual([namespaceTo("team-a"), namespaceTo("team-b")]);
+  });
+
+  test("networkPolicy.enabled=false is the opt-out", () => {
+    expect(policies([...OPENSHIFT, ...DISCOVERY, ...set("networkPolicy.enabled=false")])).toEqual([]);
+  });
+
+  test("unset renders nothing in openshift mode without discovery", () => {
+    expect(policies(OPENSHIFT)).toEqual([]);
+  });
+
+  test.each([
+    ["local", set("authProvider=local")],
+    ["oidc", set("authProvider=oidc")],
+  ])("%s mode: unset renders nothing, and enabled keeps the database rule unconfined", (_, mode) => {
+    const named = [...mode, ...DISCOVERY, ...set(`fullnameOverride=${RELEASE}`)];
+    expect(policies(named)).toEqual([]);
+    const rule = databaseRule(egress([...named, ...set("networkPolicy.enabled=true")]));
+    expect(rule).toEqual({ ports: DATABASE_PORTS });
+  });
+
+  test("a default install renders no NetworkPolicy, on OpenShift too", () => {
+    expect(policies([])).toEqual([]);
+    expect(policies(set("global.compatibility.openshift.apis=force"))).toEqual([]);
+  });
+});
