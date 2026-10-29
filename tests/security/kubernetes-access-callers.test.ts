@@ -33,6 +33,8 @@ const SRC = join(ROOT, "src");
 const GATED_MODULES: Readonly<Record<string, readonly string[]>> = {
   "src/lib/seed/index.ts": ["getManagedConnections", "getSeedListing", "getSeedConnectionByIdUnfiltered"],
   "src/lib/seed/kubernetes-discovery-loader.ts": ["getKubernetesDiscoveredConnections"],
+  "src/lib/seed/kubernetes-discovery-export.ts": ["parseKubernetesDiscoveryExport"],
+  "src/lib/seed/kubernetes-discovery-contract.ts": ["mapKubernetesDatabase"],
   "src/lib/governance/visible.ts": ["visibleConnections", "visibleConnectionById"],
   "src/lib/seed/resolve-connection.ts": ["resolveConnection"],
   "src/lib/kubernetes-access/gate.ts": [
@@ -91,6 +93,14 @@ const REVIEWED_CALLERS: Readonly<Record<string, Readonly<Record<string, string>>
   getKubernetesDiscoveredConnections: {
     "src/lib/seed/index.ts":
       "getSeedListing, the export's only reader: with the review on every row is set apart under the reserved role, with it off listed under admin through the role filter",
+  },
+  parseKubernetesDiscoveryExport: {
+    "src/lib/seed/kubernetes-discovery-loader.ts":
+      "the Kubernetes discovery source parses the export file it reads, and what it maps from it leaves only through getKubernetesDiscoveredConnections",
+  },
+  mapKubernetesDatabase: {
+    "src/lib/seed/kubernetes-discovery-loader.ts":
+      "the Kubernetes discovery source maps each parsed database to a connection, which leaves only through getKubernetesDiscoveredConnections",
   },
   visibleConnections: {
     "src/app/api/connections/managed/route.ts":
@@ -234,6 +244,8 @@ const NAMESPACE_IMPORT_ALLOWED: Readonly<Record<string, string>> = {
 const PINNED_EXACTLY: Readonly<Record<string, readonly string[]>> = {
   getSeedListing: ["src/lib/governance/visible.ts"],
   getKubernetesDiscoveredConnections: ["src/lib/seed/index.ts"],
+  parseKubernetesDiscoveryExport: ["src/lib/seed/kubernetes-discovery-loader.ts"],
+  mapKubernetesDatabase: ["src/lib/seed/kubernetes-discovery-loader.ts"],
   connectionsUnderAccessReview: ["src/lib/governance/visible.ts"],
   connectionUnderAccessReview: ["src/lib/governance/visible.ts"],
   accessReviewAllows: ["src/lib/kubernetes-access/gate.ts"],
