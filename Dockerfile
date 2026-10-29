@@ -234,18 +234,22 @@ COPY --from=builder /usr/src/app/seed-assets ./seed-assets
 #
 # The chgrp/chmod pair lets an arbitrary UID whose only group is 0 write the two
 # paths the app writes at run time, which is how OpenShift's restricted-v2 SCC
-# starts an image (PC-05): /app/data for storage, /app/.next for the cache Next
-# creates on first use (the image ships no .next/cache). Nothing changes for a
-# root start or for uid 1001. There is no USER line, because a root-owned bind
-# mount on /app/data needs the root start's chown in docker-entrypoint.sh; the
-# Helm chart remains the supported way to run on OpenShift. Not recursive: the
-# owner's bits on the two directories are enough, and a recursive pass would
-# copy every file under them into a new layer.
+# starts an image ("Support arbitrary user ids" in the OpenShift image creation
+# guidelines): /app/data for storage, /app/.next for the cache Next creates on
+# first use (the image ships no .next/cache). The sticky bit on .next lets that
+# UID create the cache but not unlink or rename what nextjs owns there. Both
+# run after the chown -R, which would otherwise set the group back to nodejs.
+# Nothing changes for a root start or for uid 1001. There is no USER line,
+# because a root-owned bind mount on /app/data needs the root start's chown in
+# docker-entrypoint.sh; the Helm chart remains the supported way to run on
+# OpenShift. Not recursive: the owner's bits on the two directories are enough,
+# and a recursive pass would copy every file under them into a new layer.
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs && \
     chown -R nextjs:nodejs /app && \
     chgrp 0 /app/data /app/.next && \
-    chmod g=u /app/data /app/.next
+    chmod g=u /app/data && \
+    chmod g=u,+t /app/.next
 
 # gosu lets the entrypoint drop from root to the app user after fixing the
 # permissions of a mounted (often root-owned) data volume.

@@ -193,14 +193,17 @@ describe("published image variants", () => {
       // what lets that UID write them. Non-recursive on purpose: a recursive pass
       // over .next would copy the largest layer, which every variant forbids.
       const chgrp = cmds.find((line) => /^(?:RUN\s+)?chgrp 0 [^;&]*\/app\/data/.test(line));
-      const chmod = cmds.find((line) => /^(?:RUN\s+)?chmod g=u [^;&]*\/app\/data/.test(line));
+      const chmodData = cmds.find((line) => /^(?:RUN\s+)?chmod g=u \/app\/data$/.test(line));
+      const chmodNext = cmds.find((line) => /^(?:RUN\s+)?chmod \S+ \/app\/\.next$/.test(line));
 
       expect(chgrp).toBeDefined();
       expect(chgrp).toContain("/app/.next");
       expect(chgrp).not.toMatch(/\s-R\b/);
-      expect(chmod).toBeDefined();
-      expect(chmod).toContain("/app/.next");
-      expect(chmod).not.toMatch(/\s-R\b/);
+      expect(chmodData).toBeDefined();
+      // The sticky bit keeps a group-writable .next from letting that UID unlink
+      // or rename what nextjs owns there (BUILD_ID, the manifests, server/),
+      // while it can still create the cache directory it needs.
+      expect(chmodNext).toMatch(/^(?:RUN\s+)?chmod g=u,\+t \/app\/\.next$/);
     },
   );
 
@@ -212,19 +215,29 @@ describe("published image variants", () => {
     }
   });
 
-  test.each(VARIANTS)("%s sets the group after the last instruction that writes .next or data", (variant) => {
-    const lines = instructions(readRepoFile(variant));
-    // A COPY that lands on .next replaces the directory's owner, group and mode,
-    // so a chgrp placed before it would be undone without a trace.
-    const lastWrite = lines.reduce(
-      (last, line, index) => (/^COPY\b.*\.next\/(standalone|static)/.test(line) ? index : last),
-      -1,
-    );
-    const chgrp = lines.findIndex((line) => /\bchgrp 0 [^;&]*\/app\/data/.test(line));
+  test.each(VARIANTS)(
+    "%s sets the group and mode after the last command that copies into or chowns /app, .next or data",
+    (variant) => {
+      const cmds = commands(readRepoFile(variant));
+      // A COPY that lands on .next or data replaces the directory's owner, group
+      // and mode, and a chown sets the group back to nodejs, so a chgrp or chmod
+      // placed before either would be undone without a trace. Commands, not
+      // instructions: the Debian chown -R shares one RUN with the chgrp.
+      const writes = (line: string) => {
+        const copy = /^COPY\b.*\s(\S+)$/.exec(line);
+        if (copy) return /^(?:\.\/?|\.\/(?:\.next|data)\b.*|\/app\/?|\/app\/(?:\.next|data)\b.*)$/.test(copy[1]);
+        return /^(?:RUN\s+)?chown\b.*\s(?:\/app|\/app\/data|\/app\/\.next|\.next|data)(?:\s|$)/.test(line);
+      };
+      const lastWrite = cmds.reduce((last, line, index) => (writes(line) ? index : last), -1);
+      const chgrp = cmds.findIndex((line) => /^(?:RUN\s+)?chgrp 0 [^;&]*\/app\/data/.test(line));
+      const chmods = cmds.flatMap((line, index) => (/^(?:RUN\s+)?chmod g=u\S* \/app\//.test(line) ? [index] : []));
 
-    expect(lastWrite).toBeGreaterThan(-1);
-    expect(chgrp).toBeGreaterThan(lastWrite);
-  });
+      expect(lastWrite).toBeGreaterThan(-1);
+      expect(chgrp).toBeGreaterThan(lastWrite);
+      expect(chmods).toHaveLength(2);
+      for (const chmod of chmods) expect(chmod).toBeGreaterThan(lastWrite);
+    },
+  );
 
   test.each(VARIANTS)("%s prunes the repo tree out of the payload it ships", (variant) => {
     // Next's output file tracing sweeps the repository root into

@@ -278,14 +278,16 @@ COPY --chown=nextjs:nodejs --from=builder /usr/src/app/seed-assets ./seed-assets
 
 # Group 0 with the owner's bits on the two paths the app writes at run time, so
 # an arbitrary UID whose only group is 0 can write them, which is how
-# OpenShift's restricted-v2 SCC starts an image (PC-05): /app/data for storage,
-# /app/.next for the cache Next creates on first use (the image ships no
-# .next/cache). Nothing changes for a root start or for uid 1001. There is no
-# USER line, because a root-owned bind mount on /app/data needs the root start's
-# chown in docker-entrypoint.sh; the Helm chart remains the supported way to run
-# on OpenShift. After the COPYs above, which would reset the group of .next, and
-# not recursive, so no file is copied into a new layer.
-RUN chgrp 0 /app/data /app/.next && chmod g=u /app/data /app/.next
+# OpenShift's restricted-v2 SCC starts an image ("Support arbitrary user ids" in
+# the OpenShift image creation guidelines): /app/data for storage, /app/.next for
+# the cache Next creates on first use (the image ships no .next/cache). The
+# sticky bit on .next lets that UID create the cache but not unlink or rename
+# what nextjs owns there. Nothing changes for a root start or for uid 1001.
+# There is no USER line, because a root-owned bind mount on /app/data needs the
+# root start's chown in docker-entrypoint.sh; the Helm chart remains the
+# supported way to run on OpenShift. After the COPYs above, which would reset
+# the group of .next, and not recursive, so no file is copied into a new layer.
+RUN chgrp 0 /app/data /app/.next && chmod g=u /app/data && chmod g=u,+t /app/.next
 
 # Entrypoint makes the SQLite data dir writable by `nextjs` then drops privileges.
 # The container starts as root only long enough to chown the volume mount; the
