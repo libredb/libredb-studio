@@ -90,7 +90,7 @@ describe("without governance", () => {
   test("finds exactly the row getManagedConnections lists for the caller's role", async () => {
     const everyone = (await getManagedConnections(["user"])).find((connection) => connection.seedId === "everyone");
     expect(everyone).toBeDefined();
-    expect(await visibleConnectionById(ALICE, "everyone")).toEqual(everyone);
+    expect(await visibleConnectionById(ALICE, "everyone")).toEqual(everyone ?? null);
     expect(await visibleConnectionById(ALICE, "admin-only")).toBeNull();
     expect((await visibleConnectionById(ADMIN, "admin-only", { credential: "read" }))?.host).toBe("admin-pg.internal");
   });
