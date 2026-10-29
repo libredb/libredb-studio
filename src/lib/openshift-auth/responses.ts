@@ -31,6 +31,15 @@ export function auditSignInFailure(route: string, reason: OpenShiftSignInCode, i
   }
 }
 
+/** The `login_success` audit line; a broken sink never turns a session that exists into a failure. */
+export function auditSignInSuccess(route: string, user: string, ip: string): void {
+  try {
+    emitAuditEvent({ type: "login_success", action: "login", target: route, user, result: "success", ip });
+  } catch {
+    logger.error("Failed to record an OpenShift sign-in login_success audit event", undefined, { route });
+  }
+}
+
 /** The code of a metadata reading that is not `ok`, logged with its fields only. */
 export function metadataFailureCode(
   route: string,
