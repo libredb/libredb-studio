@@ -281,7 +281,6 @@ export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
   db2: false,
   mssql: false,
   clickhouse: false,
-  // Agent mode executes statements on Druid, and MCP read stays closed on it until a change of its own opens it.
   druid: false,
   trino: false,
   cassandra: false,
@@ -615,6 +614,7 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   mssql: true,
   // Agent mode executes statements on ClickHouse, and MCP read stays closed on it until a change of its own opens it.
   clickhouse: false,
+  // Agent mode executes statements on Druid, and MCP read stays closed on it until a change of its own opens it.
   druid: false,
   trino: false,
   // Agent mode executes statements on Cassandra, and MCP read stays closed on it until a change of its own opens it.
