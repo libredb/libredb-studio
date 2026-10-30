@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D412, U17 · 302
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U167 · 153
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U169 · 155
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -6097,6 +6097,7 @@ Seen again 2026-10-30 on Couchbase enterprise-8.0.2 in a browser pass: with `que
 Seen again 2026-10-30 on InfluxDB 1.13.1 and 2.9.1 in a browser pass: the user holding `WRITE` on a second database, the 1.x admin and the 2.x write token each got the generic sentence, while the server log named the cause, for example that the principal can write the database `other` because InfluxDB 1.x answered a no-op `DELETE` there, and for the admin that it was answered `SHOW USERS`.
 Seen again 2026-10-30 on Weaviate 1.40.2 in a browser pass: the root key, a key holding the built-in `admin` role and a viewer key widened mid-run by a role holding `update_data` each got the generic sentence, while the server log carried the provider's own, for example "The key's roles hold create_roles, which is not one of the viewer role's read actions ... give the agent a key with the viewer role only" (runs `arun_9c77759341b84645bd81010bbfc86eef`, `arun_208ac90d893745fda727c63ebc688a56`, `arun_2fda3fd7145e4328a74766cf89484416`).
 Seen again 2026-10-30 on Qdrant 1.19.1 in a browser pass: the API key and a JWT with `rw` on an alias each got the generic sentence, while the server log carried the provider's own, "Qdrant accepted an empty alias update from this key ..." and "This key is a JWT whose claims grant more than access r ... Give the agent the server's read-only API key, or a JWT whose access is r" (runs `arun_f04735b56682495a86c1376d9920fc55`, `arun_cc0257e0e7fa4e0c871d6555e77a6b9c`).
+Seen again 2026-10-30 on Neo4j Enterprise 5.26.31 in a browser pass: the administrator, a reader given a second role holding `LOAD ON ALL DATA`, a user with the `editor` role, a reader on a server with an extension it can execute, and the reader granted `csv_loader` and then `editor` mid-run each got the generic sentence, while the server log carried the provider's own, for example "this one holds LOAD on ALL DATA through the role csv_loader. Revoke LOAD from PUBLIC and from every role the user holds, or DENY LOAD ON ALL DATA to one of its roles" and "this one holds write on NODE(*) through the role editor" (runs `arun_ed755caa5c9246159791c925a8a7fd37`, `arun_c4d3e16d50c44348805ff9aa8a678d91`, `arun_fee86c69494545d9b42ac804381c0f02`, `arun_a51f13bcf17045a48f1ad15ebfd99330`, `arun_80e22ed174734bc7b5fbb4c23a3748ca`, `arun_2f4cf8e99b08464c9294812df115fd65`).
 
 **Done when:** the rail shows the refusal's own remedies (statements or policy names) beside its code, from the shared refusal path rather than a type-id branch, the generic sentence no longer claims the credential holds privileges when the refusal is about the database, and a component test pins both texts.
 
@@ -6149,6 +6150,7 @@ Seen again 2026-10-30 on LibreDB in a browser pass: asked to send `put app:versi
 Seen again 2026-10-30 on InfluxDB 1.13.1 and 2.9.1 in a browser pass, three times: runs asked to send exact `DELETE`, `DROP`, `SELECT ... INTO` (four spellings), `CREATE CONTINUOUS QUERY`, `SHOW QUERIES`, `KILL QUERY`, `SHOW USERS`, `GRANT`, a commented and a two-statement form were each refused before anything was sent, and each run finished `answered` with one claim about the schema inventory and no word of the refusals (runs `arun_4f9ea9a9e1444c75824ebc437c14077f`, `arun_29b8b23e387f4a2092d31bc995e1f75e`, `arun_d69c3788d444421a887899d724282174`).
 Seen again 2026-10-30 on Weaviate 1.40.2 in a browser pass: asked to pass `GET /v1/meta` and six exact writes (an object create and delete, a collection create and drop, a tenant status change and a backup) to `run_read_query`, each write was refused before anything was sent and the run finished `answered` with two claims, the meta read and the schema inventory, and no word of the six refusals (run `arun_a633f13a3abc4ade88aeae32f9bb77f1`); two earlier runs asked for the same writes drafted nothing at all and also finished `answered`.
 Seen again 2026-10-30 on Qdrant 1.19.1 in a browser pass: a run asked to pass eleven exact point, scroll, search, query, facet, filtered count and snapshot requests to `run_read_query` had each refused before anything was sent and finished `answered` with one claim about the schema inventory and no word of the refusals (run `arun_d79dc0a1d0344d01b954250d458d21f5`); two runs asked for an upsert, a point delete, a collection create and drop, an alias delete and a snapshot drafted none of them and finished `answered` with counts or the schema inventory (runs `arun_abd9503a15f148699d7c18d7effd87b8`, `arun_0e4b50056c90482e87908cfd4b3b60d6`).
+Seen again 2026-10-30 on Neo4j Enterprise 5.26.31 in a browser pass: asked to pass two `LOAD CSV` forms, `CREATE`, `MERGE`, `SET`, `DETACH DELETE`, `CALL { } IN TRANSACTIONS` and `USE other` to `run_read_query`, each was refused before anything was sent and the run finished `answered` with one claim about the schema inventory and no word of the eight refusals (run `arun_a5d133c691c948d9a09d60ef611ae417`); the next run, asked for nine procedure, APOC and comment forms, did report each refusal, so it still depends on the model's wording.
 
 **Done when:** a run whose only drafted statement was refused either reports that refusal in its answer, held by the run's verifier, or ends in a state other than `answered`, with an agent test that forces the refusal.
 
@@ -6194,6 +6196,7 @@ On LibreDB that sentence is incomplete: investigation and data analysis run ther
 The sentence predates a family that offers some read workflows and lacks others; `libredbkv` is the first.
 Seen again 2026-10-30 on InfluxDB 2.9.1 in a browser pass: the picker offered Optimize and Assess, which the `influxql` family does not offer (`docs/providers/influxdb.md` section 15.6), and Optimize was refused with the same sentence although investigation and data analysis run there.
 Seen again 2026-10-30 on Weaviate 1.40.2 in a browser pass: the picker offered Optimize, Assess and Analyze, which the `weaviateapi` family does not offer (`docs/providers/weaviate.md` section 15.6), and Analyze was refused with the same sentence although investigation runs there.
+Seen again 2026-10-30 on Neo4j Enterprise 5.26.31 in a browser pass: the picker offered Optimize and Assess, which the `cypher` family does not offer (`docs/providers/neo4j.md` section 15.6), and Optimize was refused with the same sentence although investigation and data analysis run there.
 Seen 2026-10-30 on LibreDB in a browser pass.
 
 **Done when:** the refusal names the workflows the connection's statement language does offer, read from `AGENT_WORKFLOW_VARIANTS` rather than fixed text, the picker marks or hides a workflow that language has no variant for, and a test pins the sentence for `libredbkv`.
@@ -6205,6 +6208,7 @@ When a run start is refused (the POST to `/api/agent/runs` answers 400), the rai
 Seen 2026-10-30 on LibreDB in a browser pass, after choosing the Optimize workflow, which that engine does not offer (U162); the cause is not engine-specific.
 Seen again 2026-10-30 on InfluxDB 2.9.1, after the same Optimize refusal (U162).
 Seen again 2026-10-30 on Weaviate 1.40.2, after the Analyze refusal (U162).
+Seen again 2026-10-30 on Neo4j Enterprise 5.26.31, after the Optimize refusal (U162).
 
 **Done when:** a refused start does not announce the stored conversation as ended by a reload (it keeps the conversation, or says the start was refused), with a hook test that refuses a start after a finished run.
 
@@ -6247,6 +6251,24 @@ A user who sent a list read is told it was a write or a download.
 Seen 2026-10-30 on Qdrant 1.19.1 in a browser pass, in the editor on the API key and in agent mode on the read-only key (run `arun_d79dc0a1d0344d01b954250d458d21f5`); nothing was sent in either.
 
 **Done when:** a full-storage snapshot list is refused with a sentence that calls it a list and says why the console runs only a collection's list, the snapshot routes that do change or download something keep theirs, and `tests/unit/db/qdrant/` pins both sentences.
+
+### U168. A Neo4j Community server refused for agent mode is told it is an unmeasured wire-compatible server or an in-memory database
+
+Agent mode refuses Neo4j Community Edition at open with `PROFILE_UNSUPPORTED_TARGET`, and the provider's sentence names the edition and the reason: no roles, every user an administrator, and `LOAD CSV` answering on a read-only database (`docs/providers/neo4j.md` section 15.1).
+The rail shows the `profile-target-unsupported` sentence instead (`src/components/agent/timeline.ts`), "a compatible server whose read-only enforcement is not measured, such as FerretDB on the MongoDB wire or Percona on the MySQL wire, or an in-memory database", and the ledger's grounding detail says "Point the connection at the measured engine itself, or at a database file".
+Community is the measured engine's own edition and has no database file to point at, so neither sentence names the cause or the repair, an Enterprise server and a user that only reads; the provider's sentence reaches only the server log.
+Seen 2026-10-30 on Neo4j Community 5.26.31 in a browser pass (run `arun_118d93f9d7f046eba0d8c6db205e0b7f`).
+The same shape for a refused principal is U152, and for `PROFILE_SERVER_UNENFORCED` it is U164.
+
+**Done when:** a target refusal at open shows the provider's own sentence, or a per-engine remedy read from a contract row rather than a type-id branch, so a Community server is named as Community Edition with Enterprise as the repair, and a timeline test pins the Neo4j case beside a FerretDB one.
+
+### U169. Neo4j refuses `USE` and `LOAD CSV` as if they were writes
+
+The Cypher read policy refuses `USE other MATCH (n) RETURN count(n) AS n` with "USE is not allowed: Neo4j connections are read-only in this version", and `LOAD CSV FROM 'file:///probe.csv' AS row RETURN row` with the same words for `LOAD`, in the editor and in agent mode (`checkCypherRead` in `src/lib/db/graph/cypher/read-policy.ts`).
+Neither is a write: `USE` is refused because the connection pins its database (`docs/providers/neo4j.md` section 15.2), and `LOAD CSV` is a read clause refused because it fetches files and URLs (section 3.4), so the model and the user are given a reason the provider doc contradicts, followed by advice to backtick the word, which does not apply.
+Seen 2026-10-30 on Neo4j Enterprise 5.26.31 in an agent-mode browser pass (run `arun_a5d133c691c948d9a09d60ef611ae417`); nothing was sent.
+
+**Done when:** the policy refuses `USE` with a sentence that names the connection's pinned database and `LOAD CSV` with one that says it reaches files and URLs, and `tests/unit/db/graph/read-policy.test.ts` pins both sentences.
 
 ## Dependencies
 
