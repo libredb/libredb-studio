@@ -517,18 +517,21 @@ Deleting the operator's namespace last removes its OperatorGroup with it, and th
 oc delete namespace libredb-studio
 ```
 
-Uninstalling leaves `libredb-studio` in `spec.plugins` of `consoles.operator.openshift.io/cluster` when the console plugin was turned on, on either path.
-Removing that entry is a required step.
+`helm uninstall` and an operator uninstall from the CLI leave `libredb-studio` in `spec.plugins` of `consoles.operator.openshift.io/cluster` when the console plugin was turned on.
+The console's Uninstall Operator action removes the entry itself, as its dialog says; check the list either way.
+Removing a remaining entry is a required step.
 The console stays Available and not Degraded with a stale entry, and the console operator logs that the plugin is not found every few seconds, but the entry trusts the next ConsolePlugin named `libredb-studio` in advance: whoever creates one later has it load in every console session without a cluster admin turning it on again.
 On a Helm install, remove the ConsolePlugin, with `helm uninstall` or `openshift.consolePlugin.enabled=false`, before deleting the plugin namespace or Studio's namespace.
 The cluster-scoped ConsolePlugin outlives both and still names the server's Service, which anyone who may then create a namespace of that name, through a project request too, could serve to every console session.
-Remove the entry by its index in the list, `0` below; the `test` operation refuses the patch when that index holds another plugin:
+Remove the entry by its index in the list, which the first command finds; the `test` operation refuses the patch when that index holds another plugin:
 
 ```sh
-oc get consoles.operator.openshift.io cluster -o jsonpath='{.spec.plugins}'
+i=$(oc get consoles.operator.openshift.io cluster -o json | jq '.spec.plugins | index("libredb-studio")')
 oc patch consoles.operator.openshift.io cluster --type json \
-  -p '[{"op":"test","path":"/spec/plugins/0","value":"libredb-studio"},{"op":"remove","path":"/spec/plugins/0"}]'
+  -p "[{\"op\":\"test\",\"path\":\"/spec/plugins/$i\",\"value\":\"libredb-studio\"},{\"op\":\"remove\",\"path\":\"/spec/plugins/$i\"}]"
 ```
+
+When the first command prints `null`, the list holds no entry and nothing is left to remove.
 
 A Helm install uninstalls with `helm uninstall`, which removes its ConsoleLink and the Roles in the discovered namespaces as well.
 
