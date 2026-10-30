@@ -3,13 +3,16 @@
  * The values the operator sets on every LibreDBStudio win over the resource, and reach the chart
  * as the chart expects them.
  *
- * Any namespace editor may create a LibreDBStudio, and the cluster-wide operator reconciles it.
- * So the chart values that decide where objects may go are not the resource's to choose:
- * operator/watches.yaml sets them as overrideValues. operator.managed turns on the chart's O14
- * guard, operator.clusterStudioNamespace names the one namespace whose resource may render
- * cross-namespace and cluster-scoped objects (LIBREDB_CLUSTER_STUDIO_NAMESPACE, which a cluster
- * admin sets in the Subscription; unset, no namespace may), and the PostgreSQL values keep every
- * object of the bundled subchart in the resource's own namespace.
+ * The operator manages only its own namespace: its controller watches only the namespace its pod
+ * runs in (WATCH_NAMESPACE, set from the downward API field metadata.namespace in
+ * operator/config/manager/manager.yaml), so the only LibreDBStudio it reconciles is the cluster's
+ * Studio there. The chart values that decide where objects may go are still not the resource's to
+ * choose: operator/watches.yaml sets them as overrideValues. operator.managed turns on the chart's
+ * O14 guard, operator.clusterStudioNamespace is the operator's own namespace ($WATCH_NAMESPACE),
+ * the one namespace whose resource may render cross-namespace and cluster-scoped objects, and the
+ * PostgreSQL values keep every object of the bundled subchart in the resource's own namespace.
+ * Any other value of the namespace fails closed: unset or another namespace, the O14 guard refuses
+ * the render, and a list fails the --set-string parse before the chart is read.
  *
  * How helm-operator applies them, read from operator-sdk v1.42.3, the base image of
  * operator/Dockerfile: internal/helm/watches/watches.go expands each value with os.ExpandEnv, and
@@ -35,17 +38,55 @@ const ROOT = join(import.meta.dir, "../..");
 const CHART_DIR = join(ROOT, "charts/libredb-studio");
 const WATCHES = join(ROOT, "operator/watches.yaml");
 const DOCKERFILE = join(ROOT, "operator/Dockerfile");
+const MANAGER = join(ROOT, "operator/config/manager/manager.yaml");
+const BUNDLE_CSV = join(ROOT, "operator/bundle/manifests/libredb-studio-operator.clusterserviceversion.yaml");
+/** The Subscription variable the first draft of this file read; nothing may read it now. */
+const DROPPED_VARIABLE = "LIBREDB_CLUSTER_STUDIO_NAMESPACE";
 const RELEASE_NAMESPACE = "release-under-test";
 
 const EXPECTED_OVERRIDES = {
   "operator.managed": "true",
-  "operator.clusterStudioNamespace": "$LIBREDB_CLUSTER_STUDIO_NAMESPACE",
+  "operator.clusterStudioNamespace": "$WATCH_NAMESPACE",
   "postgresql.namespaceOverride": "",
   "postgresql.extraDeploy": "{}",
   "postgresql.serviceAccount.name": "",
   "postgresql.metrics.serviceMonitor.namespace": "",
   "postgresql.metrics.prometheusRule.namespace": "",
 };
+
+interface EnvVar {
+  name: string;
+  value?: string;
+  valueFrom?: unknown;
+}
+
+interface PodTemplate {
+  spec: { template: { spec: { containers: Array<{ name: string; env?: EnvVar[] }> } } };
+}
+
+/** The manager container's environment in the kustomize source and in the generated bundle. */
+function managerEnv(): Record<string, EnvVar[] | undefined> {
+  const deployment = parseAllDocuments(readFileSync(MANAGER, "utf8"))
+    .map((doc) => doc.toJSON() as ({ kind: string } & PodTemplate) | null)
+    .find((doc) => doc?.kind === "Deployment");
+  const csv = parse(readFileSync(BUNDLE_CSV, "utf8")) as {
+    spec: { install: { spec: { deployments: PodTemplate[] } } };
+  };
+  const envOf = (template: PodTemplate | undefined) =>
+    template?.spec.template.spec.containers.find((container) => container.name === "manager")?.env;
+  return { source: envOf(deployment ?? undefined), bundle: envOf(csv.spec.install.spec.deployments[0]) };
+}
+
+/** Every $NAME or ${NAME} the overrides expand. */
+function expandedNames(): string[] {
+  return [
+    ...new Set(
+      Object.values(overrideValues()).flatMap((value) =>
+        [...String(value).matchAll(/\$\{(\w+)\}|\$(\w+)/g)].map((match) => match[1] ?? match[2]),
+      ),
+    ),
+  ];
+}
 
 interface Watch {
   group: string;
@@ -157,6 +198,29 @@ describe("operator/watches.yaml", () => {
     expect(overrideValues()).toEqual(EXPECTED_OVERRIDES);
   });
 
+  test("expands only WATCH_NAMESPACE", () => {
+    expect(expandedNames()).toEqual(["WATCH_NAMESPACE"]);
+  });
+
+  test.each(["source", "bundle"])(
+    "finds every variable it expands on the manager container of the %s Deployment",
+    (name) => {
+      const env = managerEnv()[name] ?? [];
+      for (const variable of expandedNames()) {
+        expect({ variable, set: env.some((entry) => entry.name === variable) }).toEqual({ variable, set: true });
+      }
+    },
+  );
+
+  test.each(["source", "bundle"])(
+    "gets WATCH_NAMESPACE in the %s Deployment from the pod's own namespace, one name and never empty",
+    (name) => {
+      expect(managerEnv()[name]?.filter((entry) => entry.name === "WATCH_NAMESPACE")).toEqual([
+        { name: "WATCH_NAMESPACE", valueFrom: { fieldRef: { fieldPath: "metadata.namespace" } } },
+      ]);
+    },
+  );
+
   test("writes every value as a string with no template action, so the parse above is the whole story", () => {
     for (const [key, value] of Object.entries(overrideValues())) {
       expect({ key, type: typeof value, template: String(value).includes("{{") }).toEqual({
@@ -169,19 +233,19 @@ describe("operator/watches.yaml", () => {
 });
 
 describe("the chart rendered as the operator renders a resource that asks for the opposite", () => {
-  test("renders, with the cluster Studio namespace set to the resource's own", () => {
-    const run = renderAsOperator({ LIBREDB_CLUSTER_STUDIO_NAMESPACE: RELEASE_NAMESPACE });
+  test("renders, with the operator's namespace the resource's own", () => {
+    const run = renderAsOperator({ WATCH_NAMESPACE: RELEASE_NAMESPACE });
     expect({ exitCode: run.exitCode, stderr: run.stderr.toString() }).toEqual({ exitCode: 0, stderr: "" });
   });
 
   test("renders the O14-gated objects for that namespace: the discovery Role and the ConsoleLink", () => {
-    const docs = renderedDocs({ LIBREDB_CLUSTER_STUDIO_NAMESPACE: RELEASE_NAMESPACE });
+    const docs = renderedDocs({ WATCH_NAMESPACE: RELEASE_NAMESPACE });
     expect(docs.some((doc) => doc.kind === "Role" && metadataOf(doc).namespace === "team-a")).toBe(true);
     expect(docs.some((doc) => doc.kind === "ConsoleLink")).toBe(true);
   });
 
   test("keeps every object of the bundled PostgreSQL in the resource's namespace", () => {
-    const docs = renderedDocs({ LIBREDB_CLUSTER_STUDIO_NAMESPACE: RELEASE_NAMESPACE });
+    const docs = renderedDocs({ WATCH_NAMESPACE: RELEASE_NAMESPACE });
     // team-a holds the discovery Role and RoleBinding, which O14 allows this resource.
     const placed = docs
       .map((doc) => metadataOf(doc).namespace)
@@ -191,7 +255,7 @@ describe("the chart rendered as the operator renders a resource that asks for th
   });
 
   test("renders no extraDeploy manifest and names no account the resource chose", () => {
-    const docs = renderedDocs({ LIBREDB_CLUSTER_STUDIO_NAMESPACE: RELEASE_NAMESPACE });
+    const docs = renderedDocs({ WATCH_NAMESPACE: RELEASE_NAMESPACE });
     expect(docs.map((doc) => metadataOf(doc).name)).not.toContain("from-extra-deploy");
     const statefulSet = docs.find((doc) => doc.kind === "StatefulSet");
     const account = (statefulSet?.spec as { template: { spec: { serviceAccountName?: string } } } | undefined)?.template
@@ -202,11 +266,46 @@ describe("the chart rendered as the operator renders a resource that asks for th
 
   test.each([
     ["is unset", {}],
-    ["names another namespace", { LIBREDB_CLUSTER_STUDIO_NAMESPACE: "other-namespace" }],
-  ])("fails closed, naming operator.clusterStudioNamespace, when LIBREDB_CLUSTER_STUDIO_NAMESPACE %s", (_case, env) => {
+    ["names another namespace", { WATCH_NAMESPACE: "other-namespace" }],
+  ])("fails closed, naming operator.clusterStudioNamespace, when WATCH_NAMESPACE %s", (_case, env) => {
     const run = renderAsOperator(env as Record<string, string>);
     expect(run.exitCode).not.toBe(0);
     expect(run.stderr.toString()).toContain("operator.clusterStudioNamespace");
     expect(run.stderr.toString()).not.toContain("want boolean");
+  });
+
+  test("fails closed, before the chart is read, when WATCH_NAMESPACE lists two namespaces", () => {
+    const run = renderAsOperator({ WATCH_NAMESPACE: `${RELEASE_NAMESPACE},team-a` });
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stderr.toString()).toContain("has no value");
+    expect(run.stdout.toString()).toBe("");
+  });
+});
+
+describe("the dropped Subscription variable", () => {
+  test("is named by no file of the operator, the chart or the docs", () => {
+    const listed = Bun.spawnSync(
+      [
+        "git",
+        "ls-files",
+        "-z",
+        "--cached",
+        "--others",
+        "--exclude-standard",
+        "--",
+        "operator",
+        "charts/libredb-studio",
+        "docs",
+      ],
+      { cwd: ROOT, stdout: "pipe", stderr: "pipe" },
+    );
+    expect(listed.exitCode).toBe(0);
+    const files = listed.stdout
+      .toString()
+      .split("\0")
+      .filter((file) => file !== "" && !file.startsWith("docs/superpowers/"));
+    expect(files.length).toBeGreaterThan(0);
+    const naming = files.filter((file) => readFileSync(join(ROOT, file)).toString("latin1").includes(DROPPED_VARIABLE));
+    expect(naming).toEqual([]);
   });
 });

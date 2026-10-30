@@ -13,10 +13,10 @@
   # is truthy in a template.
   overrideValues:
     # O14: cross-namespace and cluster-scoped objects render only for the
-    # resource in the namespace a cluster admin names in the Subscription
-    # (spec.config.env LIBREDB_CLUSTER_STUDIO_NAMESPACE); unset, for none.
+    # resource in the operator's own namespace, the only one it watches
+    # (WATCH_NAMESPACE, from the pod's namespace in config/manager/manager.yaml).
     operator.managed: "true"
-    operator.clusterStudioNamespace: $LIBREDB_CLUSTER_STUDIO_NAMESPACE
+    operator.clusterStudioNamespace: $WATCH_NAMESPACE
     # Keep every object of the bundled PostgreSQL subchart in the resource's own
     # namespace, also for a resource stored before the CRD refused these values.
     postgresql.namespaceOverride: ""

@@ -62,6 +62,15 @@ spec:
           - --leader-elect
           - --leader-election-id=libredb-studio-operator
           - --health-probe-bind-address=:8081
+        # The operator manages only its own namespace: helm-operator watches the
+        # namespaces WATCH_NAMESPACE lists (empty means every namespace), and the
+        # downward API gives the pod's own namespace, one name and never empty.
+        # operator/watches.yaml sets operator.clusterStudioNamespace from it.
+        env:
+        - name: WATCH_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
         image: controller:latest
         name: manager
         ports: []

@@ -200,8 +200,8 @@ rules:
   - create
   - update
 # openshift.consoleLink.enabled renders a cluster-scoped ConsoleLink, which the
-# chart renders only for the LibreDBStudio in the namespace the cluster admin
-# names (LIBREDB_CLUSTER_STUDIO_NAMESPACE). Every authenticated user may already
+# chart renders only for the LibreDBStudio in the operator's own namespace
+# (operator.clusterStudioNamespace). Every authenticated user may already
 # read ConsoleLinks, so no reader role ships. No consoleplugins rule: the console
 # plugin is not part of this release.
 - apiGroups:
