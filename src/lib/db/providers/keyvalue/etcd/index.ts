@@ -475,8 +475,8 @@ export class EtcdProvider extends BaseDatabaseProvider {
   }
 
   /**
-   * The read-only proof on `session`'s channel, its answers read now: an etcd failure other than the proof's own
-   * refusal is raised in the provider's words, as a connect step's is.
+   * The read-only proof at open on `session`'s channel, its answers read now: an etcd failure other than the proof's
+   * own refusal is raised in the provider's words, as a connect step's is.
    */
   private async prove(session: EtcdSession, user: string, signal: AbortSignal): Promise<void> {
     try {
@@ -690,7 +690,9 @@ export class EtcdProvider extends BaseDatabaseProvider {
     const signal = AbortSignal.timeout(budget.statementTimeoutMs);
     try {
       // Set at open from a principal `etcdAgentUser` admitted, so a read-only profile's session always names one.
-      await this.prove(session, session.options.principal!.name, signal);
+      // Called directly, not through `prove`, so a failed proof read reaches `etcdAgentFailure` as etcd's own error
+      // and is worded by its category and the request's budget, as the read's own failure is.
+      await proveEtcdReadOnly(session.client, session.options.principal!.name, signal);
       const answer = await this.agentRead(session.client, reading.plan, signal);
       return etcdAgentResult(answer, budget, statement, Date.now() - started);
     } catch (error) {

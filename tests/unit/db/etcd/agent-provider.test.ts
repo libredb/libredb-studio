@@ -291,6 +291,44 @@ describe("queryReadOnly", () => {
     await expect(provider.queryReadOnly("endpoint status", BUDGET)).rejects.toBe(defect);
   });
 
+  test("a proof read that reaches its deadline is the time budget's refusal, not the connection's timeout", async () => {
+    let failing = false;
+    const client = clientOf("reader-range", {
+      authStatus: async () => {
+        if (failing) throw new EtcdError("deadline-exceeded", "context deadline exceeded");
+        return { enabled: true, authRevision: "33" };
+      },
+    });
+    const provider = await opened(client);
+    failing = true;
+    const failure = await provider.queryReadOnly("endpoint status", BUDGET).then(
+      () => undefined,
+      (error: unknown) => error as Error,
+    );
+    expect(failure).toBeInstanceOf(QueryError);
+    expect(failure?.message).toBe(`${TIME_BUDGET_PREFIX}: no answer within 10000ms`);
+  });
+
+  test("a proof read that fails is worded by its category, without etcd's words", async () => {
+    let failing = false;
+    const client = clientOf("reader-range", {
+      userGet: async () => {
+        if (failing) throw new EtcdError("unknown", "etcdserver: something about /secret/key");
+        return ["agent_read_app"];
+      },
+    });
+    const provider = await opened(client);
+    failing = true;
+    const failure = await provider.queryReadOnly("endpoint status", BUDGET).then(
+      () => undefined,
+      (error: unknown) => error as Error,
+    );
+    expect(failure).toBeInstanceOf(QueryError);
+    expect(failure?.message).toBe(ETCD_AGENT_FAILURE_SENTENCES.refused("unknown"));
+    expect(failure?.message).not.toContain("/secret/key");
+    expect(failure?.message).not.toContain("etcdserver");
+  });
+
   test("WRITE granted during the run is read by the next command's proof, and the read is never sent", async () => {
     let permissions: EtcdPermission[] = [{ type: "read", key: encode("/app/"), rangeEnd: encode("/app0") }];
     const client = clientOf("reader-range", { roleGet: async () => permissions });
