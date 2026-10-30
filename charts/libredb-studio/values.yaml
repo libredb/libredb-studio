@@ -320,7 +320,8 @@ governance:
 # version: on the image a default install pulls today, an unset variable resolves
 # to .workflow-data under WORKDIR /app, which is read-only, and every run refuses
 # with LEDGER_UNAVAILABLE. Both name the same path, so the two agree once such an
-# image ships. Override it through extraEnv (written after this, so it wins).
+# image ships. Override it through extraEnv (written after this, so it wins; with Helm 4
+# pass --server-side=false, see the README section on overriding a variable the chart writes).
 #
 # WHERE RUN HISTORY LIVES: in that ledger, under /app/data. With
 # persistence.enabled=false that path is an emptyDir - the agent works, every run

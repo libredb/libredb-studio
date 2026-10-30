@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.115 \
+  --version 0.1.116 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -408,7 +408,8 @@ No `extraEnv` recipe and no `--set-string` trap: **the chart sets
 `WORKFLOW_LOCAL_DATA_DIR=/app/data/workflow` for you**, and `/app/data` is mounted in every render (an
 `emptyDir` by default, the PVC when `persistence.enabled`), so the ledger is writable under this
 chart's `readOnlyRootFilesystem: true`. Override it through `extraEnv` only to put the ledger
-somewhere else — the chart writes it before `extraEnv`, so your entry wins. When the agent cannot run,
+somewhere else: the chart writes it before `extraEnv`, so your entry wins, but only under client-side
+apply, see [Overriding a variable the chart writes](#overriding-a-variable-the-chart-writes). When the agent cannot run,
 `GET /api/agent/config` says which of the two conditions failed rather than leaving a rail that fails
 on its first Start.
 
@@ -554,6 +555,12 @@ to hash and cannot see your edit — so after changing that ConfigMap, roll the 
 ```bash
 kubectl rollout restart deployment/libredb-libredb-studio
 ```
+
+### Overriding a variable the chart writes
+
+An `extraEnv` entry whose name the chart also writes renders a second entry of that name after the chart's, and Kubernetes uses the last one.
+Helm 3, Helm 4 with `--server-side=false` and the OLM operator apply it that way.
+Helm 4 installs and upgrades with server-side apply by default, and the API server refuses a container `env` with a repeated name (`duplicate entries for key [name="..."]`), so with Helm 4 pass `--server-side=false` when `extraEnv` overrides one of the chart's variables, or set the chart's own value where one exists.
 
 ## Production Setup (Ingress + HA)
 
@@ -962,7 +969,7 @@ A typical OpenShift install, with the Route, the cluster's trusted CA bundle and
 
 ```bash
 helm install studio libredb/libredb-studio \
-  --version 0.1.115 \
+  --version 0.1.116 \
   --set openshiftRoute.enabled=true \
   --set openshift.trustedCABundle.enabled=true \
   --set openshift.topology.partOf=libredb \
@@ -1005,12 +1012,12 @@ openshift:
 ```
 
 ```bash
-helm install studio libredb/libredb-studio --version 0.1.115 --namespace data -f openshift-values.yaml
+helm install studio libredb/libredb-studio --version 0.1.116 --namespace data -f openshift-values.yaml
 ```
 
 The chart annotates the ServiceAccount with `serviceaccounts.openshift.io/oauth-redirectreference.first`, naming the Route, and `serviceaccounts.openshift.io/oauth-redirecturi.first`, the callback path under `config.basePath`, so the OAuth server accepts that one callback.
 It mounts a projected token of that account with the audience `libredb-studio-oauth-client`, never the API server's, for `openshift.signIn.tokenExpirationSeconds` (600), and the cluster's CA from the `kube-root-ca.crt` ConfigMap, read-only at `/var/run/secrets/libredb/openshift`; the pod's own API token mount stays off.
-It writes `OPENSHIFT_OAUTH_CLIENT_ID` (`system:serviceaccount:<namespace>:<account>`), `OPENSHIFT_PUBLIC_URL` (`https://<openshiftRoute.host><config.basePath>`), `OPENSHIFT_OAUTH_TOKEN_FILE` and `OPENSHIFT_API_CA_FILE`, all before `extraEnv`, so an `extraEnv` entry of the same name wins.
+It writes `OPENSHIFT_OAUTH_CLIENT_ID` (`system:serviceaccount:<namespace>:<account>`), `OPENSHIFT_PUBLIC_URL` (`https://<openshiftRoute.host><config.basePath>`), `OPENSHIFT_OAUTH_TOKEN_FILE` and `OPENSHIFT_API_CA_FILE`, all before `extraEnv`, so an `extraEnv` entry of the same name wins under client-side apply (see [Overriding a variable the chart writes](#overriding-a-variable-the-chart-writes)).
 A Studio admin is whoever may `update` Studio's Deployment, or, under the OLM operator, the `LibreDBStudio` resource, which may not move that target through a `KUBERNETES_ACCESS_REVIEW_ADMIN_*` entry of `extraEnv`.
 The session lasts the app's 28800 seconds in this mode unless `config.sessionTtlSeconds` is set, and the review cache the app's 15 seconds unless `openshift.signIn.reviewCacheSeconds` is.
 No `ADMIN_PASSWORD`, `USER_EMAIL`, `USER_PASSWORD` or `SEED_CACHE_TTL_MS` is written, so `seedConnections.cacheTTL` is ignored in this mode: the browser refreshes the connection list every 10 seconds instead.
