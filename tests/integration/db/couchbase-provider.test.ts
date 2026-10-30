@@ -2655,6 +2655,20 @@ describe("CouchbaseProvider agent read-only profile", () => {
     await expect(provider.queryReadOnly("SELECT 1 AS a", BUDGET)).resolves.toMatchObject({ rowCount: 2 });
   });
 
+  test("each check's DELETE probe names a fresh key, so a server that ignores roles never deletes a fixed one", async () => {
+    const cluster = agentCluster();
+    const provider = await agentProvider(cluster);
+    await provider.queryReadOnly("SELECT 1 AS a", BUDGET);
+    await provider.queryReadOnly("SELECT 1 AS a", BUDGET);
+
+    const probes = cluster.sent
+      .map((request) => String(request.body?.statement))
+      .filter((statement) => statement.startsWith(PROBE_PREFIX));
+    expect(probes).toHaveLength(3);
+    for (const probe of probes) expect(probe).toMatch(/libredb-agent-probe-[0-9a-f]{24}"$/);
+    expect(new Set(probes).size).toBe(3);
+  });
+
   test("a check that cannot be read is the environment's failure, never the statement's", async () => {
     const cluster = agentCluster();
     const provider = await agentProvider(cluster);
