@@ -8,8 +8,8 @@
  * OPENSHIFT_* variables Studio's openshift sign-in reads (src/lib/openshift-auth/config.ts), and the admin target of
  * the self review (src/lib/kubernetes-access/config.ts). It refuses, naming the value, every values set Studio's
  * openshift preflight would refuse, and the operator-managed guard (operator.managed and
- * operator.clusterStudioNamespace) keeps every cross-namespace or cluster-scoped object to the one Studio the
- * cluster admin named.
+ * operator.clusterStudioNamespace) keeps every cross-namespace or cluster-scoped object to the one Studio in the
+ * operator's own namespace.
  *
  * Every case runs the real `helm template` against the chart, never a reimplementation of the templating.
  */
@@ -247,9 +247,10 @@ describe("the ServiceAccount the OAuth client id names", () => {
 });
 
 /**
- * O14: a LibreDBStudio any namespace editor may create is reconciled by the cluster-wide operator, so under
- * operator.managed a cross-namespace object renders only for the release in operator.clusterStudioNamespace. The
- * discovery render is gated in every sign-in mode, not only openshift mode.
+ * O14: under operator.managed a cross-namespace object renders only for the release in
+ * operator.clusterStudioNamespace, which the operator sets to its own namespace (WATCH_NAMESPACE), the only one it
+ * reconciles; the guard stays as defense in depth. The discovery render is gated in every sign-in mode, not only
+ * openshift mode.
  */
 describe("the operator namespace guard on discovery (O14)", () => {
   const MODES: Array<[string, string[]]> = [
@@ -261,7 +262,14 @@ describe("the operator namespace guard on discovery (O14)", () => {
   test.each(MODES)(
     "%s: operator-managed discovery of another namespace with no cluster Studio namespace fails",
     (_, mode) => {
-      refused([...mode, ...DISCOVERY, ...set("operator.managed=true")], "operator.clusterStudioNamespace");
+      refused(
+        [...mode, ...DISCOVERY, ...set("operator.managed=true")],
+        "operator.clusterStudioNamespace",
+        "WATCH_NAMESPACE",
+      );
+      const stderr = template([...mode, ...DISCOVERY, ...set("operator.managed=true")]).stderr;
+      expect(stderr).not.toContain("Subscription");
+      expect(stderr).not.toContain("LIBREDB_CLUSTER_STUDIO_NAMESPACE");
     },
   );
 

@@ -833,10 +833,10 @@ block renders as a Helm install, and compared as text, so only true counts.
 
 {{/*
 Whether this release may render cross-namespace and cluster-scoped objects (O14): always for a Helm
-install, and under operator.managed only for the release in operator.clusterStudioNamespace, the
-namespace a cluster admin named in the operator's Subscription. Any namespace editor may create a
-LibreDBStudio and the operator reconciles it cluster-wide, so without this an editor would have the
-operator create Roles in other namespaces or cluster-scoped objects.
+install, and under operator.managed only for the release in operator.clusterStudioNamespace, which
+the operator sets to its own namespace (WATCH_NAMESPACE in its Deployment), the only one it
+reconciles. The operator never renders another namespace's resource, so this holds in a correct
+install and stays as defense in depth: an empty or other value lets no such object render.
 */}}
 {{- define "libredb-studio.clusterStudioNamespaceOK" -}}
 {{- if not (include "libredb-studio.operatorManaged" .) }}
@@ -857,7 +857,7 @@ object>").
 {{- define "libredb-studio.clusterStudioNamespaceGuard" -}}
 {{- if not (include "libredb-studio.clusterStudioNamespaceOK" .ctx) }}
 {{- $namespace := dig "clusterStudioNamespace" "" (.ctx.Values.operator | default dict) | toString | trim }}
-{{- fail (printf "operator.managed is set and %s: the operator renders cross-namespace and cluster-scoped objects only for the LibreDBStudio in the namespace operator.clusterStudioNamespace names (LIBREDB_CLUSTER_STUDIO_NAMESPACE in the operator's Subscription), which is %s, not this release's namespace %s" .what (ternary (printf "%q" $namespace) "unset" (ne $namespace "")) .ctx.Release.Namespace) }}
+{{- fail (printf "operator.managed is set and %s: the operator renders cross-namespace and cluster-scoped objects only for the LibreDBStudio in the namespace operator.clusterStudioNamespace names, which the operator sets to its own namespace (WATCH_NAMESPACE in its Deployment), and which is %s, not this release's namespace %s" .what (ternary (printf "%q" $namespace) "unset" (ne $namespace "")) .ctx.Release.Namespace) }}
 {{- end }}
 {{- end }}
 

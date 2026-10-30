@@ -2,7 +2,7 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting forty-two engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Apache Cassandra, libSQL, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Weaviate, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B
 type: application
-version: 0.1.116
+version: 0.1.117
 appVersion: "1.1.0"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -346,6 +346,9 @@ annotations:
   # fails the schema. A Helm install that leaves the value unset renders as before.
   # False: 0.1.116 changes only the README and a values comment, documenting that Helm 4's
   # default server-side apply refuses an extraEnv entry that repeats a variable the chart writes.
+  # False: 0.1.117 changes only text: the descriptions of operator.clusterStudioNamespace and the
+  # message of the operator namespace guard name the operator's own namespace as its source. No
+  # template, value or default moves.
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
@@ -361,7 +364,7 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "README: overriding a variable the chart writes through extraEnv needs --server-side=false with Helm 4, whose default server-side apply refuses the repeated name"
+    - "operator.clusterStudioNamespace: the OLM operator sets it to the namespace it is installed in"
 dependencies:
   - name: postgresql
     version: "16.x.x"

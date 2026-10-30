@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.116 \
+  --version 0.1.117 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -939,7 +939,7 @@ helm uninstall libredb
 | `openshift.consoleLink.namespaceSelector` | `NamespaceDashboard`: a label selector for those namespaces | `{}` |
 | `discovery.kubernetes.clusterDomain` | `SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN`, the cluster's DNS domain every discovered host ends in; unset keeps `cluster.local` | unset |
 | `operator.managed` | Set by the OLM operator only: cross-namespace and cluster-scoped objects then render only for the release in `operator.clusterStudioNamespace` | `false` |
-| `operator.clusterStudioNamespace` | Set by the OLM operator only, from `LIBREDB_CLUSTER_STUDIO_NAMESPACE` in its Subscription; empty allows no cross-namespace or cluster-scoped object | `""` |
+| `operator.clusterStudioNamespace` | Set by the OLM operator only, to the namespace it is installed in, the only one it reconciles; empty allows no cross-namespace or cluster-scoped object | `""` |
 
 See [values.yaml](values.yaml) for the complete list of configurable parameters.
 
@@ -969,7 +969,7 @@ A typical OpenShift install, with the Route, the cluster's trusted CA bundle and
 
 ```bash
 helm install studio libredb/libredb-studio \
-  --version 0.1.116 \
+  --version 0.1.117 \
   --set openshiftRoute.enabled=true \
   --set openshift.trustedCABundle.enabled=true \
   --set openshift.topology.partOf=libredb \
@@ -1012,7 +1012,7 @@ openshift:
 ```
 
 ```bash
-helm install studio libredb/libredb-studio --version 0.1.116 --namespace data -f openshift-values.yaml
+helm install studio libredb/libredb-studio --version 0.1.117 --namespace data -f openshift-values.yaml
 ```
 
 The chart annotates the ServiceAccount with `serviceaccounts.openshift.io/oauth-redirectreference.first`, naming the Route, and `serviceaccounts.openshift.io/oauth-redirecturi.first`, the callback path under `config.basePath`, so the OAuth server accepts that one callback.
@@ -1047,7 +1047,7 @@ With discovery on, that link is named `libredb-studio` and labelled `app.kuberne
 `NamespaceDashboard` shows the link on the dashboard of `openshift.consoleLink.namespaces` or of the namespaces `openshift.consoleLink.namespaceSelector` selects, and fails the render with neither, or with discovery on.
 The OpenShift console plugin is not part of this release.
 
-Under the OLM operator, a ConsoleLink, a discovered namespace other than the release's, the access review's ClusterRole and ClusterRoleBinding and a Rancher NavLink render only for the `LibreDBStudio` in `operator.clusterStudioNamespace`, which the operator sets from `LIBREDB_CLUSTER_STUDIO_NAMESPACE` in its Subscription; elsewhere the render fails naming the value.
+Under the OLM operator, a ConsoleLink, a discovered namespace other than the release's, the access review's ClusterRole and ClusterRoleBinding and a Rancher NavLink render only for the `LibreDBStudio` in `operator.clusterStudioNamespace`, which the operator sets to the namespace it is installed in, the only one it reconciles; elsewhere the render fails naming the value.
 
 ### The cluster's trusted CA bundle
 
