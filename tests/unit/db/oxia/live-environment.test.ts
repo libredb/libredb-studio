@@ -1464,12 +1464,27 @@ function writesBeforeMarker(text: string): boolean {
 
 const WRITE_WORDS = /\bWrite\b|\bWriteStream\b|\bputs\b|\bput\b|delete-range|DeleteRange/;
 
+/**
+ * The agent boundary probe writes too, to show what the server does with each call the agent's table refuses, but only
+ * to the two throwaway servers its own run.sh starts and removes: it reads both addresses from the environment and names
+ * no compose fixture's address or port.
+ */
+const BOUNDARY_PROBE = "oxia-agent-boundary.ts";
+const FIXTURE_ADDRESS = /\b(?:6648|6658|6659|6668|6671|6672|6673|6678)\b/;
+
 // Rule 30.
 function writeSurfaceFindings(files: LiveFiles): string[] {
-  return Object.entries(files.live)
-    .filter(([name, text]) => name !== SEEDER && WRITE_WORDS.test(codeOf(name, text)))
-    .map(([name]) => `tests/live/${name} names a write`)
-    .sort();
+  const probe = files.live[BOUNDARY_PROBE];
+  const probeFindings =
+    probe !== undefined && FIXTURE_ADDRESS.test(codeOf(BOUNDARY_PROBE, probe))
+      ? [`tests/live/${BOUNDARY_PROBE} names a compose fixture's port`]
+      : [];
+  return [
+    ...probeFindings,
+    ...Object.entries(files.live)
+      .filter(([name, text]) => name !== SEEDER && name !== BOUNDARY_PROBE && WRITE_WORDS.test(codeOf(name, text)))
+      .map(([name]) => `tests/live/${name} names a write`),
+  ].sort();
 }
 
 const NUL_KEYS_DECLARATION = /^const NUL_KEYS = (\[.*\]) as const;$/m;
@@ -1598,6 +1613,11 @@ describe("tests/live/oxia-seed-raw.ts, the one writer", () => {
       draft.live["oxia-evidence.ts"] = `${draft.live["oxia-evidence.ts"] ?? ""}\nclient.Write(request);\n`;
     });
     finds(writeSurfaceFindings(harness), "tests/live/oxia-evidence.ts names a write");
+    expect(Object.keys(liveFiles.live)).toContain(BOUNDARY_PROBE);
+    const aimed = plantedLive(liveFiles, (draft) => {
+      draft.live[BOUNDARY_PROBE] = `${draft.live[BOUNDARY_PROBE]}\nconst target = "127.0.0.1:6648";\n`;
+    });
+    finds(writeSurfaceFindings(aimed), "tests/live/oxia-agent-boundary.ts names a compose fixture's port");
     const commented = plantedLive(liveFiles, (draft) => {
       draft.live["oxia-evidence.ts"] = `${draft.live["oxia-evidence.ts"] ?? ""}\n// never a Write\n`;
     });

@@ -1,0 +1,457 @@
+{
+  "$captured": {
+    "image": "oxia/oxia:0.18.0@sha256:65f9898d531c3ca48a3277247650200c8065435fd542ea9a81e51c37b90fff60",
+    "version": "0.18.0",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "server": "standalone, two shards, no authentication",
+    "note": "Each call sent raw over gRPC with no token. `refused` lists calls the agent's table never sends, against the same server, so each shows what the server would do with it: the server honours every one, which is why Studio refuses them before the network."
+  },
+  "keys": {
+    "tenant": "/admin/policies/acme-tenant",
+    "topic": "/managed-ledgers/acme-tenant/default/persistent/orders",
+    "flat": "fixture-flat",
+    "partitioned": "/pk/fixture/1",
+    "missing": "/admin/policies/no-such-tenant",
+    "scratch": "/scratch/put",
+    "ephemeral": "/scratch/ephemeral",
+    "sequence": "/scratch/sequence"
+  },
+  "partitionKey": "fixture-partition",
+  "before": {
+    "keys": {
+      "0": [
+        "fixture-flat",
+        "/pk/fixture/1",
+        "/managed-ledgers/acme-tenant/default/persistent/orders"
+      ],
+      "1": [
+        "/admin/policies/acme-tenant"
+      ]
+    }
+  },
+  "admitted": {
+    "shardAssignments": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "allowed_authorities": [],
+          "namespaces": {
+            "default": {
+              "assignments": [
+                {
+                  "shard": "0",
+                  "leader": "127.0.0.1:26648",
+                  "int32_hash_range": {
+                    "min_hash_inclusive": 0,
+                    "max_hash_inclusive": 2147483647
+                  },
+                  "shard_boundaries": "int32_hash_range"
+                },
+                {
+                  "shard": "1",
+                  "leader": "127.0.0.1:26648",
+                  "int32_hash_range": {
+                    "min_hash_inclusive": 2147483648,
+                    "max_hash_inclusive": 4294967295
+                  },
+                  "shard_boundaries": "int32_hash_range"
+                }
+              ],
+              "shard_key_router": "XXHASH3"
+            }
+          }
+        }
+      ],
+      "open": true
+    },
+    "shardAssignmentsOtherNamespace": {
+      "outcome": "error",
+      "code": 5,
+      "details": "oxia: namespace not found"
+    },
+    "getTenant": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "gets": [
+            {
+              "status": "OK",
+              "version": {
+                "version_id": "0",
+                "modifications_count": "0",
+                "created_timestamp": "1793392798920",
+                "modified_timestamp": "1793392798920"
+              },
+              "value": {
+                "$text": "{\"fixture\":\"tenant\"}"
+              },
+              "_value": "value"
+            }
+          ]
+        }
+      ]
+    },
+    "getMissing": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "gets": [
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            }
+          ]
+        }
+      ]
+    },
+    "getPartitionedOnOwnHash": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "gets": [
+            {
+              "status": "OK",
+              "version": {
+                "version_id": "2",
+                "modifications_count": "0",
+                "created_timestamp": "1793392798928",
+                "modified_timestamp": "1793392798928"
+              },
+              "value": {
+                "$text": "fixture-pk"
+              },
+              "_value": "value"
+            }
+          ]
+        }
+      ]
+    },
+    "getPartitionedOnPartitionShard": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "gets": [
+            {
+              "status": "OK",
+              "version": {
+                "version_id": "2",
+                "modifications_count": "0",
+                "created_timestamp": "1793392798928",
+                "modified_timestamp": "1793392798928"
+              },
+              "value": {
+                "$text": "fixture-pk"
+              },
+              "_value": "value"
+            }
+          ]
+        }
+      ]
+    },
+    "listEveryKey:0": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "keys": [
+            "fixture-flat",
+            "/pk/fixture/1",
+            "/managed-ledgers/acme-tenant/default/persistent/orders"
+          ]
+        }
+      ]
+    },
+    "listPrefixAdminBand:0": {
+      "outcome": "ok",
+      "messages": []
+    },
+    "listEveryKey:1": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "keys": [
+            "/admin/policies/acme-tenant"
+          ]
+        }
+      ]
+    },
+    "listPrefixAdminBand:1": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "keys": [
+            "/admin/policies/acme-tenant"
+          ]
+        }
+      ]
+    }
+  },
+  "refused": {
+    "getFloor": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "gets": [
+            {
+              "status": "OK",
+              "version": {
+                "version_id": "1",
+                "modifications_count": "0",
+                "created_timestamp": "1793392798927",
+                "modified_timestamp": "1793392798927"
+              },
+              "key": "fixture-flat",
+              "_key": "key"
+            }
+          ]
+        }
+      ]
+    },
+    "getSecondaryIndex": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "gets": [
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            }
+          ]
+        }
+      ]
+    },
+    "listInternalKeys": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "keys": [
+            "/admin/policies/acme-tenant",
+            "__oxia/commit-offset",
+            "__oxia/last-version-id",
+            "__oxia/term",
+            "__oxia/term-options",
+            "__oxia/features/0000000002",
+            "__oxia/features/0000000003",
+            "__oxia/features/0000000004",
+            "__oxia/features/0000000005",
+            "__oxia/features/0000000006",
+            "__oxia/features/0000000007",
+            "__oxia/features/0000000008",
+            "__oxia/features/0000000009",
+            "__oxia/features/0000000012",
+            "__oxia/notifications/0000000000000001"
+          ]
+        }
+      ]
+    },
+    "rangeScanEveryKey": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "records": [
+            {
+              "status": "OK",
+              "version": {
+                "version_id": "0",
+                "modifications_count": "0",
+                "created_timestamp": "1793392798920",
+                "modified_timestamp": "1793392798920"
+              },
+              "value": {
+                "$text": "{\"fixture\":\"tenant\"}"
+              },
+              "_value": "value",
+              "key": "/admin/policies/acme-tenant",
+              "_key": "key"
+            }
+          ]
+        }
+      ]
+    },
+    "put": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "puts": [
+            {
+              "status": "OK",
+              "version": {
+                "version_id": "3",
+                "modifications_count": "0",
+                "created_timestamp": "1793392798945",
+                "modified_timestamp": "1793392798945"
+              }
+            }
+          ],
+          "deletes": [],
+          "delete_ranges": []
+        }
+      ]
+    },
+    "delete": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "puts": [],
+          "deletes": [
+            {
+              "status": "OK"
+            }
+          ],
+          "delete_ranges": []
+        }
+      ]
+    },
+    "sequencePut": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "puts": [
+            {
+              "status": "OK",
+              "version": {
+                "version_id": "4",
+                "modifications_count": "0",
+                "created_timestamp": "1793392798949",
+                "modified_timestamp": "1793392798949"
+              },
+              "key": "/scratch/sequence-00000000000000000001",
+              "_key": "key"
+            }
+          ],
+          "deletes": [],
+          "delete_ranges": []
+        }
+      ]
+    },
+    "getSequenceUpdates": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "highest_sequence_key": "/scratch/sequence-00000000000000000001"
+        }
+      ],
+      "open": true
+    },
+    "getNotifications": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "notifications": {},
+          "shard": "1",
+          "offset": "1",
+          "timestamp": "0"
+        }
+      ],
+      "open": true
+    },
+    "createSession": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "session_id": "2"
+        }
+      ]
+    },
+    "ephemeralPut": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "puts": [
+            {
+              "status": "OK",
+              "version": {
+                "version_id": "2",
+                "modifications_count": "0",
+                "created_timestamp": "1793392802959",
+                "modified_timestamp": "1793392802959",
+                "session_id": "2",
+                "_session_id": "session_id",
+                "client_identity": "fixture-identity",
+                "_client_identity": "client_identity"
+              }
+            }
+          ],
+          "deletes": [],
+          "delete_ranges": []
+        }
+      ]
+    },
+    "ephemeralGet": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "gets": [
+            {
+              "status": "OK",
+              "version": {
+                "version_id": "2",
+                "modifications_count": "0",
+                "created_timestamp": "1793392802959",
+                "modified_timestamp": "1793392802959",
+                "session_id": "2",
+                "_session_id": "session_id",
+                "client_identity": "fixture-identity",
+                "_client_identity": "client_identity"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "closeSession": {
+      "outcome": "ok",
+      "messages": [
+        {}
+      ]
+    },
+    "ephemeralGetAfterClose": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "gets": [
+            {
+              "status": "KEY_NOT_FOUND",
+              "version": null
+            }
+          ]
+        }
+      ]
+    },
+    "deleteRangeEveryKey": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "puts": [],
+          "deletes": [],
+          "delete_ranges": [
+            {
+              "status": "OK"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "stateBeforeDeleteRange": {
+    "keys": {
+      "0": [
+        "fixture-flat",
+        "/scratch/sequence-00000000000000000001",
+        "/pk/fixture/1",
+        "/managed-ledgers/acme-tenant/default/persistent/orders"
+      ],
+      "1": [
+        "/admin/policies/acme-tenant"
+      ]
+    }
+  },
+  "after": {
+    "keys": {
+      "0": [],
+      "1": [
+        "/admin/policies/acme-tenant"
+      ]
+    }
+  }
+}
