@@ -5,6 +5,7 @@ import { fingerprintKubectl, kubectlRowCapAdvice } from "@/lib/agent/languages/k
 import { fingerprintLibredbkv, libredbkvRowCapAdvice } from "@/lib/agent/languages/libredbkv/adapter";
 import { fingerprintMongo, mongoRowCapAdvice } from "@/lib/agent/languages/mongo/adapter";
 import { fingerprintWeaviateapi, weaviateapiRowCapAdvice } from "@/lib/agent/languages/weaviateapi/adapter";
+import { fingerprintQdrantapi, qdrantapiRowCapAdvice } from "@/lib/agent/languages/qdrantapi/adapter";
 import { languageServer, languageServerPack } from "@/lib/agent/languages/server";
 import {
   admitLibredbkvStatement,
@@ -23,6 +24,12 @@ import {
   weaviateapiAgentReadInput,
 } from "@/lib/db/operations/weaviateapi-admission";
 import { WEAVIATE_AGENT_SENTENCES } from "@/lib/db/providers/vector/weaviate/metadata-request";
+import {
+  admitQdrantapiStatement,
+  QDRANTAPI_AGENT_MAX_STATEMENT_CHARS,
+  qdrantapiAgentReadInput,
+} from "@/lib/db/operations/qdrantapi-admission";
+import { QDRANT_AGENT_SENTENCES } from "@/lib/db/providers/vector/qdrant/metadata-request";
 import { INFLUXQL_AGENT_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-statement";
 import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 
@@ -486,5 +493,93 @@ describe("the weaviateapi language's server adapter and admission", () => {
   test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
     expect(Object.keys(AGENT_WORKFLOW_VARIANTS.weaviateapi).sort()).toEqual(["investigation", "operations"]);
     expect(AGENT_WORKFLOW_VARIANTS.weaviateapi.investigation?.canAutoExecute).toBe(false);
+  });
+});
+
+describe("the qdrantapi language's server adapter and admission", () => {
+  test("the fingerprint is the request as the reader reads it, so one read written three ways is one identity", () => {
+    const one = fingerprintQdrantapi("POST /collections/plain/points/count");
+    expect(fingerprintQdrantapi("// a count\nPOST /collections/plain/points/count")).toBe(one);
+    expect(fingerprintQdrantapi('POST /collections/plain/points/count {"exact": true}')).toBe(one);
+    expect(fingerprintQdrantapi('POST /collections/plain/points/count {"exact": false}')).not.toBe(one);
+    expect(fingerprintQdrantapi("POST /collections/plain/points/count?consistency=all")).not.toBe(one);
+    expect(fingerprintQdrantapi("GET /collections/plain")).not.toBe(fingerprintQdrantapi("GET /collections/docs"));
+  });
+
+  test("the query keys are read in order, so their order in the text does not make a second read", () => {
+    expect(fingerprintQdrantapi("POST /collections/plain/points/count?consistency=all&timeout=3")).toBe(
+      fingerprintQdrantapi("POST /collections/plain/points/count?timeout=3&consistency=all"),
+    );
+  });
+
+  test("the fingerprint is total: a refused request is identified by its raw text, so it is refused again", () => {
+    const raw = "GET /collections/plain/points/1";
+    expect(fingerprintQdrantapi(raw)).toBe(fingerprintQdrantapi(raw));
+    expect(fingerprintQdrantapi(raw)).toMatch(/^[0-9a-f]{64}$/);
+    expect(fingerprintQdrantapi(`${raw} `)).not.toBe(fingerprintQdrantapi(raw));
+  });
+
+  test("every advice key of the qdrantapi copy has its own sentence", () => {
+    const generic = qdrantapiRowCapAdvice("GET /collections/plain/points/1", "200");
+    const requestFor: Readonly<Record<string, string>> = {
+      collections: "GET /collections",
+      collection: "GET /collections/plain",
+      aliases: "GET /aliases",
+    };
+    expect([...AGENT_LANGUAGE_COPY.qdrantapi.adviceKeys].sort()).toEqual(["aliases", "collection", "collections"]);
+    for (const key of AGENT_LANGUAGE_COPY.qdrantapi.adviceKeys) {
+      expect(qdrantapiRowCapAdvice(requestFor[key] as string, "200"), key).not.toBe(generic);
+    }
+    expect(qdrantapiRowCapAdvice("GET /collections", "200")).toContain("GET /collections/{collection}");
+  });
+
+  test("a request without advice of its own, or one that is refused, gets the generic sentence", () => {
+    const generic = "Ask for at most 200 rows: read one collection instead of the whole list, and run it again.";
+    expect(qdrantapiRowCapAdvice("GET /collections/plain/cluster", "200")).toBe(generic);
+    expect(qdrantapiRowCapAdvice("GET /collections/plain/points/1", "200")).toBe(generic);
+    expect(languageServer("qdrantapi").shapeAdvice).toContain("a valid Qdrant request");
+  });
+
+  test("the admission is the provider's reader, plus a length the agent's contract names", () => {
+    expect(admitQdrantapiStatement("GET /collections")).toBeNull();
+    expect(admitQdrantapiStatement("GET /collections/plain/points/1")).toEqual({
+      code: "metadata-only",
+      message: QDRANT_AGENT_SENTENCES.metadataOnly("GET /collections/{collection_name}/points/{id}"),
+    });
+    expect(admitQdrantapiStatement('POST /collections/plain/points/count {"shard_key": "a"}')).toEqual({
+      code: "count-shape",
+      message: QDRANT_AGENT_SENTENCES.countShape("shard_key"),
+    });
+    expect(admitQdrantapiStatement("DELETE /collections/plain")?.code).toBe("request");
+    const long = `GET /collections ${"/".repeat(QDRANTAPI_AGENT_MAX_STATEMENT_CHARS)}`;
+    expect(admitQdrantapiStatement(long)).toEqual({
+      code: "agent-too-large",
+      message: `The request is longer than ${QDRANTAPI_AGENT_MAX_STATEMENT_CHARS} characters, the most an agent read takes: shorten it. Nothing was sent.`,
+    });
+    expect(languageServer("qdrantapi").admit?.("GET /")).toBeNull();
+  });
+
+  test("an ungrounded run is sent to a read it holds, and plan mode is told none of the reader's rules", () => {
+    const ungrounded = languageServerPack("qdrantapi").grounding.ungrounded;
+    expect(ungrounded?.("The capture failed.", { singular: "collection", plural: "collections" })).toBe(
+      "The capture failed.\nSo nothing about this database has been established for you: not one collection name. Read what you need with run_read_query, starting with GET /collections.",
+    );
+    expect(languageServerPack("qdrantapi").grounding.planningRules).toBeUndefined();
+  });
+
+  test("the descriptor's input is strict, carries the request, and refuses what the admission refuses", () => {
+    expect(qdrantapiAgentReadInput.safeParse({ statement: "GET /collections" }).success).toBe(true);
+    expect(qdrantapiAgentReadInput.safeParse({ statement: "GET /collections", sql: "x" }).success).toBe(false);
+    const refused = qdrantapiAgentReadInput.safeParse({ statement: 'POST /collections/plain/facet {"key": "city"}' });
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues[0]?.path).toEqual(["statement"]);
+    expect(refused.error?.issues[0]?.message).toBe(
+      QDRANT_AGENT_SENTENCES.metadataOnly("POST /collections/{collection_name}/facet"),
+    );
+  });
+
+  test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
+    expect(Object.keys(AGENT_WORKFLOW_VARIANTS.qdrantapi).sort()).toEqual(["investigation", "operations"]);
+    expect(AGENT_WORKFLOW_VARIANTS.qdrantapi.investigation?.canAutoExecute).toBe(false);
   });
 });

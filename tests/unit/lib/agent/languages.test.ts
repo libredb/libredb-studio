@@ -123,6 +123,7 @@ const LANGUAGE_IDS: Readonly<Record<AgentStatementLanguageId, true>> = {
   libredbkv: true,
   influxql: true,
   weaviateapi: true,
+  qdrantapi: true,
 };
 
 describe("the server packs", () => {
@@ -254,6 +255,7 @@ describe("the language packs", () => {
       "libredbkv",
       "influxql",
       "weaviateapi",
+      "qdrantapi",
     ]);
     expect(Object.isFrozen(LANGUAGE_TOOL_ARMS)).toBe(true);
   });
@@ -399,6 +401,7 @@ describe("the prompt tables the packs hold", () => {
       "libredbkv",
       "influxql",
       "weaviateapi",
+      "qdrantapi",
     ]);
     expect(Object.isFrozen(WORKFLOW_TOOL_RULES)).toBe(true);
     for (const id of ids) {
@@ -490,7 +493,15 @@ describe("the client packs", () => {
   test("each projection is frozen and keyed by every language, in the order the packs are declared", () => {
     for (const projection of [AGENT_LANGUAGE_COPY, AGENT_PLAN_ESTIMATE_OPERATION, AGENT_WORKFLOW_VARIANTS]) {
       expect(Object.isFrozen(projection)).toBe(true);
-      expect(Object.keys(projection)).toEqual(["sql", "kubectl", "mongo", "libredbkv", "influxql", "weaviateapi"]);
+      expect(Object.keys(projection)).toEqual([
+        "sql",
+        "kubectl",
+        "mongo",
+        "libredbkv",
+        "influxql",
+        "weaviateapi",
+        "qdrantapi",
+      ]);
     }
   });
 
@@ -504,6 +515,7 @@ describe("the client packs", () => {
       libredbkv: null,
       influxql: null,
       weaviateapi: null,
+      qdrantapi: null,
     });
   });
 

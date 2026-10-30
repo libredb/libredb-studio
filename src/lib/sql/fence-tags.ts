@@ -177,6 +177,7 @@ export const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "kubectl",
   "libredbkv",
   "weaviateapi",
+  "qdrantapi",
 ]);
 
 /**
@@ -226,6 +227,8 @@ export const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.free
   libredbkv: "libredb",
   // The agent's name for the Weaviate request language, and `weaviate` is the only type-id that runs it.
   weaviateapi: "weaviate",
+  // The agent's name for the Qdrant request language, and `qdrant` is the only type-id that runs it.
+  qdrantapi: "qdrant",
 });
 
 /**

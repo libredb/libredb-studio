@@ -632,6 +632,8 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   etcd: false,
   neo4j: false,
   milvus: false,
+  // Agent mode executes metadata-only reads on Qdrant, and MCP read stays closed on it until a change of its own
+  // opens it.
   qdrant: false,
   // Agent mode executes metadata-only reads on Weaviate, and MCP read stays closed on it until a change of its own
   // opens it.

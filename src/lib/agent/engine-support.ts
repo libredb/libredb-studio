@@ -70,7 +70,12 @@ import type { DatabaseType } from "@/lib/types";
  * can name no write, with a key the server proves a viewer before every request, so a connection with no key, an
  * admin key, a role that writes and a server with RBAC off are refused; Studio's reader admits the meta, schema,
  * shard, tenant, alias and node reads and a bare aggregate count, a COLD tenant is refused rather than woken, and every
- * answer carries names, counts and flags only. Each provider's own `queryReadOnly` argues its own case.
+ * answer carries names, counts and flags only. Qdrant's is the provider's closed table of read routes, which can name no
+ * write, with a key the server proves read-only before every request by refusing an empty alias update and an empty
+ * point delete on every collection the key lists, so a connection with no key, the API key, a JWT that writes any
+ * collection and a server with no key configured are refused; Studio's reader admits the version, collection, alias,
+ * count and cluster reads, so no query reaches the inference address, and every answer carries names, counts and flags
+ * only. Each provider's own `queryReadOnly` argues its own case.
  * `tests/unit/lib/agent/engine-support.test.ts` is what keeps the two equal - it walks EVERY
  * id in the `DatabaseType` union, reads `queryReadOnly` off the real provider class the
  * factory would construct, and fails if this array and the drivers diverge in either direction.
@@ -106,6 +111,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "libredb",
   "influxdb",
   "weaviate",
+  "qdrant",
 ];
 
 /**

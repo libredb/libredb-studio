@@ -89,6 +89,11 @@ type WeaviateapiOperationId =
   /** One Weaviate metadata read the model wrote, on a `weaviate` connection; see `weaviateapiQueryReadDescriptor`. */
   "weaviateapi.query.read";
 
+/** The Qdrant request language's operation: its one read. */
+type QdrantapiOperationId =
+  /** One Qdrant metadata read the model wrote, on a `qdrant` connection; see `qdrantapiQueryReadDescriptor`. */
+  "qdrantapi.query.read";
+
 /**
  * The canonical operations each family's tools drive, by family. `AgentOperationId` in `tools.ts` is the core's two
  * curated ids and every row here, so a family's ids are written once, beside the family's other types.
@@ -100,6 +105,7 @@ export interface AgentFamilyOperationIds {
   readonly libredbkv: LibredbkvOperationId;
   readonly influxql: InfluxqlOperationId;
   readonly weaviateapi: WeaviateapiOperationId;
+  readonly qdrantapi: QdrantapiOperationId;
 }
 
 /** kubectl's goal verifiers. */
@@ -143,6 +149,8 @@ export interface AgentFamilyVerifierIds {
   readonly influxql: never;
   /** None: its workflows are judged by the core's own rules. */
   readonly weaviateapi: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly qdrantapi: never;
 }
 
 /** The operation a family's model-written reads are evaluated under: its row's `<family>.query.read`. */
@@ -400,6 +408,7 @@ export interface AgentFamilyEvidenceTools {
   readonly libredbkv: never;
   readonly influxql: never;
   readonly weaviateapi: never;
+  readonly qdrantapi: never;
 }
 
 /** Every pack's evidence tool: a member of the core's `AgentToolName`, declared by the pack that offers it. */
@@ -413,6 +422,7 @@ export interface AgentFamilyReadingDenyCodes {
   readonly libredbkv: never;
   readonly influxql: never;
   readonly weaviateapi: never;
+  readonly qdrantapi: never;
 }
 
 /** Every pack's reading refusal code: a member of the core's `AgentReadingDenyCode`, declared by its pack. */
@@ -426,6 +436,7 @@ export interface AgentFamilyShortfalls {
   readonly libredbkv: never;
   readonly influxql: never;
   readonly weaviateapi: never;
+  readonly qdrantapi: never;
 }
 
 /** Every pack's verdict shortfall: a member of the core's `AgentGoalShortfall`, declared by its pack. */
@@ -439,6 +450,7 @@ export interface AgentFamilyVariantRequirements {
   readonly libredbkv: never;
   readonly influxql: never;
   readonly weaviateapi: never;
+  readonly qdrantapi: never;
 }
 
 /** Every pack's variant requirement: a member of the core's `AgentVariantRequirement`, declared by its pack. */
@@ -486,6 +498,7 @@ export interface AgentFamilyEvidenceEvents {
   readonly libredbkv: never;
   readonly influxql: never;
   readonly weaviateapi: never;
+  readonly qdrantapi: never;
 }
 
 /** Every pack's evidence event, as the ledger stores it less its timestamp. */
@@ -669,6 +682,7 @@ export interface AgentFamilyDialectRows {
   libredbkv: { client: Record<never, never>; server: Record<never, never> };
   influxql: { client: Record<never, never>; server: Record<never, never> };
   weaviateapi: { client: Record<never, never>; server: Record<never, never> };
+  qdrantapi: { client: Record<never, never>; server: Record<never, never> };
 }
 
 /** The dialect-bound members of each family, client and server. */

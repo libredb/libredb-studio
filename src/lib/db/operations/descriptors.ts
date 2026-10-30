@@ -28,6 +28,7 @@ import { influxqlAgentReadInput } from "./influxql-admission";
 import { kubectlAgentReadInput } from "./kubectl-admission";
 import { libredbkvAgentReadInput } from "./libredbkv-admission";
 import { mongoAgentReadInput } from "./mongo-admission";
+import { qdrantapiAgentReadInput } from "./qdrantapi-admission";
 import { weaviateapiAgentReadInput } from "./weaviateapi-admission";
 import { agentPlanExecutionSqlInput, agentQueryReadSqlInput, agentReadSqlInput } from "./statement-guard";
 import type { RegistrableOperationDescriptor } from "./types";
@@ -481,6 +482,41 @@ const weaviateapiQueryReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+const QDRANTAPI_READ_BOUNDARY =
+  "Qdrant: the provider's closed table of 17 GET and POST read routes, which can name no write, of which an agent " +
+  "request reaches the version, collection list, collection, exists, alias, count and cluster reads only, every body " +
+  "key closed and a count taking exact alone (metadata-request.ts). Before the open and before every request, under " +
+  "that request's deadline, the server proves the key reads only (metadata-read.ts): it must refuse 403 an alias " +
+  "update with no action and a point delete of no point on every collection the key lists, at most 32, so a " +
+  "connection with no key, the API key, a JWT that manages or writes any collection and a server with no key " +
+  "configured are refused. Point reads, scrolls, facets, every query, and so every inference call, the optimization " +
+  "and snapshot lists and every write are refused before anything is sent. Every answer is projected to names, " +
+  "counts and flags (metadata-only.ts), and a result past the row or byte budget is refused, never truncated.";
+
+/**
+ * One Qdrant metadata read the model wrote, on a `qdrant` connection.
+ *
+ * R1 on a structural boundary: the client can build no write a console request names, and the server proves the key
+ * read-only before every request. Its own id, and not a widened `sql.query.read`, so the SQL contract and its audit
+ * action stay exactly what they were.
+ */
+const qdrantapiQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "qdrantapi.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: qdrantapiAgentReadInput,
+  verification: {
+    reviewedBy: "Qdrant agent execution design review",
+    boundary: QDRANTAPI_READ_BOUNDARY,
+    verifiedOn: "2026-10-30",
+  },
+};
+
 /** The selector of a scoped MongoDB catalog read: a kind, a database and a collection, any of them narrowed. */
 const mongoCatalogSelectorInput = z.strictObject({
   kind: z.enum(["columns", "indexes"]).default("columns"),
@@ -680,6 +716,7 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   libredbkvQueryReadDescriptor,
   influxqlQueryReadDescriptor,
   weaviateapiQueryReadDescriptor,
+  qdrantapiQueryReadDescriptor,
 ]);
 
 /**

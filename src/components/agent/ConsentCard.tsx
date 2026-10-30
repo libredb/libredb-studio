@@ -115,6 +115,7 @@ const HANDOVER_CHIPS: Readonly<Record<AgentStatementLanguageId, readonly Handove
   libredbkv: [],
   influxql: [],
   weaviateapi: [],
+  qdrantapi: [],
 };
 
 export function ConsentCard({

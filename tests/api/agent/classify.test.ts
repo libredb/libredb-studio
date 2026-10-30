@@ -226,6 +226,19 @@ describe("POST /api/agent/classify", () => {
     });
   });
 
+  test("a Qdrant connection is classified in its own family's terms", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:points", name: "Points", type: "qdrant" });
+
+    const res = await POST(
+      classifyRequest({ objective: "how many points each collection holds", connectionId: "seed:points" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockClassify).toHaveBeenCalledWith("how many points each collection holds", {
+      statementLanguage: "qdrantapi",
+    });
+  });
+
   test("a connection with no statement language is classified in SQL's terms", async () => {
     mockResolveConnection.mockResolvedValueOnce({ id: "seed:cache", name: "Cache", type: "redis" });
 

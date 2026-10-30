@@ -60,6 +60,7 @@ describe("canonical operation registry", () => {
       "mongo.query.read",
       "mongo.schema.read",
       "mongo.table.profile",
+      "qdrantapi.query.read",
       "sql.explain.analyze",
       "sql.explain.estimate",
       "sql.query.read",
@@ -188,6 +189,7 @@ describe("the statement-read operations", () => {
       "kubectl.query.read",
       "libredbkv.query.read",
       "mongo.query.read",
+      "qdrantapi.query.read",
       "sql.query.read",
       "weaviateapi.query.read",
     ]);

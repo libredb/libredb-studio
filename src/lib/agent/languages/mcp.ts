@@ -76,6 +76,8 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   influxql: null,
   // No MCP statement tool yet: MCP read stays closed on Weaviate until a change of its own declares one and opens it.
   weaviateapi: null,
+  // No MCP statement tool yet: MCP read stays closed on Qdrant until a change of its own declares one and opens it.
+  qdrantapi: null,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageMcpFacet | null>);
 
 /** A facet some language declares, with its tool's name as a literal. */

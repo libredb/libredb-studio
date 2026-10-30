@@ -944,6 +944,20 @@ describe("createDatabaseProvider", () => {
     await expect(operations.connect()).rejects.not.toBeInstanceOf(ExecutionProfileError);
   });
 
+  test("the execution context rides along to qdrant: a keyless agent open is refused before any request", async () => {
+    // Port 1 on loopback answers nothing, so an open that dialled would fail as unreachable, not as this refusal.
+    const conn = makeConnection("qdrant", { host: "127.0.0.1", port: 1, user: "", password: "" });
+    const profiled = await createDatabaseProvider(conn, {}, { readOnly: true, sendsStatements: true });
+    const error = await profiled.connect().then(
+      () => undefined,
+      (failure: unknown) => failure,
+    );
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_SERVER_UNENFORCED");
+    const operations = await createDatabaseProvider(conn, {}, { readOnly: true, sendsStatements: false });
+    await expect(operations.connect()).rejects.not.toBeInstanceOf(ExecutionProfileError);
+  });
+
   test("the execution context rides along to influxdb: queryReadOnly answers only under the agent profile", async () => {
     const conn = makeConnection("influxdb", { port: 18086, user: "", password: "not-a-real-token", database: "home" });
     const profiled = await createDatabaseProvider(conn, {}, { readOnly: true, sendsStatements: true });

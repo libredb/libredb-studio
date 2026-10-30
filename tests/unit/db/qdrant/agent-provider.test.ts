@@ -221,7 +221,12 @@ describe("one agent request", () => {
     const result = await provider.queryReadOnly("POST /collections/plain/points/count", BUDGET);
     const sent = wire.requests.slice(PROOF.length);
     expect(sent.map(({ method, url, body }) => [method, url, body])).toEqual([
-      ["POST", `${ORIGIN}/collections/plain/points/count?timeout=4`, '{"exact":true}'],
+      // A second short of the 5 s budget, less what the clock has run since the request began: 4, or 3 past 1 ms.
+      [
+        "POST",
+        expect.stringMatching(/^http:\/\/127\.0\.0\.1:6333\/collections\/plain\/points\/count\?timeout=[34]$/),
+        '{"exact":true}',
+      ],
     ]);
     expect(result.rows).toEqual([{ collection: "plain", count: 3 }]);
   });

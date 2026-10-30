@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B153 · 83
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B154 · 84
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -8598,6 +8598,20 @@ Kept so that value exposure and MCP exposure on Weaviate are decisions of their 
 Found 2026-10-30 with agent execution on Weaviate.
 
 **Done when:** the owner rules on which stored values agent mode may read on Weaviate and how they are redacted, the `weaviateapi` pack offers the workflows that ruling opens, the owner opens MCP read for Weaviate, the pack declares its MCP facet (`src/lib/agent/languages/weaviateapi/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same viewer proof and projection, and `MCP_STATEMENT_READ.weaviate` is true, with tests; cited in `docs/AGENT.md`.
+
+### B154. Qdrant's agent reads are metadata only, and it has no MCP statement tool
+
+Agent mode executes Qdrant metadata reads under the `qdrantapi` statement language, from a key the server refuses an empty alias update and an empty point delete on every collection it lists before every request (`docs/providers/qdrant.md`, section Agent mode).
+Every answer is projected to names, counts and flags (`ProviderCapabilities.metadataOnly`, `src/lib/db/redaction/metadata-only.ts`), and point reads, scrolls, facets, every query and a count's `filter` and `shard_key` are refused before anything is sent, because their answers or their counts carry stored payloads and vectors, and a query naming an inference object makes the server call its inference address.
+So the language offers the investigation and the operations workflow only: data analysis needs stored values, and query optimization and database assessment need a plan and a profile the server does not compose.
+Its MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`), so no MCP tool runs a Qdrant request; `MCP_STATEMENT_READ.qdrant` is false and the MCP metadata tools work (`MCP_EXPOSABLE.qdrant` is true).
+A key listing more than 32 collections is refused, because the proof sends one empty delete per listed collection before every request; a JWT whose access is `r` on the collections the agent should read is the remedy.
+A server with no key configured has no server-side boundary, so a connection to one is refused under the agent profile rather than read through the route table alone.
+Kept so that value exposure, MCP exposure and agent reads on open servers are decisions of their own rather than side effects of agent mode joining.
+
+Found 2026-10-30 with agent execution on Qdrant.
+
+**Done when:** the owner rules on which stored values agent mode may read on Qdrant and how they are redacted, the `qdrantapi` pack offers the workflows that ruling opens, the owner opens MCP read for Qdrant, the pack declares its MCP facet (`src/lib/agent/languages/qdrantapi/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same read-only proof and projection, and `MCP_STATEMENT_READ.qdrant` is true, with tests; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

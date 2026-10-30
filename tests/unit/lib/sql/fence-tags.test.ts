@@ -177,6 +177,12 @@ describe("fenceTagEngine", () => {
     expect(fenceTagEngine("weaviate")).toBe("weaviate");
   });
 
+  test("qdrantapi names qdrant, the agent's name for the only request language qdrant runs", () => {
+    expect(fenceTagEngine("qdrantapi")).toBe("qdrant");
+    expect(isQueryFenceTag("qdrantapi")).toBe(true);
+    expect(fenceTagEngine("qdrant")).toBe("qdrant");
+  });
+
   test("libredbkv names libredb, the agent's name for the only command language libredb runs", () => {
     expect(fenceTagEngine("libredbkv")).toBe("libredb");
     expect(isQueryFenceTag("libredbkv")).toBe(true);
