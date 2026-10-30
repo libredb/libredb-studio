@@ -350,7 +350,7 @@ annotations:
   # operator.clusterStudioNamespace in its descriptions and in the operator namespace guard's
   # message, and under operator.managed refuses serviceAccount.create=false. No value or default
   # moves, and a Helm install renders as before.
-  # False: 0.1.118 adds openshift.consolePlugin, off by default, so an install that does not set it
+  # False: 0.1.118 adds openshift.consolePlugin, disabled unless set, so an install that does not set it
   # renders as before. On, it renders the OpenShift console plugin's server and the ConsolePlugin
   # libredb-studio: on a Helm install in a namespace of their own, refused in the release's namespace,
   # a discovered namespace and a requested project; under the OLM operator in the operator's own
@@ -375,7 +375,7 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "openshift.consolePlugin (off by default) renders the OpenShift console plugin's server and its ConsolePlugin: on a Helm install in a namespace that is not the release's own, a discovered one or a requested project; under the OLM operator, in the operator's own namespace"
+    - "openshift.consolePlugin (default false) renders the OpenShift console plugin's server and its ConsolePlugin: on a Helm install in a namespace that is not the release's own, a discovered one or a requested project; under the OLM operator, in the operator's own namespace"
 dependencies:
   - name: postgresql
     version: "16.x.x"
