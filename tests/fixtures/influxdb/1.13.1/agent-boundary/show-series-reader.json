@@ -1,0 +1,20 @@
+{
+  "version": "1.13.1",
+  "name": "agent-boundary/show-series-reader",
+  "image": "influxdb:1.13.1@sha256:3e3913d3b7512d1749922c8183bbf2a76973dd9f98e1a1e3249c652ec1576fc0",
+  "capturedAt": "2026-10-30",
+  "principal": "reader: READ on home",
+  "request": {
+    "method": "POST",
+    "path": "/query",
+    "query": {},
+    "form": {
+      "db": "home",
+      "q": "SHOW SERIES"
+    },
+    "auth": "basic"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "body": "{\"results\":[{\"statement_id\":0,\"series\":[{\"columns\":[\"key\"],\"values\":[[\"big,h=h0\"],[\"big,h=h1\"],[\"big,h=h10\"],[\"big,h=h11\"],[\"big,h=h12\"],[\"big,h=h13\"],[\"big,h=h14\"],[\"big,h=h15\"],[\"big,h=h16\"],[\"big,h=h17\"],[\"big,h=h18\"],[\"big,h=h19\"],[\"big,h=h2\"],[\"big,h=h20\"],[\"big,h=h21\"],[\"big,h=h22\"],[\"big,h=h23\"],[\"big,h=h24\"],[\"big,h=h25\"],[\"big,h=h26\"],[\"big,h=h27\"],[\"big,h=h28\"],[\"big,h=h29\"],[\"big,h=h3\"],[\"big,h=h30\"],[\"big,h=h31\"],[\"big,h=h32\"],[\"big,h=h33\"],[\"big,h=h34\"],[\"big,h=h35\"],[\"big,h=h36\"],[\"big,h=h37\"],[\"big,h=h38\"],[\"big,h=h39\"],[\"big,h=h4\"],[\"big,h=h40\"],[\"big,h=h41\"],[\"big,h=h42\"],[\"big,h=h43\"],[\"big,h=h44\"],[\"big,h=h45\"],[\"big,h=h46\"],[\"big,h=h47\"],[\"big,h=h48\"],[\"big,h=h49\"],[\"big,h=h5\"],[\"big,h=h6\"],[\"big,h=h7\"],[\"big,h=h8\"],[\"big,h=h9\"],[\"home,room=Kitchen\"],[\"home,room=Living\"]]}]}]}\n"
+}

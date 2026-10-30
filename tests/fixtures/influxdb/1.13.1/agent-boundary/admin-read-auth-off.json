@@ -1,0 +1,19 @@
+{
+  "version": "1.13.1",
+  "name": "agent-boundary/admin-read-auth-off",
+  "image": "influxdb:1.13.1@sha256:3e3913d3b7512d1749922c8183bbf2a76973dd9f98e1a1e3249c652ec1576fc0",
+  "capturedAt": "2026-10-30",
+  "principal": "auth-off: no credential, authentication off",
+  "request": {
+    "method": "POST",
+    "path": "/query",
+    "query": {},
+    "form": {
+      "q": "SHOW USERS"
+    },
+    "auth": "none"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "body": "{\"results\":[{\"statement_id\":0,\"series\":[{\"columns\":[\"user\",\"admin\"]}]}]}\n"
+}
