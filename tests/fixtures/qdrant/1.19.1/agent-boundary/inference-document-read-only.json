@@ -1,0 +1,22 @@
+{
+  "version": "1.19.1",
+  "name": "agent-boundary/inference-document-read-only",
+  "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1@sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+  "capturedAt": "2026-10-30",
+  "principal": "read-only: the server's read-only API key",
+  "request": {
+    "method": "POST",
+    "path": "/collections/plain/points/query",
+    "auth": "api-key",
+    "body": {
+      "query": {
+        "text": "stored text",
+        "model": "not-a-real-model"
+      }
+    }
+  },
+  "status": 500,
+  "contentType": "application/json",
+  "body": "{\"status\":{\"error\":\"Service internal error: Inference service error (500 Internal Server Error): \"},\"time\":0.004709979}",
+  "egressRequests": 1
+}

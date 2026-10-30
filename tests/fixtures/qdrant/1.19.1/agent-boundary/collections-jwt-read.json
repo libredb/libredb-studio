@@ -1,0 +1,15 @@
+{
+  "version": "1.19.1",
+  "name": "agent-boundary/collections-jwt-read",
+  "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1@sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+  "capturedAt": "2026-10-30",
+  "principal": "jwt-read: a JWT whose access claim is \"r\"",
+  "request": {
+    "method": "GET",
+    "path": "/collections",
+    "auth": "api-key"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "body": "{\"result\":{\"collections\":[{\"name\":\"docs\"},{\"name\":\"other\"},{\"name\":\"plain\"}]},\"status\":\"ok\",\"time\":1.022e-6}"
+}

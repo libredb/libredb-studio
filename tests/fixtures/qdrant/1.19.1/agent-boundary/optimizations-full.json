@@ -1,0 +1,15 @@
+{
+  "version": "1.19.1",
+  "name": "agent-boundary/optimizations-full",
+  "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1@sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+  "capturedAt": "2026-10-30",
+  "principal": "full: the server's API key",
+  "request": {
+    "method": "GET",
+    "path": "/collections/plain/optimizations",
+    "auth": "api-key"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "body": "{\"result\":{\"summary\":{\"queued_optimizations\":0,\"queued_segments\":0,\"queued_points\":0,\"idle_segments\":2},\"running\":[]},\"status\":\"ok\",\"time\":0.000010903}"
+}

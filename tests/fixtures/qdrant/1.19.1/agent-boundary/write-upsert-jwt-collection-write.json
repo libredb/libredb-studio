@@ -1,0 +1,31 @@
+{
+  "version": "1.19.1",
+  "name": "agent-boundary/write-upsert-jwt-collection-write",
+  "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1@sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+  "capturedAt": "2026-10-30",
+  "principal": "jwt-collection-write: a JWT whose access claim is [{\"collection\":\"plain\",\"access\":\"rw\"}]",
+  "request": {
+    "method": "PUT",
+    "path": "/collections/plain/points?wait=true",
+    "auth": "api-key",
+    "body": {
+      "points": [
+        {
+          "id": 98,
+          "vector": [
+            0.1,
+            0.2,
+            0.3,
+            0.4
+          ],
+          "payload": {
+            "city": "written"
+          }
+        }
+      ]
+    }
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "body": "{\"result\":{\"operation_id\":5,\"status\":\"completed\"},\"status\":\"ok\",\"time\":0.001281421}"
+}

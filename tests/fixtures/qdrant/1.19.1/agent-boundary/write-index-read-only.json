@@ -1,0 +1,19 @@
+{
+  "version": "1.19.1",
+  "name": "agent-boundary/write-index-read-only",
+  "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1@sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+  "capturedAt": "2026-10-30",
+  "principal": "read-only: the server's read-only API key",
+  "request": {
+    "method": "PUT",
+    "path": "/collections/plain/index?wait=true",
+    "auth": "api-key",
+    "body": {
+      "field_name": "note",
+      "field_schema": "keyword"
+    }
+  },
+  "status": 403,
+  "contentType": "application/json",
+  "body": "{\"status\":{\"error\":\"Forbidden: Global manage access is required\"},\"time\":5.151e-6}"
+}

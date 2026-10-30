@@ -1,0 +1,15 @@
+{
+  "version": "1.19.1",
+  "name": "agent-boundary/cluster-jwt-read",
+  "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1@sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+  "capturedAt": "2026-10-30",
+  "principal": "jwt-read: a JWT whose access claim is \"r\"",
+  "request": {
+    "method": "GET",
+    "path": "/collections/plain/cluster",
+    "auth": "api-key"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "body": "{\"result\":{\"peer_id\":4665558133302236,\"shard_count\":1,\"local_shards\":[{\"shard_id\":0,\"points_count\":3,\"state\":\"Active\"}],\"remote_shards\":[],\"shard_transfers\":[]},\"status\":\"ok\",\"time\":0.000014699}"
+}

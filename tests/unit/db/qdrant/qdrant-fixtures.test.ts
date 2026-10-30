@@ -70,12 +70,19 @@ const context = (op: QdrantOp, phase: "connect" | "request" = "request"): Qdrant
   now: () => NOW,
 });
 
+/**
+ * The agent boundary captures are written by their own run.sh in a shape of their own, and
+ * tests/unit/db/qdrant/agent-captures.test.ts holds them; so are the probe script and its directory.
+ */
+const AGENT_BOUNDARY = /^(?:1\.19\.1\/agent-boundary\/|agent-boundary-probe\.mjs$)/;
+
 function filesOnDisk(): string[] {
   return readdirSync(QDRANT_FIXTURES_DIR, { recursive: true, withFileTypes: true })
     .filter((entry) => entry.isFile())
     .map((entry) =>
       path.relative(QDRANT_FIXTURES_DIR, path.join(entry.parentPath, entry.name)).split(path.sep).join("/"),
     )
+    .filter((name) => !AGENT_BOUNDARY.test(name))
     .sort();
 }
 

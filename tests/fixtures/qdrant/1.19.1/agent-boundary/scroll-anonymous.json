@@ -1,0 +1,20 @@
+{
+  "version": "1.19.1",
+  "name": "agent-boundary/scroll-anonymous",
+  "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1@sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+  "capturedAt": "2026-10-30",
+  "principal": "anonymous: no key, on the server with keys",
+  "request": {
+    "method": "POST",
+    "path": "/collections/plain/points/scroll",
+    "auth": "none",
+    "body": {
+      "limit": 3,
+      "with_payload": true,
+      "with_vector": true
+    }
+  },
+  "status": 401,
+  "contentType": null,
+  "body": "Must provide an API key or an Authorization bearer token"
+}

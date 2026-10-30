@@ -1,0 +1,18 @@
+{
+  "version": "1.19.1",
+  "name": "agent-boundary/proof-delete-other-read-only",
+  "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1@sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+  "capturedAt": "2026-10-30",
+  "principal": "read-only: the server's read-only API key",
+  "request": {
+    "method": "POST",
+    "path": "/collections/other/points/delete",
+    "auth": "api-key",
+    "body": {
+      "points": []
+    }
+  },
+  "status": 403,
+  "contentType": "application/json",
+  "body": "{\"status\":{\"error\":\"Forbidden: Global manage access is required\"},\"time\":3.71e-6}"
+}
