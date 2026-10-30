@@ -1,0 +1,15 @@
+{
+  "version": "1.40.2",
+  "name": "agent-boundary/object-viewer",
+  "image": "cr.weaviate.io/semitechnologies/weaviate:1.40.2@sha256:0083587dc01f33112e5406ce9b471df1abea480c71a0407af903929a389ae08a",
+  "capturedAt": "2026-10-30",
+  "principal": "viewer: db user holding the built-in viewer role",
+  "request": {
+    "method": "GET",
+    "path": "/v1/objects/Note/00000000-0000-4000-8000-000000000001?include=vector",
+    "auth": "bearer"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "body": "{\"class\":\"Note\",\"creationTimeUnix\":0,\"id\":\"00000000-0000-4000-8000-000000000001\",\"lastUpdateTimeUnix\":0,\"properties\":{\"body\":\"stored-body-1\",\"meta\":{\"name\":\"stored-nested-1\"},\"objectCount\":\"stored-count-1\"},\"vector\":[0.1,0.2,0.3,0.4],\"vectorWeights\":null}\n"
+}

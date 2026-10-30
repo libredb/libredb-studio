@@ -1,0 +1,15 @@
+{
+  "version": "1.40.2",
+  "name": "agent-boundary/own-info-viewer",
+  "image": "cr.weaviate.io/semitechnologies/weaviate:1.40.2@sha256:0083587dc01f33112e5406ce9b471df1abea480c71a0407af903929a389ae08a",
+  "capturedAt": "2026-10-30",
+  "principal": "viewer: db user holding the built-in viewer role",
+  "request": {
+    "method": "GET",
+    "path": "/v1/users/own-info",
+    "auth": "bearer"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "body": "{\"groups\":null,\"roles\":[{\"name\":\"viewer\",\"permissions\":[{\"action\":\"read_roles\",\"roles\":{\"role\":\"*\",\"scope\":\"all\"}},{\"action\":\"read_backups\",\"backups\":{\"collection\":\"*\"}},{\"action\":\"read_users\",\"users\":{\"users\":\"*\"}},{\"action\":\"read_cluster\"},{\"action\":\"read_groups\",\"groups\":{\"group\":\"*\",\"groupType\":\"oidc\"}},{\"action\":\"read_nodes\",\"nodes\":{\"collection\":\"*\",\"verbosity\":\"verbose\"}},{\"action\":\"read_collections\",\"collections\":{\"collection\":\"*\"}},{\"action\":\"read_data\",\"data\":{\"collection\":\"*\",\"object\":\"*\",\"tenant\":\"*\"}},{\"action\":\"read_tenants\",\"tenants\":{\"collection\":\"*\",\"tenant\":\"*\"}},{\"action\":\"read_replicate\",\"replicate\":{\"collection\":\"*\",\"shard\":\"*\"}},{\"action\":\"read_aliases\",\"aliases\":{\"alias\":\"*\",\"collection\":\"*\"}},{\"action\":\"read_mcp\"}]}],\"username\":\"viewer\"}\n"
+}

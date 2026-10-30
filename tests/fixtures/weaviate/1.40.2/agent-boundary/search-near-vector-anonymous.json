@@ -1,0 +1,24 @@
+{
+  "version": "1.40.2",
+  "name": "agent-boundary/search-near-vector-anonymous",
+  "image": "cr.weaviate.io/semitechnologies/weaviate:1.40.2@sha256:0083587dc01f33112e5406ce9b471df1abea480c71a0407af903929a389ae08a",
+  "capturedAt": "2026-10-30",
+  "principal": "anonymous: no key, anonymous access off",
+  "request": {
+    "method": "POST",
+    "path": "/v1/search/Note/near-vector",
+    "body": {
+      "vector": [
+        0.1,
+        0.2,
+        0.3,
+        0.4
+      ],
+      "limit": 2
+    },
+    "auth": "none"
+  },
+  "status": 401,
+  "contentType": "text/plain; charset=utf-8",
+  "body": "{\"code\":401,\"message\": \"anonymous access not enabled. Please authenticate through one of the available methods: [API-keys]\" }"
+}

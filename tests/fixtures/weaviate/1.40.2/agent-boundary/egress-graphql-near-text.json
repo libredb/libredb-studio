@@ -1,0 +1,19 @@
+{
+  "version": "1.40.2",
+  "name": "agent-boundary/egress-graphql-near-text",
+  "image": "cr.weaviate.io/semitechnologies/weaviate:1.40.2@sha256:0083587dc01f33112e5406ce9b471df1abea480c71a0407af903929a389ae08a",
+  "capturedAt": "2026-10-30",
+  "principal": "viewer: db user holding the built-in viewer role",
+  "request": {
+    "method": "POST",
+    "path": "/v1/graphql",
+    "body": {
+      "query": "{ Get { Doc(nearText: {concepts: [\"doc\"]}, limit: 1) { body } } }"
+    },
+    "auth": "bearer"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "body": "{\"data\":{\"Get\":{\"Doc\":null}},\"errors\":[{\"locations\":[{\"column\":9,\"line\":1}],\"message\":\"explorer: get class: concurrentTargetVectorSearch: explorer: get class: vectorize search vector: vectorize params: vectorize params: vectorize keywords: remote client vectorize: failed to parse vectorization response (status 500): unexpected end of JSON input\",\"path\":[\"Get\",\"Doc\"]}]}\n",
+  "egressRequests": 1
+}
