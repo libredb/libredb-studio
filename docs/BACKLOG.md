@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D412, U17 · 302
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U172 · 158
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U173 · 159
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -6098,6 +6098,7 @@ Seen again 2026-10-30 on Qdrant 1.19.1 in a browser pass: the API key and a JWT 
 Seen again 2026-10-30 on Neo4j Enterprise 5.26.31 in a browser pass: the administrator, a reader given a second role holding `LOAD ON ALL DATA`, a user with the `editor` role, a reader on a server with an extension it can execute, and the reader granted `csv_loader` and then `editor` mid-run each got the generic sentence, while the server log carried the provider's own, for example "this one holds LOAD on ALL DATA through the role csv_loader. Revoke LOAD from PUBLIC and from every role the user holds, or DENY LOAD ON ALL DATA to one of its roles" and "this one holds write on NODE(*) through the role editor" (runs `arun_ed755caa5c9246159791c925a8a7fd37`, `arun_c4d3e16d50c44348805ff9aa8a678d91`, `arun_fee86c69494545d9b42ac804381c0f02`, `arun_a51f13bcf17045a48f1ad15ebfd99330`, `arun_80e22ed174734bc7b5fbb4c23a3748ca`, `arun_2f4cf8e99b08464c9294812df115fd65`).
 Seen again 2026-10-30 on Milvus 3.0.2 in a browser pass: root, a `CollectionReadWrite` user, a reader holding `Insert` on a second database, and the reader granted `Insert` mid-run each got the generic sentence, while the server log carried the provider's own, for example "This Milvus user holds "Insert" through one of its roles or public, which is not a read Studio admits ..." and "The agent read-only profile refuses Milvus's root user, which may do anything though Milvus lists it no role" (runs `arun_1fb64fc20d8341fb90940eb1ac8567cd`, `arun_861dc42859654b53be379558b233ad85`, `arun_e9c6f61584e642bcab9cb20ea73eec3d`, `arun_a7312f02a7fa4aa08df77b5494980880`).
 Seen again 2026-10-30 on Redis 8.10.2 and Valkey 9.1.2 in a browser pass: the `~* &* +@all` user, a `~app:* +@read +@write` user, the `default` user named in the connection, and a `~* +@read` reader granted `+set` mid-run each got the generic sentence, while the server log carried the provider's own, for example "This Redis user may run DEL and was refused it only by its key or channel permissions, so it may change what its own patterns allow" and "This Redis user may run SET, which the read-only proof sends against a key that does not exist ..." (runs `arun_da9b3e4c68184ce49c62081980576f12`, `arun_0539148ad0d54046a0b54d84afe2d6b3`).
+Seen again 2026-10-30 on etcd v3.7.2 in a browser pass: `root`, a user holding the root role, a user holding READWRITE on `/scratch/`, and a READ-on-every-key reader whose role was granted READWRITE on `/scratch/` mid-run each got the generic sentence, while the server log carried the provider's own, for example "This etcd user holds the root role, which may read and write every key" and "A role of this etcd user grants WRITE or READWRITE on a key range, so the user may change keys. Give the agent an etcd user of its own whose roles grant READ permissions only" (runs `arun_71925bf5986b4503be5493164c9c43d5`, `arun_237529c6e3404473a7a11a1937f15890`, `arun_d58dd12179294286a4f435a56492bbcb`, `arun_abd3532452c147f9a1635304f2b58397`).
 
 **Done when:** the rail shows the refusal's own remedies (statements or policy names) beside its code, from the shared refusal path rather than a type-id branch, the generic sentence no longer claims the credential holds privileges when the refusal is about the database, and a component test pins both texts.
 
@@ -6153,6 +6154,7 @@ Seen again 2026-10-30 on Qdrant 1.19.1 in a browser pass: a run asked to pass el
 Seen again 2026-10-30 on Neo4j Enterprise 5.26.31 in a browser pass: asked to pass two `LOAD CSV` forms, `CREATE`, `MERGE`, `SET`, `DETACH DELETE`, `CALL { } IN TRANSACTIONS` and `USE other` to `run_read_query`, each was refused before anything was sent and the run finished `answered` with one claim about the schema inventory and no word of the eight refusals (run `arun_a5d133c691c948d9a09d60ef611ae417`); the next run, asked for nine procedure, APOC and comment forms, did report each refusal, so it still depends on the model's wording.
 Seen again 2026-10-30 on Milvus 3.0.2 in a browser pass: two runs on a reader asked to pass an exact insert, upsert, delete, collection create and drop, index create, load, release, flush, compaction and alias alter to `run_read_query` drafted none of them and finished `answered` with the collection list and a row count and no word of the eleven requests (runs `arun_70eaf9fb14314b1bb1c147a2d675958a`, `arun_1c54f478ca6640f595a5dd7336e90d2c`); a run asked for seven value reads did pass each one and each was refused before anything was sent, yet its answer carried two claims about the collection list and the row count and no word of the seven refusals (run `arun_7ba4cb533d514bc2a68b6c3b8335d45c`).
 Seen again 2026-10-30 on Redis 8.10.2 and Valkey 9.1.2 in a browser pass: a reader run asked to pass `SET`, `DEL`, `EXPIRE`, `FLUSHALL`, `CONFIG SET` and `PUBLISH`, and one asked for eleven exact key listings, value reads, `INFO`, `CLIENT LIST`, `EVAL_RO` and writes, had each refused before anything was sent (`STATEMENT_NOT_ADMITTED`) and finished `answered` with the key count or the schema inventory and no word of the refusals (runs `arun_99eba3db246d4afe90057698e9fad5dc`, `arun_9fbf210c14aa4292837cf7fdaab84d60`); two earlier Redis runs asked for the same list drafted none of it.
+Seen again 2026-10-30 on etcd v3.7.2 in a browser pass: reader runs asked to pass eleven exact writes and maintenance calls (`put`, `del`, `compaction`, `defrag`, `lease grant`, `lease revoke`, `snapshot save`, `member add`, `auth disable`, `alarm disarm`, `move-leader`) and eleven key listings and value reads had each refused before anything was sent (`STATEMENT_NOT_ADMITTED`) and finished `answered` with one claim about the schema inventory and no word of the refusals (runs `arun_5aeadd9883d64e93b4d622e5010805af`, `arun_50519bcbf3ae48ee9811496b84559669`); a third, asked for six refused forms and one admitted read, reported only the read (run `arun_17ddc9181e6844fc9e00b444ce387241`).
 
 **Done when:** a run whose only drafted statement was refused either reports that refusal in its answer, held by the run's verifier, or ends in a state other than `answered`, with an agent test that forces the refusal.
 
@@ -6170,6 +6172,7 @@ On a Cassandra agent connection, an Operate run called `inspect_operations` for 
 The provider declined each one with its own sentence ("This engine family publishes no honest table statistics ..."), in 0 to 2 ms, yet the ledger recorded each as `class: "database-error"` and the rail headed it "The database refused the statement" (`src/components/agent/timeline.ts`), which attributes Studio's sentence to the engine.
 The three refusals also used the run's three repair attempts, so the next call was refused with `REPAIR_BUDGET_EXHAUSTED` and the run stopped drafting.
 Seen 2026-10-30 in a browser pass on Apache Cassandra 5.0.9; not checked on the other engines whose providers decline these panels.
+Seen again 2026-10-30 on etcd v3.7.2 in a browser pass: an Operate run on a reader and one on `root` called `inspect_operations` for the table statistics, which the provider declines on an agent-mode handle before anything is sent ("Agent mode on etcd reads metadata only, and key names count as stored values, so no key, key prefix or key range is listed to it."), and the rail headed it "The database refused the statement"; the `root` run showed one repair attempt spent (runs `arun_991c5b8f9b6f4bdfb1076e7ddbd8b429`, `arun_3c3832b0df50402e8cdd7ad992db7728`).
 
 **Done when:** a panel the provider declines without sending a statement is recorded as not sent and headed "Refused before the database" with the provider's sentence as the detail, it does not count as a repair attempt, and a timeline test and an agent test pin both.
 
@@ -6187,6 +6190,7 @@ The "Schema captured" step and the answer's schema citation print the capture's 
 On Druid the snapshot holds the datasources and the `INFORMATION_SCHEMA` and `sys` tables (kind `system_table`), so a user who may read one datasource saw "11 datasources" and "Schema snapshot ctx_4d4f · 11 datasources", and the administrator "12 datasources" over two.
 The sidebar beside it said "Datasources 1".
 Seen 2026-10-30 on Apache Druid 37.0.0 in a browser pass; not checked on other engines whose schema lists system tables.
+Seen again 2026-10-30 on etcd v3.7.2 in a browser pass: the engine's noun is "key prefixes", and on an agent-mode handle the snapshot holds no key prefix at all, only members, leases, users and roles, so a reader saw "Schema snapshot ctx_6379 · 2 key prefixes" over one lease and one member, and `root` "10 key prefixes" over one lease, one member, five users and three roles; a model then answered that the inventory "lists two key prefixes: 79caa18e44831205 (Lease) and f0b46276439bf9ca (Member)" (run `arun_4d1f985413ba469dadafbc5bc97110c2`).
 
 **Done when:** the rail's count names only the objects of the noun's kind, or names the system tables as such, from the snapshot's object kinds rather than a type-id branch, with a timeline test on a capture that mixes datasources and system tables.
 
@@ -6201,6 +6205,7 @@ Seen again 2026-10-30 on Weaviate 1.40.2 in a browser pass: the picker offered O
 Seen again 2026-10-30 on Neo4j Enterprise 5.26.31 in a browser pass: the picker offered Optimize and Assess, which the `cypher` family does not offer (`docs/providers/neo4j.md` section 15.6), and Optimize was refused with the same sentence although investigation and data analysis run there.
 Seen 2026-10-30 on LibreDB in a browser pass.
 Seen again 2026-10-30 on Redis 8.10.2 in a browser pass: the picker offered Optimize, Assess and Analyze, which the `rediscli` family does not offer (`docs/providers/redis.md` section 16.5), and Analyze was refused with the same sentence although investigation runs there.
+Seen again 2026-10-30 on etcd v3.7.2 in a browser pass: the picker offered Optimize, Assess and Analyze, which the `etcdctl` family does not offer (`docs/providers/etcd.md` section 15.5), and Optimize was refused with the same sentence although investigation runs there.
 
 **Done when:** the refusal names the workflows the connection's statement language does offer, read from `AGENT_WORKFLOW_VARIANTS` rather than fixed text, the picker marks or hides a workflow that language has no variant for, and a test pins the sentence for `libredbkv`.
 
@@ -6212,6 +6217,7 @@ Seen 2026-10-30 on LibreDB in a browser pass, after choosing the Optimize workfl
 Seen again 2026-10-30 on InfluxDB 2.9.1, after the same Optimize refusal (U162).
 Seen again 2026-10-30 on Weaviate 1.40.2, after the Analyze refusal (U162).
 Seen again 2026-10-30 on Neo4j Enterprise 5.26.31, after the Optimize refusal (U162).
+Seen again 2026-10-30 on etcd v3.7.2, after the Optimize refusal (U162).
 
 **Done when:** a refused start does not announce the stored conversation as ended by a reload (it keeps the conversation, or says the start was refused), with a hook test that refuses a start after a finished run.
 
@@ -6226,6 +6232,7 @@ Seen 2026-10-30 on Weaviate 1.40.2 in a browser pass (runs `arun_9b350b7799f94f6
 Seen again 2026-10-30 on Qdrant 1.19.1 in a browser pass: a connection with no key was refused before any client was built (`keylessAgentRefusal` in `src/lib/db/providers/vector/qdrant/metadata-read.ts`), yet the rail named MongoDB's setting and the ledger's detail said "The server accepted a write it should have refused", though nothing was sent; the provider's sentence, which asks for a read-only API key or a JWT whose access is r, reached only the server log (run `arun_bffb88a186ee4600b9042c3c6da08908`).
 Seen again 2026-10-30 on Milvus 3.0.2 in a browser pass: a user on a server with `authorizationEnabled: false` was refused at open with the same sentence naming MongoDB's `security.authorization`, where the setting is Milvus's `common.security.authorizationEnabled`; the provider's own sentence, "Milvus answered this user the list of users, which it refuses every read-only user while authorization is on ... Turn authorization on, then give the agent a read-only user", reached only the server log (run `arun_608f660dbe654134b0a4e087cc7912e7`).
 Seen again 2026-10-30 on Redis 8.10.2 and Valkey 9.1.2 in a browser pass: a connection naming no user was refused before any socket, yet the rail named MongoDB's setting and the ledger's detail said "The server accepted a write it should have refused", though nothing was sent; the provider's sentence, which asks for an ACL user of the agent's own with `~*` and `+@read`, reached only the server log (runs `arun_6454fe4c64114120aefc7bb5f776d46d`, `arun_0ce4e95c4ef14eea8a63467d5be16240`).
+Seen again 2026-10-30 on etcd v3.7.2 in a browser pass: a connection naming no user to a server with authentication off was refused before any socket, yet the rail named MongoDB's setting, where the setting is etcd's `auth enable`; the provider's sentence, which asks for an etcd user of the agent's own whose roles grant READ permissions only, reached only the server log (run `arun_ac5d4d444a02498d85d010087bed37d6`).
 
 **Done when:** a refusal at open shows the provider's own sentence, or a per-engine remedy read from a contract row rather than a type-id branch, the rail no longer tells a keyless connection that its server does not enforce authorization, and a timeline test pins both Weaviate cases.
 
@@ -6300,6 +6307,14 @@ The Keys tab still lists that user's key groupings, under "Reading the databases
 Seen 2026-10-30 on Redis 8.10.2 and Valkey 9.1.2 in a browser pass, for `~* +@read` and `~app:* +@read` users; it predates agent mode on Redis.
 
 **Done when:** a refused `CONFIG GET databases` leaves the object list showing the connection's own database with the count withheld and its reason, the routes answer without a 500, and `tests/integration/db/redis-provider.test.ts` pins it against a `+@read` user.
+
+### U173. An agent run whose connection is refused when it opens shows "The server could not carry this run"
+
+When the provider refuses to open the connection with a `DatabaseConfigError`, a sentence written for the user, the drive classifies the failure as `internal` (`src/lib/agent/runtime.ts`) and the rail shows "The server could not carry this run. The reason is in the server log." (`src/components/agent/timeline.ts`), so the repair reaches only the server log.
+On an etcd connection with a User and Password to a server with authentication off, the server log read "Authentication is not enabled on this etcd, so the User and Password would not be used. Clear them to connect.", and the run drafted `endpoint status` before it failed.
+Seen 2026-10-30 on etcd v3.7.2 in a browser pass (run `arun_d1fb9b4d1afc4613b904c062263d3123`); the classification is not engine-specific, so any provider's configuration refusal at open shows the same.
+
+**Done when:** a configuration error raised while the run opens its connection reaches the rail as its own sentence under a reason of its own rather than `internal`, from the error class and not a type-id branch, with a timeline test and an agent runtime test that raise a `DatabaseConfigError` at acquisition.
 
 ## Dependencies
 
