@@ -262,7 +262,7 @@ describe("proveNeo4jAgentPrincipal", () => {
         throw cancelled;
       },
     };
-    expect(proveNeo4jAgentPrincipal(client, { ...OPTIONS, signal })).rejects.toBe(cancelled);
+    await expect(proveNeo4jAgentPrincipal(client, { ...OPTIONS, signal })).rejects.toBe(cancelled);
   });
 
   test.each<[string, Record<string, unknown>[]]>([

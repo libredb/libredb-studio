@@ -133,7 +133,7 @@ describe("queryReadOnly", () => {
 
   test("refuses on a provider that is not connected", async () => {
     const provider = new Neo4jProvider(CONNECTION, {}, AGENT_PROFILE, factory("agent").create);
-    expect(provider.queryReadOnly(READ, BUDGET)).rejects.toThrow();
+    await expect(provider.queryReadOnly(READ, BUDGET)).rejects.toThrow();
   });
 
   test("proves the principal again, then the gate, then one run, with the budget's bounds and nothing the caller chose", async () => {
@@ -183,10 +183,10 @@ describe("queryReadOnly", () => {
   test("refuses an estimating plan, and a bad budget, before anything is sent", async () => {
     const { provider, recording } = await opened();
     const before = recording.calls.length;
-    expect(provider.queryReadOnly(READ, BUDGET, "estimate-plan")).rejects.toThrow(
+    await expect(provider.queryReadOnly(READ, BUDGET, "estimate-plan")).rejects.toThrow(
       "Neo4j composes no estimating plan for the agent",
     );
-    expect(provider.queryReadOnly(READ, { ...BUDGET, maxResultRows: 0 })).rejects.toThrow(
+    await expect(provider.queryReadOnly(READ, { ...BUDGET, maxResultRows: 0 })).rejects.toThrow(
       "Read-only execution budget field maxResultRows",
     );
     expect(recording.calls.length).toBe(before);
@@ -196,7 +196,7 @@ describe("queryReadOnly", () => {
     const { provider, recording } = await opened("agent", AGENT_PROFILE, {
       [EXPLAIN_READ]: { ...EXPLAINED, queryType: "w" },
     });
-    expect(provider.queryReadOnly(READ, BUDGET)).rejects.toThrow("classifies this statement as write");
+    await expect(provider.queryReadOnly(READ, BUDGET)).rejects.toThrow("classifies this statement as write");
     await Bun.sleep(0);
     expect(statementsOf(recording)).not.toContain(READ);
   });
@@ -223,7 +223,7 @@ describe("queryReadOnly", () => {
   test("a transport failure of the statement or of a proof read during a cancel goes through the error table", async () => {
     const cancelled = new GraphClientError("cancelled", "The query was cancelled");
     const { provider } = await opened("agent", AGENT_PROFILE, { [EXPLAIN_READ]: EXPLAINED, [READ]: cancelled });
-    expect(provider.queryReadOnly(READ, BUDGET)).rejects.toThrow("The query was cancelled.");
+    await expect(provider.queryReadOnly(READ, BUDGET)).rejects.toThrow("The query was cancelled.");
   });
 
   test("a proof read ended by the deadline is the deadline's error, mapped, not a refusal of the principal", async () => {
