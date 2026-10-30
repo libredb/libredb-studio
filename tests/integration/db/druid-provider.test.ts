@@ -3254,7 +3254,11 @@ describe("queryReadOnly", () => {
 
   test("a datasource the user may not read is the statement's to repair, not a failed sign-in", async () => {
     const recorded = recording(async () => {
-      throw new DruidTransportError("Druid refused the statement with HTTP 403: Unauthorized", "FORBIDDEN", "forbidden");
+      throw new DruidTransportError(
+        "Druid refused the statement with HTTP 403: Unauthorized",
+        "FORBIDDEN",
+        "forbidden",
+      );
     });
     const provider = await open(recorded);
     const error = await provider.queryReadOnly("SELECT n FROM other", AGENT_BUDGET).catch((caught: unknown) => caught);
