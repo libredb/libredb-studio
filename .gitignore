@@ -86,10 +86,11 @@ Thumbs.db
 .cache
 
 
-!.claude/skills
 .orchids/
 .codegraph/
-.claude/
+# Only the skills under .claude/ are shared; a negation cannot reach inside an ignored directory.
+.claude/*
+!.claude/skills/
 
 
 testdb
