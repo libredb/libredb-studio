@@ -1,0 +1,148 @@
+{{- /*
+The OpenShift console plugin (openshift.consolePlugin): the plugin's nginx server in
+openshift.consolePlugin.namespace and the cluster-scoped ConsolePlugin libredb-studio that points the
+console at it. The console loads the plugin's bundle into every console session and sends each
+console user's bearer token on every asset fetch to this server, so the server runs only where
+cluster admins alone write (the guards in _helpers.tpl, consolePluginGuards), from an image pinned
+by digest, as its own ServiceAccount with no token, with a read-only root and the configuration the
+image bakes in: no value sets its command, its environment or a file under /etc/nginx. The
+ConsolePlugin declares no proxy and no content security policy. Nothing here is a Job, ClusterRole
+or ClusterRoleBinding: a cluster admin turns the plugin on in the console.
+*/}}
+{{- if include "libredb-studio.consolePluginEnabled" . }}
+{{- include "libredb-studio.consolePluginGuards" . }}
+{{- $plugin := .Values.openshift.consolePlugin }}
+{{- $name := include "libredb-studio.consolePluginName" . }}
+{{- $namespace := $plugin.namespace | toString | trim }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "libredb-studio.consolePluginLabels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "libredb-studio.consolePluginLabels" . | nindent 4 }}
+    {{- with include "libredb-studio.topologyLabels" . }}
+    {{- . | nindent 4 }}
+    {{- end }}
+spec:
+  replicas: {{ $plugin.replicas | default 2 | int }}
+  selector:
+    matchLabels:
+      {{- include "libredb-studio.consolePluginSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "libredb-studio.consolePluginLabels" . | nindent 8 }}
+        {{- with include "libredb-studio.topologyLabels" . }}
+        {{- . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ $name }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: console-plugin
+          image: {{ $plugin.image | toString | trim | quote }}
+          imagePullPolicy: {{ $plugin.imagePullPolicy | default "IfNotPresent" }}
+          ports:
+            - name: https
+              containerPort: 9443
+              protocol: TCP
+          {{- with $plugin.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: plugin-serving-cert
+              mountPath: /var/cert
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: plugin-serving-cert
+          secret:
+            secretName: {{ printf "%s-cert" $name }}
+            defaultMode: 420
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "libredb-studio.consolePluginLabels" . | nindent 4 }}
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: {{ printf "%s-cert" $name }}
+spec:
+  selector:
+    {{- include "libredb-studio.consolePluginSelectorLabels" . | nindent 4 }}
+  ports:
+    - name: https
+      protocol: TCP
+      port: 9443
+      targetPort: 9443
+---
+{{- /* Only the console's pods fetch the plugin's assets, and nginx needs nothing else: no egress
+       rule, so a compromised server or image cannot send what it receives anywhere. */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "libredb-studio.consolePluginLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "libredb-studio.consolePluginSelectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-console
+      ports:
+        - protocol: TCP
+          port: 9443
+  egress: []
+---
+apiVersion: console.openshift.io/v1
+kind: ConsolePlugin
+metadata:
+  name: libredb-studio
+  labels:
+    {{- include "libredb-studio.consolePluginLabels" . | nindent 4 }}
+spec:
+  displayName: LibreDB Studio
+  i18n:
+    loadType: Preload
+  backend:
+    type: Service
+    service:
+      name: {{ $name }}
+      namespace: {{ $namespace }}
+      port: 9443
+      basePath: /
+{{- end }}

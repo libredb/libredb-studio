@@ -1410,7 +1410,7 @@ describe("install notes in openshift mode", () => {
     return rendered?.data?.notes ?? "";
   }
 
-  test("names the mode, where people sign in, the admin rule and that the console plugin is not in this release", () => {
+  test("names the mode, where people sign in and the admin rule", () => {
     const text = notes(OPENSHIFT);
     expect(text).toContain("Auth Provider:    openshift");
     expect(text).toContain(
@@ -1418,7 +1418,9 @@ describe("install notes in openshift mode", () => {
     );
     expect(text).toContain("OpenShift sign-in:");
     expect(text).toContain(`whoever may update the Deployment ${NAMESPACE}/${RELEASE}`);
-    expect(text).toContain("The OpenShift console plugin is not part of this release");
+    expect(text).toContain(
+      "openshift.consolePlugin.enabled adds the OpenShift console plugin and openshift.consoleLink.enabled a link to Studio in the console.",
+    );
     expect(text).not.toContain("First-run credentials");
   });
 

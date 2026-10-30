@@ -2,7 +2,7 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting forty-two engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Apache Cassandra, libSQL, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Weaviate, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B
 type: application
-version: 0.1.117
+version: 0.1.118
 appVersion: "1.1.0"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -350,10 +350,19 @@ annotations:
   # operator.clusterStudioNamespace in its descriptions and in the operator namespace guard's
   # message, and under operator.managed refuses serviceAccount.create=false. No value or default
   # moves, and a Helm install renders as before.
+  # False: 0.1.118 adds openshift.consolePlugin, off by default, so an install that does not set it
+  # renders as before. On, it renders the OpenShift console plugin's server and the ConsolePlugin
+  # libredb-studio in a namespace of their own, refused in the release's namespace, a discovered
+  # namespace and a requested project, with no Job: a cluster admin turns the plugin on in the console.
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
       image: ghcr.io/libredb/libredb-studio:1.1.0
+      platforms:
+        - linux/amd64
+        - linux/arm64
+    - name: libredb-studio-openshift-plugin
+      image: ghcr.io/libredb/libredb-studio-openshift-plugin:0.1.0@sha256:0000000000000000000000000000000000000000000000000000000000000000
       platforms:
         - linux/amd64
         - linux/arm64
@@ -365,8 +374,7 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "operator.clusterStudioNamespace: the OLM operator sets it to the namespace it is installed in"
-    - "Under operator.managed the render refuses serviceAccount.create=false"
+    - "openshift.consolePlugin (off by default) renders the OpenShift console plugin's server and its ConsolePlugin, refusing a plugin namespace that is the release's own, a discovered one or a requested project"
 dependencies:
   - name: postgresql
     version: "16.x.x"

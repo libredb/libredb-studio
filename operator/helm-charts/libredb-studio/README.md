@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.117 \
+  --version 0.1.118 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -937,6 +937,12 @@ helm uninstall libredb
 | `openshift.consoleLink.imageUrl` | The `ApplicationMenu` icon, an https URL or a `data:image/` URI; empty renders none | `""` |
 | `openshift.consoleLink.namespaces` | `NamespaceDashboard`: the namespaces whose dashboard shows the link | `[]` |
 | `openshift.consoleLink.namespaceSelector` | `NamespaceDashboard`: a label selector for those namespaces | `{}` |
+| `openshift.consolePlugin.enabled` | Render the console plugin's server and the ConsolePlugin `libredb-studio` ([The console plugin](#the-console-plugin)); needs `console.openshift.io/v1` or `apis=force`, discovery, the `ApplicationMenu` console link and a cluster admin | `false` |
+| `openshift.consolePlugin.namespace` | Where the plugin's server runs: a namespace a cluster admin made with `oc create namespace`, never the release's, a discovered one or a requested project; the operator sets its own | `""` |
+| `openshift.consolePlugin.image` | The plugin image, a whole reference pinned by digest; the operator sets it from `RELATED_IMAGE_PLUGIN` | the 0.1.0 release |
+| `openshift.consolePlugin.imagePullPolicy` | `Always`, `IfNotPresent` or `Never` | `IfNotPresent` |
+| `openshift.consolePlugin.replicas` | Plugin server replicas, 1 to 5 | `2` |
+| `openshift.consolePlugin.resources` | `requests` and `limits`, `cpu` and `memory` only | requests `10m`, `50Mi` |
 | `discovery.kubernetes.clusterDomain` | `SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN`, the cluster's DNS domain every discovered host ends in; unset keeps `cluster.local` | unset |
 | `operator.managed` | Set by the OLM operator only: cross-namespace and cluster-scoped objects then render only for the release in `operator.clusterStudioNamespace` | `false` |
 | `operator.clusterStudioNamespace` | Set by the OLM operator only, to the namespace it is installed in, the only one it reconciles; empty allows no cross-namespace or cluster-scoped object | `""` |
@@ -969,7 +975,7 @@ A typical OpenShift install, with the Route, the cluster's trusted CA bundle and
 
 ```bash
 helm install studio libredb/libredb-studio \
-  --version 0.1.117 \
+  --version 0.1.118 \
   --set openshiftRoute.enabled=true \
   --set openshift.trustedCABundle.enabled=true \
   --set openshift.topology.partOf=libredb \
@@ -1012,7 +1018,7 @@ openshift:
 ```
 
 ```bash
-helm install studio libredb/libredb-studio --version 0.1.117 --namespace data -f openshift-values.yaml
+helm install studio libredb/libredb-studio --version 0.1.118 --namespace data -f openshift-values.yaml
 ```
 
 The chart annotates the ServiceAccount with `serviceaccounts.openshift.io/oauth-redirectreference.first`, naming the Route, and `serviceaccounts.openshift.io/oauth-redirecturi.first`, the callback path under `config.basePath`, so the OAuth server accepts that one callback.
@@ -1045,10 +1051,44 @@ Every authenticated user can read ConsoleLinks, so the chart ships no reader rol
 `ApplicationMenu` lists it in the console's application launcher under `openshift.consoleLink.section`, with `openshift.consoleLink.imageUrl` as its icon.
 With discovery on, that link is named `libredb-studio` and labelled `app.kubernetes.io/name: libredb-studio`, which locates the cluster's Studio; any other link is named `<namespace>.<fullname>` and carries no such label.
 `NamespaceDashboard` shows the link on the dashboard of `openshift.consoleLink.namespaces` or of the namespaces `openshift.consoleLink.namespaceSelector` selects, and fails the render with neither, or with discovery on.
-The OpenShift console plugin is not part of this release.
+The console link works without the console plugin below.
 
-Under the OLM operator, a ConsoleLink, a discovered namespace other than the release's, the access review's ClusterRole and ClusterRoleBinding and a Rancher NavLink render only for the `LibreDBStudio` in `operator.clusterStudioNamespace`, which the operator sets to the namespace it is installed in, the only one it reconciles; elsewhere the render fails naming the value.
+Under the OLM operator, a ConsoleLink, a ConsolePlugin, a discovered namespace other than the release's, the access review's ClusterRole and ClusterRoleBinding and a Rancher NavLink render only for the `LibreDBStudio` in `operator.clusterStudioNamespace`, which the operator sets to the namespace it is installed in, the only one it reconciles; elsewhere the render fails naming the value.
 Studio's pod shares that namespace with the operator, so under the operator the render also fails with `serviceAccount.create=false`: the pod always runs as the ServiceAccount its release creates.
+
+### The console plugin
+
+`openshift.consolePlugin.enabled` adds the OpenShift console plugin, on OpenShift 4.19 or later: a Databases page and an item on each database's details page that open the database in Studio in a new tab.
+The chart renders the plugin's nginx server (a ServiceAccount, Deployment, Service and NetworkPolicy, each named `libredb-studio-console-plugin`) in `openshift.consolePlugin.namespace`, and the cluster-scoped ConsolePlugin `libredb-studio`, so installing it needs a cluster admin and one release per cluster.
+The plugin finds Studio only through the console link named `libredb-studio`, so it needs `discovery.kubernetes.enabled` and `openshift.consoleLink.enabled` with `location: ApplicationMenu`, and `console.openshift.io/v1` (or `apis=force`).
+It lists the database resources the signed-in user may list, and never reads a Secret: Studio checks again with the user's own token when a database opens.
+
+The console runs the plugin in every console session and sends each console user's token to its server on every asset fetch, so whoever may change that server's Deployment runs code in every console session and receives every console user's token.
+The render therefore fails when `openshift.consolePlugin.namespace` is empty, is the release's own namespace or is listed in `discovery.kubernetes.namespaces`, and, on a Helm install, when the namespace is a project someone requested (it carries `openshift.io/requester`, and its requester administers it).
+That last check looks the namespace up in the cluster, so `helm template` and a client-side dry run skip it; `helm install`, `helm upgrade` and `--dry-run=server` run it.
+Create the namespace with `oc create namespace` right before the install, which fails if the name is taken, never with `oc new-project` or the console's Create Project, and check that only cluster-admin bindings are listed there:
+
+```bash
+oc create namespace libredb-console-plugin
+oc get rolebindings -n libredb-console-plugin
+```
+
+```yaml
+openshift:
+  consoleLink:
+    enabled: true                  # the locator the plugin reads
+  consolePlugin:
+    enabled: true
+    namespace: libredb-console-plugin
+```
+
+The server runs the image in `openshift.consolePlugin.image`, a whole reference pinned by digest (a tag alone fails the schema), as its own ServiceAccount with no token, with a read-only root filesystem, and serves TLS on 9443 with a certificate the service CA issues into the Secret `libredb-studio-console-plugin-cert`.
+Its NetworkPolicy admits only the `openshift-console` namespace on TCP 9443 and allows no egress, so a compromised server cannot send what it receives anywhere.
+No value changes the server's command, environment or nginx configuration, which the image bakes in, and the ConsolePlugin declares no proxy and no content security policy.
+
+The chart renders no Job: a cluster admin turns the plugin on, on the console's Console plugins page (Administration > Cluster Settings > Configuration > Console), or with the patch the install notes print, which adds `libredb-studio` to `spec.plugins` of `consoles.operator.openshift.io/cluster` once and keeps the other plugins in their order.
+Turning it on restarts the console pods, which may sign people out once.
+On uninstall remove the entry again (docs/OPENSHIFT.md, "Uninstall"): a stale entry trusts the next ConsolePlugin named `libredb-studio` without asking.
 
 ### The cluster's trusted CA bundle
 

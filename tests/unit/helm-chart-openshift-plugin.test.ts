@@ -560,6 +560,90 @@ describe("guard (6) with a Namespace in place of the lookup", () => {
   });
 });
 
+describe("install notes with the console plugin", () => {
+  // helm template never emits NOTES.txt, so the real file is wrapped in a named template inside a private copy of the
+  // chart and rendered into a ConfigMap, as tests/unit/helm-chart-openshift-mode.test.ts does.
+  const PROBE_TEMPLATE = "templates/zz-notes-probe.yaml";
+  let notesChart: string;
+
+  beforeAll(() => {
+    notesChart = mkdtempSync(join(tmpdir(), "libredb-console-plugin-notes-probe-"));
+    cpSync(CHART_DIR, notesChart, { recursive: true });
+    writeFileSync(
+      join(notesChart, PROBE_TEMPLATE),
+      `{{- define "notesProbe" -}}\n${readFileSync(join(CHART_DIR, "templates/NOTES.txt"), "utf8")}\n{{- end -}}\n` +
+        'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: notes-probe\ndata:\n  notes: {{ include "notesProbe" . | quote }}\n',
+    );
+  });
+
+  afterAll(() => rmSync(notesChart, { recursive: true, force: true }));
+
+  function notes(args: string[]): string {
+    const run = template([...args, "--show-only", PROBE_TEMPLATE], notesChart);
+    if (run.exitCode !== 0) throw new Error(`helm template of the notes probe failed: ${run.stderr}`);
+    const rendered = parseAllDocuments(run.stdout)
+      .map((doc) => doc.toJS() as { data?: { notes?: string } } | null)
+      .find((doc) => doc?.data?.notes !== undefined);
+    return rendered?.data?.notes ?? "";
+  }
+
+  test("names the plugin namespace, who may write it, and how a cluster admin turns the plugin on and off", () => {
+    const text = notes(PLUGIN_ON);
+    expect(text).toContain(`OpenShift console plugin: server libredb-studio-console-plugin in ${PLUGIN_NAMESPACE}`);
+    expect(text).toContain(`oc get rolebindings -n ${PLUGIN_NAMESPACE}`);
+    expect(text).toContain("oc create namespace");
+    expect(text).toContain("Console plugins");
+    expect(text).toContain("/spec/plugins/-");
+    expect(text).toContain('case "$plugins" in *\'"libredb-studio"\'*) exit 0 ;; esac');
+    expect(text).toContain("remove libredb-studio from spec.plugins");
+  });
+
+  test("under the operator, leaves the turning on to the install form and the console", () => {
+    const text = notes([...PLUGIN_ON, ...set("operator.managed=true", `operator.clusterStudioNamespace=${NAMESPACE}`)]);
+    expect(text).toContain(`OpenShift console plugin: server libredb-studio-console-plugin in ${PLUGIN_NAMESPACE}`);
+    expect(text).not.toContain("oc create namespace");
+  });
+
+  test("says nothing of it without the plugin", () => {
+    const text = notes(pluginOn({ "openshift.consolePlugin.enabled": "false" }));
+    expect(text).not.toContain("/spec/plugins/-");
+    expect(text).not.toContain("oc create namespace");
+    expect(text).toContain(
+      "openshift.consolePlugin.enabled adds the OpenShift console plugin and openshift.consoleLink.enabled a link to Studio in the console.",
+    );
+  });
+});
+
+describe("the chart README documents the console plugin", () => {
+  const readme = readFileSync(join(CHART_DIR, "README.md"), "utf8");
+  const section = readme.slice(
+    readme.indexOf("### The console plugin"),
+    readme.indexOf("### The cluster's trusted CA bundle"),
+  );
+
+  test.each([
+    "OpenShift 4.19 or later",
+    "oc create namespace",
+    "oc get rolebindings -n",
+    "openshift.io/requester",
+    "`helm template` and a client-side dry run skip it",
+    "openshift-console",
+    "no proxy and no content security policy",
+    "Console plugins",
+    "spec.plugins",
+    "The chart renders no Job",
+  ])("names %s", (needle) => {
+    expect(section.length).toBeGreaterThan(0);
+    expect(section).toContain(needle);
+  });
+
+  test("every new value is in the configuration reference", () => {
+    for (const key of Object.keys(values.openshift.consolePlugin)) {
+      expect(readme).toContain(`| \`openshift.consolePlugin.${key}\` |`);
+    }
+  });
+});
+
 /**
  * Runs last: every render the cases above made. No standing right comes from the plugin wiring, and nothing the
  * chart renders may change the console's configuration (consoles.operator.openshift.io), which only a cluster admin

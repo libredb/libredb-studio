@@ -82,7 +82,38 @@ OpenShift sign-in:
   ALLOW_CUSTOM_CONNECTIONS=false: people open discovered and seeded connections only.
 {{- end }}
 {{- end }}
-  The OpenShift console plugin is not part of this release; openshift.consoleLink.enabled adds a link to Studio in the console.
+  openshift.consolePlugin.enabled adds the OpenShift console plugin and openshift.consoleLink.enabled a link to Studio in the console.
+{{- end }}
+
+{{- if include "libredb-studio.consolePluginEnabled" . }}
+{{- $pluginNamespace := .Values.openshift.consolePlugin.namespace }}
+
+OpenShift console plugin: server libredb-studio-console-plugin in {{ $pluginNamespace }}, ConsolePlugin libredb-studio.
+  The console sends every console user's token to that server and runs the plugin in every console
+  session, so only cluster admins may hold RoleBindings in {{ $pluginNamespace }}; check with
+    oc get rolebindings -n {{ $pluginNamespace }}
+{{- if include "libredb-studio.operatorManaged" . }}
+  A cluster admin turns the plugin on with the console plugin toggle of the operator's install form,
+  or on the console's Console plugins page (Administration > Cluster Settings > Configuration > Console).
+{{- else }}
+  The namespace must be one a cluster admin made with oc create namespace, never a requested project.
+  The plugin stays off until a cluster admin turns it on, on the console's Console plugins page
+  (Administration > Cluster Settings > Configuration > Console), or with this patch, which adds
+  libredb-studio to spec.plugins once and keeps the other plugins in their order:
+
+    set -eu
+    plugins=$(oc get consoles.operator.openshift.io cluster -o jsonpath='{.spec.plugins}')
+    case "$plugins" in *'"libredb-studio"'*) exit 0 ;; esac
+    if [ -z "$plugins" ]; then
+      oc patch consoles.operator.openshift.io cluster --type=json -p '[{"op":"add","path":"/spec/plugins","value":["libredb-studio"]}]'
+    else
+      oc patch consoles.operator.openshift.io cluster --type=json -p '[{"op":"add","path":"/spec/plugins/-","value":"libredb-studio"}]'
+    fi
+
+  Enabling it restarts the console pods, which may sign people out once.
+{{- end }}
+  On uninstall, remove libredb-studio from spec.plugins as well (docs/OPENSHIFT.md, "Uninstall"):
+  a stale entry trusts the next ConsolePlugin of that name without asking again.
 {{- end }}
 
 {{- if include "libredb-studio.governanceEnabled" . }}

@@ -42,6 +42,7 @@ charts/libredb-studio/
     ├── access-review.yaml     # ClusterRole and binding for the Kubernetes access review (default off)
     ├── kubernetes-discovery.yaml # Discovery exporter, its RBAC and the export Secret (default off)
     ├── consolelink.yaml       # OpenShift console link (openshift.consoleLink, default off)
+    ├── console-plugin.yaml    # OpenShift console plugin server and ConsolePlugin (openshift.consolePlugin, default off)
     └── NOTES.txt              # Post-install usage instructions
 ```
 
@@ -333,6 +334,41 @@ Under `operator.managed`, `operatorServiceAccountGuard` also refuses `serviceAcc
 No reader role ships: the console already lets every authenticated user read ConsoleLinks.
 
 `tests/unit/helm-chart-openshift-mode.test.ts` pins these rules.
+
+### 14. OpenShift console plugin
+
+`openshift.consolePlugin` renders the server of the OpenShift console plugin and its cluster-scoped ConsolePlugin from `console-plugin.yaml` ([chart README](../charts/libredb-studio/README.md#the-console-plugin)).
+The plugin, built in its own repository, lists the database resources the signed-in user may list and opens one in Studio, which it finds through the locator ConsoleLink `libredb-studio`; it reads no Secret, and Studio reviews again with the user's own token.
+
+**Values.** `enabled` (off), `namespace` (where the server runs, empty by default), `image` (a whole reference pinned by digest; the schema refuses a tag alone and admits the empty string so the guard can name the value), `imagePullPolicy`, `replicas` (1 to 5) and `resources` (`requests` and `limits` with `cpu` and `memory` only).
+The block is closed: any other key, an enable switch or a patcher image included, fails the schema.
+Under the operator, `operator/watches.yaml` pins `namespace` to the operator's own namespace (`$OPERATOR_NAMESPACE`) and `image` to `$RELATED_IMAGE_PLUGIN`, so a `LibreDBStudio` can neither move the server nor swap its image.
+
+**Objects.** A ServiceAccount, Deployment, Service and NetworkPolicy named `libredb-studio-console-plugin` in the plugin namespace, and the ConsolePlugin `libredb-studio` with a Service backend on 9443, `i18n.loadType: Preload`, and no `proxy` and no `contentSecurityPolicy`.
+The names are fixed whatever `nameOverride` or `fullnameOverride` say: the ConsolePlugin is a cluster-wide singleton, so a second release collides on it and Helm's ownership check refuses the install.
+The Deployment runs as its own ServiceAccount with no token, with the restricted security context, a read-only root, the service CA's serving certificate read-only at `/var/cert` and an `emptyDir` at `/tmp`, and no command, arguments or environment: the image bakes its nginx configuration in, which logs no request header.
+
+**Guards.** `consolePluginGuards` in `_helpers.tpl`, in this order, each naming the value to change:
+
+1. `console.openshift.io/v1` not served and `global.compatibility.openshift.apis` not `force`.
+2. Under the operator, a release outside `operator.clusterStudioNamespace` (`clusterStudioNamespaceGuard`).
+3. An empty `namespace` (and under the operator, an unset `OPERATOR_NAMESPACE`).
+4. The release's own namespace.
+5. A namespace `discovery.kubernetes.namespaces` lists.
+6. On the Helm path only, a namespace that `lookup` finds carrying `openshift.io/requester`, which every project made through a project request carries and whose requester administers it; skipped where `lookup` returns nothing (`helm template`, a client-side dry run, a namespace that does not exist yet).
+   The operator path pins the operator's own namespace instead.
+7. A release that renders no locator: discovery off, or no `ApplicationMenu` console link.
+8. An empty `image` (and under the operator, an unset `RELATED_IMAGE_PLUGIN`).
+
+Guards 4 to 6 share one reason: the console sends every console user's token to the server and runs the plugin in every console session, so whoever may change that Deployment holds both, and the namespace must be one only cluster admins write.
+
+**NetworkPolicy.** The server's policy selects exactly its pods and admits only the `openshift-console` namespace on TCP 9443, with no egress rule: nginx needs nothing else, and a compromised server or image cannot send what it receives anywhere.
+
+**No enable Job.** The chart renders no Job, ClusterRole or ClusterRoleBinding for the plugin and offers no value that would.
+A hook Job that patches `consoles.operator.openshift.io` would need a hook ServiceAccount bound to `patch` on the console configuration, and the Helm the console embeds before v3.19.0 (v3.17 on 4.19, v3.18 on 4.20 and 4.21) deletes only the failed hook when a later hook fails, leaving that binding behind, where `helm uninstall` never removes it.
+Turning the plugin on is a one-time cluster-admin act that changes every console session, so a cluster admin does it on the console's Console plugins page or with the guarded patch the install notes print, and the operator path offers the install form's toggle.
+
+`tests/unit/helm-chart-openshift-plugin.test.ts` pins these rules.
 
 ## Release Pipeline
 
