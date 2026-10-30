@@ -11,6 +11,7 @@ import type { DatabaseType } from "@/lib/types";
 import type { AgentStatementLanguageId } from "../../agent-manifest";
 import { languageClientPack } from "../client";
 import { KUBERNETES_CLIENT_OVERLAY } from "../kubectl/engines/client";
+import { LIBREDB_CLIENT_OVERLAY } from "../libredbkv/engines/client";
 import { MONGODB_CLIENT_OVERLAY } from "../mongo/engines/client";
 import { defineOverlay, dialectOnly } from "../overlay";
 import type { AgentEngineClientDialect, AgentEngineClientOverlays, AgentEnginePack, AgentEngineType } from "../pack";
@@ -50,6 +51,7 @@ const CLIENT_OVERLAYS: AgentEngineClientOverlays = Object.freeze({
   druid: Object.freeze({ family: "sql", overlay: dialectOnly(DRUID_CLIENT_OVERLAY) }),
   mongodb: Object.freeze({ family: "mongo", overlay: dialectOnly(MONGODB_CLIENT_OVERLAY) }),
   kubernetes: Object.freeze({ family: "kubectl", overlay: dialectOnly(KUBERNETES_CLIENT_OVERLAY) }),
+  libredb: Object.freeze({ family: "libredbkv", overlay: dialectOnly(LIBREDB_CLIENT_OVERLAY) }),
 } satisfies AgentEngineClientOverlays);
 
 /**

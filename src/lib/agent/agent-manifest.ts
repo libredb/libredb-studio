@@ -27,7 +27,7 @@ import type { AgentRunMode, AgentRunWorkflowType } from "./types";
 import { OPERATIONS_VARIANT } from "./workflow-tool-sets";
 
 /** The statement languages agent mode can send. A later engine reuses one or registers a new id here. */
-export type AgentStatementLanguageId = "sql" | "kubectl" | "mongo";
+export type AgentStatementLanguageId = "sql" | "kubectl" | "mongo" | "libredbkv";
 
 /** Literal-typed, so `AgentEngineFamily` in `languages/pack.ts` reads each engine's language by type. */
 export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
@@ -73,7 +73,7 @@ export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
   netconf: null,
   snmp: null,
   sparkplug: null,
-  libredb: null,
+  libredb: "libredbkv",
 } as const satisfies Record<DatabaseType, AgentStatementLanguageId | null>);
 
 /** The name of the model argument a language's statement arrives in: one type for every reader of it. */

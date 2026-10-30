@@ -13,6 +13,7 @@ import type { AgentStatementLanguageId } from "../agent-manifest";
 import { mergeDisjoint } from "../disjoint-merge";
 import type { AgentRunEvent } from "../types";
 import { KUBECTL_CLIENT_PACK } from "./kubectl/client";
+import { LIBREDBKV_CLIENT_PACK } from "./libredbkv/client";
 import { MONGO_CLIENT_PACK } from "./mongo/client";
 import type {
   AgentEvidenceEventSpec,
@@ -45,6 +46,7 @@ const CLIENT_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageClien
   sql: SQL_CLIENT_PACK,
   kubectl: KUBECTL_CLIENT_PACK,
   mongo: MONGO_CLIENT_PACK,
+  libredbkv: LIBREDBKV_CLIENT_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageClientPack>);
 
 /** The client facet for `language`. The record is total, so a typed id always has one. */
@@ -74,7 +76,12 @@ export function projectClientPacks<Value>(
  * adds to its events does not compile until the pack declares it.
  */
 export const AGENT_EVIDENCE_EVENTS = mergeDisjoint(
-  [SQL_CLIENT_PACK.evidenceEvents, KUBECTL_CLIENT_PACK.evidenceEvents, MONGO_CLIENT_PACK.evidenceEvents],
+  [
+    SQL_CLIENT_PACK.evidenceEvents,
+    KUBECTL_CLIENT_PACK.evidenceEvents,
+    MONGO_CLIENT_PACK.evidenceEvents,
+    LIBREDBKV_CLIENT_PACK.evidenceEvents,
+  ],
   "AGENT_EVIDENCE_EVENTS",
 ) satisfies AgentEvidenceEventSpecs<AgentPackEvidenceEvent>;
 
@@ -84,7 +91,12 @@ export const AGENT_EVIDENCE_EVENTS = mergeDisjoint(
  * `AgentPackShortfall`, so a shortfall a pack adds does not compile until the pack says it.
  */
 export const AGENT_PACK_SHORTFALL_SENTENCES = mergeDisjoint(
-  [SQL_CLIENT_PACK.shortfallSentences, KUBECTL_CLIENT_PACK.shortfallSentences, MONGO_CLIENT_PACK.shortfallSentences],
+  [
+    SQL_CLIENT_PACK.shortfallSentences,
+    KUBECTL_CLIENT_PACK.shortfallSentences,
+    MONGO_CLIENT_PACK.shortfallSentences,
+    LIBREDBKV_CLIENT_PACK.shortfallSentences,
+  ],
   "AGENT_PACK_SHORTFALL_SENTENCES",
 ) satisfies Record<AgentPackShortfall, string>;
 
@@ -94,6 +106,7 @@ export const AGENT_PACK_READING_REFUSAL_HEADLINES = mergeDisjoint(
     SQL_CLIENT_PACK.readingRefusalHeadlines,
     KUBECTL_CLIENT_PACK.readingRefusalHeadlines,
     MONGO_CLIENT_PACK.readingRefusalHeadlines,
+    LIBREDBKV_CLIENT_PACK.readingRefusalHeadlines,
   ],
   "AGENT_PACK_READING_REFUSAL_HEADLINES",
 ) satisfies Record<AgentPackReadingDenyCode, string>;
@@ -103,7 +116,12 @@ export const AGENT_PACK_READING_REFUSAL_HEADLINES = mergeDisjoint(
  * shortfalls are. `agent-manifest.ts` reads it beside the requirements the core derives.
  */
 export const AGENT_PACK_REQUIREMENTS = mergeDisjoint(
-  [SQL_CLIENT_PACK.requirements, KUBECTL_CLIENT_PACK.requirements, MONGO_CLIENT_PACK.requirements],
+  [
+    SQL_CLIENT_PACK.requirements,
+    KUBECTL_CLIENT_PACK.requirements,
+    MONGO_CLIENT_PACK.requirements,
+    LIBREDBKV_CLIENT_PACK.requirements,
+  ],
   "AGENT_PACK_REQUIREMENTS",
 ) satisfies Record<AgentPackVariantRequirement, AgentVariantRequirementSpec>;
 

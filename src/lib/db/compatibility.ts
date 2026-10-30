@@ -650,6 +650,7 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   netconf: false,
   snmp: false,
   sparkplug: false,
+  // Agent mode executes statements on LibreDB, and MCP read stays closed on it until a change of its own opens it.
   libredb: false,
 });
 

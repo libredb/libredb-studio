@@ -16,6 +16,7 @@ import type { AgentStatementLanguageId } from "../agent-manifest";
 import { mergeDisjoint } from "../disjoint-merge";
 import type { AgentRunWorkflowType } from "../types";
 import { KUBECTL_SERVER_PACK } from "./kubectl/server";
+import { LIBREDBKV_SERVER_PACK } from "./libredbkv/server";
 import { MONGO_SERVER_PACK } from "./mongo/server";
 import type { AgentLanguageServerAdapter, AgentLanguageServerPack, EvidenceToolName } from "./pack";
 import { SQL_STATEMENT_DEFINITIONS } from "./sql/definitions";
@@ -32,6 +33,7 @@ const SERVER_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageServe
   sql: SQL_SERVER_PACK,
   kubectl: KUBECTL_SERVER_PACK,
   mongo: MONGO_SERVER_PACK,
+  libredbkv: LIBREDBKV_SERVER_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageServerPack>);
 
 /** The server pack for `language`, or a named error when the id is not a language this server knows. */
@@ -65,7 +67,12 @@ export const REFERENCE_RECOMMENDATION_CARD = SQL_SERVER_PACK.recommendationCard;
  * `AGENT_TOOL_DEFINITIONS` spreads it where those tools always stood, and a name two packs both define fails at load.
  */
 export const LANGUAGE_BASE_DEFINITIONS = mergeDisjoint(
-  [SQL_SERVER_PACK.baseDefinitions, KUBECTL_SERVER_PACK.baseDefinitions, MONGO_SERVER_PACK.baseDefinitions],
+  [
+    SQL_SERVER_PACK.baseDefinitions,
+    KUBECTL_SERVER_PACK.baseDefinitions,
+    MONGO_SERVER_PACK.baseDefinitions,
+    LIBREDBKV_SERVER_PACK.baseDefinitions,
+  ],
   "LANGUAGE_BASE_DEFINITIONS",
 );
 
@@ -84,6 +91,7 @@ export const WORKFLOW_TOOL_RULES: Readonly<
   sql: SQL_SERVER_PACK.workflowToolRules,
   kubectl: KUBECTL_SERVER_PACK.workflowToolRules,
   mongo: MONGO_SERVER_PACK.workflowToolRules,
+  libredbkv: LIBREDBKV_SERVER_PACK.workflowToolRules,
 } satisfies Record<AgentStatementLanguageId, Partial<Record<AgentRunWorkflowType, string>>>);
 
 /**
@@ -91,7 +99,12 @@ export const WORKFLOW_TOOL_RULES: Readonly<
  * whatever its language, and a shortfall two packs both speak for fails at load.
  */
 export const LANGUAGE_SHORTFALL_NOTICES = mergeDisjoint(
-  [SQL_SERVER_PACK.shortfallNotices, KUBECTL_SERVER_PACK.shortfallNotices, MONGO_SERVER_PACK.shortfallNotices],
+  [
+    SQL_SERVER_PACK.shortfallNotices,
+    KUBECTL_SERVER_PACK.shortfallNotices,
+    MONGO_SERVER_PACK.shortfallNotices,
+    LIBREDBKV_SERVER_PACK.shortfallNotices,
+  ],
   "LANGUAGE_SHORTFALL_NOTICES",
 );
 

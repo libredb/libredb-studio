@@ -70,6 +70,8 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   sql: SQL_MCP_FACET,
   kubectl: KUBECTL_MCP_FACET,
   mongo: MONGO_MCP_FACET,
+  // No MCP statement tool yet: MCP read stays closed on LibreDB until a change of its own declares one and opens it.
+  libredbkv: null,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageMcpFacet | null>);
 
 /** A facet some language declares, with its tool's name as a literal. */

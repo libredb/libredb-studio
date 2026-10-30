@@ -175,6 +175,7 @@ export const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "cypher",
   "influxql",
   "kubectl",
+  "libredbkv",
 ]);
 
 /**
@@ -220,6 +221,8 @@ export const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.free
   influxql: "influxdb",
   // The command the Kubernetes console speaks, and `kubernetes` is the only type-id that runs it.
   kubectl: "kubernetes",
+  // The agent's name for the LibreDB command language, and `libredb` is the only type-id that runs it.
+  libredbkv: "libredb",
 });
 
 /**

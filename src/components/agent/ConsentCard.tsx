@@ -112,6 +112,7 @@ const HANDOVER_CHIPS: Readonly<Record<AgentStatementLanguageId, readonly Handove
   ],
   kubectl: [],
   mongo: [],
+  libredbkv: [],
 };
 
 export function ConsentCard({

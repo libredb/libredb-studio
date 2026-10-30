@@ -25,6 +25,7 @@ import type { ExplainMode } from "@/lib/explain";
 import { readMongoCommand } from "@/lib/db/providers/document/mongodb/envelope";
 import { OperationRegistry } from "./registry";
 import { kubectlAgentReadInput } from "./kubectl-admission";
+import { libredbkvAgentReadInput } from "./libredbkv-admission";
 import { mongoAgentReadInput } from "./mongo-admission";
 import { agentPlanExecutionSqlInput, agentQueryReadSqlInput, agentReadSqlInput } from "./statement-guard";
 import type { RegistrableOperationDescriptor } from "./types";
@@ -374,6 +375,39 @@ export const mongoQueryReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+const LIBREDBKV_READ_BOUNDARY =
+  "LibreDB: each statement opens the store file on a handle of its own through Studio's read-only file adapter " +
+  "(libredb-read-only-file.ts), closed after it: the descriptor is opened for reading only and a missing file is " +
+  "refused rather than created, the one call the engine writes through (the write-ahead log's append) refuses before " +
+  "any write, and truncate and fsync change nothing, so no call on the handle can change the file; it takes no writer " +
+  "lock, so it opens beside the editor's writer and reads what that writer has committed. The command reader admits " +
+  "get, prefix and range on one line and refuses put and delete by name before the file is opened; a result past the " +
+  "row or byte budget is refused, never truncated.";
+
+/**
+ * One LibreDB read command the model wrote, on a `libredb` connection.
+ *
+ * R1 on a boundary the engine's own file seam provides: LibreDB has no read-only mode of its own and no principal, so
+ * what bounds the read is the handle, opened through a filesystem that cannot write. Its own id, and not a widened
+ * `sql.query.read`, so the SQL contract and its audit action stay exactly what they were.
+ */
+const libredbkvQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "libredbkv.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: libredbkvAgentReadInput,
+  verification: {
+    reviewedBy: "LibreDB agent execution design review",
+    boundary: LIBREDBKV_READ_BOUNDARY,
+    verifiedOn: "2026-10-30",
+  },
+};
+
 /** The selector of a scoped MongoDB catalog read: a kind, a database and a collection, any of them narrowed. */
 const mongoCatalogSelectorInput = z.strictObject({
   kind: z.enum(["columns", "indexes"]).default("columns"),
@@ -570,6 +604,7 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   mongoSchemaReadDescriptor,
   mongoPlanEstimateDescriptor,
   mongoTableProfileDescriptor,
+  libredbkvQueryReadDescriptor,
 ]);
 
 /**

@@ -7,7 +7,10 @@ import { agentEnginePack } from "@/lib/agent/languages/engines/index";
 import { engineServerDialect, engineServerOverlay } from "@/lib/agent/languages/engines/server";
 import * as KUBECTL_CLIENT_OVERLAYS from "@/lib/agent/languages/kubectl/engines/client";
 import * as KUBERNETES from "@/lib/agent/languages/kubectl/engines/kubernetes";
+import * as LIBREDBKV_CLIENT_OVERLAYS from "@/lib/agent/languages/libredbkv/engines/client";
+import * as LIBREDB from "@/lib/agent/languages/libredbkv/engines/libredb";
 import { KUBECTL_PACK } from "@/lib/agent/languages/kubectl/index";
+import { LIBREDBKV_PACK } from "@/lib/agent/languages/libredbkv/index";
 import * as MONGO_CLIENT_OVERLAYS from "@/lib/agent/languages/mongo/engines/client";
 import * as MONGODB from "@/lib/agent/languages/mongo/engines/mongodb";
 import { MONGO_PACK } from "@/lib/agent/languages/mongo/index";
@@ -83,6 +86,8 @@ const ENGINE_MODULES: Readonly<Record<string, Readonly<Record<string, unknown>>>
   "mongo/engines/client": MONGO_CLIENT_OVERLAYS,
   "kubectl/engines/kubernetes": KUBERNETES,
   "kubectl/engines/client": KUBECTL_CLIENT_OVERLAYS,
+  "libredbkv/engines/libredb": LIBREDB,
+  "libredbkv/engines/client": LIBREDBKV_CLIENT_OVERLAYS,
 };
 
 /** Every overlay an engine module exports, named `<module>#<export>`. */
@@ -116,6 +121,7 @@ describe("the engine registry", () => {
       "couchbase",
       "influxdb3",
       "kubernetes",
+      "libredb",
     ]);
     expect(SQL_ENGINES).toEqual([
       "postgres",
@@ -163,7 +169,7 @@ describe("the engine registry", () => {
 
   test("every engine module's server overlay holds a dialect and overridable members, its client one a dialect alone (ruling 2)", () => {
     const exported = exportedOverlays();
-    expect(exported).toHaveLength(34);
+    expect(exported).toHaveLength(36);
     // The one other export is the PostgreSQL retry's rewrite, which its tests call directly.
     expect(
       Object.entries(ENGINE_MODULES)
@@ -225,6 +231,7 @@ describe("the engine packs", () => {
     expect(agentEnginePack("kubernetes")).toBe(KUBECTL_PACK);
     expect(agentEnginePack("mongodb")).toEqual(MONGO_PACK);
     expect(agentEnginePack("kubernetes")).toEqual(KUBECTL_PACK);
+    expect(agentEnginePack("libredb")).toBe(LIBREDBKV_PACK);
   });
 
   test.each(SQL_ENGINES)("%s is the SQL pack member for member, with its own dialect on the server facet", (type) => {
@@ -265,7 +272,7 @@ describe("engineServerDialect", () => {
   });
 
   test("a type with no overlay holds an empty one, so its server facet is its family's own", () => {
-    for (const type of ["spark", "toString", "mongodb", "kubernetes"] as DatabaseType[]) {
+    for (const type of ["spark", "toString", "mongodb", "kubernetes", "libredb"] as DatabaseType[]) {
       expect(Object.keys(engineServerOverlay(type))).toEqual([]);
     }
     expect(engineServerOverlay("postgres").dialect).toBe(engineServerDialect("postgres"));
@@ -481,7 +488,9 @@ describe("the client dialect", () => {
       influxdb3: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
     });
     for (const type of SQL_ENGINES) expect(Object.isFrozen(clientDialect(type))).toBe(true);
-    for (const type of ["mongodb", "kubernetes"] as const) expect(engineClientPack(type).dialect).toBeUndefined();
+    for (const type of ["mongodb", "kubernetes", "libredb"] as const) {
+      expect(engineClientPack(type).dialect).toBeUndefined();
+    }
   });
 
   test.each(ENGINES)("%s holds each client member exactly when its server dialect supplies it", (type) => {

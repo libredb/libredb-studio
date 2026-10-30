@@ -171,6 +171,12 @@ describe("fenceTagEngine", () => {
     expect(fenceTagEngine("sql")).toBeNull();
   });
 
+  test("libredbkv names libredb, the agent's name for the only command language libredb runs", () => {
+    expect(fenceTagEngine("libredbkv")).toBe("libredb");
+    expect(isQueryFenceTag("libredbkv")).toBe(true);
+    expect(fenceTagEngine("libredb")).toBe("libredb");
+  });
+
   test("oxia has no alias: `oxia` already names the engine and its CLI, and the shell tags name no engine (O14)", () => {
     for (const tag of ["sh", "bash", "shell", "oxia-client"]) expect(fenceTagEngine(tag)).toBeNull();
     expect(fenceTagEngine("oxia")).toBe("oxia");

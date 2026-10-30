@@ -1,8 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { AGENT_LANGUAGE_COPY } from "@/lib/agent/agent-manifest";
 import { fingerprintKubectl, kubectlRowCapAdvice } from "@/lib/agent/languages/kubectl/adapter";
+import { fingerprintLibredbkv, libredbkvRowCapAdvice } from "@/lib/agent/languages/libredbkv/adapter";
 import { fingerprintMongo, mongoRowCapAdvice } from "@/lib/agent/languages/mongo/adapter";
 import { languageServer } from "@/lib/agent/languages/server";
+import {
+  admitLibredbkvStatement,
+  LIBREDBKV_AGENT_MAX_STATEMENT_CHARS,
+  libredbkvAgentReadInput,
+} from "@/lib/db/operations/libredbkv-admission";
 import { admitMongoStatement } from "@/lib/db/operations/mongo-admission";
 
 /**
@@ -237,5 +243,66 @@ describe("canonicalize", () => {
     const text = languageServer("mongo").canonicalize(command);
     expect(text).not.toBeNull();
     expect(fingerprintMongo(text as string)).toBe(fingerprintMongo(JSON.stringify(command, null, 2)));
+  });
+});
+
+describe("the libredbkv language's server adapter and admission", () => {
+  test("the fingerprint is the parsed command, so one read written three ways is one identity", () => {
+    const one = fingerprintLibredbkv("get users:1");
+    expect(fingerprintLibredbkv("GET users:1")).toBe(one);
+    expect(fingerprintLibredbkv('  get "users:1"  ')).toBe(one);
+    expect(fingerprintLibredbkv("get users:2")).not.toBe(one);
+    expect(fingerprintLibredbkv("prefix users:1")).not.toBe(one);
+    expect(fingerprintLibredbkv("range a b")).not.toBe(fingerprintLibredbkv("range a c"));
+  });
+
+  test("the fingerprint is total: a refused command is identified by its raw text, so it is refused again", () => {
+    const raw = "put users:9 Mallory";
+    expect(fingerprintLibredbkv(raw)).toBe(fingerprintLibredbkv(raw));
+    expect(fingerprintLibredbkv(raw)).toMatch(/^[0-9a-f]{64}$/);
+    expect(fingerprintLibredbkv("PUT users:9 Mallory")).not.toBe(fingerprintLibredbkv(raw));
+  });
+
+  test("every advice key of the libredbkv copy has its own sentence, and get, which reads one key, has none", () => {
+    const generic = libredbkvRowCapAdvice("get users:1", "200");
+    const statementFor: Readonly<Record<string, string>> = { prefix: "prefix users:", range: "range a z" };
+    expect([...AGENT_LANGUAGE_COPY.libredbkv.adviceKeys].sort()).toEqual(["prefix", "range"]);
+    for (const command of AGENT_LANGUAGE_COPY.libredbkv.adviceKeys) {
+      expect(libredbkvRowCapAdvice(statementFor[command] as string, "200"), command).not.toBe(generic);
+    }
+    expect(libredbkvRowCapAdvice("prefix users:", "200")).toContain("prefix");
+    expect(libredbkvRowCapAdvice("range a z", "200")).toContain("range");
+  });
+
+  test("a command without advice of its own, or one that does not parse, gets the generic sentence", () => {
+    expect(libredbkvRowCapAdvice("get users:1", "200")).toBe(
+      "Ask for at most 200 keys: narrow the read to fewer keys, and run it again.",
+    );
+    expect(libredbkvRowCapAdvice("put a b", "200")).toBe(libredbkvRowCapAdvice("get users:1", "200"));
+    expect(languageServer("libredbkv").shapeAdvice).toContain("a valid LibreDB command");
+  });
+
+  test("the admission is the provider's reader, plus a length the agent's contract names", () => {
+    expect(admitLibredbkvStatement("prefix users:")).toBeNull();
+    expect(admitLibredbkvStatement("delete users:1")).toEqual({
+      code: "write-command",
+      message:
+        '"delete" writes, and an agent read only reads: the reads are get <key>, prefix <p> and range <start> <end>. Nothing was sent.',
+    });
+    const long = `get ${"k".repeat(LIBREDBKV_AGENT_MAX_STATEMENT_CHARS)}`;
+    expect(admitLibredbkvStatement(long)).toEqual({
+      code: "agent-too-large",
+      message: `The statement is longer than ${LIBREDBKV_AGENT_MAX_STATEMENT_CHARS} characters, the most an agent read takes: shorten the key or the prefix. Nothing was sent.`,
+    });
+    expect(languageServer("libredbkv").admit?.("get users:1")).toBeNull();
+  });
+
+  test("the descriptor's input is strict, carries the statement, and refuses what the admission refuses", () => {
+    expect(libredbkvAgentReadInput.safeParse({ statement: "get users:1" }).success).toBe(true);
+    expect(libredbkvAgentReadInput.safeParse({ statement: "get users:1", sql: "x" }).success).toBe(false);
+    const refused = libredbkvAgentReadInput.safeParse({ statement: "put users:9 x" });
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues[0]?.path).toEqual(["statement"]);
+    expect(refused.error?.issues[0]?.message).toStartWith('"put" writes');
   });
 });

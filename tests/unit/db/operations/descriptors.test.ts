@@ -54,6 +54,7 @@ describe("canonical operation registry", () => {
       "db.operations.read",
       "db.schema.read",
       "kubectl.query.read",
+      "libredbkv.query.read",
       "mongo.plan.estimate",
       "mongo.query.read",
       "mongo.schema.read",
@@ -182,6 +183,7 @@ describe("the statement-read operations", () => {
     const ids = createCanonicalOperationRegistry().registeredIds();
     expect(ids.filter(isStatementReadOperation).sort()).toEqual([
       "kubectl.query.read",
+      "libredbkv.query.read",
       "mongo.query.read",
       "sql.query.read",
     ]);

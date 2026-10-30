@@ -131,10 +131,11 @@ export async function getSeedListing(roles: string[]): Promise<SeedListing> {
     The SQLite sample leads the built-ins, and the order is the point: a client with
     no persisted active connection selects the first of this list, so whichever sample
     comes first is what a brand-new administrator lands on. Agent mode executes statements on
-    PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase and Apache Druid; the LibreDB engine's provider
-    implements no read-only statement path, so leading with it put every
-    zero-config administrator on the one connection an agent run can never execute
-    against. An operator's own seed config
+    PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid and LibreDB; the order was set while the LibreDB engine's
+    provider had no read-only statement path, when leading with it put every
+    zero-config administrator on the one connection an agent run could not execute
+    against, and it is kept: the SQLite sample offers every agent workflow, where the
+    LibreDB one offers no plan or profile workflow. An operator's own seed config
     still leads both: those are already in `before`.
 
     In a test run, only consider a sample when its explicit path override is set, so

@@ -74,6 +74,11 @@ type MongoOperationId =
   /** A MongoDB collection profile composed as an aggregation; see `mongoTableProfileDescriptor` for its id. */
   | "mongo.table.profile";
 
+/** The LibreDB command language's operation: its one read. */
+type LibredbkvOperationId =
+  /** One LibreDB read command the model wrote, on a `libredb` connection; see `libredbkvQueryReadDescriptor`. */
+  "libredbkv.query.read";
+
 /**
  * The canonical operations each family's tools drive, by family. `AgentOperationId` in `tools.ts` is the core's two
  * curated ids and every row here, so a family's ids are written once, beside the family's other types.
@@ -82,6 +87,7 @@ export interface AgentFamilyOperationIds {
   readonly sql: SqlOperationId;
   readonly kubectl: KubectlOperationId;
   readonly mongo: MongoOperationId;
+  readonly libredbkv: LibredbkvOperationId;
 }
 
 /** kubectl's goal verifiers. */
@@ -119,6 +125,8 @@ export interface AgentFamilyVerifierIds {
    * it keeps that rule, while this one judges the runs opened since.
    */
   readonly mongo: "agent-query-optimization-mongo.1";
+  /** None: its workflows are judged by the core's own rules. */
+  readonly libredbkv: never;
 }
 
 /** The operation a family's model-written reads are evaluated under: its row's `<family>.query.read`. */
@@ -373,6 +381,7 @@ export interface AgentFamilyEvidenceTools {
   readonly sql: never;
   readonly kubectl: KubectlEvidenceToolName;
   readonly mongo: never;
+  readonly libredbkv: never;
 }
 
 /** Every pack's evidence tool: a member of the core's `AgentToolName`, declared by the pack that offers it. */
@@ -383,6 +392,7 @@ export interface AgentFamilyReadingDenyCodes {
   readonly sql: never;
   readonly kubectl: KubectlReadingDenyCode;
   readonly mongo: never;
+  readonly libredbkv: never;
 }
 
 /** Every pack's reading refusal code: a member of the core's `AgentReadingDenyCode`, declared by its pack. */
@@ -393,6 +403,7 @@ export interface AgentFamilyShortfalls {
   readonly sql: never;
   readonly kubectl: KubectlShortfall;
   readonly mongo: never;
+  readonly libredbkv: never;
 }
 
 /** Every pack's verdict shortfall: a member of the core's `AgentGoalShortfall`, declared by its pack. */
@@ -403,6 +414,7 @@ export interface AgentFamilyVariantRequirements {
   readonly sql: never;
   readonly kubectl: KubectlVariantRequirement;
   readonly mongo: never;
+  readonly libredbkv: never;
 }
 
 /** Every pack's variant requirement: a member of the core's `AgentVariantRequirement`, declared by its pack. */
@@ -447,6 +459,7 @@ export interface AgentFamilyEvidenceEvents {
   readonly sql: never;
   readonly kubectl: KubectlEvidenceEvent;
   readonly mongo: never;
+  readonly libredbkv: never;
 }
 
 /** Every pack's evidence event, as the ledger stores it less its timestamp. */
@@ -627,6 +640,7 @@ export interface AgentFamilyDialectRows {
   sql: { client: SqlClientDialect; server: SqlServerDialect };
   mongo: { client: Record<never, never>; server: Record<never, never> };
   kubectl: { client: Record<never, never>; server: Record<never, never> };
+  libredbkv: { client: Record<never, never>; server: Record<never, never> };
 }
 
 /** The dialect-bound members of each family, client and server. */

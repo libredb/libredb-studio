@@ -12,6 +12,7 @@
 import type { AgentStatementLanguageId } from "../agent-manifest";
 import { mergeDisjoint } from "../disjoint-merge";
 import { KUBECTL_PACK } from "./kubectl/index";
+import { LIBREDBKV_PACK } from "./libredbkv/index";
 import { MONGO_PACK } from "./mongo/index";
 import type { AgentEvidenceTool, AgentLanguagePack, EvidenceToolName, LanguageToolArms } from "./pack";
 import { SQL_PACK } from "./sql/index";
@@ -20,6 +21,7 @@ const PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguagePack>> = Obj
   sql: SQL_PACK,
   kubectl: KUBECTL_PACK,
   mongo: MONGO_PACK,
+  libredbkv: LIBREDBKV_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguagePack>);
 
 /** The pack for `language`, or a named error when the id is not a language this server knows. */
@@ -34,6 +36,7 @@ export const LANGUAGE_TOOL_ARMS: Readonly<Record<AgentStatementLanguageId, Langu
   sql: SQL_PACK.execution.arms,
   kubectl: KUBECTL_PACK.execution.arms,
   mongo: MONGO_PACK.execution.arms,
+  libredbkv: LIBREDBKV_PACK.execution.arms,
 } satisfies Record<AgentStatementLanguageId, LanguageToolArms>);
 
 /**
@@ -41,6 +44,11 @@ export const LANGUAGE_TOOL_ARMS: Readonly<Record<AgentStatementLanguageId, Langu
  * reads the run's language, and a name two packs both hold fails at load.
  */
 export const AGENT_EVIDENCE_TOOLS: Readonly<Record<EvidenceToolName, AgentEvidenceTool>> = mergeDisjoint(
-  [SQL_PACK.execution.evidenceTools, KUBECTL_PACK.execution.evidenceTools, MONGO_PACK.execution.evidenceTools],
+  [
+    SQL_PACK.execution.evidenceTools,
+    KUBECTL_PACK.execution.evidenceTools,
+    MONGO_PACK.execution.evidenceTools,
+    LIBREDBKV_PACK.execution.evidenceTools,
+  ],
   "AGENT_EVIDENCE_TOOLS",
 );

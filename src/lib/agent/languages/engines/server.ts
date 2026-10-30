@@ -12,6 +12,7 @@
  */
 import type { DatabaseType } from "@/lib/types";
 import { KUBERNETES_SERVER_OVERLAY } from "../kubectl/engines/kubernetes";
+import { LIBREDB_SERVER_OVERLAY } from "../libredbkv/engines/libredb";
 import { MONGODB_SERVER_OVERLAY } from "../mongo/engines/mongodb";
 import type { AgentStatementLanguageId } from "../../agent-manifest";
 import { statementFamilyOf } from "../client";
@@ -60,6 +61,7 @@ const SERVER_OVERLAYS: AgentEngineServerOverlays = Object.freeze({
   druid: Object.freeze({ ...DRUID_SERVER_OVERLAY }),
   mongodb: Object.freeze({ ...MONGODB_SERVER_OVERLAY }),
   kubernetes: Object.freeze({ ...KUBERNETES_SERVER_OVERLAY }),
+  libredb: Object.freeze({ ...LIBREDB_SERVER_OVERLAY }),
 } satisfies AgentEngineServerOverlays);
 
 /** What an engine with no dialect answers: every member unsupported. */

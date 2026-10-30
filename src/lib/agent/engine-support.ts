@@ -58,8 +58,11 @@ import type { DatabaseType } from "@/lib/types";
  * still run UPDATE STATISTICS and EXECUTE. Druid's is the engine's: under the native engine its SQL endpoint refuses
  * every INSERT, REPLACE, UPDATE, DELETE, MERGE and DDL statement and every read of EXTERN, whoever asks, which the open
  * and every statement prove with an INSERT the server must refuse, and the request context naming the engine is
- * written by Studio, with only one SELECT sent, since a SET before a statement would select another engine. Each
- * provider's own `queryReadOnly` argues its own case.
+ * written by Studio, with only one SELECT sent, since a SET before a statement would select another engine. LibreDB's is
+ * the handle's: an embedded file with no principal, which each statement opens on a handle of its own through Studio's
+ * read-only file adapter, with no writer lock, so it opens beside the editor's writer, and with no call that can write
+ * the file, the engine's one write path refusing before any write; Studio's reader admits get, prefix and range only.
+ * Each provider's own `queryReadOnly` argues its own case.
  * `tests/unit/lib/agent/engine-support.test.ts` is what keeps the two equal - it walks EVERY
  * id in the `DatabaseType` union, reads `queryReadOnly` off the real provider class the
  * factory would construct, and fails if this array and the drivers diverge in either direction.
@@ -92,6 +95,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "cassandra",
   "couchbase",
   "druid",
+  "libredb",
 ];
 
 /**
