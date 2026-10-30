@@ -4,6 +4,121 @@ entries:
   - annotations:
       artifacthub.io/category: database
       artifacthub.io/changes: |
+        - "openshift.consolePlugin (default false) renders the OpenShift console plugin's server and its ConsolePlugin: on a Helm install in a namespace that is not the release's own, a discovered one or a requested project; under the OLM operator, in the operator's own namespace"
+      artifacthub.io/containsSecurityUpdates: "false"
+      artifacthub.io/images: |
+        - name: libredb-studio
+          image: ghcr.io/libredb/libredb-studio:1.1.0
+          platforms:
+            - linux/amd64
+            - linux/arm64
+        - name: libredb-studio-openshift-plugin
+          image: ghcr.io/libredb/libredb-studio-openshift-plugin:0.1.0@sha256:39698233d019f4e69fe106e634af789291011d59d27d5858a7e4d0b41283d86e
+          platforms:
+            - linux/amd64
+            - linux/arm64
+      artifacthub.io/license: MIT
+      artifacthub.io/links: |
+        - name: Documentation
+          url: https://github.com/libredb/libredb-studio#readme
+        - name: Container Image
+          url: https://github.com/libredb/libredb-studio/pkgs/container/libredb-studio
+        - name: Source
+          url: https://github.com/libredb/libredb-studio
+      artifacthub.io/prerelease: "false"
+      charts.openshift.io/name: LibreDB Studio
+      charts.openshift.io/provider: LibreDB
+      charts.openshift.io/providerType: community
+      charts.openshift.io/supportURL: https://github.com/libredb/libredb-studio/issues
+    apiVersion: v2
+    appVersion: 1.1.0
+    created: "2026-10-30T17:11:15.166266283Z"
+    dependencies:
+    - condition: postgresql.enabled
+      name: postgresql
+      repository: https://charts.bitnami.com/bitnami
+      version: 16.x.x
+    description: Web-based SQL IDE for cloud-native teams supporting forty-two engines
+      - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis,
+      Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino,
+      BigQuery, Snowflake, Apache Spark, Apache Cassandra, libSQL, Prometheus, Apache
+      Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Weaviate, InfluxDB, InfluxDB
+      3, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect,
+      Modbus, NETCONF, SNMP and Sparkplug B
+    digest: aef436c092eb165a80b954154d416d6d748db00b41d60450eaa91005689f6c88
+    home: https://github.com/libredb/libredb-studio
+    icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
+    keywords:
+    - sql
+    - ide
+    - database
+    - postgresql
+    - mysql
+    - mongodb
+    - redis
+    - sqlite
+    - oracle
+    - mssql
+    - couchbase
+    - clickhouse
+    - druid
+    - elasticsearch
+    - opensearch
+    - trino
+    - cassandra
+    - libsql
+    - turso
+    - duckdb
+    - prometheus
+    - promql
+    - kafka
+    - etcd
+    - db2
+    - ibm-db2
+    - neo4j
+    - cypher
+    - victoriametrics
+    - redpanda
+    - milvus
+    - qdrant
+    - weaviate
+    - influxdb
+    - influxql
+    - influxdb3
+    - oxia
+    - databend
+    - s3
+    - object-storage
+    - minio
+    - kubernetes
+    - bigquery
+    - snowflake
+    - spark
+    - mqtt
+    - firestore
+    - rabbitmq
+    - amqp
+    - opcua
+    - mtconnect
+    - modbus
+    - netconf
+    - snmp
+    - sparkplug
+    - web-ide
+    kubeVersion: '>=1.26.0-0'
+    maintainers:
+    - name: cevheri
+      url: https://github.com/cevheri
+    name: libredb-studio
+    sources:
+    - https://github.com/libredb/libredb-studio
+    type: application
+    urls:
+    - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.118/libredb-studio-0.1.118.tgz
+    version: 0.1.118
+  - annotations:
+      artifacthub.io/category: database
+      artifacthub.io/changes: |
         - "operator.clusterStudioNamespace: the OLM operator sets it to the namespace it is installed in"
         - "Under operator.managed the render refuses serviceAccount.create=false"
       artifacthub.io/containsSecurityUpdates: "false"
@@ -8896,4 +9011,4 @@ entries:
     urls:
     - https://github.com/libredb/libredb-studio/releases/download/libredb-studio-0.1.0/libredb-studio-0.1.0.tgz
     version: 0.1.0
-generated: "2026-10-30T15:18:22.888856009Z"
+generated: "2026-10-30T17:11:15.159934569Z"
