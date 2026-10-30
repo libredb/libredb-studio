@@ -3,6 +3,7 @@
 LibreDB Studio supports vendor-agnostic OpenID Connect (OIDC) authentication. This document is split into two parts: a **Setup Guide** for operators configuring SSO against a provider, and an **Architecture & Internals** reference for contributors working on the auth subsystem.
 
 For the built-in OAuth server of an OpenShift cluster, which is not an OpenID Connect provider, see [OPENSHIFT.md](OPENSHIFT.md) and `NEXT_PUBLIC_AUTH_PROVIDER=openshift` instead.
+An OpenShift cluster that uses direct external OIDC authentication has no built-in OAuth server, so Studio signs in there with this mode against the cluster's identity provider, without Kubernetes discovery: on a cluster that serves `config.openshift.io/v1`, the Kubernetes access review of an OIDC session denies every request ([OPENSHIFT.md](OPENSHIFT.md#supported-versions)).
 
 LibreDB Studio uses the **Authorization Code Flow with PKCE** (S256). After OIDC authentication, a local JWT session is created — the rest of the app (middleware, hooks, protected routes, RBAC) works identically to local email/password login.
 
