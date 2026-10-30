@@ -32,15 +32,10 @@ import { RABBITMQ_READ_WIRE_BYTES, RABBITMQ_RESULT_BUDGET_BYTES, RABBITMQ_TYPE }
 import type { AgentReadOutcome } from "./read";
 import type { ReadRequest } from "./request";
 
-/** A stream offset as a number when it is a safe integer, or a value no column's kind admits, so the answer is refused. */
-function offsetOf(offset: bigint): unknown {
-  const value = Number(offset);
-  return Number.isSafeInteger(value) ? value : Symbol("an offset no number holds exactly");
-}
-
 /** One delivered message: its offset in the stream and its declared body size, never the body or a property. */
 const STREAM_MESSAGES: MetadataProjection<RawMessage> = [
-  { column: "offset", kind: "count", read: (message) => offsetOf(message.offset) },
+  // An offset no number holds exactly is not a safe integer, so the count kind refuses the whole answer.
+  { column: "offset", kind: "count", read: (message) => Number(message.offset) },
   { column: "body_bytes", kind: "count", read: (message) => message.bodySize },
 ];
 
