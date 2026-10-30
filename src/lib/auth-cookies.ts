@@ -7,7 +7,7 @@
  * Secure mode carries Secure, which a browser requires before it removes a `__Host-` cookie.
  *
  * This file imports nothing request-scoped, so src/proxy.ts reads the same name from its own request headers that the
- * route handlers read through `headers()` (src/lib/auth.ts, `studioCookie`).
+ * route handlers read through `headers()` (src/lib/studio-cookie.ts, `studioCookie`).
  */
 import { getBasePath } from "@/lib/config/base-path";
 import { logger } from "@/lib/logger";
@@ -32,7 +32,8 @@ const COOKIE_SECURE_DISABLED_MESSAGE =
   "AUTH_COOKIE_SECURE=false: auth cookies drop the Secure flag and travel in cleartext; keep this to trusted networks";
 
 // Weakening the session cookie deserves a line in the log, but the decision
-// runs on every login, so the notice is latched to fire once per process.
+// runs on every request, so the notice is latched to fire once per module
+// copy: the proxy holds its own, so a process can print it twice.
 let cookieSecurityWarned = false;
 
 /** Test seam: clears the warn-once latch so each case observes a fresh process. */
