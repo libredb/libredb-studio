@@ -10,8 +10,8 @@ import {
   MANAGED_REFRESH_DEFAULT_FLOOR_MS,
   MANAGED_REFRESH_MAX_MS,
   managedRefreshIntervalMs,
-  useConnectionManager,
-} from "@/hooks/use-connection-manager";
+} from "@/lib/connection-refresh";
+import { useConnectionManager } from "@/hooks/use-connection-manager";
 import { SEED_CONFIG_UNREADABLE_REASON, type ManagedConnectionPayload } from "@/hooks/use-connection-payload";
 import { useTabManager } from "@/hooks/use-tab-manager";
 import { logger } from "@/lib/logger";

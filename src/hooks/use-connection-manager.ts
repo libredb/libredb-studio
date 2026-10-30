@@ -12,6 +12,7 @@ import { useReadGeneration } from "@/hooks/use-read-generation";
 import { useToast } from "@/hooks/use-toast";
 import { storage } from "@/lib/storage";
 import { logger } from "@/lib/logger";
+import { startManagedListRefresh } from "@/lib/connection-refresh";
 import {
   connectionAllowed,
   connectionsUnderPolicy,
@@ -30,22 +31,6 @@ import {
  * shortens the tick in source builds and tests only — NEXT_PUBLIC_ values are
  * inlined at build time, so packaged artifacts always use the default. */
 const MANAGED_POLL_MAX_ATTEMPTS = 30;
-
-/**
- * Managed-list refresh after the first load (#1502): the interval
- * never runs more often than the floor and never less often than the cap, while focus and visibility
- * refresh at once, bounded only by the refresh's in-flight guard. NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS
- * moves the floor in source builds and tests only, because NEXT_PUBLIC_ values are inlined at
- * build time, exactly like the poll tick above.
- */
-export const MANAGED_REFRESH_DEFAULT_FLOOR_MS = 5000;
-export const MANAGED_REFRESH_MAX_MS = 60000;
-
-/** Milliseconds between two refreshes: max(cacheHint, floor), capped at MANAGED_REFRESH_MAX_MS. */
-export function managedRefreshIntervalMs(cacheHint: number | null): number {
-  const floor = Number(process.env.NEXT_PUBLIC_MANAGED_REFRESH_FLOOR_MS) || MANAGED_REFRESH_DEFAULT_FLOOR_MS;
-  return Math.min(Math.max(cacheHint ?? 0, floor), MANAGED_REFRESH_MAX_MS);
-}
 
 /**
  * The query parameter a link uses to open the editor on one connection, by the connection's full id
@@ -717,19 +702,7 @@ export function useConnectionManager(storageReady = false) {
       }, pollMs);
     };
 
-    /*
-      The managed list after the first load (#1502).
-
-      A discovered database is added or removed on the server while a tab is open, so the
-      list is read again: every max(cacheHint, floor) ms capped at a minute, only while the
-      tab is visible, and at once when the window regains focus or the document becomes
-      visible. One read at a time, like the seed poll: a trigger that arrives while a read is
-      in flight is absorbed by it.
-
-      It reads quietly: a refresh that fails changes nothing, servedSeeds included.
-    */
-    let refreshTimer: ReturnType<typeof setInterval> | null = null;
-    let refreshInFlight = false;
+    let stopRefresh: (() => void) | undefined;
 
     /*
       A `?connection=` link the first load could not open (selectInitialConnection below). The
@@ -795,40 +768,14 @@ export function useConnectionManager(storageReady = false) {
       toast({ title: "Connection removed", description: `${active.name} is no longer available.` });
     };
 
-    const refreshManaged = () => {
-      if (refreshInFlight || document.visibilityState !== "visible") return;
-      refreshInFlight = true;
-      fetchManaged({ quiet: true })
-        .then(({ merged, failed }) => {
-          if (cancelled || failed) return;
-          // An empty list is an answer too: the server withdrew every managed entry, and
-          // fetchManaged maps it to `merged: null`, so what remains is the user's own list.
-          const next = merged ?? storage.getConnections();
-          applyManagedRefresh(next);
-          settlePendingLink(next);
-        })
-        .catch((err) => {
-          logger.debug("Managed connection refresh failed", {
-            route: "use-connection-manager",
-            error: err instanceof Error ? err.message : String(err),
-          });
-        })
-        .finally(() => {
-          refreshInFlight = false;
-        });
-    };
-
-    const startManagedRefresh = (cacheHint: number | null) => {
-      refreshTimer = setInterval(refreshManaged, managedRefreshIntervalMs(cacheHint));
-      window.addEventListener("focus", refreshManaged);
-      document.addEventListener("visibilitychange", refreshManaged);
-    };
-
-    const stopManagedRefresh = () => {
-      if (refreshTimer !== null) clearInterval(refreshTimer);
-      refreshTimer = null;
-      window.removeEventListener("focus", refreshManaged);
-      document.removeEventListener("visibilitychange", refreshManaged);
+    const refreshManaged = async () => {
+      const { merged, failed } = await fetchManaged({ quiet: true });
+      if (cancelled || failed) return;
+      // An empty list is an answer too: the server withdrew every managed entry, and
+      // fetchManaged maps it to `merged: null`, so what remains is the user's own list.
+      const next = merged ?? storage.getConnections();
+      applyManagedRefresh(next);
+      settlePendingLink(next);
     };
 
     /**
@@ -927,7 +874,13 @@ export function useConnectionManager(storageReady = false) {
         selectInitialConnection(loadedConnections, { answered: managedAnswered, sessionEnded: managedSessionEnded });
       }
 
-      if (managedAnswered || managedUnavailable) startManagedRefresh(managedCacheHint);
+      stopRefresh = startManagedListRefresh({
+        answered: managedAnswered,
+        unavailable: managedUnavailable,
+        cacheHint: managedCacheHint,
+        refresh: refreshManaged,
+        route: "use-connection-manager",
+      });
     };
 
     initializeConnections().catch((err) => {
@@ -940,7 +893,7 @@ export function useConnectionManager(storageReady = false) {
     return () => {
       cancelled = true;
       stopPoll();
-      stopManagedRefresh();
+      stopRefresh?.();
     };
   }, [storageReady, toast]);
 

@@ -1124,7 +1124,7 @@ With the template's values a database appears or disappears in an open tab withi
 The template's end text says about 30 seconds, which also covers a database that is still starting: an image CapRover built itself, as the MariaDB and KeyDB templates produce, is listed only once its database accepts connections.
 The active connection stays open while its id is still listed; when it is withdrawn, the first remaining connection the sidebar lists becomes active and Studio says so once.
 With `ALLOW_CUSTOM_CONNECTIONS` off that is never one of the user's own connections, which stay hidden (see [Custom Connections](#custom-connections)).
-Pages that use the lighter connection list (the admin Overview and Operations tabs, Schema Diff and Monitoring) load it once and need a reload.
+Pages that use the lighter connection list (the admin Overview and Operations tabs, Schema Diff and Monitoring) refresh it with the same cadence and focus and visibility triggers as the editor, without a page reload.
 
 ---
 
