@@ -2,7 +2,7 @@
   "$captured": {
     "image": "neo4j:5.26.31-enterprise",
     "digest": "sha256:02d30e0a80f0aaed71cfdfaa85c8ea01cf44aacd55510d4a2b4a53f9f1a2e1ad",
-    "date": "2026-10-30T11:14:01.348Z",
+    "date": "2026-10-30T11:34:56.029Z",
     "database": "neo4j"
   },
   "principal": "widened: role agent_reader and csv_loader, granted after the first proof",

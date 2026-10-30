@@ -2,7 +2,7 @@
   "$captured": {
     "image": "neo4j:5.26.31-enterprise",
     "digest": "sha256:02d30e0a80f0aaed71cfdfaa85c8ea01cf44aacd55510d4a2b4a53f9f1a2e1ad",
-    "date": "2026-10-30T11:13:57.601Z",
+    "date": "2026-10-30T11:34:52.304Z",
     "database": "neo4j"
   },
   "principal": "neo4j: role admin",

@@ -19,6 +19,12 @@
  * holding LOAD, and captured again. The node counts of both databases and the extension's marker files are read
  * before and after into `state-before.json` and `state-after.json`.
  *
+ * Then it drives the production path, `createDatabaseProvider` with the agent read-only profile's execution context,
+ * `connect` and `queryReadOnly`, with no admission of Studio's in front: the proved user reads, `LOAD CSV` and a write
+ * are refused, every refused principal and Community are refused at open, a role granted after the open refuses the
+ * next call and its revoke admits the one after, and the operations profile opens the administrator unproved. Each
+ * check prints one line, and the run ends non-zero if any failed.
+ *
  * Run by `run.sh`, never by `bun run test` (tests/runner/discover.ts excludes tests/live/).
  */
 // oxlint-disable no-await-in-loop -- captures run one at a time, so each answer is the server's to that statement alone.
@@ -27,6 +33,8 @@ import { randomBytes } from "node:crypto";
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import neo4j from "neo4j-driver-lite";
+import { ExecutionProfileError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { createDatabaseProvider, executionContextFor } from "@/lib/db/factory";
 import { createBoltClient } from "@/lib/db/graph/bolt/bolt-client";
 import { type GraphClient, GraphClientError } from "@/lib/db/graph/bolt/client";
 import {
@@ -379,8 +387,10 @@ async function capture(): Promise<void> {
     ["editor", "role editor", ["editor"], false],
     ["boosted", "agent_reader and boosted (GRANT EXECUTE BOOSTED PROCEDURE *)", ["agent_reader", "boosted"], false],
   ];
+  const principals: Record<string, Principal> = {};
   for (const [name, rights, granted, loads] of roles) {
     const principal = user(enterprise, name, rights, granted);
+    principals[name] = principal;
     await capturePrincipal(principal, loads ? BOUNDARY_STATEMENTS.slice(0, 1) : []);
     if (name === "editor") {
       const writes = new Recorder(principal);
@@ -447,6 +457,108 @@ async function capture(): Promise<void> {
   await communityWrites.close();
 
   write(join(OUT, "state-after.json"), [await state("enterprise"), await state("extension"), await state("community")]);
+
+  await productionPath({
+    agent,
+    loader: principals.loader,
+    editor: principals.editor,
+    extensionAgent,
+    community,
+    administrator,
+  });
+}
+
+const BUDGET = { statementTimeoutMs: 10_000, maxResultRows: 200, maxResultBytes: 1_000_000 };
+let failures = 0;
+
+function check(name: string, ok: boolean, detail = ""): void {
+  if (!ok) failures++;
+  console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail === "" ? "" : `: ${detail}`}`);
+}
+
+async function provider(principal: Principal, profile: "agent-read-only" | "agent-operations" = "agent-read-only") {
+  return createDatabaseProvider(
+    {
+      id: `live-${principal.name}`,
+      name: principal.name,
+      type: "neo4j",
+      host: "127.0.0.1",
+      port: Number(ports[principal.server]),
+      user: principal.user,
+      password: principal.password,
+      database: DATABASE,
+      createdAt: new Date(0),
+    },
+    {},
+    executionContextFor(profile),
+  );
+}
+
+async function refusedAtOpen(name: string, principal: Principal, words: string): Promise<void> {
+  const handle = await provider(principal);
+  const error = await handle.connect().then(
+    () => undefined,
+    (caught: unknown) => caught,
+  );
+  check(
+    name,
+    error instanceof ExecutionProfileError && error.message.includes(words),
+    error instanceof Error ? error.message : "opened",
+  );
+  await handle.disconnect().catch(() => undefined);
+}
+
+async function productionPath(p: Readonly<Record<string, Principal>>): Promise<void> {
+  const agent = await provider(p.agent as Principal);
+  await agent.connect();
+  const read = await agent.queryReadOnly?.("MATCH (n:Person) RETURN n.name AS name ORDER BY name", BUDGET);
+  check("the proved user reads", read?.rowCount === 2);
+  for (const statement of [
+    "LOAD CSV FROM 'file:///probe.csv' AS row RETURN row",
+    "CREATE (:LibredbProbe {at: 9})",
+    "RETURN 1 AS x // c\r, 2 AS y",
+    "USE other MATCH (n) RETURN count(n) AS n",
+  ]) {
+    const error = await agent.queryReadOnly?.(statement, BUDGET).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    check(`refused before it is sent: ${JSON.stringify(statement)}`, error instanceof RefusedBeforeSendError);
+  }
+
+  // A role holding LOAD granted after the open refuses the next call; its revoke admits the one after.
+  admin("enterprise", `GRANT ROLE csv_loader TO ${p.agent?.user};`);
+  const widened = await agent.queryReadOnly?.("MATCH (n) RETURN count(n) AS n", BUDGET).then(
+    () => undefined,
+    (caught: unknown) => caught,
+  );
+  check(
+    "a role granted after the open refuses the next call",
+    widened instanceof ExecutionProfileError && widened.message.includes("csv_loader"),
+  );
+  admin("enterprise", `REVOKE ROLE csv_loader FROM ${p.agent?.user};`);
+  const after = await agent.queryReadOnly?.("MATCH (n) RETURN count(n) AS n", BUDGET);
+  check("its revoke admits the call after", after?.rowCount === 1);
+  await agent.disconnect();
+
+  await refusedAtOpen("a second role holding LOAD is refused at open", p.loader as Principal, "csv_loader");
+  await refusedAtOpen("a writer is refused at open", p.editor as Principal, "write on");
+  await refusedAtOpen("the administrator is refused at open", p.administrator as Principal, "through the role admin");
+  await refusedAtOpen(
+    "the test extension refuses its reader at open",
+    p.extensionAgent as Principal,
+    "libredbtest.touch",
+  );
+  await refusedAtOpen("Community is refused at open by name", p.community as Principal, "Neo4j Community Edition");
+
+  const operations = await provider(p.administrator as Principal, "agent-operations");
+  await operations.connect();
+  check("the operations profile opens the administrator unproved", operations.isConnected());
+  await operations.disconnect();
 }
 
 await capture();
+if (failures > 0) {
+  console.log(`${failures} live check(s) failed`);
+  process.exit(1);
+}

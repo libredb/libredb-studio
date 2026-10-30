@@ -2,7 +2,7 @@
   "$captured": {
     "image": "neo4j:5.26.31-enterprise",
     "digest": "sha256:02d30e0a80f0aaed71cfdfaa85c8ea01cf44aacd55510d4a2b4a53f9f1a2e1ad",
-    "date": "2026-10-30T11:13:50.331Z",
+    "date": "2026-10-30T11:34:44.991Z",
     "database": null
   },
   "principal": "denied: agent_reader, csv_loader and no_load (DENY LOAD ON ALL DATA)",

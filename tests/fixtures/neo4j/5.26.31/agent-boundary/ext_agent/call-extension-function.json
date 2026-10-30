@@ -2,7 +2,7 @@
   "$captured": {
     "image": "neo4j:5.26.31-enterprise",
     "digest": "sha256:02d30e0a80f0aaed71cfdfaa85c8ea01cf44aacd55510d4a2b4a53f9f1a2e1ad",
-    "date": "2026-10-30T11:14:13.186Z",
+    "date": "2026-10-30T11:35:07.951Z",
     "database": "neo4j"
   },
   "principal": "ext_agent: role agent_reader on a server with the test extension",
