@@ -32,11 +32,11 @@ const SERVER = "libredb-studio-console-plugin";
 const ZERO_DIGEST = "0".repeat(64);
 
 /**
- * The plugin image the chart ships, pinned by digest. PROVISIONAL until the plugin's 0.1.0 release
- * is public: the digest is 64 zeros, and the case "pins a released digest" below stays red until
- * the released index digest replaces it.
+ * The plugin image the chart ships: the plugin's 0.1.0 release, pinned by the index digest its release
+ * notes name (both platforms).
  */
-const PLUGIN_IMAGE = `ghcr.io/libredb/libredb-studio-openshift-plugin:0.1.0@sha256:${ZERO_DIGEST}`;
+const PLUGIN_IMAGE =
+  "ghcr.io/libredb/libredb-studio-openshift-plugin:0.1.0@sha256:39698233d019f4e69fe106e634af789291011d59d27d5858a7e4d0b41283d86e";
 
 interface Manifest {
   apiVersion: string;
@@ -199,8 +199,7 @@ describe("openshift.consolePlugin values", () => {
   });
 
   test("pins a released digest, never the provisional all-zero one", () => {
-    // PROVISIONAL (S4): red until the plugin's 0.1.0 index digest replaces the zeros in values.yaml,
-    // the operator's RELATED_IMAGE_PLUGIN and PLUGIN_IMAGE above, so a placeholder never ships.
+    // Keeps a placeholder digest from ever shipping in values.yaml (S4).
     expect(values.openshift.consolePlugin.image).toMatch(/@sha256:[a-f0-9]{64}$/);
     expect(values.openshift.consolePlugin.image.endsWith(ZERO_DIGEST)).toBe(false);
   });

@@ -723,8 +723,7 @@ openshift:
     namespace: ""
     # -- The plugin image, a whole reference pinned by digest, so a mirror sets one string.
     # The operator sets it from RELATED_IMAGE_PLUGIN.
-    # PROVISIONAL: the all-zero digest stands in until the plugin's 0.1.0 release is public.
-    image: "ghcr.io/libredb/libredb-studio-openshift-plugin:0.1.0@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    image: "ghcr.io/libredb/libredb-studio-openshift-plugin:0.1.0@sha256:39698233d019f4e69fe106e634af789291011d59d27d5858a7e4d0b41283d86e"
     # -- Always, IfNotPresent or Never.
     imagePullPolicy: IfNotPresent
     # -- Plugin server replicas, from 1 to 5.

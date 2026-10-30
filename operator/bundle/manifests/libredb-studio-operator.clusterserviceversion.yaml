@@ -23,7 +23,7 @@ metadata:
     categories: Database, Developer Tools
     console.openshift.io/plugins: '["libredb-studio"]'
     containerImage: ghcr.io/libredb/libredb-studio-operator:1.1.0
-    createdAt: "2026-10-30T14:02:42Z"
+    createdAt: "2026-10-30T14:23:23Z"
     description: Open-source web-based SQL IDE for forty-two engines - PostgreSQL,
       MySQL, Oracle, Db2 LUW, SQL Server, SQLite, DuckDB, MongoDB, Redis, Couchbase,
       Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery,
@@ -253,7 +253,7 @@ spec:
                     fieldRef:
                       fieldPath: metadata.namespace
                 - name: RELATED_IMAGE_PLUGIN
-                  value: ghcr.io/libredb/libredb-studio-openshift-plugin:0.1.0@sha256:0000000000000000000000000000000000000000000000000000000000000000
+                  value: ghcr.io/libredb/libredb-studio-openshift-plugin:0.1.0@sha256:39698233d019f4e69fe106e634af789291011d59d27d5858a7e4d0b41283d86e
                 image: ghcr.io/libredb/libredb-studio-operator:1.1.0
                 livenessProbe:
                   httpGet:
@@ -540,6 +540,6 @@ spec:
     name: LibreDB
     url: https://libredb.org
   relatedImages:
-  - image: ghcr.io/libredb/libredb-studio-openshift-plugin:0.1.0@sha256:0000000000000000000000000000000000000000000000000000000000000000
+  - image: ghcr.io/libredb/libredb-studio-openshift-plugin:0.1.0@sha256:39698233d019f4e69fe106e634af789291011d59d27d5858a7e4d0b41283d86e
     name: plugin
   version: 1.1.0

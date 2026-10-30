@@ -363,7 +363,7 @@ annotations:
         - linux/amd64
         - linux/arm64
     - name: libredb-studio-openshift-plugin
-      image: ghcr.io/libredb/libredb-studio-openshift-plugin:0.1.0@sha256:0000000000000000000000000000000000000000000000000000000000000000
+      image: ghcr.io/libredb/libredb-studio-openshift-plugin:0.1.0@sha256:39698233d019f4e69fe106e634af789291011d59d27d5858a7e4d0b41283d86e
       platforms:
         - linux/amd64
         - linux/arm64
