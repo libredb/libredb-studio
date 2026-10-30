@@ -683,7 +683,7 @@ bun run test:coverage
 >
 > **CapRover：** 打开你的 CapRover 面板 → **Apps → One-Click Apps/Databases**，搜索 **LibreDB Studio**，然后部署。
 >
-> **Koyeb：** 部署前先设置一个强 `JWT_SECRET`（至少 32 个字符，用 `openssl rand -base64 32` 生成）和各项凭据（Koyeb 无法自动生成密钥）。预填的值是刻意不可用的：那个密钥比 32 字符下限还短，所以应用会在启动时停下并说明原因，而不是用一个印在本文件里的密钥运行。按钮用的是 `STORAGE_PROVIDER=local`，连接元数据留在浏览器里，这适合 Koyeb 的临时文件系统。要让连接在重新部署后仍然存在，改成 `STORAGE_PROVIDER=postgres`，并把 `STORAGE_POSTGRES_URL` 指向 Koyeb 托管 Postgres 或 Neon 数据库。按钮也会填好 `LLM_PROVIDER`/`LLM_MODEL`/`LLM_API_KEY`，但 Agent 模式需要一份服务端持有的连接，所以在 `STORAGE_PROVIDER` 为 `sqlite` 或 `postgres` 之前，它的 Start 按钮一直是禁用的（见 [docs/AGENT.md](docs/AGENT.md#turning-it-on)）。详见 [`deploy/koyeb/`](deploy/koyeb/)。
+> **Koyeb：** 部署前先设置一个强 `JWT_SECRET`（至少 32 个字符，用 `openssl rand -base64 32` 生成）和各项凭据（Koyeb 无法自动生成密钥）。预填的值是刻意不可用的：那个密钥比 32 字符下限还短，所以应用会在启动时停下并说明原因，而不是用一个印在本文件里的密钥运行。按钮用的是 `STORAGE_PROVIDER=local`，连接元数据留在浏览器里，这适合 Koyeb 的临时文件系统。要让连接在重新部署后仍然存在，改成 `STORAGE_PROVIDER=postgres`，并把 `STORAGE_POSTGRES_URL` 指向 Koyeb 托管 Postgres 或 Neon 数据库。按钮也会填好 `LLM_PROVIDER`/`LLM_MODEL`/`LLM_API_KEY`，但 Agent 运行只能在服务端自己列出的种子连接（seed connection）上启动，所以在界面中创建的连接上，无论 `STORAGE_PROVIDER` 是什么，Start 按钮都是禁用的（见 [docs/AGENT.md](docs/AGENT.md#turning-it-on)）。详见 [`deploy/koyeb/`](deploy/koyeb/)。
 >
 > **Fly.io：** 仓库里已经带了一份可用的 [`fly.toml`](fly.toml)，完整步骤（应用名、volume、secrets）见 [`docs/FLY.md`](docs/FLY.md)。
 >
