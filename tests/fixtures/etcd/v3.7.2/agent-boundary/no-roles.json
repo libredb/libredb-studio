@@ -1,0 +1,421 @@
+{
+  "$captured": {
+    "image": "gcr.io/etcd-development/etcd:v3.7.2@sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "version": "3.7.2",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "principal": "agent_no_roles",
+    "roles": []
+  },
+  "reads": {
+    "authStatus": {
+      "outcome": "ok",
+      "answer": {
+        "header": {
+          "cluster_id": "10890815359060184063",
+          "member_id": "13264652972854556008",
+          "revision": "21",
+          "raft_term": "2"
+        },
+        "enabled": true,
+        "authRevision": "32"
+      }
+    },
+    "userGetSelf": {
+      "outcome": "ok",
+      "answer": {
+        "roles": [],
+        "header": {
+          "cluster_id": "10890815359060184063",
+          "member_id": "13264652972854556008",
+          "revision": "21",
+          "raft_term": "2"
+        }
+      }
+    },
+    "userGetRoot": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "roleGet:agent_read_all(not held)": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "userList": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "roleList": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "status": {
+      "outcome": "ok",
+      "answer": {
+        "errors": [],
+        "header": {
+          "cluster_id": "10890815359060184063",
+          "member_id": "13264652972854556008",
+          "revision": "21",
+          "raft_term": "2"
+        },
+        "version": "3.7.2",
+        "dbSize": "24576",
+        "leader": "13264652972854556008",
+        "raftIndex": "187",
+        "raftTerm": "2",
+        "raftAppliedIndex": "187",
+        "dbSizeInUse": "20480",
+        "isLearner": false,
+        "storageVersion": "3.7.0",
+        "dbSizeQuota": "2147483648",
+        "downgradeInfo": {
+          "enabled": false,
+          "targetVersion": ""
+        }
+      }
+    },
+    "memberListLinearizable": {
+      "outcome": "ok",
+      "answer": {
+        "members": [
+          {
+            "peerURLs": [
+              "http://127.0.0.1:2380"
+            ],
+            "clientURLs": [
+              "http://127.0.0.1:2379"
+            ],
+            "ID": "13264652972854556008",
+            "name": "pr39-etcd-auth",
+            "isLearner": false
+          }
+        ],
+        "header": {
+          "cluster_id": "10890815359060184063",
+          "member_id": "13264652972854556008",
+          "revision": "0",
+          "raft_term": "2"
+        }
+      }
+    },
+    "memberListSerializable": {
+      "outcome": "ok",
+      "answer": {
+        "members": [
+          {
+            "peerURLs": [
+              "http://127.0.0.1:2380"
+            ],
+            "clientURLs": [
+              "http://127.0.0.1:2379"
+            ],
+            "ID": "13264652972854556008",
+            "name": "pr39-etcd-auth",
+            "isLearner": false
+          }
+        ],
+        "header": {
+          "cluster_id": "10890815359060184063",
+          "member_id": "13264652972854556008",
+          "revision": "0",
+          "raft_term": "2"
+        }
+      }
+    },
+    "alarmGet": {
+      "outcome": "ok",
+      "answer": {
+        "alarms": [],
+        "header": {
+          "cluster_id": "10890815359060184063",
+          "member_id": "13264652972854556008",
+          "revision": "21",
+          "raft_term": "2"
+        }
+      }
+    },
+    "leaseLeases": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "leaseTimeToLive": {
+      "outcome": "ok",
+      "answer": {
+        "keys": [],
+        "header": {
+          "cluster_id": "10890815359060184063",
+          "member_id": "13264652972854556008",
+          "revision": "21",
+          "raft_term": "2"
+        },
+        "ID": "3848503513075255560",
+        "TTL": "3598",
+        "grantedTTL": "3600"
+      }
+    },
+    "leaseTimeToLiveKeys": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "rangeKey": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "rangeKeyLeased": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "rangeKeyMissing": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "rangeKeyOutside": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "rangeCountAll": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "rangeCountApp": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "rangeKeysOnlyAll": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "rangeSerializableKey": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "txnReadOnly": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "watchKey": {
+      "outcome": "ok",
+      "answer": {
+        "events": [],
+        "header": {
+          "cluster_id": "10890815359060184063",
+          "member_id": "13264652972854556008",
+          "revision": "21",
+          "raft_term": "2"
+        },
+        "watch_id": "-1",
+        "created": true,
+        "canceled": true,
+        "compact_revision": "0",
+        "cancel_reason": "rpc error: code = PermissionDenied desc = etcdserver: permission denied",
+        "fragment": false
+      }
+    }
+  },
+  "probes": {
+    "put": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "putInScratchRange": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "deleteRange": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "deleteRangeInScratchRange": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "txnPut": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "txnDeleteProbe": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "compactRevisionOne": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "leaseGrant": {
+      "outcome": "ok",
+      "answer": {
+        "header": {
+          "cluster_id": "10890815359060184063",
+          "member_id": "13264652972854556008",
+          "revision": "21",
+          "raft_term": "2"
+        },
+        "ID": "3848503513075255846",
+        "TTL": "5",
+        "error": ""
+      }
+    },
+    "leaseRevokeGranted": {
+      "outcome": "ok",
+      "answer": {
+        "header": {
+          "cluster_id": "10890815359060184063",
+          "member_id": "13264652972854556008",
+          "revision": "21",
+          "raft_term": "2"
+        }
+      }
+    },
+    "leaseRevokeUnknown": {
+      "outcome": "error",
+      "code": 5,
+      "details": "etcdserver: requested lease not found"
+    },
+    "alarmDeactivateNone": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "defragment": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "hashKV": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "snapshot": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "memberRemoveUnknown": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "userAdd": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    },
+    "roleRevokeUnknown": {
+      "outcome": "error",
+      "code": 7,
+      "details": "etcdserver: permission denied"
+    }
+  },
+  "stateBefore": {
+    "revision": "21",
+    "keys": [
+      {
+        "key": {
+          "$text": "/app/config"
+        },
+        "modRevision": "2"
+      },
+      {
+        "key": {
+          "$text": "/app/feature"
+        },
+        "modRevision": "3"
+      },
+      {
+        "key": {
+          "$text": "/app/session"
+        },
+        "modRevision": "5"
+      },
+      {
+        "key": {
+          "$text": "/other/credential"
+        },
+        "modRevision": "4"
+      }
+    ],
+    "leases": [
+      {
+        "ID": "3848503513075255560"
+      }
+    ],
+    "auth": {
+      "header": {
+        "cluster_id": "10890815359060184063",
+        "member_id": "13264652972854556008",
+        "revision": "21",
+        "raft_term": "2"
+      },
+      "enabled": true,
+      "authRevision": "32"
+    }
+  },
+  "stateAfter": {
+    "revision": "21",
+    "keys": [
+      {
+        "key": {
+          "$text": "/app/config"
+        },
+        "modRevision": "2"
+      },
+      {
+        "key": {
+          "$text": "/app/feature"
+        },
+        "modRevision": "3"
+      },
+      {
+        "key": {
+          "$text": "/app/session"
+        },
+        "modRevision": "5"
+      },
+      {
+        "key": {
+          "$text": "/other/credential"
+        },
+        "modRevision": "4"
+      }
+    ],
+    "leases": [
+      {
+        "ID": "3848503513075255560"
+      }
+    ],
+    "auth": {
+      "header": {
+        "cluster_id": "10890815359060184063",
+        "member_id": "13264652972854556008",
+        "revision": "21",
+        "raft_term": "2"
+      },
+      "enabled": true,
+      "authRevision": "32"
+    }
+  }
+}
