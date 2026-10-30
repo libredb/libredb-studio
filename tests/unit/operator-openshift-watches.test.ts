@@ -29,8 +29,10 @@
  * string in values.schema.json, or the reconcile fails on the schema.
  *
  * The console plugin's server receives every console user's token, so its namespace and image are
- * the operator's, never the resource's: OPERATOR_NAMESPACE (the downward API's metadata.namespace)
- * and RELATED_IMAGE_PLUGIN, both from the controller's environment.
+ * the operator's, never the resource's: WATCH_NAMESPACE, the operator's own namespace, which is the
+ * cluster Studio namespace, and RELATED_IMAGE_PLUGIN, both from the controller's environment. So the
+ * server shares the namespace with the cluster Studio, and the watched, cluster Studio and plugin
+ * namespaces are one variable.
  */
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -48,7 +50,6 @@ const BUNDLE_CSV = join(ROOT, "operator/bundle/manifests/libredb-studio-operator
 /** The Subscription variable the first draft of this file read; nothing may read it now. */
 const DROPPED_VARIABLE = "LIBREDB_CLUSTER_STUDIO_NAMESPACE";
 const RELEASE_NAMESPACE = "release-under-test";
-const OPERATOR_NAMESPACE = "openshift-operators";
 const PLUGIN_SERVER = "libredb-studio-console-plugin";
 /** The plugin image the chart pins, which the operator's RELATED_IMAGE_PLUGIN carries too (operator-openshift-csv.test.ts). */
 const PLUGIN_IMAGE = (
@@ -58,7 +59,6 @@ const PLUGIN_IMAGE = (
 /** The controller's environment for the cluster Studio in RELEASE_NAMESPACE. */
 const OPERATOR_ENV: Record<string, string> = {
   WATCH_NAMESPACE: RELEASE_NAMESPACE,
-  OPERATOR_NAMESPACE,
   RELATED_IMAGE_PLUGIN: PLUGIN_IMAGE,
 };
 
@@ -70,7 +70,7 @@ const EXPECTED_OVERRIDES = {
   "postgresql.serviceAccount.name": "",
   "postgresql.metrics.serviceMonitor.namespace": "",
   "postgresql.metrics.prometheusRule.namespace": "",
-  "openshift.consolePlugin.namespace": "$OPERATOR_NAMESPACE",
+  "openshift.consolePlugin.namespace": "$WATCH_NAMESPACE",
   "openshift.consolePlugin.image": "$RELATED_IMAGE_PLUGIN",
 };
 
@@ -119,7 +119,7 @@ interface Watch {
 /**
  * A LibreDBStudio spec that asks for the opposite of every pinned value: off the operator's guard,
  * another cluster Studio namespace, the bundled PostgreSQL placed and named elsewhere, and the console
- * plugin's server in the resource's own namespace with an image of its choosing.
+ * plugin's server in a discovered namespace with an image of its choosing.
  */
 const RESOURCE_SPEC = {
   global: { compatibility: { openshift: { apis: "force" } } },
@@ -128,7 +128,7 @@ const RESOURCE_SPEC = {
   openshiftRoute: { enabled: true, host: "studio.apps.example.test" },
   openshift: {
     consoleLink: { enabled: true },
-    consolePlugin: { enabled: true, namespace: RELEASE_NAMESPACE, image: "attacker.example/plugin:1" },
+    consolePlugin: { enabled: true, namespace: "team-a", image: "attacker.example/plugin:1" },
   },
   discovery: { kubernetes: { enabled: true, namespaces: ["team-a"], kinds: ["cnpg"] } },
   operator: { managed: false, clusterStudioNamespace: "other-namespace" },
@@ -255,8 +255,8 @@ describe("operator/watches.yaml", () => {
     expect(overrideValues()).toEqual(EXPECTED_OVERRIDES);
   });
 
-  test("expands only WATCH_NAMESPACE and the console plugin's two variables", () => {
-    expect(expandedNames()).toEqual(["WATCH_NAMESPACE", "OPERATOR_NAMESPACE", "RELATED_IMAGE_PLUGIN"]);
+  test("expands only WATCH_NAMESPACE and the console plugin's image, RELATED_IMAGE_PLUGIN", () => {
+    expect(expandedNames()).toEqual(["WATCH_NAMESPACE", "RELATED_IMAGE_PLUGIN"]);
   });
 
   test.each(["source", "bundle"])(
@@ -303,17 +303,10 @@ describe("the chart rendered as the operator renders a resource that asks for th
 
   test("keeps every object of the bundled PostgreSQL in the resource's namespace", () => {
     const docs = renderedDocs(OPERATOR_ENV);
-    // team-a holds the discovery Role and RoleBinding, which O14 allows this resource, and the operator's
-    // namespace exactly the four objects of the console plugin's server.
-    const plugin = docs
-      .filter((doc) => metadataOf(doc).namespace === OPERATOR_NAMESPACE)
-      .map((doc) => `${doc.kind}/${metadataOf(doc).name}`);
-    expect(plugin.sort()).toEqual(
-      ["Deployment", "NetworkPolicy", "Service", "ServiceAccount"].map((kind) => `${kind}/${PLUGIN_SERVER}`),
-    );
+    // team-a holds the discovery Role and RoleBinding, which O14 allows this resource.
     const placed = docs
       .map((doc) => metadataOf(doc).namespace)
-      .filter((namespace) => namespace != null && namespace !== "team-a" && namespace !== OPERATOR_NAMESPACE);
+      .filter((namespace) => namespace != null && namespace !== "team-a");
     expect(new Set(placed)).toEqual(new Set([RELEASE_NAMESPACE]));
     expect(docs.filter((doc) => doc.kind === "ServiceMonitor" || doc.kind === "PrometheusRule")).toHaveLength(2);
   });
@@ -375,29 +368,38 @@ describe("the dropped Subscription variable", () => {
 });
 
 describe("the console plugin under the operator", () => {
-  test("runs in the operator's namespace with the pinned image, whatever the resource asks", () => {
+  test("runs in the operator's own namespace, the cluster Studio's, with the pinned image, whatever the resource asks", () => {
     const run = renderAsOperator(OPERATOR_ENV);
     expect(run.exitCode).toBe(0);
     expect(run.stdout.toString()).not.toContain("attacker.example");
     const docs = renderedDocs(OPERATOR_ENV);
     const deployment = docs.find((doc) => doc.kind === "Deployment" && metadataOf(doc).name === PLUGIN_SERVER);
     if (!deployment) throw new Error(`no Deployment ${PLUGIN_SERVER} in the render`);
-    expect(metadataOf(deployment).namespace).toBe(OPERATOR_NAMESPACE);
+    expect(metadataOf(deployment).namespace).toBe(RELEASE_NAMESPACE);
+    const server = docs
+      .filter((doc) => metadataOf(doc).name === PLUGIN_SERVER)
+      .map((doc) => `${doc.kind}/${metadataOf(doc).namespace}`);
+    expect(server.sort()).toEqual(
+      ["Deployment", "NetworkPolicy", "Service", "ServiceAccount"].map((kind) => `${kind}/${RELEASE_NAMESPACE}`),
+    );
     const containers = (deployment.spec as { template: { spec: { containers: Array<{ image: string }> } } }).template
       .spec.containers;
     expect(containers.map((container) => container.image)).toEqual([PLUGIN_IMAGE]);
     const plugin = docs.find((doc) => doc.kind === "ConsolePlugin");
     if (!plugin) throw new Error("no ConsolePlugin in the render");
     expect((plugin.spec as { backend: { service: { namespace: string } } }).backend.service.namespace).toBe(
-      OPERATOR_NAMESPACE,
+      RELEASE_NAMESPACE,
     );
   });
 
-  test("fails closed, naming openshift.consolePlugin.namespace and OPERATOR_NAMESPACE, when that is unset", () => {
-    const run = renderAsOperator(without("OPERATOR_NAMESPACE"));
-    expect(run.exitCode).not.toBe(0);
-    expect(run.stderr.toString()).toContain("openshift.consolePlugin.namespace is empty");
-    expect(run.stderr.toString()).toContain("OPERATOR_NAMESPACE");
+  test("reads no OPERATOR_NAMESPACE: the plugin namespace is the watched namespace, one variable", () => {
+    expect(JSON.stringify(overrideValues())).not.toContain("OPERATOR_NAMESPACE");
+    for (const [name, env] of Object.entries(managerEnv())) {
+      expect({ name, names: env?.map((entry) => entry.name) }).toEqual({
+        name,
+        names: ["WATCH_NAMESPACE", "RELATED_IMAGE_PLUGIN"],
+      });
+    }
   });
 
   test("fails closed, naming openshift.consolePlugin.image and RELATED_IMAGE_PLUGIN, when that is unset", () => {
@@ -426,7 +428,7 @@ describe("every pinned key accepts a string in values.schema.json", () => {
   );
 
   test("the expansion names the values the render above uses", () => {
-    expect(expanded["openshift.consolePlugin.namespace"]).toBe(OPERATOR_NAMESPACE);
+    expect(expanded["openshift.consolePlugin.namespace"]).toBe(RELEASE_NAMESPACE);
     expect(expanded["openshift.consolePlugin.image"]).toBe(PLUGIN_IMAGE);
     expect(expanded["operator.clusterStudioNamespace"]).toBe(RELEASE_NAMESPACE);
   });

@@ -21,7 +21,9 @@
  *
  * The console plugin adds two ClusterRole rules on ConsolePlugins, a cluster-scoped kind: create, list
  * and watch, which a name cannot limit, and get, patch, update and delete only for libredb-studio, the
- * one name the chart renders, so the operator can rewrite or delete no other plugin.
+ * one name the chart renders, so the operator can rewrite or delete no other plugin. The plugin's server
+ * runs in the operator's own namespace, the cluster Studio's, so its ServiceAccount, Deployment, Service
+ * and NetworkPolicy are covered by the namespaced Role, and no cluster-wide workload rule returns.
  *
  * The ClusterRole holds no rule on libredbstudios and no list or watch on Secrets, so a controller
  * whose watch is widened past its namespace cannot fill its cache and exits instead of reconciling.
@@ -204,7 +206,7 @@ const OPENSHIFT_RENDER = [
   "--set",
   "openshift.consolePlugin.enabled=true",
   "--set",
-  "openshift.consolePlugin.namespace=openshift-operators",
+  "openshift.consolePlugin.namespace=release-under-test",
   "--set",
   `openshift.consolePlugin.image=${
     (parse(readFileSync(join(CHART_DIR, "values.yaml"), "utf8")) as { openshift: { consolePlugin: { image: string } } })
@@ -426,16 +428,29 @@ describe("the openshift render under the operator", () => {
     expect(namespaces.sort()).toEqual(["team-a", "team-b"]);
   });
 
-  test("renders the console plugin's ConsolePlugin and its server's NetworkPolicy, and the operator manages both", () => {
+  test("renders the console plugin's ConsolePlugin, which only the ClusterRole manages", () => {
     const kinds = docs.map((doc) => `${doc.apiVersion}/${doc.kind}`);
     expect(kinds).toContain("console.openshift.io/v1/ConsolePlugin");
-    expect(kinds).toContain("networking.k8s.io/v1/NetworkPolicy");
     const missing = MANAGE_VERBS.filter((verb) => !grants(clusterRules(), "console.openshift.io", "consoleplugins", verb));
     expect({ resource: "consoleplugins", missing }).toEqual({ resource: "consoleplugins", missing: [] });
-    for (const doc of docs.filter((d) => d.kind === "NetworkPolicy")) {
-      const namespace = (doc.metadata as { namespace?: string }).namespace ?? RELEASE_NAMESPACE;
-      const absent = MANAGE_VERBS.filter((verb) => !grants(rulesIn(namespace), "networking.k8s.io", "networkpolicies", verb));
-      expect({ namespace, absent }).toEqual({ namespace, absent: [] });
+  });
+
+  test("renders the plugin server in the operator's namespace, where the Role manages each of its objects", () => {
+    const server = docs.filter((doc) => (doc.metadata as { name: string }).name === "libredb-studio-console-plugin");
+    const where = server.map((doc) => `${doc.kind}/${(doc.metadata as { namespace?: string }).namespace}`).sort();
+    expect(where).toEqual(
+      ["Deployment", "NetworkPolicy", "Service", "ServiceAccount"].map((kind) => `${kind}/${RELEASE_NAMESPACE}`),
+    );
+    const resourceOf: Record<string, [string, string]> = {
+      Deployment: ["apps", "deployments"],
+      NetworkPolicy: ["networking.k8s.io", "networkpolicies"],
+      Service: ["", "services"],
+      ServiceAccount: ["", "serviceaccounts"],
+    };
+    for (const doc of server) {
+      const [group, resource] = resourceOf[doc.kind];
+      const missing = MANAGE_VERBS.filter((verb) => !grants(namespaceRules(), group, resource, verb));
+      expect({ kind: doc.kind, missing }).toEqual({ kind: doc.kind, missing: [] });
     }
   });
 

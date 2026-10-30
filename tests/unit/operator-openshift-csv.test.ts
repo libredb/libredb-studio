@@ -11,8 +11,9 @@
  *
  * The CSV declares the console plugin libredb-studio (console.openshift.io/plugins), so OperatorHub
  * offers its toggle in the install form, off by default on a community catalog. The controller
- * carries the plugin image as RELATED_IMAGE_PLUGIN, the same reference the chart pins, and its own
- * namespace as OPERATOR_NAMESPACE from the downward API, which operator/watches.yaml hands the chart.
+ * carries the plugin image as RELATED_IMAGE_PLUGIN, the same reference the chart pins, which
+ * operator/watches.yaml hands the chart; the plugin's namespace is WATCH_NAMESPACE, the operator's own,
+ * so the controller has no second namespace variable.
  *
  * com.redhat.openshift.versions names the oldest OpenShift release the bundle is offered for:
  * 4.16, since no lab runs 4.14 or 4.15, which stay untested. operator-sdk rewrites bundle/metadata/annotations.yaml
@@ -48,10 +49,7 @@ const PLUGIN_IMAGE = (
     openshift: { consolePlugin: { image: string } };
   }
 ).openshift.consolePlugin.image;
-const PLUGIN_ENV = [
-  { name: "RELATED_IMAGE_PLUGIN", value: PLUGIN_IMAGE },
-  { name: "OPERATOR_NAMESPACE", valueFrom: { fieldRef: { fieldPath: "metadata.namespace" } } },
-];
+const PLUGIN_ENV = [{ name: "RELATED_IMAGE_PLUGIN", value: PLUGIN_IMAGE }];
 
 interface Rule {
   apiGroups?: string[];
@@ -193,7 +191,7 @@ describe("the bundle CSV's controller", () => {
 });
 
 describe("the controller's plugin environment", () => {
-  test("the manager carries RELATED_IMAGE_PLUGIN, the chart's plugin image, and OPERATOR_NAMESPACE from the downward API", () => {
+  test("the manager carries WATCH_NAMESPACE and RELATED_IMAGE_PLUGIN, the chart's plugin image, and no OPERATOR_NAMESPACE", () => {
     const docs = parseAllDocuments(readFileSync(MANAGER, "utf8")).map(
       (doc) => doc.toJSON() as { kind: string; spec?: { template: { spec: { containers: Container[] } } } },
     );
@@ -206,11 +204,12 @@ describe("the controller's plugin environment", () => {
     ]);
   });
 
-  test("the bundle CSV's install deployment carries the same two variables", () => {
+  test("the bundle CSV's install deployment carries the same two variables and no OPERATOR_NAMESPACE", () => {
     const deployments = csv(CSVS.bundle).spec.install.spec.deployments;
     expect(deployments).toHaveLength(1);
     const manager = deployments[0].spec.template.spec.containers.find((container) => container.name === "manager");
     expect(manager?.env).toEqual(expect.arrayContaining(PLUGIN_ENV));
+    expect(manager?.env?.map((env) => env.name)).toEqual(["WATCH_NAMESPACE", "RELATED_IMAGE_PLUGIN"]);
   });
 
   test("the bundle CSV's clusterPermissions carry both consoleplugins rules exactly as role.yaml", () => {

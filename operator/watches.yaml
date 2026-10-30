@@ -25,10 +25,10 @@
     postgresql.metrics.serviceMonitor.namespace: ""
     postgresql.metrics.prometheusRule.namespace: ""
     # The console plugin's server receives every console user's token, so it
-    # runs in the operator's own namespace (OPERATOR_NAMESPACE, from the
-    # downward API) with the image the operator release pins
-    # (RELATED_IMAGE_PLUGIN), never where or what the resource asks. Unset,
-    # the render fails naming the variable.
-    openshift.consolePlugin.namespace: $OPERATOR_NAMESPACE
+    # runs in the operator's own namespace (WATCH_NAMESPACE, the cluster Studio
+    # namespace, which only cluster admins write) with the image the operator
+    # release pins (RELATED_IMAGE_PLUGIN), never where or what the resource
+    # asks. Unset, the render fails naming the variable.
+    openshift.consolePlugin.namespace: $WATCH_NAMESPACE
     openshift.consolePlugin.image: $RELATED_IMAGE_PLUGIN
 # +kubebuilder:scaffold:watch
