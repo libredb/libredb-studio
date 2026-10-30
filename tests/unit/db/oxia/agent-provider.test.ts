@@ -181,37 +181,54 @@ describe("the reads", () => {
     expect((error as Error).message).not.toContain("/twice");
   });
 
-  test("list counts the keys of the range it names, sending only List calls, and answers no key", async () => {
+  test("list counts every key of the namespace, listing the whole range on every shard, and answers no key", async () => {
     const { provider, fake } = await connected();
     const from = fake.calls.length;
-    const result = await provider.queryReadOnly("list --prefix /admin/policies/", BUDGET);
-    expect(result.rows).toEqual([{ keys: 3 }]);
+    const result = await provider.queryReadOnly("list", { ...BUDGET, maxResultRows: 9 });
+    expect(result.rows).toEqual([{ keys: 9 }]);
     expect(JSON.stringify(result)).not.toContain("tenant-secret-marker");
-    const rpcs = new Set(callsAfter(fake, from).map((call) => call.rpc));
-    expect([...rpcs].every((rpc) => ["GetShardAssignments", "List", "Read"].includes(rpc))).toBe(true);
-    for (const call of callsAfter(fake, from)) {
-      if (call.range !== undefined) expect(call.range.secondaryIndexName).toBeUndefined();
-      for (const get of call.gets ?? []) expect(get.includeValue).toBe(false);
-    }
-    expect((await provider.queryReadOnly("list -s /ledgers/ -e /ledgers//", BUDGET)).rows).toEqual([{ keys: 3 }]);
+    const calls = callsAfter(fake, from);
+    expect(calls[0]).toEqual({ rpc: "GetShardAssignments" });
+    // The key-order probe reads no value; the count lists the whole range of every shard and nothing narrower.
+    expect(calls.every((call) => ["GetShardAssignments", "List", "Read"].includes(call.rpc))).toBe(true);
+    for (const call of calls) for (const get of call.gets ?? []) expect(get.includeValue).toBe(false);
+    const whole = calls.filter(
+      (call) => call.rpc === "List" && call.range?.startInclusive === "" && call.range.endExclusive === "",
+    );
+    expect(new Set(whole.map((call) => call.shard)).size).toBe(3);
+    for (const call of whole) expect(call.range?.secondaryIndexName).toBeUndefined();
+  });
+
+  test.each([
+    "list --prefix /admin/policies/",
+    "list -s /ledgers/ -e /ledgers//",
+    "list /a /z",
+    "list a",
+    "list --key-min=a",
+    "oxia client list --prefix x",
+  ])("%s, a count the request bounds, is refused before anything is sent", async (text) => {
+    const { provider, fake } = await connected();
+    const before = fake.calls.length;
+    await expect(provider.queryReadOnly(text, BUDGET)).rejects.toThrow(
+      new RefusedBeforeSendError(OXIA_AGENT_SENTENCES.rangeCount, "oxia", text),
+    );
+    expect(fake.calls.length).toBe(before);
   });
 
   test("a count of exactly the row budget is answered; one past it is refused, never cut", async () => {
     const { provider } = await connected();
-    expect((await provider.queryReadOnly("list --prefix /admin/", { ...BUDGET, maxResultRows: 4 })).rows).toEqual([
-      { keys: 4 },
-    ]);
-    await expect(provider.queryReadOnly("list --prefix /admin/", { ...BUDGET, maxResultRows: 3 })).rejects.toThrow(
-      OXIA_AGENT_COUNT_SENTENCES.overRows(3),
+    expect((await provider.queryReadOnly("list", { ...BUDGET, maxResultRows: 9 })).rows).toEqual([{ keys: 9 }]);
+    await expect(provider.queryReadOnly("list", { ...BUDGET, maxResultRows: 8 })).rejects.toThrow(
+      OXIA_AGENT_COUNT_SENTENCES.overRows(8),
     );
     await expect(provider.queryReadOnly("list", BUDGET)).rejects.toThrow(OXIA_AGENT_COUNT_SENTENCES.overRows(5));
   });
 
-  test("a count Studio could not read to the range's end is refused", async () => {
+  test("a count Studio could not read to the namespace's end is refused", async () => {
     const long = "k".repeat(60_000);
     const records = Array.from({ length: 150 }, (_, index) => ({ key: `/long/${index}-${long}` }));
     const { provider } = await connected(READ_ONLY, records);
-    await expect(provider.queryReadOnly("list --prefix /long/", { ...BUDGET, maxResultRows: 500 })).rejects.toThrow(
+    await expect(provider.queryReadOnly("list", { ...BUDGET, maxResultRows: 500 })).rejects.toThrow(
       OXIA_AGENT_COUNT_SENTENCES.overBytes,
     );
   });

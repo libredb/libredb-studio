@@ -12,14 +12,15 @@
  * emails in them, so nothing here lists keys or reads a value: no range-scan, no comparison get (its answer names a
  * neighbouring key), no secondary-index read (its answer names a primary key), no notification or sequence stream. What
  * an agent may read is the namespace's shard map (its shard and leader counts), for one key its own request names that
- * key's existence, version, times, value size and whether it is ephemeral, and the count of the keys in a range its own
- * request names, which Studio counts under the row budget and never lists.
+ * key's existence, version, times, value size and whether it is ephemeral, and the count of every key in the namespace,
+ * which Studio counts under the row budget and never lists. A count over a range or prefix the request names is
+ * refused: counting narrower and narrower ranges would spell out key names one character at a time.
  *
  * Not the boundary. The boundary is this table, which the provider sends nothing outside of, over a gRPC stub that holds
  * only reads; Oxia has no authorization, so no principal can be proved. This is what lets the model read why it was
  * refused, before anything is sent.
  */
-import { type OxiaCommandRange, type OxiaRefusalCode, parseOxiaCommand } from "./commands";
+import { type OxiaRefusalCode, parseOxiaCommand } from "./commands";
 import { oxiaWords } from "./lexer";
 
 export type OxiaAgentRefusalCode = "request" | "metadata-only" | "arguments";
@@ -31,7 +32,7 @@ export type OxiaAgentOperation = "shards" | "key metadata" | "key count";
 export type OxiaAgentPlan =
   | { readonly op: "shards" }
   | { readonly op: "key metadata"; readonly key: string }
-  | { readonly op: "key count"; readonly range: OxiaCommandRange };
+  | { readonly op: "key count" };
 
 export type OxiaAgentReading =
   | { readonly ok: true; readonly plan: OxiaAgentPlan }
@@ -43,12 +44,13 @@ const OXIA_AGENT_SHARDS_WORD = "shards";
 const NOTHING_SENT = "Nothing was sent.";
 
 const AGENT_READS =
-  "Agent mode on Oxia reads metadata only: shards for the namespace's shard and leader counts, get <key> for one key the request names, answered with its existence, version, creation and modification times, value size and whether it is ephemeral, and list [MIN [MAX]], list -s <min> -e <max> or list --prefix <prefix> for the count of the keys in that range, never their names.";
+  "Agent mode on Oxia reads metadata only: shards for the namespace's shard and leader counts, get <key> for one key the request names, answered with its existence, version, creation and modification times, value size and whether it is ephemeral, and list alone for the count of every key in the namespace, never their names.";
 
 export const OXIA_AGENT_SENTENCES = {
   empty: `The request holds no command. ${AGENT_READS} ${NOTHING_SENT}`,
   metadataOnly: `That is not one of agent mode's reads: key names and stored values are withheld, so nothing that lists keys or reads a value is sent, and neither is a write, a delete, a session, a notification or sequence stream, or a read of another namespace. ${AGENT_READS} ${NOTHING_SENT}`,
-  flags: `An agent read takes no flag but the bounds of a count (-s, -e and --prefix): its comparison, partition key, secondary index, limit, namespace and address are the provider's, never the request's. ${AGENT_READS} ${NOTHING_SENT}`,
+  flags: `An agent read takes no flag: its comparison, partition key, secondary index, limit, namespace and address are the provider's, never the request's. ${AGENT_READS} ${NOTHING_SENT}`,
+  rangeCount: `A count over a range or prefix the request names is withheld, since counting narrower ranges would reveal key names: agent mode counts only every key of the namespace. ${AGENT_READS} ${NOTHING_SENT}`,
   shards: `shards takes no argument and no flag. ${NOTHING_SENT}`,
   /** `message` is the editor parser's refusal, which quotes no stored value; the agent's reads follow it. */
   request: (message: string): string => `${message} ${AGENT_READS} ${NOTHING_SENT}`,
@@ -91,9 +93,6 @@ function parserRefusal(code: OxiaRefusalCode, message: string): OxiaAgentReading
   return refuse("request", OXIA_AGENT_SENTENCES.request(message));
 }
 
-/** The flags a count's bounds are written with, in every spelling the parser reads. */
-const COUNT_FLAGS: ReadonlySet<string> = new Set(["-s", "--key-min", "-e", "--key-max", "--prefix"]);
-
 /**
  * The name of every flag the request wrote before a `--`, as the parser would read it: `--name` up to an `=`, or a
  * shorthand's first letter. The parser drops a flag that changes only the editor's output (`-v`, `--limit`) from its
@@ -131,8 +130,13 @@ export function readOxiaAgentStatement(text: string): OxiaAgentReading {
   if (!parsed.ok) return parserRefusal(parsed.refusal.code, parsed.refusal.message);
   const { command } = parsed.parsed;
   if (command.kind === "range-scan") return refuse("metadata-only", OXIA_AGENT_SENTENCES.metadataOnly);
-  const allowed = command.kind === "list" ? COUNT_FLAGS : new Set<string>();
-  if (flagNames(text).some((name) => !allowed.has(name))) return refuse("arguments", OXIA_AGENT_SENTENCES.flags);
+  // A bound or prefix the request names, by any spelling, is read by the parser into the range.
+  if (
+    command.kind === "list" &&
+    (command.range.kind === "prefix" || command.range.min !== "" || command.range.max !== "")
+  )
+    return refuse("metadata-only", OXIA_AGENT_SENTENCES.rangeCount);
+  if (flagNames(text).length > 0) return refuse("arguments", OXIA_AGENT_SENTENCES.flags);
   if (command.kind === "get") return admit({ op: "key metadata", key: command.key });
-  return admit({ op: "key count", range: command.range });
+  return admit({ op: "key count" });
 }

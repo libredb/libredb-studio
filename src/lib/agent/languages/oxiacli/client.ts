@@ -47,7 +47,7 @@ export const OXIACLI_CLIENT_PACK = Object.freeze({
       tools: Object.freeze<AgentToolName[]>(["run_read_query", "compose_report"]),
       narrowedExtras: Object.freeze<AgentToolName[]>([]),
       classifierDescription:
-        "a question about the namespace's shards and leaders, about how many keys a range holds, or about the existence, version, times, value size or ephemeral state of keys the question names, that is answered from what the run establishes",
+        "a question about the namespace's shards and leaders, about how many keys the namespace holds, or about the existence, version, times, value size or ephemeral state of keys the question names, that is answered from what the run establishes",
       objective:
         "Your objective is a question about this Oxia namespace's shards, key counts or keys it names. Answer it from what you establish.",
       planDeliverable: "inherits",

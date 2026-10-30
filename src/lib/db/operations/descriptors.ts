@@ -633,7 +633,8 @@ const OXIACLI_READ_BOUNDARY =
   "Oxia: the provider's closed table of metadata reads (agent-statement.ts), read with the editor's own oxia command " +
   "parser and sent over the gRPC stub, which holds only GetShardAssignments, Read, List and RangeScan: the shard map " +
   "of the connection's own namespace, one EQUAL get with no partition key, index or comparison for one key the " +
-  "request names, and a List of a range the request names, counted in Studio. Oxia has no authorization, so no " +
+  "request names, and a List of the whole namespace, counted in Studio; a count over a range or prefix the request " +
+  "names is refused, since narrower counts would reveal key names. Oxia has no authorization, so no " +
   "principal can be proved and the table is the boundary: no write, delete, session, notification, sequence or other " +
   "namespace is reachable. Key names and stored values are withheld: nothing lists keys or reads a value, every " +
   "answer is projected to names, counts and sizes (agent-metadata-read.ts), an Oxia failure is worded by its " +

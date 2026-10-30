@@ -905,8 +905,9 @@ describe("the oxiacli language's server adapter and admission", () => {
     expect(fingerprintOxiacli("oxia client get /admin/policies")).toBe(one);
     expect(fingerprintOxiacli("get /admin/other")).not.toBe(one);
     expect(fingerprintOxiacli("shards")).not.toBe(one);
-    expect(fingerprintOxiacli("list /a /z")).toBe(fingerprintOxiacli("list -s /a -e /z"));
-    expect(fingerprintOxiacli("ls --prefix /a/")).toBe(fingerprintOxiacli("list --prefix=/a/"));
+    expect(fingerprintOxiacli("ls")).toBe(fingerprintOxiacli("oxia client list"));
+    // A refused count is identified by its raw text, so two spellings of it are two identities.
+    expect(fingerprintOxiacli("list /a /z")).not.toBe(fingerprintOxiacli("list -s /a -e /z"));
   });
 
   test("the fingerprint is total: a refused command is identified by its raw text, so it is refused again", () => {
@@ -916,10 +917,10 @@ describe("the oxiacli language's server adapter and admission", () => {
     expect(fingerprintOxiacli(`${raw} `)).not.toBe(fingerprintOxiacli(raw));
   });
 
-  test("every read answers one row, so the advice names the narrower count", () => {
+  test("every read answers one row, and the advice offers no narrower count", () => {
     expect(AGENT_LANGUAGE_COPY.oxiacli.adviceKeys).toEqual([]);
     expect(oxiacliRowCapAdvice("list", "2")).toBe(
-      "Ask for at most 2 rows: shards, get and list each answer one row, and a list counts at most 2 keys, so count a narrower range with list -s <min> -e <max> or a longer --prefix.",
+      "Ask for at most 2 rows: shards, get and list each answer one row, and list counts the namespace only when it holds at most 2 keys; a count over a narrower range is not one of agent mode's reads, since it would reveal key names.",
     );
     expect(languageServer("oxiacli").shapeAdvice).toContain("a valid oxia command");
   });
@@ -936,7 +937,11 @@ describe("the oxiacli language's server adapter and admission", () => {
       code: "agent-too-large",
       message: `The command is longer than ${OXIACLI_AGENT_MAX_STATEMENT_CHARS} characters, the most an agent read takes: shorten it. Nothing was sent.`,
     });
-    expect(languageServer("oxiacli").admit?.("list --prefix /a/")).toBeNull();
+    expect(languageServer("oxiacli").admit?.("list")).toBeNull();
+    expect(languageServer("oxiacli").admit?.("list --prefix /a/")).toEqual({
+      code: "metadata-only",
+      message: OXIA_AGENT_SENTENCES.rangeCount,
+    });
   });
 
   test("an ungrounded run is sent to a read it holds, and plan mode is told none of the reader's rules", () => {

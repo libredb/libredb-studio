@@ -148,11 +148,13 @@ describe("the answers", () => {
     expect(() => oxiaAgentResult({ op: "key count", count: 1 }, tight, "list", 1)).toThrow(BYTE_BUDGET_PREFIX);
   });
 
-  test("the count sentences carry the row budget's prefix and the narrower range", () => {
+  test("the count sentences carry the row budget's prefix and offer no narrower count", () => {
     expect(OXIA_AGENT_COUNT_SENTENCES.overRows(200)).toBe(
-      `${ROW_BUDGET_PREFIX}: the range holds more than 200 keys, and Studio counts a range's keys only up to the row budget, refusing a larger count rather than cutting it. Count a narrower range.`,
+      `${ROW_BUDGET_PREFIX}: the namespace holds more than 200 keys, and Studio counts its keys only up to the row budget, refusing a larger count rather than cutting it. A count over a narrower range is not one of agent mode's reads, since it would reveal key names.`,
     );
-    expect(OXIA_AGENT_COUNT_SENTENCES.overBytes).toContain("8 MiB");
+    expect(OXIA_AGENT_COUNT_SENTENCES.overBytes).toBe(
+      "The namespace's keys are longer than the 8 MiB Studio reads to count them, so the count was refused rather than cut.",
+    );
     expect(OXIA_AGENT_COUNT_SENTENCES.manyHolders(2)).toContain("stored on 2 shards");
   });
 });

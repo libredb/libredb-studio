@@ -23,14 +23,42 @@ describe("the reads the table holds", () => {
     ["oxia client get config", { op: "key metadata", key: "config" }],
     ["get -- -dash", { op: "key metadata", key: "-dash" }],
     ["get ''", { op: "key metadata", key: "" }],
-    ["list", { op: "key count", range: { kind: "bounds", min: "", max: "" } }],
-    ["ls /a /z", { op: "key count", range: { kind: "bounds", min: "/a", max: "/z" } }],
-    ["list -s /a -e /z", { op: "key count", range: { kind: "bounds", min: "/a", max: "/z" } }],
-    ["list --key-min=/a --key-max=/z", { op: "key count", range: { kind: "bounds", min: "/a", max: "/z" } }],
-    ["list -s/a", { op: "key count", range: { kind: "bounds", min: "/a", max: "" } }],
-    ["list --prefix /admin/", { op: "key count", range: { kind: "prefix", prefix: "/admin/" } }],
+    ["list", { op: "key count" }],
+    ["ls", { op: "key count" }],
+    ["oxia client list", { op: "key count" }],
   ])("%s", (text, plan) => {
     expect(reads(text)).toEqual({ ok: true, plan } as OxiaAgentReading);
+  });
+});
+
+describe("a count over a range or prefix the request names", () => {
+  // Counting narrower and narrower ranges would spell out key names one character at a time, so only the count of
+  // every key in the namespace is a read.
+  test.each([
+    "list --prefix x",
+    "list -s a -e b",
+    "list a",
+    "list a b",
+    "ls /a /z",
+    "list --key-min=a",
+    "list --key-max=b",
+    "list -s/a",
+    "list -e b",
+    "oxia client list --prefix x",
+    "list --index by-name -e /z",
+  ])("%s is refused with agent mode's sentence", (text) => {
+    expect(reads(text)).toEqual({ ok: false, code: "metadata-only", message: OXIA_AGENT_SENTENCES.rangeCount });
+  });
+
+  test("the sentence says why and lists the reads, and the reads offer no bounded count", () => {
+    expect(OXIA_AGENT_SENTENCES.rangeCount).toStartWith(
+      "A count over a range or prefix the request names is withheld, since counting narrower ranges would reveal key names:",
+    );
+    expect(OXIA_AGENT_SENTENCES.rangeCount).toContain(READS_SENTENCE_START);
+    expect(OXIA_AGENT_SENTENCES.rangeCount.endsWith("Nothing was sent.")).toBe(true);
+    for (const sentence of [OXIA_AGENT_SENTENCES.empty, OXIA_AGENT_SENTENCES.flags, OXIA_AGENT_SENTENCES.rangeCount]) {
+      expect(sentence).not.toMatch(/--prefix|-s <|MIN|narrower range\./);
+    }
   });
 });
 
@@ -59,7 +87,6 @@ describe("what the table refuses", () => {
     ["--namespace=default get /a", "arguments"],
     ["-a localhost:6648 get /a", "arguments"],
     ["list -p tenant", "arguments"],
-    ["list --index by-name -e /z", "arguments"],
     ["list --limit 5", "arguments"],
     ["list --internal-keys", "arguments"],
     ["list --request-timeout 1s", "arguments"],

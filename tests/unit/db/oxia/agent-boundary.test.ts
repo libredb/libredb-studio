@@ -163,8 +163,6 @@ describe("the provider over the captured keys", () => {
       `get ${open.keys.partitioned}`,
       `get ${open.keys.missing}`,
       "list",
-      "list --prefix /admin/",
-      "list -s /a -e /z",
     ];
     for (const statement of statements) {
       // oxlint-disable-next-line no-await-in-loop -- one command at a time, as the agent sends them.

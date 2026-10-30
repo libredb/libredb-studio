@@ -856,11 +856,11 @@ A command is read with the editor's own parser (section 5.1), and only these par
 | --- | --- |
 | `shards` | `GetShardAssignments` of the connection's own namespace |
 | `get <key>` | the shard map, then one EQUAL `Read` with its value on the key's own shard; on a miss an EQUAL `Read` with no value on every other shard, and the value on the one shard that holds it |
-| `list [MIN [MAX]]`, `list -s <min> -e <max>` | the shard map, then `List` of that range on every shard, counted in Studio |
-| `list --prefix <prefix>` | the shard map, then `List` of the prefix's bands on every shard, counted in Studio |
+| `list` | the shard map, then `List` of the whole namespace on every shard, counted in Studio |
 
 `shards` is Studio's own word, since the oxia CLI's client prints no shard map.
-No flag of the request's own reaches the server: a comparison (`-t`), a partition key (`-p`), a secondary index (`--index`), `--hex`, `-v`, `--limit`, a namespace (`-n`), an address (`-a`), a timeout and a token are refused, and a count takes only its bounds.
+No flag of the request's own reaches the server: a comparison (`-t`), a partition key (`-p`), a secondary index (`--index`), `--hex`, `-v`, `--limit`, a namespace (`-n`), an address (`-a`), a timeout and a token are refused.
+A `list` with a bound or a prefix, by any spelling (`MIN [MAX]`, `-s`, `-e`, `--key-min`, `--key-max`, `--prefix`), is refused before anything is sent: counting narrower and narrower ranges would spell out key names one character at a time, so only the count of every key in the namespace is a read.
 `range-scan`, every write verb, `notifications`, `sequence-updates`, every `oxia` command that is not a client read, and every command the editor refuses are refused before anything is sent.
 The server would honour each of them (`open.json`): a put, a delete and a delete-range change it; a sequence put writes a key the server names and its stream stays open; a session is created and an ephemeral put carries its session id and client identity; notifications stream; a floor get answers a neighbouring key's name; a secondary-index get answers a primary key; a List with internal keys lists `__oxia/`; and a range-scan answers keys with their values.
 Every call carries the connection's namespace, its token and the request's deadline, and nothing of the request's own: another namespace is not served (`open.json`, `shardAssignmentsOtherNamespace`), and the provider reads the shard map afresh for every command, never its brief cache.
@@ -895,7 +895,7 @@ Oxia declares `ProviderCapabilities.metadataOnly`: every answer is projected thr
 | `get <key>` | `exists`, `version_id`, `modifications`, `created`, `modified`, `value_bytes` (null for a value withheld at the receive cap), `ephemeral` (never the session id or the client identity); all but `exists` null for a missing key |
 | `list` | `keys` |
 
-A key count reads the range's keys in Studio and answers how many there are, never which: a range holding more keys than the row budget is refused rather than answered as the budget, and a range whose keys pass the 8 MiB Studio reads to count them is refused too.
+A key count reads every key of the namespace in Studio and answers how many there are, never which: a namespace holding more keys than the row budget is refused rather than answered as the budget, and one whose keys pass the 8 MiB Studio reads to count them is refused too.
 A key stored on several shards under different partition keys answers no one record, so it is refused by how many shards hold it, never by its name.
 An answer that does not fit its column withholds the whole answer, naming the column and never the value.
 An Oxia failure is worded by its category alone, since an Oxia error can repeat a key; a deadline, and a permit wait the deadline ended, is the time budget's refusal.

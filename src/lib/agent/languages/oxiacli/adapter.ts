@@ -23,11 +23,12 @@ export function fingerprintOxiacli(text: string): string {
 
 /**
  * The sentence for an Oxia read refused past the row budget. Every read answers one row, and a key count larger than
- * the budget is refused by the provider with its own sentence, so the advice names the narrower count. Exported for its
+ * the budget is refused by the provider with its own sentence; no narrower count is offered, since it would reveal key
+ * names. Exported for its
  * tests, like the fingerprint.
  */
 export function oxiacliRowCapAdvice(_statement: string, allowed: string): string {
-  return `Ask for at most ${allowed} rows: shards, get and list each answer one row, and a list counts at most ${allowed} keys, so count a narrower range with list -s <min> -e <max> or a longer --prefix.`;
+  return `Ask for at most ${allowed} rows: shards, get and list each answer one row, and list counts the namespace only when it holds at most ${allowed} keys; a count over a narrower range is not one of agent mode's reads, since it would reveal key names.`;
 }
 
 export const OXIACLI_ADAPTER: AgentLanguageServerAdapter = Object.freeze({

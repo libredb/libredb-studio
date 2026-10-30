@@ -98,14 +98,7 @@ import {
 } from "./objects";
 import { type OrderVerdict, verdictIsProvisional } from "./order";
 import { oxiaResult } from "./results";
-import {
-  detectKeyOrder,
-  limitedOxiaClient,
-  listRange,
-  type OxiaSurface,
-  prefixListPage,
-  readKeyAnywhere,
-} from "./walks";
+import { detectKeyOrder, limitedOxiaClient, listRange, type OxiaSurface, readKeyAnywhere } from "./walks";
 
 /** One process-wide table for every Oxia provider: 4 calls per provider, 16 per process, a queue of 64 (SB1-9.1). */
 const oxiaLimiter = engineLimiter("oxia", OXIA_LIMITER_OPTIONS);
@@ -475,18 +468,16 @@ export class OxiaProvider extends BaseDatabaseProvider {
       case "key count": {
         const { order } = await session.surface.order(call);
         const limit = budget.maxResultRows;
-        const { range } = plan;
-        const answer =
-          range.kind === "prefix"
-            ? await prefixListPage(client, snapshot, order, { prefix: range.prefix, limit }, call)
-            : await listRange(
-                client,
-                snapshot,
-                order,
-                { range: { startInclusive: range.min, endExclusive: range.max }, limit },
-                call,
-              );
-        // The keys stay here: only how many there are is answered, and a range Studio could not count to its end is
+        // Every key of the namespace: a range the request names is refused before this, since narrower counts would
+        // spell out key names.
+        const answer = await listRange(
+          client,
+          snapshot,
+          order,
+          { range: { startInclusive: "", endExclusive: "" }, limit },
+          call,
+        );
+        // The keys stay here: only how many there are is answered, and a namespace Studio could not count to its end is
         // refused rather than answered as the part it read.
         if (answer.stoppedBy !== undefined) throw new QueryError(OXIA_AGENT_COUNT_SENTENCES.overBytes, OXIA_TYPE);
         if (answer.more) throw new QueryError(OXIA_AGENT_COUNT_SENTENCES.overRows(limit), OXIA_TYPE);

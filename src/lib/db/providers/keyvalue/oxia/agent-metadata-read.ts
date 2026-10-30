@@ -154,9 +154,9 @@ export const OXIA_AGENT_COUNT_SENTENCES = {
    * than the budget is refused rather than answered as the budget.
    */
   overRows: (allowed: number): string =>
-    `${ROW_BUDGET_PREFIX}: the range holds more than ${allowed} keys, and Studio counts a range's keys only up to the row budget, refusing a larger count rather than cutting it. Count a narrower range.`,
-  /** A count Studio stopped at the run's byte budget before it reached the end of the range. */
-  overBytes: `The keys of that range are longer than the ${MEBIBYTES} MiB Studio reads to count them, so the count was refused rather than cut. Count a narrower range.`,
+    `${ROW_BUDGET_PREFIX}: the namespace holds more than ${allowed} keys, and Studio counts its keys only up to the row budget, refusing a larger count rather than cutting it. A count over a narrower range is not one of agent mode's reads, since it would reveal key names.`,
+  /** A count Studio stopped at the run's byte budget before it reached the end of the namespace. */
+  overBytes: `The namespace's keys are longer than the ${MEBIBYTES} MiB Studio reads to count them, so the count was refused rather than cut.`,
   /** A key several shards hold under different partition keys: no one record answers for it. */
   manyHolders: (shards: number): string =>
     `That key is stored on ${shards} shards under different partition keys, so no one record answers for it, and agent mode reads no partition key. ${NOT_PASSED_ON}`,
