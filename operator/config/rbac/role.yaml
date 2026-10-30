@@ -52,8 +52,7 @@ rules:
 # openshift.consoleLink.enabled renders a cluster-scoped ConsoleLink, which the
 # chart renders only for the LibreDBStudio in the operator's own namespace
 # (operator.clusterStudioNamespace). Every authenticated user may already
-# read ConsoleLinks, so no reader role ships. No consoleplugins rule: the console
-# plugin is not part of this release.
+# read ConsoleLinks, so no reader role ships.
 - apiGroups:
   - console.openshift.io
   resources:
@@ -66,6 +65,31 @@ rules:
   - patch
   - update
   - watch
+# openshift.consolePlugin.enabled renders the cluster-scoped ConsolePlugin
+# libredb-studio, again only for that LibreDBStudio. A create cannot be limited
+# by name and the watch lists the kind, so those stay open; every verb that
+# changes or reads an existing object holds only for libredb-studio, the one
+# name the chart renders, so the operator can rewrite or delete no other plugin.
+# Nothing on consoles: a cluster admin turns the plugin on.
+- apiGroups:
+  - console.openshift.io
+  resources:
+  - consoleplugins
+  verbs:
+  - create
+  - list
+  - watch
+- apiGroups:
+  - console.openshift.io
+  resourceNames:
+  - libredb-studio
+  resources:
+  - consoleplugins
+  verbs:
+  - delete
+  - get
+  - patch
+  - update
 # Kubernetes discovery renders a Role in each discovered namespace that lets the
 # exporter list these kinds (discovery.kubernetes.kinds), and Kubernetes lets
 # the operator create a Role only with verbs it holds itself. Read-only: the

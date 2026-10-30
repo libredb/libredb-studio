@@ -25,7 +25,12 @@
  *
  * The render below does the same with the helm CLI: the resource's spec as a values file that asks
  * for the opposite of every pinned value, then each override as --set-string, which Helm applies
- * after the values file.
+ * after the values file. Since every override arrives as a string, every pinned key must accept a
+ * string in values.schema.json, or the reconcile fails on the schema.
+ *
+ * The console plugin's server receives every console user's token, so its namespace and image are
+ * the operator's, never the resource's: OPERATOR_NAMESPACE (the downward API's metadata.namespace)
+ * and RELATED_IMAGE_PLUGIN, both from the controller's environment.
  */
 import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -43,6 +48,19 @@ const BUNDLE_CSV = join(ROOT, "operator/bundle/manifests/libredb-studio-operator
 /** The Subscription variable the first draft of this file read; nothing may read it now. */
 const DROPPED_VARIABLE = "LIBREDB_CLUSTER_STUDIO_NAMESPACE";
 const RELEASE_NAMESPACE = "release-under-test";
+const OPERATOR_NAMESPACE = "openshift-operators";
+const PLUGIN_SERVER = "libredb-studio-console-plugin";
+/** The plugin image the chart pins, which the operator's RELATED_IMAGE_PLUGIN carries too (operator-openshift-csv.test.ts). */
+const PLUGIN_IMAGE = (
+  parse(readFileSync(join(CHART_DIR, "values.yaml"), "utf8")) as { openshift: { consolePlugin: { image: string } } }
+).openshift.consolePlugin.image;
+
+/** The controller's environment for the cluster Studio in RELEASE_NAMESPACE. */
+const OPERATOR_ENV: Record<string, string> = {
+  WATCH_NAMESPACE: RELEASE_NAMESPACE,
+  OPERATOR_NAMESPACE,
+  RELATED_IMAGE_PLUGIN: PLUGIN_IMAGE,
+};
 
 const EXPECTED_OVERRIDES = {
   "operator.managed": "true",
@@ -52,6 +70,8 @@ const EXPECTED_OVERRIDES = {
   "postgresql.serviceAccount.name": "",
   "postgresql.metrics.serviceMonitor.namespace": "",
   "postgresql.metrics.prometheusRule.namespace": "",
+  "openshift.consolePlugin.namespace": "$OPERATOR_NAMESPACE",
+  "openshift.consolePlugin.image": "$RELATED_IMAGE_PLUGIN",
 };
 
 interface EnvVar {
@@ -98,14 +118,18 @@ interface Watch {
 
 /**
  * A LibreDBStudio spec that asks for the opposite of every pinned value: off the operator's guard,
- * another cluster Studio namespace, and the bundled PostgreSQL placed and named elsewhere.
+ * another cluster Studio namespace, the bundled PostgreSQL placed and named elsewhere, and the console
+ * plugin's server in the resource's own namespace with an image of its choosing.
  */
 const RESOURCE_SPEC = {
   global: { compatibility: { openshift: { apis: "force" } } },
   authProvider: "openshift",
   image: { tag: "1.2.0" },
   openshiftRoute: { enabled: true, host: "studio.apps.example.test" },
-  openshift: { consoleLink: { enabled: true } },
+  openshift: {
+    consoleLink: { enabled: true },
+    consolePlugin: { enabled: true, namespace: RELEASE_NAMESPACE, image: "attacker.example/plugin:1" },
+  },
   discovery: { kubernetes: { enabled: true, namespaces: ["team-a"], kinds: ["cnpg"] } },
   operator: { managed: false, clusterStudioNamespace: "other-namespace" },
   postgresql: {
@@ -150,7 +174,7 @@ function overrideArgs(env: Record<string, string>): string[] {
   ]);
 }
 
-function renderAsOperator(env: Record<string, string>) {
+function renderAsOperator(env: Record<string, string>, file = specFile) {
   return Bun.spawnSync(
     [
       "helm",
@@ -162,7 +186,7 @@ function renderAsOperator(env: Record<string, string>) {
       "--api-versions",
       "monitoring.coreos.com/v1",
       "-f",
-      specFile,
+      file,
       ...overrideArgs(env),
     ],
     { stdout: "pipe", stderr: "pipe" },
@@ -183,6 +207,39 @@ function metadataOf(doc: Record<string, unknown>): { name?: string; namespace?: 
   return (doc.metadata as { name?: string; namespace?: string } | undefined) ?? {};
 }
 
+/** The env without one variable, as the controller runs when that variable is unset. */
+function without(name: string): Record<string, string> {
+  return Object.fromEntries(Object.entries(OPERATOR_ENV).filter(([key]) => key !== name));
+}
+
+interface SchemaNode {
+  type?: string | string[];
+  anyOf?: SchemaNode[];
+  properties?: Record<string, SchemaNode>;
+  additionalProperties?: boolean | SchemaNode;
+}
+
+/**
+ * Whether the chart's schema lets a string stand at this dotted key: the type string at the key itself,
+ * directly or in one anyOf branch, or a key under an object the schema leaves open (no
+ * additionalProperties: false), such as the bundled subchart's postgresql.*, where the chart checks nothing.
+ */
+function schemaAcceptsString(schema: SchemaNode, key: string): boolean {
+  let node: SchemaNode | undefined = schema;
+  for (const part of key.split(".")) {
+    const child: SchemaNode | undefined = node.properties?.[part];
+    if (child) {
+      node = child;
+      continue;
+    }
+    if (node.additionalProperties === false) return false;
+    return true;
+  }
+  const admits = (candidate: SchemaNode): boolean =>
+    candidate.type === undefined ? (candidate.anyOf ?? []).some(admits) : [candidate.type].flat().includes("string");
+  return admits(node);
+}
+
 describe("operator/watches.yaml", () => {
   test("is read by the helm-operator release whose override parsing this file describes", () => {
     expect(readFileSync(DOCKERFILE, "utf8")).toContain("FROM quay.io/operator-framework/helm-operator:v1.42.3\n");
@@ -198,8 +255,8 @@ describe("operator/watches.yaml", () => {
     expect(overrideValues()).toEqual(EXPECTED_OVERRIDES);
   });
 
-  test("expands only WATCH_NAMESPACE", () => {
-    expect(expandedNames()).toEqual(["WATCH_NAMESPACE"]);
+  test("expands only WATCH_NAMESPACE and the console plugin's two variables", () => {
+    expect(expandedNames()).toEqual(["WATCH_NAMESPACE", "OPERATOR_NAMESPACE", "RELATED_IMAGE_PLUGIN"]);
   });
 
   test.each(["source", "bundle"])(
@@ -234,28 +291,35 @@ describe("operator/watches.yaml", () => {
 
 describe("the chart rendered as the operator renders a resource that asks for the opposite", () => {
   test("renders, with the operator's namespace the resource's own", () => {
-    const run = renderAsOperator({ WATCH_NAMESPACE: RELEASE_NAMESPACE });
+    const run = renderAsOperator(OPERATOR_ENV);
     expect({ exitCode: run.exitCode, stderr: run.stderr.toString() }).toEqual({ exitCode: 0, stderr: "" });
   });
 
   test("renders the O14-gated objects for that namespace: the discovery Role and the ConsoleLink", () => {
-    const docs = renderedDocs({ WATCH_NAMESPACE: RELEASE_NAMESPACE });
+    const docs = renderedDocs(OPERATOR_ENV);
     expect(docs.some((doc) => doc.kind === "Role" && metadataOf(doc).namespace === "team-a")).toBe(true);
     expect(docs.some((doc) => doc.kind === "ConsoleLink")).toBe(true);
   });
 
   test("keeps every object of the bundled PostgreSQL in the resource's namespace", () => {
-    const docs = renderedDocs({ WATCH_NAMESPACE: RELEASE_NAMESPACE });
-    // team-a holds the discovery Role and RoleBinding, which O14 allows this resource.
+    const docs = renderedDocs(OPERATOR_ENV);
+    // team-a holds the discovery Role and RoleBinding, which O14 allows this resource, and the operator's
+    // namespace exactly the four objects of the console plugin's server.
+    const plugin = docs
+      .filter((doc) => metadataOf(doc).namespace === OPERATOR_NAMESPACE)
+      .map((doc) => `${doc.kind}/${metadataOf(doc).name}`);
+    expect(plugin.sort()).toEqual(
+      ["Deployment", "NetworkPolicy", "Service", "ServiceAccount"].map((kind) => `${kind}/${PLUGIN_SERVER}`),
+    );
     const placed = docs
       .map((doc) => metadataOf(doc).namespace)
-      .filter((namespace) => namespace != null && namespace !== "team-a");
+      .filter((namespace) => namespace != null && namespace !== "team-a" && namespace !== OPERATOR_NAMESPACE);
     expect(new Set(placed)).toEqual(new Set([RELEASE_NAMESPACE]));
     expect(docs.filter((doc) => doc.kind === "ServiceMonitor" || doc.kind === "PrometheusRule")).toHaveLength(2);
   });
 
   test("renders no extraDeploy manifest and names no account the resource chose", () => {
-    const docs = renderedDocs({ WATCH_NAMESPACE: RELEASE_NAMESPACE });
+    const docs = renderedDocs(OPERATOR_ENV);
     expect(docs.map((doc) => metadataOf(doc).name)).not.toContain("from-extra-deploy");
     const statefulSet = docs.find((doc) => doc.kind === "StatefulSet");
     const account = (statefulSet?.spec as { template: { spec: { serviceAccountName?: string } } } | undefined)?.template
@@ -265,17 +329,17 @@ describe("the chart rendered as the operator renders a resource that asks for th
   });
 
   test.each([
-    ["is unset", {}],
-    ["names another namespace", { WATCH_NAMESPACE: "other-namespace" }],
+    ["is unset", without("WATCH_NAMESPACE")],
+    ["names another namespace", { ...OPERATOR_ENV, WATCH_NAMESPACE: "other-namespace" }],
   ])("fails closed, naming operator.clusterStudioNamespace, when WATCH_NAMESPACE %s", (_case, env) => {
-    const run = renderAsOperator(env as Record<string, string>);
+    const run = renderAsOperator(env);
     expect(run.exitCode).not.toBe(0);
     expect(run.stderr.toString()).toContain("operator.clusterStudioNamespace");
     expect(run.stderr.toString()).not.toContain("want boolean");
   });
 
   test("fails closed, before the chart is read, when WATCH_NAMESPACE lists two namespaces", () => {
-    const run = renderAsOperator({ WATCH_NAMESPACE: `${RELEASE_NAMESPACE},team-a` });
+    const run = renderAsOperator({ ...OPERATOR_ENV, WATCH_NAMESPACE: `${RELEASE_NAMESPACE},team-a` });
     expect(run.exitCode).not.toBe(0);
     expect(run.stderr.toString()).toContain("has no value");
     expect(run.stdout.toString()).toBe("");
@@ -307,5 +371,92 @@ describe("the dropped Subscription variable", () => {
     expect(files.length).toBeGreaterThan(0);
     const naming = files.filter((file) => readFileSync(join(ROOT, file)).toString("latin1").includes(DROPPED_VARIABLE));
     expect(naming).toEqual([]);
+  });
+});
+
+describe("the console plugin under the operator", () => {
+  test("runs in the operator's namespace with the pinned image, whatever the resource asks", () => {
+    const run = renderAsOperator(OPERATOR_ENV);
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout.toString()).not.toContain("attacker.example");
+    const docs = renderedDocs(OPERATOR_ENV);
+    const deployment = docs.find((doc) => doc.kind === "Deployment" && metadataOf(doc).name === PLUGIN_SERVER);
+    expect(deployment && metadataOf(deployment).namespace).toBe(OPERATOR_NAMESPACE);
+    const containers = (deployment?.spec as { template: { spec: { containers: Array<{ image: string }> } } }).template
+      .spec.containers;
+    expect(containers.map((container) => container.image)).toEqual([PLUGIN_IMAGE]);
+    const plugin = docs.find((doc) => doc.kind === "ConsolePlugin");
+    expect((plugin?.spec as { backend: { service: { namespace: string } } }).backend.service.namespace).toBe(
+      OPERATOR_NAMESPACE,
+    );
+  });
+
+  test("fails closed, naming openshift.consolePlugin.namespace and OPERATOR_NAMESPACE, when that is unset", () => {
+    const run = renderAsOperator(without("OPERATOR_NAMESPACE"));
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stderr.toString()).toContain("openshift.consolePlugin.namespace is empty");
+    expect(run.stderr.toString()).toContain("OPERATOR_NAMESPACE");
+  });
+
+  test("fails closed, naming openshift.consolePlugin.image and RELATED_IMAGE_PLUGIN, when that is unset", () => {
+    const run = renderAsOperator(without("RELATED_IMAGE_PLUGIN"));
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stderr.toString()).toContain("openshift.consolePlugin.image is empty");
+    expect(run.stderr.toString()).toContain("RELATED_IMAGE_PLUGIN");
+  });
+
+  test("refuses, on the schema, a resource that asks for more replicas than the chart allows", () => {
+    const file = join(scratch, "replicas.yaml");
+    const spec = structuredClone(RESOURCE_SPEC);
+    Object.assign(spec.openshift.consolePlugin, { replicas: 6 });
+    writeFileSync(file, stringify(spec));
+    const run = renderAsOperator(OPERATOR_ENV, file);
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stderr.toString()).toContain("/openshift/consolePlugin/replicas");
+  });
+});
+
+describe("every pinned key accepts a string in values.schema.json", () => {
+  const schema = JSON.parse(readFileSync(join(CHART_DIR, "values.schema.json"), "utf8")) as SchemaNode;
+  /** The string each override reaches the chart as, in the operator render above. */
+  const expanded = Object.fromEntries(
+    Object.entries(overrideValues()).map(([key, value]) => [key, expandEnv(String(value), OPERATOR_ENV)]),
+  );
+
+  test("the expansion names the values the render above uses", () => {
+    expect(expanded["openshift.consolePlugin.namespace"]).toBe(OPERATOR_NAMESPACE);
+    expect(expanded["openshift.consolePlugin.image"]).toBe(PLUGIN_IMAGE);
+    expect(expanded["operator.clusterStudioNamespace"]).toBe(RELEASE_NAMESPACE);
+  });
+
+  test.each(Object.keys(EXPECTED_OVERRIDES))("%s admits the type string", (key) => {
+    expect(schemaAcceptsString(schema, key)).toBe(true);
+  });
+
+  test.each(Object.keys(EXPECTED_OVERRIDES))("%s, as the string the operator delivers, passes the schema", (key) => {
+    const run = Bun.spawnSync(
+      [
+        "helm",
+        "template",
+        "studio",
+        CHART_DIR,
+        "--namespace",
+        RELEASE_NAMESPACE,
+        "--set-string",
+        `${key}=${expanded[key]}`,
+      ],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    expect({ key, stderr: run.stderr.toString() }).not.toEqual({
+      key,
+      stderr: expect.stringContaining("don't meet the specifications of the schema"),
+    });
+    expect({ key, exitCode: run.exitCode }).toEqual({ key, exitCode: 0 });
+  });
+
+  test("the walk refuses a key under a closed object, so the cases above check something", () => {
+    expect(schemaAcceptsString(schema, "openshift.consolePlugin.replicas")).toBe(false);
+    expect(schemaAcceptsString(schema, "openshift.consolePlugin.unknown")).toBe(false);
+    expect(schemaAcceptsString(schema, "postgresql.anything.at.all")).toBe(true);
   });
 });

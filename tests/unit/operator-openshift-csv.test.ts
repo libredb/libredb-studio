@@ -7,7 +7,12 @@
  * built for FIPS mode, Studio's token exchange and API calls do not go through a cluster proxy on
  * purpose (proxy-aware), it does not follow the cluster's TLS profile, and it uses no cloud
  * token authentication. They live in the base CSV, so make -C operator bundle carries them into
- * the bundle CSV. The console plugin annotation belongs to the plugin release and is absent.
+ * the bundle CSV.
+ *
+ * The CSV declares the console plugin libredb-studio (console.openshift.io/plugins), so OperatorHub
+ * offers its toggle in the install form, off by default on a community catalog. The controller
+ * carries the plugin image as RELATED_IMAGE_PLUGIN, the same reference the chart pins, and its own
+ * namespace as OPERATOR_NAMESPACE from the downward API, which operator/watches.yaml hands the chart.
  *
  * com.redhat.openshift.versions names the oldest OpenShift release the bundle is offered for:
  * 4.16, since no lab runs 4.14 or 4.15, which stay untested. operator-sdk rewrites bundle/metadata/annotations.yaml
@@ -28,7 +33,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parse } from "yaml";
+import { parse, parseAllDocuments } from "yaml";
 
 const ROOT = join(import.meta.dir, "../..");
 const CSVS = {
@@ -36,6 +41,29 @@ const CSVS = {
   bundle: join(ROOT, "operator/bundle/manifests/libredb-studio-operator.clusterserviceversion.yaml"),
 };
 const BUNDLE_ANNOTATIONS = join(ROOT, "operator/bundle/metadata/annotations.yaml");
+const ROLE = join(ROOT, "operator/config/rbac/role.yaml");
+const MANAGER = join(ROOT, "operator/config/manager/manager.yaml");
+const PLUGIN_IMAGE = (
+  parse(readFileSync(join(ROOT, "charts/libredb-studio/values.yaml"), "utf8")) as {
+    openshift: { consolePlugin: { image: string } };
+  }
+).openshift.consolePlugin.image;
+const PLUGIN_ENV = [
+  { name: "RELATED_IMAGE_PLUGIN", value: PLUGIN_IMAGE },
+  { name: "OPERATOR_NAMESPACE", valueFrom: { fieldRef: { fieldPath: "metadata.namespace" } } },
+];
+
+interface Rule {
+  apiGroups?: string[];
+  resources?: string[];
+  resourceNames?: string[];
+  verbs?: string[];
+}
+
+interface Container {
+  name: string;
+  env?: EnvVar[];
+}
 const MAKEFILE = join(ROOT, "operator/Makefile");
 
 const FEATURE_ANNOTATIONS = {
@@ -69,12 +97,15 @@ interface Csv {
     customresourcedefinitions: { owned: Array<{ kind: string; description: string }> };
     install: {
       spec: {
-        deployments: Array<{
-          spec: { template: { spec: { containers: Array<{ name: string; env?: EnvVar[] }> } } };
-        }>;
+        clusterPermissions?: Array<{ rules: Rule[] }>;
+        deployments: Array<{ spec: { template: { spec: { containers: Container[] } } } }>;
       };
     };
   };
+}
+
+function consolePluginRules(rules: Rule[]): Rule[] {
+  return rules.filter((rule) => rule.resources?.includes("consoleplugins"));
 }
 
 function csv(file: string): Csv {
@@ -90,8 +121,18 @@ describe.each(Object.entries(CSVS))("the %s CSV", (_name, file) => {
     expect(features).toEqual(FEATURE_ANNOTATIONS);
   });
 
-  test("declares no console plugin", () => {
-    expect(Object.keys(csv(file).metadata.annotations)).not.toContain("console.openshift.io/plugins");
+  test("declares the console plugin libredb-studio", () => {
+    const plugins = csv(file).metadata.annotations["console.openshift.io/plugins"];
+    expect(typeof plugins).toBe("string");
+    expect(JSON.parse(plugins as string)).toEqual(["libredb-studio"]);
+  });
+
+  test("tells the admin how the plugin is turned on, and on which OpenShift", () => {
+    const description = csv(file).spec.description;
+    expect(description).toContain("defaults to Disabled");
+    expect(description).toContain("Console plugins");
+    expect(description).toContain("OpenShift 4.19");
+    expect(description).toContain("openshift.consolePlugin.enabled");
   });
 
   test("tells a resource author which values the operator refuses", () => {
@@ -148,6 +189,35 @@ describe("the bundle CSV's controller", () => {
 
   test("reads no Subscription variable for the cluster Studio namespace", () => {
     expect(manager?.env?.map((env) => env.name)).not.toContain("LIBREDB_CLUSTER_STUDIO_NAMESPACE");
+  });
+});
+
+describe("the controller's plugin environment", () => {
+  test("the manager carries RELATED_IMAGE_PLUGIN, the chart's plugin image, and OPERATOR_NAMESPACE from the downward API", () => {
+    const docs = parseAllDocuments(readFileSync(MANAGER, "utf8")).map(
+      (doc) => doc.toJSON() as { kind: string; spec?: { template: { spec: { containers: Container[] } } } },
+    );
+    const manager = docs
+      .find((doc) => doc.kind === "Deployment")
+      ?.spec?.template.spec.containers.find((container) => container.name === "manager");
+    expect(manager?.env).toEqual([
+      { name: "WATCH_NAMESPACE", valueFrom: { fieldRef: { fieldPath: "metadata.namespace" } } },
+      ...PLUGIN_ENV,
+    ]);
+  });
+
+  test("the bundle CSV's install deployment carries the same two variables", () => {
+    const deployments = csv(CSVS.bundle).spec.install.spec.deployments;
+    expect(deployments).toHaveLength(1);
+    const manager = deployments[0].spec.template.spec.containers.find((container) => container.name === "manager");
+    expect(manager?.env).toEqual(expect.arrayContaining(PLUGIN_ENV));
+  });
+
+  test("the bundle CSV's clusterPermissions carry both consoleplugins rules exactly as role.yaml", () => {
+    const role = (parse(readFileSync(ROLE, "utf8")) as { rules: Rule[] }).rules;
+    const bundle = (csv(CSVS.bundle).spec.install.spec.clusterPermissions ?? []).flatMap((entry) => entry.rules);
+    expect(consolePluginRules(role)).toHaveLength(2);
+    expect(consolePluginRules(bundle)).toEqual(consolePluginRules(role));
   });
 });
 

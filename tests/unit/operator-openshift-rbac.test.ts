@@ -19,6 +19,10 @@
  * Route's host needs create on routes/custom-host, and changing it on an existing Route needs update
  * there, or the API server refuses the Route.
  *
+ * The console plugin adds two ClusterRole rules on ConsolePlugins, a cluster-scoped kind: create, list
+ * and watch, which a name cannot limit, and get, patch, update and delete only for libredb-studio, the
+ * one name the chart renders, so the operator can rewrite or delete no other plugin.
+ *
  * The ClusterRole holds no rule on libredbstudios and no list or watch on Secrets, so a controller
  * whose watch is widened past its namespace cannot fill its cache and exits instead of reconciling.
  *
@@ -117,6 +121,13 @@ const REVIEWED_CLUSTER_RULES: Rule[] = [
   manage("rbac.authorization.k8s.io", ["roles", "rolebindings"]),
   { apiGroups: [""], resources: ["secrets", "services"], verbs: ["get"] },
   manage("console.openshift.io", ["consolelinks"]),
+  { apiGroups: ["console.openshift.io"], resources: ["consoleplugins"], verbs: ["create", "list", "watch"] },
+  {
+    apiGroups: ["console.openshift.io"],
+    resources: ["consoleplugins"],
+    resourceNames: ["libredb-studio"],
+    verbs: ["delete", "get", "patch", "update"],
+  },
   { apiGroups: ["postgresql.cnpg.io"], resources: ["clusters"], verbs: READ_VERBS },
   { apiGroups: ["postgresql.k8s.enterprisedb.io"], resources: ["clusters"], verbs: READ_VERBS },
   { apiGroups: ["postgres-operator.crunchydata.com"], resources: ["postgresclusters"], verbs: READ_VERBS },
@@ -190,6 +201,15 @@ const OPENSHIFT_RENDER = [
   "operator.managed=true",
   "--set",
   "operator.clusterStudioNamespace=release-under-test",
+  "--set",
+  "openshift.consolePlugin.enabled=true",
+  "--set",
+  "openshift.consolePlugin.namespace=openshift-operators",
+  "--set",
+  `openshift.consolePlugin.image=${
+    (parse(readFileSync(join(CHART_DIR, "values.yaml"), "utf8")) as { openshift: { consolePlugin: { image: string } } })
+      .openshift.consolePlugin.image
+  }`,
 ];
 
 interface RbacObject {
@@ -283,10 +303,26 @@ describe("the manager ClusterRole", () => {
     }
   });
 
-  test("manages ConsoleLinks but no ConsolePlugin, which is not shipped yet", () => {
+  test("manages ConsoleLinks, and may get, patch, update and delete only the ConsolePlugin libredb-studio", () => {
     const rules = clusterRules();
     for (const verb of MANAGE_VERBS) expect(grants(rules, "console.openshift.io", "consolelinks", verb)).toBe(true);
-    expect([...rules, ...namespaceRules()].some((rule) => rule.resources?.includes("consoleplugins"))).toBe(false);
+    const plugins = rules.filter((rule) => rule.resources?.includes("consoleplugins"));
+    // A create cannot be limited by name, and helm-operator's watch lists the kind; every verb that acts on an
+    // existing object is held only for the one name the chart renders, so no other plugin can be rewritten.
+    for (const rule of plugins) {
+      expect(rule.resources).toEqual(["consoleplugins"]);
+      const named = rule.verbs?.some((verb) => ["delete", "get", "patch", "update", "*"].includes(verb));
+      if (named) expect(rule.resourceNames).toEqual(["libredb-studio"]);
+      else expect(rule.verbs?.sort()).toEqual(["create", "list", "watch"]);
+    }
+    expect(plugins.flatMap((rule) => rule.verbs ?? []).sort()).toEqual([...MANAGE_VERBS].sort());
+    expect(namespaceRules().some((rule) => rule.resources?.includes("consoleplugins"))).toBe(false);
+  });
+
+  test("holds nothing on consoles, clusterroles or clusterrolebindings", () => {
+    const resources = [...clusterRules(), ...namespaceRules()].flatMap((rule) => rule.resources ?? []);
+    for (const resource of ["consoles", "clusterroles", "clusterrolebindings"])
+      expect(resources).not.toContain(resource);
   });
 
   test.each([
@@ -353,7 +389,7 @@ describe("the manager rights together", () => {
     expect(at("namespace_role_binding.yaml")).toBe(at("namespace_role.yaml") + 1);
   });
 
-  test("hold no access review, cluster RBAC or console plugin rule", () => {
+  test("hold no access review or cluster RBAC rule", () => {
     const resources = [...clusterRules(), ...namespaceRules()].flatMap((rule) => rule.resources ?? []);
     for (const resource of [
       "subjectaccessreviews",
@@ -361,7 +397,6 @@ describe("the manager rights together", () => {
       "tokenreviews",
       "clusterroles",
       "clusterrolebindings",
-      "consoleplugins",
     ]) {
       expect(resources).not.toContain(resource);
     }
@@ -389,6 +424,24 @@ describe("the openshift render under the operator", () => {
       .map((doc) => (doc.metadata as { namespace?: string }).namespace)
       .filter((namespace) => namespace != null);
     expect(namespaces.sort()).toEqual(["team-a", "team-b"]);
+  });
+
+  test("renders the console plugin's ConsolePlugin and its server's NetworkPolicy, and the operator manages both", () => {
+    const kinds = docs.map((doc) => `${doc.apiVersion}/${doc.kind}`);
+    expect(kinds).toContain("console.openshift.io/v1/ConsolePlugin");
+    expect(kinds).toContain("networking.k8s.io/v1/NetworkPolicy");
+    const missing = MANAGE_VERBS.filter((verb) => !grants(clusterRules(), "console.openshift.io", "consoleplugins", verb));
+    expect({ resource: "consoleplugins", missing }).toEqual({ resource: "consoleplugins", missing: [] });
+    for (const doc of docs.filter((d) => d.kind === "NetworkPolicy")) {
+      const namespace = (doc.metadata as { namespace?: string }).namespace ?? RELEASE_NAMESPACE;
+      const absent = MANAGE_VERBS.filter((verb) => !grants(rulesIn(namespace), "networking.k8s.io", "networkpolicies", verb));
+      expect({ namespace, absent }).toEqual({ namespace, absent: [] });
+    }
+  });
+
+  test("names in the ConsolePlugin the one name its rule allows", () => {
+    const plugins = docs.filter((doc) => doc.kind === "ConsolePlugin");
+    expect(plugins.map((doc) => (doc.metadata as { name: string }).name)).toEqual(["libredb-studio"]);
   });
 
   test("grants no rule in any rendered Role or ClusterRole that the operator does not hold where it lands", () => {
