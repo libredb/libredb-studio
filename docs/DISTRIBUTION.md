@@ -1399,7 +1399,7 @@ A later pre-release takes the next odd minor, 0.3.x, and stays above the release
 Its `verify` job runs `vscode-extension/scripts/release-tag.mjs`, which refuses a tag that is not `vscode-extension-` plus the manifest's `version`, and refuses a tag whose commit is not on `main`.
 Its `gates` job then calls [`vscode-extension.yml`](../.github/workflows/vscode-extension.yml), the same reusable workflow every pull request runs, smoke matrix included, which uploads the tested VSIX as the `vscode-extension-vsix` workflow artifact and the packaged build's `dist/*.js.map` as `vscode-extension-sourcemaps`.
 Its `publish` job then uploads that same VSIX with `npm run publish:marketplace` ([`vscode-extension/scripts/publish.mjs`](../vscode-extension/scripts/publish.mjs)), which runs `vsce publish --oidc --packagePath <file>`, plus `--pre-release` on an odd minor; nothing is rebuilt.
-It runs in the `vscode-marketplace` GitHub environment, which requires a reviewer, so a pushed tag waits for that approval before anything reaches the Marketplace.
+It runs in the `vscode-marketplace` GitHub environment, which only `vscode-extension-*` tags can deploy to, and waits for no approval, like the product's automated channels: pushing the tag publishes the version, and only members with push access can push one.
 Its only credential is the job's GitHub OIDC token (`id-token: write`), which vsce trades for a short-lived Marketplace token against the trusted publisher configured on the `libredb` publisher; no Marketplace token is stored in the repository.
 `tests/unit/vscode-extension-workflow.test.ts` holds the job to that shape: after `gates`, the tested artifact, that environment, no stored secret, no Open VSX.
 No GitHub Release is created.
@@ -1410,7 +1410,8 @@ No GitHub Release is created.
 
 Two settings, both the owner's, configured on 31 October 2026:
 
-1. The `vscode-marketplace` environment under the repository's Settings > Environments, with required reviewers and deployments limited to `vscode-extension-*` tags.
+1. The `vscode-marketplace` environment under the repository's Settings > Environments, with deployments limited to `vscode-extension-*` tags and no required reviewers.
+   Its name is part of the trusted publishing policy below, so the job keeps the environment even without an approval step.
 2. The trusted publishing policy `VS Code Extension Release` on the `libredb` publisher's management page (`https://marketplace.visualstudio.com/manage`, Trusted Publishing), provider GitHub Actions, naming the repository owner `libredb`, the repository `libredb-studio`, the workflow `vscode-extension-release.yml` and the environment `vscode-marketplace`.
    The Marketplace binds the owner and the repository by their numeric ids (251081537 and 1121989093), so a repository recreated under the same name does not match it.
    A change to any of those four names, such as renaming the workflow file or the environment, needs the policy edited in the same change, or the token exchange is refused.
@@ -1435,6 +1436,7 @@ The listing's text and images come from the packed `README.md`; the management p
 - The publisher is owned by named members' Microsoft accounts, added by User ID on the publisher's Members page, so no single account holds it.
 - 0.1.0 was uploaded by hand from `main` at 15fff4b04 (the `vscode-extension-vsix` artifact of run 39575773660), with no token, after a check on the four v0 engines in a fresh VS Code profile.
 - The publish job authenticates by trusted publishing (`vsce publish --oidc`), decided on 22 October 2026 over Entra ID workload identity federation and an organization-scoped PAT: it stores no secret and needs no Azure tenant, and global Azure DevOps PATs retire on 1 December 2026.
+- The environment's required reviewers were removed on 31 October 2026, after 0.4.1: the reviewers were the same members who can push a tag, so the approval added a second click rather than a second person, and no other automated channel has one.
 - 0.4.1 was the first version the publish job uploaded, on 30 October 2026 (UTC), from the `vscode-extension-0.4.1` tag on `main` at 0b97ace52 (run 41137115534); the Marketplace's Trusted Publishing page showed the policy as used by that run, and `code --install-extension libredb.libredb-studio` installed 0.4.1 in a fresh profile.
 - The tag namespace is `vscode-extension-<version>`, as in "Cutting a version" above and `CLAUDE.md`'s "Tag namespace" paragraph.
 

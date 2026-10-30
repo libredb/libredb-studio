@@ -316,9 +316,9 @@ channels:
     kind: marketplace
     update:
       # A vscode-extension-<version> tag runs vscode-extension-release.yml, whose
-      # publish job uploads the VSIX its gates tested by trusted publishing, after
-      # a reviewer approves the vscode-marketplace environment. The tag is cut on
-      # demand, not with each product release.
+      # publish job uploads the VSIX its gates tested by trusted publishing, from
+      # the vscode-marketplace environment, with no approval step. The tag is cut
+      # on demand, not with each product release.
       method: ci_publish
       sla: on_demand
     links:

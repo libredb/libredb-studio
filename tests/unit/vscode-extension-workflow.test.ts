@@ -146,7 +146,7 @@ describe("vscode-extension-release.yml", () => {
     for (const uses of pinned(release())) expect(ours.has(uses)).toBe(true);
   });
 
-  test("publish uploads the VSIX the gates tested, from an environment that requires a reviewer", () => {
+  test("publish uploads the VSIX the gates tested, from the vscode-marketplace environment", () => {
     const publish = release().jobs.publish;
     expect(publish?.needs).toBe("gates");
     expect(publish?.environment).toBe("vscode-marketplace");

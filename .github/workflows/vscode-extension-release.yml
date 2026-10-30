@@ -9,7 +9,8 @@
 # vscode-extension-vsix artifact.
 #
 # publish then uploads that same VSIX to the Visual Studio Marketplace, from
-# the vscode-marketplace environment, which requires a reviewer. It rebuilds
+# the vscode-marketplace environment, which only vscode-extension-* tags can
+# deploy to; like the product's channels, it waits for no approval. It rebuilds
 # nothing. Its only credential is the job's GitHub OIDC token, which
 # `vsce publish --oidc` trades for a Marketplace token against the trusted
 # publisher the libredb publisher names; no Marketplace token is stored.
