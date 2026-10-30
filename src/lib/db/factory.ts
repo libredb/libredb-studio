@@ -486,8 +486,7 @@ export async function createDatabaseProvider(
     }
 
     // RabbitMQ: the second member of the stream family, read-only whatever the flag says. It reads the execution
-    // context, which opens its agent read path; no seam is passed, so the provider runs on its production management
-    // transport, AMQP dial and clock.
+    // context for its agent read path; no seam is passed: it runs on its production transport, AMQP dial and clock.
     case "rabbitmq": {
       // The explicit /index specifier keeps this dynamic import statically analysable.
       const { RabbitMQProvider } = await import("./providers/stream/rabbitmq/index");
