@@ -404,6 +404,7 @@ Before upgrading the operator to this release, check each existing resource:
   On OpenShift 4.16 (Kubernetes 1.29) the API server refuses every later write to a stored resource that still holds one, including the operator's status update and the removal of its finalizer, so the resource stops reconciling and a delete never completes.
   Clearing the value lifts this; newer versions accept writes that leave the stored value unchanged.
   OLM's upgrade check of existing resources does not apply these rules, so it does not stop the upgrade.
+- Under `route`, clear any `kind` other than `HTTPRoute` and any `apiVersion` outside `gateway.networking.k8s.io`, and keep at most 64 keys, for the same reason.
 - The subchart's ServiceMonitor and PrometheusRule are created in the resource's namespace from now on, so a monitoring stack that selected them in another namespace must select that one.
 The chart's Rancher mode is not offered through the operator in this release: the operator's role grants no `ui.cattle.io` `NavLink` and no ClusterRole or ClusterRoleBinding, so a resource with `rancher.navLink.enabled` or `accessReview.enabled` fails to reconcile, and Rancher installs go through Helm or Rancher's Apps page.
 Kubernetes discovery is offered: any resource may discover its own namespace, and discovering other namespaces is limited to one resource, as the next section says.
