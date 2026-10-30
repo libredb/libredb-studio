@@ -8046,15 +8046,16 @@ Found 2026-10-03 while designing the Neo4j provider (spec 6.4).
 
 **Done when:** `Neo4jProvider` implements `queryReadOnly` through the same policy, gate and READ session as the editor, `AGENT_EXECUTION_ENGINES` names Neo4j, MCP serves its Cypher through its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) (`run_read_query` serves SQL engines alone), and an agent run and an MCP call each drive a `LOAD CSV` and a write to their refusal in a test.
 
-### B94. InfluxDB over InfluxQL has no agent execution and no MCP statement read
+### B94. InfluxDB over InfluxQL has no MCP statement read and no 2.x agent token
 
-The `influxdb` provider implements no `queryReadOnly`, so `AGENT_EXECUTION_ENGINES` does not name it, agent auto mode refuses it, and no MCP tool runs InfluxQL; plan mode and the MCP metadata tools work (`MCP_EXPOSABLE` in `src/lib/db/compatibility.ts`).
-Both execution paths guard a statement with SQL readers (`src/lib/db/operations/statement-guard.ts`), and InfluxQL needs a statement contract of its own, the InfluxQL read policy.
+No MCP tool runs InfluxQL: the `influxql` language pack declares no MCP facet (`AGENT_LANGUAGE_MCP_FACETS.influxql` is null) and `MCP_STATEMENT_READ.influxdb` is false; plan mode and the MCP metadata tools work (`MCP_EXPOSABLE` in `src/lib/db/compatibility.ts`).
+The agent half closed on 2026-10-30: the `influxdb` provider implements `queryReadOnly` for a principal the server proves read-only before every statement, under the agent's InfluxQL statement reader (`docs/providers/influxdb.md`, section Agent mode).
+Its agent credential takes the default form, `agentUser` and `agentPassword` together, which is a 1.x user; a 2.x token beside the connection's own credential has no form, because one provider class serves both lines and declares its form before it knows the line, so a 2.x connection gives the agent a read-only token as its own credential.
 `influxdb3` left this entry on 2026-10-29: agent mode executes its DataFusion SQL under the 3.12 Core planner's write refusals, and its MCP statement read stays closed until a change of its own opens it.
 
 Found 2026-10-04 while designing the InfluxDB provider (ruling R10).
 
-**Done when:** `influxdb` implements `queryReadOnly` under the InfluxQL policy, agent execution serves it, and MCP serves its InfluxQL through its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), with tests.
+**Done when:** MCP serves `influxdb`'s InfluxQL through its own MCP facet in its language pack (`src/lib/agent/languages/influxql/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), under the same principal proof, with `MCP_STATEMENT_READ.influxdb` opened by the owner, and a 2.x agent token is accepted beside the connection's own credential, with tests.
 
 ### B100. Oxia has no agent execution and no MCP surface
 
