@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D412, U17 · 302
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U163 · 149
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U166 · 152
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -6095,6 +6095,7 @@ On Oracle a refusal can also name a row-level security or fine-grained auditing 
 Seen 2026-10-29 on Oracle 26ai Free in a browser pass, for a granted function and for a row-level policy.
 Seen again 2026-10-30 on Couchbase enterprise-8.0.2 in a browser pass: with `query_update` granted on the scope, the server log named the role, `query_update[bv110:shop:*]`, and the user the agent needs, while the rail showed only the generic sentence.
 Seen again 2026-10-30 on InfluxDB 1.13.1 and 2.9.1 in a browser pass: the user holding `WRITE` on a second database, the 1.x admin and the 2.x write token each got the generic sentence, while the server log named the cause, for example that the principal can write the database `other` because InfluxDB 1.x answered a no-op `DELETE` there, and for the admin that it was answered `SHOW USERS`.
+Seen again 2026-10-30 on Weaviate 1.40.2 in a browser pass: the root key, a key holding the built-in `admin` role and a viewer key widened mid-run by a role holding `update_data` each got the generic sentence, while the server log carried the provider's own, for example "The key's roles hold create_roles, which is not one of the viewer role's read actions ... give the agent a key with the viewer role only" (runs `arun_9c77759341b84645bd81010bbfc86eef`, `arun_208ac90d893745fda727c63ebc688a56`, `arun_2fda3fd7145e4328a74766cf89484416`).
 
 **Done when:** the rail shows the refusal's own remedies (statements or policy names) beside its code, from the shared refusal path rather than a type-id branch, the generic sentence no longer claims the credential holds privileges when the refusal is about the database, and a component test pins both texts.
 
@@ -6145,6 +6146,7 @@ Seen again 2026-10-30 on Couchbase enterprise-8.0.2, twice: asked to run an exac
 Seen again 2026-10-30 on Apache Druid 37.0.0, twice: one run asked for an exact `INSERT`, `REPLACE`, `SET engine = 'msq-task'` and an `EXTERN` read drafted only the `EXTERN` read (403), and one asked for the three writes had each refused before it was sent; both finished `answered` with a report on the datasource's columns and no word of the refusals (runs `arun_08f051825d2744adb753bd8cf0f7edaf`, `arun_a074a7f229004afb8cf93537663325ab`).
 Seen again 2026-10-30 on LibreDB in a browser pass: asked to send `put app:version 3.2`, `PUT zeta changed`, `delete zeta` and `DeLeTe user:1`, each refused before the file was opened (`STATEMENT_NOT_ADMITTED`), the run finished `answered` with one claim about the schema inventory and no word of the four refusals (run `arun_f7423cf2546540028744ebef73824e7e`); the next run, asked for five other refused forms, did report each refusal, so it still depends on the model's wording.
 Seen again 2026-10-30 on InfluxDB 1.13.1 and 2.9.1 in a browser pass, three times: runs asked to send exact `DELETE`, `DROP`, `SELECT ... INTO` (four spellings), `CREATE CONTINUOUS QUERY`, `SHOW QUERIES`, `KILL QUERY`, `SHOW USERS`, `GRANT`, a commented and a two-statement form were each refused before anything was sent, and each run finished `answered` with one claim about the schema inventory and no word of the refusals (runs `arun_4f9ea9a9e1444c75824ebc437c14077f`, `arun_29b8b23e387f4a2092d31bc995e1f75e`, `arun_d69c3788d444421a887899d724282174`).
+Seen again 2026-10-30 on Weaviate 1.40.2 in a browser pass: asked to pass `GET /v1/meta` and six exact writes (an object create and delete, a collection create and drop, a tenant status change and a backup) to `run_read_query`, each write was refused before anything was sent and the run finished `answered` with two claims, the meta read and the schema inventory, and no word of the six refusals (run `arun_a633f13a3abc4ade88aeae32f9bb77f1`); two earlier runs asked for the same writes drafted nothing at all and also finished `answered`.
 
 **Done when:** a run whose only drafted statement was refused either reports that refusal in its answer, held by the run's verifier, or ends in a state other than `answered`, with an agent test that forces the refusal.
 
@@ -6189,6 +6191,7 @@ Choosing Optimize and pressing Start is refused (400 on `/api/agent/runs`) with 
 On LibreDB that sentence is incomplete: investigation and data analysis run there too, so the user reads operations as the only way forward.
 The sentence predates a family that offers some read workflows and lacks others; `libredbkv` is the first.
 Seen again 2026-10-30 on InfluxDB 2.9.1 in a browser pass: the picker offered Optimize and Assess, which the `influxql` family does not offer (`docs/providers/influxdb.md` section 15.6), and Optimize was refused with the same sentence although investigation and data analysis run there.
+Seen again 2026-10-30 on Weaviate 1.40.2 in a browser pass: the picker offered Optimize, Assess and Analyze, which the `weaviateapi` family does not offer (`docs/providers/weaviate.md` section 15.6), and Analyze was refused with the same sentence although investigation runs there.
 Seen 2026-10-30 on LibreDB in a browser pass.
 
 **Done when:** the refusal names the workflows the connection's statement language does offer, read from `AGENT_WORKFLOW_VARIANTS` rather than fixed text, the picker marks or hides a workflow that language has no variant for, and a test pins the sentence for `libredbkv`.
@@ -6199,8 +6202,39 @@ When a run start is refused (the POST to `/api/agent/runs` answers 400), the rai
 `interrupted` in `src/components/agent/use-agent-run.ts` is `runId === null && !isBusy ? storedThread : null`, and `start()` clears `runId` before it fetches, so a refused start leaves `runId` null and `isBusy` false and the stored conversation reads as interrupted; the docblock beside it fixed the same false sentence for the in-flight window only.
 Seen 2026-10-30 on LibreDB in a browser pass, after choosing the Optimize workflow, which that engine does not offer (U162); the cause is not engine-specific.
 Seen again 2026-10-30 on InfluxDB 2.9.1, after the same Optimize refusal (U162).
+Seen again 2026-10-30 on Weaviate 1.40.2, after the Analyze refusal (U162).
 
 **Done when:** a refused start does not announce the stored conversation as ended by a reload (it keeps the conversation, or says the start was refused), with a hook test that refuses a start after a finished run.
+
+### U164. The rail tells a Weaviate connection with no key that the server does not enforce authorization, and names MongoDB's setting
+
+An agent run refused with `PROFILE_SERVER_UNENFORCED` shows the rail's `server-authorization-off` sentence (`src/components/agent/timeline.ts`): "This database server does not enforce authorization ... Turn on the server's authorization (on MongoDB, security.authorization) and connect as a read-only user."
+Weaviate raises that code in two cases (`docs/providers/weaviate.md` section 15.2), and the sentence fits neither.
+A connection with no key to a server with RBAC on is refused before any client is built (`keylessAgentRefusal` in `src/lib/db/providers/vector/weaviate/metadata-read.ts`), yet that server does enforce authorization, and the repair is a viewer's key in the connection, which the provider's own sentence says and the rail does not.
+A key on a server with RBAC off is told about MongoDB's `security.authorization` where the setting is Weaviate's `AUTHORIZATION_RBAC_ENABLED`.
+The provider's sentences reach only the server log.
+Seen 2026-10-30 on Weaviate 1.40.2 in a browser pass (runs `arun_9b350b7799f94f618474644d1a970f2a`, no key, and `arun_f969982a3aca40e6b09cd19f405b44fc`, RBAC off).
+
+**Done when:** a refusal at open shows the provider's own sentence, or a per-engine remedy read from a contract row rather than a type-id branch, the rail no longer tells a keyless connection that its server does not enforce authorization, and a timeline test pins both Weaviate cases.
+
+### U165. A Weaviate agent request the console grammar refuses is answered with the console's list of runnable reads, which agent mode refuses
+
+`readWeaviateAgentStatement` (`src/lib/db/providers/vector/weaviate/metadata-request.ts`) passes the console grammar's refusal through unchanged when the grammar refuses first.
+That sentence ends "This console runs Weaviate's read requests only ...: ... object list and read by id, the bm25, hybrid, near-vector and near-object searches, and aggregate counts", so the model and the rail read that object reads and searches run, which agent mode refuses with its own sentence one step later.
+It was shown for a near-text search, a GraphQL `generate` request and six writes, and an aggregate `groupBy` written as a list was refused with the grammar's "groupBy must be a string, found a list." rather than the agent's sentence that `groupBy` counts by stored values.
+Seen 2026-10-30 on Weaviate 1.40.2 in a browser pass (runs `arun_7c2ffd5be3734d4c972147f7d5e84677`, `arun_a633f13a3abc4ade88aeae32f9bb77f1`); nothing was sent in any case.
+
+**Done when:** an agent request the grammar refuses is answered with the grammar's reason followed by the agent's list of reads, not the console's, an aggregate naming `groupBy` or `where` in any shape gets the agent's sentence, and `tests/unit/db/weaviate/metadata-request.test.ts` pins both.
+
+### U166. A Weaviate tenant refusal is headed "The database refused the statement" and spends a repair attempt
+
+A request naming a `COLD` tenant, and a shard read or count of a multi-tenant collection naming no tenant, is refused by Studio after the tenant's or the collection's own record is read, and nothing else is sent (`docs/providers/weaviate.md` section 15.4).
+The ledger records each as `class: "database-error"`, the rail heads it "The database refused the statement" over Studio's own sentence ("The tenant `cold` is COLD. Studio does not activate a tenant by reading it ..."), and each spends a repair attempt.
+Three such refusals in one run exhausted the budget, so the fourth request was refused with "This run has used all of its repair attempts" and the run stopped drafting.
+Seen 2026-10-30 on Weaviate 1.40.2 in a browser pass (run `arun_d7928d6c386d47ec84395091ff3adcad`); the tenant stayed `COLD` throughout.
+The same misattribution for a declined operations panel is U159.
+
+**Done when:** a tenant refusal Studio makes is recorded and headed as refused before the read it guards, with the provider's sentence as the detail, it does not count as a repair attempt, and an agent test pins both.
 
 ## Dependencies
 
