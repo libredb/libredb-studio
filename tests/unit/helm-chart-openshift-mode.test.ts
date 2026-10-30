@@ -247,12 +247,6 @@ describe("the ServiceAccount the OAuth client id names", () => {
 });
 
 /**
- * O14: under operator.managed a cross-namespace object renders only for the release in
- * operator.clusterStudioNamespace, which the operator sets to its own namespace (WATCH_NAMESPACE), the only one it
- * reconciles; the guard stays as defense in depth. The discovery render is gated in every sign-in mode, not only
- * openshift mode.
- */
-/**
  * Under the operator, Studio's pod shares the operator's namespace, and with it the operator's own ServiceAccount, so
  * the chart refuses serviceAccount.create=false there: the pod always runs as the account its release creates.
  */
@@ -283,6 +277,12 @@ describe("the ServiceAccount under the operator", () => {
   });
 });
 
+/**
+ * O14: under operator.managed a cross-namespace object renders only for the release in
+ * operator.clusterStudioNamespace, which the operator sets to its own namespace (WATCH_NAMESPACE), the only one it
+ * reconciles; the guard stays as defense in depth. The discovery render is gated in every sign-in mode, not only
+ * openshift mode.
+ */
 describe("the operator namespace guard on discovery (O14)", () => {
   const MODES: Array<[string, string[]]> = [
     ["local", set("authProvider=local")],
