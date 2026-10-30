@@ -1509,7 +1509,7 @@ All channels have now had their first live run (the Snap publish completed its f
 0.9.52, validated per this runbook). Right after publishing a release:
 
 1. Watch the `release-artifacts` run: all four tarball legs green (if the `macos-15-intel` or
-   `macos-14` runner labels ever disappear, check the current labels in
+   `macos-15` runner labels ever disappear, check the current labels in
    [actions/runner-images](https://github.com/actions/runner-images) - do not fall back to
    retired `macos-13` or paid `-large` labels blindly), `.deb`/`.rpm` uploaded with `.sha256`
    sidecars, `SHA256SUMS` complete, tap push and snap jobs behaving per their secrets.
