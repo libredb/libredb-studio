@@ -1051,6 +1051,136 @@ describe("MSSQLProvider", () => {
       expect(result.wasLimited).toBe(true);
     });
 
+    test.each<[string, string, string]>([
+      [
+        "UNION",
+        "SELECT id FROM a UNION SELECT id FROM b ORDER BY id",
+        "SELECT id FROM a UNION SELECT id FROM b ORDER BY id OFFSET 0 ROWS FETCH NEXT 50 ROWS ONLY",
+      ],
+      [
+        "UNION ALL",
+        "SELECT id FROM a UNION ALL SELECT id FROM b ORDER BY id",
+        "SELECT id FROM a UNION ALL SELECT id FROM b ORDER BY id OFFSET 0 ROWS FETCH NEXT 50 ROWS ONLY",
+      ],
+      [
+        "INTERSECT",
+        "SELECT id FROM a INTERSECT SELECT id FROM b ORDER BY id",
+        "SELECT id FROM a INTERSECT SELECT id FROM b ORDER BY id OFFSET 0 ROWS FETCH NEXT 50 ROWS ONLY",
+      ],
+      [
+        "EXCEPT",
+        "SELECT id FROM a EXCEPT SELECT id FROM b ORDER BY id",
+        "SELECT id FROM a EXCEPT SELECT id FROM b ORDER BY id OFFSET 0 ROWS FETCH NEXT 50 ROWS ONLY",
+      ],
+      [
+        "a set operation behind a CTE",
+        "WITH c AS (SELECT 1 AS id) SELECT id FROM c UNION ALL SELECT id FROM b ORDER BY id",
+        "WITH c AS (SELECT 1 AS id) SELECT id FROM c UNION ALL SELECT id FROM b ORDER BY id OFFSET 0 ROWS FETCH NEXT 50 ROWS ONLY",
+      ],
+      [
+        "a terminated statement",
+        "SELECT id FROM a UNION ALL SELECT id FROM b ORDER BY id;",
+        "SELECT id FROM a UNION ALL SELECT id FROM b ORDER BY id OFFSET 0 ROWS FETCH NEXT 50 ROWS ONLY;",
+      ],
+      [
+        "a trailing line comment",
+        "SELECT id FROM a UNION ALL SELECT id FROM b ORDER BY id -- newest first",
+        "SELECT id FROM a UNION ALL SELECT id FROM b ORDER BY id OFFSET 0 ROWS FETCH NEXT 50 ROWS ONLY -- newest first",
+      ],
+    ])("pages an ordered top-level set operation at offset 0: %s", (_label, sql, expected) => {
+      const result = provider.prepareQuery(sql, { limit: 50 });
+
+      expect(result.query).toBe(expected);
+      expect(result.wasLimited).toBe(true);
+    });
+
+    test.each<[string, string]>([
+      ["UNION", "SELECT id FROM a UNION SELECT id FROM b"],
+      ["UNION ALL", "SELECT id FROM a UNION ALL SELECT id FROM b"],
+      ["INTERSECT", "SELECT id FROM a INTERSECT SELECT id FROM b"],
+      ["EXCEPT", "SELECT id FROM a EXCEPT SELECT id FROM b"],
+      ["unnamed first-arm columns", "SELECT COUNT(*) FROM a UNION ALL SELECT COUNT(*) FROM b"],
+      ["ORDER BY only in a literal", "SELECT id FROM a UNION ALL SELECT id FROM b WHERE note = 'ORDER BY id'"],
+      ["ORDER BY only in a comment", "SELECT id FROM a UNION ALL SELECT id FROM b -- ORDER BY id"],
+      ["ORDER BY only in a subquery", "SELECT id FROM a UNION ALL SELECT id FROM (SELECT TOP 5 id FROM b ORDER BY id) s"],
+      ["ORDER BY only in a window", "SELECT ROW_NUMBER() OVER (ORDER BY id) AS rn FROM a UNION ALL SELECT 1 FROM b"],
+    ])("declines an unordered top-level set operation: %s", (_label, sql) => {
+      const result = provider.prepareQuery(sql, { limit: 50 });
+
+      expect(result.query).toBe(sql);
+      expect(result.wasLimited).toBe(false);
+    });
+
+    test.each<[string, string]>([
+      ["FOR JSON", "SELECT id FROM a UNION ALL SELECT id FROM b ORDER BY id FOR JSON PATH"],
+      ["FOR XML", "SELECT id FROM a UNION ALL SELECT id FROM b ORDER BY id FOR XML PATH"],
+      ["OPTION", "SELECT id FROM a UNION ALL SELECT id FROM b ORDER BY id OPTION (HASH JOIN)"],
+    ])("declines an ordered set operation ending in %s", (_label, sql) => {
+      const result = provider.prepareQuery(sql, { limit: 50 });
+
+      expect(result.query).toBe(sql);
+      expect(result.wasLimited).toBe(false);
+    });
+
+    test.each<[string, string]>([
+      ["TOP", "SELECT TOP 10 id FROM a UNION ALL SELECT id FROM b ORDER BY id"],
+      ["DISTINCT TOP", "SELECT DISTINCT TOP 10 id FROM a UNION ALL SELECT id FROM b ORDER BY id"],
+      ["a comment before TOP", "SELECT/* c */TOP 10 id FROM a UNION ALL SELECT id FROM b ORDER BY id"],
+      ["TOP after a CTE", "WITH c AS (SELECT 1 AS id) SELECT TOP 10 id FROM c UNION ALL SELECT id FROM b ORDER BY id"],
+    ])("declines a set operation whose first arm has %s", (_label, sql) => {
+      const result = provider.prepareQuery(sql, { limit: 50 });
+
+      expect(result.query).toBe(sql);
+      expect(result.wasLimited).toBe(false);
+    });
+
+    test.each<[string, string]>([
+      ["OFFSET FETCH", "SELECT id FROM a UNION SELECT id FROM b ORDER BY id OFFSET 0 ROWS FETCH NEXT 3 ROWS ONLY"],
+      ["bare OFFSET", "SELECT id FROM a UNION SELECT id FROM b ORDER BY id OFFSET 10 ROWS"],
+    ])("leaves a set operation with its own page unchanged: %s", (_label, sql) => {
+      const result = provider.prepareQuery(sql, { limit: 50 });
+
+      expect(result.query).toBe(sql);
+      expect(result.wasLimited).toBe(false);
+    });
+
+    test("declines an unordered set operation at a later offset", () => {
+      const sql = "SELECT id FROM a UNION ALL SELECT id FROM b";
+      const result = provider.prepareQuery(sql, { limit: 5, offset: 10 });
+
+      expect(result.query).toBe(sql);
+      expect(result.wasLimited).toBe(false);
+    });
+
+    test("bounds the outer SELECT of a CTE", () => {
+      const sql =
+        "-- annotated\nWITH first_cte AS (SELECT 1 AS id), second_cte AS (SELECT 2 AS id) SELECT id FROM first_cte";
+      const result = provider.prepareQuery(sql, { limit: 50 });
+
+      expect(result.query).toBe(
+        "-- annotated\nWITH first_cte AS (SELECT 1 AS id), second_cte AS (SELECT 2 AS id) SELECT TOP 50 id FROM first_cte",
+      );
+      expect(result.wasLimited).toBe(true);
+    });
+
+    test.each<[string, string, string]>([
+      [
+        "a window function",
+        "SELECT id, ROW_NUMBER() OVER (ORDER BY id) AS rn FROM t",
+        "SELECT id, ROW_NUMBER() OVER (ORDER BY id) AS rn FROM t ORDER BY (SELECT NULL) OFFSET 10 ROWS FETCH NEXT 5 ROWS ONLY",
+      ],
+      [
+        "a literal",
+        "SELECT id FROM t WHERE note = 'ORDER BY id'",
+        "SELECT id FROM t WHERE note = 'ORDER BY id' ORDER BY (SELECT NULL) OFFSET 10 ROWS FETCH NEXT 5 ROWS ONLY",
+      ],
+    ])("adds the required ORDER BY when the only one is inside %s", (_label, sql, expected) => {
+      const result = provider.prepareQuery(sql, { limit: 5, offset: 10 });
+
+      expect(result.query).toBe(expected);
+      expect(result.wasLimited).toBe(true);
+    });
+
     // ── Leading comments (#275) ─────────────────────────────────────────────
     //
     // This path is the reason the classifier could not be fixed on its own. It
@@ -1462,12 +1592,9 @@ describe("MSSQLProvider", () => {
 
     // The honesty invariant behind all of the above, asserted directly: there is no
     // input for which this path claims a limit while handing back the statement it
-    // was given. A CTE is the case that is NOT rewritable here - `TOP` belongs to
-    // the trailing SELECT, which finding would need a parser - so it must report
-    // false rather than lie.
+    // was given. Malformed CTEs and parenthesised roots remain declined.
     test.each<[string, string]>([
-      ["a CTE", "WITH cte AS (SELECT 1 AS n) SELECT * FROM cte"],
-      ["a commented CTE", "-- annotated\nWITH cte AS (SELECT 1 AS n) SELECT * FROM cte"],
+      ["a malformed CTE", "WITH cte AS (SELECT 1 AS n)"],
       ["a statement opening with a parenthesis", "(SELECT 1) UNION (SELECT 2)"],
     ])("never reports a limit it did not apply, for %s", (_label, sql) => {
       const result = provider.prepareQuery(sql, { limit: 50 });

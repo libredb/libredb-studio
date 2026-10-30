@@ -92,9 +92,14 @@ explicit-`ssl` overrides and the [security caveat](#15-known-limitations--future
 ### 3.2 T-SQL pagination: `TOP` and `OFFSET … FETCH`
 
 `prepareQuery()` ([`mssql.ts`](../../src/lib/db/providers/sql/mssql.ts)) overrides the base. For a
-limit-less `SELECT`: with no offset it injects `TOP n` right after `SELECT [DISTINCT]`; with an
-offset it appends `OFFSET m ROWS FETCH NEXT n ROWS ONLY` — and because T-SQL requires an `ORDER BY`
-for `OFFSET … FETCH`, it injects `ORDER BY (SELECT NULL)` when the query has none.
+limit-less `SELECT`: with no offset it injects `TOP n` right after the outer `SELECT [DISTINCT]`;
+for a CTE, that is the `SELECT` after the complete CTE list. With an offset it appends `OFFSET m ROWS
+FETCH NEXT n ROWS ONLY` — and because T-SQL requires an `ORDER BY` for `OFFSET … FETCH`, it injects
+`ORDER BY (SELECT NULL)` when the outer query has none, as read by `hasResultOrder`.
+
+A top-level `UNION`, `UNION ALL`, `INTERSECT`, or `EXCEPT` is never given a `TOP`, which would bound
+only its first arm. With an outer `ORDER BY` it takes the appending branch, at offset 0 as well
+(`… ORDER BY id OFFSET 0 ROWS FETCH NEXT n ROWS ONLY`). Any other set operation declines (see below).
 
 A `limit` or an `offset` that is not a non-negative safe integer is refused with a `QueryError` before either branch runs, by the check the shared limiter runs first (`assertRowBounds` in [`query-limiter.ts`](../../src/lib/db/utils/query-limiter.ts)).
 
@@ -175,16 +180,21 @@ bounds a read behind a leading nested comment (`/* a /* b */ x */ SELECT name FR
 write a nested comment hid inside a CTE list, and declines where the comment carries one opener too
 many and therefore never closes. Pinned in `tests/integration/db/mssql-provider.test.ts`.
 
-`prepareQuery` **declines** rather than splicing in two cases, reporting `wasLimited: false` and
+`prepareQuery` **declines** rather than splicing in these cases, reporting `wasLimited: false` and
 returning the statement untouched. It never reports a limit while handing back the statement unchanged.
 
-- **No leading `SELECT`** — with no offset, a CTE, whose `TOP` belongs to the trailing `SELECT` that
-  finding would need a parser. (With an offset a CTE takes the `OFFSET … FETCH` branch, which appends
-  and so is genuinely bounded.)
+- **No readable outer `SELECT`** — a malformed CTE or a statement rooted in parentheses has no safe
+  insertion point and is returned unchanged with `wasLimited: false`.
 - **A `TOP` already at the insertion point** — the statement is bounded but the shared already-bounded
   probe missed it, because that probe wants literal whitespace between `SELECT` and `TOP`, which both a
   comment (`SELECT/* c */TOP 10 …`) and a `DISTINCT` defeat. Splicing would emit `SELECT TOP n TOP 10`
   and a syntax error.
+- **A set operation without an outer `ORDER BY`** — there is nothing to page on, `ORDER BY (SELECT
+  NULL)` is not allowed there, and a derived-table wrapper would need every first-arm column named and
+  distinct (Msg 8155).
+- **A set operation ending in `FOR JSON`, `FOR XML`, or `OPTION (…)`** — those clauses must stay last,
+  so nothing can be appended after them.
+- **A set operation whose first arm has `TOP`** — a page beside it is refused (Msg 10741).
 - **A T-SQL page at the end of the statement** (`… ORDER BY id OFFSET 10 ROWS`) — a bound the shared
   probes do not recognise, and a clause beside it is a rejected statement.
 - **An end that may not be cut, in a statement mentioning `OFFSET` or `FETCH`** — the already-bounded

@@ -70,8 +70,11 @@ import { analyzeQuery, assertRowBounds, DEFAULT_QUERY_LIMIT, MAX_UNLIMITED_ROWS 
 import { measuredNullableAggregate } from "../../utils/measured-aggregate";
 import { uniqueFieldNames } from "../../utils/result-fields";
 import { readLeadingKeyword } from "@/lib/sql/leading-keyword";
+import { readOperativeKeyword } from "@/lib/sql/operative-keyword";
 import { resolveSqlGrammar, type SqlGrammar } from "@/lib/sql/grammar";
-import { hasLoneCarriageReturnInLineComment } from "@/lib/sql/spans";
+import { hasResultOrder } from "@/lib/sql/result-order";
+import { hasLoneCarriageReturnInLineComment, readSqlSpan } from "@/lib/sql/spans";
+import { readSqlWord } from "@/lib/sql/words";
 import { readStatementEnd } from "@/lib/sql/statement-end";
 import { CACHE_HIT_RATIO_UNAVAILABLE, formatCacheHitRatio, measuredNumber } from "@/lib/monitoring-cache-ratio";
 
@@ -88,8 +91,8 @@ const MSSQL_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
 };
 
 /**
- * `SELECT ... ` with `TOP n` spliced in where T-SQL wants it, or `null` when this
- * statement has no leading `SELECT` to splice after.
+ * A `TOP n` splice at a known outer `SELECT`, or `null` when that insertion point
+ * already carries a TOP.
  *
  * The insertion point comes from `readLeadingKeyword` rather than from a
  * `^\s*SELECT\s+` rewrite, because that pattern silently matched nothing behind a
@@ -109,10 +112,7 @@ const MSSQL_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
  * the alternate-quote tag reads the character before its index (see `readSqlSpan`),
  * and T-SQL does not have that form.
  */
-function injectTop(sql: string, limit: number, grammar: SqlGrammar): string | null {
-  const select = readLeadingKeyword(sql, grammar);
-  if (select === null || select.keyword !== "SELECT") return null;
-
+function injectTopAt(sql: string, select: { end: number }, limit: number, grammar: SqlGrammar): string | null {
   const next = readLeadingKeyword(sql.slice(select.end), grammar);
   const insertAt = next?.keyword === "DISTINCT" ? select.end + next.end : select.end;
 
@@ -124,6 +124,58 @@ function injectTop(sql: string, limit: number, grammar: SqlGrammar): string | nu
   if (readLeadingKeyword(sql.slice(insertAt), grammar)?.keyword === "TOP") return null;
 
   return `${sql.slice(0, insertAt)} TOP ${limit}${sql.slice(insertAt)}`;
+}
+
+/**
+ * Whether the statement is a top-level set operation, and whether it ends in a clause that
+ * must stay last. Comments, literals and nested queries are skipped. Ordering is not read
+ * here: that question belongs to `hasResultOrder`.
+ */
+function readOuterQueryClauses(
+  sql: string,
+  grammar: SqlGrammar,
+): { hasSetOperator: boolean; hasTerminalClause: boolean } {
+  let depth = 0;
+  let hasSetOperator = false;
+  let hasTerminalClause = false;
+  let i = 0;
+
+  while (i < sql.length) {
+    const span = readSqlSpan(sql, i, grammar);
+    if (span !== null) {
+      i = span.end;
+      continue;
+    }
+    if (sql[i] === "(") {
+      depth++;
+      i++;
+      continue;
+    }
+    if (sql[i] === ")") {
+      depth = Math.max(0, depth - 1);
+      i++;
+      continue;
+    }
+    const word = readSqlWord(sql, i);
+    if (word === null) {
+      i++;
+      continue;
+    }
+    if (depth === 0) {
+      if (word.text === "UNION" || word.text === "INTERSECT" || word.text === "EXCEPT") {
+        hasSetOperator = true;
+      } else if (
+        word.text === "OPTION" ||
+        (word.text === "FOR" &&
+          ["JSON", "XML"].includes(readLeadingKeyword(sql.slice(word.end), grammar)?.keyword ?? ""))
+      ) {
+        hasTerminalClause = true;
+      }
+    }
+    i = word.end;
+  }
+
+  return { hasSetOperator, hasTerminalClause };
 }
 
 /**
@@ -2739,26 +2791,46 @@ export class MSSQLProvider extends SQLBaseProvider {
         return { query, wasLimited: false, limit: effectiveLimit, offset };
       }
 
-      if (offset > 0) {
+      const hasOrderBy = hasResultOrder(modifiedSql, this.type);
+      const { hasSetOperator, hasTerminalClause } = readOuterQueryClauses(modifiedSql, grammar);
+
+      // `TOP` on one arm does not bound a set operation's combined result, and no text
+      // rewrite can wrap it safely: a derived table needs every first-arm column named and
+      // distinct (Msg 8155). So an ordered one takes the appending branch below and every
+      // other one is reported honestly as unbounded. A first arm's own `TOP` may not sit
+      // beside the page (Msg 10741); an unordered one has no outer ORDER BY to page on, and
+      // `ORDER BY (SELECT NULL)` is refused in a set operation (Msg 104).
+      if (hasSetOperator) {
+        const firstArm = readOperativeKeyword(modifiedSql, grammar);
+        const firstArmHasTop =
+          firstArm?.keyword === "SELECT" && injectTopAt(modifiedSql, firstArm, effectiveLimit, grammar) === null;
+        if (!hasOrderBy || hasTerminalClause || firstArmHasTop) {
+          return { query, wasLimited: false, limit: effectiveLimit, offset };
+        }
+      }
+
+      if (offset > 0 || hasSetOperator) {
         if (!rewritable) {
           return { query, wasLimited: false, limit: effectiveLimit, offset };
         }
 
         // OFFSET FETCH requires ORDER BY
-        const hasOrderBy = /\bORDER\s+BY\b/i.test(modifiedSql);
         if (!hasOrderBy) {
           modifiedSql = `${modifiedSql} ORDER BY (SELECT NULL)`;
         }
         modifiedSql = `${modifiedSql} OFFSET ${offset} ROWS FETCH NEXT ${effectiveLimit} ROWS ONLY`;
       } else {
-        // Inject TOP N after SELECT
-        const injected = injectTop(modifiedSql, effectiveLimit, grammar);
+        const outerSelect = readOperativeKeyword(modifiedSql, grammar);
+        if (outerSelect === null || outerSelect.keyword !== "SELECT") {
+          return { query, wasLimited: false, limit: effectiveLimit, offset };
+        }
+
+        // Inject TOP N after the outer SELECT, including the SELECT after a CTE.
+        const injected = injectTopAt(modifiedSql, outerSelect, effectiveLimit, grammar);
 
         // Nothing to inject into: report the truth rather than a limit that is not
-        // there. `analyzeQuery` also calls a CTE a SELECT, and `TOP` belongs to the
-        // SELECT at its tail, which finding needs a parser this provider does not
-        // have. The old head-rewrite silently produced this same non-edit behind a
-        // leading comment while still claiming `wasLimited: true` (#275).
+        // there. A malformed CTE or a statement with no outer SELECT cannot be
+        // safely rewritten, so it reports no applied limit.
         if (injected === null) {
           return { query, wasLimited: false, limit: effectiveLimit, offset };
         }
