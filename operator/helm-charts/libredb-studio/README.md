@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.118 \
+  --version 0.1.119 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -359,7 +359,7 @@ extraEnv:
 ```
 
 Without it the OIDC login fails with a TLS error such as `UNABLE_TO_VERIFY_LEAF_SIGNATURE`.
-From the first application release after 1.1.0, Studio refuses to boot when the file `NODE_EXTRA_CA_CERTS` names is missing, unreadable, empty, whitespace only or holds no PEM certificate, where Node itself would only warn and trust nothing extra.
+From application release 1.2.0, Studio refuses to boot when the file `NODE_EXTRA_CA_CERTS` names is missing, unreadable, empty, whitespace only or holds no PEM certificate, where Node itself would only warn and trust nothing extra.
 
 When the CA sits in a Secret that also holds a private key, such as a cert-manager or Elasticsearch certificate Secret, project only the CA key so the private key never reaches the pod:
 
@@ -975,7 +975,7 @@ A typical OpenShift install, with the Route, the cluster's trusted CA bundle and
 
 ```bash
 helm install studio libredb/libredb-studio \
-  --version 0.1.118 \
+  --version 0.1.119 \
   --set openshiftRoute.enabled=true \
   --set openshift.trustedCABundle.enabled=true \
   --set openshift.topology.partOf=libredb \
@@ -997,13 +997,11 @@ An existing OpenShift install with the policy on gains these two egress ports on
 ### OpenShift sign-in
 
 `authProvider=openshift` signs people in with their OpenShift account through the cluster's OAuth server, with Studio's ServiceAccount as the OAuth client, and reviews every database and admin request with the signed-in user's own token.
-It needs an application image after 1.1.0: release 1.1.0 and earlier have no openshift sign-in, so the render fails while the effective `image.tag` (`appVersion` when unset) is a version at or below 1.1.0, and accepts a tag that is not a version, such as `latest` or a branch tag.
+It needs application image 1.2.0 or later: release 1.1.0 and earlier have no openshift sign-in, so the render fails while the effective `image.tag` (`appVersion` when unset, 1.2.0 by default) is a version at or below 1.1.0, and accepts a tag that is not a version, such as `latest` or a branch tag.
 A typical install, with discovery of two namespaces:
 
 ```yaml
 authProvider: openshift
-image:
-  tag: "1.2.0"                     # a release after 1.1.0; drop it once appVersion is past 1.1.0
 openshiftRoute:
   enabled: true
   host: studio-data.apps.example.com
@@ -1018,7 +1016,7 @@ openshift:
 ```
 
 ```bash
-helm install studio libredb/libredb-studio --version 0.1.118 --namespace data -f openshift-values.yaml
+helm install studio libredb/libredb-studio --version 0.1.119 --namespace data -f openshift-values.yaml
 ```
 
 The chart annotates the ServiceAccount with `serviceaccounts.openshift.io/oauth-redirectreference.first`, naming the Route, and `serviceaccounts.openshift.io/oauth-redirecturi.first`, the callback path under `config.basePath`, so the OAuth server accepts that one callback.
@@ -1108,7 +1106,7 @@ The chart mounts it read-only at `/etc/libredb-studio/trusted-ca` and sets `NODE
 Choose it when the private CA is already in the cluster's trusted bundle; otherwise use the recipe in [Trusting a private CA](#trusting-a-private-ca).
 The two do not combine: `NODE_EXTRA_CA_CERTS` takes one file, so the render fails when `extraEnv` also sets it.
 Studio refuses to boot while `NODE_EXTRA_CA_CERTS` names a file that is missing, unreadable, empty, whitespace only or holds no PEM certificate, so a first start that races the injection exits and the restart picks the bundle up.
-That boot check is application code that needs an application release after 1.1.0; with the default `appVersion` 1.1.0 the bundle is mounted, but a first start that races the injection runs without it, with no error, and nothing restarts the pod on its own: run `oc rollout restart` on the Deployment once the ConfigMap holds `ca-bundle.crt`.
+That boot check is application code that needs application release 1.2.0 or later, the default `appVersion`; with an `image.tag` of 1.1.0 or earlier the bundle is mounted, but a first start that races the injection runs without it, with no error, and nothing restarts the pod on its own: run `oc rollout restart` on the Deployment once the ConfigMap holds `ca-bundle.crt`.
 
 ### Topology
 

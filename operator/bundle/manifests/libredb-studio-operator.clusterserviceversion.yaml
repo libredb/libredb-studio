@@ -22,8 +22,8 @@ metadata:
     capabilities: Basic Install
     categories: Database, Developer Tools
     console.openshift.io/plugins: '["libredb-studio"]'
-    containerImage: ghcr.io/libredb/libredb-studio-operator:1.1.0
-    createdAt: "2026-10-30T14:23:23Z"
+    containerImage: ghcr.io/libredb/libredb-studio-operator:1.2.0
+    createdAt: "2026-10-30T20:24:04Z"
     description: Open-source web-based SQL IDE for forty-two engines - PostgreSQL,
       MySQL, Oracle, Db2 LUW, SQL Server, SQLite, DuckDB, MongoDB, Redis, Couchbase,
       Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery,
@@ -38,7 +38,7 @@ metadata:
     features.operators.openshift.io/token-auth-aws: "false"
     features.operators.openshift.io/token-auth-azure: "false"
     features.operators.openshift.io/token-auth-gcp: "false"
-    olm.skipRange: '>=0.0.0 <1.1.0'
+    olm.skipRange: '>=0.0.0 <1.2.0'
     operatorframework.io/suggested-namespace: libredb-studio
     operators.operatorframework.io/builder: operator-sdk-v1.42.3
     operators.operatorframework.io/project_layout: helm.sdk.operatorframework.io/v1
@@ -48,7 +48,7 @@ metadata:
     operatorframework.io/arch.amd64: supported
     operatorframework.io/arch.arm64: supported
     operatorframework.io/os.linux: supported
-  name: libredb-studio-operator.v1.1.0
+  name: libredb-studio-operator.v1.2.0
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
@@ -254,7 +254,7 @@ spec:
                       fieldPath: metadata.namespace
                 - name: RELATED_IMAGE_PLUGIN
                   value: ghcr.io/libredb/libredb-studio-openshift-plugin:0.1.0@sha256:39698233d019f4e69fe106e634af789291011d59d27d5858a7e4d0b41283d86e
-                image: ghcr.io/libredb/libredb-studio-operator:1.1.0
+                image: ghcr.io/libredb/libredb-studio-operator:1.2.0
                 livenessProbe:
                   httpGet:
                     path: /healthz
@@ -542,4 +542,4 @@ spec:
   relatedImages:
   - image: ghcr.io/libredb/libredb-studio-openshift-plugin:0.1.0@sha256:39698233d019f4e69fe106e634af789291011d59d27d5858a7e4d0b41283d86e
     name: plugin
-  version: 1.1.0
+  version: 1.2.0

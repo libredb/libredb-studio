@@ -44,6 +44,7 @@ interface PodSpec {
   securityContext?: Record<string, unknown>;
   containers: Array<{
     name: string;
+    image?: string;
     env?: EnvVar[];
     volumeMounts?: Array<{ name: string; mountPath: string; readOnly?: boolean }>;
   }>;
@@ -948,8 +949,8 @@ describe("the openshift-mode guards", () => {
       `fullnameOverride=${RELEASE}`,
     );
 
-    test("the default image, appVersion 1.1.0, fails naming image.tag", () => {
-      refused(withoutTag, "image.tag", "1.1.0");
+    test("the default image, appVersion 1.2.0, renders", () => {
+      expect(studioPod(render(withoutTag)).containers[0].image).toBe("ghcr.io/libredb/libredb-studio:1.2.0");
     });
 
     test.each(["1.1.0", "v1.1.0", "1.0.0", "0.18.3", "1.1.0-rc.1", "1.1.0+build.7"])("image.tag=%s fails", (tag) => {

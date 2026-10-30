@@ -596,13 +596,12 @@ With openshift sign-in, people sign in with their OpenShift account and no passw
 ```bash
 helm install libredb libredb/libredb-studio \
   --set authProvider=openshift \
-  --set image.tag="$STUDIO_TAG" \
   --set openshiftRoute.enabled=true \
   --set openshiftRoute.host=studio-data.apps.example.com \
   --set openshift.consoleLink.enabled=true
 ```
 
-`$STUDIO_TAG` is a release after 1.1.0, which the render requires until `appVersion` moves past it; the chart README's "OpenShift sign-in" section lists what the mode renders and refuses, and section 13 above explains why.
+The render refuses openshift mode while the effective `image.tag` is 1.1.0 or earlier, which the default `appVersion`, 1.2.0, is not; the chart README's "OpenShift sign-in" section lists what the mode renders and refuses, and section 13 above explains why.
 
 ### External Secrets (Vault / ESO)
 ```bash

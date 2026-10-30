@@ -229,7 +229,7 @@ This path has not run.
 ## Install with Helm
 
 A cluster admin installs the chart's openshift mode with Helm as the [chart README](../charts/libredb-studio/README.md#openshift-sign-in) shows, from the repository `https://libredb.org/libredb-studio/` or from `oci://ghcr.io/libredb/charts/libredb-studio`.
-The chart refuses openshift mode until `image.tag` names a release after 1.1.0, while its `appVersion` is 1.1.0 or earlier.
+The chart refuses openshift mode while the effective `image.tag` is 1.1.0 or earlier; its default, `appVersion` 1.2.0, passes.
 Discovery of other namespaces creates Roles there and a ConsoleLink is cluster-scoped, so such an install needs a cluster admin, and the [cluster Studio namespace](#the-cluster-studio-namespace) rule applies to the release's namespace.
 Teams install their own Studio this way, in their own namespace and with their own rights; it discovers no other namespace and renders no ConsoleLink.
 
