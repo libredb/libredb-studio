@@ -683,3 +683,4 @@ No MCP tool runs an etcdctl command: the family declares no MCP facet, and `MCP_
 - `tests/unit/db/etcd/agent-metadata-read.test.ts`: every projection over the captured answers, and the wording of every failure.
 - `tests/unit/db/etcd/agent-provider.test.ts`: the open, the proof before every command, the exact request sent, the object surface and the monitoring reads of either agent profile, and the wording of a failure.
 - `tests/unit/db/etcd/agent-boundary.test.ts`: the captured writes as the boundary test, with the root user as the positive control and the server's state compared before and after.
+- `tests/integration/db/etcd-provider.test.ts`: over the real adapter, `queryReadOnly` refused on an editor handle, and on an operations-profile handle a grounding capture that names no key prefix and no key, the key-prefix folder withheld and the table statistics refused.
