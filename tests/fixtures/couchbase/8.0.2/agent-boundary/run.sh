@@ -11,7 +11,8 @@
 # advertises is the one this host reaches. The administrator's and the users' passwords are generated here for the
 # run, unless the environment already sets CB_ADMIN_PASSWORD and CB_USER_PASSWORD, and handed to probe.mjs in the
 # environment; no capture prints either. 01 to 05 depend on 00, and run in order:
-# 02 leaves a prepared statement and a request log entry that 03 reads back.
+# 02 leaves a prepared statement and a request log entry that 03 reads back; 08 times the query service against
+# role changes, so its milliseconds differ run to run.
 set -euo pipefail
 ee="$1"
 ce="$2"
@@ -56,4 +57,5 @@ run "$ee" 03-positive-controls-as-each-refused-user
 run "$ee" 04-readonly-flag-as-agent-admin
 run "$ee" 05-statement-text-as-administrator
 run "$ee" 07-catalog-read-as-agent-ro
+node "$dir/08-revoke-window.mjs" "$ee" > "$dir/08-revoke-window.txt"
 run "$ce" 06-community-edition-roles

@@ -1,0 +1,20 @@
+round 1: role granted: 0 call(s) answered otherwise, then ran [{"v":2}], 5 ms after the change; whoami then lists query_execute_global_functions,query_select
+round 1: role taken away: 0 call(s) answered otherwise, then refused 5010, 4 ms after the change; whoami then lists query_select
+round 2: role granted: 0 call(s) answered otherwise, then ran [{"v":2}], 2 ms after the change; whoami then lists query_execute_global_functions,query_select
+round 2: role taken away: 0 call(s) answered otherwise, then refused 5010, 3 ms after the change; whoami then lists query_select
+round 3: role granted: 0 call(s) answered otherwise, then ran [{"v":2}], 2 ms after the change; whoami then lists query_execute_global_functions,query_select
+round 3: role taken away: 0 call(s) answered otherwise, then refused 5010, 2 ms after the change; whoami then lists query_select
+round 4: role granted: 0 call(s) answered otherwise, then ran [{"v":2}], 3 ms after the change; whoami then lists query_execute_global_functions,query_select
+round 4: role taken away: 0 call(s) answered otherwise, then refused 5010, 2 ms after the change; whoami then lists query_select
+round 5: role granted: 0 call(s) answered otherwise, then ran [{"v":2}], 2 ms after the change; whoami then lists query_execute_global_functions,query_select
+round 5: role taken away: 0 call(s) answered otherwise, then refused 5010, 3 ms after the change; whoami then lists query_select
+round 6: role granted: 0 call(s) answered otherwise, then ran [{"v":2}], 2 ms after the change; whoami then lists query_execute_global_functions,query_select
+round 6: role taken away: 0 call(s) answered otherwise, then refused 5010, 3 ms after the change; whoami then lists query_select
+round 7: role granted: 0 call(s) answered otherwise, then ran [{"v":2}], 3 ms after the change; whoami then lists query_execute_global_functions,query_select
+round 7: role taken away: 0 call(s) answered otherwise, then refused 5010, 2 ms after the change; whoami then lists query_select
+round 8: role granted: 0 call(s) answered otherwise, then ran [{"v":2}], 3 ms after the change; whoami then lists query_execute_global_functions,query_select
+round 8: role taken away: 1 call(s) answered otherwise, then refused 5010, 54 ms after the change; whoami then lists query_select
+round 9: role granted: 0 call(s) answered otherwise, then ran [{"v":2}], 1 ms after the change; whoami then lists query_execute_global_functions,query_select
+round 9: role taken away: 0 call(s) answered otherwise, then refused 5010, 2 ms after the change; whoami then lists query_select
+round 10: role granted: 0 call(s) answered otherwise, then ran [{"v":2}], 3 ms after the change; whoami then lists query_execute_global_functions,query_select
+round 10: role taken away: 0 call(s) answered otherwise, then refused 5010, 3 ms after the change; whoami then lists query_select
