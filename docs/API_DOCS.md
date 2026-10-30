@@ -67,7 +67,7 @@ LibreDB Studio uses JWT (JSON Web Tokens) for authentication. Tokens are stored 
 ### Authentication Flow
 
 1. Client sends credentials to `/api/auth/login`
-2. Server validates and returns JWT in `auth-token` cookie
+2. Server validates and returns JWT in `auth-token` cookie (`__Host-auth-token` on HTTPS, where the cookie is Secure)
 3. Client includes cookie in subsequent requests
 4. Middleware validates token on protected routes
 
@@ -148,7 +148,7 @@ Authenticate user and create session.
 
 **Notes:**
 - Both `email` and `password` are required in the request body; matched against `ADMIN_EMAIL`/`ADMIN_PASSWORD` or `USER_EMAIL`/`USER_PASSWORD` environment variables. `ADMIN_PASSWORD` is mandatory; the `USER_*` account exists only when `USER_PASSWORD` is set
-- Sets `auth-token` HTTP-only cookie on success
+- Sets `auth-token` HTTP-only cookie on success (`__Host-auth-token` at `Path=/` on HTTPS)
 - A body that is not valid JSON gets the 400 above, not a 500 - and, like a wrong password, spends one unit of the client-address rate-limit budget (see "Rate Limiting" below), so a flood of malformed bodies from one address is eventually refused rather than answered indefinitely
 
 ---
@@ -175,7 +175,7 @@ When `NEXT_PUBLIC_AUTH_PROVIDER=oidc`, the response also includes the provider's
 ```
 
 **Notes:**
-- Clears the `auth-token` cookie
+- Clears the `auth-token` cookie (`__Host-auth-token` on HTTPS)
 
 ---
 
