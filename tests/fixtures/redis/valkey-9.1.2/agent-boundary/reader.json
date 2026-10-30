@@ -1,0 +1,526 @@
+{
+  "$captured": {
+    "image": "valkey/valkey:9.1.2@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd",
+    "version": "9.1.2",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "principal": "agent_reader",
+    "rules": "on ~* +@read"
+  },
+  "probes": [
+    {
+      "argv": [
+        "DEL",
+        "agent-probe:missing"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_reader has no permissions to run the 'del' command"
+    },
+    {
+      "argv": [
+        "UNLINK",
+        "agent-probe:missing"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_reader has no permissions to run the 'unlink' command"
+    },
+    {
+      "argv": [
+        "SET",
+        "agent-probe:missing",
+        "x",
+        "XX"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_reader has no permissions to run the 'set' command"
+    },
+    {
+      "argv": [
+        "EXPIRE",
+        "agent-probe:missing",
+        "1"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_reader has no permissions to run the 'expire' command"
+    },
+    {
+      "argv": [
+        "HDEL",
+        "agent-probe:missing",
+        "f"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_reader has no permissions to run the 'hdel' command"
+    },
+    {
+      "argv": [
+        "LREM",
+        "agent-probe:missing",
+        "0",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_reader has no permissions to run the 'lrem' command"
+    },
+    {
+      "argv": [
+        "SREM",
+        "agent-probe:missing",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_reader has no permissions to run the 'srem' command"
+    },
+    {
+      "argv": [
+        "ZREM",
+        "agent-probe:missing",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_reader has no permissions to run the 'zrem' command"
+    },
+    {
+      "argv": [
+        "XDEL",
+        "agent-probe:missing",
+        "0-1"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_reader has no permissions to run the 'xdel' command"
+    },
+    {
+      "argv": [
+        "MOVE",
+        "agent-probe:missing",
+        "1"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_reader has no permissions to run the 'move' command"
+    },
+    {
+      "argv": [
+        "RESTORE",
+        "agent-probe:missing",
+        "0",
+        "not-a-dump-payload"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_reader has no permissions to run the 'restore' command"
+    },
+    {
+      "argv": [
+        "CONFIG",
+        "SET",
+        "agent-probe-no-such-parameter",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_reader has no permissions to run the 'config|set' command"
+    },
+    {
+      "argv": [
+        "EVALSHA",
+        "0000000000000000000000000000000000000000",
+        "0"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_reader has no permissions to run the 'evalsha' command"
+    },
+    {
+      "argv": [
+        "FUNCTION",
+        "DELETE",
+        "agent_probe_no_such_library"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_reader has no permissions to run the 'function|delete' command"
+    },
+    {
+      "argv": [
+        "PUBLISH",
+        "agent-probe:channel",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_reader has no permissions to run the 'publish' command"
+    }
+  ],
+  "stateBeforeProbes": {
+    "dbsize": "8",
+    "probeKeyExists": "0",
+    "functions": []
+  },
+  "stateAfterProbes": {
+    "dbsize": "8",
+    "probeKeyExists": "0",
+    "functions": []
+  },
+  "table": [
+    {
+      "argv": [
+        "DBSIZE"
+      ],
+      "outcome": "ok",
+      "reply": "8"
+    },
+    {
+      "argv": [
+        "TYPE",
+        "agent:hash"
+      ],
+      "outcome": "ok",
+      "reply": "hash"
+    },
+    {
+      "argv": [
+        "TYPE",
+        "agent:missing"
+      ],
+      "outcome": "ok",
+      "reply": "none"
+    },
+    {
+      "argv": [
+        "EXISTS",
+        "agent:hash"
+      ],
+      "outcome": "ok",
+      "reply": "1"
+    },
+    {
+      "argv": [
+        "EXISTS",
+        "agent:missing"
+      ],
+      "outcome": "ok",
+      "reply": "0"
+    },
+    {
+      "argv": [
+        "TTL",
+        "agent:ttl"
+      ],
+      "outcome": "ok",
+      "reply": "3600"
+    },
+    {
+      "argv": [
+        "TTL",
+        "agent:hash"
+      ],
+      "outcome": "ok",
+      "reply": "-1"
+    },
+    {
+      "argv": [
+        "TTL",
+        "agent:missing"
+      ],
+      "outcome": "ok",
+      "reply": "-2"
+    },
+    {
+      "argv": [
+        "PTTL",
+        "agent:ttl"
+      ],
+      "outcome": "ok",
+      "reply": "3599921"
+    },
+    {
+      "argv": [
+        "STRLEN",
+        "agent:string"
+      ],
+      "outcome": "ok",
+      "reply": "23"
+    },
+    {
+      "argv": [
+        "STRLEN",
+        "agent:hash"
+      ],
+      "outcome": "error",
+      "error": "WRONGTYPE Operation against a key holding the wrong kind of value"
+    },
+    {
+      "argv": [
+        "LLEN",
+        "agent:list"
+      ],
+      "outcome": "ok",
+      "reply": "2"
+    },
+    {
+      "argv": [
+        "HLEN",
+        "agent:hash"
+      ],
+      "outcome": "ok",
+      "reply": "1"
+    },
+    {
+      "argv": [
+        "SCARD",
+        "agent:set"
+      ],
+      "outcome": "ok",
+      "reply": "1"
+    },
+    {
+      "argv": [
+        "ZCARD",
+        "agent:zset"
+      ],
+      "outcome": "ok",
+      "reply": "1"
+    },
+    {
+      "argv": [
+        "XLEN",
+        "agent:stream"
+      ],
+      "outcome": "ok",
+      "reply": "1"
+    },
+    {
+      "argv": [
+        "OBJECT",
+        "ENCODING",
+        "agent:hash"
+      ],
+      "outcome": "ok",
+      "reply": "listpack"
+    },
+    {
+      "argv": [
+        "OBJECT",
+        "ENCODING",
+        "agent:missing"
+      ],
+      "outcome": "ok",
+      "reply": null
+    },
+    {
+      "argv": [
+        "MEMORY",
+        "USAGE",
+        "agent:hash"
+      ],
+      "outcome": "ok",
+      "reply": "80"
+    },
+    {
+      "argv": [
+        "MEMORY",
+        "USAGE",
+        "agent:hash",
+        "SAMPLES",
+        "5"
+      ],
+      "outcome": "ok",
+      "reply": "80"
+    },
+    {
+      "argv": [
+        "MEMORY",
+        "USAGE",
+        "agent:missing"
+      ],
+      "outcome": "ok",
+      "reply": null
+    }
+  ],
+  "outside": [
+    {
+      "argv": [
+        "INFO",
+        "server"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_reader has no permissions to run the 'info' command"
+    },
+    {
+      "argv": [
+        "INFO",
+        "keyspace"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_reader has no permissions to run the 'info' command"
+    },
+    {
+      "argv": [
+        "HELLO",
+        "2"
+      ],
+      "outcome": "ok",
+      "reply": [
+        "server",
+        "valkey",
+        "version",
+        "9.1.2",
+        "proto",
+        "2",
+        "id",
+        "285",
+        "mode",
+        "standalone",
+        "role",
+        "master",
+        "modules",
+        [
+          [
+            "name",
+            "lua",
+            "ver",
+            "1",
+            "path",
+            "lua",
+            "args",
+            []
+          ]
+        ]
+      ]
+    },
+    {
+      "argv": [
+        "KEYS",
+        "*"
+      ],
+      "outcome": "ok",
+      "reply": [
+        "agent:hll",
+        "agent:string",
+        "agent:hash",
+        "agent:list",
+        "agent:set",
+        "agent:zset",
+        "agent:stream",
+        "agent:ttl"
+      ]
+    },
+    {
+      "argv": [
+        "SCAN",
+        "0"
+      ],
+      "outcome": "ok",
+      "reply": [
+        "0",
+        [
+          "agent:hll",
+          "agent:string",
+          "agent:hash",
+          "agent:list",
+          "agent:set",
+          "agent:zset",
+          "agent:stream",
+          "agent:ttl"
+        ]
+      ]
+    },
+    {
+      "argv": [
+        "RANDOMKEY"
+      ],
+      "outcome": "ok",
+      "reply": "agent:ttl"
+    },
+    {
+      "argv": [
+        "GET",
+        "agent:string"
+      ],
+      "outcome": "ok",
+      "reply": "not-a-real-stored-value"
+    },
+    {
+      "argv": [
+        "HGETALL",
+        "agent:hash"
+      ],
+      "outcome": "ok",
+      "reply": [
+        "agent-field",
+        "not-a-real-field-value"
+      ]
+    },
+    {
+      "argv": [
+        "OBJECT",
+        "FREQ",
+        "agent:hash"
+      ],
+      "outcome": "error",
+      "error": "ERR An LFU maxmemory policy is not selected, access frequency not tracked. Please note that when switching between policies at runtime LRU and LFU data will take some time to adjust."
+    },
+    {
+      "argv": [
+        "MEMORY",
+        "DOCTOR"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_reader has no permissions to run the 'memory|doctor' command"
+    },
+    {
+      "argv": [
+        "CLIENT",
+        "LIST"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_reader has no permissions to run the 'client|list' command"
+    },
+    {
+      "argv": [
+        "SORT_RO",
+        "agent:list"
+      ],
+      "outcome": "error",
+      "error": "ERR One or more scores can't be converted into double"
+    },
+    {
+      "argv": [
+        "EVAL_RO",
+        "return 1",
+        "0"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_reader has no permissions to run the 'eval_ro' command"
+    },
+    {
+      "argv": [
+        "FCALL_RO",
+        "agent_no_such_function",
+        "0"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_reader has no permissions to run the 'fcall_ro' command"
+    },
+    {
+      "argv": [
+        "PFCOUNT",
+        "agent:hll"
+      ],
+      "outcome": "ok",
+      "reply": "1"
+    },
+    {
+      "argv": [
+        "DEBUG",
+        "OBJECT",
+        "agent:hash"
+      ],
+      "outcome": "error",
+      "error": "ERR DEBUG command not allowed. If the enable-debug-command option is set to \"local\", you can run it from a local connection, otherwise you need to set this option in the configuration file, and then restart the server."
+    },
+    {
+      "argv": [
+        "NOSUCHCOMMAND",
+        "agent:string"
+      ],
+      "outcome": "error",
+      "error": "ERR unknown command 'NOSUCHCOMMAND', with args beginning with: 'agent:string' "
+    }
+  ]
+}

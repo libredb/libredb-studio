@@ -1,0 +1,289 @@
+{
+  "$captured": {
+    "image": "redis:8.10.2@sha256:5c02d7c0f8d75af45958c0294a8004f2e14b42df98a1103e3a669aa7ec787be6",
+    "version": "8.10.2",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "principal": "agent_midrun",
+    "rules": "on ~* +@read +info",
+    "grantedMidRun": "+del"
+  },
+  "probesBeforeGrant": [
+    {
+      "argv": [
+        "DEL",
+        "agent-probe:missing"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'del' command"
+    },
+    {
+      "argv": [
+        "UNLINK",
+        "agent-probe:missing"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'unlink' command"
+    },
+    {
+      "argv": [
+        "SET",
+        "agent-probe:missing",
+        "x",
+        "XX"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'set' command"
+    },
+    {
+      "argv": [
+        "EXPIRE",
+        "agent-probe:missing",
+        "1"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'expire' command"
+    },
+    {
+      "argv": [
+        "HDEL",
+        "agent-probe:missing",
+        "f"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'hdel' command"
+    },
+    {
+      "argv": [
+        "LREM",
+        "agent-probe:missing",
+        "0",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'lrem' command"
+    },
+    {
+      "argv": [
+        "SREM",
+        "agent-probe:missing",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'srem' command"
+    },
+    {
+      "argv": [
+        "ZREM",
+        "agent-probe:missing",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'zrem' command"
+    },
+    {
+      "argv": [
+        "XDEL",
+        "agent-probe:missing",
+        "0-1"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'xdel' command"
+    },
+    {
+      "argv": [
+        "MOVE",
+        "agent-probe:missing",
+        "1"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'move' command"
+    },
+    {
+      "argv": [
+        "RESTORE",
+        "agent-probe:missing",
+        "0",
+        "not-a-dump-payload"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'restore' command"
+    },
+    {
+      "argv": [
+        "CONFIG",
+        "SET",
+        "agent-probe-no-such-parameter",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'config|set' command"
+    },
+    {
+      "argv": [
+        "EVALSHA",
+        "0000000000000000000000000000000000000000",
+        "0"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'evalsha' command"
+    },
+    {
+      "argv": [
+        "FUNCTION",
+        "DELETE",
+        "agent_probe_no_such_library"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'function|delete' command"
+    },
+    {
+      "argv": [
+        "PUBLISH",
+        "agent-probe:channel",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'publish' command"
+    }
+  ],
+  "probesAfterGrant": [
+    {
+      "argv": [
+        "DEL",
+        "agent-probe:missing"
+      ],
+      "outcome": "ok",
+      "reply": "0"
+    },
+    {
+      "argv": [
+        "UNLINK",
+        "agent-probe:missing"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'unlink' command"
+    },
+    {
+      "argv": [
+        "SET",
+        "agent-probe:missing",
+        "x",
+        "XX"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'set' command"
+    },
+    {
+      "argv": [
+        "EXPIRE",
+        "agent-probe:missing",
+        "1"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'expire' command"
+    },
+    {
+      "argv": [
+        "HDEL",
+        "agent-probe:missing",
+        "f"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'hdel' command"
+    },
+    {
+      "argv": [
+        "LREM",
+        "agent-probe:missing",
+        "0",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'lrem' command"
+    },
+    {
+      "argv": [
+        "SREM",
+        "agent-probe:missing",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'srem' command"
+    },
+    {
+      "argv": [
+        "ZREM",
+        "agent-probe:missing",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'zrem' command"
+    },
+    {
+      "argv": [
+        "XDEL",
+        "agent-probe:missing",
+        "0-1"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'xdel' command"
+    },
+    {
+      "argv": [
+        "MOVE",
+        "agent-probe:missing",
+        "1"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'move' command"
+    },
+    {
+      "argv": [
+        "RESTORE",
+        "agent-probe:missing",
+        "0",
+        "not-a-dump-payload"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'restore' command"
+    },
+    {
+      "argv": [
+        "CONFIG",
+        "SET",
+        "agent-probe-no-such-parameter",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'config|set' command"
+    },
+    {
+      "argv": [
+        "EVALSHA",
+        "0000000000000000000000000000000000000000",
+        "0"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'evalsha' command"
+    },
+    {
+      "argv": [
+        "FUNCTION",
+        "DELETE",
+        "agent_probe_no_such_library"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'function|delete' command"
+    },
+    {
+      "argv": [
+        "PUBLISH",
+        "agent-probe:channel",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_midrun has no permissions to run the 'publish' command"
+    }
+  ]
+}

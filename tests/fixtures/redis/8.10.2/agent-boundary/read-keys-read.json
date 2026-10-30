@@ -1,0 +1,566 @@
+{
+  "$captured": {
+    "image": "redis:8.10.2@sha256:5c02d7c0f8d75af45958c0294a8004f2e14b42df98a1103e3a669aa7ec787be6",
+    "version": "8.10.2",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "principal": "agent_read_keys_read",
+    "rules": "on %R~* +@read +info"
+  },
+  "probes": [
+    {
+      "argv": [
+        "DEL",
+        "agent-probe:missing"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_read_keys_read has no permissions to run the 'del' command"
+    },
+    {
+      "argv": [
+        "UNLINK",
+        "agent-probe:missing"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_read_keys_read has no permissions to run the 'unlink' command"
+    },
+    {
+      "argv": [
+        "SET",
+        "agent-probe:missing",
+        "x",
+        "XX"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_read_keys_read has no permissions to run the 'set' command"
+    },
+    {
+      "argv": [
+        "EXPIRE",
+        "agent-probe:missing",
+        "1"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_read_keys_read has no permissions to run the 'expire' command"
+    },
+    {
+      "argv": [
+        "HDEL",
+        "agent-probe:missing",
+        "f"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_read_keys_read has no permissions to run the 'hdel' command"
+    },
+    {
+      "argv": [
+        "LREM",
+        "agent-probe:missing",
+        "0",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_read_keys_read has no permissions to run the 'lrem' command"
+    },
+    {
+      "argv": [
+        "SREM",
+        "agent-probe:missing",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_read_keys_read has no permissions to run the 'srem' command"
+    },
+    {
+      "argv": [
+        "ZREM",
+        "agent-probe:missing",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_read_keys_read has no permissions to run the 'zrem' command"
+    },
+    {
+      "argv": [
+        "XDEL",
+        "agent-probe:missing",
+        "0-1"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_read_keys_read has no permissions to run the 'xdel' command"
+    },
+    {
+      "argv": [
+        "MOVE",
+        "agent-probe:missing",
+        "1"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_read_keys_read has no permissions to run the 'move' command"
+    },
+    {
+      "argv": [
+        "RESTORE",
+        "agent-probe:missing",
+        "0",
+        "not-a-dump-payload"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_read_keys_read has no permissions to run the 'restore' command"
+    },
+    {
+      "argv": [
+        "CONFIG",
+        "SET",
+        "agent-probe-no-such-parameter",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_read_keys_read has no permissions to run the 'config|set' command"
+    },
+    {
+      "argv": [
+        "EVALSHA",
+        "0000000000000000000000000000000000000000",
+        "0"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_read_keys_read has no permissions to run the 'evalsha' command"
+    },
+    {
+      "argv": [
+        "FUNCTION",
+        "DELETE",
+        "agent_probe_no_such_library"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_read_keys_read has no permissions to run the 'function|delete' command"
+    },
+    {
+      "argv": [
+        "PUBLISH",
+        "agent-probe:channel",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_read_keys_read has no permissions to run the 'publish' command"
+    }
+  ],
+  "stateBeforeProbes": {
+    "dbsize": "8",
+    "probeKeyExists": "0",
+    "functions": []
+  },
+  "stateAfterProbes": {
+    "dbsize": "8",
+    "probeKeyExists": "0",
+    "functions": []
+  },
+  "table": [
+    {
+      "argv": [
+        "DBSIZE"
+      ],
+      "outcome": "ok",
+      "reply": "8"
+    },
+    {
+      "argv": [
+        "TYPE",
+        "agent:hash"
+      ],
+      "outcome": "ok",
+      "reply": "hash"
+    },
+    {
+      "argv": [
+        "TYPE",
+        "agent:missing"
+      ],
+      "outcome": "ok",
+      "reply": "none"
+    },
+    {
+      "argv": [
+        "EXISTS",
+        "agent:hash"
+      ],
+      "outcome": "ok",
+      "reply": "1"
+    },
+    {
+      "argv": [
+        "EXISTS",
+        "agent:missing"
+      ],
+      "outcome": "ok",
+      "reply": "0"
+    },
+    {
+      "argv": [
+        "TTL",
+        "agent:ttl"
+      ],
+      "outcome": "ok",
+      "reply": "3600"
+    },
+    {
+      "argv": [
+        "TTL",
+        "agent:hash"
+      ],
+      "outcome": "ok",
+      "reply": "-1"
+    },
+    {
+      "argv": [
+        "TTL",
+        "agent:missing"
+      ],
+      "outcome": "ok",
+      "reply": "-2"
+    },
+    {
+      "argv": [
+        "PTTL",
+        "agent:ttl"
+      ],
+      "outcome": "ok",
+      "reply": "3599873"
+    },
+    {
+      "argv": [
+        "STRLEN",
+        "agent:string"
+      ],
+      "outcome": "ok",
+      "reply": "23"
+    },
+    {
+      "argv": [
+        "STRLEN",
+        "agent:hash"
+      ],
+      "outcome": "error",
+      "error": "WRONGTYPE Operation against a key holding the wrong kind of value"
+    },
+    {
+      "argv": [
+        "LLEN",
+        "agent:list"
+      ],
+      "outcome": "ok",
+      "reply": "2"
+    },
+    {
+      "argv": [
+        "HLEN",
+        "agent:hash"
+      ],
+      "outcome": "ok",
+      "reply": "1"
+    },
+    {
+      "argv": [
+        "SCARD",
+        "agent:set"
+      ],
+      "outcome": "ok",
+      "reply": "1"
+    },
+    {
+      "argv": [
+        "ZCARD",
+        "agent:zset"
+      ],
+      "outcome": "ok",
+      "reply": "1"
+    },
+    {
+      "argv": [
+        "XLEN",
+        "agent:stream"
+      ],
+      "outcome": "ok",
+      "reply": "1"
+    },
+    {
+      "argv": [
+        "OBJECT",
+        "ENCODING",
+        "agent:hash"
+      ],
+      "outcome": "ok",
+      "reply": "listpack"
+    },
+    {
+      "argv": [
+        "OBJECT",
+        "ENCODING",
+        "agent:missing"
+      ],
+      "outcome": "ok",
+      "reply": null
+    },
+    {
+      "argv": [
+        "MEMORY",
+        "USAGE",
+        "agent:hash"
+      ],
+      "outcome": "ok",
+      "reply": "73"
+    },
+    {
+      "argv": [
+        "MEMORY",
+        "USAGE",
+        "agent:hash",
+        "SAMPLES",
+        "5"
+      ],
+      "outcome": "ok",
+      "reply": "73"
+    },
+    {
+      "argv": [
+        "MEMORY",
+        "USAGE",
+        "agent:missing"
+      ],
+      "outcome": "ok",
+      "reply": null
+    }
+  ],
+  "outside": [
+    {
+      "argv": [
+        "INFO",
+        "server"
+      ],
+      "outcome": "ok",
+      "reply": "# Server\r\nredis_version:8.10.2\r\nredis_git_sha1:00000000\r\nredis_git_dirty:1\r\nredis_build_id:9afb359f90603816\r\nredis_mode:standalone\r\nos:Linux 6.8.0-147-generic x86_64\r\narch_bits:64\r\nmonotonic_clock:POSIX clock_gettime\r\nmultiplexing_api:epoll\r\natomicvar_api:c11-builtin\r\ngcc_version:14.2.0\r\nprocess_id:1\r\nprocess_supervised:no\r\nrun_id:52145a4f067bf220a191b6b0aee215702da15309\r\ntcp_port:6379\r\nserver_time_usec:1793376594053800\r\nuptime_in_seconds:2\r\nuptime_in_days:0\r\nhz:10\r\nconfigured_hz:10\r\nlru_clock:14991698\r\nexecutable:/data/redis-server\r\nconfig_file:\r\nio_threads_active:0\r\nlistener0:name=tcp,bind=*,bind=-::*,port=6379\r\n"
+    },
+    {
+      "argv": [
+        "INFO",
+        "keyspace"
+      ],
+      "outcome": "ok",
+      "reply": "# Keyspace\r\ndb0:keys=8,expires=1,avg_ttl=3599900,subexpiry=0\r\n"
+    },
+    {
+      "argv": [
+        "HELLO",
+        "2"
+      ],
+      "outcome": "ok",
+      "reply": [
+        "server",
+        "redis",
+        "version",
+        "8.10.2",
+        "proto",
+        "2",
+        "id",
+        "421",
+        "mode",
+        "standalone",
+        "role",
+        "master",
+        "modules",
+        [
+          [
+            "name",
+            "search",
+            "ver",
+            "81001",
+            "path",
+            "/usr/local/lib/redis/modules//redisearch.so",
+            "args",
+            []
+          ],
+          [
+            "name",
+            "bf",
+            "ver",
+            "81001",
+            "path",
+            "/usr/local/lib/redis/modules//redisbloom.so",
+            "args",
+            []
+          ],
+          [
+            "name",
+            "vectorset",
+            "ver",
+            "1",
+            "path",
+            "",
+            "args",
+            []
+          ],
+          [
+            "name",
+            "timeseries",
+            "ver",
+            "81001",
+            "path",
+            "/usr/local/lib/redis/modules//redistimeseries.so",
+            "args",
+            []
+          ],
+          [
+            "name",
+            "ReJSON",
+            "ver",
+            "81000",
+            "path",
+            "/usr/local/lib/redis/modules//rejson.so",
+            "args",
+            []
+          ]
+        ]
+      ]
+    },
+    {
+      "argv": [
+        "KEYS",
+        "*"
+      ],
+      "outcome": "ok",
+      "reply": [
+        "agent:hll",
+        "agent:list",
+        "agent:hash",
+        "agent:zset",
+        "agent:set",
+        "agent:stream",
+        "agent:string",
+        "agent:ttl"
+      ]
+    },
+    {
+      "argv": [
+        "SCAN",
+        "0"
+      ],
+      "outcome": "ok",
+      "reply": [
+        "0",
+        [
+          "agent:set",
+          "agent:ttl",
+          "agent:list",
+          "agent:stream",
+          "agent:zset",
+          "agent:hll",
+          "agent:hash",
+          "agent:string"
+        ]
+      ]
+    },
+    {
+      "argv": [
+        "RANDOMKEY"
+      ],
+      "outcome": "ok",
+      "reply": "agent:list"
+    },
+    {
+      "argv": [
+        "GET",
+        "agent:string"
+      ],
+      "outcome": "ok",
+      "reply": "not-a-real-stored-value"
+    },
+    {
+      "argv": [
+        "HGETALL",
+        "agent:hash"
+      ],
+      "outcome": "ok",
+      "reply": [
+        "agent-field",
+        "not-a-real-field-value"
+      ]
+    },
+    {
+      "argv": [
+        "OBJECT",
+        "FREQ",
+        "agent:hash"
+      ],
+      "outcome": "error",
+      "error": "ERR An LFU maxmemory policy is not selected, access frequency not tracked. Please note that when switching between policies at runtime LRU and LFU data will take some time to adjust."
+    },
+    {
+      "argv": [
+        "MEMORY",
+        "DOCTOR"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_read_keys_read has no permissions to run the 'memory|doctor' command"
+    },
+    {
+      "argv": [
+        "CLIENT",
+        "LIST"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_read_keys_read has no permissions to run the 'client|list' command"
+    },
+    {
+      "argv": [
+        "SORT_RO",
+        "agent:list"
+      ],
+      "outcome": "error",
+      "error": "ERR One or more scores can't be converted into double"
+    },
+    {
+      "argv": [
+        "EVAL_RO",
+        "return 1",
+        "0"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_read_keys_read has no permissions to run the 'eval_ro' command"
+    },
+    {
+      "argv": [
+        "FCALL_RO",
+        "agent_no_such_function",
+        "0"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_read_keys_read has no permissions to run the 'fcall_ro' command"
+    },
+    {
+      "argv": [
+        "PFCOUNT",
+        "agent:hll"
+      ],
+      "outcome": "ok",
+      "reply": "1"
+    },
+    {
+      "argv": [
+        "DEBUG",
+        "OBJECT",
+        "agent:hash"
+      ],
+      "outcome": "error",
+      "error": "ERR DEBUG command not allowed. If the enable-debug-command option is set to \"local\", you can run it from a local connection, otherwise you need to set this option in the configuration file, and then restart the server."
+    },
+    {
+      "argv": [
+        "NOSUCHCOMMAND",
+        "agent:string"
+      ],
+      "outcome": "error",
+      "error": "ERR unknown command 'NOSUCHCOMMAND', with args beginning with: 'agent:string' "
+    }
+  ]
+}

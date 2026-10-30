@@ -1,0 +1,333 @@
+{
+  "$captured": {
+    "image": "redis:8.10.2@sha256:5c02d7c0f8d75af45958c0294a8004f2e14b42df98a1103e3a669aa7ec787be6",
+    "version": "8.10.2",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "principal": "agent_reader_info",
+    "rules": "on ~* +@read +info",
+    "notify": "KEAmn"
+  },
+  "steps": [
+    {
+      "argv": [
+        "DBSIZE"
+      ],
+      "outcome": "ok",
+      "published": []
+    },
+    {
+      "argv": [
+        "TYPE",
+        "agent:hash"
+      ],
+      "outcome": "ok",
+      "published": []
+    },
+    {
+      "argv": [
+        "TYPE",
+        "agent:missing"
+      ],
+      "outcome": "ok",
+      "published": [
+        "__keyspace@0__:agent:missing keymiss",
+        "__keyevent@0__:keymiss agent:missing"
+      ]
+    },
+    {
+      "argv": [
+        "EXISTS",
+        "agent:hash"
+      ],
+      "outcome": "ok",
+      "published": []
+    },
+    {
+      "argv": [
+        "EXISTS",
+        "agent:missing"
+      ],
+      "outcome": "ok",
+      "published": [
+        "__keyspace@0__:agent:missing keymiss",
+        "__keyevent@0__:keymiss agent:missing"
+      ]
+    },
+    {
+      "argv": [
+        "TTL",
+        "agent:ttl"
+      ],
+      "outcome": "ok",
+      "published": []
+    },
+    {
+      "argv": [
+        "TTL",
+        "agent:hash"
+      ],
+      "outcome": "ok",
+      "published": []
+    },
+    {
+      "argv": [
+        "TTL",
+        "agent:missing"
+      ],
+      "outcome": "ok",
+      "published": [
+        "__keyspace@0__:agent:missing keymiss",
+        "__keyevent@0__:keymiss agent:missing"
+      ]
+    },
+    {
+      "argv": [
+        "PTTL",
+        "agent:ttl"
+      ],
+      "outcome": "ok",
+      "published": []
+    },
+    {
+      "argv": [
+        "STRLEN",
+        "agent:string"
+      ],
+      "outcome": "ok",
+      "published": []
+    },
+    {
+      "argv": [
+        "STRLEN",
+        "agent:hash"
+      ],
+      "outcome": "error",
+      "published": []
+    },
+    {
+      "argv": [
+        "LLEN",
+        "agent:list"
+      ],
+      "outcome": "ok",
+      "published": []
+    },
+    {
+      "argv": [
+        "HLEN",
+        "agent:hash"
+      ],
+      "outcome": "ok",
+      "published": []
+    },
+    {
+      "argv": [
+        "SCARD",
+        "agent:set"
+      ],
+      "outcome": "ok",
+      "published": []
+    },
+    {
+      "argv": [
+        "ZCARD",
+        "agent:zset"
+      ],
+      "outcome": "ok",
+      "published": []
+    },
+    {
+      "argv": [
+        "XLEN",
+        "agent:stream"
+      ],
+      "outcome": "ok",
+      "published": []
+    },
+    {
+      "argv": [
+        "OBJECT",
+        "ENCODING",
+        "agent:hash"
+      ],
+      "outcome": "ok",
+      "published": []
+    },
+    {
+      "argv": [
+        "OBJECT",
+        "ENCODING",
+        "agent:missing"
+      ],
+      "outcome": "ok",
+      "published": []
+    },
+    {
+      "argv": [
+        "MEMORY",
+        "USAGE",
+        "agent:hash"
+      ],
+      "outcome": "ok",
+      "published": []
+    },
+    {
+      "argv": [
+        "MEMORY",
+        "USAGE",
+        "agent:hash",
+        "SAMPLES",
+        "5"
+      ],
+      "outcome": "ok",
+      "published": []
+    },
+    {
+      "argv": [
+        "MEMORY",
+        "USAGE",
+        "agent:missing"
+      ],
+      "outcome": "ok",
+      "published": []
+    },
+    {
+      "argv": [
+        "DEL",
+        "agent-probe:missing"
+      ],
+      "outcome": "error",
+      "published": []
+    },
+    {
+      "argv": [
+        "UNLINK",
+        "agent-probe:missing"
+      ],
+      "outcome": "error",
+      "published": []
+    },
+    {
+      "argv": [
+        "SET",
+        "agent-probe:missing",
+        "x",
+        "XX"
+      ],
+      "outcome": "error",
+      "published": []
+    },
+    {
+      "argv": [
+        "EXPIRE",
+        "agent-probe:missing",
+        "1"
+      ],
+      "outcome": "error",
+      "published": []
+    },
+    {
+      "argv": [
+        "HDEL",
+        "agent-probe:missing",
+        "f"
+      ],
+      "outcome": "error",
+      "published": []
+    },
+    {
+      "argv": [
+        "LREM",
+        "agent-probe:missing",
+        "0",
+        "x"
+      ],
+      "outcome": "error",
+      "published": []
+    },
+    {
+      "argv": [
+        "SREM",
+        "agent-probe:missing",
+        "x"
+      ],
+      "outcome": "error",
+      "published": []
+    },
+    {
+      "argv": [
+        "ZREM",
+        "agent-probe:missing",
+        "x"
+      ],
+      "outcome": "error",
+      "published": []
+    },
+    {
+      "argv": [
+        "XDEL",
+        "agent-probe:missing",
+        "0-1"
+      ],
+      "outcome": "error",
+      "published": []
+    },
+    {
+      "argv": [
+        "MOVE",
+        "agent-probe:missing",
+        "1"
+      ],
+      "outcome": "error",
+      "published": []
+    },
+    {
+      "argv": [
+        "RESTORE",
+        "agent-probe:missing",
+        "0",
+        "not-a-dump-payload"
+      ],
+      "outcome": "error",
+      "published": []
+    },
+    {
+      "argv": [
+        "CONFIG",
+        "SET",
+        "agent-probe-no-such-parameter",
+        "x"
+      ],
+      "outcome": "error",
+      "published": []
+    },
+    {
+      "argv": [
+        "EVALSHA",
+        "0000000000000000000000000000000000000000",
+        "0"
+      ],
+      "outcome": "error",
+      "published": []
+    },
+    {
+      "argv": [
+        "FUNCTION",
+        "DELETE",
+        "agent_probe_no_such_library"
+      ],
+      "outcome": "error",
+      "published": []
+    },
+    {
+      "argv": [
+        "PUBLISH",
+        "agent-probe:channel",
+        "x"
+      ],
+      "outcome": "error",
+      "published": []
+    }
+  ]
+}

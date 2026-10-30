@@ -1,0 +1,523 @@
+{
+  "$captured": {
+    "image": "valkey/valkey:9.1.2@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd",
+    "version": "9.1.2",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "principal": "agent_prefix",
+    "rules": "on ~app:* +@read +info"
+  },
+  "probes": [
+    {
+      "argv": [
+        "DEL",
+        "agent-probe:missing"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_prefix has no permissions to run the 'del' command"
+    },
+    {
+      "argv": [
+        "UNLINK",
+        "agent-probe:missing"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_prefix has no permissions to run the 'unlink' command"
+    },
+    {
+      "argv": [
+        "SET",
+        "agent-probe:missing",
+        "x",
+        "XX"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_prefix has no permissions to run the 'set' command"
+    },
+    {
+      "argv": [
+        "EXPIRE",
+        "agent-probe:missing",
+        "1"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_prefix has no permissions to run the 'expire' command"
+    },
+    {
+      "argv": [
+        "HDEL",
+        "agent-probe:missing",
+        "f"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_prefix has no permissions to run the 'hdel' command"
+    },
+    {
+      "argv": [
+        "LREM",
+        "agent-probe:missing",
+        "0",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_prefix has no permissions to run the 'lrem' command"
+    },
+    {
+      "argv": [
+        "SREM",
+        "agent-probe:missing",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_prefix has no permissions to run the 'srem' command"
+    },
+    {
+      "argv": [
+        "ZREM",
+        "agent-probe:missing",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_prefix has no permissions to run the 'zrem' command"
+    },
+    {
+      "argv": [
+        "XDEL",
+        "agent-probe:missing",
+        "0-1"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_prefix has no permissions to run the 'xdel' command"
+    },
+    {
+      "argv": [
+        "MOVE",
+        "agent-probe:missing",
+        "1"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_prefix has no permissions to run the 'move' command"
+    },
+    {
+      "argv": [
+        "RESTORE",
+        "agent-probe:missing",
+        "0",
+        "not-a-dump-payload"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_prefix has no permissions to run the 'restore' command"
+    },
+    {
+      "argv": [
+        "CONFIG",
+        "SET",
+        "agent-probe-no-such-parameter",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_prefix has no permissions to run the 'config|set' command"
+    },
+    {
+      "argv": [
+        "EVALSHA",
+        "0000000000000000000000000000000000000000",
+        "0"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_prefix has no permissions to run the 'evalsha' command"
+    },
+    {
+      "argv": [
+        "FUNCTION",
+        "DELETE",
+        "agent_probe_no_such_library"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_prefix has no permissions to run the 'function|delete' command"
+    },
+    {
+      "argv": [
+        "PUBLISH",
+        "agent-probe:channel",
+        "x"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_prefix has no permissions to run the 'publish' command"
+    }
+  ],
+  "stateBeforeProbes": {
+    "dbsize": "8",
+    "probeKeyExists": "0",
+    "functions": []
+  },
+  "stateAfterProbes": {
+    "dbsize": "8",
+    "probeKeyExists": "0",
+    "functions": []
+  },
+  "table": [
+    {
+      "argv": [
+        "DBSIZE"
+      ],
+      "outcome": "ok",
+      "reply": "8"
+    },
+    {
+      "argv": [
+        "TYPE",
+        "agent:hash"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    },
+    {
+      "argv": [
+        "TYPE",
+        "agent:missing"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    },
+    {
+      "argv": [
+        "EXISTS",
+        "agent:hash"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    },
+    {
+      "argv": [
+        "EXISTS",
+        "agent:missing"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    },
+    {
+      "argv": [
+        "TTL",
+        "agent:ttl"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    },
+    {
+      "argv": [
+        "TTL",
+        "agent:hash"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    },
+    {
+      "argv": [
+        "TTL",
+        "agent:missing"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    },
+    {
+      "argv": [
+        "PTTL",
+        "agent:ttl"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    },
+    {
+      "argv": [
+        "STRLEN",
+        "agent:string"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    },
+    {
+      "argv": [
+        "STRLEN",
+        "agent:hash"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    },
+    {
+      "argv": [
+        "LLEN",
+        "agent:list"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    },
+    {
+      "argv": [
+        "HLEN",
+        "agent:hash"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    },
+    {
+      "argv": [
+        "SCARD",
+        "agent:set"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    },
+    {
+      "argv": [
+        "ZCARD",
+        "agent:zset"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    },
+    {
+      "argv": [
+        "XLEN",
+        "agent:stream"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    },
+    {
+      "argv": [
+        "OBJECT",
+        "ENCODING",
+        "agent:hash"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    },
+    {
+      "argv": [
+        "OBJECT",
+        "ENCODING",
+        "agent:missing"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    },
+    {
+      "argv": [
+        "MEMORY",
+        "USAGE",
+        "agent:hash"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    },
+    {
+      "argv": [
+        "MEMORY",
+        "USAGE",
+        "agent:hash",
+        "SAMPLES",
+        "5"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    },
+    {
+      "argv": [
+        "MEMORY",
+        "USAGE",
+        "agent:missing"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    }
+  ],
+  "outside": [
+    {
+      "argv": [
+        "INFO",
+        "server"
+      ],
+      "outcome": "ok",
+      "reply": "# Server\r\nredis_version:7.2.4\r\nserver_name:valkey\r\nvalkey_version:9.1.2\r\nvalkey_release_stage:ga\r\nredis_git_sha1:00000000\r\nredis_git_dirty:0\r\nredis_build_id:16129465b18d72a\r\nserver_mode:standalone\r\nos:Linux 6.8.0-147-generic x86_64\r\narch_bits:64\r\nmonotonic_clock:X86 TSC @ 2803.68 ticks/us\r\nmultiplexing_api:epoll\r\ngcc_version:14.2.0\r\nprocess_id:7\r\nprocess_supervised:no\r\nrun_id:77f69a425ed524b4ac6d9224a70059443c72a105\r\ntcp_port:6379\r\nserver_time_usec:1793376597675886\r\nuptime_in_seconds:1\r\nuptime_in_days:0\r\nhz:10\r\nconfigured_hz:10\r\nclients_hz:10\r\nlru_clock:14991701\r\nexecutable:/data/valkey-server\r\nconfig_file:\r\nio_threads_active:0\r\navailability_zone:\r\nlistener0:name=tcp,bind=*,bind=-::*,port=6379\r\n"
+    },
+    {
+      "argv": [
+        "INFO",
+        "keyspace"
+      ],
+      "outcome": "ok",
+      "reply": "# Keyspace\r\ndb0:keys=8,expires=1,avg_ttl=3599938,keys_with_volatile_items=0\r\n"
+    },
+    {
+      "argv": [
+        "HELLO",
+        "2"
+      ],
+      "outcome": "ok",
+      "reply": [
+        "server",
+        "valkey",
+        "version",
+        "9.1.2",
+        "proto",
+        "2",
+        "id",
+        "639",
+        "mode",
+        "standalone",
+        "role",
+        "master",
+        "modules",
+        [
+          [
+            "name",
+            "lua",
+            "ver",
+            "1",
+            "path",
+            "lua",
+            "args",
+            []
+          ]
+        ]
+      ]
+    },
+    {
+      "argv": [
+        "KEYS",
+        "*"
+      ],
+      "outcome": "ok",
+      "reply": [
+        "agent:hll",
+        "agent:string",
+        "agent:hash",
+        "agent:list",
+        "agent:set",
+        "agent:zset",
+        "agent:stream",
+        "agent:ttl"
+      ]
+    },
+    {
+      "argv": [
+        "SCAN",
+        "0"
+      ],
+      "outcome": "ok",
+      "reply": [
+        "0",
+        [
+          "agent:hll",
+          "agent:string",
+          "agent:hash",
+          "agent:list",
+          "agent:set",
+          "agent:zset",
+          "agent:stream",
+          "agent:ttl"
+        ]
+      ]
+    },
+    {
+      "argv": [
+        "RANDOMKEY"
+      ],
+      "outcome": "ok",
+      "reply": "agent:hash"
+    },
+    {
+      "argv": [
+        "GET",
+        "agent:string"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    },
+    {
+      "argv": [
+        "HGETALL",
+        "agent:hash"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    },
+    {
+      "argv": [
+        "OBJECT",
+        "FREQ",
+        "agent:hash"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    },
+    {
+      "argv": [
+        "MEMORY",
+        "DOCTOR"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_prefix has no permissions to run the 'memory|doctor' command"
+    },
+    {
+      "argv": [
+        "CLIENT",
+        "LIST"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_prefix has no permissions to run the 'client|list' command"
+    },
+    {
+      "argv": [
+        "SORT_RO",
+        "agent:list"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    },
+    {
+      "argv": [
+        "EVAL_RO",
+        "return 1",
+        "0"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_prefix has no permissions to run the 'eval_ro' command"
+    },
+    {
+      "argv": [
+        "FCALL_RO",
+        "agent_no_such_function",
+        "0"
+      ],
+      "outcome": "error",
+      "error": "NOPERM User agent_prefix has no permissions to run the 'fcall_ro' command"
+    },
+    {
+      "argv": [
+        "PFCOUNT",
+        "agent:hll"
+      ],
+      "outcome": "error",
+      "error": "NOPERM No permissions to access a key"
+    },
+    {
+      "argv": [
+        "DEBUG",
+        "OBJECT",
+        "agent:hash"
+      ],
+      "outcome": "error",
+      "error": "ERR DEBUG command not allowed. If the enable-debug-command option is set to \"local\", you can run it from a local connection, otherwise you need to set this option in the configuration file, and then restart the server."
+    },
+    {
+      "argv": [
+        "NOSUCHCOMMAND",
+        "agent:string"
+      ],
+      "outcome": "error",
+      "error": "ERR unknown command 'NOSUCHCOMMAND', with args beginning with: 'agent:string' "
+    }
+  ]
+}
