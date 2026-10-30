@@ -467,8 +467,9 @@ function containerDatabase(capabilities: ProviderCapabilities, container: readon
  * The grouping one key belongs to: `user:123` and `user:456` are both `user:*`, and a key
  * with no colon is its own grouping.
  *
- * Module-level and shared, so every caller groups the keyspace through this one function
- * and the same keyspace can never be grouped two different ways.
+ * Module-level and shared, so every editor caller groups the keyspace through this one function
+ * and the same keyspace can never be grouped two different ways; an agent-mode handle groups
+ * through `agentKeyGrouping`, which defers to this one for every delimited key.
  */
 function keyGrouping(key: string): string {
   const colonIdx = key.indexOf(":");
@@ -476,6 +477,37 @@ function keyGrouping(key: string): string {
     return key.substring(0, colonIdx) + ":*";
   }
   return key;
+}
+
+/**
+ * The one grouping an agent-mode handle counts every key with no delimiter under. Such a key
+ * is its own grouping in the editor, so naming it would hand the agent the whole key name.
+ * It cannot collide with a delimited grouping, which always ends in `:*`.
+ */
+const UNDELIMITED_KEY_GROUP = "(keys with no delimiter)";
+
+/** `keyGrouping` on an agent-mode handle: a delimited key names its leading segment, any other key none. */
+function agentKeyGrouping(key: string): string {
+  return key.indexOf(":") > 0 ? keyGrouping(key) : UNDELIMITED_KEY_GROUP;
+}
+
+/** `SLOWLOG_ENTRY_MAX_ARGC`: past it, Redis keeps 31 words and makes the 32nd `... (N more arguments)`. */
+const SLOW_LOG_MAX_WORDS = 32;
+const SLOW_LOG_CUT_MARKER = /^\.\.\. \((\d+) more arguments\)$/;
+const SLOW_LOG_ENTRY_WITHHELD = "(the entry's command words were not a list, so none is shown)";
+
+/**
+ * A slow-log entry's command words as an agent-mode handle reports them: the command name and how
+ * many arguments it took, never an argument, since an argument is a key name or a stored value.
+ * The cut marker is read only on an entry of exactly 32 words, the one place Redis writes it, so an
+ * argument that merely reads like it is counted as the one argument it is.
+ */
+function agentSlowLogCommand(words: unknown): string {
+  if (!Array.isArray(words) || words.length === 0) return SLOW_LOG_ENTRY_WITHHELD;
+  const [command, ...args] = words.map(String);
+  const marker = words.length === SLOW_LOG_MAX_WORDS ? SLOW_LOG_CUT_MARKER.exec(args[args.length - 1]) : null;
+  const count = marker === null ? args.length : args.length - 1 + Number(marker[1]);
+  return `${command} (${count} ${count === 1 ? "argument" : "arguments"})`;
 }
 
 /**
@@ -1229,10 +1261,24 @@ export class RedisProvider extends BaseDatabaseProvider {
    */
   private readonly readOnlyProfile: boolean;
 
+  /**
+   * Whether this handle was opened for any agent-mode profile: the read-only profile above, or the operations profile
+   * the operations workflow and plan mode ground on. Every execution profile opens `readOnly` and no editor handle
+   * does, so this is what tells the two apart. On such a handle the slow log names no argument and a key with no
+   * delimiter is counted without its name; the editor's monitoring panel and tree keep the full reads.
+   */
+  private readonly agentProfile: boolean;
+
   constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
     super(config, options);
     this.validate();
     this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
+    this.agentProfile = execution.readOnly === true;
+  }
+
+  /** How this handle groups a key: `agentKeyGrouping` on an agent-mode handle, `keyGrouping` on an editor one. */
+  private get groupKey(): (key: string) => string {
+    return this.agentProfile ? agentKeyGrouping : keyGrouping;
   }
 
   // ============================================================================
@@ -1842,6 +1888,7 @@ export class RedisProvider extends BaseDatabaseProvider {
    */
   private static async scanKeyGroups(
     client: Redis,
+    groupKey: (key: string) => string,
   ): Promise<{ groups: Map<string, { count: number; types: Set<string> }>; truncated: boolean }> {
     const keyPatterns = new Map<string, { count: number; types: Set<string> }>();
     let cursor = "0";
@@ -1853,7 +1900,7 @@ export class RedisProvider extends BaseDatabaseProvider {
 
       for (const key of keys) {
         totalScanned++;
-        const prefix = keyGrouping(key);
+        const prefix = groupKey(key);
         if (!keyPatterns.has(prefix)) {
           keyPatterns.set(prefix, { count: 0, types: new Set() });
         }
@@ -2078,8 +2125,9 @@ export class RedisProvider extends BaseDatabaseProvider {
     client: Redis,
     container: readonly string[],
     kind: string,
+    groupKey: (key: string) => string,
   ): Promise<{ entries: { object: DatabaseObject; types: ReadonlySet<string> }[]; truncated: boolean }> {
-    const { groups, truncated } = await RedisProvider.scanKeyGroups(client);
+    const { groups, truncated } = await RedisProvider.scanKeyGroups(client, groupKey);
     const entries = [...groups.entries()]
       .map(([pattern, info]) => ({
         object: {
@@ -2139,7 +2187,7 @@ export class RedisProvider extends BaseDatabaseProvider {
     kind: string,
   ): Promise<{ objects: DatabaseObject[]; sampledFrom?: string }> {
     if (kind === "keyspace") {
-      const { entries, truncated } = await RedisProvider.keyspaceEntries(client, container, kind);
+      const { entries, truncated } = await RedisProvider.keyspaceEntries(client, container, kind, this.groupKey);
       const objects = entries.map((entry) => entry.object);
       // Only when the walk actually stopped early. A completed cursor walked the whole
       // keyspace, and marking that count a floor would teach a reader to discount a number
@@ -2203,7 +2251,7 @@ export class RedisProvider extends BaseDatabaseProvider {
     // The LAST segment and never `path[1]`: at depth 2 the second segment is a container.
     const name = path[path.length - 1];
     return this.withDatabase(db, async (client) => {
-      const { groups } = await RedisProvider.scanKeyGroups(client);
+      const { groups } = await RedisProvider.scanKeyGroups(client, this.groupKey);
       const info = groups.get(name);
       if (info === undefined) {
         throw new QueryError(
@@ -2683,7 +2731,12 @@ export class RedisProvider extends BaseDatabaseProvider {
     }
 
     return this.withDatabase(db, async (client) => {
-      const { entries, truncated: scanTruncated } = await RedisProvider.keyspaceEntries(client, container, kind);
+      const { entries, truncated: scanTruncated } = await RedisProvider.keyspaceEntries(
+        client,
+        container,
+        kind,
+        this.groupKey,
+      );
       const bounded = limit !== undefined && entries.length > limit;
       const details = (bounded ? entries.slice(0, limit) : entries).map((entry) =>
         RedisProvider.keyspaceDetail(entry.object.path, entry.types),
@@ -2773,7 +2826,11 @@ export class RedisProvider extends BaseDatabaseProvider {
 
       return slowlog.map((entry) => ({
         queryId: String(entry[0]),
-        query: Array.isArray(entry[3]) ? (entry[3] as string[]).join(" ") : String(entry[3]),
+        query: this.agentProfile
+          ? agentSlowLogCommand(entry[3])
+          : Array.isArray(entry[3])
+            ? (entry[3] as string[]).join(" ")
+            : String(entry[3]),
         calls: 1,
         totalTime: Number(entry[2]) / 1000, // microseconds to ms
         avgTime: Number(entry[2]) / 1000,

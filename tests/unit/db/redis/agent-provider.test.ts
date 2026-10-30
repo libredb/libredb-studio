@@ -345,3 +345,16 @@ describe("the object surface under the profile", () => {
     expect(opened).toEqual([]);
   });
 });
+
+describe("the monitoring reads under the profile", () => {
+  test("a slow-log entry carries the command name, the argument count and the timing, never an argument", async () => {
+    const provider = new RedisProvider(connection(), {}, PROFILE);
+    await provider.connect();
+    readOverride = { reply: [["3", "1700000000", "1500", ["GET", "token-MARKER-f1f9cab0"], "10.0.0.1:5000", "app"]] };
+    const slow = await provider.getSlowQueries();
+    expect(slow).toEqual([
+      { queryId: "3", query: "GET (1 argument)", calls: 1, totalTime: 1.5, avgTime: 1.5, rows: 0 },
+    ]);
+    expect(opened[0].calls).toEqual([["SLOWLOG", "GET", "10"]]);
+  });
+});

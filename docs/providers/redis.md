@@ -1748,7 +1748,7 @@ string into a flat `key → value` map that the methods below read from.
 | `getHealth()` | `INFO` | `connected_clients`, `used_memory_human`, hit ratio |
 | `getOverview()` | `INFO` + `DBSIZE` | version, uptime, clients, maxclients, memory, key count (`tableCount`) |
 | `getPerformanceMetrics()` | `INFO` | cache hit ratio, `instantaneous_ops_per_sec` → `queriesPerSecond` |
-| `getSlowQueries()` | `SLOWLOG GET 10` | per-entry id, command text, duration (µs → ms) |
+| `getSlowQueries()` | `SLOWLOG GET 10` | per-entry id, command text, duration (µs → ms); on an agent-mode handle the command name and argument count only ([§16.4](#164-metadata-only)) |
 | `getActiveSessions()` | `CLIENT LIST` | one session per client (id, addr, db, flags, cmd, idle) |
 | `getStorageStats()` | `INFO memory` | `used_memory_human`, optional `usagePercent` vs `maxmemory` |
 | `getTableStats()` | — | `[]` (N/A) |
@@ -2243,7 +2243,21 @@ The command runs on a connection of its own in the connection's database, with t
 
 ### 16.4 Metadata only
 
-Key names count as stored values, since applications put ids, emails and tokens in them, so agent mode never lists keys, hash fields, set or sorted-set members or stream field names, and reads per-key metadata only for a key its own command names.
+Key names count as stored values, since applications put ids, emails and tokens in them, so agent mode never lists a full key name, hash fields, set or sorted-set members or stream field names, and reads per-key metadata only for a key its own command names.
+Each agent-mode path reads this much:
+
+| Path | Handle | What it reads |
+| --- | --- | --- |
+| Investigation commands | agent read-only profile | the closed table below, projected to counts, types and sizes |
+| Investigation grounding | agent read-only profile | the session database's number; each kind's count is withheld with the reason, and no grouping or library is listed |
+| Operations workflow and plan-mode grounding | operations profile | the key groupings and function library names; the slow log, sessions, health and storage reads |
+| MCP `inspect_schema` | operations profile | the key groupings and function library names |
+
+On a handle of either profile, a key grouping names a delimited key's leading segment only (`user:*`), and every key with no `:` after its first character is counted under one grouping, `(keys with no delimiter)`, never under its own name.
+A slow-log entry carries its id, its duration, the command name and the number of arguments it took (`GET (1 argument)`), never an argument; an entry Redis cut at 32 words is counted through its `... (N more arguments)` marker, and an entry whose words are not a list is withheld whole.
+A session row carries the client's id, ACL user, database, flags, last command name, idle time and address, never its `CLIENT SETNAME` name; health and storage carry `INFO` figures only.
+The function library names stay listed on the operations profile: a library name is code the server loaded, not a stored value.
+An editor handle keeps the full slow log, with every argument, and names each key with no delimiter as its own grouping.
 Redis declares `ProviderCapabilities.metadataOnly`: every answer is projected through [`src/lib/db/redaction/metadata-only.ts`](../../src/lib/db/redaction/metadata-only.ts), one row per command, and no answer repeats the key it was asked about.
 
 | Read | Columns |
@@ -2282,5 +2296,5 @@ No MCP tool runs a Redis command: the family declares no MCP facet, and `MCP_STA
 - `tests/unit/db/redis/agent-statement.test.ts`: the exact argv of every read, and every refusal before the network.
 - `tests/unit/db/redis/read-only-proof.test.ts`: the proof over every principal's captures, a grant made during the run included.
 - `tests/unit/db/redis/metadata-read.test.ts`: every projection over the captured replies, and the wording of every failure.
-- `tests/unit/db/redis/agent-provider.test.ts`: the open, the proof before every command on its own connection, the argv sent, the object surface under the profile and the wording of a failure.
-- `tests/integration/db/redis-provider.test.ts`: `queryReadOnly` refused on an editor handle.
+- `tests/unit/db/redis/agent-provider.test.ts`: the open, the proof before every command on its own connection, the argv sent, the object surface under the profile, the slow log reduced to command names and argument counts, and the wording of a failure.
+- `tests/integration/db/redis-provider.test.ts`: `queryReadOnly` refused on an editor handle, and on an operations-profile handle the slow log reduced to command names and argument counts, keys with no delimiter counted under one grouping, and no session name, beside the editor handle's unchanged reads.
