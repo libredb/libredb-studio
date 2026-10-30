@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D412, U17 · 302
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U166 · 152
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U167 · 153
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -6096,6 +6096,7 @@ Seen 2026-10-29 on Oracle 26ai Free in a browser pass, for a granted function an
 Seen again 2026-10-30 on Couchbase enterprise-8.0.2 in a browser pass: with `query_update` granted on the scope, the server log named the role, `query_update[bv110:shop:*]`, and the user the agent needs, while the rail showed only the generic sentence.
 Seen again 2026-10-30 on InfluxDB 1.13.1 and 2.9.1 in a browser pass: the user holding `WRITE` on a second database, the 1.x admin and the 2.x write token each got the generic sentence, while the server log named the cause, for example that the principal can write the database `other` because InfluxDB 1.x answered a no-op `DELETE` there, and for the admin that it was answered `SHOW USERS`.
 Seen again 2026-10-30 on Weaviate 1.40.2 in a browser pass: the root key, a key holding the built-in `admin` role and a viewer key widened mid-run by a role holding `update_data` each got the generic sentence, while the server log carried the provider's own, for example "The key's roles hold create_roles, which is not one of the viewer role's read actions ... give the agent a key with the viewer role only" (runs `arun_9c77759341b84645bd81010bbfc86eef`, `arun_208ac90d893745fda727c63ebc688a56`, `arun_2fda3fd7145e4328a74766cf89484416`).
+Seen again 2026-10-30 on Qdrant 1.19.1 in a browser pass: the API key and a JWT with `rw` on an alias each got the generic sentence, while the server log carried the provider's own, "Qdrant accepted an empty alias update from this key ..." and "This key is a JWT whose claims grant more than access r ... Give the agent the server's read-only API key, or a JWT whose access is r" (runs `arun_f04735b56682495a86c1376d9920fc55`, `arun_cc0257e0e7fa4e0c871d6555e77a6b9c`).
 
 **Done when:** the rail shows the refusal's own remedies (statements or policy names) beside its code, from the shared refusal path rather than a type-id branch, the generic sentence no longer claims the credential holds privileges when the refusal is about the database, and a component test pins both texts.
 
@@ -6147,6 +6148,7 @@ Seen again 2026-10-30 on Apache Druid 37.0.0, twice: one run asked for an exact 
 Seen again 2026-10-30 on LibreDB in a browser pass: asked to send `put app:version 3.2`, `PUT zeta changed`, `delete zeta` and `DeLeTe user:1`, each refused before the file was opened (`STATEMENT_NOT_ADMITTED`), the run finished `answered` with one claim about the schema inventory and no word of the four refusals (run `arun_f7423cf2546540028744ebef73824e7e`); the next run, asked for five other refused forms, did report each refusal, so it still depends on the model's wording.
 Seen again 2026-10-30 on InfluxDB 1.13.1 and 2.9.1 in a browser pass, three times: runs asked to send exact `DELETE`, `DROP`, `SELECT ... INTO` (four spellings), `CREATE CONTINUOUS QUERY`, `SHOW QUERIES`, `KILL QUERY`, `SHOW USERS`, `GRANT`, a commented and a two-statement form were each refused before anything was sent, and each run finished `answered` with one claim about the schema inventory and no word of the refusals (runs `arun_4f9ea9a9e1444c75824ebc437c14077f`, `arun_29b8b23e387f4a2092d31bc995e1f75e`, `arun_d69c3788d444421a887899d724282174`).
 Seen again 2026-10-30 on Weaviate 1.40.2 in a browser pass: asked to pass `GET /v1/meta` and six exact writes (an object create and delete, a collection create and drop, a tenant status change and a backup) to `run_read_query`, each write was refused before anything was sent and the run finished `answered` with two claims, the meta read and the schema inventory, and no word of the six refusals (run `arun_a633f13a3abc4ade88aeae32f9bb77f1`); two earlier runs asked for the same writes drafted nothing at all and also finished `answered`.
+Seen again 2026-10-30 on Qdrant 1.19.1 in a browser pass: a run asked to pass eleven exact point, scroll, search, query, facet, filtered count and snapshot requests to `run_read_query` had each refused before anything was sent and finished `answered` with one claim about the schema inventory and no word of the refusals (run `arun_d79dc0a1d0344d01b954250d458d21f5`); two runs asked for an upsert, a point delete, a collection create and drop, an alias delete and a snapshot drafted none of them and finished `answered` with counts or the schema inventory (runs `arun_abd9503a15f148699d7c18d7effd87b8`, `arun_0e4b50056c90482e87908cfd4b3b60d6`).
 
 **Done when:** a run whose only drafted statement was refused either reports that refusal in its answer, held by the run's verifier, or ends in a state other than `answered`, with an agent test that forces the refusal.
 
@@ -6214,6 +6216,7 @@ A connection with no key to a server with RBAC on is refused before any client i
 A key on a server with RBAC off is told about MongoDB's `security.authorization` where the setting is Weaviate's `AUTHORIZATION_RBAC_ENABLED`.
 The provider's sentences reach only the server log.
 Seen 2026-10-30 on Weaviate 1.40.2 in a browser pass (runs `arun_9b350b7799f94f618474644d1a970f2a`, no key, and `arun_f969982a3aca40e6b09cd19f405b44fc`, RBAC off).
+Seen again 2026-10-30 on Qdrant 1.19.1 in a browser pass: a connection with no key was refused before any client was built (`keylessAgentRefusal` in `src/lib/db/providers/vector/qdrant/metadata-read.ts`), yet the rail named MongoDB's setting and the ledger's detail said "The server accepted a write it should have refused", though nothing was sent; the provider's sentence, which asks for a read-only API key or a JWT whose access is r, reached only the server log (run `arun_bffb88a186ee4600b9042c3c6da08908`).
 
 **Done when:** a refusal at open shows the provider's own sentence, or a per-engine remedy read from a contract row rather than a type-id branch, the rail no longer tells a keyless connection that its server does not enforce authorization, and a timeline test pins both Weaviate cases.
 
@@ -6223,6 +6226,7 @@ Seen 2026-10-30 on Weaviate 1.40.2 in a browser pass (runs `arun_9b350b7799f94f6
 That sentence ends "This console runs Weaviate's read requests only ...: ... object list and read by id, the bm25, hybrid, near-vector and near-object searches, and aggregate counts", so the model and the rail read that object reads and searches run, which agent mode refuses with its own sentence one step later.
 It was shown for a near-text search, a GraphQL `generate` request and six writes, and an aggregate `groupBy` written as a list was refused with the grammar's "groupBy must be a string, found a list." rather than the agent's sentence that `groupBy` counts by stored values.
 Seen 2026-10-30 on Weaviate 1.40.2 in a browser pass (runs `arun_7c2ffd5be3734d4c972147f7d5e84677`, `arun_a633f13a3abc4ade88aeae32f9bb77f1`); nothing was sent in any case.
+Seen again 2026-10-30 on Qdrant 1.19.1 in a browser pass: `readQdrantAgentStatement` (`src/lib/db/providers/vector/qdrant/metadata-request.ts`) passes the grammar's refusal through the same way, so a legacy `points/search` and `points/recommend`, `GET /snapshots` and a query naming an inference model were answered "This console runs Qdrant's read requests only ...: ... point retrieve, scroll, count, facet, query, query/batch and query/groups", and the model refusal added that Studio sends a text for the local BM25 model, while agent mode refuses every query (run `arun_d79dc0a1d0344d01b954250d458d21f5`); nothing was sent.
 
 **Done when:** an agent request the grammar refuses is answered with the grammar's reason followed by the agent's list of reads, not the console's, an aggregate naming `groupBy` or `where` in any shape gets the agent's sentence, and `tests/unit/db/weaviate/metadata-request.test.ts` pins both.
 
@@ -6235,6 +6239,14 @@ Seen 2026-10-30 on Weaviate 1.40.2 in a browser pass (run `arun_d7928d6c386d47ec
 The same misattribution for a declined operations panel is U159.
 
 **Done when:** a tenant refusal Studio makes is recorded and headed as refused before the read it guards, with the provider's sentence as the detail, it does not count as a repair attempt, and an agent test pins both.
+
+### U167. Qdrant's console calls `GET /snapshots` a snapshot create, delete, download, upload or recover route
+
+`GET /snapshots` lists the server's full-storage snapshots, yet the console refuses it as "a snapshot create, delete, download, upload or recover route, which this console does not run" (`QDRANT_REFUSED_ROUTES` in `src/lib/db/providers/vector/qdrant/routes.ts`), and the same sentence goes on to say the console runs "snapshot-list ... reads", meaning a collection's own list.
+A user who sent a list read is told it was a write or a download.
+Seen 2026-10-30 on Qdrant 1.19.1 in a browser pass, in the editor on the API key and in agent mode on the read-only key (run `arun_d79dc0a1d0344d01b954250d458d21f5`); nothing was sent in either.
+
+**Done when:** a full-storage snapshot list is refused with a sentence that calls it a list and says why the console runs only a collection's list, the snapshot routes that do change or download something keep theirs, and `tests/unit/db/qdrant/` pins both sentences.
 
 ## Dependencies
 
