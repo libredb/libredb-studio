@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.114 \
+  --version 0.1.115 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -962,7 +962,7 @@ A typical OpenShift install, with the Route, the cluster's trusted CA bundle and
 
 ```bash
 helm install studio libredb/libredb-studio \
-  --version 0.1.114 \
+  --version 0.1.115 \
   --set openshiftRoute.enabled=true \
   --set openshift.trustedCABundle.enabled=true \
   --set openshift.topology.partOf=libredb \
@@ -1005,7 +1005,7 @@ openshift:
 ```
 
 ```bash
-helm install studio libredb/libredb-studio --version 0.1.114 --namespace data -f openshift-values.yaml
+helm install studio libredb/libredb-studio --version 0.1.115 --namespace data -f openshift-values.yaml
 ```
 
 The chart annotates the ServiceAccount with `serviceaccounts.openshift.io/oauth-redirectreference.first`, naming the Route, and `serviceaccounts.openshift.io/oauth-redirecturi.first`, the callback path under `config.basePath`, so the OAuth server accepts that one callback.

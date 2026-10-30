@@ -352,6 +352,42 @@ describe("the operator namespace guard on the other cluster-scoped objects (O14)
   });
 });
 
+/**
+ * helm-operator applies watches.yaml overrideValues through strvals.ParseIntoString, so the operator delivers
+ * operator.managed as the string "true". The schema takes that string, and its "false", as the boolean they spell,
+ * and still refuses any other string.
+ */
+describe("operator.managed as the string the operator's overrideValues deliver", () => {
+  function setString(...pairs: string[]): string[] {
+    return pairs.flatMap((pair) => ["--set-string", pair]);
+  }
+
+  test('the string "true" is operator-managed, as the boolean is', () => {
+    refused([...DISCOVERY, ...setString("operator.managed=true")], "operator.clusterStudioNamespace");
+    const docs = render([
+      ...DISCOVERY,
+      ...setString("operator.managed=true", `operator.clusterStudioNamespace=${NAMESPACE}`),
+    ]);
+    expect(
+      all(docs, "Role")
+        .map((role) => role.metadata.namespace)
+        .filter(Boolean),
+    ).toEqual(["team-a", "team-b"]);
+    const env = envOf(render([...OPENSHIFT, ...setString("operator.managed=true")]));
+    expect(env.KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO).toBe(`${NAMESPACE}/${RELEASE}`);
+  });
+
+  test('the string "false" is a Helm install, as the boolean is', () => {
+    render([...DISCOVERY, ...setString("operator.managed=false")]);
+    const env = envOf(render([...OPENSHIFT, ...setString("operator.managed=false")]));
+    expect(env).not.toHaveProperty("KUBERNETES_ACCESS_REVIEW_ADMIN_LIBREDBSTUDIO");
+  });
+
+  test.each(["yes", "True", ""])('the string "%s" fails the schema', (value) => {
+    refused(setString(`operator.managed=${value}`), "/operator/managed");
+  });
+});
+
 describe("the ServiceAccount as the OAuth client", () => {
   const REFERENCE = "serviceaccounts.openshift.io/oauth-redirectreference.first";
   const REDIRECT = "serviceaccounts.openshift.io/oauth-redirecturi.first";

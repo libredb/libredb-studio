@@ -2,7 +2,7 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting forty-two engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Apache Cassandra, libSQL, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Weaviate, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B
 type: application
-version: 0.1.114
+version: 0.1.115
 appVersion: "1.1.0"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -341,6 +341,9 @@ annotations:
   # policy only in openshift mode with discovery on; true and false behave as before. openshift
   # mode needs an application image after 1.1.0, and the render fails while image.tag, or
   # appVersion 1.1.0 when it is unset, is a version at or below 1.1.0.
+  # False: 0.1.115 lets operator.managed be the string "true" or "false" as well as a boolean,
+  # since helm-operator applies watches.yaml overrideValues as strings; any other string still
+  # fails the schema. A Helm install that leaves the value unset renders as before.
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
@@ -356,11 +359,7 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "authProvider: openshift signs people in with their OpenShift account: the chart annotates the ServiceAccount as the OAuth client, mounts its client token and the cluster CA, writes the OPENSHIFT_* variables and the admin review target, and refuses every values set the mode cannot run; it needs the next Studio image and fails the render on 1.1.0"
-    - "openshift.consoleLink renders a console.openshift.io/v1 ConsoleLink to Studio in the application menu or a namespace dashboard"
-    - "In openshift mode with Kubernetes discovery on, custom connections default off and the NetworkPolicy renders by default, confining database egress to the discovered namespaces; networkPolicy.enabled=false opts out"
-    - "Under the OLM operator, a discovered namespace other than the release's and the ConsoleLink render only for the LibreDBStudio in operator.clusterStudioNamespace"
-    - "discovery.kubernetes.clusterDomain sets SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN for a cluster domain other than cluster.local"
+    - "operator.managed accepts the strings true and false that the OLM operator's overrideValues deliver, as well as a boolean, so an operator-managed render no longer fails the schema"
 dependencies:
   - name: postgresql
     version: "16.x.x"

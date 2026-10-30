@@ -1117,9 +1117,9 @@
       "additionalProperties": false,
       "properties": {
         "managed": {
-          "type": "boolean",
+          "anyOf": [{ "type": "boolean" }, { "type": "string", "enum": ["true", "false"] }],
           "default": false,
-          "description": "Set by the operator: cross-namespace and cluster-scoped objects then render only for the release in operator.clusterStudioNamespace"
+          "description": "Set by the operator: cross-namespace and cluster-scoped objects then render only for the release in operator.clusterStudioNamespace. Also the string \"true\" or \"false\", since helm-operator applies watches.yaml overrideValues as strings"
         },
         "clusterStudioNamespace": {
           "type": "string",
