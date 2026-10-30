@@ -431,7 +431,9 @@ describe("the openshift render under the operator", () => {
   test("renders the console plugin's ConsolePlugin, which only the ClusterRole manages", () => {
     const kinds = docs.map((doc) => `${doc.apiVersion}/${doc.kind}`);
     expect(kinds).toContain("console.openshift.io/v1/ConsolePlugin");
-    const missing = MANAGE_VERBS.filter((verb) => !grants(clusterRules(), "console.openshift.io", "consoleplugins", verb));
+    const missing = MANAGE_VERBS.filter(
+      (verb) => !grants(clusterRules(), "console.openshift.io", "consoleplugins", verb),
+    );
     expect({ resource: "consoleplugins", missing }).toEqual({ resource: "consoleplugins", missing: [] });
   });
 

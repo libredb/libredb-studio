@@ -383,7 +383,11 @@ describe("the console plugin guards, each naming the value to change", () => {
   });
 
   test("(8) under the operator, the empty image names RELATED_IMAGE_PLUGIN", () => {
-    refused(operatorOn({ "openshift.consolePlugin.image": "" }), "openshift.consolePlugin.image is empty", "RELATED_IMAGE_PLUGIN");
+    refused(
+      operatorOn({ "openshift.consolePlugin.image": "" }),
+      "openshift.consolePlugin.image is empty",
+      "RELATED_IMAGE_PLUGIN",
+    );
     expect(template(operatorOn({ "openshift.consolePlugin.image": "" })).stderr).not.toContain(
       "--reset-then-reuse-values",
     );
