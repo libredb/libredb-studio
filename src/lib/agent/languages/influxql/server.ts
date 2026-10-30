@@ -38,8 +38,8 @@ const INFLUXQL_WORKFLOW_TOOL_RULES: Readonly<Partial<Record<AgentRunWorkflowType
 
 /**
  * No `inspect_schema` is offered, so the omission advice names a read the run holds. `relations` is false: a
- * measurement declares no reference to another. No `planningRules`: plan mode drafts writes too, so the read-only
- * rules of the agent's reader are never told to it.
+ * measurement declares no reference to another. No `planningRules`: they reach plan mode alone, whose statement form
+ * is the provider's `statementLanguage` label, so the rules of the agent's reader are never told to it.
  */
 const INFLUXQL_GROUNDING: AgentLanguageGrounding = Object.freeze({
   omissionAdvice:
