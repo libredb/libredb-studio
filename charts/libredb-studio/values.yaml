@@ -707,9 +707,10 @@ openshift:
   # (ServiceAccount, Deployment, Service and NetworkPolicy, each named
   # libredb-studio-console-plugin) in the namespace below and the cluster-scoped
   # ConsolePlugin libredb-studio. The console sends every console user's token to that
-  # server, so whoever may change its Deployment runs code in every console session: the
-  # render fails in Studio's namespace, in a discovered namespace and, on a Helm install, in
-  # a project a user requested. Needs console.openshift.io/v1 (or
+  # server, so whoever may change its Deployment runs code in every console session: on a
+  # Helm install the render fails in Studio's namespace, in a discovered namespace and in a
+  # project a user requested; under the operator the server runs only in the operator's own
+  # namespace, the cluster Studio's. Needs console.openshift.io/v1 (or
   # global.compatibility.openshift.apis=force), discovery.kubernetes.enabled and the
   # ApplicationMenu console link, through which the plugin finds Studio. No Job: a cluster
   # admin turns the plugin on in the console (README, "The console plugin").
@@ -718,7 +719,7 @@ openshift:
     enabled: false
     # -- Where the plugin server runs: a namespace a cluster admin created with
     # `oc create namespace` and only cluster admins write. The operator sets its own
-    # namespace (OPERATOR_NAMESPACE).
+    # namespace (WATCH_NAMESPACE), the cluster Studio namespace, and refuses any other.
     namespace: ""
     # -- The plugin image, a whole reference pinned by digest, so a mirror sets one string.
     # The operator sets it from RELATED_IMAGE_PLUGIN.

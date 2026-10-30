@@ -5,8 +5,10 @@
  * The plugin is a static bundle the console loads into every console session, served by an nginx
  * server that receives every console user's bearer token on each asset fetch. So whoever can change
  * that server's Deployment runs code in every console session and receives every console user's
- * token, and the chart refuses every place a person who is not a cluster admin could do that: Studio's
- * own namespace, a discovered namespace, and on the Helm path a project a user requested. The server
+ * token, and the chart refuses every place a person who is not a cluster admin could do that: on the Helm
+ * path Studio's own namespace and a project a user requested, on both paths a discovered namespace. Under
+ * the operator the server runs only in the operator's own namespace, the cluster Studio namespace that
+ * only cluster admins write, and any other plugin namespace is refused. The server
  * runs an image pinned by digest, as its own ServiceAccount with no token, and the ConsolePlugin
  * declares no proxy and no content security policy. The chart renders no Job, ClusterRole or
  * ClusterRoleBinding for the plugin: a cluster admin turns it on in the console.
@@ -155,6 +157,14 @@ function pluginOn(changes: Record<string, string | null> = {}): string[] {
 
 const PLUGIN_ON = pluginOn();
 
+/** The values the operator pins on its own resource: the operator path, in the release's namespace. */
+const OPERATOR = set("operator.managed=true", `operator.clusterStudioNamespace=${NAMESPACE}`);
+
+/** PLUGIN_ON as the operator renders it: the plugin server in the operator's own namespace, the release's. */
+function operatorOn(changes: Record<string, string | null> = {}): string[] {
+  return [...pluginOn({ "openshift.consolePlugin.namespace": NAMESPACE, ...changes }), ...OPERATOR];
+}
+
 const values = parse(readFileSync(join(CHART_DIR, "values.yaml"), "utf8"));
 const helpers = readFileSync(join(CHART_DIR, "templates/_helpers.tpl"), "utf8");
 
@@ -272,22 +282,52 @@ describe("the console plugin guards, each naming the value to change", () => {
     );
   });
 
-  test("(3) under the operator, the empty namespace names OPERATOR_NAMESPACE", () => {
+  test("(3) under the operator, the empty namespace names WATCH_NAMESPACE, the operator's own namespace", () => {
     refused(
-      [
-        ...pluginOn({ "openshift.consolePlugin.namespace": "" }),
-        ...set("operator.managed=true", `operator.clusterStudioNamespace=${NAMESPACE}`),
-      ],
+      operatorOn({ "openshift.consolePlugin.namespace": "" }),
       "openshift.consolePlugin.namespace is empty",
+      "WATCH_NAMESPACE",
+    );
+    expect(template(operatorOn({ "openshift.consolePlugin.namespace": "" })).stderr).not.toContain(
       "OPERATOR_NAMESPACE",
     );
   });
 
-  test("(4) refuses the release's own namespace", () => {
+  test("(4) on the Helm path, refuses the release's own namespace", () => {
     refused(
       pluginOn({ "openshift.consolePlugin.namespace": NAMESPACE }),
       `openshift.consolePlugin.namespace is ${NAMESPACE}, this release's own namespace`,
       "every console session",
+    );
+  });
+
+  test("(4) under the operator, renders the server in the operator's own namespace, the cluster Studio's", () => {
+    const run = template(operatorOn());
+    expect({ exitCode: run.exitCode, stderr: run.stderr }).toEqual({ exitCode: 0, stderr: "" });
+    const docs = render(operatorOn());
+    const server = docs
+      .filter((doc) => doc.metadata.name === SERVER)
+      .map((doc) => `${doc.kind}/${doc.metadata.namespace}`)
+      .sort();
+    expect(server).toEqual(
+      ["Deployment", "NetworkPolicy", "Service", "ServiceAccount"].map((kind) => `${kind}/${NAMESPACE}`),
+    );
+    const plugin = one(docs, "ConsolePlugin", "libredb-studio");
+    expect((plugin.spec as { backend: { service: { namespace: string } } }).backend.service.namespace).toBe(NAMESPACE);
+  });
+
+  test("(4) under the operator, refuses a plugin namespace other than the operator's own", () => {
+    refused(
+      operatorOn({ "openshift.consolePlugin.namespace": PLUGIN_NAMESPACE }),
+      `openshift.consolePlugin.namespace is ${PLUGIN_NAMESPACE}, not the operator's own namespace ${NAMESPACE}`,
+      "WATCH_NAMESPACE",
+    );
+  });
+
+  test("(5) under the operator, still refuses the operator's namespace when discovery lists it", () => {
+    refused(
+      operatorOn({ "discovery.kubernetes.namespaces": `{team-a,${NAMESPACE}}` }),
+      `openshift.consolePlugin.namespace is ${NAMESPACE}, which discovery.kubernetes.namespaces lists`,
     );
   });
 
@@ -337,26 +377,16 @@ describe("the console plugin guards, each naming the value to change", () => {
     refused(
       pluginOn({ "openshift.consolePlugin.image": "" }),
       "openshift.consolePlugin.image is empty",
-      "--reuse-values from chart 0.1.116 or earlier",
+      "--reuse-values from chart 0.1.117 or earlier",
       "--reset-then-reuse-values",
     );
   });
 
   test("(8) under the operator, the empty image names RELATED_IMAGE_PLUGIN", () => {
-    refused(
-      [
-        ...pluginOn({ "openshift.consolePlugin.image": "" }),
-        ...set("operator.managed=true", `operator.clusterStudioNamespace=${NAMESPACE}`),
-      ],
-      "openshift.consolePlugin.image is empty",
-      "RELATED_IMAGE_PLUGIN",
+    refused(operatorOn({ "openshift.consolePlugin.image": "" }), "openshift.consolePlugin.image is empty", "RELATED_IMAGE_PLUGIN");
+    expect(template(operatorOn({ "openshift.consolePlugin.image": "" })).stderr).not.toContain(
+      "--reset-then-reuse-values",
     );
-    expect(
-      template([
-        ...pluginOn({ "openshift.consolePlugin.image": "" }),
-        ...set("operator.managed=true", `operator.clusterStudioNamespace=${NAMESPACE}`),
-      ]).stderr,
-    ).not.toContain("--reset-then-reuse-values");
   });
 });
 
@@ -588,10 +618,7 @@ describe("guard (6) with a Namespace in place of the lookup", () => {
   });
 
   test("is skipped under the operator, whose own namespace the operator pins", () => {
-    const run = template(
-      [...PLUGIN_ON, ...set("operator.managed=true", `operator.clusterStudioNamespace=${NAMESPACE}`)],
-      requested,
-    );
+    const run = template(operatorOn(), requested);
     expect({ exitCode: run.exitCode, stderr: run.stderr }).toEqual({ exitCode: 0, stderr: "" });
   });
 });
@@ -676,8 +703,9 @@ describe("install notes with the console plugin", () => {
   });
 
   test("under the operator, leaves the turning on to the install form and the console", () => {
-    const text = notes([...PLUGIN_ON, ...set("operator.managed=true", `operator.clusterStudioNamespace=${NAMESPACE}`)]);
-    expect(text).toContain(`OpenShift console plugin: server libredb-studio-console-plugin in ${PLUGIN_NAMESPACE}`);
+    const text = notes(operatorOn());
+    expect(text).toContain(`OpenShift console plugin: server libredb-studio-console-plugin in ${NAMESPACE}`);
+    expect(text).toContain("the operator's own namespace");
     expect(text).not.toContain("oc create namespace");
   });
 

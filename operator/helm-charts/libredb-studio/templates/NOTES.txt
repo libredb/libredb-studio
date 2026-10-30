@@ -95,6 +95,7 @@ OpenShift console plugin: server libredb-studio-console-plugin in {{ $pluginName
   bindings OpenShift adds to every namespace are expected). Check who may with
     oc adm policy who-can update deployments.apps -n {{ $pluginNamespace }}
 {{- if include "libredb-studio.operatorManaged" . }}
+  Under the operator that is the operator's own namespace, the cluster Studio's.
   A cluster admin turns the plugin on with the console plugin toggle of the operator's install form,
   or on the console's Console plugins page (Administration > Cluster Settings > Configuration > Console).
 {{- else }}

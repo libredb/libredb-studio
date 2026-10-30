@@ -1064,12 +1064,19 @@ console session, so whoever may change the server's Deployment runs code in ever
 and receives every console user's token: the server runs only in a namespace only cluster admins
 write. Included from console-plugin.yaml.
 
+Guard 4 differs by path. On a Helm install the server never runs in the release's own namespace,
+whose editors are Studio's. Under the operator the server runs only in the operator's own namespace,
+which is the cluster Studio namespace (operator.clusterStudioNamespace, the release's namespace once
+guard 2 passed): only cluster admins write it, and whoever writes it already controls the operator.
+Studio's ServiceAccount there holds no right on the server's objects and the server's selector
+labels match none of Studio's, so sharing the namespace gives Studio nothing.
+
 Guard 6 looks the namespace up on the Helm path only. A project made through a project request (oc
 new-project, the console's Create Project), which any OAuth user may make, carries
 openshift.io/requester and is administered by its requester. lookup returns nothing under helm
 template and a client-side dry run, and for a namespace that does not exist yet, so the guard is
-skipped there. The operator path pins the operator's own namespace, whose administrator already
-controls the operator.
+skipped there. The operator path pins the operator's own namespace, which the console creates as a
+plain Namespace from the suggested namespace or a cluster admin creates with oc create namespace.
 */}}
 {{- define "libredb-studio.consolePluginGuards" -}}
 {{- $operator := include "libredb-studio.operatorManaged" . }}
@@ -1080,9 +1087,14 @@ controls the operator.
 {{- include "libredb-studio.clusterStudioNamespaceGuard" (dict "ctx" . "what" "openshift.consolePlugin.enabled renders a cluster-scoped ConsolePlugin and its server in another namespace") }}
 {{- $namespace := get $plugin "namespace" | default "" | toString | trim }}
 {{- if not $namespace }}
-{{- fail (printf "openshift.consolePlugin.namespace is empty: name the namespace the console plugin's server runs in, one a cluster admin creates with oc create namespace and only cluster admins write%s" (ternary "; under the operator it is the operator's own namespace, OPERATOR_NAMESPACE in the operator's Deployment" "" (eq $operator "true"))) }}
+{{- fail (printf "openshift.consolePlugin.namespace is empty: name the namespace the console plugin's server runs in, one a cluster admin creates with oc create namespace and only cluster admins write%s" (ternary "; under the operator it is the operator's own namespace, WATCH_NAMESPACE in the operator's Deployment" "" (eq $operator "true"))) }}
 {{- end }}
-{{- if eq $namespace .Release.Namespace }}
+{{- if eq $operator "true" }}
+{{- $own := dig "clusterStudioNamespace" "" (.Values.operator | default dict) | toString | trim }}
+{{- if ne $namespace $own }}
+{{- fail (printf "openshift.consolePlugin.namespace is %s, not the operator's own namespace %s: under the operator the console plugin's server runs only in the namespace the operator is installed in (WATCH_NAMESPACE in the operator's Deployment), which only cluster admins write" $namespace $own) }}
+{{- end }}
+{{- else if eq $namespace .Release.Namespace }}
 {{- fail (printf "openshift.consolePlugin.namespace is %s, this release's own namespace: whoever can change that Deployment runs code in every console session and receives every console user's token, so name a namespace only cluster admins write" $namespace) }}
 {{- end }}
 {{- $discovered := dig "kubernetes" "namespaces" list (.Values.discovery | default dict) | default list }}
@@ -1104,6 +1116,6 @@ controls the operator.
 {{- fail "openshift.consolePlugin.enabled needs openshift.consoleLink.enabled with openshift.consoleLink.location=ApplicationMenu: the console plugin finds Studio only through the console link named libredb-studio, which only that link is" }}
 {{- end }}
 {{- if not (get $plugin "image" | default "" | toString | trim) }}
-{{- fail (printf "openshift.consolePlugin.image is empty: set the plugin image as a reference pinned by digest%s" (ternary "; under the operator it comes from RELATED_IMAGE_PLUGIN in the operator's Deployment" "; an upgrade with --reuse-values from chart 0.1.116 or earlier keeps that release's values, which have no plugin image, so upgrade with --reset-then-reuse-values or set it" (eq $operator "true"))) }}
+{{- fail (printf "openshift.consolePlugin.image is empty: set the plugin image as a reference pinned by digest%s" (ternary "; under the operator it comes from RELATED_IMAGE_PLUGIN in the operator's Deployment" "; an upgrade with --reuse-values from chart 0.1.117 or earlier keeps that release's values, which have no plugin image, so upgrade with --reset-then-reuse-values or set it" (eq $operator "true"))) }}
 {{- end }}
 {{- end }}
