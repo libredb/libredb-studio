@@ -539,7 +539,15 @@ CI runs it in the Functional Smoke job against a fresh 4.3.6 broker; 4.2.9 is ru
 - 2026-10-12, the consume backstop: a classic queue answered the provider's consume with 406 and delivered nothing.
 - 2026-10-12, a 50 ms round trip: 10 stored messages read in full, stopped idle after 1,425 ms.
 - 2026-10-12, a vhost of 520 classic queues, 1 quorum queue and 510 streams filled in 5,296 ms; the Streams folder held 500 streams.
+- 2026-10-31, RabbitMQ 4.3.6 and 4.2.9, the agent boundary capture: a read-only user's `basic.get`, acked consume, `queue.purge` and management purge and get each removed messages; the agent's reads answered offsets and body sizes only and left every queue as it was; the 406 backstop held on a classic and a quorum queue declared under a stream's name.
 <!-- live-record:end -->
+
+### 14.5 The agent boundary capture
+
+[`tests/fixtures/rabbitmq/4.3.6/agent-boundary/run.sh`](../../tests/fixtures/rabbitmq/4.3.6/agent-boundary/run.sh) and its 4.2.9 twin start a fresh digest-pinned broker, and [`tests/live/rabbitmq-agent-boundary.ts`](../../tests/live/rabbitmq-agent-boundary.ts) seeds it, sends every call the agent's table refuses raw as a read-only user, runs the agent's own reads through the provider, and writes `boundary.json` beside the script ([§17](#17-agent-mode)).
+Every queue's message count is read with a passive `queue.declare` before and after each call, so a take shows as the count it removed.
+Both passwords are made for the run and stay in the process: the script refuses to write a capture that holds either.
+`tests/unit/db/rabbitmq/agent-boundary.test.ts` replays the captures.
 
 ## 15. Known limitations
 

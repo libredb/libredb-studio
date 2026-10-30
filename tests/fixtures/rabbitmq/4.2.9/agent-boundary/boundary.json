@@ -1,0 +1,549 @@
+{
+  "$captured": {
+    "image": "rabbitmq:4.2.9-management@sha256:9e9fd21d60f060acc9ecbd847cd1dcb87e6550bdb0297c27e79a40bfe1766ce4",
+    "version": "4.2.9",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "user": "agent-reader: tag management; on / configure ^$, write ^$, read .*",
+    "note": "`refused` lists calls the agent's closed table never sends, each sent raw as the reader with every queue's message count read before and after, so each shows what the broker would do with it. `agent` is the provider's agent read, and `backstop` the same read with the type check answered as a stream for a classic and a quorum queue declared under a stream's name."
+  },
+  "markers": {
+    "body": "agent-marker-body",
+    "header": "agent-marker-header",
+    "headerName": "x-agent-marker-name",
+    "routingKey": "agent-marker-routing-key",
+    "messageId": "agent-marker-message-id",
+    "correlationId": "agent-marker-correlation-id",
+    "appId": "agent-marker-app-id",
+    "type": "agent-marker-type",
+    "contentType": "application/x-agent-marker",
+    "replyTo": "agent-marker-reply-to"
+  },
+  "queues": {
+    "classic": "q-classic",
+    "quorum": "q-quorum",
+    "purge": "q-purge",
+    "swapClassic": "st-swap-classic",
+    "swapQuorum": "st-swap-quorum"
+  },
+  "before": {
+    "q-classic": 3,
+    "q-quorum": 3,
+    "q-purge": 3,
+    "st-swap-classic": 0,
+    "st-swap-quorum": 0
+  },
+  "editor": {
+    "value": {
+      "rows": [
+        {
+          "offset": "0",
+          "timestamp": "2023-11-14T22:13:20.000Z",
+          "exchange": "ex-agent",
+          "routing_key": "agent-marker-routing-key",
+          "headers": {
+            "x-agent-marker-name": "agent-marker-header-0"
+          },
+          "properties": {
+            "content_type": "application/x-agent-marker",
+            "delivery_mode": 2,
+            "correlation_id": "agent-marker-correlation-id",
+            "reply_to": "agent-marker-reply-to",
+            "message_id": "agent-marker-message-id-0",
+            "type": "agent-marker-type",
+            "user_id": "libredb-admin",
+            "app_id": "agent-marker-app-id"
+          },
+          "payload": "agent-marker-body-0",
+          "payload_encoding": "text",
+          "payload_bytes": 19
+        },
+        {
+          "offset": "1",
+          "timestamp": "2023-11-14T22:13:21.000Z",
+          "exchange": "ex-agent",
+          "routing_key": "agent-marker-routing-key",
+          "headers": {
+            "x-agent-marker-name": "agent-marker-header-1"
+          },
+          "properties": {
+            "content_type": "application/x-agent-marker",
+            "delivery_mode": 2,
+            "correlation_id": "agent-marker-correlation-id",
+            "reply_to": "agent-marker-reply-to",
+            "message_id": "agent-marker-message-id-1",
+            "type": "agent-marker-type",
+            "user_id": "libredb-admin",
+            "app_id": "agent-marker-app-id"
+          },
+          "payload": "agent-marker-body-1",
+          "payload_encoding": "text",
+          "payload_bytes": 19
+        }
+      ],
+      "fields": [
+        "offset",
+        "timestamp",
+        "exchange",
+        "routing_key",
+        "headers",
+        "properties",
+        "payload",
+        "payload_encoding",
+        "payload_bytes"
+      ],
+      "rowCount": 2,
+      "executionTime": 13,
+      "pagination": {
+        "limit": 2,
+        "offset": 0,
+        "hasMore": false,
+        "totalReturned": 2,
+        "wasLimited": true
+      }
+    }
+  },
+  "refused": [
+    {
+      "name": "basic.get no-ack, classic",
+      "before": {
+        "q-classic": 3,
+        "q-quorum": 3,
+        "q-purge": 3,
+        "st-swap-classic": 0,
+        "st-swap-quorum": 0
+      },
+      "outcome": {
+        "outcome": "ok",
+        "detail": {
+          "answer": "get-ok"
+        }
+      },
+      "after": {
+        "q-classic": 2,
+        "q-quorum": 3,
+        "q-purge": 3,
+        "st-swap-classic": 0,
+        "st-swap-quorum": 0
+      }
+    },
+    {
+      "name": "basic.get no-ack, quorum",
+      "before": {
+        "q-classic": 2,
+        "q-quorum": 3,
+        "q-purge": 3,
+        "st-swap-classic": 0,
+        "st-swap-quorum": 0
+      },
+      "outcome": {
+        "outcome": "ok",
+        "detail": {
+          "answer": "get-ok"
+        }
+      },
+      "after": {
+        "q-classic": 2,
+        "q-quorum": 2,
+        "q-purge": 3,
+        "st-swap-classic": 0,
+        "st-swap-quorum": 0
+      }
+    },
+    {
+      "name": "basic.consume and ack, no x-stream-offset, classic",
+      "before": {
+        "q-classic": 2,
+        "q-quorum": 2,
+        "q-purge": 3,
+        "st-swap-classic": 0,
+        "st-swap-quorum": 0
+      },
+      "outcome": {
+        "outcome": "ok",
+        "detail": {
+          "delivered": 1,
+          "acked": true
+        }
+      },
+      "after": {
+        "q-classic": 1,
+        "q-quorum": 2,
+        "q-purge": 3,
+        "st-swap-classic": 0,
+        "st-swap-quorum": 0
+      }
+    },
+    {
+      "name": "basic.consume and ack, no x-stream-offset, quorum",
+      "before": {
+        "q-classic": 1,
+        "q-quorum": 2,
+        "q-purge": 3,
+        "st-swap-classic": 0,
+        "st-swap-quorum": 0
+      },
+      "outcome": {
+        "outcome": "ok",
+        "detail": {
+          "delivered": 1,
+          "acked": true
+        }
+      },
+      "after": {
+        "q-classic": 1,
+        "q-quorum": 1,
+        "q-purge": 3,
+        "st-swap-classic": 0,
+        "st-swap-quorum": 0
+      }
+    },
+    {
+      "name": "basic.consume with x-stream-offset, classic",
+      "before": {
+        "q-classic": 1,
+        "q-quorum": 1,
+        "q-purge": 3,
+        "st-swap-classic": 0,
+        "st-swap-quorum": 0
+      },
+      "outcome": {
+        "outcome": "closed",
+        "replyCode": 406,
+        "scope": "channel"
+      },
+      "after": {
+        "q-classic": 1,
+        "q-quorum": 1,
+        "q-purge": 3,
+        "st-swap-classic": 0,
+        "st-swap-quorum": 0
+      }
+    },
+    {
+      "name": "basic.consume with x-stream-offset, quorum",
+      "before": {
+        "q-classic": 1,
+        "q-quorum": 1,
+        "q-purge": 3,
+        "st-swap-classic": 0,
+        "st-swap-quorum": 0
+      },
+      "outcome": {
+        "outcome": "closed",
+        "replyCode": 406,
+        "scope": "channel"
+      },
+      "after": {
+        "q-classic": 1,
+        "q-quorum": 1,
+        "q-purge": 3,
+        "st-swap-classic": 0,
+        "st-swap-quorum": 0
+      }
+    },
+    {
+      "name": "queue.purge over AMQP",
+      "before": {
+        "q-classic": 1,
+        "q-quorum": 1,
+        "q-purge": 3,
+        "st-swap-classic": 0,
+        "st-swap-quorum": 0
+      },
+      "outcome": {
+        "outcome": "ok",
+        "detail": {
+          "purged": 3
+        }
+      },
+      "after": {
+        "q-classic": 1,
+        "q-quorum": 1,
+        "q-purge": 0,
+        "st-swap-classic": 0,
+        "st-swap-quorum": 0
+      }
+    },
+    {
+      "name": "DELETE /api/queues/{vhost}/{name}/contents",
+      "before": {
+        "q-classic": 1,
+        "q-quorum": 1,
+        "q-purge": 3,
+        "st-swap-classic": 0,
+        "st-swap-quorum": 0
+      },
+      "outcome": {
+        "outcome": "http",
+        "status": 204
+      },
+      "after": {
+        "q-classic": 1,
+        "q-quorum": 1,
+        "q-purge": 0,
+        "st-swap-classic": 0,
+        "st-swap-quorum": 0
+      }
+    },
+    {
+      "name": "POST /api/queues/{vhost}/{name}/get, ack_requeue_false",
+      "before": {
+        "q-classic": 1,
+        "q-quorum": 1,
+        "q-purge": 0,
+        "st-swap-classic": 0,
+        "st-swap-quorum": 0
+      },
+      "outcome": {
+        "outcome": "http",
+        "status": 200
+      },
+      "after": {
+        "q-classic": 0,
+        "q-quorum": 1,
+        "q-purge": 0,
+        "st-swap-classic": 0,
+        "st-swap-quorum": 0
+      }
+    },
+    {
+      "name": "basic.publish",
+      "before": {
+        "q-classic": 0,
+        "q-quorum": 1,
+        "q-purge": 0,
+        "st-swap-classic": 0,
+        "st-swap-quorum": 0
+      },
+      "outcome": {
+        "outcome": "closed",
+        "replyCode": 403,
+        "scope": "channel"
+      },
+      "after": {
+        "q-classic": 0,
+        "q-quorum": 1,
+        "q-purge": 0,
+        "st-swap-classic": 0,
+        "st-swap-quorum": 0
+      }
+    },
+    {
+      "name": "POST /api/exchanges/{vhost}/amq.default/publish",
+      "before": {
+        "q-classic": 0,
+        "q-quorum": 1,
+        "q-purge": 0,
+        "st-swap-classic": 0,
+        "st-swap-quorum": 0
+      },
+      "outcome": {
+        "outcome": "http",
+        "status": 400
+      },
+      "after": {
+        "q-classic": 0,
+        "q-quorum": 1,
+        "q-purge": 0,
+        "st-swap-classic": 0,
+        "st-swap-quorum": 0
+      }
+    },
+    {
+      "name": "queue.declare of a new queue",
+      "before": {
+        "q-classic": 0,
+        "q-quorum": 1,
+        "q-purge": 0,
+        "st-swap-classic": 0,
+        "st-swap-quorum": 0
+      },
+      "outcome": {
+        "outcome": "closed",
+        "replyCode": 403,
+        "scope": "channel"
+      },
+      "after": {
+        "q-classic": 0,
+        "q-quorum": 1,
+        "q-purge": 0,
+        "st-swap-classic": 0,
+        "st-swap-quorum": 0
+      }
+    }
+  ],
+  "agent": [
+    {
+      "statement": "{\"vhost\":\"/\",\"stream\":\"st-agent\",\"from\":\"first\",\"limit\":10}",
+      "countsBefore": {
+        "q-classic": 0,
+        "q-quorum": 1,
+        "q-purge": 0,
+        "st-swap-classic": 1,
+        "st-swap-quorum": 1
+      },
+      "answer": {
+        "value": {
+          "fields": [
+            "offset",
+            "body_bytes"
+          ],
+          "rows": [
+            {
+              "offset": 0,
+              "body_bytes": 19
+            },
+            {
+              "offset": 1,
+              "body_bytes": 19
+            },
+            {
+              "offset": 2,
+              "body_bytes": 19
+            },
+            {
+              "offset": 3,
+              "body_bytes": 19
+            },
+            {
+              "offset": 4,
+              "body_bytes": 19
+            }
+          ],
+          "rowCount": 5,
+          "executionTime": 1007,
+          "warnings": [
+            {
+              "message": "No further message arrived within 1 s; this is not proof that the stream ends here."
+            }
+          ]
+        }
+      },
+      "countsAfter": {
+        "q-classic": 0,
+        "q-quorum": 1,
+        "q-purge": 0,
+        "st-swap-classic": 1,
+        "st-swap-quorum": 1
+      }
+    },
+    {
+      "statement": "{\"vhost\":\"/\",\"stream\":\"st-agent\",\"from\":{\"offset\":3},\"limit\":1}",
+      "countsBefore": {
+        "q-classic": 0,
+        "q-quorum": 1,
+        "q-purge": 0,
+        "st-swap-classic": 1,
+        "st-swap-quorum": 1
+      },
+      "answer": {
+        "value": {
+          "fields": [
+            "offset",
+            "body_bytes"
+          ],
+          "rows": [
+            {
+              "offset": 3,
+              "body_bytes": 19
+            }
+          ],
+          "rowCount": 1,
+          "executionTime": 6
+        }
+      },
+      "countsAfter": {
+        "q-classic": 0,
+        "q-quorum": 1,
+        "q-purge": 0,
+        "st-swap-classic": 1,
+        "st-swap-quorum": 1
+      }
+    },
+    {
+      "statement": "{\"vhost\":\"/\",\"stream\":\"q-classic\",\"from\":\"first\",\"limit\":1}",
+      "countsBefore": {
+        "q-classic": 0,
+        "q-quorum": 1,
+        "q-purge": 0,
+        "st-swap-classic": 1,
+        "st-swap-quorum": 1
+      },
+      "answer": {
+        "error": "QueryError: \"q-classic\" is a classic queue; Studio reads streams only, because reading a queue removes messages."
+      },
+      "countsAfter": {
+        "q-classic": 0,
+        "q-quorum": 1,
+        "q-purge": 0,
+        "st-swap-classic": 1,
+        "st-swap-quorum": 1
+      }
+    },
+    {
+      "statement": "{\"vhost\":\"/\",\"stream\":\"q-quorum\",\"from\":\"first\",\"limit\":1}",
+      "countsBefore": {
+        "q-classic": 0,
+        "q-quorum": 1,
+        "q-purge": 0,
+        "st-swap-classic": 1,
+        "st-swap-quorum": 1
+      },
+      "answer": {
+        "error": "QueryError: \"q-quorum\" is a quorum queue; Studio reads streams only, because reading a queue removes messages."
+      },
+      "countsAfter": {
+        "q-classic": 0,
+        "q-quorum": 1,
+        "q-purge": 0,
+        "st-swap-classic": 1,
+        "st-swap-quorum": 1
+      }
+    }
+  ],
+  "backstop": [
+    {
+      "statement": "{\"vhost\":\"/\",\"stream\":\"st-swap-classic\",\"from\":\"first\",\"limit\":1}",
+      "typeCheckAnswered": "stream",
+      "countsBefore": {
+        "q-classic": 0,
+        "q-quorum": 1,
+        "q-purge": 0,
+        "st-swap-classic": 1,
+        "st-swap-quorum": 1
+      },
+      "answer": {
+        "error": "QueryError: \"st-swap-classic\" is not a stream; Studio reads streams only."
+      },
+      "countsAfter": {
+        "q-classic": 0,
+        "q-quorum": 1,
+        "q-purge": 0,
+        "st-swap-classic": 1,
+        "st-swap-quorum": 1
+      }
+    },
+    {
+      "statement": "{\"vhost\":\"/\",\"stream\":\"st-swap-quorum\",\"from\":\"first\",\"limit\":1}",
+      "typeCheckAnswered": "stream",
+      "countsBefore": {
+        "q-classic": 0,
+        "q-quorum": 1,
+        "q-purge": 0,
+        "st-swap-classic": 1,
+        "st-swap-quorum": 1
+      },
+      "answer": {
+        "error": "QueryError: \"st-swap-quorum\" is not a stream; Studio reads streams only."
+      },
+      "countsAfter": {
+        "q-classic": 0,
+        "q-quorum": 1,
+        "q-purge": 0,
+        "st-swap-classic": 1,
+        "st-swap-quorum": 1
+      }
+    }
+  ]
+}
