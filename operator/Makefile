@@ -228,6 +228,19 @@ bundle: kustomize operator-sdk ## Generate bundle manifests and metadata, then v
 	# skipRange" and fail there as a dangling bundle. Verify it landed here.
 	@grep -q "olm.skipRange: '>=0.0.0 <$(VERSION)'$$" bundle/manifests/libredb-studio-operator.clusterserviceversion.yaml || \
 		{ echo "ERROR: olm.skipRange stamp failed - restore the olm.skipRange annotation in config/manifests/bases"; exit 1; }
+	# The operator manages only its own namespace, so the controller watches
+	# the namespace its pod runs in (config/manager/manager.yaml). generate
+	# bundle rewrites every WATCH_NAMESPACE to the olm.targetNamespaces
+	# annotation, which is empty outside OLM and for an all-namespaces group,
+	# and empty means every namespace; put the pod's namespace back.
+	sed -e "s|fieldPath: metadata.annotations\['olm.targetNamespaces'\]$$|fieldPath: metadata.namespace|" \
+		bundle/manifests/libredb-studio-operator.clusterserviceversion.yaml > bundle/manifests/.csv.tmp
+	mv bundle/manifests/.csv.tmp bundle/manifests/libredb-studio-operator.clusterserviceversion.yaml
+	# Verify no annotation reference is left and WATCH_NAMESPACE reads the pod's
+	# namespace exactly once, so a reformatted generator output fails here.
+	@test "$$(grep -c "olm.targetNamespaces" bundle/manifests/libredb-studio-operator.clusterserviceversion.yaml)" = 0 && \
+		test "$$(grep -A3 -e '- name: WATCH_NAMESPACE$$' bundle/manifests/libredb-studio-operator.clusterserviceversion.yaml | grep -c 'fieldPath: metadata.namespace$$')" = 1 || \
+		{ echo "ERROR: WATCH_NAMESPACE stamp failed - the bundle CSV must set it once, from metadata.namespace"; exit 1; }
 	# Stamp the OpenShift floor. The catalogs read com.redhat.openshift.versions
 	# from the bundle metadata, which generate bundle rewrites from scratch on
 	# every run and has no flag for, so it is appended here each time.

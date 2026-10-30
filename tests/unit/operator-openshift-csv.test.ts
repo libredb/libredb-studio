@@ -20,7 +20,10 @@
  * helm-operator reads WATCH_NAMESPACE, and the bundle's Deployment sets it from the downward API
  * field metadata.namespace, which is one name and never empty (empty would mean every namespace).
  * The install modes and that variable are pinned together, so adding another install mode forces
- * revisiting the variable.
+ * revisiting the variable. operator-sdk generate bundle rewrites every WATCH_NAMESPACE it finds to
+ * the annotation olm.targetNamespaces, which is empty outside OLM and for an all-namespaces group,
+ * where empty means every namespace; the bundle target puts the pod's namespace back and checks it
+ * landed exactly once.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -132,6 +135,15 @@ describe("the bundle CSV's controller", () => {
     expect(manager?.env?.filter((env) => env.name === "WATCH_NAMESPACE")).toEqual([
       { name: "WATCH_NAMESPACE", valueFrom: { fieldRef: { fieldPath: "metadata.namespace" } } },
     ]);
+  });
+
+  test("gets the pod's namespace back from the bundle target, which checks it landed exactly once", () => {
+    const makefile = readFileSync(MAKEFILE, "utf8");
+    expect(makefile).toContain(
+      `sed -e "s|fieldPath: metadata.annotations\\['olm.targetNamespaces'\\]$$|fieldPath: metadata.namespace|"`,
+    );
+    expect(makefile).toContain(`grep -c "olm.targetNamespaces"`);
+    expect(makefile).toContain(`grep -A3 -e '- name: WATCH_NAMESPACE$$'`);
   });
 
   test("reads no Subscription variable for the cluster Studio namespace", () => {
