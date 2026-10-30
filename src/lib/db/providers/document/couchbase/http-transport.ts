@@ -526,7 +526,7 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
     if (transport === undefined) {
       transport = this.createNodeTransport({
         origin,
-        tls: this.tls ? nodeTlsMaterial(this.ssl, this.host) : null,
+        tls: this.tls ? nodeTlsMaterial(this.ssl, origin.host) : null,
         maxSockets: AGENT_MAX_SOCKETS,
         headers: { accept: "application/json", authorization: this.authorization },
       });

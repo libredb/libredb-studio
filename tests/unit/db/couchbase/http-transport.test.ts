@@ -1170,7 +1170,7 @@ describe("CouchbaseHttpTransport agent path", () => {
     await expect(transport.whoami(bounds())).rejects.toBe(lost);
   });
 
-  test("takes the panel's TLS material and the secure ports", async () => {
+  test("takes the panel's TLS material, checked against the host each request dials, and the secure ports", async () => {
     const built: Built[] = [];
     const transport = makeTransport({ ssl: { mode: "require" }, port: undefined }, nodeDeps(cluster(), built));
 
@@ -1182,8 +1182,9 @@ describe("CouchbaseHttpTransport agent path", () => {
         { rejectUnauthorized: false, identity: "127.0.0.1" },
       ],
       [
+        // Each transport checks the certificate against the host it dials, as the editor's TLS request does.
         { scheme: "https", host: "node1.local", port: 18093 },
-        { rejectUnauthorized: false, identity: "127.0.0.1" },
+        { rejectUnauthorized: false, identity: "node1.local" },
       ],
     ]);
   });
