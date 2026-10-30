@@ -29,15 +29,22 @@
  *   to read a cancellable query id from, so `supportsMaintenance` is false.
  * - Positional parameters really execute, unlike ClickHouse (#264), so
  *   `query(sql, params)` binds them rather than refusing them.
+ * - Agent statements (`queryReadOnly`) run only on a handle opened under the agent read-only profile, under the
+ *   native engine, which refuses every write on the SQL endpoint, proven before every statement, and only one SELECT
+ *   is sent (`agent-boundary.ts`).
  */
+
+import { randomBytes, randomUUID } from "node:crypto";
 
 import { SQLBaseProvider } from "../sql-base";
 import {
   AuthenticationError,
   ConnectionError,
   DatabaseConfigError,
+  ExecutionProfileError,
   QueryCancelledError,
   QueryError,
+  RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
 import {
@@ -56,16 +63,27 @@ import {
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
+  type ProviderExecutionContext,
   type ProviderLabels,
   type ProviderOptions,
   type QueryPrepareOptions,
   type QueryResult,
   type QueryWarning,
+  type ReadOnlyStatementBudget,
+  type ReadOnlyStatementMode,
   type SlowQueryStats,
   type StorageStats,
   type TableStats,
 } from "@/lib/db/types";
 import { analyzeQuery } from "@/lib/db/utils/query-limiter";
+import {
+  assertReadOnlyBudget,
+  byteBudgetSentence,
+  measureResultBytes,
+  rowBudgetSentence,
+  TIME_BUDGET_PREFIX,
+} from "../read-only-budget";
+import { druidAgentStatementRefusal, verifyDruidAgentEngine } from "./agent-boundary";
 import { DruidHttpTransport } from "./http-transport";
 import {
   getActiveSessions as readActiveSessions,
@@ -87,6 +105,7 @@ import {
   listObjects,
 } from "./objects";
 import {
+  DruidAnswerTooLargeError,
   DRUID_CLIENT_DEADLINE_GRACE_MS,
   DRUID_TRANSPORT_FAILURE,
   type DruidQueryResult,
@@ -125,6 +144,22 @@ const CONNECT_PROBE_SQL = "SELECT 1";
  * race on every slow catalog read. One definition is what keeps them in step.
  */
 const CLIENT_DEADLINE_GRACE_MS = DRUID_CLIENT_DEADLINE_GRACE_MS;
+
+/** The deadline of the engine check at the open of a handle that sends statements, and of each check's probe. */
+const AGENT_CHECK_TIMEOUT_MS = 15000;
+
+/** The most bytes the answer to the engine check's probe may hold: a refusal. */
+const AGENT_CHECK_MAX_BYTES = 65536;
+
+/**
+ * Bytes an agent statement's answer may hold past twice its byte budget: the three header rows and the server's own
+ * punctuation. Past this cap the transport stops reading and the call is refused on the byte budget; under it, the
+ * rows themselves are measured against the budget.
+ */
+const AGENT_ENVELOPE_BYTES = 65536;
+
+/** How long the cancel of a statement past its deadline may take, on a deadline of its own. */
+const AGENT_CANCEL_TIMEOUT_MS = 5000;
 
 // ============================================================================
 // Pure helpers
@@ -197,8 +232,27 @@ function incompleteResultWarning(unavailableSegments: number | null): QueryWarni
 export class DruidProvider extends SQLBaseProvider {
   private transport: DruidTransport | null = null;
 
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
+  /**
+   * Whether this provider was opened to send an agent's statements: under an execution profile (`readOnly`) whose
+   * acquisition calls `queryReadOnly` (`sendsStatements`). Only then does the open prove the native engine
+   * (`verifyDruidAgentEngine` in `agent-boundary.ts`) and does `queryReadOnly` answer. The operations profile sends no
+   * statement, so plan mode keeps grounding with no probe sent.
+   */
+  private readonly readOnlyProfile: boolean;
+
+  /**
+   * `createTransport` is the test seam of the transport the open builds: the factory passes three arguments, so a
+   * real connection always builds the HTTP one.
+   */
+  constructor(
+    config: DatabaseConnection,
+    options: ProviderOptions = {},
+    execution: ProviderExecutionContext = {},
+    private readonly createTransport: (config: DatabaseConnection) => DruidTransport = (connection) =>
+      new DruidHttpTransport(connection),
+  ) {
     super(config, options);
+    this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
     this.validate();
   }
 
@@ -331,7 +385,7 @@ export class DruidProvider extends SQLBaseProvider {
   }
 
   public async connect(): Promise<void> {
-    const transport = new DruidHttpTransport(this.config);
+    const transport = this.createTransport(this.config);
 
     try {
       // The cheapest statement there is, sent here so a wrong port, a proxy in
@@ -339,9 +393,12 @@ export class DruidProvider extends SQLBaseProvider {
       // rejected credential all surface while the user is still looking at the
       // connection form rather than at their first query.
       await transport.query(CONNECT_PROBE_SQL, this.deadlines());
+      // A handle that will send an agent's statements proves the native engine at the open, so a server that does not
+      // refuse a write is refused before any statement; every call proves it again.
+      if (this.readOnlyProfile) await this.verifyAgentEngine(transport, AbortSignal.timeout(AGENT_CHECK_TIMEOUT_MS));
     } catch (error) {
       await transport.close();
-      const failure = this.describeConnectFailure(error);
+      const failure = error instanceof ExecutionProfileError ? error : this.describeConnectFailure(error);
       this.setError(failure);
       throw failure;
     }
@@ -424,6 +481,143 @@ export class DruidProvider extends SQLBaseProvider {
         throw this.mapDruidError(error, sql);
       }
     });
+  }
+
+  /**
+   * One agent statement under the read-only profile.
+   *
+   * The boundary is the engine's: under the native engine the SQL endpoint refuses every INSERT, REPLACE, UPDATE,
+   * DELETE, MERGE and DDL statement and every read of EXTERN, whoever asks, and the check proves the server is such a
+   * server before every statement, keeping no verdict between calls (`agent-boundary.ts`). Only one statement whose
+   * first keyword is SELECT or WITH is sent (`druidAgentStatementRefusal`), anything else refused before anything is
+   * sent, because a SET before a statement would select another engine and replace the request's query id.
+   *
+   * The statement goes out on a request of its own (`DruidTransport.agentQuery`) under the native engine, a fresh
+   * query id and the budget's timeout on the server, and nothing a previous request named. One deadline, the
+   * budget's, bounds the check and the statement together. The server stops the statement at its own timeout; past the
+   * deadline the client stops waiting and cancels the statement's id. A statement the data servers compute stops at
+   * the cancel, while one the Broker computes itself, over inline data, keeps running to its end (capture 03), so the
+   * cancel ends the wait, and the work only there.
+   *
+   * Budgets refuse rather than truncate: an answer past twice the byte budget and its envelope is not read further,
+   * and a result past the row or the byte budget is refused. Refused outside the profile and for an estimating plan,
+   * which the agent does not compose here.
+   */
+  public async queryReadOnly(
+    sql: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    const transport = this.requireTransport();
+    if (!this.readOnlyProfile) {
+      throw new RefusedBeforeSendError(
+        "Read-only execution requires a provider opened under the agent read-only profile",
+        this.type,
+        sql,
+      );
+    }
+    assertReadOnlyBudget(budget, this.type);
+    if (mode !== "execute") {
+      throw new RefusedBeforeSendError("Druid composes no estimating plan for the agent", this.type, sql);
+    }
+    const fenced = druidAgentStatementRefusal(sql);
+    if (fenced !== null) throw new RefusedBeforeSendError(fenced, this.type, sql);
+
+    return this.trackQuery(async () => {
+      const { result, executionTime } = await this.measureExecution(async () => {
+        const signal = AbortSignal.timeout(budget.statementTimeoutMs);
+        await this.verifyAgentEngine(transport, signal).catch((error: unknown) => {
+          if (error instanceof ExecutionProfileError) throw error;
+          if (signal.aborted) throw this.timeBudgetError(budget, sql, null);
+          // The environment's failure, not the statement's: the agent must not offer it to the model as one to repair.
+          throw new ConnectionError(
+            `The agent read-only execution profile's check of the Druid engine could not be read: ${this.mapDruidError(error).message}`,
+            this.type,
+            this.config.host,
+            this.config.port,
+          );
+        });
+        const queryId = randomUUID();
+        const maxResponseBytes = 2 * budget.maxResultBytes + AGENT_ENVELOPE_BYTES;
+        try {
+          return await transport.agentQuery(sql, {
+            queryId,
+            timeoutMs: budget.statementTimeoutMs,
+            signal,
+            maxResponseBytes,
+          });
+        } catch (error) {
+          if (error instanceof DruidAnswerTooLargeError) {
+            throw new QueryError(
+              `${byteBudgetSentence(maxResponseBytes, budget.maxResultBytes)}; the server's answer passed that many bytes and was not read further`,
+              this.type,
+              sql,
+            );
+          }
+          if (signal.aborted)
+            throw this.timeBudgetError(budget, sql, await this.cancelAgentStatement(transport, queryId));
+          if (error instanceof DruidTransportError && error.is("TIMEOUT")) {
+            throw new QueryError(
+              `${TIME_BUDGET_PREFIX}: the server stopped the statement at ${budget.statementTimeoutMs}ms`,
+              this.type,
+              sql,
+            );
+          }
+          throw this.mapDruidError(error, sql);
+        }
+      });
+      return this.readAgentAnswer(result, executionTime, budget, sql);
+    });
+  }
+
+  /** The proof of the native engine, its probe sent on `transport` under a fresh query id and `signal`. */
+  private verifyAgentEngine(transport: DruidTransport, signal: AbortSignal): Promise<void> {
+    return verifyDruidAgentEngine(
+      (probe) =>
+        transport.agentQuery(probe, {
+          queryId: randomUUID(),
+          timeoutMs: AGENT_CHECK_TIMEOUT_MS,
+          signal,
+          maxResponseBytes: AGENT_CHECK_MAX_BYTES,
+        }),
+      // The probe's datasource carries a fresh suffix each time, so no datasource anyone wrote can be the one it names.
+      randomBytes(12).toString("hex"),
+    );
+  }
+
+  /** The cancel of the statement past its deadline, on a deadline of its own, as a clause of the refusal. */
+  private async cancelAgentStatement(transport: DruidTransport, queryId: string): Promise<string> {
+    try {
+      const outcome = await transport.cancel(queryId, AbortSignal.timeout(AGENT_CANCEL_TIMEOUT_MS));
+      return outcome === "cancelled"
+        ? "the statement was cancelled on the server"
+        : "the server holds no statement under its id any longer";
+    } catch (error) {
+      return `its cancel could not be confirmed: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+
+  private timeBudgetError(budget: ReadOnlyStatementBudget, sql: string, cancel: string | null): QueryError {
+    const waited = `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`;
+    return new QueryError(cancel === null ? waited : `${waited}; ${cancel}`, this.type, sql);
+  }
+
+  /** The agent's result, or the shared refusal: held to both budgets, never cut. */
+  private readAgentAnswer(
+    result: DruidQueryResult,
+    executionTime: number,
+    budget: ReadOnlyStatementBudget,
+    sql: string,
+  ): QueryResult {
+    if (result.rows.length > budget.maxResultRows) {
+      throw new QueryError(rowBudgetSentence(result.rows.length, budget.maxResultRows), this.type, sql);
+    }
+    const answer = { ...toQueryResult(result), executionTime };
+    const bytes = measureResultBytes(answer.rows);
+    if (bytes > budget.maxResultBytes) {
+      throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, sql);
+    }
+    return answer;
   }
 
   /**

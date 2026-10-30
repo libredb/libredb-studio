@@ -49,10 +49,21 @@ import {
   ConnectionError,
   DatabaseConfigError,
   DatabaseError,
+  ExecutionProfileError,
   QueryCancelledError,
   QueryError,
+  RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
+import { druidAgentStatementRefusal } from "@/lib/db/providers/sql/druid/agent-boundary";
+import {
+  type DruidAgentQueryOptions,
+  DruidAnswerTooLargeError,
+  type DruidCancelOutcome,
+  type DruidQueryResult,
+  type DruidTransport,
+  DruidTransportError,
+} from "@/lib/db/providers/sql/druid/transport";
 import { DRUID_CONTAINER_LEVELS, DRUID_OBJECT_KINDS } from "@/lib/db/providers/sql/druid/objects";
 import { callerBoundTruncationReason, findKind, kindHasColumns, kindHasSource } from "@/lib/db/object-kinds";
 import { getExplainStrategy } from "@/lib/explain";
@@ -2946,5 +2957,308 @@ describe("endOpenQueryTransaction()", () => {
     expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual([
       "the engine has no transaction to leave open",
     ]);
+  });
+});
+
+// ============================================================================
+// Agent read-only execution (queryReadOnly)
+// ----------------------------------------------------------------------------
+// Driven through the provider's fourth constructor argument, a transport that records every call, so the order and
+// the options of each request are pinned: the engine probe before every statement, a fresh query id per request,
+// the budget's deadline and byte cap, and the cancel of the statement's own id past the deadline. The answers are the
+// ones tests/fixtures/druid/37.0.0/agent-boundary/ records.
+// ============================================================================
+
+describe("queryReadOnly", () => {
+  const AGENT_BUDGET = { statementTimeoutMs: 30000, maxResultRows: 3, maxResultBytes: 1000 };
+  const NATIVE_INSERT_REFUSAL = new DruidTransportError(
+    "INSERT operations are not supported by requested SQL engine [native], consider using MSQ.",
+    "INVALID_INPUT",
+    "invalidInput",
+    "USER",
+  );
+  const PROBE =
+    /^INSERT INTO "libredb_agent_probe_[0-9a-f]{24}" SELECT TIME_PARSE\('2026-01-01'\) AS __time PARTITIONED BY ALL$/;
+
+  const rowsOf = (rows: Record<string, unknown>[]): DruidQueryResult => ({
+    rows,
+    fieldNames: rows.length === 0 ? [] : Object.keys(rows[0]),
+    sqlTypes: {},
+    nativeTypes: {},
+    executionTimeMs: 4,
+    unavailableSegments: null,
+  });
+
+  interface AgentCall {
+    sql: string;
+    opts: DruidAgentQueryOptions;
+  }
+
+  /** A transport answering the probe with the native engine's refusal and every other statement from `answer`. */
+  function recording(
+    answer: (sql: string, opts: DruidAgentQueryOptions) => Promise<DruidQueryResult> = async () => rowsOf([{ n: 1 }]),
+  ) {
+    const agent: AgentCall[] = [];
+    const cancels: { queryId: string; signal: AbortSignal }[] = [];
+    const editor: string[] = [];
+    let cancelAnswer: () => Promise<DruidCancelOutcome> = async () => "cancelled";
+    const transport: DruidTransport = {
+      kind: "http",
+      query: async (sql) => {
+        editor.push(sql);
+        return rowsOf([{ EXPR$0: 1 }]);
+      },
+      agentQuery: async (sql, opts) => {
+        agent.push({ sql, opts });
+        if (PROBE.test(sql)) throw NATIVE_INSERT_REFUSAL;
+        return answer(sql, opts);
+      },
+      cancel: async (queryId, signal) => {
+        cancels.push({ queryId, signal });
+        return cancelAnswer();
+      },
+      close: async () => undefined,
+    };
+    return {
+      transport,
+      agent,
+      cancels,
+      editor,
+      answerCancel: (next: () => Promise<DruidCancelOutcome>) => {
+        cancelAnswer = next;
+      },
+    };
+  }
+
+  async function open(recorded: ReturnType<typeof recording>, execution = { readOnly: true, sendsStatements: true }) {
+    const provider = new DruidProvider(makeConnection(), {}, execution, () => recorded.transport);
+    await provider.connect();
+    return provider;
+  }
+
+  test("an open under the profile proves the native engine, after the editor's probe", async () => {
+    const recorded = recording();
+    await open(recorded);
+    expect(recorded.editor).toEqual([CONNECT_PROBE]);
+    expect(recorded.agent).toHaveLength(1);
+    expect(recorded.agent[0].sql).toMatch(PROBE);
+    expect(recorded.agent[0].opts).toMatchObject({ timeoutMs: 15000, maxResponseBytes: 65536 });
+  });
+
+  test("an editor open and an open that sends no statement send no probe", async () => {
+    for (const execution of [{}, { readOnly: true }, { readOnly: true, sendsStatements: false }]) {
+      const recorded = recording();
+      await open(recorded, execution as { readOnly: boolean; sendsStatements: boolean });
+      expect(recorded.agent).toEqual([]);
+    }
+  });
+
+  test("an open whose probe the server runs is refused with the profile's own error, and closes its transport", async () => {
+    const recorded = recording();
+    let closed = false;
+    recorded.transport.agentQuery = async () => rowsOf([]);
+    recorded.transport.close = async () => {
+      closed = true;
+    };
+    const provider = new DruidProvider(
+      makeConnection(),
+      {},
+      { readOnly: true, sendsStatements: true },
+      () => recorded.transport,
+    );
+    const error = await provider.connect().catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_SERVER_UNENFORCED");
+    expect(closed).toBe(true);
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("refuses on a handle not opened under the profile, sending nothing", async () => {
+    const recorded = recording();
+    const provider = await open(recorded, {} as { readOnly: boolean; sendsStatements: boolean });
+    const error = await provider.queryReadOnly("SELECT 1 AS a", AGENT_BUDGET).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect((error as Error).message).toBe(
+      "Read-only execution requires a provider opened under the agent read-only profile",
+    );
+    expect(recorded.agent).toEqual([]);
+  });
+
+  test("probes the engine again before every statement, then sends the statement under a fresh id, the budget's timeout and its byte cap", async () => {
+    const recorded = recording();
+    const provider = await open(recorded);
+    const first = await provider.queryReadOnly("SELECT 1 AS a", AGENT_BUDGET);
+    await provider.queryReadOnly("SELECT 2 AS a", AGENT_BUDGET);
+    expect(first.rows).toEqual([{ n: 1 }]);
+    expect(first.fields).toEqual(["n"]);
+    const sent = recorded.agent.map((call) => (PROBE.test(call.sql) ? "probe" : call.sql));
+    expect(sent).toEqual(["probe", "probe", "SELECT 1 AS a", "probe", "SELECT 2 AS a"]);
+    const statements = recorded.agent.filter((call) => !PROBE.test(call.sql));
+    for (const call of statements) {
+      expect(call.opts.timeoutMs).toBe(30000);
+      expect(call.opts.maxResponseBytes).toBe(2 * 1000 + 65536);
+      expect(call.opts.queryId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    }
+    const ids = recorded.agent.map((call) => call.opts.queryId);
+    expect(new Set(ids).size).toBe(ids.length);
+    const probes = recorded.agent.filter((call) => PROBE.test(call.sql)).map((call) => call.sql);
+    expect(new Set(probes).size).toBe(probes.length);
+    // The probe and the statement of one call share its deadline.
+    expect(recorded.agent[1].opts.signal).toBe(recorded.agent[2].opts.signal);
+    expect(recorded.agent[1].opts.timeoutMs).toBe(15000);
+  });
+
+  test("a probe the server runs mid-handle refuses the statement, which is never sent", async () => {
+    const recorded = recording();
+    const provider = await open(recorded);
+    recorded.transport.agentQuery = async (sql, opts) => {
+      recorded.agent.push({ sql, opts });
+      return rowsOf([]);
+    };
+    const error = await provider.queryReadOnly("SELECT 1 AS a", AGENT_BUDGET).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect(recorded.agent.at(-1)?.sql).toMatch(PROBE);
+  });
+
+  test("a probe that cannot reach the server is the environment's failure, not the statement's", async () => {
+    const recorded = recording();
+    const provider = await open(recorded);
+    recorded.transport.agentQuery = async () => {
+      throw new DruidTransportError("Druid request failed: connection refused at 127.0.0.1:8888");
+    };
+    const error = await provider.queryReadOnly("SELECT 1 AS a", AGENT_BUDGET).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as Error).message).toBe(
+      "The agent read-only execution profile's check of the Druid engine could not be read: Failed to connect to druid database: Druid request failed: connection refused at 127.0.0.1:8888",
+    );
+  });
+
+  test.each([
+    ["SET engine = 'msq-task'; INSERT INTO t SELECT 1 AS a PARTITIONED BY ALL"],
+    ["INSERT INTO t SELECT 1 AS a PARTITIONED BY ALL"],
+    ["SELECT 1 AS a; SELECT 2 AS b"],
+    ["SELECT 1 AS a -- x\r, 2 AS b"],
+  ])("refuses %j before anything is sent", async (sql) => {
+    const recorded = recording();
+    const provider = await open(recorded);
+    const before = recorded.agent.length;
+    const error = await provider.queryReadOnly(sql, AGENT_BUDGET).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect((error as Error).message).toBe(druidAgentStatementRefusal(sql) ?? "admitted");
+    expect(recorded.agent).toHaveLength(before);
+  });
+
+  test("composes no estimating plan, and refuses a budget the shared check refuses", async () => {
+    const recorded = recording();
+    const provider = await open(recorded);
+    await expect(provider.queryReadOnly("SELECT 1 AS a", AGENT_BUDGET, "estimate-plan")).rejects.toThrow(
+      "Druid composes no estimating plan for the agent",
+    );
+    await expect(provider.queryReadOnly("SELECT 1 AS a", { ...AGENT_BUDGET, maxResultRows: 0 })).rejects.toBeInstanceOf(
+      QueryError,
+    );
+    expect(recorded.agent).toHaveLength(1);
+  });
+
+  test("refuses a result past the row budget, never cuts it", async () => {
+    const recorded = recording(async () => rowsOf([{ n: 1 }, { n: 2 }, { n: 3 }, { n: 4 }]));
+    const provider = await open(recorded);
+    await expect(provider.queryReadOnly("SELECT n FROM t", AGENT_BUDGET)).rejects.toThrow(
+      "Read-only execution exceeded the row budget: 4 rows > 3 allowed",
+    );
+  });
+
+  test("refuses a result past the byte budget", async () => {
+    const recorded = recording(async () => rowsOf([{ s: "x".repeat(2000) }]));
+    const provider = await open(recorded);
+    await expect(provider.queryReadOnly("SELECT s FROM t", AGENT_BUDGET)).rejects.toThrow(
+      "Read-only execution exceeded the byte budget",
+    );
+  });
+
+  test("refuses an answer the transport stopped reading at its byte cap", async () => {
+    const recorded = recording(async (_sql, opts) => {
+      throw new DruidAnswerTooLargeError(opts.maxResponseBytes);
+    });
+    const provider = await open(recorded);
+    const error = await provider.queryReadOnly("SELECT s FROM t", AGENT_BUDGET).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toStartWith("Read-only execution exceeded the byte budget");
+    expect((error as Error).message).toEndWith("; the server's answer passed that many bytes and was not read further");
+    expect(recorded.cancels).toEqual([]);
+  });
+
+  test("a statement the server stopped at its own timeout is refused on the time budget, and nothing is cancelled", async () => {
+    const recorded = recording(async () => {
+      throw new DruidTransportError("Query [x] timed out!", "TIMEOUT", "legacyQueryException", "OPERATOR");
+    });
+    const provider = await open(recorded);
+    await expect(provider.queryReadOnly("SELECT n FROM t", AGENT_BUDGET)).rejects.toThrow(
+      "Read-only execution exceeded the time budget: the server stopped the statement at 30000ms",
+    );
+    expect(recorded.cancels).toEqual([]);
+  });
+
+  describe("past the deadline", () => {
+    /** A statement that waits for its signal and fails as the aborted fetch does. */
+    const hangs = async (_sql: string, opts: DruidAgentQueryOptions): Promise<DruidQueryResult> =>
+      new Promise((_resolve, reject) => {
+        opts.signal.addEventListener("abort", () =>
+          reject(new DruidTransportError("Druid request failed: The operation timed out.")),
+        );
+      });
+    const SHORT = { ...AGENT_BUDGET, statementTimeoutMs: 20 };
+
+    test("cancels the statement's own id, and says the server was told to stop it", async () => {
+      const recorded = recording(hangs);
+      const provider = await open(recorded);
+      await expect(provider.queryReadOnly("SELECT n FROM t", SHORT)).rejects.toThrow(
+        "Read-only execution exceeded the time budget: no answer within 20ms; the statement was cancelled on the server",
+      );
+      const statement = recorded.agent.at(-1);
+      expect(statement?.sql).toBe("SELECT n FROM t");
+      expect(recorded.cancels.map((cancel) => cancel.queryId)).toEqual([statement?.opts.queryId ?? "no statement"]);
+      expect(recorded.cancels[0].signal.aborted).toBe(false);
+    });
+
+    test("says so when the server holds no statement under the id any longer", async () => {
+      const recorded = recording(hangs);
+      recorded.answerCancel(async () => "not-found");
+      const provider = await open(recorded);
+      await expect(provider.queryReadOnly("SELECT n FROM t", SHORT)).rejects.toThrow(
+        "Read-only execution exceeded the time budget: no answer within 20ms; the server holds no statement under its id any longer",
+      );
+    });
+
+    test("names a cancel that could not be confirmed, and still refuses on the time budget", async () => {
+      const recorded = recording(hangs);
+      recorded.answerCancel(async () => {
+        throw new DruidTransportError("Druid refused the cancel with HTTP 403");
+      });
+      const provider = await open(recorded);
+      await expect(provider.queryReadOnly("SELECT n FROM t", SHORT)).rejects.toThrow(
+        "Read-only execution exceeded the time budget: no answer within 20ms; its cancel could not be confirmed: Druid refused the cancel with HTTP 403",
+      );
+    });
+
+    test("a deadline that passes during the probe refuses on the time budget, and cancels nothing", async () => {
+      const recorded = recording();
+      const provider = await open(recorded);
+      recorded.transport.agentQuery = (sql, opts) => hangs(sql, opts);
+      await expect(provider.queryReadOnly("SELECT n FROM t", SHORT)).rejects.toThrow(
+        "Read-only execution exceeded the time budget: no answer within 20ms",
+      );
+      expect(recorded.cancels).toEqual([]);
+    });
+  });
+
+  test("a statement the server refuses is the statement's to repair", async () => {
+    const recorded = recording(async () => {
+      throw new DruidTransportError("Object 'nope' not found", "INVALID_INPUT", "invalidInput", "USER");
+    });
+    const provider = await open(recorded);
+    const error = await provider.queryReadOnly("SELECT n FROM nope", AGENT_BUDGET).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toBe("Object 'nope' not found");
   });
 });
