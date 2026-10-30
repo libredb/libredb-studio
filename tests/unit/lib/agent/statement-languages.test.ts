@@ -9,6 +9,7 @@ import { fingerprintWeaviateapi, weaviateapiRowCapAdvice } from "@/lib/agent/lan
 import { fingerprintQdrantapi, qdrantapiRowCapAdvice } from "@/lib/agent/languages/qdrantapi/adapter";
 import { fingerprintMilvusrpc, milvusrpcRowCapAdvice } from "@/lib/agent/languages/milvusrpc/adapter";
 import { fingerprintRediscli, rediscliRowCapAdvice } from "@/lib/agent/languages/rediscli/adapter";
+import { etcdctlRowCapAdvice, fingerprintEtcdctl } from "@/lib/agent/languages/etcdctl/adapter";
 import { languageServer, languageServerPack } from "@/lib/agent/languages/server";
 import {
   admitLibredbkvStatement,
@@ -50,6 +51,12 @@ import {
   rediscliAgentReadInput,
 } from "@/lib/db/operations/rediscli-admission";
 import { REDIS_AGENT_SENTENCES } from "@/lib/db/providers/keyvalue/redis-agent-statement";
+import {
+  admitEtcdctlStatement,
+  ETCDCTL_AGENT_MAX_STATEMENT_CHARS,
+  etcdctlAgentReadInput,
+} from "@/lib/db/operations/etcdctl-admission";
+import { ETCD_AGENT_SENTENCES } from "@/lib/db/providers/keyvalue/etcd/agent-statement";
 import { INFLUXQL_AGENT_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-statement";
 import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 
@@ -816,5 +823,70 @@ describe("the rediscli language's server adapter and admission", () => {
   test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
     expect(Object.keys(AGENT_WORKFLOW_VARIANTS.rediscli).sort()).toEqual(["investigation", "operations"]);
     expect(AGENT_WORKFLOW_VARIANTS.rediscli.investigation?.canAutoExecute).toBe(false);
+  });
+});
+
+describe("the etcdctl language's server adapter and admission", () => {
+  test("the fingerprint is the request the reader sends, so one read written two ways is one identity", () => {
+    const one = fingerprintEtcdctl("get /app/config");
+    expect(fingerprintEtcdctl('get "/app/config"')).toBe(one);
+    expect(fingerprintEtcdctl("  get /app/config")).toBe(one);
+    expect(fingerprintEtcdctl("get /app/other")).not.toBe(one);
+    expect(fingerprintEtcdctl("endpoint status")).not.toBe(one);
+    expect(fingerprintEtcdctl('get "" --prefix --count-only')).toBe(
+      fingerprintEtcdctl('get "" --from-key --count-only'),
+    );
+  });
+
+  test("the fingerprint is total: a refused command is identified by its raw text, so it is refused again", () => {
+    const raw = "get /app/ --prefix";
+    expect(fingerprintEtcdctl(raw)).toBe(fingerprintEtcdctl(raw));
+    expect(fingerprintEtcdctl(raw)).toMatch(/^[0-9a-f]{64}$/);
+    expect(fingerprintEtcdctl(`${raw} `)).not.toBe(fingerprintEtcdctl(raw));
+  });
+
+  test("only a list can pass the row budget, so the advice names the reads that answer one row", () => {
+    expect(AGENT_LANGUAGE_COPY.etcdctl.adviceKeys).toEqual([]);
+    expect(etcdctlRowCapAdvice("member list", "2")).toBe(
+      "Ask for at most 2 rows: member list, alarm list and lease list answer one row per member, alarm or lease, so read one lease with lease timetolive, or the cluster with endpoint status.",
+    );
+    expect(languageServer("etcdctl").shapeAdvice).toContain("a valid etcdctl command");
+  });
+
+  test("the admission is the provider's reader, plus a length the agent's contract names", () => {
+    expect(admitEtcdctlStatement("endpoint status")).toBeNull();
+    expect(admitEtcdctlStatement("get /app/ --prefix")).toEqual({
+      code: "metadata-only",
+      message: ETCD_AGENT_SENTENCES.metadataOnly,
+    });
+    expect(admitEtcdctlStatement("get /app/config --rev=2")?.code).toBe("arguments");
+    const long = `get /${"k".repeat(ETCDCTL_AGENT_MAX_STATEMENT_CHARS)}`;
+    expect(admitEtcdctlStatement(long)).toEqual({
+      code: "agent-too-large",
+      message: `The command is longer than ${ETCDCTL_AGENT_MAX_STATEMENT_CHARS} characters, the most an agent read takes: shorten it. Nothing was sent.`,
+    });
+    expect(languageServer("etcdctl").admit?.("member list")).toBeNull();
+  });
+
+  test("an ungrounded run is sent to a read it holds, and plan mode is told none of the reader's rules", () => {
+    const ungrounded = languageServerPack("etcdctl").grounding.ungrounded;
+    expect(ungrounded?.("The capture failed.", { singular: "key prefix", plural: "key prefixes" })).toBe(
+      "The capture failed.\nSo nothing about this cluster's keys has been established for you: not one key prefix name, and none will be, since key names are withheld from agent mode. Read what you need with run_read_query, starting with endpoint status.",
+    );
+    expect(languageServerPack("etcdctl").grounding.planningRules).toBeUndefined();
+  });
+
+  test("the descriptor's input is strict, carries the command, and refuses what the admission refuses", () => {
+    expect(etcdctlAgentReadInput.safeParse({ statement: "alarm list" }).success).toBe(true);
+    expect(etcdctlAgentReadInput.safeParse({ statement: "alarm list", sql: "x" }).success).toBe(false);
+    const refused = etcdctlAgentReadInput.safeParse({ statement: "watch /app/config" });
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues[0]?.path).toEqual(["statement"]);
+    expect(refused.error?.issues[0]?.message).toBe(ETCD_AGENT_SENTENCES.metadataOnly);
+  });
+
+  test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
+    expect(Object.keys(AGENT_WORKFLOW_VARIANTS.etcdctl).sort()).toEqual(["investigation", "operations"]);
+    expect(AGENT_WORKFLOW_VARIANTS.etcdctl.investigation?.canAutoExecute).toBe(false);
   });
 });
