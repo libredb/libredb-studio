@@ -6,7 +6,12 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { ExecutionProfileError } from "@/lib/db/errors";
-import { type GraphClient, GraphClientError, type GraphRunOptions, type GraphRunResult } from "@/lib/db/graph/bolt/client";
+import {
+  type GraphClient,
+  GraphClientError,
+  type GraphRunOptions,
+  type GraphRunResult,
+} from "@/lib/db/graph/bolt/client";
 import {
   NEO4J_AGENT_PROOF_ROW_BOUND,
   NEO4J_AGENT_PROOF_STATEMENTS,
@@ -260,12 +265,18 @@ describe("proveNeo4jAgentPrincipal", () => {
     expect(proveNeo4jAgentPrincipal(client, { ...OPTIONS, signal })).rejects.toBe(cancelled);
   });
 
-  test.each([
-    ["a user row naming another user", { user: "someone", roles: ["PUBLIC"] }],
-    ["roles that are not strings", { user: "agent", roles: [1] }],
-    ["no user", { roles: ["PUBLIC"] }],
-    ["a second row", { user: "agent", roles: ["PUBLIC"] }, { user: "agent", roles: ["PUBLIC", "admin"] }],
-  ])("refuses SHOW CURRENT USER answering %s", async (_label, ...rows) => {
+  test.each<[string, Record<string, unknown>[]]>([
+    ["a user row naming another user", [{ user: "someone", roles: ["PUBLIC"] }]],
+    ["roles that are not strings", [{ user: "agent", roles: [1] }]],
+    ["no user", [{ roles: ["PUBLIC"] }]],
+    [
+      "a second row",
+      [
+        { user: "agent", roles: ["PUBLIC"] },
+        { user: "agent", roles: ["PUBLIC", "admin"] },
+      ],
+    ],
+  ])("refuses SHOW CURRENT USER answering %s", async (_label, rows) => {
     const answer = { fields: ["user", "roles"], rows, truncated: false };
     const message = (await refusal(agentWith(NEO4J_AGENT_PROOF_STATEMENTS.currentUser, answer))).message;
     expect(message).toMatch(/could not read the server's answer to (SHOW CURRENT USER|SHOW USER PRIVILEGES)/);
