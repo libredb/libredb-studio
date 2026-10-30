@@ -47,7 +47,16 @@ A cluster admin installs the operator once per cluster, names the namespace of t
    oc -n openshift-operators patch installplan <name> --type merge -p '{"spec":{"approved":true}}'
    ```
 
-2. Name the cluster Studio namespace in the Subscription's `spec.config.env` as `LIBREDB_CLUSTER_STUDIO_NAMESPACE`; OLM restarts the operator with it.
+2. As a cluster admin, create the cluster Studio namespace before you name it, and check that nobody else holds a RoleBinding in it:
+
+   ```sh
+   oc create namespace libredb-studio
+   oc get rolebindings -n libredb-studio
+   ```
+
+   `oc create namespace` fails when the namespace already exists; do not reuse an existing one, because any user may request a project, and the user who requested it administers it.
+   Only the default ServiceAccount bindings should be listed.
+   Then name it in the Subscription's `spec.config.env` as `LIBREDB_CLUSTER_STUDIO_NAMESPACE`; OLM restarts the operator with it.
    The console's install form has no field for it, so after a console install set it with this patch.
    The patch replaces the whole `spec.config.env` list, so list any other variable already set there in it as well:
 
@@ -57,7 +66,7 @@ A cluster admin installs the operator once per cluster, names the namespace of t
    ```
 
    The first operator release after 1.1.0 reads this variable; 1.1.0 neither reads it nor renders openshift sign-in.
-3. Create that namespace, with RoleBindings for cluster admins only (see [The cluster Studio namespace](#the-cluster-studio-namespace)), and one `LibreDBStudio` in it with openshift-mode values.
+3. Create one `LibreDBStudio` in that namespace with openshift-mode values, and keep its RoleBindings to cluster admins only (see [The cluster Studio namespace](#the-cluster-studio-namespace)).
    The spec takes the chart's values, which the [chart README](../charts/libredb-studio/README.md#openshift-sign-in) documents:
 
    ```yaml
@@ -93,6 +102,7 @@ Unsetting or changing the variable later does not remove what the cluster Studio
 
 Whoever may edit the `LibreDBStudio` in the cluster Studio namespace chooses the namespaces Studio discovers and is a Studio admin, and the operator carries out that choice with its own service account.
 So only cluster admins may hold RoleBindings in that namespace: the guard above rests on it.
+Create it with `oc create namespace` as a cluster admin, never through a project request, since the user who requests a project administers it; a namespace that already existed when you named it needs its RoleBindings checked first.
 Run one Studio with discovery per cluster there; a team's own Studio runs without discovery in the team's namespace.
 
 ### What the operator may do
