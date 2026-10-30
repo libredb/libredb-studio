@@ -72,6 +72,8 @@ const UNSERVED_OFFERS: Readonly<Partial<Record<DatabaseType, readonly AgentToolN
   cassandra: ["inspect_plan", "profile_table"],
   // And on Couchbase, since the agent path sends only a SELECT, never an EXPLAIN.
   couchbase: ["inspect_plan", "profile_table"],
+  // And on Druid, for the same reason.
+  druid: ["inspect_plan", "profile_table"],
 };
 
 /**

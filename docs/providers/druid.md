@@ -960,6 +960,7 @@ Every one of these is **HTTP 400** and every message below is quoted verbatim fr
 the alternative, which is more useful than a substitute, and `mapDruidError()` surfaces it verbatim as
 a `QueryError`. Note that `UPDATE` and `DELETE` are not "unimplemented on this endpoint" — they are
 not in Druid SQL *anywhere*, on any engine.
+Agent mode rests on these refusals, proven before every agent statement ([§15](#15-agent-mode-the-native-engine-proven-before-every-statement)).
 
 **`INSERT` and `REPLACE` do exist, but only through the MSQ task engine on
 `POST /druid/v2/sql/task`**, which is out of scope for #265: it is a submit/poll protocol that returns
@@ -2071,3 +2072,85 @@ The refusal reason it prints, verbatim:
 - `EXPLAIN PLAN FOR`: <https://druid.apache.org/docs/latest/querying/sql-translation>
 - Native batch ingestion: <https://druid.apache.org/docs/latest/ingestion/native-batch>
 - Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [MongoDB](./mongodb.md) · [Couchbase](./couchbase.md) · [ClickHouse](./clickhouse.md) · [Trino](./trino.md) · [Redis](./redis.md) · [LibreDB](./libredb.md)
+
+## 15. Agent mode: the native engine, proven before every statement
+
+Agent mode executes statements on Druid through `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/sql/druid/index.ts), with the engine check and the statement fence in [`agent-boundary.ts`](../../src/lib/db/providers/sql/druid/agent-boundary.ts).
+Every fact below was measured on `apache/druid:37.0.0`, digest-pinned, as the seven services of the `druid` profile, once unsecured and once with `druid-basic-security`, and is recorded in [`tests/fixtures/druid/37.0.0/agent-boundary/`](../../tests/fixtures/druid/37.0.0/agent-boundary/), whose `run.sh` starts the cluster and re-records every capture.
+
+### 15.1 The boundary is the engine
+
+The boundary is engine-enforced: under the request context `engine: native`, the SQL endpoint refuses every write, whoever asks (captures 01 and 06).
+`INSERT` and `REPLACE`, in every spelling measured (lower case, after a comment, with a column list, `CLUSTERED BY`, `OVERWRITE WHERE`, from `EXTERN`, an export `INSERT INTO EXTERN(...)`, `UPSERT`, and behind `EXPLAIN PLAN FOR`), are refused as operations the native engine does not support; `UPDATE`, `DELETE` and `MERGE` as unsupported statements; `CREATE`, `DROP`, `ALTER` and `TRUNCATE` as outside the grammar; and a `SELECT` that reads `EXTERN` as unplannable on the native engine.
+Under druid-basic-security the refusals are the same for a user holding `READ` on one datasource, for one holding `WRITE` on every datasource and `READ` on `EXTERNAL`, and for the administrator, and no row is written (capture 06).
+The positive control: the same `INSERT` through the MSQ task endpoint, `POST /druid/v2/sql/task`, which the provider never calls, writes, for the user holding `WRITE` and for an unsecured caller, and is refused with 403 to the user holding only `READ` (captures 01 and 06).
+
+What would move the engine is the statement or the request (capture 01).
+A `SET engine = 'msq-task'` before a statement, or the request context's own `engine: "msq-task"`, selects the MSQ engine, which Druid 37 refuses on this endpoint (`Unsupported engine[msq-task]`), and the same holds for `msq-dart` with Dart off; a top-level `engine` field beside the context is ignored.
+A `SET` also replaces the request context's own keys: `SET sqlQueryId = '...'` names the statement's query id in place of the context's.
+So the provider does not lean on Druid refusing another engine: the transport writes the context itself, exactly `engine: "native"`, a fresh `sqlQueryId` and the budget's `timeout`, and takes no key from the caller, and the fence (15.3) sends no `SET`.
+
+No least-privilege principal can be proven, so none is required.
+A druid-basic-security user reads its own permissions through the authorizer's API only when it holds `CONFIG` `READ`, which also shows it every role and every user's credential salt and hash; a user holding `READ` on a datasource, or `STATE` `READ`, is refused with 403 (capture 05).
+The server's own filters decide what a `SELECT` reaches: `INFORMATION_SCHEMA` and `sys.segments` and `sys.tasks` list only the datasources the user may read, `sys.servers` and `sys.server_properties` are refused without `STATE` `READ`, another datasource is refused with 403, and `EXTERN` is refused with 403 to a user holding no `EXTERNAL` `READ` before the engine refuses it to one that does (capture 06).
+Unsecured, every caller reads `sys.server_properties`, whose values Druid masks for the keys `druid.server.hiddenProperties` names (any key containing `password`, `key`, `token` or `pwd`, by default).
+SQL has no JavaScript function (`JAVASCRIPT` is "No match found for function signature"), the input-source table functions (`http`, `localfiles`, `inline`, `s3`) are refused, and `LOOKUP` reads the cluster's lookups (capture 01).
+An agent credential beside a connection string is refused before the provider is built, as on every engine.
+
+### 15.2 The check, before every statement
+
+`verifyDruidAgentEngine` runs at the open of a handle under the agent read-only profile and again before every agent statement, keeping no verdict between calls.
+It sends, under the agent request's own context, `INSERT INTO "libredb_agent_probe_<24 hex>" SELECT TIME_PARSE('2026-01-01') AS __time PARTITIONED BY ALL`, a datasource no one holds, and admits the server only when it answers category `INVALID_INPUT` with exactly `INSERT operations are not supported by requested SQL engine [native], consider using MSQ.`, which it does before it asks whether the user may write there (capture 06).
+A server that ran the `INSERT` is refused as one that does not enforce the engine (`PROFILE_SERVER_UNENFORCED`); any other answer, another engine's refusal or a permission refusal included, is refused as unmeasured (`PROFILE_UNSUPPORTED_TARGET`); a failure to reach the server leaves as it came.
+The operations profile sends no statement, so it opens without the check and plan mode grounds on any connection.
+
+### 15.3 The statement path
+
+Only one statement whose first keyword is `SELECT` or `WITH` is sent, refused before anything is sent otherwise (`druidAgentStatementRefusal`), because a `SET` before a statement would select another engine and replace the request's query id.
+The text is read with the Druid SQL grammar row ([`sql-grammar.ts`](../../src/lib/db/providers/sql/druid/sql-grammar.ts)): `--`, `//` and block comments and whitespace skipped, string literals and double-quoted names opaque, a hint and an array's brackets read as code, and a code semicolon ending the statement with only comments and whitespace after it.
+Capture 02 measures each reading against the server: block comments do not nest, a `--` and a `//` comment end at a line feed and at a lone carriage return but not at a form feed, U+2028 or U+0085, the server runs `SELECT 1 AS a;;` and refuses a second statement unless every statement before the last is a `SET`, and `$` is a letter in a name.
+Two readings a reader can differ on are refused before the walk: a carriage return inside a `--` or `//` comment with more text after it, and a `$$` run, which the span reader reads as a string and Druid as a name.
+Text ending inside a comment, a string or a name is refused; that includes a plain literal ending in a backslash, which Druid closes (`'a\'` answers `a\`) and the reader cannot place, and an `E'...'` literal with an escaped quote.
+`(SELECT ...)`, `VALUES` and `EXPLAIN PLAN FOR` run on the server and are refused by the fence all the same.
+
+Each statement goes out on a request of its own (`DruidTransport.agentQuery` in [`http-transport.ts`](../../src/lib/db/providers/sql/druid/http-transport.ts)) whose body holds the statement, the array result format and its three header flags, and the context above, in that order and nothing else: no parameter, and no key a previous request named.
+One deadline, the budget's, bounds the check and the statement together, and the server stops the statement at the same `timeout` (504, category `TIMEOUT`).
+The answer is read as it streams and the read is cancelled the moment it passes twice the byte budget plus 64 KiB; a result past the row or the byte budget is refused, never cut.
+A statement the server refuses, a datasource the user may not read included, is answered as the statement's failure, so the agent can repair it; a check that cannot be read is the environment's.
+
+### 15.4 The cancel past the deadline
+
+Past the deadline the client stops waiting and sends `DELETE /druid/v2/sql/<query id>` for the statement's own id, on a deadline of its own, and the refusal says what it answered: cancelled (202), no statement under the id any longer (404), or a cancel that could not be confirmed.
+Measured in capture 03, a statement the data servers compute ends at the cancel (500, `Sequence canceled`) and at the context's timeout (504), while one the Broker computes itself over inline data, a cross join of `UNNEST` arrays, runs to its end after a 202 and past its timeout alike.
+So the cancel ends the wait everywhere, and the work only where the data servers do it; such a statement holds Broker threads until it ends, as it would from the editor.
+Under druid-basic-security a user cancels a statement by its id when it may read the statement's datasources, another user's statement included, and an unauthenticated cancel is refused with 401 (capture 07); the query id is a fresh random UUID per request, so no other caller can name the agent's, and the agent sends no `DELETE`.
+
+### 15.5 Agent language pack
+
+Statement-language family: `sql`.
+Overlay: [`src/lib/agent/languages/sql/engines/druid.ts`](../../src/lib/agent/languages/sql/engines/druid.ts), with its client row in [`src/lib/agent/languages/sql/engines/client.ts`](../../src/lib/agent/languages/sql/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`, and the dialect through `engineServerDialect`.
+
+| Member | Kind | Value |
+| --- | --- | --- |
+| `catalogRead` | Dialect-bound | Supplied |
+| `planEstimate` | Dialect-bound | `"unsupported"` |
+| `profileComposition` | Dialect-bound | `"unsupported"` |
+| `statistics` | Dialect-bound | `"unsupported"` |
+| `catalogCapture` | Dialect-bound | `"unsupported"` |
+
+The overlay overrides no Shared member, so the engine resolves to the `sql` family pack itself for those.
+The column kind reads `INFORMATION_SCHEMA.COLUMNS`, which the server filters to the datasources the user may read (capture 06), leaving the `sys` schema and `INFORMATION_SCHEMA` itself out, and answers `table_schema`, `table_name`, `column_name`, `data_type`, `is_nullable` and `ordinal_position`; the relation kind answers the same projection the other engines answer with no rows, since a datasource cannot reference another.
+The index and statistics kinds are refused with `SELECTOR_UNSUPPORTED_BY_DIALECT`: every dimension is indexed inside its segments, and the catalog keeps no row count.
+So investigation, database assessment and data analysis open here and send their statements through `queryReadOnly`, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`; database assessment cannot pass with no table profile ([B146](../BACKLOG.md)), and the `sql-composers` requirement holds query optimization out, since the agent path sends no `EXPLAIN PLAN FOR` ([B151](../BACKLOG.md)); plan mode drafts here as on every engine.
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+MCP's statement read stays closed on Druid (`MCP_STATEMENT_READ.druid` is false) until a change of its own opens it.
+
+### 15.6 Boundary record
+
+`bun tests/live/druid-agent-boundary.ts`, run on 2026-10-30 against the cluster `run.sh secured` starts, passes 34 checks through the production path (`createDatabaseProvider` with the profile's execution context, `connect`, `queryReadOnly`) and with no admission of Studio's in front.
+The open admits a user holding `READ` on one datasource, one holding `WRITE` on every datasource and the administrator, since the boundary is the engine; a wrong password is refused by the editor's own probe before the check; the operations profile opens.
+A `SET` before a statement, `INSERT`, `REPLACE`, `EXPLAIN PLAN FOR`, a second statement, a carriage return inside a line comment, a `$$` run and a `SET sqlQueryId` are each refused before anything is sent.
+Behind the fence, `INSERT`, `REPLACE`, a `SET engine = 'msq-task'` before an `INSERT` and the context's own `msq-task` engine, sent raw as the user holding `WRITE` and as the administrator, are each refused by the engine with 400 `INVALID_INPUT`, and the datasource reads the same after; the check's probe, as a user holding no `WRITE`, gets the native engine's own refusal; the MSQ task endpoint writes the same `INSERT` for the user holding `WRITE`, the positive control, and refuses it with 403 to the user holding only `READ`.
+`EXTERN` passes the fence and the server refuses it; another datasource is refused to the user who may not read it as the statement's failure (`Druid refused the statement with HTTP 403: Unauthorized`); the composed column read lists only the datasource the user may read, and the relation read answers no rows.
+The row, byte and time budgets refuse, and past the deadline the client cancels the statement's own query id, on the data servers and on the Broker over inline data alike, the server answering 202 to both.

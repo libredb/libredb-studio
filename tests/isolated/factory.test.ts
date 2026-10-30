@@ -63,6 +63,7 @@ import { encryptSecret } from "@/lib/storage/encryption";
 import type { SSHTunnelConfig } from "@/lib/types";
 import { CassandraTransportError } from "@/lib/db/providers/sql/cassandra/transport";
 import { CouchbaseError } from "@/lib/db/providers/document/couchbase/transport";
+import { DruidTransportError } from "@/lib/db/providers/sql/druid/transport";
 
 // The SQLite agent-profile tests below construct the read-only profile for its
 // query_only boundary, not to exercise the child transport. The worker's node:sqlite
@@ -777,6 +778,44 @@ describe("createDatabaseProvider", () => {
         sent.push(statement);
         if (statement.startsWith("DELETE")) throw new CouchbaseError("no query_delete", 13014);
         return { rows: [{ x: 1 }], fieldNames: ["x"], executionTimeMs: 1, mutationCount: 0, warnings: [] };
+      },
+    };
+    for (const provider of [profiled, editor]) {
+      Object.assign(provider, { ensureConnected: () => undefined, transport });
+    }
+    await expect(editor.queryReadOnly("SELECT 1", AGENT_BUDGET)).rejects.toThrow(
+      "Read-only execution requires a provider opened under the agent read-only profile",
+    );
+    expect(sent).toEqual([]);
+    await expect(profiled.queryReadOnly("SELECT 1", AGENT_BUDGET)).resolves.toMatchObject({ rows: [{ x: 1 }] });
+    expect(sent.at(-1)).toBe("SELECT 1");
+  });
+
+  test("the execution context rides along to druid: queryReadOnly answers only under the agent profile", async () => {
+    const conn = makeConnection("druid", { port: 8888 });
+    const profiled = await createDatabaseProvider(conn, {}, { readOnly: true, sendsStatements: true });
+    const editor = await createDatabaseProvider(conn);
+    if (profiled.queryReadOnly === undefined || editor.queryReadOnly === undefined) throw new Error("no queryReadOnly");
+    // A transport answering the engine probe with the native engine's refusal and the statement with one row, so only
+    // the context tells the two apart.
+    const sent: string[] = [];
+    const transport = {
+      agentQuery: async (statement: string) => {
+        sent.push(statement);
+        if (statement.startsWith("INSERT")) {
+          throw new DruidTransportError(
+            "INSERT operations are not supported by requested SQL engine [native], consider using MSQ.",
+            "INVALID_INPUT",
+          );
+        }
+        return {
+          rows: [{ x: 1 }],
+          fieldNames: ["x"],
+          sqlTypes: {},
+          nativeTypes: {},
+          executionTimeMs: 1,
+          unavailableSegments: null,
+        };
       },
     };
     for (const provider of [profiled, editor]) {

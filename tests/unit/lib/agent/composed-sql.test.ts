@@ -9,6 +9,7 @@ import { AgentComposedSqlError, MAX_CATALOG_SELECTOR_LENGTH } from "@/lib/agent/
 import { engineServerDialect } from "@/lib/agent/languages/engines/server";
 import { withoutExtensionOwnershipTest } from "@/lib/agent/languages/sql/engines/postgres";
 import { agentReadSqlInput, inspectAgentStatement } from "@/lib/db/operations/statement-guard";
+import { druidAgentStatementRefusal } from "@/lib/db/providers/sql/druid/agent-boundary";
 import {
   AGENT_REQUIREMENT_ENGINES,
   AGENT_STATEMENT_LANGUAGE,
@@ -1898,5 +1899,53 @@ describe("composeCatalogRead — Couchbase", () => {
 
   test("it composes no estimating plan, since the agent path sends only a SELECT", () => {
     expect(() => composeEstimatingExplain("couchbase", "SELECT 1")).toThrow(AgentComposedSqlError);
+  });
+});
+
+/**
+ * Druid reads its catalog with a SELECT on INFORMATION_SCHEMA, which the server filters to the datasources the user may
+ * read (measured on 37.0.0 as a user holding READ on one datasource, `tests/fixtures/druid/37.0.0/agent-boundary/`
+ * capture 06), and every statement here is one the agent fence admits.
+ */
+describe("composeCatalogRead: Druid", () => {
+  const COLUMNS =
+    "SELECT TABLE_SCHEMA AS table_schema, TABLE_NAME AS table_name, COLUMN_NAME AS column_name, " +
+    "DATA_TYPE AS data_type, IS_NULLABLE AS is_nullable, ORDINAL_POSITION AS ordinal_position " +
+    "FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA NOT IN ('sys', 'INFORMATION_SCHEMA')";
+
+  test("the column kind is exactly the statement below, narrowed by schema and table", () => {
+    expect(composeCatalogRead("druid", { kind: "columns" })).toBe(
+      `${COLUMNS} ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION`,
+    );
+    expect(composeCatalogRead("druid", { kind: "columns", schema: "druid", table: "libredb_o'brien" })).toBe(
+      `${COLUMNS} AND TABLE_SCHEMA = 'druid' AND TABLE_NAME = 'libredb_o''brien' ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION`,
+    );
+    expect(guardAccepts(composeCatalogRead("druid", { kind: "columns", table: "a" }))).toBe(true);
+    expect(druidAgentStatementRefusal(composeCatalogRead("druid", { kind: "columns", table: "a;b" }))).toBeNull();
+    // A backslash, which ends a plain Druid literal and which the fence's reader cannot place, never reaches it.
+    expect(() => composeCatalogRead("druid", { kind: "columns", table: "a\\" })).toThrow(AgentComposedSqlError);
+  });
+
+  test("the relation kind is the projection the other engines answer, with no rows, since Druid has no foreign key", () => {
+    const sql = composeCatalogRead("druid", { kind: "relations", schema: "druid" });
+    expect(sql).toBe(
+      "SELECT TABLE_SCHEMA AS table_schema, TABLE_NAME AS table_name, COLUMN_NAME AS column_name, " +
+        "'' AS referenced_schema, '' AS referenced_table, '' AS referenced_column " +
+        "FROM INFORMATION_SCHEMA.COLUMNS WHERE 1 = 0 AND TABLE_SCHEMA = 'druid'",
+    );
+    expect(druidAgentStatementRefusal(sql)).toBeNull();
+  });
+
+  test("the index and statistics kinds are refused, each naming why", () => {
+    expect(() => composeCatalogRead("druid", { kind: "indexes", schema: "druid" })).toThrow(
+      "Druid keeps no index object, since every dimension is indexed inside its segments, so there is no such inventory to read",
+    );
+    expect(() => composeCatalogRead("druid", { kind: "statistics", schema: "druid" })).toThrow(
+      "Druid keeps no row count in its catalog, only in the segment list, which is not read here, so there is no such inventory to read",
+    );
+  });
+
+  test("it composes no estimating plan, since the agent path sends only a SELECT", () => {
+    expect(() => composeEstimatingExplain("druid", "SELECT 1")).toThrow(AgentComposedSqlError);
   });
 });

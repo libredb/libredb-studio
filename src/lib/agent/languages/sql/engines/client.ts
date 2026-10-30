@@ -9,6 +9,7 @@ import type { CASSANDRA_SERVER_OVERLAY } from "./cassandra";
 import type { CLICKHOUSE_SERVER_OVERLAY } from "./clickhouse";
 import type { COUCHBASE_SERVER_OVERLAY } from "./couchbase";
 import type { DB2_SERVER_OVERLAY } from "./db2";
+import type { DRUID_SERVER_OVERLAY } from "./druid";
 import type { DUCKDB_SERVER_OVERLAY } from "./duckdb";
 import type { ELASTICSEARCH_SERVER_OVERLAY } from "./elasticsearch";
 import type { INFLUXDB3_SERVER_OVERLAY } from "./influxdb3";
@@ -118,3 +119,10 @@ export const COUCHBASE_CLIENT_OVERLAY = {
     catalogCapture: "unsupported",
   } satisfies ClientDialectOf<(typeof COUCHBASE_SERVER_OVERLAY)["dialect"]>),
 } as const satisfies { dialect: ClientDialectOf<(typeof COUCHBASE_SERVER_OVERLAY)["dialect"]> };
+export const DRUID_CLIENT_OVERLAY = {
+  dialect: Object.freeze({
+    catalogRead: "supported",
+    planEstimate: "unsupported",
+    catalogCapture: "unsupported",
+  } satisfies ClientDialectOf<(typeof DRUID_SERVER_OVERLAY)["dialect"]>),
+} as const satisfies { dialect: ClientDialectOf<(typeof DRUID_SERVER_OVERLAY)["dialect"]> };

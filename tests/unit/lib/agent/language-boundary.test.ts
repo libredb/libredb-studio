@@ -179,7 +179,7 @@ const ALLOWLIST: Readonly<Record<string, number>> = Object.freeze({
   [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R5a "sql"`]: 1,
   [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "mongo"`]: 1,
   [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "kubectl"`]: 1,
-  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R5a "sql"`]: 14,
+  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R5a "sql"`]: 15,
   [`${AGENT}/agent-manifest.ts#AgentStatementArgument: R5a "sql"`]: 1,
   [`${AGENT}/tools.ts#argument: R5a "sql"`]: 1,
   [`${AGENT}/investigation.ts#planningStatementContract: R5a "sql"`]: 2,
@@ -221,6 +221,7 @@ const ALLOWLIST: Readonly<Record<string, number>> = Object.freeze({
   [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "db2"`]: 1,
   [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "cassandra"`]: 1,
   [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "couchbase"`]: 1,
+  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "druid"`]: 1,
   [`${AGENT}/config.ts#AgentDurableBackend: R8a "postgres"`]: 1,
   [`${AGENT}/config.ts#SANCTIONED_WORLD_TARGETS: R8a "postgres"`]: 1,
   [`${AGENT}/config.ts#resolveAgentAvailability: R8a "postgres"`]: 1,
@@ -955,7 +956,7 @@ describe("every engine overlay is declared satisfies its overlay type", () => {
     const exported = sourcesUnder(LANGUAGES)
       .filter((file) => new RegExp(`^${LANGUAGES}/[^/]+/engines/`).test(file))
       .flatMap((file) => Array.from(read(file).matchAll(/^export const (\w+_(SERVER|CLIENT)_OVERLAY)\b/gm)));
-    expect(exported).toHaveLength(32);
+    expect(exported).toHaveLength(34);
   });
 
   test("an overlay that drops its satisfies fails R6", () => {

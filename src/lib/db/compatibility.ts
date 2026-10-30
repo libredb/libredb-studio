@@ -281,6 +281,7 @@ export const READ_ONLY_ENFORCED: Record<DatabaseType, boolean> = Object.freeze({
   db2: false,
   mssql: false,
   clickhouse: false,
+  // Agent mode executes statements on Druid, and MCP read stays closed on it until a change of its own opens it.
   druid: false,
   trino: false,
   cassandra: false,

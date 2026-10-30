@@ -8408,6 +8408,7 @@ Elasticsearch has no profile composition either and opens assessment by the same
 Oracle and Db2 are in the same position: each overlay supplies the catalog read and declares `profileComposition` `"unsupported"`, so assessment opens there and its verdict can never be met; also reasoned from the code, not measured.
 Apache Cassandra is in the same position, for the same reason (B149); also reasoned from the code, not measured.
 Couchbase is in the same position, for the same reason (B150), measured 2026-10-30 on enterprise-8.0.2 in a browser pass: an assessment run had `compose_report` held twice for `no-table-profile` and ended with the goal verdict `unanswered`.
+Apache Druid is in the same position, for the same reason (B151); reasoned from the code, not measured.
 `docs/AGENT.md` records the choice to leave that need unheld (B111, B140, B143, B144); this entry is the claim that it should change, since a workflow offered on an engine where it cannot pass reads as a broken one.
 
 **Done when:** the database assessment workflow's requirement admits an engine only where its pass check can be met, derived from a dialect capability such as a supplied profile composition rather than a type-id branch, so it is not offered on OpenSearch, Elasticsearch, Oracle or Db2 until they gain one, with a test that holds the requirement to the pass check; cited in `docs/AGENT.md`.
@@ -8459,6 +8460,18 @@ Kept so that the engine joined on the members measured on it, and nothing compos
 Found 2026-10-30 with agent execution on Couchbase.
 
 **Done when:** the Couchbase overlay gains an estimating plan whose `EXPLAIN SELECT` the agent path's fence admits, measured on 8.0, and a profile composition, or a recorded decision that it keeps none, with tests for each; cited in `docs/AGENT.md`.
+
+### B151. Apache Druid composes no estimating plan, profile, statistics reading or grounding capture
+
+Druid's engine overlay (`src/lib/agent/languages/sql/engines/druid.ts`) supplies the catalog read alone: the column kind reads `INFORMATION_SCHEMA.COLUMNS`, which the server filters to the datasources the user may read, and the relation kind answers the projection the other engines answer with no rows, since a datasource cannot reference another; the index and statistics kinds are refused, since every dimension is indexed inside its segments and the catalog keeps no row count (the segment list does, and is not read).
+The other four dialect members are `"unsupported"`: the estimating plan, the profile composition, the statistics reading and the grounding capture.
+Druid has `EXPLAIN PLAN FOR`, and the editor reads its native plan, but the provider sends only one statement whose first keyword is `SELECT` or `WITH` on the agent path, since a `SET` before a statement selects another engine and replaces the request's query id; an estimating plan would need that fence to admit `EXPLAIN PLAN FOR SELECT` by the server's own reading, never measured for the fence. A table profile would be an aggregate over a whole datasource, never measured.
+So investigation, database assessment and data analysis open on Druid, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`, and database assessment, which needs a table profile, opens but cannot pass (B146); the `sql-composers` requirement holds query optimization out; plan mode drafts there and grounds under the operations profile.
+Kept so that the engine joined on the members measured on it, and nothing composed from another engine's rule.
+
+Found 2026-10-30 with agent execution on Apache Druid.
+
+**Done when:** the Druid overlay gains an estimating plan whose `EXPLAIN PLAN FOR` the agent path's fence admits, measured on 37.0, and a profile composition, or a recorded decision that it keeps none, with tests for each; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

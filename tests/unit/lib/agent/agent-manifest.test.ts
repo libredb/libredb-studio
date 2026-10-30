@@ -98,6 +98,7 @@ describe("the requirement mirrors", () => {
       "db2",
       "cassandra",
       "couchbase",
+      "druid",
     ]);
     expect(Object.isFrozen(AGENT_REQUIREMENT_ENGINES["sql-catalog"])).toBe(true);
     for (const type of AGENT_REQUIREMENT_ENGINES["sql-composers"]) {
