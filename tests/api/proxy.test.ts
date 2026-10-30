@@ -937,11 +937,34 @@ describe("proxy with host-prefixed cookie names", () => {
     }
   }
 
-  function request(url: string, host: string, cookie?: string, basePath?: string): NextRequest {
+  function request(
+    url: string,
+    host: string,
+    cookie?: string,
+    basePath?: string,
+    forwardedProto?: string,
+  ): NextRequest {
     const headers: Record<string, string> = { host };
     if (cookie !== undefined) headers.cookie = cookie;
+    if (forwardedProto !== undefined) headers["x-forwarded-proto"] = forwardedProto;
     return new NextRequest(url, { headers, ...(basePath ? { nextConfig: { basePath } } : {}) });
   }
+
+  // A proxy that terminates TLS and forwards to loopback: the route handlers name the cookie __Host-auth-token from
+  // x-forwarded-proto, so the proxy must read that header too, or every sign-in loops back to /login.
+  test("a loopback host behind a TLS proxy reads __Host-auth-token only", async () => {
+    const token = await createToken("user");
+    await inProduction(async () => {
+      const prefixed = await proxy(
+        request("http://localhost:3000/", "localhost:3000", `__Host-auth-token=${token}`, undefined, "https"),
+      );
+      expect(isRedirect(prefixed)).toBe(false);
+      const plain = await proxy(
+        request("http://localhost:3000/", "localhost:3000", `auth-token=${token}`, undefined, "https"),
+      );
+      expect(getRedirectLocation(plain)).toBe("http://localhost:3000/login");
+    });
+  });
 
   test("a page with only a valid plain-named cookie goes to sign in", async () => {
     const token = await createToken("user");
