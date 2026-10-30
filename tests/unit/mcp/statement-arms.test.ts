@@ -75,6 +75,8 @@ describe("MCP_STATEMENT_ARMS", () => {
     expect(mcpStatementToolFor("milvus")).toBeNull();
     expect(MCP_STATEMENT_ARMS.rediscli).toBeNull();
     expect(mcpStatementToolFor("redis")).toBeNull();
+    expect(MCP_STATEMENT_ARMS.etcdctl).toBeNull();
+    expect(mcpStatementToolFor("etcd")).toBeNull();
   });
 
   test("is built from the languages' MCP facets, one arm per declared facet, in the registry's order", () => {
@@ -401,6 +403,7 @@ describe("the tool each engine is read with", () => {
       cypher: null,
       milvusrpc: null,
       rediscli: null,
+      etcdctl: null,
     };
     expect(servingStatementArms(arms)).toEqual([RUN_READ_QUERY_ARM]);
     const registerTool = mock((_name: string) => undefined);

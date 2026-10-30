@@ -20,6 +20,7 @@ import { QDRANT_SERVER_OVERLAY } from "../qdrantapi/engines/qdrant";
 import { NEO4J_SERVER_OVERLAY } from "../cypher/engines/neo4j";
 import { MILVUS_SERVER_OVERLAY } from "../milvusrpc/engines/milvus";
 import { REDIS_SERVER_OVERLAY } from "../rediscli/engines/redis";
+import { ETCD_SERVER_OVERLAY } from "../etcdctl/engines/etcd";
 import type { AgentStatementLanguageId } from "../../agent-manifest";
 import { statementFamilyOf } from "../client";
 import { defineOverlay } from "../overlay";
@@ -74,6 +75,7 @@ const SERVER_OVERLAYS: AgentEngineServerOverlays = Object.freeze({
   neo4j: Object.freeze({ ...NEO4J_SERVER_OVERLAY }),
   milvus: Object.freeze({ ...MILVUS_SERVER_OVERLAY }),
   redis: Object.freeze({ ...REDIS_SERVER_OVERLAY }),
+  etcd: Object.freeze({ ...ETCD_SERVER_OVERLAY }),
 } satisfies AgentEngineServerOverlays);
 
 /** What an engine with no dialect answers: every member unsupported. */

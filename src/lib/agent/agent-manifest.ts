@@ -37,7 +37,8 @@ export type AgentStatementLanguageId =
   | "qdrantapi"
   | "cypher"
   | "milvusrpc"
-  | "rediscli";
+  | "rediscli"
+  | "etcdctl";
 
 /** Literal-typed, so `AgentEngineFamily` in `languages/pack.ts` reads each engine's language by type. */
 export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
@@ -63,7 +64,7 @@ export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
   redis: "rediscli",
   prometheus: null,
   kafka: null,
-  etcd: null,
+  etcd: "etcdctl",
   neo4j: "cypher",
   milvus: "milvusrpc",
   qdrant: "qdrantapi",

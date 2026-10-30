@@ -84,10 +84,9 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // because a MongoDB document is JSON too, and `fenceTagEngine` is what decides whether a plan's
   // deliverable was written for THIS connection.
   kafka: true,
-  // An ```etcd block holds one etcdctl command the editor runs as it is (#1089). No alias is
-  // registered below: `sh`, `bash` and `shell` name no engine, which is the reason `sql` maps to
-  // no engine in `ALIAS_ENGINES`, and `etcdctl`, which names etcd alone, is left out until plan
-  // runs show a model writing it.
+  // An ```etcd block holds one etcdctl command the editor runs as it is (#1089). `sh`, `bash` and
+  // `shell` name no engine, which is the reason `sql` maps to no engine in `ALIAS_ENGINES`; the
+  // `etcdctl` alias below names the agent's language, and it still names this engine: see its entry.
   etcd: true,
   // A ```neo4j block holds one read-only Cypher statement the editor runs as it is (Neo4j spec 6.4). The
   // `cypher` alias below spells the language, and it still names this engine: see its entry.
@@ -180,6 +179,7 @@ export const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "qdrantapi",
   "milvusrpc",
   "rediscli",
+  "etcdctl",
 ]);
 
 /**
@@ -235,6 +235,8 @@ export const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.free
   milvusrpc: "milvus",
   // The agent's name for the Redis command language, and `redis` is the only type-id that runs it.
   rediscli: "redis",
+  // The agent's name for the etcdctl command language, and `etcd` is the only type-id that runs it.
+  etcdctl: "etcd",
 });
 
 /**

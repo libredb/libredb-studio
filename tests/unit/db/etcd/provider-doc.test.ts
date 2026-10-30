@@ -16,7 +16,7 @@ import path from "node:path";
 import { parse as parseYAML } from "yaml";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
-import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import type { EtcdClient } from "@/lib/db/providers/keyvalue/etcd/client";
 import { buildEtcdConnectionOptions, ETCD_DEFAULT_PORT } from "@/lib/db/providers/keyvalue/etcd/connection-options";
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
@@ -217,11 +217,13 @@ describe("the read-only recipe, in the provider doc and in docs/SEED_CONNECTIONS
   });
 });
 
-describe("docs/providers/etcd.md section 3.5 states the machine access the product refuses (E12)", () => {
-  test("no agent execution and no MCP for etcd", () => {
-    expect(AGENT_EXECUTION_ENGINES).not.toContain("etcd");
+describe("docs/providers/etcd.md section 3.5 states the machine access the product gives and refuses (E12)", () => {
+  test("agent execution reads metadata only, and MCP stays closed for etcd", () => {
+    expect(AGENT_EXECUTION_ENGINES).toContain("etcd");
     expect(MCP_EXPOSABLE.etcd).toBe(false);
-    expect(MACHINE).toContain("the agent's execution mode refuses etcd");
+    expect(MCP_STATEMENT_READ.etcd).toBe(false);
+    expect(MACHINE).toContain("The provider's read-only query path is agent mode's alone and reads metadata only");
+    expect(MACHINE).toContain("MCP stays closed");
   });
 
   test("the MCP refusal quoted is the one the seed schema gives", () => {

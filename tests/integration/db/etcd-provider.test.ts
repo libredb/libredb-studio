@@ -782,6 +782,43 @@ describe("E13: key names stay in the Keys panel and the Source tab", () => {
 // A user who is not root (spec 4.3, 4.7)
 // ============================================================================
 
+describe("agent mode over the real adapter: metadata only", () => {
+  /** A handle the operations profile opens: the one plan mode and the operations workflow ground on. */
+  async function operationsHandle() {
+    const provider = new EtcdProvider(ETCD, {}, { readOnly: true, sendsStatements: false }, (options, hooks) =>
+      createGrpcEtcdClient(options, hooks, clusterWire().transport),
+    );
+    await provider.connect();
+    return provider;
+  }
+
+  test("queryReadOnly is refused on an editor handle, before anything is sent", async () => {
+    const { provider } = await connected(ETCD, clusterWire());
+    await expect(
+      provider.queryReadOnly("endpoint status", { maxResultRows: 10, maxResultBytes: 4096, statementTimeoutMs: 1000 }),
+    ).rejects.toThrow("Read-only execution requires a provider opened under the agent read-only profile");
+    await provider.disconnect();
+  });
+
+  test("the grounding capture on an agent-mode handle names no group and no key, and says why", async () => {
+    const provider = await operationsHandle();
+    const captured = JSON.stringify(await snapshotOf(provider, ETCD));
+    for (const group of SEEDED_GROUPS)
+      expect({ group, found: captured.includes(group) }).toEqual({ group, found: false });
+    const texts = ALL.kvs.map((kv) => kv.key.toString("utf8")).filter((text) => !text.includes("\uFFFD"));
+    for (const text of texts) {
+      const needle = text === "plain" ? JSON.stringify(text) : text;
+      expect({ key: text, found: captured.includes(needle) }).toEqual({ key: text, found: false });
+    }
+    expect((await provider.countObjects([])).prefix).toEqual({
+      unavailable:
+        "Agent mode on etcd reads metadata only, and key names count as stored values, so no key, key prefix or key range is listed to it.",
+    });
+    await expect(provider.getTableStats()).rejects.toThrow("key names count as stored values");
+    await provider.disconnect();
+  });
+});
+
 describe("the reader of spec 9 (spec 4.3, 4.7)", () => {
   test("counts its groups over its two ranges, names no range, and says which three kinds it may not list", async () => {
     const { provider } = await connected(READER, readerWire());

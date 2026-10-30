@@ -19,6 +19,7 @@ import { QDRANTAPI_CLIENT_PACK } from "./qdrantapi/client";
 import { CYPHER_CLIENT_PACK } from "./cypher/client";
 import { MILVUSRPC_CLIENT_PACK } from "./milvusrpc/client";
 import { REDISCLI_CLIENT_PACK } from "./rediscli/client";
+import { ETCDCTL_CLIENT_PACK } from "./etcdctl/client";
 import { LIBREDBKV_CLIENT_PACK } from "./libredbkv/client";
 import { MONGO_CLIENT_PACK } from "./mongo/client";
 import type {
@@ -59,6 +60,7 @@ const CLIENT_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageClien
   cypher: CYPHER_CLIENT_PACK,
   milvusrpc: MILVUSRPC_CLIENT_PACK,
   rediscli: REDISCLI_CLIENT_PACK,
+  etcdctl: ETCDCTL_CLIENT_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageClientPack>);
 
 /** The client facet for `language`. The record is total, so a typed id always has one. */
@@ -99,6 +101,7 @@ export const AGENT_EVIDENCE_EVENTS = mergeDisjoint(
     CYPHER_CLIENT_PACK.evidenceEvents,
     MILVUSRPC_CLIENT_PACK.evidenceEvents,
     REDISCLI_CLIENT_PACK.evidenceEvents,
+    ETCDCTL_CLIENT_PACK.evidenceEvents,
   ],
   "AGENT_EVIDENCE_EVENTS",
 ) satisfies AgentEvidenceEventSpecs<AgentPackEvidenceEvent>;
@@ -120,6 +123,7 @@ export const AGENT_PACK_SHORTFALL_SENTENCES = mergeDisjoint(
     CYPHER_CLIENT_PACK.shortfallSentences,
     MILVUSRPC_CLIENT_PACK.shortfallSentences,
     REDISCLI_CLIENT_PACK.shortfallSentences,
+    ETCDCTL_CLIENT_PACK.shortfallSentences,
   ],
   "AGENT_PACK_SHORTFALL_SENTENCES",
 ) satisfies Record<AgentPackShortfall, string>;
@@ -137,6 +141,7 @@ export const AGENT_PACK_READING_REFUSAL_HEADLINES = mergeDisjoint(
     CYPHER_CLIENT_PACK.readingRefusalHeadlines,
     MILVUSRPC_CLIENT_PACK.readingRefusalHeadlines,
     REDISCLI_CLIENT_PACK.readingRefusalHeadlines,
+    ETCDCTL_CLIENT_PACK.readingRefusalHeadlines,
   ],
   "AGENT_PACK_READING_REFUSAL_HEADLINES",
 ) satisfies Record<AgentPackReadingDenyCode, string>;
@@ -157,6 +162,7 @@ export const AGENT_PACK_REQUIREMENTS = mergeDisjoint(
     CYPHER_CLIENT_PACK.requirements,
     MILVUSRPC_CLIENT_PACK.requirements,
     REDISCLI_CLIENT_PACK.requirements,
+    ETCDCTL_CLIENT_PACK.requirements,
   ],
   "AGENT_PACK_REQUIREMENTS",
 ) satisfies Record<AgentPackVariantRequirement, AgentVariantRequirementSpec>;

@@ -519,8 +519,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   redis: true,
   prometheus: true,
   kafka: true,
-  // The first engine MCP is not offered for (#1089 E12): the provider implements no read-only query path, and a seed
-  // that sets `mcp: true` on an etcd connection is refused when the seed file loads.
+  // The first engine MCP is not offered for (#1089 E12): key names and values carry secrets, the provider's read-only
+  // query path is agent mode's alone and reads metadata only, and no MCP surface is decided for it yet (BACKLOG B136),
+  // so a seed that sets `mcp: true` on an etcd connection is refused when the seed file loads.
   etcd: false,
   // Offered for the two metadata tools, `list_connections` and `inspect_schema` (Neo4j spec 6.4).
   // `run_read_query` does not serve it, because the provider implements no `queryReadOnly`.
@@ -631,6 +632,8 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   redis: false,
   prometheus: false,
   kafka: false,
+  // Agent mode executes metadata-only reads on etcd, and MCP read stays closed on it until a change of its own opens
+  // it.
   etcd: false,
   // Agent mode executes statements on Neo4j, and MCP read stays closed on it until a change of its own opens it.
   neo4j: false,

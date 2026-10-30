@@ -23,6 +23,9 @@ import { MILVUSRPC_PACK } from "@/lib/agent/languages/milvusrpc/index";
 import * as REDISCLI_CLIENT_OVERLAYS from "@/lib/agent/languages/rediscli/engines/client";
 import * as REDIS from "@/lib/agent/languages/rediscli/engines/redis";
 import { REDISCLI_PACK } from "@/lib/agent/languages/rediscli/index";
+import * as ETCDCTL_CLIENT_OVERLAYS from "@/lib/agent/languages/etcdctl/engines/client";
+import * as ETCD from "@/lib/agent/languages/etcdctl/engines/etcd";
+import { ETCDCTL_PACK } from "@/lib/agent/languages/etcdctl/index";
 import * as KUBECTL_CLIENT_OVERLAYS from "@/lib/agent/languages/kubectl/engines/client";
 import * as KUBERNETES from "@/lib/agent/languages/kubectl/engines/kubernetes";
 import * as LIBREDBKV_CLIENT_OVERLAYS from "@/lib/agent/languages/libredbkv/engines/client";
@@ -118,6 +121,8 @@ const ENGINE_MODULES: Readonly<Record<string, Readonly<Record<string, unknown>>>
   "milvusrpc/engines/client": MILVUSRPC_CLIENT_OVERLAYS,
   "rediscli/engines/redis": REDIS,
   "rediscli/engines/client": REDISCLI_CLIENT_OVERLAYS,
+  "etcdctl/engines/etcd": ETCD,
+  "etcdctl/engines/client": ETCDCTL_CLIENT_OVERLAYS,
 };
 
 /** Every overlay an engine module exports, named `<module>#<export>`. */
@@ -150,6 +155,7 @@ describe("the engine registry", () => {
       "mongodb",
       "couchbase",
       "redis",
+      "etcd",
       "neo4j",
       "milvus",
       "qdrant",
@@ -205,7 +211,7 @@ describe("the engine registry", () => {
 
   test("every engine module's server overlay holds a dialect and overridable members, its client one a dialect alone (ruling 2)", () => {
     const exported = exportedOverlays();
-    expect(exported).toHaveLength(48);
+    expect(exported).toHaveLength(50);
     // The one other export is the PostgreSQL retry's rewrite, which its tests call directly.
     expect(
       Object.entries(ENGINE_MODULES)
@@ -274,6 +280,7 @@ describe("the engine packs", () => {
     expect(agentEnginePack("neo4j")).toBe(CYPHER_PACK);
     expect(agentEnginePack("milvus")).toBe(MILVUSRPC_PACK);
     expect(agentEnginePack("redis")).toBe(REDISCLI_PACK);
+    expect(agentEnginePack("etcd")).toBe(ETCDCTL_PACK);
   });
 
   test.each(SQL_ENGINES)("%s is the SQL pack member for member, with its own dialect on the server facet", (type) => {
@@ -326,6 +333,7 @@ describe("engineServerDialect", () => {
       "neo4j",
       "milvus",
       "redis",
+      "etcd",
     ] as DatabaseType[]) {
       expect(Object.keys(engineServerOverlay(type))).toEqual([]);
     }
@@ -552,6 +560,7 @@ describe("the client dialect", () => {
       "neo4j",
       "milvus",
       "redis",
+      "etcd",
     ] as const) {
       expect(engineClientPack(type).dialect).toBeUndefined();
     }

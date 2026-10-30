@@ -48,9 +48,15 @@ describe("fenceTagEngine", () => {
     for (const engine of engines) expect(fenceTagEngine(engine)).toBe(engine);
   });
 
-  test("etcd has no alias: the shell tags name no engine, and etcdctl is not registered (#1089)", () => {
+  test("the shell tags name no engine: `sql` and an untagged fence get the same answer (#1089)", () => {
     // `null` is fenceTagEngine's "names no engine", the answer an untagged fence and `sql` get.
-    for (const tag of ["sh", "bash", "shell", "etcdctl"]) expect(fenceTagEngine(tag)).toBeNull();
+    for (const tag of ["sh", "bash", "shell"]) expect(fenceTagEngine(tag)).toBeNull();
+    expect(fenceTagEngine("etcd")).toBe("etcd");
+  });
+
+  test("etcdctl names etcd, the agent's name for the only command language etcd runs", () => {
+    expect(fenceTagEngine("etcdctl")).toBe("etcd");
+    expect(isQueryFenceTag("etcdctl")).toBe(true);
     expect(fenceTagEngine("etcd")).toBe("etcd");
   });
 

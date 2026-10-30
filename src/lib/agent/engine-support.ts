@@ -127,6 +127,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "neo4j",
   "milvus",
   "redis",
+  "etcd",
 ];
 
 /**

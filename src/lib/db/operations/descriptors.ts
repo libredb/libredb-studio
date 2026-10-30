@@ -32,6 +32,7 @@ import { milvusrpcAgentReadInput } from "./milvusrpc-admission";
 import { mongoAgentReadInput } from "./mongo-admission";
 import { qdrantapiAgentReadInput } from "./qdrantapi-admission";
 import { rediscliAgentReadInput } from "./rediscli-admission";
+import { etcdctlAgentReadInput } from "./etcdctl-admission";
 import { weaviateapiAgentReadInput } from "./weaviateapi-admission";
 import { agentPlanExecutionSqlInput, agentQueryReadSqlInput, agentReadSqlInput } from "./statement-guard";
 import type { RegistrableOperationDescriptor } from "./types";
@@ -591,6 +592,42 @@ const milvusrpcQueryReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+const ETCDCTL_READ_BOUNDARY =
+  "etcd: the provider's closed table of metadata reads (agent-statement.ts), read with the editor's own etcdctl " +
+  "parser and mapped to one fixed request each: endpoint status, member list, alarm list, auth status, lease list, " +
+  "lease timetolive without its keys, the count of every key, and one key's metadata, with no revision, range end, " +
+  "limit or consistency of the request's own. Before the open and before every command the server proves the user " +
+  "reads only (agent-read-only-proof.ts): authentication must be on, the user must not be root or hold the root role, " +
+  "and every permission of every role, read from the server with UserGet and RoleGet, must be READ, so a user that " +
+  "writes even one key range is refused; a call the roles do not govern, such as a lease grant, is stopped by the " +
+  "table, which sends none. Key names and stored values are withheld: nothing lists keys, reads a value or watches, " +
+  "every answer is projected to names, counts and sizes (agent-metadata-read.ts), an etcd failure is worded by its " +
+  "category alone, and a result past the row or byte budget is refused, never truncated.";
+
+/**
+ * One etcd metadata read the model wrote, on an `etcd` connection.
+ *
+ * R1 on a structural boundary: the table can name no write and no read of a key name or value, and the server proves
+ * the user read-only before every command. Its own id, and not a widened `sql.query.read`, so the SQL contract and its
+ * audit action stay exactly what they were.
+ */
+const etcdctlQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "etcdctl.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: etcdctlAgentReadInput,
+  verification: {
+    reviewedBy: "etcd agent execution design review",
+    boundary: ETCDCTL_READ_BOUNDARY,
+    verifiedOn: "2026-10-30",
+  },
+};
+
 const REDISCLI_READ_BOUNDARY =
   "Redis: the provider's closed table of metadata reads, each flagged readonly by the server's own COMMAND INFO and " +
   "none flagged write, admin, pubsub, may_replicate or script_runner, in no write, admin, dangerous, scripting or " +
@@ -834,6 +871,7 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   cypherQueryReadDescriptor,
   milvusrpcQueryReadDescriptor,
   rediscliQueryReadDescriptor,
+  etcdctlQueryReadDescriptor,
 ]);
 
 /**

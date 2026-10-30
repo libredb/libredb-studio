@@ -127,6 +127,7 @@ const LANGUAGE_IDS: Readonly<Record<AgentStatementLanguageId, true>> = {
   cypher: true,
   milvusrpc: true,
   rediscli: true,
+  etcdctl: true,
 };
 
 describe("the server packs", () => {
@@ -262,6 +263,7 @@ describe("the language packs", () => {
       "cypher",
       "milvusrpc",
       "rediscli",
+      "etcdctl",
     ]);
     expect(Object.isFrozen(LANGUAGE_TOOL_ARMS)).toBe(true);
   });
@@ -411,6 +413,7 @@ describe("the prompt tables the packs hold", () => {
       "cypher",
       "milvusrpc",
       "rediscli",
+      "etcdctl",
     ]);
     expect(Object.isFrozen(WORKFLOW_TOOL_RULES)).toBe(true);
     for (const id of ids) {
@@ -513,6 +516,7 @@ describe("the client packs", () => {
         "cypher",
         "milvusrpc",
         "rediscli",
+        "etcdctl",
       ]);
     }
   });
@@ -531,6 +535,7 @@ describe("the client packs", () => {
       cypher: null,
       milvusrpc: null,
       rediscli: null,
+      etcdctl: null,
     });
   });
 

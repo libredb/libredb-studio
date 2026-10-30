@@ -159,6 +159,7 @@ describe("the plan-estimate operation of each language", () => {
       cypher: null,
       milvusrpc: null,
       rediscli: null,
+      etcdctl: null,
     });
     expect(Object.isFrozen(AGENT_PLAN_ESTIMATE_OPERATION)).toBe(true);
   });

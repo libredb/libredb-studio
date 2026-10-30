@@ -8463,14 +8463,19 @@ Found 2026-10-27 while designing read-only agent and MCP execution for every pro
 
 **Done when:** the engineering-units objection is answered, either by reading the units and the EU range beside each value or by an owner ruling, the provider implements `queryReadOnly` through the `OpcuaReadOnlyClient` seam with a test that pins its services, joins `AGENT_EXECUTION_ENGINES`, and MCP read is opened for it only on its own exposure ruling, with tests; cited in `docs/AGENT.md`.
 
-### B136. etcd has no agent execution and no MCP surface
+### B136. etcd's agent reads are metadata only, and it has no MCP statement tool
 
-`MCP_EXPOSABLE.etcd` is false and the provider implements no `queryReadOnly` (E12), so agent execution refuses etcd and an etcd seed with `mcp: true` is refused when the seed file loads (`docs/providers/etcd.md` section 3.5).
-Key names and values can carry secrets that the withholding table (E9, section 3.3) does not recognise, such as a secret stored under a custom prefix in an envelope Studio does not know, so any agent or MCP answer has to start from names and sizes, not values.
+Agent mode executes etcd metadata reads under the `etcdctl` statement language, as a user the server shows, before every command, has authentication on, holds neither the root user's name nor the root role, and holds READ permissions only on every role, read with `UserGet` and `RoleGet` (`docs/providers/etcd.md`, section 15).
+Key names count as stored values, since applications put ids, emails and tokens in them, and values can carry secrets that the withholding table (E9, section 3.3) does not recognise, so the reads are the cluster's status, members, alarms, authentication state and lease ids, one lease's time to live, the count of every key, and, for one key the command names, its existence, revisions, version, lease and value size: nothing lists keys, reads a value, watches or counts a prefix, a lease's attached keys and a role's permissions are not read, and every answer is projected to names, counts and sizes (`ProviderCapabilities.metadataOnly`, `src/lib/db/redaction/metadata-only.ts`).
+On a handle of either agent profile, the grounding of the investigation and of plan mode and the operations workflow list no key prefix and no key range, and the table statistics are refused, since each row would name a key prefix.
+So the language offers the investigation and the operations workflow only: data analysis needs stored values, and query optimization and database assessment need a plan and a profile the server does not compose.
+etcd v3.7.2 grants and revokes a lease for any authenticated user, a READ-only one included, so the proof cannot rule that out, and the closed table, which sends no lease call but the two reads, is what stops it.
+Its MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) and `MCP_EXPOSABLE.etcd` and `MCP_STATEMENT_READ.etcd` are false, so no MCP tool reads an etcd connection and an etcd seed with `mcp: true` is refused when the seed file loads (`docs/providers/etcd.md` section 3.5).
+Kept so that key-name and value exposure and MCP exposure are decisions of their own rather than side effects of agent mode joining.
 
-Found 2026-10-27 while designing read-only agent and MCP execution for every provider.
+Found 2026-10-27 while designing read-only agent and MCP execution for every provider; narrowed 2026-10-30 when agent mode joined etcd.
 
-**Done when:** the provider implements `queryReadOnly` over a read-kind allowlist of its typed gRPC calls, with a test that pins it, whose answers carry key names, counts and sizes and no value, and joins `AGENT_EXECUTION_ENGINES`; MCP stays closed until a per-engine exposure ruling opens it, and that ruling's surface is tested to return no value; cited in `docs/AGENT.md`.
+**Done when:** the owner rules on whether agent mode may read key names and which values it may read on etcd and how they are redacted, the `etcdctl` pack offers the workflows that ruling opens, a per-engine exposure ruling opens MCP for etcd, the pack declares its MCP facet (`src/lib/agent/languages/etcdctl/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same proof and projection, and `MCP_EXPOSABLE.etcd` and `MCP_STATEMENT_READ.etcd` are true, with tests that every MCP answer carries no value; cited in `docs/AGENT.md`.
 
 ### B137. Modbus has no agent execution and no MCP surface
 
