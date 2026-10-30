@@ -53,6 +53,7 @@ const {
   resetCookieSecurityWarning,
   readCookieSecureOverride,
   isLoopbackHost,
+  verifiedSessionCookie,
 } = await import("@/lib/auth");
 
 // ============================================================================
@@ -557,8 +558,9 @@ describe("auth", () => {
         claimRoles: maxClaimRoles,
       });
 
-      // Browser cookies are limited to 4096 bytes total
-      expect(token.length).toBeLessThan(4096);
+      // A browser drops a cookie whose name and value exceed 4096 bytes; the longest name is the
+      // __Host- one under a base path.
+      expect("__Host-auth-token.tools.libredb".length + token.length).toBeLessThan(4096);
 
       const verified = await verifyJWT(token);
       expect(verified?.claimRoles).toEqual(maxClaimRoles);
@@ -752,6 +754,101 @@ describe("auth", () => {
       expect(mockSetCalls[0].opts).toMatchObject({ path: "/tools/libredb", httpOnly: true, sameSite: "lax" });
       await logout();
       expect(mockDeleteCalls).toContainEqual({ name: "auth-token", path: "/tools/libredb" });
+    });
+  });
+
+  // Whenever the session cookie is Secure it is named __Host-auth-token: host-only, Path=/, no Domain. Readers accept
+  // only the name of the current mode, so a plain-named cookie is never read in Secure mode.
+  describe("host-prefixed names", () => {
+    const setNodeEnv = (value: string | undefined) => {
+      if (value === undefined) delete (process.env as Record<string, string>).NODE_ENV;
+      else (process.env as Record<string, string>).NODE_ENV = value;
+    };
+
+    async function inSecureMode(host: string, action: () => Promise<void>): Promise<void> {
+      const previous = process.env.NODE_ENV;
+      setNodeEnv("production");
+      mockRequestHeaders.host = host;
+      try {
+        await action();
+      } finally {
+        setNodeEnv(previous);
+      }
+    }
+
+    test("login() sets __Host-auth-token at Path=/ with Secure", async () => {
+      await inSecureMode("studio.example.com", () => login("admin", "admin"));
+      expect(mockSetCalls).toHaveLength(1);
+      expect(mockSetCalls[0].name).toBe("__Host-auth-token");
+      expect(mockSetCalls[0].opts).toMatchObject({ path: "/", secure: true, httpOnly: true, sameSite: "lax" });
+    });
+
+    test("readSession() never reads a plain-named cookie in Secure mode", async () => {
+      mockCookieStore["auth-token"] = { value: await signJWT({ role: "user", username: "user" }) };
+      await inSecureMode("studio.example.com", async () => {
+        expect((await readSession()).kind).toBe("anonymous");
+      });
+      expect(mockDeleteCalls).toEqual([]);
+    });
+
+    test("readSession() reads __Host-auth-token in Secure mode", async () => {
+      mockCookieStore["__Host-auth-token"] = { value: await signJWT({ role: "user", username: "user" }) };
+      await inSecureMode("studio.example.com", async () => {
+        const reading = await readSession();
+        expect(reading.kind).toBe("authenticated");
+      });
+    });
+
+    test("a refused session clears the __Host- name with Secure", async () => {
+      mockCookieStore["__Host-auth-token"] = { value: await signJWT({ role: "user", username: "user" }) };
+      const allowsSpy = spyOn(localAccounts, "storedAccountAllows").mockResolvedValue(false);
+      try {
+        await inSecureMode("studio.example.com", async () => {
+          expect((await readSession()).kind).toBe("anonymous");
+        });
+      } finally {
+        allowsSpy.mockRestore();
+      }
+      expect(mockDeleteCalls).toEqual([{ name: "__Host-auth-token", path: "/", secure: true }]);
+    });
+
+    test("logout() deletes __Host-auth-token with Secure, which a browser requires", async () => {
+      await inSecureMode("studio.example.com", () => logout());
+      expect(mockDeleteCalls).toEqual([{ name: "__Host-auth-token", path: "/", secure: true }]);
+    });
+
+    test("verifiedSessionCookie() reads only the name of the current mode", async () => {
+      mockCookieStore["auth-token"] = { value: await signJWT({ role: "user", username: "plain" }) };
+      await inSecureMode("studio.example.com", async () => {
+        expect(await verifiedSessionCookie()).toBeNull();
+        mockCookieStore["__Host-auth-token"] = { value: await signJWT({ role: "user", username: "host" }) };
+        expect((await verifiedSessionCookie())?.username).toBe("host");
+      });
+      expect((await verifiedSessionCookie())?.username).toBe("plain");
+    });
+
+    test("a loopback host over plain http keeps auth-token and the base path", async () => {
+      await withBasePathEnv("/tools/libredb", () =>
+        inSecureMode("localhost:3000", async () => {
+          await login("admin", "admin");
+          await logout();
+        }),
+      );
+      expect(mockSetCalls[0].name).toBe("auth-token");
+      expect(mockSetCalls[0].opts).toMatchObject({ path: "/tools/libredb", secure: false });
+      expect(mockDeleteCalls).toEqual([{ name: "auth-token", path: "/tools/libredb" }]);
+    });
+
+    test("under a base path the Secure name carries the path's segments", async () => {
+      await withBasePathEnv("/tools/libredb", () =>
+        inSecureMode("studio.example.com", async () => {
+          await login("admin", "admin");
+          await logout();
+        }),
+      );
+      expect(mockSetCalls[0].name).toBe("__Host-auth-token.tools.libredb");
+      expect(mockSetCalls[0].opts).toMatchObject({ path: "/", secure: true });
+      expect(mockDeleteCalls).toEqual([{ name: "__Host-auth-token.tools.libredb", path: "/", secure: true }]);
     });
   });
 });
