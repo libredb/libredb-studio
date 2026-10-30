@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D412, U17 · 302
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U170 · 156
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U172 · 158
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -6099,6 +6099,7 @@ Seen again 2026-10-30 on Weaviate 1.40.2 in a browser pass: the root key, a key 
 Seen again 2026-10-30 on Qdrant 1.19.1 in a browser pass: the API key and a JWT with `rw` on an alias each got the generic sentence, while the server log carried the provider's own, "Qdrant accepted an empty alias update from this key ..." and "This key is a JWT whose claims grant more than access r ... Give the agent the server's read-only API key, or a JWT whose access is r" (runs `arun_f04735b56682495a86c1376d9920fc55`, `arun_cc0257e0e7fa4e0c871d6555e77a6b9c`).
 Seen again 2026-10-30 on Neo4j Enterprise 5.26.31 in a browser pass: the administrator, a reader given a second role holding `LOAD ON ALL DATA`, a user with the `editor` role, a reader on a server with an extension it can execute, and the reader granted `csv_loader` and then `editor` mid-run each got the generic sentence, while the server log carried the provider's own, for example "this one holds LOAD on ALL DATA through the role csv_loader. Revoke LOAD from PUBLIC and from every role the user holds, or DENY LOAD ON ALL DATA to one of its roles" and "this one holds write on NODE(*) through the role editor" (runs `arun_ed755caa5c9246159791c925a8a7fd37`, `arun_c4d3e16d50c44348805ff9aa8a678d91`, `arun_fee86c69494545d9b42ac804381c0f02`, `arun_a51f13bcf17045a48f1ad15ebfd99330`, `arun_80e22ed174734bc7b5fbb4c23a3748ca`, `arun_2f4cf8e99b08464c9294812df115fd65`).
 Seen again 2026-10-30 on Milvus 3.0.2 in a browser pass: root, a `CollectionReadWrite` user, a reader holding `Insert` on a second database, and the reader granted `Insert` mid-run each got the generic sentence, while the server log carried the provider's own, for example "This Milvus user holds "Insert" through one of its roles or public, which is not a read Studio admits ..." and "The agent read-only profile refuses Milvus's root user, which may do anything though Milvus lists it no role" (runs `arun_1fb64fc20d8341fb90940eb1ac8567cd`, `arun_861dc42859654b53be379558b233ad85`, `arun_e9c6f61584e642bcab9cb20ea73eec3d`, `arun_a7312f02a7fa4aa08df77b5494980880`).
+Seen again 2026-10-30 on Redis 8.10.2 and Valkey 9.1.2 in a browser pass: the `~* &* +@all` user, a `~app:* +@read +@write` user, the `default` user named in the connection, and a `~* +@read` reader granted `+set` mid-run each got the generic sentence, while the server log carried the provider's own, for example "This Redis user may run DEL and was refused it only by its key or channel permissions, so it may change what its own patterns allow" and "This Redis user may run SET, which the read-only proof sends against a key that does not exist ..." (runs `arun_da9b3e4c68184ce49c62081980576f12`, `arun_0539148ad0d54046a0b54d84afe2d6b3`).
 
 **Done when:** the rail shows the refusal's own remedies (statements or policy names) beside its code, from the shared refusal path rather than a type-id branch, the generic sentence no longer claims the credential holds privileges when the refusal is about the database, and a component test pins both texts.
 
@@ -6153,6 +6154,7 @@ Seen again 2026-10-30 on Weaviate 1.40.2 in a browser pass: asked to pass `GET /
 Seen again 2026-10-30 on Qdrant 1.19.1 in a browser pass: a run asked to pass eleven exact point, scroll, search, query, facet, filtered count and snapshot requests to `run_read_query` had each refused before anything was sent and finished `answered` with one claim about the schema inventory and no word of the refusals (run `arun_d79dc0a1d0344d01b954250d458d21f5`); two runs asked for an upsert, a point delete, a collection create and drop, an alias delete and a snapshot drafted none of them and finished `answered` with counts or the schema inventory (runs `arun_abd9503a15f148699d7c18d7effd87b8`, `arun_0e4b50056c90482e87908cfd4b3b60d6`).
 Seen again 2026-10-30 on Neo4j Enterprise 5.26.31 in a browser pass: asked to pass two `LOAD CSV` forms, `CREATE`, `MERGE`, `SET`, `DETACH DELETE`, `CALL { } IN TRANSACTIONS` and `USE other` to `run_read_query`, each was refused before anything was sent and the run finished `answered` with one claim about the schema inventory and no word of the eight refusals (run `arun_a5d133c691c948d9a09d60ef611ae417`); the next run, asked for nine procedure, APOC and comment forms, did report each refusal, so it still depends on the model's wording.
 Seen again 2026-10-30 on Milvus 3.0.2 in a browser pass: two runs on a reader asked to pass an exact insert, upsert, delete, collection create and drop, index create, load, release, flush, compaction and alias alter to `run_read_query` drafted none of them and finished `answered` with the collection list and a row count and no word of the eleven requests (runs `arun_70eaf9fb14314b1bb1c147a2d675958a`, `arun_1c54f478ca6640f595a5dd7336e90d2c`); a run asked for seven value reads did pass each one and each was refused before anything was sent, yet its answer carried two claims about the collection list and the row count and no word of the seven refusals (run `arun_7ba4cb533d514bc2a68b6c3b8335d45c`).
+Seen again 2026-10-30 on Redis 8.10.2 and Valkey 9.1.2 in a browser pass: a reader run asked to pass `SET`, `DEL`, `EXPIRE`, `FLUSHALL`, `CONFIG SET` and `PUBLISH`, and one asked for eleven exact key listings, value reads, `INFO`, `CLIENT LIST`, `EVAL_RO` and writes, had each refused before anything was sent (`STATEMENT_NOT_ADMITTED`) and finished `answered` with the key count or the schema inventory and no word of the refusals (runs `arun_99eba3db246d4afe90057698e9fad5dc`, `arun_9fbf210c14aa4292837cf7fdaab84d60`); two earlier Redis runs asked for the same list drafted none of it.
 
 **Done when:** a run whose only drafted statement was refused either reports that refusal in its answer, held by the run's verifier, or ends in a state other than `answered`, with an agent test that forces the refusal.
 
@@ -6200,6 +6202,7 @@ Seen again 2026-10-30 on InfluxDB 2.9.1 in a browser pass: the picker offered Op
 Seen again 2026-10-30 on Weaviate 1.40.2 in a browser pass: the picker offered Optimize, Assess and Analyze, which the `weaviateapi` family does not offer (`docs/providers/weaviate.md` section 15.6), and Analyze was refused with the same sentence although investigation runs there.
 Seen again 2026-10-30 on Neo4j Enterprise 5.26.31 in a browser pass: the picker offered Optimize and Assess, which the `cypher` family does not offer (`docs/providers/neo4j.md` section 15.6), and Optimize was refused with the same sentence although investigation and data analysis run there.
 Seen 2026-10-30 on LibreDB in a browser pass.
+Seen again 2026-10-30 on Redis 8.10.2 in a browser pass: the picker offered Optimize, Assess and Analyze, which the `rediscli` family does not offer (`docs/providers/redis.md` section 16.5), and Analyze was refused with the same sentence although investigation runs there.
 
 **Done when:** the refusal names the workflows the connection's statement language does offer, read from `AGENT_WORKFLOW_VARIANTS` rather than fixed text, the picker marks or hides a workflow that language has no variant for, and a test pins the sentence for `libredbkv`.
 
@@ -6224,6 +6227,7 @@ The provider's sentences reach only the server log.
 Seen 2026-10-30 on Weaviate 1.40.2 in a browser pass (runs `arun_9b350b7799f94f618474644d1a970f2a`, no key, and `arun_f969982a3aca40e6b09cd19f405b44fc`, RBAC off).
 Seen again 2026-10-30 on Qdrant 1.19.1 in a browser pass: a connection with no key was refused before any client was built (`keylessAgentRefusal` in `src/lib/db/providers/vector/qdrant/metadata-read.ts`), yet the rail named MongoDB's setting and the ledger's detail said "The server accepted a write it should have refused", though nothing was sent; the provider's sentence, which asks for a read-only API key or a JWT whose access is r, reached only the server log (run `arun_bffb88a186ee4600b9042c3c6da08908`).
 Seen again 2026-10-30 on Milvus 3.0.2 in a browser pass: a user on a server with `authorizationEnabled: false` was refused at open with the same sentence naming MongoDB's `security.authorization`, where the setting is Milvus's `common.security.authorizationEnabled`; the provider's own sentence, "Milvus answered this user the list of users, which it refuses every read-only user while authorization is on ... Turn authorization on, then give the agent a read-only user", reached only the server log (run `arun_608f660dbe654134b0a4e087cc7912e7`).
+Seen again 2026-10-30 on Redis 8.10.2 and Valkey 9.1.2 in a browser pass: a connection naming no user was refused before any socket, yet the rail named MongoDB's setting and the ledger's detail said "The server accepted a write it should have refused", though nothing was sent; the provider's sentence, which asks for an ACL user of the agent's own with `~*` and `+@read`, reached only the server log (runs `arun_6454fe4c64114120aefc7bb5f776d46d`, `arun_0ce4e95c4ef14eea8a63467d5be16240`).
 
 **Done when:** a refusal at open shows the provider's own sentence, or a per-engine remedy read from a contract row rather than a type-id branch, the rail no longer tells a keyless connection that its server does not enforce authorization, and a timeline test pins both Weaviate cases.
 
@@ -6281,6 +6285,23 @@ An operations run read that as a conflict and reported it to the user as one, th
 Seen 2026-10-30 on Milvus 3.0.2 in an agent-mode browser pass; nothing was written.
 
 **Done when:** the Milvus schema inventory either names each collection's indexes or says it does not read them, and a test in `tests/unit/db/milvus/` pins that.
+
+### U171. Redis agent mode refuses a write by saying key names and stored values are withheld
+
+`readRedisAgentStatement` in `src/lib/db/providers/keyvalue/redis-agent-statement.ts` answers every command outside its closed table with one sentence: "That is not one of agent mode's reads: key names and stored values are withheld, so nothing that lists keys or reads a value, field or member is sent."
+That reason is right for `KEYS`, `SCAN` or `HGETALL`, and wrong for `SET`, `DEL`, `EXPIRE`, `FLUSHALL`, `CONFIG SET` or `PUBLISH`, which are refused because they are not reads at all, and for `INFO` or `CLIENT LIST`, which are refused as server reads outside the table; the rail and the model read a write refused as a privacy rule.
+Seen 2026-10-30 on Redis 8.10.2 and Valkey 9.1.2 in a browser pass (runs `arun_99eba3db246d4afe90057698e9fad5dc`, `arun_9fbf210c14aa4292837cf7fdaab84d60`) and by calling `queryReadOnly` directly; nothing was sent in any case.
+
+**Done when:** a command the server's `COMMAND INFO` flags as a write, admin, pubsub or scripting command is refused with a sentence that says it is not a read, the metadata-only sentence is kept for the listing and value reads, and `tests/unit/db/redis/agent-statement.test.ts` pins both.
+
+### U172. The Redis object list fails for a `+@read` user with the server's `CONFIG GET` refusal
+
+On a Redis or Valkey connection whose ACL user holds `+@read` only, the editor's Objects tab shows "The object list could not be read" with the server's words, "NOPERM User bv_reader has no permissions to run the 'config|get' command", and `/api/db/objects/containers` and `/api/db/objects/inventory` answer 500 with an unhandled `ReplyError` in the server log.
+The database count is read with `CONFIG GET databases` (`parseDatabaseCount` in `src/lib/db/providers/keyvalue/redis.ts`), an `@admin` command such a user is never granted, and `+@read` is the user `docs/providers/redis.md` section 16 tells an operator to give agent mode, so the same connection that runs agent mode cannot browse its objects.
+The Keys tab still lists that user's key groupings, under "Reading the databases failed:" and the same server words.
+Seen 2026-10-30 on Redis 8.10.2 and Valkey 9.1.2 in a browser pass, for `~* +@read` and `~app:* +@read` users; it predates agent mode on Redis.
+
+**Done when:** a refused `CONFIG GET databases` leaves the object list showing the connection's own database with the count withheld and its reason, the routes answer without a 500, and `tests/integration/db/redis-provider.test.ts` pins it against a `+@read` user.
 
 ## Dependencies
 
