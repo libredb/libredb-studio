@@ -19,6 +19,7 @@ import {
   weaviateAgentFailure,
   weaviateProjectionOf,
 } from "@/lib/db/providers/vector/weaviate/metadata-read";
+import { measureResultBytes } from "@/lib/db/providers/sql/read-only-budget";
 import { readWeaviateAgentStatement } from "@/lib/db/providers/vector/weaviate/metadata-request";
 import { type WeaviateAnswer, WeaviateError } from "@/lib/db/providers/vector/weaviate/client";
 import type { WeaviateAnswered } from "@/lib/db/providers/vector/weaviate/execute";
@@ -446,6 +447,17 @@ describe("the budgets", () => {
         "GET /v1/schema/Tenanted/tenants",
       ),
     ).toThrow(/^Read-only execution exceeded the byte budget: \d+ bytes > 10 allowed$/);
+  });
+
+  test("an answer of exactly the byte budget is kept, and one byte less refuses it", () => {
+    const text = "GET /v1/schema/Tenanted/tenants";
+    const shaped = (maxResultBytes: number) =>
+      shapeWeaviateAgentAnswer(answered(text, agentAnswer("tenants-viewer")), { ...BUDGET, maxResultBytes }, text);
+    const bytes = measureResultBytes(shaped(BUDGET.maxResultBytes).rows);
+    expect(shaped(bytes).rowCount).toBe(2);
+    expect(() => shaped(bytes - 1)).toThrow(
+      `Read-only execution exceeded the byte budget: ${bytes} bytes > ${bytes - 1} allowed`,
+    );
   });
 });
 

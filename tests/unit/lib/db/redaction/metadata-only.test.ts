@@ -51,6 +51,12 @@ describe("projectMetadata", () => {
     ["an empty name", { name: "", objectCount: 1 }, "shard"],
     ["a name with a line break", { name: "a\nstored-value", objectCount: 1 }, "shard"],
     ["a name with a control character", { name: "a\u0000b", objectCount: 1 }, "shard"],
+    ["a name with a unit separator", { name: "a\u001fb", objectCount: 1 }, "shard"],
+    ["a name with DEL", { name: "a\u007fb", objectCount: 1 }, "shard"],
+    ["a name with a C1 next line", { name: "a\u0085b", objectCount: 1 }, "shard"],
+    ["a name with the last C1 control", { name: "a\u009fb", objectCount: 1 }, "shard"],
+    ["a name with a line separator", { name: "a\u2028stored-value", objectCount: 1 }, "shard"],
+    ["a name with a paragraph separator", { name: "a\u2029stored-value", objectCount: 1 }, "shard"],
     ["a name past 512 characters", { name: "n".repeat(513), objectCount: 1 }, "shard"],
     ["a count that is text", { name: "s", objectCount: "stored-value" }, "objects"],
     ["a negative count", { name: "s", objectCount: -1 }, "objects"],
@@ -75,6 +81,13 @@ describe("projectMetadata", () => {
       expect((thrown as MetadataProjectionError).column).toBe(column);
     });
   }
+
+  test("the printable neighbours of every refused range are kept", () => {
+    const name = "a b~\u00a0\u2027\u202a";
+    expect(projectMetadata(SHARDS, [{ name, objectCount: 1 }]).rows).toEqual([
+      { shard: name, objects: 1, loaded: null },
+    ]);
+  });
 
   test("a name at exactly 512 printable characters is kept", () => {
     const name = "n".repeat(512);
