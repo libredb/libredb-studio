@@ -170,6 +170,20 @@ describe("openshift.consolePlugin values", () => {
     });
   });
 
+  test("Chart.yaml lists the same plugin image for Artifact Hub, for both platforms", () => {
+    const chart = parse(readFileSync(join(CHART_DIR, "Chart.yaml"), "utf8")) as { annotations: Record<string, string> };
+    const images = parse(chart.annotations["artifacthub.io/images"]) as Array<{
+      name: string;
+      image: string;
+      platforms: string[];
+    }>;
+    expect(images.find((entry) => entry.name === "libredb-studio-openshift-plugin")).toEqual({
+      name: "libredb-studio-openshift-plugin",
+      image: values.openshift.consolePlugin.image,
+      platforms: ["linux/amd64", "linux/arm64"],
+    });
+  });
+
   test("pins a released digest, never the provisional all-zero one", () => {
     // PROVISIONAL (S4): red until the plugin's 0.1.0 index digest replaces the zeros in values.yaml,
     // the operator's RELATED_IMAGE_PLUGIN and PLUGIN_IMAGE above, so a placeholder never ships.
