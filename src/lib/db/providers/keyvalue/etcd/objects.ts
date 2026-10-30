@@ -107,7 +107,8 @@ export interface EtcdSurfaceContext {
   readonly readOnly?: ReadOnlySource;
   /**
    * Set on a handle opened for an agent-mode profile, whose every refusal the agent reads: what the user may read is
-   * named by how many ranges and never by one, since a range is a key name (E13).
+   * named by how many ranges and never by one, since a range is a key name (E13), and a lost quorum's `Status.errors`
+   * by how many there are, never by their text.
    */
   readonly rangesCounted?: true;
   readonly signal: AbortSignal;

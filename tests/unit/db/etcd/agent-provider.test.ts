@@ -434,6 +434,28 @@ describe("a handle opened for an agent-mode profile names no key", () => {
         expect(failure?.message).not.toContain("/app/");
       });
 
+      test("health on a lost quorum counts Status.errors and passes none of their text on", async () => {
+        const captured = capturedClient(principalCapture("reader-range")).status!;
+        let lost = false;
+        const provider = await opened(
+          clientOf("reader-range", {
+            status: async (options) => {
+              const answer = await captured(options);
+              return lost ? { ...answer, leader: "0", errors: ["etcdserver: no leader"] } : answer;
+            },
+          }),
+          execution,
+        );
+        lost = true;
+        const failure = await provider.getHealth().then(
+          () => undefined,
+          (error: unknown) => error as Error,
+        );
+        expect(failure?.message).toContain("lost quorum");
+        expect(failure?.message).toContain("etcd reported 1 error, whose text is not passed on to agent mode");
+        expect(failure?.message).not.toContain("etcd: no leader");
+      });
+
       test("a member's source is still read", async () => {
         const provider = await opened(clientOf("reader-range"), execution);
         const members = await provider.listObjects([], "member");

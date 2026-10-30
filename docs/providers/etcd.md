@@ -642,7 +642,7 @@ Each agent-mode path reads this much:
 | --- | --- | --- |
 | Investigation commands | agent read-only profile | the closed table above, projected to names, counts and sizes |
 | Investigation grounding, plan-mode grounding and the operations workflow | either agent profile | the members, lease ids, user and role names; the key-prefix folder is withheld with the reason and lists nothing |
-| Operations readings | operations profile | health and storage from `Status` and the alarm list; table statistics are refused, since each row would name a key prefix |
+| Operations readings | operations profile | health and storage from `Status` and the alarm list, a lost quorum naming how many errors `Status` holds, never their text; table statistics are refused, since each row would name a key prefix |
 | MCP | none | closed: `MCP_EXPOSABLE.etcd` is false |
 
 On a handle of either agent profile the Keys panel walk, a key's, a role's and a lease's source, the table statistics and the editor's command path are refused, and a refusal names what the user may read by how many ranges, never by one.
