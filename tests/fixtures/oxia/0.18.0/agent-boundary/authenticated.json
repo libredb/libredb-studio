@@ -32,8 +32,8 @@
               "version": {
                 "version_id": "0",
                 "modifications_count": "0",
-                "created_timestamp": "1793392802976",
-                "modified_timestamp": "1793392802976"
+                "created_timestamp": "1793396443375",
+                "modified_timestamp": "1793396443375"
               }
             }
           ],
@@ -52,8 +52,8 @@
               "version": {
                 "version_id": "0",
                 "modifications_count": "0",
-                "created_timestamp": "1793392802976",
-                "modified_timestamp": "1793392802976"
+                "created_timestamp": "1793396443375",
+                "modified_timestamp": "1793396443375"
               },
               "value": {
                 "$text": "fixture-a"
@@ -74,8 +74,8 @@
               "version": {
                 "version_id": "1",
                 "modifications_count": "1",
-                "created_timestamp": "1793392802976",
-                "modified_timestamp": "1793392802978"
+                "created_timestamp": "1793396443375",
+                "modified_timestamp": "1793396443378"
               }
             }
           ],

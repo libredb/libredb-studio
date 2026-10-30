@@ -285,11 +285,6 @@ async function open(): Promise<void> {
       start_inclusive: "",
       end_exclusive: "",
     });
-    admitted[`listPrefixAdminBand:${shard.id}`] = await stream(target, "List", {
-      shard: shard.id,
-      start_inclusive: "/admin/policies/",
-      end_exclusive: "/admin/policies//",
-    });
   }
 
   // What the table never sends, each against the same server: the positive control that the server would honour it.
@@ -320,6 +315,14 @@ async function open(): Promise<void> {
     }),
     getNotifications: await stream(target, "GetNotifications", { shard: home(KEYS.tenant) }),
   };
+  // A count over a band the request names: the table refuses it, since narrower counts would spell out key names.
+  for (const shard of shards) {
+    refused[`listPrefixAdminBand:${shard.id}`] = await stream(target, "List", {
+      shard: shard.id,
+      start_inclusive: "/admin/policies/",
+      end_exclusive: "/admin/policies//",
+    });
+  }
   const session = await unary(target, "CreateSession", {
     shard: home(KEYS.ephemeral),
     session_timeout_ms: 5_000,

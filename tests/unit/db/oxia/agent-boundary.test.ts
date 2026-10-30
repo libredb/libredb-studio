@@ -130,6 +130,13 @@ describe("every call the agent's table refuses, the server honours", () => {
     expect(scanned.value).toBeDefined();
   });
 
+  test("a List over a band the request names answers the key names in it", () => {
+    const band = Object.entries(open.refused)
+      .filter(([name]) => name.startsWith("listPrefixAdminBand:"))
+      .flatMap(([, answer]) => answer.messages?.flatMap((message) => message.keys) ?? []);
+    expect(band).toEqual([open.keys.tenant]);
+  });
+
   test("another namespace is not served, and the shard map names this one", () => {
     expect(open.admitted.shardAssignmentsOtherNamespace).toMatchObject({ outcome: "error", code: 5 });
     expect(Object.keys(open.admitted.shardAssignments?.messages?.[0].namespaces)).toEqual(["default"]);
@@ -188,6 +195,8 @@ describe("the provider over the captured keys", () => {
       `get --index fixture-index ${open.keys.tenant}`,
       `get -p ${open.partitionKey} ${open.keys.partitioned}`,
       "list --internal-keys",
+      "list /admin/policies/ /admin/policies//",
+      "list --prefix /admin/policies/",
       "range-scan",
       "-n no-such-namespace shards",
       "-n no-such-namespace list",
