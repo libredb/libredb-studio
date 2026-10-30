@@ -1406,20 +1406,20 @@ No GitHub Release is created.
 `npm-publish.yml`, `docker-build-push.yml` and `aws-ami-build.yml` run on every `release: published` and skip only the chart's `libredb-studio-` prefix, so a GitHub Release for the extension would start a product publish and, while the `aws-marketplace` channel is live, an AMI build from the root `package.json` version.
 `operator-release.yml` runs on it too, but already skips a tag that is not an app semver.
 
-### Before the publish job can run
+### What the publish job relies on outside the repository
 
-Three things outside the repository, all the owner's:
+Two settings, both the owner's, configured on 31 October 2026:
 
-1. The `vscode-marketplace` environment under the repository's Settings > Environments, with a required reviewer and deployments limited to `vscode-extension-*` tags.
-2. A trusted publisher on the `libredb` publisher's management page, naming the repository `libredb/libredb-studio`, the workflow `vscode-extension-release.yml` and, where the form takes one, the environment `vscode-marketplace`.
-   As of 22 October 2026 the Marketplace backend still refuses `--oidc` (`TrustedPublishingNotSupportedException`) and announced it for the following week ([microsoft/vscode-vsce#1275](https://github.com/microsoft/vscode-vsce/issues/1275)).
-3. A stable `@vscode/vsce` that carries the token exchange of [microsoft/vscode-vsce#1337](https://github.com/microsoft/vscode-vsce/pull/1337); 4.0.0, the version `vscode-extension/package.json` pins, predates it, and only the 4.0.1 prereleases had it on 22 October 2026.
+1. The `vscode-marketplace` environment under the repository's Settings > Environments, with required reviewers and deployments limited to `vscode-extension-*` tags.
+2. The trusted publishing policy `VS Code Extension Release` on the `libredb` publisher's management page (`https://marketplace.visualstudio.com/manage`, Trusted Publishing), provider GitHub Actions, naming the repository owner `libredb`, the repository `libredb-studio`, the workflow `vscode-extension-release.yml` and the environment `vscode-marketplace`.
+   The Marketplace binds the owner and the repository by their numeric ids (251081537 and 1121989093), so a repository recreated under the same name does not match it.
+   A change to any of those four names, such as renaming the workflow file or the environment, needs the policy edited in the same change, or the token exchange is refused.
 
-Until all three hold, a pushed tag's `publish` job is left unapproved, or rejected, and the version goes up by hand as below.
+The token exchange needs `@vscode/vsce` 4.1.0 or later, the first stable release with [microsoft/vscode-vsce#1337](https://github.com/microsoft/vscode-vsce/pull/1337); 4.0.0 fails it ([microsoft/vscode-vsce#1275](https://github.com/microsoft/vscode-vsce/issues/1275)).
 
 ### Publishing a version by hand
 
-The owner uploads the VSIX the gates tested; nothing is rebuilt for the upload.
+When the publish job cannot run, the owner uploads the VSIX the gates tested; nothing is rebuilt for the upload.
 
 1. Download the `vscode-extension-vsix` artifact of the tag's `vscode-extension-release.yml` run, or of `main`'s `vscode-extension.yml` run at the tagged commit, and check that its manifest names `Publisher="libredb"`, the version, and, on an odd minor, the `PreRelease` property.
 2. Install it into a fresh VS Code profile (`code --user-data-dir <dir> --extensions-dir <dir> --install-extension <file>`) and run one query on each v0 engine.
@@ -1439,7 +1439,6 @@ The listing's text and images come from the packed `README.md`; the management p
 
 ### Still open
 
-- Who the `vscode-marketplace` environment's reviewer is.
 - When the `VS Code Extension` job and its macOS and Windows smoke matrix become required checks.
 - Whether the extension ever gets GitHub Releases; if it does, `npm-publish.yml`, `docker-build-push.yml` and `aws-ami-build.yml` must first learn to skip `vscode-extension-` tags.
 - The Open VSX namespace `libredb`, and when to publish there (`ovsx publish --pre-release`) for Cursor, Windsurf and VSCodium, after their extension host runtimes are measured.
