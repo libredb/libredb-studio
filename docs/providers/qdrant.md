@@ -527,6 +527,7 @@ First an alias update with no action: it is refused 403 to the read-only key and
 A JWT that writes one collection is refused that update too, so each collection the key lists (`GET /collections`, which lists a collection-scoped JWT's own collections alone, `collections-jwt-collection-write`) is then sent a point delete of no point.
 It is refused 403 to every read-only principal (`proof-delete-*-read-only`, `proof-delete-*-jwt-read`, `proof-delete-plain-jwt-collection-read`) and read past its access check and answered 400 `Empty update request` to one that can write that collection (`proof-delete-plain-jwt-collection-write`), which is refused; the API key's is answered the same way and changes nothing (`proof-delete-plain-full`).
 Any answer but 403 refuses the profile, as does a list Studio does not read and a key listing more than 32 collections (B154).
+The API key's empty alias update, the one write the proof can have answered, changes nothing: the aliases read the same after it (`write-state-aliases-after-full`).
 A collection the key can write that appears after the open is refused at the next request, before the request is sent.
 The operations profile sends no request of the model's, so it opens with any key and no proof, and plan mode keeps grounding on the API key.
 
@@ -554,6 +555,7 @@ Qdrant declares `ProviderCapabilities.metadataOnly`: every answer is projected t
 A collection read answers one row for the collection itself (`kind` `collection`, with its status, counts, shard number, replication factor and optimizer status), then one per vector (its name, null for the one unnamed vector, its distance and size), one per sparse vector and one per payload index (its field name, data type and point count).
 A column's name comes from the projection, never from a key the store holds, and nothing the projection does not name reaches a row: no HNSW, optimizer, WAL, quantization or strict-mode value, no collection `metadata`, no title, peer id or shard key.
 An optimizer error is answered as `error`, never its text.
+Names are the operator's own: a collection, alias, vector or payload field named after a stored value reaches the answer as that name, checked only to be printable text of 1 to 512 characters on one line.
 A cell that does not fit its kind, such as an object, a list or a vector where a name or a count stands, or a name holding a line break, withholds the whole answer, naming the column and never the value.
 A server refusal is worded by its status and category alone, never the server's message: a collection-scoped JWT reading another collection is answered 403 `Forbidden: Access to collection other is required` (`collection-other-jwt-collection-read`), and agent mode is told only that Qdrant answered HTTP 403.
 A result past the row or byte budget is refused, never cut, and an estimating plan is refused.
