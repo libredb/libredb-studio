@@ -450,7 +450,7 @@ describe("the openshift render under the operator", () => {
       ServiceAccount: ["", "serviceaccounts"],
     };
     for (const doc of server) {
-      const [group, resource] = resourceOf[doc.kind];
+      const [group, resource] = resourceOf[String(doc.kind)];
       const missing = MANAGE_VERBS.filter((verb) => !grants(namespaceRules(), group, resource, verb));
       expect({ kind: doc.kind, missing }).toEqual({ kind: doc.kind, missing: [] });
     }

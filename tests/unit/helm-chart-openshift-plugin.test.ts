@@ -105,7 +105,7 @@ interface Container {
   args?: unknown;
   env?: unknown;
   envFrom?: unknown;
-  ports?: Array<{ containerPort: number; protocol?: string }>;
+  ports?: Array<{ name?: string; containerPort: number; protocol?: string }>;
   readinessProbe?: unknown;
   resources?: unknown;
   securityContext?: Record<string, unknown>;
@@ -118,7 +118,7 @@ interface PodSpec {
   enableServiceLinks?: boolean;
   securityContext?: Record<string, unknown>;
   containers: Container[];
-  volumes?: Array<{ name: string; secret?: { secretName: string }; emptyDir?: unknown }>;
+  volumes?: Array<{ name: string; secret?: { secretName: string; defaultMode?: number }; emptyDir?: unknown }>;
 }
 
 interface DeploymentSpec {
@@ -566,7 +566,7 @@ describe("the plugin server and the ConsolePlugin", () => {
       ...PLUGIN_ON,
       ...set("openshift.topology.partOf=foo-operator", "openshift.topology.runtime=nginx"),
     ]);
-    const own = one(topology, "ServiceAccount", SERVER).metadata.labels;
+    const own = one(topology, "ServiceAccount", SERVER).metadata.labels ?? {};
     expect(own).toMatchObject({ "app.kubernetes.io/component": "console-plugin" });
     expect(one(topology, "Deployment", SERVER).metadata.labels).toEqual(own);
     expect(deploymentSpec(topology).template.metadata.labels).toEqual(own);
