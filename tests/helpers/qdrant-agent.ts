@@ -61,8 +61,9 @@ const lineOf = (capture: QdrantAgentCapture): string => `${capture.request.metho
 
 /**
  * A recording transport's answers for `principal` (`read-only`, `full`, ...): each request is answered with the
- * capture of the same request line sent as that principal (`<name>-<principal>.json`); `overrides` answers a request
- * line otherwise. A line no capture holds throws by name.
+ * capture of the same request line sent as that principal (`<name>-<principal>.json`), or of the same line without
+ * its query string, since the console writes a `timeout` the probe sent none of; `overrides` answers a request line
+ * otherwise. A line no capture holds throws by name.
  */
 export function agentServer(
   principal: string,
@@ -79,7 +80,7 @@ export function agentServer(
   return (_request, line) => {
     const override = overrides[line];
     if (override !== undefined) return asResponse(typeof override === "function" ? override() : override);
-    const found = byLine.get(line);
+    const found = byLine.get(line) ?? byLine.get(line.split("?")[0]);
     if (found === undefined) throw new Error(`no ${principal} capture answers ${line}`);
     return asResponse(found);
   };

@@ -72,6 +72,9 @@ describe("QdrantSend, the slice a consumer is handed (3.13)", () => {
         sent.push(request.op);
         return answer;
       },
+      async probe() {
+        return answer;
+      },
       close() {},
     };
     const listing: QdrantSend<"get_collections" | "get_collections_aliases"> = client.send.bind(client);

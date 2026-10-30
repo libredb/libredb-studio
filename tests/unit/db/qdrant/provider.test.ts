@@ -15,6 +15,7 @@ import type { QdrantAnswer, QdrantRequest, QdrantRouteTemplates } from "@/lib/db
 import { QDRANT_DEFAULT_PORT } from "@/lib/db/providers/vector/qdrant/connection-options";
 import { qdrantTableQuery } from "@/lib/db/providers/vector/qdrant/generators";
 import { QDRANT_LIMITER_OPTIONS, QDRANT_ROUTE_TEMPLATES, QdrantProvider } from "@/lib/db/providers/vector/qdrant/index";
+import { QDRANT_METADATA_ONLY } from "@/lib/db/providers/vector/qdrant/metadata-read";
 import { QDRANT_LABELS } from "@/lib/db/providers/vector/qdrant/labels";
 import { toQdrantIndexStats, toQdrantTableStats } from "@/lib/db/providers/vector/qdrant/monitoring";
 import { QDRANT_OBJECT_KINDS, VISIBLE_TO_CREDENTIAL } from "@/lib/db/providers/vector/qdrant/objects";
@@ -99,6 +100,7 @@ describe("declarations", () => {
       objectKinds: QDRANT_OBJECT_KINDS,
       enforcesReadOnly: true,
       agentCredential: "token",
+      metadataOnly: QDRANT_METADATA_ONLY,
       schemaRefreshPattern: "(?!)",
     });
   });

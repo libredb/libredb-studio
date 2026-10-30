@@ -41,6 +41,9 @@ let current: QdrantProvider | undefined;
 async function connectedProvider(answer: Answer, connection: Partial<DatabaseConnection> = {}) {
   const provider = new QdrantProvider({ ...CONNECTION, ...connection }, {}, {}, () => ({
     send: async (request, signal) => answer(request, signal),
+    probe: async () => {
+      throw new Error("the console sent the read-only proof's probe");
+    },
     close() {},
   }));
   await provider.connect();
