@@ -72,6 +72,22 @@ export interface WeaviateExecution {
   readonly now?: () => number;
   /** The deadline's signal; only a test passes another. */
   readonly deadline?: (ms: number) => AbortSignal;
+  /**
+   * What the request's answer becomes: `weaviateResult` by default; the agent read-only profile passes the
+   * metadata-only projection of `agent-read.ts`, so its answer is never shaped as a console result.
+   */
+  readonly answered?: (answered: WeaviateAnswered) => QueryResult;
+}
+
+/** One request's successful answer, as the result is built from it. */
+export interface WeaviateAnswered {
+  /** The request as phase 1 read it, with the defaults written in. */
+  readonly plan: WeaviatePlan;
+  /** The answer's text, as the server sent it. */
+  readonly text: string;
+  /** The path a search or an aggregate went over; null for every other request. */
+  readonly path: WeaviatePath | null;
+  readonly executionTime: number;
 }
 
 const METADATA_OPS: ReadonlySet<WeaviateConsoleOp> = new Set([
@@ -171,6 +187,12 @@ export async function executeWeaviate(
       throw run.fail({ kind: "thrown", op: request.op, error });
     }
   };
+  const result = (plan: WeaviatePlan, text: string, path: WeaviatePath | null, shape: ResultShape): QueryResult => {
+    const executionTime = now() - startedAt;
+    return run.answered === undefined
+      ? weaviateResult(text, shape, { executionTime })
+      : run.answered({ plan, text, path, executionTime });
+  };
   /** One call whose failure is the request's failure. */
   const call = async (request: WeaviateRequest): Promise<WeaviateAnswer> => {
     const answer = await raw(request);
@@ -192,9 +214,7 @@ export async function executeWeaviate(
       let facts: WeaviateCollectionFacts | null = null;
       if (plan0.collection !== null && (READS_COLLECTION.has(op) || op === "collection")) {
         const answer = await call({ op: "collection", params: collectionParams, query: {} });
-        if (op === "collection") {
-          return weaviateResult(answer.text, resultShape(plan0, null, null), { executionTime: now() - startedAt });
-        }
+        if (op === "collection") return result(plan0, answer.text, null, resultShape(plan0, null, null));
         facts = weaviateCollectionFacts(readWeaviateClass(JSON.parse(answer.text), plan0.collection));
       }
       const plan = facts === null ? plan0 : weaviatePhase1(plan0, facts);
@@ -215,7 +235,7 @@ export async function executeWeaviate(
       const params = op === "objects" ? {} : { ...plan.request.params, ...collectionParams };
       if (plan.search === null) {
         const answer = await call({ op, params, query: plan.query });
-        return weaviateResult(answer.text, resultShape(plan, facts, null), { executionTime: now() - startedAt });
+        return result(plan, answer.text, null, resultShape(plan, facts, null));
       }
       const kind = pathKindOf(op);
       const first = run.paths.get(kind) ?? initialPath(run.version, kind);
@@ -246,9 +266,7 @@ export async function executeWeaviate(
       const failed = path === "graphql" ? graphqlFailure(answer) !== undefined : !ok(answer);
       if (failed) throw run.fail({ kind: "answer", op: path === "graphql" ? "graphql" : op, answer });
       run.paths.set(kind, path);
-      return weaviateResult(answer.text, resultShape(plan, facts, path, run.version), {
-        executionTime: now() - startedAt,
-      });
+      return result(plan, answer.text, path, resultShape(plan, facts, path, run.version));
     } finally {
       ticket.release();
     }
@@ -282,6 +300,8 @@ function geoAggregateNote(plan: WeaviatePlan, version: WeaviateVersion | undefin
 
 /** The first line measured to count a WithinGeoRange aggregate correctly. */
 const GEO_AGGREGATE_SINCE = [1, 38, 0] as const;
+
+type ResultShape = ReturnType<typeof resultShape>;
 
 function resultShape(
   plan: WeaviatePlan,

@@ -1,6 +1,6 @@
 /**
  * The Weaviate REST client over a recording transport (#1566 spec 3.2, W7): what it hands the shared transport, the
- * nineteen routes it builds and nothing else, and every refusal it raises before the wire: an operation outside the
+ * twenty routes it builds and nothing else, and every refusal it raises before the wire: an operation outside the
  * table, a path parameter that would leave its segment, an undeclared parameter or query key, a body on a GET and
  * none on a POST. A route table that is not exactly the operations of `WEAVIATE_OPS` fails when the client is built.
  */
@@ -68,6 +68,7 @@ const SAMPLES: Readonly<Record<WeaviateOp, { params: Record<string, string>; bod
   aggregate: { params: { collection: "Article" }, body: "{}", line: "POST /v1/aggregate/Article" },
   ready: { params: {}, line: "GET /v1/.well-known/ready" },
   graphql: { params: {}, body: '{"query":"{Get{Article{title}}}"}', line: "POST /v1/graphql" },
+  own_info: { params: {}, line: "GET /v1/users/own-info" },
 };
 
 function client(answer?: RecordedAnswer, routes: WeaviateRouteTemplates = WEAVIATE_CLIENT_ROUTES) {
@@ -167,9 +168,9 @@ describe("the answer is data, whatever its status, and nothing is sent twice", (
 });
 
 describe("the client builds exactly the routes of the table (W7)", () => {
-  test("the seam names nineteen operations, each once", () => {
-    expect(WEAVIATE_OPS).toHaveLength(19);
-    expect(new Set(WEAVIATE_OPS).size).toBe(19);
+  test("the seam names twenty operations, each once", () => {
+    expect(WEAVIATE_OPS).toHaveLength(20);
+    expect(new Set(WEAVIATE_OPS).size).toBe(20);
     expect(Object.keys(SAMPLES).sort()).toEqual([...WEAVIATE_OPS].sort());
   });
 
@@ -265,7 +266,7 @@ describe("the client builds exactly the routes of the table (W7)", () => {
       "The Weaviate route table gives meta a query key this client cannot read",
     );
     expect(build({ backups: { method: "GET", path: "/v1/backups", query: [] } })).toThrow(
-      "The Weaviate route table must name exactly the 19 operations",
+      "The Weaviate route table must name exactly the 20 operations",
     );
   });
 

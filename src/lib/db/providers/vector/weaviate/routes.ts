@@ -134,7 +134,7 @@ export const WEAVIATE_ROUTES: readonly WeaviateRoute[] = Object.freeze([
 
 /**
  * Every operation's method, path and query keys, as the client is built with them: the console's routes, then the
- * two the provider writes itself and no console text can name.
+ * three the provider writes itself and no console text can name.
  */
 export const WEAVIATE_CLIENT_ROUTES: Readonly<
   Record<WeaviateOp, { readonly method: "GET" | "POST"; readonly path: string; readonly query: readonly string[] }>
@@ -151,6 +151,7 @@ export const WEAVIATE_CLIENT_ROUTES: Readonly<
   ) as Record<WeaviateConsoleOp, { method: "GET" | "POST"; path: string; query: readonly string[] }>),
   ready: Object.freeze({ method: "GET", path: "/v1/.well-known/ready", query: Object.freeze([]) }),
   graphql: Object.freeze({ method: "POST", path: "/v1/graphql", query: Object.freeze([]) }),
+  own_info: Object.freeze({ method: "GET", path: "/v1/users/own-info", query: Object.freeze([]) }),
 });
 
 /** One closed object level: the keys it takes, and the keys it cannot go without. */
