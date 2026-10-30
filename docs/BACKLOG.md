@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S10 · 7
-- [Drivers and connections](#drivers-and-connections) — D1-D412, U17 · 302
+- [Drivers and connections](#drivers-and-connections) — D1-D413, U17 · 303
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U173 · 159
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U176 · 162
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -4156,6 +4156,20 @@ Found 2026-10-30 in the browser verification of the Druid agent read (PR 1.11); 
 
 **Done when:** a health check refused only for the `STATE` permission reports the connection as reachable with the cluster figures marked unavailable, rather than degraded, and an integration test on a user without `STATE` `READ` pins the route's answer.
 
+### D413. Concurrent first requests open the SQLite sample several times and one fails with "database is locked"
+
+`getOrCreateProvider` in `src/lib/db/factory.ts:1166-1311` checks the provider cache, and on a miss creates and connects a provider and only then caches it, with nothing recording an open in flight.
+So concurrent first requests for one connection each open their own handle on the same file; for the SQLite sample each open also runs the WAL and synchronous pragmas, and one of them can fail with `ConnectionError` "Failed to open SQLite database: database is locked" (`src/lib/db/providers/sql/sqlite.ts:1384`).
+Repro: start the server with a fresh data directory, sign in, open `/` with Sample (Employees) active.
+The sidebar shows "The object list could not be read. Failed to open SQLite database: database is locked", and Try again clears it.
+The server log showed five concurrent `[DB] Creating sqlite provider for "Sample (Employees)"` lines, then `/api/db/health` and `/api/db/objects/counts` failing with that error.
+Intermittent: seen on 1 of 4 cold starts, not on the 3 later ones.
+Seen 2026-10-30 in the pre-release browser E2E of Studio 1.1.0 (build 12e81a05f), on the PostgreSQL tester's server; the evidence is that run's PostgreSQL screenshots of the first studio load and of the retry.
+
+Found 2026-10-30 in the pre-release browser E2E; pre-existing.
+
+**Done when:** concurrent cache misses for one cache key share one in-flight open, so a connection is opened once, and a test in `tests/unit/lib/db/` fires concurrent `getOrCreateProvider` calls for one connection and asserts a single `createDatabaseProvider` and a single `connect`.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -6315,6 +6329,45 @@ On an etcd connection with a User and Password to a server with authentication o
 Seen 2026-10-30 on etcd v3.7.2 in a browser pass (run `arun_d1fb9b4d1afc4613b904c062263d3123`); the classification is not engine-specific, so any provider's configuration refusal at open shows the same.
 
 **Done when:** a configuration error raised while the run opens its connection reaches the rail as its own sentence under a reason of its own rather than `internal`, from the error class and not a type-id branch, with a timeline test and an agent runtime test that raise a `DatabaseConfigError` at acquisition.
+
+### U174. The Query Safety Check is not told which columns are keys or unique
+
+`analyzeQuery` in `src/components/QuerySafetyDialog.tsx:251-268` reduces the schema it sends to `/api/ai/query-safety` to `name (type)` for the first eight columns of the first thirty objects, plus the estimated row count.
+The schema it reads has more: each column's `isPrimary`, and each object's `indexes` with their `unique` flag (`DetailedObject` in `src/lib/db/detailed-object.ts`), so the model cannot know that a `WHERE` on a primary or unique key matches at most one row.
+Repro: on PostgreSQL, with `customers.email` declared `UNIQUE`, run `UPDATE customers SET city = 'Ankara' WHERE email = 'e2e.tester@example.com'` in the editor.
+The dialog rates it Low Risk but says "the schema does not indicate that email is unique; up to 10 rows could match", and Execute Query then answers "1 row affected".
+The path is shared by every SQL engine.
+Seen 2026-10-30 on PostgreSQL in the pre-release browser E2E of Studio 1.1.0 (build 12e81a05f); the evidence is that run's PostgreSQL screenshot of the update confirmation dialog.
+
+Found 2026-10-30 in the pre-release browser E2E; pre-existing.
+
+**Done when:** the schema text the dialog sends marks primary-key columns and names unique indexes within the same size bound, and a test in `tests/components/QuerySafetyDialog.test.tsx` pins both in the request body.
+
+### U175. A Plan run refused for an over-privileged credential ends "succeeded" and asks the user for the schema
+
+When the execution profile refuses the connection's credential as too broad, the grounding capture records a `context-unavailable` event with `reasonCode` `CATALOG_READ_REFUSED`, `profileReasonCode` `PROFILE_PRIVILEGES_TOO_BROAD` and the advice to connect with a least-privilege credential in `detail` (`environmentFailure` in `src/lib/agent/context-snapshot.ts`).
+The timeline renders that event as "Schema not captured" with the bare `reasonCode` inside the collapsed "Run setup" group, and leaves out `detail` and `profileReasonCode` on purpose (`src/components/agent/timeline.ts:1156-1176`).
+The run goes on ungrounded, ends "succeeded", and the answer card says "No statement drafted" and asks the user for the table and column names.
+The refusal itself is the intended safety property; only the message is the gap.
+Repro: seed a SQL Server connection whose login is `db_owner`, open the agent rail, Plan, objective "Which three customers placed the most orders?", Start.
+Seen 2026-10-30 on SQL Server in the pre-release browser E2E of Studio 1.1.0 (build 12e81a05f), run `arun_9ef6157967f547c8a91885f8a6280820`; the evidence is that run's SQL Server screenshot of the finished plan run on the `db_owner` credential, and the run's ledger.
+
+Found 2026-10-30 in the pre-release browser E2E; pre-existing.
+
+**Done when:** a `context-unavailable` event that carries a `profileReasonCode` is shown outside the collapsed group with a sentence naming the credential problem and its remedy, without the engine's fenced text, and `tests/unit/components/agent-timeline.test.ts` pins it for `PROFILE_PRIVILEGES_TOO_BROAD`.
+
+### U176. The consent card offers auto-execute on engines where the gate can never fire
+
+`handOverLanguage` in `src/components/agent/AgentRail.tsx:1138-1146` offers "Also run the final answer in my editor" whenever the statement language's variant declares `canAutoExecute`, which the SQL variant does for every SQL engine.
+The gate reads only PostgreSQL's and SQLite's plans, so on SQL Server, MySQL and DuckDB `planRefusal` answers `unverified-dialect` for every answer (`src/lib/agent/auto-execute.ts:169`), and the ticked consent can never be honoured.
+The answer lands in the editor unrun, and only the timeline says why: "this server has no rule for weighing a plan from this database".
+The behaviour is documented (`docs/AGENT.md`, and A6 for SQL Server); this entry is about the control, which MongoDB already hides (B118).
+Repro: seed a least-privilege SQL Server connection, Agent mode, Advanced, Analyze, Start, tick "Also run the final answer in my editor", Start run.
+Seen 2026-10-30 on SQL Server in the pre-release browser E2E of Studio 1.1.0 (build 12e81a05f); the evidence is that run's SQL Server screenshots of the consent card and of the hand-over note in the timeline.
+
+Found 2026-10-30 in the pre-release browser E2E; pre-existing.
+
+**Done when:** the rail offers the setting only on a connection whose engine has a plan reading the gate can weigh, read from the explain strategy rather than a type-id branch, and `tests/components/agent/AgentRail.test.tsx` pins the checkbox absent on SQL Server and present on PostgreSQL.
 
 ## Dependencies
 
