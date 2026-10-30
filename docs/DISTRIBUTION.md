@@ -394,6 +394,7 @@ Plain Helm applies a release with the installer's own credentials, and Argo CD w
 The API server drops any other key under it (strict field validation, the `kubectl` default, refuses it instead) and refuses `postgresql.extraDeploy`, `postgresql.namespaceOverride` and the `metrics` ServiceMonitor and PrometheusRule namespaces with a message, so every object of the subchart stays in the resource's namespace.
 `operator/watches.yaml` also pins those values empty at reconcile, for a resource stored before the CRD refused them.
 A resource stored before this release keeps only the accepted keys when it is read back, so an upgrade drops any other `postgresql` value from the next reconcile.
+Under `route`, the CRD accepts only the Gateway API route kinds the chart supports: a route's `kind` must be `HTTPRoute` and its `apiVersion` a `gateway.networking.k8s.io` version that serves it, `route` takes at most 64 keys, and the shared `labels` and `annotations` are not checked as routes.
 Before upgrading the operator to this release, check each existing resource:
 
 - A dropped key also drops the objects it rendered, and the next reconcile deletes them.

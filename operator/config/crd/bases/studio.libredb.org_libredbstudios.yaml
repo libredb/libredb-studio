@@ -132,6 +132,32 @@ spec:
                     type: object
                     x-kubernetes-preserve-unknown-fields: true
                 type: object
+              route:
+                additionalProperties:
+                  properties:
+                    apiVersion:
+                      type: string
+                    kind:
+                      type: string
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                description: Gateway API routes, keyed by route name; labels and
+                  annotations are settings shared by every route. Through the operator
+                  a route's kind must be HTTPRoute, the only route kind the chart
+                  renders, and its apiVersion a gateway.networking.k8s.io version.
+                maxProperties: 64
+                type: object
+                x-kubernetes-validations:
+                - message: route.<name>.kind must be HTTPRoute through the operator,
+                    the only Gateway API route kind the chart renders
+                  rule: self.all(name, name in ['labels', 'annotations'] || !has(self[name].kind)
+                    || self[name].kind in ['', 'HTTPRoute'])
+                - message: route.<name>.apiVersion must be a gateway.networking.k8s.io
+                    version that serves HTTPRoute (v1, v1beta1 or v1alpha2) through
+                    the operator
+                  rule: self.all(name, name in ['labels', 'annotations'] || !has(self[name].apiVersion)
+                    || self[name].apiVersion in ['', 'gateway.networking.k8s.io/v1', 'gateway.networking.k8s.io/v1beta1',
+                    'gateway.networking.k8s.io/v1alpha2'])
             type: object
             x-kubernetes-preserve-unknown-fields: true
           status:
