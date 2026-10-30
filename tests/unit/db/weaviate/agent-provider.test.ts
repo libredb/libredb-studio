@@ -401,6 +401,30 @@ describe("one agent request", () => {
   });
 });
 
+describe("no state is kept between agent requests", () => {
+  test("a path one request fell back to is not remembered: the next request tries REST first again", async () => {
+    const { provider, wire } = await connected(
+      agentServer("viewer", {
+        "GET /v1/schema/Note": agentCollectionAnswer("Note"),
+        "POST /v1/aggregate/Note": {
+          status: 404,
+          contentType: "application/json",
+          retryAfter: null,
+          text: JSON.stringify({ code: 404, message: "path /v1/aggregate/Note was not found" }),
+        },
+        "POST /v1/graphql": agentAnswer("graphql-viewer"),
+      }),
+    );
+    const aggregate = ["GET /v1/users/own-info", "GET /v1/schema/Note", "POST /v1/aggregate/Note", "POST /v1/graphql"];
+    await provider.queryReadOnly("POST /v1/aggregate/Note", BUDGET);
+    expect(lines(wire)).toEqual(aggregate);
+    wire.calls.length = 0;
+    const result = await provider.queryReadOnly("POST /v1/aggregate/Note", BUDGET);
+    expect(lines(wire)).toEqual(aggregate);
+    expect(result.rows).toEqual([{ collection: "Note", tenant: null, count: 3 }]);
+  });
+});
+
 describe("grounding and catalog reads on the operations profile", () => {
   test("list, describe and count read the schema and counts only, and carry no stored value", async () => {
     const { provider, wire } = agentProvider(
