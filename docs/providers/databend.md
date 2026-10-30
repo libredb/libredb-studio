@@ -520,7 +520,7 @@ The statement splitter, the row limiter, the confirmation gate, the guard and th
 | `doubleSlashComment` | `false` | `//` starts no comment |
 | `backslashAlwaysEscapes` | `true` | a backslash escapes the next character inside `'...'` and `"..."`, the first shipped row to declare it |
 | `script` | `{"blocks":"none","separatorLine":null,"unit":"statement"}` | the default: no procedural block and no separator line, so every code `;` ends a statement |
-| `trailingLimitClauses` | `["\\s+FORMAT\\s+\\w+\\s*$"]` | a trailing `FORMAT <name>` must follow the row bound, so the limiter appends `LIMIT` before it (measured, L3: `SELECT 1 FORMAT JSON LIMIT 5` is a parse error) |
+| `trailingLimitClauses` | `["\\s+FORMAT\\s+\\w+\\s*$","\\s+IGNORE_RESULT\\s*$"]` | trailing `FORMAT <name>` and `IGNORE_RESULT` clauses follow the row bound, so the limiter writes `LIMIT` before them and recognises an existing bound before them (`FORMAT` measured, L3: `SELECT 1 FORMAT JSON LIMIT 5` is a parse error; `IGNORE_RESULT` follows `LIMIT`/`OFFSET` in [Databend's SELECT syntax](https://docs.databend.com/sql/sql-commands/query-syntax/query-select), #2092) |
 
 A top-level `SELECT TOP n` is a bounded statement to the shared limiter, so no `LIMIT` is appended to it: Databend refuses `TOP` and `LIMIT` together (L3).
 
@@ -665,6 +665,7 @@ Block comments are flat: `lex_comment_block` scans for the first `*/` with no de
 `//` is an operator token.
 A backslash always escapes: the string token is `'([^'\\]|\\.|'')*'` and its `"` twin, and no setting turns the escape off.
 The row bound goes before a trailing `FORMAT` clause, measured on the pinned image over `POST /v1/query`: `SELECT 1 FORMAT JSON LIMIT 5` is 1005 "unexpected `LIMIT`", and `SELECT 1 LIMIT 5 FORMAT JSON` succeeds.
+The bound also goes before `IGNORE_RESULT`, which follows `LIMIT`/`OFFSET` in [Databend's SELECT syntax](https://docs.databend.com/sql/sql-commands/query-syntax/query-select): the issue's `... ORDER BY EventTime LIMIT 10 ignore_result` keeps its existing bound instead of taking a second `LIMIT` past the clause (#2092).
 `readsSqlText` is `true`: the editor text is SQL, and the provider extends `SQLBaseProvider`.
 Redaction is `sql` with no name quote: a redacted statement keeps its words, and every literal and quoted run becomes `?`.
 

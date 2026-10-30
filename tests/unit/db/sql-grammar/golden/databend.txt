@@ -1,4 +1,4 @@
-resolveSqlGrammar("databend") => {"hash":"code","bracket":"subscript","blockComment":"flat","alternateQuoting":false,"doubleSlashComment":false,"backslashAlwaysEscapes":true,"script":{"blocks":"none","separatorLine":null,"unit":"statement"},"trailingLimitClauses":["/\\s+FORMAT\\s+\\w+\\s*$/i"]}
+resolveSqlGrammar("databend") => {"hash":"code","bracket":"subscript","blockComment":"flat","alternateQuoting":false,"doubleSlashComment":false,"backslashAlwaysEscapes":true,"script":{"blocks":"none","separatorLine":null,"unit":"statement"},"trailingLimitClauses":["/\\s+FORMAT\\s+\\w+\\s*$/i","/\\s+IGNORE_RESULT\\s*$/i"]}
 readsSqlText("databend") => true
 hashRunIsAmbiguous(resolveSqlGrammar("databend")) => false
 readSqlSpan walk("SELECT 1 # c\nFROM t") => [["whitespace",6,7],["whitespace",8,9],["whitespace",10,11],["whitespace",12,13],["whitespace",17,18]]

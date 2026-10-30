@@ -2562,6 +2562,83 @@ describe("PostgreSQL locking clauses take the row bound before them (#1964)", ()
   });
 });
 
+// ─── Databend IGNORE_RESULT follows the row bound (#2092) ────────────────────
+//
+// Databend's SELECT syntax places IGNORE_RESULT after LIMIT/OFFSET. Declaring
+// it as a trailing clause lets the shared limiter see a bound before it and
+// insert a missing bound before the clause rather than append one past it.
+describe("Databend IGNORE_RESULT follows the row bound (#2092)", () => {
+  test.each(["IGNORE_RESULT", "ignore_result"])("the bound is written before %s", (tail) => {
+    const sql = `SELECT * FROM t ${tail}`;
+    expect(analyzeQuery(sql, "databend").hasLimit).toBe(false);
+    const result = applyQueryLimit(sql, 500, 0, {}, "databend");
+    expect(result.sql).toBe(`SELECT * FROM t LIMIT 500 ${tail}`);
+    expect(result.wasLimited).toBe(true);
+  });
+
+  test.each([
+    "SELECT * FROM t LIMIT 10 IGNORE_RESULT",
+    "SELECT * FROM t LIMIT 10 OFFSET 2 IGNORE_RESULT",
+    "SELECT * FROM t ORDER BY EventTime LIMIT 10 ignore_result",
+  ])("an existing bound is respected: %s", (sql) => {
+    const info = analyzeQuery(sql, "databend");
+    expect(info.hasLimit).toBe(true);
+    expect(info.existingLimit).toBe(10);
+    const result = applyQueryLimit(sql, 500, 0, {}, "databend");
+    expect(result.sql).toBe(sql);
+    expect(result.wasLimited).toBe(false);
+  });
+
+  test("forceLimit replaces the bound before IGNORE_RESULT exactly once", () => {
+    const result = applyQueryLimit("SELECT * FROM t LIMIT 10 IGNORE_RESULT", 5, 0, { forceLimit: true }, "databend");
+    expect(result.sql).toBe("SELECT * FROM t LIMIT 5 IGNORE_RESULT");
+    expect(result.wasLimited).toBe(true);
+    expect(result.originalLimit).toBe(10);
+  });
+
+  test("an injected offset also precedes IGNORE_RESULT", () => {
+    const result = applyQueryLimit("SELECT * FROM t IGNORE_RESULT", 25, 2, {}, "databend");
+    expect(result.sql).toBe("SELECT * FROM t LIMIT 25 OFFSET 2 IGNORE_RESULT");
+    expect(result.wasLimited).toBe(true);
+  });
+
+  test.each([
+    ["SELECT * FROM t -- note\nIGNORE_RESULT", "SELECT * FROM t LIMIT 500 -- note\nIGNORE_RESULT"],
+    ["SELECT * FROM t /* note */ IGNORE_RESULT", "SELECT * FROM t LIMIT 500 /* note */ IGNORE_RESULT"],
+    ["SELECT * FROM t IGNORE_RESULT; -- note", "SELECT * FROM t LIMIT 500 IGNORE_RESULT; -- note"],
+  ])("comments keep their place around the clause: %s", (sql, expected) => {
+    const result = applyQueryLimit(sql, 500, 0, {}, "databend");
+    expect(result.sql).toBe(expected);
+    expect(result.wasLimited).toBe(true);
+  });
+
+  test.each([
+    ["SELECT * FROM t WHERE note = 'ignore_result'", "SELECT * FROM t WHERE note = 'ignore_result' LIMIT 500"],
+    ["SELECT /* IGNORE_RESULT */ * FROM t", "SELECT /* IGNORE_RESULT */ * FROM t LIMIT 500"],
+    ["SELECT * FROM t /* IGNORE_RESULT */", "SELECT * FROM t LIMIT 500 /* IGNORE_RESULT */"],
+    ["SELECT * FROM t -- IGNORE_RESULT", "SELECT * FROM t LIMIT 500 -- IGNORE_RESULT"],
+  ])("clause words inside a literal or comment are not a tail: %s", (sql, expected) => {
+    expect(analyzeQuery(sql, "databend").hasLimit).toBe(false);
+    const result = applyQueryLimit(sql, 500, 0, {}, "databend");
+    expect(result.sql).toBe(expected);
+    expect(result.wasLimited).toBe(true);
+  });
+
+  // The word is a legal alias after `AS`, but only the one end-anchored shape with nothing behind
+  // the alias can collide with the clause; anything after the alias (a FROM, a second column, a
+  // bound) breaks the anchor and the word reads as code again - the accepted trade-off the druid
+  // `ROWS?` clause already ships, kept after a lookbehind guard measured quadratic on a long run.
+  test.each([
+    ["SELECT a AS IGNORE_RESULT FROM t", "SELECT a AS IGNORE_RESULT FROM t LIMIT 500"],
+    ["SELECT a AS ignore_result, b FROM t", "SELECT a AS ignore_result, b FROM t LIMIT 500"],
+  ])("an alias with a FROM behind it is not the clause: %s", (sql, expected) => {
+    expect(analyzeQuery(sql, "databend").hasLimit).toBe(false);
+    const result = applyQueryLimit(sql, 500, 0, {}, "databend");
+    expect(result.sql).toBe(expected);
+    expect(result.wasLimited).toBe(true);
+  });
+});
+
 // ─── the trailing-clause strip stays linear in the statement's length ───────
 //
 // A clause pattern opens with `\s+` and is end-anchored, and an unanchored search
@@ -2598,6 +2675,20 @@ describe("the trailing-clause strip stays linear in the statement's length", () 
       const result = applyQueryLimit(sql, 500, 0, {}, type);
       expect(result.sql).toBe(`${sql} LIMIT 500`);
       expect(analyzeQuery(sql, type).hasLimit).toBe(false);
+    },
+    1000,
+  );
+
+  test.each([
+    ["before an earlier token", `SELECT${run}1 IGNORE_RESULT`, `SELECT${run}1 LIMIT 500 IGNORE_RESULT`],
+    ["before the clause", `SELECT * FROM t${run}IGNORE_RESULT`, `SELECT * FROM t LIMIT 500${run}IGNORE_RESULT`],
+  ])(
+    "databend: a long whitespace run %s is read once",
+    (_label, sql, expected) => {
+      const result = applyQueryLimit(sql, 500, 0, {}, "databend");
+      expect(result.sql).toBe(expected);
+      expect(result.wasLimited).toBe(true);
+      expect(analyzeQuery(sql, "databend").hasLimit).toBe(false);
     },
     1000,
   );

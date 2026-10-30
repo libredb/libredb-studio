@@ -428,6 +428,25 @@ test("the header names the image and the date the manifest records", () => {
   );
 });
 
+describe("DatabendProvider query preparation", () => {
+  test.each<[string, string, boolean]>([
+    ["SELECT * FROM t", "SELECT * FROM t LIMIT 25", true],
+    ["SELECT * FROM t IGNORE_RESULT", "SELECT * FROM t LIMIT 25 IGNORE_RESULT", true],
+    ["SELECT * FROM t LIMIT 10 IGNORE_RESULT", "SELECT * FROM t LIMIT 10 IGNORE_RESULT", false],
+  ])("prepares %s (#2092)", (sql, expected, wasLimited) => {
+    const script = scriptedNodeTransport();
+    const { deps } = transportDeps(script);
+    const provider = new DatabendProvider(testConnection(), { queryTimeout: 60_000 }, deps);
+    opened.push(provider);
+
+    const prepared = provider.prepareQuery(sql, { limit: 25 });
+    expect(prepared.query).toBe(expected);
+    expect(prepared.wasLimited).toBe(wasLimited);
+    expect(prepared.limit).toBe(25);
+    expect(script.requests).toEqual([]);
+  });
+});
+
 describe("Databend v1.2.951-nightly, replayed", () => {
   flow("connect probes and reads its caution; the object surface meets the fleet's contract", async () => {
     const { provider, server, record } = replay();
