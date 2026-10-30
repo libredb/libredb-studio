@@ -1173,7 +1173,12 @@ describe("AgentRail", () => {
     // connection the server has never heard of: the seed exists on the server, it is
     // the local settings that do not. So the caveat may not
     // claim the agent reaches managed connections only — it does not.
-    expect(caveat).toContain("this browser");
+    // Nor may it say the settings live in this browser: with STORAGE_PROVIDER=sqlite or
+    // postgres a connection typed into the UI is stored on the server, and it is still
+    // refused, because a run resolves only the connections the server lists itself.
+    expect(caveat).toContain("a connection the server lists itself");
+    expect(caveat).toContain("matches the copy the server holds");
+    expect(caveat).not.toContain("this browser");
     expect(caveat).not.toContain("managed connections only");
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -7082,8 +7087,8 @@ describe("a seed configuration the server could not read (B37)", () => {
   });
 
   // The control arm. A server that legitimately serves NO seeds is answering, and the
-  // original sentence is the true one there: this copy exists in this browser and
-  // nowhere else. Without this test the fix could turn every empty list into a false
+  // original sentence is the true one there: the server lists no connection this copy
+  // could be rebuilt from. Without this test the fix could turn every empty list into a false
   // alarm about a configuration that is fine.
   test("a server that legitimately serves no seeds still gets the original sentence", async () => {
     const { view, seeds, resolved } = await railAfterManaged({ json: { connections: [] } });
@@ -7093,7 +7098,7 @@ describe("a seed configuration the server could not read (B37)", () => {
 
     const caveat = view.getByTestId("agent-unresolvable-connection").textContent ?? "";
     expect(caveat).toContain("Sample (Employees)");
-    expect(caveat).toContain("this browser");
+    expect(caveat).toContain("a connection the server lists itself");
     expect(view.queryByTestId("agent-seed-config-unreadable")).toBeNull();
     expect((view.getByTestId("agent-start") as HTMLButtonElement).disabled).toBe(true);
   });

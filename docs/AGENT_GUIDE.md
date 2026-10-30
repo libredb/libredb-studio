@@ -167,12 +167,15 @@ which is what lets the rail say the same true sentence about a run after a reloa
 it opened it.
 
 **The connection is the one the shell is on, and it has to be one the server can rebuild.** A run
-stores a connection id and no credential, so a connection that exists only in your browser cannot be
-investigated. The rail says so rather than offering a Start that must fail:
+stores a connection id and no credential, so only a seed connection the server lists itself can be
+investigated, and only while it still matches the copy the server holds.
+A connection you created in the UI cannot, wherever `STORAGE_PROVIDER` keeps it.
+The rail says so rather than offering a Start that must fail:
 
-> *"… cannot be rebuilt on the server: its settings live in this browser. A run re-resolves its
-> connection there after a restart, so it can only investigate a connection the server holds too."*
-> (`AgentRail.tsx:2098-2104`)
+> *"… cannot be rebuilt on the server: a run can start only on a connection the server lists itself,
+> such as a seed or a built-in sample, and only while it still matches the copy the server holds. A
+> run re-resolves its connection there after a restart."*
+> (`src/components/agent/AgentRail.tsx`, `agent-unresolvable-connection`)
 
 A *different* absence gets a different sentence. When the server could not read its own seed
 configuration, nothing has been established about your connection at all, so the rail says that

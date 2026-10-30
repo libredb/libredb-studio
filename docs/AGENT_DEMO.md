@@ -214,10 +214,11 @@ the seed file". A run persists a connection id and no credential, so the server 
 resolve it again from its own configuration. Seed connections
 ([`docs/SEED_CONNECTIONS.md`](./SEED_CONNECTIONS.md), pointed at by `SEED_CONFIG_PATH`) qualify, and
 so do the two built-in samples — **Sample (Employees)** and **Sample (LibreDB)** — which appear in no
-seed file and run fine. A connection you created in the UI does not, and the rail says so instead of
-failing later: *"PG Superuser (test) cannot be rebuilt on the server: its settings live in this
-browser. A run re-resolves its connection there after a restart, so it can only investigate a
-connection the server holds too."* Start is disabled underneath it.
+seed file and run fine. A connection you created in the UI does not, whatever `STORAGE_PROVIDER` is
+set to, and the rail says so instead of failing later: *"PG Superuser (test) cannot be rebuilt on the
+server: a run can start only on a connection the server lists itself, such as a seed or a built-in
+sample, and only while it still matches the copy the server holds. A run re-resolves its connection
+there after a restart."* Start is disabled underneath it.
 
 **PostgreSQL needs a least-privilege role.** The agent refuses a superuser outright — a read-only
 transaction does not stop `COPY TO PROGRAM` or server-side file access, so the profile checks the

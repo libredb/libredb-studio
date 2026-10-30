@@ -186,13 +186,12 @@ request time, and `GET /api/agent/config` reports which one is missing:
    With an unreachable `WORKFLOW_POSTGRES_URL` the rail still appears and the first Start still
    fails (see [HTTP surface](#http-surface)).
 
-**A third condition, not covered by `/api/agent/config`, gates the Start button itself:** the
-connection being investigated must be one the server can resolve on its own, which needs
-`STORAGE_PROVIDER` to be `sqlite` or `postgres`. With the default `STORAGE_PROVIDER=local`,
-connection metadata lives only in the browser, so `resolveAgentRunConnectionId` (in
-[`src/hooks/use-connection-payload.ts`](../src/hooks/use-connection-payload.ts)) never has a
-server-known connection to hand back, and Start stays disabled no matter what the two conditions
-above report.
+**A third condition, not covered by `/api/agent/config`, gates the Start button itself:** the connection being investigated must be a seed connection the server lists itself, from a seed file, platform discovery or the built-in samples ([SEED_CONNECTIONS.md](./SEED_CONNECTIONS.md)), and still match the copy the server holds.
+`STORAGE_PROVIDER` does not change this, in either direction.
+A connection created in the UI stays ineligible with `STORAGE_PROVIDER=sqlite` or `postgres`, although its row is then stored on the server, because a run resolves only a `seed:<id>` and never reads user storage.
+A seed connection is eligible with the default `STORAGE_PROVIDER=local`.
+`resolveAgentRunConnectionId` (in [`src/hooks/use-connection-payload.ts`](../src/hooks/use-connection-payload.ts)) decides this in the browser, and for any other connection Start stays disabled no matter what the two conditions above report.
+[What a run is](#what-a-run-is) gives the full rule and the reason for it.
 
 **Governance mode holds the agent off.**
 With `GOVERNANCE_SOURCE` set (see [GOVERNANCE.md](./GOVERNANCE.md)) this version runs no agent, whatever the two conditions above, `LIBREDB_AGENT_ENABLED` and the AI configuration say, until a later Studio release runs the agent under governance.
@@ -3120,7 +3119,7 @@ the role's own grants are the whole boundary (A3).
   narrowing would move behaviour five passing runs were measured under.
 - **B81** — the seed list starts out claiming to be loaded and empty, so a non-OK the server did not
   attribute to its seed configuration leaves the rail saying of a connection this application seeds
-  itself that its settings live in this browser. That is the same false sentence the seed-config
+  itself that it cannot be rebuilt on the server. That is the same false sentence the seed-config
   entry was filed about, reached through a proxy rather than through a malformed seed file. Not
   fixed here because separating "unasked" from "measured empty" changes a type every consumer
   reads, and two tests currently pin the wrong half as intended.

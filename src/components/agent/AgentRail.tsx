@@ -2301,7 +2301,7 @@ export const AgentRail = React.memo(function AgentRail({
           "the server does not hold this connection" only when the server ANSWERED
           with the connections it holds. When it could not read its own seed
           configuration, nothing has been established about this connection at all —
-          and saying its settings live in this browser is false of the samples this
+          and saying the server does not list it is false of the samples this
           application ships and seeds itself, while sending the operator to the wrong
           file. Which absence it is comes from the shell, because only it asked.
         */}
@@ -2313,9 +2313,9 @@ export const AgentRail = React.memo(function AgentRail({
             </p>
           ) : (
             <p data-testid="agent-unresolvable-connection" className="mt-2 text-xs text-warning/80">
-              {connectionName ?? "This connection"} cannot be rebuilt on the server: its settings live in this browser.
-              A run re-resolves its connection there after a restart, so it can only investigate a connection the server
-              holds too.
+              {connectionName ?? "This connection"} cannot be rebuilt on the server: a run can start only on a
+              connection the server lists itself, such as a seed or a built-in sample, and only while it still matches
+              the copy the server holds. A run re-resolves its connection there after a restart.
             </p>
           ))}
 
