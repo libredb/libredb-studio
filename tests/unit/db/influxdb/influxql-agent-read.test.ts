@@ -118,6 +118,30 @@ describe("proveInfluxqlAgentPrincipal on 1.13.1", () => {
     expect(at("1.13.1", "into-state-other-after-rw").body).toContain("libredb_into");
   });
 
+  test("admits a user with READ on two databases, each probe refused as needing WRITE on that database", async () => {
+    // The second database's refusal is the measured one with its own name, as 1.13.1 words each database it checks.
+    const home = at("1.13.1", "write-probe-reader-home");
+    const other = answer(home.status, home.body.replace("requires WRITE on home", "requires WRITE on other"));
+    const listing = answer(
+      200,
+      '{"results":[{"statement_id":0,"series":[{"name":"databases","columns":["name"],"values":[["home"],["other"]]}]}]}',
+    );
+    const { error, sent } = await prove("v1", [at("1.13.1", "admin-read-reader"), listing, home, other]);
+    expect(error).toBeUndefined();
+    expect(sent).toEqual([USERS, LISTING, probeOn("home"), probeOn("other")]);
+    // A refusal naming another database than the one probed is not that database's refusal.
+    const crossed = await prove("v1", [at("1.13.1", "admin-read-reader"), listing, home, home]);
+    expect(profileError(crossed.error, "PROFILE_UNSUPPORTED_TARGET").message).toContain(
+      'a no-op DELETE on the database "other"',
+    );
+  });
+
+  test("refuses a 200 whose body is the server's top-level error, as unread rather than run", async () => {
+    const { error, sent } = await prove("v1", [answer(200, '{"error":"boom"}')]);
+    expect(sent).toEqual([USERS]);
+    profileError(error, "PROFILE_UNSUPPORTED_TARGET");
+  });
+
   test("refuses an admin by its SHOW USERS answer, before anything else is sent", async () => {
     const { error, sent } = await prove("v1", [at("1.13.1", "admin-read-admin")]);
     expect(sent).toEqual([USERS]);
@@ -181,7 +205,7 @@ describe("proveInfluxqlAgentPrincipal on 2.9.1", () => {
     const { error, sent } = await prove("v2", [at("2.9.1", "listing-operator")]);
     expect(sent).toEqual([LISTING]);
     expect(profileError(error, "PROFILE_PRIVILEGES_TOO_BROAD").message).toBe(
-      "The agent read-only profile needs a token scoped to the buckets it reads, and this one lists InfluxDB 2.x's system buckets, which only an operator or all-access token reads. Use a token with read permission on the connection's bucket. Nothing else was sent.",
+      "The agent read-only profile needs a token scoped to the buckets it reads, and this one lists InfluxDB 2.x's system buckets, which a token scoped to its buckets does not list. Use a token with read permission on the connection's bucket. Nothing else was sent.",
     );
   });
 
@@ -239,6 +263,12 @@ describe("proveInfluxqlAgentPrincipal on every line", () => {
     expect(profileError(error, "PROFILE_UNSUPPORTED_TARGET").message).toBe(
       "The agent read-only profile reads the connection's database, and this connection names none: set Database on the connection.",
     );
+  });
+
+  test("refuses a connection whose database is empty, before anything is sent", async () => {
+    const { error, sent } = await prove("v1", [], { database: "" });
+    expect(sent).toEqual([]);
+    expect(profileError(error, "PROFILE_UNSUPPORTED_TARGET").message).toContain("this connection names none");
   });
 
   test("refuses a principal that does not list the bound database", async () => {
@@ -358,6 +388,19 @@ describe("shapeInfluxqlAgentAnswer", () => {
     expect(() =>
       shapeInfluxqlAgentAnswer(body, { ...BUDGET, maxResultBytes: 100_000_000 }, [], "SELECT * FROM m"),
     ).toThrow("Read-only execution exceeded the row budget: 3 rows > 2 allowed");
+  });
+
+  test("refuses a result the server marked partial, which it cut at its max-row-limit, rather than answer it cut", () => {
+    const partial = JSON.stringify({
+      results: [{ statement_id: 0, series: [{ name: "m", columns: ["time", "v"], values: [[0, 0]] }], partial: true }],
+    });
+    expect(() => shapeInfluxqlAgentAnswer(partial, BUDGET, [], "SELECT * FROM m")).toThrow(
+      new QueryError(
+        "Read-only execution was refused: InfluxDB marked this result partial, so the server cut it at its max-row-limit",
+        "influxdb",
+        "SELECT * FROM m",
+      ),
+    );
   });
 
   test("an answer the server words as an error stays the shaper's error", () => {

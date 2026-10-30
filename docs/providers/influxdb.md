@@ -710,7 +710,7 @@ Every claim below is a capture under `tests/fixtures/influxdb/1.13.1/agent-bound
 2. The connection names its database, and the principal lists it.
 3. No administrator.
    On 1.x, `SHOW USERS` must be refused as needing the admin privilege (`admin-read-reader`); an admin is answered (`admin-read-admin`), and so is anyone on a server with authentication off (`admin-read-auth-off`), refused as a server that does not check who asks.
-   On 2.x every token is answered `not implemented: SHOW USERS`, the operator's included (`admin-read-operator`), so there a token that lists the system buckets `_monitoring` or `_tasks`, which only the operator and all-access tokens do (`listing-operator`), is refused.
+   On 2.x every token is answered `not implemented: SHOW USERS`, the operator's included (`admin-read-operator`), so there a token that lists the system buckets `_monitoring` or `_tasks`, as the operator token does (`listing-operator`) and no token scoped to buckets does (`listing-ro`, `listing-readother`), is refused.
 4. No write anywhere it can reach.
    `SHOW DATABASES` lists every database the principal holds any privilege on, a 1.x `WRITE`-only grant included (`listing-rw`), and each is sent a no-op write, a `DELETE` from a measurement named for that probe alone, of points before 1970.
    A reader is refused it (`write-probe-reader-home`: 403 `requires WRITE on home`; `write-probe-ro-home`: `insufficient permissions`); a principal that can write is answered it and deletes nothing (`write-probe-rw-other`, `write-probe-rwhome-home`, `write-probe-readother-other`), and is refused.
@@ -726,7 +726,10 @@ The operations profile sends no statement, so its acquisitions open unproved and
 Sent past Studio's policy as a user with `READ` on `home` only, it is refused into `home` and into a second database, in every spelling, behind `EXPLAIN`, `EXPLAIN ANALYZE` and inside a subquery (`into-*-reader`), and the databases read the same before and after (`into-state-*-before`, `into-state-*-after-reader`).
 As a user that also holds `WRITE` on the second database, the same statement into that database is answered `written 2` and lands there (`into-second-rw`, `into-state-other-after-rw`).
 So the proof's no-op write on every listed database is what refuses that user, before any statement is sent; the read policy refuses `INTO` before anything is sent as well.
-2.9.1 answers `not implemented: SELECT INTO` to every token, the operator's included, and a token's write on a bucket it cannot read is out of InfluxQL's reach (`write-probe-rwother-other`: `no dbrp mappings found`).
+2.9.1 writes no `SELECT ... INTO` for any token, the operator's included, and the databases read the same before and after (`into-state-*`).
+The top-level form is answered `not implemented: SELECT INTO`, or `database not found: other` to a token that cannot see the second bucket (`into-bound-*`, `into-second-*`).
+The subquery form is refused the same way, or answered with the inner rows and its `INTO` dropped (`into-second-subquery-operator`, `into-second-subquery-readother`).
+A token's write on a bucket it cannot read is out of InfluxQL's reach (`write-probe-rwother-other`: `no dbrp mappings found`).
 
 ### 15.3 The statement path
 
@@ -744,6 +747,10 @@ A `SELECT` is read chunked and a `SHOW` or `EXPLAIN` whole, as in section 5.2.
 ### 15.4 The budgets
 
 A result past the row budget, past the cell budget or past the byte budget is refused with the shared sentence, never cut; the answer's bytes on the wire are capped at six times the byte budget plus 64 KiB, since the server writes `<`, `>` and `&` as six-byte escapes.
+A result the server cut at its `max-row-limit`, which it marks partial, is refused as well, where the editor shows it with a notice (section 5.4):
+
+> Read-only execution was refused: InfluxDB marked this result partial, so the server cut it at its max-row-limit
+
 The time budget is the request's deadline: past it the request is dropped, which ends the server's work (section 5.6).
 An estimating plan is refused, since the server composes none an agent is shown before a statement runs.
 

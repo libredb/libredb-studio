@@ -350,6 +350,27 @@ describe("the agent read-only profile", () => {
     await provider.disconnect();
   });
 
+  test("the operations profile, which sends no statement, opens a writing principal unproved and refuses queryReadOnly", async () => {
+    const { provider, wire } = agentServer(
+      "1.13.1",
+      at("1.13.1", "listing-rw"),
+      [],
+      { user: "rw" },
+      {
+        readOnly: true,
+        sendsStatements: false,
+      },
+    );
+    await provider.connect();
+    // The connect sequence alone: no SHOW USERS, no second listing, no probe.
+    expect(forms(wire.requests.slice(2))).toEqual([{ q: "SHOW DATABASES" }]);
+    const error = await rejection(provider.queryReadOnly("SELECT * FROM home", BUDGET));
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect(error.message).toBe("Read-only execution requires a provider opened under the agent read-only profile");
+    expect(wire.requests).toHaveLength(3);
+    await provider.disconnect();
+  });
+
   test("1.13.1: a READ user opens, proved by SHOW USERS refused and the no-op DELETE refused on every database it lists", async () => {
     const { provider, wire } = agentServer("1.13.1", at("1.13.1", "listing-reader"), PROOF.reader);
     await provider.connect();
@@ -557,10 +578,34 @@ describe("the agent read-only profile", () => {
     // The positive control: the same statement from a user that holds WRITE there writes, which the proof refuses.
     expect(at("1.13.1", "into-second-rw").status).toBe(200);
     expect(at("1.13.1", "into-state-other-after-rw").body).toContain("libredb_into");
-    // 2.9.1 refuses SELECT ... INTO to every token, the operator's included, and nothing lands.
+    // 2.9.1 writes no SELECT ... INTO for any token, the operator's included: the top-level form is refused, as not
+    // implemented or as a database the token cannot see, and the subquery form either is refused the same way or is
+    // answered with the inner rows and its INTO dropped. The state read before and after is the same.
     for (const principal of ["ro", "rwother", "readother", "operator"]) {
-      expect(at("2.9.1", `into-bound-${principal}`).body).toContain("not implemented: SELECT INTO");
+      expect(at("2.9.1", `into-bound-${principal}`).body).toBe(
+        '{"results":[{"statement_id":0,"error":"not implemented: SELECT INTO"}]}\n',
+      );
+    }
+    for (const [principal, error] of [
+      ["ro", "database not found: other"],
+      ["rwother", "database not found: other"],
+      ["readother", "not implemented: SELECT INTO"],
+      ["operator", "not implemented: SELECT INTO"],
+    ] as const) {
+      const second = at("2.9.1", `into-second-${principal}`);
+      expect([second.status, JSON.parse(second.body)]).toEqual([200, { results: [{ statement_id: 0, error }] }]);
+    }
+    for (const principal of ["ro", "rwother"]) {
+      expect(JSON.parse(at("2.9.1", `into-second-subquery-${principal}`).body)).toEqual({
+        results: [{ statement_id: 0, error: "database not found: other" }],
+      });
+    }
+    for (const principal of ["readother", "operator"]) {
+      const answered = JSON.parse(at("2.9.1", `into-second-subquery-${principal}`).body);
+      expect(answered.results[0].series[0].name).toBe("home");
+      expect(answered.results[0].error).toBeUndefined();
     }
     expect(at("2.9.1", "into-state-other-after").body).toBe(at("2.9.1", "into-state-other-before").body);
+    expect(at("2.9.1", "into-state-home-after").body).toBe(at("2.9.1", "into-state-home-before").body);
   });
 });

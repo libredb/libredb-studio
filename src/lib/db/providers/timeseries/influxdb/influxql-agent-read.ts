@@ -14,16 +14,19 @@
  * 2. **Not an administrator.** On 1.x, `SHOW USERS` must be refused as needing the admin privilege
  *    (`admin-read-reader`); an admin is answered (`admin-read-admin`), and so is anyone on a server with
  *    authentication off (`admin-read-auth-off`). 2.x answers `SHOW USERS` "not implemented" to every token, the
- *    operator's included (`admin-read-operator`), so there the administrator is told by the listing: only the operator
- *    and all-access tokens list the system buckets `_monitoring` and `_tasks` (`listing-operator`).
+ *    operator's included (`admin-read-operator`), so there the administrator is told by the listing: the operator
+ *    token lists the system buckets `_monitoring` and `_tasks` (`listing-operator`), and a token scoped to buckets
+ *    lists none of them (`listing-ro`, `listing-readother`).
  * 3. **No write anywhere it can reach.** `SHOW DATABASES` lists every database the principal holds any privilege on, a
  *    1.x WRITE-only grant included (`listing-rw`), and each is sent a no-op write: a DELETE from a measurement named
  *    for this probe alone, before 1970. A reader is refused it (`write-probe-reader-home`, 403 "requires WRITE on";
  *    `write-probe-ro-home`, "insufficient permissions"); a principal that can write is answered it, and deletes nothing.
  *    This is what stops `SELECT ... INTO`: 1.13.1 writes into a second database where a principal that reads only the
  *    bound one holds WRITE (`into-second-rw`, written 2), and refuses a principal with no write there
- *    (`into-second-reader`). 2.9.1 refuses `SELECT ... INTO` to every token, and a token's write on a bucket it cannot
- *    read is out of InfluxQL's reach (`write-probe-rwother-other`, "no dbrp mappings found").
+ *    (`into-second-reader`). 2.9.1 writes no `SELECT ... INTO` for any token: the top-level form is refused, as not
+ *    implemented or as a database the token cannot see, and the subquery form's INTO is refused or dropped
+ *    (`into-second-subquery-operator`). A token's write on a bucket it cannot read is out of InfluxQL's reach
+ *    (`write-probe-rwother-other`, "no dbrp mappings found").
  *
  * The connection's own database must be one the listing names, and a principal listing more than
  * `INFLUXQL_AGENT_PROBED_DATABASES` databases is refused, so a statement's probes stay bounded. Every answer is matched
@@ -54,7 +57,7 @@ import { GENERATION_TRAITS, type InfluxGeneration } from "./versions";
 /** The most databases a principal may list: each is sent its own probe before every agent statement. */
 export const INFLUXQL_AGENT_PROBED_DATABASES = 32;
 
-/** InfluxDB 2.x's own buckets, listed only to an operator or all-access token (`listing-operator`). */
+/** InfluxDB 2.x's own buckets, listed to the operator token and to no token scoped to buckets (`listing-operator`). */
 const SYSTEM_BUCKETS: ReadonlySet<string> = new Set(["_monitoring", "_tasks"]);
 
 /** What the proof is given: the provider's limited send, the call's deadline, and what the connection says. */
@@ -191,7 +194,7 @@ export async function proveInfluxqlAgentPrincipal(context: InfluxqlAgentProofCon
   }
   if (traits.agentPrincipal === "token" && names.some((name) => SYSTEM_BUCKETS.has(name))) {
     throw tooBroad(
-      `The agent read-only profile needs a token scoped to the buckets it reads, and this one lists ${label}'s system buckets, which only an operator or all-access token reads. Use a token with read permission on the connection's bucket. ${NOTHING_ELSE}`,
+      `The agent read-only profile needs a token scoped to the buckets it reads, and this one lists ${label}'s system buckets, which a token scoped to its buckets does not list. Use a token with read permission on the connection's bucket. ${NOTHING_ELSE}`,
     );
   }
   if (!names.includes(database)) {
@@ -238,9 +241,14 @@ export function influxqlAgentResponseCap(budget: ReadOnlyStatementBudget): numbe
   return budget.maxResultBytes * INFLUXQL_AGENT_WIRE_EXPANSION + INFLUXQL_AGENT_ENVELOPE_ALLOWANCE_BYTES;
 }
 
+/** An answer the server cut at its `max-row-limit`, which marks the last result partial. */
+const INFLUXQL_AGENT_PARTIAL_SENTENCE =
+  "Read-only execution was refused: InfluxDB marked this result partial, so the server cut it at its max-row-limit";
+
 /**
- * A `/query` answer as the agent's fields and rows, or the shared refusal: the row bound, the cell bound, then the
- * byte bound. The shaper reads one row past the row budget, so a result one row over it is refused, never cut.
+ * A `/query` answer as the agent's fields and rows, or the refusal: a result the server marked partial, then the
+ * shared row bound, the cell bound and the byte bound. The shaper reads one row past the row budget, so a result one
+ * row over it is refused, never cut.
  */
 export function shapeInfluxqlAgentAnswer(
   text: string,
@@ -253,6 +261,8 @@ export function shapeInfluxqlAgentAnswer(
     { rowCut: budget.maxResultRows + 1, cellBudget: INFLUX_CELL_BUDGET },
     secretForms,
   );
+  // The server's own cut (its max-row-limit) leaves the last result partial: refused like Studio's own cut.
+  if (shaped.partial) throw new QueryError(INFLUXQL_AGENT_PARTIAL_SENTENCE, "influxdb", statement);
   const rows = [...shaped.rows];
   if (rows.length > budget.maxResultRows) {
     throw new QueryError(rowBudgetSentence(rows.length, budget.maxResultRows), "influxdb", statement);

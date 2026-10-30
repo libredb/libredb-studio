@@ -256,7 +256,7 @@ export function shapeInfluxqlBody(
   text: string,
   limits: InfluxShapeLimits,
   secretForms: readonly string[],
-): ShapedResult {
+): ShapedResult & { readonly partial: boolean } {
   const statements = statementResults(splitJsonDocuments(text).map(readDocument));
   const series = statements.flatMap((result) => result.series);
   const grid = gridColumns(series);
@@ -272,5 +272,11 @@ export function shapeInfluxqlBody(
       if (rows.length < kept) rows.push(gridRow(fields, entry, values, lead));
     }
   }
-  return { fields, rows, cut: columnsCut || total > kept, warnings: engineWarnings(statements, secretForms) };
+  return {
+    fields,
+    rows,
+    cut: columnsCut || total > kept,
+    warnings: engineWarnings(statements, secretForms),
+    partial: statements.at(-1)?.partial === true,
+  };
 }
