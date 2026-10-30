@@ -51,7 +51,8 @@ import type { DatabaseType } from "@/lib/types";
  * Unauthorized, proven before every statement to be no superuser, to hold no other permission, and to reach no column
  * masked with a user-defined function, on an Apache Cassandra 5.0 server whose own refusal of a DROP proves it
  * enforces grants, each statement on a session of its own. Couchbase's is the user's: one whose only role is
- * query_select on the connection's bucket, which the query service refuses every write, DDL, GRANT, function call,
+ * query_select on named scopes of the connection's bucket, never its _system scope, which the query service refuses
+ * every write, DDL, GRANT, function call,
  * CURL() and sequence statement, proven before every statement through GET /whoami, a group's roles included, on a
  * server whose own refusal of a DELETE proves it enforces the role, with only one SELECT sent, since such a user may
  * still run UPDATE STATISTICS and EXECUTE. Each provider's own `queryReadOnly` argues its own case.

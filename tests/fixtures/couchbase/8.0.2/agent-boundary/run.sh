@@ -58,4 +58,5 @@ run "$ee" 04-readonly-flag-as-agent-admin
 run "$ee" 05-statement-text-as-administrator
 run "$ee" 07-catalog-read-as-agent-ro
 node "$dir/08-revoke-window.mjs" "$ee" > "$dir/08-revoke-window.txt"
+run "$ee" 09-system-scope-reach
 run "$ce" 06-community-edition-roles

@@ -1,0 +1,120 @@
+[
+ {
+  "note": "the bucket's _system scope: a query_select role on every scope of the bucket reaches it, one on named scopes does not"
+ },
+ {
+  "as": "Administrator",
+  "rest": "PUT /settings/rbac/users/local/agent_scoped",
+  "form": {
+   "password": "@PASSWORD@",
+   "roles": "query_select[probe:_default],query_select[probe:s1]"
+  }
+ },
+ {
+  "sleep": 2000
+ },
+ {
+  "as": "agent_scoped",
+  "rest": "GET /whoami"
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT META(q).id FROM `probe`.`_system`.`_query` AS q ORDER BY META(q).id LIMIT 3",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT m.* FROM `probe`.`_system`.`_mobile` AS m USE KEYS \"_sync:user:alice\"",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT d.n FROM `_default` AS d ORDER BY d.n",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro",
+  "query": {
+   "statement": "SELECT d.n FROM `probe`.`s1`.`c1` AS d",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro_coll",
+  "query": {
+   "statement": "SELECT META(q).id FROM `probe`.`_system`.`_query` AS q ORDER BY META(q).id LIMIT 3",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro_coll",
+  "query": {
+   "statement": "SELECT m.* FROM `probe`.`_system`.`_mobile` AS m USE KEYS \"_sync:user:alice\"",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro_coll",
+  "query": {
+   "statement": "SELECT d.n FROM `_default` AS d ORDER BY d.n",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_ro_coll",
+  "query": {
+   "statement": "SELECT d.n FROM `probe`.`s1`.`c1` AS d",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_scoped",
+  "query": {
+   "statement": "SELECT META(q).id FROM `probe`.`_system`.`_query` AS q ORDER BY META(q).id LIMIT 3",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_scoped",
+  "query": {
+   "statement": "SELECT m.* FROM `probe`.`_system`.`_mobile` AS m USE KEYS \"_sync:user:alice\"",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_scoped",
+  "query": {
+   "statement": "SELECT d.n FROM `_default` AS d ORDER BY d.n",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "agent_scoped",
+  "query": {
+   "statement": "SELECT d.n FROM `probe`.`s1`.`c1` AS d",
+   "query_context": "default:`probe`",
+   "scan_consistency": "request_plus"
+  }
+ },
+ {
+  "as": "Administrator",
+  "rest": "DELETE /settings/rbac/users/local/agent_scoped"
+ }
+]

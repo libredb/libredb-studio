@@ -2,13 +2,15 @@
  * Live check of the Couchbase agent read-only execution profile, against a cluster of the operator's choosing.
  *
  * WHY THIS EXISTS, AND WHY IT CANNOT BE A UNIT TEST. The profile's boundary is the server's: a user whose only role is
- * query_select on the connection's bucket, which the query service refuses every write, and a check of that user
+ * query_select on named scopes of the connection's bucket, which the query service refuses every write, and a check
+ * of that user
  * before every statement (`agent-boundary.ts`). The provider suite replays answers its author captured; whether the
  * query service refuses a write, lists a group's role in GET /whoami or runs a JavaScript function for a SELECT is the
  * server's to say. So this script asks one, through the production path (`createDatabaseProvider` with the agent
  * profile's execution context, then `connect` and `queryReadOnly`), with no admission of Studio's in front:
  *
- *  - the open: query_select on the bucket, and on its default collection, is admitted; each other role beside it
+ *  - the open: query_select on the _default scope, and on its default collection, is admitted; query_select on every
+ *    scope of the bucket, which reaches its _system scope, and each other role beside it
  *    (query_update, query_insert, query_delete, data_writer, bucket_admin, every query_execute_* function role,
  *    query_system_catalog, query_external_access, query_use_sequences, data_reader), admin, query_select on every
  *    bucket and on a second bucket, and data_writer held through a group are each refused by name; a user holding no
@@ -17,7 +19,7 @@
  *  - the fence: each write, DDL, transaction, PREPARE, EXECUTE, UPDATE STATISTICS, ADVISE, INFER, EXPLAIN, GRANT,
  *    second statement and carriage-return text is refused through `queryReadOnly` before it is sent; a call of each
  *    user-defined function, CURL(), NEXTVAL, a read of another bucket and of the system keyspaces that hold other
- *    users' work is a SELECT, reaches the server and is refused there;
+ *    users' work, and of the bucket's _system scope, is a SELECT, reaches the server and is refused there;
  *  - the boundary behind the fence: the same statements, sent as the admitted user on a request of its own with the
  *    readonly flag off, are each refused for a missing role (13014), never a syntax error, except the five the server
  *    runs for such a user, which is why the fence exists: UPDATE STATISTICS, BEGIN WORK, PREPARE, ADVISE and the
@@ -199,24 +201,26 @@ const USERS = {
 
 /** Each user refused at open, with the role it holds beside query_select and the name the refusal must carry. */
 const REFUSED: readonly (readonly [string, string, string])[] = [
-  ["update", `query_select[${BUCKET}],query_update[${BUCKET}]`, `query_update[${BUCKET}:*:*]`],
-  ["insert", `query_select[${BUCKET}],query_insert[${BUCKET}]`, `query_insert[${BUCKET}:*:*]`],
-  ["delete", `query_select[${BUCKET}],query_delete[${BUCKET}]`, `query_delete[${BUCKET}:*:*]`],
-  ["writer", `query_select[${BUCKET}],data_writer[${BUCKET}]`, `data_writer[${BUCKET}:*:*]`],
-  ["badmin", `query_select[${BUCKET}],bucket_admin[${BUCKET}]`, `bucket_admin[${BUCKET}]`],
+  ["bucketwide", `query_select[${BUCKET}]`, `query_select[${BUCKET}:*:*]`],
+  ["system", `query_select[${BUCKET}:_default],query_select[${BUCKET}:_system]`, `query_select[${BUCKET}:_system:*]`],
+  ["update", `query_select[${BUCKET}:_default],query_update[${BUCKET}]`, `query_update[${BUCKET}:*:*]`],
+  ["insert", `query_select[${BUCKET}:_default],query_insert[${BUCKET}]`, `query_insert[${BUCKET}:*:*]`],
+  ["delete", `query_select[${BUCKET}:_default],query_delete[${BUCKET}]`, `query_delete[${BUCKET}:*:*]`],
+  ["writer", `query_select[${BUCKET}:_default],data_writer[${BUCKET}]`, `data_writer[${BUCKET}:*:*]`],
+  ["badmin", `query_select[${BUCKET}:_default],bucket_admin[${BUCKET}]`, `bucket_admin[${BUCKET}]`],
   ["admin", "admin", "admin"],
   ["all", "query_select[*]", "query_select[*:*:*]"],
-  ["two", `query_select[${BUCKET}],query_select[${OTHER}]`, `query_select[${OTHER}:*:*]`],
-  ["funcs", `query_select[${BUCKET}],query_execute_functions[${BUCKET}:_default]`, "query_execute_functions"],
+  ["two", `query_select[${BUCKET}:_default],query_select[${OTHER}]`, `query_select[${OTHER}:*:*]`],
+  ["funcs", `query_select[${BUCKET}:_default],query_execute_functions[${BUCKET}:_default]`, "query_execute_functions"],
   [
     "xfuncs",
-    `query_select[${BUCKET}],query_execute_external_functions[${BUCKET}:_default]`,
+    `query_select[${BUCKET}:_default],query_execute_external_functions[${BUCKET}:_default]`,
     "query_execute_external_functions",
   ],
-  ["gfuncs", `query_select[${BUCKET}],query_execute_global_functions`, "query_execute_global_functions"],
-  ["catalog", `query_select[${BUCKET}],query_system_catalog`, "query_system_catalog"],
-  ["curl", `query_select[${BUCKET}],query_external_access`, "query_external_access"],
-  ["seq", `query_select[${BUCKET}],query_use_sequences[${BUCKET}:_default]`, "query_use_sequences"],
+  ["gfuncs", `query_select[${BUCKET}:_default],query_execute_global_functions`, "query_execute_global_functions"],
+  ["catalog", `query_select[${BUCKET}:_default],query_system_catalog`, "query_system_catalog"],
+  ["curl", `query_select[${BUCKET}:_default],query_external_access`, "query_external_access"],
+  ["seq", `query_select[${BUCKET}:_default],query_use_sequences[${BUCKET}:_default]`, "query_use_sequences"],
   ["reader", `data_reader[${BUCKET}]`, `data_reader[${BUCKET}:*:*]`],
 ];
 
@@ -258,14 +262,16 @@ const SERVER_REFUSED: readonly string[] = [
   "SELECT * FROM system:applicable_roles",
   'SELECT ADVISOR({"action": "start", "duration": "1m"}) AS v',
   `SELECT d.n FROM default:\`${OTHER}\` AS d`,
+  `SELECT META(q).id FROM \`${BUCKET}\`.\`_system\`.\`_query\` AS q LIMIT 1`,
+  `SELECT m.* FROM \`${BUCKET}\`.\`_system\`.\`_mobile\` AS m USE KEYS "_sync:user:alice"`,
 ];
 
 async function seed(): Promise<void> {
   await manage(HOST, "PUT", `/settings/rbac/groups/${PREFIX}writers`, { roles: `data_writer[${BUCKET}]` });
-  await setUser(USERS.ro, `query_select[${BUCKET}]`);
+  await setUser(USERS.ro, `query_select[${BUCKET}:_default]`);
   await setUser(USERS.coll, `query_select[${BUCKET}:_default:_default]`);
-  await setUser(USERS.moving, `query_select[${BUCKET}]`);
-  await setUser(`${PREFIX}grouped`, `query_select[${BUCKET}]`, `${PREFIX}writers`);
+  await setUser(USERS.moving, `query_select[${BUCKET}:_default]`);
+  await setUser(`${PREFIX}grouped`, `query_select[${BUCKET}:_default]`, `${PREFIX}writers`);
   for (const [name, roles] of REFUSED) await setUser(`${PREFIX}${name}`, roles);
   await asAdmin(`UPSERT INTO \`_default\` (KEY, VALUE) VALUES ("${PREFIX}seed", {"n": 1}), ("${PREFIX}cr", {"n": 2})`);
   await asAdmin(`CREATE OR REPLACE FUNCTION default:${SCOPE}.${PREFIX}inline(x) { x + 1 }`);
@@ -301,7 +307,7 @@ async function cleanUp(): Promise<void> {
 }
 
 async function opens(): Promise<void> {
-  check((await openRefusal(USERS.ro)) === null, "open: query_select on the bucket is admitted");
+  check((await openRefusal(USERS.ro)) === null, "open: query_select on the _default scope is admitted");
   check((await openRefusal(USERS.coll)) === null, "open: query_select on the bucket's default collection is admitted");
   for (const [name, , named] of REFUSED) {
     const refusal = await openRefusal(`${PREFIX}${name}`);
@@ -415,26 +421,26 @@ async function checkEveryCall(): Promise<void> {
   const provider = await agentHandle(USERS.moving);
   const first = await readOnly(provider, "SELECT RAW 1");
   check(!(first instanceof Error), "per call: the first call is admitted");
-  await setUser(USERS.moving, `query_select[${BUCKET}],query_external_access`);
+  await setUser(USERS.moving, `query_select[${BUCKET}:_default],query_external_access`);
   const added = await readOnly(provider, "SELECT RAW 1");
   check(added instanceof ExecutionProfileError, "per call: a role added after one call refuses the next");
-  await setUser(USERS.moving, `query_select[${BUCKET}]`);
+  await setUser(USERS.moving, `query_select[${BUCKET}:_default]`);
   const removed = await readOnly(provider, "SELECT RAW 1");
   check(!(removed instanceof Error), "per call: taking the role away admits the one after");
-  await setUser(USERS.moving, `query_select[${BUCKET}]`, `${PREFIX}writers`);
+  await setUser(USERS.moving, `query_select[${BUCKET}:_default]`, `${PREFIX}writers`);
   const grouped = await readOnly(provider, "SELECT RAW 1");
   check(grouped instanceof ExecutionProfileError, "per call: a group joined after one call refuses the next");
-  await setUser(USERS.moving, `query_select[${BUCKET}]`);
+  await setUser(USERS.moving, `query_select[${BUCKET}:_default]`);
   const left = await readOnly(provider, "SELECT RAW 1");
   check(!(left instanceof Error), "per call: leaving the group admits the one after");
 
   // What the query service itself enforces once a role is taken away: measured, not assumed. GET /whoami lists the
   // change at once, while the query service may honour the old role for some milliseconds more (capture 08), the
   // residual the provider document names; this times it.
-  await setUser(USERS.moving, `query_select[${BUCKET}],query_execute_global_functions`);
+  await setUser(USERS.moving, `query_select[${BUCKET}:_default],query_execute_global_functions`);
   await new Promise((resolve) => setTimeout(resolve, 1000));
   const held = await raw(USERS.moving, PASSWORD, `SELECT default:${PREFIX}global(1) AS v`);
-  await setUser(USERS.moving, `query_select[${BUCKET}]`);
+  await setUser(USERS.moving, `query_select[${BUCKET}:_default]`);
   const revokedAt = Date.now();
   let ran = 0;
   let revoked = await raw(USERS.moving, PASSWORD, `SELECT default:${PREFIX}global(1) AS v`);

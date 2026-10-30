@@ -770,7 +770,7 @@ describe("createDatabaseProvider", () => {
         sent.push("GET /whoami");
         return {
           id: "agent_ro",
-          roles: [{ role: "query_select", bucket_name: "probe", scope_name: "*", collection_name: "*" }],
+          roles: [{ role: "query_select", bucket_name: "probe", scope_name: "_default", collection_name: "*" }],
         };
       },
       agentQuery: async (statement: string) => {

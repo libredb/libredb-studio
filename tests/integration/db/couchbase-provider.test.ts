@@ -2459,7 +2459,7 @@ describe("endOpenQueryTransaction()", () => {
 describe("CouchbaseProvider agent read-only profile", () => {
   const AGENT_PROFILE = { readOnly: true, sendsStatements: true } as const;
   const BUDGET = { statementTimeoutMs: 5000, maxResultRows: 3, maxResultBytes: 4096 };
-  const SELECT_ONLY = { role: "query_select", bucket_name: BUCKET, scope_name: "*", collection_name: "*" };
+  const SELECT_ONLY = { role: "query_select", bucket_name: BUCKET, scope_name: "_default", collection_name: "*" };
   const PROBE_PREFIX = 'DELETE FROM `_default` USE KEYS "libredb-agent-probe-';
   const MISSING_DELETE = errorPayload(
     13014,

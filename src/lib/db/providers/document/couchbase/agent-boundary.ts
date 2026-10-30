@@ -6,15 +6,19 @@
  * The query service has no read-only session, and its `readonly` request flag is no boundary: measured on Couchbase
  * Server 8.0.2 Enterprise (`tests/fixtures/couchbase/8.0.2/agent-boundary/`, capture 04), it refuses INSERT, UPDATE,
  * DELETE, CREATE INDEX, BEGIN WORK, EXECUTE FUNCTION and the EXECUTE of a prepared DELETE with code 1000, but runs
- * UPDATE STATISTICS. So the boundary is the user: one whose only role is `query_select` on the connection's bucket.
+ * UPDATE STATISTICS. So the boundary is the user: one whose only roles are `query_select` on named scopes of the
+ * connection's bucket.
  * Such a user is refused every INSERT, UPSERT, UPDATE, DELETE, MERGE, index, scope, collection, sequence and GRANT
  * statement with code 13014, a call of any user-defined function (inline or JavaScript, scoped or global) and CURL()
  * included, and every `system:` keyspace that holds other users' requests, prepared statements or roles (capture 02).
  * Two checks, each on the server's own answers, in the order `verifyCouchbaseAgentProfile` sends them:
  *
- * 1. **The user's only role is query_select on the bound bucket.** `GET /whoami` answers the user's roles, those it
- *    holds through a group included (capture 01). Every role must be `query_select` whose `bucket_name` is the
- *    connection's bucket exactly, on any of its scopes and collections; any other role is refused by name, whether it
+ * 1. **The user's only roles are query_select on named scopes of the bound bucket.** `GET /whoami` answers the user's
+ *    roles, those it holds through a group included (capture 01). Every role must be `query_select` whose `bucket_name`
+ *    is the connection's bucket exactly and whose `scope_name` names one scope, never `*` and never `_system`, on any
+ *    of that scope's collections. A role on every scope reaches the bucket's `_system` scope, whose `_query` and
+ *    `_mobile` collections hold the query optimizer's statistics and Sync Gateway's own documents, readable by key
+ *    with no index (capture 09), so it is refused. Any other role is refused by name, whether it
  *    writes (query_update, query_insert, query_delete, data_writer, bucket_admin, admin), runs code (the query_execute_*
  *    function roles), reaches beyond the bucket (query_select on `*` or on a second bucket, query_external_access) or
  *    reads other users' work (query_system_catalog). A role this check has never seen is refused with the rest, so a
@@ -56,8 +60,11 @@ export interface CouchbaseAgentTarget {
   readonly nonce: string;
 }
 
-/** The one role the profile admits. */
+/** The one role the profile admits, on a named scope of the bound bucket. */
 const ADMITTED_ROLE = "query_select";
+
+/** Scope names that are not one ordinary scope: every scope, and the bucket's system scope (capture 09). */
+const REFUSED_SCOPES: ReadonlySet<string> = new Set(["*", "_system"]);
 
 /** The query service's code for a statement the user's roles do not allow (capture 02). */
 const MISSING_ROLE_CODE = 13014;
@@ -107,20 +114,28 @@ function readRoles(answer: unknown, user: string): readonly WhoamiRole[] {
   return roles;
 }
 
-/** Check 1: every role is query_select on the bound bucket, and there is one. */
+/** Whether `entry` is query_select on one named scope of `bucket`, other than its system scope. */
+function isAdmitted(entry: WhoamiRole, bucket: string): boolean {
+  return (
+    entry.role === ADMITTED_ROLE &&
+    entry.bucket_name === bucket &&
+    entry.scope_name !== undefined &&
+    !REFUSED_SCOPES.has(entry.scope_name)
+  );
+}
+
+/** Check 1: every role is query_select on a named scope of the bound bucket, and there is one. */
 function assertSelectOnly(roles: readonly WhoamiRole[], target: CouchbaseAgentTarget): void {
-  const findings = roles
-    .filter((entry) => entry.role !== ADMITTED_ROLE || entry.bucket_name !== target.bucket)
-    .map(spelled);
+  const findings = roles.filter((entry) => !isAdmitted(entry, target.bucket)).map(spelled);
   if (findings.length > 0) {
     throw new ExecutionProfileError(
-      `The agent read-only execution profile needs a Couchbase user holding only query_select on the bucket ${target.bucket}; the user ${target.user} also holds ${findings.join(", ")}, which reach past reading that bucket, so the connection is refused. Give the agent a user whose only role is query_select[${target.bucket}].`,
+      `The agent read-only execution profile needs a Couchbase user whose only roles are query_select on named scopes of the bucket ${target.bucket}; the user ${target.user} also holds ${findings.join(", ")}, which reach past them, so the connection is refused. A role on every scope of the bucket reaches its _system scope too, which holds Sync Gateway's and the query optimizer's own documents. Give the agent a user whose only roles are query_select[${target.bucket}:<scope>], one for each scope it reads.`,
       "PROFILE_PRIVILEGES_TOO_BROAD",
     );
   }
   if (roles.length === 0) {
     throw new ExecutionProfileError(
-      `The agent read-only execution profile needs a Couchbase user holding query_select on the bucket ${target.bucket}, and the user ${target.user} holds none, so it cannot read it. Give it the role query_select[${target.bucket}].`,
+      `The agent read-only execution profile needs a Couchbase user holding query_select on a named scope of the bucket ${target.bucket}, and the user ${target.user} holds none, so it cannot read it. Give it the role query_select[${target.bucket}:<scope>] for each scope it reads.`,
       "PROFILE_PRIVILEGES_TOO_NARROW",
     );
   }
@@ -141,7 +156,7 @@ async function probeServerEnforcesRoles(reader: CouchbaseAgentReader, target: Co
     );
   }
   throw new ExecutionProfileError(
-    `${enforcement} ran a DELETE in the bucket ${target.bucket} for the user ${target.user}, whose only role is query_select, so its enforcement is unproven and the connection is refused.`,
+    `${enforcement} ran a DELETE in the bucket ${target.bucket} for the user ${target.user}, whose only roles are query_select, so its enforcement is unproven and the connection is refused.`,
     "PROFILE_SERVER_UNENFORCED",
   );
 }
@@ -149,7 +164,7 @@ async function probeServerEnforcesRoles(reader: CouchbaseAgentReader, target: Co
 /**
  * The check of the agent user, run on every agent statement before it is sent and keeping no verdict between calls,
  * so a role added after one call refuses the next and a role taken away admits it. Resolves only for a user whose
- * only role is query_select on `target.bucket`, on a server that refuses that user a DELETE.
+ * only roles are query_select on named scopes of `target.bucket`, on a server that refuses that user a DELETE.
  */
 export async function verifyCouchbaseAgentProfile(
   reader: CouchbaseAgentReader,

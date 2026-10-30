@@ -1,0 +1,32 @@
+# the bucket's _system scope: a query_select role on every scope of the bucket reaches it, one on named scopes does not
+> as Administrator: PUT /settings/rbac/users/local/agent_scoped {"password":"(generated)","roles":"query_select[probe:_default],query_select[probe:s1]"}
+  200 ""
+(waited 2000 ms)
+> as agent_scoped: GET /whoami
+  200 {"roles":[{"role":"query_select","bucket_name":"probe","scope_name":"_default","collection_name":"*"},{"role":"query_select","bucket_name":"probe","scope_name":"s1","collection_name":"*"}],"id":"agent_scoped","domain":"local","password_change_date":"2026-10-30T00:15:15Z"}
+> as agent_ro: {"statement":"SELECT META(q).id FROM `probe`.`_system`.`_query` AS q ORDER BY META(q).id LIMIT 3","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"id":"json"},"results":[{"id":"cbo::00000000::_default._default"},{"id":"cbo::00000000::_default._default(histogram)(meta().id)"},{"id":"cbo::00000000::_default._default(index)9b4e0155cfadc05f"}],"status":"success","metrics":{"resultCount":3,"resultSize":168}}
+> as agent_ro: {"statement":"SELECT m.* FROM `probe`.`_system`.`_mobile` AS m USE KEYS \"_sync:user:alice\"","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"*":"*"},"results":[],"status":"success","metrics":{"resultCount":0,"resultSize":0}}
+> as agent_ro: {"statement":"SELECT d.n FROM `_default` AS d ORDER BY d.n","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"n":"json"},"results":[{"n":1},{"n":2}],"status":"success","metrics":{"resultCount":2,"resultSize":14,"sortCount":2}}
+> as agent_ro: {"statement":"SELECT d.n FROM `probe`.`s1`.`c1` AS d","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"n":"json"},"results":[{"n":100}],"status":"success","metrics":{"resultCount":1,"resultSize":9}}
+> as agent_ro_coll: {"statement":"SELECT META(q).id FROM `probe`.`_system`.`_query` AS q ORDER BY META(q).id LIMIT 3","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  401 {"signature":{"id":"json"},"results":[],"errors":[{"code":13014,"msg":"User does not have credentials to run SELECT queries on default:probe._system._query. Add role query_select on default:probe._system._query to allow the statement to run.","reason":{"missing_role":"query_select","path":"default:probe._system._query"}}],"status":"fatal","metrics":{"resultCount":0,"resultSize":0,"errorCount":1}}
+> as agent_ro_coll: {"statement":"SELECT m.* FROM `probe`.`_system`.`_mobile` AS m USE KEYS \"_sync:user:alice\"","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  401 {"signature":{"*":"*"},"results":[],"errors":[{"code":13014,"msg":"User does not have credentials to run SELECT queries on default:probe._system._mobile. Add role query_select on default:probe._system._mobile to allow the statement to run.","reason":{"missing_role":"query_select","path":"default:probe._system._mobile"}}],"status":"fatal","metrics":{"resultCount":0,"resultSize":0,"errorCount":1}}
+> as agent_ro_coll: {"statement":"SELECT d.n FROM `_default` AS d ORDER BY d.n","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"n":"json"},"results":[{"n":1},{"n":2}],"status":"success","metrics":{"resultCount":2,"resultSize":14,"sortCount":2}}
+> as agent_ro_coll: {"statement":"SELECT d.n FROM `probe`.`s1`.`c1` AS d","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  401 {"signature":{"n":"json"},"results":[],"errors":[{"code":13014,"msg":"User does not have credentials to run SELECT queries on default:probe.s1.c1. Add role query_select on default:probe.s1.c1 to allow the statement to run.","reason":{"missing_role":"query_select","path":"default:probe.s1.c1"}}],"status":"fatal","metrics":{"resultCount":0,"resultSize":0,"errorCount":1}}
+> as agent_scoped: {"statement":"SELECT META(q).id FROM `probe`.`_system`.`_query` AS q ORDER BY META(q).id LIMIT 3","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  401 {"signature":{"id":"json"},"results":[],"errors":[{"code":13014,"msg":"User does not have credentials to run SELECT queries on default:probe._system._query. Add role query_select on default:probe._system._query to allow the statement to run.","reason":{"missing_role":"query_select","path":"default:probe._system._query"}}],"status":"fatal","metrics":{"resultCount":0,"resultSize":0,"errorCount":1}}
+> as agent_scoped: {"statement":"SELECT m.* FROM `probe`.`_system`.`_mobile` AS m USE KEYS \"_sync:user:alice\"","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  401 {"signature":{"*":"*"},"results":[],"errors":[{"code":13014,"msg":"User does not have credentials to run SELECT queries on default:probe._system._mobile. Add role query_select on default:probe._system._mobile to allow the statement to run.","reason":{"missing_role":"query_select","path":"default:probe._system._mobile"}}],"status":"fatal","metrics":{"resultCount":0,"resultSize":0,"errorCount":1}}
+> as agent_scoped: {"statement":"SELECT d.n FROM `_default` AS d ORDER BY d.n","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"n":"json"},"results":[{"n":1},{"n":2}],"status":"success","metrics":{"resultCount":2,"resultSize":14,"sortCount":2}}
+> as agent_scoped: {"statement":"SELECT d.n FROM `probe`.`s1`.`c1` AS d","query_context":"default:`probe`","scan_consistency":"request_plus"}
+  200 {"signature":{"n":"json"},"results":[{"n":100}],"status":"success","metrics":{"resultCount":1,"resultSize":9}}
+> as Administrator: DELETE /settings/rbac/users/local/agent_scoped
+  200 ""

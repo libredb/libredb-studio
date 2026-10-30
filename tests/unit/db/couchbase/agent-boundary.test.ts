@@ -31,7 +31,7 @@ const whoami = (roles: unknown[], id = "agent_ro") => ({
   password_change_date: "2026-10-29T23:43:52Z",
 });
 
-const SELECT_ONLY = role("query_select", "probe", "*", "*");
+const SELECT_ONLY = role("query_select", "probe", "_default", "*");
 
 /** The probe's refusal as capture 02 records the same refusal of a DELETE for a user holding no query_delete. */
 const MISSING_DELETE = new CouchbaseError(
@@ -88,7 +88,7 @@ describe("the check's requests", () => {
     );
   });
 
-  test("admits a user holding only query_select on the bound bucket: GET /whoami, then the probe the server refuses", async () => {
+  test("admits a user holding only query_select on a named scope of the bound bucket: GET /whoami, then the probe the server refuses", async () => {
     const recorded = reader(whoami([SELECT_ONLY]));
     await verifyCouchbaseAgentProfile(recorded.reader, TARGET);
     expect(recorded.sent).toEqual([
@@ -97,7 +97,7 @@ describe("the check's requests", () => {
     ]);
   });
 
-  test("admits query_select on one scope or one collection of the bound bucket, and the role twice", async () => {
+  test("admits query_select on one collection, and on several named scopes, of the bound bucket", async () => {
     await verifyCouchbaseAgentProfile(
       reader(whoami([role("query_select", "probe", "_default", "_default"), role("query_select", "probe", "s1", "*")]))
         .reader,
@@ -126,6 +126,21 @@ describe("the roles", () => {
     ["bucket_admin", [role("bucket_admin", "probe"), SELECT_ONLY], "bucket_admin[probe]"],
     ["admin", [role("admin")], "admin"],
     ["query_select on every bucket", [role("query_select", "*", "*", "*")], "query_select[*:*:*]"],
+    [
+      "query_select on every scope of the bucket, the _system scope among them (capture 09)",
+      [role("query_select", "probe", "*", "*")],
+      "query_select[probe:*:*]",
+    ],
+    [
+      "query_select on the _system scope",
+      [role("query_select", "probe", "_system", "*"), SELECT_ONLY],
+      "query_select[probe:_system:*]",
+    ],
+    [
+      "query_select on a collection of the _system scope",
+      [role("query_select", "probe", "_system", "_mobile"), SELECT_ONLY],
+      "query_select[probe:_system:_mobile]",
+    ],
     [
       "query_select on a second bucket",
       [role("query_select", "other", "*", "*"), SELECT_ONLY],
@@ -170,7 +185,7 @@ describe("the roles", () => {
     expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
     expect(error.message).toContain(named);
     expect(error.message).toStartWith(
-      "The agent read-only execution profile needs a Couchbase user holding only query_select on the bucket probe;",
+      "The agent read-only execution profile needs a Couchbase user whose only roles are query_select on named scopes of the bucket probe;",
     );
   });
 
@@ -179,7 +194,7 @@ describe("the roles", () => {
       reader(whoami([role("query_system_catalog"), role("query_update", "probe", "*", "*"), SELECT_ONLY])),
     );
     expect(error.message).toBe(
-      "The agent read-only execution profile needs a Couchbase user holding only query_select on the bucket probe; the user agent_ro also holds query_system_catalog, query_update[probe:*:*], which reach past reading that bucket, so the connection is refused. Give the agent a user whose only role is query_select[probe].",
+      "The agent read-only execution profile needs a Couchbase user whose only roles are query_select on named scopes of the bucket probe; the user agent_ro also holds query_system_catalog, query_update[probe:*:*], which reach past them, so the connection is refused. A role on every scope of the bucket reaches its _system scope too, which holds Sync Gateway's and the query optimizer's own documents. Give the agent a user whose only roles are query_select[probe:<scope>], one for each scope it reads.",
     );
   });
 
@@ -187,13 +202,13 @@ describe("the roles", () => {
     const error = await refusal(reader(whoami([])));
     expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_NARROW");
     expect(error.message).toBe(
-      "The agent read-only execution profile needs a Couchbase user holding query_select on the bucket probe, and the user agent_ro holds none, so it cannot read it. Give it the role query_select[probe].",
+      "The agent read-only execution profile needs a Couchbase user holding query_select on a named scope of the bucket probe, and the user agent_ro holds none, so it cannot read it. Give it the role query_select[probe:<scope>] for each scope it reads.",
     );
   });
 
   test("matches the bucket exactly, case included", async () => {
-    const error = await refusal(reader(whoami([role("query_select", "Probe", "*", "*")])));
-    expect(error.message).toContain("query_select[Probe:*:*]");
+    const error = await refusal(reader(whoami([role("query_select", "Probe", "_default", "*")])));
+    expect(error.message).toContain("query_select[Probe:_default:*]");
   });
 
   test.each([
@@ -230,7 +245,7 @@ describe("the probe", () => {
     const error = await refusal(reader(whoami([SELECT_ONLY]), MUTATED));
     expect(error.reasonCode).toBe("PROFILE_SERVER_UNENFORCED");
     expect(error.message).toBe(
-      "The agent read-only execution profile needs a server that enforces its users' roles; this server ran a DELETE in the bucket probe for the user agent_ro, whose only role is query_select, so its enforcement is unproven and the connection is refused.",
+      "The agent read-only execution profile needs a server that enforces its users' roles; this server ran a DELETE in the bucket probe for the user agent_ro, whose only roles are query_select, so its enforcement is unproven and the connection is refused.",
     );
   });
 

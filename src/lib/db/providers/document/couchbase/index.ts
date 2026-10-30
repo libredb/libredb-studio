@@ -20,7 +20,8 @@
  *   read is the NORMAL case for a restricted user and must not break an
  *   otherwise working connection.
  * - Agent statements (`queryReadOnly`) run only on a handle opened under the agent read-only profile, for a user whose
- *   only role is query_select on the connection's bucket, checked before every statement (`agent-boundary.ts`).
+ *   only roles are query_select on named scopes of the connection's bucket, checked before every statement
+ *   (`agent-boundary.ts`).
  */
 
 import { randomBytes } from "node:crypto";
@@ -618,7 +619,8 @@ export class CouchbaseProvider extends BaseDatabaseProvider {
   /**
    * One agent statement under the read-only profile.
    *
-   * The boundary is the user's: one whose only role is query_select on the connection's bucket is refused every write,
+   * The boundary is the user's: one whose only roles are query_select on named scopes of the connection's bucket is
+   * refused every write,
    * DDL, GRANT, function call, CURL() and sequence statement by the query service, and the check proves the user is
    * such a user on a server that enforces it (`agent-boundary.ts`). The check runs again before every statement,
    * keeping no verdict between calls, so a role added after one call refuses the next and a role taken away admits it.
