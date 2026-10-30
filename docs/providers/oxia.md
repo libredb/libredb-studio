@@ -881,7 +881,7 @@ Each agent-mode path reads this much:
 | Path | Handle | What it reads |
 | --- | --- | --- |
 | Investigation commands | agent read-only profile | the closed table above, projected to names, counts and sizes |
-| Investigation grounding, plan-mode grounding and the operations workflow | either agent profile | the shard rows, each its id and hash range, never a key, a value or a leader address |
+| Investigation grounding, plan-mode grounding and the operations workflow | either agent profile | the shard rows: the text the model receives names each shard by its id only, and the rows' hash ranges and the leader address do not reach it; never a key or a value |
 | Operations readings | operations profile | health from the shard map and `Health/Check`; the overview, sessions, slow queries, table, index and storage readings name nothing, since the client API reports none of them |
 | MCP | none | closed: `MCP_EXPOSABLE.oxia` is false |
 
