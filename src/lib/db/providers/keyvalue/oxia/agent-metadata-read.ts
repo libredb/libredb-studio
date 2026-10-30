@@ -95,7 +95,8 @@ const KEY_METADATA: MetadataProjection<OxiaRecordView | undefined> = [
     column: "value_bytes",
     kind: "count",
     optional: true,
-    read: (record) => (record === undefined || record.withheld === true ? null : (record.value?.length ?? null)),
+    // A value withheld at the receive cap is absent from the record, so it has no size.
+    read: (record) => (record === undefined ? null : (record.value?.length ?? null)),
   },
   {
     column: "ephemeral",
