@@ -556,6 +556,10 @@ export class DruidProvider extends SQLBaseProvider {
           }
           if (signal.aborted)
             throw this.timeBudgetError(budget, sql, await this.cancelAgentStatement(transport, queryId));
+          // A datasource the user may not read is the statement's to repair, never a failed sign-in.
+          if (error instanceof DruidTransportError && error.is("FORBIDDEN")) {
+            throw new QueryError(error.message, this.type, sql);
+          }
           if (error instanceof DruidTransportError && error.is("TIMEOUT")) {
             throw new QueryError(
               `${TIME_BUDGET_PREFIX}: the server stopped the statement at ${budget.statementTimeoutMs}ms`,
@@ -590,7 +594,7 @@ export class DruidProvider extends SQLBaseProvider {
     try {
       const outcome = await transport.cancel(queryId, AbortSignal.timeout(AGENT_CANCEL_TIMEOUT_MS));
       return outcome === "cancelled"
-        ? "the statement was cancelled on the server"
+        ? "the server accepted the cancel of its query id"
         : "the server holds no statement under its id any longer";
     } catch (error) {
       return `its cancel could not be confirmed: ${error instanceof Error ? error.message : String(error)}`;

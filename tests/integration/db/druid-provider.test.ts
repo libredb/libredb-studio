@@ -3209,11 +3209,11 @@ describe("queryReadOnly", () => {
       });
     const SHORT = { ...AGENT_BUDGET, statementTimeoutMs: 20 };
 
-    test("cancels the statement's own id, and says the server was told to stop it", async () => {
+    test("cancels the statement's own id, and says the server accepted the cancel", async () => {
       const recorded = recording(hangs);
       const provider = await open(recorded);
       await expect(provider.queryReadOnly("SELECT n FROM t", SHORT)).rejects.toThrow(
-        "Read-only execution exceeded the time budget: no answer within 20ms; the statement was cancelled on the server",
+        "Read-only execution exceeded the time budget: no answer within 20ms; the server accepted the cancel of its query id",
       );
       const statement = recorded.agent.at(-1);
       expect(statement?.sql).toBe("SELECT n FROM t");
@@ -3250,6 +3250,17 @@ describe("queryReadOnly", () => {
       );
       expect(recorded.cancels).toEqual([]);
     });
+  });
+
+  test("a datasource the user may not read is the statement's to repair, not a failed sign-in", async () => {
+    const recorded = recording(async () => {
+      throw new DruidTransportError("Druid refused the statement with HTTP 403: Unauthorized", "FORBIDDEN", "forbidden");
+    });
+    const provider = await open(recorded);
+    const error = await provider.queryReadOnly("SELECT n FROM other", AGENT_BUDGET).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error).not.toBeInstanceOf(AuthenticationError);
+    expect((error as Error).message).toBe("Druid refused the statement with HTTP 403: Unauthorized");
   });
 
   test("a statement the server refuses is the statement's to repair", async () => {

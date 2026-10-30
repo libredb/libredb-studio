@@ -129,6 +129,25 @@ describe("the agent statement's request", () => {
     );
   });
 
+  test("a 403 with no envelope, the authorizer's refusal of what the statement names, leaves as FORBIDDEN", async () => {
+    handler = () => respond('{"Access-Check-Result":"Unauthorized"}', 403);
+    const error = await makeTransport()
+      .agentQuery('SELECT COUNT(*) AS n FROM "other"', options())
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(DruidTransportError);
+    expect((error as DruidTransportError).category).toBe("FORBIDDEN");
+    expect((error as DruidTransportError).message).toBe("Druid refused the statement with HTTP 403: Unauthorized");
+  });
+
+  test("a 403 whose body says nothing still leaves as FORBIDDEN", async () => {
+    handler = () => respond("", 403);
+    const error = await makeTransport()
+      .agentQuery("SELECT 1", options())
+      .catch((caught: unknown) => caught);
+    expect((error as DruidTransportError).category).toBe("FORBIDDEN");
+    expect((error as DruidTransportError).message).toBe("Druid refused the statement with HTTP 403");
+  });
+
   test("a failure to reach the server leaves as the stand-in category", async () => {
     handler = () => {
       throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });

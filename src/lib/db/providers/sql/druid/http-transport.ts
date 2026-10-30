@@ -45,6 +45,7 @@ import {
   type DruidAgentQueryOptions,
   DruidAnswerTooLargeError,
   type DruidCancelOutcome,
+  DRUID_ERROR_CATEGORIES,
   DRUID_TRANSPORT_FAILURE,
   type DruidQueryOptions,
   type DruidQueryResult,
@@ -77,6 +78,13 @@ const SQL_PATH = "/druid/v2/sql";
  * `msq-dart` would select another (tests/fixtures/druid/37.0.0/agent-boundary/ capture 01).
  */
 const AGENT_ENGINE = "native";
+
+/**
+ * The status druid-basic-security answers a statement that names a datasource the user may not read, with no error
+ * envelope, only `{"Access-Check-Result":"Unauthorized"}` (capture 06).
+ */
+const FORBIDDEN_STATUS = 403;
+const ACCESS_CHECK_FIELD = "Access-Check-Result";
 
 /** The answers to a cancel (capture 03): the statement was told to stop, or no statement holds the id. */
 const CANCEL_ACCEPTED = 202;
@@ -498,6 +506,23 @@ function toParameter(value: unknown): DruidParameter {
 }
 
 /**
+ * An agent statement's failure. A 403 whose body carries no category is the authorizer's refusal of what the statement
+ * names, which it answers outside the error envelope, so it leaves as FORBIDDEN with the authorizer's own words: the
+ * statement's to repair, never a failed sign-in.
+ */
+function agentFailure(outcome: HttpOutcome): DruidTransportError {
+  const payload = parseJson(outcome.text);
+  const failure = envelopeError(payload, `Druid request failed with HTTP ${outcome.status}`);
+  if (outcome.status !== FORBIDDEN_STATUS || failure.isServerAnswer()) return failure;
+  const accessCheck = textField(asRecord(payload) ?? {}, ACCESS_CHECK_FIELD);
+  return new DruidTransportError(
+    `Druid refused the statement with HTTP ${FORBIDDEN_STATUS}${accessCheck === null ? "" : `: ${accessCheck}`}`,
+    DRUID_ERROR_CATEGORIES.FORBIDDEN,
+    DRUID_ERROR_CATEGORIES.FORBIDDEN,
+  );
+}
+
+/**
  * The body as text, read chunk by chunk and counted in bytes as it arrives: the moment the count passes `maxBytes`
  * the read is cancelled, which releases the connection, and the call fails without reading the rest.
  */
@@ -583,7 +608,7 @@ export class DruidHttpTransport implements DruidTransport {
     const outcome = await this.send(body, undefined, { signal: opts.signal, maxResponseBytes: opts.maxResponseBytes });
     const executionTimeMs = performance.now() - startedAt;
 
-    if (!outcome.ok) throw envelopeError(parseJson(outcome.text), `Druid request failed with HTTP ${outcome.status}`);
+    if (!outcome.ok) throw agentFailure(outcome);
 
     return toQueryResult(parseRows(outcome.text), executionTimeMs, outcome.unavailableSegments);
   }
