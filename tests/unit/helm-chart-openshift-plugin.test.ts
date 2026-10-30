@@ -74,6 +74,44 @@ function refusedIn(chart: string, args: string[], ...needles: string[]): void {
   for (const needle of needles) expect(run.stderr).toContain(needle);
 }
 
+function one(docs: Manifest[], kind: string, name: string): Manifest {
+  const found = docs.filter((doc) => doc.kind === kind && doc.metadata.name === name);
+  expect(found).toHaveLength(1);
+  return found[0];
+}
+
+interface Container {
+  name: string;
+  image?: string;
+  imagePullPolicy?: string;
+  command?: unknown;
+  args?: unknown;
+  env?: unknown;
+  envFrom?: unknown;
+  ports?: Array<{ containerPort: number; protocol?: string }>;
+  resources?: unknown;
+  securityContext?: Record<string, unknown>;
+  volumeMounts?: Array<{ name: string; mountPath: string; readOnly?: boolean }>;
+}
+
+interface PodSpec {
+  serviceAccountName?: string;
+  automountServiceAccountToken?: boolean;
+  securityContext?: Record<string, unknown>;
+  containers: Container[];
+  volumes?: Array<{ name: string; secret?: { secretName: string }; emptyDir?: unknown }>;
+}
+
+interface DeploymentSpec {
+  replicas: number;
+  selector: { matchLabels: Record<string, string> };
+  template: { metadata: { labels: Record<string, string> }; spec: PodSpec };
+}
+
+function deploymentSpec(docs: Manifest[]): DeploymentSpec {
+  return one(docs, "Deployment", SERVER).spec as unknown as DeploymentSpec;
+}
+
 function set(...pairs: string[]): string[] {
   return pairs.flatMap((pair) => ["--set", pair]);
 }
@@ -281,6 +319,143 @@ describe("the console plugin guards, each naming the value to change", () => {
       "openshift.consolePlugin.image is empty",
       "RELATED_IMAGE_PLUGIN",
     );
+  });
+});
+
+describe("the plugin server and the ConsolePlugin", () => {
+  const docs = render(PLUGIN_ON);
+
+  test("the ConsolePlugin libredb-studio is cluster-scoped and points at the server's Service", () => {
+    const plugin = one(docs, "ConsolePlugin", "libredb-studio");
+    expect(plugin.apiVersion).toBe("console.openshift.io/v1");
+    expect(plugin.metadata.namespace).toBeUndefined();
+    expect(plugin.spec?.displayName).toBe("LibreDB Studio");
+    expect(plugin.spec?.backend).toEqual({
+      type: "Service",
+      service: { name: SERVER, namespace: PLUGIN_NAMESPACE, port: 9443, basePath: "/" },
+    });
+    expect(plugin.spec?.i18n).toEqual({ loadType: "Preload" });
+  });
+
+  test("the ConsolePlugin declares no proxy and no content security policy", () => {
+    const keys = Object.keys(one(docs, "ConsolePlugin", "libredb-studio").spec ?? {});
+    expect(keys).not.toContain("proxy");
+    expect(keys).not.toContain("contentSecurityPolicy");
+    expect(keys.sort()).toEqual(["backend", "displayName", "i18n"]);
+  });
+
+  test("the ServiceAccount, Deployment and Service sit in the plugin namespace", () => {
+    for (const kind of ["ServiceAccount", "Deployment", "Service"]) {
+      expect({ kind, namespace: one(docs, kind, SERVER).metadata.namespace }).toEqual({
+        kind,
+        namespace: PLUGIN_NAMESPACE,
+      });
+    }
+  });
+
+  test("the ServiceAccount mounts no token", () => {
+    expect(one(docs, "ServiceAccount", SERVER).automountServiceAccountToken).toBe(false);
+  });
+
+  test("the Service asks the service CA for the serving certificate and serves 9443 from the server's pods", () => {
+    const service = one(docs, "Service", SERVER);
+    expect(service.metadata.annotations).toEqual({
+      "service.beta.openshift.io/serving-cert-secret-name": `${SERVER}-cert`,
+    });
+    const spec = service.spec as { selector: Record<string, string>; ports: unknown[] };
+    expect(spec.ports).toEqual([{ name: "https", protocol: "TCP", port: 9443, targetPort: 9443 }]);
+    expect(spec.selector).toEqual(deploymentSpec(docs).selector.matchLabels);
+  });
+
+  test("the server's selector is its own, never Studio's", () => {
+    expect(deploymentSpec(docs).selector.matchLabels).toEqual({
+      "app.kubernetes.io/name": SERVER,
+      "app.kubernetes.io/instance": RELEASE,
+    });
+    expect(deploymentSpec(docs).template.metadata.labels).toMatchObject({
+      "app.kubernetes.io/name": SERVER,
+      "app.kubernetes.io/component": "console-plugin",
+    });
+  });
+
+  test("the Deployment runs the pinned image, two replicas, as its own account with no token", () => {
+    const spec = deploymentSpec(docs);
+    expect(spec.replicas).toBe(2);
+    expect(spec.template.spec.serviceAccountName).toBe(SERVER);
+    expect(spec.template.spec.automountServiceAccountToken).toBe(false);
+    expect(spec.template.spec.containers).toHaveLength(1);
+    const [container] = spec.template.spec.containers;
+    expect(container.image).toBe(values.openshift.consolePlugin.image);
+    expect(container.imagePullPolicy).toBe("IfNotPresent");
+    expect(container.ports).toEqual([{ name: "https", containerPort: 9443, protocol: "TCP" }]);
+    expect(container.resources).toEqual({ requests: { cpu: "10m", memory: "50Mi" } });
+  });
+
+  test("the container runs the image as built: no command, args, env or envFrom", () => {
+    const [container] = deploymentSpec(docs).template.spec.containers;
+    for (const key of ["command", "args", "env", "envFrom"]) expect(Object.keys(container)).not.toContain(key);
+  });
+
+  test("restricted security context, read-only root, no fixed user", () => {
+    const pod = deploymentSpec(docs).template.spec;
+    expect(pod.securityContext).toEqual({ runAsNonRoot: true, seccompProfile: { type: "RuntimeDefault" } });
+    expect(pod.containers[0].securityContext).toEqual({
+      allowPrivilegeEscalation: false,
+      capabilities: { drop: ["ALL"] },
+      readOnlyRootFilesystem: true,
+    });
+    expect(JSON.stringify(pod)).not.toContain("runAsUser");
+  });
+
+  test("mounts the serving certificate read-only at /var/cert and an emptyDir at /tmp, and nothing under /etc/nginx", () => {
+    const pod = deploymentSpec(docs).template.spec;
+    expect(pod.volumes).toEqual([
+      { name: "plugin-serving-cert", secret: { secretName: `${SERVER}-cert`, defaultMode: 420 } },
+      { name: "tmp", emptyDir: {} },
+    ]);
+    expect(pod.containers[0].volumeMounts).toEqual([
+      { name: "plugin-serving-cert", mountPath: "/var/cert", readOnly: true },
+      { name: "tmp", mountPath: "/tmp" },
+    ]);
+  });
+
+  test("the same render holds the locator ConsoleLink the plugin reads", () => {
+    const link = one(docs, "ConsoleLink", "libredb-studio");
+    expect(link.metadata.labels?.["app.kubernetes.io/name"]).toBe("libredb-studio");
+  });
+
+  test("names stay fixed under fullnameOverride and another release name", () => {
+    const run = Bun.spawnSync(
+      ["helm", "template", "other", CHART_DIR, "--namespace", NAMESPACE, ...PLUGIN_ON, ...set("fullnameOverride=x")],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    expect(run.exitCode).toBe(0);
+    const other = parseAllDocuments(run.stdout.toString())
+      .map((doc) => doc.toJSON() as Manifest)
+      .filter(Boolean);
+    one(other, "ConsolePlugin", "libredb-studio");
+    for (const kind of ["ServiceAccount", "Deployment", "Service"]) one(other, kind, SERVER);
+  });
+
+  test("the values set the replicas, pull policy, resources and image", () => {
+    const image = `registry.example/mirror/plugin@sha256:${"c".repeat(64)}`;
+    const spec = deploymentSpec(
+      render([
+        ...PLUGIN_ON,
+        ...set(
+          "openshift.consolePlugin.replicas=3",
+          "openshift.consolePlugin.imagePullPolicy=Always",
+          `openshift.consolePlugin.image=${image}`,
+          "openshift.consolePlugin.resources.limits.memory=128Mi",
+        ),
+      ]),
+    );
+    expect(spec.replicas).toBe(3);
+    expect(spec.template.spec.containers[0]).toMatchObject({
+      image,
+      imagePullPolicy: "Always",
+      resources: { requests: { cpu: "10m", memory: "50Mi" }, limits: { memory: "128Mi" } },
+    });
   });
 });
 
