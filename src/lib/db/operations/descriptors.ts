@@ -34,6 +34,7 @@ import { qdrantapiAgentReadInput } from "./qdrantapi-admission";
 import { rediscliAgentReadInput } from "./rediscli-admission";
 import { etcdctlAgentReadInput } from "./etcdctl-admission";
 import { oxiacliAgentReadInput } from "./oxiacli-admission";
+import { rabbitreadAgentReadInput } from "./rabbitread-admission";
 import { weaviateapiAgentReadInput } from "./weaviateapi-admission";
 import { agentPlanExecutionSqlInput, agentQueryReadSqlInput, agentReadSqlInput } from "./statement-guard";
 import type { RegistrableOperationDescriptor } from "./types";
@@ -664,6 +665,42 @@ const oxiacliQueryReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+const RABBITREAD_READ_BOUNDARY =
+  "RabbitMQ: the provider's structural closed table, read with the editor's own read request parser: one read of one " +
+  "stream, its AMQP 0-9-1 client holding encoders for the handshake, basic.qos, basic.consume, basic.ack and the " +
+  "closes alone, so no take, publish, reject, nack, recover, purge, declare, transaction or confirm can be sent. " +
+  "Before any frame the management API's type check refuses anything but a stream, and the consume always carries " +
+  "x-stream-offset, which the broker refuses with 406 on a classic or quorum queue declared under the stream's name " +
+  "after the check. Read permission in RabbitMQ also grants a take and a purge, so no credential can be the boundary. " +
+  "A message's body, headers, properties and routing key are withheld: every answer is projected to each message's " +
+  "offset and body size (agent-metadata-read.ts), a request whose limit passes the row budget is refused before it is " +
+  "sent, and a result past the byte budget or a read that stops before its limit for any reason but the stream's end " +
+  "is refused, never truncated.";
+
+/**
+ * One RabbitMQ stream read the model wrote, on a `rabbitmq` connection.
+ *
+ * R1 on a structural boundary: the client can encode no take, publish, purge or declare, and a read reaches a stream
+ * only. Its own id, and not a widened `sql.query.read`, so the SQL contract and its audit action stay exactly what they
+ * were.
+ */
+const rabbitreadQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "rabbitread.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: rabbitreadAgentReadInput,
+  verification: {
+    reviewedBy: "RabbitMQ agent execution design review",
+    boundary: RABBITREAD_READ_BOUNDARY,
+    verifiedOn: "2026-10-31",
+  },
+};
+
 const REDISCLI_READ_BOUNDARY =
   "Redis: the provider's closed table of metadata reads, each flagged readonly by the server's own COMMAND INFO and " +
   "none flagged write, admin, pubsub, may_replicate or script_runner, in no write, admin, dangerous, scripting or " +
@@ -909,6 +946,7 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   rediscliQueryReadDescriptor,
   etcdctlQueryReadDescriptor,
   oxiacliQueryReadDescriptor,
+  rabbitreadQueryReadDescriptor,
 ]);
 
 /**

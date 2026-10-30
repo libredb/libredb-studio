@@ -129,6 +129,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "redis",
   "etcd",
   "oxia",
+  "rabbitmq",
 ];
 
 /**

@@ -90,7 +90,7 @@ function replayed(
   extra: Record<string, { status: number; body: string; contentType?: string }> = {},
 ) {
   const stub = createManagementStub({ ...stubAnswers(loadManagementCapture(set, name)), ...extra });
-  const provider = new RabbitMQProvider(connectionFor(amqpPort, user), {}, { managementTransport: stub.factory });
+  const provider = new RabbitMQProvider(connectionFor(amqpPort, user), {}, {}, { managementTransport: stub.factory });
   return { provider, stub };
 }
 
@@ -734,7 +734,7 @@ describe("the three routes' full JSON bodies on Node (R-S5, R-S7)", () => {
         "    },",
         "    close() {},",
         "  });",
-        "  const provider = new RabbitMQProvider(connection, {}, { managementTransport });",
+        "  const provider = new RabbitMQProvider(connection, {}, {}, { managementTransport });",
         "  if (each.connect) await provider.connect();",
         "  useProvider(provider);",
         "  const request = new Request(`http://localhost:3000/api/db/${each.route}`, {",

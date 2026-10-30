@@ -94,6 +94,7 @@ function recorded(connection: DatabaseConnection, transport: ManagementTransport
   const provider = new RabbitMQProvider(
     connection,
     {},
+    {},
     {
       managementTransport: recordingTransport(transport, exchanges),
       dial: recordingDial(dialAmqp, connections),
@@ -624,6 +625,7 @@ async function digest(): Promise<void> {
     const connections: AmqpRecording[] = [];
     const provider = new RabbitMQProvider(
       connectionTo(target, "studio-reader"),
+      {},
       {},
       {
         dial: recordingDial(dialAmqp, connections),

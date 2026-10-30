@@ -58,6 +58,7 @@ Two endpoints serve one connection, on one host and one TLS setting:
 | `objects.ts`, `source.ts`, `tracking-probe.ts`, `monitoring.ts`, `access-check.ts` | The object surface, details, the queue check of Test Connection, health |
 | `amqp/codec.ts`, `amqp/field-table.ts`, `amqp/frame-reader.ts`, `amqp/connection.ts`, `amqp/read-loop.ts`, `amqp/dial.ts` | The read client |
 | `request.ts`, `read.ts`, `results.ts`, `render.ts` | The read request, the read path, the result and the rendering rules |
+| `agent-statement.ts`, `agent-metadata-read.ts` | Agent mode's reader of one read request and its metadata-only answer ([§17](#17-agent-mode)) |
 | `generators.ts`, `labels.ts` | What a tree click and "Generate Read Request" write, and the words the shared panels and plan mode use |
 
 ## 3. Design decisions
@@ -271,13 +272,15 @@ No node name and no other principal's name is shown.
 
 ## 8. AI agent and MCP
 
-- A model receives virtual host, stream, queue and exchange names, kinds, the fixed stream columns, counts and the request language, each name inside the untrusted-content fence in plan mode and MCP.
-- A model never receives a message cell, a consumer tag, a peer address, another user's name, a node name or a health-check body.
+- A model receives virtual host, stream, queue and exchange names, kinds, counts and the request language, each name inside the untrusted-content fence in plan mode and MCP.
+- A model never receives a message's body, headers, properties or routing key, a consumer tag, a peer address, another user's name, a node name or a health-check body.
+- On a handle opened for agent mode, a stream's columns are the agent read's, `offset` and `body_bytes`, never the nine of the editor's result, and an object's source (its arguments, bindings and policies) is refused; plan-mode grounding, the operations workflow and MCP `inspect_schema` all read through such a handle.
+- Agent mode reads streams through its own statement language, `rabbitread`, and answers each message's offset and body size only ([§17](#17-agent-mode)).
 - Plan mode walks only `/`, at most 7 management GETs at any vhost count, and tells the model how many virtual hosts it did not read; it drafts a read request and never runs it.
 - The plan-mode inventory names each object by its virtual host, a dot and its name, so the stream `orders` reaches the model as `/.orders`; the request language it is given says that `"stream"` takes only the part after `/.`.
 - MCP `inspect_schema` makes 2 GETs per call (`/api/vhosts` and the chosen virtual host's Streams page), plus `connect()`'s 2 on a fresh instance; above 500 streams it sees the Streams folder's 500 names as the whole list, and a stream outside them is reached only by a typed read.
 - MCP matches a named virtual host case-insensitively, so of `Billing` and `billing` a call naming `billing` reads the one listed first.
-- There is no agent execution and no MCP `run_read_query` for RabbitMQ.
+- There is no MCP `run_read_query` for RabbitMQ: `MCP_STATEMENT_READ.rabbitmq` is false, and the `rabbitread` language declares no MCP statement tool (B108).
 
 ## 9. What Studio costs the broker
 
@@ -560,3 +563,76 @@ The refusal reason it prints, verbatim:
 
 - RabbitMQ is a trademark of Broadcom, Inc. in the U.S. and other countries; LibreDB Studio is not affiliated with or endorsed by Broadcom.
 - [RabbitMQ documentation](https://www.rabbitmq.com/docs), [Streams](https://www.rabbitmq.com/docs/streams), [Management Plugin](https://www.rabbitmq.com/docs/management).
+
+## 17. Agent mode
+
+Agent mode reads RabbitMQ streams through `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/stream/rabbitmq/index.ts).
+The request reader is [`agent-statement.ts`](../../src/lib/db/providers/stream/rabbitmq/agent-statement.ts), and the metadata-only projection and the wording of a stop are [`agent-metadata-read.ts`](../../src/lib/db/providers/stream/rabbitmq/agent-metadata-read.ts).
+Every claim below about the broker cites a capture under [`tests/fixtures/rabbitmq/4.3.6/agent-boundary/`](../../tests/fixtures/rabbitmq/4.3.6/agent-boundary/) or [`tests/fixtures/rabbitmq/4.2.9/agent-boundary/`](../../tests/fixtures/rabbitmq/4.2.9/agent-boundary/), each recorded by its `run.sh` against a fresh digest-pinned broker, with every refused call sent raw, past every Studio check, as a user tagged `management` with no configure and no write permission and a read pattern of every name.
+
+### 17.1 The boundary
+
+The boundary is a structural closed table, because no account can be one: a read permission in RabbitMQ also grants a take and a purge.
+Measured on both versions as that read-only user (`boundary.json`, `refused`): a no-ack `basic.get` and a consume that acks each remove a message from a classic and from a quorum queue, `queue.purge` and the management API's `DELETE /api/queues/{vhost}/{name}/contents` empty a queue, and the management API's `POST /api/queues/{vhost}/{name}/get` with `ack_requeue_false` removes one; only a publish and a declare are refused, with 403.
+So the table is what stops a take, in three layers ([§3](#3-design-decisions)):
+
+- the read client has no encoder for `basic.get`, `basic.publish`, `basic.reject`, `basic.nack`, `basic.recover`, or any `queue.*`, `exchange.*`, `tx.*` or `confirm.*` method, and its management client sends GET only, through a route table with no route that takes, purges or publishes;
+- before any frame, the management API's type check refuses anything but a stream, naming a classic or quorum queue's type;
+- the consume always carries `x-stream-offset`, which the broker refuses with 406 on a classic and on a quorum queue (`refused`), so a classic or quorum queue declared under a stream's name after the check delivers nothing and loses nothing: the provider's agent read, its type check answered as a stream, is refused with 406 and both queues hold their message after it (`backstop`).
+
+### 17.2 What an agent request may be
+
+One read request of the editor's own shape, read by the editor's own parser ([§5.1](#51-the-read-request)): one JSON object with the keys `vhost`, `stream`, `from` and `limit`, and no other, each written once.
+The shape has no field outside it, so no request filters messages by a property, a header or a body, and none counts by a value: what a request names is a virtual host, a stream, a start by offset or by the time the broker stored the messages, and how many to read.
+A request the parser refuses is refused with the parser's sentence followed by agent mode's own sentence, which says what the read answers; no refusal quotes a broker value.
+A request whose `limit`, or the default 50 when it writes none, passes the row budget is refused before anything is sent, since a read answers up to its limit and an answer is never cut.
+The admission refuses a request longer than 4,096 characters.
+Each call opens its own AMQP connection, as the editor's read does, with no queryId, so nothing of one call reaches another, and its deadline is the request's time budget, at most the read's own 30 s.
+
+### 17.3 Metadata only
+
+A message's body, its headers, every property (the message id, correlation id, app id, user id, type, content type and encoding, reply-to, expiration, priority, delivery mode and the publisher's timestamp) and its routing key are stored values, so no agent answer holds one.
+The answer is built from the read loop's raw messages, never from a rendered row, and each message answers two columns:
+
+| Column | Kind | Value |
+| --- | --- | --- |
+| `offset` | count | The stream offset; an offset past 2^53 - 1 withholds the whole answer |
+| `body_bytes` | count | The declared body size |
+
+An AMQP 0-9-1 delivery from a stream carries no other metadata the agent may read: measured on both versions, it holds the `x-stream-offset` header and the publisher's own properties, and no chunk time (`editor`), so a start by time selects messages by the time the broker stored them, but no answer states that time.
+RabbitMQ declares `ProviderCapabilities.metadataOnly`: every answer is projected through [`src/lib/db/redaction/metadata-only.ts`](../../src/lib/db/redaction/metadata-only.ts), and a cell that does not fit its column withholds the whole answer, naming the column and never the value.
+A read that stops at its limit answers, and so does one that stops with no message within 1 s, the stream's end as far as the read can tell, with the one fixed sentence that says it is not proof of the end.
+Every other stop refuses the answer rather than cutting it: the deadline (the time budget's refusal), the 8 MiB Studio holds for one read, the 64 MiB one read may transfer, a stop, the broker's cancel or close, and the 541 close at a message the broker cannot convert, which names how many messages it read first and never the message.
+A failure before the broker started the read is the time budget's refusal when the deadline ended it, and otherwise one of [§11](#11-error-handling)'s own sentences, each picked by a reply code or a fixed pattern and never quoting the broker.
+A result past the byte budget is refused, never cut, and an estimating plan is refused.
+
+Each agent-mode path reads this much:
+
+| Path | Handle | What it reads |
+| --- | --- | --- |
+| Investigation reads | agent read-only profile | one stream read, projected to offsets and body sizes |
+| Investigation grounding, plan-mode grounding, the operations workflow and MCP `inspect_schema` | either agent profile | virtual host, stream, queue and exchange names and counts, and a stream's columns `offset` and `body_bytes`; never a message, an argument, a binding or a policy |
+| Operations readings | operations profile | health and the overview, version and alarm state only; the sessions, slow-query, table, index and storage readings answer empty with no GET ([§7](#7-monitoring-and-health)) |
+| MCP `run_read_query` | none | closed: `MCP_STATEMENT_READ.rabbitmq` is false |
+
+On a handle of either agent profile the editor's read and an object's source are refused; an editor handle keeps every read and renders every message cell.
+
+### 17.4 Agent language pack
+
+Statement-language family: `rabbitread`.
+Overlay: [`src/lib/agent/languages/rabbitread/engines/rabbitmq.ts`](../../src/lib/agent/languages/rabbitread/engines/rabbitmq.ts), with its client row in [`src/lib/agent/languages/rabbitread/engines/client.ts`](../../src/lib/agent/languages/rabbitread/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`.
+Both overlays are empty, so the engine resolves to the `rabbitread` family pack itself.
+The `rabbitread` statement-language family has no dialect-bound member.
+This overlay overrides no Shared member, so every Shared member is the `rabbitread` statement-language family's own.
+The family offers the investigation workflow, through `run_read_query` with one read request, and the operations workflow; it offers no data analysis, since its answers carry no stored value, and no query optimization or database assessment, since the broker composes no plan and no profile, and no workflow hands an answer to the editor.
+The workflow classifier offers the model only these two.
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+No MCP tool runs a RabbitMQ read request: the family declares no MCP facet, and `MCP_STATEMENT_READ.rabbitmq` is false (B108).
+
+### 17.5 Tests
+
+- `tests/unit/db/rabbitmq/agent-statement.test.ts`: the read every admitted request is read to, and every refusal before the network in agent mode's own words.
+- `tests/unit/db/rabbitmq/agent-metadata-read.test.ts`: the projection, every stop answered or refused, and the wording of a failure.
+- `tests/unit/db/rabbitmq/agent-provider.test.ts`: the profile, the whole AMQP conversation of an admitted read against a fake broker, no marker of a body, header, property or routing key in any answer, the type check and the 406 backstop, every stop refused, the budgets, and the editor's surfaces on either agent profile.
+- `tests/unit/db/rabbitmq/agent-boundary.test.ts`: the captures as the boundary test, with the broker honouring every refused take and purge as the positive control, every queue's message count unchanged by an agent read, and no captured marker in an agent answer.

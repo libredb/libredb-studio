@@ -129,6 +129,7 @@ const LANGUAGE_IDS: Readonly<Record<AgentStatementLanguageId, true>> = {
   rediscli: true,
   etcdctl: true,
   oxiacli: true,
+  rabbitread: true,
 };
 
 describe("the server packs", () => {
@@ -266,6 +267,7 @@ describe("the language packs", () => {
       "rediscli",
       "etcdctl",
       "oxiacli",
+      "rabbitread",
     ]);
     expect(Object.isFrozen(LANGUAGE_TOOL_ARMS)).toBe(true);
   });
@@ -417,6 +419,7 @@ describe("the prompt tables the packs hold", () => {
       "rediscli",
       "etcdctl",
       "oxiacli",
+      "rabbitread",
     ]);
     expect(Object.isFrozen(WORKFLOW_TOOL_RULES)).toBe(true);
     for (const id of ids) {
@@ -521,6 +524,7 @@ describe("the client packs", () => {
         "rediscli",
         "etcdctl",
         "oxiacli",
+        "rabbitread",
       ]);
     }
   });
@@ -541,6 +545,7 @@ describe("the client packs", () => {
       rediscli: null,
       etcdctl: null,
       oxiacli: null,
+      rabbitread: null,
     });
   });
 

@@ -21,6 +21,7 @@ import { MILVUSRPC_CLIENT_PACK } from "./milvusrpc/client";
 import { REDISCLI_CLIENT_PACK } from "./rediscli/client";
 import { ETCDCTL_CLIENT_PACK } from "./etcdctl/client";
 import { OXIACLI_CLIENT_PACK } from "./oxiacli/client";
+import { RABBITREAD_CLIENT_PACK } from "./rabbitread/client";
 import { LIBREDBKV_CLIENT_PACK } from "./libredbkv/client";
 import { MONGO_CLIENT_PACK } from "./mongo/client";
 import type {
@@ -63,6 +64,7 @@ const CLIENT_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageClien
   rediscli: REDISCLI_CLIENT_PACK,
   etcdctl: ETCDCTL_CLIENT_PACK,
   oxiacli: OXIACLI_CLIENT_PACK,
+  rabbitread: RABBITREAD_CLIENT_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageClientPack>);
 
 /** The client facet for `language`. The record is total, so a typed id always has one. */
@@ -105,6 +107,7 @@ export const AGENT_EVIDENCE_EVENTS = mergeDisjoint(
     REDISCLI_CLIENT_PACK.evidenceEvents,
     ETCDCTL_CLIENT_PACK.evidenceEvents,
     OXIACLI_CLIENT_PACK.evidenceEvents,
+    RABBITREAD_CLIENT_PACK.evidenceEvents,
   ],
   "AGENT_EVIDENCE_EVENTS",
 ) satisfies AgentEvidenceEventSpecs<AgentPackEvidenceEvent>;
@@ -128,6 +131,7 @@ export const AGENT_PACK_SHORTFALL_SENTENCES = mergeDisjoint(
     REDISCLI_CLIENT_PACK.shortfallSentences,
     ETCDCTL_CLIENT_PACK.shortfallSentences,
     OXIACLI_CLIENT_PACK.shortfallSentences,
+    RABBITREAD_CLIENT_PACK.shortfallSentences,
   ],
   "AGENT_PACK_SHORTFALL_SENTENCES",
 ) satisfies Record<AgentPackShortfall, string>;
@@ -147,6 +151,7 @@ export const AGENT_PACK_READING_REFUSAL_HEADLINES = mergeDisjoint(
     REDISCLI_CLIENT_PACK.readingRefusalHeadlines,
     ETCDCTL_CLIENT_PACK.readingRefusalHeadlines,
     OXIACLI_CLIENT_PACK.readingRefusalHeadlines,
+    RABBITREAD_CLIENT_PACK.readingRefusalHeadlines,
   ],
   "AGENT_PACK_READING_REFUSAL_HEADLINES",
 ) satisfies Record<AgentPackReadingDenyCode, string>;
@@ -169,6 +174,7 @@ export const AGENT_PACK_REQUIREMENTS = mergeDisjoint(
     REDISCLI_CLIENT_PACK.requirements,
     ETCDCTL_CLIENT_PACK.requirements,
     OXIACLI_CLIENT_PACK.requirements,
+    RABBITREAD_CLIENT_PACK.requirements,
   ],
   "AGENT_PACK_REQUIREMENTS",
 ) satisfies Record<AgentPackVariantRequirement, AgentVariantRequirementSpec>;

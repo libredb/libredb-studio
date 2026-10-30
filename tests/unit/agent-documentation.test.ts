@@ -492,6 +492,7 @@ const READ_ONLY_PROVIDER_FILES: Readonly<Record<string, string>> = {
   redis: "src/lib/db/providers/keyvalue/redis.ts",
   etcd: "src/lib/db/providers/keyvalue/etcd/index.ts",
   oxia: "src/lib/db/providers/keyvalue/oxia/index.ts",
+  rabbitmq: "src/lib/db/providers/stream/rabbitmq/index.ts",
 };
 
 /**
@@ -600,9 +601,9 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
   const list = namedList(AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label));
   const prose = (relative: string) => read(relative).replace(/\n[ \t]*(?:\*|\/\/|#)?[ \t]*/g, " ");
 
-  test("the derived list is today's twenty-six engines", () => {
+  test("the derived list is today's twenty-seven engines", () => {
     expect(list).toBe(
-      "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd and Oxia",
+      "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia and RabbitMQ",
     );
   });
 
@@ -933,6 +934,7 @@ describe("docs/AGENT.md names every language-pack resolver in its Language packs
       "ten",
       "eleven",
       "twelve",
+      "thirteen",
     ];
     expect(ids.length).toBeLessThan(COUNT_WORDS.length);
     expect(section).toContain(

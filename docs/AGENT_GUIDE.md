@@ -232,7 +232,7 @@ now two different sentences, and the difference is the whole of what changed:
 
 - **Grounding: every engine.** What a Plan run is TOLD about your database. It needs no read-only
   statement path, because the provider reading sends no statement, so it reaches all forty-three engines.
-- **Agent mode: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd and Oxia.** What a run may DO by itself.
+- **Agent mode: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia and RabbitMQ.** What a run may DO by itself.
   Its tools execute statements and need a read-only path the provider implements, which only those providers do.
   So a schema-workflow Agent run on any other engine is refused when you press **Start**, before a run is opened and before anything is read, with the reason the rail's amber card shows (`workflowAvailability` in `src/app/api/agent/runs/route.ts`, #512); a Plan run there is still grounded.
   See [What the agent does not do](#what-the-agent-does-not-do).
@@ -404,7 +404,7 @@ as an ordinary citable result.
 Two consequences you will notice:
 
 - **It runs on every engine.** The other workflows need a read-only statement path the provider implements,
-  which only PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd and Oxia have; this one needs none, so a run opened on
+  which only PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia and RabbitMQ have; this one needs none, so a run opened on
   Oracle, Cassandra or Redis works rather than ending `engine-unsupported`.
 - **It has no free-form SQL, and its schema is a short list of names.** There is no `inspect_schema`
   and no `run_read_query` here, and the run is told so in its opening message rather than being left
@@ -459,6 +459,7 @@ It is one of the readings below and not a mood, and the qualifier beside the pil
 | *Reads only* | *metadata only, 200 rows and 10 s per command, as an ACL user the server refuses writes* | **Agent** mode on Redis, where auto-execute is not offered, so there is nothing to widen |
 | *Reads only* | *metadata only, 200 rows and 10 s per command, as an etcd user whose roles grant READ only* | **Agent** mode on etcd, where auto-execute is not offered, so there is nothing to widen |
 | *Reads only* | *metadata only, 200 rows and 10 s per command, over a client that holds only reads* | **Agent** mode on Oxia, where auto-execute is not offered, so there is nothing to widen |
+| *Reads only* | *metadata only, 200 rows and 10 s per read, over a client that cannot take a message* | **Agent** mode on RabbitMQ, where auto-execute is not offered, so there is nothing to widen |
 | *Cannot execute on `<engine>`* | *plan mode drafts here, and the operations workflow still runs* | **Agent** mode on any other engine. A run whose workflow sends a statement is refused when it is started, before a run is opened |
 | *Cannot execute yet* | *no connection is resolved, so no engine has been established* | **Agent** mode with no connection resolved. Nothing has been read, so the panel does not claim to know which engine you are on |
 | *Refused on this connection* | *plan mode drafts here, and the operations workflow still runs* | **Agent** mode after a run on this connection was refused for the connection itself, for example a user that holds writes or a server with authorization off. The popover says why; switch to another connection and the strip goes back to what its engine does |
@@ -969,9 +970,9 @@ Stated plainly, because a surface that hides its edges is the one that surprises
   which calls the provider directly, so an editor query is neither policy-checked nor written to the
   agent audit trail. The controls above describe what the agent is held to, not a guarantee the whole
   product enforces.
-- **Agent mode runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd and Oxia only.** The read-only profile has to
+- **Agent mode runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia and RabbitMQ only.** The read-only profile has to
   be implemented by the provider, and only those providers do: `queryReadOnly` exists on `postgres.ts`,
-  `sqlite.ts`, `duckdb/index.ts`, `mssql.ts`, `mysql.ts`, `kubernetes/index.ts`, `mongodb/index.ts`, `clickhouse/index.ts`, `libsql/index.ts`, `influxdb/sql-provider.ts`, `search/index.ts`, `oracle/index.ts`, `db2/index.ts`, `cassandra/index.ts`, `couchbase/index.ts`, `druid/index.ts`, `libredb.ts`, `influxdb/influxql-provider.ts`, `weaviate/index.ts`, `qdrant/index.ts`, `neo4j/index.ts`, `milvus/index.ts`, `redis.ts`, `etcd/index.ts` and `oxia/index.ts`.
+  `sqlite.ts`, `duckdb/index.ts`, `mssql.ts`, `mysql.ts`, `kubernetes/index.ts`, `mongodb/index.ts`, `clickhouse/index.ts`, `libsql/index.ts`, `influxdb/sql-provider.ts`, `search/index.ts`, `oracle/index.ts`, `db2/index.ts`, `cassandra/index.ts`, `couchbase/index.ts`, `druid/index.ts`, `libredb.ts`, `influxdb/influxql-provider.ts`, `weaviate/index.ts`, `qdrant/index.ts`, `neo4j/index.ts`, `milvus/index.ts`, `redis.ts`, `etcd/index.ts`, `oxia/index.ts` and `rabbitmq/index.ts`.
   They do not draw the boundary the same way.
   Kubernetes has no read-only session at all, so there the boundary is Studio's request allowlist, checked on the
   final method and path of every request before it is sent, together with the RBAC of the identity the agent runs as.

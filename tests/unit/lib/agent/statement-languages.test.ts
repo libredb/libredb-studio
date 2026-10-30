@@ -11,6 +11,7 @@ import { fingerprintMilvusrpc, milvusrpcRowCapAdvice } from "@/lib/agent/languag
 import { fingerprintRediscli, rediscliRowCapAdvice } from "@/lib/agent/languages/rediscli/adapter";
 import { etcdctlRowCapAdvice, fingerprintEtcdctl } from "@/lib/agent/languages/etcdctl/adapter";
 import { fingerprintOxiacli, oxiacliRowCapAdvice } from "@/lib/agent/languages/oxiacli/adapter";
+import { fingerprintRabbitread, rabbitreadRowCapAdvice } from "@/lib/agent/languages/rabbitread/adapter";
 import { languageServer, languageServerPack } from "@/lib/agent/languages/server";
 import {
   admitLibredbkvStatement,
@@ -64,6 +65,12 @@ import {
   oxiacliAgentReadInput,
 } from "@/lib/db/operations/oxiacli-admission";
 import { OXIA_AGENT_SENTENCES } from "@/lib/db/providers/keyvalue/oxia/agent-statement";
+import {
+  admitRabbitreadStatement,
+  RABBITREAD_AGENT_MAX_STATEMENT_CHARS,
+  rabbitreadAgentReadInput,
+} from "@/lib/db/operations/rabbitread-admission";
+import { RABBITMQ_AGENT_SENTENCES } from "@/lib/db/providers/stream/rabbitmq/agent-statement";
 import { INFLUXQL_AGENT_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-statement";
 import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 
@@ -964,5 +971,73 @@ describe("the oxiacli language's server adapter and admission", () => {
   test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
     expect(Object.keys(AGENT_WORKFLOW_VARIANTS.oxiacli).sort()).toEqual(["investigation", "operations"]);
     expect(AGENT_WORKFLOW_VARIANTS.oxiacli.investigation?.canAutoExecute).toBe(false);
+  });
+});
+
+describe("the rabbitread language's server adapter and admission", () => {
+  const READ = '{"vhost": "/", "stream": "orders", "from": "first", "limit": 5}';
+
+  test("the fingerprint is the read the reader sends, so one read written two ways is one identity", () => {
+    const one = fingerprintRabbitread(READ);
+    expect(fingerprintRabbitread('{"limit":5,"from":"first","stream":"orders","vhost":"/"}')).toBe(one);
+    expect(fingerprintRabbitread('{"vhost": "/", "stream": "orders", "from": "first", "limit": 6}')).not.toBe(one);
+    expect(fingerprintRabbitread('{"vhost": "/", "stream": "audit", "from": "first", "limit": 5}')).not.toBe(one);
+    // A default written out is the read left out.
+    expect(fingerprintRabbitread('{"vhost": "/", "stream": "orders"}')).toBe(
+      fingerprintRabbitread('{"vhost": "/", "stream": "orders", "from": "last", "limit": 50}'),
+    );
+    expect(fingerprintRabbitread('{"vhost": "/", "stream": "orders", "from": {"offset": 7}}')).toBe(
+      fingerprintRabbitread('{"vhost": "/", "stream": "orders", "from": {"offset": "7"}}'),
+    );
+  });
+
+  test("the fingerprint is total: a refused request is identified by its raw text, so it is refused again", () => {
+    const raw = '{"vhost": "/", "stream": "orders", "ack": true}';
+    expect(fingerprintRabbitread(raw)).toBe(fingerprintRabbitread(raw));
+    expect(fingerprintRabbitread(raw)).toMatch(/^[0-9a-f]{64}$/);
+    expect(fingerprintRabbitread(`${raw} `)).not.toBe(fingerprintRabbitread(raw));
+  });
+
+  test("a read answers one row per message, and the advice names the limit", () => {
+    expect(AGENT_LANGUAGE_COPY.rabbitread.adviceKeys).toEqual([]);
+    expect(rabbitreadRowCapAdvice(READ, "2")).toBe(
+      'Ask for at most 2 rows: a read answers one row per message, up to its "limit", so write "limit": 2 or less, and read on from the offset after the last one you read.',
+    );
+    expect(languageServer("rabbitread").shapeAdvice).toContain("a valid read request");
+  });
+
+  test("the admission is the provider's reader, plus a length the agent's contract names", () => {
+    expect(admitRabbitreadStatement(READ)).toBeNull();
+    expect(admitRabbitreadStatement("")).toEqual({ code: "request", message: RABBITMQ_AGENT_SENTENCES.empty });
+    expect(admitRabbitreadStatement('{"vhost": "/", "stream": "orders", "ack": true}')?.code).toBe("request");
+    const long = JSON.stringify({ vhost: "/", stream: "s".repeat(RABBITREAD_AGENT_MAX_STATEMENT_CHARS) });
+    expect(admitRabbitreadStatement(long)).toEqual({
+      code: "agent-too-large",
+      message: `The read request is longer than ${RABBITREAD_AGENT_MAX_STATEMENT_CHARS} characters, the most an agent read takes: shorten it. Nothing was sent.`,
+    });
+    expect(languageServer("rabbitread").admit?.(READ)).toBeNull();
+  });
+
+  test("an ungrounded run is sent to a read it holds, and plan mode is told none of the reader's rules", () => {
+    const ungrounded = languageServerPack("rabbitread").grounding.ungrounded;
+    expect(ungrounded?.("The capture failed.", { singular: "stream", plural: "streams" })).toBe(
+      "The capture failed.\nSo nothing about this broker has been established for you: not one stream name. Read a stream the question names with run_read_query; each message answers its offset and body size only.",
+    );
+    expect(languageServerPack("rabbitread").grounding.planningRules).toBeUndefined();
+    expect(languageServerPack("rabbitread").grounding.omissionAdvice).toContain("by offset and body size only");
+  });
+
+  test("the descriptor's input is strict, carries the request, and refuses what the admission refuses", () => {
+    expect(rabbitreadAgentReadInput.safeParse({ statement: READ }).success).toBe(true);
+    expect(rabbitreadAgentReadInput.safeParse({ statement: READ, sql: "x" }).success).toBe(false);
+    const refused = rabbitreadAgentReadInput.safeParse({ statement: "basic.get orders" });
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues[0]?.path).toEqual(["statement"]);
+    expect(refused.error?.issues[0]?.message).toStartWith("A RabbitMQ read request is one JSON object");
+  });
+
+  test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
+    expect(Object.keys(AGENT_WORKFLOW_VARIANTS.rabbitread).sort()).toEqual(["investigation", "operations"]);
+    expect(AGENT_WORKFLOW_VARIANTS.rabbitread.investigation?.canAutoExecute).toBe(false);
   });
 });

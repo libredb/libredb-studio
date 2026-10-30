@@ -22,6 +22,7 @@ import { MILVUS_SERVER_OVERLAY } from "../milvusrpc/engines/milvus";
 import { REDIS_SERVER_OVERLAY } from "../rediscli/engines/redis";
 import { ETCD_SERVER_OVERLAY } from "../etcdctl/engines/etcd";
 import { OXIA_SERVER_OVERLAY } from "../oxiacli/engines/oxia";
+import { RABBITMQ_SERVER_OVERLAY } from "../rabbitread/engines/rabbitmq";
 import type { AgentStatementLanguageId } from "../../agent-manifest";
 import { statementFamilyOf } from "../client";
 import { defineOverlay } from "../overlay";
@@ -78,6 +79,7 @@ const SERVER_OVERLAYS: AgentEngineServerOverlays = Object.freeze({
   redis: Object.freeze({ ...REDIS_SERVER_OVERLAY }),
   etcd: Object.freeze({ ...ETCD_SERVER_OVERLAY }),
   oxia: Object.freeze({ ...OXIA_SERVER_OVERLAY }),
+  rabbitmq: Object.freeze({ ...RABBITMQ_SERVER_OVERLAY }),
 } satisfies AgentEngineServerOverlays);
 
 /** What an engine with no dialect answers: every member unsupported. */

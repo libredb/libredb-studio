@@ -345,6 +345,21 @@ describe("the posture on Oxia", () => {
   });
 });
 
+describe("the posture on RabbitMQ", () => {
+  const posture = agentPosture({ mode: "agent", engine: "rabbitmq", engineLabel: "RabbitMQ", handover: false });
+
+  test("names exactly what the agent reads: each message's offset and body size, never a value", () => {
+    expect(posture.qualifier).toBe(
+      `metadata only, ${STATEMENT_BUDGETS.maxResultRows} rows and ${STATEMENT_BUDGETS.statementTimeoutMs / 1000} s per read, over a client that cannot take a message`,
+    );
+    expect(posture.body).toContain(
+      "answers each message's offset and body size, never its body, headers, properties or routing key",
+    );
+    expect(posture.body).toContain("refuses a classic or quorum queue before any frame");
+    expect(posture.body).not.toMatch(/payload|headers are shown|message cells/);
+  });
+});
+
 describe("autoExecuteTerms", () => {
   // No default: a caller that names no language would be shown SQL's terms on whatever engine it is on, SQL's
   // read-only session included, on an engine that has none.

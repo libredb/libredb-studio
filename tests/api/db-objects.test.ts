@@ -2150,6 +2150,7 @@ describe("the inventory and search routes over RabbitMQ's management API", () =>
     const provider = new RabbitMQProvider(
       rabbitmqConnection(),
       { queryTimeout: 60_000 },
+      {},
       { managementTransport: stub.factory, deadlineSignal: manualDeadlines().factory },
     );
     await provider.connect();

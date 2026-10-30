@@ -558,7 +558,8 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // client could drive, and every read is billed to the user's project.
   firestore: false,
   // Offered for the two metadata tools, carrying stream names and the fixed read columns only; `run_read_query` does
-  // not serve it, because the provider implements no `queryReadOnly`.
+  // not serve it: the provider's read-only query path is agent mode's alone and reads metadata only, and
+  // MCP_STATEMENT_READ keeps MCP read closed on it (BACKLOG B108).
   rabbitmq: true,
   // Outside this version, as for etcd, Oxia, S3 and MQTT. NOT because there is no read to hand over:
   // the console reads one JSON request and is read-only by construction. Because a node's value
@@ -659,6 +660,8 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   kubernetes: true,
   mqtt: false,
   firestore: false,
+  // Agent mode executes metadata-only stream reads on RabbitMQ, and MCP read stays closed on it until a change of its
+  // own opens it.
   rabbitmq: false,
   opcua: false,
   mtconnect: false,

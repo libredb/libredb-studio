@@ -60,6 +60,12 @@ describe("fenceTagEngine", () => {
     expect(fenceTagEngine("oxia")).toBe("oxia");
   });
 
+  test("rabbitread names rabbitmq, the agent's name for the only read request language RabbitMQ runs", () => {
+    expect(fenceTagEngine("rabbitread")).toBe("rabbitmq");
+    expect(isQueryFenceTag("rabbitread")).toBe(true);
+    expect(fenceTagEngine("rabbitmq")).toBe("rabbitmq");
+  });
+
   test("etcdctl names etcd, the agent's name for the only command language etcd runs", () => {
     expect(fenceTagEngine("etcdctl")).toBe("etcd");
     expect(isQueryFenceTag("etcdctl")).toBe(true);

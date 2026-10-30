@@ -131,7 +131,8 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // A ```firestore block holds one statement of the console's read-only Admin SDK subset. No alias: `firebase` names a
   // platform of many products, and `js` and `javascript` name a language, not an engine.
   firestore: true,
-  // A ```rabbitmq block holds one JSON read request the editor runs as it is.
+  // A ```rabbitmq block holds one JSON read request the editor runs as it is. The `rabbitread` alias below names the
+  // agent's language, and it still names this engine: see its entry.
   rabbitmq: true,
   // An ```opcua block holds one JSON read request, which the console runs as it is.
   opcua: true,
@@ -181,6 +182,7 @@ export const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "rediscli",
   "etcdctl",
   "oxiacli",
+  "rabbitread",
 ]);
 
 /**
@@ -240,6 +242,8 @@ export const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.free
   etcdctl: "etcd",
   // The agent's name for the Oxia command language, and `oxia` is the only type-id that runs it.
   oxiacli: "oxia",
+  // The agent's name for the RabbitMQ read request language, and `rabbitmq` is the only type-id that runs it.
+  rabbitread: "rabbitmq",
 });
 
 /**

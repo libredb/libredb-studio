@@ -39,7 +39,8 @@ export type AgentStatementLanguageId =
   | "milvusrpc"
   | "rediscli"
   | "etcdctl"
-  | "oxiacli";
+  | "oxiacli"
+  | "rabbitread";
 
 /** Literal-typed, so `AgentEngineFamily` in `languages/pack.ts` reads each engine's language by type. */
 export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
@@ -78,7 +79,7 @@ export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
   kubernetes: "kubectl",
   mqtt: null,
   firestore: null,
-  rabbitmq: null,
+  rabbitmq: "rabbitread",
   opcua: null,
   mtconnect: null,
   modbus: null,

@@ -121,6 +121,7 @@ const HANDOVER_CHIPS: Readonly<Record<AgentStatementLanguageId, readonly Handove
   rediscli: [],
   etcdctl: [],
   oxiacli: [],
+  rabbitread: [],
 };
 
 export function ConsentCard({
