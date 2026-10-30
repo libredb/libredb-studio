@@ -11,5 +11,5 @@
   },
   "status": 200,
   "contentType": "application/json",
-  "body": "{\"result\":{\"aliases\":[{\"alias_name\":\"plain_alias\",\"collection_name\":\"plain\"}]},\"status\":\"ok\",\"time\":5.643e-6}"
+  "body": "{\"result\":{\"aliases\":[{\"alias_name\":\"plain_alias\",\"collection_name\":\"plain\"}]},\"status\":\"ok\",\"time\":1.813e-6}"
 }

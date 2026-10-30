@@ -16,5 +16,5 @@
   },
   "status": 200,
   "contentType": "application/json",
-  "body": "{\"result\":{\"points\":[{\"id\":1,\"payload\":{\"city\":\"stored-city-1\",\"note\":\"stored-note-1\",\"meta\":{\"name\":\"stored-nested-1\"}},\"vector\":[0.1,0.2,0.3,0.4]},{\"id\":2,\"payload\":{\"city\":\"stored-city-2\",\"note\":\"stored-note-2\",\"meta\":{\"name\":\"stored-nested-2\"}},\"vector\":[0.2,0.2,0.3,0.4]},{\"id\":3,\"payload\":{\"city\":\"stored-city-3\",\"note\":\"stored-note-3\",\"meta\":{\"name\":\"stored-nested-3\"}},\"vector\":[0.3,0.2,0.3,0.4]}],\"next_page_offset\":null},\"status\":\"ok\",\"time\":0.000043899}"
+  "body": "{\"result\":{\"points\":[{\"id\":1,\"payload\":{\"city\":\"stored-city-1\",\"note\":\"stored-note-1\",\"meta\":{\"name\":\"stored-nested-1\"}},\"vector\":[0.1,0.2,0.3,0.4]},{\"id\":2,\"payload\":{\"city\":\"stored-city-2\",\"note\":\"stored-note-2\",\"meta\":{\"name\":\"stored-nested-2\"}},\"vector\":[0.2,0.2,0.3,0.4]},{\"id\":3,\"payload\":{\"city\":\"stored-city-3\",\"note\":\"stored-note-3\",\"meta\":{\"name\":\"stored-nested-3\"}},\"vector\":[0.3,0.2,0.3,0.4]}],\"next_page_offset\":null},\"status\":\"ok\",\"time\":0.000089738}"
 }

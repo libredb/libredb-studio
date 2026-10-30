@@ -17,6 +17,6 @@
   },
   "status": 500,
   "contentType": "application/json",
-  "body": "{\"status\":{\"error\":\"Service internal error: Inference service error (500 Internal Server Error): \"},\"time\":0.004709979}",
+  "body": "{\"status\":{\"error\":\"Service internal error: Inference service error (500 Internal Server Error): \"},\"time\":0.003909485}",
   "egressRequests": 1
 }

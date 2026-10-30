@@ -352,8 +352,9 @@ export class QdrantProvider extends BaseDatabaseProvider {
   }
 
   /**
-   * What the read-only proof sends through `client`: its two probes and the collection list, each under a permit of
-   * its own. A probe's failure is worded as the alias route's, the console route nearest to what it writes.
+   * What the read-only proof reads and sends through `client`: the connection's key, whose JWT claims it reads, then its
+   * two probes and the collection list, each under a permit of its own. A probe's failure is worded as the alias
+   * route's, the console route nearest to what it writes.
    */
   private proofWire(
     client: QdrantClient,
@@ -361,6 +362,8 @@ export class QdrantProvider extends BaseDatabaseProvider {
     phase: QdrantErrorContext["phase"],
   ): QdrantProofWire {
     return {
+      // Read only under the agent profile, whose open refused a connection with no key.
+      key: options.headers["api-key"] as string,
       probe: (probe: QdrantProbe, signal: AbortSignal) =>
         this.answered(options, phase, "get_collections_aliases", signal, () => client.probe(probe, signal)),
       listCollections: (signal: AbortSignal) =>

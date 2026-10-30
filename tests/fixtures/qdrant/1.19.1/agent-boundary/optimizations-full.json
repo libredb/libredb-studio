@@ -11,5 +11,5 @@
   },
   "status": 200,
   "contentType": "application/json",
-  "body": "{\"result\":{\"summary\":{\"queued_optimizations\":0,\"queued_segments\":0,\"queued_points\":0,\"idle_segments\":2},\"running\":[]},\"status\":\"ok\",\"time\":0.000010903}"
+  "body": "{\"result\":{\"summary\":{\"queued_optimizations\":0,\"queued_segments\":0,\"queued_points\":0,\"idle_segments\":2},\"running\":[]},\"status\":\"ok\",\"time\":0.000011978}"
 }

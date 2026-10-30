@@ -11,5 +11,5 @@
   },
   "status": 200,
   "contentType": "application/json",
-  "body": "{\"result\":{\"exists\":true},\"status\":\"ok\",\"time\":2.315e-6}"
+  "body": "{\"result\":{\"exists\":true},\"status\":\"ok\",\"time\":1.535e-6}"
 }

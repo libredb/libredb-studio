@@ -18,6 +18,7 @@ import {
   QDRANT_PROOF_SENTENCES,
   qdrantAgentFailure,
   qdrantProjectionOf,
+  type QdrantProofWire,
   readQdrantProbeAnswer,
   readQdrantProofCollections,
   shapeQdrantAgentAnswer,
@@ -123,6 +124,98 @@ describe("the read-only proof, from what 1.19.1 answered", () => {
   });
 });
 
+/** A key in a JWT's shape carrying `claims`; its header and signature are not real, which the claim check never reads. */
+const jwtKey = (claims: unknown): string =>
+  `not-a-real-header.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.not-a-real-signature`;
+
+/** A proof wire that records what it was sent and answers like the read-only key's server. */
+function recordingWire(key: string) {
+  const sent: string[] = [];
+  const wire: QdrantProofWire = {
+    key,
+    probe: async (probe: QdrantProbe) => {
+      sent.push(probe.kind === "empty-alias-update" ? "alias" : `delete ${probe.collection}`);
+      return json({}, 403);
+    },
+    listCollections: async () => {
+      sent.push("list");
+      return json({ result: { collections: [] } });
+    },
+  };
+  return { wire, sent };
+}
+
+describe("a JWT's own claims", () => {
+  for (const [what, claims] of [
+    ["access r", { access: "r" }],
+    ["access r on each collection it names", { access: [{ collection: "plain", access: "r" }] }],
+    ["an empty list of collections", { access: [] }],
+    ["access r with every claim beside it Studio reads", { access: "r", exp: 1, iat: 1, nbf: 1, sub: "s" }],
+    ["access r bound to a point that exists", { access: "r", value_exists: { collection: "plain", matches: [] } }],
+  ] as const) {
+    test(`${what}: admitted, and the server's two no-op writes are still sent`, async () => {
+      const { wire, sent } = recordingWire(jwtKey(claims));
+      await proveQdrantReadOnly(wire, new AbortController().signal);
+      expect(sent).toEqual(["alias", "list"]);
+    });
+  }
+
+  for (const [what, claims] of [
+    [
+      "rw on an alias, which lists nothing and passes both no-op writes",
+      { access: [{ collection: "plain_alias", access: "rw" }] },
+    ],
+    ["rw on a name nothing has yet", { access: [{ collection: "future", access: "rw" }] }],
+    [
+      "r on one collection and rw on another",
+      {
+        access: [
+          { collection: "plain", access: "r" },
+          { collection: "other", access: "rw" },
+        ],
+      },
+    ],
+    ["access m", { access: "m" }],
+    ["access rw", { access: "rw" }],
+    ["no access claim", {}],
+    [
+      "an access entry with a key Studio does not read",
+      { access: [{ collection: "plain", access: "r", payload: {} }] },
+    ],
+    ["an access entry with no collection", { access: [{ access: "r" }] }],
+    ["an access entry whose collection is not a name", { access: [{ collection: 1, access: "r" }] }],
+    ["an access entry that is not an object", { access: ["r"] }],
+    ["an access claim that is an object", { access: { collection: "plain", access: "r" } }],
+    ["a claim Studio does not read", { access: "r", role: "admin" }],
+  ] as const) {
+    test(`${what}: refused before anything is sent`, async () => {
+      const { wire, sent } = recordingWire(jwtKey(claims));
+      const error = await proveQdrantReadOnly(wire, new AbortController().signal).then(
+        () => {
+          throw new Error("admitted");
+        },
+        (thrown: unknown) => thrown,
+      );
+      expect(error).toBeInstanceOf(ExecutionProfileError);
+      expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+      expect((error as Error).message).toBe(QDRANT_PROOF_SENTENCES.claims);
+      expect(sent).toEqual([]);
+    });
+  }
+
+  for (const [what, key] of [
+    ["an opaque key", "not-a-real-key"],
+    ["a key with three parts whose middle is not JSON", "not.a-real.key"],
+    ["a key with three parts whose middle is JSON but no object", `a.${Buffer.from("[1]").toString("base64url")}.b`],
+  ] as const) {
+    test(`${what} has no claims to read, and is left to the server's two no-op writes`, async () => {
+      const { wire, sent } = recordingWire(key);
+      await proveQdrantReadOnly(wire, new AbortController().signal);
+      expect(sent).toEqual(["alias", "list"]);
+    });
+  }
+});
+
 describe("the collections the proof checks", () => {
   test("are the ones the key lists: all three for the read-only key, its own for a collection-scoped JWT", () => {
     expect(readQdrantProofCollections(agentAnswer("collections-read-only"))).toEqual(["docs", "other", "plain"]);
@@ -164,6 +257,7 @@ describe("the proof's order", () => {
     const sent: string[] = [];
     const signal = new AbortController().signal;
     const wire = (deleteAnswer: (collection: string) => QdrantAnswer) => ({
+      key: "not-a-real-key",
       probe: async (probe: QdrantProbe) => {
         sent.push(probe.kind === "empty-alias-update" ? "alias" : `delete ${probe.collection}`);
         return probe.kind === "empty-alias-update" ? json({}, 403) : deleteAnswer(probe.collection);
@@ -193,6 +287,7 @@ describe("the proof's order", () => {
     await expect(
       proveQdrantReadOnly(
         {
+          key: "not-a-real-key",
           probe: async () => {
             sent.push("alias");
             return agentAnswer("proof-alias-full");
@@ -268,6 +363,24 @@ describe("the metadata-only projections, from what a read-only key read", () => 
       ["text", "vector", "Cosine", 4, null],
       ["keywords", "sparse_vector", null, null, null],
       ["meta.name", "payload_index", "keyword", null, 2],
+    ]);
+  });
+
+  test("a named vector called size is a named vector, not the collection's one unnamed vector", () => {
+    const text = JSON.stringify({
+      result: {
+        status: "green",
+        points_count: 1,
+        config: {
+          params: { vectors: { size: { size: 2, distance: "Dot" }, other: { size: 3, distance: "Cosine" } } },
+        },
+        payload_schema: {},
+      },
+    });
+    expect(shape("GET /collections/plain", text).rows.map((row) => [row.name, row.kind, row.type, row.size])).toEqual([
+      ["plain", "collection", null, null],
+      ["size", "vector", "Dot", 2],
+      ["other", "vector", "Cosine", 3],
     ]);
   });
 

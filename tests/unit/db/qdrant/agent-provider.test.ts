@@ -150,6 +150,24 @@ describe("the open, under the agent read-only profile", () => {
     expect(lines(wire).at(-1)).toBe("POST /collections/plain/points/delete");
   });
 
+  test("a JWT that writes through an alias, which the server's two no-op writes pass, is refused on its claims", async () => {
+    const claims = Buffer.from(JSON.stringify({ access: [{ collection: "plain_alias", access: "rw" }] })).toString(
+      "base64url",
+    );
+    const { provider, wire } = agentProvider(
+      agentServer("jwt-alias-write", { "GET /": agentAnswer("root-read-only") }),
+      AGENT,
+      { password: `not-a-real-header.${claims}.not-a-real-signature` },
+    );
+    const error = await rejection(provider.connect());
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect((error as Error).message).toBe(QDRANT_PROOF_SENTENCES.claims);
+    expect(lines(wire)).toEqual(["GET /", "GET /collections"]);
+    expect(provider.isConnected()).toBe(false);
+    expect(wire.closed()).toBe(1);
+  });
+
   test("a transport failure of the proof is worded by the provider's table", async () => {
     const { provider } = agentProvider((request, line) => {
       if (line === "POST /collections/aliases") throw new Error("socket closed");

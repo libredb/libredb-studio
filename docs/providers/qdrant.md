@@ -527,6 +527,9 @@ First an alias update with no action: it is refused 403 to the read-only key and
 A JWT that writes one collection is refused that update too, so each collection the key lists (`GET /collections`, which lists a collection-scoped JWT's own collections alone, `collections-jwt-collection-write`) is then sent a point delete of no point.
 It is refused 403 to every read-only principal (`proof-delete-*-read-only`, `proof-delete-*-jwt-read`, `proof-delete-plain-jwt-collection-read`) and read past its access check and answered 400 `Empty update request` to one that can write that collection (`proof-delete-plain-jwt-collection-write`), which is refused; the API key's is answered the same way and changes nothing (`proof-delete-plain-full`).
 Any answer but 403 refuses the profile, as does a list Studio does not read and a key listing more than 32 collections (B154).
+The server's answers alone do not tell every writing JWT apart: a JWT with `rw` on an alias, or on a name no collection or alias has yet, is refused the alias update and lists no collection and no alias (`proof-alias-jwt-alias-write`, `collections-jwt-alias-write`, `aliases-jwt-alias-write` and their `jwt-future-write` twins), so no point delete is sent, while its upsert through the alias is answered and adds a point (`write-upsert-alias-jwt-alias-write`, `write-count-after-alias-write-full`).
+So before anything is sent, and again before every request, Studio reads the claims of a key in a JWT's shape and admits it only when its access is `r`, globally or on each collection it names, beside `exp`, `iat`, `nbf`, `sub` and `value_exists`; any other access, a missing one and any other claim are refused.
+A key with no claims to read, the read-only API key among them, is left to the server's answers.
 The API key's empty alias update, the one write the proof can have answered, changes nothing: the aliases read the same after it (`write-state-aliases-after-full`).
 A collection the key can write that appears after the open is refused at the next request, before the request is sent.
 The operations profile sends no request of the model's, so it opens with any key and no proof, and plan mode keeps grounding on the API key.
@@ -577,7 +580,7 @@ No MCP tool runs a Qdrant request: the family declares no MCP facet, and `MCP_ST
 
 - `tests/unit/db/qdrant/agent-captures.test.ts`: what 1.19.1 answered each principal, held against the captures.
 - `tests/unit/db/qdrant/metadata-request.test.ts`: the routes an agent request may name, and every refusal before the network.
-- `tests/unit/db/qdrant/metadata-read.test.ts`: the read-only proof over each `proof-*` capture, every projection over the captured answers, and answers that carry a stored value where a name, a count or a flag stands.
+- `tests/unit/db/qdrant/metadata-read.test.ts`: a JWT's claims, the read-only proof over each `proof-*` capture, every projection over the captured answers, and answers that carry a stored value where a name, a count or a flag stands.
 - `tests/unit/db/qdrant/rest-client-probe.test.ts`: the two probes' full URLs and bodies.
 - `tests/unit/db/qdrant/agent-provider.test.ts`: the open, the proof before every request, the exact request lines, URLs and bodies through the REST client, the wording of a failure and the budgets.
 - `tests/integration/db/qdrant-provider.test.ts`: the boundary replayed from the captures, the read-only principals' writes beside the positive controls.

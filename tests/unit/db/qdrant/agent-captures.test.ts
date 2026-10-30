@@ -96,6 +96,22 @@ describe("the read-only proof's two no-op writes", () => {
     expect(JSON.parse(agentCapture("collections-read-only").body).result.collections).toHaveLength(3);
   });
 
+  test("a JWT that writes an alias, or a name nothing has yet, lists nothing and passes both no-op writes, yet writes", () => {
+    for (const principal of ["jwt-alias-write", "jwt-future-write"]) {
+      expect({ principal, alias: agentCapture(`proof-alias-${principal}`).status }).toEqual({ principal, alias: 403 });
+      expect(JSON.parse(agentCapture(`collections-${principal}`).body).result).toEqual({ collections: [] });
+      expect(JSON.parse(agentCapture(`aliases-${principal}`).body).result).toEqual({ aliases: [] });
+      expect(agentCapture(`proof-delete-plain-${principal}`).status).toBe(403);
+    }
+    // Through the alias it names, the JWT reads the collection and is read past the access check of a delete...
+    expect(agentCapture("collection-alias-jwt-alias-write").status).toBe(200);
+    expect(errorOf("proof-delete-plain_alias-jwt-alias-write")).toBe("Bad request: Empty update request");
+    // ...and its upsert is answered and lands: one point more than after the collection rw JWT's.
+    expect(agentCapture("write-upsert-alias-jwt-alias-write").status).toBe(200);
+    expect(countOf("write-count-after-alias-write-full")).toBe(countOf("write-count-after-collection-write-full") + 1);
+    expect(countOf("write-count-restored-full")).toBe(countOf("write-count-before-full"));
+  });
+
   test("a server with no key configured answers every request, with or without a key: it has no boundary", () => {
     expect(agentCapture("collections-open-anonymous").status).toBe(200);
     expect(agentCapture("proof-alias-open-key").status).toBe(200);

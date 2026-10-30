@@ -20,5 +20,5 @@
   },
   "status": 200,
   "contentType": "application/json",
-  "body": "{\"result\":{\"groups\":[{\"hits\":[{\"id\":3,\"version\":1,\"score\":0.32000002}],\"id\":\"stored-city-3\"},{\"hits\":[{\"id\":2,\"version\":1,\"score\":0.31}],\"id\":\"stored-city-2\"},{\"hits\":[{\"id\":1,\"version\":1,\"score\":0.3}],\"id\":\"stored-city-1\"}]},\"status\":\"ok\",\"time\":0.000160569}"
+  "body": "{\"result\":{\"groups\":[{\"hits\":[{\"id\":3,\"version\":1,\"score\":0.32000002}],\"id\":\"stored-city-3\"},{\"hits\":[{\"id\":2,\"version\":1,\"score\":0.31}],\"id\":\"stored-city-2\"},{\"hits\":[{\"id\":1,\"version\":1,\"score\":0.3}],\"id\":\"stored-city-1\"}]},\"status\":\"ok\",\"time\":0.000251496}"
 }

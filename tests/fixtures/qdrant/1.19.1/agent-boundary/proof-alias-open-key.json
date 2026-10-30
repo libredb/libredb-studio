@@ -14,5 +14,5 @@
   },
   "status": 200,
   "contentType": "application/json",
-  "body": "{\"result\":true,\"status\":\"ok\",\"time\":3.759e-6}"
+  "body": "{\"result\":true,\"status\":\"ok\",\"time\":6.691e-6}"
 }

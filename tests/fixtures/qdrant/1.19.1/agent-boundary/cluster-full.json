@@ -11,5 +11,5 @@
   },
   "status": 200,
   "contentType": "application/json",
-  "body": "{\"result\":{\"peer_id\":4665558133302236,\"shard_count\":1,\"local_shards\":[{\"shard_id\":0,\"points_count\":3,\"state\":\"Active\"}],\"remote_shards\":[],\"shard_transfers\":[]},\"status\":\"ok\",\"time\":0.000019846}"
+  "body": "{\"result\":{\"peer_id\":7989300025996429,\"shard_count\":1,\"local_shards\":[{\"shard_id\":0,\"points_count\":3,\"state\":\"Active\"}],\"remote_shards\":[],\"shard_transfers\":[]},\"status\":\"ok\",\"time\":0.000031203}"
 }

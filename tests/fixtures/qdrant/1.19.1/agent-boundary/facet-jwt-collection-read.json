@@ -14,5 +14,5 @@
   },
   "status": 200,
   "contentType": "application/json",
-  "body": "{\"result\":{\"hits\":[{\"value\":\"stored-city-1\",\"count\":1},{\"value\":\"stored-city-2\",\"count\":1},{\"value\":\"stored-city-3\",\"count\":1}]},\"status\":\"ok\",\"time\":0.000127869}"
+  "body": "{\"result\":{\"hits\":[{\"value\":\"stored-city-1\",\"count\":1},{\"value\":\"stored-city-2\",\"count\":1},{\"value\":\"stored-city-3\",\"count\":1}]},\"status\":\"ok\",\"time\":0.00004981}"
 }

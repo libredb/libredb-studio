@@ -27,5 +27,5 @@
   },
   "status": 403,
   "contentType": "application/json",
-  "body": "{\"status\":{\"error\":\"Forbidden: Write access to collection plain is required\"},\"time\":7.239e-6}"
+  "body": "{\"status\":{\"error\":\"Forbidden: Write access to collection plain is required\"},\"time\":5.242e-6}"
 }

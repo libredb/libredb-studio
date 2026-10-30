@@ -11,5 +11,5 @@
   },
   "status": 200,
   "contentType": "application/json",
-  "body": "{\"result\":{\"collections\":[{\"name\":\"docs\"},{\"name\":\"other\"},{\"name\":\"plain\"}]},\"status\":\"ok\",\"time\":2.784e-6}"
+  "body": "{\"result\":{\"collections\":[{\"name\":\"docs\"},{\"name\":\"other\"},{\"name\":\"plain\"}]},\"status\":\"ok\",\"time\":4.642e-6}"
 }

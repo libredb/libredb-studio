@@ -14,5 +14,5 @@
   },
   "status": 200,
   "contentType": "application/json",
-  "body": "{\"result\":{\"count\":3},\"status\":\"ok\",\"time\":0.000033803}"
+  "body": "{\"result\":{\"count\":3},\"status\":\"ok\",\"time\":0.000018486}"
 }

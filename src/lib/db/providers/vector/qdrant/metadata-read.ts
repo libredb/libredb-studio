@@ -13,6 +13,12 @@
  *   that collection (`proof-delete-*`). Anything but 403 at either step refuses the profile, as does a list Studio
  *   does not read or one of more than 32 collections. It runs before every agent request with no verdict kept, so a
  *   collection the key could write that appeared since the last request is refused at the next one.
+ * - **A JWT's own claims.** A JWT with `rw` on an alias, or on a name nothing has yet, is refused the alias update and
+ *   lists no collection and no alias, so the server's answers pass it, while it writes through that alias
+ *   (`proof-*-jwt-alias-write`, `write-upsert-alias-jwt-alias-write`). Studio holds the key, so before anything is sent
+ *   a key in a JWT's shape is read for its claims and admitted only when its access is `r`, globally or on each
+ *   collection it names, beside `exp`, `iat`, `nbf`, `sub` and `value_exists`; a key with no claims to read is left to
+ *   the server's answers alone.
  * - **Metadata only.** Every answer is projected through `src/lib/db/redaction/metadata-only.ts`: per route a
  *   declared list of columns, each a name, a count or a flag read from a fixed place in the server's answer, so no
  *   stored payload or vector, and no configuration value the projection does not name, reaches a row, a column name
@@ -60,6 +66,7 @@ export const QDRANT_PROOF_SENTENCES = {
   tooMany: (count: number): string =>
     `This key lists ${count} collections, more than the ${QDRANT_PROOF_MAX_COLLECTIONS} the read-only proof checks one by one, so the key is not proved read-only and is refused: give the agent a JWT whose access is r on the collections it should read. ${NOTHING_SENT}`,
   unreadable: `Qdrant's list of collections is not in the shape Studio reads, so the key is not proved read-only and is refused. ${NOTHING_SENT}`,
+  claims: `This key is a JWT whose claims grant more than access r, globally or on each collection it names, or carry a claim Studio does not read, so the key may write, as a JWT with rw on an alias does though the server lists it nothing, and is refused. ${GIVE_A_READER} ${NOTHING_SENT}`,
 } as const;
 
 const STEPS = {
@@ -121,17 +128,62 @@ function unreadableList(): ExecutionProfileError {
   return new ExecutionProfileError(QDRANT_PROOF_SENTENCES.unreadable, "PROFILE_UNSUPPORTED_TARGET");
 }
 
-/** What the proof sends: the client's two probes, and the collection list, each answered whatever its status. */
+/** The claims a JWT may carry beside `access`, none of which grants a right. */
+const CLAIMS_BESIDE_ACCESS: ReadonlySet<string> = new Set(["exp", "iat", "nbf", "sub", "value_exists"]);
+
+/** The claims of a key in a JWT's shape whose payload is a JSON object, or undefined for a key with none to read. */
+function jwtClaimsOf(key: string): Json | undefined {
+  const parts = key.split(".");
+  if (parts.length !== 3) return undefined;
+  try {
+    const claims: unknown = JSON.parse(Buffer.from(parts[1] as string, "base64url").toString("utf8"));
+    return isObject(claims) ? claims : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `r` globally, or a list of `{collection, access: "r"}` entries and nothing else. */
+function readsOnly(access: unknown): boolean {
+  if (access === "r") return true;
+  return (
+    Array.isArray(access) &&
+    access.every(
+      (entry) =>
+        isObject(entry) &&
+        typeof entry.collection === "string" &&
+        entry.access === "r" &&
+        Object.keys(entry).length === 2,
+    )
+  );
+}
+
+/** Refuses a key in a JWT's shape whose claims grant more than reading; a key with no claims to read passes. */
+function readQdrantKeyClaims(key: string): void {
+  const claims = jwtClaimsOf(key);
+  if (claims === undefined) return;
+  const others = Object.keys(claims).some((claim) => claim !== "access" && !CLAIMS_BESIDE_ACCESS.has(claim));
+  if (others || !readsOnly(claims.access)) {
+    throw new ExecutionProfileError(QDRANT_PROOF_SENTENCES.claims, "PROFILE_PRIVILEGES_TOO_BROAD");
+  }
+}
+
+/**
+ * What the proof reads and sends: the connection's key, the client's two probes, and the collection list, each
+ * answered whatever its status.
+ */
 export interface QdrantProofWire {
+  readonly key: string;
   readonly probe: (probe: QdrantProbe, signal: AbortSignal) => Promise<QdrantAnswer>;
   readonly listCollections: (signal: AbortSignal) => Promise<QdrantAnswer>;
 }
 
 /**
- * Proves the key reads only: an empty alias update refused, then an empty point delete refused on every collection
- * the key lists, one request after another. Throws the refusal at the first answer that is not one.
+ * Proves the key reads only: a JWT's claims read first, then an empty alias update refused, then an empty point delete
+ * refused on every collection the key lists, one request after another. Throws the refusal at the first that is not.
  */
 export async function proveQdrantReadOnly(wire: QdrantProofWire, signal: AbortSignal): Promise<void> {
+  readQdrantKeyClaims(wire.key);
   const alias: QdrantProbe = { kind: "empty-alias-update" };
   readQdrantProbeAnswer(await wire.probe(alias, signal), alias);
   for (const collection of readQdrantProofCollections(await wire.listCollections(signal))) {
@@ -313,7 +365,8 @@ function collectionRows(result: Json, collection: string): CollectionRow[] {
   const params = object(at(result, "config", "params") ?? {});
   const rows: CollectionRow[] = [{ kind: "collection", name: collection, facts: result }];
   const vectors = params.vectors;
-  if (isObject(vectors) && Object.hasOwn(vectors, "size")) {
+  // The one unnamed vector has a numeric size; a named vector may be called `size`, and its definition is an object.
+  if (isObject(vectors) && typeof vectors.size === "number") {
     rows.push({ kind: "vector", name: null, facts: vectors });
   } else {
     for (const [name, facts] of named(vectors)) rows.push({ kind: "vector", name, facts });

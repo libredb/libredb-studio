@@ -56,6 +56,16 @@ const PRINCIPALS = {
     key: jwt({ access: [{ collection: "plain", access: "rw" }] }),
     rights: 'a JWT whose access claim is [{"collection":"plain","access":"rw"}]',
   },
+  "jwt-alias-write": {
+    server: "auth",
+    key: jwt({ access: [{ collection: "plain_alias", access: "rw" }] }),
+    rights: 'a JWT whose access claim is [{"collection":"plain_alias","access":"rw"}], an alias of plain',
+  },
+  "jwt-future-write": {
+    server: "auth",
+    key: jwt({ access: [{ collection: "future", access: "rw" }] }),
+    rights: 'a JWT whose access claim is [{"collection":"future","access":"rw"}], a name no collection or alias has',
+  },
   "jwt-no-access": { server: "auth", key: jwt({}), rights: "a JWT with no access claim" },
   anonymous: { server: "auth", key: undefined, rights: "no key, on the server with keys" },
   "open-anonymous": { server: "open", key: undefined, rights: "no key, on a server with no key configured" },
@@ -240,6 +250,12 @@ async function main() {
   await capture("collection-other", "jwt-collection-read", "GET", "/collections/other");
   await capture("count-other", "jwt-collection-read", "POST", "/collections/other/points/count", { exact: true });
   await capture("collections", "jwt-collection-write", "GET", "/collections");
+  // A JWT that writes an alias, or a name nothing has yet, lists no collection and no alias, though it writes.
+  for (const principal of ["jwt-alias-write", "jwt-future-write"]) {
+    await capture("collections", principal, "GET", "/collections");
+    await capture("aliases", principal, "GET", "/aliases");
+  }
+  await capture("collection-alias", "jwt-alias-write", "GET", "/collections/plain_alias");
 
   for (const principal of Object.keys(PRINCIPALS)) {
     for (const [name, method, path, body] of [PROOF_ALIAS, proofDelete("plain"), proofDelete("other")]) {
@@ -247,6 +263,8 @@ async function main() {
     }
   }
   await capture("collections", "open-anonymous", "GET", "/collections");
+  const [aliasDelete, ...aliasDeleteRequest] = proofDelete("plain_alias");
+  await capture(aliasDelete, "jwt-alias-write", ...aliasDeleteRequest);
 
   await countAs("write-count-before");
   for (const principal of ["read-only", "jwt-read", "jwt-collection-read"]) {
@@ -264,7 +282,11 @@ async function main() {
     points: [{ id: 98, vector, payload: { city: "written" } }],
   });
   await countAs("write-count-after-collection-write");
-  await admin("auth", "POST", "/collections/plain/points/delete?wait=true", { points: [98, 99] });
+  await capture("write-upsert-alias", "jwt-alias-write", "PUT", "/collections/plain_alias/points?wait=true", {
+    points: [{ id: 97, vector, payload: { city: "written" } }],
+  });
+  await countAs("write-count-after-alias-write");
+  await admin("auth", "POST", "/collections/plain/points/delete?wait=true", { points: [97, 98, 99] });
   await countAs("write-count-restored");
 
   for (const [name, body] of INFERENCE) {

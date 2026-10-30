@@ -19,6 +19,6 @@
   },
   "status": 200,
   "contentType": "application/json",
-  "body": "{\"result\":{\"points\":[{\"id\":3,\"version\":1,\"score\":0.32000002},{\"id\":2,\"version\":1,\"score\":0.31},{\"id\":1,\"version\":1,\"score\":0.3}]},\"status\":\"ok\",\"time\":0.000262368}",
+  "body": "{\"result\":{\"points\":[{\"id\":3,\"version\":1,\"score\":0.32000002},{\"id\":2,\"version\":1,\"score\":0.31},{\"id\":1,\"version\":1,\"score\":0.3}]},\"status\":\"ok\",\"time\":0.00017357}",
   "egressRequests": 0
 }

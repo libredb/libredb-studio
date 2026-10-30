@@ -18,5 +18,5 @@
   },
   "status": 200,
   "contentType": "application/json",
-  "body": "{\"result\":[{\"id\":1,\"payload\":{\"city\":\"stored-city-1\",\"note\":\"stored-note-1\",\"meta\":{\"name\":\"stored-nested-1\"}},\"vector\":[0.1,0.2,0.3,0.4]}],\"status\":\"ok\",\"time\":0.000205635}"
+  "body": "{\"result\":[{\"id\":1,\"payload\":{\"city\":\"stored-city-1\",\"note\":\"stored-note-1\",\"meta\":{\"name\":\"stored-nested-1\"}},\"vector\":[0.1,0.2,0.3,0.4]}],\"status\":\"ok\",\"time\":0.000221786}"
 }
