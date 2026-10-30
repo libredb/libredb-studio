@@ -106,6 +106,13 @@ as `src/lib/sql/statement-end.ts` delimits it, before any trailing comment and b
 of which are re-attached verbatim. Whitespace written before the terminator is now preserved rather
 than dropped, which is the only emitted-SQL difference on the `TOP` branch.
 
+T-SQL also requires `OFFSET … FETCH` to come **before** a top-level `FOR JSON`, `FOR XML`,
+`FOR BROWSE` or `OPTION (…)` clause. The appending branch now finds the first such clause outside
+parentheses, string literals and quoted or bracketed identifiers, pages the body before it and
+re-attaches it, so `SELECT id FROM t ORDER BY id FOR JSON PATH` becomes
+`… ORDER BY id OFFSET 10 ROWS FETCH NEXT 50 ROWS ONLY FOR JSON PATH`. A `FOR XML PATH('')` inside a
+`STUFF((SELECT …))` subquery is left alone (#2013).
+
 That reader also answers whether the end may be **cut**, and until #292 it could not answer it for a
 statement ending in a `#` run — `SELECT * FROM #tmp` is everyday T-SQL, and the shared scanner had to
 read it as a MySQL comment because nothing in the *text* distinguishes the two. The appending branch
