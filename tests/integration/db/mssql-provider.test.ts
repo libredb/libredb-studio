@@ -1342,6 +1342,38 @@ describe("MSSQLProvider", () => {
     // 2. `OFFSET n ROWS` with no `FETCH` tail is a complete T-SQL page that the
     //    shared probes do not recognise at all: they want a `FETCH … ROWS ONLY`
     //    tail or a bare `OFFSET n` at the very end, and this form is neither.
+    describe("trailing FOR JSON / FOR XML / FOR BROWSE / OPTION clauses (#2013)", () => {
+      const page = "OFFSET 10 ROWS FETCH NEXT 5 ROWS ONLY";
+      test.each([
+        ["SELECT * FROM t FOR JSON PATH", `SELECT * FROM t ORDER BY (SELECT NULL) ${page} FOR JSON PATH`],
+        ["SELECT * FROM t FOR XML PATH('row')", `SELECT * FROM t ORDER BY (SELECT NULL) ${page} FOR XML PATH('row')`],
+        ["SELECT * FROM t ORDER BY id FOR JSON PATH", `SELECT * FROM t ORDER BY id ${page} FOR JSON PATH`],
+        ["SELECT * FROM t OPTION (RECOMPILE)", `SELECT * FROM t ORDER BY (SELECT NULL) ${page} OPTION (RECOMPILE)`],
+        ["SELECT * FROM t FOR BROWSE", `SELECT * FROM t ORDER BY (SELECT NULL) ${page} FOR BROWSE`],
+        [
+          "SELECT STUFF((SELECT ',' + x FROM t FOR XML PATH('')), 1, 1, '') AS s FROM u",
+          `SELECT STUFF((SELECT ',' + x FROM t FOR XML PATH('')), 1, 1, '') AS s FROM u ORDER BY (SELECT NULL) ${page}`,
+        ],
+        [
+          "SELECT 'a FOR JSON b' AS [x FOR XML], \"y)\" FROM t",
+          `SELECT 'a FOR JSON b' AS [x FOR XML], "y)" FROM t ORDER BY (SELECT NULL) ${page}`,
+        ],
+        [
+          "SELECT 'it''s' AS [a]]b] FROM t FOR JSON AUTO",
+          `SELECT 'it''s' AS [a]]b] FROM t ORDER BY (SELECT NULL) ${page} FOR JSON AUTO`,
+        ],
+      ])("pages %p before its trailing clause", (sql, expected) => {
+        const result = provider.prepareQuery(sql, { limit: 5, offset: 10 });
+        expect(result.wasLimited).toBe(true);
+        expect(result.query).toBe(expected);
+      });
+
+      test("an unbalanced ')' does not drive the depth negative", () => {
+        const result = provider.prepareQuery("SELECT 1) FROM t FOR JSON PATH", { limit: 5, offset: 10 });
+        expect(result.query).toBe(`SELECT 1) FROM t ORDER BY (SELECT NULL) ${page} FOR JSON PATH`);
+      });
+    });
+
     describe("statements that already carry a page", () => {
       // Shape 1. Every row carries a real page AND real trailing trivia; what
       // differs is only the reason the end cannot be cut. The emitted text is

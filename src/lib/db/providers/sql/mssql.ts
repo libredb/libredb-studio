@@ -1645,6 +1645,40 @@ function planResultSet(plan: mssql.IResult): MssqlResultSet {
 // MSSQL Provider
 // ============================================================================
 
+/**
+ * Index of the first top-level `FOR JSON` / `FOR XML` / `FOR BROWSE` / `OPTION (`
+ * clause in a statement body, or -1. Text inside parentheses, string literals,
+ * quoted or bracketed identifiers is skipped, so the common
+ * `STUFF((SELECT ... FOR XML PATH('')), 1, 1, '')` subquery is not mistaken for
+ * the outer statement's tail (#2013).
+ */
+function findTsqlResultTail(sql: string): number {
+  const tail = /^(?:FOR\s+(?:JSON|XML|BROWSE)\b|OPTION\s*\()/i;
+  let depth = 0;
+  for (let i = 0; i < sql.length; i++) {
+    const ch = sql[i];
+    if (ch === "'" || ch === '"' || ch === "[") {
+      const close = ch === "[" ? "]" : ch;
+      i++;
+      while (i < sql.length) {
+        if (sql[i] === close) {
+          if (sql[i + 1] === close) {
+            i += 2;
+            continue;
+          }
+          break;
+        }
+        i++;
+      }
+      continue;
+    }
+    if (ch === "(") depth++;
+    else if (ch === ")") depth = Math.max(0, depth - 1);
+    else if (depth === 0 && /\s/.test(sql[i - 1] ?? "") && tail.test(sql.slice(i))) return i;
+  }
+  return -1;
+}
+
 export class MSSQLProvider extends SQLBaseProvider {
   private pool: mssql.ConnectionPool | null = null;
 
@@ -2744,12 +2778,19 @@ export class MSSQLProvider extends SQLBaseProvider {
           return { query, wasLimited: false, limit: effectiveLimit, offset };
         }
 
+        // `FOR JSON` / `FOR XML` / `FOR BROWSE` / `OPTION (...)` must follow the
+        // paging clause in T-SQL, so page on the body and re-attach that tail (#2013).
+        const tailStart = findTsqlResultTail(modifiedSql);
+        const resultTail = tailStart === -1 ? "" : modifiedSql.slice(tailStart);
+        let body = tailStart === -1 ? modifiedSql : modifiedSql.slice(0, tailStart).trimEnd();
+
         // OFFSET FETCH requires ORDER BY
-        const hasOrderBy = /\bORDER\s+BY\b/i.test(modifiedSql);
+        const hasOrderBy = /\bORDER\s+BY\b/i.test(body);
         if (!hasOrderBy) {
-          modifiedSql = `${modifiedSql} ORDER BY (SELECT NULL)`;
+          body = `${body} ORDER BY (SELECT NULL)`;
         }
-        modifiedSql = `${modifiedSql} OFFSET ${offset} ROWS FETCH NEXT ${effectiveLimit} ROWS ONLY`;
+        body = `${body} OFFSET ${offset} ROWS FETCH NEXT ${effectiveLimit} ROWS ONLY`;
+        modifiedSql = resultTail ? `${body} ${resultTail}` : body;
       } else {
         // Inject TOP N after SELECT
         const injected = injectTop(modifiedSql, effectiveLimit, grammar);
