@@ -90,6 +90,15 @@ describe("maskByType", () => {
     expect(result).toBe("****-****-****-5678");
   });
 
+  test("ssn mask shows only trailing digits, never letters or punctuation", () => {
+    const p = makePattern("ssn");
+    expect(maskByType("AB12CD34", p)).toBe("***-**-1234");
+    expect(maskByType("NID-XYZ9", p)).toBe("***-**-****");
+    expect(maskByType("abcd", p)).toBe("***-**-****");
+    expect(maskByType("xxx-xx-9999", p)).toBe("***-**-9999");
+    expect(maskByType("12", p)).toBe("***-**-****");
+  });
+
   test("masks SSN", () => {
     const result = maskByType("123-45-6789", makePattern("ssn"));
     expect(result).toStartWith("***-**-");

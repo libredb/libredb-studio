@@ -170,7 +170,11 @@ const MASK_FUNCTIONS: Record<MaskType, (value: string, customMask?: string) => s
     return `${"*".repeat(digits.length - 4)}${digits.slice(-4)}`;
   },
   card: (v) => `****-****-****-${v.replace(/\D/g, "").slice(-4).padStart(4, "*")}`,
-  ssn: (v) => `***-**-${v.slice(-4).padStart(4, "*")}`,
+  ssn: (v) => {
+    const digits = v.replace(/\D/g, "");
+    if (digits.length < 4) return "***-**-****";
+    return `***-**-${digits.slice(-4)}`;
+  },
   full: () => "********",
   partial: (v) => {
     const chars = Array.from(v);
