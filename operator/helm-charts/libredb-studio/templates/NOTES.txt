@@ -100,6 +100,8 @@ OpenShift console plugin: server libredb-studio-console-plugin in {{ $pluginName
   or on the console's Console plugins page (Administration > Cluster Settings > Configuration > Console).
 {{- else }}
   The namespace must be one a cluster admin made with oc create namespace, never a requested project.
+  With the plugin on, {{ .Release.Namespace }} falls under the cluster Studio namespace rule: only cluster admins may hold RoleBindings there
+  (docs/OPENSHIFT.md, "The cluster Studio namespace").
   The plugin stays off until a cluster admin turns it on, on the console's Console plugins page
   (Administration > Cluster Settings > Configuration > Console), or with this patch, which adds
   libredb-studio to spec.plugins once and keeps the other plugins in their order:

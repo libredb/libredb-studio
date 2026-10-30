@@ -42,6 +42,7 @@ spec:
     spec:
       serviceAccountName: {{ $name }}
       automountServiceAccountToken: false
+      enableServiceLinks: false
       securityContext:
         runAsNonRoot: true
         seccompProfile:
@@ -54,6 +55,11 @@ spec:
             - name: https
               containerPort: 9443
               protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /plugin-manifest.json
+              port: 9443
+              scheme: HTTPS
           {{- with $plugin.resources }}
           resources:
             {{- toYaml . | nindent 12 }}

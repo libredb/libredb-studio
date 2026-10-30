@@ -6,7 +6,9 @@
  * server that receives every console user's bearer token on each asset fetch. So whoever can change
  * that server's Deployment runs code in every console session and receives every console user's
  * token, and the chart refuses every place a person who is not a cluster admin could do that: on the Helm
- * path Studio's own namespace and a project a user requested, on both paths a discovered namespace. Under
+ * path Studio's own namespace, on both paths a discovered namespace and a project a user requested. With
+ * the plugin on, the release's own namespace falls under the cluster Studio namespace rule, so it may not
+ * be a requested project either, and Studio's name may not be the server's. Under
  * the operator the server runs only in the operator's own namespace, the cluster Studio namespace that
  * only cluster admins write, and any other plugin namespace is refused. The server
  * runs an image pinned by digest, as its own ServiceAccount with no token, and the ConsolePlugin
@@ -104,6 +106,7 @@ interface Container {
   env?: unknown;
   envFrom?: unknown;
   ports?: Array<{ containerPort: number; protocol?: string }>;
+  readinessProbe?: unknown;
   resources?: unknown;
   securityContext?: Record<string, unknown>;
   volumeMounts?: Array<{ name: string; mountPath: string; readOnly?: boolean }>;
@@ -112,6 +115,7 @@ interface Container {
 interface PodSpec {
   serviceAccountName?: string;
   automountServiceAccountToken?: boolean;
+  enableServiceLinks?: boolean;
   securityContext?: Record<string, unknown>;
   containers: Container[];
   volumes?: Array<{ name: string; secret?: { secretName: string }; emptyDir?: unknown }>;
@@ -344,13 +348,16 @@ describe("the console plugin guards, each naming the value to change", () => {
     expect({ exitCode: run.exitCode, stderr: run.stderr }).toEqual({ exitCode: 0, stderr: "" });
   });
 
-  test("(6) on the Helm path only, looks the namespace up and refuses a project a user requested", () => {
+  test("(6) on both paths, looks up the plugin namespace and the release's and refuses a project a user requested", () => {
     const guard = helpers.slice(
       helpers.indexOf('{{- define "libredb-studio.consolePluginGuards" -}}'),
       helpers.indexOf("{{- end }}\n\n", helpers.indexOf('{{- define "libredb-studio.consolePluginGuards" -}}')),
     );
-    expect(guard).toMatch(
-      /\{\{- if not \(include "libredb-studio\.operatorManaged" \.\) \}\}\n\{\{- \$object := lookup "v1" "Namespace" "" \$namespace \}\}\n/,
+    expect(guard).toContain(
+      '{{- range $checked := uniq (list $namespace .Release.Namespace) }}\n{{- $object := lookup "v1" "Namespace" "" $checked }}\n',
+    );
+    expect(guard).not.toMatch(
+      /\{\{- if not \(include "libredb-studio\.operatorManaged" \.\) \}\}\n\{\{- \$object := lookup/,
     );
     expect(guard).toContain('{{- if hasKey $annotations "openshift.io/requester" }}');
     expect(guard).toContain("oc create namespace");
@@ -391,6 +398,41 @@ describe("the console plugin guards, each naming the value to change", () => {
     expect(template(operatorOn({ "openshift.consolePlugin.image": "" })).stderr).not.toContain(
       "--reset-then-reuse-values",
     );
+  });
+
+  test.each([
+    [[], "the Helm path"],
+    [OPERATOR, "the operator path"],
+  ])("(9) refuses a nameOverride that gives Studio the server's name and selector labels (%#, %s)", (path) => {
+    const base = path.length ? operatorOn() : PLUGIN_ON;
+    refused(
+      [...base, ...set(`nameOverride=${SERVER}`)],
+      `nameOverride makes Studio's name ${SERVER}, the console plugin server's name`,
+      "selector labels",
+    );
+  });
+
+  test("(9) refuses a fullnameOverride or a release name that gives Studio's objects the server's name", () => {
+    refused(
+      [...operatorOn(), ...set(`fullnameOverride=${SERVER}`)],
+      `fullnameOverride or the release name makes Studio's objects ${SERVER}, the console plugin server's name`,
+    );
+    const run = Bun.spawnSync(["helm", "template", SERVER, CHART_DIR, "--namespace", NAMESPACE, ...operatorOn()], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stderr.toString()).toContain(
+      `fullnameOverride or the release name makes Studio's objects ${SERVER}, the console plugin server's name`,
+    );
+  });
+
+  test("(9) accepts any other nameOverride and both overrides without the plugin", () => {
+    render([...PLUGIN_ON, ...set("nameOverride=studio-db")]);
+    render([
+      ...pluginOn({ "openshift.consolePlugin.enabled": "false" }),
+      ...set(`nameOverride=${SERVER}`, `fullnameOverride=${SERVER}`),
+    ]);
   });
 });
 
@@ -466,6 +508,16 @@ describe("the plugin server and the ConsolePlugin", () => {
   test("the container runs the image as built: no command, args, env or envFrom", () => {
     const [container] = deploymentSpec(docs).template.spec.containers;
     for (const key of ["command", "args", "env", "envFrom"]) expect(Object.keys(container)).not.toContain(key);
+  });
+
+  test("the pod gets no service links in its environment", () => {
+    expect(deploymentSpec(docs).template.spec.enableServiceLinks).toBe(false);
+  });
+
+  test("the pod is ready once it serves the plugin manifest over HTTPS on 9443", () => {
+    expect(deploymentSpec(docs).template.spec.containers[0].readinessProbe).toEqual({
+      httpGet: { path: "/plugin-manifest.json", port: 9443, scheme: "HTTPS" },
+    });
   });
 
   test("restricted security context, read-only root, no fixed user", () => {
@@ -585,9 +637,11 @@ describe("the plugin server's NetworkPolicy", () => {
  * replaces the one lookup call with the Namespace a project request creates, which carries openshift.io/requester.
  */
 describe("guard (6) with a Namespace in place of the lookup", () => {
-  const LOOKUP = 'lookup "v1" "Namespace" "" $namespace';
+  const LOOKUP = 'lookup "v1" "Namespace" "" $checked';
+  const REQUESTED = '(dict "metadata" (dict "annotations" (dict "openshift.io/requester" "dev-a")))';
   let requested: string;
   let created: string;
+  let releaseRequested: string;
 
   function chartWith(namespace: string): string {
     const chart = mkdtempSync(join(tmpdir(), "libredb-console-plugin-lookup-"));
@@ -598,12 +652,13 @@ describe("guard (6) with a Namespace in place of the lookup", () => {
   }
 
   beforeAll(() => {
-    requested = chartWith('(dict "metadata" (dict "annotations" (dict "openshift.io/requester" "dev-a")))');
+    requested = chartWith(REQUESTED);
     created = chartWith('(dict "metadata" (dict "annotations" (dict "openshift.io/sa.scc.uid-range" "1000/10000")))');
+    releaseRequested = chartWith(`(ternary ${REQUESTED} (dict) (eq $checked "${NAMESPACE}"))`);
   });
 
   afterAll(() => {
-    for (const chart of [requested, created]) rmSync(chart, { recursive: true, force: true });
+    for (const chart of [requested, created, releaseRequested]) rmSync(chart, { recursive: true, force: true });
   });
 
   test("refuses a project dev-a requested, and says how to make the namespace instead", () => {
@@ -617,13 +672,33 @@ describe("guard (6) with a Namespace in place of the lookup", () => {
     );
   });
 
-  test("accepts a namespace no project request made", () => {
+  test("accepts namespaces no project request made, on both paths", () => {
     expect(template(PLUGIN_ON, created).exitCode).toBe(0);
+    expect(template(operatorOn(), created).exitCode).toBe(0);
   });
 
-  test("is skipped under the operator, whose own namespace the operator pins", () => {
-    const run = template(operatorOn(), requested);
-    expect({ exitCode: run.exitCode, stderr: run.stderr }).toEqual({ exitCode: 0, stderr: "" });
+  test("on the Helm path, refuses a release namespace that is a requested project, by the cluster Studio namespace rule", () => {
+    refusedIn(
+      releaseRequested,
+      PLUGIN_ON,
+      `openshift.consolePlugin.enabled is true and this release's namespace ${NAMESPACE} is a project dev-a requested`,
+      "the cluster Studio namespace rule",
+      "only cluster admins may hold RoleBindings there",
+      "oc create namespace",
+    );
+  });
+
+  test("leaves a release in a requested project alone while the plugin is off", () => {
+    expect(template(pluginOn({ "openshift.consolePlugin.enabled": "false" }), releaseRequested).exitCode).toBe(0);
+  });
+
+  test("under the operator, refuses an operator namespace that is a requested project", () => {
+    refusedIn(
+      requested,
+      operatorOn(),
+      `openshift.consolePlugin.namespace ${NAMESPACE} is a project dev-a requested`,
+      `oc create namespace ${NAMESPACE}`,
+    );
   });
 });
 
@@ -689,7 +764,10 @@ describe("install notes with the console plugin", () => {
     expect(text).toContain(`OpenShift console plugin: server libredb-studio-console-plugin in ${PLUGIN_NAMESPACE}`);
     expect(text).toContain(`oc adm policy who-can update deployments.apps -n ${PLUGIN_NAMESPACE}`);
     expect(text).toContain("system:image-pullers");
-    expect(text).not.toContain("only cluster admins may hold RoleBindings");
+    expect(text).not.toContain(`only cluster admins may hold RoleBindings in ${PLUGIN_NAMESPACE}`);
+    expect(text).toContain(
+      `With the plugin on, ${NAMESPACE} falls under the cluster Studio namespace rule: only cluster admins may hold RoleBindings there`,
+    );
     expect(text).toContain("oc create namespace");
     expect(text).toContain("Console plugins");
     expect(text).toContain("/spec/plugins/-");
@@ -711,6 +789,7 @@ describe("install notes with the console plugin", () => {
     expect(text).toContain(`OpenShift console plugin: server libredb-studio-console-plugin in ${NAMESPACE}`);
     expect(text).toContain("the operator's own namespace");
     expect(text).not.toContain("oc create namespace");
+    expect(text).not.toContain("falls under the cluster Studio namespace rule");
   });
 
   test("says nothing of it without the plugin", () => {
@@ -744,6 +823,10 @@ describe("the chart README documents the console plugin", () => {
     "Console plugins",
     "spec.plugins",
     "The chart renders no Job",
+    "the release's namespace falls under the [cluster Studio namespace](https://github.com/libredb/libredb-studio/blob/main/docs/OPENSHIFT.md#the-cluster-studio-namespace) rule",
+    "only cluster admins may hold RoleBindings there",
+    "the server's name `libredb-studio-console-plugin`",
+    "An upgrade with `--reuse-values` from chart 0.1.117 or earlier",
   ])("names %s", (needle) => {
     expect(section.length).toBeGreaterThan(0);
     expect(section).toContain(needle);
@@ -758,6 +841,7 @@ describe("the chart README documents the console plugin", () => {
     expect(section).toContain("Under the OLM operator the server runs in the operator's own namespace");
     expect(section).toContain("on a Helm install, is the release's own namespace");
     expect(section).not.toContain("is the release's own namespace or is listed");
+    expect(section).not.toContain("on a Helm install, is the release's own namespace or a project someone requested");
   });
 
   test("every new value is in the configuration reference", () => {
@@ -800,9 +884,40 @@ describe("docs/OPENSHIFT.md on the console plugin", () => {
     expect(plugin).not.toContain("lists only cluster-admin bindings");
   });
 
+  test("puts the release's namespace under the cluster Studio namespace rule while the plugin is on", () => {
+    expect(plugin).toContain(
+      "the release's namespace falls under the [cluster Studio namespace](#the-cluster-studio-namespace) rule",
+    );
+    expect(plugin).toContain("only cluster admins may hold RoleBindings there");
+    expect(plugin).not.toContain("the server's NetworkPolicy and labels are its own");
+  });
+
   test("Uninstall removes the ConsolePlugin before the namespaces it names", () => {
     expect(uninstall.length).toBeGreaterThan(0);
     expect(uninstall).toContain("before deleting the plugin namespace or Studio's namespace");
+  });
+});
+
+describe("docs/HELM_CHART.md on the console plugin guards", () => {
+  const doc = readFileSync(join(import.meta.dir, "../../docs/HELM_CHART.md"), "utf8");
+  const guards = doc.slice(doc.indexOf("**Guards.** `consolePluginGuards`"), doc.indexOf("**NetworkPolicy.**"));
+
+  test("guard 3 says an unset WATCH_NAMESPACE is answered by guard 2 first", () => {
+    expect(guards).toContain(
+      "3. An empty `namespace`; under the operator an unset `WATCH_NAMESPACE` empties `operator.clusterStudioNamespace` too, so guard 2 answers first.",
+    );
+    expect(guards).not.toContain("(and under the operator, an unset `WATCH_NAMESPACE`)");
+  });
+
+  test("guard 6 runs on both paths and checks the release's namespace on the Helm path", () => {
+    expect(guards).toContain(
+      "6. On both paths, the plugin namespace, and on the Helm path also the release's namespace",
+    );
+    expect(guards).not.toContain("On the Helm path only");
+  });
+
+  test("guard 9 refuses a Studio name equal to the server's", () => {
+    expect(guards).toContain("9. A `nameOverride`, `fullnameOverride` or release name");
   });
 });
 
@@ -814,6 +929,8 @@ describe("security control 3.37 and the chart's release notes", () => {
   test("the row refuses Studio's namespace on a Helm install and pins the operator's own namespace under the operator", () => {
     expect(row).toContain("never runs in Studio's namespace on a Helm install");
     expect(row).toContain("under the operator it runs only in the operator's own namespace (row 3.36)");
+    expect(row).toContain("where the render can look the namespace up");
+    expect(row).toContain("the release's own namespace may then not be a requested project either");
     expect(row).toContain("[`operator/config/manager/manager.yaml`]");
   });
 

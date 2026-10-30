@@ -352,17 +352,19 @@ The Deployment runs as its own ServiceAccount with no token, with the restricted
 
 1. `console.openshift.io/v1` not served and `global.compatibility.openshift.apis` not `force`.
 2. Under the operator, a release outside `operator.clusterStudioNamespace` (`clusterStudioNamespaceGuard`).
-3. An empty `namespace` (and under the operator, an unset `WATCH_NAMESPACE`).
+3. An empty `namespace`; under the operator an unset `WATCH_NAMESPACE` empties `operator.clusterStudioNamespace` too, so guard 2 answers first.
 4. On the Helm path, the release's own namespace.
    Under the operator, any namespace other than `operator.clusterStudioNamespace`, the operator's own namespace and, after guard 2, the release's: the server shares that namespace with the cluster Studio, which only cluster admins write.
 5. A namespace `discovery.kubernetes.namespaces` lists.
-6. On the Helm path only, a namespace that `lookup` finds carrying `openshift.io/requester`, which the default project request template sets on every project made through a project request and whose requester administers it; skipped where `lookup` returns nothing (`helm template`, a client-side dry run, a namespace that does not exist yet), and blind to a requested project whose custom project request template drops that annotation.
-   The operator path pins the operator's own namespace instead, which the console creates as a plain Namespace from the suggested namespace or a cluster admin creates with `oc create namespace`.
+6. On both paths, the plugin namespace, and on the Helm path also the release's namespace, when `lookup` finds it carrying `openshift.io/requester`, which the default project request template sets on every project made through a project request and whose requester administers it; skipped where `lookup` returns nothing (`helm template`, a client-side dry run, a namespace that does not exist yet), and blind to a requested project whose custom project request template drops that annotation.
+   With the plugin on, the release's namespace falls under the cluster Studio namespace rule ([docs/OPENSHIFT.md](OPENSHIFT.md#the-cluster-studio-namespace)): only cluster admins may hold RoleBindings there.
+   Under the operator the two are one namespace, the operator's own, and the operator's ClusterRole already holds `get` on namespaces.
 7. A release that renders no locator: discovery off, or no `ApplicationMenu` console link.
 8. An empty `image` (and under the operator, an unset `RELATED_IMAGE_PLUGIN`).
+9. A `nameOverride`, `fullnameOverride` or release name that gives Studio the server's name `libredb-studio-console-plugin`: Studio's selector labels would then match the server's pods, and under the operator its objects would take the server's names in the same namespace.
 
 Guards 4 to 6 share one reason: the console sends every console user's token to the server and runs the plugin in every console session, so whoever may change that Deployment holds both, and the namespace must be one only cluster admins write.
-On the operator path that is the operator's namespace itself: whoever writes it already controls the operator, Studio's ServiceAccount there holds no right on the server's objects, Studio's pod mounts no API token by default, and the server's selector labels match none of Studio's.
+On the operator path that is the operator's namespace itself: whoever writes it already controls the operator, Studio's ServiceAccount there holds no right on the server's objects, Studio's pod mounts no API token by default, and, by guard 9, the server's selector labels match none of Studio's.
 
 **NetworkPolicy.** The server's policy selects exactly its pods and admits only the `openshift-console` namespace on TCP 9443, with no egress rule: nginx needs nothing else, and while no other NetworkPolicy and no AdminNetworkPolicy allow rule selects those pods (policies add up), a compromised server or image cannot send what it receives anywhere.
 

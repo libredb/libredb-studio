@@ -1068,15 +1068,17 @@ Guard 4 differs by path. On a Helm install the server never runs in the release'
 whose editors are Studio's. Under the operator the server runs only in the operator's own namespace,
 which is the cluster Studio namespace (operator.clusterStudioNamespace, the release's namespace once
 guard 2 passed): only cluster admins write it, and whoever writes it already controls the operator.
-Studio's ServiceAccount there holds no right on the server's objects and the server's selector
-labels match none of Studio's, so sharing the namespace gives Studio nothing.
+Studio's ServiceAccount there holds no right on the server's objects and, guard 9 keeping Studio's
+name off the server's, the server's selector labels match none of Studio's, so sharing the namespace
+gives Studio nothing.
 
-Guard 6 looks the namespace up on the Helm path only. A project made through a project request (oc
-new-project, the console's Create Project), which any OAuth user may make, carries
-openshift.io/requester and is administered by its requester. lookup returns nothing under helm
-template and a client-side dry run, and for a namespace that does not exist yet, so the guard is
-skipped there. The operator path pins the operator's own namespace, which the console creates as a
-plain Namespace from the suggested namespace or a cluster admin creates with oc create namespace.
+Guard 6 looks up the plugin namespace and the release's namespace, on both paths (the operator holds
+get on namespaces). A project made through a project request (oc new-project, the console's Create
+Project), which any OAuth user may make, carries openshift.io/requester and is administered by its
+requester. With the plugin on, the release's namespace falls under the cluster Studio namespace rule
+(docs/OPENSHIFT.md), so it may not be a requested project either; under the operator the two are one
+namespace, the operator's own. lookup returns nothing under helm template and a client-side dry run,
+and for a namespace that does not exist yet, so the guard is skipped there.
 */}}
 {{- define "libredb-studio.consolePluginGuards" -}}
 {{- $operator := include "libredb-studio.operatorManaged" . }}
@@ -1101,11 +1103,15 @@ plain Namespace from the suggested namespace or a cluster admin creates with oc 
 {{- if has $namespace $discovered }}
 {{- fail (printf "openshift.consolePlugin.namespace is %s, which discovery.kubernetes.namespaces lists: a discovered namespace has editors by design, and whoever can change that Deployment runs code in every console session and receives every console user's token, so name a namespace only cluster admins write" $namespace) }}
 {{- end }}
-{{- if not (include "libredb-studio.operatorManaged" .) }}
-{{- $object := lookup "v1" "Namespace" "" $namespace }}
+{{- range $checked := uniq (list $namespace .Release.Namespace) }}
+{{- $object := lookup "v1" "Namespace" "" $checked }}
 {{- $annotations := dig "metadata" "annotations" dict ($object | default dict) }}
 {{- if hasKey $annotations "openshift.io/requester" }}
-{{- fail (printf "openshift.consolePlugin.namespace %s is a project %s requested, so that user administers it and could run code in every console session and receive every console user's token; delete it, create the namespace with oc create namespace %s and check that only cluster admins may change its Deployments (oc adm policy who-can update deployments.apps -n %s)" $namespace (get $annotations "openshift.io/requester" | toString) $namespace $namespace) }}
+{{- $requester := get $annotations "openshift.io/requester" | toString }}
+{{- if eq $checked $namespace }}
+{{- fail (printf "openshift.consolePlugin.namespace %s is a project %s requested, so that user administers it and could run code in every console session and receive every console user's token; delete it, create the namespace with oc create namespace %s and check that only cluster admins may change its Deployments (oc adm policy who-can update deployments.apps -n %s)" $checked $requester $checked $checked) }}
+{{- end }}
+{{- fail (printf "openshift.consolePlugin.enabled is true and this release's namespace %s is a project %s requested, so that user administers it; with the console plugin on, the release's namespace falls under the cluster Studio namespace rule, and only cluster admins may hold RoleBindings there (docs/OPENSHIFT.md, \"The cluster Studio namespace\"): install the release into a namespace a cluster admin created with oc create namespace, or turn the plugin off" $checked $requester) }}
 {{- end }}
 {{- end }}
 {{- if not (include "libredb-studio.discoveryEnabled" .) }}
@@ -1117,5 +1123,12 @@ plain Namespace from the suggested namespace or a cluster admin creates with oc 
 {{- end }}
 {{- if not (get $plugin "image" | default "" | toString | trim) }}
 {{- fail (printf "openshift.consolePlugin.image is empty: set the plugin image as a reference pinned by digest%s" (ternary "; under the operator it comes from RELATED_IMAGE_PLUGIN in the operator's Deployment" "; an upgrade with --reuse-values from chart 0.1.117 or earlier keeps that release's values, which have no plugin image, so upgrade with --reset-then-reuse-values or set it" (eq $operator "true"))) }}
+{{- end }}
+{{- $server := include "libredb-studio.consolePluginName" . }}
+{{- if eq (include "libredb-studio.name" .) $server }}
+{{- fail (printf "nameOverride makes Studio's name %s, the console plugin server's name: Studio's selector labels would then match the server's pods, so choose another nameOverride" $server) }}
+{{- end }}
+{{- if eq (include "libredb-studio.fullname" .) $server }}
+{{- fail (printf "fullnameOverride or the release name makes Studio's objects %s, the console plugin server's name, so choose another fullnameOverride or release name" $server) }}
 {{- end }}
 {{- end }}

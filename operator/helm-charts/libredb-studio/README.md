@@ -1065,9 +1065,11 @@ The plugin finds Studio only through the console link named `libredb-studio`, so
 It lists the database resources the signed-in user may list, and never reads a Secret: Studio checks again with the user's own token when a database opens.
 
 The console runs the plugin in every console session and sends each console user's token to its server on every asset fetch, so whoever may change that server's Deployment runs code in every console session and receives every console user's token.
-The render therefore fails when `openshift.consolePlugin.namespace` is empty or is listed in `discovery.kubernetes.namespaces`, and, on a Helm install, is the release's own namespace or a project someone requested (it carries `openshift.io/requester`, and its requester administers it).
+The render therefore fails when `openshift.consolePlugin.namespace` is empty, is listed in `discovery.kubernetes.namespaces` or is a project someone requested (it carries `openshift.io/requester`, and its requester administers it), and, on a Helm install, is the release's own namespace.
+With the plugin on, the release's namespace falls under the [cluster Studio namespace](https://github.com/libredb/libredb-studio/blob/main/docs/OPENSHIFT.md#the-cluster-studio-namespace) rule: only cluster admins may hold RoleBindings there, so on a Helm install the render also fails when the release's namespace is a requested project.
 Under the OLM operator the server runs in the operator's own namespace, the cluster Studio namespace that only cluster admins write, which the operator sets; any other plugin namespace fails the render there.
-That last check looks the namespace up in the cluster, so `helm template` and a client-side dry run skip it; `helm install`, `helm upgrade` and `--dry-run=server` run it.
+The render also fails when `nameOverride`, `fullnameOverride` or the release name gives Studio the server's name `libredb-studio-console-plugin`, whose selector labels would then match Studio's pods.
+The requested-project check looks the namespaces up in the cluster, so `helm template` and a client-side dry run skip it; `helm install`, `helm upgrade` and `--dry-run=server` run it.
 It also relies on the cluster's project request template setting `openshift.io/requester`, as the default template does; a custom template that drops it hides a requested project from the check.
 Create the namespace with `oc create namespace` right before the install, which fails if the name is taken, never with `oc new-project` or the console's Create Project.
 Then check who may change Deployments there: no RoleBinding may name a user or a group of users, while the `system:deployers`, `system:image-builders` and `system:image-pullers` bindings OpenShift adds to every namespace are expected, and `oc adm policy who-can update deployments.apps -n <namespace>` decides:
@@ -1097,7 +1099,7 @@ On uninstall remove the entry again (docs/OPENSHIFT.md, "Uninstall"): a stale en
 Remove the ConsolePlugin, with `helm uninstall` or `openshift.consolePlugin.enabled=false`, before deleting the plugin namespace or Studio's namespace.
 The cluster-scoped ConsolePlugin outlives both and still names the server's Service, which anyone who may then create a namespace of that name, through a project request too, could serve to every console session.
 
-An upgrade with `--reuse-values` from chart 0.1.116 or earlier keeps that release's values, which have no plugin image, so turning the plugin on fails naming `openshift.consolePlugin.image`: upgrade with `--reset-then-reuse-values`, or set the image.
+An upgrade with `--reuse-values` from chart 0.1.117 or earlier keeps that release's values, which have no plugin image, so turning the plugin on fails naming `openshift.consolePlugin.image`: upgrade with `--reset-then-reuse-values`, or set the image.
 
 ### The cluster's trusted CA bundle
 
