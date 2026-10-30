@@ -600,6 +600,17 @@ const INVOKE: ReadonlyArray<
     (c, o) => c.releaseCollection({ collection_name: "notes" }, o),
     { collection_name: "notes", db_name: "probe_db" },
   ],
+  ["ListCredUsers", (c, o) => c.listCredUsers(o), {}],
+  [
+    "SelectUser",
+    (c, o) => c.selectUser({ user: { name: "agent" }, include_role_info: true }, o),
+    { user: { name: "agent" }, include_role_info: true },
+  ],
+  [
+    "SelectGrant",
+    (c, o) => c.selectGrant({ entity: { role: { name: "public" } } }, o),
+    { entity: { role: { name: "public" } } },
+  ],
 ];
 
 /** The smallest successful answer of every RPC: a status of its own, or, for Load and Release, the status itself. */

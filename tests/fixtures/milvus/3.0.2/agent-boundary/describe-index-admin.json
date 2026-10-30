@@ -1,0 +1,82 @@
+{
+  "$captured": {
+    "server": "authorization on",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "rpc": "DescribeIndex",
+    "principal": "admin",
+    "rights": "the built-in role admin",
+    "surface": "DescribeIndex agent_docs, every index",
+    "request": {
+      "db_name": "default",
+      "collection_name": "agent_docs"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "index_descriptions": [
+      {
+        "params": [
+          {
+            "key": "index_type",
+            "value": "FLAT"
+          },
+          {
+            "key": "metric_type",
+            "value": "L2"
+          },
+          {
+            "key": "params",
+            "value": "{}"
+          }
+        ],
+        "index_name": "vec_idx",
+        "indexID": "470121212090979619",
+        "field_name": "vec",
+        "indexed_rows": "0",
+        "total_rows": "0",
+        "state": "Finished",
+        "index_state_fail_reason": "",
+        "pending_index_rows": "0",
+        "min_index_version": 2147483647,
+        "max_index_version": -2147483648
+      },
+      {
+        "params": [
+          {
+            "key": "index_type",
+            "value": "SPARSE_INVERTED_INDEX"
+          },
+          {
+            "key": "metric_type",
+            "value": "BM25"
+          },
+          {
+            "key": "params",
+            "value": "{}"
+          }
+        ],
+        "index_name": "sparse_idx",
+        "indexID": "470121212090979623",
+        "field_name": "sparse",
+        "indexed_rows": "0",
+        "total_rows": "0",
+        "state": "Finished",
+        "index_state_fail_reason": "",
+        "pending_index_rows": "0",
+        "min_index_version": 2147483647,
+        "max_index_version": -2147483648
+      }
+    ],
+    "status": {
+      "extra_info": {},
+      "error_code": "Success",
+      "reason": "",
+      "code": 0,
+      "retriable": false,
+      "detail": ""
+    }
+  }
+}

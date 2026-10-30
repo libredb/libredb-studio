@@ -157,6 +157,7 @@ describe("the plan-estimate operation of each language", () => {
       weaviateapi: null,
       qdrantapi: null,
       cypher: null,
+      milvusrpc: null,
     });
     expect(Object.isFrozen(AGENT_PLAN_ESTIMATE_OPERATION)).toBe(true);
   });

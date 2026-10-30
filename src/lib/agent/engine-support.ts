@@ -81,7 +81,13 @@ import type { DatabaseType } from "@/lib/types";
  * procedure and function the user can execute must be a built-in, so an administrator, a user that writes or loads, a
  * server with an extension the user can run and Community Edition, which has no roles, are refused. Studio's reader
  * admits one statement of the editor's read policy with no comment, and the server's EXPLAIN classification and a READ
- * session stand behind it. Each provider's own `queryReadOnly` argues its own case.
+ * session stand behind it. Milvus's is the provider's gRPC stub filtered to a closed table of RPCs, whose only writes,
+ * Load and Release, no agent request reaches, with a user the server proves read-only before every request: it must
+ * be refused the list of users, and every privilege its roles and public grant must be a read, so a connection naming
+ * no user, root, the admin role, a role that writes, loads or releases and a server with authorization off are
+ * refused; Studio's reader admits the database, collection, schema, statistics, load state, partition, index and alias
+ * reads in the connection's own database, so no search runs a function on the server, and every answer carries names,
+ * counts and flags only. Each provider's own `queryReadOnly` argues its own case.
  * `tests/unit/lib/agent/engine-support.test.ts` is what keeps the two equal - it walks EVERY
  * id in the `DatabaseType` union, reads `queryReadOnly` off the real provider class the
  * factory would construct, and fails if this array and the drivers diverge in either direction.
@@ -119,6 +125,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "weaviate",
   "qdrant",
   "neo4j",
+  "milvus",
 ];
 
 /**

@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { MILVUS_CLIENT_METHODS, MilvusError } from "@/lib/db/providers/vector/milvus/client";
 
 describe("MILVUS_CLIENT_METHODS", () => {
-  test("is E15's allowlist in its order, then close()", () => {
+  test("is E15's allowlist in its order, the read-only proof's three privilege reads, then close()", () => {
     expect([...MILVUS_CLIENT_METHODS]).toEqual([
       "getVersion",
       "checkHealth",
@@ -29,6 +29,9 @@ describe("MILVUS_CLIENT_METHODS", () => {
       "hybridSearch",
       "loadCollection",
       "releaseCollection",
+      "listCredUsers",
+      "selectUser",
+      "selectGrant",
       "close",
     ]);
   });

@@ -1,0 +1,44 @@
+{
+  "$captured": {
+    "server": "authorization on",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "rpc": "SelectUser",
+    "principal": "elsewhere",
+    "rights": "role agent_elsewhere_role: the CollectionReadOnly group on default/* and the Insert privilege on agent_other_db/*",
+    "surface": "SelectUser of the principal itself with its roles",
+    "request": {
+      "user": {
+        "name": "agent_elsewhere"
+      },
+      "include_role_info": true
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "results": [
+      {
+        "roles": [
+          {
+            "name": "agent_elsewhere_role",
+            "description": ""
+          }
+        ],
+        "user": {
+          "name": "agent_elsewhere"
+        },
+        "description": ""
+      }
+    ],
+    "status": {
+      "extra_info": {},
+      "error_code": "Success",
+      "reason": "",
+      "code": 0,
+      "retriable": false,
+      "detail": ""
+    }
+  }
+}

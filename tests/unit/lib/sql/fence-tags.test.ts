@@ -177,6 +177,12 @@ describe("fenceTagEngine", () => {
     expect(fenceTagEngine("weaviate")).toBe("weaviate");
   });
 
+  test("milvusrpc names milvus, the agent's name for the only request language milvus runs", () => {
+    expect(fenceTagEngine("milvusrpc")).toBe("milvus");
+    expect(isQueryFenceTag("milvusrpc")).toBe(true);
+    expect(fenceTagEngine("milvus")).toBe("milvus");
+  });
+
   test("qdrantapi names qdrant, the agent's name for the only request language qdrant runs", () => {
     expect(fenceTagEngine("qdrantapi")).toBe("qdrant");
     expect(isQueryFenceTag("qdrantapi")).toBe(true);

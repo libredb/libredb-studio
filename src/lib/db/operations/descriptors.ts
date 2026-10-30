@@ -28,6 +28,7 @@ import { cypherAgentReadInput } from "./cypher-admission";
 import { influxqlAgentReadInput } from "./influxql-admission";
 import { kubectlAgentReadInput } from "./kubectl-admission";
 import { libredbkvAgentReadInput } from "./libredbkv-admission";
+import { milvusrpcAgentReadInput } from "./milvusrpc-admission";
 import { mongoAgentReadInput } from "./mongo-admission";
 import { qdrantapiAgentReadInput } from "./qdrantapi-admission";
 import { weaviateapiAgentReadInput } from "./weaviateapi-admission";
@@ -553,6 +554,42 @@ const cypherQueryReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+const MILVUSRPC_READ_BOUNDARY =
+  "Milvus: the provider's gRPC stub filtered to a closed table of RPCs, whose only writes are Load and Release, which " +
+  "the admin's maintenance route alone sends; an agent request reaches the database, collection, schema, statistics, " +
+  "load state, partition, index and alias reads only, in the console's grammar with every body key closed and the " +
+  "connection's own database on every call (metadata-request.ts). Before the open and before every request, under " +
+  "that request's deadline, the server proves the user reads only (read-only-proof.ts): it must refuse the user " +
+  "PERMISSION_DENIED the list of users, and every privilege its roles and public grant must be a read, so a connection " +
+  "naming no user, root, the admin role, a role that writes, loads or releases, an unknown privilege group and a " +
+  "server with authorization off are refused. Queries, gets and searches, and so every function a search runs on the " +
+  "server, are refused before anything is sent. Every answer is projected to names, counts and flags " +
+  "(metadata-only.ts), and a result past the row or byte budget is refused, never truncated.";
+
+/**
+ * One Milvus metadata read the model wrote, on a `milvus` connection.
+ *
+ * R1 on a structural boundary: the stub can name no write an agent request reaches, and the server proves the user
+ * read-only before every request. Its own id, and not a widened `sql.query.read`, so the SQL contract and its audit
+ * action stay exactly what they were.
+ */
+const milvusrpcQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "milvusrpc.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: milvusrpcAgentReadInput,
+  verification: {
+    reviewedBy: "Milvus agent execution design review",
+    boundary: MILVUSRPC_READ_BOUNDARY,
+    verifiedOn: "2026-10-30",
+  },
+};
+
 /** The selector of a scoped MongoDB catalog read: a kind, a database and a collection, any of them narrowed. */
 const mongoCatalogSelectorInput = z.strictObject({
   kind: z.enum(["columns", "indexes"]).default("columns"),
@@ -754,6 +791,7 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   weaviateapiQueryReadDescriptor,
   qdrantapiQueryReadDescriptor,
   cypherQueryReadDescriptor,
+  milvusrpcQueryReadDescriptor,
 ]);
 
 /**

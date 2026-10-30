@@ -35,7 +35,8 @@ export type AgentStatementLanguageId =
   | "influxql"
   | "weaviateapi"
   | "qdrantapi"
-  | "cypher";
+  | "cypher"
+  | "milvusrpc";
 
 /** Literal-typed, so `AgentEngineFamily` in `languages/pack.ts` reads each engine's language by type. */
 export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
@@ -63,7 +64,7 @@ export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
   kafka: null,
   etcd: null,
   neo4j: "cypher",
-  milvus: null,
+  milvus: "milvusrpc",
   qdrant: "qdrantapi",
   weaviate: "weaviateapi",
   influxdb: "influxql",

@@ -8,8 +8,9 @@
  * translation. `mock.module()` is not used: it is process-wide in bun and would poison sibling test files.
  *
  * Most answers are built here in the shape Milvus 3.0.2 gives them, from the fixtures of
- * `tests/helpers/milvus-catalog-client.ts`; the last block replays answers captured from a server
- * (`tests/fixtures/milvus/`), so the composition also meets bytes a real server sent.
+ * `tests/helpers/milvus-catalog-client.ts`; the last blocks replay answers captured from a server
+ * (`tests/fixtures/milvus/`), so the composition also meets bytes a real server sent, the agent read-only profile's
+ * boundary among them (`tests/fixtures/milvus/3.0.2/agent-boundary/`).
  *
  * Server: Milvus 3.0.2 standalone (milvusdb/milvus:v3.0.2), the build the captures were taken from.
  * Live check (tests/live/milvus-live-check.ts) against milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0,
@@ -21,6 +22,9 @@ import {
   type MilvusRpc,
   SYSTEM_INFO_REQUEST,
 } from "@/lib/db/providers/vector/milvus/grpc-client";
+import { ExecutionProfileError } from "@/lib/db/errors";
+import { MilvusError } from "@/lib/db/providers/vector/milvus/client";
+import { toMilvusError } from "@/lib/db/providers/vector/milvus/errors";
 import { MilvusProvider } from "@/lib/db/providers/vector/milvus/index";
 import type { DescribeCollectionResponse } from "@/lib/db/providers/vector/milvus/client";
 import { collectionColumns } from "@/lib/db/providers/vector/milvus/schema";
@@ -28,6 +32,12 @@ import { milvusSelectQuery } from "@/lib/db/providers/vector/milvus/generators";
 import { milvusSourceParts } from "@/lib/db/providers/vector/milvus/source";
 import type { DatabaseConnection } from "@/lib/db/types";
 import { DOCS_INT64, DOCS_INT64_INDEX, FTS, SYSTEM_INFO } from "../../helpers/milvus-catalog-client";
+import {
+  agentMilvusWire,
+  MILVUS_AGENT_USERS,
+  milvusAgentCapture,
+  milvusAgentCaptureNames,
+} from "../../helpers/milvus-agent";
 import { capturedAnswer, milvusCapture } from "../../helpers/milvus-fixtures";
 import { okStatus, type RecordedMilvusAnswer, recordedMilvusWire, statusError } from "../../helpers/milvus-wire";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
@@ -355,5 +365,138 @@ describe("answers captured from Milvus 3.0.2, replayed through the adapter", () 
     expect(detail.columns.length).toBeGreaterThan(0);
     expect(detail.columns).toEqual(collectionColumns(captured as DescribeCollectionResponse));
     expect(detail.columns.every((column) => column.defaultValue === undefined)).toBe(true);
+  });
+});
+
+/**
+ * The agent boundary, replayed from 3.0.2's answers: every write a read-only principal sent past Studio, with no
+ * client admission in front of it, classified as an authorization refusal with the state root reads unchanged; the
+ * same writes from the principals that may write, landing; and the read-only proof's verdict on every principal.
+ */
+describe("the agent read-only boundary, replayed from what 3.0.2 answered", () => {
+  const READ_ONLY = ["reader", "dbro", "custom", "clusterro", "nobody", "midrun"];
+  const WRITERS = ["rw", "admin", "root", "open-reader", "open-anonymous"];
+  const writes = [
+    ...new Set(
+      milvusAgentCaptureNames()
+        .filter((name) => name.startsWith("write-") && name.endsWith("-reader") && !name.endsWith("-open-reader"))
+        .map((name) => name.slice(0, -"-reader".length)),
+    ),
+  ];
+
+  test("every write, Load, Release, Flush, compaction and import is captured for every read-only principal", () => {
+    expect(writes.sort()).toEqual([
+      "write-compact",
+      "write-create-alias",
+      "write-create-collection",
+      "write-create-credential",
+      "write-create-database",
+      "write-create-index",
+      "write-create-partition",
+      "write-delete-none",
+      "write-drop-missing-alias",
+      "write-drop-missing-collection",
+      "write-flush",
+      "write-grant-self",
+      "write-import",
+      "write-insert",
+      "write-load",
+      "write-release",
+      "write-upsert",
+    ]);
+  });
+
+  test.each(READ_ONLY)("every write from %s is refused PERMISSION_DENIED, an authorization refusal", (principal) => {
+    for (const write of writes) {
+      const capture = milvusAgentCapture(write, principal);
+      expect({ write, outcome: capture.outcome }).toEqual({ write, outcome: "fail" });
+      const error = (capture.payload as { error: { code: number; details: string } }).error;
+      const classified = toMilvusError(
+        Object.assign(new Error(error.details), error, { metadata: {} }),
+        new AbortController().signal,
+      );
+      expect({ write, category: (classified as MilvusError).category }).toEqual({
+        write,
+        category: "permission-denied",
+      });
+    }
+  });
+
+  test("the state root reads is the same before and after every refused write", () => {
+    for (const surface of ["count", "collections", "aliases", "partitions", "databases", "load", "indexes"]) {
+      const strip = (payload: unknown) =>
+        JSON.stringify(payload, (key, value) =>
+          key === "session_ts" ||
+          key.endsWith("timestamps") ||
+          key.endsWith("timestamp") ||
+          key.endsWith("_ids") ||
+          key === "partitionIDs" ||
+          key === "collection_ids" ||
+          key === "db_ids" ||
+          key === "indexID"
+            ? undefined
+            : value,
+        );
+      const before = JSON.parse(strip(milvusAgentCapture(`state-before-${surface}`, "root").payload));
+      const after = JSON.parse(strip(milvusAgentCapture(`state-after-refused-${surface}`, "root").payload));
+      const sortLists = (value: Record<string, unknown>) =>
+        Object.fromEntries(
+          Object.entries(value).map(([key, inner]) => [
+            key,
+            Array.isArray(inner) && inner.every((item) => typeof item === "string") ? [...inner].sort() : inner,
+          ]),
+        );
+      expect({ surface, state: sortLists(after) }).toEqual({ surface, state: sortLists(before) });
+    }
+  });
+
+  test("the positive controls: the same Insert, alias, partition and database land for a principal that may write", () => {
+    for (const principal of WRITERS) {
+      for (const write of [
+        "write-insert",
+        "write-create-partition",
+        "write-create-database",
+        "write-load",
+        "write-release",
+      ]) {
+        expect({ principal, write, outcome: milvusAgentCapture(write, principal).outcome }).toEqual({
+          principal,
+          write,
+          outcome: principal === "rw" && write === "write-create-database" ? "fail" : "pass",
+        });
+      }
+    }
+    expect(milvusAgentCapture("state-after-writable-count", "root").payload).toMatchObject({
+      fields_data: [{ scalars: { long_data: { data: ["5"] } } }],
+    });
+    expect(milvusAgentCapture("write-insert-after-grant", "midrun").outcome).toBe("pass");
+  });
+
+  test.each([
+    ["reader", "proved"],
+    ["dbro", "proved"],
+    ["nobody", "proved"],
+    ["midrun", "proved"],
+    ["custom", "PROFILE_PRIVILEGES_TOO_BROAD"],
+    ["clusterro", "PROFILE_PRIVILEGES_TOO_BROAD"],
+    ["rw", "PROFILE_PRIVILEGES_TOO_BROAD"],
+    ["elsewhere", "PROFILE_PRIVILEGES_TOO_BROAD"],
+    ["rwother", "PROFILE_PRIVILEGES_TOO_BROAD"],
+    ["admin", "PROFILE_PRIVILEGES_TOO_BROAD"],
+    ["root", "PROFILE_PRIVILEGES_TOO_BROAD"],
+    ["open-reader", "PROFILE_SERVER_UNENFORCED"],
+  ])("the proof's verdict on %s, at the open: %s", async (principal, verdict) => {
+    const wire = agentMilvusWire(principal);
+    const provider = new MilvusProvider(
+      { ...CONNECTION, user: MILVUS_AGENT_USERS[principal], password: "not-a-real-password" },
+      {},
+      { readOnly: true, sendsStatements: true },
+      (options) => createGrpcMilvusClient(options, wire.transport),
+    );
+    const outcome = await provider.connect().then(
+      () => "proved",
+      (error: unknown) => (error instanceof ExecutionProfileError ? error.reasonCode : error),
+    );
+    expect(outcome).toBe(verdict);
   });
 });

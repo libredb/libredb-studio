@@ -125,6 +125,7 @@ const LANGUAGE_IDS: Readonly<Record<AgentStatementLanguageId, true>> = {
   weaviateapi: true,
   qdrantapi: true,
   cypher: true,
+  milvusrpc: true,
 };
 
 describe("the server packs", () => {
@@ -258,6 +259,7 @@ describe("the language packs", () => {
       "weaviateapi",
       "qdrantapi",
       "cypher",
+      "milvusrpc",
     ]);
     expect(Object.isFrozen(LANGUAGE_TOOL_ARMS)).toBe(true);
   });
@@ -405,6 +407,7 @@ describe("the prompt tables the packs hold", () => {
       "weaviateapi",
       "qdrantapi",
       "cypher",
+      "milvusrpc",
     ]);
     expect(Object.isFrozen(WORKFLOW_TOOL_RULES)).toBe(true);
     for (const id of ids) {
@@ -505,6 +508,7 @@ describe("the client packs", () => {
         "weaviateapi",
         "qdrantapi",
         "cypher",
+        "milvusrpc",
       ]);
     }
   });
@@ -521,6 +525,7 @@ describe("the client packs", () => {
       weaviateapi: null,
       qdrantapi: null,
       cypher: null,
+      milvusrpc: null,
     });
   });
 

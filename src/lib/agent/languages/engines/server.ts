@@ -18,6 +18,7 @@ import { MONGODB_SERVER_OVERLAY } from "../mongo/engines/mongodb";
 import { WEAVIATE_SERVER_OVERLAY } from "../weaviateapi/engines/weaviate";
 import { QDRANT_SERVER_OVERLAY } from "../qdrantapi/engines/qdrant";
 import { NEO4J_SERVER_OVERLAY } from "../cypher/engines/neo4j";
+import { MILVUS_SERVER_OVERLAY } from "../milvusrpc/engines/milvus";
 import type { AgentStatementLanguageId } from "../../agent-manifest";
 import { statementFamilyOf } from "../client";
 import { defineOverlay } from "../overlay";
@@ -70,6 +71,7 @@ const SERVER_OVERLAYS: AgentEngineServerOverlays = Object.freeze({
   weaviate: Object.freeze({ ...WEAVIATE_SERVER_OVERLAY }),
   qdrant: Object.freeze({ ...QDRANT_SERVER_OVERLAY }),
   neo4j: Object.freeze({ ...NEO4J_SERVER_OVERLAY }),
+  milvus: Object.freeze({ ...MILVUS_SERVER_OVERLAY }),
 } satisfies AgentEngineServerOverlays);
 
 /** What an engine with no dialect answers: every member unsupported. */

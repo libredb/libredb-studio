@@ -47,6 +47,7 @@ It shows MCP clients and the agent the schema alone, never a value or a vector.
 | `execute.ts`, `objects.ts`, `source.ts` | One request within its bounds, the object surface and the two-part Source |
 | `monitoring.ts`, `monitoring-reads.ts`, `maintenance.ts` | The monitoring panels, Load with its preview and Release |
 | `write-policy.ts`, `versions.ts`, `errors.ts` | The read-only decisions, the version gates and the one error table |
+| `metadata-request.ts`, `read-only-proof.ts`, `metadata-read.ts` | Agent mode: the reader of an agent request, the read-only proof of the agent's user, and the metadata-only answer (section 15) |
 | `generators.ts`, `float32-text.ts`, `type-spelling.ts`, `labels.ts`, `index.ts` | The generated requests, the float text, the type spellings, the labels and the composition root |
 
 ### 2.3 Registration & lifecycle
@@ -106,11 +107,12 @@ The mode binds a `user` only on a managed seed whose secret only the seed holds,
 Double the mode on the server with a Milvus role that holds `CollectionReadOnly` and `DatabaseReadOnly` and nothing more.
 On 3.0.2 `DatabaseReadOnly` is exactly `ShowCollections` and `DescribeDatabase` (`DatabaseReadOnlyPrivileges` in the server's `pkg/util/constant.go`), and `CreateCollection` belongs to `DatabaseAdmin`.
 The 2.6.x and 3.0.x privilege-group tables on milvus.io list `CreateCollection` under `DatabaseReadOnly`; the server source and the 2.5.x table do not, and the server is what decides.
+Measured on 3.0.2: the server lists `DatabaseReadOnly` as those two privileges (`list-privilege-groups-root`), and refuses a user holding it alone `CreateCollection` with `PERMISSION_DENIED`, as it refuses it every other write (`write-create-collection-dbro` and the `write-*-dbro` captures under `tests/fixtures/milvus/3.0.2/agent-boundary/`).
 
 ### 3.5 Machine access
 
 MCP clients may be given a Milvus seed connection (`mcp: true`): `inspect_schema` and the agent's grounding carry names and types only, never a value, a vector, a default value, a function's parameters or a sampled key.
-The provider implements no read-only query path, so agent execution and MCP `run_read_query` refuse Milvus, and plan mode drafts a request that a person runs.
+Agent execution reads metadata only, as a user the server proves read-only before every request (section 15), and MCP `run_read_query` still refuses Milvus; plan mode drafts a request that a person runs.
 No Milvus statement reaches an AI route: Explain is not offered, and the confirmation gate posts nothing to the query-safety analysis for a Milvus request.
 
 ### 3.6 Lossless integers
@@ -523,6 +525,7 @@ Copy the users' passwords out first, into a directory outside the repository: `d
 Keep the management port 9091 off the network: on 3.0.2 it answers without authentication, its metrics and its telemetry list included, and Studio never dials it.
 Turn authorization on (`common.security.authorizationEnabled: true`) and change the default root password before anyone connects; with authorization off, any credential or none connects.
 Give Studio's seeds a user of their own with `CollectionReadOnly` and `DatabaseReadOnly`, and the read-only mode on top.
+The same user is what agent mode needs: it refuses root, the admin role, any other privilege and a server with authorization off (section 15).
 Milvus's RBAC hides neither the topology nor other databases' row counts from an authenticated user, because GetMetrics needs no privilege.
 
 ## 13. Known limitations
@@ -560,3 +563,91 @@ The refusal reason it prints, verbatim:
 - Milvus's REST v2 reference (`rest-summary-v3.0.x`) and the milvus-proto `go-api/v3.0.2` definitions.
 - Milvus's built-in privilege groups: `DatabaseReadOnlyPrivileges` and its neighbours in [`pkg/util/constant.go` at v3.0.2](https://github.com/milvus-io/milvus/blob/v3.0.2/pkg/util/constant.go), which the [privilege-group table](https://milvus.io/docs/privilege_group.md) misstates for `CreateCollection` (section 3.4).
 - [`docker/milvus/README.md`](../../docker/milvus/README.md) and [`tests/fixtures/milvus/README.md`](../../tests/fixtures/milvus/README.md).
+
+## 15. Agent mode
+
+Agent mode reads Milvus's metadata through `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/vector/milvus/index.ts).
+The request reader is [`metadata-request.ts`](../../src/lib/db/providers/vector/milvus/metadata-request.ts), the read-only proof is [`read-only-proof.ts`](../../src/lib/db/providers/vector/milvus/read-only-proof.ts), and the metadata-only projection and the wording of a failure are [`metadata-read.ts`](../../src/lib/db/providers/vector/milvus/metadata-read.ts).
+Every claim below cites a capture under [`tests/fixtures/milvus/3.0.2/agent-boundary/`](../../tests/fixtures/milvus/3.0.2/agent-boundary/), recorded by its `run.sh` against digest-pinned 3.0.2 servers, one with authorization on and one with it off, with every call sent raw, past every Studio check.
+
+### 15.1 The boundary
+
+The boundary is a structural closed table: the gRPC stub is MilvusService filtered to `MILVUS_ALLOWLISTED_RPCS` in `grpc-client.ts`, whose only writes are `LoadCollection` and `ReleaseCollection`, which the admin's maintenance route alone sends, and an agent request reaches the 11 metadata reads of the console's 15 routes and nothing else.
+Beside them the stub holds three privilege reads, `ListCredUsers`, `SelectUser` and `SelectGrant`, which only the read-only proof calls, with requests the proof writes itself.
+On top of the table the user is proved read-only, so the server's own authorization refuses what the table could ever let through.
+A user holding `CollectionReadOnly` with `ShowCollections` and `DescribeDatabase`, one holding `DatabaseReadOnly`, one holding a custom group of reads, one holding `ClusterReadOnly` and one holding no role are each refused with `PERMISSION_DENIED` (gRPC 7) a collection create and drop, an alias create and drop, an insert, an upsert, a delete of no row, a flush, a compaction, an index, a partition, a database, a credential, a grant to its own role, an import, a Load and a Release (`write-*-reader`, `write-*-dbro`, `write-*-custom`, `write-*-clusterro`, `write-*-nobody`), with the row count, the collections, the aliases, the partitions, the databases, the load state and the indexes root reads unchanged after (`state-before-*`, `state-after-refused-*`).
+The same writes land for a `CollectionReadWrite` user where its group allows them, for the admin role and for root (`write-*-rw`, `write-*-admin`, `write-*-root`, `state-after-writable-*`).
+A server with authorization off answers every write, with any credential or none (`write-*-open-reader`, `write-*-open-anonymous`, `state-open-*`): it has no server-side boundary.
+
+### 15.2 The read-only proof
+
+A handle opened for the agent read-only profile by an acquisition that sends statements refuses a connection that names no user (no credential, or a token with no `user:` part) before any client is built.
+After `GetVersion`, and again before every request under that request's permit and deadline with no verdict kept, the server is asked who the user is and what it may do, reads only:
+
+- `root` is refused by name before anything is sent: 3.0.2 lists it no role (`select-user-self-root`), yet it may do anything.
+- `ListCredUsers` must be refused with `PERMISSION_DENIED`: 3.0.2 refuses it to every user without a cluster privilege, readers and writers alike (`list-cred-users-reader`, `-dbro`, `-custom`, `-nobody`, `-midrun`, `-rw`, `-elsewhere`, `-rwother`), and answers it to root, the admin role, `ClusterReadOnly` and every caller on a server with authorization off (`list-cred-users-root`, `-admin`, `-clusterro`, `-open-reader`, `-open-anonymous`). This step proves authorization is on; the grant step below is what refuses a writer. Any other refusal is no proof.
+- `SelectUser` of the user itself, with its roles, must name that user alone; the admin role, or more than 16 roles, is refused. 3.0.2 answers it to every user (`select-user-self-*`).
+- `SelectGrant` of each role and of `public`, which every user holds, must name only `CollectionReadOnly`, `DatabaseReadOnly`, a privilege either group holds on 3.0.2 (`list-privilege-groups-root`) or `ListDatabases`; 3.0.2 answers a user its own roles' grants (`select-grant-own-role-*`, `select-grant-public-*`) and refuses it another role's (`select-grant-admin-reader`).
+  The grants are read across every database, whichever one the connection names: a `SelectGrant` naming no database answers only the grants on `default` and `*` (`select-grant-own-role-default-only-*`), so it would miss a role that reads `default` and inserts into a second database, or one that holds `CollectionReadWrite` on a database other than `default`, and both write there (`write-insert-other-db-elsewhere`, `-rwother`); named `*`, it answers every database's grants (`select-grant-own-role-elsewhere`, `-rwother`), and both are refused.
+  A grant names a group by its name (`select-grant-own-role-custom`), and a read-only user cannot read a custom group's members (`list-privilege-groups-reader`), so a custom group is refused, as is `CollectionReadWrite`, `ClusterReadOnly` and every privilege that writes, loads or releases.
+
+When the user list was answered and every grant reads only, the server does not enforce authorization, and the refusal says so (`PROFILE_SERVER_UNENFORCED`), since narrowing the user would change nothing.
+A grant made since the last request is caught at the next one: `Insert` granted to a role during the run shows in its grants (`select-grant-own-role-after-grant-midrun`), and the proof refuses the request before it is sent.
+The window between the proof's last read and the request's own read is a residual, and the proxy's privilege cache may lag a revoke; neither lets the user write, since no agent request names a write.
+A transport failure is raised as itself, never read as a verdict.
+No write is sent to prove a write is refused: the privilege reads decide, so the stub keeps no write an agent request could reach.
+The operations profile sends no request of the model's, so it opens with any user and no proof, and plan mode keeps grounding on root.
+
+### 15.3 What an agent request may be
+
+One request in the console's own grammar, every body key closed (section 5.2), naming `databases/list`, `databases/describe`, `collections/list`, `collections/describe`, `collections/get_stats`, `collections/get_load_state`, `partitions/list`, `indexes/list`, `indexes/describe`, `aliases/list` or `aliases/describe`.
+`entities/query` and `entities/get` answer stored scalar, vector and dynamic field values (`query-values-reader`), and `entities/search` with a text input against a function's output field makes the server run the function on it (`search-text-reader`), so every entity route is refused before anything is sent, by its route, never the request's own words.
+A `dbName` naming a database other than the connection's is refused before anything is sent; every call names the connection's database, written by the adapter, and carries only the `authorization` metadata.
+
+### 15.4 Metadata only
+
+Milvus declares `ProviderCapabilities.metadataOnly`: every answer is projected through [`src/lib/db/redaction/metadata-only.ts`](../../src/lib/db/redaction/metadata-only.ts) by a typed projection per route, each column a name, a count or a flag read from a fixed place in the server's answer.
+
+| Route | Columns |
+| --- | --- |
+| `databases/list` | `database` |
+| `databases/describe` | `database`, `properties` (how many) |
+| `collections/list` | `collection` |
+| `collections/describe` | `name`, `kind`, `type`, `element_type`, `dimension`, `max_length`, `primary`, `nullable`, `dynamic`, `partition_key`, `function_output`, `index`, `index_type`, `metric`, `shards`, `partitions`, `consistency`, `load_state` |
+| `collections/get_stats` | `collection`, `row_count` |
+| `collections/get_load_state` | `collection`, `load_state`, `progress` |
+| `partitions/list` | `partition` |
+| `indexes/list`, `indexes/describe` | `index`, `field`, `index_type`, `metric`, `state`, `indexed_rows`, `total_rows`, `pending_rows`, `failed` |
+| `aliases/list` | `alias`, `collection` |
+| `aliases/describe` | `alias`, `collection`, `database` |
+
+A collection read answers one row for the collection itself (`kind` `collection`, with its dynamic flag, shard and partition counts, consistency level and load state), then one per field (its name, data type, element type, dimension, maximum length, flags and index), one per struct array and its fields, and one per function (its name and type).
+A column's name comes from the projection, never from a key the store holds, and nothing the projection does not name reaches a row: no field's default value, no description, no collection or database property's value, no index parameter and no function parameter, which can name a service or a credential.
+A failed index build is answered as `failed`, never its reason, which is the server's text.
+`aliases/list` without a `collectionName` answers `collection` as null on every row, since 3.0.2 lists alias names alone; `aliases/describe` names the collection.
+Names are the operator's own: a database, collection, field, partition, index, alias or function named after a stored value reaches the answer as that name, checked only to be printable text of 1 to 512 characters on one line.
+A cell that does not fit its kind, such as a dimension that is not a whole number or a name holding a line break, withholds the whole answer, naming the column and never the value.
+A server refusal is worded by its category alone, never the server's message: a user without `DescribeAlias` is answered `PrivilegeDescribeAlias: permission deny to agent_dbro in the default database` (`describe-alias-dbro`), and agent mode is told only that the call failed with `permission-denied`.
+A result past the row or byte budget is refused, never cut, and an estimating plan is refused.
+
+### 15.5 Agent language pack
+
+Statement-language family: `milvusrpc`.
+Overlay: [`src/lib/agent/languages/milvusrpc/engines/milvus.ts`](../../src/lib/agent/languages/milvusrpc/engines/milvus.ts), with its client row in [`src/lib/agent/languages/milvusrpc/engines/client.ts`](../../src/lib/agent/languages/milvusrpc/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`.
+Both overlays are empty, so the engine resolves to the `milvusrpc` family pack itself.
+The `milvusrpc` statement-language family has no dialect-bound member.
+This overlay overrides no Shared member, so every Shared member is the `milvusrpc` statement-language family's own.
+The family offers the investigation workflow, through `run_read_query` with one Milvus request, and the operations workflow; it offers no data analysis, since its answers carry no stored value, and no query optimization or database assessment, since the server composes no plan and no profile, and no workflow hands an answer to the editor.
+The workflow classifier offers the model only these two.
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+No MCP tool runs a Milvus request: the family declares no MCP facet, and `MCP_STATEMENT_READ.milvus` is false (B155).
+
+### 15.6 Tests
+
+- `tests/unit/db/milvus/read-only-proof.test.ts`: the privileges a read-only user may hold, held to 3.0.2's groups, and the proof over every principal's captures, a grant made during the run included.
+- `tests/unit/db/milvus/metadata-request.test.ts`: the routes an agent request may name, and every refusal before the network.
+- `tests/unit/db/milvus/metadata-read.test.ts`: every projection over the captured answers, and answers that carry a stored value where a name, a count or a flag stands.
+- `tests/unit/db/milvus/agent-provider.test.ts`: the open, the proof before every request, the exact RPCs, requests and metadata through the adapter, the wording of a failure and the budgets.
+- `tests/integration/db/milvus-provider.test.ts`: the boundary replayed from the captures, the read-only principals' writes beside the positive controls, and the proof's verdict on every principal.
+- `tests/unit/lib/db/redaction/metadata-only.test.ts`: the shared projection helpers.

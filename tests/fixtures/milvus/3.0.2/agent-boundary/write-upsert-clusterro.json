@@ -1,0 +1,65 @@
+{
+  "$captured": {
+    "server": "authorization on",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "rpc": "Upsert",
+    "principal": "clusterro",
+    "rights": "role agent_clusterro_role: the ClusterReadOnly group on */*",
+    "surface": "Upsert of row 1 of agent_scratch",
+    "request": {
+      "db_name": "default",
+      "collection_name": "agent_scratch",
+      "num_rows": 1,
+      "fields_data": [
+        {
+          "type": "Int64",
+          "field_name": "id",
+          "scalars": {
+            "long_data": {
+              "data": [
+                "1"
+              ]
+            }
+          }
+        },
+        {
+          "type": "FloatVector",
+          "field_name": "vec",
+          "vectors": {
+            "dim": "4",
+            "float_vector": {
+              "data": [
+                0.1,
+                0.2,
+                0.3,
+                0.4
+              ]
+            }
+          }
+        },
+        {
+          "type": "VarChar",
+          "field_name": "title",
+          "scalars": {
+            "string_data": {
+              "data": [
+                "stored-title-value-1"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  },
+  "outcome": "fail",
+  "payload": {
+    "error": {
+      "code": 7,
+      "details": "PrivilegeUpsert: permission deny to agent_clusterro in the `default` database",
+      "message": "7 PERMISSION_DENIED: PrivilegeUpsert: permission deny to agent_clusterro in the `default` database"
+    }
+  }
+}
