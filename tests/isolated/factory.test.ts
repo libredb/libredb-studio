@@ -768,7 +768,10 @@ describe("createDatabaseProvider", () => {
     const transport = {
       whoami: async () => {
         sent.push("GET /whoami");
-        return { id: "agent_ro", roles: [{ role: "query_select", bucket_name: "probe", scope_name: "*", collection_name: "*" }] };
+        return {
+          id: "agent_ro",
+          roles: [{ role: "query_select", bucket_name: "probe", scope_name: "*", collection_name: "*" }],
+        };
       },
       agentQuery: async (statement: string) => {
         sent.push(statement);

@@ -2594,14 +2594,21 @@ describe("CouchbaseProvider agent read-only profile", () => {
       scan_consistency: "request_plus",
       query_context: "default:`travel`",
     });
-    expect(String(probe.body?.statement)).toMatch(/^DELETE FROM `_default` USE KEYS "libredb-agent-probe-[0-9a-f]{24}"$/);
+    expect(String(probe.body?.statement)).toMatch(
+      /^DELETE FROM `_default` USE KEYS "libredb-agent-probe-[0-9a-f]{24}"$/,
+    );
     expect(cluster.sent.map((request) => request.maxResponseBytes)).toEqual([65536, 65536, 65536]);
   });
 
   test("the open refuses a user holding more than query_select, and closes what it opened", async () => {
     const cluster = agentCluster();
     cluster.roles = [SELECT_ONLY, { role: "data_writer", bucket_name: BUCKET, scope_name: "*", collection_name: "*" }];
-    const provider = new CouchbaseProvider(makeConnection({ user: "agent_ro" }), {}, AGENT_PROFILE, nodeTransports(cluster));
+    const provider = new CouchbaseProvider(
+      makeConnection({ user: "agent_ro" }),
+      {},
+      AGENT_PROFILE,
+      nodeTransports(cluster),
+    );
     const failure = await provider.connect().catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(ExecutionProfileError);
     expect((failure as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
@@ -2730,7 +2737,9 @@ describe("CouchbaseProvider agent read-only profile", () => {
       payload: errorPayload(13014, "User does not have credentials to run SELECT queries on default:other."),
     });
     const provider = await agentProvider(cluster);
-    const failure = await provider.queryReadOnly("SELECT d.n FROM default:`other` AS d", BUDGET).catch((e: unknown) => e);
+    const failure = await provider
+      .queryReadOnly("SELECT d.n FROM default:`other` AS d", BUDGET)
+      .catch((e: unknown) => e);
     expect(failure).toBeInstanceOf(QueryError);
     expect((failure as Error).message).toBe("User does not have credentials to run SELECT queries on default:other.");
   });

@@ -477,7 +477,6 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
       method: "POST",
       url: endpointUrl(origin, QUERY_PATH),
       body: JSON.stringify(body),
-      headers: { "content-type": "application/json" },
       signal: o.signal,
       maxResponseBytes: o.maxResponseBytes,
     });
@@ -530,7 +529,6 @@ export class CouchbaseHttpTransport implements CouchbaseTransport {
         tls: this.tls ? nodeTlsMaterial(this.ssl, this.host) : null,
         maxSockets: AGENT_MAX_SOCKETS,
         headers: { accept: "application/json", authorization: this.authorization },
-        requestHeaderNames: ["content-type"],
       });
       this.agentTransports.set(key, transport);
     }

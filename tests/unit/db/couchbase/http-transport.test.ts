@@ -1072,7 +1072,6 @@ describe("CouchbaseHttpTransport agent path", () => {
         accept: "application/json",
         authorization: `Basic ${Buffer.from("Administrator:password123").toString("base64")}`,
       },
-      requestHeaderNames: ["content-type"],
     });
     expect(built[0].requests).toEqual([
       { method: "GET", url: "http://127.0.0.1:8091/whoami", signal: request.signal, maxResponseBytes: 65536 },
@@ -1080,7 +1079,10 @@ describe("CouchbaseHttpTransport agent path", () => {
   });
 
   test("maps a refused GET /whoami like any management failure", async () => {
-    const transport = makeTransport({}, nodeDeps(() => ({ status: 401, text: "" }), []));
+    const transport = makeTransport(
+      {},
+      nodeDeps(() => ({ status: 401, text: "" }), []),
+    );
     await expect(transport.whoami(bounds())).rejects.toMatchObject({ name: "CouchbaseError", code: 401 });
   });
 
@@ -1103,7 +1105,6 @@ describe("CouchbaseHttpTransport agent path", () => {
         method: "POST",
         url: "http://node1.local:8093/query/service",
         body: '{"statement":"SELECT 1 AS a","timeout":"5000ms","readonly":true,"scan_consistency":"request_plus","query_context":"default:`travel`"}',
-        headers: { "content-type": "application/json" },
         signal: request.signal,
         maxResponseBytes: 65536,
       },
@@ -1115,7 +1116,11 @@ describe("CouchbaseHttpTransport agent path", () => {
     const transport = makeTransport({}, nodeDeps(cluster(), built));
 
     await transport.agentQuery("SELECT 1 AS a", { ...bounds(), timeoutMs: 1000, readonly: true });
-    await transport.agentQuery("DELETE FROM `_default` USE KEYS \"k\"", { ...bounds(), timeoutMs: 1000, readonly: false });
+    await transport.agentQuery('DELETE FROM `_default` USE KEYS "k"', {
+      ...bounds(),
+      timeoutMs: 1000,
+      readonly: false,
+    });
 
     expect(built[0].requests).toHaveLength(1);
     expect(built[1].requests.map((sent) => JSON.parse(sent.body ?? "{}").readonly)).toEqual([true, false]);
@@ -1135,9 +1140,9 @@ describe("CouchbaseHttpTransport agent path", () => {
       }, built),
     );
 
-    await expect(transport.agentQuery("SELECT 1", { ...bounds(), timeoutMs: 1000, readonly: true })).rejects.toMatchObject(
-      { code: 503 },
-    );
+    await expect(
+      transport.agentQuery("SELECT 1", { ...bounds(), timeoutMs: 1000, readonly: true }),
+    ).rejects.toMatchObject({ code: 503 });
     await transport.agentQuery("SELECT 1", { ...bounds(), timeoutMs: 1000, readonly: true });
     expect(built[0].requests.map((sent) => new URL(sent.url).pathname)).toEqual([
       "/pools/default/nodeServices",
@@ -1158,7 +1163,10 @@ describe("CouchbaseHttpTransport agent path", () => {
 
   test("lets a transport failure leave as it came", async () => {
     const lost = new Error("socket destroyed");
-    const transport = makeTransport({}, nodeDeps(() => lost, []));
+    const transport = makeTransport(
+      {},
+      nodeDeps(() => lost, []),
+    );
     await expect(transport.whoami(bounds())).rejects.toBe(lost);
   });
 
@@ -1169,8 +1177,14 @@ describe("CouchbaseHttpTransport agent path", () => {
     await transport.agentQuery("SELECT 1", { ...bounds(), timeoutMs: 1000, readonly: true });
 
     expect(built.map((record) => [record.options.origin, record.options.tls])).toEqual([
-      [{ scheme: "https", host: "127.0.0.1", port: 18091 }, { rejectUnauthorized: false, identity: "127.0.0.1" }],
-      [{ scheme: "https", host: "node1.local", port: 18093 }, { rejectUnauthorized: false, identity: "127.0.0.1" }],
+      [
+        { scheme: "https", host: "127.0.0.1", port: 18091 },
+        { rejectUnauthorized: false, identity: "127.0.0.1" },
+      ],
+      [
+        { scheme: "https", host: "node1.local", port: 18093 },
+        { rejectUnauthorized: false, identity: "127.0.0.1" },
+      ],
     ]);
   });
 

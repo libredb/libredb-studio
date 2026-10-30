@@ -126,7 +126,11 @@ describe("the roles", () => {
     ["bucket_admin", [role("bucket_admin", "probe"), SELECT_ONLY], "bucket_admin[probe]"],
     ["admin", [role("admin")], "admin"],
     ["query_select on every bucket", [role("query_select", "*", "*", "*")], "query_select[*:*:*]"],
-    ["query_select on a second bucket", [role("query_select", "other", "*", "*"), SELECT_ONLY], "query_select[other:*:*]"],
+    [
+      "query_select on a second bucket",
+      [role("query_select", "other", "*", "*"), SELECT_ONLY],
+      "query_select[other:*:*]",
+    ],
     [
       "query_execute_functions",
       [role("query_execute_functions", "probe", "_default"), SELECT_ONLY],
@@ -137,7 +141,11 @@ describe("the roles", () => {
       [role("query_execute_external_functions", "probe", "_default"), SELECT_ONLY],
       "query_execute_external_functions[probe:_default]",
     ],
-    ["query_execute_global_functions", [role("query_execute_global_functions"), SELECT_ONLY], "query_execute_global_functions"],
+    [
+      "query_execute_global_functions",
+      [role("query_execute_global_functions"), SELECT_ONLY],
+      "query_execute_global_functions",
+    ],
     ["query_system_catalog", [role("query_system_catalog"), SELECT_ONLY], "query_system_catalog"],
     ["query_external_access", [role("query_external_access"), SELECT_ONLY], "query_external_access"],
     [
@@ -145,8 +153,16 @@ describe("the roles", () => {
       [SELECT_ONLY, role("query_use_sequences", "probe", "_default")],
       "query_use_sequences[probe:_default]",
     ],
-    ["data_reader, a read, and still not query_select", [role("data_reader", "probe", "*", "*"), SELECT_ONLY], "data_reader[probe:*:*]"],
-    ["a role this check has never seen", [role("query_something_new", "probe", "*", "*"), SELECT_ONLY], "query_something_new[probe:*:*]"],
+    [
+      "data_reader, a read, and still not query_select",
+      [role("data_reader", "probe", "*", "*"), SELECT_ONLY],
+      "data_reader[probe:*:*]",
+    ],
+    [
+      "a role this check has never seen",
+      [role("query_something_new", "probe", "*", "*"), SELECT_ONLY],
+      "query_something_new[probe:*:*]",
+    ],
     ["Community Edition's bucket_full_access", [role("bucket_full_access", "probe")], "bucket_full_access[probe]"],
     ["Community Edition's ro_admin", [role("ro_admin")], "ro_admin"],
   ])("refuses %s, naming the role as Couchbase spells it", async (_name, roles, named) => {
@@ -185,7 +201,10 @@ describe("the roles", () => {
     ["no roles array", { id: "agent_ro" }],
     ["a role entry that is not an object", whoami(["query_select"])],
     ["a role name that is not a string", whoami([{ role: 7 }])],
-    ["a bucket that is not a string", whoami([{ role: "query_select", bucket_name: 1, scope_name: "*", collection_name: "*" }])],
+    [
+      "a bucket that is not a string",
+      whoami([{ role: "query_select", bucket_name: 1, scope_name: "*", collection_name: "*" }]),
+    ],
     ["query_select without its scope", whoami([{ role: "query_select", bucket_name: "probe", collection_name: "*" }])],
     ["query_select without its collection", whoami([{ role: "query_select", bucket_name: "probe", scope_name: "*" }])],
     ["another user's identity", whoami([SELECT_ONLY], "agent_other")],
@@ -224,7 +243,7 @@ describe("the probe", () => {
     );
     expect(error.reasonCode).toBe("PROFILE_SERVER_UNENFORCED");
     expect(error.message).toBe(
-      'The agent read-only execution profile needs a server that enforces its users\' roles; this server answered a DELETE in the bucket probe for the user agent_ro with "Keyspace not found in CB datastore: default:probe._default._default" (code 12003) rather than refusing it for a missing role, so its enforcement is unproven and the connection is refused. The check deletes one freshly named key in the bucket\'s _default collection, which must exist.',
+      "The agent read-only execution profile needs a server that enforces its users' roles; this server answered a DELETE in the bucket probe for the user agent_ro with \"Keyspace not found in CB datastore: default:probe._default._default\" (code 12003) rather than refusing it for a missing role, so its enforcement is unproven and the connection is refused. The check deletes one freshly named key in the bucket's _default collection, which must exist.",
     );
   });
 
@@ -272,7 +291,7 @@ describe("the statement fence", () => {
     ["INFER `_default`"],
     ["EXPLAIN SELECT 1"],
     ["DELETE FROM `_default`"],
-    ["INSERT INTO `_default` (KEY, VALUE) VALUES (\"k\", {})"],
+    ['INSERT INTO `_default` (KEY, VALUE) VALUES ("k", {})'],
     ["(SELECT 1 AS a)"],
     ["`select` FROM x"],
     ["SELECTED"],
