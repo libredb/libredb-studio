@@ -27,8 +27,9 @@
  *    all, for a decision the runtime already has a documented default for
  *    (`DEFAULT_AGENT_WORKFLOW_TYPE`). `outcome` is what keeps that honest — the
  *    surface can say "opened as Ask, could not classify" rather than presenting a
- *    fallback as a verdict. The one throw is a manifest defect, a language with no line
- *    for a workflow, which no model, objective or network can cause.
+ *    fallback as a verdict. The one throw is a manifest defect, a language with no
+ *    variant for the default workflow the fallback opens, which no model, objective or
+ *    network can cause.
  *  - **It never guesses.** A reply is normalised defensively — whitespace, case,
  *    surrounding quotes or a trailing full stop, all of which models add — and then
  *    matched EXACTLY. "optimization" is one word away from a canonical id and is
@@ -54,7 +55,12 @@ import { LLMConfigError } from "@/lib/llm/types";
 import { logger } from "@/lib/logger";
 import type { AgentRunWorkflowType } from "./types";
 import { DEFAULT_AGENT_WORKFLOW_TYPE } from "./types";
-import { AGENT_WORKFLOW_VARIANTS, type AgentStatementLanguageId, requiredVariant } from "./agent-manifest";
+import {
+  AGENT_WORKFLOW_VARIANTS,
+  type AgentStatementLanguageId,
+  agentVariant,
+  requiredVariant,
+} from "./agent-manifest";
 import { DEFAULT_STATEMENT_LANGUAGE, statementFamilyOf } from "./languages/client";
 import type { AgentFetch } from "./provider-registry";
 import {
@@ -133,21 +139,26 @@ const CLASSIFY_MAX_OUTPUT_TOKENS_RESPONSES = 1024;
 const classifySystems = new Map<AgentStatementLanguageId, string>();
 
 /**
- * The system prompt for one language: the five ids and the line the model is told about each, read from that
- * language's variants in `agent-manifest.ts`.
+ * The system prompt for one language: the ids of the workflows that language has a variant for, and the line the model
+ * is told about each, read from that language's variants in `agent-manifest.ts`.
  *
- * The ids and their order come from the SQL record, which is total over `AgentRunWorkflowType` and written in the
- * union's order, so adding a workflow stops the manifest compiling until someone writes the line, and the line is then
- * listed here with nothing else to edit. Each line is the language's own variant's, and a language missing one is a
- * thrown `AgentManifestError` rather than a workflow the classifier silently cannot reach: a classifier that cannot
- * name a workflow is worse than one that fails loudly, which is why this reads the record's own entries rather than a
- * list of ids. Built once per language, because the manifest is frozen.
+ * The order comes from the SQL record, which is total over `AgentRunWorkflowType` and written in the union's order, so
+ * adding a workflow stops the manifest compiling until someone writes the line, and the line is then listed here with
+ * nothing else to edit. Each line is the language's own variant's. A workflow the language has no variant for is left
+ * out rather than refused: a family can lack a workflow on purpose (one whose store has no plan offers no
+ * optimization), and a run of it could only be refused, so the model is never offered it. The default workflow is the
+ * exception, because every unclassified run opens as it: a language without it is a thrown `AgentManifestError`.
+ * Built once per language, because the manifest is frozen.
  */
 function classifySystem(language: AgentStatementLanguageId): string {
   const held = classifySystems.get(language);
   if (held !== undefined) return held;
+  requiredVariant(language, DEFAULT_AGENT_WORKFLOW_TYPE);
   const lines = (Object.keys(AGENT_WORKFLOW_VARIANTS[DEFAULT_STATEMENT_LANGUAGE]) as AgentRunWorkflowType[])
-    .map((id) => `${id}: ${requiredVariant(language, id).classifierDescription}`)
+    .flatMap((id) => {
+      const variant = agentVariant(language, id);
+      return variant === undefined ? [] : [`${id}: ${variant.classifierDescription}`];
+    })
     .join("\n");
   const system = [
     "You classify a database task into exactly one workflow.",
@@ -186,16 +197,17 @@ const UNCLASSIFIED: AgentWorkflowClassification = Object.freeze({
  *
  * @returns the workflow and whether it was actually classified. Every model failure
  *          is an `unclassified` investigation.
- * @throws AgentManifestError when the statement language has no classifier line for a
+ * @throws AgentManifestError when the statement language has no variant for the default
  *         workflow, a manifest defect that no fallback should hide.
  */
 export async function classifyAgentWorkflow(
   objective: string,
   options: AgentWorkflowClassificationOptions = {},
 ): Promise<AgentWorkflowClassification> {
-  // Read before any model failure can be caught: a language missing a workflow's line is a manifest defect, and
+  // Read before any model failure can be caught: a language missing the default workflow is a manifest defect, and
   // folding it into `unclassified` would hide it behind the fallback every transient failure reaches.
-  const system = classifySystem(statementFamilyOf(options.statementLanguage));
+  const language = statementFamilyOf(options.statementLanguage);
+  const system = classifySystem(language);
   // The ceiling always applies; a caller's signal only ever makes the bound tighter.
   const signals = [AbortSignal.timeout(AGENT_WORKFLOW_CLASSIFY_TIMEOUT_MS)];
   if (options.signal) signals.push(options.signal);
@@ -253,6 +265,7 @@ export async function classifyAgentWorkflow(
   }
 
   const candidate = normaliseReply(reply);
-  if (!isWorkflowType(candidate)) return UNCLASSIFIED;
+  // A workflow the language has no variant for was never offered, so a model naming one is not followed.
+  if (!isWorkflowType(candidate) || agentVariant(language, candidate) === undefined) return UNCLASSIFIED;
   return { workflowType: candidate, outcome: "classified" };
 }

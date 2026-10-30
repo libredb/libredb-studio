@@ -1472,6 +1472,7 @@ The `libredbkv` statement-language family has no dialect-bound member.
 This overlay overrides no Shared member, so every Shared member is the `libredbkv` statement-language family's own.
 The pack id is `libredbkv` and not the editor language's `libredb`, because a pack id must differ from every type-id.
 The family offers the investigation and the data-analysis workflows, each through `run_read_query` with one read command, and the operations workflow; it offers no query optimization and no database assessment, since the store has no plan, no profile and no index for their tools to read, and no workflow hands an answer to the editor.
+The workflow classifier offers the model only these three, so an Automatic run is classified into one of them, and a reply naming a workflow the family lacks is not followed.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
 
 ### 15.7 Boundary record

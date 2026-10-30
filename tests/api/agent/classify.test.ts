@@ -195,6 +195,15 @@ describe("POST /api/agent/classify", () => {
     expect(mockClassify).toHaveBeenCalledWith("why is checkout slow", { statementLanguage: "sql" });
   });
 
+  test("a LibreDB connection is classified in its own family's terms", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:store", name: "Store", type: "libredb" });
+
+    const res = await POST(classifyRequest({ objective: "which keys hold a role", connectionId: "seed:store" }));
+
+    expect(res.status).toBe(200);
+    expect(mockClassify).toHaveBeenCalledWith("which keys hold a role", { statementLanguage: "libredbkv" });
+  });
+
   test("a connection with no statement language is classified in SQL's terms", async () => {
     mockResolveConnection.mockResolvedValueOnce({ id: "seed:cache", name: "Cache", type: "redis" });
 
