@@ -239,6 +239,15 @@ describe("POST /api/agent/classify", () => {
     });
   });
 
+  test("a Neo4j connection is classified in its own family's terms", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:graph", name: "Graph", type: "neo4j" });
+
+    const res = await POST(classifyRequest({ objective: "who knows whom", connectionId: "seed:graph" }));
+
+    expect(res.status).toBe(200);
+    expect(mockClassify).toHaveBeenCalledWith("who knows whom", { statementLanguage: "cypher" });
+  });
+
   test("a connection with no statement language is classified in SQL's terms", async () => {
     mockResolveConnection.mockResolvedValueOnce({ id: "seed:cache", name: "Cache", type: "redis" });
 

@@ -2814,10 +2814,10 @@ describe("runReadQueryTool — a database error is repairable, bounded, and neve
 
     await expect(
       executeAgentOperation(
-        { ...h.context, statementLanguage: "cypher" as AgentStatementLanguageId },
+        { ...h.context, statementLanguage: "gremlin" as AgentStatementLanguageId },
         { operationId: "sql.query.read", sql: "MATCH (n) RETURN n" },
       ),
-    ).rejects.toThrow("no server adapter for cypher");
+    ).rejects.toThrow("no server adapter for gremlin");
     expect(reached).toBe(false);
   });
 

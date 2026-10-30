@@ -17,7 +17,7 @@ import { parse as parseYAML } from "yaml";
 import { MAX_GRAPH_NODES, capNotice, droppedNotice, graphAriaLabel } from "@/components/results-graph/graph-canvas";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { DB_UI_CONFIG, readOnlyHint } from "@/lib/db-ui-config";
-import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import { type GraphClient, GraphClientError, type GraphRunResult } from "@/lib/db/graph/bolt/client";
 import { MAX_CELL_DEPTH, MAX_CELL_JSON_BYTES } from "@/lib/db/graph/bolt/record-values";
 import { boltEndpointOf } from "@/lib/db/graph/bolt/uri";
@@ -26,6 +26,9 @@ import { CYPHER_UNICODE_ESCAPE, CypherNameError } from "@/lib/db/graph/cypher/qu
 import { checkCypherRead } from "@/lib/db/graph/cypher/read-policy";
 import { type ResultGraph, buildResultGraph, captionOf } from "@/lib/db/graph/result-graph";
 import { GRAPH_TAG } from "@/lib/db/graph/values";
+import { NEO4J_AGENT_PROOF_ROW_BOUND, proveNeo4jAgentPrincipal } from "@/lib/db/providers/graph/neo4j/agent-boundary";
+import { NEO4J_BUILT_IN_ROUTINES } from "@/lib/db/providers/graph/neo4j/agent-builtins";
+import { readNeo4jAgentStatement } from "@/lib/db/providers/graph/neo4j/agent-statement";
 import { CATALOG_ROW_BOUND, NEO4J_CATALOG_STATEMENTS } from "@/lib/db/providers/graph/neo4j/catalog";
 import { mapNeo4jError } from "@/lib/db/providers/graph/neo4j/errors";
 import { Neo4jProvider } from "@/lib/db/providers/graph/neo4j/index";
@@ -38,6 +41,7 @@ import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { SeedConfigSchema } from "@/lib/seed/types";
 import type { DatabaseConnection, SSLConfig } from "@/lib/types";
 import { TUNNEL_FAR_END } from "@/lib/types";
+import { NEO4J_FIXTURES, recordedGraphClient } from "../../../helpers/neo4j-fixtures";
 
 const ROOT = path.resolve(import.meta.dir, "../../../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
@@ -413,11 +417,13 @@ describe("docs/SECURITY.md note 3.10 names only what the policy profile refuses"
 });
 
 describe("docs/providers/neo4j.md section 3.6 states the machine access the product offers", () => {
-  test("plan mode and the MCP metadata tools, no agent execution and no run_read_query", () => {
-    expect(AGENT_EXECUTION_ENGINES).not.toContain("neo4j");
+  test("plan mode, the MCP metadata tools and agent execution, and no run_read_query", () => {
+    expect(AGENT_EXECUTION_ENGINES).toContain("neo4j");
     expect(MCP_EXPOSABLE.neo4j).toBe(true);
+    expect(MCP_STATEMENT_READ.neo4j).toBe(false);
     expect(MACHINE).toContain("`list_connections` and `inspect_schema`");
-    expect(MACHINE).toContain("agent execution and MCP `run_read_query` do not serve Neo4j");
+    expect(MACHINE).toContain("Agent mode executes Cypher on Enterprise Edition through `queryReadOnly`");
+    expect(MACHINE).toContain("MCP `run_read_query` does not serve Neo4j, filed as B93");
   });
 
   test("the plan-mode statement language is the one getLabels() answers", () => {
@@ -745,5 +751,29 @@ describe("docs/providers/neo4j.md carries no authoring instruction", () => {
     expect(DOC).not.toContain("/home/");
     expect(DOC).not.toMatch(/\bSR\d+\b/);
     expect(DOC).not.toContain("TODO");
+  });
+});
+
+describe("docs/providers/neo4j.md section 15 states the agent path as the code decides it", () => {
+  const AGENT =
+    docSection(DOC, "15. Agent mode: a user proved read-only before every statement, on Enterprise only") ?? "";
+  const quoted = (text: string) => `> ${text}`;
+
+  test("the Community refusal is quoted as the proof words it", async () => {
+    const community = recordedGraphClient(path.join(NEO4J_FIXTURES, "agent-boundary", "community"));
+    const error = await proveNeo4jAgentPrincipal(community, { database: "neo4j", timeoutMs: 1000 }).catch((e) => e);
+    expect(AGENT).toContain(quoted((error as Error).message));
+  });
+
+  test("the carriage return refusal is quoted as the reader words it", () => {
+    const reading = readNeo4jAgentStatement("RETURN 1\r");
+    if (reading.ok) throw new Error("admitted");
+    expect(AGENT).toContain(quoted(reading.message));
+  });
+
+  test("the pinned versions and the proof's row bound are the ones the code holds", () => {
+    expect(Object.keys(NEO4J_BUILT_IN_ROUTINES)).toEqual(["5.26.31"]);
+    expect(AGENT).toContain("5.26.31 today");
+    expect(AGENT).toContain(`${NEO4J_AGENT_PROOF_ROW_BOUND.toLocaleString("en-US")}-row bound`);
   });
 });

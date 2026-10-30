@@ -21,6 +21,7 @@ import { LIBREDBKV_SERVER_PACK } from "./libredbkv/server";
 import { MONGO_SERVER_PACK } from "./mongo/server";
 import { WEAVIATEAPI_SERVER_PACK } from "./weaviateapi/server";
 import { QDRANTAPI_SERVER_PACK } from "./qdrantapi/server";
+import { CYPHER_SERVER_PACK } from "./cypher/server";
 import type { AgentLanguageServerAdapter, AgentLanguageServerPack, EvidenceToolName } from "./pack";
 import { SQL_STATEMENT_DEFINITIONS } from "./sql/definitions";
 import { SQL_RECOMMEND_CHANGE } from "./sql/recommendation";
@@ -40,6 +41,7 @@ const SERVER_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageServe
   influxql: INFLUXQL_SERVER_PACK,
   weaviateapi: WEAVIATEAPI_SERVER_PACK,
   qdrantapi: QDRANTAPI_SERVER_PACK,
+  cypher: CYPHER_SERVER_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageServerPack>);
 
 /** The server pack for `language`, or a named error when the id is not a language this server knows. */
@@ -81,6 +83,7 @@ export const LANGUAGE_BASE_DEFINITIONS = mergeDisjoint(
     INFLUXQL_SERVER_PACK.baseDefinitions,
     WEAVIATEAPI_SERVER_PACK.baseDefinitions,
     QDRANTAPI_SERVER_PACK.baseDefinitions,
+    CYPHER_SERVER_PACK.baseDefinitions,
   ],
   "LANGUAGE_BASE_DEFINITIONS",
 );
@@ -104,6 +107,7 @@ export const WORKFLOW_TOOL_RULES: Readonly<
   influxql: INFLUXQL_SERVER_PACK.workflowToolRules,
   weaviateapi: WEAVIATEAPI_SERVER_PACK.workflowToolRules,
   qdrantapi: QDRANTAPI_SERVER_PACK.workflowToolRules,
+  cypher: CYPHER_SERVER_PACK.workflowToolRules,
 } satisfies Record<AgentStatementLanguageId, Partial<Record<AgentRunWorkflowType, string>>>);
 
 /**
@@ -119,6 +123,7 @@ export const LANGUAGE_SHORTFALL_NOTICES = mergeDisjoint(
     INFLUXQL_SERVER_PACK.shortfallNotices,
     WEAVIATEAPI_SERVER_PACK.shortfallNotices,
     QDRANTAPI_SERVER_PACK.shortfallNotices,
+    CYPHER_SERVER_PACK.shortfallNotices,
   ],
   "LANGUAGE_SHORTFALL_NOTICES",
 );

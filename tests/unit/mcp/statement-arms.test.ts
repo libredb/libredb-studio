@@ -69,6 +69,8 @@ describe("MCP_STATEMENT_ARMS", () => {
     expect(mcpStatementToolFor("weaviate")).toBeNull();
     expect(MCP_STATEMENT_ARMS.qdrantapi).toBeNull();
     expect(mcpStatementToolFor("qdrant")).toBeNull();
+    expect(MCP_STATEMENT_ARMS.cypher).toBeNull();
+    expect(mcpStatementToolFor("neo4j")).toBeNull();
   });
 
   test("is built from the languages' MCP facets, one arm per declared facet, in the registry's order", () => {
@@ -392,6 +394,7 @@ describe("the tool each engine is read with", () => {
       influxql: null,
       weaviateapi: null,
       qdrantapi: null,
+      cypher: null,
     };
     expect(servingStatementArms(arms)).toEqual([RUN_READ_QUERY_ARM]);
     const registerTool = mock((_name: string) => undefined);

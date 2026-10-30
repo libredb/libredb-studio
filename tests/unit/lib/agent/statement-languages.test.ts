@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { AGENT_LANGUAGE_COPY, AGENT_WORKFLOW_VARIANTS } from "@/lib/agent/agent-manifest";
+import { cypherRowCapAdvice, fingerprintCypher } from "@/lib/agent/languages/cypher/adapter";
 import { fingerprintInfluxql, influxqlRowCapAdvice } from "@/lib/agent/languages/influxql/adapter";
 import { fingerprintKubectl, kubectlRowCapAdvice } from "@/lib/agent/languages/kubectl/adapter";
 import { fingerprintLibredbkv, libredbkvRowCapAdvice } from "@/lib/agent/languages/libredbkv/adapter";
@@ -18,6 +19,11 @@ import {
   influxqlAgentReadInput,
 } from "@/lib/db/operations/influxql-admission";
 import { admitMongoStatement } from "@/lib/db/operations/mongo-admission";
+import {
+  admitCypherStatement,
+  CYPHER_AGENT_MAX_STATEMENT_CHARS,
+  cypherAgentReadInput,
+} from "@/lib/db/operations/cypher-admission";
 import {
   admitWeaviateapiStatement,
   WEAVIATEAPI_AGENT_MAX_STATEMENT_CHARS,
@@ -581,5 +587,64 @@ describe("the qdrantapi language's server adapter and admission", () => {
   test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
     expect(Object.keys(AGENT_WORKFLOW_VARIANTS.qdrantapi).sort()).toEqual(["investigation", "operations"]);
     expect(AGENT_WORKFLOW_VARIANTS.qdrantapi.investigation?.canAutoExecute).toBe(false);
+  });
+});
+
+describe("the cypher language's server adapter and admission", () => {
+  test("the fingerprint is the statement's tokens, keywords folded, so one read written three ways is one identity", () => {
+    const one = fingerprintCypher("MATCH (n:Person) RETURN n.name LIMIT 5");
+    expect(fingerprintCypher("match (n:Person)  return n.name limit 5")).toBe(one);
+    expect(fingerprintCypher("MATCH (n:Person)\nRETURN n.name LIMIT 5;")).toBe(one);
+    expect(fingerprintCypher("MATCH (n:person) RETURN n.name LIMIT 5")).not.toBe(one);
+    expect(fingerprintCypher("MATCH (n:Person) RETURN n.name LIMIT 6")).not.toBe(one);
+    expect(fingerprintCypher("MATCH (n:Person) RETURN n.Name LIMIT 5")).not.toBe(one);
+  });
+
+  test("the fingerprint is total: a refused statement is identified by its raw text, so it is refused again", () => {
+    const raw = "LOAD CSV FROM 'file:///x.csv' AS row RETURN row";
+    expect(fingerprintCypher(raw)).toBe(fingerprintCypher(raw));
+    expect(fingerprintCypher(raw)).toMatch(/^[0-9a-f]{64}$/);
+    expect(fingerprintCypher(raw.toLowerCase())).not.toBe(fingerprintCypher(raw));
+  });
+
+  test("the copy has no advice key, and every statement gets the one Cypher sentence", () => {
+    expect([...AGENT_LANGUAGE_COPY.cypher.adviceKeys]).toEqual([]);
+    expect(cypherRowCapAdvice("MATCH (n) RETURN n", "200")).toBe(
+      "Ask for at most 200 rows: narrow the MATCH with a WHERE, aggregate with count() or collect(), or bound it with LIMIT, and run it again.",
+    );
+    expect(languageServer("cypher").rowCapAdvice("SHOW INDEXES", "200")).toBe(cypherRowCapAdvice("x", "200"));
+    expect(languageServer("cypher").shapeAdvice).toContain("a valid Cypher statement");
+  });
+
+  test("the admission is the provider's reader, plus a length the agent's contract names", () => {
+    expect(admitCypherStatement("MATCH (n) RETURN count(n) AS n")).toBeNull();
+    expect(admitCypherStatement("RETURN 1 // why")).toEqual({
+      code: "agent-comment",
+      message: "An agent statement has no comment: remove it and send the statement alone. Nothing was sent.",
+    });
+    expect(admitCypherStatement("LOAD CSV FROM 'file:///x.csv' AS row RETURN row")?.code).toBe("denied-word");
+    const long = `RETURN '${"m".repeat(CYPHER_AGENT_MAX_STATEMENT_CHARS)}'`;
+    expect(admitCypherStatement(long)).toEqual({
+      code: "agent-too-large",
+      message: `The statement is longer than ${CYPHER_AGENT_MAX_STATEMENT_CHARS} characters, the most an agent read takes: shorten it. Nothing was sent.`,
+    });
+    expect(languageServer("cypher").admit?.("MATCH (n) RETURN n LIMIT 1")).toBeNull();
+  });
+
+  test("an ungrounded run is sent to a read it holds, and plan mode is told no rule of the agent's reader", () => {
+    const ungrounded = languageServerPack("cypher").grounding.ungrounded;
+    expect(ungrounded?.("The capture failed.", { singular: "label", plural: "labels" })).toBe(
+      "The capture failed.\nSo nothing about this database has been established for you: not one label name. Read what you need with run_read_query, starting with CALL db.labels().",
+    );
+    expect(languageServerPack("cypher").grounding.planningRules).toBeUndefined();
+  });
+
+  test("the descriptor's input is strict, carries the statement, and refuses what the admission refuses", () => {
+    expect(cypherAgentReadInput.safeParse({ statement: "MATCH (n) RETURN n LIMIT 1" }).success).toBe(true);
+    expect(cypherAgentReadInput.safeParse({ statement: "MATCH (n) RETURN n", sql: "x" }).success).toBe(false);
+    const refused = cypherAgentReadInput.safeParse({ statement: "RETURN 1\r" });
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues[0]?.path).toEqual(["statement"]);
+    expect(refused.error?.issues[0]?.message).toContain("An agent statement has no carriage return");
   });
 });

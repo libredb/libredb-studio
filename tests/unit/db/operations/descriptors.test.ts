@@ -51,6 +51,7 @@ describe("canonical operation registry", () => {
     expect(registry.registeredIds()).toEqual([
       "cluster.usage.read",
       "cluster.workloads.read",
+      "cypher.query.read",
       "db.operations.read",
       "db.schema.read",
       "influxql.query.read",
@@ -185,6 +186,7 @@ describe("the statement-read operations", () => {
     // profile exactly as of SQL's.
     const ids = createCanonicalOperationRegistry().registeredIds();
     expect(ids.filter(isStatementReadOperation).sort()).toEqual([
+      "cypher.query.read",
       "influxql.query.read",
       "kubectl.query.read",
       "libredbkv.query.read",

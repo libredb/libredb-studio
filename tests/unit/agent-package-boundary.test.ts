@@ -239,7 +239,8 @@ function isAgentModule(file: string): boolean {
  * `cluster.usage.read` and ship in the package with the provider. The MongoDB
  * provider's read-only profile (its bounded read and the boundary it proves at
  * open) is `queryReadOnly`'s own code, split out of `mongodb/index.ts`, and
- * ships with the provider the same way, as do the ClickHouse, libSQL, Oracle, Db2, Cassandra, Couchbase and Druid providers'.
+ * ships with the provider the same way, as do the ClickHouse, libSQL, Oracle, Db2, Cassandra, Couchbase, Druid and Neo4j
+ * providers'.
  */
 const NOT_AGENT_CODE: ReadonlySet<string> = new Set([
   "src/lib/db/providers/platform/kubernetes/agent-readings.ts",
@@ -254,6 +255,9 @@ const NOT_AGENT_CODE: ReadonlySet<string> = new Set([
   "src/lib/db/providers/sql/cassandra/agent-boundary.ts",
   "src/lib/db/providers/document/couchbase/agent-boundary.ts",
   "src/lib/db/providers/sql/druid/agent-boundary.ts",
+  "src/lib/db/providers/graph/neo4j/agent-boundary.ts",
+  "src/lib/db/providers/graph/neo4j/agent-builtins.ts",
+  "src/lib/db/providers/graph/neo4j/agent-statement.ts",
 ]);
 
 // ---------------------------------------------------------------------------

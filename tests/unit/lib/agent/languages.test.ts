@@ -124,6 +124,7 @@ const LANGUAGE_IDS: Readonly<Record<AgentStatementLanguageId, true>> = {
   influxql: true,
   weaviateapi: true,
   qdrantapi: true,
+  cypher: true,
 };
 
 describe("the server packs", () => {
@@ -140,7 +141,7 @@ describe("the server packs", () => {
     },
   );
 
-  test.each(["cypher", "toString"])("an id no pack holds (%s) is the same named error from both accessors", (id) => {
+  test.each(["gremlin", "toString"])("an id no pack holds (%s) is the same named error from both accessors", (id) => {
     const unknown = id as AgentStatementLanguageId;
     expect(() => languageServerPack(unknown)).toThrow(new Error(`no server adapter for ${id}`));
     expect(() => languageServer(unknown)).toThrow(new Error(`no server adapter for ${id}`));
@@ -183,8 +184,8 @@ describe("the definitions the packs register", () => {
   });
 
   test("an offer on an id no pack holds is the named error, not a fall back to SQL", () => {
-    expect(() => agentToolDefinition("cypher" as AgentStatementLanguageId, "investigation", "run_read_query")).toThrow(
-      new Error("no server adapter for cypher"),
+    expect(() => agentToolDefinition("gremlin" as AgentStatementLanguageId, "investigation", "run_read_query")).toThrow(
+      new Error("no server adapter for gremlin"),
     );
   });
 
@@ -256,11 +257,12 @@ describe("the language packs", () => {
       "influxql",
       "weaviateapi",
       "qdrantapi",
+      "cypher",
     ]);
     expect(Object.isFrozen(LANGUAGE_TOOL_ARMS)).toBe(true);
   });
 
-  test.each(["cypher", "toString"])("an id no pack holds (%s) is a named error", (id) => {
+  test.each(["gremlin", "toString"])("an id no pack holds (%s) is a named error", (id) => {
     expect(() => agentLanguagePack(id as AgentStatementLanguageId)).toThrow(new Error(`no language pack for ${id}`));
   });
 
@@ -402,6 +404,7 @@ describe("the prompt tables the packs hold", () => {
       "influxql",
       "weaviateapi",
       "qdrantapi",
+      "cypher",
     ]);
     expect(Object.isFrozen(WORKFLOW_TOOL_RULES)).toBe(true);
     for (const id of ids) {
@@ -501,6 +504,7 @@ describe("the client packs", () => {
         "influxql",
         "weaviateapi",
         "qdrantapi",
+        "cypher",
       ]);
     }
   });
@@ -516,6 +520,7 @@ describe("the client packs", () => {
       influxql: null,
       weaviateapi: null,
       qdrantapi: null,
+      cypher: null,
     });
   });
 

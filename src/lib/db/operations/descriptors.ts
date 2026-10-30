@@ -24,6 +24,7 @@ import { z } from "zod";
 import type { ExplainMode } from "@/lib/explain";
 import { readMongoCommand } from "@/lib/db/providers/document/mongodb/envelope";
 import { OperationRegistry } from "./registry";
+import { cypherAgentReadInput } from "./cypher-admission";
 import { influxqlAgentReadInput } from "./influxql-admission";
 import { kubectlAgentReadInput } from "./kubectl-admission";
 import { libredbkvAgentReadInput } from "./libredbkv-admission";
@@ -517,6 +518,41 @@ const qdrantapiQueryReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+const CYPHER_READ_BOUNDARY =
+  "Neo4j Enterprise Edition: before the open and before every statement, under that statement's deadline, the server " +
+  "proves the connection's user reads only (agent-boundary.ts): Enterprise Edition at a version whose built-in " +
+  "procedures and functions are pinned, every granted privilege of every role a read, no LOAD that a DENY LOAD ON ALL " +
+  "DATA does not override, and no executable procedure or function outside the built-ins, so an administrator, a user " +
+  "that writes or loads, a server with an extension the user can run and Community Edition are refused. The statement " +
+  "reader admits one statement under the editor's read policy with no comment and no carriage return, refusing every " +
+  "write, LOAD CSV, USE and any other procedure before anything is sent; the server's EXPLAIN classification runs before " +
+  "it, it runs in a READ session on the connection's database, and a result past the row or byte budget is refused, " +
+  "never truncated.";
+
+/**
+ * One Cypher read statement the model wrote, on a `neo4j` connection.
+ *
+ * R1 on a boundary the server's own authorization provides: a READ session still runs LOAD CSV and any procedure an
+ * extension adds, so what bounds the read is a user the server proves cannot write, load or run an extension. Its own
+ * id, and not a widened `sql.query.read`, so the SQL contract and its audit action stay exactly what they were.
+ */
+const cypherQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "cypher.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: cypherAgentReadInput,
+  verification: {
+    reviewedBy: "Neo4j agent execution design review",
+    boundary: CYPHER_READ_BOUNDARY,
+    verifiedOn: "2026-10-30",
+  },
+};
+
 /** The selector of a scoped MongoDB catalog read: a kind, a database and a collection, any of them narrowed. */
 const mongoCatalogSelectorInput = z.strictObject({
   kind: z.enum(["columns", "indexes"]).default("columns"),
@@ -717,6 +753,7 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   influxqlQueryReadDescriptor,
   weaviateapiQueryReadDescriptor,
   qdrantapiQueryReadDescriptor,
+  cypherQueryReadDescriptor,
 ]);
 
 /**

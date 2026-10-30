@@ -16,6 +16,7 @@ import { LIBREDB_CLIENT_OVERLAY } from "../libredbkv/engines/client";
 import { MONGODB_CLIENT_OVERLAY } from "../mongo/engines/client";
 import { WEAVIATE_CLIENT_OVERLAY } from "../weaviateapi/engines/client";
 import { QDRANT_CLIENT_OVERLAY } from "../qdrantapi/engines/client";
+import { NEO4J_CLIENT_OVERLAY } from "../cypher/engines/client";
 import { defineOverlay, dialectOnly } from "../overlay";
 import type { AgentEngineClientDialect, AgentEngineClientOverlays, AgentEnginePack, AgentEngineType } from "../pack";
 import {
@@ -58,6 +59,7 @@ const CLIENT_OVERLAYS: AgentEngineClientOverlays = Object.freeze({
   influxdb: Object.freeze({ family: "influxql", overlay: dialectOnly(INFLUXDB_CLIENT_OVERLAY) }),
   weaviate: Object.freeze({ family: "weaviateapi", overlay: dialectOnly(WEAVIATE_CLIENT_OVERLAY) }),
   qdrant: Object.freeze({ family: "qdrantapi", overlay: dialectOnly(QDRANT_CLIENT_OVERLAY) }),
+  neo4j: Object.freeze({ family: "cypher", overlay: dialectOnly(NEO4J_CLIENT_OVERLAY) }),
 } satisfies AgentEngineClientOverlays);
 
 /**

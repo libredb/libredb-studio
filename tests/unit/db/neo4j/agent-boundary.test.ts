@@ -84,7 +84,7 @@ describe("proveNeo4jAgentPrincipal", () => {
   test("admits a reader whose roles hold no LOAD and no write, on the connection's database, in five reads", async () => {
     const client = recordedGraphClient(at("agent"));
     await proveNeo4jAgentPrincipal(client, OPTIONS);
-    expect(client.calls.map((call) => call.statement)).toEqual(STATEMENTS);
+    expect(client.calls.map((call) => call.statement)).toEqual([...STATEMENTS]);
     for (const call of client.calls) {
       expect(call.options).toEqual({ ...OPTIONS, maxRows: NEO4J_AGENT_PROOF_ROW_BOUND });
     }
@@ -167,14 +167,13 @@ describe("proveNeo4jAgentPrincipal", () => {
     expect(error.message).toContain(expected);
   });
 
-  test("refuses a components answer with no kernel row, or two", async () => {
+  test.each([0, 2])("refuses a components answer with %i kernel rows", async (count) => {
     const kernel = rowsOf("agent", "proof-components")[0];
-    for (const rows of [[], [kernel, kernel]]) {
-      const error = await refusal(
-        agentWith(NEO4J_AGENT_PROOF_STATEMENTS.components, { fields: ["name"], rows, truncated: false }),
-      );
-      expect(error.message).toContain("could not read the server's answer to CALL dbms.components()");
-    }
+    const rows = Array.from({ length: count }, () => kernel);
+    const error = await refusal(
+      agentWith(NEO4J_AGENT_PROOF_STATEMENTS.components, { fields: ["name"], rows, truncated: false }),
+    );
+    expect(error.message).toContain("could not read the server's answer to CALL dbms.components()");
   });
 
   test("refuses the stock reader, whose LOAD comes from PUBLIC", async () => {
@@ -270,7 +269,8 @@ describe("proveNeo4jAgentPrincipal", () => {
     ["no segment", { segment: undefined }],
     ["no role", { role: undefined }],
   ])("refuses a privilege listing with %s", async (_label, change) => {
-    const rows = rowsOf("agent", "proof-privileges").map((row, index) => (index === 0 ? { ...row, ...change } : row));
+    const [first, ...rest] = rowsOf("agent", "proof-privileges");
+    const rows = [{ ...first, ...change }, ...rest];
     const answer = { fields: Object.keys(rows[1]), rows, truncated: false };
     const error = await refusal(agentWith(NEO4J_AGENT_PROOF_STATEMENTS.privileges, answer));
     expect(error.message).toContain("could not read the server's answer to SHOW USER PRIVILEGES");

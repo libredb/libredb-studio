@@ -75,8 +75,13 @@ import type { DatabaseType } from "@/lib/types";
  * alone, and by the server refusing an empty alias update and an empty point delete on every collection the key lists,
  * so a connection with no key, the API key, a JWT that writes any collection or alias and a server with no key
  * configured are refused; Studio's reader admits the version, collection, alias, count and cluster reads, so no query
- * reaches the inference address, and every answer carries names, counts and flags only. Each provider's own
- * `queryReadOnly` argues its own case.
+ * reaches the inference address, and every answer carries names, counts and flags only. Neo4j's is the user's, on
+ * Enterprise Edition only: before every statement the server must name Enterprise at a version whose built-in routines
+ * are pinned, every granted privilege of every role must be a read, LOAD must be revoked or denied, and every
+ * procedure and function the user can execute must be a built-in, so an administrator, a user that writes or loads, a
+ * server with an extension the user can run and Community Edition, which has no roles, are refused. Studio's reader
+ * admits one statement of the editor's read policy with no comment, and the server's EXPLAIN classification and a READ
+ * session stand behind it. Each provider's own `queryReadOnly` argues its own case.
  * `tests/unit/lib/agent/engine-support.test.ts` is what keeps the two equal - it walks EVERY
  * id in the `DatabaseType` union, reads `queryReadOnly` off the real provider class the
  * factory would construct, and fails if this array and the drivers diverge in either direction.
@@ -113,6 +118,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "influxdb",
   "weaviate",
   "qdrant",
+  "neo4j",
 ];
 
 /**
