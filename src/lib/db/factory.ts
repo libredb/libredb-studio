@@ -386,7 +386,6 @@ export async function createDatabaseProvider(
 
     // Key-Value Stores - dynamically imported
     case "redis": {
-      // The execution context rides along, so the agent read-only profile proves its ACL user and reads metadata only.
       const { RedisProvider } = await import("./providers/keyvalue/redis");
       return new RedisProvider(connection, options, execution);
     }
