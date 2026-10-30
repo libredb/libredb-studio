@@ -918,3 +918,75 @@ describe("proxy in openshift sign-in mode", () => {
     });
   });
 });
+
+// Whenever the auth cookies are Secure the session cookie is __Host-auth-token, and the proxy reads that name alone,
+// decided from the request's own Host and x-forwarded-proto exactly as the route handlers decide it.
+describe("proxy with host-prefixed cookie names", () => {
+  const setNodeEnv = (value: string | undefined) => {
+    if (value === undefined) delete (process.env as Record<string, string>).NODE_ENV;
+    else (process.env as Record<string, string>).NODE_ENV = value;
+  };
+
+  async function inProduction(action: () => Promise<void>): Promise<void> {
+    const previous = process.env.NODE_ENV;
+    setNodeEnv("production");
+    try {
+      await action();
+    } finally {
+      setNodeEnv(previous);
+    }
+  }
+
+  function request(url: string, host: string, cookie?: string, basePath?: string): NextRequest {
+    const headers: Record<string, string> = { host };
+    if (cookie !== undefined) headers.cookie = cookie;
+    return new NextRequest(url, { headers, ...(basePath ? { nextConfig: { basePath } } : {}) });
+  }
+
+  test("a page with only a valid plain-named cookie goes to sign in", async () => {
+    const token = await createToken("user");
+    await inProduction(async () => {
+      const res = await proxy(request("https://studio.example.com/", "studio.example.com", `auth-token=${token}`));
+      expect(getRedirectLocation(res)).toBe("https://studio.example.com/login");
+    });
+  });
+
+  test("a page with a valid __Host-auth-token passes, and /login sends it to its landing page", async () => {
+    const token = await createToken("admin");
+    await inProduction(async () => {
+      const page = await proxy(
+        request("https://studio.example.com/", "studio.example.com", `__Host-auth-token=${token}`),
+      );
+      expect(isRedirect(page)).toBe(false);
+      const login = await proxy(
+        request("https://studio.example.com/login", "studio.example.com", `__Host-auth-token=${token}`),
+      );
+      expect(getRedirectLocation(login)).toBe("https://studio.example.com/admin");
+    });
+  });
+
+  test("a loopback host over plain http reads the plain name only", async () => {
+    const token = await createToken("user");
+    await inProduction(async () => {
+      const prefixed = await proxy(request("http://localhost:3000/", "localhost:3000", `__Host-auth-token=${token}`));
+      expect(getRedirectLocation(prefixed)).toBe("http://localhost:3000/login");
+      const plain = await proxy(request("http://localhost:3000/", "localhost:3000", `auth-token=${token}`));
+      expect(isRedirect(plain)).toBe(false);
+    });
+  });
+
+  test("under a base path the name carrying its segments is the one read", async () => {
+    const token = await createToken("user");
+    await withBasePathEnv("/tools/libredb", () =>
+      inProduction(async () => {
+        const url = "https://studio.example.com/tools/libredb/";
+        const bare = await proxy(request(url, "studio.example.com", `__Host-auth-token=${token}`, "/tools/libredb"));
+        expect(getRedirectLocation(bare)).toBe("https://studio.example.com/tools/libredb/login");
+        const suffixed = await proxy(
+          request(url, "studio.example.com", `__Host-auth-token.tools.libredb=${token}`, "/tools/libredb"),
+        );
+        expect(isRedirect(suffixed)).toBe(false);
+      }),
+    );
+  });
+});
