@@ -333,6 +333,18 @@ describe("the posture on Kubernetes", () => {
   });
 });
 
+describe("the posture on Oxia", () => {
+  const posture = agentPosture({ mode: "agent", engine: "oxia", engineLabel: "Oxia", handover: false });
+  const rows = STATEMENT_BUDGETS.maxResultRows;
+
+  test("claims the count of every key in the namespace, never a count over a range a command names", () => {
+    // A count over a named range or prefix is refused before the network, so the rail may not offer it.
+    expect(posture.body).not.toMatch(/keys in a range a command names|a range holding more than/);
+    expect(posture.body).toContain("the count of every key in the namespace, never their names");
+    expect(posture.body).toContain(`a namespace holding more than ${rows} keys is refused rather than counted in part`);
+  });
+});
+
 describe("autoExecuteTerms", () => {
   // No default: a caller that names no language would be shown SQL's terms on whatever engine it is on, SQL's
   // read-only session included, on an engine that has none.
