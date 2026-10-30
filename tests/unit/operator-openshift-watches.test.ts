@@ -339,6 +339,22 @@ describe("the chart rendered as the operator renders a resource that asks for th
   });
 });
 
+describe("the docs on the console plugin's namespace under the operator", () => {
+  test.each(["docs/DISTRIBUTION.md", "docs/HELM_CHART.md", "docs/OPENSHIFT.md", "charts/libredb-studio/README.md"])(
+    "%s names WATCH_NAMESPACE, never OPERATOR_NAMESPACE or openshift-operators, as the plugin's namespace",
+    (file) => {
+      const text = readFileSync(join(ROOT, file), "utf8");
+      expect(text).not.toContain("OPERATOR_NAMESPACE");
+      expect(text).not.toContain("openshift-operators` for the AllNamespaces install");
+    },
+  );
+
+  test("docs/DISTRIBUTION.md says the plugin namespace is pinned to $WATCH_NAMESPACE", () => {
+    const text = readFileSync(join(ROOT, "docs/DISTRIBUTION.md"), "utf8");
+    expect(text).toContain("pins `openshift.consolePlugin.namespace` to `$WATCH_NAMESPACE`");
+  });
+});
+
 describe("the dropped Subscription variable", () => {
   test("is named by no file of the operator, the chart or the docs", () => {
     const listed = Bun.spawnSync(

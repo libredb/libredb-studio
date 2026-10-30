@@ -266,6 +266,7 @@ Studio never asks for a password of its own in this mode.
 ## The console plugin
 
 The console plugin `libredb-studio` adds a Databases page under Home and an item on the details page of each supported database resource (CloudNativePG and EDB `Cluster`, Crunchy `PostgresCluster`, `MongoDBCommunity`).
+The item shows on the generic details page, the one Search and the resource's own list open (`/k8s/ns/<namespace>/<group>~<version>~<kind>/<name>`); the console renders no plugin details item on the operand details page that Installed Operators opens, so it is not shown there, and the Databases page lists the same database.
 The page lists the resources of those kinds the signed-in user may list in the chosen project, or in all projects for a user who may list them cluster-wide, and opens one in Studio in a new tab.
 It finds Studio only through the ConsoleLink named `libredb-studio`, which the cluster Studio renders with discovery on, so it needs `discovery.kubernetes.enabled` and `openshift.consoleLink.enabled` with `location: ApplicationMenu`.
 Per row it asks one access review, whether the user may `get` the row's credential Secret, only as a hint; the plugin never reads a Secret, and Studio reviews again with the user's own token when the database opens.
@@ -302,7 +303,9 @@ Neither the chart nor the operator patches the console's configuration: turning 
 The console runs the plugin in every console session and sends each console user's token to the plugin's server on every asset fetch.
 So whoever may change that server's Deployment runs code in every console session and receives every console user's token: only cluster admins may write the namespace it runs in, and anyone `oc adm policy who-can update deployments.apps -n <namespace>` lists there holds cluster-admin-grade power.
 
-- Under the operator, the server runs in the operator's own namespace, which the operator sets; a `LibreDBStudio` chooses neither the namespace nor the image.
+- Under the operator, the server runs in the operator's own namespace, the cluster Studio namespace ([The cluster Studio namespace](#the-cluster-studio-namespace)), which the operator sets; a `LibreDBStudio` chooses neither the namespace nor the image, and any other plugin namespace fails the render.
+  Sharing the namespace gives Studio nothing: Studio's ServiceAccount holds no right on the server's objects there and its pod mounts no API token, and the server's NetworkPolicy and labels are its own.
+  Check the namespace with `oc adm policy who-can update deployments.apps -n libredb-studio`, which should list only cluster admins, the operator's account and system accounts.
 - On a Helm install, `openshift.consolePlugin.namespace` names it.
   Create it with `oc create namespace <namespace>` right before the install, which fails if the name is taken, never with `oc new-project` or the console's Create Project.
   Then check that no RoleBinding there names a user or a group of users; the `system:deployers`, `system:image-builders` and `system:image-pullers` bindings OpenShift adds to every namespace are expected, and `oc adm policy who-can update deployments.apps -n <namespace>` decides.
@@ -482,7 +485,7 @@ docker run --rm -v <volume>:/app/data --entrypoint sh ghcr.io/libredb/libredb-st
 
 ## Uninstall
 
-Delete the `LibreDBStudio` in the operator's namespace first and uninstall the operator after it: the operator's finalizer uninstalls the resource's release, its ConsoleLink and the Roles in the discovered namespaces with it, and without the operator the resource's deletion, and its namespace's, never completes.
+Delete the `LibreDBStudio` in the operator's namespace first and uninstall the operator after it: the operator's finalizer uninstalls the resource's release, its ConsoleLink, its ConsolePlugin and plugin server and the Roles in the discovered namespaces with it, and without the operator the resource's deletion, and its namespace's, never completes.
 Resources in other namespaces carry no finalizer of this operator, except ones left from 1.1.0 (see [Moving from operator 1.1.0](#moving-from-operator-110)).
 Remove the Subscription and the CSV only once the second `get` lists nothing:
 

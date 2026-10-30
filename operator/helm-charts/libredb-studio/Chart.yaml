@@ -352,8 +352,9 @@ annotations:
   # moves, and a Helm install renders as before.
   # False: 0.1.118 adds openshift.consolePlugin, off by default, so an install that does not set it
   # renders as before. On, it renders the OpenShift console plugin's server and the ConsolePlugin
-  # libredb-studio in a namespace of their own, refused in the release's namespace, a discovered
-  # namespace and a requested project, with no Job: a cluster admin turns the plugin on in the console.
+  # libredb-studio: on a Helm install in a namespace of their own, refused in the release's namespace,
+  # a discovered namespace and a requested project; under the OLM operator in the operator's own
+  # namespace only. No Job: a cluster admin turns the plugin on in the console.
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
@@ -374,7 +375,7 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "openshift.consolePlugin (off by default) renders the OpenShift console plugin's server and its ConsolePlugin, refusing a plugin namespace that is the release's own, a discovered one or a requested project"
+    - "openshift.consolePlugin (off by default) renders the OpenShift console plugin's server and its ConsolePlugin: on a Helm install in a namespace that is not the release's own, a discovered one or a requested project; under the OLM operator, in the operator's own namespace"
 dependencies:
   - name: postgresql
     version: "16.x.x"

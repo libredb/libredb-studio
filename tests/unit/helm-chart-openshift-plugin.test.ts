@@ -745,6 +745,17 @@ describe("the chart README documents the console plugin", () => {
     expect(section).toContain(needle);
   });
 
+  test("says the details item shows on the generic details page only, not on the operator's operand page", () => {
+    expect(section).toContain("generic details page");
+    expect(section).toContain("operand details page that Installed Operators opens");
+  });
+
+  test("puts the server in the operator's own namespace under the operator, and refuses Studio's only on a Helm install", () => {
+    expect(section).toContain("Under the OLM operator the server runs in the operator's own namespace");
+    expect(section).toContain("on a Helm install, is the release's own namespace");
+    expect(section).not.toContain("is the release's own namespace or is listed");
+  });
+
   test("every new value is in the configuration reference", () => {
     for (const key of Object.keys(values.openshift.consolePlugin)) {
       expect(readme).toContain(`| \`openshift.consolePlugin.${key}\` |`);
@@ -768,6 +779,17 @@ describe("docs/OPENSHIFT.md on the console plugin", () => {
     expectEnableSnippetBehaves(plugin, plugins, patch);
   });
 
+  test("says the details item shows on the generic details page only, not on the operator's operand page", () => {
+    expect(plugin).toContain("generic details page");
+    expect(plugin).toContain("operand details page that Installed Operators opens");
+  });
+
+  test("puts the server in the operator's own namespace, the cluster Studio namespace, under the operator", () => {
+    expect(plugin).toContain("the server runs in the operator's own namespace, the cluster Studio namespace");
+    expect(plugin).toContain("any other plugin namespace fails");
+    expect(doc).not.toContain("openshift-operators` for the AllNamespaces install");
+  });
+
   test("names who-can as the check, and the system bindings every namespace holds", () => {
     expect(plugin).toContain("oc adm policy who-can update deployments.apps -n <namespace>");
     expect(plugin).toContain("system:image-pullers");
@@ -777,6 +799,24 @@ describe("docs/OPENSHIFT.md on the console plugin", () => {
   test("Uninstall removes the ConsolePlugin before the namespaces it names", () => {
     expect(uninstall.length).toBeGreaterThan(0);
     expect(uninstall).toContain("before deleting the plugin namespace or Studio's namespace");
+  });
+});
+
+describe("security control 3.37 and the chart's release notes", () => {
+  const security = readFileSync(join(import.meta.dir, "../../docs/SECURITY.md"), "utf8");
+  const row = security.split("\n").find((line) => line.startsWith("| 3.37 |")) ?? "";
+  const chartYaml = readFileSync(join(CHART_DIR, "Chart.yaml"), "utf8");
+
+  test("the row refuses Studio's namespace on a Helm install and pins the operator's own namespace under the operator", () => {
+    expect(row).toContain("never runs in Studio's namespace on a Helm install");
+    expect(row).toContain("under the operator it runs only in the operator's own namespace (row 3.36)");
+    expect(row).toContain("[`operator/config/manager/manager.yaml`]");
+  });
+
+  test("Chart.yaml's change entry names the operator's own namespace", () => {
+    const changes = chartYaml.slice(chartYaml.indexOf("artifacthub.io/changes:"));
+    expect(changes).toContain("under the OLM operator, in the operator's own namespace");
+    expect(chartYaml).toContain("# False: 0.1.118 adds openshift.consolePlugin");
   });
 });
 

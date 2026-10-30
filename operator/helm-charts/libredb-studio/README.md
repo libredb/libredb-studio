@@ -938,7 +938,7 @@ helm uninstall libredb
 | `openshift.consoleLink.namespaces` | `NamespaceDashboard`: the namespaces whose dashboard shows the link | `[]` |
 | `openshift.consoleLink.namespaceSelector` | `NamespaceDashboard`: a label selector for those namespaces | `{}` |
 | `openshift.consolePlugin.enabled` | Render the console plugin's server and the ConsolePlugin `libredb-studio` ([The console plugin](#the-console-plugin)); needs `console.openshift.io/v1` or `apis=force`, discovery, the `ApplicationMenu` console link and a cluster admin | `false` |
-| `openshift.consolePlugin.namespace` | Where the plugin's server runs: a namespace a cluster admin made with `oc create namespace`, never the release's, a discovered one or a requested project; the operator sets its own | `""` |
+| `openshift.consolePlugin.namespace` | Where the plugin's server runs: a namespace a cluster admin made with `oc create namespace`, on a Helm install never the release's, a discovered one or a requested project; the operator sets its own, the cluster Studio namespace | `""` |
 | `openshift.consolePlugin.image` | The plugin image, a whole reference pinned by digest; the operator sets it from `RELATED_IMAGE_PLUGIN` | the 0.1.0 release |
 | `openshift.consolePlugin.imagePullPolicy` | `Always`, `IfNotPresent` or `Never` | `IfNotPresent` |
 | `openshift.consolePlugin.replicas` | Plugin server replicas, 1 to 5 | `2` |
@@ -1059,12 +1059,14 @@ Studio's pod shares that namespace with the operator, so under the operator the 
 ### The console plugin
 
 `openshift.consolePlugin.enabled` adds the OpenShift console plugin, on OpenShift 4.19 or later: a Databases page and an item on each database's details page that open the database in Studio in a new tab.
+The item shows on the generic details page that Search and the resource's own list open; the console renders no plugin details item on the operand details page that Installed Operators opens.
 The chart renders the plugin's nginx server (a ServiceAccount, Deployment, Service and NetworkPolicy, each named `libredb-studio-console-plugin`) in `openshift.consolePlugin.namespace`, and the cluster-scoped ConsolePlugin `libredb-studio`, so installing it needs a cluster admin and one release per cluster.
 The plugin finds Studio only through the console link named `libredb-studio`, so it needs `discovery.kubernetes.enabled` and `openshift.consoleLink.enabled` with `location: ApplicationMenu`, and `console.openshift.io/v1` (or `apis=force`).
 It lists the database resources the signed-in user may list, and never reads a Secret: Studio checks again with the user's own token when a database opens.
 
 The console runs the plugin in every console session and sends each console user's token to its server on every asset fetch, so whoever may change that server's Deployment runs code in every console session and receives every console user's token.
-The render therefore fails when `openshift.consolePlugin.namespace` is empty, is the release's own namespace or is listed in `discovery.kubernetes.namespaces`, and, on a Helm install, when the namespace is a project someone requested (it carries `openshift.io/requester`, and its requester administers it).
+The render therefore fails when `openshift.consolePlugin.namespace` is empty or is listed in `discovery.kubernetes.namespaces`, and, on a Helm install, is the release's own namespace or a project someone requested (it carries `openshift.io/requester`, and its requester administers it).
+Under the OLM operator the server runs in the operator's own namespace, the cluster Studio namespace that only cluster admins write, which the operator sets; any other plugin namespace fails the render there.
 That last check looks the namespace up in the cluster, so `helm template` and a client-side dry run skip it; `helm install`, `helm upgrade` and `--dry-run=server` run it.
 It also relies on the cluster's project request template setting `openshift.io/requester`, as the default template does; a custom template that drops it hides a requested project from the check.
 Create the namespace with `oc create namespace` right before the install, which fails if the name is taken, never with `oc new-project` or the console's Create Project.

@@ -342,7 +342,7 @@ The plugin, built in its own repository, lists the database resources the signed
 
 **Values.** `enabled` (off), `namespace` (where the server runs, empty by default), `image` (a whole reference pinned by digest; the schema refuses a tag alone and admits the empty string so the guard can name the value), `imagePullPolicy`, `replicas` (1 to 5) and `resources` (`requests` and `limits` with `cpu` and `memory` only).
 The block is closed: any other key, an enable switch or a patcher image included, fails the schema.
-Under the operator, `operator/watches.yaml` pins `namespace` to the operator's own namespace (`$OPERATOR_NAMESPACE`) and `image` to `$RELATED_IMAGE_PLUGIN`, so a `LibreDBStudio` can neither move the server nor swap its image.
+Under the operator, `operator/watches.yaml` pins `namespace` to the operator's own namespace (`$WATCH_NAMESPACE`), which is the cluster Studio namespace, and `image` to `$RELATED_IMAGE_PLUGIN`, so a `LibreDBStudio` can neither move the server nor swap its image.
 
 **Objects.** A ServiceAccount, Deployment, Service and NetworkPolicy named `libredb-studio-console-plugin` in the plugin namespace, and the ConsolePlugin `libredb-studio` with a Service backend on 9443, `i18n.loadType: Preload`, and no `proxy` and no `contentSecurityPolicy`.
 The names are fixed whatever `nameOverride` or `fullnameOverride` say: the ConsolePlugin is a cluster-wide singleton, so a second release collides on it and Helm's ownership check refuses the install.
@@ -352,15 +352,17 @@ The Deployment runs as its own ServiceAccount with no token, with the restricted
 
 1. `console.openshift.io/v1` not served and `global.compatibility.openshift.apis` not `force`.
 2. Under the operator, a release outside `operator.clusterStudioNamespace` (`clusterStudioNamespaceGuard`).
-3. An empty `namespace` (and under the operator, an unset `OPERATOR_NAMESPACE`).
-4. The release's own namespace.
+3. An empty `namespace` (and under the operator, an unset `WATCH_NAMESPACE`).
+4. On the Helm path, the release's own namespace.
+   Under the operator, any namespace other than `operator.clusterStudioNamespace`, the operator's own namespace and, after guard 2, the release's: the server shares that namespace with the cluster Studio, which only cluster admins write.
 5. A namespace `discovery.kubernetes.namespaces` lists.
 6. On the Helm path only, a namespace that `lookup` finds carrying `openshift.io/requester`, which the default project request template sets on every project made through a project request and whose requester administers it; skipped where `lookup` returns nothing (`helm template`, a client-side dry run, a namespace that does not exist yet), and blind to a requested project whose custom project request template drops that annotation.
-   The operator path pins the operator's own namespace instead.
+   The operator path pins the operator's own namespace instead, which the console creates as a plain Namespace from the suggested namespace or a cluster admin creates with `oc create namespace`.
 7. A release that renders no locator: discovery off, or no `ApplicationMenu` console link.
 8. An empty `image` (and under the operator, an unset `RELATED_IMAGE_PLUGIN`).
 
 Guards 4 to 6 share one reason: the console sends every console user's token to the server and runs the plugin in every console session, so whoever may change that Deployment holds both, and the namespace must be one only cluster admins write.
+On the operator path that is the operator's namespace itself: whoever writes it already controls the operator, Studio's ServiceAccount there holds no right on the server's objects, Studio's pod mounts no API token by default, and the server's selector labels match none of Studio's.
 
 **NetworkPolicy.** The server's policy selects exactly its pods and admits only the `openshift-console` namespace on TCP 9443, with no egress rule: nginx needs nothing else, and while no other NetworkPolicy and no AdminNetworkPolicy allow rule selects those pods (policies add up), a compromised server or image cannot send what it receives anywhere.
 
