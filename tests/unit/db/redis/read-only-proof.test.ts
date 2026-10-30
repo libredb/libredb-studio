@@ -160,6 +160,32 @@ describe.each(REDIS_CAPTURE_VERSIONS)("the proof over %s's answers", (version) =
   });
 });
 
+describe.each(REDIS_CAPTURE_VERSIONS)("the probes as %s answered them, sent raw past every Studio check", (version) => {
+  interface Principal {
+    probes: CapturedStep[];
+    stateBeforeProbes: Record<string, unknown>;
+    stateAfterProbes: Record<string, unknown>;
+  }
+
+  test("a +@read user is refused every probe as a permission refusal, never a syntax or argument error", () => {
+    const reader = readRedisCapture<Principal>(version, "reader");
+    for (const step of reader.probes) {
+      expect(step.outcome, step.argv.join(" ")).toBe("error");
+      expect(step.error, step.argv.join(" ")).toMatch(
+        /^NOPERM User agent_reader has no permissions to run the '[a-z|]+' command$/,
+      );
+    }
+    expect(reader.stateAfterProbes).toEqual(reader.stateBeforeProbes);
+  });
+
+  test("the positive control: a full user is answered every probe, and none of them changes what the server holds", () => {
+    const full = readRedisCapture<Principal>(version, "full");
+    for (const step of full.probes) expect(step.error ?? "", step.argv.join(" ")).not.toStartWith("NOPERM");
+    expect(full.stateBeforeProbes).toEqual({ dbsize: "8", probeKeyExists: "0", functions: [] });
+    expect(full.stateAfterProbes).toEqual(full.stateBeforeProbes);
+  });
+});
+
 describe("what the server says it is", () => {
   const hello = (fields: Record<string, unknown>): RedisReply => ({ ok: true, reply: Object.entries(fields).flat() });
 
