@@ -10,7 +10,11 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { QueryCancelledError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
-import { byteBudgetSentence, rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
+import {
+  byteBudgetSentence,
+  MAX_STATEMENT_TIMEOUT_MS,
+  rowBudgetSentence,
+} from "@/lib/db/providers/sql/read-only-budget";
 import { RABBITMQ_AGENT_STOP_SENTENCES } from "@/lib/db/providers/stream/rabbitmq/agent-metadata-read";
 import { RABBITMQ_AGENT_SENTENCES } from "@/lib/db/providers/stream/rabbitmq/agent-statement";
 import { type AmqpDial, type AmqpSocket, DialAborted, dialAmqp } from "@/lib/db/providers/stream/rabbitmq/amqp/dial";
@@ -212,14 +216,31 @@ describe("who may call queryReadOnly", () => {
     expect(h.dials()).toBe(0);
   });
 
-  test("an estimate is refused, and a budget out of range is refused by the shared check", async () => {
+  test("an estimate is refused before anything is sent", async () => {
     const h = await handle(AGENT);
     const estimate = await refusal(h.provider.queryReadOnly(READ(), BUDGET, "estimate-plan"));
     expect(estimate).toBeInstanceOf(RefusedBeforeSendError);
     expect(estimate.message).toBe("RabbitMQ composes no estimating plan for the agent");
-    expect(await refusal(h.provider.queryReadOnly(READ(), { ...BUDGET, maxResultRows: 0 }))).toBeInstanceOf(Error);
     expect(h.dials()).toBe(0);
   });
+
+  test.each([
+    ["maxResultRows", { ...BUDGET, maxResultRows: 0 }, Number.MAX_SAFE_INTEGER],
+    ["maxResultBytes", { ...BUDGET, maxResultBytes: 0 }, Number.MAX_SAFE_INTEGER],
+    ["maxResultBytes", { ...BUDGET, maxResultBytes: Number.NaN }, Number.MAX_SAFE_INTEGER],
+    ["statementTimeoutMs", { ...BUDGET, statementTimeoutMs: 0 }, MAX_STATEMENT_TIMEOUT_MS],
+    ["statementTimeoutMs", { ...BUDGET, statementTimeoutMs: Number.NaN }, MAX_STATEMENT_TIMEOUT_MS],
+  ] as const)(
+    "a budget whose %s is out of range is refused by the shared check before anything is sent",
+    async (field, budget, max) => {
+      const h = await handle(AGENT);
+      const before = h.stub.requests.length;
+      const error = await refusal(h.provider.queryReadOnly(READ(), budget));
+      expect(error.message).toBe(`Read-only execution budget field ${field} must be a positive integer <= ${max}`);
+      expect(h.stub.requests).toHaveLength(before);
+      expect(h.dials()).toBe(0);
+    },
+  );
 
   test("before connect() and after disconnect() the call is refused with the provider's own sentences", async () => {
     const provider = new RabbitMQProvider(rabbitmqConnection(), {}, AGENT, {

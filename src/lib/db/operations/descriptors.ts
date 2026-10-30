@@ -667,8 +667,9 @@ const oxiacliQueryReadDescriptor: RegistrableOperationDescriptor = {
 
 const RABBITREAD_READ_BOUNDARY =
   "RabbitMQ: the provider's structural closed table, read with the editor's own read request parser: one read of one " +
-  "stream, its AMQP 0-9-1 client holding encoders for the handshake, basic.qos, basic.consume, basic.ack and the " +
-  "closes alone, so no take, publish, reject, nack, recover, purge, declare, transaction or confirm can be sent. " +
+  "stream, its AMQP 0-9-1 client holding encoders for the handshake and channel open, basic.qos, basic.consume, " +
+  "basic.ack, basic.cancel-ok and the closes alone, so no take, publish, reject, nack, recover, purge, declare, " +
+  "transaction or confirm can be sent. " +
   "Before any frame the management API's type check refuses anything but a stream, and the consume always carries " +
   "x-stream-offset, which the broker refuses with 406 on a classic or quorum queue declared under the stream's name " +
   "after the check. Read permission in RabbitMQ also grants a take and a purge, so no credential can be the boundary. " +

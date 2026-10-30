@@ -132,7 +132,6 @@ export async function runAgentRead(request: ReadRequest, deps: ReadDependencies)
   const endpoint = deps.endpoints.amqp?.display ?? deps.endpoints.management.display;
   const deadlineMs = Math.min(deps.queryTimeoutMs, RABBITMQ_READ_DEADLINE_MS);
   try {
-    if (deps.lifetime.aborted) throw deps.lifetime.reason;
     const startedAt = deps.clock.now();
     const signal = AbortSignal.any([deps.deadlineSignal(deadlineMs), deps.lifetime]);
     const outcome = await readRequest(request, signal, deadlineMs, deps);
