@@ -379,7 +379,7 @@ export async function createDatabaseProvider(
 
     case "firestore": {
       // The explicit /index specifier keeps this dynamic import statically analysable. Read-only whatever the flag
-      // says, so no execution context rides along, as for Neo4j.
+      // says, so no execution context rides along.
       const { FirestoreProvider } = await import("./providers/document/firestore/index");
       return new FirestoreProvider(connection, options);
     }
@@ -443,7 +443,8 @@ export async function createDatabaseProvider(
       // analysable: a bare directory resolves only at runtime, which the bundler
       // cannot trace into a chunk.
       const { Neo4jProvider } = await import("./providers/graph/neo4j/index");
-      return new Neo4jProvider(connection, options);
+      // The execution context decides whether the open proves the user reads only, for the agent read-only profile.
+      return new Neo4jProvider(connection, options, execution);
     }
 
     // Vector databases - dynamically imported
@@ -493,7 +494,7 @@ export async function createDatabaseProvider(
     }
 
     // OPC UA: an industrial address space, browsed level by level. Read-only whatever the flag says,
-    // so no execution context rides along, as for Neo4j.
+    // so no execution context rides along.
     case "opcua": {
       // The explicit /index specifier keeps this dynamic import statically analysable.
       const { OpcuaProvider } = await import("./providers/industrial/opcua/index");

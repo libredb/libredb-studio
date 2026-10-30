@@ -64,6 +64,7 @@ import type { SSHTunnelConfig } from "@/lib/types";
 import { CassandraTransportError } from "@/lib/db/providers/sql/cassandra/transport";
 import { CouchbaseError } from "@/lib/db/providers/document/couchbase/transport";
 import { DruidTransportError } from "@/lib/db/providers/sql/druid/transport";
+import { NEO4J_FIXTURES, recordedGraphClient } from "../helpers/neo4j-fixtures";
 
 // The SQLite agent-profile tests below construct the read-only profile for its
 // query_only boundary, not to exercise the child transport. The worker's node:sqlite
@@ -956,6 +957,40 @@ describe("createDatabaseProvider", () => {
     expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_SERVER_UNENFORCED");
     const operations = await createDatabaseProvider(conn, {}, { readOnly: true, sendsStatements: false });
     await expect(operations.connect()).rejects.not.toBeInstanceOf(ExecutionProfileError);
+  });
+
+  test("the execution context rides along to neo4j: queryReadOnly answers only under the agent profile", async () => {
+    const conn = makeConnection("neo4j", {
+      port: 17687,
+      user: "agent",
+      password: "not-a-real-password",
+      database: "neo4j",
+    });
+    const profiled = await createDatabaseProvider(conn, {}, { readOnly: true, sendsStatements: true });
+    const editor = await createDatabaseProvider(conn);
+    if (profiled.queryReadOnly === undefined || editor.queryReadOnly === undefined) throw new Error("no queryReadOnly");
+    // A session in place of a connect, whose client answers the agent principal's proof from its captures, so only the
+    // context tells the two apart.
+    const recorded = recordedGraphClient(join(NEO4J_FIXTURES, "agent-boundary", "agent"));
+    const read = "MATCH (n:Person) RETURN n.name AS name ORDER BY name";
+    const client = {
+      ...recorded,
+      run: (statement: string, options: Parameters<typeof recorded.run>[1]) =>
+        statement === `EXPLAIN ${read}`
+          ? Promise.resolve({ fields: ["name"], rows: [], truncated: false, queryType: "r" as const })
+          : recorded.run(statement, options),
+    };
+    for (const provider of [profiled, editor]) {
+      Object.assign(provider, { session: { client, database: "neo4j" }, ensureConnected: () => undefined });
+    }
+    await expect(editor.queryReadOnly(read, AGENT_BUDGET)).rejects.toThrow(
+      "Read-only execution requires a provider opened under the agent read-only profile",
+    );
+    expect(recorded.calls).toEqual([]);
+    await expect(profiled.queryReadOnly(read, AGENT_BUDGET)).resolves.toMatchObject({
+      rows: [{ name: "Ada" }, { name: "Bob" }],
+    });
+    expect(recorded.calls.at(-1)?.statement).toBe(read);
   });
 
   test("the execution context rides along to influxdb: queryReadOnly answers only under the agent profile", async () => {

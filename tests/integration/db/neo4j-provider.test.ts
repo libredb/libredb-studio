@@ -100,7 +100,7 @@ function client(
 
 async function connected(hook?: Parameters<typeof client>[0]) {
   let recorded: RecordedGraphClient | undefined;
-  const provider = new Neo4jProvider(CONNECTION, {}, () => {
+  const provider = new Neo4jProvider(CONNECTION, {}, {}, () => {
     recorded = client(hook);
     return recorded;
   });

@@ -293,7 +293,7 @@ async function connectedProvider(): Promise<Neo4jProvider> {
     },
     close: async () => {},
   };
-  const provider = new Neo4jProvider(CONNECTION, {}, () => client);
+  const provider = new Neo4jProvider(CONNECTION, {}, {}, () => client);
   await provider.connect();
   return provider;
 }
