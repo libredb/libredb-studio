@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D410, U17 · 300
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U159 · 145
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U160 · 146
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -6070,6 +6070,7 @@ When the execution profile refuses the run's principal, the agent rail shows one
 The engine's refusal carries the statements that lift it, on Oracle for example `REVOKE EXECUTE ON "APP_OWNER"."BV_FN" FROM "LIBREDB_AGENT_BV"`, but they reach only the server log, so the user cannot act on the rail.
 On Oracle a refusal can also name a row-level security or fine-grained auditing policy anywhere in the database, where the user holds nothing extra, and there the sentence is false.
 Seen 2026-10-29 on Oracle 26ai Free in a browser pass, for a granted function and for a row-level policy.
+Seen again 2026-10-30 on Couchbase enterprise-8.0.2 in a browser pass: with `query_update` granted on the scope, the server log named the role, `query_update[bv110:shop:*]`, and the user the agent needs, while the rail showed only the generic sentence.
 
 **Done when:** the rail shows the refusal's own remedies (statements or policy names) beside its code, from the shared refusal path rather than a type-id branch, the generic sentence no longer claims the credential holds privileges when the refusal is about the database, and a component test pins both texts.
 
@@ -6077,6 +6078,7 @@ Seen 2026-10-29 on Oracle 26ai Free in a browser pass, for a granted function an
 
 An agent statement the provider refuses before it is sent, such as Oracle's `SELECT ... FOR UPDATE`, appears in the rail as `INPUT_VALIDATION_FAILED` with no sentence saying what was refused or why.
 Seen 2026-10-29 on Oracle 26ai Free in a browser pass.
+Seen again 2026-10-30 on Couchbase enterprise-8.0.2 in a browser pass: a forced `DELETE`, `UPDATE`, `UPDATE STATISTICS` and `BEGIN WORK` each showed "Refused by policy" over the bare code, though the statement fence (`couchbaseAgentStatementRefusal`) refuses with a sentence of its own.
 
 **Done when:** the rail shows the refusal's sentence with the code beside it, and a component test pins it.
 
@@ -6084,6 +6086,7 @@ Seen 2026-10-29 on Oracle 26ai Free in a browser pass.
 
 A plan-mode run on an Oracle owner connection showed "1/42 stmt" in the rail while its own copy says it executed nothing; the count appears to be the schema capture's reads, not a statement of the model's.
 Seen 2026-10-29 on Oracle 26ai Free in a browser pass; not checked on other engines.
+Seen again 2026-10-30 on Couchbase enterprise-8.0.2 in a browser pass, which bears out the capture: a plan run that captured the schema showed "1/30 stmt", and the next plan run, which reused that capture, showed "0/30 stmt".
 
 **Done when:** the plan-mode rail counts only statements of the model's, or labels the capture's reads as reads, and a component test pins the plan-mode count.
 
@@ -6093,6 +6096,7 @@ Seen 2026-10-29 on Oracle 26ai Free in a browser pass; not checked on other engi
 On Db2 there is no read-only session: the boundary is a user holding only read privileges, checked before every statement.
 And Studio does read the statement first: a forced `UPDATE` on Db2 and a `SELECT ... FOR UPDATE` on Oracle were refused before they reached the database (`INPUT_VALIDATION_FAILED`), with the engine as the second line.
 Seen 2026-10-29 in browser passes on Db2 12.1 and Oracle 26ai.
+Seen again 2026-10-30 on Couchbase enterprise-8.0.2, where the copy is shown unchanged: the boundary there is a user holding only `query_select` on named scopes, checked before every statement, and the statement fence refused four forced statements before they were sent; the consent panel's "same database-enforced read-only session either way" is false there too, since an editor run on that connection has no read-only session.
 
 **Done when:** the copy states the boundary each engine actually has, from a per-engine row rather than a type-id branch, says that Studio's own admission refuses a statement first and the engine refuses what passes it, and a component test pins the text for a session-enforced engine and a credential-enforced one.
 
@@ -6100,6 +6104,7 @@ Seen 2026-10-29 in browser passes on Db2 12.1 and Oracle 26ai.
 
 After switching from a Db2 agent connection to an owner connection, the rail header read "on Db2 owner" while the agent connection's last run and its "Reads only" badge stayed on screen; a new run then started while the badge still read "Refused on this connection".
 Seen 2026-10-29 in a browser pass on Db2 12.1.
+Seen again 2026-10-30 on Couchbase enterprise-8.0.2: after switching to the owner connection, the rail read "on Couchbase owner (Administrator)" with the "Reads only" badge and the agent connection's last run still on screen, although that owner is the cluster administrator, whom the profile refuses.
 
 **Done when:** changing the connection clears or re-labels the rail's run and badge for the new connection, and a component test switches connections and reads the badge.
 
@@ -6107,6 +6112,7 @@ Seen 2026-10-29 in a browser pass on Db2 12.1.
 
 Asked to run an exact `UPDATE` through its read tool, the agent's statement was refused before it was sent (`INPUT_VALIDATION_FAILED`), yet the run finished `answered` and its report did not say the `UPDATE` was refused.
 Seen 2026-10-29 in a browser pass on Db2 12.1; the Oracle pass the same day had a report that did say so, so it depends on the model's wording.
+Seen again 2026-10-30 on Couchbase enterprise-8.0.2, twice: asked to run an exact `DELETE`, `UPDATE`, `UPDATE STATISTICS` and `BEGIN WORK`, each refused before it was sent, both runs finished `answered` with a report about the schema inventory or a row count and no word of the four refusals.
 
 **Done when:** a run whose only drafted statement was refused either reports that refusal in its answer, held by the run's verifier, or ends in a state other than `answered`, with an agent test that forces the refusal.
 
@@ -6126,6 +6132,14 @@ The three refusals also used the run's three repair attempts, so the next call w
 Seen 2026-10-30 in a browser pass on Apache Cassandra 5.0.9; not checked on the other engines whose providers decline these panels.
 
 **Done when:** a panel the provider declines without sending a statement is recorded as not sent and headed "Refused before the database" with the provider's sentence as the detail, it does not count as a repair attempt, and a timeline test and an agent test pin both.
+
+### U160. A run whose goal verdict is unanswered heads its report "Answer" with a "succeeded" pill
+
+`AnswerCard` (`src/components/agent/AnswerCard.tsx`) picks its eyebrow from the run's product, so a composed report is always headed "Answer", and its pill shows the run's status word; neither reads the ledger's goal verdict.
+A database assessment run on a Couchbase agent connection ended `succeeded` with `goalVerdict` `unanswered` (unmet `no-table-profile`), and the top of the rail read "ANSWER succeeded" over a report that said it established nothing about the data; only the timeline at the bottom said the run did not answer.
+Seen 2026-10-30 on Couchbase enterprise-8.0.2 in a browser pass (run `arun_d91209e7b86045b1989d813ec629b25b`); any engine where assessment cannot pass (B146) shows the same.
+
+**Done when:** a run whose goal verdict is not `answered` is headed as an outcome rather than an answer, and its pill or a line beside it says the run did not answer, from the verdict the timeline already reads, with a component test for a `succeeded` run whose verdict is `unanswered`.
 
 ## Dependencies
 
@@ -8393,7 +8407,7 @@ Measured 2026-10-29 on OpenSearch 3.8.0 in a browser pass: the run ends with "No
 Elasticsearch has no profile composition either and opens assessment by the same requirement, so it likely ends the same way; that was reasoned from the code, not measured.
 Oracle and Db2 are in the same position: each overlay supplies the catalog read and declares `profileComposition` `"unsupported"`, so assessment opens there and its verdict can never be met; also reasoned from the code, not measured.
 Apache Cassandra is in the same position, for the same reason (B149); also reasoned from the code, not measured.
-Couchbase is in the same position, for the same reason (B150); also reasoned from the code, not measured.
+Couchbase is in the same position, for the same reason (B150), measured 2026-10-30 on enterprise-8.0.2 in a browser pass: an assessment run had `compose_report` held twice for `no-table-profile` and ended with the goal verdict `unanswered`.
 `docs/AGENT.md` records the choice to leave that need unheld (B111, B140, B143, B144); this entry is the claim that it should change, since a workflow offered on an engine where it cannot pass reads as a broken one.
 
 **Done when:** the database assessment workflow's requirement admits an engine only where its pass check can be met, derived from a dialect capability such as a supplied profile composition rather than a type-id branch, so it is not offered on OpenSearch, Elasticsearch, Oracle or Db2 until they gain one, with a test that holds the requirement to the pass check; cited in `docs/AGENT.md`.
