@@ -1,3 +1,9 @@
+# The manager's cluster-wide rights. The operator manages only its own
+# namespace, and everything it renders there is granted by the Role in
+# namespace_role.yaml. This ClusterRole holds only what must reach other
+# namespaces or cluster-scoped kinds. It holds no rule on libredbstudios and no
+# list or watch on Secrets, so a controller whose watch is widened past its own
+# namespace cannot fill its cache and exits instead of reconciling.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -13,127 +19,14 @@ rules:
   - namespaces
   verbs:
   - get
-# We need to manage Helm release secrets
-- apiGroups:
-  - ""
-  resources:
-  - secrets
-  verbs:
-  - "*"
-# We need to create events on CRs about things happening during reconciliation
-- apiGroups:
-  - ""
-  resources:
-  - events
-  verbs:
-  - create
 
 ##
 ## Rules for studio.libredb.org/v1alpha1, Kind: LibreDBStudio
 ##
-- apiGroups:
-  - studio.libredb.org
-  resources:
-  - libredbstudios
-  - libredbstudios/status
-  - libredbstudios/finalizers
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - pods
-  - services
-  - services/finalizers
-  - endpoints
-  - persistentvolumeclaims
-  - events
-  - configmaps
-  - secrets
-  - serviceaccounts
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - apps
-  resources:
-  - deployments
-  - daemonsets
-  - replicasets
-  - statefulsets
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-# The chart renders these behind feature flags (ingress.enabled,
-# networkPolicy.enabled, autoscaling.enabled, podDisruptionBudget.enabled)
-- apiGroups:
-  - networking.k8s.io
-  resources:
-  - ingresses
-  - networkpolicies
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - autoscaling
-  resources:
-  - horizontalpodautoscalers
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - policy
-  resources:
-  - poddisruptionbudgets
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-# The bundled PostgreSQL subchart can render these behind its own flags
-# (passwordUpdateJob -> Job, backup -> CronJob, rbac.create -> Role/RoleBinding)
-- apiGroups:
-  - batch
-  resources:
-  - jobs
-  - cronjobs
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
+# Kubernetes discovery renders a Role and a RoleBinding in each discovered
+# namespace (templates/kubernetes-discovery.yaml); the bundled PostgreSQL
+# subchart can render a Role and a RoleBinding in the operator's namespace
+# behind rbac.create.
 - apiGroups:
   - rbac.authorization.k8s.io
   resources:
@@ -147,58 +40,15 @@ rules:
   - patch
   - update
   - watch
-# The chart renders an HTTPRoute per enabled route.<name> (route.main.enabled);
-# without this rule the release fails with "cannot get resource httproutes"
+# The discovery Role grants get on Secrets and Services in its namespace, and
+# Kubernetes lets the operator create a Role only with verbs it holds there.
 - apiGroups:
-  - gateway.networking.k8s.io
+  - ""
   resources:
-  - httproutes
+  - secrets
+  - services
   verbs:
-  - create
-  - delete
   - get
-  - list
-  - patch
-  - update
-  - watch
-# (postgresql.metrics.serviceMonitor / prometheusRule flags; rules for CRDs
-# that may not exist on the cluster are harmless)
-- apiGroups:
-  - monitoring.coreos.com
-  resources:
-  - servicemonitors
-  - prometheusrules
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-# openshiftRoute.enabled renders a route.openshift.io Route with the host the
-# resource sets; setting spec.host needs create on routes/custom-host, and
-# changing it on an existing Route needs update there, or the API server
-# refuses the Route
-- apiGroups:
-  - route.openshift.io
-  resources:
-  - routes
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - route.openshift.io
-  resources:
-  - routes/custom-host
-  verbs:
-  - create
-  - update
 # openshift.consoleLink.enabled renders a cluster-scoped ConsoleLink, which the
 # chart renders only for the LibreDBStudio in the operator's own namespace
 # (operator.clusterStudioNamespace). Every authenticated user may already
@@ -253,4 +103,6 @@ rules:
   - list
   - watch
 
+# A rule added here holds in every namespace; a namespaced rule belongs in
+# namespace_role.yaml.
 # +kubebuilder:scaffold:rules
