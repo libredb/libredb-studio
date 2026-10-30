@@ -356,7 +356,7 @@ its hand-over read that database alone and its connection identity names it.
 
 **Each engine declares the form of the agent's own credential** (`ProviderCapabilities.agentCredential`, the `AgentCredentialForm` forms in `src/lib/db/types.ts`), and `acquireExecutionProfileProvider` refuses a credential in a shape its form does not take before the provider connects, with `AGENT_CREDENTIAL_UNRESOLVABLE`.
 Absent, the form takes `agentUser` and `agentPassword` together.
-`"token"` takes `agentPassword` alone as a bearer token: Kubernetes, Weaviate, Qdrant and Neo4j.
+`"token"` takes `agentPassword` alone as a bearer token: Kubernetes, Weaviate and Qdrant.
 `"service-account-key"` takes `agentPassword` alone holding a service-account key JSON, and refuses an access token or a user's own credential, whose scope Studio cannot read: BigQuery.
 `"dedicated-user"` takes both, with an agent user other than the connection's own; no engine declares it yet, and Snowflake takes it when it joins agent mode, with the agent user's PAT as the agent password; its key-pair sign-in reads `privateKey`, which the agent credential does not reach today, so an agent key pair waits on that PR extending the form or the overlay (D324).
 `"none"` refuses any agent credential, on an engine with no user to sign an agent in as: LibreDB.

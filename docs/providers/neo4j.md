@@ -9,7 +9,8 @@ Tests: [`tests/unit/db/neo4j/`](../../tests/unit/db/neo4j/), [`tests/unit/db/gra
 Studio reads a Neo4j database through Cypher typed in the editor, shows its node labels, relationship types, indexes and constraints in the object tree, and reads the monitoring panels Community serves.
 It writes nothing: every statement passes a read policy before anything is sent, then the server's own classification (an allowlisted SHOW form skips it, and an allowlisted procedure call classified `s` runs, section 3.5), and then runs in a READ session, so a write has to defeat three layers (section 3.1).
 Nodes, relationships and paths reach the grid as tagged JSON cells, and the column header names the graph type (section 5.2); a Graph tab beside the grid draws them (section 5.6).
-Plan mode drafts Cypher and the MCP metadata tools list Neo4j connections and their shape, while agent execution and MCP `run_read_query` do not serve Neo4j (section 3.6).
+Plan mode drafts Cypher, and the MCP metadata tools list Neo4j connections and their shape.
+Agent execution runs Cypher on Enterprise Edition for a user the server proves read-only before every statement, while MCP `run_read_query` does not serve Neo4j (section 3.6).
 
 ### Concept mapping
 
@@ -539,6 +540,7 @@ Every claim below is a capture under `tests/fixtures/neo4j/5.26.31/agent-boundar
 
 [`agent-boundary.ts`](../../src/lib/db/providers/graph/neo4j/agent-boundary.ts) proves the user at the open of a connection that sends statements, and again before every agent statement, on the connection's database, under that statement's deadline and with no verdict kept between them.
 Neo4j checks privileges per transaction against the system graph: a `DENY` added or lifted on a running driver took effect on its next transaction, measured on 5.26.31, so a privilege widened after the open is caught by the next statement's proof.
+The proof reads and the statement each run in a Bolt session of their own, one after the other, so a privilege granted in the moment between the last proof read and the statement's own transaction is caught by the next statement's proof, not by this one; the statement itself still passes Studio's reader first, which refuses `LOAD CSV`, `USE` and every procedure outside the schema reads before anything is sent.
 
 1. `CALL dbms.components()` must name Enterprise Edition at a version whose built-in procedures and functions are pinned in [`agent-builtins.ts`](../../src/lib/db/providers/graph/neo4j/agent-builtins.ts), 5.26.31 today.
    Community Edition is refused by name (`community/proof-components`):
