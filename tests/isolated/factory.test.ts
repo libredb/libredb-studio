@@ -4280,8 +4280,11 @@ describe("single-writer file reuse", () => {
     expect(agent).not.toBe(writable);
     expect(getExecutionProfileCacheStats()).toEqual({ size: 1, connections: [conn.id] });
     expect((await agent.queryReadOnly!("get users:1", AGENT_BUDGET)).rows).toEqual([{ key: "users:1", value: "Ada" }]);
-    // A write sent past the agent's reader, on the agent's own handle, fails, and the file is unchanged.
-    await expect(agent.query("put users:9 Mallory")).rejects.toThrow(/failed to reach the disk/);
+    // The editor's statement path is refused on the agent's handle, and a write sent past everything, on the
+    // provider's own store, fails on the read-only handle: the file is unchanged either way.
+    await expect(agent.query("put users:9 Mallory")).rejects.toThrow(/answers statements through queryReadOnly only/);
+    const store = (agent as unknown as { kv: { set(key: string, value: string): void } }).kv;
+    expect(() => store.set("users:9", "Mallory")).toThrow(expect.objectContaining({ code: "FAILED" }));
     expect(readFileSync(file)).toEqual(before);
     // The writer and the reader coexist: the writer still writes, and the reader's next statement reads it.
     await writable.query("put users:2 Grace");

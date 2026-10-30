@@ -115,3 +115,20 @@ export function readRegularFileStart(filePath: string, length: number): Buffer |
     fs.closeSync(fd);
   }
 }
+
+/**
+ * A read-only descriptor on `filePath`, for an engine's own read of a file the server opens again after
+ * `assertRegularFileOrMissing` passed. Opened without waiting, and refused (the descriptor closed) unless
+ * what was opened is a regular file, so a FIFO put at the path since the check is refused instead of read.
+ * An open failure (missing, unreadable) is raised as it came, for the caller to describe.
+ */
+export function openRegularFileForReading(filePath: string): number {
+  const fd = fs.openSync(filePath, READ_WITHOUT_WAITING);
+  try {
+    refuseUnlessRegular(filePath, fs.fstatSync(fd));
+  } catch (error) {
+    fs.closeSync(fd);
+    throw error;
+  }
+  return fd;
+}

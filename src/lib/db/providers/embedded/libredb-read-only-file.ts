@@ -6,8 +6,9 @@
  * torn tail, then fsyncs; nothing else writes). So a handle opened through this adapter cannot change the file
  * whatever is asked of it:
  *
- * - the file is opened with the `r` flag, a descriptor the operating system will not write through, and a missing
- *   file is refused rather than created;
+ * - the file is opened read-only, a descriptor the operating system will not write through, and a missing file is
+ *   refused rather than created; the open does not wait, and what it opened is refused unless it is a regular file, so
+ *   a FIFO put at the path since the connection checked it never blocks the server's thread;
  * - `append` refuses before any write call, and the kernel then latches the handle, refusing every later call on it
  *   until it is closed (`FAILED`);
  * - `truncate` and `fsync` change nothing, so recovery drops a torn tail from the handle's memory and leaves the bytes
@@ -23,13 +24,14 @@
  */
 import * as fs from "fs";
 import type { FileSystem, WalFile } from "@libredb/libredb";
+import { openRegularFileForReading } from "../../utils/regular-file";
 
 /** What a write through a read-only handle is refused with; the kernel carries it as the cause of its `FAILED`. */
 export const LIBREDB_READ_ONLY_WRITE_REFUSAL = "LibreDB file opened read-only for the agent: a write is refused";
 
 /** One read-only descriptor on `file`, with the operations the write-ahead log performs. */
 function openReadOnlyWal(file: string): WalFile {
-  const fd = fs.openSync(file, "r");
+  const fd = openRegularFileForReading(file);
   return Object.freeze({
     size: () => fs.fstatSync(fd).size,
     read(offset: number, length: number): Uint8Array {

@@ -635,13 +635,20 @@ export class LibreDBProvider extends BaseDatabaseProvider {
   protected override ensureConnected(): void {
     super.ensureConnected();
     if (!this.readOnlyProfile) return;
+    const lib = libredbModule!;
     const dbPath = this.dbPath as string;
-    const current = fileSnapshotOf(dbPath);
-    if (current === this.snapshotOf) return;
-    const next = openReadOnly(libredbModule!, dbPath);
+    let current: string;
+    let next: LibreDatabase;
+    try {
+      current = fileSnapshotOf(dbPath);
+      if (current === this.snapshotOf) return;
+      next = openReadOnly(lib, dbPath);
+    } catch (error) {
+      throw new ConnectionError(this.describeOpenError(lib, error), "libredb");
+    }
     this.db!.close();
     this.db = next;
-    this.kv = libredbModule!.kv(next);
+    this.kv = lib.kv(next);
     this.snapshotOf = current;
   }
 
@@ -792,6 +799,14 @@ export class LibreDBProvider extends BaseDatabaseProvider {
   }
 
   public async query(input: string): Promise<QueryResult> {
+    // The held read-only handle serves the object reads; a write sent to it would latch it for all of them.
+    if (this.readOnlyProfile) {
+      throw new RefusedBeforeSendError(
+        "A handle opened under the agent read-only profile answers statements through queryReadOnly only",
+        "libredb",
+        input,
+      );
+    }
     this.ensureConnected();
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => this.runCommand(input));

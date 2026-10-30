@@ -8,13 +8,25 @@
  * instead of hanging the suite.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+  writeSync,
+} from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   assertRegularFileOrMissing,
   assertRegularFilesOrMissing,
+  openRegularFileForReading,
   readRegularFileStart,
   type FileKind,
 } from "@/lib/db/utils/regular-file";
@@ -228,6 +240,44 @@ describe("readRegularFileStart, on the real filesystem", () => {
   });
 });
 
+describe("openRegularFileForReading, on the real filesystem", () => {
+  let scratch: string;
+
+  beforeAll(() => {
+    scratch = mkdtempSync(join(tmpdir(), "regular-file-open-"));
+  });
+
+  afterAll(() => {
+    rmSync(scratch, { recursive: true, force: true });
+  });
+
+  test("a regular file answers a descriptor that reads it and that no write goes through", () => {
+    const file = join(scratch, "store.db");
+    writeFileSync(file, "abc");
+    const fd = openRegularFileForReading(file);
+    try {
+      const into = Buffer.alloc(3);
+      expect(readSync(fd, into, 0, 3, 0)).toBe(3);
+      expect(into.toString("latin1")).toBe("abc");
+      expect(() => writeSync(fd, Buffer.from("x"), 0, 1, 0)).toThrow(expect.objectContaining({ code: "EBADF" }));
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  test("a path that cannot be opened is raised as it came, for the caller to describe", () => {
+    expect(() => openRegularFileForReading(join(scratch, "missing.db"))).toThrow(
+      expect.objectContaining({ code: "ENOENT" }),
+    );
+  });
+
+  testIf(MISSING_DIRECTORY_OPEN, "a directory is refused from what opened, naming the path", () => {
+    const dir = join(scratch, "a-directory");
+    mkdirSync(dir);
+    expect(refusal(() => openRegularFileForReading(dir))).toBe(`${dir} is a directory, not a regular file`);
+  });
+});
+
 // Its own timeout, above the child's hard limit, so a regression is reported by the kill rather than
 // by bun's 5 s default with the child still blocked.
 describeIf(MISSING_POSIX_SPECIAL_FILES, "a FIFO, checked in a child under a hard limit", () => {
@@ -268,6 +318,24 @@ describeIf(MISSING_POSIX_SPECIAL_FILES, "a FIFO, checked in a child under a hard
         failure: null,
       });
       expect(statSync(fifo).isFIFO()).toBe(true);
+    },
+    CHILD_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "openRegularFileForReading refuses a FIFO at once, from what it opened",
+    async () => {
+      const fifo = join(scratch, "swapped-in-for-open");
+      makeFifo(fifo);
+      const open = JSON.stringify(join(import.meta.dir, "../../../src/lib/db/utils/regular-file.ts"));
+      const outcome = await runInChild(
+        [
+          `const { openRegularFileForReading } = await import(${open});`,
+          `try { openRegularFileForReading(${JSON.stringify(fifo)}); report(null); }`,
+          "catch (error) { report(error.message); }",
+        ].join("\n"),
+      );
+      expect(outcome).toEqual({ report: `${fifo} is a named pipe (FIFO), not a regular file`, failure: null });
     },
     CHILD_TEST_TIMEOUT_MS,
   );

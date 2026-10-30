@@ -12,7 +12,7 @@ import {
   LIBREDB_TABLE_STATS_TRUNCATED,
   LibreDBProvider,
 } from "@/lib/db/providers/embedded/libredb";
-import { ConnectionError, QueryError } from "@/lib/db/errors";
+import { ConnectionError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
 import { describeIf } from "../../helpers/posix-tools";
 import {
@@ -20,6 +20,7 @@ import {
   MISSING_POSIX_SPECIAL_FILES,
   connectInChild,
   makeFifo,
+  runInChild,
 } from "../../helpers/special-files";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { open, kv, doc, table, CATALOG_PREFIX } from "@libredb/libredb";
@@ -1637,20 +1638,45 @@ describe("LibreDBProvider — the agent read-only profile", () => {
     }
   });
 
-  test("a write sent around the reader through query() fails on the read-only handle, and the file is unchanged", async () => {
+  test("query() on a profiled reader is refused before it reaches the handle, and the file is unchanged", async () => {
+    const reader = new LibreDBProvider(makeConn(tmpFile), {}, AGENT);
+    await reader.connect();
+    const before = directory();
+    try {
+      for (const command of ["put user:9 Mallory", "delete user:1", "get user:1"]) {
+        const error = await settle(reader.query(command));
+        expect(error).toBeInstanceOf(RefusedBeforeSendError);
+        expect((error as Error).message).toBe(
+          "A handle opened under the agent read-only profile answers statements through queryReadOnly only",
+        );
+      }
+      expect(directory()).toEqual(before);
+      // The held handle was never reached, so the object reads still answer.
+      expect((await reader.getOverview()).tableCount).toBeGreaterThan(0);
+    } finally {
+      await reader.disconnect();
+    }
+  });
+
+  test("a write sent around everything, on the provider's own store, fails on the read-only handle, and the file is unchanged", async () => {
     const writer = new LibreDBProvider(makeConn(tmpFile));
     await writer.connect();
     const reader = new LibreDBProvider(makeConn(tmpFile), {}, AGENT);
     await reader.connect();
     const before = directory();
+    const store = (reader as unknown as { kv: { set(k: string, v: string): void; delete(k: string): void } }).kv;
     try {
-      for (const write of ["put user:9 Mallory", "delete user:1"]) {
-        const error = await settle(reader.query(write));
-        expect(error).toBeInstanceOf(Error);
+      for (const write of [() => store.set("user:9", "Mallory"), () => store.delete("user:1")]) {
+        let error: unknown = null;
+        try {
+          write();
+        } catch (caught) {
+          error = caught;
+        }
         expect((error as Error & { code?: string }).code).toBe("FAILED");
       }
       expect(directory()).toEqual(before);
-      // Nothing reached the store either: the writer and a fresh statement both read it unchanged.
+      // Nothing reached the store, and the latched handle does not reach the next statement, which opens its own.
       expect((await writer.query("get user:9")).rowCount).toBe(0);
       expect((await reader.queryReadOnly("get user:1", BUDGET)).rows).toEqual([{ key: "user:1", value: "Ada" }]);
     } finally {
@@ -1659,15 +1685,64 @@ describe("LibreDBProvider — the agent read-only profile", () => {
     }
   });
 
-  test("each statement opens its own handle: a latched handle does not reach the next statement", async () => {
-    const reader = new LibreDBProvider(makeConn(tmpFile), {}, AGENT);
-    await reader.connect();
-    try {
-      await settle(reader.query("put user:9 Mallory"));
-      expect((await reader.queryReadOnly("get user:2", BUDGET)).rowCount).toBe(1);
-    } finally {
-      await reader.disconnect();
+  // Each statement's handle, and a snapshot handle replaced by a newer one, holds a descriptor and a replay of the store:
+  // each is closed when it is done with, on every path out, or every statement leaks both.
+  describe("every handle it opens is closed", () => {
+    function track() {
+      const opens = spyOn(fs, "openSync");
+      const closes = spyOn(fs, "closeSync");
+      return {
+        opened: () => opens.mock.results.map((result) => result.value as number),
+        closed: () => closes.mock.calls.map((call) => call[0]),
+        clear() {
+          opens.mockClear();
+          closes.mockClear();
+        },
+        restore() {
+          opens.mockRestore();
+          closes.mockRestore();
+        },
+      };
     }
+
+    test.each([
+      ["an answered read", "get user:1", BUDGET],
+      ["a read refused over the row budget", "prefix user:", { ...BUDGET, maxResultRows: 1 }],
+      ["a key the kernel refuses", "get \uD800", BUDGET],
+    ] as const)("%s closes the statement's own handle", async (_name, statement, budget) => {
+      const reader = new LibreDBProvider(makeConn(tmpFile), {}, AGENT);
+      await reader.connect();
+      const fds = track();
+      try {
+        await settle(reader.queryReadOnly(statement, budget));
+        expect(fds.opened()).toHaveLength(1);
+        expect(fds.closed()).toEqual(fds.opened());
+      } finally {
+        fds.restore();
+        await reader.disconnect();
+      }
+    });
+
+    test("a snapshot reopened after a commit closes the handle it replaces", async () => {
+      const writer = new LibreDBProvider(makeConn(tmpFile));
+      await writer.connect();
+      const fds = track();
+      const reader = new LibreDBProvider(makeConn(tmpFile), {}, AGENT);
+      try {
+        await reader.connect();
+        const [held] = fds.opened();
+        expect(fds.opened()).toHaveLength(1);
+        await writer.query("put audit:1 created");
+        fds.clear();
+        await reader.listObjects([], "keyspace");
+        expect(fds.opened()).toHaveLength(1);
+        expect(fds.closed()).toEqual([held]);
+      } finally {
+        fds.restore();
+        await reader.disconnect();
+        await writer.disconnect();
+      }
+    });
   });
 
   test("the object surface of a profiled reader reads what the writer committed since it opened", async () => {
@@ -1785,6 +1860,52 @@ describe("LibreDBProvider — the agent read-only profile", () => {
     } finally {
       await reader.disconnect();
     }
+  });
+
+  test("an object read after the file is gone is refused as the connection's failure", async () => {
+    const reader = new LibreDBProvider(makeConn(tmpFile), {}, AGENT);
+    await reader.connect();
+    try {
+      rmDbFile(tmpFile);
+      const error = await settle(reader.getOverview());
+      expect(error).toBeInstanceOf(ConnectionError);
+      expect((error as Error).message).toBe(
+        `The LibreDB file ${tmpFile} does not exist. The agent opens an existing file read-only and creates none.`,
+      );
+    } finally {
+      await reader.disconnect();
+    }
+  });
+
+  // connect() refuses a FIFO before it opens, but the agent's handles reopen the file after that, per statement and when
+  // the file changed. A FIFO put at the path since then would block the server's own thread at that open, so what was
+  // opened is asked, in a child under a hard limit, so a regression fails here instead of hanging the suite.
+  describeIf(MISSING_POSIX_SPECIAL_FILES, "a FIFO put at the path after the open", () => {
+    test(
+      "is refused at the next statement and object read, not waited on",
+      async () => {
+        const outcome = await runInChild(
+          [
+            `const { LibreDBProvider } = await import(${JSON.stringify(path.join(import.meta.dir, "../../../src/lib/db/providers/embedded/libredb.ts"))});`,
+            `const { unlinkSync } = await import("node:fs");`,
+            `const file = ${JSON.stringify(tmpFile)};`,
+            `const provider = new LibreDBProvider({ id: "fifo", name: "fifo", type: "libredb", database: file }, {}, { readOnly: true, sendsStatements: true });`,
+            "await provider.connect();",
+            "unlinkSync(file);",
+            `const made = Bun.spawnSync(["mkfifo", "-m", "644", file]);`,
+            "if (made.exitCode !== 0) throw new Error('mkfifo failed');",
+            "const outcome = async (run) => run().then(() => 'answered', (error) => `${error.constructor.name}: ${error.message}`);",
+            "report({",
+            "  statement: await outcome(() => provider.queryReadOnly('get user:1', { statementTimeoutMs: 5000, maxResultRows: 10, maxResultBytes: 100000 })),",
+            "  objects: await outcome(() => provider.getOverview()),",
+            "});",
+          ].join("\n"),
+        );
+        const refusal = `ConnectionError: Failed to open LibreDB file: ${tmpFile} is a named pipe (FIFO), not a regular file`;
+        expect(outcome).toEqual({ report: { statement: refusal, objects: refusal }, failure: null });
+      },
+      CHILD_TEST_TIMEOUT_MS,
+    );
   });
 
   test("a missing file is refused at the open, and no file and no lock are created", async () => {

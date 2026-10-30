@@ -5,7 +5,7 @@
  * refuses the one call the kernel writes through. So every case here compares the file, and the writer's lock beside
  * it, byte for byte before and after, rather than trusting what the kernel says it did.
  */
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { open, kv } from "@libredb/libredb";
 import * as fs from "fs";
 import * as os from "os";
@@ -14,6 +14,8 @@ import {
   LIBREDB_READ_ONLY_WRITE_REFUSAL,
   libredbReadOnlyFileSystem,
 } from "@/lib/db/providers/embedded/libredb-read-only-file";
+import { testIf } from "../../../helpers/posix-tools";
+import { MISSING_POSIX_SPECIAL_FILES } from "../../../helpers/special-files";
 
 let dir: string;
 let file: string;
@@ -115,6 +117,43 @@ describe("libredbReadOnlyFileSystem", () => {
     }
     expect(snapshot()).toEqual(before);
   });
+
+  test("the descriptor it opens is one the operating system will not write through", () => {
+    const opens = spyOn(fs, "openSync");
+    let handle: ReturnType<ReturnType<typeof libredbReadOnlyFileSystem>["open"]>;
+    let fds: unknown[];
+    try {
+      handle = libredbReadOnlyFileSystem().open(file);
+      fds = opens.mock.results.map((result) => result.value);
+    } finally {
+      opens.mockRestore();
+    }
+    const before = snapshot();
+    try {
+      expect(fds).toHaveLength(1);
+      const fd = fds[0] as number;
+      expect(() => fs.writeSync(fd, Buffer.from("x"), 0, 1, 0)).toThrow(expect.objectContaining({ code: "EBADF" }));
+    } finally {
+      handle.close();
+    }
+    expect(snapshot()).toEqual(before);
+  });
+
+  // What was opened is asked, not the path: a path that names no regular file by the time it is opened is refused from
+  // its descriptor, which is closed again. A directory opens for reading on POSIX, so it shows the check without a FIFO.
+  testIf(
+    MISSING_POSIX_SPECIAL_FILES,
+    "a path that is not a regular file is refused from the descriptor it opened",
+    () => {
+      const closes = spyOn(fs, "closeSync");
+      try {
+        expect(() => libredbReadOnlyFileSystem().open(dir)).toThrow(`${dir} is a directory, not a regular file`);
+        expect(closes).toHaveBeenCalledTimes(1);
+      } finally {
+        closes.mockRestore();
+      }
+    },
+  );
 
   test("reads by position and stops at the end of the file", () => {
     const handle = libredbReadOnlyFileSystem().open(file);
