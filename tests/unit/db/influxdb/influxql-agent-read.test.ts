@@ -141,6 +141,9 @@ describe("proveInfluxqlAgentPrincipal on 1.13.1", () => {
     }
     const { error } = await prove("v1", [answer(500, '{"error":"boom"}')]);
     profileError(error, "PROFILE_UNSUPPORTED_TARGET");
+    // The measured wording whole: a refusal that only ends like the server's is not the server's.
+    const lookalike = await prove("v1", [answer(403, '{"error":"proxy: denied, requires admin privilege"}')]);
+    profileError(lookalike.error, "PROFILE_UNSUPPORTED_TARGET");
   });
 
   test("refuses a write probe answered in any other way, fail closed", async () => {
@@ -172,6 +175,12 @@ describe("proveInfluxqlAgentPrincipal on 2.9.1", () => {
     expect(profileError(error, "PROFILE_PRIVILEGES_TOO_BROAD").message).toBe(
       "The agent read-only profile needs a token scoped to the buckets it reads, and this one lists InfluxDB 2.x's system buckets, which only an operator or all-access token reads. Use a token with read permission on the connection's bucket. Nothing else was sent.",
     );
+  });
+
+  test("refuses a probe answered with a second result beside the refusal, fail closed", async () => {
+    const two = answer(200, '{"results":[{"statement_id":0,"error":"insufficient permissions"},{"statement_id":1}]}');
+    const { error } = await prove("v2", [at("2.9.1", "listing-ro"), two]);
+    profileError(error, "PROFILE_UNSUPPORTED_TARGET");
   });
 
   test("refuses a token that writes the bound bucket", async () => {
