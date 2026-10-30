@@ -315,9 +315,11 @@ channels:
     tier: 2
     kind: marketplace
     update:
-      # The VSIX that vscode-extension.yml tested is uploaded by hand on the
-      # publisher's management page; the release workflow publishes nothing yet.
-      method: manual_ui
+      # A vscode-extension-<version> tag runs vscode-extension-release.yml, whose
+      # publish job uploads the VSIX its gates tested by trusted publishing, after
+      # a reviewer approves the vscode-marketplace environment. The tag is cut on
+      # demand, not with each product release.
+      method: ci_publish
       sla: on_demand
     links:
       catalog: https://marketplace.visualstudio.com/items?itemName=libredb.libredb-studio

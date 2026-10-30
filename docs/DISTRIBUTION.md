@@ -1435,6 +1435,7 @@ The listing's text and images come from the packed `README.md`; the management p
 - The publisher is owned by named members' Microsoft accounts, added by User ID on the publisher's Members page, so no single account holds it.
 - 0.1.0 was uploaded by hand from `main` at 15fff4b04 (the `vscode-extension-vsix` artifact of run 39575773660), with no token, after a check on the four v0 engines in a fresh VS Code profile.
 - The publish job authenticates by trusted publishing (`vsce publish --oidc`), decided on 22 October 2026 over Entra ID workload identity federation and an organization-scoped PAT: it stores no secret and needs no Azure tenant, and global Azure DevOps PATs retire on 1 December 2026.
+- 0.4.1 was the first version the publish job uploaded, on 30 October 2026 (UTC), from the `vscode-extension-0.4.1` tag on `main` at 0b97ace52 (run 41137115534); the Marketplace's Trusted Publishing page showed the policy as used by that run, and `code --install-extension libredb.libredb-studio` installed 0.4.1 in a fresh profile.
 - The tag namespace is `vscode-extension-<version>`, as in "Cutting a version" above and `CLAUDE.md`'s "Tag namespace" paragraph.
 
 ### Still open
@@ -1445,7 +1446,7 @@ The listing's text and images come from the packed `README.md`; the management p
 
 ### Its channel row
 
-The extension is the `vscode-marketplace` row of [`distribution/channels.yaml`](../distribution/channels.yaml): `kind: marketplace`, `runtime: channel_supplied`, `method: manual_ui`.
+The extension is the `vscode-marketplace` row of [`distribution/channels.yaml`](../distribution/channels.yaml): `kind: marketplace`, `runtime: channel_supplied`, `method: ci_publish`, `sla: on_demand`.
 `evaluateChannel` in `scripts/distribution-check.mjs` compares a pinned row with the root `package.json` version, which is not the extension's, so the row has `strategy: none` and the listed version is checked by hand, as Azure's and AWS's are.
 A pin that reads the listing's version against `vscode-extension/package.json` would need its own comparison in the checker, and its test.
 
