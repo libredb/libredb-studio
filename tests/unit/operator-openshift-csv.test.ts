@@ -3,7 +3,7 @@
  *
  * OperatorHub on OpenShift reads seven features.operators.openshift.io annotations from the CSV
  * (preflight's RequiredAnnotations check), and each one must be a string. All seven are "false" in
- * this release: the bundle lists no relatedImages or digests (disconnected), the image is not
+ * this release: Studio's own image is still a tag, only the plugin's is in relatedImages by digest (disconnected), the image is not
  * built for FIPS mode, Studio's token exchange and API calls do not go through a cluster proxy on
  * purpose (proxy-aware), it does not follow the cluster's TLS profile, and it uses no cloud
  * token authentication. They live in the base CSV, so make -C operator bundle carries them into

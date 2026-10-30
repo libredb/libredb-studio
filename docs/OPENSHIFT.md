@@ -1,13 +1,15 @@
 # LibreDB Studio on OpenShift
 
 On OpenShift, Studio installs through its operator from the community catalog or with its Helm chart, signs people in with their OpenShift account, lists the databases of the cluster's database operators, and links itself from the web console.
-This release ships no OpenShift console plugin.
+Its console plugin adds a Databases page and an item on each database's details page to the web console, which open the database in Studio in a new tab.
 
 ## Supported versions
 
 - The chart's openshift mode, the operator installed from OperatorHub (OLM v0), the console link and openshift sign-in are tested on OpenShift 4.22 (CRC 4.22.14).
   OLM v1 installs the operator only where the `NewOLMOwnSingleNamespace` feature gate is on, which OpenShift 4.19 to 4.22 enable only in the TechPreviewNoUpgrade and DevPreviewNoUpgrade feature sets; that path has not run (see [OLM v1](#olm-v1)).
 - The operator bundle declares OpenShift 4.16 as its oldest release; 4.14 and 4.15 are untested.
+- The console plugin needs OpenShift 4.19 or later; tested on 4.22 (CRC 4.22.14).
+  On 4.16 to 4.18 the operator and the chart run without it, and the console link works.
 - Sign-in with OpenShift accounts needs the cluster's built-in OAuth server.
   A cluster that uses direct external OIDC authentication has none: there, Studio signs people in with [OIDC sign-in](OIDC.md) against the cluster's identity provider, without Kubernetes discovery, because on a cluster that serves `config.openshift.io/v1` the access review of an OIDC session denies every request, and the chart refuses discovery with `authProvider=oidc`.
 - The calls of openshift sign-in never go through a proxy (see [Variables](#variables)), so the operator does not declare itself proxy-aware.
@@ -142,10 +144,11 @@ Across the cluster, a ClusterRole lets it:
 - create, read, change and delete Roles and RoleBindings, which discovery renders in each discovered namespace;
 - `get` Secrets and Services, and `get`, `list` and `watch` the four kinds discovery lists, because Kubernetes lets the operator create the exporter's Roles only with verbs it holds itself;
 - create, read, change and delete the cluster-scoped `console.openshift.io` ConsoleLinks;
+- create any `console.openshift.io` ConsolePlugin, and read, change and delete only the one named `libredb-studio`, the console plugin's;
 - `get` Namespaces.
 
 Outside its namespace the operator can create no workload, Service, Secret, ConfigMap, NetworkPolicy, Route or Job, and it can neither list nor watch Secrets.
-Its roles hold no ClusterRole, ClusterRoleBinding or ConsolePlugin rule, so a resource with `accessReview.enabled` or a Rancher NavLink fails to reconcile.
+Its roles hold no ClusterRole or ClusterRoleBinding rule and nothing on `consoles`, so a resource with `accessReview.enabled` or a Rancher NavLink fails to reconcile.
 Its service account creates token and subject access reviews only through the metrics auth role that guards its metrics endpoint.
 
 ### Upgrading the operator
@@ -259,6 +262,51 @@ With `openshift.consoleLink.enabled`, the console links to Studio; the [chart RE
 
 A signed-out visit from the link goes to the cluster's login page, which may ask for the OpenShift password again even when the console tab is signed in (it does with htpasswd): the OAuth server keeps no login session that another client could reuse, while an identity provider that signs people in on its own page may keep one.
 Studio never asks for a password of its own in this mode.
+
+## The console plugin
+
+The console plugin `libredb-studio` adds a Databases page under Home and an item on the details page of each supported database resource (CloudNativePG and EDB `Cluster`, Crunchy `PostgresCluster`, `MongoDBCommunity`).
+The page lists the resources of those kinds the signed-in user may list in the chosen project, or in all projects for a user who may list them cluster-wide, and opens one in Studio in a new tab.
+It finds Studio only through the ConsoleLink named `libredb-studio`, which the cluster Studio renders with discovery on, so it needs `discovery.kubernetes.enabled` and `openshift.consoleLink.enabled` with `location: ApplicationMenu`.
+Per row it asks one access review, whether the user may `get` the row's credential Secret, only as a hint; the plugin never reads a Secret, and Studio reviews again with the user's own token when the database opens.
+It needs OpenShift 4.19 or later.
+
+### Turning it on
+
+The plugin renders with `openshift.consolePlugin.enabled` on the cluster Studio, and then stays off in the console until a cluster admin turns it on, in one of three ways:
+
+- the operator's install form, whose console plugin toggle defaults to Disabled on a community catalog ("Ecosystem > Software Catalog" on 4.20 and later, "OperatorHub" on 4.19);
+- the console's Console plugins page, Administration > Cluster Settings > Configuration > Console, tab Console plugins;
+- this patch, which the chart's install notes print, and which adds `libredb-studio` to `spec.plugins` once and keeps the other plugins in their order:
+
+  ```sh
+  set -eu
+  plugins=$(oc get consoles.operator.openshift.io cluster -o jsonpath='{.spec.plugins}')
+  case "$plugins" in *'"libredb-studio"'*) exit 0 ;; esac
+  if [ -z "$plugins" ]; then
+    oc patch consoles.operator.openshift.io cluster --type=json -p '[{"op":"add","path":"/spec/plugins","value":["libredb-studio"]}]'
+  else
+    oc patch consoles.operator.openshift.io cluster --type=json -p '[{"op":"add","path":"/spec/plugins/-","value":"libredb-studio"}]'
+  fi
+  ```
+
+Turning it on restarts the console pods, which may sign people out once.
+Neither the chart nor the operator patches the console's configuration: turning the plugin on changes every console session, so it stays a cluster admin's act, and a Helm hook Job that did it would leave a binding to `patch` the console's configuration behind whenever a later hook failed under the Helm the console embeds before v3.19.
+
+### The plugin's namespace
+
+The console runs the plugin in every console session and sends each console user's token to the plugin's server on every asset fetch.
+So whoever may change that server's Deployment runs code in every console session and receives every console user's token: only cluster admins may write the namespace it runs in, and anyone `oc adm policy who-can update deployments.apps -n <namespace>` lists there holds cluster-admin-grade power.
+
+- Under the operator, the server runs in the operator's own namespace, which the operator sets; a `LibreDBStudio` chooses neither the namespace nor the image.
+- On a Helm install, `openshift.consolePlugin.namespace` names it.
+  Create it with `oc create namespace <namespace>` right before the install, which fails if the name is taken, never with `oc new-project` or the console's Create Project, and check that `oc get rolebindings -n <namespace>` lists only cluster-admin bindings.
+  The chart refuses Studio's own namespace, a discovered namespace and a project someone requested (it carries `openshift.io/requester`, and its requester administers it); the last check looks the namespace up, so `helm template` and a client-side dry run skip it.
+
+The server runs an image pinned by digest, as its own ServiceAccount with no token, with a read-only root and the nginx configuration the image bakes in, which logs no request header.
+Its NetworkPolicy admits only the `openshift-console` namespace on TCP 9443 and allows no egress.
+The ConsolePlugin declares no proxy and no content security policy.
+The chart README's [The console plugin](../charts/libredb-studio/README.md#the-console-plugin) has the values.
 
 ## Sign-in with the OpenShift OAuth server
 
@@ -459,9 +507,9 @@ Deleting the operator's namespace last removes its OperatorGroup with it, and th
 oc delete namespace libredb-studio
 ```
 
-This release ships no console plugin, so its uninstall leaves nothing in the console's configuration.
-When `libredb-studio` is listed in `spec.plugins` of `consoles.operator.openshift.io/cluster`, from a plugin enabled by hand or a release that ships one, uninstalling the operator from the CLI leaves the entry there.
-A stale entry is harmless: the console stays Available and not Degraded, and the console operator logs that the plugin is not found every few seconds.
+Uninstalling leaves `libredb-studio` in `spec.plugins` of `consoles.operator.openshift.io/cluster` when the console plugin was turned on, on either path.
+Removing that entry is a required step.
+The console stays Available and not Degraded with a stale entry, and the console operator logs that the plugin is not found every few seconds, but the entry trusts the next ConsolePlugin named `libredb-studio` in advance: whoever creates one later has it load in every console session without a cluster admin turning it on again.
 Remove it by its index in the list, `0` below; the `test` operation refuses the patch when that index holds another plugin:
 
 ```sh

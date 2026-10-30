@@ -447,7 +447,7 @@ PR touches `operator/`. The operator Makefile derives `VERSION` from
 ### OpenShift mode and the cluster Studio namespace
 
 The operator renders the chart's OpenShift sign-in mode (`authProvider: openshift`, see [OPENSHIFT.md](OPENSHIFT.md)) and the console objects that go with it: the `route.openshift.io` Route with the host the resource sets, and with `openshift.consoleLink.enabled` a `console.openshift.io` ConsoleLink in the application menu or on the dashboards of the namespaces it names.
-No ConsolePlugin ships in this release.
+With `openshift.consolePlugin.enabled` it also renders the OpenShift console plugin: the cluster-scoped ConsolePlugin `libredb-studio` and the plugin's nginx server (a ServiceAccount, Deployment, Service and NetworkPolicy named `libredb-studio-console-plugin`) in the operator's own namespace.
 Every authenticated user may read ConsoleLinks, so the operator ships no reader role, and a link carries no discovered namespace.
 
 A ConsoleLink is cluster-scoped and Kubernetes discovery renders a Role in each namespace it discovers, while any user who may edit a namespace may create a `LibreDBStudio` there.
@@ -459,16 +459,25 @@ A `LibreDBStudio` in another namespace never enters the controller's cache, so i
 `operator/watches.yaml` sets `operator.clusterStudioNamespace` from `$WATCH_NAMESPACE`, so the chart renders the ConsoleLink and discovery of other namespaces for the resource in the operator's own namespace, and the chart's guard refusing them elsewhere stays as defense in depth.
 The operator sets `operator.managed` and `operator.clusterStudioNamespace` itself through `overrideValues` in `operator/watches.yaml`, which win over the resource's spec, so a resource cannot change either.
 helm-operator applies `overrideValues` like `helm --set-string`, so each one reaches the chart as a string: the chart receives `operator.managed` as the string `"true"`, and a boolean must never be pinned that way, since the string `"false"` is truthy in a template.
+Every key `overrideValues` pins accepts a string in the chart's `values.schema.json`, which `tests/unit/operator-openshift-watches.test.ts` checks key by key.
+
+The console plugin's server receives every console user's token, so the resource chooses neither where it runs nor what it runs.
+`overrideValues` pins `openshift.consolePlugin.namespace` to `$OPERATOR_NAMESPACE` and `openshift.consolePlugin.image` to `$RELATED_IMAGE_PLUGIN`, two variables of the manager's own Deployment (`operator/config/manager/manager.yaml`): `OPERATOR_NAMESPACE` comes from the downward API (`metadata.namespace`, the operator's own namespace), and `RELATED_IMAGE_PLUGIN` is the plugin image pinned by digest, the same reference as the chart's default.
+With either unset the reconcile fails naming it.
+The ConsolePlugin renders, like the ConsoleLink, only for the resource in the operator's own namespace.
+The CSV carries `console.openshift.io/plugins: '["libredb-studio"]'`, so the install form offers the plugin's toggle, which defaults to Disabled on a community catalog, and `make -C operator bundle` lists `RELATED_IMAGE_PLUGIN` in `spec.relatedImages`.
+The plugin needs OpenShift 4.19 or later; the console link works without it.
 
 The manager's rights are split in two.
 The Role `manager-namespace-role` (`config/rbac/namespace_role.yaml`) holds everything a release renders in the operator's namespace, the Helm release Secrets and the `LibreDBStudio` kind included, and `make -C operator bundle` turns it into the CSV's `permissions`, which OLM grants in the install namespace only.
-The ClusterRole `manager-role` (`config/rbac/role.yaml`) becomes the CSV's `clusterPermissions` and holds only what must reach other namespaces or cluster-scoped kinds: Roles and RoleBindings, `get` on Secrets and Services and read on the four kinds discovery lists (CloudNativePG and EDB `clusters`, Crunchy `postgresclusters` and `mongodbcommunity`), because Kubernetes lets the operator create the exporter's Roles only with verbs it holds itself, ConsoleLinks, and `get` on Namespaces.
+The ClusterRole `manager-role` (`config/rbac/role.yaml`) becomes the CSV's `clusterPermissions` and holds only what must reach other namespaces or cluster-scoped kinds: Roles and RoleBindings, `get` on Secrets and Services and read on the four kinds discovery lists (CloudNativePG and EDB `clusters`, Crunchy `postgresclusters` and `mongodbcommunity`), because Kubernetes lets the operator create the exporter's Roles only with verbs it holds itself, ConsoleLinks, ConsolePlugins in two rules, and `get` on Namespaces.
 It holds no rule on `libredbstudios` and no `list` or `watch` on Secrets, so a controller whose watch is widened past its namespace cannot fill its cache and exits instead of reconciling.
-Neither grants a ClusterRole, ClusterRoleBinding, access review or ConsolePlugin, and `tests/unit/operator-openshift-rbac.test.ts` pins both to reviewed lists.
+The first `consoleplugins` rule holds `create`, `list` and `watch`, which a name cannot limit; the second holds `delete`, `get`, `patch` and `update` only for `resourceNames: [libredb-studio]`, the one name the chart renders, so the operator can rewrite or delete no other plugin.
+Neither grants a ClusterRole, ClusterRoleBinding or access review, nor anything on `consoles`, and `tests/unit/operator-openshift-rbac.test.ts` pins both to reviewed lists.
 The operator's service account still creates token and subject access reviews through the separate metrics auth role, which guards its metrics endpoint.
 An operator 1.1.0 install, which runs for all namespaces, is not upgraded in place: the new CSV fails with `UnsupportedOperatorGroup` and 1.1.0 keeps running, so [OPENSHIFT.md](OPENSHIFT.md#moving-from-operator-110) gives the move.
 
-The CSV declares the seven `features.operators.openshift.io` annotations OperatorHub reads, all `"false"` in this release: no `relatedImages` or digests yet, no FIPS build, no cluster proxy for Studio's token exchange and API calls, no cluster TLS profile and no cloud token authentication.
+The CSV declares the seven `features.operators.openshift.io` annotations OperatorHub reads, all `"false"` in this release: Studio's own image is still a tag (only the plugin's is in `relatedImages` by digest), no FIPS build, no cluster proxy for Studio's token exchange and API calls, no cluster TLS profile and no cloud token authentication.
 `make -C operator bundle` stamps `com.redhat.openshift.versions: "v4.16"` into `bundle/metadata/annotations.yaml` after `generate bundle` rewrites it, so the bundle records OpenShift 4.16 as its floor; 4.14 and 4.15 are untested.
 The annotation does not decide which catalogs list the bundle: in FBC mode the submission's `ci.yaml` `catalog_mapping` does, so the floor holds only once that mapping starts at v4.16.
 The submission's `ci.yaml` maps v4.15 to v4.22 today (the rendered catalogs below); the intended mapping is v4.16 to v4.22 without the end-of-life v4.17 row, an owner pull request on community-operators-prod outside this repository.
