@@ -204,6 +204,15 @@ describe("POST /api/agent/classify", () => {
     expect(mockClassify).toHaveBeenCalledWith("which keys hold a role", { statementLanguage: "libredbkv" });
   });
 
+  test("an InfluxDB (InfluxQL) connection is classified in its own family's terms", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:metrics", name: "Metrics", type: "influxdb" });
+
+    const res = await POST(classifyRequest({ objective: "which room ran hottest", connectionId: "seed:metrics" }));
+
+    expect(res.status).toBe(200);
+    expect(mockClassify).toHaveBeenCalledWith("which room ran hottest", { statementLanguage: "influxql" });
+  });
+
   test("a connection with no statement language is classified in SQL's terms", async () => {
     mockResolveConnection.mockResolvedValueOnce({ id: "seed:cache", name: "Cache", type: "redis" });
 

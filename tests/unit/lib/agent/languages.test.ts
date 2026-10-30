@@ -121,6 +121,7 @@ const LANGUAGE_IDS: Readonly<Record<AgentStatementLanguageId, true>> = {
   kubectl: true,
   mongo: true,
   libredbkv: true,
+  influxql: true,
 };
 
 describe("the server packs", () => {
@@ -245,7 +246,7 @@ describe("the language packs", () => {
   );
 
   test("the arms projection holds every language, in the order the packs are declared", () => {
-    expect(Object.keys(LANGUAGE_TOOL_ARMS)).toEqual(["sql", "kubectl", "mongo", "libredbkv"]);
+    expect(Object.keys(LANGUAGE_TOOL_ARMS)).toEqual(["sql", "kubectl", "mongo", "libredbkv", "influxql"]);
     expect(Object.isFrozen(LANGUAGE_TOOL_ARMS)).toBe(true);
   });
 
@@ -383,7 +384,7 @@ describe("the prompt tables the packs hold", () => {
   });
 
   test("the workflow rules projection holds each pack's own frozen record, in the order the packs are declared", () => {
-    expect(Object.keys(WORKFLOW_TOOL_RULES)).toEqual(["sql", "kubectl", "mongo", "libredbkv"]);
+    expect(Object.keys(WORKFLOW_TOOL_RULES)).toEqual(["sql", "kubectl", "mongo", "libredbkv", "influxql"]);
     expect(Object.isFrozen(WORKFLOW_TOOL_RULES)).toBe(true);
     for (const id of ids) {
       expect(WORKFLOW_TOOL_RULES[id]).toBe(languageServerPack(id).workflowToolRules);
@@ -474,14 +475,14 @@ describe("the client packs", () => {
   test("each projection is frozen and keyed by every language, in the order the packs are declared", () => {
     for (const projection of [AGENT_LANGUAGE_COPY, AGENT_PLAN_ESTIMATE_OPERATION, AGENT_WORKFLOW_VARIANTS]) {
       expect(Object.isFrozen(projection)).toBe(true);
-      expect(Object.keys(projection)).toEqual(["sql", "kubectl", "mongo", "libredbkv"]);
+      expect(Object.keys(projection)).toEqual(["sql", "kubectl", "mongo", "libredbkv", "influxql"]);
     }
   });
 
   test("a language with no plan keeps its key in the plan projection, with null as its value", () => {
     expect(Object.hasOwn(AGENT_PLAN_ESTIMATE_OPERATION, "kubectl")).toBe(true);
     expect(AGENT_PLAN_ESTIMATE_OPERATION.kubectl).toBeNull();
-    expect(projectClientPacks(() => null)).toEqual({ sql: null, kubectl: null, mongo: null, libredbkv: null });
+    expect(projectClientPacks(() => null)).toEqual({ sql: null, kubectl: null, mongo: null, libredbkv: null, influxql: null });
   });
 
   test("every language's operations variant is the one shared variant, and the read-class four are frozen", () => {

@@ -11,6 +11,7 @@
  */
 import type { AgentStatementLanguageId } from "../agent-manifest";
 import { mergeDisjoint } from "../disjoint-merge";
+import { INFLUXQL_PACK } from "./influxql/index";
 import { KUBECTL_PACK } from "./kubectl/index";
 import { LIBREDBKV_PACK } from "./libredbkv/index";
 import { MONGO_PACK } from "./mongo/index";
@@ -22,6 +23,7 @@ const PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguagePack>> = Obj
   kubectl: KUBECTL_PACK,
   mongo: MONGO_PACK,
   libredbkv: LIBREDBKV_PACK,
+  influxql: INFLUXQL_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguagePack>);
 
 /** The pack for `language`, or a named error when the id is not a language this server knows. */
@@ -37,6 +39,7 @@ export const LANGUAGE_TOOL_ARMS: Readonly<Record<AgentStatementLanguageId, Langu
   kubectl: KUBECTL_PACK.execution.arms,
   mongo: MONGO_PACK.execution.arms,
   libredbkv: LIBREDBKV_PACK.execution.arms,
+  influxql: INFLUXQL_PACK.execution.arms,
 } satisfies Record<AgentStatementLanguageId, LanguageToolArms>);
 
 /**
@@ -49,6 +52,7 @@ export const AGENT_EVIDENCE_TOOLS: Readonly<Record<EvidenceToolName, AgentEviden
     KUBECTL_PACK.execution.evidenceTools,
     MONGO_PACK.execution.evidenceTools,
     LIBREDBKV_PACK.execution.evidenceTools,
+    INFLUXQL_PACK.execution.evidenceTools,
   ],
   "AGENT_EVIDENCE_TOOLS",
 );

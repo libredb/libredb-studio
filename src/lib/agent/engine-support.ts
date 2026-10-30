@@ -62,7 +62,11 @@ import type { DatabaseType } from "@/lib/types";
  * the handle's: an embedded file with no principal, which each statement opens on a handle of its own through Studio's
  * read-only file adapter, with no writer lock, so it opens beside the editor's writer, and with no call that can write
  * the file, the engine's one write path refusing before any write; Studio's reader admits get, prefix and range only.
- * Each provider's own `queryReadOnly` argues its own case.
+ * InfluxDB's (InfluxQL, 1.x and 2.x) is the principal's: a 1.x user refused SHOW USERS as needing the admin privilege,
+ * or a 2.x token that lists no system bucket, refused a no-op DELETE on every database it lists, proven before every
+ * statement, so an admin, a server with authentication off and a principal that can write anywhere, where SELECT ...
+ * INTO would land, are refused; InfluxDB 3 is refused on this path. Studio's reader admits one SELECT, SHOW of the
+ * catalog or EXPLAIN of a SELECT, with no comment. Each provider's own `queryReadOnly` argues its own case.
  * `tests/unit/lib/agent/engine-support.test.ts` is what keeps the two equal - it walks EVERY
  * id in the `DatabaseType` union, reads `queryReadOnly` off the real provider class the
  * factory would construct, and fails if this array and the drivers diverge in either direction.
@@ -96,6 +100,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "couchbase",
   "druid",
   "libredb",
+  "influxdb",
 ];
 
 /**

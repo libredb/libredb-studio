@@ -72,6 +72,8 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   mongo: MONGO_MCP_FACET,
   // No MCP statement tool yet: MCP read stays closed on LibreDB until a change of its own declares one and opens it.
   libredbkv: null,
+  // No MCP statement tool yet: MCP read stays closed on InfluxDB until a change of its own declares one and opens it.
+  influxql: null,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageMcpFacet | null>);
 
 /** A facet some language declares, with its tool's name as a literal. */

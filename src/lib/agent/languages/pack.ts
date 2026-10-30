@@ -79,6 +79,11 @@ type LibredbkvOperationId =
   /** One LibreDB read command the model wrote, on a `libredb` connection; see `libredbkvQueryReadDescriptor`. */
   "libredbkv.query.read";
 
+/** The InfluxQL language's operation: its one read. */
+type InfluxqlOperationId =
+  /** One InfluxQL read statement the model wrote, on an `influxdb` connection; see `influxqlQueryReadDescriptor`. */
+  "influxql.query.read";
+
 /**
  * The canonical operations each family's tools drive, by family. `AgentOperationId` in `tools.ts` is the core's two
  * curated ids and every row here, so a family's ids are written once, beside the family's other types.
@@ -88,6 +93,7 @@ export interface AgentFamilyOperationIds {
   readonly kubectl: KubectlOperationId;
   readonly mongo: MongoOperationId;
   readonly libredbkv: LibredbkvOperationId;
+  readonly influxql: InfluxqlOperationId;
 }
 
 /** kubectl's goal verifiers. */
@@ -127,6 +133,8 @@ export interface AgentFamilyVerifierIds {
   readonly mongo: "agent-query-optimization-mongo.1";
   /** None: its workflows are judged by the core's own rules. */
   readonly libredbkv: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly influxql: never;
 }
 
 /** The operation a family's model-written reads are evaluated under: its row's `<family>.query.read`. */
@@ -382,6 +390,7 @@ export interface AgentFamilyEvidenceTools {
   readonly kubectl: KubectlEvidenceToolName;
   readonly mongo: never;
   readonly libredbkv: never;
+  readonly influxql: never;
 }
 
 /** Every pack's evidence tool: a member of the core's `AgentToolName`, declared by the pack that offers it. */
@@ -393,6 +402,7 @@ export interface AgentFamilyReadingDenyCodes {
   readonly kubectl: KubectlReadingDenyCode;
   readonly mongo: never;
   readonly libredbkv: never;
+  readonly influxql: never;
 }
 
 /** Every pack's reading refusal code: a member of the core's `AgentReadingDenyCode`, declared by its pack. */
@@ -404,6 +414,7 @@ export interface AgentFamilyShortfalls {
   readonly kubectl: KubectlShortfall;
   readonly mongo: never;
   readonly libredbkv: never;
+  readonly influxql: never;
 }
 
 /** Every pack's verdict shortfall: a member of the core's `AgentGoalShortfall`, declared by its pack. */
@@ -415,6 +426,7 @@ export interface AgentFamilyVariantRequirements {
   readonly kubectl: KubectlVariantRequirement;
   readonly mongo: never;
   readonly libredbkv: never;
+  readonly influxql: never;
 }
 
 /** Every pack's variant requirement: a member of the core's `AgentVariantRequirement`, declared by its pack. */
@@ -460,6 +472,7 @@ export interface AgentFamilyEvidenceEvents {
   readonly kubectl: KubectlEvidenceEvent;
   readonly mongo: never;
   readonly libredbkv: never;
+  readonly influxql: never;
 }
 
 /** Every pack's evidence event, as the ledger stores it less its timestamp. */
@@ -641,6 +654,7 @@ export interface AgentFamilyDialectRows {
   mongo: { client: Record<never, never>; server: Record<never, never> };
   kubectl: { client: Record<never, never>; server: Record<never, never> };
   libredbkv: { client: Record<never, never>; server: Record<never, never> };
+  influxql: { client: Record<never, never>; server: Record<never, never> };
 }
 
 /** The dialect-bound members of each family, client and server. */

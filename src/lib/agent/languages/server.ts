@@ -15,6 +15,7 @@
 import type { AgentStatementLanguageId } from "../agent-manifest";
 import { mergeDisjoint } from "../disjoint-merge";
 import type { AgentRunWorkflowType } from "../types";
+import { INFLUXQL_SERVER_PACK } from "./influxql/server";
 import { KUBECTL_SERVER_PACK } from "./kubectl/server";
 import { LIBREDBKV_SERVER_PACK } from "./libredbkv/server";
 import { MONGO_SERVER_PACK } from "./mongo/server";
@@ -34,6 +35,7 @@ const SERVER_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageServe
   kubectl: KUBECTL_SERVER_PACK,
   mongo: MONGO_SERVER_PACK,
   libredbkv: LIBREDBKV_SERVER_PACK,
+  influxql: INFLUXQL_SERVER_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageServerPack>);
 
 /** The server pack for `language`, or a named error when the id is not a language this server knows. */
@@ -72,6 +74,7 @@ export const LANGUAGE_BASE_DEFINITIONS = mergeDisjoint(
     KUBECTL_SERVER_PACK.baseDefinitions,
     MONGO_SERVER_PACK.baseDefinitions,
     LIBREDBKV_SERVER_PACK.baseDefinitions,
+    INFLUXQL_SERVER_PACK.baseDefinitions,
   ],
   "LANGUAGE_BASE_DEFINITIONS",
 );
@@ -92,6 +95,7 @@ export const WORKFLOW_TOOL_RULES: Readonly<
   kubectl: KUBECTL_SERVER_PACK.workflowToolRules,
   mongo: MONGO_SERVER_PACK.workflowToolRules,
   libredbkv: LIBREDBKV_SERVER_PACK.workflowToolRules,
+  influxql: INFLUXQL_SERVER_PACK.workflowToolRules,
 } satisfies Record<AgentStatementLanguageId, Partial<Record<AgentRunWorkflowType, string>>>);
 
 /**
@@ -104,6 +108,7 @@ export const LANGUAGE_SHORTFALL_NOTICES = mergeDisjoint(
     KUBECTL_SERVER_PACK.shortfallNotices,
     MONGO_SERVER_PACK.shortfallNotices,
     LIBREDBKV_SERVER_PACK.shortfallNotices,
+    INFLUXQL_SERVER_PACK.shortfallNotices,
   ],
   "LANGUAGE_SHORTFALL_NOTICES",
 );

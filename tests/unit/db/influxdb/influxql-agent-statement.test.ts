@@ -39,7 +39,7 @@ describe("readInfluxqlAgentStatement", () => {
     ["EXPLAIN ANALYZE SELECT * FROM home", "EXPLAIN"],
     ["EXPLAIN ANALYZE VERBOSE SELECT * FROM home", "EXPLAIN"],
     ["SELECT *\nFROM home", "SELECT"],
-  ])("admits %p as a %s", (text, statement) => {
+  ] as const)("admits %p as a %s", (text, statement) => {
     expect(readInfluxqlAgentStatement(text)).toEqual({ ok: true, statement });
   });
 

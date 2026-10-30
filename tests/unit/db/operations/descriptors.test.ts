@@ -53,6 +53,7 @@ describe("canonical operation registry", () => {
       "cluster.workloads.read",
       "db.operations.read",
       "db.schema.read",
+      "influxql.query.read",
       "kubectl.query.read",
       "libredbkv.query.read",
       "mongo.plan.estimate",
@@ -182,6 +183,7 @@ describe("the statement-read operations", () => {
     // profile exactly as of SQL's.
     const ids = createCanonicalOperationRegistry().registeredIds();
     expect(ids.filter(isStatementReadOperation).sort()).toEqual([
+      "influxql.query.read",
       "kubectl.query.read",
       "libredbkv.query.read",
       "mongo.query.read",

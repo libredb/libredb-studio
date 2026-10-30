@@ -11,6 +11,7 @@
  * `"unsupported"`. That is what grounding and statistics need, since they run on every engine in plan mode.
  */
 import type { DatabaseType } from "@/lib/types";
+import { INFLUXDB_SERVER_OVERLAY } from "../influxql/engines/influxdb";
 import { KUBERNETES_SERVER_OVERLAY } from "../kubectl/engines/kubernetes";
 import { LIBREDB_SERVER_OVERLAY } from "../libredbkv/engines/libredb";
 import { MONGODB_SERVER_OVERLAY } from "../mongo/engines/mongodb";
@@ -62,6 +63,7 @@ const SERVER_OVERLAYS: AgentEngineServerOverlays = Object.freeze({
   mongodb: Object.freeze({ ...MONGODB_SERVER_OVERLAY }),
   kubernetes: Object.freeze({ ...KUBERNETES_SERVER_OVERLAY }),
   libredb: Object.freeze({ ...LIBREDB_SERVER_OVERLAY }),
+  influxdb: Object.freeze({ ...INFLUXDB_SERVER_OVERLAY }),
 } satisfies AgentEngineServerOverlays);
 
 /** What an engine with no dialect answers: every member unsupported. */

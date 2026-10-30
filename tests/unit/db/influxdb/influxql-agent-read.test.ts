@@ -74,9 +74,9 @@ function profileError(error: Error | undefined, code: string): ExecutionProfileE
   return error as ExecutionProfileError;
 }
 
-const USERS = { route: "query-unchunked", values: { q: "SHOW USERS" } };
-const LISTING = { route: "query-unchunked", values: { q: "SHOW DATABASES" } };
-const probeOn = (db: string) => ({ route: "query-unchunked", values: { db, q: PROBE } });
+const USERS: InfluxRequest<InfluxqlRouteId> = { route: "query-unchunked", values: { q: "SHOW USERS" } };
+const LISTING: InfluxRequest<InfluxqlRouteId> = { route: "query-unchunked", values: { q: "SHOW DATABASES" } };
+const probeOn = (db: string): InfluxRequest<InfluxqlRouteId> => ({ route: "query-unchunked", values: { db, q: PROBE } });
 
 describe("writeProbeStatement", () => {
   test("deletes from a measurement named for this probe alone, before any point there can be", () => {

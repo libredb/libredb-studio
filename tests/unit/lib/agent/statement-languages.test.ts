@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { AGENT_LANGUAGE_COPY } from "@/lib/agent/agent-manifest";
+import { fingerprintInfluxql, influxqlRowCapAdvice } from "@/lib/agent/languages/influxql/adapter";
 import { fingerprintKubectl, kubectlRowCapAdvice } from "@/lib/agent/languages/kubectl/adapter";
 import { fingerprintLibredbkv, libredbkvRowCapAdvice } from "@/lib/agent/languages/libredbkv/adapter";
 import { fingerprintMongo, mongoRowCapAdvice } from "@/lib/agent/languages/mongo/adapter";
@@ -9,7 +10,14 @@ import {
   LIBREDBKV_AGENT_MAX_STATEMENT_CHARS,
   libredbkvAgentReadInput,
 } from "@/lib/db/operations/libredbkv-admission";
+import {
+  admitInfluxqlStatement,
+  INFLUXQL_AGENT_MAX_STATEMENT_CHARS,
+  influxqlAgentReadInput,
+} from "@/lib/db/operations/influxql-admission";
 import { admitMongoStatement } from "@/lib/db/operations/mongo-admission";
+import { INFLUXQL_AGENT_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-statement";
+import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 
 /**
  * kubectl's server half: the repair ledger's identity of one read, and the row-cap advice written in the command's
@@ -312,5 +320,78 @@ describe("the libredbkv language's server adapter and admission", () => {
     expect(refused.success).toBe(false);
     expect(refused.error?.issues[0]?.path).toEqual(["statement"]);
     expect(refused.error?.issues[0]?.message).toStartWith('"put" writes');
+  });
+});
+
+describe("the influxql language's server adapter and admission", () => {
+  test("the fingerprint is the statement's tokens, so one read written three ways is one identity", () => {
+    const one = fingerprintInfluxql("SELECT * FROM home");
+    expect(fingerprintInfluxql("select *  from home")).toBe(one);
+    expect(fingerprintInfluxql("SELECT *\nFROM home")).toBe(one);
+    expect(fingerprintInfluxql('SELECT * FROM "home2"')).not.toBe(one);
+    expect(fingerprintInfluxql("SELECT * FROM home LIMIT 5")).not.toBe(one);
+  });
+
+  test("the fingerprint is total: a refused statement is identified by its raw text, so it is refused again", () => {
+    const raw = 'SELECT * INTO "other".."m" FROM home';
+    expect(fingerprintInfluxql(raw)).toBe(fingerprintInfluxql(raw));
+    expect(fingerprintInfluxql(raw)).toMatch(/^[0-9a-f]{64}$/);
+    expect(fingerprintInfluxql(raw.toLowerCase())).not.toBe(fingerprintInfluxql(raw));
+  });
+
+  test("every advice key of the influxql copy has its own sentence", () => {
+    const generic = influxqlRowCapAdvice("DROP DATABASE home", "200");
+    const statementFor: Readonly<Record<string, string>> = { SELECT: "SELECT * FROM home", SHOW: "SHOW SERIES" };
+    expect([...AGENT_LANGUAGE_COPY.influxql.adviceKeys].sort()).toEqual(["SELECT", "SHOW"]);
+    for (const kind of AGENT_LANGUAGE_COPY.influxql.adviceKeys) {
+      expect(influxqlRowCapAdvice(statementFor[kind] as string, "200"), kind).not.toBe(generic);
+    }
+    expect(influxqlRowCapAdvice("SELECT * FROM home", "200")).toContain("SLIMIT");
+    expect(influxqlRowCapAdvice("SHOW SERIES", "200")).toContain("WITH KEY");
+  });
+
+  test("a statement without advice of its own, or one that is refused, gets the generic sentence", () => {
+    expect(influxqlRowCapAdvice("EXPLAIN SELECT * FROM home", "200")).toBe(
+      "Ask for at most 200 rows: narrow the read to fewer rows, and run it again.",
+    );
+    expect(influxqlRowCapAdvice("SHOW QUERIES", "200")).toBe(
+      "Ask for at most 200 rows: narrow the read to fewer rows, and run it again.",
+    );
+    expect(languageServer("influxql").shapeAdvice).toContain("a valid InfluxQL statement");
+  });
+
+  test("the admission is the provider's reader, plus a length the agent's contract names", () => {
+    expect(admitInfluxqlStatement("SHOW MEASUREMENTS")).toBeNull();
+    expect(admitInfluxqlStatement('SELECT * INTO "other".."m" FROM home')).toEqual({
+      code: "policy",
+      message: INFLUXQL_POLICY_SENTENCES.into,
+    });
+    expect(admitInfluxqlStatement("SHOW QUERIES")).toEqual({
+      code: "show-kind",
+      message: INFLUXQL_AGENT_SENTENCES.showKind("QUERIES"),
+    });
+    const long = `SELECT * FROM "${"m".repeat(INFLUXQL_AGENT_MAX_STATEMENT_CHARS)}"`;
+    expect(admitInfluxqlStatement(long)).toEqual({
+      code: "agent-too-large",
+      message: `The statement is longer than ${INFLUXQL_AGENT_MAX_STATEMENT_CHARS} characters, the most an agent read takes: shorten it. Nothing was sent.`,
+    });
+    expect(languageServer("influxql").admit?.("SELECT * FROM home")).toBeNull();
+  });
+
+  test("an ungrounded run is sent to a read it holds, since no inspect_schema is offered", () => {
+    const ungrounded = languageServerPack("influxql").grounding.ungrounded;
+    expect(ungrounded?.("The capture failed.", { singular: "measurement", plural: "measurements" })).toBe(
+      "The capture failed.\nSo nothing about this database has been established for you: not one measurement name. Read what you need with run_read_query, starting with SHOW MEASUREMENTS.",
+    );
+    expect(languageServerPack("influxql").grounding.planningRules).toBeUndefined();
+  });
+
+  test("the descriptor's input is strict, carries the statement, and refuses what the admission refuses", () => {
+    expect(influxqlAgentReadInput.safeParse({ statement: "SELECT * FROM home" }).success).toBe(true);
+    expect(influxqlAgentReadInput.safeParse({ statement: "SELECT * FROM home", sql: "x" }).success).toBe(false);
+    const refused = influxqlAgentReadInput.safeParse({ statement: "SHOW USERS" });
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues[0]?.path).toEqual(["statement"]);
+    expect(refused.error?.issues[0]?.message).toBe(INFLUXQL_AGENT_SENTENCES.showKind("USERS"));
   });
 });

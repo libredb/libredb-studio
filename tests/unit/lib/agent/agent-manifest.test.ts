@@ -153,6 +153,7 @@ describe("the plan-estimate operation of each language", () => {
       kubectl: null,
       mongo: "mongo.plan.estimate",
       libredbkv: null,
+      influxql: null,
     });
     expect(Object.isFrozen(AGENT_PLAN_ESTIMATE_OPERATION)).toBe(true);
   });

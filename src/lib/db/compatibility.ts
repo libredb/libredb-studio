@@ -634,6 +634,7 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   milvus: false,
   qdrant: false,
   weaviate: false,
+  // Agent mode executes statements on InfluxDB, and MCP read stays closed on it until a change of its own opens it.
   influxdb: false,
   // Agent mode executes statements on InfluxDB 3, and MCP read stays closed on it until a change of its own opens it.
   influxdb3: false,

@@ -479,7 +479,7 @@ describe("the agent read-only profile", () => {
     const { provider, wire } = agentServer("1.13.1", at("1.13.1", "listing-reader"), PROOF.reader);
     await provider.connect();
     const opened = wire.requests.length;
-    expect((await rejection(provider.queryReadOnly("SELECT * FROM home", BUDGET, "estimate"))).message).toBe(
+    expect((await rejection(provider.queryReadOnly("SELECT * FROM home", BUDGET, "estimate-plan"))).message).toBe(
       "InfluxDB composes no estimating plan for the agent",
     );
     expect(await rejection(provider.queryReadOnly("SELECT * FROM home", { ...BUDGET, maxResultRows: 0 }))).toBeInstanceOf(

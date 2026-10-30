@@ -24,6 +24,7 @@ import { z } from "zod";
 import type { ExplainMode } from "@/lib/explain";
 import { readMongoCommand } from "@/lib/db/providers/document/mongodb/envelope";
 import { OperationRegistry } from "./registry";
+import { influxqlAgentReadInput } from "./influxql-admission";
 import { kubectlAgentReadInput } from "./kubectl-admission";
 import { libredbkvAgentReadInput } from "./libredbkv-admission";
 import { mongoAgentReadInput } from "./mongo-admission";
@@ -408,6 +409,41 @@ const libredbkvQueryReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+const INFLUXQL_READ_BOUNDARY =
+  "InfluxDB (InfluxQL, 1.x and 2.x): before the open and before every statement, on the requests of that statement's " +
+  "call, the server proves the connection's principal reads only (influxql-agent-read.ts): a 1.x user must be refused " +
+  "SHOW USERS as needing the admin privilege, a 2.x token must list no system bucket, and every database the principal " +
+  "lists must refuse a no-op DELETE, so an admin, a server with authentication off and a principal that can write any " +
+  "database it lists, where SELECT ... INTO would land, are refused, and InfluxDB 3 is refused on this path. The " +
+  "statement reader admits one SELECT, SHOW of the catalog or EXPLAIN of a SELECT with no comment and no carriage " +
+  "return, refusing INTO, every write and SHOW QUERIES before anything is sent; the statement is sent with the " +
+  "connection's database and nothing else the caller chose, and a result past the row or byte budget is refused, never " +
+  "truncated.";
+
+/**
+ * One InfluxQL read statement the model wrote, on an `influxdb` connection.
+ *
+ * R1 on a boundary the server's own authorization provides: the v1 `/query` route runs any statement the principal may
+ * run, so what bounds the read is a principal the server proves cannot write. Its own id, and not a widened
+ * `sql.query.read`, so the SQL contract and its audit action stay exactly what they were.
+ */
+const influxqlQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "influxql.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: influxqlAgentReadInput,
+  verification: {
+    reviewedBy: "InfluxDB agent execution design review",
+    boundary: INFLUXQL_READ_BOUNDARY,
+    verifiedOn: "2026-10-30",
+  },
+};
+
 /** The selector of a scoped MongoDB catalog read: a kind, a database and a collection, any of them narrowed. */
 const mongoCatalogSelectorInput = z.strictObject({
   kind: z.enum(["columns", "indexes"]).default("columns"),
@@ -605,6 +641,7 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   mongoPlanEstimateDescriptor,
   mongoTableProfileDescriptor,
   libredbkvQueryReadDescriptor,
+  influxqlQueryReadDescriptor,
 ]);
 
 /**

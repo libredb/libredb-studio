@@ -10,6 +10,7 @@
 import type { DatabaseType } from "@/lib/types";
 import type { AgentStatementLanguageId } from "../../agent-manifest";
 import { languageClientPack } from "../client";
+import { INFLUXDB_CLIENT_OVERLAY } from "../influxql/engines/client";
 import { KUBERNETES_CLIENT_OVERLAY } from "../kubectl/engines/client";
 import { LIBREDB_CLIENT_OVERLAY } from "../libredbkv/engines/client";
 import { MONGODB_CLIENT_OVERLAY } from "../mongo/engines/client";
@@ -52,6 +53,7 @@ const CLIENT_OVERLAYS: AgentEngineClientOverlays = Object.freeze({
   mongodb: Object.freeze({ family: "mongo", overlay: dialectOnly(MONGODB_CLIENT_OVERLAY) }),
   kubernetes: Object.freeze({ family: "kubectl", overlay: dialectOnly(KUBERNETES_CLIENT_OVERLAY) }),
   libredb: Object.freeze({ family: "libredbkv", overlay: dialectOnly(LIBREDB_CLIENT_OVERLAY) }),
+  influxdb: Object.freeze({ family: "influxql", overlay: dialectOnly(INFLUXDB_CLIENT_OVERLAY) }),
 } satisfies AgentEngineClientOverlays);
 
 /**

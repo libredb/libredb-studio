@@ -13,6 +13,7 @@ import type { AgentStatementLanguageId } from "../agent-manifest";
 import { mergeDisjoint } from "../disjoint-merge";
 import type { AgentRunEvent } from "../types";
 import { KUBECTL_CLIENT_PACK } from "./kubectl/client";
+import { INFLUXQL_CLIENT_PACK } from "./influxql/client";
 import { LIBREDBKV_CLIENT_PACK } from "./libredbkv/client";
 import { MONGO_CLIENT_PACK } from "./mongo/client";
 import type {
@@ -47,6 +48,7 @@ const CLIENT_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageClien
   kubectl: KUBECTL_CLIENT_PACK,
   mongo: MONGO_CLIENT_PACK,
   libredbkv: LIBREDBKV_CLIENT_PACK,
+  influxql: INFLUXQL_CLIENT_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageClientPack>);
 
 /** The client facet for `language`. The record is total, so a typed id always has one. */
@@ -81,6 +83,7 @@ export const AGENT_EVIDENCE_EVENTS = mergeDisjoint(
     KUBECTL_CLIENT_PACK.evidenceEvents,
     MONGO_CLIENT_PACK.evidenceEvents,
     LIBREDBKV_CLIENT_PACK.evidenceEvents,
+    INFLUXQL_CLIENT_PACK.evidenceEvents,
   ],
   "AGENT_EVIDENCE_EVENTS",
 ) satisfies AgentEvidenceEventSpecs<AgentPackEvidenceEvent>;
@@ -96,6 +99,7 @@ export const AGENT_PACK_SHORTFALL_SENTENCES = mergeDisjoint(
     KUBECTL_CLIENT_PACK.shortfallSentences,
     MONGO_CLIENT_PACK.shortfallSentences,
     LIBREDBKV_CLIENT_PACK.shortfallSentences,
+    INFLUXQL_CLIENT_PACK.shortfallSentences,
   ],
   "AGENT_PACK_SHORTFALL_SENTENCES",
 ) satisfies Record<AgentPackShortfall, string>;
@@ -107,6 +111,7 @@ export const AGENT_PACK_READING_REFUSAL_HEADLINES = mergeDisjoint(
     KUBECTL_CLIENT_PACK.readingRefusalHeadlines,
     MONGO_CLIENT_PACK.readingRefusalHeadlines,
     LIBREDBKV_CLIENT_PACK.readingRefusalHeadlines,
+    INFLUXQL_CLIENT_PACK.readingRefusalHeadlines,
   ],
   "AGENT_PACK_READING_REFUSAL_HEADLINES",
 ) satisfies Record<AgentPackReadingDenyCode, string>;
@@ -121,6 +126,7 @@ export const AGENT_PACK_REQUIREMENTS = mergeDisjoint(
     KUBECTL_CLIENT_PACK.requirements,
     MONGO_CLIENT_PACK.requirements,
     LIBREDBKV_CLIENT_PACK.requirements,
+    INFLUXQL_CLIENT_PACK.requirements,
   ],
   "AGENT_PACK_REQUIREMENTS",
 ) satisfies Record<AgentPackVariantRequirement, AgentVariantRequirementSpec>;

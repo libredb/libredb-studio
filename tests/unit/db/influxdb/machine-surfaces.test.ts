@@ -334,9 +334,11 @@ describe("MCP inspect_schema (InfluxDB spec 6.5, E13)", () => {
 });
 
 describe("which InfluxDB statements of the model's run (InfluxDB spec 6.5)", () => {
-  test("the InfluxQL provider has a read-only statement path", async () => {
+  test("the InfluxQL provider has a read-only statement path, and influxdb is an agent execution engine", async () => {
+    const engines: readonly string[] = AGENT_EXECUTION_ENGINES;
     const connected = await connectedInfluxql("3.12.0-core");
     expect("queryReadOnly" in connected.provider).toBe(true);
+    expect(engines).toContain(connected.connection.type);
   });
 
   test("the InfluxDB 3 provider has one, and influxdb3 is an agent execution engine", async () => {
