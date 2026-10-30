@@ -176,9 +176,10 @@ rules:
   - patch
   - update
   - watch
-# openshiftRoute.enabled renders a route.openshift.io Route, and openshift sign-in
-# fixes its host at install time; setting spec.host needs create on
-# routes/custom-host, or the API server refuses the Route
+# openshiftRoute.enabled renders a route.openshift.io Route with the host the
+# resource sets; setting spec.host needs create on routes/custom-host, and
+# changing it on an existing Route needs update there, or the API server
+# refuses the Route
 - apiGroups:
   - route.openshift.io
   resources:
@@ -197,6 +198,7 @@ rules:
   - routes/custom-host
   verbs:
   - create
+  - update
 # openshift.consoleLink.enabled renders a cluster-scoped ConsoleLink, which the
 # chart renders only for the LibreDBStudio in the namespace the cluster admin
 # names (LIBREDB_CLUSTER_STUDIO_NAMESPACE). Every authenticated user may already

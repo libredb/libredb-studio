@@ -444,7 +444,7 @@ A resource in any other namespace that asks for them fails to reconcile with a m
 The operator sets `operator.managed` and `operator.clusterStudioNamespace` itself through `overrideValues` in `operator/watches.yaml`, which win over the resource's spec, so a resource cannot change either.
 helm-operator applies `overrideValues` like `helm --set-string`, so each one reaches the chart as a string: the chart receives `operator.managed` as the string `"true"`, and a boolean must never be pinned that way, since the string `"false"` is truthy in a template.
 
-The manager role grants what these objects need and no more: Routes and `routes/custom-host` (setting a Route's host needs it), ConsoleLinks, and read on the four kinds discovery lists (CloudNativePG and EDB `clusters`, Crunchy `postgresclusters` and `mongodbcommunity`), because Kubernetes lets the operator create the exporter's Roles only with verbs it holds itself.
+The manager role grants what these objects need and no more: Routes and `routes/custom-host` (`create` to set a Route's host, `update` to change it), ConsoleLinks, and read on the four kinds discovery lists (CloudNativePG and EDB `clusters`, Crunchy `postgresclusters` and `mongodbcommunity`), because Kubernetes lets the operator create the exporter's Roles only with verbs it holds itself.
 It grants no ClusterRole, ClusterRoleBinding, access review or ConsolePlugin, and `tests/unit/operator-openshift-rbac.test.ts` pins it to a reviewed list.
 
 The CSV declares the seven `features.operators.openshift.io` annotations OperatorHub reads, all `"false"` in this release: no `relatedImages` or digests yet, no FIPS build, no cluster proxy for Studio's token exchange and API calls, no cluster TLS profile and no cloud token authentication.

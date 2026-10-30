@@ -7,8 +7,9 @@
  * a cluster-scoped ConsoleLink and, with Kubernetes discovery on, a Role in each discovered
  * namespace that lets the exporter list the database kinds. Kubernetes refuses to let anyone create
  * a Role that grants a verb the creator does not hold itself, so the manager role must hold every
- * (group, resource, verb) those Roles grant, and setting a Route's host needs create on
- * routes/custom-host, or the API server refuses the Route.
+ * (group, resource, verb) those Roles grant. Setting a Route's host needs create on
+ * routes/custom-host, and changing it on an existing Route needs update there, or the API server
+ * refuses the Route.
  *
  * Every rule the role holds is listed below as the reviewed list, so a rule added or removed is a
  * visible change to this file. The escalation test renders the chart the way the operator does in
@@ -122,7 +123,7 @@ const REVIEWED_RULES: Rule[] = [
   manage("gateway.networking.k8s.io", ["httproutes"]),
   manage("monitoring.coreos.com", ["servicemonitors", "prometheusrules"]),
   manage("route.openshift.io", ["routes"]),
-  { apiGroups: ["route.openshift.io"], resources: ["routes/custom-host"], verbs: ["create"] },
+  { apiGroups: ["route.openshift.io"], resources: ["routes/custom-host"], verbs: ["create", "update"] },
   manage("console.openshift.io", ["consolelinks"]),
   { apiGroups: ["postgresql.cnpg.io"], resources: ["clusters"], verbs: READ_VERBS },
   { apiGroups: ["postgresql.k8s.enterprisedb.io"], resources: ["clusters"], verbs: READ_VERBS },
@@ -189,10 +190,13 @@ describe("the manager role", () => {
     expect(roleRules()).toEqual(REVIEWED_RULES);
   });
 
-  test("manages Routes and may set their host, which openshift mode fixes at install time", () => {
+  test("manages Routes and may set their host, and change it when openshiftRoute.host changes", () => {
     const rules = roleRules();
     for (const verb of MANAGE_VERBS) expect(grants(rules, "route.openshift.io", "routes", verb)).toBe(true);
     expect(grants(rules, "route.openshift.io", "routes/custom-host", "create")).toBe(true);
+    // The route admission check asks for update on routes/custom-host when spec.host changes,
+    // and create when only the certificate fields change.
+    expect(grants(rules, "route.openshift.io", "routes/custom-host", "update")).toBe(true);
   });
 
   test("manages ConsoleLinks but no ConsolePlugin, which is not shipped yet", () => {
