@@ -213,7 +213,10 @@ describe("proveInfluxqlAgentPrincipal on 2.9.1", () => {
     expect(at("2.9.1", "write-probe-rwother-other").body).toContain("no dbrp mappings found");
     for (const principal of ["ro", "rwother", "readother", "operator"]) {
       expect(at("2.9.1", `into-bound-${principal}`).body).toContain("not implemented: SELECT INTO");
-      expect(at("2.9.1", `into-second-${principal}`).body).toMatch(/not implemented: SELECT INTO|database not found/);
+      const second = at("2.9.1", `into-second-${principal}`).body;
+      expect(second.includes("not implemented: SELECT INTO") || second.includes("database not found: other")).toBe(
+        true,
+      );
     }
     expect(at("2.9.1", "into-state-other-after").body).not.toContain("libredb_into");
   });
