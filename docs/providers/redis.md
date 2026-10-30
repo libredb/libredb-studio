@@ -2209,8 +2209,9 @@ A user granted only `+@read` is refused `NOPERM` every write the proof probes (`
 A handle opened for the agent read-only profile by an acquisition that sends statements refuses, before any socket, a connection that names no ACL user, which would sign in as `default`, and one that names `default`, which every client that names no user signs in as: a stock server leaves it `on nopass ~* &* +@all`, and it is admitted every probe (`default-nopass.json`).
 When the handle opens, and again before every command, on that command's own connection and in one round trip, the server is asked:
 
-- `HELLO 2`, which a `+@read` user may send (`reader.json`), must name `redis` or `valkey` and the `standalone` mode. Valkey with `extended-redis-compatibility` on names itself `redis` 7.2.4 (`identity-compatibility.json`), and is the server measured either way. A relative that names itself anything else (Dragonfly, KeyDB, Garnet) and a cluster are refused until each is measured.
-- Fifteen probes must each be refused `NOPERM`: `DEL`, `UNLINK`, `SET ... XX`, `EXPIRE`, `HDEL`, `LREM`, `SREM`, `ZREM`, `XDEL` and `MOVE` of a key that exists nowhere, `RESTORE` of it with a payload that is not a dump (dangerous), `CONFIG SET` of a parameter that does not exist (admin), `EVALSHA` of a script that does not exist (scripting), `FUNCTION DELETE` of a library that does not exist (scripting) and `PUBLISH` to a channel nobody hears (pubsub). Each name is fresh for every proof. Admitted, each changes nothing: a full user is answered every one, and the key count, the probe key and the function list read the same before and after (`full.json`).
+- `HELLO 2`, which a `+@read` user may send (`reader.json`), must answer exactly the seven fields both measured servers answer, in their order (`server`, `version`, `proto`, `id`, `mode`, `role`, `modules`), name `redis` or `valkey`, and the `standalone` mode. Valkey with `extended-redis-compatibility` on names itself `redis` 7.2.4 (`identity-compatibility.json`), and is the server measured either way. A cluster, and a relative whose `HELLO` differs, are refused until measured: Dragonfly's, by its own `HELLO` reference, names itself `redis` in `standalone` mode but adds `dfly_version`. A relative whose `HELLO` copies the measured one exactly is not told apart by it, and is held to the probes' exact wording below.
+- Fifteen probes must each be refused as a command the user does not hold: `DEL`, `UNLINK`, `SET ... XX`, `EXPIRE`, `HDEL`, `LREM`, `SREM`, `ZREM`, `XDEL` and `MOVE` of a key that exists nowhere, `RESTORE` of it with a payload that is not a dump (dangerous), `CONFIG SET` of a parameter that does not exist (admin), `EVALSHA` of a script that does not exist (scripting), `FUNCTION DELETE` of a library that does not exist (scripting) and `SPUBLISH` to a shard channel that exists nowhere (pubsub). Each name is fresh for every proof. Admitted, each changes nothing: a full user is answered every one, and the key count, the probe key and the function list read the same before and after (`full.json`). An admitted `SPUBLISH` is heard only by a subscriber of that one shard channel, never by a pattern subscriber, and is passed to replicas like any publish; `PUBLISH` would also reach every `PSUBSCRIBE` pattern that matches it.
+- The refusal must be the server's own, word for word, naming this user and the probe's command: `NOPERM User <user> has no permissions to run the '<command>' command`, the same on both servers (`reader.json`). The ACL checks the command before the key or channel, so that refusal says the user does not hold the command at all. A user that holds it and is refused only because the probe's key or channel lies outside its patterns, `NOPERM No permissions to access a key` or `... a channel`, may still write where its patterns allow, so it is refused too: a `~app:* +@write` user is refused every key probe that way and deletes `app:in-pattern` (`scoped-writer.json`, `scoped-writer-in-pattern.json`).
 
 What the measured users get:
 
@@ -2218,16 +2219,19 @@ What the measured users get:
 | --- | --- | --- |
 | `default`, stock `nopass +@all` | every one admitted | refused before any socket, by name |
 | `~* &* +@all` | every one admitted | refused: `DEL` |
-| `~* +@read`, `~* +@read +info`, `%R~* +@read +info`, `~app:* +@read +info` | every one refused `NOPERM` by command | proved |
-| `%R~* &* +@all` | the key writes refused `NOPERM` by key permission; `CONFIG SET` admitted and then refused `ERR` for its unknown parameter | refused: `CONFIG SET` |
+| `~* +@read`, `~* +@read +info`, `%R~* +@read +info`, `~app:* +@read +info` | every one refused by command | proved |
+| `%R~* &* +@all` | the key writes refused by key permission; `CONFIG SET` admitted and then refused `ERR` for its unknown parameter | refused: `DEL`, by key permission |
+| `~app:* &* +@read +info +@write` | the key writes refused by key permission, and it deletes keys in `app:*` | refused: `DEL`, by key permission |
+| `~* resetchannels +@read +info +spublish` | `SPUBLISH` refused by channel permission | refused: `SPUBLISH`, by channel permission |
 | `~* +@read +info +del` | `DEL` admitted | refused: `DEL` |
 | `~* +@read +info +set` | `SET ... XX` admitted | refused: `SET` |
 
-Any answer but a `NOPERM` refusal refuses the profile: a reply says the user may write, and any other error, whether an admitted probe's own error, a renamed command's `ERR unknown command` or a replica's `READONLY`, proves nothing.
+Any other answer refuses the profile: a reply says the user may write, and any other error, whether an admitted probe's own error, a renamed command's `ERR unknown command`, a replica's `READONLY` or another server's wording, proves nothing.
 Nothing is kept between two proofs: `+del` granted to a user that passed is caught at its next command (`midrun.json`), and the command is never sent.
 The probes cannot name every write, so a user granted one write command they leave out passes; the closed table, which sends no write, is what stops that user, and the proof is never instead of it.
-A key-pattern user (`%R~*` or `~app:*`) passes when its commands are reads, and a key outside its pattern answers `NOPERM No permissions to access a key` (`prefix.json`), which agent mode is told without the server's words.
+A key-pattern reader (`%R~* +@read` or `~app:* +@read`) passes, since it holds no probed command, and a key outside its pattern answers `NOPERM No permissions to access a key` (`prefix.json`), which agent mode is told without the server's words.
 A transport failure is raised as itself, never read as a verdict.
+An agent connection skips ioredis's ready check, whose `INFO` is refused a `+@read` user and would log a warning on every command; the proof's `HELLO` checks the connection instead.
 The operations profile sends no command of the model's, so it opens with any user and no proof, and plan mode keeps grounding on a privileged connection, `default` included.
 
 ### 16.3 What an agent command may be

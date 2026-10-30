@@ -19,7 +19,7 @@
  * escapes. So a second command, an inline `MULTI`, a CRLF and a comment are refused, never read.
  *
  * Not the boundary. The boundary is this table, which the provider sends nothing outside of, and the ACL user the
- * server proves read-only on the command's own connection before every command (`redis-read-only-proof.ts`); this is
+ * server must refuse the proof's write probes on the command's own connection before every command (`redis-read-only-proof.ts`); this is
  * what lets the model read why it was refused, before anything is sent.
  */
 

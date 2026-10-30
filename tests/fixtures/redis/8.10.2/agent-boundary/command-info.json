@@ -2088,6 +2088,57 @@
       [],
       [],
       []
+    ],
+    "spublish": [
+      "spublish",
+      "3",
+      [
+        "pubsub",
+        "loading",
+        "stale",
+        "fast"
+      ],
+      "1",
+      "1",
+      "1",
+      [
+        "@pubsub",
+        "@fast"
+      ],
+      [],
+      [
+        [
+          "flags",
+          [
+            "not_key"
+          ],
+          "begin_search",
+          [
+            "type",
+            "index",
+            "spec",
+            [
+              "index",
+              "1"
+            ]
+          ],
+          "find_keys",
+          [
+            "type",
+            "range",
+            "spec",
+            [
+              "lastkey",
+              "0",
+              "keystep",
+              "1",
+              "limit",
+              "0"
+            ]
+          ]
+        ]
+      ],
+      []
     ]
   }
 }

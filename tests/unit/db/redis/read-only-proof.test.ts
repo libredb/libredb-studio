@@ -68,11 +68,28 @@ describe("the probes", () => {
       ["CONFIG", "SET", `libredb-agent-probe-${NONCE}`, "x"],
       ["EVALSHA", "0f1e2d3c4b5a69788796a5b4c3d2e1f000000000", "0"],
       ["FUNCTION", "DELETE", "libredb_agent_probe_0f1e2d3c_4b5a_6978_8796_a5b4c3d2e1f0"],
-      ["PUBLISH", `libredb-agent-probe:${NONCE}`, "x"],
+      ["SPUBLISH", `libredb-agent-probe:${NONCE}`, "x"],
     ]);
     expect(redisProofProbes(NONCE).map((probe) => probe.label)).toEqual(
       redisProofProbes(NONCE).map((probe) => probeLabel(probe.argv)),
     );
+    expect(redisProofProbes(NONCE).map((probe) => probe.aclCommand)).toEqual([
+      "del",
+      "unlink",
+      "set",
+      "expire",
+      "hdel",
+      "lrem",
+      "srem",
+      "zrem",
+      "xdel",
+      "move",
+      "restore",
+      "config|set",
+      "evalsha",
+      "function|delete",
+      "spublish",
+    ]);
   });
 
   test("the captures measured every probe the proof sends, so each label is on record", () => {
@@ -86,20 +103,25 @@ describe("the probes", () => {
 
   test("a fresh nonce is drawn for every proof that names none", async () => {
     const roundTrip = capturedRoundTrip("8.10.2", "reader");
-    await proveRedisReadOnly(roundTrip);
-    await proveRedisReadOnly(roundTrip);
+    await proveRedisReadOnly(roundTrip, "agent_reader");
+    await proveRedisReadOnly(roundTrip, "agent_reader");
     const [first, second] = roundTrip.sent.map((commands) => commands[1][1]);
     expect(first).toMatch(/^libredb-agent-probe:[0-9a-f-]{36}$/);
     expect(second).not.toBe(first);
   });
 });
 
+/** The ACL user the capture probe named `principal` (`agent_<name>`), whom the server's refusals name. */
+function userOf(principal: string): string {
+  return `agent_${principal.replace(/-/g, "_")}`;
+}
+
 describe.each(REDIS_CAPTURE_VERSIONS)("the proof over %s's answers", (version) => {
   test.each(["reader", "reader-info", "read-keys-read", "prefix"])(
     "%s is refused every probe NOPERM, so it is proved read-only in one round trip",
     async (principal) => {
       const roundTrip = capturedRoundTrip(version, principal);
-      await proveRedisReadOnly(roundTrip, NONCE);
+      await proveRedisReadOnly(roundTrip, userOf(principal), NONCE);
       expect(roundTrip.sent).toHaveLength(1);
       expect(roundTrip.sent[0][0]).toEqual(["HELLO", "2"]);
       expect(roundTrip.sent[0].slice(1)).toEqual(redisProofProbes(NONCE).map((probe) => probe.argv));
@@ -112,15 +134,60 @@ describe.each(REDIS_CAPTURE_VERSIONS)("the proof over %s's answers", (version) =
     ["read-del", "DEL"],
     ["read-set", "SET"],
   ])("%s is refused at the first probe it is admitted, %s", async (principal, label) => {
-    const error = await refusalOf(proveRedisReadOnly(capturedRoundTrip(version, principal), NONCE));
+    const error = await refusalOf(proveRedisReadOnly(capturedRoundTrip(version, principal), userOf(principal), NONCE));
     expect(error.message).toBe(REDIS_PROOF_SENTENCES.admitted(label));
     expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
   });
 
-  test("read-keys is refused at CONFIG SET, which it is admitted and which then refuses the unknown parameter ERR", async () => {
-    const error = await refusalOf(proveRedisReadOnly(capturedRoundTrip(version, "read-keys"), NONCE));
-    expect(error.message).toBe(REDIS_PROOF_SENTENCES.unread("CONFIG SET"));
-    expect(error.reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
+  test.each([
+    ["read-keys", "DEL"],
+    ["scoped-writer", "DEL"],
+    ["channel-scoped", "SPUBLISH"],
+  ])("%s holds %s and is refused it only by key or channel permission, so it is refused", async (principal, label) => {
+    const error = await refusalOf(proveRedisReadOnly(capturedRoundTrip(version, principal), userOf(principal), NONCE));
+    expect(error.message).toBe(REDIS_PROOF_SENTENCES.patternScoped(label));
+    expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+  });
+
+  test("the user a key-pattern refusal hides may write inside its own pattern, which is why it is refused", () => {
+    const scoped = readRedisCapture<{ inPatternWrite: CapturedStep; existsAfterWrite: string }>(
+      version,
+      "scoped-writer-in-pattern",
+    );
+    expect(scoped.inPatternWrite).toEqual({ argv: ["DEL", "app:in-pattern"], outcome: "ok", reply: "1" });
+    expect(scoped.existsAfterWrite).toBe("0");
+    for (const step of readRedisCapture<{ probes: CapturedStep[] }>(version, "scoped-writer").probes.slice(0, 11)) {
+      expect(step.error, step.argv.join(" ")).toBe("NOPERM No permissions to access a key");
+    }
+  });
+
+  test("a command refusal counts only when it names this user and the probe's own command", async () => {
+    const reader = readRedisCapture<{ probes: CapturedStep[] }>(version, "reader");
+    expect(
+      (await refusalOf(proveRedisReadOnly(capturedRoundTrip(version, "reader"), "agent_other", NONCE))).message,
+    ).toBe(REDIS_PROOF_SENTENCES.unread("DEL"));
+    const swapped = reader.probes.map((step) =>
+      probeLabel(step.argv) === "UNLINK"
+        ? { ...step, error: "NOPERM User agent_reader has no permissions to run the 'del' command" }
+        : step,
+    );
+    expect(
+      (
+        await refusalOf(
+          proveRedisReadOnly(capturedRoundTrip(version, "midrun", { probes: swapped }), "agent_reader", NONCE),
+        )
+      ).message,
+    ).toBe(REDIS_PROOF_SENTENCES.unread("UNLINK"));
+    const trailing = reader.probes.map((step) =>
+      probeLabel(step.argv) === "SREM" ? { ...step, error: `${step.error} or its subcommand` } : step,
+    );
+    expect(
+      (
+        await refusalOf(
+          proveRedisReadOnly(capturedRoundTrip(version, "midrun", { probes: trailing }), "agent_reader", NONCE),
+        )
+      ).message,
+    ).toBe(REDIS_PROOF_SENTENCES.unread("SREM"));
   });
 
   test("a write granted mid-run is refused at the next proof: no verdict is kept", async () => {
@@ -128,9 +195,17 @@ describe.each(REDIS_CAPTURE_VERSIONS)("the proof over %s's answers", (version) =
       version,
       "midrun",
     );
-    await proveRedisReadOnly(capturedRoundTrip(version, "midrun", { probes: midrun.probesBeforeGrant }), NONCE);
+    await proveRedisReadOnly(
+      capturedRoundTrip(version, "midrun", { probes: midrun.probesBeforeGrant }),
+      "agent_midrun",
+      NONCE,
+    );
     const error = await refusalOf(
-      proveRedisReadOnly(capturedRoundTrip(version, "midrun", { probes: midrun.probesAfterGrant }), NONCE),
+      proveRedisReadOnly(
+        capturedRoundTrip(version, "midrun", { probes: midrun.probesAfterGrant }),
+        "agent_midrun",
+        NONCE,
+      ),
     );
     expect(error.message).toBe(REDIS_PROOF_SENTENCES.admitted("DEL"));
   });
@@ -142,20 +217,30 @@ describe.each(REDIS_CAPTURE_VERSIONS)("the proof over %s's answers", (version) =
         ? { ...step, error: "READONLY You can't write against a read only replica." }
         : step,
     );
-    const error = await refusalOf(proveRedisReadOnly(capturedRoundTrip(version, "midrun", { probes }), NONCE));
+    const error = await refusalOf(
+      proveRedisReadOnly(capturedRoundTrip(version, "midrun", { probes }), "agent_reader", NONCE),
+    );
     expect(error.message).toBe(REDIS_PROOF_SENTENCES.unread("UNLINK"));
     expect(error.reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
     const renamed = reader.map((step) =>
       probeLabel(step.argv) === "CONFIG SET" ? { ...step, error: "ERR unknown command 'CONFIG'" } : step,
     );
     expect(
-      (await refusalOf(proveRedisReadOnly(capturedRoundTrip(version, "midrun", { probes: renamed }), NONCE))).message,
+      (
+        await refusalOf(
+          proveRedisReadOnly(capturedRoundTrip(version, "midrun", { probes: renamed }), "agent_reader", NONCE),
+        )
+      ).message,
     ).toBe(REDIS_PROOF_SENTENCES.unread("CONFIG SET"));
     const lowercase = reader.map((step) =>
       probeLabel(step.argv) === "DEL" ? { ...step, error: "noperm no permissions" } : step,
     );
     expect(
-      (await refusalOf(proveRedisReadOnly(capturedRoundTrip(version, "midrun", { probes: lowercase }), NONCE))).message,
+      (
+        await refusalOf(
+          proveRedisReadOnly(capturedRoundTrip(version, "midrun", { probes: lowercase }), "agent_reader", NONCE),
+        )
+      ).message,
     ).toBe(REDIS_PROOF_SENTENCES.unread("DEL"));
   });
 });
@@ -194,20 +279,41 @@ describe("what the server says it is", () => {
     expect(compat.hello.slice(0, 2)).toEqual(["server", "redis"]);
     await proveRedisReadOnly(
       capturedRoundTrip("valkey-9.1.2", "reader", { hello: { ok: true, reply: compat.hello } }),
+      "agent_reader",
       NONCE,
     );
   });
 
-  test("a server naming itself anything else, or a cluster, is refused until measured", async () => {
+  /** The measured shape: the seven fields Redis 8.10.2 and Valkey 9.1.2 answer, in their order. */
+  const measured = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+    server: "redis",
+    version: "8.10.2",
+    proto: "2",
+    id: "7",
+    mode: "standalone",
+    role: "master",
+    modules: [],
+    ...overrides,
+  });
+
+  test("a server naming itself anything else, a cluster, or a HELLO of any other shape is refused until measured", async () => {
+    const { modules: _modules, ...withoutModules } = measured();
+    const { role, ...rest } = measured();
     for (const reply of [
-      hello({ server: "dragonfly", version: "1.40.1", mode: "standalone" }),
-      hello({ server: "redis", version: "8.10.2", mode: "cluster" }),
-      hello({ server: "redis", version: "8.10.2", mode: "sentinel" }),
-      hello({ server: "redis", version: "8.10.2" }),
-      hello({ server: 7, mode: "standalone" }),
-      hello({ version: "8.10.2", mode: "standalone" }),
+      hello(measured({ server: "dragonfly" })),
+      hello(measured({ mode: "cluster" })),
+      hello(measured({ mode: "sentinel" })),
+      hello({ server: "redis", version: "8.10.2", mode: "standalone" }),
+      hello(measured({ server: 7 })),
+      // Dragonfly's own HELLO names it redis in standalone mode and adds its version under a field of its own.
+      hello({ ...measured({ version: "6.2.11" }), dfly_version: "df-v1.40.1" }),
+      hello(withoutModules),
+      hello({ ...rest, role }),
+      hello({ ...measured(), modules: [], extra: "x" }),
     ]) {
-      const error = await refusalOf(proveRedisReadOnly(capturedRoundTrip("8.10.2", "reader", { hello: reply }), NONCE));
+      const error = await refusalOf(
+        proveRedisReadOnly(capturedRoundTrip("8.10.2", "reader", { hello: reply }), "agent_reader", NONCE),
+      );
       expect(error.message).toBe(REDIS_PROOF_SENTENCES.notMeasured);
       expect(error.reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
     }
@@ -220,25 +326,33 @@ describe("what the server says it is", () => {
       { ok: true, reply: ["server", "redis", "version"] },
       { ok: true, reply: [1, "redis"] },
     ] as RedisReply[]) {
-      const error = await refusalOf(proveRedisReadOnly(capturedRoundTrip("8.10.2", "reader", { hello: reply }), NONCE));
+      const error = await refusalOf(
+        proveRedisReadOnly(capturedRoundTrip("8.10.2", "reader", { hello: reply }), "agent_reader", NONCE),
+      );
       expect(error.message).toBe(REDIS_PROOF_SENTENCES.unread("HELLO 2"));
     }
   });
 
   test("a round trip that answers fewer commands than it was sent proves nothing", async () => {
-    expect((await refusalOf(proveRedisReadOnly(async () => [], NONCE))).message).toBe(
+    expect((await refusalOf(proveRedisReadOnly(async () => [], "agent_reader", NONCE))).message).toBe(
       REDIS_PROOF_SENTENCES.unread("HELLO 2"),
     );
     const helloOnly = capturedRoundTrip("8.10.2", "reader");
     const short = async (commands: readonly (readonly string[])[]) => (await helloOnly(commands)).slice(0, 3);
-    expect((await refusalOf(proveRedisReadOnly(short, NONCE))).message).toBe(REDIS_PROOF_SENTENCES.unread("SET"));
+    expect((await refusalOf(proveRedisReadOnly(short, "agent_reader", NONCE))).message).toBe(
+      REDIS_PROOF_SENTENCES.unread("SET"),
+    );
   });
 
   test("a failed round trip is raised as it is, never read as a verdict", async () => {
     const failure = new Error("Connection is closed.");
-    const error = await proveRedisReadOnly(async () => {
-      throw failure;
-    }, NONCE).then(
+    const error = await proveRedisReadOnly(
+      async () => {
+        throw failure;
+      },
+      "agent_reader",
+      NONCE,
+    ).then(
       () => undefined,
       (caught: unknown) => caught,
     );

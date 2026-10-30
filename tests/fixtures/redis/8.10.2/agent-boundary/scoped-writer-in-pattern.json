@@ -1,0 +1,19 @@
+{
+  "$captured": {
+    "image": "redis:8.10.2@sha256:5c02d7c0f8d75af45958c0294a8004f2e14b42df98a1103e3a669aa7ec787be6",
+    "version": "8.10.2",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "principal": "agent_scoped_writer",
+    "rules": "on ~app:* &* +@read +info +@write"
+  },
+  "inPatternWrite": {
+    "argv": [
+      "DEL",
+      "app:in-pattern"
+    ],
+    "outcome": "ok",
+    "reply": "1"
+  },
+  "existsAfterWrite": "0"
+}

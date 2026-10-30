@@ -154,8 +154,9 @@ describe("the profile", () => {
         "Read-only execution requires a provider opened under the agent read-only profile",
       );
       expect(opened.length).toBe(before);
-      // Unproved: the editor's open sends no probe.
+      // Unproved: the editor's open sends no probe, and keeps ioredis's ready check.
       expect(opened[0].pipelines).toEqual([]);
+      expect(opened[0].options.enableReadyCheck).toBeUndefined();
     }
   });
 
@@ -180,6 +181,8 @@ describe("the profile", () => {
     expect(provider.isConnected()).toBe(true);
     expect(opened).toHaveLength(1);
     expect(opened[0].options.username).toBe("agent_reader_info");
+    // No ready check: its INFO is refused a +@read user, and ioredis would warn of that on every connection.
+    expect(opened[0].options.enableReadyCheck).toBe(false);
     expect(opened[0].pipelines).toHaveLength(1);
     expect(opened[0].pipelines[0][0]).toEqual(["HELLO", "2"]);
     expect(opened[0].pipelines[0].slice(1).map(probeLabel)).toEqual(
@@ -194,9 +197,18 @@ describe("the profile", () => {
     ["read-set", "SET"],
   ])("a %s user is refused at the open, and its connection closed", async (who, label) => {
     principal = who;
-    const provider = new RedisProvider(connection({ user: `agent_${who}` }), {}, PROFILE);
+    const provider = new RedisProvider(connection({ user: `agent_${who.replace(/-/g, "_")}` }), {}, PROFILE);
     const error = await failureOf(provider.connect());
     expect((error as Error).message).toBe(REDIS_PROOF_SENTENCES.admitted(label));
+    expect(opened[0].disconnected).toBe(true);
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("a user that may write inside its own key pattern is refused at the open", async () => {
+    principal = "scoped-writer";
+    const provider = new RedisProvider(connection({ user: "agent_scoped_writer" }), {}, PROFILE);
+    const error = await failureOf(provider.connect());
+    expect((error as Error).message).toBe(REDIS_PROOF_SENTENCES.patternScoped("DEL"));
     expect(opened[0].disconnected).toBe(true);
     expect(provider.isConnected()).toBe(false);
   });
@@ -218,6 +230,7 @@ describe("one agent command", () => {
     expect(result.rowCount).toBe(1);
     expect(opened).toHaveLength(1);
     expect(opened[0].options.commandTimeout).toBe(4_000);
+    expect(opened[0].options.enableReadyCheck).toBe(false);
     expect(opened[0].selected).toBe(3);
     expect(opened[0].pipelines).toHaveLength(1);
     expect(opened[0].pipelines[0][0]).toEqual(["HELLO", "2"]);

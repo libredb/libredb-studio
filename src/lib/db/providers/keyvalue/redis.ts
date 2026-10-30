@@ -1432,6 +1432,9 @@ export class RedisProvider extends BaseDatabaseProvider {
       // `DBSIZE` counts this provider reads for itself go through `integerReply`, which reads
       // the digit string back as a number; `SLOWLOG GET` is read through `String()`/`Number()`.
       stringNumbers: true,
+      // Under the agent read-only profile, no ready check: its INFO is @dangerous, refused a +@read user, and ioredis
+      // then warns of the refusal on every connection, which is one per agent command. The proof's HELLO is the check.
+      ...(this.readOnlyProfile ? { enableReadyCheck: false } : {}),
       ...(tls ? { tls } : {}),
     };
   }
@@ -1512,10 +1515,10 @@ export class RedisProvider extends BaseDatabaseProvider {
     try {
       // The agent read-only profile proves an ACL user of the agent's own, so one that names none, or `default`, is
       // refused before any socket.
-      if (this.readOnlyProfile) redisAgentUser(this.config.user);
+      const agentUser = this.readOnlyProfile ? redisAgentUser(this.config.user) : undefined;
       const client = await this.openClient(this.sessionDatabase());
-      if (this.readOnlyProfile) {
-        await proveRedisReadOnly(pipelineRoundTrip(client)).catch((error: unknown) => {
+      if (agentUser !== undefined) {
+        await proveRedisReadOnly(pipelineRoundTrip(client), agentUser).catch((error: unknown) => {
           client.disconnect();
           throw error;
         });
@@ -1590,7 +1593,7 @@ export class RedisProvider extends BaseDatabaseProvider {
       let client: Redis | undefined;
       try {
         client = await this.openClient(this.sessionDatabase(), budget.statementTimeoutMs);
-        await proveRedisReadOnly(pipelineRoundTrip(client));
+        await proveRedisReadOnly(pipelineRoundTrip(client), redisAgentUser(this.config.user));
         const reply: unknown = await client.call(argv[0], ...argv.slice(1));
         return redisAgentResult(op, reply, budget, statement, Date.now() - started);
       } catch (error) {

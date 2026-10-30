@@ -14,7 +14,7 @@
     "proto",
     "2",
     "id",
-    "80",
+    "83",
     "mode",
     "standalone",
     "role",
@@ -43,21 +43,21 @@
       ],
       [
         "name",
-        "vectorset",
-        "ver",
-        "1",
-        "path",
-        "",
-        "args",
-        []
-      ],
-      [
-        "name",
         "timeseries",
         "ver",
         "81001",
         "path",
         "/usr/local/lib/redis/modules//redistimeseries.so",
+        "args",
+        []
+      ],
+      [
+        "name",
+        "vectorset",
+        "ver",
+        "1",
+        "path",
+        "",
         "args",
         []
       ],
@@ -73,5 +73,5 @@
       ]
     ]
   ],
-  "infoServer": "# Server\r\nredis_version:8.10.2\r\nredis_git_sha1:00000000\r\nredis_git_dirty:1\r\nredis_build_id:9afb359f90603816\r\nredis_mode:standalone\r\nos:Linux 6.8.0-147-generic x86_64\r\narch_bits:64\r\nmonotonic_clock:POSIX clock_gettime\r\nmultiplexing_api:epoll\r\natomicvar_api:c11-builtin\r\ngcc_version:14.2.0\r\nprocess_id:1\r\nprocess_supervised:no\r\nrun_id:52145a4f067bf220a191b6b0aee215702da15309\r\ntcp_port:6379\r\nserver_time_usec:1793376593948132\r\nuptime_in_seconds:1\r\nuptime_in_days:0\r\nhz:10\r\nconfigured_hz:10\r\nlru_clock:14991697\r\nexecutable:/data/redis-server\r\nconfig_file:\r\nio_threads_active:0\r\nlistener0:name=tcp,bind=*,bind=-::*,port=6379\r\n"
+  "infoServer": "# Server\r\nredis_version:8.10.2\r\nredis_git_sha1:00000000\r\nredis_git_dirty:1\r\nredis_build_id:9afb359f90603816\r\nredis_mode:standalone\r\nos:Linux 6.8.0-147-generic x86_64\r\narch_bits:64\r\nmonotonic_clock:POSIX clock_gettime\r\nmultiplexing_api:epoll\r\natomicvar_api:c11-builtin\r\ngcc_version:14.2.0\r\nprocess_id:1\r\nprocess_supervised:no\r\nrun_id:0abe4c9b9f4886c5eb8a658f5d92c139cfb5bc55\r\ntcp_port:6379\r\nserver_time_usec:1793379177392491\r\nuptime_in_seconds:0\r\nuptime_in_days:0\r\nhz:10\r\nconfigured_hz:10\r\nlru_clock:14994281\r\nexecutable:/data/redis-server\r\nconfig_file:\r\nio_threads_active:0\r\nlistener0:name=tcp,bind=*,bind=-::*,port=6379\r\n"
 }

@@ -139,12 +139,12 @@
     },
     {
       "argv": [
-        "PUBLISH",
+        "SPUBLISH",
         "agent-probe:channel",
         "x"
       ],
       "outcome": "error",
-      "error": "NOPERM User agent_midrun has no permissions to run the 'publish' command"
+      "error": "NOPERM User agent_midrun has no permissions to run the 'spublish' command"
     }
   ],
   "probesAfterGrant": [
@@ -278,12 +278,12 @@
     },
     {
       "argv": [
-        "PUBLISH",
+        "SPUBLISH",
         "agent-probe:channel",
         "x"
       ],
       "outcome": "error",
-      "error": "NOPERM User agent_midrun has no permissions to run the 'publish' command"
+      "error": "NOPERM User agent_midrun has no permissions to run the 'spublish' command"
     }
   ]
 }

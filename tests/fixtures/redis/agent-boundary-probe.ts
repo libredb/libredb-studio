@@ -56,6 +56,8 @@ const RULES: Readonly<Record<string, string>> = {
   "read-del": "on ~* +@read +info +del",
   "read-set": "on ~* +@read +info +set",
   prefix: "on ~app:* +@read +info",
+  "scoped-writer": "on ~app:* &* +@read +info +@write",
+  "channel-scoped": "on ~* resetchannels +@read +info +spublish",
   midrun: "on ~* +@read +info",
 };
 
@@ -94,7 +96,7 @@ const PROBES: ReadonlyArray<readonly string[]> = [
   ["CONFIG", "SET", "agent-probe-no-such-parameter", "x"],
   ["EVALSHA", "0000000000000000000000000000000000000000", "0"],
   ["FUNCTION", "DELETE", "agent_probe_no_such_library"],
-  ["PUBLISH", "agent-probe:channel", "x"],
+  ["SPUBLISH", "agent-probe:channel", "x"],
 ];
 
 /** The metadata reads the agent may send, each against the key its request names. */
@@ -194,6 +196,7 @@ const COMMAND_INFO: readonly string[] = [
   "evalsha",
   "function|delete",
   "publish",
+  "spublish",
 ];
 
 interface Step {
@@ -332,6 +335,18 @@ async function main(): Promise<void> {
       },
     );
   }
+
+  // A user whose write commands reach only its own key pattern: refused every probe by key permission, yet it deletes
+  // a key inside the pattern.
+  const scoped = PRINCIPALS["scoped-writer"];
+  await admin("SET", "app:in-pattern", "not-a-real-stored-value");
+  const inPattern = await run(scoped, ["DEL", "app:in-pattern"]);
+  const existsAfter = await admin("EXISTS", "app:in-pattern");
+  write(
+    "scoped-writer-in-pattern",
+    { principal: scoped.user, rules: scoped.rules },
+    { inPatternWrite: inPattern, existsAfterWrite: existsAfter },
+  );
 
   // A grant made during the run: the probes pass, then the admin grants DEL, then the probes run again.
   const midrun = PRINCIPALS.midrun;

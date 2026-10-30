@@ -138,7 +138,7 @@
     },
     {
       "argv": [
-        "PUBLISH",
+        "SPUBLISH",
         "agent-probe:channel",
         "x"
       ],
@@ -226,7 +226,7 @@
         "agent:ttl"
       ],
       "outcome": "ok",
-      "reply": "3599963"
+      "reply": "3599956"
     },
     {
       "argv": [
@@ -339,7 +339,7 @@
         "server"
       ],
       "outcome": "ok",
-      "reply": "# Server\r\nredis_version:8.10.2\r\nredis_git_sha1:00000000\r\nredis_git_dirty:1\r\nredis_build_id:9afb359f90603816\r\nredis_mode:standalone\r\nos:Linux 6.8.0-147-generic x86_64\r\narch_bits:64\r\nmonotonic_clock:POSIX clock_gettime\r\nmultiplexing_api:epoll\r\natomicvar_api:c11-builtin\r\ngcc_version:14.2.0\r\nprocess_id:1\r\nprocess_supervised:no\r\nrun_id:52145a4f067bf220a191b6b0aee215702da15309\r\ntcp_port:6379\r\nserver_time_usec:1793376593965178\r\nuptime_in_seconds:1\r\nuptime_in_days:0\r\nhz:10\r\nconfigured_hz:10\r\nlru_clock:14991697\r\nexecutable:/data/redis-server\r\nconfig_file:\r\nio_threads_active:0\r\nlistener0:name=tcp,bind=*,bind=-::*,port=6379\r\n"
+      "reply": "# Server\r\nredis_version:8.10.2\r\nredis_git_sha1:00000000\r\nredis_git_dirty:1\r\nredis_build_id:9afb359f90603816\r\nredis_mode:standalone\r\nos:Linux 6.8.0-147-generic x86_64\r\narch_bits:64\r\nmonotonic_clock:POSIX clock_gettime\r\nmultiplexing_api:epoll\r\natomicvar_api:c11-builtin\r\ngcc_version:14.2.0\r\nprocess_id:1\r\nprocess_supervised:no\r\nrun_id:0abe4c9b9f4886c5eb8a658f5d92c139cfb5bc55\r\ntcp_port:6379\r\nserver_time_usec:1793379177409200\r\nuptime_in_seconds:0\r\nuptime_in_days:0\r\nhz:10\r\nconfigured_hz:10\r\nlru_clock:14994281\r\nexecutable:/data/redis-server\r\nconfig_file:\r\nio_threads_active:0\r\nlistener0:name=tcp,bind=*,bind=-::*,port=6379\r\n"
     },
     {
       "argv": [
@@ -347,7 +347,7 @@
         "keyspace"
       ],
       "outcome": "ok",
-      "reply": "# Keyspace\r\ndb0:keys=8,expires=1,avg_ttl=0,subexpiry=0\r\n"
+      "reply": "# Keyspace\r\ndb0:keys=8,expires=1,avg_ttl=3599983,subexpiry=0\r\n"
     },
     {
       "argv": [
@@ -363,7 +363,7 @@
         "proto",
         "2",
         "id",
-        "126",
+        "129",
         "mode",
         "standalone",
         "role",
@@ -392,21 +392,21 @@
           ],
           [
             "name",
-            "vectorset",
-            "ver",
-            "1",
-            "path",
-            "",
-            "args",
-            []
-          ],
-          [
-            "name",
             "timeseries",
             "ver",
             "81001",
             "path",
             "/usr/local/lib/redis/modules//redistimeseries.so",
+            "args",
+            []
+          ],
+          [
+            "name",
+            "vectorset",
+            "ver",
+            "1",
+            "path",
+            "",
             "args",
             []
           ],
@@ -430,14 +430,14 @@
       ],
       "outcome": "ok",
       "reply": [
-        "agent:set",
-        "agent:hll",
+        "agent:zset",
         "agent:stream",
-        "agent:list",
-        "agent:string",
-        "agent:hash",
         "agent:ttl",
-        "agent:zset"
+        "agent:list",
+        "agent:set",
+        "agent:hash",
+        "agent:string",
+        "agent:hll"
       ]
     },
     {
@@ -449,14 +449,14 @@
       "reply": [
         "0",
         [
-          "agent:set",
-          "agent:ttl",
-          "agent:stream",
-          "agent:list",
           "agent:zset",
+          "agent:list",
           "agent:hll",
-          "agent:string",
-          "agent:hash"
+          "agent:hash",
+          "agent:set",
+          "agent:stream",
+          "agent:ttl",
+          "agent:string"
         ]
       ]
     },
@@ -465,7 +465,7 @@
         "RANDOMKEY"
       ],
       "outcome": "ok",
-      "reply": "agent:set"
+      "reply": "agent:list"
     },
     {
       "argv": [
@@ -509,7 +509,7 @@
         "LIST"
       ],
       "outcome": "ok",
-      "reply": "id=134 addr=172.17.0.1:39660 laddr=172.17.0.2:6379 fd=22 name= age=0 idle=0 flags=N db=0 sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=26 qbuf-free=20448 argv-mem=10 multi-mem=0 rbs=16384 rbp=16384 obl=0 oll=0 omem=0 omem-shared=0 omem-unshared=0 tot-mem=38170 events=r cmd=client|list user=default redir=-1 resp=2 lib-name=ioredis lib-ver=5.11.1 io-thread=0 tot-net-in=136 tot-net-out=10 tot-cmds=2 read-events=3 avg-pipeline-len-sum=3 avg-pipeline-len-cnt=3\n"
+      "reply": "id=137 addr=172.17.0.1:54972 laddr=172.17.0.2:6379 fd=22 name= age=0 idle=0 flags=N db=0 sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=26 qbuf-free=20448 argv-mem=10 multi-mem=0 rbs=16384 rbp=16384 obl=0 oll=0 omem=0 omem-shared=0 omem-unshared=0 tot-mem=38170 events=r cmd=client|list user=default redir=-1 resp=2 lib-name=ioredis lib-ver=5.11.1 io-thread=0 tot-net-in=136 tot-net-out=10 tot-cmds=2 read-events=2 avg-pipeline-len-sum=3 avg-pipeline-len-cnt=2\n"
     },
     {
       "argv": [

@@ -138,7 +138,7 @@
     },
     {
       "argv": [
-        "PUBLISH",
+        "SPUBLISH",
         "agent-probe:channel",
         "x"
       ],
@@ -226,7 +226,7 @@
         "agent:ttl"
       ],
       "outcome": "ok",
-      "reply": "3599943"
+      "reply": "3599948"
     },
     {
       "argv": [
@@ -339,7 +339,7 @@
         "server"
       ],
       "outcome": "ok",
-      "reply": "# Server\r\nredis_version:7.2.4\r\nserver_name:valkey\r\nvalkey_version:9.1.2\r\nvalkey_release_stage:ga\r\nredis_git_sha1:00000000\r\nredis_git_dirty:0\r\nredis_build_id:16129465b18d72a\r\nserver_mode:standalone\r\nos:Linux 6.8.0-147-generic x86_64\r\narch_bits:64\r\nmonotonic_clock:X86 TSC @ 2803.68 ticks/us\r\nmultiplexing_api:epoll\r\ngcc_version:14.2.0\r\nprocess_id:7\r\nprocess_supervised:no\r\nrun_id:77f69a425ed524b4ac6d9224a70059443c72a105\r\ntcp_port:6379\r\nserver_time_usec:1793376597551650\r\nuptime_in_seconds:1\r\nuptime_in_days:0\r\nhz:10\r\nconfigured_hz:10\r\nclients_hz:10\r\nlru_clock:14991701\r\nexecutable:/data/valkey-server\r\nconfig_file:\r\nio_threads_active:0\r\navailability_zone:\r\nlistener0:name=tcp,bind=*,bind=-::*,port=6379\r\n"
+      "reply": "# Server\r\nredis_version:7.2.4\r\nserver_name:valkey\r\nvalkey_version:9.1.2\r\nvalkey_release_stage:ga\r\nredis_git_sha1:00000000\r\nredis_git_dirty:0\r\nredis_build_id:16129465b18d72a\r\nserver_mode:standalone\r\nos:Linux 6.8.0-147-generic x86_64\r\narch_bits:64\r\nmonotonic_clock:X86 TSC @ 2803.21 ticks/us\r\nmultiplexing_api:epoll\r\ngcc_version:14.2.0\r\nprocess_id:7\r\nprocess_supervised:no\r\nrun_id:bb531ed0385992a214c0e93ec33681639327b7fd\r\ntcp_port:6379\r\nserver_time_usec:1793379179942553\r\nuptime_in_seconds:0\r\nuptime_in_days:0\r\nhz:10\r\nconfigured_hz:10\r\nclients_hz:10\r\nlru_clock:14994283\r\nexecutable:/data/valkey-server\r\nconfig_file:\r\nio_threads_active:0\r\navailability_zone:\r\nlistener0:name=tcp,bind=*,bind=-::*,port=6379\r\n"
     },
     {
       "argv": [
@@ -347,7 +347,7 @@
         "keyspace"
       ],
       "outcome": "ok",
-      "reply": "# Keyspace\r\ndb0:keys=8,expires=1,avg_ttl=3599940,keys_with_volatile_items=0\r\n"
+      "reply": "# Keyspace\r\ndb0:keys=8,expires=1,avg_ttl=0,keys_with_volatile_items=0\r\n"
     },
     {
       "argv": [
@@ -363,7 +363,7 @@
         "proto",
         "2",
         "id",
-        "226",
+        "230",
         "mode",
         "standalone",
         "role",
@@ -392,12 +392,12 @@
       "reply": [
         "agent:hll",
         "agent:string",
-        "agent:hash",
         "agent:list",
-        "agent:set",
         "agent:zset",
-        "agent:stream",
-        "agent:ttl"
+        "agent:ttl",
+        "agent:hash",
+        "agent:set",
+        "agent:stream"
       ]
     },
     {
@@ -411,12 +411,12 @@
         [
           "agent:hll",
           "agent:string",
-          "agent:hash",
           "agent:list",
-          "agent:set",
           "agent:zset",
-          "agent:stream",
-          "agent:ttl"
+          "agent:ttl",
+          "agent:hash",
+          "agent:set",
+          "agent:stream"
         ]
       ]
     },
@@ -425,7 +425,7 @@
         "RANDOMKEY"
       ],
       "outcome": "ok",
-      "reply": "agent:list"
+      "reply": "agent:hash"
     },
     {
       "argv": [
@@ -469,7 +469,7 @@
         "LIST"
       ],
       "outcome": "ok",
-      "reply": "id=234 addr=172.17.0.1:35064 laddr=172.17.0.2:6379 fd=10 name= age=0 idle=0 flags=N capa= db=0 sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=0 qbuf-free=0 argv-mem=10 multi-mem=0 rbs=16384 rbp=16384 obl=0 oll=0 omem=0 tot-mem=17050 events=r cmd=client|list user=agent_full redir=-1 resp=2 lib-name=ioredis lib-ver=5.11.1 tot-net-in=206 tot-net-out=15 tot-cmds=3\n"
+      "reply": "id=238 addr=172.17.0.1:34294 laddr=172.17.0.2:6379 fd=10 name= age=0 idle=0 flags=N capa= db=0 sub=0 psub=0 ssub=0 multi=-1 watch=0 qbuf=0 qbuf-free=0 argv-mem=10 multi-mem=0 rbs=16384 rbp=16384 obl=0 oll=0 omem=0 tot-mem=17050 events=r cmd=client|list user=agent_full redir=-1 resp=2 lib-name=ioredis lib-ver=5.11.1 tot-net-in=206 tot-net-out=15 tot-cmds=3\n"
     },
     {
       "argv": [

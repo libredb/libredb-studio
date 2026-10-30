@@ -8675,12 +8675,13 @@ Found 2026-10-30 with agent execution on Milvus.
 
 ### B156. Redis's agent reads are metadata only, and it has no MCP statement tool
 
-Agent mode executes Redis metadata reads under the `rediscli` statement language, as an ACL user the server refuses write, admin, dangerous, scripting and pubsub probes that change nothing, proved before every command on that command's own connection (`docs/providers/redis.md`, section 16).
+Agent mode executes Redis metadata reads under the `rediscli` statement language, as an ACL user the server refuses write, admin, dangerous, scripting and pubsub probes that change nothing, each as a command the user does not hold, checked before every command on that command's own connection (`docs/providers/redis.md`, section 16).
 Key names count as stored values, since applications put ids, emails and tokens in them, so the reads are the database's key count and, for one key the command names, its type, existence, time to live, length, encoding and memory use: nothing lists keys (`SCAN`, `KEYS`, `RANDOMKEY`) or reads a value, a hash field, a set or sorted-set member or a stream entry, every answer is projected to counts, types and sizes (`ProviderCapabilities.metadataOnly`, `src/lib/db/redaction/metadata-only.ts`), and the grounding under the agent profile holds no key name.
 `INFO` is not read either: the server's own `COMMAND INFO` flags it neither `readonly` nor anything but `@dangerous`, so it fails the rule every command in the table meets, and the server's other sections and the per-database counts of other databases stay unread.
 So the language offers the investigation and the operations workflow only: data analysis needs stored values, and query optimization and database assessment need a plan and a profile the server does not compose.
 Its MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`), so no MCP tool runs a Redis command; `MCP_STATEMENT_READ.redis` is false and the MCP metadata tools work, `inspect_schema` among them, which lists the key groupings the editor's tree derives from key names, as it did before agent mode joined.
-The proof's probes cannot name every write: a user granted one write command they leave out passes it, and the closed table, which sends no write, is what stops that user; Dragonfly, KeyDB, Garnet and a cluster are refused at open until each is measured.
+The proof's probes cannot name every write: a user granted one write command they leave out passes it, and the closed table, which sends no write, is what stops that user.
+A cluster, and a relative whose `HELLO` differs from the measured shape (Dragonfly adds `dfly_version`), are refused at open by the identity check; one that copies the measured `HELLO` exactly is held to the probes' exact refusal wording and refused only where its wording differs, so measuring KeyDB, Garnet and the other relatives stays open.
 Kept so that key-name and value exposure, `INFO`, MCP exposure and the relatives are decisions of their own rather than side effects of agent mode joining.
 
 Found 2026-10-30 with agent execution on Redis.

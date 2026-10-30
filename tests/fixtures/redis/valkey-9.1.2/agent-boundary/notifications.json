@@ -322,7 +322,7 @@
     },
     {
       "argv": [
-        "PUBLISH",
+        "SPUBLISH",
         "agent-probe:channel",
         "x"
       ],

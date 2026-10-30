@@ -138,12 +138,12 @@
     },
     {
       "argv": [
-        "PUBLISH",
+        "SPUBLISH",
         "agent-probe:channel",
         "x"
       ],
       "outcome": "error",
-      "error": "NOPERM User agent_reader has no permissions to run the 'publish' command"
+      "error": "NOPERM User agent_reader has no permissions to run the 'spublish' command"
     }
   ],
   "stateBeforeProbes": {
@@ -226,7 +226,7 @@
         "agent:ttl"
       ],
       "outcome": "ok",
-      "reply": "3599922"
+      "reply": "3599914"
     },
     {
       "argv": [
@@ -363,7 +363,7 @@
         "proto",
         "2",
         "id",
-        "244",
+        "247",
         "mode",
         "standalone",
         "role",
@@ -392,21 +392,21 @@
           ],
           [
             "name",
-            "vectorset",
-            "ver",
-            "1",
-            "path",
-            "",
-            "args",
-            []
-          ],
-          [
-            "name",
             "timeseries",
             "ver",
             "81001",
             "path",
             "/usr/local/lib/redis/modules//redistimeseries.so",
+            "args",
+            []
+          ],
+          [
+            "name",
+            "vectorset",
+            "ver",
+            "1",
+            "path",
+            "",
             "args",
             []
           ],
@@ -430,14 +430,14 @@
       ],
       "outcome": "ok",
       "reply": [
-        "agent:set",
-        "agent:hll",
+        "agent:zset",
         "agent:stream",
-        "agent:list",
-        "agent:string",
-        "agent:hash",
         "agent:ttl",
-        "agent:zset"
+        "agent:list",
+        "agent:set",
+        "agent:hash",
+        "agent:string",
+        "agent:hll"
       ]
     },
     {
@@ -449,14 +449,14 @@
       "reply": [
         "0",
         [
-          "agent:set",
-          "agent:ttl",
-          "agent:stream",
-          "agent:list",
           "agent:zset",
+          "agent:list",
           "agent:hll",
-          "agent:string",
-          "agent:hash"
+          "agent:hash",
+          "agent:set",
+          "agent:stream",
+          "agent:ttl",
+          "agent:string"
         ]
       ]
     },
@@ -465,7 +465,7 @@
         "RANDOMKEY"
       ],
       "outcome": "ok",
-      "reply": "agent:zset"
+      "reply": "agent:list"
     },
     {
       "argv": [

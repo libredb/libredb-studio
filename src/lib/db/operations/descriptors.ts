@@ -598,9 +598,11 @@ const REDISCLI_READ_BOUNDARY =
   "names TYPE, EXISTS, TTL, PTTL, STRLEN, LLEN, HLEN, SCARD, ZCARD, XLEN, OBJECT ENCODING and MEMORY USAGE, read " +
   "from one line into the exact argv sent. Every command runs on a connection of its own in the connection's " +
   "database, closed after it, and before it, on that connection, the server proves the ACL user reads only " +
-  "(redis-read-only-proof.ts): HELLO must name Redis or Valkey in standalone mode, and the user must be refused " +
-  "NOPERM on write, admin, dangerous, scripting and pubsub probes that change nothing even when admitted, so a " +
-  "connection naming no user, the default user and a user that may write are refused. Key names and stored values " +
+  "(redis-read-only-proof.ts): HELLO must answer the measured Redis or Valkey shape in standalone mode, and the " +
+  "user must be refused write, admin, dangerous, scripting and pubsub probes that change nothing even when " +
+  "admitted, each as a command it does not hold, so a connection naming no user, the default user and a user " +
+  "holding any probed command, even on its own key pattern only, are refused; a write the probes leave out is " +
+  "stopped by the table, which sends none. Key names and stored values " +
   "are withheld: nothing lists keys or reads a value, field or member, every answer is projected to counts, types and " +
   "sizes (redis-metadata-read.ts), a server error is worded by its code alone, and a result past the row or byte " +
   "budget is refused, never truncated.";

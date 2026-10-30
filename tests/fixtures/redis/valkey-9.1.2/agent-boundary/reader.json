@@ -138,12 +138,12 @@
     },
     {
       "argv": [
-        "PUBLISH",
+        "SPUBLISH",
         "agent-probe:channel",
         "x"
       ],
       "outcome": "error",
-      "error": "NOPERM User agent_reader has no permissions to run the 'publish' command"
+      "error": "NOPERM User agent_reader has no permissions to run the 'spublish' command"
     }
   ],
   "stateBeforeProbes": {
@@ -226,7 +226,7 @@
         "agent:ttl"
       ],
       "outcome": "ok",
-      "reply": "3599921"
+      "reply": "3599924"
     },
     {
       "argv": [
@@ -363,7 +363,7 @@
         "proto",
         "2",
         "id",
-        "285",
+        "289",
         "mode",
         "standalone",
         "role",
@@ -392,12 +392,12 @@
       "reply": [
         "agent:hll",
         "agent:string",
-        "agent:hash",
         "agent:list",
-        "agent:set",
         "agent:zset",
-        "agent:stream",
-        "agent:ttl"
+        "agent:ttl",
+        "agent:hash",
+        "agent:set",
+        "agent:stream"
       ]
     },
     {
@@ -411,12 +411,12 @@
         [
           "agent:hll",
           "agent:string",
-          "agent:hash",
           "agent:list",
-          "agent:set",
           "agent:zset",
-          "agent:stream",
-          "agent:ttl"
+          "agent:ttl",
+          "agent:hash",
+          "agent:set",
+          "agent:stream"
         ]
       ]
     },
@@ -425,7 +425,7 @@
         "RANDOMKEY"
       ],
       "outcome": "ok",
-      "reply": "agent:ttl"
+      "reply": "agent:hash"
     },
     {
       "argv": [
