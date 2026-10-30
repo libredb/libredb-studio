@@ -65,6 +65,8 @@ describe("MCP_STATEMENT_ARMS", () => {
     expect(mcpStatementToolFor("libredb")).toBeNull();
     expect(MCP_STATEMENT_ARMS.influxql).toBeNull();
     expect(mcpStatementToolFor("influxdb")).toBeNull();
+    expect(MCP_STATEMENT_ARMS.weaviateapi).toBeNull();
+    expect(mcpStatementToolFor("weaviate")).toBeNull();
   });
 
   test("is built from the languages' MCP facets, one arm per declared facet, in the registry's order", () => {
@@ -380,7 +382,14 @@ describe("the tool each engine is read with", () => {
 
   test("an arm that serves no engine is neither listed nor registered", () => {
     const idle = Object.freeze({ ...RUN_MONGO_COMMAND_ARM, types: [] });
-    const arms = { sql: RUN_READ_QUERY_ARM, kubectl: null, mongo: idle, libredbkv: null, influxql: null };
+    const arms = {
+      sql: RUN_READ_QUERY_ARM,
+      kubectl: null,
+      mongo: idle,
+      libredbkv: null,
+      influxql: null,
+      weaviateapi: null,
+    };
     expect(servingStatementArms(arms)).toEqual([RUN_READ_QUERY_ARM]);
     const registerTool = mock((_name: string) => undefined);
     registerStatementTools({ registerTool } as unknown as McpServer, {} as McpConnectionContext, arms);

@@ -66,7 +66,11 @@ import type { DatabaseType } from "@/lib/types";
  * or a 2.x token that lists no system bucket, refused a no-op DELETE on every database it lists, proven before every
  * statement, so an admin, a server with authentication off and a principal that can write anywhere, where SELECT ...
  * INTO would land, are refused; InfluxDB 3 is refused on this path. Studio's reader admits one SELECT, SHOW of the
- * catalog or EXPLAIN of a SELECT, with no comment. Each provider's own `queryReadOnly` argues its own case.
+ * catalog or EXPLAIN of a SELECT, with no comment. Weaviate's is the provider's closed table of read requests, which
+ * can name no write, with a key the server proves a viewer before every request, so a connection with no key, an
+ * admin key, a role that writes and a server with RBAC off are refused; Studio's reader admits the meta, schema,
+ * shard, tenant, alias and node reads and a bare aggregate count, a COLD tenant is refused rather than woken, and every
+ * answer carries names, counts and flags only. Each provider's own `queryReadOnly` argues its own case.
  * `tests/unit/lib/agent/engine-support.test.ts` is what keeps the two equal - it walks EVERY
  * id in the `DatabaseType` union, reads `queryReadOnly` off the real provider class the
  * factory would construct, and fails if this array and the drivers diverge in either direction.
@@ -101,6 +105,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "druid",
   "libredb",
   "influxdb",
+  "weaviate",
 ];
 
 /**

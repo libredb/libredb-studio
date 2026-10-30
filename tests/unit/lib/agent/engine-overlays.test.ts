@@ -8,6 +8,9 @@ import { engineServerDialect, engineServerOverlay } from "@/lib/agent/languages/
 import * as INFLUXQL_CLIENT_OVERLAYS from "@/lib/agent/languages/influxql/engines/client";
 import * as INFLUXDB from "@/lib/agent/languages/influxql/engines/influxdb";
 import { INFLUXQL_PACK } from "@/lib/agent/languages/influxql/index";
+import * as WEAVIATEAPI_CLIENT_OVERLAYS from "@/lib/agent/languages/weaviateapi/engines/client";
+import * as WEAVIATE from "@/lib/agent/languages/weaviateapi/engines/weaviate";
+import { WEAVIATEAPI_PACK } from "@/lib/agent/languages/weaviateapi/index";
 import * as KUBECTL_CLIENT_OVERLAYS from "@/lib/agent/languages/kubectl/engines/client";
 import * as KUBERNETES from "@/lib/agent/languages/kubectl/engines/kubernetes";
 import * as LIBREDBKV_CLIENT_OVERLAYS from "@/lib/agent/languages/libredbkv/engines/client";
@@ -93,6 +96,8 @@ const ENGINE_MODULES: Readonly<Record<string, Readonly<Record<string, unknown>>>
   "libredbkv/engines/client": LIBREDBKV_CLIENT_OVERLAYS,
   "influxql/engines/influxdb": INFLUXDB,
   "influxql/engines/client": INFLUXQL_CLIENT_OVERLAYS,
+  "weaviateapi/engines/weaviate": WEAVIATE,
+  "weaviateapi/engines/client": WEAVIATEAPI_CLIENT_OVERLAYS,
 };
 
 /** Every overlay an engine module exports, named `<module>#<export>`. */
@@ -124,6 +129,7 @@ describe("the engine registry", () => {
       "opensearch",
       "mongodb",
       "couchbase",
+      "weaviate",
       "influxdb",
       "influxdb3",
       "kubernetes",
@@ -175,7 +181,7 @@ describe("the engine registry", () => {
 
   test("every engine module's server overlay holds a dialect and overridable members, its client one a dialect alone (ruling 2)", () => {
     const exported = exportedOverlays();
-    expect(exported).toHaveLength(38);
+    expect(exported).toHaveLength(40);
     // The one other export is the PostgreSQL retry's rewrite, which its tests call directly.
     expect(
       Object.entries(ENGINE_MODULES)
@@ -239,6 +245,7 @@ describe("the engine packs", () => {
     expect(agentEnginePack("kubernetes")).toEqual(KUBECTL_PACK);
     expect(agentEnginePack("libredb")).toBe(LIBREDBKV_PACK);
     expect(agentEnginePack("influxdb")).toBe(INFLUXQL_PACK);
+    expect(agentEnginePack("weaviate")).toBe(WEAVIATEAPI_PACK);
   });
 
   test.each(SQL_ENGINES)("%s is the SQL pack member for member, with its own dialect on the server facet", (type) => {
@@ -279,7 +286,15 @@ describe("engineServerDialect", () => {
   });
 
   test("a type with no overlay holds an empty one, so its server facet is its family's own", () => {
-    for (const type of ["spark", "toString", "mongodb", "kubernetes", "libredb", "influxdb"] as DatabaseType[]) {
+    for (const type of [
+      "spark",
+      "toString",
+      "mongodb",
+      "kubernetes",
+      "libredb",
+      "influxdb",
+      "weaviate",
+    ] as DatabaseType[]) {
       expect(Object.keys(engineServerOverlay(type))).toEqual([]);
     }
     expect(engineServerOverlay("postgres").dialect).toBe(engineServerDialect("postgres"));
@@ -495,7 +510,7 @@ describe("the client dialect", () => {
       influxdb3: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
     });
     for (const type of SQL_ENGINES) expect(Object.isFrozen(clientDialect(type))).toBe(true);
-    for (const type of ["mongodb", "kubernetes", "libredb", "influxdb"] as const) {
+    for (const type of ["mongodb", "kubernetes", "libredb", "influxdb", "weaviate"] as const) {
       expect(engineClientPack(type).dialect).toBeUndefined();
     }
   });

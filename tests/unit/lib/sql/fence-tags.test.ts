@@ -171,6 +171,12 @@ describe("fenceTagEngine", () => {
     expect(fenceTagEngine("sql")).toBeNull();
   });
 
+  test("weaviateapi names weaviate, the agent's name for the only request language weaviate runs", () => {
+    expect(fenceTagEngine("weaviateapi")).toBe("weaviate");
+    expect(isQueryFenceTag("weaviateapi")).toBe(true);
+    expect(fenceTagEngine("weaviate")).toBe("weaviate");
+  });
+
   test("libredbkv names libredb, the agent's name for the only command language libredb runs", () => {
     expect(fenceTagEngine("libredbkv")).toBe("libredb");
     expect(isQueryFenceTag("libredbkv")).toBe(true);

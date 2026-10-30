@@ -633,6 +633,8 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   neo4j: false,
   milvus: false,
   qdrant: false,
+  // Agent mode executes metadata-only reads on Weaviate, and MCP read stays closed on it until a change of its own
+  // opens it.
   weaviate: false,
   // Agent mode executes statements on InfluxDB, and MCP read stays closed on it until a change of its own opens it.
   influxdb: false,

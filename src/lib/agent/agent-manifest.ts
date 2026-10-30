@@ -27,7 +27,7 @@ import type { AgentRunMode, AgentRunWorkflowType } from "./types";
 import { OPERATIONS_VARIANT } from "./workflow-tool-sets";
 
 /** The statement languages agent mode can send. A later engine reuses one or registers a new id here. */
-export type AgentStatementLanguageId = "sql" | "kubectl" | "mongo" | "libredbkv" | "influxql";
+export type AgentStatementLanguageId = "sql" | "kubectl" | "mongo" | "libredbkv" | "influxql" | "weaviateapi";
 
 /** Literal-typed, so `AgentEngineFamily` in `languages/pack.ts` reads each engine's language by type. */
 export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
@@ -57,7 +57,7 @@ export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
   neo4j: null,
   milvus: null,
   qdrant: null,
-  weaviate: null,
+  weaviate: "weaviateapi",
   influxdb: "influxql",
   influxdb3: "sql",
   oxia: null,

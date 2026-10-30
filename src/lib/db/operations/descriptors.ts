@@ -28,6 +28,7 @@ import { influxqlAgentReadInput } from "./influxql-admission";
 import { kubectlAgentReadInput } from "./kubectl-admission";
 import { libredbkvAgentReadInput } from "./libredbkv-admission";
 import { mongoAgentReadInput } from "./mongo-admission";
+import { weaviateapiAgentReadInput } from "./weaviateapi-admission";
 import { agentPlanExecutionSqlInput, agentQueryReadSqlInput, agentReadSqlInput } from "./statement-guard";
 import type { RegistrableOperationDescriptor } from "./types";
 
@@ -444,6 +445,41 @@ const influxqlQueryReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+const WEAVIATEAPI_READ_BOUNDARY =
+  "Weaviate: the provider's closed table of 20 GET and POST operations, which can name no write, of which an agent " +
+  "request reaches the meta, schema, shard, tenant, alias and node reads and an aggregate count only, every body key " +
+  "closed (metadata-request.ts). Before the open and before every request, under that request's deadline, the server " +
+  "proves the key a viewer (metadata-read.ts): GET /v1/users/own-info must name at least one role and every action must " +
+  "be one of the viewer role's twelve read actions, so a connection with no key, an admin key, a role that writes and " +
+  "a server with RBAC off are refused. A request naming a tenant reads the tenant's own record first and is refused " +
+  "unless it is HOT, so no read wakes a tenant; object reads, searches, GraphQL, every module call, filters and " +
+  "groupBy are refused before anything is sent. Every answer is projected to names, counts and flags " +
+  "(metadata-only.ts), and a result past the row or byte budget is refused, never truncated.";
+
+/**
+ * One Weaviate metadata read the model wrote, on a `weaviate` connection.
+ *
+ * R1 on a structural boundary: the client can build no write, and the server proves the key a viewer before every
+ * request. Its own id, and not a widened `sql.query.read`, so the SQL contract and its audit action stay exactly what
+ * they were.
+ */
+const weaviateapiQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "weaviateapi.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: weaviateapiAgentReadInput,
+  verification: {
+    reviewedBy: "Weaviate agent execution design review",
+    boundary: WEAVIATEAPI_READ_BOUNDARY,
+    verifiedOn: "2026-10-30",
+  },
+};
+
 /** The selector of a scoped MongoDB catalog read: a kind, a database and a collection, any of them narrowed. */
 const mongoCatalogSelectorInput = z.strictObject({
   kind: z.enum(["columns", "indexes"]).default("columns"),
@@ -642,6 +678,7 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   mongoTableProfileDescriptor,
   libredbkvQueryReadDescriptor,
   influxqlQueryReadDescriptor,
+  weaviateapiQueryReadDescriptor,
 ]);
 
 /**

@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { AGENT_LANGUAGE_COPY } from "@/lib/agent/agent-manifest";
+import { AGENT_LANGUAGE_COPY, AGENT_WORKFLOW_VARIANTS } from "@/lib/agent/agent-manifest";
 import { fingerprintInfluxql, influxqlRowCapAdvice } from "@/lib/agent/languages/influxql/adapter";
 import { fingerprintKubectl, kubectlRowCapAdvice } from "@/lib/agent/languages/kubectl/adapter";
 import { fingerprintLibredbkv, libredbkvRowCapAdvice } from "@/lib/agent/languages/libredbkv/adapter";
 import { fingerprintMongo, mongoRowCapAdvice } from "@/lib/agent/languages/mongo/adapter";
+import { fingerprintWeaviateapi, weaviateapiRowCapAdvice } from "@/lib/agent/languages/weaviateapi/adapter";
 import { languageServer, languageServerPack } from "@/lib/agent/languages/server";
 import {
   admitLibredbkvStatement,
@@ -16,6 +17,12 @@ import {
   influxqlAgentReadInput,
 } from "@/lib/db/operations/influxql-admission";
 import { admitMongoStatement } from "@/lib/db/operations/mongo-admission";
+import {
+  admitWeaviateapiStatement,
+  WEAVIATEAPI_AGENT_MAX_STATEMENT_CHARS,
+  weaviateapiAgentReadInput,
+} from "@/lib/db/operations/weaviateapi-admission";
+import { WEAVIATE_AGENT_SENTENCES } from "@/lib/db/providers/vector/weaviate/metadata-request";
 import { INFLUXQL_AGENT_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-statement";
 import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 
@@ -393,5 +400,91 @@ describe("the influxql language's server adapter and admission", () => {
     expect(refused.success).toBe(false);
     expect(refused.error?.issues[0]?.path).toEqual(["statement"]);
     expect(refused.error?.issues[0]?.message).toBe(INFLUXQL_AGENT_SENTENCES.showKind("USERS"));
+  });
+});
+
+describe("the weaviateapi language's server adapter and admission", () => {
+  test("the fingerprint is the request as the reader reads it, so one read written three ways is one identity", () => {
+    const one = fingerprintWeaviateapi("GET /v1/nodes?output=verbose");
+    expect(fingerprintWeaviateapi("// shard rows\nGET /v1/nodes?output=verbose")).toBe(one);
+    expect(fingerprintWeaviateapi("GET   /v1/nodes?output=verbose")).toBe(one);
+    expect(fingerprintWeaviateapi("GET /v1/nodes?output=minimal")).not.toBe(one);
+    expect(fingerprintWeaviateapi("GET /v1/schema/Note")).not.toBe(fingerprintWeaviateapi("GET /v1/schema/Doc"));
+    expect(fingerprintWeaviateapi('POST /v1/aggregate/Note {"tenant": "a"}')).not.toBe(
+      fingerprintWeaviateapi('POST /v1/aggregate/Note {"tenant": "b"}'),
+    );
+  });
+
+  test("the fingerprint is total: a refused request is identified by its raw text, so it is refused again", () => {
+    const raw = "GET /v1/objects?class=Note";
+    expect(fingerprintWeaviateapi(raw)).toBe(fingerprintWeaviateapi(raw));
+    expect(fingerprintWeaviateapi(raw)).toMatch(/^[0-9a-f]{64}$/);
+    expect(fingerprintWeaviateapi(`${raw} `)).not.toBe(fingerprintWeaviateapi(raw));
+  });
+
+  test("every advice key of the weaviateapi copy has its own sentence", () => {
+    const generic = weaviateapiRowCapAdvice("GET /v1/objects?class=Note", "200");
+    const requestFor: Readonly<Record<string, string>> = {
+      schema: "GET /v1/schema",
+      tenants: "GET /v1/schema/Tenanted/tenants",
+      nodes: "GET /v1/nodes?output=verbose",
+    };
+    expect([...AGENT_LANGUAGE_COPY.weaviateapi.adviceKeys].sort()).toEqual(["nodes", "schema", "tenants"]);
+    for (const key of AGENT_LANGUAGE_COPY.weaviateapi.adviceKeys) {
+      expect(weaviateapiRowCapAdvice(requestFor[key] as string, "200"), key).not.toBe(generic);
+    }
+    expect(weaviateapiRowCapAdvice("GET /v1/nodes/Note?output=verbose", "200")).toBe(
+      weaviateapiRowCapAdvice("GET /v1/nodes", "200"),
+    );
+    expect(weaviateapiRowCapAdvice("GET /v1/schema", "200")).toContain("GET /v1/schema/{collection}");
+  });
+
+  test("a request without advice of its own, or one that is refused, gets the generic sentence", () => {
+    const generic =
+      "Ask for at most 200 rows: read one collection, tenant or node instead of the whole list, and run it again.";
+    expect(weaviateapiRowCapAdvice("GET /v1/aliases", "200")).toBe(generic);
+    expect(weaviateapiRowCapAdvice("GET /v1/objects?class=Note", "200")).toBe(generic);
+    expect(languageServer("weaviateapi").shapeAdvice).toContain("a valid Weaviate request");
+  });
+
+  test("the admission is the provider's reader, plus a length the agent's contract names", () => {
+    expect(admitWeaviateapiStatement("GET /v1/schema")).toBeNull();
+    expect(admitWeaviateapiStatement("GET /v1/objects?class=Note")).toEqual({
+      code: "metadata-only",
+      message: WEAVIATE_AGENT_SENTENCES.metadataOnly("GET /v1/objects"),
+    });
+    expect(admitWeaviateapiStatement('POST /v1/aggregate/Note {"groupBy": "body"}')).toEqual({
+      code: "aggregate-shape",
+      message: WEAVIATE_AGENT_SENTENCES.aggregateShape("groupBy"),
+    });
+    expect(admitWeaviateapiStatement("DELETE /v1/schema/Note")?.code).toBe("request");
+    const long = `GET /v1/meta ${"/".repeat(WEAVIATEAPI_AGENT_MAX_STATEMENT_CHARS)}`;
+    expect(admitWeaviateapiStatement(long)).toEqual({
+      code: "agent-too-large",
+      message: `The request is longer than ${WEAVIATEAPI_AGENT_MAX_STATEMENT_CHARS} characters, the most an agent read takes: shorten it. Nothing was sent.`,
+    });
+    expect(languageServer("weaviateapi").admit?.("GET /v1/meta")).toBeNull();
+  });
+
+  test("an ungrounded run is sent to a read it holds, and plan mode is told none of the reader's rules", () => {
+    const ungrounded = languageServerPack("weaviateapi").grounding.ungrounded;
+    expect(ungrounded?.("The capture failed.", { singular: "collection", plural: "collections" })).toBe(
+      "The capture failed.\nSo nothing about this database has been established for you: not one collection name. Read what you need with run_read_query, starting with GET /v1/schema.",
+    );
+    expect(languageServerPack("weaviateapi").grounding.planningRules).toBeUndefined();
+  });
+
+  test("the descriptor's input is strict, carries the request, and refuses what the admission refuses", () => {
+    expect(weaviateapiAgentReadInput.safeParse({ statement: "GET /v1/meta" }).success).toBe(true);
+    expect(weaviateapiAgentReadInput.safeParse({ statement: "GET /v1/meta", sql: "x" }).success).toBe(false);
+    const refused = weaviateapiAgentReadInput.safeParse({ statement: "GET /v1/objects?class=Note" });
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues[0]?.path).toEqual(["statement"]);
+    expect(refused.error?.issues[0]?.message).toBe(WEAVIATE_AGENT_SENTENCES.metadataOnly("GET /v1/objects"));
+  });
+
+  test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
+    expect(Object.keys(AGENT_WORKFLOW_VARIANTS.weaviateapi).sort()).toEqual(["investigation", "operations"]);
+    expect(AGENT_WORKFLOW_VARIANTS.weaviateapi.investigation?.canAutoExecute).toBe(false);
   });
 });

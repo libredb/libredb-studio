@@ -176,6 +176,7 @@ export const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "influxql",
   "kubectl",
   "libredbkv",
+  "weaviateapi",
 ]);
 
 /**
@@ -223,6 +224,8 @@ export const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.free
   kubectl: "kubernetes",
   // The agent's name for the LibreDB command language, and `libredb` is the only type-id that runs it.
   libredbkv: "libredb",
+  // The agent's name for the Weaviate request language, and `weaviate` is the only type-id that runs it.
+  weaviateapi: "weaviate",
 });
 
 /**

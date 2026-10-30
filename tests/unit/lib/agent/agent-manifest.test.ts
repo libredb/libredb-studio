@@ -154,6 +154,7 @@ describe("the plan-estimate operation of each language", () => {
       mongo: "mongo.plan.estimate",
       libredbkv: null,
       influxql: null,
+      weaviateapi: null,
     });
     expect(Object.isFrozen(AGENT_PLAN_ESTIMATE_OPERATION)).toBe(true);
   });

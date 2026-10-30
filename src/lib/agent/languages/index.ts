@@ -15,6 +15,7 @@ import { INFLUXQL_PACK } from "./influxql/index";
 import { KUBECTL_PACK } from "./kubectl/index";
 import { LIBREDBKV_PACK } from "./libredbkv/index";
 import { MONGO_PACK } from "./mongo/index";
+import { WEAVIATEAPI_PACK } from "./weaviateapi/index";
 import type { AgentEvidenceTool, AgentLanguagePack, EvidenceToolName, LanguageToolArms } from "./pack";
 import { SQL_PACK } from "./sql/index";
 
@@ -24,6 +25,7 @@ const PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguagePack>> = Obj
   mongo: MONGO_PACK,
   libredbkv: LIBREDBKV_PACK,
   influxql: INFLUXQL_PACK,
+  weaviateapi: WEAVIATEAPI_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguagePack>);
 
 /** The pack for `language`, or a named error when the id is not a language this server knows. */
@@ -40,6 +42,7 @@ export const LANGUAGE_TOOL_ARMS: Readonly<Record<AgentStatementLanguageId, Langu
   mongo: MONGO_PACK.execution.arms,
   libredbkv: LIBREDBKV_PACK.execution.arms,
   influxql: INFLUXQL_PACK.execution.arms,
+  weaviateapi: WEAVIATEAPI_PACK.execution.arms,
 } satisfies Record<AgentStatementLanguageId, LanguageToolArms>);
 
 /**
@@ -53,6 +56,7 @@ export const AGENT_EVIDENCE_TOOLS: Readonly<Record<EvidenceToolName, AgentEviden
     MONGO_PACK.execution.evidenceTools,
     LIBREDBKV_PACK.execution.evidenceTools,
     INFLUXQL_PACK.execution.evidenceTools,
+    WEAVIATEAPI_PACK.execution.evidenceTools,
   ],
   "AGENT_EVIDENCE_TOOLS",
 );

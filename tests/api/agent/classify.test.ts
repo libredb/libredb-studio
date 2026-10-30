@@ -213,6 +213,19 @@ describe("POST /api/agent/classify", () => {
     expect(mockClassify).toHaveBeenCalledWith("which room ran hottest", { statementLanguage: "influxql" });
   });
 
+  test("a Weaviate connection is classified in its own family's terms", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:vectors", name: "Vectors", type: "weaviate" });
+
+    const res = await POST(
+      classifyRequest({ objective: "how many objects each collection holds", connectionId: "seed:vectors" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockClassify).toHaveBeenCalledWith("how many objects each collection holds", {
+      statementLanguage: "weaviateapi",
+    });
+  });
+
   test("a connection with no statement language is classified in SQL's terms", async () => {
     mockResolveConnection.mockResolvedValueOnce({ id: "seed:cache", name: "Cache", type: "redis" });
 

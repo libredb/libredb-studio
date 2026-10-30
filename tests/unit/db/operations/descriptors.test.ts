@@ -64,6 +64,7 @@ describe("canonical operation registry", () => {
       "sql.explain.estimate",
       "sql.query.read",
       "sql.table.profile",
+      "weaviateapi.query.read",
     ]);
   });
 
@@ -188,6 +189,7 @@ describe("the statement-read operations", () => {
       "libredbkv.query.read",
       "mongo.query.read",
       "sql.query.read",
+      "weaviateapi.query.read",
     ]);
     expect(isStatementReadOperation("mongo.plan.estimate")).toBe(false);
     expect(isStatementReadOperation("mongo.table.profile")).toBe(false);

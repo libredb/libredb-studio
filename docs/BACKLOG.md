@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B152 · 82
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B153 · 83
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -8551,6 +8551,19 @@ Kept so that MCP exposure of a LibreDB file is a decision of its own rather than
 Found 2026-10-30 with agent execution on LibreDB.
 
 **Done when:** the owner opens MCP read for LibreDB, the `libredbkv` pack declares its MCP facet (`src/lib/agent/languages/libredbkv/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) fenced by the agent's own admission, and `MCP_STATEMENT_READ.libredb` is true, with tests; cited in `docs/AGENT.md`.
+
+### B153. Weaviate's agent reads are metadata only, and it has no MCP statement tool
+
+Agent mode executes Weaviate metadata reads under the `weaviateapi` statement language, from a key the server proves a viewer before every request (`docs/providers/weaviate.md`, section Agent mode).
+Every answer is projected to names, counts and flags (`ProviderCapabilities.metadataOnly`, `src/lib/db/redaction/metadata-only.ts`), and object reads, searches, filters and `groupBy` are refused before anything is sent, because their answers or their counts carry stored property values and vectors.
+So the language offers the investigation and the operations workflow only: data analysis needs stored values, and query optimization and database assessment need a plan and a profile the server does not compose.
+Its MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`), so no MCP tool runs a Weaviate request; `MCP_STATEMENT_READ.weaviate` is false and the MCP metadata tools work (`MCP_EXPOSABLE.weaviate` is true).
+A request naming a tenant reads the tenant's record first and runs only on a `HOT` one, but a tenant an administrator sets `COLD` between that read and the request is woken by it; the window is one round trip, and the request is a count or a shard read.
+Kept so that value exposure and MCP exposure on Weaviate are decisions of their own rather than side effects of agent mode joining.
+
+Found 2026-10-30 with agent execution on Weaviate.
+
+**Done when:** the owner rules on which stored values agent mode may read on Weaviate and how they are redacted, the `weaviateapi` pack offers the workflows that ruling opens, the owner opens MCP read for Weaviate, the pack declares its MCP facet (`src/lib/agent/languages/weaviateapi/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same viewer proof and projection, and `MCP_STATEMENT_READ.weaviate` is true, with tests; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 
