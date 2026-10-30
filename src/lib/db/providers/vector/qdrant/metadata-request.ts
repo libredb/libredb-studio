@@ -50,7 +50,7 @@ const AGENT_READS =
 export const QDRANT_AGENT_SENTENCES = {
   /** `line` is the request's method and route template, never user text. */
   metadataOnly: (line: string): string =>
-    `${line} answers stored points, payloads or vectors, or other than metadata, which agent mode does not read. ${AGENT_READS} Nothing was sent.`,
+    `${line} is not one of agent mode's reads: it answers stored payloads or vectors, or what no metadata projection reads. ${AGENT_READS} Nothing was sent.`,
   /** `key` is a key the closed CountRequest schema declares, never user text. */
   countShape: (key: string): string =>
     `An agent's count counts a whole collection, so it takes "exact" only; "${key}" counts by stored values. Nothing was sent.`,
