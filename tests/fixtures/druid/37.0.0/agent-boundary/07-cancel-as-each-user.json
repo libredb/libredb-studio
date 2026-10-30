@@ -1,0 +1,56 @@
+[
+ {
+  "note": "agent_ro cancels its own statement by the query id its request named"
+ },
+ {
+  "as": "agent_ro",
+  "race": {
+   "query": "SELECT SUM(STRLEN(REPEAT(CONCAT(s, CAST(x AS VARCHAR)), 10000))) AS n FROM libredb_agent_data",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native",
+    "sqlQueryId": "libredb-agent-cancel-own",
+    "useCache": false,
+    "populateCache": false
+   }
+  },
+  "cancelAfterMs": 2000,
+  "cancelAs": "agent_ro"
+ },
+ {
+  "note": "agent_ro cancels admin's statement, and an anonymous caller cancels agent_ro's"
+ },
+ {
+  "as": "admin",
+  "race": {
+   "query": "SELECT SUM(STRLEN(REPEAT(CONCAT(s, CAST(x AS VARCHAR)), 10000))) AS n FROM libredb_agent_data",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native",
+    "sqlQueryId": "libredb-agent-cancel-admin",
+    "useCache": false,
+    "populateCache": false
+   }
+  },
+  "cancelAfterMs": 2000,
+  "cancelAs": "agent_ro"
+ },
+ {
+  "as": "agent_ro",
+  "race": {
+   "query": "SELECT SUM(STRLEN(REPEAT(CONCAT(s, CAST(x AS VARCHAR)), 10000))) AS n FROM libredb_agent_data",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native",
+    "sqlQueryId": "libredb-agent-cancel-anon",
+    "useCache": false,
+    "populateCache": false
+   }
+  },
+  "cancelAfterMs": 2000,
+  "cancelAs": "anonymous"
+ }
+]

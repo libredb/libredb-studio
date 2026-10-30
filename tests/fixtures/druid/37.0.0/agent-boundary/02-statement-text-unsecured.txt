@@ -1,0 +1,112 @@
+# the unsecured druid profile, as an anonymous caller: where a comment, a string and a statement end
+> as anonymous: POST /druid/v2/sql {"query":"SELECT 1 AS a -- note\n, 2 AS b","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a","b"],[1,2]]
+
+> as anonymous: POST /druid/v2/sql {"query":"SELECT 1 AS a // note\n, 2 AS b","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a","b"],[1,2]]
+
+> as anonymous: POST /druid/v2/sql {"query":"SELECT 1 AS a -- note\r, 2 AS b","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a","b"],[1,2]]
+
+> as anonymous: POST /druid/v2/sql {"query":"SELECT 1 AS a // note\r, 2 AS b","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a","b"],[1,2]]
+
+> as anonymous: POST /druid/v2/sql {"query":"SELECT 1 AS a -- note\r\n, 2 AS b","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a","b"],[1,2]]
+
+> as anonymous: POST /druid/v2/sql {"query":"SELECT 1 AS a -- note\f, 2 AS b","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a"],[1]]
+
+> as anonymous: POST /druid/v2/sql {"query":"SELECT 1 AS a -- note , 2 AS b","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a"],[1]]
+
+> as anonymous: POST /druid/v2/sql {"query":"SELECT 1 AS a -- note, 2 AS b","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a"],[1]]
+
+> as anonymous: POST /druid/v2/sql {"query":"SELECT 1 AS a # note","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Lexical error at line 1, column 15.  Encountered: \"#\" (35), after : \"\"","context":{"sourceType":"sql"}}
+> as anonymous: POST /druid/v2/sql {"query":"SELECT /* a /* b */ 1 AS a","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a"],[1]]
+
+> as anonymous: POST /druid/v2/sql {"query":"SELECT /* a /* b */ c */ 1 AS a","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Received an unexpected token [*/] (line [1], column [23]), acceptable options: [<EOF>, \"ORDER\", \"LIMIT\", \"OFFSET\", \"FETCH\", \";\", \"UNION\", \"INTERSECT\", \"EXCEPT\", \"MINUS\", \",\", \"FROM\", \"AS\", <IDENTIFIER>, <HYPHENATED_IDENTIFIER>, <QUOTED_IDENTIFIER>, <BACK_QUOTED_IDENTIFIER>, <BIG_QUERY_BACK_QUOTED_IDENTIFIER>, <BRACKET_QUOTED_IDENTIFIER>, <UNICODE_QUOTED_IDENTIFIER>, <QUOTED_STRING>, \".\", \"NOT\", \"IN\", \"<\", \"<=\", \">\", \">=\", \"=\", \"<>\", \"!=\", \"BETWEEN\", \"LIKE\", \"SIMILAR\", \"+\", \"-\", \"*\", \"/\", \"%\", \"||\", \"AND\", \"OR\", \"IS\", \"MEMBER\", \"SUBMULTISET\", \"CONTAINS\", \"OVERLAPS\", \"EQUALS\", \"PRECEDES\", \"SUCCEEDS\", \"MULTISET\", \"[\", \"(\"]","context":{"sourceType":"sql","line":"1","column":"23","endLine":"1","endColumn":"24","token":"*/","expected":"[<EOF>, \"ORDER\", \"LIMIT\", \"OFFSET\", \"FETCH\", \";\", \"UNION\", \"INTERSECT\", \"EXCEPT\", \"MINUS\", \",\", \"FROM\", \"AS\", <IDENTIFIER>, <HYPHENATED_IDENTIFIER>, <QUOTED_IDENTIFIER>, <BACK_QUOTED_IDENTIFIER>, <BIG_QUERY_BACK_QUOTED_IDENTIFIER>, <BRACKET_QUOTED_IDENTIFIER>, <UNICODE_QUOTED_IDENTIFIER>, <QUOTED_STRING>, \".\", \"NOT\", \"IN\", \"<\", \"<=\", \">\", \">=\", \"=\", \"<>\", \"!=\", \"BETWEEN\", \"LIKE\", \"SIMILAR\", \"+\", \"-\", \"*\", \"/\", \"%\", \"||\", \"AND\", \"OR\", \"IS\", \"MEMBER\", \"SUBMULTISET\", \"CONTAINS\", \"OVERLAPS\", \"EQUALS\", \"PRECEDES\", \"SUCCEEDS\", \"MULTISET\", \"[\", \"(\"]"}}
+> as anonymous: POST /druid/v2/sql {"query":"SELECT /*+ h(';') */ 1 AS a","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a"],[1]]
+
+> as anonymous: POST /druid/v2/sql {"query":"SELECT /* a /*+ b */ 1 AS a","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a"],[1]]
+
+> as anonymous: POST /druid/v2/sql {"query":"SELECT 1 AS a /* unclosed","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Lexical error at line 1, column 26.  Encountered: <EOF> after : \"\"","context":{"sourceType":"sql"}}
+# statement boundaries, and the statements a request may hold
+> as anonymous: POST /druid/v2/sql {"query":"SELECT 1 AS a;","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a"],[1]]
+
+> as anonymous: POST /druid/v2/sql {"query":"SELECT 1 AS a;;","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a"],[1]]
+
+> as anonymous: POST /druid/v2/sql {"query":"SELECT 1 AS a; -- trailing","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a"],[1]]
+
+> as anonymous: POST /druid/v2/sql {"query":"SELECT 1 AS a; SELECT 2 AS b","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Only SET statements can appear before the final statement in a statement list, but found non-SET statement[SELECT 1 AS \"a\"]","context":{"sourceType":"sql"}}
+> as anonymous: POST /druid/v2/sql {"query":"SELECT 1 AS a; SET engine = 'msq-task'","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Only SET statements can appear before the final statement in a statement list, but found non-SET statement[SELECT 1 AS \"a\"]","context":{"sourceType":"sql"}}
+> as anonymous: POST /druid/v2/sql {"query":"SET engine = 'native'; SELECT 1 AS a","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a"],[1]]
+
+> as anonymous: POST /druid/v2/sql {"query":"RESET engine; SELECT 1 AS a","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Assigned value must be a literal for SET statement[RESET \"engine\"]","context":{"sourceType":"sql"}}
+> as anonymous: POST /druid/v2/sql {"query":"ALTER SESSION SET engine = 'msq-task'","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Statement list is missing a non-SET statement to execute","context":{"sourceType":"sql"}}
+> as anonymous: POST /druid/v2/sql {"query":"ALTER SYSTEM SET engine = 'msq-task'","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Statement list is missing a non-SET statement to execute","context":{"sourceType":"sql"}}
+> as anonymous: POST /druid/v2/sql {"query":"UPSERT INTO libredb_agent_probe SELECT TIME_PARSE('2026-01-01') AS __time, 'w' AS v PARTITIONED BY ALL","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"INSERT operations are not supported by requested SQL engine [native], consider using MSQ.","context":{"sourceType":"sql"}}
+# string and name readings
+> as anonymous: POST /druid/v2/sql {"query":"SELECT 'a\\' AS a","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a"],["a\\"]]
+
+> as anonymous: POST /druid/v2/sql {"query":"SELECT 'it\\'s' AS a","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Received an unexpected token [\\'] (line [1], column [14]), acceptable options: [<EOF>, \"ORDER\", \"LIMIT\", \"OFFSET\", \"FETCH\", \";\", \",\", \"FROM\", \"UNION\", \"INTERSECT\", \"EXCEPT\", \"MINUS\"]","context":{"sourceType":"sql","line":"1","column":"14","endLine":"1","endColumn":"14","token":"\\'","expected":"[<EOF>, \"ORDER\", \"LIMIT\", \"OFFSET\", \"FETCH\", \";\", \",\", \"FROM\", \"UNION\", \"INTERSECT\", \"EXCEPT\", \"MINUS\"]"}}
+> as anonymous: POST /druid/v2/sql {"query":"SELECT E'it\\'s' AS a","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a"],["it's"]]
+
+> as anonymous: POST /druid/v2/sql {"query":"SELECT U&'\\0041' AS a","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a"],["A"]]
+
+> as anonymous: POST /druid/v2/sql {"query":"SELECT X'41' AS a","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Cannot handle literal [X'41':BINARY(1)] of unsupported type [BINARY].","context":{"sourceType":"sql"}}
+> as anonymous: POST /druid/v2/sql {"query":"SELECT $$x$$ AS a","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Column '$$x$$' not found in any table (line [1], column [8])","context":{"sourceType":"sql","line":"1","column":"8","endLine":"1","endColumn":"12"}}
+> as anonymous: POST /druid/v2/sql {"query":"SELECT 1 AS $t$","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["$t$"],[1]]
+
+> as anonymous: POST /druid/v2/sql {"query":"SELECT 1 AS \"a\nb\"","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Incorrect syntax near the keyword 'AS' at line 1, column 10.\nWas expecting one of:\n    <EOF> \n    \"ORDER\" ...\n    \"LIMIT\" ...\n    \"OFFSET\" ...\n    \"FETCH\" ...\n    \";\" ...\n    \"UNION\" ...\n    \"INTERSECT\" ...\n    \"EXCEPT\" ...\n    \"MINUS\" ...\n    \",\" ...\n    \"FROM\" ...\n    \"AS\" <IDENTIFIER> ...\n    \"AS\" <HYPHENATED_IDENTIFIER> ...\n    \"AS\" <QUOTED_IDENTIFIER> ...\n    \"AS\" <BACK_QUOTED_IDENTIFIER> ...\n    \"AS\" <BIG_QUERY_BACK_QUOTED_IDENTIFIER> ...\n    \"AS\" <BRACKET_QUOTED_IDENTIFIER> ...\n    \"AS\" <UNICODE_QUOTED_IDENTIFIER> ...\n    \"AS\" <QUOTED_STRING> ...\n    \".\" ...\n    \"NOT\" ...\n    \"IN\" ...\n    \"<\" ...\n    \"<=\" ...\n    \">\" ...\n    \">=\" ...\n    \"=\" ...\n    \"<>\" ...\n    \"!=\" ...\n    \"BETWEEN\" ...\n    \"LIKE\" ...\n    \"ILIKE\" ...\n    \"RLIKE\" ...\n    \"SIMILAR\" ...\n    \"+\" ...\n    \"-\" ...\n    \"*\" ...\n    \"/\" ...\n    \"%\" ...\n    \"||\" ...\n    \"AND\" ...\n    \"OR\" ...\n    \"IS\" ...\n    \"MEMBER\" ...\n    \"SUBMULTISET\" ...\n    \"CONTAINS\" ...\n    \"OVERLAPS\" ...\n    \"EQUALS\" ...\n    \"PRECEDES\" ...\n    \"SUCCEEDS\" ...\n    \"IMMEDIATELY\" ...\n    \"MULTISET\" ...\n    \"[\" ...\n    \"FORMAT\" ...\n    ","context":{"sourceType":"sql"}}
+> as anonymous: POST /druid/v2/sql {"query":"SELECT 1 AS `a`","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Lexical error at line 1, column 13.  Encountered: \"`\" (96), after : \"\"","context":{"sourceType":"sql"}}
+> as anonymous: POST /druid/v2/sql {"query":"SELECT 1 AS [a]","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Incorrect syntax near the keyword 'AS' at line 1, column 10.\nWas expecting one of:\n    <EOF> \n    \"ORDER\" ...\n    \"LIMIT\" ...\n    \"OFFSET\" ...\n    \"FETCH\" ...\n    \";\" ...\n    \"UNION\" ...\n    \"INTERSECT\" ...\n    \"EXCEPT\" ...\n    \"MINUS\" ...\n    \",\" ...\n    \"FROM\" ...\n    \"AS\" <IDENTIFIER> ...\n    \"AS\" <HYPHENATED_IDENTIFIER> ...\n    \"AS\" <QUOTED_IDENTIFIER> ...\n    \"AS\" <BACK_QUOTED_IDENTIFIER> ...\n    \"AS\" <BIG_QUERY_BACK_QUOTED_IDENTIFIER> ...\n    \"AS\" <BRACKET_QUOTED_IDENTIFIER> ...\n    \"AS\" <UNICODE_QUOTED_IDENTIFIER> ...\n    \"AS\" <QUOTED_STRING> ...\n    \".\" ...\n    \"NOT\" ...\n    \"IN\" ...\n    \"<\" ...\n    \"<=\" ...\n    \">\" ...\n    \">=\" ...\n    \"=\" ...\n    \"<>\" ...\n    \"!=\" ...\n    \"BETWEEN\" ...\n    \"LIKE\" ...\n    \"ILIKE\" ...\n    \"RLIKE\" ...\n    \"SIMILAR\" ...\n    \"+\" ...\n    \"-\" ...\n    \"*\" ...\n    \"/\" ...\n    \"%\" ...\n    \"||\" ...\n    \"AND\" ...\n    \"OR\" ...\n    \"IS\" ...\n    \"MEMBER\" ...\n    \"SUBMULTISET\" ...\n    \"CONTAINS\" ...\n    \"OVERLAPS\" ...\n    \"EQUALS\" ...\n    \"PRECEDES\" ...\n    \"SUCCEEDS\" ...\n    \"IMMEDIATELY\" ...\n    \"MULTISET\" ...\n    \"[\" ...\n    \"FORMAT\" ...\n    ","context":{"sourceType":"sql"}}
+> as anonymous: POST /druid/v2/sql {"query":"SELECT q'[x]' AS a","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Expecting alias, found character literal","context":{"sourceType":"sql"}}
+# the forms a SELECT may begin with
+> as anonymous: POST /druid/v2/sql {"query":"select 1 as a","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a"],[1]]
+
+> as anonymous: POST /druid/v2/sql {"query":"WITH t AS (SELECT 1 AS a) SELECT a FROM t","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a"],[1]]
+
+> as anonymous: POST /druid/v2/sql {"query":"(SELECT 1 AS a)","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a"],[1]]
+
+> as anonymous: POST /druid/v2/sql {"query":"VALUES (1)","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["EXPR$0"],[1]]
+
+> as anonymous: POST /druid/v2/sql {"query":"EXPLAIN PLAN FOR SELECT 1 AS a","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["PLAN","RESOURCES","ATTRIBUTES"],["[{\"query\":{\"queryType\":\"scan\",\"dataSource\":{\"type\":\"inline\",\"columnNames\":[\"a\"],\"columnTypes\":[\"LONG\"],\"rows\":[[1]]},\"intervals\":{\"type\":\"intervals\",\"intervals\":[\"-146136543-09-08T08:23:32.096Z/146140482-04-24T15:36:27.903Z\"]},\"resultFormat\":\"compactedList\",\"columns\":[\"a\"],\"context\":{\"engine\":\"native\",\"queryId\":\"<uuid>\",\"sqlQueryId\":\"<uuid>\"},\"columnTypes\":[\"LONG\"],\"granularity\":{\"type\":\"all\"},\"legacy\":false},\"signature\":[{\"name\":\"a\",\"type\":\"LONG\"}],\"columnMappings\":[{\"queryColumn\":\"a\",\"outputColumn\":\"a\"}]}]","[]","{\"statementType\":\"SELECT\"}"]]
+
+> as anonymous: POST /druid/v2/sql {"query":" SELECT 1 AS a","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Lexical error at line 1, column 1.  Encountered: \"\\u00a0\" (160), after : \"\"","context":{"sourceType":"sql"}}
+> as anonymous: POST /druid/v2/sql {"query":"﻿SELECT 1 AS a","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Lexical error at line 1, column 1.  Encountered: \"\\ufeff\" (65279), after : \"\"","context":{"sourceType":"sql"}}

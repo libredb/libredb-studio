@@ -1,0 +1,85 @@
+[
+ {
+  "note": "can a user read its own permissions? Each user asks the authorizer and the authenticator for itself, then for the role list"
+ },
+ {
+  "as": "agent_ro",
+  "rest": "GET /proxy/coordinator/druid-ext/basic-security/authorization/db/basic/users/agent_ro"
+ },
+ {
+  "as": "agent_ro",
+  "rest": "GET /proxy/coordinator/druid-ext/basic-security/authorization/db/basic/users/agent_ro?full"
+ },
+ {
+  "as": "agent_ro",
+  "rest": "GET /proxy/coordinator/druid-ext/basic-security/authorization/db/basic/roles"
+ },
+ {
+  "as": "agent_ro",
+  "rest": "GET /proxy/coordinator/druid-ext/basic-security/authentication/db/basic/users/agent_ro"
+ },
+ {
+  "as": "agent_ro",
+  "rest": "GET /status"
+ },
+ {
+  "as": "agent_rw",
+  "rest": "GET /proxy/coordinator/druid-ext/basic-security/authorization/db/basic/users/agent_rw"
+ },
+ {
+  "as": "agent_rw",
+  "rest": "GET /proxy/coordinator/druid-ext/basic-security/authorization/db/basic/users/agent_rw?full"
+ },
+ {
+  "as": "agent_rw",
+  "rest": "GET /proxy/coordinator/druid-ext/basic-security/authorization/db/basic/roles"
+ },
+ {
+  "as": "agent_rw",
+  "rest": "GET /proxy/coordinator/druid-ext/basic-security/authentication/db/basic/users/agent_rw"
+ },
+ {
+  "as": "agent_rw",
+  "rest": "GET /status"
+ },
+ {
+  "as": "agent_state",
+  "rest": "GET /proxy/coordinator/druid-ext/basic-security/authorization/db/basic/users/agent_state"
+ },
+ {
+  "as": "agent_state",
+  "rest": "GET /proxy/coordinator/druid-ext/basic-security/authorization/db/basic/users/agent_state?full"
+ },
+ {
+  "as": "agent_state",
+  "rest": "GET /proxy/coordinator/druid-ext/basic-security/authorization/db/basic/roles"
+ },
+ {
+  "as": "agent_state",
+  "rest": "GET /proxy/coordinator/druid-ext/basic-security/authentication/db/basic/users/agent_state"
+ },
+ {
+  "as": "agent_state",
+  "rest": "GET /status"
+ },
+ {
+  "as": "admin",
+  "rest": "GET /proxy/coordinator/druid-ext/basic-security/authorization/db/basic/users/admin"
+ },
+ {
+  "as": "admin",
+  "rest": "GET /proxy/coordinator/druid-ext/basic-security/authorization/db/basic/users/admin?full"
+ },
+ {
+  "as": "admin",
+  "rest": "GET /proxy/coordinator/druid-ext/basic-security/authorization/db/basic/roles"
+ },
+ {
+  "as": "admin",
+  "rest": "GET /proxy/coordinator/druid-ext/basic-security/authentication/db/basic/users/admin"
+ },
+ {
+  "as": "admin",
+  "rest": "GET /status"
+ }
+]

@@ -1,0 +1,617 @@
+[
+ {
+  "note": "the unsecured druid profile (allowAll), as an anonymous caller: the state before"
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'druid' ORDER BY TABLE_NAME",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "note": "a pinned sqlQueryId comes back as the query id; engine native is accepted"
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT 1 AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native",
+    "sqlQueryId": "libredb-agent-fixed-id"
+   }
+  }
+ },
+ {
+  "note": "INSERT and REPLACE under engine native, in every spelling"
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "INSERT INTO libredb_agent_probe SELECT TIME_PARSE('2026-01-01') AS __time, 'w' AS v PARTITIONED BY ALL",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "insert into libredb_agent_probe select time_parse('2026-01-01') as __time, 'w' as v partitioned by all",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "/* note */ INSERT INTO libredb_agent_probe SELECT TIME_PARSE('2026-01-01') AS __time, 'w' AS v PARTITIONED BY ALL",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "INSERT INTO \"libredb_agent_probe\" SELECT TIME_PARSE('2026-01-01') AS __time, 'w' AS v PARTITIONED BY DAY CLUSTERED BY v",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "INSERT INTO libredb_agent_probe (__time, v) SELECT TIME_PARSE('2026-01-01'), 'w' PARTITIONED BY ALL",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "INSERT INTO libredb_agent_probe SELECT * FROM TABLE(EXTERN('{\"type\":\"inline\",\"data\":\"a\"}', '{\"type\":\"csv\",\"columns\":[\"v\"]}', '[{\"name\":\"v\",\"type\":\"string\"}]')) PARTITIONED BY ALL",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "INSERT INTO EXTERN(local(exportPath => '/tmp/libredb-agent-probe')) AS CSV SELECT 1 AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "REPLACE INTO libredb_agent_probe OVERWRITE ALL SELECT TIME_PARSE('2026-01-01') AS __time, 'w' AS v PARTITIONED BY ALL",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "REPLACE INTO libredb_agent_probe OVERWRITE WHERE __time >= TIMESTAMP '2026-01-01' AND __time < TIMESTAMP '2026-01-02' SELECT TIME_PARSE('2026-01-01') AS __time, 'w' AS v PARTITIONED BY DAY",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "EXPLAIN PLAN FOR INSERT INTO libredb_agent_probe SELECT TIME_PARSE('2026-01-01') AS __time, 'w' AS v PARTITIONED BY ALL",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "WITH t AS (SELECT 1 AS a) INSERT INTO libredb_agent_probe SELECT TIME_PARSE('2026-01-01') AS __time, 'w' AS v PARTITIONED BY ALL",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "note": "the engine asked for in every other form, with engine native in the request's context"
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SET engine = 'msq-task'; INSERT INTO libredb_agent_probe SELECT TIME_PARSE('2026-01-01') AS __time, 'w' AS v PARTITIONED BY ALL",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SET engine = 'msq-task'; REPLACE INTO libredb_agent_probe OVERWRITE ALL SELECT TIME_PARSE('2026-01-01') AS __time, 'w' AS v PARTITIONED BY ALL",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SET engine = 'msq-task'; SELECT 1 AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SET \"engine\" = 'msq-task'; INSERT INTO libredb_agent_probe SELECT TIME_PARSE('2026-01-01') AS __time, 'w' AS v PARTITIONED BY ALL",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "set engine='MSQ-TASK'; INSERT INTO libredb_agent_probe SELECT TIME_PARSE('2026-01-01') AS __time, 'w' AS v PARTITIONED BY ALL",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "/* note */ SET engine = 'msq-task'; INSERT INTO libredb_agent_probe SELECT TIME_PARSE('2026-01-01') AS __time, 'w' AS v PARTITIONED BY ALL",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SET timeout = 1000; SET engine = 'msq-task'; INSERT INTO libredb_agent_probe SELECT TIME_PARSE('2026-01-01') AS __time, 'w' AS v PARTITIONED BY ALL",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SET engine = 'msq-dart'; SELECT 1 AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "INSERT INTO libredb_agent_probe SELECT TIME_PARSE('2026-01-01') AS __time, 'w' AS v PARTITIONED BY ALL",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "msq-task"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "INSERT INTO libredb_agent_probe SELECT TIME_PARSE('2026-01-01') AS __time, 'w' AS v PARTITIONED BY ALL",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "MSQ-TASK"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "INSERT INTO libredb_agent_probe SELECT TIME_PARSE('2026-01-01') AS __time, 'w' AS v PARTITIONED BY ALL",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "msq-dart"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "INSERT INTO libredb_agent_probe SELECT TIME_PARSE('2026-01-01') AS __time, 'w' AS v PARTITIONED BY ALL",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   },
+   "engine": "msq-task"
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT /*+ engine('msq-task') */ 1 AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "INSERT /*+ engine('msq-task') */ INTO libredb_agent_probe SELECT TIME_PARSE('2026-01-01') AS __time, 'w' AS v PARTITIONED BY ALL",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "note": "a SET overrides the request's own context keys: the query id and the timeout"
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SET sqlQueryId = 'libredb-agent-set-id'; SELECT 1 AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native",
+    "sqlQueryId": "libredb-agent-context-id"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SET timeout = 1; SELECT COUNT(*) AS n FROM UNNEST(ARRAY[1,2,3]) AS t(x)",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "note": "statements the grammar has no write form for"
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "UPDATE libredb_objects_orders SET status = 'x'",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "DELETE FROM libredb_objects_orders",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "CREATE TABLE libredb_agent_probe (v VARCHAR)",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "DROP TABLE libredb_objects_orders",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "ALTER TABLE libredb_objects_orders ADD COLUMN v VARCHAR",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "TRUNCATE TABLE libredb_objects_orders",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "MERGE INTO libredb_objects_orders t USING libredb_objects_orders s ON t.id = s.id WHEN MATCHED THEN UPDATE SET status = 'x'",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "note": "what a SELECT can reach: external data, table functions, functions, lookups and the system tables"
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT * FROM TABLE(EXTERN('{\"type\":\"inline\",\"data\":\"a\"}', '{\"type\":\"csv\",\"columns\":[\"v\"]}', '[{\"name\":\"v\",\"type\":\"string\"}]'))",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT * FROM TABLE(http(userName => 'x', uris => ARRAY['http://127.0.0.1:8888/status'], format => 'json'))",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT * FROM TABLE(http(uris => ARRAY['http://127.0.0.1:8888/status'], format => 'json')) (version VARCHAR)",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT * FROM TABLE(localfiles(files => ARRAY['/etc/hostname'], format => 'csv')) (a VARCHAR)",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT * FROM TABLE(inline(data => ARRAY['a'], format => 'csv')) (a VARCHAR)",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT * FROM TABLE(s3(uris => ARRAY['s3://libredb-agent-probe/x'], format => 'csv')) (a VARCHAR)",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT JAVASCRIPT('1') AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT LOOKUP('US', 'libredb_country_names') AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA IN ('lookup', 'sys', 'view') ORDER BY 1, 2",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT server_type, COUNT(*) AS n FROM sys.servers GROUP BY server_type ORDER BY 1",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM sys.tasks",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM sys.segments",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM sys.supervisors",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "note": "the native-engine refusals left no datasource behind"
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'druid' ORDER BY TABLE_NAME",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "note": "positive control: the same INSERT on the MSQ task endpoint, which the provider never calls, is accepted and writes"
+ },
+ {
+  "as": "anonymous",
+  "rest": "POST /druid/v2/sql/task",
+  "body": {
+   "query": "INSERT INTO libredb_agent_probe SELECT TIME_PARSE('2026-01-01') AS __time, 'w' AS v PARTITIONED BY ALL",
+   "context": {
+    "finalizeAggregations": false
+   }
+  }
+ },
+ {
+  "sleep": 60000
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'druid' ORDER BY TABLE_NAME",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM libredb_agent_probe",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ }
+]

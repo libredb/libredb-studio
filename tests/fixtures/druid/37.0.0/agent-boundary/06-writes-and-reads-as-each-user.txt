@@ -1,0 +1,84 @@
+# every write on /druid/v2/sql under engine native, as each user, the writable ones included
+> as agent_ro: POST /druid/v2/sql {"query":"INSERT INTO libredb_agent_data SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"INSERT operations are not supported by requested SQL engine [native], consider using MSQ.","context":{"sourceType":"sql"}}
+> as agent_ro: POST /druid/v2/sql {"query":"REPLACE INTO libredb_agent_data OVERWRITE ALL SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"REPLACE operations are not supported by the requested SQL engine [native].  Consider using MSQ.","context":{"sourceType":"sql"}}
+> as agent_ro: POST /druid/v2/sql {"query":"SET engine = 'msq-task'; INSERT INTO libredb_agent_data SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Unsupported engine[msq-task]","context":{"sourceType":"sql"}}
+> as agent_ro: POST /druid/v2/sql {"query":"INSERT INTO libredb_agent_data SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY","resultFormat":"array","header":true,"context":{"engine":"msq-task"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Unsupported engine[msq-task]","context":{"sourceType":"sql"}}
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT * FROM TABLE(EXTERN('{\"type\":\"inline\",\"data\":\"a\"}', '{\"type\":\"csv\",\"columns\":[\"v\"]}', '[{\"name\":\"v\",\"type\":\"string\"}]'))","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  403 {"Access-Check-Result":"Unauthorized"}
+> as agent_rw: POST /druid/v2/sql {"query":"INSERT INTO libredb_agent_data SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"INSERT operations are not supported by requested SQL engine [native], consider using MSQ.","context":{"sourceType":"sql"}}
+> as agent_rw: POST /druid/v2/sql {"query":"REPLACE INTO libredb_agent_data OVERWRITE ALL SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"REPLACE operations are not supported by the requested SQL engine [native].  Consider using MSQ.","context":{"sourceType":"sql"}}
+> as agent_rw: POST /druid/v2/sql {"query":"SET engine = 'msq-task'; INSERT INTO libredb_agent_data SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Unsupported engine[msq-task]","context":{"sourceType":"sql"}}
+> as agent_rw: POST /druid/v2/sql {"query":"INSERT INTO libredb_agent_data SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY","resultFormat":"array","header":true,"context":{"engine":"msq-task"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Unsupported engine[msq-task]","context":{"sourceType":"sql"}}
+> as agent_rw: POST /druid/v2/sql {"query":"SELECT * FROM TABLE(EXTERN('{\"type\":\"inline\",\"data\":\"a\"}', '{\"type\":\"csv\",\"columns\":[\"v\"]}', '[{\"name\":\"v\",\"type\":\"string\"}]'))","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"general","persona":"USER","category":"INVALID_INPUT","errorMessage":"Query could not be planned. A possible reason is [Cannot use [EXTERN] with SQL engine [native].]","context":{}}
+> as admin: POST /druid/v2/sql {"query":"INSERT INTO libredb_agent_data SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"INSERT operations are not supported by requested SQL engine [native], consider using MSQ.","context":{"sourceType":"sql"}}
+> as admin: POST /druid/v2/sql {"query":"REPLACE INTO libredb_agent_data OVERWRITE ALL SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"REPLACE operations are not supported by the requested SQL engine [native].  Consider using MSQ.","context":{"sourceType":"sql"}}
+> as admin: POST /druid/v2/sql {"query":"SET engine = 'msq-task'; INSERT INTO libredb_agent_data SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Unsupported engine[msq-task]","context":{"sourceType":"sql"}}
+> as admin: POST /druid/v2/sql {"query":"INSERT INTO libredb_agent_data SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY","resultFormat":"array","header":true,"context":{"engine":"msq-task"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"invalidInput","persona":"USER","category":"INVALID_INPUT","errorMessage":"Unsupported engine[msq-task]","context":{"sourceType":"sql"}}
+> as admin: POST /druid/v2/sql {"query":"SELECT * FROM TABLE(EXTERN('{\"type\":\"inline\",\"data\":\"a\"}', '{\"type\":\"csv\",\"columns\":[\"v\"]}', '[{\"name\":\"v\",\"type\":\"string\"}]'))","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  400 (query id <uuid>) {"error":"druidException","errorCode":"general","persona":"USER","category":"INVALID_INPUT","errorMessage":"Query could not be planned. A possible reason is [Cannot use [EXTERN] with SQL engine [native].]","context":{}}
+# the state after: no row was written
+> as admin: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM libredb_agent_data WHERE x = -1","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["n"],[0]]
+
+# positive control and its refusal on the MSQ task endpoint, which the provider never calls
+> as agent_ro: POST /druid/v2/sql/task {"query":"INSERT INTO libredb_agent_data SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY"}
+  403 {"taskId":"forbidden","state":"FAILED","error":{"error":"druidException","errorCode":"general","persona":"USER","category":"FORBIDDEN","errorMessage":"Unauthorized","context":{}}}
+> as agent_rw: POST /druid/v2/sql/task {"query":"INSERT INTO libredb_agent_data SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY"}
+  202 {"taskId":"query-<uuid>","state":"RUNNING"}
+(waited 90000 ms)
+> as admin: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM libredb_agent_data WHERE x = -1","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["n"],[1]]
+
+# what agent_ro (READ on one datasource) reads, and what it is refused
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM libredb_agent_data","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["n"],[1000001]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM libredb_agent_other","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  403 {"Access-Check-Result":"Unauthorized"}
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA <> 'INFORMATION_SCHEMA' ORDER BY 1, 2","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["TABLE_SCHEMA","TABLE_NAME"],["druid","libredb_agent_data"],["sys","segments"],["sys","server_properties"],["sys","server_segments"],["sys","servers"],["sys","supervisors"],["sys","tasks"]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, ORDINAL_POSITION FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = 'druid' AND TABLE_NAME = 'libredb_agent_data' ORDER BY ORDINAL_POSITION","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["COLUMN_NAME","DATA_TYPE","IS_NULLABLE","ORDINAL_POSITION"],["__time","TIMESTAMP","NO",1],["x","BIGINT","YES",2],["y","BIGINT","YES",3],["s","VARCHAR","YES",4]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM sys.segments","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["n"],[2]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT DISTINCT datasource FROM sys.segments ORDER BY 1","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["datasource"],["libredb_agent_data"]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM sys.servers","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  403 {"Access-Check-Result":"Insufficient permission to view servers: Unauthorized"}
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM sys.server_properties","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  403 {"Access-Check-Result":"Insufficient permission to view servers: Unauthorized"}
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT DISTINCT datasource FROM sys.tasks ORDER BY 1","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["datasource"],["libredb_agent_data"]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM sys.supervisors","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["n"]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT 1 AS a","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["a"],[1]]
+
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT * FROM TABLE(EXTERN('{\"type\":\"inline\",\"data\":\"a\"}', '{\"type\":\"csv\",\"columns\":[\"v\"]}', '[{\"name\":\"v\",\"type\":\"string\"}]'))","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  403 {"Access-Check-Result":"Unauthorized"}
+# the same reads as agent_state, which also holds STATE and CONFIG READ
+> as agent_state: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM sys.servers","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["n"],[6]]
+
+> as agent_state: POST /druid/v2/sql {"query":"SELECT COUNT(*) AS n FROM sys.server_properties","resultFormat":"array","header":true,"context":{"engine":"native"}}
+  200 (query id <uuid>) [["n"],[513]]
+

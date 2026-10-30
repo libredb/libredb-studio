@@ -1,0 +1,15 @@
+# agent_ro cancels its own statement by the query id its request named
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT SUM(STRLEN(REPEAT(CONCAT(s, CAST(x AS VARCHAR)), 10000))) AS n FROM libredb_agent_data","resultFormat":"array","header":true,"context":{"engine":"native","sqlQueryId":"libredb-agent-cancel-own","useCache":false,"populateCache":false}}
+> as agent_ro, after 2000 ms: DELETE /druid/v2/sql/libredb-agent-cancel-own
+  202 
+  the statement answered about 0 s after the cancel: 500 (query id libredb-agent-cancel-own) {"error":"Unknown exception","errorClass":"java.lang.RuntimeException","host":null,"errorCode":"legacyQueryException","persona":"OPERATOR","category":"RUNTIME_FAILURE","errorMessage":"Sequence canceled","context":{"host":null,"errorClass":"java.lang.RuntimeException","legacyErrorCode":"Unknown exception"}}
+# agent_ro cancels admin's statement, and an anonymous caller cancels agent_ro's
+> as admin: POST /druid/v2/sql {"query":"SELECT SUM(STRLEN(REPEAT(CONCAT(s, CAST(x AS VARCHAR)), 10000))) AS n FROM libredb_agent_data","resultFormat":"array","header":true,"context":{"engine":"native","sqlQueryId":"libredb-agent-cancel-admin","useCache":false,"populateCache":false}}
+> as agent_ro, after 2000 ms: DELETE /druid/v2/sql/libredb-agent-cancel-admin
+  202 
+  the statement answered about 0 s after the cancel: 500 (query id libredb-agent-cancel-admin) {"error":"Unknown exception","errorClass":"java.lang.RuntimeException","host":null,"errorCode":"legacyQueryException","persona":"OPERATOR","category":"RUNTIME_FAILURE","errorMessage":"Sequence canceled","context":{"host":null,"errorClass":"java.lang.RuntimeException","legacyErrorCode":"Unknown exception"}}
+> as agent_ro: POST /druid/v2/sql {"query":"SELECT SUM(STRLEN(REPEAT(CONCAT(s, CAST(x AS VARCHAR)), 10000))) AS n FROM libredb_agent_data","resultFormat":"array","header":true,"context":{"engine":"native","sqlQueryId":"libredb-agent-cancel-anon","useCache":false,"populateCache":false}}
+> as anonymous, after 2000 ms: DELETE /druid/v2/sql/libredb-agent-cancel-anon
+  401 {"error":"Unauthorized request","errorMessage":null,"errorClass":null,"host":"<container>"}
+  the statement answered about 51 s after the cancel: 200 (query id libredb-agent-cancel-anon) [["n"],[237800030000]]
+

@@ -1,0 +1,95 @@
+# The seven-service druid profile of database-compose.yml, digest-pinned, with the security settings run.sh passes
+# in the environment: allowAll for the unsecured captures, druid-basic-security for the secured ones.
+# Started by run.sh under its own project name; no container name is fixed, so it runs beside the repo's own.
+x-druid-env: &druid-env
+  DRUID_SINGLE_NODE_CONF: micro-quickstart
+  druid_extensions_loadList: ${DRUID_EXTENSIONS}
+  druid_zk_service_host: druid-zookeeper
+  druid_metadata_storage_host: ""
+  druid_metadata_storage_type: postgresql
+  druid_metadata_storage_connector_connectURI: jdbc:postgresql://druid-metadata:5432/druid
+  druid_metadata_storage_connector_user: druid
+  druid_metadata_storage_connector_password: ${DRUID_METADATA_PASSWORD}
+  druid_storage_type: local
+  druid_storage_storageDirectory: /opt/shared/segments
+  druid_indexer_logs_type: file
+  druid_indexer_logs_directory: /opt/shared/indexing-logs
+  druid_indexer_runner_javaOptsArray: '["-server", "-Xmx1g", "-Xms1g", "-XX:MaxDirectMemorySize=1g", "-Duser.timezone=UTC", "-Dfile.encoding=UTF-8", "-Djava.util.logging.manager=org.apache.logging.log4j.jul.LogManager"]'
+  druid_indexer_fork_property_druid_processing_buffer_sizeBytes: 100MiB
+  druid_processing_numThreads: "2"
+  druid_processing_numMergeBuffers: "2"
+  druid_router_managementProxy_enabled: "true"
+  druid_emitter_logging_logLevel: info
+  druid_auth_authenticatorChain: ${DRUID_AUTHENTICATORS}
+  druid_auth_authenticator_basic_type: basic
+  druid_auth_authenticator_basic_initialAdminPassword: ${DRUID_ADMIN_PASSWORD}
+  druid_auth_authenticator_basic_initialInternalClientPassword: ${DRUID_INTERNAL_PASSWORD}
+  druid_auth_authenticator_basic_credentialsValidator_type: metadata
+  druid_auth_authenticator_basic_skipOnFailure: "false"
+  druid_auth_authenticator_basic_authorizerName: basic
+  druid_escalator_type: ${DRUID_ESCALATOR}
+  druid_escalator_internalClientUsername: druid_system
+  druid_escalator_internalClientPassword: ${DRUID_INTERNAL_PASSWORD}
+  druid_escalator_authorizerName: basic
+  druid_auth_authorizers: ${DRUID_AUTHORIZERS}
+  druid_auth_authorizer_basic_type: basic
+  druid_auth_authorizer_allowAll_type: allowAll
+  druid_auth_authenticator_allowAll_type: allowAll
+  druid_auth_authenticator_allowAll_authorizerName: allowAll
+
+services:
+  druid-metadata:
+    image: postgres@sha256:00bc86618629af00d2937fdc5a5d63db3ff8450acf52f0636ec813c7f4902929
+    environment:
+      POSTGRES_USER: druid
+      POSTGRES_PASSWORD: ${DRUID_METADATA_PASSWORD}
+      POSTGRES_DB: druid
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U druid -d druid"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  druid-zookeeper:
+    image: zookeeper@sha256:9980cafbff742c15b339811ae829faa61c69154606ec504223560da9d31acd43
+    environment:
+      ZOO_MY_ID: "1"
+      ZOO_4LW_COMMANDS_WHITELIST: "srvr,ruok,conf"
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc -w 2 localhost 2181 | grep -q imok"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+  druid-coordinator:
+    image: apache/druid@sha256:0116fb802786649fc3635d6d4ab5be4da8abee3edafbe95c7f358a564d4c82e8
+    command: ["coordinator"]
+    environment: *druid-env
+    volumes: [druid_shared:/opt/shared]
+    depends_on:
+      druid-metadata: {condition: service_healthy}
+      druid-zookeeper: {condition: service_healthy}
+  druid-historical:
+    image: apache/druid@sha256:0116fb802786649fc3635d6d4ab5be4da8abee3edafbe95c7f358a564d4c82e8
+    command: ["historical"]
+    environment: *druid-env
+    volumes: [druid_shared:/opt/shared]
+    depends_on: [druid-coordinator]
+  druid-middlemanager:
+    image: apache/druid@sha256:0116fb802786649fc3635d6d4ab5be4da8abee3edafbe95c7f358a564d4c82e8
+    command: ["middleManager"]
+    environment: *druid-env
+    volumes: [druid_shared:/opt/shared]
+    depends_on: [druid-coordinator]
+  druid-broker:
+    image: apache/druid@sha256:0116fb802786649fc3635d6d4ab5be4da8abee3edafbe95c7f358a564d4c82e8
+    command: ["broker"]
+    environment: *druid-env
+    depends_on: [druid-coordinator]
+  druid-router:
+    image: apache/druid@sha256:0116fb802786649fc3635d6d4ab5be4da8abee3edafbe95c7f358a564d4c82e8
+    command: ["router"]
+    environment: *druid-env
+    volumes: ["${DRUID_INIT_DIR}:/opt/druid-init:ro"]
+    ports: ["127.0.0.1:${DRUID_ROUTER_PORT}:8888"]
+    depends_on: [druid-broker, druid-coordinator]
+volumes:
+  druid_shared:

@@ -1,0 +1,476 @@
+[
+ {
+  "note": "the unsecured druid profile, as an anonymous caller: where a comment, a string and a statement end"
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT 1 AS a -- note\n, 2 AS b",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT 1 AS a // note\n, 2 AS b",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT 1 AS a -- note\r, 2 AS b",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT 1 AS a // note\r, 2 AS b",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT 1 AS a -- note\r\n, 2 AS b",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT 1 AS a -- note\f, 2 AS b",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT 1 AS a -- note\u2028, 2 AS b",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT 1 AS a -- note\u0085, 2 AS b",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT 1 AS a # note",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT /* a /* b */ 1 AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT /* a /* b */ c */ 1 AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT /*+ h(';') */ 1 AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT /* a /*+ b */ 1 AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT 1 AS a /* unclosed",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "note": "statement boundaries, and the statements a request may hold"
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT 1 AS a;",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT 1 AS a;;",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT 1 AS a; -- trailing",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT 1 AS a; SELECT 2 AS b",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT 1 AS a; SET engine = 'msq-task'",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SET engine = 'native'; SELECT 1 AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "RESET engine; SELECT 1 AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "ALTER SESSION SET engine = 'msq-task'",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "ALTER SYSTEM SET engine = 'msq-task'",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "UPSERT INTO libredb_agent_probe SELECT TIME_PARSE('2026-01-01') AS __time, 'w' AS v PARTITIONED BY ALL",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "note": "string and name readings"
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT 'a\\' AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT 'it\\'s' AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT E'it\\'s' AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT U&'\\0041' AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT X'41' AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT $$x$$ AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT 1 AS $t$",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT 1 AS \"a\nb\"",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT 1 AS `a`",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT 1 AS [a]",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "SELECT q'[x]' AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "note": "the forms a SELECT may begin with"
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "select 1 as a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "WITH t AS (SELECT 1 AS a) SELECT a FROM t",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "(SELECT 1 AS a)",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "VALUES (1)",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "EXPLAIN PLAN FOR SELECT 1 AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "\u00a0SELECT 1 AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "anonymous",
+  "sql": {
+   "query": "\ufeffSELECT 1 AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ }
+]

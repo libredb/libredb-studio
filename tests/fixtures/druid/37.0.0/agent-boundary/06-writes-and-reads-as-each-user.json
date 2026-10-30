@@ -1,0 +1,375 @@
+[
+ {
+  "note": "every write on /druid/v2/sql under engine native, as each user, the writable ones included"
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "INSERT INTO libredb_agent_data SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "REPLACE INTO libredb_agent_data OVERWRITE ALL SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SET engine = 'msq-task'; INSERT INTO libredb_agent_data SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "INSERT INTO libredb_agent_data SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "msq-task"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT * FROM TABLE(EXTERN('{\"type\":\"inline\",\"data\":\"a\"}', '{\"type\":\"csv\",\"columns\":[\"v\"]}', '[{\"name\":\"v\",\"type\":\"string\"}]'))",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_rw",
+  "sql": {
+   "query": "INSERT INTO libredb_agent_data SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_rw",
+  "sql": {
+   "query": "REPLACE INTO libredb_agent_data OVERWRITE ALL SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_rw",
+  "sql": {
+   "query": "SET engine = 'msq-task'; INSERT INTO libredb_agent_data SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_rw",
+  "sql": {
+   "query": "INSERT INTO libredb_agent_data SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "msq-task"
+   }
+  }
+ },
+ {
+  "as": "agent_rw",
+  "sql": {
+   "query": "SELECT * FROM TABLE(EXTERN('{\"type\":\"inline\",\"data\":\"a\"}', '{\"type\":\"csv\",\"columns\":[\"v\"]}', '[{\"name\":\"v\",\"type\":\"string\"}]'))",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "admin",
+  "sql": {
+   "query": "INSERT INTO libredb_agent_data SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "admin",
+  "sql": {
+   "query": "REPLACE INTO libredb_agent_data OVERWRITE ALL SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "admin",
+  "sql": {
+   "query": "SET engine = 'msq-task'; INSERT INTO libredb_agent_data SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "admin",
+  "sql": {
+   "query": "INSERT INTO libredb_agent_data SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "msq-task"
+   }
+  }
+ },
+ {
+  "as": "admin",
+  "sql": {
+   "query": "SELECT * FROM TABLE(EXTERN('{\"type\":\"inline\",\"data\":\"a\"}', '{\"type\":\"csv\",\"columns\":[\"v\"]}', '[{\"name\":\"v\",\"type\":\"string\"}]'))",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "note": "the state after: no row was written"
+ },
+ {
+  "as": "admin",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM libredb_agent_data WHERE x = -1",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "note": "positive control and its refusal on the MSQ task endpoint, which the provider never calls"
+ },
+ {
+  "as": "agent_ro",
+  "rest": "POST /druid/v2/sql/task",
+  "body": {
+   "query": "INSERT INTO libredb_agent_data SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY"
+  }
+ },
+ {
+  "as": "agent_rw",
+  "rest": "POST /druid/v2/sql/task",
+  "body": {
+   "query": "INSERT INTO libredb_agent_data SELECT TIME_PARSE('2026-01-01') AS __time, -1 AS x, -1 AS y, 'w' AS s PARTITIONED BY DAY"
+  }
+ },
+ {
+  "sleep": 90000
+ },
+ {
+  "as": "admin",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM libredb_agent_data WHERE x = -1",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "note": "what agent_ro (READ on one datasource) reads, and what it is refused"
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM libredb_agent_data",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM libredb_agent_other",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA <> 'INFORMATION_SCHEMA' ORDER BY 1, 2",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, ORDINAL_POSITION FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = 'druid' AND TABLE_NAME = 'libredb_agent_data' ORDER BY ORDINAL_POSITION",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM sys.segments",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT DISTINCT datasource FROM sys.segments ORDER BY 1",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM sys.servers",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM sys.server_properties",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT DISTINCT datasource FROM sys.tasks ORDER BY 1",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM sys.supervisors",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT 1 AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT * FROM TABLE(EXTERN('{\"type\":\"inline\",\"data\":\"a\"}', '{\"type\":\"csv\",\"columns\":[\"v\"]}', '[{\"name\":\"v\",\"type\":\"string\"}]'))",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "note": "the same reads as agent_state, which also holds STATE and CONFIG READ"
+ },
+ {
+  "as": "agent_state",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM sys.servers",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_state",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM sys.server_properties",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ }
+]
