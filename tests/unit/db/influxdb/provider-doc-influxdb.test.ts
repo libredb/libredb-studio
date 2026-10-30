@@ -561,4 +561,3 @@ describe("section 15, agent mode", () => {
     expect(INFLUXQL_AGENT_WIRE_EXPANSION).toBe(6);
   });
 });
-

@@ -483,7 +483,9 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
       generation,
       database: options.database,
       hasUser: Object.hasOwn(options.headers, "authorization"),
-      nonce: Array.from(crypto.getRandomValues(new Uint8Array(8)), (byte) => byte.toString(16).padStart(2, "0")).join(""),
+      nonce: Array.from(crypto.getRandomValues(new Uint8Array(8)), (byte) => byte.toString(16).padStart(2, "0")).join(
+        "",
+      ),
     });
   }
 
@@ -515,7 +517,13 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
     const reading = readInfluxqlAgentStatement(statement);
     if (!reading.ok) throw new RefusedBeforeSendError(reading.message, this.type, statement);
     const { client, options, version } = session;
-    const context = this.errorContext(options, "query", version.generation, options.database, budget.statementTimeoutMs);
+    const context = this.errorContext(
+      options,
+      "query",
+      version.generation,
+      options.database,
+      budget.statementTimeoutMs,
+    );
     return this.trackQuery(async () => {
       const signal = AbortSignal.timeout(budget.statementTimeoutMs);
       const { result: answer, executionTime } = await this.measureExecution(async () => {

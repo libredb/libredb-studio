@@ -65,7 +65,11 @@ function wordOf(token: InfluxqlToken | undefined): string {
   return token.kind === "identifier" ? "a name" : "a symbol";
 }
 
-const refuse = (code: InfluxqlAgentRefusalCode, message: string): InfluxqlAgentReading => ({ ok: false, code, message });
+const refuse = (code: InfluxqlAgentRefusalCode, message: string): InfluxqlAgentReading => ({
+  ok: false,
+  code,
+  message,
+});
 
 /** One agent statement read: admitted with its kind, or refused with the sentence the model reads. */
 export function readInfluxqlAgentStatement(text: string): InfluxqlAgentReading {
@@ -85,7 +89,8 @@ export function readInfluxqlAgentStatement(text: string): InfluxqlAgentReading {
   }
   if (verdict.statement === "EXPLAIN") {
     const explained = significant.find(
-      (token, index) => index > 0 && !(token.kind === "keyword" && (token.value === "ANALYZE" || token.value === "VERBOSE")),
+      (token, index) =>
+        index > 0 && !(token.kind === "keyword" && (token.value === "ANALYZE" || token.value === "VERBOSE")),
     );
     if (explained?.kind !== "keyword" || explained.value !== "SELECT") {
       return refuse("explain-target", INFLUXQL_AGENT_SENTENCES.explainTarget(wordOf(explained)));

@@ -482,7 +482,13 @@ describe("the client packs", () => {
   test("a language with no plan keeps its key in the plan projection, with null as its value", () => {
     expect(Object.hasOwn(AGENT_PLAN_ESTIMATE_OPERATION, "kubectl")).toBe(true);
     expect(AGENT_PLAN_ESTIMATE_OPERATION.kubectl).toBeNull();
-    expect(projectClientPacks(() => null)).toEqual({ sql: null, kubectl: null, mongo: null, libredbkv: null, influxql: null });
+    expect(projectClientPacks(() => null)).toEqual({
+      sql: null,
+      kubectl: null,
+      mongo: null,
+      libredbkv: null,
+      influxql: null,
+    });
   });
 
   test("every language's operations variant is the one shared variant, and the read-class four are frozen", () => {

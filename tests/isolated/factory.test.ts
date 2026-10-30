@@ -938,15 +938,24 @@ describe("createDatabaseProvider", () => {
     // A session in place of a connect, whose client answers a 2.x read-only token's proof and then one row, so only
     // the context tells the two apart.
     const sent: string[] = [];
-    const listing = '{"results":[{"statement_id":0,"series":[{"name":"databases","columns":["name"],"values":[["home"]]}]}]}';
+    const listing =
+      '{"results":[{"statement_id":0,"series":[{"name":"databases","columns":["name"],"values":[["home"]]}]}]}';
     const client = {
       send: async (request: { values: { q: string } }) => {
         sent.push(request.values.q);
         if (request.values.q === "SHOW DATABASES") return { status: 200, contentType: null, text: listing };
         if (request.values.q.startsWith("DELETE")) {
-          return { status: 200, contentType: null, text: '{"results":[{"statement_id":0,"error":"insufficient permissions"}]}' };
+          return {
+            status: 200,
+            contentType: null,
+            text: '{"results":[{"statement_id":0,"error":"insufficient permissions"}]}',
+          };
         }
-        return { status: 200, contentType: null, text: '{"results":[{"statement_id":0,"series":[{"name":"m","columns":["x"],"values":[[1]]}]}]}' };
+        return {
+          status: 200,
+          contentType: null,
+          text: '{"results":[{"statement_id":0,"series":[{"name":"m","columns":["x"],"values":[[1]]}]}]}',
+        };
       },
       close: () => undefined,
     };
@@ -954,7 +963,14 @@ describe("createDatabaseProvider", () => {
       Object.assign(provider, {
         session: {
           client,
-          options: { surfaceTimeoutMs: 1_000, callTimeoutMs: 1_000, endpoint: {}, secretForms: [], headers: {}, database: "home" },
+          options: {
+            surfaceTimeoutMs: 1_000,
+            callTimeoutMs: 1_000,
+            endpoint: {},
+            secretForms: [],
+            headers: {},
+            database: "home",
+          },
           version: { generation: "v2", reported: "2.9.1", build: null },
           visible: ["home"],
           visibleCut: false,

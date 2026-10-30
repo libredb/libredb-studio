@@ -113,9 +113,7 @@ function isStatementRefusal(answer: InfluxAnswer, wording: string): boolean {
   if (answer.status !== 200) return false;
   const results = (parsed(answer.text) as { results?: unknown } | undefined)?.results;
   return (
-    Array.isArray(results) &&
-    results.length === 1 &&
-    (results[0] as { error?: unknown } | null)?.error === wording
+    Array.isArray(results) && results.length === 1 && (results[0] as { error?: unknown } | null)?.error === wording
   );
 }
 
@@ -287,7 +285,11 @@ export function influxqlAgentReadFailure(
     );
   }
   if (error.kind === "timeout") {
-    return new QueryError(`${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`, "influxdb", statement);
+    return new QueryError(
+      `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`,
+      "influxdb",
+      statement,
+    );
   }
   return undefined;
 }

@@ -42,7 +42,8 @@ const INFLUXQL_WORKFLOW_TOOL_RULES: Readonly<Partial<Record<AgentRunWorkflowType
  * rules of the agent's reader are never told to it.
  */
 const INFLUXQL_GROUNDING: AgentLanguageGrounding = Object.freeze({
-  omissionAdvice: 'Read any of them with run_read_query, for example SHOW FIELD KEYS FROM "home" for the measurement home.',
+  omissionAdvice:
+    'Read any of them with run_read_query, for example SHOW FIELD KEYS FROM "home" for the measurement home.',
   relations: false,
   ungrounded: (detail: string, noun: AgentInventoryNoun) =>
     `${detail}\nSo nothing about this database has been established for you: not one ${noun.singular} name. Read what you need with run_read_query, starting with SHOW MEASUREMENTS.`,

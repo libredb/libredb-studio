@@ -301,7 +301,11 @@ describe("the agent read-only profile", () => {
 
   /** The proof's answers for one principal, in the order it sends. */
   const PROOF = {
-    reader: [at("1.13.1", "admin-read-reader"), at("1.13.1", "listing-reader"), at("1.13.1", "write-probe-reader-home")],
+    reader: [
+      at("1.13.1", "admin-read-reader"),
+      at("1.13.1", "listing-reader"),
+      at("1.13.1", "write-probe-reader-home"),
+    ],
     rw: [
       at("1.13.1", "admin-read-rw"),
       at("1.13.1", "listing-rw"),
@@ -359,7 +363,12 @@ describe("the agent read-only profile", () => {
   });
 
   test.each([
-    ["a user that also writes a second database", "rw", "PROFILE_PRIVILEGES_TOO_BROAD", 'can write the database "other"'],
+    [
+      "a user that also writes a second database",
+      "rw",
+      "PROFILE_PRIVILEGES_TOO_BROAD",
+      'can write the database "other"',
+    ],
     ["an admin", "admin", "PROFILE_PRIVILEGES_TOO_BROAD", "answered this one SHOW USERS"],
   ] as const)("1.13.1: %s is refused at open, and the client is closed", async (_name, principal, code, says) => {
     const script = principal === "rw" ? PROOF.rw : [at("1.13.1", "admin-read-admin")];
@@ -373,12 +382,10 @@ describe("the agent read-only profile", () => {
   });
 
   test("1.13.1: a server with authentication off is refused at open as unenforced", async () => {
-    const { provider } = agentServer(
-      "1.13.1",
-      at("1.13.1", "listing-reader"),
-      [at("1.13.1", "admin-read-auth-off")],
-      { user: "", password: "" },
-    );
+    const { provider } = agentServer("1.13.1", at("1.13.1", "listing-reader"), [at("1.13.1", "admin-read-auth-off")], {
+      user: "",
+      password: "",
+    });
     const error = await rejection(provider.connect());
     expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_SERVER_UNENFORCED");
   });
@@ -403,7 +410,10 @@ describe("the agent read-only profile", () => {
   });
 
   test("InfluxDB 3 is refused at open on this path, with no proof sent", async () => {
-    const v3 = [loadInfluxCapture("3.12.0-core", "ping-auth"), loadInfluxCapture("3.12.0-core", "show-databases-admin")];
+    const v3 = [
+      loadInfluxCapture("3.12.0-core", "ping-auth"),
+      loadInfluxCapture("3.12.0-core", "show-databases-admin"),
+    ];
     const wire = recordingInfluxTransport(v3);
     const factory: InfluxClientFactory = (options, routes) => createInfluxClient(options, routes, wire.factory);
     const provider = new InfluxDBProvider(
@@ -482,16 +492,20 @@ describe("the agent read-only profile", () => {
     expect((await rejection(provider.queryReadOnly("SELECT * FROM home", BUDGET, "estimate-plan"))).message).toBe(
       "InfluxDB composes no estimating plan for the agent",
     );
-    expect(await rejection(provider.queryReadOnly("SELECT * FROM home", { ...BUDGET, maxResultRows: 0 }))).toBeInstanceOf(
-      Error,
-    );
+    expect(
+      await rejection(provider.queryReadOnly("SELECT * FROM home", { ...BUDGET, maxResultRows: 0 })),
+    ).toBeInstanceOf(Error);
     expect(wire.requests).toHaveLength(opened);
     await provider.disconnect();
   });
 
   test("a result past the row budget is refused, never cut", async () => {
     const shown = at("1.13.1", "show-measurements-reader");
-    const { provider } = agentServer("1.13.1", at("1.13.1", "listing-reader"), [...PROOF.reader, ...PROOF.reader, shown]);
+    const { provider } = agentServer("1.13.1", at("1.13.1", "listing-reader"), [
+      ...PROOF.reader,
+      ...PROOF.reader,
+      shown,
+    ]);
     await provider.connect();
     const error = await rejection(provider.queryReadOnly("SHOW MEASUREMENTS", { ...BUDGET, maxResultRows: 1 }));
     expect(error).toBeInstanceOf(QueryError);
@@ -534,7 +548,9 @@ describe("the agent read-only profile", () => {
     ]) {
       const refused = at("1.13.1", `into-${shape}-reader`);
       expect(refused.status).toBe(403);
-      expect(refused.body).toMatch(/error authorizing query: reader not authorized .*, requires WRITE on (home|other)"/);
+      expect(refused.body).toMatch(
+        /error authorizing query: reader not authorized .*, requires WRITE on (home|other)"/,
+      );
     }
     expect(at("1.13.1", "into-state-other-after-reader").body).toBe(at("1.13.1", "into-state-other-before").body);
     expect(at("1.13.1", "into-state-home-after-reader").body).toBe(at("1.13.1", "into-state-home-before").body);

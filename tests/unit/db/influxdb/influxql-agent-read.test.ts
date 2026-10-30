@@ -76,7 +76,10 @@ function profileError(error: Error | undefined, code: string): ExecutionProfileE
 
 const USERS: InfluxRequest<InfluxqlRouteId> = { route: "query-unchunked", values: { q: "SHOW USERS" } };
 const LISTING: InfluxRequest<InfluxqlRouteId> = { route: "query-unchunked", values: { q: "SHOW DATABASES" } };
-const probeOn = (db: string): InfluxRequest<InfluxqlRouteId> => ({ route: "query-unchunked", values: { db, q: PROBE } });
+const probeOn = (db: string): InfluxRequest<InfluxqlRouteId> => ({
+  route: "query-unchunked",
+  values: { db, q: PROBE },
+});
 
 describe("writeProbeStatement", () => {
   test("deletes from a measurement named for this probe alone, before any point there can be", () => {
@@ -134,6 +137,7 @@ describe("proveInfluxqlAgentPrincipal on 1.13.1", () => {
 
   test("refuses an admin read answered in any other way, fail closed", async () => {
     for (const body of ['{"error":"error authorizing query: reader not authorized"}', "not json"]) {
+      // oxlint-disable-next-line no-await-in-loop -- each refusal is proved on its own scripted proof, one after another.
       const { error } = await prove("v1", [answer(403, body)]);
       expect(profileError(error, "PROFILE_UNSUPPORTED_TARGET").message).toBe(
         "The agent read-only profile could not read InfluxDB 1.x's answer to SHOW USERS, so this principal is not proved read-only and is refused. Nothing else was sent.",
@@ -148,10 +152,14 @@ describe("proveInfluxqlAgentPrincipal on 1.13.1", () => {
 
   test("refuses a write probe answered in any other way, fail closed", async () => {
     for (const reply of [
-      answer(403, '{"error":"error authorizing query: reader not authorized to execute statement, requires WRITE on edge"}'),
+      answer(
+        403,
+        '{"error":"error authorizing query: reader not authorized to execute statement, requires WRITE on edge"}',
+      ),
       answer(200, '{"results":[{"statement_id":0,"error":"database not found: home"}]}'),
       answer(500, "boom"),
     ]) {
+      // oxlint-disable-next-line no-await-in-loop -- each refusal is proved on its own scripted proof, one after another.
       const { error } = await prove("v1", [at("1.13.1", "admin-read-reader"), at("1.13.1", "listing-reader"), reply]);
       expect(profileError(error, "PROFILE_UNSUPPORTED_TARGET").message).toBe(
         'The agent read-only profile could not read InfluxDB 1.x\'s answer to a no-op DELETE on the database "home", so this principal is not proved read-only and is refused. Nothing else was sent.',
@@ -243,7 +251,9 @@ describe("proveInfluxqlAgentPrincipal on every line", () => {
     const names = Array.from({ length: INFLUXQL_AGENT_PROBED_DATABASES + 1 }, (_, index) => [`db${index}`]);
     const listing = answer(
       200,
-      JSON.stringify({ results: [{ statement_id: 0, series: [{ name: "databases", columns: ["name"], values: names }] }] }),
+      JSON.stringify({
+        results: [{ statement_id: 0, series: [{ name: "databases", columns: ["name"], values: names }] }],
+      }),
     );
     const { error } = await prove("v2", [listing], { database: "db0" });
     expect(profileError(error, "PROFILE_PRIVILEGES_TOO_BROAD").message).toBe(
@@ -253,6 +263,7 @@ describe("proveInfluxqlAgentPrincipal on every line", () => {
 
   test("refuses a listing it cannot read, fail closed", async () => {
     for (const reply of [answer(200, "not json"), answer(401, '{"code":"unauthorized"}')]) {
+      // oxlint-disable-next-line no-await-in-loop -- each refusal is proved on its own scripted proof, one after another.
       const { error } = await prove("v2", [reply]);
       expect(profileError(error, "PROFILE_UNSUPPORTED_TARGET").message).toBe(
         "The agent read-only profile could not read InfluxDB 2.x's answer to SHOW DATABASES, so this principal is not proved read-only and is refused. Nothing else was sent.",
