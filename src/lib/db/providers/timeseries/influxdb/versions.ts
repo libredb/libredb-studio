@@ -28,6 +28,12 @@ export interface GenerationTraits {
   readonly pingForbidden: "resource-token" | "refused";
   /** Whether a `Token <secret>` header is read as `user:password` (the 1.x 401 sentence). */
   readonly tokenMeansUserPassword: boolean;
+  /**
+   * The principal the agent read-only profile proves read-only on this line (`influxql-agent-read.ts`): a 1.x user,
+   * a 2.x token, or none, so the profile is refused. InfluxDB 3 Core mints only admin tokens, and its InfluxQL path
+   * was never measured for the agent, so it is refused here; a line Studio cannot place is refused with it.
+   */
+  readonly agentPrincipal: "user" | "token" | "refused";
 }
 
 export const GENERATION_TRAITS: Readonly<Record<InfluxGeneration, GenerationTraits>> = Object.freeze({
@@ -38,6 +44,7 @@ export const GENERATION_TRAITS: Readonly<Record<InfluxGeneration, GenerationTrai
     servesSql: false,
     pingForbidden: "refused",
     tokenMeansUserPassword: true,
+    agentPrincipal: "user",
   }),
   v2: Object.freeze({
     label: "InfluxDB 2.x",
@@ -46,6 +53,7 @@ export const GENERATION_TRAITS: Readonly<Record<InfluxGeneration, GenerationTrai
     servesSql: false,
     pingForbidden: "refused",
     tokenMeansUserPassword: false,
+    agentPrincipal: "token",
   }),
   v3: Object.freeze({
     label: "InfluxDB 3",
@@ -54,6 +62,7 @@ export const GENERATION_TRAITS: Readonly<Record<InfluxGeneration, GenerationTrai
     servesSql: true,
     pingForbidden: "resource-token",
     tokenMeansUserPassword: false,
+    agentPrincipal: "refused",
   }),
   unknown: Object.freeze({
     label: "InfluxDB",
@@ -62,6 +71,7 @@ export const GENERATION_TRAITS: Readonly<Record<InfluxGeneration, GenerationTrai
     servesSql: false,
     pingForbidden: "refused",
     tokenMeansUserPassword: false,
+    agentPrincipal: "refused",
   }),
 });
 

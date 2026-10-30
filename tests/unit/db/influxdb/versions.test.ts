@@ -274,6 +274,7 @@ describe("GENERATION_TRAITS", () => {
         servesSql: false,
         pingForbidden: "refused",
         tokenMeansUserPassword: true,
+        agentPrincipal: "user",
       },
       v2: {
         label: "InfluxDB 2.x",
@@ -282,6 +283,7 @@ describe("GENERATION_TRAITS", () => {
         servesSql: false,
         pingForbidden: "refused",
         tokenMeansUserPassword: false,
+        agentPrincipal: "token",
       },
       v3: {
         label: "InfluxDB 3",
@@ -290,6 +292,7 @@ describe("GENERATION_TRAITS", () => {
         servesSql: true,
         pingForbidden: "resource-token",
         tokenMeansUserPassword: false,
+        agentPrincipal: "refused",
       },
       unknown: {
         label: "InfluxDB",
@@ -298,6 +301,7 @@ describe("GENERATION_TRAITS", () => {
         servesSql: false,
         pingForbidden: "refused",
         tokenMeansUserPassword: false,
+        agentPrincipal: "refused",
       },
     });
   });
