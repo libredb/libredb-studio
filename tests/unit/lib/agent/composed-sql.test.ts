@@ -1854,3 +1854,49 @@ describe("composeCatalogRead — Cassandra", () => {
     expect(() => composeEstimatingExplain("cassandra", "SELECT 1")).toThrow(AgentComposedSqlError);
   });
 });
+
+/**
+ * A Couchbase collection declares no columns, so the column read samples one collection's documents, named by its
+ * scope and its own name inside the connection's bucket (measured on 8.0.2 as a user holding only query_select,
+ * `tests/fixtures/couchbase/8.0.2/agent-boundary/` capture 07), and the kinds SQL++ has nothing for are refused.
+ */
+describe("composeCatalogRead — Couchbase", () => {
+  test("the column kind is exactly the statement below, for one collection of one scope", () => {
+    expect(composeCatalogRead("couchbase", { kind: "columns", schema: "_default", table: "_default" })).toBe(
+      "SELECT DISTINCT '_default' AS table_schema, '_default' AS table_name, p.name AS column_name, " +
+        "TYPE(p.val) AS data_type FROM (SELECT RAW d FROM `_default`.`_default` AS d LIMIT 100) AS doc " +
+        "UNNEST OBJECT_PAIRS(doc) AS p ORDER BY column_name, data_type",
+    );
+    expect(guardAccepts(composeCatalogRead("couchbase", { kind: "columns", schema: "s1", table: "c1" }))).toBe(true);
+  });
+
+  test("a name's quote and backtick are escaped as SQL++ reads them", () => {
+    const sql = composeCatalogRead("couchbase", { kind: "columns", schema: "o'k", table: "a`b" });
+    expect(sql).toContain("'o\\'k' AS table_schema");
+    expect(sql).toContain("FROM `o'k`.`a``b` AS d");
+  });
+
+  test("a read without a scope and a collection is refused, naming both as what to give", () => {
+    const refusal =
+      "Couchbase's collections declare no columns, so the fields are read from one collection's documents at a time: name its scope as the schema and the collection as the table";
+    expect(() => composeCatalogRead("couchbase", { kind: "columns" })).toThrow(refusal);
+    expect(() => composeCatalogRead("couchbase", { kind: "columns", schema: "_default" })).toThrow(refusal);
+    expect(() => composeCatalogRead("couchbase", { kind: "columns", table: "_default" })).toThrow(refusal);
+  });
+
+  test("the relation, index and statistics kinds are refused, each naming what SQL++ lacks", () => {
+    expect(() => composeCatalogRead("couchbase", { kind: "relations", schema: "_default" })).toThrow(
+      "Couchbase keeps no foreign key, so there is no such inventory to read",
+    );
+    expect(() => composeCatalogRead("couchbase", { kind: "indexes", schema: "_default" })).toThrow(
+      "Couchbase keeps no index list a user holding only query_select is shown, so there is no such inventory to read",
+    );
+    expect(() => composeCatalogRead("couchbase", { kind: "statistics", schema: "_default" })).toThrow(
+      "Couchbase keeps no row count it can vouch for, so there is no such inventory to read",
+    );
+  });
+
+  test("it composes no estimating plan, since the agent path sends only a SELECT", () => {
+    expect(() => composeEstimatingExplain("couchbase", "SELECT 1")).toThrow(AgentComposedSqlError);
+  });
+});

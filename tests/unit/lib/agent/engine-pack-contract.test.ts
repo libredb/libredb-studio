@@ -70,6 +70,8 @@ const UNSERVED_OFFERS: Readonly<Partial<Record<DatabaseType, readonly AgentToolN
   db2: ["inspect_plan", "profile_table"],
   // And on Cassandra, since CQL has no EXPLAIN.
   cassandra: ["inspect_plan", "profile_table"],
+  // And on Couchbase, since the agent path sends only a SELECT, never an EXPLAIN.
+  couchbase: ["inspect_plan", "profile_table"],
 };
 
 /**

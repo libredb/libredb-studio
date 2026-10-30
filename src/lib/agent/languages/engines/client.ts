@@ -17,6 +17,7 @@ import type { AgentEngineClientDialect, AgentEngineClientOverlays, AgentEnginePa
 import {
   CASSANDRA_CLIENT_OVERLAY,
   CLICKHOUSE_CLIENT_OVERLAY,
+  COUCHBASE_CLIENT_OVERLAY,
   DB2_CLIENT_OVERLAY,
   DUCKDB_CLIENT_OVERLAY,
   ELASTICSEARCH_CLIENT_OVERLAY,
@@ -44,6 +45,7 @@ const CLIENT_OVERLAYS: AgentEngineClientOverlays = Object.freeze({
   oracle: Object.freeze({ family: "sql", overlay: dialectOnly(ORACLE_CLIENT_OVERLAY) }),
   db2: Object.freeze({ family: "sql", overlay: dialectOnly(DB2_CLIENT_OVERLAY) }),
   cassandra: Object.freeze({ family: "sql", overlay: dialectOnly(CASSANDRA_CLIENT_OVERLAY) }),
+  couchbase: Object.freeze({ family: "sql", overlay: dialectOnly(COUCHBASE_CLIENT_OVERLAY) }),
   mongodb: Object.freeze({ family: "mongo", overlay: dialectOnly(MONGODB_CLIENT_OVERLAY) }),
   kubernetes: Object.freeze({ family: "kubectl", overlay: dialectOnly(KUBERNETES_CLIENT_OVERLAY) }),
 } satisfies AgentEngineClientOverlays);

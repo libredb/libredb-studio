@@ -16,6 +16,7 @@ import type { AgentEngineClientDialect, AgentEngineServerDialect } from "@/lib/a
 import { languageServerPack } from "@/lib/agent/languages/server";
 import * as CASSANDRA from "@/lib/agent/languages/sql/engines/cassandra";
 import * as CLICKHOUSE from "@/lib/agent/languages/sql/engines/clickhouse";
+import * as COUCHBASE from "@/lib/agent/languages/sql/engines/couchbase";
 import * as ELASTICSEARCH from "@/lib/agent/languages/sql/engines/elasticsearch";
 import * as INFLUXDB3 from "@/lib/agent/languages/sql/engines/influxdb3";
 import * as LIBSQL from "@/lib/agent/languages/sql/engines/libsql";
@@ -74,6 +75,7 @@ const ENGINE_MODULES: Readonly<Record<string, Readonly<Record<string, unknown>>>
   "sql/engines/oracle": ORACLE,
   "sql/engines/db2": DB2,
   "sql/engines/cassandra": CASSANDRA,
+  "sql/engines/couchbase": COUCHBASE,
   "sql/engines/client": SQL_CLIENT_OVERLAYS,
   "mongo/engines/mongodb": MONGODB,
   "mongo/engines/client": MONGO_CLIENT_OVERLAYS,
@@ -108,6 +110,7 @@ describe("the engine registry", () => {
       "elasticsearch",
       "opensearch",
       "mongodb",
+      "couchbase",
       "influxdb3",
       "kubernetes",
     ]);
@@ -124,6 +127,7 @@ describe("the engine registry", () => {
       "cassandra",
       "elasticsearch",
       "opensearch",
+      "couchbase",
       "influxdb3",
     ]);
   });
@@ -155,7 +159,7 @@ describe("the engine registry", () => {
 
   test("every engine module's server overlay holds a dialect and overridable members, its client one a dialect alone (ruling 2)", () => {
     const exported = exportedOverlays();
-    expect(exported).toHaveLength(30);
+    expect(exported).toHaveLength(32);
     // The one other export is the PostgreSQL retry's rewrite, which its tests call directly.
     expect(
       Object.entries(ENGINE_MODULES)
@@ -169,14 +173,19 @@ describe("the engine registry", () => {
     }
   });
 
-  test("Cassandra's overlay alone overrides a Shared member, its grounding, which keeps the SQL grounding and adds CQL's limits", () => {
+  const GROUNDING_OVERLAYS = [
+    "sql/engines/cassandra#CASSANDRA_SERVER_OVERLAY",
+    "sql/engines/couchbase#COUCHBASE_SERVER_OVERLAY",
+  ];
+
+  test("Cassandra's and Couchbase's overlays alone override a Shared member, their grounding, which keeps the SQL grounding and adds the dialect's rules", () => {
     for (const [name, overlay] of exportedOverlays()) {
       const shared = Object.keys(overlay).filter((key) => key !== "dialect");
-      expect(shared).toEqual(name === "sql/engines/cassandra#CASSANDRA_SERVER_OVERLAY" ? ["grounding"] : []);
+      expect(shared).toEqual(GROUNDING_OVERLAYS.includes(name) ? ["grounding"] : []);
     }
     for (const type of ENGINES) {
       const shared = Object.keys(engineServerOverlay(type)).filter((key) => key !== "dialect");
-      expect(shared).toEqual(type === "cassandra" ? ["grounding"] : []);
+      expect(shared).toEqual(type === "cassandra" || type === "couchbase" ? ["grounding"] : []);
     }
     const base = languageServerPack("sql").grounding;
     const grounding = agentEnginePack("cassandra").server.grounding;
@@ -190,6 +199,17 @@ describe("the engine registry", () => {
       ],
     });
     expect(Object.isFrozen(grounding)).toBe(true);
+    const couchbase = agentEnginePack("couchbase").server.grounding;
+    expect(couchbase).toEqual({
+      ...base,
+      relations: false,
+      planningRules: [
+        "Name a collection as scope.collection with each part in backticks (`_default`.`_default` for the bucket's default collection): the query context is the connection's bucket, and a bare name reads as a collection of the _default scope.",
+        "Documents are JSON: reach a nested field with a dot (d.address.city) and an array element with brackets, and alias the collection (FROM `s`.`c` AS d) so META(d).id names the document key.",
+        "Send one SELECT, a WITH before it allowed; UPDATE STATISTICS, INFER, EXPLAIN, ADVISE, PREPARE and EXECUTE are refused before they are sent.",
+      ],
+    });
+    expect(Object.isFrozen(couchbase)).toBe(true);
   });
 });
 
@@ -279,6 +299,8 @@ describe("engineServerDialect", () => {
       db2: "unsupported",
       // CQL has no EXPLAIN.
       cassandra: "unsupported",
+      // The agent path sends only a SELECT, never an EXPLAIN.
+      couchbase: "unsupported",
       libsql: { kind: "prefix", prefix: "EXPLAIN QUERY PLAN" },
       influxdb3: { kind: "prefix", prefix: "EXPLAIN" },
     });
@@ -445,6 +467,7 @@ describe("the client dialect", () => {
       oracle: { catalogRead: "supported", planEstimate: "unsupported", catalogCapture: "unsupported" },
       db2: { catalogRead: "supported", planEstimate: "unsupported", catalogCapture: "unsupported" },
       cassandra: { catalogRead: "supported", planEstimate: "unsupported", catalogCapture: "unsupported" },
+      couchbase: { catalogRead: "supported", planEstimate: "unsupported", catalogCapture: "unsupported" },
       libsql: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
       influxdb3: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
     });

@@ -623,6 +623,7 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // Agent mode executes statements on OpenSearch, and MCP read stays closed on it until a change of its own opens it.
   opensearch: false,
   mongodb: true,
+  // Agent mode executes statements on Couchbase, and MCP read stays closed on it until a change of its own opens it.
   couchbase: false,
   redis: false,
   prometheus: false,

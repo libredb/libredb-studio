@@ -239,7 +239,7 @@ function isAgentModule(file: string): boolean {
  * `cluster.usage.read` and ship in the package with the provider. The MongoDB
  * provider's read-only profile (its bounded read and the boundary it proves at
  * open) is `queryReadOnly`'s own code, split out of `mongodb/index.ts`, and
- * ships with the provider the same way, as do the ClickHouse, libSQL, Oracle, Db2 and Cassandra providers'.
+ * ships with the provider the same way, as do the ClickHouse, libSQL, Oracle, Db2, Cassandra and Couchbase providers'.
  */
 const NOT_AGENT_CODE: ReadonlySet<string> = new Set([
   "src/lib/db/providers/platform/kubernetes/agent-readings.ts",
@@ -252,6 +252,7 @@ const NOT_AGENT_CODE: ReadonlySet<string> = new Set([
   "src/lib/db/providers/sql/oracle/agent-read.ts",
   "src/lib/db/providers/sql/db2/agent-read.ts",
   "src/lib/db/providers/sql/cassandra/agent-boundary.ts",
+  "src/lib/db/providers/document/couchbase/agent-boundary.ts",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -354,6 +355,7 @@ describe("the scanner reads what it claims to read", () => {
       "src/lib/db/providers/sql/oracle/agent-read.ts",
       "src/lib/db/providers/sql/db2/agent-read.ts",
       "src/lib/db/providers/sql/cassandra/agent-boundary.ts",
+      "src/lib/db/providers/document/couchbase/agent-boundary.ts",
       "src/workspace/StudioWorkspace.tsx",
     ]) {
       expect(isAgentModule(path.join(ROOT, ordinaryFile))).toBe(false);

@@ -481,6 +481,7 @@ const READ_ONLY_PROVIDER_FILES: Readonly<Record<string, string>> = {
   oracle: "src/lib/db/providers/sql/oracle/index.ts",
   db2: "src/lib/db/providers/sql/db2/index.ts",
   cassandra: "src/lib/db/providers/sql/cassandra/index.ts",
+  couchbase: "src/lib/db/providers/document/couchbase/index.ts",
 };
 
 /**
@@ -589,9 +590,9 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
   const list = namedList(AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label));
   const prose = (relative: string) => read(relative).replace(/\n[ \t]*(?:\*|\/\/|#)?[ \t]*/g, " ");
 
-  test("the derived list is today's fifteen engines", () => {
+  test("the derived list is today's sixteen engines", () => {
     expect(list).toBe(
-      "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW and Apache Cassandra",
+      "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra and Couchbase",
     );
   });
 

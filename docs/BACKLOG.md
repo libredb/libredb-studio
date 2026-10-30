@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B149 · 79
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B150 · 80
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -362,6 +362,8 @@ Amended 2026-09-30: the mapping now exists four times, the fourth in the etcd pr
 Amended 2026-10-03: the shared helper this entry asks for now exists outside any provider directory, `src/lib/db/http/node-transport.ts`: `createNodeTransport` is the request path for plaintext and TLS alike, built on the Prometheus shape with `rejectRedirect` on both, and `nodeTlsMaterial` is the one TLS mapping a REST provider takes, so later providers reuse it instead of adding a copy; no provider uses it yet, the Qdrant provider will be its first consumer, and moving Couchbase and Prometheus onto it, and the five `fetch` transports, stays open under this entry.
 Amended 2026-10-03 again: the mapping now exists five times, the fifth in the Milvus provider's `connection-options.ts` (vector-family spec 5.1, decision Q1a), deliberate for the reason the fourth was; like etcd's it is a mapping over grpc-js's own TLS, with the IP-identity rule, and the copied channel options add `grpc.enable_retries: 0`, which is an addition and not a copy.
 Amended 2026-10-04: the two gRPC copies are one, `readGrpcTlsPanel` and `grpcTlsIdentity` in `src/lib/db/grpc/tls.ts` with the credentials in `src/lib/db/grpc/credentials.ts`, which etcd and Milvus both take, so the mapping exists four times: Couchbase's, Prometheus's, Kafka's and the shared gRPC one, beside `nodeTlsMaterial`; a new gRPC provider takes the shared one, and the done-when below, which is about the HTTP providers, is unchanged.
+
+Amended 2026-10-30: the Couchbase agent path (`agentQuery` and `whoami` in `src/lib/db/providers/document/couchbase/http-transport.ts`) goes through `createNodeTransport` for the caller's signal and byte cap; the editor's query and management paths keep their `fetch` and TLS request function, and moving those stays open under this entry.
 
 `ssl.caCert`, `ssl.clientCert`, `ssl.clientKey` and `ssl.rejectUnauthorized` reach the
 driver on every provider that uses one. On the providers that speak HTTP through global
@@ -8391,6 +8393,7 @@ Measured 2026-10-29 on OpenSearch 3.8.0 in a browser pass: the run ends with "No
 Elasticsearch has no profile composition either and opens assessment by the same requirement, so it likely ends the same way; that was reasoned from the code, not measured.
 Oracle and Db2 are in the same position: each overlay supplies the catalog read and declares `profileComposition` `"unsupported"`, so assessment opens there and its verdict can never be met; also reasoned from the code, not measured.
 Apache Cassandra is in the same position, for the same reason (B149); also reasoned from the code, not measured.
+Couchbase is in the same position, for the same reason (B150); also reasoned from the code, not measured.
 `docs/AGENT.md` records the choice to leave that need unheld (B111, B140, B143, B144); this entry is the claim that it should change, since a workflow offered on an engine where it cannot pass reads as a broken one.
 
 **Done when:** the database assessment workflow's requirement admits an engine only where its pass check can be met, derived from a dialect capability such as a supplied profile composition rather than a type-id branch, so it is not offered on OpenSearch, Elasticsearch, Oracle or Db2 until they gain one, with a test that holds the requirement to the pass check; cited in `docs/AGENT.md`.
@@ -8430,6 +8433,18 @@ Kept so that the engine joined on the members measured on it, and nothing compos
 Found 2026-10-30 with agent execution on Apache Cassandra.
 
 **Done when:** the Cassandra overlay gains a profile composition measured on 5.0, or a recorded decision that it keeps none, and a catalog read of every keyspace the connection may read, with tests for each; cited in `docs/AGENT.md`.
+
+### B150. Couchbase composes no estimating plan, profile, statistics reading or grounding capture
+
+Couchbase's engine overlay (`src/lib/agent/languages/sql/engines/couchbase.ts`) supplies the catalog read alone: the column kind samples at most 100 documents of one collection, named by its scope and its own name, and answers each top-level field's name and JSON type once; the relation, index and statistics kinds are refused, since SQL++ has no foreign key, `system:indexes` shows a user holding only `query_select` no row, and the server keeps no row count it can vouch for.
+The other four dialect members are `"unsupported"`: the estimating plan, the profile composition, the statistics reading and the grounding capture.
+SQL++ has `EXPLAIN`, but the provider sends only one statement whose first keyword is `SELECT` or `WITH` on the agent path, since a user holding only `query_select` may still run `UPDATE STATISTICS` and `EXECUTE`; an estimating plan would need that fence to admit `EXPLAIN SELECT` by the server's own reading, never measured. A table profile would be an aggregate that scans a collection, never measured, and a column read of every collection would need one statement per collection.
+So investigation, database assessment and data analysis open on Couchbase, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`, and database assessment, which needs a table profile, opens but cannot pass (B146); the `sql-composers` requirement holds query optimization out; plan mode drafts there and grounds under the operations profile.
+Kept so that the engine joined on the members measured on it, and nothing composed from another engine's rule.
+
+Found 2026-10-30 with agent execution on Couchbase.
+
+**Done when:** the Couchbase overlay gains an estimating plan whose `EXPLAIN SELECT` the agent path's fence admits, measured on 8.0, and a profile composition, or a recorded decision that it keeps none, with tests for each; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

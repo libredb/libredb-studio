@@ -1588,3 +1588,73 @@ The refusal reason it prints, verbatim:
 - INFER: <https://docs.couchbase.com/server/current/n1ql/n1ql-language-reference/infer.html>
 - EXPLAIN: <https://docs.couchbase.com/server/current/n1ql/n1ql-language-reference/explain.html>
 - Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [MongoDB](./mongodb.md) · [Trino](./trino.md) · [Redis](./redis.md) · [LibreDB](./libredb.md)
+
+---
+
+## 15. Agent mode: a user holding only query_select, checked before every statement
+
+Agent mode executes statements on Couchbase through `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/document/couchbase/index.ts), with the check and the statement fence in [`agent-boundary.ts`](../../src/lib/db/providers/document/couchbase/agent-boundary.ts).
+Every fact below was measured on `couchbase/server:enterprise-8.0.2` and `community-8.0.2`, digest-pinned, and is recorded in [`tests/fixtures/couchbase/8.0.2/agent-boundary/`](../../tests/fixtures/couchbase/8.0.2/agent-boundary/), whose `run.sh` re-records every capture.
+
+### 15.1 The boundary is the user
+
+The query service has no read-only session, and its `readonly` request flag is no boundary: it refuses INSERT, UPDATE, DELETE, CREATE INDEX, `BEGIN WORK`, `EXECUTE FUNCTION` and the `EXECUTE` of a prepared DELETE with code 1000, but runs `UPDATE STATISTICS` (capture 04).
+So the boundary is credential-enforced: a user whose only role is `query_select` on the connection's bucket.
+Such a user is refused every INSERT, UPSERT, UPDATE, DELETE, MERGE, index, scope, collection, sequence and `GRANT` statement with code 13014, a call of any user-defined function, inline or JavaScript, scoped or global, `CURL()`, `NEXTVAL`, a read of another bucket and of the system keyspaces that hold other users' requests, prepared statements and roles (`system:completed_requests`, `system:active_requests`, `system:prepareds`, `system:user_info`, `system:applicable_roles`), each with 13014 or, for a function call inside a projection, 5010 naming the missing role (capture 02).
+The positive controls show each refused role really reaches further: `query_update`, `query_insert` and `query_delete` write, `data_writer` writes through the document API, a group's `data_writer` does too, `query_select` on every bucket or on a second bucket reads it, `query_system_catalog` reads the administrator's statement text and prepared statement, and the function and sequence roles run their code (capture 03).
+Community Edition offers only `admin`, `ro_admin` and `bucket_full_access`, refuses to grant `query_select` at all, and its `bucket_full_access` user writes (capture 06), so no Community Edition user is admitted.
+An agent credential beside a connection string is refused before the provider is built, as on every engine.
+
+### 15.2 The check, before every statement
+
+`verifyCouchbaseAgentProfile` runs at the open of a handle under the agent read-only profile and again before every agent statement, keeping no verdict between calls, so a role added after one call refuses the next and a role taken away admits the one after.
+It sends two requests as the agent user:
+
+1. `GET /whoami`, which lists the user's roles, those it holds through a group included (capture 01). Every role must be `query_select` whose `bucket_name` is the connection's bucket exactly, on any of its scopes and collections. Any other role is refused by name, as Couchbase spells it (`data_writer[probe:*:*]`), a role the check has never seen included, so a new role is refused until it is measured; a user holding none is refused as too narrow. An answer it cannot read, or one for another identity, refuses the profile.
+2. ``DELETE FROM `_default` USE KEYS "libredb-agent-probe-<24 hex>"``, with the `readonly` flag off so the refusal is the role's, which an enforcing server refuses with 13014 for the missing `query_delete`; any other answer refuses the profile, a bucket whose `_default` collection was dropped included.
+
+The operations profile sends no statement, so it opens without the check and plan mode grounds on a privileged connection.
+
+### 15.3 The statement path
+
+Only one statement whose first keyword is `SELECT` or `WITH` is sent, refused before anything is sent otherwise (`couchbaseAgentStatementRefusal`), because a user holding only `query_select` may still run `UPDATE STATISTICS`, which writes the optimizer's statistics, `BEGIN WORK`, `PREPARE`, `ADVISE`, `INFER` and the `EXECUTE` of a statement another user prepared, which runs under that statement's own privilege list (captures 02 and 04).
+A `WITH` leads only a `SELECT`: `WITH ... INSERT`, `DELETE`, `UPSERT`, `MERGE`, `UPDATE` and `EXECUTE FUNCTION` are syntax errors (captures 02 and 05).
+The text is read with the SQL++ grammar row (`sql-grammar.ts`): comments and whitespace skipped, string literals and backtick names opaque, a code semicolon ending the statement with only comments and whitespace after it, since the server runs `SELECT 1 AS a;;`; text ending inside a comment, string or name, and a `$$` run, are refused.
+The server ends a `--` comment at a lone carriage return (capture 05), so a carriage return inside a `--` comment with more text after it is refused, whichever reading a later reader takes; U+2028, U+0085 and a form feed end no comment there.
+
+Each statement goes out on a request of its own through the shared node transport (`src/lib/db/http/node-transport.ts`), whose body carries the statement, its timeout (the budget's), `readonly: true` as defence in depth only, `scan_consistency: "request_plus"` and the bucket's query context, and nothing else: no arguments, transaction id or prepared name, so nothing one request set reaches the next.
+One deadline, the budget's, bounds the check and the statement together; the server stops the statement at its own timeout, and the client deadline ends the wait, not the work.
+Budgets refuse rather than truncate: the answer is read up to twice the byte budget plus 64 KiB and refused past it, and a result past the row or the byte budget is refused.
+A statement the user's role does not allow is answered as the statement's failure, so the agent can repair it; a check that cannot be read is the environment's.
+
+### 15.4 Residual: a role taken away
+
+`GET /whoami` lists a role change the moment the management request answers, while the query service honours a role taken away for up to some tens of milliseconds more: in capture 08, the call made at once after the change still ran in 1 of 10 rounds and was refused 54 ms after it.
+So a user narrowed to `query_select` may, for that window, still reach what the removed role allowed through a `SELECT`, the statement fence still in front of it.
+A fresh user holding only `query_select`, rather than narrowing one, is the remedy.
+
+### 15.5 Agent language pack
+
+Statement-language family: `sql`.
+Overlay: [`src/lib/agent/languages/sql/engines/couchbase.ts`](../../src/lib/agent/languages/sql/engines/couchbase.ts), with its client row in [`src/lib/agent/languages/sql/engines/client.ts`](../../src/lib/agent/languages/sql/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`, and the dialect through `engineServerDialect`.
+
+| Member | Kind | Value |
+| --- | --- | --- |
+| `catalogRead` | Dialect-bound | Supplied |
+| `planEstimate` | Dialect-bound | `"unsupported"` |
+| `profileComposition` | Dialect-bound | `"unsupported"` |
+| `statistics` | Dialect-bound | `"unsupported"` |
+| `catalogCapture` | Dialect-bound | `"unsupported"` |
+| `grounding` | Shared | Overridden |
+
+The overlay overrides the `sql` family's grounding: it keeps the family's own and adds three planning rules a plan run on Couchbase is told (each collection named as scope.collection in backticks, since the query context is the bucket; nested fields and the document key; one `SELECT`, the statements the fence refuses named), and sets `relations` false, since SQL++ has no foreign key.
+A collection declares no columns, so the column kind samples at most 100 documents of one collection, named by its scope as the schema and its own name as the table, and answers each top-level field's name and JSON type once as `table_schema`, `table_name`, `column_name` and `data_type` (capture 07); it describes the sample, as the schema explorer's INFER does, and a selector without both names is refused.
+The relation, index and statistics kinds are refused with `SELECTOR_UNSUPPORTED_BY_DIALECT`: SQL++ has no foreign key, `system:indexes` shows a user holding only `query_select` no row, and the server keeps no row count it can vouch for.
+So investigation, database assessment and data analysis open here and send their statements through `queryReadOnly`, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`; database assessment cannot pass with no table profile ([B146](../BACKLOG.md)), and the `sql-composers` requirement holds query optimization out, since the agent path sends no `EXPLAIN` ([B150](../BACKLOG.md)); plan mode drafts here as on every engine.
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+MCP's statement read stays closed on Couchbase (`MCP_STATEMENT_READ.couchbase` is false) until a change of its own opens it.
+
+### 15.6 Boundary record
+
+`bun tests/live/couchbase-agent-boundary.ts`, run on 2026-10-30 against the `enterprise-8.0.2` node and the `community-8.0.2` node `run.sh` sets up, passes 86 checks through the production path (`createDatabaseProvider` with the profile's execution context, `connect`, `queryReadOnly`) and with no admission of Studio's in front: the open admits `query_select` on the bucket and on its default collection, and refuses by name every other role listed in 15.1, `data_writer` held through a group, and Community Edition's `bucket_full_access` and `ro_admin` users, while a user holding no role is refused as unauthenticated before the check, since it cannot read `/pools/default`; the operations profile opens the administrator unchecked; each write, DDL, transaction, `PREPARE`, `EXECUTE`, `UPDATE STATISTICS`, `ADVISE`, `GRANT`, second statement and carriage-return text is refused before it is sent; behind the fence, the same statements sent as the user on a request of its own are refused for a missing role (13014), never as a syntax error, except `UPDATE STATISTICS`, `BEGIN WORK`, `PREPARE`, `ADVISE` and the `EXECUTE` of the administrator's prepared statement, which the server runs for such a user; each function call, `CURL()`, `NEXTVAL`, other-bucket and system-keyspace read passes the fence and is refused by the server naming the missing role; the bucket's documents read the same after; the administrator's INSERT, JavaScript function and carriage-return DELETE each write, the positive controls; a role or a group added after one call refuses the next and its removal admits the one after; the three budgets refuse; and the composed column read answers the sample's fields.
