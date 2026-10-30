@@ -1020,3 +1020,90 @@ discovered namespace.
 {{- true }}
 {{- end }}
 {{- end }}
+
+{{/*
+Whether the OpenShift console plugin renders (openshift.consolePlugin.enabled). Read with dig over a
+defaulted dict, so a --reuse-values upgrade from a chart without the block renders as off.
+*/}}
+{{- define "libredb-studio.consolePluginEnabled" -}}
+{{- if dig "consolePlugin" "enabled" false (.Values.openshift | default dict) }}
+{{- true }}
+{{- end }}
+{{- end }}
+
+{{/*
+The plugin server's name, fixed whatever nameOverride or fullnameOverride say: the ConsolePlugin
+libredb-studio is a cluster-wide singleton whose backend names this Service, so a second release
+collides on the ConsolePlugin and Helm's ownership check refuses it.
+*/}}
+{{- define "libredb-studio.consolePluginName" -}}
+libredb-studio-console-plugin
+{{- end }}
+
+{{/* The plugin server's selector labels: its own name, so no selector of Studio's matches its pods. */}}
+{{- define "libredb-studio.consolePluginSelectorLabels" -}}
+app.kubernetes.io/name: {{ include "libredb-studio.consolePluginName" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{/* The chart's common labels, with the plugin server's name and component. */}}
+{{- define "libredb-studio.consolePluginLabels" -}}
+helm.sh/chart: {{ include "libredb-studio.chart" . }}
+{{ include "libredb-studio.consolePluginSelectorLabels" . }}
+app.kubernetes.io/component: console-plugin
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{/*
+The console plugin guards, in this order, each naming the value to change. The console sends every
+console user's bearer token to the plugin server on each asset fetch and runs its bundle in every
+console session, so whoever may change the server's Deployment runs code in every console session
+and receives every console user's token: the server runs only in a namespace only cluster admins
+write. Included from console-plugin.yaml.
+
+Guard 6 looks the namespace up on the Helm path only. A project made through a project request (oc
+new-project, the console's Create Project), which any OAuth user may make, carries
+openshift.io/requester and is administered by its requester. lookup returns nothing under helm
+template and a client-side dry run, and for a namespace that does not exist yet, so the guard is
+skipped there. The operator path pins the operator's own namespace, whose administrator already
+controls the operator.
+*/}}
+{{- define "libredb-studio.consolePluginGuards" -}}
+{{- $operator := include "libredb-studio.operatorManaged" . }}
+{{- $plugin := dig "consolePlugin" dict (.Values.openshift | default dict) }}
+{{- if not (include "libredb-studio.openshiftApiServed" (dict "ctx" . "api" "console.openshift.io/v1")) }}
+{{- fail "openshift.consolePlugin.enabled is true but this cluster does not serve console.openshift.io/v1: the console plugin needs OpenShift 4.19 or later; install on OpenShift, or set global.compatibility.openshift.apis=force to render the ConsolePlugin without API detection (GitOps, offline helm template)" }}
+{{- end }}
+{{- include "libredb-studio.clusterStudioNamespaceGuard" (dict "ctx" . "what" "openshift.consolePlugin.enabled renders a cluster-scoped ConsolePlugin and its server in another namespace") }}
+{{- $namespace := get $plugin "namespace" | default "" | toString | trim }}
+{{- if not $namespace }}
+{{- fail (printf "openshift.consolePlugin.namespace is empty: name the namespace the console plugin's server runs in, one a cluster admin creates with oc create namespace and only cluster admins write%s" (ternary "; under the operator it is the operator's own namespace, OPERATOR_NAMESPACE in the operator's Deployment" "" (eq $operator "true"))) }}
+{{- end }}
+{{- if eq $namespace .Release.Namespace }}
+{{- fail (printf "openshift.consolePlugin.namespace is %s, this release's own namespace: whoever can change that Deployment runs code in every console session and receives every console user's token, so name a namespace only cluster admins write" $namespace) }}
+{{- end }}
+{{- $discovered := dig "kubernetes" "namespaces" list (.Values.discovery | default dict) | default list }}
+{{- if has $namespace $discovered }}
+{{- fail (printf "openshift.consolePlugin.namespace is %s, which discovery.kubernetes.namespaces lists: a discovered namespace has editors by design, and whoever can change that Deployment runs code in every console session and receives every console user's token, so name a namespace only cluster admins write" $namespace) }}
+{{- end }}
+{{- if not (include "libredb-studio.operatorManaged" .) }}
+{{- $object := lookup "v1" "Namespace" "" $namespace }}
+{{- $annotations := dig "metadata" "annotations" dict ($object | default dict) }}
+{{- if hasKey $annotations "openshift.io/requester" }}
+{{- fail (printf "openshift.consolePlugin.namespace %s is a project %s requested, so that user administers it and could run code in every console session and receive every console user's token; delete it, create the namespace with oc create namespace %s and check that only cluster admins hold RoleBindings there (oc get rolebindings -n %s)" $namespace (get $annotations "openshift.io/requester" | toString) $namespace $namespace) }}
+{{- end }}
+{{- end }}
+{{- if not (include "libredb-studio.discoveryEnabled" .) }}
+{{- fail "openshift.consolePlugin.enabled needs discovery.kubernetes.enabled: the console plugin finds Studio only through the console link named libredb-studio, which a release renders only with discovery on, and Studio opens only discovered databases" }}
+{{- end }}
+{{- $link := dig "consoleLink" dict (.Values.openshift | default dict) }}
+{{- if or (not (get $link "enabled")) (ne (get $link "location" | default "ApplicationMenu" | toString) "ApplicationMenu") }}
+{{- fail "openshift.consolePlugin.enabled needs openshift.consoleLink.enabled with openshift.consoleLink.location=ApplicationMenu: the console plugin finds Studio only through the console link named libredb-studio, which only that link is" }}
+{{- end }}
+{{- if not (get $plugin "image" | default "" | toString | trim) }}
+{{- fail (printf "openshift.consolePlugin.image is empty: set the plugin image as a reference pinned by digest%s" (ternary "; under the operator it comes from RELATED_IMAGE_PLUGIN in the operator's Deployment" "" (eq $operator "true"))) }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,8 @@
+{{- /*
+The OpenShift console plugin (openshift.consolePlugin): the plugin's nginx server in
+openshift.consolePlugin.namespace and the cluster-scoped ConsolePlugin libredb-studio that points the
+console at it. The guards live in _helpers.tpl (consolePluginGuards).
+*/}}
+{{- if include "libredb-studio.consolePluginEnabled" . }}
+{{- include "libredb-studio.consolePluginGuards" . }}
+{{- end }}

@@ -758,6 +758,65 @@
               "description": "NamespaceDashboard only: a label selector (matchLabels, matchExpressions) for those namespaces"
             }
           }
+        },
+        "consolePlugin": {
+          "type": "object",
+          "description": "The OpenShift console plugin: its nginx server in openshift.consolePlugin.namespace and the cluster-scoped ConsolePlugin libredb-studio; needs console.openshift.io/v1 or global.compatibility.openshift.apis=force, discovery and the ApplicationMenu console link",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Render the plugin server and the ConsolePlugin"
+            },
+            "namespace": {
+              "type": "string",
+              "default": "",
+              "pattern": "^([a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)?$",
+              "description": "Where the plugin server runs: a namespace a cluster admin created with oc create namespace and only cluster admins write; the operator sets its own namespace (OPERATOR_NAMESPACE)"
+            },
+            "image": {
+              "type": "string",
+              "pattern": "^$|^[^\\s@]+@sha256:[a-f0-9]{64}$",
+              "description": "The plugin image, a whole reference pinned by digest; the operator sets it from RELATED_IMAGE_PLUGIN"
+            },
+            "imagePullPolicy": {
+              "type": "string",
+              "enum": ["Always", "IfNotPresent", "Never"],
+              "default": "IfNotPresent",
+              "description": "The plugin server's image pull policy"
+            },
+            "replicas": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5,
+              "default": 2,
+              "description": "Plugin server replicas"
+            },
+            "resources": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "The plugin server's requests and limits, cpu and memory only",
+              "properties": {
+                "requests": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "cpu": { "type": ["string", "number"] },
+                    "memory": { "type": ["string", "number"] }
+                  }
+                },
+                "limits": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "cpu": { "type": ["string", "number"] },
+                    "memory": { "type": ["string", "number"] }
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },
