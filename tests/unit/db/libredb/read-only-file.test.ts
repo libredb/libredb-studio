@@ -82,10 +82,11 @@ describe("libredbReadOnlyFileSystem", () => {
           return error as Error & { code?: string; cause?: unknown };
         }
       })();
+      expect(setError).not.toBeNull();
       expect(setError?.code).toBe("FAILED");
-      expect((setError?.cause as Error).message).toBe(LIBREDB_READ_ONLY_WRITE_REFUSAL);
+      expect(((setError as { cause?: unknown }).cause as Error).message).toBe(LIBREDB_READ_ONLY_WRITE_REFUSAL);
       // The kernel latches a handle whose commit could not reach the disk: every later call on it is refused.
-      expect(() => kv(reader).delete("users:1")).toThrow(/FAILED|failed to reach the disk/);
+      expect(() => kv(reader).delete("users:1")).toThrow(/failed to reach the disk/);
       expect(() => reader.transact((tx) => tx.set(new Uint8Array([1]), new Uint8Array([2])))).toThrow(
         /failed to reach the disk/,
       );

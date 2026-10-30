@@ -32,7 +32,7 @@ describe("readLibreDBReadCommand", () => {
     ["  Prefix users:  ", { verb: "prefix", prefix: "users:" }],
     ["range a z", { verb: "range", start: "a", end: "z" }],
     ["range '' 'users:~'", { verb: "range", start: "", end: "users:~" }],
-  ])("admits %p", (text, command) => {
+  ] as const)("admits %p", (text, command) => {
     expect(readLibreDBReadCommand(text)).toEqual({ ok: true, command });
   });
 

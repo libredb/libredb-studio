@@ -1513,3 +1513,302 @@ describe("endOpenQueryTransaction()", () => {
     ]);
   });
 });
+
+// ============================================================================
+// The agent's read-only path
+// ----------------------------------------------------------------------------
+// Opened under the agent read-only profile, the provider reads the file through the read-only file adapter: no writer
+// lock is taken, so it opens beside the editor's writer, and nothing it is asked can change the file. Every case
+// compares the directory byte for byte, because the property is the file's, not what the provider reports.
+// ============================================================================
+
+describe("LibreDBProvider — the agent read-only profile", () => {
+  const AGENT = { readOnly: true, sendsStatements: true } as const;
+  const BUDGET = { statementTimeoutMs: 5000, maxResultRows: 100, maxResultBytes: 1_000_000 };
+
+  /** Every file in the test directory with its bytes and its modification time. */
+  function directory(): Record<string, { bytes: string; mtimeMs: number }> {
+    return Object.fromEntries(
+      fs
+        .readdirSync(tmpDir)
+        .sort()
+        .map((name) => {
+          const full = path.join(tmpDir, name);
+          return [name, { bytes: fs.readFileSync(full).toString("base64"), mtimeMs: fs.statSync(full).mtimeMs }];
+        }),
+    );
+  }
+
+  async function settle(promise: Promise<unknown>): Promise<unknown> {
+    return promise.then(
+      () => null,
+      (error: unknown) => error,
+    );
+  }
+
+  test("queryReadOnly refuses a handle the editor opened, before anything is read", async () => {
+    const provider = new LibreDBProvider(makeConn(tmpFile));
+    await provider.connect();
+    try {
+      const error = await settle(provider.queryReadOnly("get user:1", BUDGET));
+      expect(error).toBeInstanceOf(QueryError);
+      expect((error as Error).name).toBe("RefusedBeforeSendError");
+      expect((error as Error).message).toBe(
+        "Read-only execution requires a provider opened under the agent read-only profile",
+      );
+    } finally {
+      await provider.disconnect();
+    }
+  });
+
+  test("an operations handle, which sends no statement, is refused too", async () => {
+    const provider = new LibreDBProvider(makeConn(tmpFile), {}, { readOnly: true });
+    await provider.connect();
+    try {
+      expect(await settle(provider.queryReadOnly("get user:1", BUDGET))).toBeInstanceOf(QueryError);
+    } finally {
+      await provider.disconnect();
+    }
+  });
+
+  test("a profiled reader opens beside the editor's writer, with no LOCKED, and changes no byte", async () => {
+    const writer = new LibreDBProvider(makeConn(tmpFile));
+    await writer.connect();
+    const before = directory();
+    expect(Object.keys(before)).toEqual(["test.libredb", "test.libredb.lock"]);
+    const reader = new LibreDBProvider(makeConn(tmpFile), {}, AGENT);
+    try {
+      await reader.connect();
+
+      expect((await reader.queryReadOnly("get user:1", BUDGET)).rows).toEqual([{ key: "user:1", value: "Ada" }]);
+      expect((await reader.queryReadOnly("prefix user:", BUDGET)).rows.map((row) => row.key)).toEqual([
+        "user:1",
+        "user:2",
+      ]);
+      expect((await reader.queryReadOnly("range order: user:", BUDGET)).rows).toEqual([
+        { key: "order:1", value: "42" },
+      ]);
+      expect(directory()).toEqual(before);
+      // The writer is not locked out by the reader: it still writes, and the reader's next statement sees it.
+      await writer.query("put user:3 Linus");
+      expect((await reader.queryReadOnly("get user:3", BUDGET)).rows).toEqual([{ key: "user:3", value: "Linus" }]);
+    } finally {
+      await reader.disconnect();
+      await writer.disconnect();
+    }
+  });
+
+  test("a writer opens beside a profiled reader that already holds the file", async () => {
+    const reader = new LibreDBProvider(makeConn(tmpFile), {}, AGENT);
+    await reader.connect();
+    const writer = new LibreDBProvider(makeConn(tmpFile));
+    try {
+      await writer.connect();
+      await writer.query("put user:4 Barbara");
+      expect((await reader.queryReadOnly("get user:4", BUDGET)).rowCount).toBe(1);
+    } finally {
+      await writer.disconnect();
+      await reader.disconnect();
+    }
+  });
+
+  test.each([
+    "put user:9 Mallory",
+    "PUT user:9 Mallory",
+    '"put" user:9 Mallory',
+    "delete user:1",
+    "Delete user:1",
+    "'delete' user:1",
+    "set user:9 Mallory",
+    "get user:1\nput user:9 Mallory",
+    "get user:1\rput user:9 Mallory",
+    "# put user:9 Mallory",
+  ])("queryReadOnly refuses %p before it opens the file, and the file is unchanged", async (statement) => {
+    const reader = new LibreDBProvider(makeConn(tmpFile), {}, AGENT);
+    await reader.connect();
+    const before = directory();
+    try {
+      const error = await settle(reader.queryReadOnly(statement, BUDGET));
+      expect((error as Error).name).toBe("RefusedBeforeSendError");
+      expect((error as Error).message).toEndWith("Nothing was sent.");
+      expect(directory()).toEqual(before);
+    } finally {
+      await reader.disconnect();
+    }
+  });
+
+  test("a write sent around the reader through query() fails on the read-only handle, and the file is unchanged", async () => {
+    const writer = new LibreDBProvider(makeConn(tmpFile));
+    await writer.connect();
+    const reader = new LibreDBProvider(makeConn(tmpFile), {}, AGENT);
+    await reader.connect();
+    const before = directory();
+    try {
+      for (const write of ["put user:9 Mallory", "delete user:1"]) {
+        const error = await settle(reader.query(write));
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error & { code?: string }).code).toBe("FAILED");
+      }
+      expect(directory()).toEqual(before);
+      // Nothing reached the store either: the writer and a fresh statement both read it unchanged.
+      expect((await writer.query("get user:9")).rowCount).toBe(0);
+      expect((await reader.queryReadOnly("get user:1", BUDGET)).rows).toEqual([{ key: "user:1", value: "Ada" }]);
+    } finally {
+      await reader.disconnect();
+      await writer.disconnect();
+    }
+  });
+
+  test("each statement opens its own handle: a latched handle does not reach the next statement", async () => {
+    const reader = new LibreDBProvider(makeConn(tmpFile), {}, AGENT);
+    await reader.connect();
+    try {
+      await settle(reader.query("put user:9 Mallory"));
+      expect((await reader.queryReadOnly("get user:2", BUDGET)).rowCount).toBe(1);
+    } finally {
+      await reader.disconnect();
+    }
+  });
+
+  test("the object surface of a profiled reader reads what the writer committed since it opened", async () => {
+    const writer = new LibreDBProvider(makeConn(tmpFile));
+    await writer.connect();
+    const reader = new LibreDBProvider(makeConn(tmpFile), {}, AGENT);
+    await reader.connect();
+    try {
+      const names = async () => (await reader.listObjects([], "keyspace")).map((object) => object.name);
+      expect(await names()).not.toContain("audit:*");
+      await writer.query("put audit:1 created");
+      expect(await names()).toContain("audit:*");
+      // Read twice with nothing written between: the same answer.
+      expect(await names()).toContain("audit:*");
+    } finally {
+      await reader.disconnect();
+      await writer.disconnect();
+    }
+  });
+
+  test("hides the reserved catalog namespace, on get as on a scan", async () => {
+    seedWithCatalog(tmpFile);
+    const reader = new LibreDBProvider(makeConn(tmpFile), {}, AGENT);
+    await reader.connect();
+    try {
+      const all = await reader.queryReadOnly(`range "" "\u{10FFFF}"`, BUDGET);
+      expect(all.rows.some((row) => String(row.key).startsWith(CATALOG_PREFIX))).toBe(false);
+      expect((await reader.queryReadOnly(`get "${CATALOG_PREFIX}employees"`, BUDGET)).rowCount).toBe(0);
+    } finally {
+      await reader.disconnect();
+    }
+  });
+
+  test("a result past the row budget is refused, never cut", async () => {
+    const reader = new LibreDBProvider(makeConn(tmpFile), {}, AGENT);
+    await reader.connect();
+    try {
+      const error = await settle(reader.queryReadOnly("prefix user:", { ...BUDGET, maxResultRows: 1 }));
+      expect(error).toBeInstanceOf(QueryError);
+      expect((error as Error).message).toBe(
+        "Read-only execution exceeded the row budget: 2 rows > 1 allowed; the read stops one key past the budget, so at least 2 keys match and the total is not known: narrow the prefix or the range",
+      );
+      expect((await reader.queryReadOnly("prefix user:", { ...BUDGET, maxResultRows: 2 })).rowCount).toBe(2);
+    } finally {
+      await reader.disconnect();
+    }
+  });
+
+  test("a result past the byte budget is refused, never cut", async () => {
+    const reader = new LibreDBProvider(makeConn(tmpFile), {}, AGENT);
+    await reader.connect();
+    try {
+      const error = await settle(reader.queryReadOnly("prefix user:", { ...BUDGET, maxResultBytes: 20 }));
+      expect(error).toBeInstanceOf(QueryError);
+      expect((error as Error).message).toMatch(
+        /^Read-only execution exceeded the byte budget: \d+ bytes > 20 allowed$/,
+      );
+    } finally {
+      await reader.disconnect();
+    }
+  });
+
+  test("a read that outran its time budget is refused, since an in-process read cannot be stopped midway", async () => {
+    const reader = new LibreDBProvider(makeConn(tmpFile), {}, AGENT);
+    await reader.connect();
+    let now = 0;
+    const clock = spyOn(performance, "now").mockImplementation(() => (now += 50));
+    try {
+      const error = await settle(reader.queryReadOnly("get user:1", { ...BUDGET, statementTimeoutMs: 10 }));
+      expect((error as Error).message).toBe("Read-only execution exceeded the time budget: 50ms > 10ms allowed");
+    } finally {
+      clock.mockRestore();
+      await reader.disconnect();
+    }
+  });
+
+  test("refuses a malformed budget and an estimating plan, which this engine has none of", async () => {
+    const reader = new LibreDBProvider(makeConn(tmpFile), {}, AGENT);
+    await reader.connect();
+    try {
+      expect(await settle(reader.queryReadOnly("get user:1", { ...BUDGET, maxResultRows: 0 }))).toBeInstanceOf(
+        QueryError,
+      );
+      const plan = await settle(reader.queryReadOnly("get user:1", BUDGET, "estimate-plan"));
+      expect((plan as Error).name).toBe("RefusedBeforeSendError");
+      expect((plan as Error).message).toBe("LibreDB has no query plan: there is no plan to estimate for a command");
+    } finally {
+      await reader.disconnect();
+    }
+  });
+
+  test("a key the kernel refuses is the statement's error to repair", async () => {
+    const reader = new LibreDBProvider(makeConn(tmpFile), {}, AGENT);
+    await reader.connect();
+    try {
+      const error = await settle(reader.queryReadOnly("get \uD800", BUDGET));
+      expect(error).toBeInstanceOf(QueryError);
+      expect((error as Error).name).toBe("QueryError");
+    } finally {
+      await reader.disconnect();
+    }
+  });
+
+  test("a file gone since the open is refused as the connection's failure, and nothing is created", async () => {
+    const reader = new LibreDBProvider(makeConn(tmpFile), {}, AGENT);
+    await reader.connect();
+    try {
+      rmDbFile(tmpFile);
+      const error = await settle(reader.queryReadOnly("get user:1", BUDGET));
+      expect(error).toBeInstanceOf(ConnectionError);
+      expect((error as Error).message).toBe(
+        `The LibreDB file ${tmpFile} does not exist. The agent opens an existing file read-only and creates none.`,
+      );
+      expect(fs.existsSync(tmpFile)).toBe(false);
+    } finally {
+      await reader.disconnect();
+    }
+  });
+
+  test("a missing file is refused at the open, and no file and no lock are created", async () => {
+    const missing = path.join(tmpDir, "missing.libredb");
+    const reader = new LibreDBProvider(makeConn(missing), {}, AGENT);
+    const error = await settle(reader.connect());
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as Error).message).toBe(
+      `The LibreDB file ${missing} does not exist. The agent opens an existing file read-only and creates none.`,
+    );
+    expect(reader.isConnected()).toBe(false);
+    expect(fs.readdirSync(tmpDir)).toEqual(["test.libredb"]);
+  });
+
+  test("a file that is no database is refused at the open with the editor's sentence", async () => {
+    const junk = path.join(tmpDir, "junk.libredb");
+    fs.writeFileSync(junk, "not a database at all");
+    const reader = new LibreDBProvider(makeConn(junk), {}, AGENT);
+    expect((await settle(reader.connect())) as Error).toBeInstanceOf(ConnectionError);
+    expect(fs.readFileSync(junk, "utf8")).toBe("not a database at all");
+  });
+
+  test("queryReadOnly on a reader that is not connected is refused", async () => {
+    const reader = new LibreDBProvider(makeConn(tmpFile), {}, AGENT);
+    expect(await settle(reader.queryReadOnly("get user:1", BUDGET))).toBeInstanceOf(Error);
+  });
+});

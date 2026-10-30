@@ -566,8 +566,10 @@ export async function createDatabaseProvider(
 
     // Embedded databases - dynamically imported
     case "libredb": {
+      // The execution context decides the open: an acquisition that sends statements opens the file through the
+      // read-only adapter, with no writer lock, beside the editor's writer.
       const { LibreDBProvider } = await import("./providers/embedded/libredb");
-      return new LibreDBProvider(connection, options);
+      return new LibreDBProvider(connection, options, execution);
     }
 
     default:
@@ -786,14 +788,16 @@ function fileIdentity(connection: DatabaseConnection): string | null {
  * nothing to lend while the file is open, `isSingleWriterFileOpen` says so, and Test Connection
  * opens a read-only handle rather than a second read-write one.
  *
- * The cost of that is real and is paid by the editor. If an agent run reaches a
- * single-writer connection nobody has browsed yet, `acquireExecutionProfileProvider`
- * opens the file and caches the handle under the PROFILED key; `getOrCreateProvider`
- * then fails on the lock, so browsing that connection in the sidebar is refused until
- * the profiled entry is evicted (30 minutes idle). Lifting it would mean serving an
- * editor request a provider opened under an execution profile, which is the isolation
- * invariant `acquireExecutionProfileProvider` exists to keep - so the lockout is the
- * chosen side of that trade, not an oversight.
+ * The cost of that is real and is paid by the editor. If an operations acquisition reaches
+ * a single-writer connection nobody has browsed yet, `acquireExecutionProfileProvider`
+ * opens the file and caches the handle under the PROFILED key; on LibreDB that handle
+ * takes the writer lock, so `getOrCreateProvider` then fails on it, and browsing that
+ * connection in the sidebar is refused until the profiled entry is evicted (30 minutes
+ * idle). Lifting it would mean serving an editor request a provider opened under an
+ * execution profile, which is the isolation invariant `acquireExecutionProfileProvider`
+ * exists to keep - so the lockout is the chosen side of that trade, not an oversight.
+ * An acquisition that sends statements never takes the lock: LibreDB opens it through
+ * its read-only file adapter, beside the writer and before it.
  */
 export function findOpenSingleWriterProvider(
   connection: DatabaseConnection,
@@ -1367,7 +1371,7 @@ export type ExecutionProfile = "agent-read-only" | "agent-operations" | "agent-h
  * handle or transaction, a least-privilege principal the server's own answers prove, or a
  * Studio-enforced request allowlist plus the identity's own authorization), and only the
  * providers of AGENT_EXECUTION_ENGINES implement that: PostgreSQL, SQLite,
- * DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase and Apache Druid (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
+ * DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid and LibreDB (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
  * at all — it calls the curated reporting methods every provider implements — so
  * requiring a read-only STATEMENT path of it would refuse an engine over a capability
  * the profile never uses. `agent-handover` sends a statement too — the one a run
@@ -1622,8 +1626,11 @@ export async function acquireExecutionProfileProvider(
     Two bounds keep the isolation invariant intact. It is scoped to the profile that
     sends NO statement of the model's: `agent-operations` calls the curated reporting
     methods only, so there is nothing here for a read-only statement path to bound,
-    and `agent-read-only` / `agent-handover` are still refused on such an engine
-    rather than served the writable handle. And it is refused when the connection
+    and `agent-read-only` / `agent-handover` are never served the writable handle. They
+    open their own instead, which on a single-writer engine is a second handle the lock
+    refuses unless the engine opens it without one: LibreDB opens a handle that sends
+    statements through its read-only file adapter, which takes no lock and cannot write,
+    so it opens beside the held writer. And it is refused when the connection
     configures an agent credential, because the borrowed handle was opened under the
     connection's own - a reuse cannot silently substitute one principal for another.
 

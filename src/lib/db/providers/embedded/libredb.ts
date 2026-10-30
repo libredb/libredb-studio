@@ -30,6 +30,7 @@ import {
   type MaintenanceResult,
   type ProviderOptions,
   type ProviderCapabilities,
+  type ProviderExecutionContext,
   type ProviderLabels,
   type DatabaseOverview,
   type PerformanceMetrics,
@@ -46,6 +47,8 @@ import {
   type ObjectDetail,
   type ObjectDetailBatch,
   type ObjectKindSpec,
+  type ReadOnlyStatementBudget,
+  type ReadOnlyStatementMode,
 } from "../../types";
 import {
   assertContainerPathShape,
@@ -58,10 +61,19 @@ import {
   type ObjectPathShapeEngine,
 } from "../../object-kinds";
 import { comparePaths } from "../../object-path";
-import { DatabaseConfigError, ConnectionError, QueryError } from "../../errors";
+import { DatabaseConfigError, ConnectionError, QueryError, RefusedBeforeSendError } from "../../errors";
 import { formatBytes } from "../../utils/pool-manager";
 import { carriesLossyNumber } from "../../utils/json-integers";
 import { assertRegularFilesOrMissing } from "../../utils/regular-file";
+import {
+  assertReadOnlyBudget,
+  byteBudgetSentence,
+  measureRowBytes,
+  rowBudgetSentence,
+  TIME_BUDGET_PREFIX,
+} from "../sql/read-only-budget";
+import { type LibreDBReadCommand, readLibreDBReadCommand, tokenizeLibreDBCommand } from "./libredb-command";
+import { libredbReadOnlyFileSystem } from "./libredb-read-only-file";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import * as fs from "fs";
 import { isReservedStoragePath } from "@/lib/data-dir";
@@ -79,6 +91,20 @@ function isDirectory(dir: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * The file's identity, size and modification time: a commit appends to the write-ahead log, so any commit changes it.
+ * What a read-only handle compares to tell whether its snapshot is still the file's committed state.
+ */
+function fileSnapshotOf(file: string): string {
+  const stat = fs.statSync(file);
+  return `${stat.ino}:${stat.size}:${stat.mtimeMs}`;
+}
+
+/** The file opened through the read-only adapter: no lock, and no call on the handle can change the file. */
+function openReadOnly(lib: LibreDBModule, file: string): LibreDatabase {
+  return lib.open({ path: file, fs: libredbReadOnlyFileSystem() });
 }
 
 /**
@@ -365,9 +391,20 @@ export class LibreDBProvider extends BaseDatabaseProvider {
   protected dbVersion = "unknown";
   /** The resolved, validated absolute file path, set on connect(). */
   protected dbPath: string | null = null;
+  /**
+   * Whether this handle was opened for an acquisition that sends statements under the agent read-only profile. Then the
+   * file is opened through the read-only file adapter (`libredb-read-only-file.ts`): no writer lock is taken, so it
+   * opens beside the editor's writer, and no call on it can change the file. Only then does `queryReadOnly` answer.
+   * The operations profile sends no statement and opens as the editor does, so its borrow of the writer's handle is
+   * unchanged.
+   */
+  private readonly readOnlyProfile: boolean;
+  /** The file's identity, size and modification time when the read-only handle opened: see `ensureConnected`. */
+  private snapshotOf: string | null = null;
 
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
+  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
     super(config, options);
+    this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
   }
 
   // --------------------------------------------------------------------------
@@ -530,7 +567,12 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       // `.lock` too, since lock() reads a lock it finds taken to judge whether it is stale, and that
       // read of a FIFO waited for a writer on the server's own thread.
       assertRegularFilesOrMissing(dbPath, LIBREDB_SIDECAR_SUFFIXES);
-      this.db = lib.open({ path: dbPath });
+      if (this.readOnlyProfile) {
+        this.snapshotOf = fileSnapshotOf(dbPath);
+        this.db = openReadOnly(lib, dbPath);
+      } else {
+        this.db = lib.open({ path: dbPath });
+      }
       this.kv = lib.kv(this.db);
       this.dbVersion = lib.version;
       this.dbPath = dbPath;
@@ -549,6 +591,10 @@ export class LibreDBProvider extends BaseDatabaseProvider {
    * generic wrapper together with non-kernel errors.
    */
   private describeOpenError(lib: LibreDBModule, error: unknown): string {
+    // Only the read-only open can meet a missing file: the editor's open creates it.
+    if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") {
+      return `The LibreDB file ${this.resolveDatabasePath()} does not exist. The agent opens an existing file read-only and creates none.`;
+    }
     if (error instanceof lib.LibreDbError) {
       switch (error.code) {
         case "LOCKED":
@@ -575,8 +621,28 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       this.db = null;
       this.kv = null;
       this.dbPath = null;
+      this.snapshotOf = null;
     }
     this.setConnected(false);
+  }
+
+  /**
+   * On a read-only handle, a handle is a snapshot of what was committed when it opened, while the editor's writer keeps
+   * committing beside it, and a profiled handle lives until the idle sweep. So before every read the file is looked at
+   * again and, when it changed, the snapshot is reopened through the read-only adapter, so the agent's object reads
+   * see what the writer has committed. The writable handle is the file's only writer and is always current.
+   */
+  protected override ensureConnected(): void {
+    super.ensureConnected();
+    if (!this.readOnlyProfile) return;
+    const dbPath = this.dbPath as string;
+    const current = fileSnapshotOf(dbPath);
+    if (current === this.snapshotOf) return;
+    const next = openReadOnly(libredbModule!, dbPath);
+    this.db!.close();
+    this.db = next;
+    this.kv = libredbModule!.kv(next);
+    this.snapshotOf = current;
   }
 
   // --------------------------------------------------------------------------
@@ -733,6 +799,116 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     });
   }
 
+  /**
+   * One agent read, on a handle opened under the agent read-only profile.
+   *
+   * The boundary is the handle, not the reader: the statement runs on a handle of its own, opened through the read-only
+   * file adapter for this statement and closed after it, so no state, and no latch a refused write left, reaches the
+   * next statement, and a write the reader somehow admitted would still fail with the file unchanged. Before that the
+   * statement is read with the agent's form (`readLibreDBReadCommand`): one `get`, `prefix` or `range` on one line,
+   * every write refused by name, so the model reads why.
+   *
+   * A result past the row or byte budget is refused, never cut; the scan stops one key past the row budget. The read
+   * runs in this server's own thread and cannot be stopped midway, so a read that outran the time budget is refused
+   * when it ends, as SQLite's in-process fallback is.
+   */
+  public async queryReadOnly(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    if (!this.readOnlyProfile) {
+      throw new RefusedBeforeSendError(
+        "Read-only execution requires a provider opened under the agent read-only profile",
+        "libredb",
+        statement,
+      );
+    }
+    assertReadOnlyBudget(budget, "libredb");
+    if (mode !== "execute") {
+      throw new RefusedBeforeSendError(
+        "LibreDB has no query plan: there is no plan to estimate for a command",
+        "libredb",
+        statement,
+      );
+    }
+    const reading = readLibreDBReadCommand(statement);
+    if (!reading.ok) throw new RefusedBeforeSendError(reading.message, "libredb", statement);
+    super.ensureConnected();
+    return this.trackQuery(async () => {
+      const { result, executionTime } = await this.measureExecution(async () =>
+        this.readForAgent(reading.command, budget, statement),
+      );
+      if (executionTime > budget.statementTimeoutMs) {
+        throw new QueryError(
+          `${TIME_BUDGET_PREFIX}: ${executionTime}ms > ${budget.statementTimeoutMs}ms allowed`,
+          "libredb",
+          statement,
+        );
+      }
+      return { ...result, executionTime };
+    });
+  }
+
+  /** `command` on a read-only handle opened for it alone, bounded by `budget`. */
+  private readForAgent(
+    command: LibreDBReadCommand,
+    budget: ReadOnlyStatementBudget,
+    statement: string,
+  ): Omit<QueryResult, "executionTime"> {
+    const lib = libredbModule!;
+    let db: LibreDatabase;
+    try {
+      db = openReadOnly(lib, this.dbPath as string);
+    } catch (error) {
+      throw new ConnectionError(this.describeOpenError(lib, error), "libredb");
+    }
+    try {
+      const store = lib.kv(db);
+      const rows: Record<string, unknown>[] = [];
+      let bytes = 0;
+      for (const { key, value } of this.agentScan(store, command)) {
+        if (this.isReserved(key)) continue;
+        if (rows.length === budget.maxResultRows) {
+          throw new QueryError(
+            `${rowBudgetSentence(rows.length + 1, budget.maxResultRows)}; the read stops one key past the budget, so at least ${rows.length + 1} keys match and the total is not known: narrow the prefix or the range`,
+            "libredb",
+            statement,
+          );
+        }
+        const row = { key, value: this.renderValue(value) };
+        bytes += measureRowBytes(row);
+        if (bytes > budget.maxResultBytes) {
+          throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), "libredb", statement);
+        }
+        rows.push(row);
+      }
+      return { rows, fields: ["key", "value"], rowCount: rows.length };
+    } catch (error) {
+      // A key the kernel refuses (an empty prefix, a lone surrogate) is the statement's to repair, as in the editor.
+      if (error instanceof lib.LibreDbError && error.code === "INVALID_ARGUMENT") {
+        throw new QueryError(error.message, "libredb", statement);
+      }
+      throw error;
+    } finally {
+      db.close();
+    }
+  }
+
+  /** The entries `command` reads: one key, or a prefix or range scan. */
+  private agentScan(store: LibreKv, command: LibreDBReadCommand): Iterable<{ key: string; value: string }> {
+    switch (command.verb) {
+      case "get": {
+        const value = store.get(command.key);
+        return value === undefined ? [] : [{ key: command.key, value }];
+      }
+      case "prefix":
+        return store.prefix(command.prefix);
+      case "range":
+        return store.range(command.start, command.end);
+    }
+  }
+
   private runCommand(input: string): Omit<QueryResult, "executionTime"> {
     const line = this.firstCommandLine(input);
     if (line === "") {
@@ -806,39 +982,10 @@ export class LibreDBProvider extends BaseDatabaseProvider {
     return "";
   }
 
-  /**
-   * Split on whitespace, honoring single/double quotes (Redis-style).
-   *
-   * Note: consecutive whitespace outside quotes is collapsed to a single
-   * token boundary (unquoted `put key hello  world` stores `"hello world"`).
-   * To preserve exact spacing, wrap the value in quotes: `put key "hello  world"`.
-   */
+  /** Split on whitespace, honoring single/double quotes (`tokenizeLibreDBCommand`). */
   private tokenize(input: string): string[] {
-    const parts: string[] = [];
-    let current = "";
-    let inQuote = false;
-    let quoteChar = "";
-    let sawToken = false;
-    for (const ch of input) {
-      if (!inQuote && (ch === '"' || ch === "'")) {
-        inQuote = true;
-        quoteChar = ch;
-        sawToken = true;
-      } else if (inQuote && ch === quoteChar) {
-        inQuote = false;
-      } else if (!inQuote && /\s/.test(ch)) {
-        if (sawToken) {
-          parts.push(current);
-          current = "";
-          sawToken = false;
-        }
-      } else {
-        current += ch;
-        sawToken = true;
-      }
-    }
-    if (sawToken) parts.push(current);
-    if (inQuote) {
+    const parts = tokenizeLibreDBCommand(input);
+    if (parts === null) {
       throw new QueryError("Unmatched quote in command", "libredb");
     }
     return parts;

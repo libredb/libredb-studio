@@ -4265,20 +4265,74 @@ describe("single-writer file reuse", () => {
     await expect(agent.queryReadOnly!("INSERT INTO t (id) VALUES (1)", AGENT_BUDGET)).rejects.toThrow();
   });
 
-  test("a profile that sends statements is still refused rather than handed the writable handle", async () => {
-    // The borrow is scoped to `agent-operations`, the profile that sends no statement
-    // at all. `agent-read-only` and `agent-handover` send one, and an engine with no
-    // read-only statement path is refused as it always was - being able to reuse a
-    // handle is not a reason to run a model's statement through a writable one.
+  test("a profile that sends statements opens its own read-only handle beside the writer, never the writable one", async () => {
+    // The borrow is scoped to `agent-operations`, the profile that sends no statement at all. `agent-read-only` sends
+    // the model's statements, so it is never handed the writable handle; it opens one of its own through the read-only
+    // file adapter, which takes no writer lock, so the held lock does not refuse it LOCKED, and no call on it can write.
     const conn = libredbConn();
     const writable = await getOrCreateProvider(conn);
+    await writable.query("put users:1 Ada");
+    const file = conn.database as string;
+    const before = readFileSync(file);
 
-    const error: unknown = await acquireExecutionProfileProvider(conn, "agent-read-only").catch((e: unknown) => e);
+    const agent = await acquireExecutionProfileProvider(conn, "agent-read-only");
 
-    expect(error).toBeInstanceOf(ExecutionProfileError);
-    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_UNSUPPORTED_BY_PROVIDER");
+    expect(agent).not.toBe(writable);
+    expect(getExecutionProfileCacheStats()).toEqual({ size: 1, connections: [conn.id] });
+    expect((await agent.queryReadOnly!("get users:1", AGENT_BUDGET)).rows).toEqual([{ key: "users:1", value: "Ada" }]);
+    // A write sent past the agent's reader, on the agent's own handle, fails, and the file is unchanged.
+    await expect(agent.query("put users:9 Mallory")).rejects.toThrow(/failed to reach the disk/);
+    expect(readFileSync(file)).toEqual(before);
+    // The writer and the reader coexist: the writer still writes, and the reader's next statement reads it.
+    await writable.query("put users:2 Grace");
+    expect((await agent.queryReadOnly!("get users:2", AGENT_BUDGET)).rowCount).toBe(1);
     expect(writable.isConnected()).toBe(true);
+    // A profiled handle is never offered to the editor's borrow.
+    expect(findOpenSingleWriterProvider(conn)).toBe(writable);
+    await removeProvider(conn.id);
   });
+
+  test("a profiled reader opened first does not lock the editor out of the file", async () => {
+    // The opposite order: before the read-only adapter, an agent run on a file nobody had browsed opened a locking
+    // handle under the profiled key, and the editor's open of the same file was then refused until the idle sweep.
+    const conn = libredbConn();
+    const first = await getOrCreateProvider(conn);
+    await first.query("put users:1 Ada");
+    await removeProvider(conn.id);
+    const agent = await acquireExecutionProfileProvider(conn, "agent-handover");
+    expect(findOpenSingleWriterProvider(conn)).toBeNull();
+
+    const writable = await getOrCreateProvider(conn);
+
+    expect(writable).not.toBe(agent);
+    expect(writable.isConnected()).toBe(true);
+    await writable.query("put users:2 Grace");
+    expect((await agent.queryReadOnly!("prefix users:", AGENT_BUDGET)).rowCount).toBe(2);
+    await removeProvider(conn.id);
+  });
+
+  test.each([
+    ["an agent user and password", { agentUser: "agent", agentPassword: "not-a-real-password" }],
+    ["an agent password alone", { agentPassword: "not-a-real-password" }],
+    ["an agent user alone", { agentUser: "agent" }],
+  ] as const)(
+    "the agent read-only profile refuses %s on this engine before it opens the file",
+    async (_label, credential) => {
+      const conn = libredbConn(credential);
+      const writable = await getOrCreateProvider(conn);
+      const before = readFileSync(conn.database as string);
+
+      const error: unknown = await acquireExecutionProfileProvider(conn, "agent-read-only").catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ExecutionProfileError);
+      expect((error as ExecutionProfileError).reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
+      expect((error as Error).message).toContain("this engine takes none");
+      expect(getExecutionProfileCacheStats().size).toBe(0);
+      expect(readFileSync(conn.database as string)).toEqual(before);
+      expect(writable.isConnected()).toBe(true);
+      await removeProvider(conn.id);
+    },
+  );
 
   test("a configured agent credential opts out of borrowing (fail closed)", async () => {
     // The borrowed handle was opened under the connection's own credentials. An
