@@ -8067,6 +8067,12 @@ No statement classifier can be the boundary there: `nextval`, `EXECUTE IMMEDIATE
 
 Found 2026-10-07 while designing the Databend provider (design 5.7).
 
+Amended 2026-10-30, measured on `datafuselabs/databend:v1.2.951-nightly` with a user holding only `SELECT` on one database and the RBAC check on.
+That user turns `enable_experimental_rbac_check` off for its own statements with `SET`, `SET SESSION`, `UNSET`, a leading `SETTINGS (...)` clause or the request's session settings; only `SET GLOBAL` is refused.
+With the check off it reads a stage and runs a function it holds no grant on.
+With the check on it still runs `nextval`, `fuse_vacuum2`, `fuse_vacuum_temporary_table` and the two `fuse_vacuum_drop_*_index` functions from a SELECT shape.
+So neither a proof of the user's grants nor a fence over the statement text bounds what an agent statement could do, and the agent path stays closed; MCP read would stay closed on Databend even with one, since it can resume a billed Databend Cloud warehouse.
+
 **Done when:** a statement contract for Databend is measured and `queryReadOnly` implements it, `AGENT_EXECUTION_ENGINES` and the engines `run_read_query` serves name Databend, and an agent run and an MCP call each drive a SELECT-shaped writer to its refusal in a test.
 
 ### B104. S3-compatible object storage has no agent execution and no MCP surface
