@@ -71,13 +71,13 @@ const COUCHBASE_CATALOG_READ: AgentCatalogRead = Object.freeze({
 });
 
 /**
- * What a plan run on Couchbase is told on top of the SQL contract: how SQL++ names what it reads, and what the agent
- * path sends, each measured on 8.0.2.
+ * What a plan run on Couchbase is told on top of the SQL contract: how SQL++ names what it reads, each measured on
+ * 8.0.2. A plan run drafts writes too, for the owner to run in the editor, so the agent path's one-SELECT fence
+ * (`src/lib/db/providers/document/couchbase/agent-boundary.ts`) is never said here.
  */
 const SQLPP_PLANNING_RULES: readonly string[] = Object.freeze([
   "Name a collection as scope.collection with each part in backticks (`_default`.`_default` for the bucket's default collection): the query context is the connection's bucket, and a bare name reads as a collection of the _default scope.",
   "Documents are JSON: reach a nested field with a dot (d.address.city) and an array element with brackets, and alias the collection (FROM `s`.`c` AS d) so META(d).id names the document key.",
-  "Send one SELECT, a WITH before it allowed; UPDATE STATISTICS, INFER, EXPLAIN, ADVISE, PREPARE and EXECUTE are refused before they are sent.",
 ]);
 
 /** The SQL grounding with SQL++'s naming added, and no relation inventory, since SQL++ has no foreign key. */

@@ -206,10 +206,12 @@ describe("the engine registry", () => {
       planningRules: [
         "Name a collection as scope.collection with each part in backticks (`_default`.`_default` for the bucket's default collection): the query context is the connection's bucket, and a bare name reads as a collection of the _default scope.",
         "Documents are JSON: reach a nested field with a dot (d.address.city) and an array element with brackets, and alias the collection (FROM `s`.`c` AS d) so META(d).id names the document key.",
-        "Send one SELECT, a WITH before it allowed; UPDATE STATISTICS, INFER, EXPLAIN, ADVISE, PREPARE and EXECUTE are refused before they are sent.",
       ],
     });
     expect(Object.isFrozen(couchbase)).toBe(true);
+    // A plan run drafts any statement, a write included, for the owner to run in the editor: the agent path's
+    // one-SELECT fence is the provider's to enforce and never a planning rule.
+    expect(couchbase.planningRules?.some((rule) => /\bSELECT\b/.test(rule))).toBe(false);
   });
 });
 
