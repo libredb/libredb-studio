@@ -276,6 +276,35 @@ describe("proveNeo4jAgentPrincipal", () => {
     expect(error.message).toContain("could not read the server's answer to SHOW USER PRIVILEGES");
   });
 
+  test("a denial of LOAD on a CIDR range does not override a grant on ALL DATA", async () => {
+    const rows = [
+      ...rowsOf("loader", "proof-privileges"),
+      {
+        access: "DENIED",
+        action: "load",
+        resource: "file",
+        graph: "*",
+        segment: "CIDR('10.0.0.0/8')",
+        role: "x",
+        user: "loader",
+      },
+    ];
+    const loader = recordedGraphClient(at("loader"));
+    const client: Pick<GraphClient, "run"> = {
+      run: (text, options) =>
+        text === NEO4J_AGENT_PROOF_STATEMENTS.privileges
+          ? Promise.resolve({ fields: Object.keys(rows[0]), rows, truncated: false })
+          : loader.run(text, options),
+    };
+    expect((await refusal(client)).message).toContain("holds LOAD on ALL DATA through the role csv_loader");
+  });
+
+  test("a current-user row with no roles field at all is answered as Community answers", async () => {
+    const answer = { fields: ["user"], rows: [{ user: "agent" }], truncated: false };
+    const error = await refusal(agentWith(NEO4J_AGENT_PROOF_STATEMENTS.currentUser, answer));
+    expect(error.message).toContain("answers SHOW CURRENT USER with no roles");
+  });
+
   test("refuses an execute privilege on anything but procedures or functions", async () => {
     const rows = [
       ...rowsOf("agent", "proof-privileges"),
