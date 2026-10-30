@@ -11,5 +11,5 @@
   },
   "status": 200,
   "contentType": "application/json",
-  "body": "[{\"name\":\"PMGcW3JafiXK\",\"per_node_status\":{\"node1\":\"READY\"},\"status\":\"READY\",\"vectorQueueSize\":0}]\n"
+  "body": "[{\"name\":\"ZTZKH0Prcp1b\",\"per_node_status\":{\"node1\":\"READY\"},\"status\":\"READY\",\"vectorQueueSize\":0}]\n"
 }

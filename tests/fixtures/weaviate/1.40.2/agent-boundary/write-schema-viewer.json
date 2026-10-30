@@ -1,0 +1,15 @@
+{
+  "version": "1.40.2",
+  "name": "agent-boundary/write-schema-viewer",
+  "image": "cr.weaviate.io/semitechnologies/weaviate:1.40.2@sha256:0083587dc01f33112e5406ce9b471df1abea480c71a0407af903929a389ae08a",
+  "capturedAt": "2026-10-30",
+  "principal": "viewer: db user holding the built-in viewer role",
+  "request": {
+    "method": "DELETE",
+    "path": "/v1/schema/Doc",
+    "auth": "bearer"
+  },
+  "status": 403,
+  "contentType": "application/json",
+  "body": "{\"error\":[{\"message\":\"rbac: authorization, forbidden action: user 'viewer' has insufficient permissions to delete_collections [[Domain: collections, Collection: Doc]]\"}]}\n"
+}

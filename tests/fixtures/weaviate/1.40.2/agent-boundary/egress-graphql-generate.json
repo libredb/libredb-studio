@@ -14,6 +14,6 @@
   },
   "status": 200,
   "contentType": "application/json",
-  "body": "{\"data\":{\"Get\":{\"Doc\":[{\"_additional\":{\"generate\":{\"error\":\"{failed to parse generative response (status 500): unexpected end of JSON input 0xdac522322e8}\",\"singleResult\":null}},\"body\":\"doc-11\"}]}}}\n",
+  "body": "{\"data\":{\"Get\":{\"Doc\":[{\"_additional\":{\"generate\":{\"error\":\"{failed to parse generative response (status 500): unexpected end of JSON input 0x17a0ddb84090}\",\"singleResult\":null}},\"body\":\"doc-11\"}]}}}\n",
   "egressRequests": 1
 }

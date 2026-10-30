@@ -275,6 +275,22 @@ async function main() {
   await capture("manual-aggregate", "viewer", "POST", "/v1/aggregate/TenantedManual", { tenant: "cold" });
   await capture("manual-record-after", "viewer", "GET", "/v1/schema/TenantedManual/tenants/cold");
 
+  // The viewer's writes, each sent past every Studio check, with the root user's same write as the positive control
+  // and the count of Note before and after each.
+  const write = { class: "Note", id: uuid(9), properties: { body: "probe-write" } };
+  await capture("write-count-before", "viewer", "POST", "/v1/aggregate/Note", {});
+  await capture("write-object-viewer", "viewer", "POST", "/v1/objects", write);
+  await capture("write-count-after-viewer", "viewer", "POST", "/v1/aggregate/Note", {});
+  await capture("write-tenant-viewer", "viewer", "PUT", "/v1/schema/TenantedManual/tenants", [
+    { name: "hot", activityStatus: "COLD" },
+  ]);
+  await capture("write-tenant-after-viewer", "viewer", "GET", "/v1/schema/TenantedManual/tenants/hot");
+  await capture("write-schema-viewer", "viewer", "DELETE", "/v1/schema/Doc");
+  await capture("write-schema-after-viewer", "viewer", "GET", "/v1/schema/Doc");
+  await capture("write-object-root", "root", "POST", "/v1/objects", write, "the positive control");
+  await capture("write-count-after-root", "viewer", "POST", "/v1/aggregate/Note", {});
+  await root("DELETE", `/v1/objects/Note/${uuid(9)}`);
+
   // Vectorizer and generative egress: Doc names text2vec-openai and generative-openai at the listener.
   const egress = [
     ["egress-hybrid-alpha-half", "POST", "/v1/search/Doc/hybrid", { query: "doc", alpha: 0.5, limit: 1 }],

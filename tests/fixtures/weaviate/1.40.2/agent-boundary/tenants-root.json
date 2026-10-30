@@ -11,5 +11,5 @@
   },
   "status": 200,
   "contentType": "application/json",
-  "body": "[{\"activityStatus\":\"COLD\",\"name\":\"cold\"},{\"activityStatus\":\"HOT\",\"name\":\"hot\"}]\n"
+  "body": "[{\"activityStatus\":\"HOT\",\"name\":\"hot\"},{\"activityStatus\":\"COLD\",\"name\":\"cold\"}]\n"
 }
