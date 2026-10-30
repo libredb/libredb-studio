@@ -12,6 +12,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 import * as realOidc from "@/lib/oidc";
+import { withBasePathEnv } from "../helpers/base-path";
 import { CookieJar, type CookieWrite } from "../helpers/openshift-auth/cookie-jar";
 import { type FakeCluster, startFakeCluster } from "../helpers/openshift-auth/fake-cluster";
 import { approvedSignIn, callbackRequest } from "../helpers/openshift-auth/sign-in";
@@ -63,7 +64,7 @@ const STUDIO_COOKIES = [
 const ROOT = join(import.meta.dir, "..", "..");
 const SRC = join(ROOT, "src");
 
-/** The modules that hold a cookie store; a new one fails the guard until it is listed here and scoped the same way. */
+/** The modules that touch a cookie; a new one fails the guard until it is listed here and scoped the same way. */
 const COOKIE_STORE_MODULES = [
   "src/app/api/auth/logout/route.ts",
   "src/app/api/auth/oidc/callback/route.ts",
@@ -74,6 +75,45 @@ const COOKIE_STORE_MODULES = [
   "src/lib/passkey/ceremony.ts",
   "src/proxy.ts",
 ];
+
+/**
+ * Modules that write a cookie but are no Studio cookie, each with its reason. A module listed here must stay imported
+ * by nothing, so the browser never receives its cookie; the moment something imports it, the guard fails.
+ */
+const UNUSED_COOKIE_WRITERS: Record<string, string> = {
+  // The shadcn sidebar primitive keeps its open state in a client-side cookie; nothing renders it.
+  "src/components/ui/sidebar.tsx": "unused shadcn primitive, a client-side UI preference cookie",
+};
+
+/** Whether a source touches a cookie by any API: a request cookie store, a response's cookies, a Set-Cookie header or document.cookie. */
+const COOKIE_API =
+  /\bcookies\(\)|\.cookies\.(?:get|getAll|has|set|delete)\(|\brequest\.cookies\b|\bdocument\.cookie\b|\.(?:set|append)\(\s*["'`]set-cookie["'`]|["'`]set-cookie["'`]\s*:/i;
+
+/** A Set-Cookie header or document.cookie: a cookie write the scoped-call guard below cannot see into. */
+const RAW_COOKIE_WRITE = /\bdocument\.cookie\b|\.(?:set|append)\(\s*["'`]set-cookie["'`]|["'`]set-cookie["'`]\s*:/i;
+
+/**
+ * Every call on a cookie store in `source` that does not take its name from a scope, or delete through cookieDeletion.
+ * A store is `(await cookies())`, any `<x>.cookies`, and every name `await cookies()` is assigned to or a parameter
+ * typed as its result is given, whatever that name is.
+ */
+function unscopedCookieCalls(source: string): { calls: number; wrong: string[] } {
+  const names = [
+    ...source.matchAll(/\b(?:const|let|var)\s+([\w$]+)\s*=\s*await\s+cookies\(\)/g),
+    ...source.matchAll(/\b([\w$]+)\s*:\s*Awaited<ReturnType<typeof cookies>>/g),
+  ].map((match) => match[1]);
+  const holders = ["\\(await cookies\\(\\)\\)", "[\\w$]+(?:\\.[\\w$]+)*\\.cookies", ...new Set(names)];
+  const pattern = new RegExp(`(?<![\\w$.])(?:${holders.join("|")})\\.(get|getAll|has|set|delete)\\(`, "g");
+  const wrong: string[] = [];
+  let calls = 0;
+  for (const call of source.matchAll(pattern)) {
+    calls += 1;
+    const argument = firstArgument(source, (call.index ?? 0) + call[0].length - 1);
+    const allowed = call[1] === "delete" ? /^cookieDeletion\(/.test(argument) : /\.name$/.test(argument);
+    if (!allowed) wrong.push(`${call[0]}${argument})`);
+  }
+  return { calls, wrong };
+}
 
 function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -98,12 +138,44 @@ function firstArgument(source: string, open: number): string {
 }
 
 describe("every module that touches a cookie store takes the cookie's name from its scope", () => {
-  test("the modules holding a cookie store are exactly the listed ones", () => {
-    const holders = sourceFiles(SRC)
-      .filter((path) => /\bcookies\(\)|\brequest\.cookies\b/.test(readFileSync(path, "utf8")))
+  test("the guard sees every cookie API, under any variable name", () => {
+    for (const source of [
+      "const res = NextResponse.next(); res.cookies.set('x', '1');",
+      "headers.append('Set-Cookie', 'x=1');",
+      'new Response(null, { headers: { "set-cookie": "x=1" } });',
+      "document.cookie = 'x=1';",
+      "const jar = await cookies(); jar.get('x');",
+    ]) {
+      expect({ source, seen: COOKIE_API.test(source) }).toEqual({ source, seen: true });
+    }
+    expect(RAW_COOKIE_WRITE.test("headers.set(`Set-Cookie`, line)")).toBe(true);
+    expect(unscopedCookieCalls("const jar = await cookies(); jar.set('x', v);").wrong).toEqual(["jar.set('x')"]);
+    expect(unscopedCookieCalls("this.response.cookies.delete('x');").wrong).toEqual([
+      "this.response.cookies.delete('x')",
+    ]);
+    expect(unscopedCookieCalls("function f(c: Awaited<ReturnType<typeof cookies>>) { c.get('x'); }").wrong).toEqual([
+      "c.get('x')",
+    ]);
+    expect(
+      unscopedCookieCalls("const s = await cookies(); s.set(scope.name, v); s.delete(cookieDeletion(scope));"),
+    ).toEqual({ calls: 2, wrong: [] });
+  });
+
+  test("the modules touching a cookie are exactly the listed ones, and the unused writers stay unimported", () => {
+    const files = sourceFiles(SRC);
+    const holders = files
+      .filter((path) => COOKIE_API.test(readFileSync(path, "utf8")))
       .map(relativePath)
       .sort();
-    expect(holders).toEqual(COOKIE_STORE_MODULES);
+    expect(holders).toEqual([...COOKIE_STORE_MODULES, ...Object.keys(UNUSED_COOKIE_WRITERS)].sort());
+    const importers = files.flatMap((path) => {
+      const source = readFileSync(path, "utf8");
+      return Object.keys(UNUSED_COOKIE_WRITERS)
+        .map((writer) => writer.replace(/^src\//, "@/").replace(/\.tsx?$/, ""))
+        .filter((specifier) => source.includes(`"${specifier}"`) || source.includes(`'${specifier}'`))
+        .map((specifier) => `${relativePath(path)} imports ${specifier}`);
+    });
+    expect(importers).toEqual([]);
   });
 
   test("each one scopes its cookies, reads and sets by the scope's name and deletes through cookieDeletion", () => {
@@ -111,17 +183,10 @@ describe("every module that touches a cookie store takes the cookie's name from 
     for (const file of COOKIE_STORE_MODULES) {
       const source = readFileSync(join(ROOT, file), "utf8");
       if (!/\b(studioCookie|cookieScope)\(/.test(source)) wrong.push(`${file} never scopes a cookie`);
-      const calls = source.matchAll(
-        /\b(?:cookieStore|store|request\.cookies|\(await cookies\(\)\))\.(get|set|delete)\(/g,
-      );
-      let seen = 0;
-      for (const call of calls) {
-        seen += 1;
-        const argument = firstArgument(source, (call.index ?? 0) + call[0].length - 1);
-        const allowed = call[1] === "delete" ? /^cookieDeletion\(/.test(argument) : /\.name$/.test(argument);
-        if (!allowed) wrong.push(`${file}: ${call[0]}${argument})`);
-      }
-      if (seen === 0) wrong.push(`${file} holds a cookie store but the guard matched no call on it`);
+      if (RAW_COOKIE_WRITE.test(source)) wrong.push(`${file} writes a cookie through a raw header or document.cookie`);
+      const { calls, wrong: unscoped } = unscopedCookieCalls(source);
+      for (const call of unscoped) wrong.push(`${file}: ${call}`);
+      if (calls === 0) wrong.push(`${file} holds a cookie store but the guard matched no call on it`);
     }
     expect(wrong).toEqual([]);
   });
@@ -205,7 +270,7 @@ describe("with Secure on, every cookie the real routes write is a __Host- cookie
     }
   });
 
-  async function signInEveryWay(): Promise<void> {
+  async function signInEveryWay(basePath: string): Promise<void> {
     process.env.NEXT_PUBLIC_AUTH_PROVIDER = "local";
     const password = await passwordLogin(
       new NextRequest("https://studio.example.com/api/auth/login", {
@@ -225,15 +290,17 @@ describe("with Secure on, every cookie the real routes write is a __Host- cookie
     const callback = await oidcCallback(
       new Request("https://studio.example.com/api/auth/oidc/callback?code=c-1&state=s-1"),
     );
-    expect(callback.headers.get("location")).toBe("https://studio.example.com/");
+    expect(callback.headers.get("location")).toBe(`https://studio.example.com${basePath}/`);
     const logout = await logoutRoute(new NextRequest("https://studio.example.com/api/auth/logout", { method: "POST" }));
     expect(logout.status).toBe(200);
 
     cluster.reset();
     cluster.useEnv();
+    // The URL people open Studio at carries the base path (src/lib/openshift-auth/config.ts).
+    process.env.OPENSHIFT_PUBLIC_URL = `${process.env.OPENSHIFT_PUBLIC_URL}${basePath}`;
     const { params } = await approvedSignIn(openShiftLogin, cluster);
     expect((await openShiftCallback(callbackRequest(params))).headers.get("location")).toBe(
-      "https://studio.apps.example.com/",
+      `https://studio.apps.example.com${basePath}/`,
     );
     // A restart empties the token store, so the session is refused once and the retry marker is armed.
     resetOpenShiftSessions();
@@ -255,23 +322,43 @@ describe("with Secure on, every cookie the real routes write is a __Host- cookie
     await takeRegistrationCeremony();
   }
 
-  test("each write meets the __Host- rules through Next's serializer, and all seven cookies are written", async () => {
-    await signInEveryWay();
+  const isPlainName = (name: string) => (STUDIO_COOKIES as readonly string[]).includes(name);
 
-    const problems = jar.writes.flatMap((write) => {
-      const line = serialized(write);
-      return hostPrefixProblems(line).map((problem) => `${write.op} ${write.name}: ${problem} in ${line}`);
+  // At the root and under a base path, where a `__Host-` cookie still sits at Path=/ and its name carries the segments.
+  for (const [basePath, suffix] of [
+    ["", ""],
+    ["/tools/libredb", ".tools.libredb"],
+  ] as const) {
+    const inBasePath = (action: () => Promise<void>) =>
+      basePath === "" ? action() : withBasePathEnv(basePath, action);
+    const where = basePath === "" ? "at the root" : `under ${basePath}`;
+
+    test(`${where}, each write meets the __Host- rules through Next's serializer, and all seven are written`, async () => {
+      await inBasePath(() => signInEveryWay(basePath));
+
+      // The plain-named writes are the session cookie's legacy delete, pinned by the next case.
+      const problems = jar.writes
+        .filter((write) => !isPlainName(write.name))
+        .flatMap((write) => {
+          const line = serialized(write);
+          return hostPrefixProblems(line).map((problem) => `${write.op} ${write.name}: ${problem} in ${line}`);
+        });
+      expect(problems).toEqual([]);
+      const written = new Set(jar.writes.filter((write) => write.op === "set").map((write) => write.name));
+      expect([...written].sort()).toEqual(STUDIO_COOKIES.map((name) => `__Host-${name}${suffix}`).sort());
     });
-    expect(problems).toEqual([]);
-    const written = new Set(jar.writes.filter((write) => write.op === "set").map((write) => write.name));
-    expect([...written].sort()).toEqual(STUDIO_COOKIES.map((name) => `__Host-${name}`).sort());
-  });
 
-  test("the plain name of a Studio cookie is never read, whichever cookie it is", async () => {
-    await signInEveryWay();
+    test(`${where}, the plain name of a Studio cookie is never read, and only the plain session cookie is deleted`, async () => {
+      await inBasePath(() => signInEveryWay(basePath));
 
-    expect(jar.reads.filter((name) => (STUDIO_COOKIES as readonly string[]).includes(name))).toEqual([]);
-    // And never written over or deleted: the browser's plain-named cookie only expires.
-    expect(jar.writes.filter((write) => (STUDIO_COOKIES as readonly string[]).includes(write.name))).toEqual([]);
-  });
+      expect(jar.reads.filter(isPlainName)).toEqual([]);
+      // Never written over: the one plain-named write is the delete of the session cookie at its plain path, so a
+      // signed-out session cannot come back on a rollback to plain names. Every other plain-named cookie only expires.
+      const plainWrites = jar.writes.filter((write) => isPlainName(write.name)).map(serialized);
+      expect(plainWrites.length).toBeGreaterThan(0);
+      expect([...new Set(plainWrites)]).toEqual([
+        `auth-token=; Path=${basePath || "/"}; Expires=Thu, 01 Jan 1970 00:00:00 GMT`,
+      ]);
+    });
+  }
 });

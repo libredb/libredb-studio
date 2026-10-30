@@ -211,7 +211,8 @@ describe("the retry marker in openshift mode with host-prefixed names", () => {
     delete jar["auth-token"];
     resetOpenShiftSessions();
     expect(await getSession()).toBeNull();
-    expect(names("delete")).toEqual(["__Host-auth-token"]);
+    // The refused session is cleared, and with it the plain-named session cookie, which is never read.
+    expect(names("delete")).toEqual(["__Host-auth-token", "auth-token"]);
     expect(names("set")).toEqual(["__Host-access-review-retry"]);
 
     writes = [];

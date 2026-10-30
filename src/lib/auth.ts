@@ -17,7 +17,7 @@ import { AuthConfigError } from "@/lib/auth-errors";
 import { storedAccountAllows } from "@/lib/local-accounts";
 import { authenticateBearer } from "@/lib/oidc-bearer";
 import { openShiftRecordCheck } from "@/lib/openshift-auth/session";
-import { type CookieScope, SESSION_COOKIE, cookieDeletion } from "@/lib/auth-cookies";
+import { type CookieScope, SESSION_COOKIE, cookieDeletion, cookieScope } from "@/lib/auth-cookies";
 import { studioCookie } from "@/lib/studio-cookie";
 
 export { isLoopbackHost, readCookieSecureOverride, resetCookieSecurityWarning } from "@/lib/auth-cookies";
@@ -261,6 +261,16 @@ function sessionCookie(): Promise<CookieScope> {
   return studioCookie(SESSION_COOKIE, getBasePath() || "/");
 }
 
+/**
+ * In Secure mode, deletes the plain-named session cookie a browser upgraded from plain names may still hold. It is
+ * never read in that mode, but it is still a signed session: a rollback, or AUTH_COOKIE_SECURE=false, within its
+ * Max-Age would read it again, so sign-in and sign-out delete it. Plain mode has nothing to delete beside its own.
+ */
+function deletePlainSessionCookie(cookieStore: Awaited<ReturnType<typeof cookies>>, scope: CookieScope): void {
+  if (!scope.secure) return;
+  cookieStore.delete(cookieDeletion(cookieScope(SESSION_COOKIE, getBasePath() || "/", false)));
+}
+
 /** The access review's retry marker (src/lib/kubernetes-access/session-guard.ts), scoped like the session cookie. */
 function retryMarkerCookie(): Promise<CookieScope> {
   return studioCookie(ACCESS_REVIEW_RETRY_COOKIE, getBasePath() || "/");
@@ -297,9 +307,12 @@ export async function login(
     maxAge: lifetime,
     path: scope.path,
   });
+  deletePlainSessionCookie(cookieStore, scope);
 }
 
 export async function logout() {
   const cookieStore = await cookies();
-  cookieStore.delete(cookieDeletion(await sessionCookie()));
+  const scope = await sessionCookie();
+  cookieStore.delete(cookieDeletion(scope));
+  deletePlainSessionCookie(cookieStore, scope);
 }

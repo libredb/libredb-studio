@@ -154,6 +154,8 @@ describe("the retry marker with host-prefixed names", () => {
     expect(await getSession()).toBeNull();
     expect(writes.filter((write) => write.op === "delete")).toEqual([
       { op: "delete", name: "__Host-auth-token", options: { name: "__Host-auth-token", path: "/", secure: true } },
+      // The plain-named session cookie goes too, never read: a rollback to plain names cannot bring it back.
+      { op: "delete", name: "auth-token", options: { name: "auth-token", path: "/" } },
     ]);
     expect(writes.find((write) => write.op === "set")).toEqual({
       op: "set",

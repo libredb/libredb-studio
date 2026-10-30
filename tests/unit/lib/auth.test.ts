@@ -783,6 +783,16 @@ describe("auth", () => {
       expect(mockSetCalls[0].opts).toMatchObject({ path: "/", secure: true, httpOnly: true, sameSite: "lax" });
     });
 
+    // The plain-named cookie a browser upgraded from plain names still holds is never read in Secure mode, but it is
+    // still a valid session: a rollback, or AUTH_COOKIE_SECURE=false, within its Max-Age would read it again. Sign-in
+    // and sign-out delete it, without ever reading it.
+    test("login() in Secure mode deletes the plain auth-token at its plain path, without reading it", async () => {
+      mockCookieStore["auth-token"] = { value: await signJWT({ role: "user", username: "plain" }) };
+      await inSecureMode("studio.example.com", () => login("admin", "admin"));
+      expect(mockDeleteCalls).toEqual([{ name: "auth-token", path: "/" }]);
+      expect(mockCookieStore["auth-token"]).toBeUndefined();
+    });
+
     test("readSession() never reads a plain-named cookie in Secure mode", async () => {
       mockCookieStore["auth-token"] = { value: await signJWT({ role: "user", username: "user" }) };
       await inSecureMode("studio.example.com", async () => {
@@ -799,7 +809,7 @@ describe("auth", () => {
       });
     });
 
-    test("a refused session clears the __Host- name with Secure", async () => {
+    test("a refused session clears the __Host- name with Secure, and the plain name beside it", async () => {
       mockCookieStore["__Host-auth-token"] = { value: await signJWT({ role: "user", username: "user" }) };
       const allowsSpy = spyOn(localAccounts, "storedAccountAllows").mockResolvedValue(false);
       try {
@@ -809,12 +819,18 @@ describe("auth", () => {
       } finally {
         allowsSpy.mockRestore();
       }
-      expect(mockDeleteCalls).toEqual([{ name: "__Host-auth-token", path: "/", secure: true }]);
+      expect(mockDeleteCalls).toEqual([
+        { name: "__Host-auth-token", path: "/", secure: true },
+        { name: "auth-token", path: "/" },
+      ]);
     });
 
-    test("logout() deletes __Host-auth-token with Secure, which a browser requires", async () => {
+    test("logout() deletes __Host-auth-token with Secure, which a browser requires, and the plain auth-token", async () => {
       await inSecureMode("studio.example.com", () => logout());
-      expect(mockDeleteCalls).toEqual([{ name: "__Host-auth-token", path: "/", secure: true }]);
+      expect(mockDeleteCalls).toEqual([
+        { name: "__Host-auth-token", path: "/", secure: true },
+        { name: "auth-token", path: "/" },
+      ]);
     });
 
     test("verifiedSessionCookie() reads only the name of the current mode", async () => {
@@ -848,7 +864,11 @@ describe("auth", () => {
       );
       expect(mockSetCalls[0].name).toBe("__Host-auth-token.tools.libredb");
       expect(mockSetCalls[0].opts).toMatchObject({ path: "/", secure: true });
-      expect(mockDeleteCalls).toEqual([{ name: "__Host-auth-token.tools.libredb", path: "/", secure: true }]);
+      expect(mockDeleteCalls).toEqual([
+        { name: "auth-token", path: "/tools/libredb" },
+        { name: "__Host-auth-token.tools.libredb", path: "/", secure: true },
+        { name: "auth-token", path: "/tools/libredb" },
+      ]);
     });
   });
 });
