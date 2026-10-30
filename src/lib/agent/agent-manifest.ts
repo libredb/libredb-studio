@@ -36,7 +36,8 @@ export type AgentStatementLanguageId =
   | "weaviateapi"
   | "qdrantapi"
   | "cypher"
-  | "milvusrpc";
+  | "milvusrpc"
+  | "rediscli";
 
 /** Literal-typed, so `AgentEngineFamily` in `languages/pack.ts` reads each engine's language by type. */
 export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
@@ -59,7 +60,7 @@ export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
   opensearch: "sql",
   mongodb: "mongo",
   couchbase: "sql",
-  redis: null,
+  redis: "rediscli",
   prometheus: null,
   kafka: null,
   etcd: null,

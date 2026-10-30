@@ -8,6 +8,7 @@ import { fingerprintMongo, mongoRowCapAdvice } from "@/lib/agent/languages/mongo
 import { fingerprintWeaviateapi, weaviateapiRowCapAdvice } from "@/lib/agent/languages/weaviateapi/adapter";
 import { fingerprintQdrantapi, qdrantapiRowCapAdvice } from "@/lib/agent/languages/qdrantapi/adapter";
 import { fingerprintMilvusrpc, milvusrpcRowCapAdvice } from "@/lib/agent/languages/milvusrpc/adapter";
+import { fingerprintRediscli, rediscliRowCapAdvice } from "@/lib/agent/languages/rediscli/adapter";
 import { languageServer, languageServerPack } from "@/lib/agent/languages/server";
 import {
   admitLibredbkvStatement,
@@ -43,6 +44,12 @@ import {
   milvusrpcAgentReadInput,
 } from "@/lib/db/operations/milvusrpc-admission";
 import { MILVUS_AGENT_SENTENCES } from "@/lib/db/providers/vector/milvus/metadata-request";
+import {
+  admitRediscliStatement,
+  REDISCLI_AGENT_MAX_STATEMENT_CHARS,
+  rediscliAgentReadInput,
+} from "@/lib/db/operations/rediscli-admission";
+import { REDIS_AGENT_SENTENCES } from "@/lib/db/providers/keyvalue/redis-agent-statement";
 import { INFLUXQL_AGENT_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-statement";
 import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 
@@ -747,5 +754,67 @@ describe("the milvusrpc language's server adapter and admission", () => {
   test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
     expect(Object.keys(AGENT_WORKFLOW_VARIANTS.milvusrpc).sort()).toEqual(["investigation", "operations"]);
     expect(AGENT_WORKFLOW_VARIANTS.milvusrpc.investigation?.canAutoExecute).toBe(false);
+  });
+});
+
+describe("the rediscli language's server adapter and admission", () => {
+  test("the fingerprint is the argv the reader sends, so one read written three ways is one identity", () => {
+    const one = fingerprintRediscli("TYPE session:42");
+    expect(fingerprintRediscli("type   session:42")).toBe(one);
+    expect(fingerprintRediscli('TYPE "session:42"')).toBe(one);
+    expect(fingerprintRediscli("TYPE session:43")).not.toBe(one);
+    expect(fingerprintRediscli("TTL session:42")).not.toBe(one);
+  });
+
+  test("the fingerprint is total: a refused command is identified by its raw text, so it is refused again", () => {
+    const raw = "GET session:42";
+    expect(fingerprintRediscli(raw)).toBe(fingerprintRediscli(raw));
+    expect(fingerprintRediscli(raw)).toMatch(/^[0-9a-f]{64}$/);
+    expect(fingerprintRediscli(`${raw} `)).not.toBe(fingerprintRediscli(raw));
+  });
+
+  test("every read answers one row, so the copy names no advice key and the advice names no narrower read", () => {
+    expect(AGENT_LANGUAGE_COPY.rediscli.adviceKeys).toEqual([]);
+    expect(rediscliRowCapAdvice("DBSIZE", "0")).toBe(
+      "Ask for at most 0 rows: every Redis read agent mode runs answers one row, about the database or one key, so read one key at a time.",
+    );
+    expect(languageServer("rediscli").shapeAdvice).toContain("a valid Redis command");
+  });
+
+  test("the admission is the provider's reader, plus a length the agent's contract names", () => {
+    expect(admitRediscliStatement("DBSIZE")).toBeNull();
+    expect(admitRediscliStatement("GET session:42")).toEqual({
+      code: "metadata-only",
+      message: REDIS_AGENT_SENTENCES.metadataOnly,
+    });
+    expect(admitRediscliStatement("TYPE")?.code).toBe("arguments");
+    const long = `TYPE ${"k".repeat(REDISCLI_AGENT_MAX_STATEMENT_CHARS)}`;
+    expect(admitRediscliStatement(long)).toEqual({
+      code: "agent-too-large",
+      message: `The command is longer than ${REDISCLI_AGENT_MAX_STATEMENT_CHARS} characters, the most an agent read takes: shorten it. Nothing was sent.`,
+    });
+    expect(languageServer("rediscli").admit?.("TTL session:42")).toBeNull();
+  });
+
+  test("an ungrounded run is sent to a read it holds, and plan mode is told none of the reader's rules", () => {
+    const ungrounded = languageServerPack("rediscli").grounding.ungrounded;
+    expect(ungrounded?.("The capture failed.", { singular: "key", plural: "keys" })).toBe(
+      "The capture failed.\nSo nothing about this database has been established for you: not one key name, and none will be, since key names are withheld from agent mode. Read what you need with run_read_query, starting with DBSIZE.",
+    );
+    expect(languageServerPack("rediscli").grounding.planningRules).toBeUndefined();
+  });
+
+  test("the descriptor's input is strict, carries the command, and refuses what the admission refuses", () => {
+    expect(rediscliAgentReadInput.safeParse({ statement: "DBSIZE" }).success).toBe(true);
+    expect(rediscliAgentReadInput.safeParse({ statement: "DBSIZE", sql: "x" }).success).toBe(false);
+    const refused = rediscliAgentReadInput.safeParse({ statement: "KEYS *" });
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues[0]?.path).toEqual(["statement"]);
+    expect(refused.error?.issues[0]?.message).toBe(REDIS_AGENT_SENTENCES.metadataOnly);
+  });
+
+  test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
+    expect(Object.keys(AGENT_WORKFLOW_VARIANTS.rediscli).sort()).toEqual(["investigation", "operations"]);
+    expect(AGENT_WORKFLOW_VARIANTS.rediscli.investigation?.canAutoExecute).toBe(false);
   });
 });

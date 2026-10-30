@@ -33,6 +33,9 @@ import {
 import { EDIT_CHARACTER_LIMIT, userPositionOf } from "../../object-edit";
 import { connectionFingerprint } from "../../connection-fingerprint";
 import { readRedisCommandText } from "./redis-command-text";
+import { readRedisAgentStatement } from "./redis-agent-statement";
+import { REDIS_METADATA_ONLY, redisAgentFailure, redisAgentResult } from "./redis-metadata-read";
+import { proveRedisReadOnly, type RedisRoundTrip, redisAgentUser } from "./redis-read-only-proof";
 import { comparePaths } from "../../object-path";
 import {
   type DatabaseConnection,
@@ -74,8 +77,20 @@ import {
   type ObjectKindSpec,
   type ObjectSourceDocument,
   type OpenQueryTransactionOutcome,
+  type ProviderExecutionContext,
+  type ReadOnlyStatementBudget,
+  type ReadOnlyStatementMode,
 } from "../../types";
-import { AuthenticationError, ConnectionError, DatabaseConfigError, DatabaseError, QueryError } from "../../errors";
+import {
+  AuthenticationError,
+  ConnectionError,
+  DatabaseConfigError,
+  DatabaseError,
+  ExecutionProfileError,
+  QueryError,
+  RefusedBeforeSendError,
+} from "../../errors";
+import { assertReadOnlyBudget } from "../sql/read-only-budget";
 
 /**
  * Redis's identity for the shared container-path renderer.
@@ -1166,6 +1181,33 @@ function redisApplyFailure(payload: ObjectEditStep, error: unknown, duration: nu
   };
 }
 
+const PROFILE_REQUIRED = "Read-only execution requires a provider opened under the agent read-only profile";
+const NO_ESTIMATE = "Redis composes no estimating plan for the agent";
+
+/**
+ * What the object surface answers on a handle opened under the agent read-only profile, in place of a key grouping or
+ * a library name: key names count as stored values, so the agent's grounding walk is told why it reads none.
+ */
+const KEY_NAMES_WITHHELD =
+  "Agent mode on Redis reads metadata only, and key names count as stored values, so no key, key grouping or library name is listed to it.";
+
+/** The refusal of an editor surface on a handle opened under the agent read-only profile, whose reads are its own. */
+const PROFILE_SURFACE_REFUSED =
+  "A Redis handle opened under the agent read-only profile answers only the agent's metadata reads, through queryReadOnly.";
+
+/** One round trip of commands on `client`, each answered in order with its reply or the server's error line. */
+function pipelineRoundTrip(client: Redis): RedisRoundTrip {
+  return async (commands) => {
+    const pipeline = client.pipeline();
+    for (const [command, ...args] of commands) pipeline.call(command, ...args);
+    const results = (await pipeline.exec()) ?? [];
+    return commands.map((_, index) => {
+      const [error, reply] = results[index] ?? [new Error("no reply"), undefined];
+      return error ? { ok: false as const, error: error.message } : { ok: true as const, reply };
+    });
+  };
+}
+
 /** `CLIENT LIST` flags. `b` is a client blocked on a command; every other flag, including `N`, is idle. */
 function redisSessionActivity(flags: string): SessionActivity {
   return flags.includes("b") ? "waiting" : "idle";
@@ -1178,9 +1220,19 @@ function redisSessionActivity(flags: string): SessionActivity {
 export class RedisProvider extends BaseDatabaseProvider {
   private client: Redis | null = null;
 
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
+  /**
+   * Whether this handle was opened for the agent read-only profile by an acquisition that sends statements
+   * (`sendsStatements`). Only then does `connect()` refuse a connection that names no ACL user or names `default` and
+   * prove the user reads only, does `queryReadOnly` answer, and does the object surface answer without a key name.
+   * The operations profile's acquisitions send no statement, so they open unproved, as an editor connection does, and
+   * plan mode keeps grounding on any user.
+   */
+  private readonly readOnlyProfile: boolean;
+
+  constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
     super(config, options);
     this.validate();
+    this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
   }
 
   // ============================================================================
@@ -1254,6 +1306,8 @@ export class RedisProvider extends BaseDatabaseProvider {
       // reply in one go. 1000 is the same budget `KEY_SCAN_LIMIT` already puts on the object
       // surface's walk, so the two readings of one keyspace are bounded alike.
       keyScan: { defaultCount: 500, maxCount: 1000 },
+      // Key names, values, fields and members are stored values: the agent's answers carry counts, types and sizes.
+      metadataOnly: REDIS_METADATA_ONLY,
       schemaRefreshPattern: "(DEL|FLUSHDB|FLUSHALL|RENAME)\\b",
     };
   }
@@ -1406,8 +1460,8 @@ export class RedisProvider extends BaseDatabaseProvider {
    * "[ioredis] Unhandled error event" (#1356). The message only, never the error: a `ReplyError`
    * carries the command it answered, which for `AUTH` holds the password.
    */
-  private async openClient(db: number): Promise<Redis> {
-    const client = new Redis(this.redisOptions());
+  private async openClient(db: number, commandTimeout?: number): Promise<Redis> {
+    const client = new Redis({ ...this.redisOptions(), ...(commandTimeout === undefined ? {} : { commandTimeout }) });
     let connecting = true;
     let firstError: Error | undefined;
     client.on("error", (error: Error) => {
@@ -1456,7 +1510,17 @@ export class RedisProvider extends BaseDatabaseProvider {
    */
   public async connect(): Promise<void> {
     try {
-      this.client = await this.openClient(this.sessionDatabase());
+      // The agent read-only profile proves an ACL user of the agent's own, so one that names none, or `default`, is
+      // refused before any socket.
+      if (this.readOnlyProfile) redisAgentUser(this.config.user);
+      const client = await this.openClient(this.sessionDatabase());
+      if (this.readOnlyProfile) {
+        await proveRedisReadOnly(pipelineRoundTrip(client)).catch((error: unknown) => {
+          client.disconnect();
+          throw error;
+        });
+      }
+      this.client = client;
       this.setConnected(true);
     } catch (error) {
       this.setError(error instanceof Error ? error : new Error(String(error)));
@@ -1489,6 +1553,7 @@ export class RedisProvider extends BaseDatabaseProvider {
 
   public async query(sql: string): Promise<QueryResult> {
     this.ensureConnected();
+    if (this.readOnlyProfile) throw new RefusedBeforeSendError(PROFILE_SURFACE_REFUSED, "redis", sql);
 
     return this.trackQuery(async () => {
       const { result, executionTime } = await this.measureExecution(async () => {
@@ -1496,6 +1561,44 @@ export class RedisProvider extends BaseDatabaseProvider {
       });
 
       return { ...result, executionTime };
+    });
+  }
+
+  /**
+   * One agent command. Only on a handle opened under the agent read-only profile; the command is read by
+   * `readRedisAgentStatement` against the closed table and refused before anything is sent when it is not one of the
+   * metadata reads. Then, on a connection of its own in the connection's database, with the request's deadline as
+   * every command's timeout, the server is asked again to prove the user reads only, with no verdict kept from the open
+   * or the command before, and the read is sent. The connection is closed after it, so no state a command could leave
+   * reaches the next. Its answer is the metadata-only projection, refused past the row or byte budget rather than
+   * cut, and a server refusal is worded without the server's words.
+   */
+  public async queryReadOnly(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    this.ensureConnected();
+    if (!this.readOnlyProfile) throw new RefusedBeforeSendError(PROFILE_REQUIRED, "redis", statement);
+    assertReadOnlyBudget(budget, "redis");
+    if (mode !== "execute") throw new RefusedBeforeSendError(NO_ESTIMATE, "redis", statement);
+    const reading = readRedisAgentStatement(statement);
+    if (!reading.ok) throw new RefusedBeforeSendError(reading.message, "redis", statement);
+    const { op, argv } = reading.plan;
+    const started = Date.now();
+    return this.trackQuery(async () => {
+      let client: Redis | undefined;
+      try {
+        client = await this.openClient(this.sessionDatabase(), budget.statementTimeoutMs);
+        await proveRedisReadOnly(pipelineRoundTrip(client));
+        const reply: unknown = await client.call(argv[0], ...argv.slice(1));
+        return redisAgentResult(op, reply, budget, statement, Date.now() - started);
+      } catch (error) {
+        if (error instanceof ExecutionProfileError || error instanceof QueryError) throw error;
+        throw redisAgentFailure(error, budget, statement) ?? error;
+      } finally {
+        client?.disconnect();
+      }
     });
   }
 
@@ -1809,6 +1912,11 @@ export class RedisProvider extends BaseDatabaseProvider {
   public async listContainers(parent?: readonly string[]): Promise<Container[]> {
     this.ensureConnected();
     if (parent !== undefined && parent.length > 0) return [];
+    // The agent reads its connection's own database alone, and `CONFIG GET` is an admin command its user is refused.
+    if (this.readOnlyProfile) {
+      const session = String(this.sessionDatabase());
+      return [{ path: [session], name: session, level: 0, isSessionDefault: true }];
+    }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const reply = await (this.client as any).call("CONFIG", "GET", "databases");
@@ -1857,6 +1965,7 @@ export class RedisProvider extends BaseDatabaseProvider {
    */
   public async scanKeysPage(options: KeyScanOptions): Promise<KeyScanPage> {
     this.ensureConnected();
+    if (this.readOnlyProfile) throw new QueryError(PROFILE_SURFACE_REFUSED, "redis");
     const db = options.database ?? this.sessionDatabase();
 
     return this.withDatabase(db, async (client) => {
@@ -1901,6 +2010,11 @@ export class RedisProvider extends BaseDatabaseProvider {
     const db = containerDatabase(capabilities, container);
     const declared = declaredKinds(capabilities);
     const counts: Record<string, KindCount> = {};
+    // Counted from nothing: a keyspace count is a count of groupings of key names, which the agent is not given.
+    if (this.readOnlyProfile) {
+      for (const kind of declared) counts[kind.id] = { unavailable: KEY_NAMES_WITHHELD };
+      return counts;
+    }
 
     return this.withDatabase(db, async (client) => {
       // EVERY declared kind gets an entry, whatever the replies hold. Nine providers seed
@@ -1937,6 +2051,7 @@ export class RedisProvider extends BaseDatabaseProvider {
       throw new QueryError(`Redis declares no object kind "${kind}"`, "redis");
     }
     const db = containerDatabase(capabilities, container);
+    if (this.readOnlyProfile) return [];
     return this.withDatabase(db, async (client) => (await this.listIn(client, container, kind)).objects);
   }
 
@@ -2076,6 +2191,7 @@ export class RedisProvider extends BaseDatabaseProvider {
     }
 
     assertObjectPathShape(capabilities, spec, kind, path, PATH_SHAPE_ENGINE);
+    if (this.readOnlyProfile) throw new QueryError(PROFILE_SURFACE_REFUSED, "redis");
     const levels = declaredLevels(capabilities);
 
     if (kind !== "keyspace") return { path: [...path], columns: [], indexes: [], foreignKeys: [] };
@@ -2556,7 +2672,7 @@ export class RedisProvider extends BaseDatabaseProvider {
         "redis",
       );
     }
-    if (kind === "function") return { details: [] };
+    if (kind === "function" || this.readOnlyProfile) return { details: [] };
     if (kind !== "keyspace") {
       // The same sentence `listIn` refuses with, so a kind added to the declaration without
       // a reader fails by name on both methods rather than answering an empty folder here.

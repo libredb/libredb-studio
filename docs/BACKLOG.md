@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B155 · 85
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B156 · 86
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -8672,6 +8672,20 @@ Kept so that value exposure, MCP exposure and agent reads on servers with author
 Found 2026-10-30 with agent execution on Milvus.
 
 **Done when:** the owner rules on which stored values agent mode may read on Milvus and how they are redacted, the `milvusrpc` pack offers the workflows that ruling opens, the owner opens MCP read for Milvus, the pack declares its MCP facet (`src/lib/agent/languages/milvusrpc/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same read-only proof and projection, and `MCP_STATEMENT_READ.milvus` is true, with tests; cited in `docs/AGENT.md`.
+
+### B156. Redis's agent reads are metadata only, and it has no MCP statement tool
+
+Agent mode executes Redis metadata reads under the `rediscli` statement language, as an ACL user the server refuses write, admin, dangerous, scripting and pubsub probes that change nothing, proved before every command on that command's own connection (`docs/providers/redis.md`, section 16).
+Key names count as stored values, since applications put ids, emails and tokens in them, so the reads are the database's key count and, for one key the command names, its type, existence, time to live, length, encoding and memory use: nothing lists keys (`SCAN`, `KEYS`, `RANDOMKEY`) or reads a value, a hash field, a set or sorted-set member or a stream entry, every answer is projected to counts, types and sizes (`ProviderCapabilities.metadataOnly`, `src/lib/db/redaction/metadata-only.ts`), and the grounding under the agent profile holds no key name.
+`INFO` is not read either: the server's own `COMMAND INFO` flags it neither `readonly` nor anything but `@dangerous`, so it fails the rule every command in the table meets, and the server's other sections and the per-database counts of other databases stay unread.
+So the language offers the investigation and the operations workflow only: data analysis needs stored values, and query optimization and database assessment need a plan and a profile the server does not compose.
+Its MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`), so no MCP tool runs a Redis command; `MCP_STATEMENT_READ.redis` is false and the MCP metadata tools work, `inspect_schema` among them, which lists the key groupings the editor's tree derives from key names, as it did before agent mode joined.
+The proof's probes cannot name every write: a user granted one write command they leave out passes it, and the closed table, which sends no write, is what stops that user; Dragonfly, KeyDB, Garnet and a cluster are refused at open until each is measured.
+Kept so that key-name and value exposure, `INFO`, MCP exposure and the relatives are decisions of their own rather than side effects of agent mode joining.
+
+Found 2026-10-30 with agent execution on Redis.
+
+**Done when:** the owner rules on whether agent mode may read key names, which stored values it may read on Redis and how they are redacted, and whether `INFO` sections join the table as a named exception, the `rediscli` pack offers the workflows that ruling opens, the owner opens MCP read for Redis, the pack declares its MCP facet (`src/lib/agent/languages/rediscli/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same proof and projection, and `MCP_STATEMENT_READ.redis` is true, with tests; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

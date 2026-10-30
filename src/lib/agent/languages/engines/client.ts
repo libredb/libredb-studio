@@ -18,6 +18,7 @@ import { WEAVIATE_CLIENT_OVERLAY } from "../weaviateapi/engines/client";
 import { QDRANT_CLIENT_OVERLAY } from "../qdrantapi/engines/client";
 import { NEO4J_CLIENT_OVERLAY } from "../cypher/engines/client";
 import { MILVUS_CLIENT_OVERLAY } from "../milvusrpc/engines/client";
+import { REDIS_CLIENT_OVERLAY } from "../rediscli/engines/client";
 import { defineOverlay, dialectOnly } from "../overlay";
 import type { AgentEngineClientDialect, AgentEngineClientOverlays, AgentEnginePack, AgentEngineType } from "../pack";
 import {
@@ -62,6 +63,7 @@ const CLIENT_OVERLAYS: AgentEngineClientOverlays = Object.freeze({
   qdrant: Object.freeze({ family: "qdrantapi", overlay: dialectOnly(QDRANT_CLIENT_OVERLAY) }),
   neo4j: Object.freeze({ family: "cypher", overlay: dialectOnly(NEO4J_CLIENT_OVERLAY) }),
   milvus: Object.freeze({ family: "milvusrpc", overlay: dialectOnly(MILVUS_CLIENT_OVERLAY) }),
+  redis: Object.freeze({ family: "rediscli", overlay: dialectOnly(REDIS_CLIENT_OVERLAY) }),
 } satisfies AgentEngineClientOverlays);
 
 /**

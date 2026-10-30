@@ -149,7 +149,7 @@ test("no provider document whose type speaks no statement language carries the h
     .filter((type) => Object.hasOwn(AGENT_STATEMENT_LANGUAGE, type))
     .filter((type) => AGENT_STATEMENT_LANGUAGE[type as DatabaseType] === null);
   // Non-vacuity: the null-family population is most of the providers.
-  expect(silent).toContain("redis");
+  expect(silent).toContain("sparkplug");
   expect(silent.filter((type) => packHeadings(docOf(type)).length > 0)).toEqual([]);
 });
 
@@ -225,8 +225,8 @@ describe("each check fails when the document is wrong", () => {
   });
 
   test("a stray heading in a document whose type speaks no statement language is found", () => {
-    const redis = docOf("redis");
-    expect(packHeadings(redis)).toEqual([]);
-    expect(packHeadings(`${redis}\n### 9.9 Agent language pack\n`)).toHaveLength(1);
+    const sparkplug = docOf("sparkplug");
+    expect(packHeadings(sparkplug)).toEqual([]);
+    expect(packHeadings(`${sparkplug}\n### 9.9 Agent language pack\n`)).toHaveLength(1);
   });
 });

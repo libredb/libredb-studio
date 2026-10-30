@@ -33,9 +33,9 @@ import type { DatabaseType } from "@/lib/types";
 afterEach(cleanup);
 
 /** An engine agent mode has no read-only statement path on, taken from the real gate. */
-const UNSUPPORTED_ENGINE: DatabaseType = (["mongodb", "redis", "oracle", "mssql", "mysql"] as DatabaseType[]).filter(
-  (type) => !AGENT_EXECUTION_ENGINES.includes(type),
-)[0] as DatabaseType;
+const UNSUPPORTED_ENGINE: DatabaseType = (
+  ["mongodb", "sparkplug", "oracle", "mssql", "mysql"] as DatabaseType[]
+).filter((type) => !AGENT_EXECUTION_ENGINES.includes(type))[0] as DatabaseType;
 
 /** An engine it does, so this file cannot pin a tone the gate no longer produces. */
 const SUPPORTED_ENGINE: DatabaseType = AGENT_EXECUTION_ENGINES[0] as DatabaseType;

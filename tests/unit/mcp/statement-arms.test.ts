@@ -73,6 +73,8 @@ describe("MCP_STATEMENT_ARMS", () => {
     expect(mcpStatementToolFor("neo4j")).toBeNull();
     expect(MCP_STATEMENT_ARMS.milvusrpc).toBeNull();
     expect(mcpStatementToolFor("milvus")).toBeNull();
+    expect(MCP_STATEMENT_ARMS.rediscli).toBeNull();
+    expect(mcpStatementToolFor("redis")).toBeNull();
   });
 
   test("is built from the languages' MCP facets, one arm per declared facet, in the registry's order", () => {
@@ -398,6 +400,7 @@ describe("the tool each engine is read with", () => {
       qdrantapi: null,
       cypher: null,
       milvusrpc: null,
+      rediscli: null,
     };
     expect(servingStatementArms(arms)).toEqual([RUN_READ_QUERY_ARM]);
     const registerTool = mock((_name: string) => undefined);

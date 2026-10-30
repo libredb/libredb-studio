@@ -31,6 +31,7 @@ import { libredbkvAgentReadInput } from "./libredbkv-admission";
 import { milvusrpcAgentReadInput } from "./milvusrpc-admission";
 import { mongoAgentReadInput } from "./mongo-admission";
 import { qdrantapiAgentReadInput } from "./qdrantapi-admission";
+import { rediscliAgentReadInput } from "./rediscli-admission";
 import { weaviateapiAgentReadInput } from "./weaviateapi-admission";
 import { agentPlanExecutionSqlInput, agentQueryReadSqlInput, agentReadSqlInput } from "./statement-guard";
 import type { RegistrableOperationDescriptor } from "./types";
@@ -590,6 +591,44 @@ const milvusrpcQueryReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+const REDISCLI_READ_BOUNDARY =
+  "Redis: the provider's closed table of metadata reads, each flagged readonly by the server's own COMMAND INFO and " +
+  "none flagged write, admin, pubsub, may_replicate or script_runner, in no write, admin, dangerous, scripting or " +
+  "pubsub category, and with only read-only key specs (redis-agent-statement.ts): DBSIZE, and for one key the command " +
+  "names TYPE, EXISTS, TTL, PTTL, STRLEN, LLEN, HLEN, SCARD, ZCARD, XLEN, OBJECT ENCODING and MEMORY USAGE, read " +
+  "from one line into the exact argv sent. Every command runs on a connection of its own in the connection's " +
+  "database, closed after it, and before it, on that connection, the server proves the ACL user reads only " +
+  "(redis-read-only-proof.ts): HELLO must name Redis or Valkey in standalone mode, and the user must be refused " +
+  "NOPERM on write, admin, dangerous, scripting and pubsub probes that change nothing even when admitted, so a " +
+  "connection naming no user, the default user and a user that may write are refused. Key names and stored values " +
+  "are withheld: nothing lists keys or reads a value, field or member, every answer is projected to counts, types and " +
+  "sizes (redis-metadata-read.ts), a server error is worded by its code alone, and a result past the row or byte " +
+  "budget is refused, never truncated.";
+
+/**
+ * One Redis metadata read the model wrote, on a `redis` connection.
+ *
+ * R1 on a structural boundary: the table can name no write and no read of a key name or value, and the server proves
+ * the ACL user read-only before every command. Its own id, and not a widened `sql.query.read`, so the SQL contract and
+ * its audit action stay exactly what they were.
+ */
+const rediscliQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "rediscli.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: rediscliAgentReadInput,
+  verification: {
+    reviewedBy: "Redis agent execution design review",
+    boundary: REDISCLI_READ_BOUNDARY,
+    verifiedOn: "2026-10-30",
+  },
+};
+
 /** The selector of a scoped MongoDB catalog read: a kind, a database and a collection, any of them narrowed. */
 const mongoCatalogSelectorInput = z.strictObject({
   kind: z.enum(["columns", "indexes"]).default("columns"),
@@ -792,6 +831,7 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   qdrantapiQueryReadDescriptor,
   cypherQueryReadDescriptor,
   milvusrpcQueryReadDescriptor,
+  rediscliQueryReadDescriptor,
 ]);
 
 /**

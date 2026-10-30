@@ -118,6 +118,7 @@ const HANDOVER_CHIPS: Readonly<Record<AgentStatementLanguageId, readonly Handove
   qdrantapi: [],
   cypher: [],
   milvusrpc: [],
+  rediscli: [],
 };
 
 export function ConsentCard({

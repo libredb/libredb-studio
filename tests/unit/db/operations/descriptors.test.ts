@@ -63,6 +63,7 @@ describe("canonical operation registry", () => {
       "mongo.schema.read",
       "mongo.table.profile",
       "qdrantapi.query.read",
+      "rediscli.query.read",
       "sql.explain.analyze",
       "sql.explain.estimate",
       "sql.query.read",
@@ -194,6 +195,7 @@ describe("the statement-read operations", () => {
       "milvusrpc.query.read",
       "mongo.query.read",
       "qdrantapi.query.read",
+      "rediscli.query.read",
       "sql.query.read",
       "weaviateapi.query.read",
     ]);

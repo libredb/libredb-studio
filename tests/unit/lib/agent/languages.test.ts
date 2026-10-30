@@ -126,6 +126,7 @@ const LANGUAGE_IDS: Readonly<Record<AgentStatementLanguageId, true>> = {
   qdrantapi: true,
   cypher: true,
   milvusrpc: true,
+  rediscli: true,
 };
 
 describe("the server packs", () => {
@@ -260,6 +261,7 @@ describe("the language packs", () => {
       "qdrantapi",
       "cypher",
       "milvusrpc",
+      "rediscli",
     ]);
     expect(Object.isFrozen(LANGUAGE_TOOL_ARMS)).toBe(true);
   });
@@ -408,6 +410,7 @@ describe("the prompt tables the packs hold", () => {
       "qdrantapi",
       "cypher",
       "milvusrpc",
+      "rediscli",
     ]);
     expect(Object.isFrozen(WORKFLOW_TOOL_RULES)).toBe(true);
     for (const id of ids) {
@@ -509,6 +512,7 @@ describe("the client packs", () => {
         "qdrantapi",
         "cypher",
         "milvusrpc",
+        "rediscli",
       ]);
     }
   });
@@ -526,6 +530,7 @@ describe("the client packs", () => {
       qdrantapi: null,
       cypher: null,
       milvusrpc: null,
+      rediscli: null,
     });
   });
 

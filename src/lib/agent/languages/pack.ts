@@ -104,6 +104,11 @@ type MilvusrpcOperationId =
   /** One Milvus metadata read the model wrote, on a `milvus` connection; see `milvusrpcQueryReadDescriptor`. */
   "milvusrpc.query.read";
 
+/** The Redis command language's operation: its one read. */
+type RediscliOperationId =
+  /** One Redis metadata read the model wrote, on a `redis` connection; see `rediscliQueryReadDescriptor`. */
+  "rediscli.query.read";
+
 /**
  * The canonical operations each family's tools drive, by family. `AgentOperationId` in `tools.ts` is the core's two
  * curated ids and every row here, so a family's ids are written once, beside the family's other types.
@@ -118,6 +123,7 @@ export interface AgentFamilyOperationIds {
   readonly qdrantapi: QdrantapiOperationId;
   readonly cypher: CypherOperationId;
   readonly milvusrpc: MilvusrpcOperationId;
+  readonly rediscli: RediscliOperationId;
 }
 
 /** kubectl's goal verifiers. */
@@ -167,6 +173,8 @@ export interface AgentFamilyVerifierIds {
   readonly cypher: never;
   /** None: its workflows are judged by the core's own rules. */
   readonly milvusrpc: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly rediscli: never;
 }
 
 /** The operation a family's model-written reads are evaluated under: its row's `<family>.query.read`. */
@@ -427,6 +435,7 @@ export interface AgentFamilyEvidenceTools {
   readonly qdrantapi: never;
   readonly cypher: never;
   readonly milvusrpc: never;
+  readonly rediscli: never;
 }
 
 /** Every pack's evidence tool: a member of the core's `AgentToolName`, declared by the pack that offers it. */
@@ -443,6 +452,7 @@ export interface AgentFamilyReadingDenyCodes {
   readonly qdrantapi: never;
   readonly cypher: never;
   readonly milvusrpc: never;
+  readonly rediscli: never;
 }
 
 /** Every pack's reading refusal code: a member of the core's `AgentReadingDenyCode`, declared by its pack. */
@@ -459,6 +469,7 @@ export interface AgentFamilyShortfalls {
   readonly qdrantapi: never;
   readonly cypher: never;
   readonly milvusrpc: never;
+  readonly rediscli: never;
 }
 
 /** Every pack's verdict shortfall: a member of the core's `AgentGoalShortfall`, declared by its pack. */
@@ -475,6 +486,7 @@ export interface AgentFamilyVariantRequirements {
   readonly qdrantapi: never;
   readonly cypher: never;
   readonly milvusrpc: never;
+  readonly rediscli: never;
 }
 
 /** Every pack's variant requirement: a member of the core's `AgentVariantRequirement`, declared by its pack. */
@@ -525,6 +537,7 @@ export interface AgentFamilyEvidenceEvents {
   readonly qdrantapi: never;
   readonly cypher: never;
   readonly milvusrpc: never;
+  readonly rediscli: never;
 }
 
 /** Every pack's evidence event, as the ledger stores it less its timestamp. */
@@ -711,6 +724,7 @@ export interface AgentFamilyDialectRows {
   qdrantapi: { client: Record<never, never>; server: Record<never, never> };
   cypher: { client: Record<never, never>; server: Record<never, never> };
   milvusrpc: { client: Record<never, never>; server: Record<never, never> };
+  rediscli: { client: Record<never, never>; server: Record<never, never> };
 }
 
 /** The dialect-bound members of each family, client and server. */

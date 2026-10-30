@@ -4498,6 +4498,19 @@ describe("RedisProvider", () => {
   });
 });
 
+describe("the agent read-only path on an editor handle", () => {
+  test("queryReadOnly refuses a handle not opened under the agent read-only profile, before any command", async () => {
+    const editor = new RedisProvider({ ...baseConfig, database: "0" });
+    await editor.connect();
+    capturedCalls.length = 0;
+    await expect(
+      editor.queryReadOnly("DBSIZE", { maxResultRows: 10, maxResultBytes: 1024, statementTimeoutMs: 1000 }),
+    ).rejects.toThrow("Read-only execution requires a provider opened under the agent read-only profile");
+    expect(capturedCalls).toEqual([]);
+    await editor.disconnect();
+  });
+});
+
 /**
  * Every module-private function in this provider carries its OWN doc comment (#789).
  *

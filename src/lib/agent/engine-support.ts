@@ -126,6 +126,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "qdrant",
   "neo4j",
   "milvus",
+  "redis",
 ];
 
 /**

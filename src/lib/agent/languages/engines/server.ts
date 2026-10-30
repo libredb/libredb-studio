@@ -19,6 +19,7 @@ import { WEAVIATE_SERVER_OVERLAY } from "../weaviateapi/engines/weaviate";
 import { QDRANT_SERVER_OVERLAY } from "../qdrantapi/engines/qdrant";
 import { NEO4J_SERVER_OVERLAY } from "../cypher/engines/neo4j";
 import { MILVUS_SERVER_OVERLAY } from "../milvusrpc/engines/milvus";
+import { REDIS_SERVER_OVERLAY } from "../rediscli/engines/redis";
 import type { AgentStatementLanguageId } from "../../agent-manifest";
 import { statementFamilyOf } from "../client";
 import { defineOverlay } from "../overlay";
@@ -72,6 +73,7 @@ const SERVER_OVERLAYS: AgentEngineServerOverlays = Object.freeze({
   qdrant: Object.freeze({ ...QDRANT_SERVER_OVERLAY }),
   neo4j: Object.freeze({ ...NEO4J_SERVER_OVERLAY }),
   milvus: Object.freeze({ ...MILVUS_SERVER_OVERLAY }),
+  redis: Object.freeze({ ...REDIS_SERVER_OVERLAY }),
 } satisfies AgentEngineServerOverlays);
 
 /** What an engine with no dialect answers: every member unsupported. */

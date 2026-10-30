@@ -259,10 +259,19 @@ describe("POST /api/agent/classify", () => {
     expect(mockClassify).toHaveBeenCalledWith("which collections are loaded", { statementLanguage: "milvusrpc" });
   });
 
-  test("a connection with no statement language is classified in SQL's terms", async () => {
+  test("a Redis connection is classified in its own family's terms", async () => {
     mockResolveConnection.mockResolvedValueOnce({ id: "seed:cache", name: "Cache", type: "redis" });
 
-    const res = await POST(classifyRequest({ objective: "what is connected", connectionId: "seed:cache" }));
+    const res = await POST(classifyRequest({ objective: "how many keys are there", connectionId: "seed:cache" }));
+
+    expect(res.status).toBe(200);
+    expect(mockClassify).toHaveBeenCalledWith("how many keys are there", { statementLanguage: "rediscli" });
+  });
+
+  test("a connection with no statement language is classified in SQL's terms", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:plant", name: "Plant", type: "sparkplug" });
+
+    const res = await POST(classifyRequest({ objective: "what is connected", connectionId: "seed:plant" }));
 
     expect(res.status).toBe(200);
     expect(mockClassify).toHaveBeenCalledWith("what is connected", { statementLanguage: undefined });

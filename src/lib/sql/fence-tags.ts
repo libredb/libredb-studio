@@ -179,6 +179,7 @@ export const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "weaviateapi",
   "qdrantapi",
   "milvusrpc",
+  "rediscli",
 ]);
 
 /**
@@ -232,6 +233,8 @@ export const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.free
   qdrantapi: "qdrant",
   // The agent's name for the Milvus request language, and `milvus` is the only type-id that runs it.
   milvusrpc: "milvus",
+  // The agent's name for the Redis command language, and `redis` is the only type-id that runs it.
+  rediscli: "redis",
 });
 
 /**

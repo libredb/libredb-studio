@@ -489,6 +489,7 @@ const READ_ONLY_PROVIDER_FILES: Readonly<Record<string, string>> = {
   qdrant: "src/lib/db/providers/vector/qdrant/index.ts",
   neo4j: "src/lib/db/providers/graph/neo4j/index.ts",
   milvus: "src/lib/db/providers/vector/milvus/index.ts",
+  redis: "src/lib/db/providers/keyvalue/redis.ts",
 };
 
 /**
@@ -597,9 +598,9 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
   const list = namedList(AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label));
   const prose = (relative: string) => read(relative).replace(/\n[ \t]*(?:\*|\/\/|#)?[ \t]*/g, " ");
 
-  test("the derived list is today's twenty-three engines", () => {
+  test("the derived list is today's twenty-four engines", () => {
     expect(list).toBe(
-      "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j and Milvus",
+      "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus and Redis",
     );
   });
 

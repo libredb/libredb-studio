@@ -19,6 +19,7 @@ import { WEAVIATEAPI_PACK } from "./weaviateapi/index";
 import { QDRANTAPI_PACK } from "./qdrantapi/index";
 import { CYPHER_PACK } from "./cypher/index";
 import { MILVUSRPC_PACK } from "./milvusrpc/index";
+import { REDISCLI_PACK } from "./rediscli/index";
 import type { AgentEvidenceTool, AgentLanguagePack, EvidenceToolName, LanguageToolArms } from "./pack";
 import { SQL_PACK } from "./sql/index";
 
@@ -32,6 +33,7 @@ const PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguagePack>> = Obj
   qdrantapi: QDRANTAPI_PACK,
   cypher: CYPHER_PACK,
   milvusrpc: MILVUSRPC_PACK,
+  rediscli: REDISCLI_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguagePack>);
 
 /** The pack for `language`, or a named error when the id is not a language this server knows. */
@@ -52,6 +54,7 @@ export const LANGUAGE_TOOL_ARMS: Readonly<Record<AgentStatementLanguageId, Langu
   qdrantapi: QDRANTAPI_PACK.execution.arms,
   cypher: CYPHER_PACK.execution.arms,
   milvusrpc: MILVUSRPC_PACK.execution.arms,
+  rediscli: REDISCLI_PACK.execution.arms,
 } satisfies Record<AgentStatementLanguageId, LanguageToolArms>);
 
 /**
@@ -69,6 +72,7 @@ export const AGENT_EVIDENCE_TOOLS: Readonly<Record<EvidenceToolName, AgentEviden
     QDRANTAPI_PACK.execution.evidenceTools,
     CYPHER_PACK.execution.evidenceTools,
     MILVUSRPC_PACK.execution.evidenceTools,
+    REDISCLI_PACK.execution.evidenceTools,
   ],
   "AGENT_EVIDENCE_TOOLS",
 );

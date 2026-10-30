@@ -626,6 +626,8 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   mongodb: true,
   // Agent mode executes statements on Couchbase, and MCP read stays closed on it until a change of its own opens it.
   couchbase: false,
+  // Agent mode executes metadata-only reads on Redis, and MCP read stays closed on it until a change of its own opens
+  // it.
   redis: false,
   prometheus: false,
   kafka: false,
