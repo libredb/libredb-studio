@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S10 · 7
-- [Drivers and connections](#drivers-and-connections) — D1-D410, U17 · 300
+- [Drivers and connections](#drivers-and-connections) — D1-D412, U17 · 302
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U160 · 146
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U161 · 147
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -4135,6 +4135,29 @@ Found 2026-10-30 in the October PR review; pre-existing.
 
 **Done when:** the field is removed with its tests, or replaced by a reading of top-level set operations (`UNION`, `INTERSECT`, `EXCEPT`) that ignores one inside parentheses, with a test for each operator and for a nested one.
 
+### D411. A wrong Druid password on the editor path is reported as a connection failure
+
+On a cluster with `druid-basic-security`, a wrong password is answered with HTTP 401 and an HTML error page, not Druid's JSON error envelope.
+The editor path's query (`DruidHttpTransport.query` in `src/lib/db/providers/sql/druid/http-transport.ts`) turns that into `envelopeError` with the stand-in category, so `mapDruidError` in `src/lib/db/providers/sql/druid/index.ts` hands it to the shared message-based mapping, which does not read "HTTP 401" as a refused credential.
+`describeConnectFailure` then wraps it as `ConnectionError` "Failed to connect to Druid: Druid request failed with HTTP 401", which sends the user to check the host instead of the password.
+The agent path does not share this for a 403: `agentFailure` in the same transport file maps an envelope-less 403 to `FORBIDDEN`; nothing maps an envelope-less 401 on either path.
+Measured on apache/druid 37.0.0 (digest-pinned, the cluster in `tests/fixtures/druid/37.0.0/agent-boundary/cluster.yml` run secured): connect with the admin user and a wrong password.
+
+Found 2026-10-30 while building the Druid agent read (PR 1.11); pre-existing.
+
+**Done when:** an HTTP 401 with no envelope leaves the Druid transport as an `UNAUTHORIZED` failure on both paths, so a wrong password at connect is an `AuthenticationError`, with a transport test on a 401 HTML body and a provider test on the connect error's class and message.
+
+### D412. A Druid connection whose user may not read `sys.servers` shows as degraded on every health check
+
+The connection health check (`POST /api/db/health`) calls `getHealth` in `src/lib/db/providers/sql/druid/introspect.ts`, which reads `sys.servers` through `getOverview`.
+Under druid-basic-security a user without `STATE` `READ` is refused that read with HTTP 403 (`docs/providers/druid.md` section 15.1), the route answers an error ("Druid request failed with HTTP 403", logged as `DatabaseError` from `api/db/health`), and the header badge shows the connection as "Slow" (degraded).
+That is the user section 15 recommends for agent mode, one holding `READ` on its datasources and nothing else, so the editor reports a healthy cluster as degraded for as long as the connection is open, while the administrator's connection to the same cluster reads "Online".
+Seen 2026-10-30 on apache/druid 37.0.0 in a browser pass, with a user holding `READ` on one datasource.
+
+Found 2026-10-30 in the browser verification of the Druid agent read (PR 1.11); pre-existing.
+
+**Done when:** a health check refused only for the `STATE` permission reports the connection as reachable with the cluster figures marked unavailable, rather than degraded, and an integration test on a user without `STATE` `READ` pins the route's answer.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -6079,6 +6102,7 @@ Seen again 2026-10-30 on Couchbase enterprise-8.0.2 in a browser pass: with `que
 An agent statement the provider refuses before it is sent, such as Oracle's `SELECT ... FOR UPDATE`, appears in the rail as `INPUT_VALIDATION_FAILED` with no sentence saying what was refused or why.
 Seen 2026-10-29 on Oracle 26ai Free in a browser pass.
 Seen again 2026-10-30 on Couchbase enterprise-8.0.2 in a browser pass: a forced `DELETE`, `UPDATE`, `UPDATE STATISTICS` and `BEGIN WORK` each showed "Refused by policy" over the bare code, though the statement fence (`couchbaseAgentStatementRefusal`) refuses with a sentence of its own.
+Seen again 2026-10-30 on Apache Druid 37.0.0 in a browser pass: a forced `INSERT`, `REPLACE ... OVERWRITE ALL` and `SET engine = 'msq-task'; SELECT ...` each showed "Refused by policy" over the bare code; the shared statement guard (`inspectAgentStatement` in `src/lib/db/operations/statement-guard.ts`) refused them at the policy stage, before the Druid fence was reached.
 
 **Done when:** the rail shows the refusal's sentence with the code beside it, and a component test pins it.
 
@@ -6087,6 +6111,7 @@ Seen again 2026-10-30 on Couchbase enterprise-8.0.2 in a browser pass: a forced 
 A plan-mode run on an Oracle owner connection showed "1/42 stmt" in the rail while its own copy says it executed nothing; the count appears to be the schema capture's reads, not a statement of the model's.
 Seen 2026-10-29 on Oracle 26ai Free in a browser pass; not checked on other engines.
 Seen again 2026-10-30 on Couchbase enterprise-8.0.2 in a browser pass, which bears out the capture: a plan run that captured the schema showed "1/30 stmt", and the next plan run, which reused that capture, showed "0/30 stmt".
+Seen again 2026-10-30 on Apache Druid 37.0.0: a plan run on the owner connection that drafted an `INSERT` and executed nothing showed "1/42 stmt".
 
 **Done when:** the plan-mode rail counts only statements of the model's, or labels the capture's reads as reads, and a component test pins the plan-mode count.
 
@@ -6097,6 +6122,7 @@ On Db2 there is no read-only session: the boundary is a user holding only read p
 And Studio does read the statement first: a forced `UPDATE` on Db2 and a `SELECT ... FOR UPDATE` on Oracle were refused before they reached the database (`INPUT_VALIDATION_FAILED`), with the engine as the second line.
 Seen 2026-10-29 in browser passes on Db2 12.1 and Oracle 26ai.
 Seen again 2026-10-30 on Couchbase enterprise-8.0.2, where the copy is shown unchanged: the boundary there is a user holding only `query_select` on named scopes, checked before every statement, and the statement fence refused four forced statements before they were sent; the consent panel's "same database-enforced read-only session either way" is false there too, since an editor run on that connection has no read-only session.
+Seen again 2026-10-30 on Apache Druid 37.0.0, copy unchanged: there is no read-only session either, the boundary is the native engine checked before every statement (`docs/providers/druid.md` section 15), the shared statement guard refused three forced writes before they were sent, and the header's "200 rows ... enforced by the engine" is not so on Druid, where no row bound is sent and the rows are counted by Studio after a byte-capped read (section 15.3).
 
 **Done when:** the copy states the boundary each engine actually has, from a per-engine row rather than a type-id branch, says that Studio's own admission refuses a statement first and the engine refuses what passes it, and a component test pins the text for a session-enforced engine and a credential-enforced one.
 
@@ -6105,6 +6131,7 @@ Seen again 2026-10-30 on Couchbase enterprise-8.0.2, where the copy is shown unc
 After switching from a Db2 agent connection to an owner connection, the rail header read "on Db2 owner" while the agent connection's last run and its "Reads only" badge stayed on screen; a new run then started while the badge still read "Refused on this connection".
 Seen 2026-10-29 in a browser pass on Db2 12.1.
 Seen again 2026-10-30 on Couchbase enterprise-8.0.2: after switching to the owner connection, the rail read "on Couchbase owner (Administrator)" with the "Reads only" badge and the agent connection's last run still on screen, although that owner is the cluster administrator, whom the profile refuses.
+Seen again 2026-10-30 on Apache Druid 37.0.0: after switching to the owner connection and to plan mode, the rail still listed the agent connection's conversation and last run, and the results panel still showed the agent run's rows ("Stored by agent run ... read-only") under the owner connection.
 
 **Done when:** changing the connection clears or re-labels the rail's run and badge for the new connection, and a component test switches connections and reads the badge.
 
@@ -6113,6 +6140,7 @@ Seen again 2026-10-30 on Couchbase enterprise-8.0.2: after switching to the owne
 Asked to run an exact `UPDATE` through its read tool, the agent's statement was refused before it was sent (`INPUT_VALIDATION_FAILED`), yet the run finished `answered` and its report did not say the `UPDATE` was refused.
 Seen 2026-10-29 in a browser pass on Db2 12.1; the Oracle pass the same day had a report that did say so, so it depends on the model's wording.
 Seen again 2026-10-30 on Couchbase enterprise-8.0.2, twice: asked to run an exact `DELETE`, `UPDATE`, `UPDATE STATISTICS` and `BEGIN WORK`, each refused before it was sent, both runs finished `answered` with a report about the schema inventory or a row count and no word of the four refusals.
+Seen again 2026-10-30 on Apache Druid 37.0.0, twice: one run asked for an exact `INSERT`, `REPLACE`, `SET engine = 'msq-task'` and an `EXTERN` read drafted only the `EXTERN` read (403), and one asked for the three writes had each refused before it was sent; both finished `answered` with a report on the datasource's columns and no word of the refusals (runs `arun_08f051825d2744adb753bd8cf0f7edaf`, `arun_a074a7f229004afb8cf93537663325ab`).
 
 **Done when:** a run whose only drafted statement was refused either reports that refusal in its answer, held by the run's verifier, or ends in a state other than `answered`, with an agent test that forces the refusal.
 
@@ -6140,6 +6168,15 @@ A database assessment run on a Couchbase agent connection ended `succeeded` with
 Seen 2026-10-30 on Couchbase enterprise-8.0.2 in a browser pass (run `arun_d91209e7b86045b1989d813ec629b25b`); any engine where assessment cannot pass (B146) shows the same.
 
 **Done when:** a run whose goal verdict is not `answered` is headed as an outcome rather than an answer, and its pill or a line beside it says the run did not answer, from the verdict the timeline already reads, with a component test for a `succeeded` run whose verdict is `unanswered`.
+
+### U161. The agent rail counts system tables in the engine's word for its tables, so a Druid user with one datasource reads "11 datasources"
+
+The "Schema captured" step and the answer's schema citation print the capture's `tableCount` with the engine's noun (`src/components/agent/timeline.ts`, the `context-captured` case and `AgentCaptureView`), and the count is every object in the snapshot whatever its kind.
+On Druid the snapshot holds the datasources and the `INFORMATION_SCHEMA` and `sys` tables (kind `system_table`), so a user who may read one datasource saw "11 datasources" and "Schema snapshot ctx_4d4f · 11 datasources", and the administrator "12 datasources" over two.
+The sidebar beside it said "Datasources 1".
+Seen 2026-10-30 on Apache Druid 37.0.0 in a browser pass; not checked on other engines whose schema lists system tables.
+
+**Done when:** the rail's count names only the objects of the noun's kind, or names the system tables as such, from the snapshot's object kinds rather than a type-id branch, with a timeline test on a capture that mixes datasources and system tables.
 
 ## Dependencies
 
