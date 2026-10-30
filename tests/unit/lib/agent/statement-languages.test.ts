@@ -7,6 +7,7 @@ import { fingerprintLibredbkv, libredbkvRowCapAdvice } from "@/lib/agent/languag
 import { fingerprintMongo, mongoRowCapAdvice } from "@/lib/agent/languages/mongo/adapter";
 import { fingerprintWeaviateapi, weaviateapiRowCapAdvice } from "@/lib/agent/languages/weaviateapi/adapter";
 import { fingerprintQdrantapi, qdrantapiRowCapAdvice } from "@/lib/agent/languages/qdrantapi/adapter";
+import { fingerprintMilvusrpc, milvusrpcRowCapAdvice } from "@/lib/agent/languages/milvusrpc/adapter";
 import { languageServer, languageServerPack } from "@/lib/agent/languages/server";
 import {
   admitLibredbkvStatement,
@@ -36,6 +37,12 @@ import {
   qdrantapiAgentReadInput,
 } from "@/lib/db/operations/qdrantapi-admission";
 import { QDRANT_AGENT_SENTENCES } from "@/lib/db/providers/vector/qdrant/metadata-request";
+import {
+  admitMilvusrpcStatement,
+  MILVUSRPC_AGENT_MAX_STATEMENT_CHARS,
+  milvusrpcAgentReadInput,
+} from "@/lib/db/operations/milvusrpc-admission";
+import { MILVUS_AGENT_SENTENCES } from "@/lib/db/providers/vector/milvus/metadata-request";
 import { INFLUXQL_AGENT_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-statement";
 import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 
@@ -646,5 +653,99 @@ describe("the cypher language's server adapter and admission", () => {
     expect(refused.success).toBe(false);
     expect(refused.error?.issues[0]?.path).toEqual(["statement"]);
     expect(refused.error?.issues[0]?.message).toContain("An agent statement has no carriage return");
+  });
+});
+
+describe("the milvusrpc language's server adapter and admission", () => {
+  const describe_ = (body: string) => `POST /v2/vectordb/collections/describe\n${body}`;
+
+  test("the fingerprint is the request as the reader reads it, so one read written three ways is one identity", () => {
+    const one = fingerprintMilvusrpc(describe_('{"collectionName": "docs"}'));
+    expect(fingerprintMilvusrpc(`# a describe\n${describe_('{"collectionName": "docs"}')}`)).toBe(one);
+    expect(fingerprintMilvusrpc('POST collections/describe\n{"collectionName": "docs"}')).toBe(one);
+    expect(fingerprintMilvusrpc(describe_('{"dbName": "default", "collectionName": "docs"}'))).toBe(one);
+    expect(fingerprintMilvusrpc(describe_('{"collectionName": "other"}'))).not.toBe(one);
+    expect(fingerprintMilvusrpc("POST /v2/vectordb/collections/list")).not.toBe(
+      fingerprintMilvusrpc("POST /v2/vectordb/databases/list"),
+    );
+  });
+
+  test("the fingerprint is total: a refused request is identified by its raw text, so it is refused again", () => {
+    const raw = 'POST /v2/vectordb/entities/get\n{"collectionName": "docs", "id": 1}';
+    expect(fingerprintMilvusrpc(raw)).toBe(fingerprintMilvusrpc(raw));
+    expect(fingerprintMilvusrpc(raw)).toMatch(/^[0-9a-f]{64}$/);
+    expect(fingerprintMilvusrpc(`${raw} `)).not.toBe(fingerprintMilvusrpc(raw));
+  });
+
+  test("every advice key of the milvusrpc copy has its own sentence", () => {
+    const generic = milvusrpcRowCapAdvice("POST /v2/vectordb/entities/query", "200");
+    const requestFor: Readonly<Record<string, string>> = {
+      databases: "POST /v2/vectordb/databases/list",
+      collections: "POST /v2/vectordb/collections/list",
+      collection: describe_('{"collectionName": "docs"}'),
+      partitions: 'POST /v2/vectordb/partitions/list\n{"collectionName": "docs"}',
+      aliases: "POST /v2/vectordb/aliases/list",
+    };
+    expect([...AGENT_LANGUAGE_COPY.milvusrpc.adviceKeys].sort()).toEqual([
+      "aliases",
+      "collection",
+      "collections",
+      "databases",
+      "partitions",
+    ]);
+    for (const key of AGENT_LANGUAGE_COPY.milvusrpc.adviceKeys) {
+      expect(milvusrpcRowCapAdvice(requestFor[key] as string, "200"), key).not.toBe(generic);
+      expect(milvusrpcRowCapAdvice(requestFor[key] as string, "200"), key).toContain("Ask for at most 200 rows");
+    }
+  });
+
+  test("a request without advice of its own, or one that is refused, gets the generic sentence", () => {
+    const generic = "Ask for at most 200 rows: read one collection instead of the whole list, and run it again.";
+    expect(milvusrpcRowCapAdvice('POST /v2/vectordb/indexes/list\n{"collectionName": "docs"}', "200")).toBe(generic);
+    expect(milvusrpcRowCapAdvice("POST /v2/vectordb/entities/query", "200")).toBe(generic);
+    expect(languageServer("milvusrpc").shapeAdvice).toContain("a valid Milvus request");
+  });
+
+  test("the admission is the provider's reader, plus a length the agent's contract names", () => {
+    expect(admitMilvusrpcStatement("POST /v2/vectordb/collections/list")).toBeNull();
+    expect(admitMilvusrpcStatement('POST /v2/vectordb/entities/get\n{"collectionName": "docs", "id": 1}')).toEqual({
+      code: "metadata-only",
+      message: MILVUS_AGENT_SENTENCES.metadataOnly("entities/get"),
+    });
+    expect(admitMilvusrpcStatement('POST /v2/vectordb/collections/load\n{"collectionName": "docs"}')?.code).toBe(
+      "request",
+    );
+    const long = `POST /v2/vectordb/collections/list\n{"dbName": "${"a".repeat(MILVUSRPC_AGENT_MAX_STATEMENT_CHARS)}"}`;
+    expect(admitMilvusrpcStatement(long)).toEqual({
+      code: "agent-too-large",
+      message: `The request is longer than ${MILVUSRPC_AGENT_MAX_STATEMENT_CHARS} characters, the most an agent read takes: shorten it. Nothing was sent.`,
+    });
+    expect(languageServer("milvusrpc").admit?.("POST /v2/vectordb/databases/list")).toBeNull();
+  });
+
+  test("an ungrounded run is sent to a read it holds, and plan mode is told none of the reader's rules", () => {
+    const ungrounded = languageServerPack("milvusrpc").grounding.ungrounded;
+    expect(ungrounded?.("The capture failed.", { singular: "collection", plural: "collections" })).toBe(
+      "The capture failed.\nSo nothing about this database has been established for you: not one collection name. Read what you need with run_read_query, starting with POST /v2/vectordb/collections/list.",
+    );
+    expect(languageServerPack("milvusrpc").grounding.planningRules).toBeUndefined();
+  });
+
+  test("the descriptor's input is strict, carries the request, and refuses what the admission refuses", () => {
+    expect(milvusrpcAgentReadInput.safeParse({ statement: "POST /v2/vectordb/collections/list" }).success).toBe(true);
+    expect(
+      milvusrpcAgentReadInput.safeParse({ statement: "POST /v2/vectordb/collections/list", sql: "x" }).success,
+    ).toBe(false);
+    const refused = milvusrpcAgentReadInput.safeParse({
+      statement: 'POST /v2/vectordb/entities/query\n{"collectionName": "docs", "filter": "id > 0"}',
+    });
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues[0]?.path).toEqual(["statement"]);
+    expect(refused.error?.issues[0]?.message).toBe(MILVUS_AGENT_SENTENCES.metadataOnly("entities/query"));
+  });
+
+  test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
+    expect(Object.keys(AGENT_WORKFLOW_VARIANTS.milvusrpc).sort()).toEqual(["investigation", "operations"]);
+    expect(AGENT_WORKFLOW_VARIANTS.milvusrpc.investigation?.canAutoExecute).toBe(false);
   });
 });

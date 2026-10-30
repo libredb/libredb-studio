@@ -99,6 +99,11 @@ type CypherOperationId =
   /** One Cypher read statement the model wrote, on a `neo4j` connection; see `cypherQueryReadDescriptor`. */
   "cypher.query.read";
 
+/** The Milvus request language's operation: its one read. */
+type MilvusrpcOperationId =
+  /** One Milvus metadata read the model wrote, on a `milvus` connection; see `milvusrpcQueryReadDescriptor`. */
+  "milvusrpc.query.read";
+
 /**
  * The canonical operations each family's tools drive, by family. `AgentOperationId` in `tools.ts` is the core's two
  * curated ids and every row here, so a family's ids are written once, beside the family's other types.
@@ -112,6 +117,7 @@ export interface AgentFamilyOperationIds {
   readonly weaviateapi: WeaviateapiOperationId;
   readonly qdrantapi: QdrantapiOperationId;
   readonly cypher: CypherOperationId;
+  readonly milvusrpc: MilvusrpcOperationId;
 }
 
 /** kubectl's goal verifiers. */
@@ -159,6 +165,8 @@ export interface AgentFamilyVerifierIds {
   readonly qdrantapi: never;
   /** None: its workflows are judged by the core's own rules. */
   readonly cypher: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly milvusrpc: never;
 }
 
 /** The operation a family's model-written reads are evaluated under: its row's `<family>.query.read`. */
@@ -418,6 +426,7 @@ export interface AgentFamilyEvidenceTools {
   readonly weaviateapi: never;
   readonly qdrantapi: never;
   readonly cypher: never;
+  readonly milvusrpc: never;
 }
 
 /** Every pack's evidence tool: a member of the core's `AgentToolName`, declared by the pack that offers it. */
@@ -433,6 +442,7 @@ export interface AgentFamilyReadingDenyCodes {
   readonly weaviateapi: never;
   readonly qdrantapi: never;
   readonly cypher: never;
+  readonly milvusrpc: never;
 }
 
 /** Every pack's reading refusal code: a member of the core's `AgentReadingDenyCode`, declared by its pack. */
@@ -448,6 +458,7 @@ export interface AgentFamilyShortfalls {
   readonly weaviateapi: never;
   readonly qdrantapi: never;
   readonly cypher: never;
+  readonly milvusrpc: never;
 }
 
 /** Every pack's verdict shortfall: a member of the core's `AgentGoalShortfall`, declared by its pack. */
@@ -463,6 +474,7 @@ export interface AgentFamilyVariantRequirements {
   readonly weaviateapi: never;
   readonly qdrantapi: never;
   readonly cypher: never;
+  readonly milvusrpc: never;
 }
 
 /** Every pack's variant requirement: a member of the core's `AgentVariantRequirement`, declared by its pack. */
@@ -512,6 +524,7 @@ export interface AgentFamilyEvidenceEvents {
   readonly weaviateapi: never;
   readonly qdrantapi: never;
   readonly cypher: never;
+  readonly milvusrpc: never;
 }
 
 /** Every pack's evidence event, as the ledger stores it less its timestamp. */
@@ -697,6 +710,7 @@ export interface AgentFamilyDialectRows {
   weaviateapi: { client: Record<never, never>; server: Record<never, never> };
   qdrantapi: { client: Record<never, never>; server: Record<never, never> };
   cypher: { client: Record<never, never>; server: Record<never, never> };
+  milvusrpc: { client: Record<never, never>; server: Record<never, never> };
 }
 
 /** The dialect-bound members of each family, client and server. */

@@ -80,6 +80,8 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   qdrantapi: null,
   // No MCP statement tool yet: MCP read stays closed on Neo4j until a change of its own declares one and opens it.
   cypher: null,
+  // No MCP statement tool yet: MCP read stays closed on Milvus until a change of its own declares one and opens it.
+  milvusrpc: null,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageMcpFacet | null>);
 
 /** A facet some language declares, with its tool's name as a literal. */

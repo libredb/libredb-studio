@@ -114,12 +114,16 @@ const OPTIONS: MilvusConnectionOptions = {
 const call: CallOptions = { db: "default", signal: new AbortController().signal };
 
 function filesOnDisk(): string[] {
-  return readdirSync(MILVUS_FIXTURES_DIR, { recursive: true, withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
-    .map((entry) =>
-      path.relative(MILVUS_FIXTURES_DIR, path.join(entry.parentPath, entry.name)).split(path.sep).join("/"),
-    )
-    .sort();
+  return (
+    readdirSync(MILVUS_FIXTURES_DIR, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map((entry) =>
+        path.relative(MILVUS_FIXTURES_DIR, path.join(entry.parentPath, entry.name)).split(path.sep).join("/"),
+      )
+      // The agent boundary's captures are another harness's, read by tests/helpers/milvus-agent.ts.
+      .filter((file) => !file.startsWith("3.0.2/agent-boundary/"))
+      .sort()
+  );
 }
 
 /** The harness's ROOT_CREDENTIAL, read by parsing it, so this file never repeats the default password. */

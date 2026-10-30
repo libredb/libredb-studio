@@ -2,7 +2,7 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting forty-two engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Apache Cassandra, libSQL, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Weaviate, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B
 type: application
-version: 0.1.116
+version: 0.1.118
 appVersion: "1.1.0"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
@@ -346,10 +346,24 @@ annotations:
   # fails the schema. A Helm install that leaves the value unset renders as before.
   # False: 0.1.116 changes only the README and a values comment, documenting that Helm 4's
   # default server-side apply refuses an extraEnv entry that repeats a variable the chart writes.
+  # False: 0.1.117 names the operator's own namespace as the source of
+  # operator.clusterStudioNamespace in its descriptions and in the operator namespace guard's
+  # message, and under operator.managed refuses serviceAccount.create=false. No value or default
+  # moves, and a Helm install renders as before.
+  # False: 0.1.118 adds openshift.consolePlugin, disabled unless set, so an install that does not set it
+  # renders as before. On, it renders the OpenShift console plugin's server and the ConsolePlugin
+  # libredb-studio: on a Helm install in a namespace of their own, refused in the release's namespace,
+  # a discovered namespace and a requested project; under the OLM operator in the operator's own
+  # namespace only. No Job: a cluster admin turns the plugin on in the console.
   artifacthub.io/containsSecurityUpdates: "false"
   artifacthub.io/images: |
     - name: libredb-studio
       image: ghcr.io/libredb/libredb-studio:1.1.0
+      platforms:
+        - linux/amd64
+        - linux/arm64
+    - name: libredb-studio-openshift-plugin
+      image: ghcr.io/libredb/libredb-studio-openshift-plugin:0.1.0@sha256:39698233d019f4e69fe106e634af789291011d59d27d5858a7e4d0b41283d86e
       platforms:
         - linux/amd64
         - linux/arm64
@@ -361,7 +375,7 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "README: overriding a variable the chart writes through extraEnv needs --server-side=false with Helm 4, whose default server-side apply refuses the repeated name"
+    - "openshift.consolePlugin (default false) renders the OpenShift console plugin's server and its ConsolePlugin: on a Helm install in a namespace that is not the release's own, a discovered one or a requested project; under the OLM operator, in the operator's own namespace"
 dependencies:
   - name: postgresql
     version: "16.x.x"

@@ -632,6 +632,8 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   etcd: false,
   // Agent mode executes statements on Neo4j, and MCP read stays closed on it until a change of its own opens it.
   neo4j: false,
+  // Agent mode executes metadata-only reads on Milvus, and MCP read stays closed on it until a change of its own
+  // opens it.
   milvus: false,
   // Agent mode executes metadata-only reads on Qdrant, and MCP read stays closed on it until a change of its own
   // opens it.

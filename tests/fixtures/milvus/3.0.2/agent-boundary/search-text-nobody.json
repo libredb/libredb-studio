@@ -1,0 +1,53 @@
+{
+  "$captured": {
+    "server": "authorization on",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "rpc": "Search",
+    "principal": "nobody",
+    "rights": "no role",
+    "surface": "Search with a text input against the BM25 function's output field: the server runs the function",
+    "request": {
+      "db_name": "default",
+      "collection_name": "agent_docs",
+      "dsl": "",
+      "dsl_type": "BoolExprV1",
+      "placeholder_group": {
+        "$bytes": "Cg8KAiQwEBUaB3ZlY3RvcnM="
+      },
+      "nq": "1",
+      "output_fields": [
+        "title"
+      ],
+      "search_params": [
+        {
+          "key": "anns_field",
+          "value": "sparse"
+        },
+        {
+          "key": "topk",
+          "value": "3"
+        },
+        {
+          "key": "metric_type",
+          "value": "BM25"
+        },
+        {
+          "key": "params",
+          "value": "{}"
+        }
+      ],
+      "use_default_consistency": true
+    }
+  },
+  "outcome": "fail",
+  "payload": {
+    "error": {
+      "code": 7,
+      "details": "PrivilegeSearch: permission deny to agent_nobody in the `default` database",
+      "message": "7 PERMISSION_DENIED: PrivilegeSearch: permission deny to agent_nobody in the `default` database"
+    }
+  }
+}

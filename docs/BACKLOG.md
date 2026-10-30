@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D412, U17 · 302
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U169 · 155
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U170 · 156
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B154 · 84
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B155 · 85
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -6098,6 +6098,7 @@ Seen again 2026-10-30 on InfluxDB 1.13.1 and 2.9.1 in a browser pass: the user h
 Seen again 2026-10-30 on Weaviate 1.40.2 in a browser pass: the root key, a key holding the built-in `admin` role and a viewer key widened mid-run by a role holding `update_data` each got the generic sentence, while the server log carried the provider's own, for example "The key's roles hold create_roles, which is not one of the viewer role's read actions ... give the agent a key with the viewer role only" (runs `arun_9c77759341b84645bd81010bbfc86eef`, `arun_208ac90d893745fda727c63ebc688a56`, `arun_2fda3fd7145e4328a74766cf89484416`).
 Seen again 2026-10-30 on Qdrant 1.19.1 in a browser pass: the API key and a JWT with `rw` on an alias each got the generic sentence, while the server log carried the provider's own, "Qdrant accepted an empty alias update from this key ..." and "This key is a JWT whose claims grant more than access r ... Give the agent the server's read-only API key, or a JWT whose access is r" (runs `arun_f04735b56682495a86c1376d9920fc55`, `arun_cc0257e0e7fa4e0c871d6555e77a6b9c`).
 Seen again 2026-10-30 on Neo4j Enterprise 5.26.31 in a browser pass: the administrator, a reader given a second role holding `LOAD ON ALL DATA`, a user with the `editor` role, a reader on a server with an extension it can execute, and the reader granted `csv_loader` and then `editor` mid-run each got the generic sentence, while the server log carried the provider's own, for example "this one holds LOAD on ALL DATA through the role csv_loader. Revoke LOAD from PUBLIC and from every role the user holds, or DENY LOAD ON ALL DATA to one of its roles" and "this one holds write on NODE(*) through the role editor" (runs `arun_ed755caa5c9246159791c925a8a7fd37`, `arun_c4d3e16d50c44348805ff9aa8a678d91`, `arun_fee86c69494545d9b42ac804381c0f02`, `arun_a51f13bcf17045a48f1ad15ebfd99330`, `arun_80e22ed174734bc7b5fbb4c23a3748ca`, `arun_2f4cf8e99b08464c9294812df115fd65`).
+Seen again 2026-10-30 on Milvus 3.0.2 in a browser pass: root, a `CollectionReadWrite` user, a reader holding `Insert` on a second database, and the reader granted `Insert` mid-run each got the generic sentence, while the server log carried the provider's own, for example "This Milvus user holds "Insert" through one of its roles or public, which is not a read Studio admits ..." and "The agent read-only profile refuses Milvus's root user, which may do anything though Milvus lists it no role" (runs `arun_1fb64fc20d8341fb90940eb1ac8567cd`, `arun_861dc42859654b53be379558b233ad85`, `arun_e9c6f61584e642bcab9cb20ea73eec3d`, `arun_a7312f02a7fa4aa08df77b5494980880`).
 
 **Done when:** the rail shows the refusal's own remedies (statements or policy names) beside its code, from the shared refusal path rather than a type-id branch, the generic sentence no longer claims the credential holds privileges when the refusal is about the database, and a component test pins both texts.
 
@@ -6151,6 +6152,7 @@ Seen again 2026-10-30 on InfluxDB 1.13.1 and 2.9.1 in a browser pass, three time
 Seen again 2026-10-30 on Weaviate 1.40.2 in a browser pass: asked to pass `GET /v1/meta` and six exact writes (an object create and delete, a collection create and drop, a tenant status change and a backup) to `run_read_query`, each write was refused before anything was sent and the run finished `answered` with two claims, the meta read and the schema inventory, and no word of the six refusals (run `arun_a633f13a3abc4ade88aeae32f9bb77f1`); two earlier runs asked for the same writes drafted nothing at all and also finished `answered`.
 Seen again 2026-10-30 on Qdrant 1.19.1 in a browser pass: a run asked to pass eleven exact point, scroll, search, query, facet, filtered count and snapshot requests to `run_read_query` had each refused before anything was sent and finished `answered` with one claim about the schema inventory and no word of the refusals (run `arun_d79dc0a1d0344d01b954250d458d21f5`); two runs asked for an upsert, a point delete, a collection create and drop, an alias delete and a snapshot drafted none of them and finished `answered` with counts or the schema inventory (runs `arun_abd9503a15f148699d7c18d7effd87b8`, `arun_0e4b50056c90482e87908cfd4b3b60d6`).
 Seen again 2026-10-30 on Neo4j Enterprise 5.26.31 in a browser pass: asked to pass two `LOAD CSV` forms, `CREATE`, `MERGE`, `SET`, `DETACH DELETE`, `CALL { } IN TRANSACTIONS` and `USE other` to `run_read_query`, each was refused before anything was sent and the run finished `answered` with one claim about the schema inventory and no word of the eight refusals (run `arun_a5d133c691c948d9a09d60ef611ae417`); the next run, asked for nine procedure, APOC and comment forms, did report each refusal, so it still depends on the model's wording.
+Seen again 2026-10-30 on Milvus 3.0.2 in a browser pass: two runs on a reader asked to pass an exact insert, upsert, delete, collection create and drop, index create, load, release, flush, compaction and alias alter to `run_read_query` drafted none of them and finished `answered` with the collection list and a row count and no word of the eleven requests (runs `arun_70eaf9fb14314b1bb1c147a2d675958a`, `arun_1c54f478ca6640f595a5dd7336e90d2c`); a run asked for seven value reads did pass each one and each was refused before anything was sent, yet its answer carried two claims about the collection list and the row count and no word of the seven refusals (run `arun_7ba4cb533d514bc2a68b6c3b8335d45c`).
 
 **Done when:** a run whose only drafted statement was refused either reports that refusal in its answer, held by the run's verifier, or ends in a state other than `answered`, with an agent test that forces the refusal.
 
@@ -6221,6 +6223,7 @@ A key on a server with RBAC off is told about MongoDB's `security.authorization`
 The provider's sentences reach only the server log.
 Seen 2026-10-30 on Weaviate 1.40.2 in a browser pass (runs `arun_9b350b7799f94f618474644d1a970f2a`, no key, and `arun_f969982a3aca40e6b09cd19f405b44fc`, RBAC off).
 Seen again 2026-10-30 on Qdrant 1.19.1 in a browser pass: a connection with no key was refused before any client was built (`keylessAgentRefusal` in `src/lib/db/providers/vector/qdrant/metadata-read.ts`), yet the rail named MongoDB's setting and the ledger's detail said "The server accepted a write it should have refused", though nothing was sent; the provider's sentence, which asks for a read-only API key or a JWT whose access is r, reached only the server log (run `arun_bffb88a186ee4600b9042c3c6da08908`).
+Seen again 2026-10-30 on Milvus 3.0.2 in a browser pass: a user on a server with `authorizationEnabled: false` was refused at open with the same sentence naming MongoDB's `security.authorization`, where the setting is Milvus's `common.security.authorizationEnabled`; the provider's own sentence, "Milvus answered this user the list of users, which it refuses every read-only user while authorization is on ... Turn authorization on, then give the agent a read-only user", reached only the server log (run `arun_608f660dbe654134b0a4e087cc7912e7`).
 
 **Done when:** a refusal at open shows the provider's own sentence, or a per-engine remedy read from a contract row rather than a type-id branch, the rail no longer tells a keyless connection that its server does not enforce authorization, and a timeline test pins both Weaviate cases.
 
@@ -6231,6 +6234,7 @@ That sentence ends "This console runs Weaviate's read requests only ...: ... obj
 It was shown for a near-text search, a GraphQL `generate` request and six writes, and an aggregate `groupBy` written as a list was refused with the grammar's "groupBy must be a string, found a list." rather than the agent's sentence that `groupBy` counts by stored values.
 Seen 2026-10-30 on Weaviate 1.40.2 in a browser pass (runs `arun_7c2ffd5be3734d4c972147f7d5e84677`, `arun_a633f13a3abc4ade88aeae32f9bb77f1`); nothing was sent in any case.
 Seen again 2026-10-30 on Qdrant 1.19.1 in a browser pass: `readQdrantAgentStatement` (`src/lib/db/providers/vector/qdrant/metadata-request.ts`) passes the grammar's refusal through the same way, so a legacy `points/search` and `points/recommend`, `GET /snapshots` and a query naming an inference model were answered "This console runs Qdrant's read requests only ...: ... point retrieve, scroll, count, facet, query, query/batch and query/groups", and the model refusal added that Studio sends a text for the local BM25 model, while agent mode refuses every query (run `arun_d79dc0a1d0344d01b954250d458d21f5`); nothing was sent.
+Seen again 2026-10-30 on Milvus 3.0.2: `readMilvusAgentStatement` (`src/lib/db/providers/vector/milvus/metadata-request.ts`) passes the grammar's refusal through the same way, so a write route such as `collections/drop` or `entities/insert` is answered with the console's list of runnable routes, which ends "POST entities/query, POST entities/get, POST entities/search, POST entities/hybrid_search", all four of which agent mode refuses, measured by calling the reader directly since the model drafted none of the writes in the browser pass (U157); in the browser an `entities/get` naming `ids` was refused with the grammar's key list ("it takes dbName, collectionName, id, outputFields ...") rather than the agent's metadata-only sentence (run `arun_9b1810ece2f140fc8e8ca1082aa3a0a2`); nothing was sent.
 
 **Done when:** an agent request the grammar refuses is answered with the grammar's reason followed by the agent's list of reads, not the console's, an aggregate naming `groupBy` or `where` in any shape gets the agent's sentence, and `tests/unit/db/weaviate/metadata-request.test.ts` pins both.
 
@@ -6269,6 +6273,14 @@ Neither is a write: `USE` is refused because the connection pins its database (`
 Seen 2026-10-30 on Neo4j Enterprise 5.26.31 in an agent-mode browser pass (run `arun_a5d133c691c948d9a09d60ef611ae417`); nothing was sent.
 
 **Done when:** the policy refuses `USE` with a sentence that names the connection's pinned database and `LOAD CSV` with one that says it reaches files and URLs, and `tests/unit/db/graph/read-policy.test.ts` pins both sentences.
+
+### U170. Milvus agent grounding shows no index where the index reads show one
+
+On Milvus, the schema inventory agent mode grounds on lists each collection with `indexes: []`, while `indexes/list` and the `index` column of `collections/describe` name the collection's indexes.
+An operations run read that as a conflict and reported it to the user as one, though both answers are right about what each read covers.
+Seen 2026-10-30 on Milvus 3.0.2 in an agent-mode browser pass; nothing was written.
+
+**Done when:** the Milvus schema inventory either names each collection's indexes or says it does not read them, and a test in `tests/unit/db/milvus/` pins that.
 
 ## Dependencies
 
@@ -8646,6 +8658,20 @@ Kept so that value exposure, MCP exposure and agent reads on open servers are de
 Found 2026-10-30 with agent execution on Qdrant.
 
 **Done when:** the owner rules on which stored values agent mode may read on Qdrant and how they are redacted, the `qdrantapi` pack offers the workflows that ruling opens, the owner opens MCP read for Qdrant, the pack declares its MCP facet (`src/lib/agent/languages/qdrantapi/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same read-only proof and projection, and `MCP_STATEMENT_READ.qdrant` is true, with tests; cited in `docs/AGENT.md`.
+
+### B155. Milvus's agent reads are metadata only, and it has no MCP statement tool
+
+Agent mode executes Milvus metadata reads under the `milvusrpc` statement language, as a user the server refuses the list of users and whose roles and `public` grant only reads, proved before every request (`docs/providers/milvus.md`, section Agent mode).
+Every answer is projected to names, counts and flags (`ProviderCapabilities.metadataOnly`, `src/lib/db/redaction/metadata-only.ts`), and queries, gets and searches are refused before anything is sent, because their answers carry stored scalar, vector and dynamic field values, and a search with a text input makes the server run the collection's function on it.
+So the language offers the investigation and the operations workflow only: data analysis needs stored values, and query optimization and database assessment need a plan and a profile the server does not compose.
+Its MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`), so no MCP tool runs a Milvus request; `MCP_STATEMENT_READ.milvus` is false and the MCP metadata tools work.
+A user granted a custom privilege group is refused, because a read-only user cannot read a group's members; granting the built-in CollectionReadOnly and DatabaseReadOnly groups, or their read privileges one by one, is the remedy.
+A server with authorization off, Milvus's default, has no server-side boundary, so a connection to one is refused under the agent profile rather than read through the RPC table alone.
+Kept so that value exposure, MCP exposure and agent reads on servers with authorization off are decisions of their own rather than side effects of agent mode joining.
+
+Found 2026-10-30 with agent execution on Milvus.
+
+**Done when:** the owner rules on which stored values agent mode may read on Milvus and how they are redacted, the `milvusrpc` pack offers the workflows that ruling opens, the owner opens MCP read for Milvus, the pack declares its MCP facet (`src/lib/agent/languages/milvusrpc/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same read-only proof and projection, and `MCP_STATEMENT_READ.milvus` is true, with tests; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

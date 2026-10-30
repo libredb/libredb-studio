@@ -1,13 +1,15 @@
 # LibreDB Studio on OpenShift
 
 On OpenShift, Studio installs through its operator from the community catalog or with its Helm chart, signs people in with their OpenShift account, lists the databases of the cluster's database operators, and links itself from the web console.
-This release ships no OpenShift console plugin.
+Its console plugin adds a Databases page and an item on each database's details page to the web console, which open the database in Studio in a new tab.
 
 ## Supported versions
 
 - The chart's openshift mode, the operator installed from OperatorHub (OLM v0), the console link and openshift sign-in are tested on OpenShift 4.22 (CRC 4.22.14).
-  The OLM v1 path below follows from the operator's behaviour with `LIBREDB_CLUSTER_STUDIO_NAMESPACE` unset, and has not run as a `ClusterExtension`.
+  OLM v1 installs the operator only where the `NewOLMOwnSingleNamespace` feature gate is on, which OpenShift 4.19 to 4.22 enable only in the TechPreviewNoUpgrade and DevPreviewNoUpgrade feature sets; that path has not run (see [OLM v1](#olm-v1)).
 - The operator bundle declares OpenShift 4.16 as its oldest release; 4.14 and 4.15 are untested.
+- The console plugin needs OpenShift 4.19 or later; tested on 4.22 (CRC 4.22.14).
+  On 4.16 to 4.18 the operator and the chart run without it, and the console link works.
 - Sign-in with OpenShift accounts needs the cluster's built-in OAuth server.
   A cluster that uses direct external OIDC authentication has none: there, Studio signs people in with [OIDC sign-in](OIDC.md) against the cluster's identity provider, without Kubernetes discovery, because on a cluster that serves `config.openshift.io/v1` the access review of an OIDC session denies every request, and the chart refuses discovery with `authProvider=oidc`.
 - The calls of openshift sign-in never go through a proxy (see [Variables](#variables)), so the operator does not declare itself proxy-aware.
@@ -15,57 +17,68 @@ This release ships no OpenShift console plugin.
 
 ## Install from OperatorHub
 
-A cluster admin installs the operator once per cluster, names the namespace of the cluster's Studio, and creates one `LibreDBStudio` there.
+A cluster admin installs the operator once per cluster, into the namespace of the cluster's Studio, and creates one `LibreDBStudio` there.
+The operator manages only its own namespace: it reconciles the `LibreDBStudio` there and no other.
 
-1. Install **LibreDB Studio** (package `libredb-studio-operator`) from the Community catalog in the console's OperatorHub, or from the CLI with a Subscription.
-   It installs for all namespaces, in `openshift-operators`.
-   Choose Manual approval in the console's install form, as [Upgrading the operator](#upgrading-the-operator) explains.
-   From the CLI, this Subscription also names the cluster Studio namespace of step 2:
+1. Install **LibreDB Studio** (package `libredb-studio-operator`) from the Community catalog in the console's OperatorHub, or from the CLI.
+   Its only install mode is **A specific namespace on the cluster**.
+   Keep **Operator recommended Namespace** at `libredb-studio`, which the console creates when it does not exist, and choose Manual approval, as [Upgrading the operator](#upgrading-the-operator) explains.
+   When the form says that the namespace already exists and will be used, check it as step 2 shows before you install, or pick another name.
+   From the CLI, as a cluster admin, create the namespace, an OperatorGroup for it and a Subscription in it:
+
+   ```sh
+   oc create namespace libredb-studio
+   ```
 
    ```yaml
+   apiVersion: operators.coreos.com/v1
+   kind: OperatorGroup
+   metadata:
+     name: libredb-studio
+     namespace: libredb-studio
+   spec:
+     targetNamespaces:
+       - libredb-studio
+   ---
    apiVersion: operators.coreos.com/v1alpha1
    kind: Subscription
    metadata:
      name: libredb-studio-operator
-     namespace: openshift-operators
+     namespace: libredb-studio
    spec:
      name: libredb-studio-operator
      channel: alpha
      source: community-operators
      sourceNamespace: openshift-marketplace
      installPlanApproval: Manual
-     config:
-       env:
-         - name: LIBREDB_CLUSTER_STUDIO_NAMESPACE
-           value: libredb-studio
-   ```
-
-   With Manual approval, OLM installs nothing until the first InstallPlan is approved as well:
-
-   ```sh
-   oc -n openshift-operators get installplan
-   oc -n openshift-operators patch installplan <name> --type merge -p '{"spec":{"approved":true}}'
-   ```
-
-2. As a cluster admin, create the cluster Studio namespace before you name it, and check that nobody else holds a RoleBinding in it:
-
-   ```sh
-   oc create namespace libredb-studio
-   oc get rolebindings -n libredb-studio
    ```
 
    `oc create namespace` fails when the namespace already exists; do not reuse an existing one, because any user may request a project, and the user who requested it administers it.
-   Only the default ServiceAccount bindings should be listed.
-   Then name it in the Subscription's `spec.config.env` as `LIBREDB_CLUSTER_STUDIO_NAMESPACE`; OLM restarts the operator with it.
-   The console's install form has no field for it, so after a console install set it with this patch.
-   The patch replaces the whole `spec.config.env` list, so list any other variable already set there in it as well:
+   With Manual approval, OLM installs nothing until the first InstallPlan is approved as well:
 
    ```sh
-   oc -n openshift-operators patch subscription libredb-studio-operator --type merge \
-     -p '{"spec":{"config":{"env":[{"name":"LIBREDB_CLUSTER_STUDIO_NAMESPACE","value":"libredb-studio"}]}}}'
+   oc -n libredb-studio get installplan
+   oc -n libredb-studio patch installplan <name> --type merge -p '{"spec":{"approved":true}}'
    ```
 
-   The first operator release after 1.1.0 reads this variable; 1.1.0 neither reads it nor renders openshift sign-in.
+   Confirm the install in Installed Operators in `libredb-studio` (Status Succeeded) or with `oc get csv -n libredb-studio`, because the install page can keep showing progress after the install has finished.
+
+2. Check that only cluster admins may write in the namespace:
+
+   ```sh
+   oc get rolebindings -n libredb-studio
+   oc get namespace libredb-studio -o jsonpath='{.metadata.annotations.openshift\.io/requester}'
+   ```
+
+   Only the default ServiceAccount bindings and the ones OLM made for the operator should be listed, and the second command should print nothing: a project a user requested names that user, and that user administers it.
+   RoleBindings do not show a ClusterRoleBinding that gives a group `edit` or `admin` in every namespace, so check who may write there as well:
+
+   ```sh
+   oc adm policy who-can create pods -n libredb-studio
+   oc adm policy who-can update secrets -n libredb-studio
+   ```
+
+   Only cluster admins, the operator's service account and system accounts should be named.
 3. Create one `LibreDBStudio` in that namespace with openshift-mode values, and keep its RoleBindings to cluster admins only (see [The cluster Studio namespace](#the-cluster-studio-namespace)).
    The spec takes the chart's values, which the [chart README](../charts/libredb-studio/README.md#openshift-sign-in) documents:
 
@@ -92,33 +105,51 @@ A cluster admin installs the operator once per cluster, names the namespace of t
 
    Under the operator, a Studio admin is whoever may `update` this `LibreDBStudio`.
 
-The operator renders the ConsoleLink, and discovery of any namespace other than the resource's own, only for the `LibreDBStudio` in the namespace `LIBREDB_CLUSTER_STUDIO_NAMESPACE` names.
-A resource in any other namespace that asks for them fails to reconcile with a message naming `operator.clusterStudioNamespace`, and with the variable unset no resource may render them.
-Discovery of the resource's own namespace, and every namespaced object of the chart, render for any resource.
-The resource cannot change this: the operator sets `operator.managed` and `operator.clusterStudioNamespace` itself, over the resource's spec.
-Unsetting or changing the variable later does not remove what the cluster Studio already rendered: its ConsoleLink and its Roles in discovered namespaces stay while the resource fails to reconcile, so turn discovery and the ConsoleLink off in that resource, or delete it, before you change the variable.
+The operator reconciles only the `LibreDBStudio` resources of its own namespace.
+A resource in any other namespace gets no status, no finalizer and no objects, and deleting it completes at once.
+Any user who may edit a namespace may still create one, because OLM adds the kind to the default `edit` and `admin` roles; the operator ignores it.
+A team's own Studio is a [Helm install](#install-with-helm) in the team's namespace.
+The resource cannot move the operator to another namespace: the operator sets `operator.managed` and `operator.clusterStudioNamespace`, its own namespace, over the resource's spec.
+It still chooses the namespaces discovery covers, which is why the next section keeps the namespace to cluster admins.
+
+Installing the operator is a cluster admin's act, done once, into that one namespace, and the cluster keeps one install:
+
+```sh
+oc get csv -A | grep libredb-studio-operator
+```
+
+This should list one namespace, the operator's.
+OLM lets anyone who may edit a namespace create a Subscription there, and where an OperatorGroup in that namespace names no `serviceAccountName`, OLM installs the subscribed operator with every right its CSV asks for, this one's cluster-wide rights included.
+So an OperatorGroup in a namespace that users other than cluster admins edit names a `serviceAccountName`, whose rights then bound what OLM installs there.
 
 ### The cluster Studio namespace
 
-Whoever may edit the `LibreDBStudio` in the cluster Studio namespace chooses the namespaces Studio discovers and is a Studio admin, and the operator carries out that choice with its own service account.
-So only cluster admins may hold RoleBindings in that namespace: the guard above rests on it.
-Create it with `oc create namespace` as a cluster admin, never through a project request, since the user who requests a project administers it; a namespace that already existed when you named it needs its RoleBindings checked first.
-Run one Studio with discovery per cluster there; a team's own Studio runs without discovery in the team's namespace.
+The cluster Studio namespace is also the operator's namespace, so whoever may write in it controls what the operator does in the cluster.
+Whoever may edit the `LibreDBStudio` there chooses the namespaces Studio discovers and is a Studio admin, and the operator carries out that choice with its own service account.
+So only cluster admins may hold RoleBindings in that namespace: the operator's limits rest on it.
+Create it with the console's recommended namespace or with `oc create namespace` as a cluster admin, never through a project request, since the user who requests a project administers it; a namespace that already existed needs its RoleBindings and requester checked first, as step 2 shows.
+Run the one Studio with discovery there.
 
 ### What the operator may do
 
-The operator applies each `LibreDBStudio` as a Helm release with its own service account, which a ClusterRole lets act in every namespace:
+The operator applies the `LibreDBStudio` as a Helm release with its own service account.
+In its own namespace, a Role lets it:
 
-- create, read, change and delete Secrets, ConfigMaps, Services, ServiceAccounts, Pods, PersistentVolumeClaims, Endpoints, Deployments, StatefulSets, DaemonSets, ReplicaSets, Ingresses, NetworkPolicies, HorizontalPodAutoscalers, PodDisruptionBudgets, Jobs, CronJobs, Roles, RoleBindings, Gateway API HTTPRoutes, and the monitoring ServiceMonitors and PrometheusRules;
-- create, read, change and delete `route.openshift.io` Routes, and `create` and `update` on `routes/custom-host`, so a resource's Route may carry the host it sets;
+- create, read, change and delete Secrets, ConfigMaps, Services, ServiceAccounts, Pods, PersistentVolumeClaims, Endpoints, Deployments, StatefulSets, DaemonSets, ReplicaSets, Ingresses, NetworkPolicies, HorizontalPodAutoscalers, PodDisruptionBudgets, Jobs, CronJobs, Gateway API HTTPRoutes, the monitoring ServiceMonitors and PrometheusRules, and the `LibreDBStudio` resources with their status;
+- create, read, change and delete `route.openshift.io` Routes, and `create` and `update` on `routes/custom-host`, so the resource's Route may carry the host it sets;
+- `create` Events.
+
+Across the cluster, a ClusterRole lets it:
+
+- create, read, change and delete Roles and RoleBindings, which discovery renders in each discovered namespace;
+- `get` Secrets and Services, and `get`, `list` and `watch` the four kinds discovery lists, because Kubernetes lets the operator create the exporter's Roles only with verbs it holds itself;
 - create, read, change and delete the cluster-scoped `console.openshift.io` ConsoleLinks;
-- `get`, `list` and `watch` on the four kinds discovery lists, because Kubernetes lets the operator create the exporter's Roles only with verbs it holds itself;
-- `get` on Namespaces and `create` on Events.
+- create any `console.openshift.io` ConsolePlugin, and read, change and delete only the one named `libredb-studio`, the console plugin's;
+- `get` Namespaces.
 
-Its manager role holds no ClusterRole, ClusterRoleBinding or ConsolePlugin rule, so a resource with `accessReview.enabled` or a Rancher NavLink fails to reconcile.
+Outside its namespace the operator can create no workload, Service, Secret, ConfigMap, NetworkPolicy, Route or Job, and it can neither list nor watch Secrets.
+Its roles hold no ClusterRole or ClusterRoleBinding rule and nothing on `consoles`, so a resource with `accessReview.enabled` or a Rancher NavLink fails to reconcile.
 Its service account creates token and subject access reviews only through the metrics auth role that guards its metrics endpoint.
-Any user who may edit a namespace may create a `LibreDBStudio` there, because OLM (v0) adds the kind to the default `edit` and `admin` roles.
-Such a resource with `route.main.enabled` has the operator create an HTTPRoute, with the hostnames the resource sets, in the resource's namespace; whether a Gateway serves it is decided by that Gateway's `allowedRoutes`, so a Gateway shared across namespaces should admit routes only from the namespaces it trusts.
 
 ### Upgrading the operator
 
@@ -133,17 +164,74 @@ oc get libredbstudios -A
 - Clear `postgresql.extraDeploy`, `postgresql.namespaceOverride`, `postgresql.metrics.serviceMonitor.namespace` and `postgresql.metrics.prometheusRule.namespace` first, or on OpenShift 4.16 the resource stops reconciling and its delete never completes.
 - The bundled PostgreSQL's ServiceMonitor and PrometheusRule move into the resource's namespace, so a monitoring stack that selected them in another namespace must select that one.
 
+### Moving from operator 1.1.0
+
+Operator 1.1.0 installs for all namespaces, in `openshift-operators`, and OLM cannot move an install to another install mode.
+An upgrade InstallPlan for a later version applies the new CRD and CSV, but the new CSV fails with the reason `UnsupportedOperatorGroup` and 1.1.0 keeps running; installing the new version in another namespace while 1.1.0 is installed fails as well.
+So 1.1.0 is uninstalled first, keeping its resources, each team's `LibreDBStudio` becomes a Helm release, and the new version is installed for the namespace of the cluster's Studio.
+This procedure ran end to end on OpenShift 4.22 (CRC 4.22.14) with Helm 4.1.3.
+
+1. List the resources:
+
+   ```sh
+   oc get libredbstudios -A
+   ```
+
+   The cluster's Studio is the one in the namespace only cluster admins write; the others are team Studios.
+2. Approve no InstallPlan of the new version, and install it in no other namespace yet.
+   An approved InstallPlan, which Automatic approval approves at once, applies the new CRD even though the new CSV shows `Failed`, and so does an install in another namespace: 1.1.0 then runs on under the new CRD, so make the [upgrade checks](#upgrading-the-operator) on every resource at once, copying backup dumps out first.
+   Then go on with step 3.
+3. Uninstall 1.1.0 and keep its resources: in Installed Operators in `openshift-operators`, run Uninstall Operator on the LibreDB Studio row that offers it (the new version's row, showing Failed, once an upgrade InstallPlan was approved), with "Delete all operand instances for this operator" left unchecked where the dialog shows it.
+   The console removes the Subscription and that row's CSV only, so then delete every `libredb-studio-operator` CSV left in `openshift-operators` with the second command below.
+   From the CLI, run both commands, which delete the Subscription and every `libredb-studio-operator` CSV in `openshift-operators`:
+
+   ```sh
+   oc delete subscription libredb-studio-operator -n openshift-operators
+   oc get csv -n openshift-operators -o name | grep libredb-studio-operator | xargs oc delete -n openshift-operators
+   ```
+
+   Either way, check that `oc get csv -n openshift-operators | grep libredb-studio-operator` prints nothing before step 4, since a 1.1.0 CSV left in place keeps reconciling every namespace.
+   Keep the CRD: deleting it deletes every `LibreDBStudio` and what each one owns.
+   The Studios keep running, and nothing reconciles them until step 5.
+4. Move each team Studio to a Helm release of the same name in the same namespace.
+   Helm applies a release with the rights of whoever runs it, and the values file is the resource's spec, which anyone who may edit the namespace wrote, so the team runs these commands with its own rights, never a cluster admin.
+   First a cluster admin removes what the release placed outside the team's namespace, which the team's rights cannot change: the discovery Roles and RoleBindings in other namespaces, the ConsoleLink, and what `postgresql.extraDeploy`, `postgresql.namespaceOverride` or the `postgresql.metrics` ServiceMonitor and PrometheusRule namespaces put elsewhere, each named in its `meta.helm.sh/release-name` and `meta.helm.sh/release-namespace` annotations; a PostgreSQL moved to another namespace holds the team's data, so its data is copied out first.
+   Then a user with `edit` or `admin` in the team's namespace runs:
+
+   ```sh
+   helm repo add libredb https://libredb.org/libredb-studio/
+   helm repo update libredb
+   oc patch libredbstudio <name> -n <namespace> --type merge -p '{"metadata":{"finalizers":null},"spec":{"postgresql":{"extraDeploy":null,"namespaceOverride":null,"metrics":{"serviceMonitor":{"namespace":null},"prometheusRule":{"namespace":null}}}}}'
+   oc get libredbstudio <name> -n <namespace> -o jsonpath='{.spec}' > <name>-values.json
+   oc delete libredbstudio <name> -n <namespace> --cascade=orphan
+   helm upgrade <name> libredb/libredb-studio --version 0.1.117 -n <namespace> -f <name>-values.json --set discovery.kubernetes.enabled=false --set openshift.consoleLink.enabled=false
+   ```
+
+   The first two commands add the chart repository, as the [chart README](../charts/libredb-studio/README.md) shows; `oci://ghcr.io/libredb/charts/libredb-studio` in place of `libredb/libredb-studio` needs neither.
+   The patch removes the finalizer while nothing reconciles, so the operator cannot add it back, and clears the four values the new CRD refuses in the same write, since on OpenShift 4.16 a resource that still holds one takes no write once the new CRD is applied; add to it any `route` entry the new CRD refuses.
+   The orphaning delete then leaves the Studio's objects and its data claim in place, and Helm upgrades the same release, whose objects already carry Helm's ownership labels and annotations, because the operator installs through Helm.
+   The two `--set` flags keep the release to the team's namespace: a team Studio discovers no other namespace and renders no ConsoleLink.
+5. Install the new version for a specific namespace, as [Install from OperatorHub](#install-from-operatorhub) shows; the install applies the new CRD, so make the [upgrade checks](#upgrading-the-operator) on the cluster's Studio first.
+   Prefer the recommended `libredb-studio` with a new `LibreDBStudio` there, moving the old cluster Studio to Helm as in step 4, since an existing namespace's RoleBindings and requester show only who may write there now.
+   Keep the namespace that holds the old cluster Studio only when it has been one only cluster admins write since it was created: the operator then takes the existing resource over in place, upgraded to the new chart at its first reconcile.
+   The release name and its revision numbering continue in that namespace, while only the latest revision record remains.
+   In that namespace, skip `oc create namespace`, which fails there, and create only the OperatorGroup and the Subscription, naming that namespace in place of `libredb-studio`.
+6. A `LibreDBStudio` left in another namespace is ignored.
+   One that still carries the 1.1.0 finalizer blocks its own deletion, and its namespace's, until the finalizer is removed as in step 4.
+
 ### OLM v1
 
-OLM v1 can install the same bundle as a `ClusterExtension` from a `ClusterCatalog`, with a service account whose ClusterRole covers the bundle's.
-A `ClusterExtension` has no Subscription, so `LIBREDB_CLUSTER_STUDIO_NAMESPACE` stays unset there unless the controller's environment is set another way.
-With it unset, which is a known limit of this release, every `LibreDBStudio` renders its namespaced objects only, and one that asks for a ConsoleLink or for discovery of another namespace fails to reconcile.
+OLM v1 installs a bundle whose only install mode is OwnNamespace only behind the `NewOLMOwnSingleNamespace` feature gate.
+OpenShift 4.19 to 4.22 enable it only in the TechPreviewNoUpgrade and DevPreviewNoUpgrade feature sets, and 4.18 does not define it.
+Where it is on, a `ClusterExtension` from a `ClusterCatalog` installs the bundle with `spec.config.inline.watchNamespace` set to the install namespace, and a service account whose rights cover the bundle's.
+This path has not run.
 
 ## Install with Helm
 
 A cluster admin installs the chart's openshift mode with Helm as the [chart README](../charts/libredb-studio/README.md#openshift-sign-in) shows, from the repository `https://libredb.org/libredb-studio/` or from `oci://ghcr.io/libredb/charts/libredb-studio`.
 The chart refuses openshift mode until `image.tag` names a release after 1.1.0, while its `appVersion` is 1.1.0 or earlier.
 Discovery of other namespaces creates Roles there and a ConsoleLink is cluster-scoped, so such an install needs a cluster admin, and the [cluster Studio namespace](#the-cluster-studio-namespace) rule applies to the release's namespace.
+Teams install their own Studio this way, in their own namespace and with their own rights; it discovers no other namespace and renders no ConsoleLink.
 
 The console's Helm catalog lists the chart once its repository is added.
 Anyone with `edit` in a namespace may add it for that namespace with a ProjectHelmChartRepository, and a cluster admin for every namespace with a cluster-scoped HelmChartRepository of the same `spec`:
@@ -170,10 +258,65 @@ With `openshift.consoleLink.enabled`, the console links to Studio; the [chart RE
 - A `NamespaceDashboard` ConsoleLink shows on the dashboard of the namespaces it names or selects, and nowhere else.
   It is for a team's Studio without discovery; with discovery on, the chart refuses it and renders the `ApplicationMenu` link named `libredb-studio` that locates the cluster's Studio.
 - Every authenticated user may read every ConsoleLink, so a link carries Studio's address and name and never a discovered namespace.
-- Under the operator, only the `LibreDBStudio` in the cluster Studio namespace renders a ConsoleLink of either kind, so a team's Studio under the operator gets no console link; a `NamespaceDashboard` link for a team needs a Helm install by a cluster admin.
+- Under the operator there is only the cluster's Studio; a team's `NamespaceDashboard` link is a Helm install by a cluster admin.
 
 A signed-out visit from the link goes to the cluster's login page, which may ask for the OpenShift password again even when the console tab is signed in (it does with htpasswd): the OAuth server keeps no login session that another client could reuse, while an identity provider that signs people in on its own page may keep one.
 Studio never asks for a password of its own in this mode.
+
+## The console plugin
+
+The console plugin `libredb-studio` adds a Databases page under Home and an item on the details page of each supported database resource (CloudNativePG and EDB `Cluster`, Crunchy `PostgresCluster`, `MongoDBCommunity`).
+The item shows on the generic details page, the one Search and the resource's own list open (`/k8s/ns/<namespace>/<group>~<version>~<kind>/<name>`); the console renders no plugin details item on the operand details page that Installed Operators opens, so it is not shown there, and the Databases page lists the same database.
+The page lists the resources of those kinds the signed-in user may list in the chosen project, or in all projects for a user who may list them cluster-wide, and opens one in Studio in a new tab.
+It finds Studio only through the ConsoleLink named `libredb-studio`, which the cluster Studio renders with discovery on, so it needs `discovery.kubernetes.enabled` and `openshift.consoleLink.enabled` with `location: ApplicationMenu`.
+Per row it asks one access review, whether the user may `get` the row's credential Secret, only as a hint; the plugin never reads a Secret, and Studio reviews again with the user's own token when the database opens.
+It needs OpenShift 4.19 or later.
+
+### Turning it on
+
+The plugin renders with `openshift.consolePlugin.enabled` on the cluster Studio, and then stays off in the console until a cluster admin turns it on, in one of three ways:
+
+- the operator's install form, whose console plugin toggle defaults to Disabled on a community catalog ("Ecosystem > Software Catalog" on 4.20 and later, "OperatorHub" on 4.19);
+- the console's Console plugins page, Administration > Cluster Settings > Configuration > Console, tab Console plugins;
+- this patch, which the chart's install notes print, and which adds `libredb-studio` to `spec.plugins` once and keeps the other plugins in their order:
+
+  ```sh
+  (
+    set -eu
+    plugins=$(oc get consoles.operator.openshift.io cluster -o jsonpath='{.spec.plugins}')
+    case "$plugins" in *'"libredb-studio"'*) exit 0 ;; esac
+    if [ -z "$plugins" ]; then
+      oc patch consoles.operator.openshift.io cluster --type=json -p '[{"op":"add","path":"/spec/plugins","value":["libredb-studio"]}]'
+    else
+      oc patch consoles.operator.openshift.io cluster --type=json -p '[{"op":"add","path":"/spec/plugins/-","value":"libredb-studio"}]'
+    fi
+  )
+  ```
+
+  The parentheses run it in a subshell, so its `exit` and `set -eu` leave the shell it is pasted into running.
+
+Turning it on restarts the console pods, which may sign people out once.
+Neither the chart nor the operator patches the console's configuration: turning the plugin on changes every console session, so it stays a cluster admin's act, and a Helm hook Job that did it would leave a binding to `patch` the console's configuration behind whenever a later hook failed under the Helm the console embeds before v3.19.
+
+### The plugin's namespace
+
+The console runs the plugin in every console session and sends each console user's token to the plugin's server on every asset fetch.
+So whoever may change that server's Deployment runs code in every console session and receives every console user's token: only cluster admins may write the namespace it runs in, and anyone `oc adm policy who-can update deployments.apps -n <namespace>` lists there holds cluster-admin-grade power.
+
+- Under the operator, the server runs in the operator's own namespace, the cluster Studio namespace ([The cluster Studio namespace](#the-cluster-studio-namespace)), which the operator sets; a `LibreDBStudio` chooses neither the namespace nor the image, and any other plugin namespace fails the render, as does an operator namespace that is a requested project.
+  Sharing the namespace gives Studio nothing: Studio's ServiceAccount holds no right on the server's objects there and its pod mounts no API token, and the server's NetworkPolicy is its own, as are its labels, since the chart refuses a `nameOverride`, `fullnameOverride` or release name that gives Studio the server's name `libredb-studio-console-plugin`.
+  Check the namespace with `oc adm policy who-can update deployments.apps -n libredb-studio`, which should list only cluster admins, the operator's account and system accounts.
+- On a Helm install, `openshift.consolePlugin.namespace` names it.
+  Create it with `oc create namespace <namespace>` right before the install, which fails if the name is taken, never with `oc new-project` or the console's Create Project.
+  Then check that no RoleBinding there names a user or a group of users; the `system:deployers`, `system:image-builders` and `system:image-pullers` bindings OpenShift adds to every namespace are expected, and `oc adm policy who-can update deployments.apps -n <namespace>` decides.
+  With the plugin on, the release's namespace falls under the [cluster Studio namespace](#the-cluster-studio-namespace) rule: only cluster admins may hold RoleBindings there, so install the release into a namespace a cluster admin created too.
+  As the plugin namespace, the chart refuses Studio's own namespace, a discovered namespace and a project someone requested (it carries `openshift.io/requester`, and its requester administers it), and it refuses a release whose own namespace is a requested project; that last check looks the namespaces up, so `helm template` and a client-side dry run skip it, and it relies on the cluster's project request template setting `openshift.io/requester`, as the default template does.
+
+The server runs an image pinned by digest, as its own ServiceAccount with no token, with a read-only root and the nginx configuration the image bakes in, which logs no request header.
+Its NetworkPolicy admits only the `openshift-console` namespace on TCP 9443 and allows no egress.
+NetworkPolicies add up, so another policy in that namespace or an AdminNetworkPolicy allow rule that selects the server's pods widens what it may reach.
+The ConsolePlugin declares no proxy and no content security policy.
+The chart README's [The console plugin](../charts/libredb-studio/README.md#the-console-plugin) has the values.
 
 ## Sign-in with the OpenShift OAuth server
 
@@ -343,18 +486,19 @@ docker run --rm -v <volume>:/app/data --entrypoint sh ghcr.io/libredb/libredb-st
 
 ## Uninstall
 
-Delete every `LibreDBStudio` first and uninstall the operator after it: the operator's finalizer uninstalls each resource's release, its ConsoleLink and the Roles in the discovered namespaces with it, and without the operator a resource's deletion, and its namespace's, never completes.
-Teams may run their own `LibreDBStudio` in their namespaces, so delete them all, and remove the Subscription and the CSV only once the last command lists nothing:
+Delete the `LibreDBStudio` in the operator's namespace first and uninstall the operator after it: the operator's finalizer uninstalls the resource's release, its ConsoleLink, its ConsolePlugin and plugin server and the Roles in the discovered namespaces with it, and without the operator the resource's deletion, and its namespace's, never completes.
+Resources in other namespaces carry no finalizer of this operator, except ones left from 1.1.0 (see [Moving from operator 1.1.0](#moving-from-operator-110)).
+Remove the Subscription and the CSV only once the second `get` lists nothing:
 
 ```sh
-oc get libredbstudios -A
-oc delete libredbstudios --all -A --wait
-oc get libredbstudios -A
-oc delete subscription libredb-studio-operator -n openshift-operators
-oc get csv -n openshift-operators -o name | grep libredb-studio-operator | xargs oc delete -n openshift-operators
+oc get libredbstudios -n libredb-studio
+oc delete libredbstudios --all -n libredb-studio --wait
+oc get libredbstudios -n libredb-studio
+oc delete subscription libredb-studio-operator -n libredb-studio
+oc get csv -n libredb-studio -o name | grep libredb-studio-operator | xargs oc delete -n libredb-studio
 ```
 
-The console's Uninstall Operator action replaces the last two commands.
+The console's Uninstall Operator action in Installed Operators in that namespace replaces the last two commands.
 OLM leaves the CRD and the four ClusterRoles it generated for the kind (`libredbstudios.studio.libredb.org-v1alpha1-admin`, `-edit`, `-view` and `-crdview`); once no `LibreDBStudio` is left anywhere, deleting the CRD removes them too:
 
 ```sh
@@ -367,16 +511,27 @@ OLM also leaves the bundle's own ClusterRoles, which deleting the CRD does not r
 oc delete clusterrole libredb-studio-operator-libredbstudio-admin-role libredb-studio-operator-libredbstudio-editor-role libredb-studio-operator-libredbstudio-viewer-role libredb-studio-operator-metrics-reader
 ```
 
-This release ships no console plugin, so its uninstall leaves nothing in the console's configuration.
-When `libredb-studio` is listed in `spec.plugins` of `consoles.operator.openshift.io/cluster`, from a plugin enabled by hand or a release that ships one, uninstalling the operator from the CLI leaves the entry there.
-A stale entry is harmless: the console stays Available and not Degraded, and the console operator logs that the plugin is not found every few seconds.
-Remove it by its index in the list, `0` below; the `test` operation refuses the patch when that index holds another plugin:
+Deleting the operator's namespace last removes its OperatorGroup with it, and the data claims below as well, so delete it only once they are no longer needed:
 
 ```sh
-oc get consoles.operator.openshift.io cluster -o jsonpath='{.spec.plugins}'
-oc patch consoles.operator.openshift.io cluster --type json \
-  -p '[{"op":"test","path":"/spec/plugins/0","value":"libredb-studio"},{"op":"remove","path":"/spec/plugins/0"}]'
+oc delete namespace libredb-studio
 ```
+
+`helm uninstall` and an operator uninstall from the CLI leave `libredb-studio` in `spec.plugins` of `consoles.operator.openshift.io/cluster` when the console plugin was turned on.
+The console's Uninstall Operator action removes the entry itself, as its dialog says; check the list either way.
+Removing a remaining entry is a required step.
+The console stays Available and not Degraded with a stale entry, and the console operator logs that the plugin is not found every few seconds, but the entry trusts the next ConsolePlugin named `libredb-studio` in advance: whoever creates one later has it load in every console session without a cluster admin turning it on again.
+On a Helm install, remove the ConsolePlugin, with `helm uninstall` or `openshift.consolePlugin.enabled=false`, before deleting the plugin namespace or Studio's namespace.
+The cluster-scoped ConsolePlugin outlives both and still names the server's Service, which anyone who may then create a namespace of that name, through a project request too, could serve to every console session.
+Remove the entry by its index in the list, which the first command finds; the `test` operation refuses the patch when that index holds another plugin:
+
+```sh
+i=$(oc get consoles.operator.openshift.io cluster -o json | jq '.spec.plugins | index("libredb-studio")')
+oc patch consoles.operator.openshift.io cluster --type json \
+  -p "[{\"op\":\"test\",\"path\":\"/spec/plugins/$i\",\"value\":\"libredb-studio\"},{\"op\":\"remove\",\"path\":\"/spec/plugins/$i\"}]"
+```
+
+When the first command prints `null`, the list holds no entry and nothing is left to remove.
 
 A Helm install uninstalls with `helm uninstall`, which removes its ConsoleLink and the Roles in the discovered namespaces as well.
 

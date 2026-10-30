@@ -8,8 +8,8 @@
  * OPENSHIFT_* variables Studio's openshift sign-in reads (src/lib/openshift-auth/config.ts), and the admin target of
  * the self review (src/lib/kubernetes-access/config.ts). It refuses, naming the value, every values set Studio's
  * openshift preflight would refuse, and the operator-managed guard (operator.managed and
- * operator.clusterStudioNamespace) keeps every cross-namespace or cluster-scoped object to the one Studio the
- * cluster admin named.
+ * operator.clusterStudioNamespace) keeps every cross-namespace or cluster-scoped object to the one Studio in the
+ * operator's own namespace.
  *
  * Every case runs the real `helm template` against the chart, never a reimplementation of the templating.
  */
@@ -247,9 +247,41 @@ describe("the ServiceAccount the OAuth client id names", () => {
 });
 
 /**
- * O14: a LibreDBStudio any namespace editor may create is reconciled by the cluster-wide operator, so under
- * operator.managed a cross-namespace object renders only for the release in operator.clusterStudioNamespace. The
- * discovery render is gated in every sign-in mode, not only openshift mode.
+ * Under the operator, Studio's pod shares the operator's namespace, and with it the operator's own ServiceAccount, so
+ * the chart refuses serviceAccount.create=false there: the pod always runs as the account its release creates.
+ */
+describe("the ServiceAccount under the operator", () => {
+  test.each([
+    ["the boolean", set("operator.managed=true")],
+    ["the string", ["--set-string", "operator.managed=true"]],
+  ])("operator.managed as %s with serviceAccount.create=false fails naming serviceAccount.create", (_, managed) => {
+    const run = template([
+      ...managed,
+      ...set(
+        `operator.clusterStudioNamespace=${NAMESPACE}`,
+        "serviceAccount.create=false",
+        "serviceAccount.name=other",
+      ),
+    ]);
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stderr).toMatch(/execution error at [^\n]*: serviceAccount\.create/);
+  });
+
+  test("a Helm install with serviceAccount.create=false still renders", () => {
+    render(set("serviceAccount.create=false", "serviceAccount.name=other"));
+  });
+
+  test("the default operator render still renders, with the release's own ServiceAccount", () => {
+    const docs = render(set("operator.managed=true", `operator.clusterStudioNamespace=${NAMESPACE}`));
+    expect(all(docs, "ServiceAccount")).toHaveLength(1);
+  });
+});
+
+/**
+ * O14: under operator.managed a cross-namespace object renders only for the release in
+ * operator.clusterStudioNamespace, which the operator sets to its own namespace (WATCH_NAMESPACE), the only one it
+ * reconciles; the guard stays as defense in depth. The discovery render is gated in every sign-in mode, not only
+ * openshift mode.
  */
 describe("the operator namespace guard on discovery (O14)", () => {
   const MODES: Array<[string, string[]]> = [
@@ -261,7 +293,14 @@ describe("the operator namespace guard on discovery (O14)", () => {
   test.each(MODES)(
     "%s: operator-managed discovery of another namespace with no cluster Studio namespace fails",
     (_, mode) => {
-      refused([...mode, ...DISCOVERY, ...set("operator.managed=true")], "operator.clusterStudioNamespace");
+      refused(
+        [...mode, ...DISCOVERY, ...set("operator.managed=true")],
+        "operator.clusterStudioNamespace",
+        "WATCH_NAMESPACE",
+      );
+      const stderr = template([...mode, ...DISCOVERY, ...set("operator.managed=true")]).stderr;
+      expect(stderr).not.toContain("Subscription");
+      expect(stderr).not.toContain("LIBREDB_CLUSTER_STUDIO_NAMESPACE");
     },
   );
 
@@ -1371,7 +1410,7 @@ describe("install notes in openshift mode", () => {
     return rendered?.data?.notes ?? "";
   }
 
-  test("names the mode, where people sign in, the admin rule and that the console plugin is not in this release", () => {
+  test("names the mode, where people sign in and the admin rule", () => {
     const text = notes(OPENSHIFT);
     expect(text).toContain("Auth Provider:    openshift");
     expect(text).toContain(
@@ -1379,7 +1418,9 @@ describe("install notes in openshift mode", () => {
     );
     expect(text).toContain("OpenShift sign-in:");
     expect(text).toContain(`whoever may update the Deployment ${NAMESPACE}/${RELEASE}`);
-    expect(text).toContain("The OpenShift console plugin is not part of this release");
+    expect(text).toContain(
+      "openshift.consolePlugin.enabled adds the OpenShift console plugin and openshift.consoleLink.enabled a link to Studio in the console.",
+    );
     expect(text).not.toContain("First-run credentials");
   });
 

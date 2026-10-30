@@ -39,3 +39,14 @@ bun tests/live/milvus-evidence.ts --secrets "$OUTSIDE/credentials" --certs "$OUT
 
 The run takes several minutes: the deadline shapes, the dropped connection and the three query-node rejections each wait on the server.
 `--only <name,...>` captures the named rows alone.
+
+## The agent boundary
+
+`3.0.2/agent-boundary/` holds what Milvus 3.0.2 answers each principal the agent read-only profile may meet, which the provider's agent tests replay.
+`3.0.2/agent-boundary/run.sh` writes every file there: it starts two digest-pinned servers of its own, one with authorization on and one with it off, generates root's password for the run, and runs `agent-boundary-probe.ts`, which seeds both, generates every other user's password and refuses to write a capture holding any form of any credential it sent.
+The containers are removed when the run ends; `MILVUS_PREFIX` names them and `MILVUS_PORT` picks the first of their two loopback ports.
+
+- `select-user-self-*`, `select-grant-*`, `list-cred-users-*`, `select-role-all-*`, `list-privilege-groups-*`, `select-user-other-*`: the reads the read-only proof may send, for every principal.
+- `list-databases-*` to `describe-alias-*`: the console's metadata reads; `query-values-*` and `search-text-*`: a read of stored values, and a text search the server runs the BM25 function for.
+- `write-*`: every write and state change, refused to each read-only principal, then sent by a principal that may write; `state-*`: what root reads before and after them.
+- `select-grant-own-role-after-grant-midrun` and `write-insert-after-grant-midrun`: a grant made during the run.

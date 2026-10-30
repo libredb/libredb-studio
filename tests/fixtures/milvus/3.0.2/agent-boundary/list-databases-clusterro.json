@@ -1,0 +1,37 @@
+{
+  "$captured": {
+    "server": "authorization on",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "rpc": "ListDatabases",
+    "principal": "clusterro",
+    "rights": "role agent_clusterro_role: the ClusterReadOnly group on */*",
+    "surface": "ListDatabases",
+    "request": {}
+  },
+  "outcome": "pass",
+  "payload": {
+    "db_names": [
+      "default",
+      "agent_other_db"
+    ],
+    "created_timestamp": [
+      "1793370102277118071",
+      "1793370106310676476"
+    ],
+    "db_ids": [
+      "1",
+      "470121212090979682"
+    ],
+    "status": {
+      "extra_info": {},
+      "error_code": "Success",
+      "reason": "",
+      "code": 0,
+      "retriable": false,
+      "detail": ""
+    }
+  }
+}

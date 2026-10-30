@@ -31,7 +31,7 @@ export const MILVUS_LOADER_OPTIONS = {
   oneofs: true,
 } as const;
 
-/** E15's RPCs as MilvusService names them. */
+/** E15's RPCs as MilvusService names them, then the agent read-only proof's three privilege reads. */
 export type MilvusRpc =
   | "GetVersion"
   | "CheckHealth"
@@ -52,9 +52,15 @@ export type MilvusRpc =
   | "Search"
   | "HybridSearch"
   | "LoadCollection"
-  | "ReleaseCollection";
+  | "ReleaseCollection"
+  | "ListCredUsers"
+  | "SelectUser"
+  | "SelectGrant";
 
-/** Every RPC the adapter may name, in E15's order; the stub holds these and no other. */
+/**
+ * Every RPC the adapter may name, in E15's order, then the read-only proof's privilege reads; the stub holds these and
+ * no other. Every one reads, but LoadCollection and ReleaseCollection, which only the admin's maintenance route sends.
+ */
 export const MILVUS_ALLOWLISTED_RPCS = [
   "GetVersion",
   "CheckHealth",
@@ -76,6 +82,9 @@ export const MILVUS_ALLOWLISTED_RPCS = [
   "HybridSearch",
   "LoadCollection",
   "ReleaseCollection",
+  "ListCredUsers",
+  "SelectUser",
+  "SelectGrant",
 ] as const satisfies readonly MilvusRpc[];
 
 /** Fails to compile when `MilvusRpc` gains an RPC the list above does not name. */
@@ -166,7 +175,15 @@ export function deadlineMs(rpc: MilvusRpc, callTimeoutMs: number): number {
 export const SYSTEM_INFO_REQUEST = '{"metric_type": "system_info"}';
 
 /** The RPCs whose request message has no `db_name` field; every other one carries `CallOptions.db` (E16). */
-const WITHOUT_DB_NAME: ReadonlySet<MilvusRpc> = new Set(["GetVersion", "CheckHealth", "GetMetrics", "ListDatabases"]);
+const WITHOUT_DB_NAME: ReadonlySet<MilvusRpc> = new Set([
+  "GetVersion",
+  "CheckHealth",
+  "GetMetrics",
+  "ListDatabases",
+  "ListCredUsers",
+  "SelectUser",
+  "SelectGrant",
+]);
 /** The RPCs whose answer is a `common.Status` itself. */
 const ANSWERS_A_STATUS: ReadonlySet<MilvusRpc> = new Set(["LoadCollection", "ReleaseCollection"]);
 
@@ -239,6 +256,9 @@ export async function createGrpcMilvusClient(
     hybridSearch: (r, o) => send("HybridSearch", r, o),
     loadCollection: (r, o) => send("LoadCollection", r, o),
     releaseCollection: (r, o) => send("ReleaseCollection", r, o),
+    listCredUsers: (o) => send("ListCredUsers", {}, o),
+    selectUser: (r, o) => send("SelectUser", r, o),
+    selectGrant: (r, o) => send("SelectGrant", r, o),
     close: () => {
       if (closed) return;
       closed = true;

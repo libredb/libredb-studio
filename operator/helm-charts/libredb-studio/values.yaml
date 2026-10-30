@@ -702,6 +702,37 @@ openshift:
     # -- NamespaceDashboard only: a label selector for those namespaces, used beside or
     # instead of the list. The render fails when both are empty.
     namespaceSelector: {}
+  # The OpenShift console plugin (OpenShift 4.19 or later): a Databases page and a details
+  # item that open a database in Studio in a new tab. Renders the plugin's nginx server
+  # (ServiceAccount, Deployment, Service and NetworkPolicy, each named
+  # libredb-studio-console-plugin) in the namespace below and the cluster-scoped
+  # ConsolePlugin libredb-studio. The console sends every console user's token to that
+  # server, so whoever may change its Deployment runs code in every console session: on a
+  # Helm install the render fails in Studio's namespace, in a discovered namespace and in a
+  # project a user requested; under the operator the server runs only in the operator's own
+  # namespace, the cluster Studio's. Needs console.openshift.io/v1 (or
+  # global.compatibility.openshift.apis=force), discovery.kubernetes.enabled and the
+  # ApplicationMenu console link, through which the plugin finds Studio. No Job: a cluster
+  # admin turns the plugin on in the console (README, "The console plugin").
+  consolePlugin:
+    # -- Render the plugin server and the ConsolePlugin.
+    enabled: false
+    # -- Where the plugin server runs: a namespace a cluster admin created with
+    # `oc create namespace` and only cluster admins write. The operator sets its own
+    # namespace (WATCH_NAMESPACE), the cluster Studio namespace, and refuses any other.
+    namespace: ""
+    # -- The plugin image, a whole reference pinned by digest, so a mirror sets one string.
+    # The operator sets it from RELATED_IMAGE_PLUGIN.
+    image: "ghcr.io/libredb/libredb-studio-openshift-plugin:0.1.0@sha256:39698233d019f4e69fe106e634af789291011d59d27d5858a7e4d0b41283d86e"
+    # -- Always, IfNotPresent or Never.
+    imagePullPolicy: IfNotPresent
+    # -- Plugin server replicas, from 1 to 5.
+    replicas: 2
+    # -- requests and limits, each with cpu and memory only.
+    resources:
+      requests:
+        cpu: 10m
+        memory: 50Mi
 
 networkPolicy:
   # -- Render the NetworkPolicy. null (the default) renders it only in openshift sign-in mode
@@ -967,7 +998,7 @@ operator:
   # ClusterRoleBinding, the Rancher NavLink) only for the release in
   # operator.clusterStudioNamespace, and fails the render otherwise.
   managed: false
-  # -- The namespace of the one LibreDBStudio a cluster admin allows cross-namespace and
-  # cluster-scoped objects for, from LIBREDB_CLUSTER_STUDIO_NAMESPACE in the operator's
-  # Subscription. Empty allows none.
+  # -- The namespace of the one LibreDBStudio allowed cross-namespace and cluster-scoped
+  # objects, which the operator sets to its own namespace, the only one it reconciles.
+  # Empty allows none.
   clusterStudioNamespace: ""

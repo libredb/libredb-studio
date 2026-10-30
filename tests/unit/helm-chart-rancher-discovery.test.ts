@@ -286,6 +286,44 @@ describe("the exporter's RBAC", () => {
     ]);
   });
 
+  /**
+   * The release namespace holds the release's Helm records, which are Secrets, so the export Secret by name must stay
+   * the only Secret any rendered role lets anyone write, the release namespace discovered too and every kind on.
+   */
+  test("no rendered role writes a Secret but the export Role, on the export Secret by name", () => {
+    const docs = render([
+      "--set",
+      "discovery.kubernetes.enabled=true",
+      "--set",
+      `discovery.kubernetes.namespaces={${NAMESPACE},team-a}`,
+      "--set",
+      "discovery.kubernetes.kinds={mongo,pgo,edbpg,cnpg}",
+      "--set",
+      "postgresql.enabled=true",
+    ]);
+    const writes = docs
+      .filter((doc) => doc.kind === "Role" || doc.kind === "ClusterRole")
+      .flatMap((role) =>
+        (role.rules ?? [])
+          .filter(
+            (rule) =>
+              rule.apiGroups.some((group) => group === "" || group === "*") &&
+              rule.resources.some((resource) => resource === "secrets" || resource === "*") &&
+              rule.verbs.some((verb) => verb !== "get"),
+          )
+          .map((rule) => ({
+            role: `${role.kind}/${role.metadata.namespace ?? NAMESPACE}/${role.metadata.name}`,
+            rule,
+          })),
+      );
+    expect(writes).toEqual([
+      {
+        role: `Role/${NAMESPACE}/libredb-studio-discovery-export`,
+        rule: { apiGroups: [""], resources: ["secrets"], resourceNames: [EXPORT_SECRET], verbs: ["get", "update"] },
+      },
+    ]);
+  });
+
   test("no rule watches anything or lists Secrets or Services, and no ClusterRole is rendered for discovery", () => {
     const docs = render([...ON, "--set", "discovery.kubernetes.kinds={mongo,pgo,edbpg,cnpg}"]);
     for (const role of docs.filter((doc) => doc.kind === "Role")) {
