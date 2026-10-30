@@ -2562,6 +2562,229 @@ describe("PostgreSQL locking clauses take the row bound before them (#1964)", ()
   });
 });
 
+// ─── MySQL export tails follow the row bound (#2011) ─────────────────────────
+//
+// MySQL places INTO OUTFILE / INTO DUMPFILE (and the export options that follow
+// the file name) after the select list, WHERE, ORDER BY and LIMIT (SELECT ... INTO,
+// dev.mysql.com; the end position is the preferred one). The limiter appended its
+// bound at the very end, past the export tail, and read a bound that already stood
+// before one as absent - so a write-to-file SELECT got `... INTO OUTFILE 'f' LIMIT 5`
+// and an already-bounded export got a second LIMIT past the INTO. The export tail
+// is therefore a trailing clause run like the locking tails above (#1981): stripped
+// from the end, the bound written before it, the run re-attached verbatim.
+//
+// The patterns eat the file name as a quoted literal and a CLOSED set of export
+// options (one CHARACTER SET, one FIELDS/COLUMNS block, one LINES block - the
+// parser grammar's opt_field_term/opt_line_term, sql_yacc.yy), so a mid-statement
+// INTO (`SELECT a INTO OUTFILE '/x' FROM t`, the position before FROM that the
+// docs also allow) can never match: the words after the file name are not the
+// option set, and the pattern is end-anchored. A `)` stays excluded for the same
+// reason as everywhere else: an INTO written inside a subquery is never the
+// statement's own tail.
+describe("MySQL export tails follow the row bound (#2011)", () => {
+  const read = "SELECT * FROM t";
+
+  test.each<[string, string]>([
+    ["INTO OUTFILE '/tmp/x.csv'", "SELECT * FROM t LIMIT 500 INTO OUTFILE '/tmp/x.csv'"],
+    ["INTO DUMPFILE '/tmp/x'", "SELECT * FROM t LIMIT 500 INTO DUMPFILE '/tmp/x'"],
+    [
+      "INTO OUTFILE '/tmp/x.csv' FIELDS TERMINATED BY ','",
+      "SELECT * FROM t LIMIT 500 INTO OUTFILE '/tmp/x.csv' FIELDS TERMINATED BY ','",
+    ],
+    [
+      "INTO OUTFILE '/tmp/x.csv' COLUMNS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"' ESCAPED BY '\\\\' LINES TERMINATED BY '\\n'",
+      "SELECT * FROM t LIMIT 500 INTO OUTFILE '/tmp/x.csv' COLUMNS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"' ESCAPED BY '\\\\' LINES TERMINATED BY '\\n'",
+    ],
+    ["INTO OUTFILE '/x' CHARACTER SET utf8mb4", "SELECT * FROM t LIMIT 500 INTO OUTFILE '/x' CHARACTER SET utf8mb4"],
+    [
+      "INTO OUTFILE '/x' LINES STARTING BY '>' TERMINATED BY '\\n'",
+      "SELECT * FROM t LIMIT 500 INTO OUTFILE '/x' LINES STARTING BY '>' TERMINATED BY '\\n'",
+    ],
+    ["INTO OUTFILE '/tmp/it''s.csv'", "SELECT * FROM t LIMIT 500 INTO OUTFILE '/tmp/it''s.csv'"],
+  ])("the bound is written before the %s tail", (tail, expected) => {
+    const result = applyQueryLimit(`${read} ${tail}`, 500, 0, {}, "mysql");
+    expect(result.sql).toBe(expected);
+    expect(result.wasLimited).toBe(true);
+  });
+
+  test("the export tail keeps its place when an offset is applied", () => {
+    const result = applyQueryLimit(`${read} INTO OUTFILE '/x'`, 20, 10, {}, "mysql");
+    expect(result.sql).toBe("SELECT * FROM t LIMIT 20 OFFSET 10 INTO OUTFILE '/x'");
+  });
+
+  test("the tail keeps its place after a locking clause the writer put before it", () => {
+    // Both orders appear in the docs: INTO before the locking clause (deprecated
+    // but accepted) and at the end. The strip works from the end backward, so the
+    // run re-attaches in the order it was written.
+    const result = applyQueryLimit(`${read} FOR UPDATE INTO OUTFILE '/x'`, 500, 0, {}, "mysql");
+    expect(result.sql).toBe("SELECT * FROM t LIMIT 500 FOR UPDATE INTO OUTFILE '/x'");
+  });
+
+  test("a locking clause after the export tail keeps its place too", () => {
+    const result = applyQueryLimit(`${read} INTO OUTFILE '/x' FOR UPDATE`, 500, 0, {}, "mysql");
+    expect(result.sql).toBe("SELECT * FROM t LIMIT 500 INTO OUTFILE '/x' FOR UPDATE");
+  });
+
+  test.each([
+    ["LIMIT 10", "LIMIT 10 INTO OUTFILE '/x'"],
+    ["LIMIT 2, 10", "LIMIT 2, 10 INTO OUTFILE '/x'"],
+    ["LIMIT 10 OFFSET 2", "LIMIT 10 OFFSET 2 INTO DUMPFILE '/x'"],
+  ])("an existing %s before the export tail is left alone", (form, tail) => {
+    const sql = `${read} ${tail}`;
+    expect(analyzeQuery(sql, "mysql").hasLimit).toBe(true);
+    const result = applyQueryLimit(sql, 500, 0, {}, "mysql");
+    expect(result.wasLimited).toBe(false);
+    expect(result.sql).toBe(sql);
+  });
+
+  test("an existing LIMIT before the export tail keeps its own count", () => {
+    const info = analyzeQuery(`${read} LIMIT 10 INTO OUTFILE '/x'`, "mysql");
+    expect(info.hasLimit).toBe(true);
+    expect(info.existingLimit).toBe(10);
+    expect(info.existingOffset).toBeUndefined();
+  });
+
+  test("forceLimit replaces the bound before the export tail exactly once", () => {
+    const result = applyQueryLimit(`${read} LIMIT 2, 10 INTO OUTFILE '/x'`, 5, 3, { forceLimit: true }, "mysql");
+    expect(result.sql).toBe("SELECT * FROM t LIMIT 5 OFFSET 3 INTO OUTFILE '/x'");
+  });
+
+  test("a mid-statement INTO (before FROM) is not an export tail", () => {
+    // `SELECT a INTO OUTFILE '/x' FROM t` is the position before FROM the docs
+    // allow. A pattern that swallowed everything after INTO would tear the FROM
+    // off the statement; the closed option set cannot match it.
+    const sql = "SELECT a INTO OUTFILE '/x' FROM t";
+    expect(analyzeQuery(sql, "mysql").hasLimit).toBe(false);
+    const result = applyQueryLimit(sql, 500, 0, {}, "mysql");
+    expect(result.sql).toBe("SELECT a INTO OUTFILE '/x' FROM t LIMIT 500");
+  });
+
+  test("a mid-statement INTO with export options before FROM is not a tail either", () => {
+    const sql = "SELECT a INTO OUTFILE '/x' FIELDS TERMINATED BY ',' FROM t";
+    const result = applyQueryLimit(sql, 500, 0, {}, "mysql");
+    expect(result.sql).toBe(`${sql} LIMIT 500`);
+  });
+
+  test.each([
+    // A literal that merely ends in the tail words is not a tail: the pattern's
+    // value form needs a quoted file name right after INTO OUTFILE.
+    ["SELECT * FROM t WHERE note = 'INTO OUTFILE'", "SELECT * FROM t WHERE note = 'INTO OUTFILE' LIMIT 500"],
+    // A block comment whose text ends in the tail words is not a tail either;
+    // it is trailing trivia, so the bound goes between the code and the comment.
+    ["SELECT * FROM t /* INTO OUTFILE '/x' */", "SELECT * FROM t LIMIT 500 /* INTO OUTFILE '/x' */"],
+  ])("%s keeps the bound in code", (sql, expected) => {
+    const result = applyQueryLimit(sql, 500, 0, {}, "mysql");
+    expect(result.sql).toBe(expected);
+  });
+
+  test("INTO OUTFILE words inside a line comment do not become a tail", () => {
+    // `'/x'` here is a quoted alias on the next line - the statement's own text,
+    // not trivia - and the comment ends in the clause words. The match that
+    // starts inside the comment is refused, the tail stays where it stands, and
+    // the bound lands after the alias.
+    const sql = "SELECT 1 AS -- INTO OUTFILE\n'/x'";
+    const result = applyQueryLimit(sql, 500, 0, {}, "mysql");
+    expect(result.sql).toBe("SELECT 1 AS -- INTO OUTFILE\n'/x' LIMIT 500");
+  });
+
+  test("INTO DUMPFILE words inside a line comment do not become a tail either", () => {
+    const sql = "SELECT 1 AS -- INTO DUMPFILE\n'/x'";
+    const result = applyQueryLimit(sql, 500, 0, {}, "mysql");
+    expect(result.sql).toBe("SELECT 1 AS -- INTO DUMPFILE\n'/x' LIMIT 500");
+  });
+
+  test("a # comment ending in the tail words does not become a tail", () => {
+    // `#` is MySQL's second line-comment marker; the same refusal covers it.
+    const sql = "SELECT 1 AS # INTO OUTFILE\n'/x'";
+    const result = applyQueryLimit(sql, 500, 0, {}, "mysql");
+    expect(result.sql).toBe("SELECT 1 AS # INTO OUTFILE\n'/x' LIMIT 500");
+  });
+
+  test("a real INTO after a line comment still strips", () => {
+    // The handoff: the comment's span includes the newline that closes it, and a
+    // match starting exactly on that newline is the comment the writer put
+    // between the code and the clause - it travels with the run.
+    const result = applyQueryLimit("SELECT * FROM t -- note\nINTO OUTFILE '/x'", 500, 0, {}, "mysql");
+    expect(result.sql).toBe("SELECT * FROM t LIMIT 500 -- note\nINTO OUTFILE '/x'");
+  });
+
+  test("the tail is stripped after a trailing semicolon is split off", () => {
+    const result = applyQueryLimit(`${read} INTO OUTFILE '/x'; -- export`, 500, 0, {}, "mysql");
+    expect(result.sql).toBe("SELECT * FROM t LIMIT 500 INTO OUTFILE '/x'; -- export");
+  });
+
+  test.each([
+    "INTO OUTFILE '/x' FIELDS TERMINATED BY X'09'",
+    "INTO OUTFILE '/x' FIELDS TERMINATED BY 0x09",
+    "INTO OUTFILE '/x' FIELDS TERMINATED BY B'00101100'",
+  ])("hex and binary field terminators in %s are part of the tail", (tail) => {
+    const result = applyQueryLimit(`${read} ${tail}`, 500, 0, {}, "mysql");
+    expect(result.sql).toBe(`${read} LIMIT 500 ${tail}`);
+  });
+
+  test("a double-quoted file name is a file name too", () => {
+    const result = applyQueryLimit(`${read} INTO OUTFILE "/x"`, 500, 0, {}, "mysql");
+    expect(result.sql).toBe(`SELECT * FROM t LIMIT 500 INTO OUTFILE "/x"`);
+  });
+
+  test("a second FIELDS block is not stripped as part of the tail", () => {
+    // The parser grammar takes one FIELDS/COLUMNS block; a second one is a
+    // syntax error on the server. The strip leaves it where it stands rather
+    // than deciding what the writer meant, so the bound keeps its place at the
+    // end and the engine reports the writer's own error.
+    const sql = `${read} INTO OUTFILE '/x' FIELDS TERMINATED BY ',' FIELDS TERMINATED BY ';'`;
+    const result = applyQueryLimit(sql, 500, 0, {}, "mysql");
+    expect(result.sql).toBe(`${sql} LIMIT 500`);
+  });
+
+  test("FIELDS after LINES is not stripped either", () => {
+    const sql = `${read} INTO OUTFILE '/x' LINES TERMINATED BY '\\n' FIELDS TERMINATED BY ','`;
+    const result = applyQueryLimit(sql, 500, 0, {}, "mysql");
+    expect(result.sql).toBe(`${sql} LIMIT 500`);
+  });
+
+  test("a subquery's INTO is never the statement's own tail", () => {
+    const sql = "SELECT * FROM (SELECT a INTO OUTFILE '/x' FROM u) t";
+    const result = applyQueryLimit(sql, 500, 0, {}, "mysql");
+    expect(result.sql).toBe(`${sql} LIMIT 500`);
+  });
+
+  test("a file name ending in a backslash is read whole", () => {
+    // A quoted literal's escape pair is taken whole, so a trailing backslash
+    // before the closing quote cannot end the name early.
+    const result = applyQueryLimit(`${read} INTO OUTFILE '/tmp/x\\\\'`, 500, 0, {}, "mysql");
+    expect(result.sql).toBe(`${read} LIMIT 500 INTO OUTFILE '/tmp/x\\\\'`);
+  });
+
+  test("charset, FIELDS and LINES together form one tail", () => {
+    const tail = "INTO OUTFILE '/x' CHARACTER SET binary FIELDS TERMINATED BY ',' LINES TERMINATED BY '\\n'";
+    const result = applyQueryLimit(`${read} ${tail}`, 500, 0, {}, "mysql");
+    expect(result.sql).toBe(`${read} LIMIT 500 ${tail}`);
+  });
+
+  test("DUMPFILE with options after the file name is not a tail", () => {
+    // DUMPFILE takes no options; anything after its file name is not the
+    // DUMPFILE shape, and the pattern leaves it where it stands.
+    const sql = `${read} INTO DUMPFILE '/x' FIELDS TERMINATED BY ','`;
+    const result = applyQueryLimit(sql, 500, 0, {}, "mysql");
+    expect(result.sql).toBe(`${sql} LIMIT 500`);
+  });
+
+  test("63 locking clauses and an export tail pass the cap together", () => {
+    const chain = " FOR SHARE OF a".repeat(63);
+    const result = applyQueryLimit(`SELECT * FROM t${chain} INTO OUTFILE '/x'`, 500, 0, {}, "mysql");
+    expect(result.sql).toBe(`SELECT * FROM t LIMIT 500${chain} INTO OUTFILE '/x'`);
+  });
+
+  test("64 locking clauses and an export tail are refused rather than split", () => {
+    const sql = `SELECT * FROM t${" FOR SHARE OF a".repeat(64)} INTO OUTFILE '/x'`;
+    expect(() => applyQueryLimit(sql, 500, 0, {}, "mysql")).toThrow(QueryError);
+    expect(() => applyQueryLimit(sql, 500, 0, {}, "mysql")).toThrow(
+      "The statement ends in more than 64 clauses that must follow the row limit",
+    );
+  });
+});
+
 // ─── the trailing-clause strip stays linear in the statement's length ───────
 //
 // A clause pattern opens with `\s+` and is end-anchored, and an unanchored search

@@ -3661,6 +3661,44 @@ describe("MySQLProvider", () => {
       });
     });
 
+    // ── an export tail takes the row bound before it (#2011) ─────────────────
+    //
+    // INTO OUTFILE/DUMPFILE and the export options after the file name follow
+    // LIMIT in MySQL's SELECT grammar, so the bound this provider injects must
+    // stand before them, and a bound that already stands before one must be
+    // recognised as the statement's own.
+    describe("export tails (#2011)", () => {
+      test.each<[string, string]>([
+        ["INTO OUTFILE '/tmp/users.csv'", "INTO OUTFILE '/tmp/users.csv'"],
+        ["INTO DUMPFILE '/tmp/users'", "INTO DUMPFILE '/tmp/users'"],
+        [
+          "INTO OUTFILE '/tmp/users.csv' FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"'",
+          "INTO OUTFILE '/tmp/users.csv' FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"'",
+        ],
+        [
+          "INTO OUTFILE '/tmp/users.csv' LINES TERMINATED BY '\\n'",
+          "INTO OUTFILE '/tmp/users.csv' LINES TERMINATED BY '\\n'",
+        ],
+      ])("the page bound is placed before %s", (tail, expected) => {
+        provider = new MySQLProvider(makeMySQLConfig());
+        const result = provider.prepareQuery(`SELECT * FROM users ${tail}`, { limit: 5, offset: 2 });
+
+        expect(result.query).toBe(`SELECT * FROM users LIMIT 5 OFFSET 2 ${expected}`);
+        expect(result.wasLimited).toBe(true);
+      });
+
+      test.each<[string, string]>([
+        ["LIMIT 10", "LIMIT 10 INTO OUTFILE '/tmp/users.csv'"],
+        ["LIMIT 2, 10", "LIMIT 2, 10 INTO DUMPFILE '/tmp/users'"],
+      ])("an existing %s before an export tail is left alone", (form, sql) => {
+        provider = new MySQLProvider(makeMySQLConfig());
+        const result = provider.prepareQuery(`SELECT * FROM users ${sql}`, { limit: 5 });
+
+        expect(result.query).toBe(`SELECT * FROM users ${sql}`);
+        expect(result.wasLimited).toBe(false);
+      });
+    });
+
     // `#` is MySQL's own second line-comment marker, and it is the reason
     // `lib/sql/leading-keyword.ts` skips such a run at all - on every dialect, since
     // none of them can OPEN a statement with one. Without it a `# note`-led SELECT

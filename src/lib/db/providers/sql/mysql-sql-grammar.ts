@@ -1,6 +1,44 @@
 import { DEFAULT_SQL_GRAMMAR, NO_EXTRA_WORDS } from "@/lib/db/sql-grammar/shared";
 import type { SqlGrammar, SqlGrammarSpec } from "@/lib/db/sql-grammar/types";
 
+/**
+ * A quoted literal as an export file name or option value: single or double
+ * quotes, a quote inside it doubled, a backslash escape pair taken whole
+ * (String Literals, dev.mysql.com - both quote forms are strings while
+ * `ANSI_QUOTES` is off, and a file name may carry either).
+ */
+const EXPORT_QUOTED = "(?:'(?:''|\\\\[\\s\\S]|[^'\\\\])*'|\"(?:\"\"|\\\\[\\s\\S]|[^\"\\\\])*\")";
+
+/** An export option value: a quoted literal, or a hex/binary literal (LOAD DATA). */
+const EXPORT_VALUE = `(?:${EXPORT_QUOTED}|0x[0-9a-f]+|x'[0-9a-f]*'|0b[01]+|b'[01]*')`;
+
+/** A `CHARACTER SET` name: a bare word, a backticked name, or a quoted literal. */
+const EXPORT_CHARSET = "(?:[A-Za-z0-9_]+|`(?:``|[^`])*`|" + EXPORT_QUOTED + ")";
+
+/**
+ * The INTO OUTFILE tail: the file name, one optional `CHARACTER SET`, one
+ * optional FIELDS/COLUMNS block, one optional LINES block - the shapes the
+ * parser grammar takes (sql_yacc.yy `into_destination`), not a wildcard. #2011.
+ */
+const MYSQL_OUTFILE_TAIL = new RegExp(
+  "\\s+INTO\\s+OUTFILE\\s+" +
+    EXPORT_QUOTED +
+    "(?:\\s+(?:CHARACTER\\s+SET|CHAR\\s+SET|CHARSET)\\s+" +
+    EXPORT_CHARSET +
+    ")?" +
+    "(?:\\s+(?:FIELDS|COLUMNS)(?:\\s+(?:TERMINATED\\s+BY|(?:OPTIONALLY\\s+)?ENCLOSED\\s+BY|ESCAPED\\s+BY)\\s+" +
+    EXPORT_VALUE +
+    ")+)?" +
+    "(?:\\s+LINES(?:\\s+(?:STARTING|TERMINATED)\\s+BY\\s+" +
+    EXPORT_VALUE +
+    ")+)?" +
+    "\\s*$",
+  "i",
+);
+
+/** The INTO DUMPFILE tail: a file name and nothing after it (SELECT ... INTO). #2011. */
+const MYSQL_DUMPFILE_TAIL = new RegExp("\\s+INTO\\s+DUMPFILE\\s+" + EXPORT_QUOTED + "\\s*$", "i");
+
 const MYSQL_GRAMMAR: SqlGrammar = {
   hash: "comment",
   bracket: DEFAULT_SQL_GRAMMAR.bracket,
@@ -30,7 +68,7 @@ const MYSQL_GRAMMAR: SqlGrammar = {
   // `FOR SHARE OF t1 FOR UPDATE OF t2` - keeps them in the order they were
   // written. `SKIP LOCKED`, `NOWAIT`, `WAIT n` and the OF list are options OF
   // THE CLAUSE, not clauses of their own: a pattern that peeled `SKIP LOCKED`
-  // off separately would re-attach it before `FOR UPDATE`.
+  // off separately would re-attach it before its `FOR UPDATE`.
   //
   // A name in the OF list is a bare token, a backtick-quoted identifier or a
   // double-quoted one - the quoted forms are the only way a name carries a
@@ -42,9 +80,38 @@ const MYSQL_GRAMMAR: SqlGrammar = {
   // end rather than landing inside the quoted text. A `)` is excluded for the
   // same reason: a locking clause written inside a subquery is never the
   // statement's own tail.
+  //
+  // The file-writing INTO tails follow the row bound too (#2011): INTO
+  // OUTFILE/DUMPFILE (and the export options after the file name) stand after
+  // the select list, WHERE, ORDER BY and LIMIT (SELECT ... INTO, dev.mysql.com;
+  // the end position is the preferred one, the position before a locking clause
+  // is deprecated but accepted, so a statement may carry both orders and the
+  // strip re-attaches whichever order it finds). The file name is a quoted
+  // literal - single or double quotes, a quote inside it doubled, a backslash
+  // escape pair taken whole - and the export options are the CLOSED set the
+  // parser grammar spells (sql_yacc.yy: one `CHARACTER SET`, one FIELDS/COLUMNS
+  // block of TERMINATED/ENCLOSED/ESCAPED BY, one LINES block of
+  // STARTING/TERMINATED BY; the values are quoted literals or hex/binary
+  // literals). The closed set is what keeps a mid-statement `INTO` (`SELECT a
+  // INTO OUTFILE '/x' FROM t`, the position before FROM the docs also allow)
+  // from matching: the words after the file name are not the option set, and
+  // the pattern is end-anchored anyway. A second FIELDS block or a FIELDS after
+  // LINES is a syntax error on the server, not a tail to strip: the pattern
+  // leaves it where it stands and the engine reports the writer's own error.
+  // DUMPFILE takes no options (SELECT ... INTO, dev.mysql.com). A match that
+  // starts inside a comment or a literal is refused by the strip
+  // (`matchStartsInNonCode` in query-limiter.ts), so words a statement merely
+  // mentions never come off as a tail; and a `)` outside a quoted value ends
+  // the option set the same way it ends a name everywhere else: an INTO written
+  // inside a subquery is never the statement's own tail. Forms without a space
+  // before the quote (`OUTFILE'/x'`) and a comment between INTO and OUTFILE are
+  // known gaps: they are left where they stand, which is the bound-at-the-end
+  // placement of today rather than a new corruption.
   trailingLimitClauses: [
     /\s+FOR\s+(?:UPDATE|SHARE)(?:\s+OF\s+(?:`(?:[^`]|``)*`|"(?:[^"]|"")*"|[^\s()',;"`]+)(?:\s*,\s*(?:`(?:[^`]|``)*`|"(?:[^"]|"")*"|[^\s()',;"`]+))*)?(?:\s+(?:NOWAIT|SKIP\s+LOCKED|WAIT\s+\d+))?\s*$/i,
     /\s+LOCK\s+IN\s+SHARE\s+MODE(?:\s+(?:NOWAIT|SKIP\s+LOCKED|WAIT\s+\d+))?\s*$/i,
+    MYSQL_OUTFILE_TAIL,
+    MYSQL_DUMPFILE_TAIL,
   ],
 };
 
