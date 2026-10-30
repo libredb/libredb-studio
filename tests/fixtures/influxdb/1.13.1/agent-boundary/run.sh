@@ -4,7 +4,7 @@
 #   tests/fixtures/influxdb/1.13.1/agent-boundary/run.sh
 #
 # The first server has authentication on, the second off; each is a container named <INFLUX_PREFIX>influxdb1 and
-# <INFLUX_PREFIX>influxdb1-noauth (default prefix pr34-) on 127.0.0.1:INFLUX_PORT and INFLUX_NOAUTH_PORT (defaults
+# <INFLUX_PREFIX>influxdb1-noauth (default prefix libredb-agent-) on 127.0.0.1:INFLUX_PORT and INFLUX_NOAUTH_PORT (defaults
 # 18087 and 18088), removed with its volumes when the run ends. The admin's and the two users' passwords are
 # generated here for the run and handed to the probe in the environment; no capture holds any of them.
 #
@@ -14,7 +14,7 @@
 set -euo pipefail
 dir="$(cd "$(dirname "$0")" && pwd)"
 image="influxdb:1.13.1@sha256:3e3913d3b7512d1749922c8183bbf2a76973dd9f98e1a1e3249c652ec1576fc0"
-prefix="${INFLUX_PREFIX:-pr34-}"
+prefix="${INFLUX_PREFIX:-libredb-agent-}"
 port="${INFLUX_PORT:-18087}"
 noauth_port="${INFLUX_NOAUTH_PORT:-18088}"
 admin_password="$(openssl rand -hex 16)"

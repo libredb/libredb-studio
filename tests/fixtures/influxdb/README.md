@@ -33,7 +33,7 @@ The five `r42-*` entries separate two statements with whitespace or a comment al
 ## The agent boundary captures
 
 `1.13.1/agent-boundary/` and `2.9.1/agent-boundary/` hold what each line answered the principals the agent read-only profile is proved against, every statement sent raw, past Studio's read policy: an admin read, the database listing, a no-op write on each database, `SELECT ... INTO` the bound database and a second one in every spelling with the databases read before and after, the SHOW forms, and every comment form and carriage return.
-Each directory's `run.sh` starts its own digest-pinned servers (containers named `pr34-*` unless `INFLUX_PREFIX` says otherwise), seeds them with passwords and tokens generated for the run, and records one capture per request through `agent-boundary-probe.mjs`, which refuses to write a file that holds a credential; a capture names its principal and that principal's rights, never its credential.
+Each directory's `run.sh` starts its own digest-pinned servers (containers named `libredb-agent-*` unless `INFLUX_PREFIX` says otherwise), seeds them with passwords and tokens generated for the run, and records one capture per request through `agent-boundary-probe.mjs`, which refuses to write a file that holds a credential; a capture names its principal and that principal's rights, never its credential.
 `docs/providers/influxdb.md`, section 15, reads each one.
 
 ## Re-recording

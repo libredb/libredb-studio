@@ -3,7 +3,7 @@
 #
 #   tests/fixtures/influxdb/2.9.1/agent-boundary/run.sh
 #
-# The server is a container named <INFLUX_PREFIX>influxdb2 (default prefix pr34-) on 127.0.0.1:INFLUX_PORT (default
+# The server is a container named <INFLUX_PREFIX>influxdb2 (default prefix libredb-agent-) on 127.0.0.1:INFLUX_PORT (default
 # 18086), removed with its volumes when the run ends. The setup user's password and the operator token are generated
 # here for the run, and every other token is minted by the server; all are handed to the probe in the environment, and
 # no capture holds any of them.
@@ -14,7 +14,7 @@
 set -euo pipefail
 dir="$(cd "$(dirname "$0")" && pwd)"
 image="influxdb:2.9.1@sha256:db0bdab1e5ad5ee899c127b8c13d9c986a3ced78cd9200dd80a1064bf1533b6e"
-prefix="${INFLUX_PREFIX:-pr34-}"
+prefix="${INFLUX_PREFIX:-libredb-agent-}"
 port="${INFLUX_PORT:-18086}"
 operator="$(openssl rand -hex 24)"
 cleanup() { docker rm -f -v "${prefix}influxdb2" >/dev/null 2>&1 || true; }
