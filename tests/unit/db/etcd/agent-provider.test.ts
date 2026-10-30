@@ -89,10 +89,6 @@ function statusFailsAfterConnect(error: unknown): FakeEtcdClient {
 }
 
 const methods = (client: FakeEtcdClient, from = 0) => client.calls.slice(from).map((call) => call.method);
-/** A call's arguments without its options, which carry a signal of their own. */
-const argsOf = (client: FakeEtcdClient, method: keyof EtcdClient) =>
-  client.calls.filter((call) => call.method === method).map((call) => call.args.slice(0, -1));
-
 describe("the open under the agent read-only profile", () => {
   test("a connection that names no user is refused before any client is built", async () => {
     const { provider, built } = build(connectionOf(undefined), clientOf("auth-off"), READ_ONLY);
