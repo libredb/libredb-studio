@@ -38,7 +38,7 @@ export type OxiaAgentReading =
   | { readonly ok: false; readonly code: OxiaAgentRefusalCode; readonly message: string };
 
 /** The word of the shard-map read: Studio's own, since the oxia CLI's client prints no shard map. */
-export const OXIA_AGENT_SHARDS_WORD = "shards";
+const OXIA_AGENT_SHARDS_WORD = "shards";
 
 const NOTHING_SENT = "Nothing was sent.";
 

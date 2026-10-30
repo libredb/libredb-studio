@@ -167,6 +167,7 @@ describe("the provider over the captured keys", () => {
       "list -s /a -e /z",
     ];
     for (const statement of statements) {
+      // oxlint-disable-next-line no-await-in-loop -- one command at a time, as the agent sends them.
       const text = JSON.stringify(await built.queryReadOnly(statement, BUDGET));
       for (const secret of [...SEEDED_KEYS, ...SEEDED_VALUES]) {
         expect({ statement, leaked: text.includes(secret) }).toEqual({ statement, leaked: false });
@@ -194,6 +195,7 @@ describe("the provider over the captured keys", () => {
       "-n no-such-namespace list",
     ];
     for (const statement of refused) {
+      // oxlint-disable-next-line no-await-in-loop -- one command at a time, as the agent sends them.
       await expect(built.queryReadOnly(statement, BUDGET)).rejects.toThrow("Nothing was sent.");
     }
     expect(fake.calls.length).toBe(before);

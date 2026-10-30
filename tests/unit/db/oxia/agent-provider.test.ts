@@ -16,7 +16,12 @@ import { OxiaProvider } from "@/lib/db/providers/keyvalue/oxia/index";
 import { shardFor } from "@/lib/db/providers/keyvalue/oxia/routing";
 import { TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
 import type { ProviderExecutionContext } from "@/lib/db/types";
-import { createFakeOxiaClient, type FakeOxiaClient, type FakeOxiaRecord } from "../../../helpers/oxia-fake-client";
+import {
+  createFakeOxiaClient,
+  type FakeOxiaCall,
+  type FakeOxiaClient,
+  type FakeOxiaRecord,
+} from "../../../helpers/oxia-fake-client";
 import { oxiaConnection } from "../../../helpers/oxia-connection";
 
 const BUDGET = { maxResultRows: 5, maxResultBytes: 64 * 1024, statementTimeoutMs: 10_000 };
@@ -58,19 +63,24 @@ async function connected(execution: ProviderExecutionContext = READ_ONLY, record
 
 /** The calls made after `from`, as the pinned requests. */
 function callsAfter(fake: FakeOxiaClient, from: number) {
-  return fake.calls.slice(from).map((call) => ({
-    rpc: call.rpc,
-    ...(call.shard === undefined ? {} : { shard: call.shard }),
-    ...(call.gets === undefined ? {} : { gets: call.gets }),
-    ...(call.range === undefined ? {} : { range: call.range }),
-  }));
+  return fake.calls.slice(from).map((call) => {
+    const pinned: { rpc: string; shard?: string; gets?: FakeOxiaCall["gets"]; range?: FakeOxiaCall["range"] } = {
+      rpc: call.rpc,
+    };
+    if (call.shard !== undefined) pinned.shard = call.shard;
+    if (call.gets !== undefined) pinned.gets = call.gets;
+    if (call.range !== undefined) pinned.range = call.range;
+    return pinned;
+  });
 }
 
 describe("queryReadOnly's profile", () => {
   test("an editor handle, and an operations handle, are refused before anything is sent", async () => {
     for (const execution of [{}, OPERATIONS]) {
+      // oxlint-disable-next-line no-await-in-loop -- each handle is opened and asked on its own.
       const { provider, fake } = await connected(execution);
       const before = fake.calls.length;
+      // oxlint-disable-next-line no-await-in-loop -- each handle is opened and asked on its own.
       await expect(provider.queryReadOnly("shards", BUDGET)).rejects.toThrow(
         new RefusedBeforeSendError(PROFILE_REQUIRED, "oxia", "shards"),
       );
@@ -83,7 +93,7 @@ describe("queryReadOnly's profile", () => {
     await expect(provider.queryReadOnly("shards", BUDGET)).rejects.toThrow();
     await provider.connect();
     await expect(provider.queryReadOnly("shards", { ...BUDGET, maxResultRows: 0 })).rejects.toThrow();
-    await expect(provider.queryReadOnly("shards", BUDGET, "estimate")).rejects.toThrow(
+    await expect(provider.queryReadOnly("shards", BUDGET, "estimate-plan")).rejects.toThrow(
       "Oxia composes no estimating plan for the agent",
     );
   });
