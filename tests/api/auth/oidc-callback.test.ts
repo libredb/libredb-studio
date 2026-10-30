@@ -846,4 +846,22 @@ describe("GET /api/auth/oidc/callback with host-prefixed names", () => {
     await GET(new Request(callbackUrl));
     expect(mockCookieStore.delete).toHaveBeenCalledWith({ name: "__Host-oidc-logout-hint", path: "/", secure: true });
   });
+
+  // The size check counts the name the cookie is written under: a long base path makes __Host-oidc-logout-hint<suffix>
+  // too long for a token the plain name would still hold, so the token is not written and a stale hint is deleted.
+  test("a token that fits only beside the plain name is not kept under a long base path's __Host- name", async () => {
+    process.env.OIDC_LOGOUT_HINT = "true";
+    const segment = "a".repeat(280);
+    const hintName = `__Host-oidc-logout-hint.${segment}`;
+    mockCookieGet.mockImplementation((name: string) =>
+      name === `__Host-oidc-state.${segment}` ? { value: "encrypted-state-cookie" } : undefined,
+    );
+    mockExchangeCode.mockImplementationOnce(async () => exchanged({ ...defaultClaims }, "a".repeat(3800)));
+    await withBasePathEnv(`/${segment}`, async () => {
+      await GET(new Request(`https://studio.example.com/${segment}/api/auth/oidc/callback?code=c&state=test-state`));
+    });
+    expect(setCookies.has(`__Host-auth-token.${segment}`)).toBe(true);
+    expect(setCookies.has(hintName)).toBe(false);
+    expect(mockCookieStore.delete).toHaveBeenCalledWith({ name: hintName, path: "/", secure: true });
+  });
 });
