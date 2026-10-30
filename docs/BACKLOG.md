@@ -6094,6 +6094,7 @@ The engine's refusal carries the statements that lift it, on Oracle for example 
 On Oracle a refusal can also name a row-level security or fine-grained auditing policy anywhere in the database, where the user holds nothing extra, and there the sentence is false.
 Seen 2026-10-29 on Oracle 26ai Free in a browser pass, for a granted function and for a row-level policy.
 Seen again 2026-10-30 on Couchbase enterprise-8.0.2 in a browser pass: with `query_update` granted on the scope, the server log named the role, `query_update[bv110:shop:*]`, and the user the agent needs, while the rail showed only the generic sentence.
+Seen again 2026-10-30 on InfluxDB 1.13.1 and 2.9.1 in a browser pass: the user holding `WRITE` on a second database, the 1.x admin and the 2.x write token each got the generic sentence, while the server log named the cause, for example that the principal can write the database `other` because InfluxDB 1.x answered a no-op `DELETE` there, and for the admin that it was answered `SHOW USERS`.
 
 **Done when:** the rail shows the refusal's own remedies (statements or policy names) beside its code, from the shared refusal path rather than a type-id branch, the generic sentence no longer claims the credential holds privileges when the refusal is about the database, and a component test pins both texts.
 
@@ -6132,6 +6133,7 @@ After switching from a Db2 agent connection to an owner connection, the rail hea
 Seen 2026-10-29 in a browser pass on Db2 12.1.
 Seen again 2026-10-30 on Couchbase enterprise-8.0.2: after switching to the owner connection, the rail read "on Couchbase owner (Administrator)" with the "Reads only" badge and the agent connection's last run still on screen, although that owner is the cluster administrator, whom the profile refuses.
 Seen again 2026-10-30 on Apache Druid 37.0.0: after switching to the owner connection and to plan mode, the rail still listed the agent connection's conversation and last run, and the results panel still showed the agent run's rows ("Stored by agent run ... read-only") under the owner connection.
+Seen again 2026-10-30 on InfluxDB in a browser pass: after switching from the 1.x reader connection to the 2.x read token connection, the rail read "on Influx 2.x read token (home)" over the reader's last run and offered to continue its conversation ("Conversation: 1 step before this one"); and the refusal "Agent mode does not offer this workflow on this engine" shown for Optimize on the 2.x connection stayed on screen after switching to the InfluxDB 3 connection.
 
 **Done when:** changing the connection clears or re-labels the rail's run and badge for the new connection, and a component test switches connections and reads the badge.
 
@@ -6142,6 +6144,7 @@ Seen 2026-10-29 in a browser pass on Db2 12.1; the Oracle pass the same day had 
 Seen again 2026-10-30 on Couchbase enterprise-8.0.2, twice: asked to run an exact `DELETE`, `UPDATE`, `UPDATE STATISTICS` and `BEGIN WORK`, each refused before it was sent, both runs finished `answered` with a report about the schema inventory or a row count and no word of the four refusals.
 Seen again 2026-10-30 on Apache Druid 37.0.0, twice: one run asked for an exact `INSERT`, `REPLACE`, `SET engine = 'msq-task'` and an `EXTERN` read drafted only the `EXTERN` read (403), and one asked for the three writes had each refused before it was sent; both finished `answered` with a report on the datasource's columns and no word of the refusals (runs `arun_08f051825d2744adb753bd8cf0f7edaf`, `arun_a074a7f229004afb8cf93537663325ab`).
 Seen again 2026-10-30 on LibreDB in a browser pass: asked to send `put app:version 3.2`, `PUT zeta changed`, `delete zeta` and `DeLeTe user:1`, each refused before the file was opened (`STATEMENT_NOT_ADMITTED`), the run finished `answered` with one claim about the schema inventory and no word of the four refusals (run `arun_f7423cf2546540028744ebef73824e7e`); the next run, asked for five other refused forms, did report each refusal, so it still depends on the model's wording.
+Seen again 2026-10-30 on InfluxDB 1.13.1 and 2.9.1 in a browser pass, three times: runs asked to send exact `DELETE`, `DROP`, `SELECT ... INTO` (four spellings), `CREATE CONTINUOUS QUERY`, `SHOW QUERIES`, `KILL QUERY`, `SHOW USERS`, `GRANT`, a commented and a two-statement form were each refused before anything was sent, and each run finished `answered` with one claim about the schema inventory and no word of the refusals (runs `arun_4f9ea9a9e1444c75824ebc437c14077f`, `arun_29b8b23e387f4a2092d31bc995e1f75e`, `arun_d69c3788d444421a887899d724282174`).
 
 **Done when:** a run whose only drafted statement was refused either reports that refusal in its answer, held by the run's verifier, or ends in a state other than `answered`, with an agent test that forces the refusal.
 
@@ -6185,6 +6188,7 @@ The agent rail's Advanced picker lists all five workflows on every connection, s
 Choosing Optimize and pressing Start is refused (400 on `/api/agent/runs`) with `NO_VARIANT_SENTENCE` in `src/lib/agent/agent-manifest.ts`: "Agent mode does not offer this workflow on this engine. The operations workflow runs here, and plan mode drafts here."
 On LibreDB that sentence is incomplete: investigation and data analysis run there too, so the user reads operations as the only way forward.
 The sentence predates a family that offers some read workflows and lacks others; `libredbkv` is the first.
+Seen again 2026-10-30 on InfluxDB 2.9.1 in a browser pass: the picker offered Optimize and Assess, which the `influxql` family does not offer (`docs/providers/influxdb.md` section 15.6), and Optimize was refused with the same sentence although investigation and data analysis run there.
 Seen 2026-10-30 on LibreDB in a browser pass.
 
 **Done when:** the refusal names the workflows the connection's statement language does offer, read from `AGENT_WORKFLOW_VARIANTS` rather than fixed text, the picker marks or hides a workflow that language has no variant for, and a test pins the sentence for `libredbkv`.
@@ -6194,6 +6198,7 @@ Seen 2026-10-30 on LibreDB in a browser pass.
 When a run start is refused (the POST to `/api/agent/runs` answers 400), the rail says "The conversation this browser was in (1 question, arun_...) ended when the page reloaded. Your next question starts a new one." although no page reloaded.
 `interrupted` in `src/components/agent/use-agent-run.ts` is `runId === null && !isBusy ? storedThread : null`, and `start()` clears `runId` before it fetches, so a refused start leaves `runId` null and `isBusy` false and the stored conversation reads as interrupted; the docblock beside it fixed the same false sentence for the in-flight window only.
 Seen 2026-10-30 on LibreDB in a browser pass, after choosing the Optimize workflow, which that engine does not offer (U162); the cause is not engine-specific.
+Seen again 2026-10-30 on InfluxDB 2.9.1, after the same Optimize refusal (U162).
 
 **Done when:** a refused start does not announce the stored conversation as ended by a reload (it keeps the conversation, or says the start was refused), with a hook test that refuses a start after a finished run.
 
