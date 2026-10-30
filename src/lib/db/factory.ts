@@ -414,11 +414,12 @@ export async function createDatabaseProvider(
     }
 
     // Two type-ids served by one directory, one per query language (InfluxDB spec I2, I23). Both are read-only
-    // whatever the flag says, so no execution context rides along, as for Neo4j.
+    // whatever the flag says. The execution context decides whether the open proves the principal reads only, for
+    // the agent read-only profile.
     case "influxdb": {
       // The explicit /index specifier keeps this dynamic import statically analysable.
       const { InfluxDBProvider } = await import("./providers/timeseries/influxdb/index");
-      return new InfluxDBProvider(connection, options);
+      return new InfluxDBProvider(connection, options, execution);
     }
 
     case "influxdb3": {

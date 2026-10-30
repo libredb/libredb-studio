@@ -138,7 +138,7 @@ function harness(
   };
   const factory: InfluxClientFactory = (clientOptions, routes) => createInfluxClient(clientOptions, routes, transport);
   return {
-    provider: new InfluxDBProvider({ ...CONNECTION, ...config }, options, factory),
+    provider: new InfluxDBProvider({ ...CONNECTION, ...config }, options, {}, factory),
     requests: wire.requests,
     closed: () => closed,
   };

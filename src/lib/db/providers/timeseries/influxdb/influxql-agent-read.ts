@@ -37,6 +37,7 @@
 import { ExecutionProfileError, QueryError } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
 import {
+  assertReadOnlyBudget,
   byteBudgetSentence,
   measureResultBytes,
   rowBudgetSentence,
@@ -218,6 +219,11 @@ export async function proveInfluxqlAgentPrincipal(context: InfluxqlAgentProofCon
     }
     throw unreadable(label, `a no-op DELETE on the database ${JSON.stringify(name)}`);
   }
+}
+
+/** Refuses a budget any field of which is not a positive integer in range, as every agent read path does. */
+export function assertInfluxqlAgentBudget(budget: ReadOnlyStatementBudget): void {
+  assertReadOnlyBudget(budget, "influxdb");
 }
 
 /**
