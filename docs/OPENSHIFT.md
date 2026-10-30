@@ -5,8 +5,8 @@ This release ships no OpenShift console plugin.
 
 ## Supported versions
 
-- The chart's openshift mode, the console link and openshift sign-in are tested on OpenShift 4.22 (CRC 4.22.14).
-  What this page says of the operator's openshift mode and of OLM v1 follows from the operator's manifests and their tests, and has not yet run on a live cluster.
+- The chart's openshift mode, the operator installed from OperatorHub (OLM v0), the console link and openshift sign-in are tested on OpenShift 4.22 (CRC 4.22.14).
+  The OLM v1 path below follows from the operator's behaviour with `LIBREDB_CLUSTER_STUDIO_NAMESPACE` unset, and has not run as a `ClusterExtension`.
 - The operator bundle declares OpenShift 4.16 as its oldest release; 4.14 and 4.15 are untested.
 - Sign-in with OpenShift accounts needs the cluster's built-in OAuth server.
   A cluster that uses direct external OIDC authentication has none: there, Studio signs people in with [OIDC sign-in](OIDC.md) against the cluster's identity provider, without Kubernetes discovery, because on a cluster that serves `config.openshift.io/v1` the access review of an OIDC session denies every request, and the chart refuses discovery with `authProvider=oidc`.
@@ -87,6 +87,7 @@ The operator renders the ConsoleLink, and discovery of any namespace other than 
 A resource in any other namespace that asks for them fails to reconcile with a message naming `operator.clusterStudioNamespace`, and with the variable unset no resource may render them.
 Discovery of the resource's own namespace, and every namespaced object of the chart, render for any resource.
 The resource cannot change this: the operator sets `operator.managed` and `operator.clusterStudioNamespace` itself, over the resource's spec.
+Unsetting or changing the variable later does not remove what the cluster Studio already rendered: its ConsoleLink and its Roles in discovered namespaces stay while the resource fails to reconcile, so turn discovery and the ConsoleLink off in that resource, or delete it, before you change the variable.
 
 ### The cluster Studio namespace
 
@@ -348,6 +349,12 @@ OLM leaves the CRD and the four ClusterRoles it generated for the kind (`libredb
 
 ```sh
 oc delete crd libredbstudios.studio.libredb.org
+```
+
+OLM also leaves the bundle's own ClusterRoles, which deleting the CRD does not remove:
+
+```sh
+oc delete clusterrole libredb-studio-operator-libredbstudio-admin-role libredb-studio-operator-libredbstudio-editor-role libredb-studio-operator-libredbstudio-viewer-role libredb-studio-operator-metrics-reader
 ```
 
 This release ships no console plugin, so its uninstall leaves nothing in the console's configuration.
