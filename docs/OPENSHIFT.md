@@ -67,6 +67,14 @@ The operator manages only its own namespace: it reconciles the `LibreDBStudio` t
    ```
 
    Only the default ServiceAccount bindings and the ones OLM made for the operator should be listed, and the second command should print nothing: a project a user requested names that user, and that user administers it.
+   RoleBindings do not show a ClusterRoleBinding that gives a group `edit` or `admin` in every namespace, so check who may write there as well:
+
+   ```sh
+   oc adm policy who-can create pods -n libredb-studio
+   oc adm policy who-can update secrets -n libredb-studio
+   ```
+
+   Only cluster admins, the operator's service account and system accounts should be named.
 3. Create one `LibreDBStudio` in that namespace with openshift-mode values, and keep its RoleBindings to cluster admins only (see [The cluster Studio namespace](#the-cluster-studio-namespace)).
    The spec takes the chart's values, which the [chart README](../charts/libredb-studio/README.md#openshift-sign-in) documents:
 
@@ -97,7 +105,18 @@ The operator reconciles only the `LibreDBStudio` resources of its own namespace.
 A resource in any other namespace gets no status, no finalizer and no objects, and deleting it completes at once.
 Any user who may edit a namespace may still create one, because OLM adds the kind to the default `edit` and `admin` roles; the operator ignores it.
 A team's own Studio is a [Helm install](#install-with-helm) in the team's namespace.
-The resource cannot change where the operator puts objects: the operator sets `operator.managed` and `operator.clusterStudioNamespace`, its own namespace, over the resource's spec.
+The resource cannot move the operator to another namespace: the operator sets `operator.managed` and `operator.clusterStudioNamespace`, its own namespace, over the resource's spec.
+It still chooses the namespaces discovery covers, which is why the next section keeps the namespace to cluster admins.
+
+Installing the operator is a cluster admin's act, done once, into that one namespace, and the cluster keeps one install:
+
+```sh
+oc get csv -A | grep libredb-studio-operator
+```
+
+This should list one namespace, the operator's.
+OLM lets anyone who may edit a namespace create a Subscription there, and where an OperatorGroup in that namespace names no `serviceAccountName`, OLM installs the subscribed operator with every right its CSV asks for, this one's cluster-wide rights included.
+So an OperatorGroup in a namespace that users other than cluster admins edit names a `serviceAccountName`, whose rights then bound what OLM installs there.
 
 ### The cluster Studio namespace
 
@@ -154,8 +173,9 @@ This procedure follows from OLM's and the operator's behaviour and has not yet r
    ```
 
    The cluster's Studio is the one in the namespace only cluster admins write; the others are team Studios.
-2. Approve no InstallPlan of the new version.
-   If one was approved, the new CSV shows `Failed` and 1.1.0 still runs; go on with step 3.
+2. Approve no InstallPlan of the new version, and install it in no other namespace yet.
+   An approved InstallPlan, which Automatic approval approves at once, applies the new CRD even though the new CSV shows `Failed`, and so does an install in another namespace: 1.1.0 then runs on under the new CRD, so make the [upgrade checks](#upgrading-the-operator) on every resource at once, copying backup dumps out first.
+   Then go on with step 3.
 3. Uninstall 1.1.0 and keep its resources: in Installed Operators in `openshift-operators`, Uninstall Operator, with "Delete all operand instances for this operator" left unchecked, its default.
    From the CLI, delete the Subscription and every `libredb-studio-operator` CSV in `openshift-operators`:
 
@@ -166,20 +186,24 @@ This procedure follows from OLM's and the operator's behaviour and has not yet r
 
    Keep the CRD: deleting it deletes every `LibreDBStudio` and what each one owns.
    The Studios keep running, and nothing reconciles them until step 5.
-4. Move each team Studio to a Helm release of the same name in the same namespace, as a cluster admin:
+4. Move each team Studio to a Helm release of the same name in the same namespace.
+   Helm applies a release with the rights of whoever runs it, and the values file is the resource's spec, which anyone who may edit the namespace wrote, so the team runs these commands with its own rights, never a cluster admin.
+   First a cluster admin removes what the release placed outside the team's namespace, which the team's rights cannot change: the discovery Roles and RoleBindings in other namespaces, the ConsoleLink, and what `postgresql.extraDeploy`, `postgresql.namespaceOverride` or the `postgresql.metrics` ServiceMonitor and PrometheusRule namespaces put elsewhere, each named in its `meta.helm.sh/release-name` and `meta.helm.sh/release-namespace` annotations; a PostgreSQL moved to another namespace holds the team's data, so its data is copied out first.
+   Then a user with `edit` or `admin` in the team's namespace runs:
 
    ```sh
+   oc patch libredbstudio <name> -n <namespace> --type merge -p '{"metadata":{"finalizers":null},"spec":{"postgresql":{"extraDeploy":null,"namespaceOverride":null,"metrics":{"serviceMonitor":{"namespace":null},"prometheusRule":{"namespace":null}}}}}'
    oc get libredbstudio <name> -n <namespace> -o jsonpath='{.spec}' > <name>-values.json
-   oc patch libredbstudio <name> -n <namespace> --type merge -p '{"metadata":{"finalizers":null}}'
    oc delete libredbstudio <name> -n <namespace> --cascade=orphan
-   helm upgrade <name> libredb/libredb-studio --version 0.1.117 -n <namespace> -f <name>-values.json
+   helm upgrade <name> libredb/libredb-studio --version 0.1.117 -n <namespace> -f <name>-values.json --set discovery.kubernetes.enabled=false --set openshift.consoleLink.enabled=false
    ```
 
-   The finalizer goes first, while nothing reconciles, so the operator cannot add it back.
+   The patch removes the finalizer while nothing reconciles, so the operator cannot add it back, and clears the four values the new CRD refuses in the same write, since on OpenShift 4.16 a resource that still holds one takes no write once the new CRD is applied; add to it any `route` entry the new CRD refuses.
    The orphaning delete then leaves the Studio's objects and its data claim in place, and Helm upgrades the same release, whose objects already carry Helm's ownership labels and annotations, because the operator installs through Helm.
-   A team release that renders discovery of other namespaces or a ConsoleLink stays a cluster admin's to upgrade; turn both off in the values file if the team takes it over.
-5. Install the new version for a specific namespace, as [Install from OperatorHub](#install-from-operatorhub) shows: the namespace that holds the cluster's Studio when only cluster admins hold RoleBindings there and it names no requester, or else the recommended `libredb-studio`, moving the old cluster Studio to Helm as in step 4 or creating a new one there.
-   The operator takes the existing resource over in place: the same release name and history in that namespace, upgraded to the new chart at its first reconcile.
+   The two `--set` flags keep the release to the team's namespace: a team Studio discovers no other namespace and renders no ConsoleLink.
+5. Install the new version for a specific namespace, as [Install from OperatorHub](#install-from-operatorhub) shows; the install applies the new CRD, so make the [upgrade checks](#upgrading-the-operator) on the cluster's Studio first.
+   Prefer the recommended `libredb-studio` with a new `LibreDBStudio` there, moving the old cluster Studio to Helm as in step 4, since an existing namespace's RoleBindings and requester show only who may write there now.
+   Keep the namespace that holds the old cluster Studio only when it has been one only cluster admins write since it was created: the operator then takes the existing resource over in place, the same release name and history in that namespace, upgraded to the new chart at its first reconcile.
 6. A `LibreDBStudio` left in another namespace is ignored.
    One that still carries the 1.1.0 finalizer blocks its own deletion, and its namespace's, until the finalizer is removed as in step 4.
 
@@ -195,7 +219,7 @@ This path has not run.
 A cluster admin installs the chart's openshift mode with Helm as the [chart README](../charts/libredb-studio/README.md#openshift-sign-in) shows, from the repository `https://libredb.org/libredb-studio/` or from `oci://ghcr.io/libredb/charts/libredb-studio`.
 The chart refuses openshift mode until `image.tag` names a release after 1.1.0, while its `appVersion` is 1.1.0 or earlier.
 Discovery of other namespaces creates Roles there and a ConsoleLink is cluster-scoped, so such an install needs a cluster admin, and the [cluster Studio namespace](#the-cluster-studio-namespace) rule applies to the release's namespace.
-Teams install their own Studio this way, in their own namespace; it discovers no other namespace and renders no ConsoleLink unless a cluster admin installs it.
+Teams install their own Studio this way, in their own namespace and with their own rights; it discovers no other namespace and renders no ConsoleLink.
 
 The console's Helm catalog lists the chart once its repository is added.
 Anyone with `edit` in a namespace may add it for that namespace with a ProjectHelmChartRepository, and a cluster admin for every namespace with a cluster-scoped HelmChartRepository of the same `spec`:
