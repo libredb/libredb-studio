@@ -10,8 +10,8 @@
 import { describe, expect, test } from "bun:test";
 import { ExecutionProfileError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import type { NodeResponse } from "@/lib/db/http/node-transport";
-import { WEAVIATE_PROOF_SENTENCES } from "@/lib/db/providers/vector/weaviate/agent-read";
-import { WEAVIATE_AGENT_SENTENCES } from "@/lib/db/providers/vector/weaviate/agent-statement";
+import { WEAVIATE_PROOF_SENTENCES } from "@/lib/db/providers/vector/weaviate/metadata-read";
+import { WEAVIATE_AGENT_SENTENCES } from "@/lib/db/providers/vector/weaviate/metadata-request";
 import type { WeaviateAnswer } from "@/lib/db/providers/vector/weaviate/client";
 import { WeaviateProvider } from "@/lib/db/providers/vector/weaviate/index";
 import { createRestWeaviateClient } from "@/lib/db/providers/vector/weaviate/rest-client";

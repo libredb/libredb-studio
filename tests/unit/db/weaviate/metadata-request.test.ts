@@ -1,5 +1,5 @@
 /**
- * The agent's reader of one Weaviate request (`agent-statement.ts`): the console's own grammar and phase 0 under it,
+ * The agent's reader of one Weaviate request (`metadata-request.ts`): the console's own grammar and phase 0 under it,
  * the metadata operations an agent may name, every operation that answers stored objects, properties or vectors
  * refused by name, and an aggregate that counts by stored values refused by the key that would.
  */
@@ -8,7 +8,7 @@ import {
   readWeaviateAgentStatement,
   WEAVIATE_AGENT_OPS,
   WEAVIATE_AGENT_SENTENCES,
-} from "@/lib/db/providers/vector/weaviate/agent-statement";
+} from "@/lib/db/providers/vector/weaviate/metadata-request";
 import { WEAVIATE_ROUTES } from "@/lib/db/providers/vector/weaviate/routes";
 
 const ID = "00000000-0000-4000-8000-000000000001";

@@ -1,5 +1,5 @@
 /**
- * The Weaviate agent read-only profile's own rules (`agent-read.ts`): the viewer proof, replayed from what 1.40.2
+ * The Weaviate agent read-only profile's own rules (`metadata-read.ts`): the viewer proof, replayed from what 1.40.2
  * answered each principal's `GET /v1/users/own-info` (tests/fixtures/weaviate/1.40.2/agent-boundary/), the metadata-only
  * projection of every agent answer, each fed the captured answers and answers that carry a stored value where only a
  * name, a count or a flag may stand, and the agent's wording of a failure.
@@ -18,8 +18,8 @@ import {
   WEAVIATE_VIEWER_ACTIONS,
   weaviateAgentFailure,
   weaviateProjectionOf,
-} from "@/lib/db/providers/vector/weaviate/agent-read";
-import { readWeaviateAgentStatement } from "@/lib/db/providers/vector/weaviate/agent-statement";
+} from "@/lib/db/providers/vector/weaviate/metadata-read";
+import { readWeaviateAgentStatement } from "@/lib/db/providers/vector/weaviate/metadata-request";
 import { type WeaviateAnswer, WeaviateError } from "@/lib/db/providers/vector/weaviate/client";
 import type { WeaviateAnswered } from "@/lib/db/providers/vector/weaviate/execute";
 import type { WeaviatePlan } from "@/lib/db/providers/vector/weaviate/request";

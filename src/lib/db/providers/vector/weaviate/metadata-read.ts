@@ -237,13 +237,24 @@ const NODES: MetadataProjection<Json> = [
   { column: "shards", kind: "count", read: (node) => at(node, "stats", "shardCount"), optional: true },
 ];
 
-const NODE_SHARDS: MetadataProjection<Json> = [
-  { column: "node", kind: "name", read: (shard) => shard.node },
-  { column: "collection", kind: "name", read: (shard) => shard.class },
-  { column: "shard", kind: "name", read: (shard) => shard.name },
-  { column: "objects", kind: "count", read: (shard) => shard.objectCount, optional: true },
-  { column: "vector_indexing_status", kind: "name", read: (shard) => shard.vectorIndexingStatus, optional: true },
-  { column: "loaded", kind: "flag", read: (shard) => shard.loaded, optional: true },
+/** One shard of a verbose node read, beside the name of the node that holds it. */
+interface NodeShard {
+  readonly node: unknown;
+  readonly shard: Json;
+}
+
+const NODE_SHARDS: MetadataProjection<NodeShard> = [
+  { column: "node", kind: "name", read: (row) => row.node },
+  { column: "collection", kind: "name", read: (row) => row.shard.class },
+  { column: "shard", kind: "name", read: (row) => row.shard.name },
+  { column: "objects", kind: "count", read: (row) => row.shard.objectCount, optional: true },
+  {
+    column: "vector_indexing_status",
+    kind: "name",
+    read: (row) => row.shard.vectorIndexingStatus,
+    optional: true,
+  },
+  { column: "loaded", kind: "flag", read: (row) => row.shard.loaded, optional: true },
 ];
 
 const AGGREGATE: MetadataProjection<Json> = [
@@ -292,15 +303,17 @@ function object(value: unknown): Json {
 }
 
 /** Every property of a definition, nested ones after their parent as `parent.child`. */
-function properties(list: unknown, prefix: string, depth: number): PropertyRow[] {
-  if (list === undefined || list === null) return [];
+function properties(list: unknown, prefix: string, depth: number, rows: PropertyRow[] = []): PropertyRow[] {
+  if (list === undefined || list === null) return rows;
   if (depth > MAX_PROPERTY_DEPTH) throw shapeError();
-  return objects(list).flatMap((property) => {
+  for (const property of objects(list)) {
     const name = property.name;
     if (typeof name !== "string") throw shapeError();
     const path = `${prefix}${name}`;
-    return [{ path, property }, ...properties(property.nestedProperties, `${path}.`, depth + 1)];
-  });
+    rows.push({ path, property });
+    properties(property.nestedProperties, `${path}.`, depth + 1, rows);
+  }
+  return rows;
 }
 
 /** Which projection an agent request's answer takes. */
@@ -344,7 +357,7 @@ function sourcesOf(id: WeaviateProjectionId, answer: unknown, answered: Weaviate
       return objects(object(answer).nodes);
     case "node-shards":
       return objects(object(answer).nodes).flatMap((node) =>
-        objects(node.shards ?? []).map((shard) => ({ ...shard, node: node.name })),
+        objects(node.shards ?? []).map((shard): NodeShard => ({ node: node.name, shard })),
       );
     case "aggregate":
       return [

@@ -24,7 +24,7 @@ import {
   WEAVIATE_ROUTE_TEMPLATES,
   WeaviateProvider,
 } from "@/lib/db/providers/vector/weaviate/index";
-import { WEAVIATE_METADATA_ONLY } from "@/lib/db/providers/vector/weaviate/agent-read";
+import { WEAVIATE_METADATA_ONLY } from "@/lib/db/providers/vector/weaviate/metadata-read";
 import { WEAVIATE_LABELS } from "@/lib/db/providers/vector/weaviate/labels";
 import {
   readWeaviateHealth,

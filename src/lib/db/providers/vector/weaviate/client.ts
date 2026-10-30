@@ -12,7 +12,7 @@
  * Every operation the client sends: the console's routes (`routes.ts`) first, in their table order, then the three
  * the console never names, the readiness probe of the health surface, the GraphQL read the encoder writes for a
  * server that serves no REST search (spec 3.3), and the key's own record the agent read-only profile proves a viewer
- * from (`agent-read.ts`).
+ * from (`metadata-read.ts`).
  */
 export const WEAVIATE_OPS = [
   "meta",

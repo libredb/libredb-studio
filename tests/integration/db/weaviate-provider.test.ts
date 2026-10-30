@@ -24,7 +24,7 @@ import {
 } from "../../helpers/weaviate-scenario";
 import { scenarioFile, WEAVIATE_SCENARIOS, WEAVIATE_SERVICES } from "../../live/weaviate-scenarios";
 import { ExecutionProfileError } from "@/lib/db/errors";
-import { readWeaviateViewerProof } from "@/lib/db/providers/vector/weaviate/agent-read";
+import { readWeaviateViewerProof } from "@/lib/db/providers/vector/weaviate/metadata-read";
 import { answerFailure } from "@/lib/db/providers/vector/weaviate/errors";
 import { agentAnswer, agentCapture, agentCaptureNames } from "../../helpers/weaviate-agent";
 
@@ -164,7 +164,7 @@ describe("what the captures show", () => {
  * (tests/fixtures/weaviate/1.40.2/agent-boundary/, recorded by its run.sh): the viewer's writes refused as RBAC
  * refusals with the data unchanged, beside the root user's same write as the positive control; the viewer proof's
  * answers; a COLD tenant woken by a viewer's data read and not by its own record; and the module calls a read makes.
- * The provider's own refusals of each are held in tests/unit/db/weaviate/agent-*.test.ts.
+ * The provider's own refusals of each are held in tests/unit/db/weaviate/metadata-*.test.ts and agent-provider.test.ts.
  */
 describe("the agent boundary, replayed from 1.40.2", () => {
   const count = (name: string): number => (JSON.parse(agentCapture(name).body) as { count: number }).count;

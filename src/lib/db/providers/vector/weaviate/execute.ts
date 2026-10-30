@@ -74,7 +74,7 @@ export interface WeaviateExecution {
   readonly deadline?: (ms: number) => AbortSignal;
   /**
    * What the request's answer becomes: `weaviateResult` by default; the agent read-only profile passes the
-   * metadata-only projection of `agent-read.ts`, so its answer is never shaped as a console result.
+   * metadata-only projection of `metadata-read.ts`, so its answer is never shaped as a console result.
    */
   readonly answered?: (answered: WeaviateAnswered) => QueryResult;
 }
