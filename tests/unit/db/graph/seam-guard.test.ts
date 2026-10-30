@@ -132,10 +132,10 @@ function namesOutsideComments(sf: ts.SourceFile): Array<{ name: string; position
   return found;
 }
 
-/** Every rule this guard holds, applied to one file's text. `file` is its repository path. */
 /** The shared budget module of every read-only path (see the provider-directory rule below). */
 const SHARED_BUDGET = `${PROVIDERS}/sql/read-only-budget`;
 
+/** Every rule this guard holds, applied to one file's text. `file` is its repository path. */
 function violations(file: string, text: string): string[] {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   const line = (position: number) => sf.getLineAndCharacterOfPosition(position).line + 1;

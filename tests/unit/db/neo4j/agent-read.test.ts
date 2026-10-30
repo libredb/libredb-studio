@@ -105,6 +105,7 @@ describe("the open under the agent read-only profile", () => {
     expect(error).toBeInstanceOf(ExecutionProfileError);
     expect((error as Error).message).toContain(words);
     expect(provider.isConnected()).toBe(false);
+    expect((provider as unknown as { state: { lastError?: Error } }).state.lastError).toBe(error as Error);
     expect(recording.closed).toBe(1);
   });
 

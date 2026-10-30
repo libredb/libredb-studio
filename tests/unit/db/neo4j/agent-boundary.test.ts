@@ -6,7 +6,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { ExecutionProfileError } from "@/lib/db/errors";
-import type { GraphClient, GraphRunOptions, GraphRunResult } from "@/lib/db/graph/bolt/client";
+import { type GraphClient, GraphClientError, type GraphRunOptions, type GraphRunResult } from "@/lib/db/graph/bolt/client";
 import {
   NEO4J_AGENT_PROOF_ROW_BOUND,
   NEO4J_AGENT_PROOF_STATEMENTS,
@@ -236,6 +236,14 @@ describe("proveNeo4jAgentPrincipal", () => {
     expect(error.message).toContain(`could not read the server's answer to ${statement.split(" YIELD")[0]}`);
   });
 
+  test("reads another server error on SHOW USER PRIVILEGES as unread, never as Community", async () => {
+    const forbidden = new GraphClientError("auth", "not allowed", "Neo.ClientError.Security.Forbidden");
+    const error = await refusal(agentWith(NEO4J_AGENT_PROOF_STATEMENTS.privileges, forbidden));
+    expect(error.reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
+    expect(error.message).toContain("could not read the server's answer to SHOW USER PRIVILEGES");
+    expect(error.message).not.toContain("Community");
+  });
+
   test.each(STATEMENTS)("refuses when %s is cut at the row bound", async (statement) => {
     const error = await refusal(agentWith(statement, { fields: ["name"], rows: [], truncated: true }));
     expect(error.message).toContain(`could not read the server's answer to ${statement.split(" YIELD")[0]}`);
@@ -256,8 +264,9 @@ describe("proveNeo4jAgentPrincipal", () => {
     ["a user row naming another user", { user: "someone", roles: ["PUBLIC"] }],
     ["roles that are not strings", { user: "agent", roles: [1] }],
     ["no user", { roles: ["PUBLIC"] }],
-  ])("refuses SHOW CURRENT USER answering %s", async (_label, row) => {
-    const answer = { fields: ["user", "roles"], rows: [row], truncated: false };
+    ["a second row", { user: "agent", roles: ["PUBLIC"] }, { user: "agent", roles: ["PUBLIC", "admin"] }],
+  ])("refuses SHOW CURRENT USER answering %s", async (_label, ...rows) => {
+    const answer = { fields: ["user", "roles"], rows, truncated: false };
     const message = (await refusal(agentWith(NEO4J_AGENT_PROOF_STATEMENTS.currentUser, answer))).message;
     expect(message).toMatch(/could not read the server's answer to (SHOW CURRENT USER|SHOW USER PRIVILEGES)/);
   });
