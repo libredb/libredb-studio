@@ -3,7 +3,7 @@ import { AGENT_LANGUAGE_COPY } from "@/lib/agent/agent-manifest";
 import { fingerprintKubectl, kubectlRowCapAdvice } from "@/lib/agent/languages/kubectl/adapter";
 import { fingerprintLibredbkv, libredbkvRowCapAdvice } from "@/lib/agent/languages/libredbkv/adapter";
 import { fingerprintMongo, mongoRowCapAdvice } from "@/lib/agent/languages/mongo/adapter";
-import { languageServer } from "@/lib/agent/languages/server";
+import { languageServer, languageServerPack } from "@/lib/agent/languages/server";
 import {
   admitLibredbkvStatement,
   LIBREDBKV_AGENT_MAX_STATEMENT_CHARS,
@@ -295,6 +295,14 @@ describe("the libredbkv language's server adapter and admission", () => {
       message: `The statement is longer than ${LIBREDBKV_AGENT_MAX_STATEMENT_CHARS} characters, the most an agent read takes: shorten the key or the prefix. Nothing was sent.`,
     });
     expect(languageServer("libredbkv").admit?.("get users:1")).toBeNull();
+  });
+
+  test("an ungrounded run is sent to a read it holds, since no inspect_schema is offered", () => {
+    const ungrounded = languageServerPack("libredbkv").grounding.ungrounded;
+    expect(ungrounded?.("The capture failed.", { singular: "key prefix", plural: "key prefixes" })).toBe(
+      "The capture failed.\nSo nothing about this database has been established for you: not one key prefix name. Read what you need with run_read_query, starting with prefix on the namespaces your objective names.",
+    );
+    expect(languageServerPack("libredbkv").grounding.planningRules).toBeUndefined();
   });
 
   test("the descriptor's input is strict, carries the statement, and refuses what the admission refuses", () => {
