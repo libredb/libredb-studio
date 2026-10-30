@@ -29,6 +29,7 @@ import type {
 } from "../types";
 import { declaresDialect, dialectSpec } from "./query-dialects";
 import type { RunReadAllowance } from "./read-allowance";
+import type { MetadataOnlyDeclaration } from "./redaction/metadata-only";
 
 // ============================================================================
 // Pool Configuration
@@ -1413,6 +1414,18 @@ export interface ProviderCapabilities {
    * Optional for the same published-interface reason as `enforcesReadOnly`.
    */
   readonly machineRedaction?: { readonly maskedNameKinds: readonly string[] };
+  /**
+   * The metadata-only answer mode of `queryReadOnly`, the agent's read path, for a store whose answers carry stored
+   * values (objects, vectors, payloads, message bodies) that no machine surface may pass on: per metadata operation the
+   * provider permits, the typed output projection its answer is built from, column by column, each a name, a count
+   * or a flag. Every other operation is refused before anything is sent. Absent: the provider answers as it reads.
+   * The projection helpers are provider-neutral, in `src/lib/db/redaction/metadata-only.ts`, which derives this
+   * declaration from the provider's projections, so the two cannot differ. Separate from `machineRedaction`, which
+   * masks names and neither names nor withholds a value.
+   *
+   * Optional for the same published-interface reason as `enforcesReadOnly`.
+   */
+  readonly metadataOnly?: MetadataOnlyDeclaration;
   /**
    * The curated cluster readings this provider answers for the agent, each one audited call and one statement charge
    * instead of composed statements: `"usage"` is `readClusterUsage` (`cluster.usage.read`), `"workloads"` is
