@@ -1,0 +1,20 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-enterprise",
+    "digest": "sha256:02d30e0a80f0aaed71cfdfaa85c8ea01cf44aacd55510d4a2b4a53f9f1a2e1ad",
+    "date": "2026-10-30T11:13:50.381Z",
+    "database": "neo4j"
+  },
+  "principal": "denied: agent_reader, csv_loader and no_load (DENY LOAD ON ALL DATA)",
+  "statement": "LOAD CSV FROM 'file:///probe.csv' AS row RETURN row",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 100
+  },
+  "outcome": "fail",
+  "error": {
+    "category": "access-mode",
+    "code": "Neo.ClientError.Security.Forbidden",
+    "message": "LOAD on URL 'file:///var/lib/neo4j/import/probe.csv' is denied for user 'denied' with roles [PUBLIC, agent_reader, csv_loader, no_load]."
+  }
+}

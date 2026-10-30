@@ -1,0 +1,21 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-enterprise",
+    "digest": "sha256:02d30e0a80f0aaed71cfdfaa85c8ea01cf44aacd55510d4a2b4a53f9f1a2e1ad",
+    "date": "2026-10-30T11:13:38.293Z",
+    "database": "neo4j"
+  },
+  "principal": "agent: role agent_reader (a copy of reader), PUBLIC's LOAD revoked",
+  "statement": "MATCH (n:Person) DETACH DELETE n",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 100
+  },
+  "session": "WRITE",
+  "outcome": "fail",
+  "error": {
+    "category": "query",
+    "code": "Neo.ClientError.Security.Forbidden",
+    "message": "Delete relationship with type 'KNOWS' on database 'neo4j' is not allowed for user 'agent' with roles [PUBLIC, agent_reader]."
+  }
+}

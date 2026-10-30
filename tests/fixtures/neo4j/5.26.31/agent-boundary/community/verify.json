@@ -1,0 +1,16 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-community",
+    "digest": "sha256:d9cfe82983d27f5a75b3aaae8f316d04f9a698a3b7f6103a508f7caf8362f255",
+    "date": "2026-10-30T11:14:13.187Z",
+    "database": null
+  },
+  "principal": "neo4j: the only user of Community Edition, every database read-only",
+  "surface": "verify",
+  "outcome": "pass",
+  "result": {
+    "address": "127.0.0.1:17689",
+    "agent": "Neo4j/5.26.31",
+    "protocolVersion": "5.5"
+  }
+}

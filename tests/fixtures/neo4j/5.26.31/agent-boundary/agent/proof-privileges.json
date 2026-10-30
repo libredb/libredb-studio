@@ -1,0 +1,102 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-enterprise",
+    "digest": "sha256:02d30e0a80f0aaed71cfdfaa85c8ea01cf44aacd55510d4a2b4a53f9f1a2e1ad",
+    "date": "2026-10-30T11:13:37.867Z",
+    "database": "neo4j"
+  },
+  "principal": "agent: role agent_reader (a copy of reader), PUBLIC's LOAD revoked",
+  "statement": "SHOW USER PRIVILEGES YIELD access, action, resource, graph, segment, role, user",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 1000
+  },
+  "outcome": "pass",
+  "result": {
+    "fields": [
+      "access",
+      "action",
+      "resource",
+      "graph",
+      "segment",
+      "role",
+      "user"
+    ],
+    "rows": [
+      {
+        "access": "GRANTED",
+        "action": "execute",
+        "resource": "database",
+        "graph": "*",
+        "segment": "FUNCTION(*)",
+        "role": "PUBLIC",
+        "user": "agent"
+      },
+      {
+        "access": "GRANTED",
+        "action": "execute",
+        "resource": "database",
+        "graph": "*",
+        "segment": "PROCEDURE(*)",
+        "role": "PUBLIC",
+        "user": "agent"
+      },
+      {
+        "access": "GRANTED",
+        "action": "access",
+        "resource": "database",
+        "graph": "HOME",
+        "segment": "database",
+        "role": "PUBLIC",
+        "user": "agent"
+      },
+      {
+        "access": "GRANTED",
+        "action": "match",
+        "resource": "all_properties",
+        "graph": "*",
+        "segment": "NODE(*)",
+        "role": "agent_reader",
+        "user": "agent"
+      },
+      {
+        "access": "GRANTED",
+        "action": "match",
+        "resource": "all_properties",
+        "graph": "*",
+        "segment": "RELATIONSHIP(*)",
+        "role": "agent_reader",
+        "user": "agent"
+      },
+      {
+        "access": "GRANTED",
+        "action": "access",
+        "resource": "database",
+        "graph": "*",
+        "segment": "database",
+        "role": "agent_reader",
+        "user": "agent"
+      },
+      {
+        "access": "GRANTED",
+        "action": "show_constraint",
+        "resource": "database",
+        "graph": "*",
+        "segment": "database",
+        "role": "agent_reader",
+        "user": "agent"
+      },
+      {
+        "access": "GRANTED",
+        "action": "show_index",
+        "resource": "database",
+        "graph": "*",
+        "segment": "database",
+        "role": "agent_reader",
+        "user": "agent"
+      }
+    ],
+    "truncated": false,
+    "queryType": "s"
+  }
+}

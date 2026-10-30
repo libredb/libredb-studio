@@ -1,0 +1,16 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-enterprise",
+    "digest": "sha256:02d30e0a80f0aaed71cfdfaa85c8ea01cf44aacd55510d4a2b4a53f9f1a2e1ad",
+    "date": "2026-10-30T11:14:00.059Z",
+    "database": null
+  },
+  "principal": "widened: role agent_reader, then also csv_loader",
+  "surface": "verify",
+  "outcome": "pass",
+  "result": {
+    "address": "127.0.0.1:17687",
+    "agent": "Neo4j/5.26.31",
+    "protocolVersion": "5.5"
+  }
+}

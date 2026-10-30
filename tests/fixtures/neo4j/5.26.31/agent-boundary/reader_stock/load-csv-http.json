@@ -1,0 +1,20 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-enterprise",
+    "digest": "sha256:02d30e0a80f0aaed71cfdfaa85c8ea01cf44aacd55510d4a2b4a53f9f1a2e1ad",
+    "date": "2026-10-30T11:13:34.000Z",
+    "database": "neo4j"
+  },
+  "principal": "reader_stock: role reader, PUBLIC holding LOAD ON ALL DATA",
+  "statement": "LOAD CSV FROM 'http://127.0.0.1:7474/' AS row RETURN count(row) AS lines",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 100
+  },
+  "outcome": "fail",
+  "error": {
+    "category": "query",
+    "code": "Neo.DatabaseError.Statement.ExecutionFailed",
+    "message": "At http://127.0.0.1:7474/ @ position 49 -  there's a field starting with a quote and whereas it ends that quote there seems to be characters in that field after that ending quote. That isn't supported. This is what I read: 'query\":'"
+  }
+}
