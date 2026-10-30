@@ -1093,7 +1093,7 @@ controls the operator.
 {{- $object := lookup "v1" "Namespace" "" $namespace }}
 {{- $annotations := dig "metadata" "annotations" dict ($object | default dict) }}
 {{- if hasKey $annotations "openshift.io/requester" }}
-{{- fail (printf "openshift.consolePlugin.namespace %s is a project %s requested, so that user administers it and could run code in every console session and receive every console user's token; delete it, create the namespace with oc create namespace %s and check that only cluster admins hold RoleBindings there (oc get rolebindings -n %s)" $namespace (get $annotations "openshift.io/requester" | toString) $namespace $namespace) }}
+{{- fail (printf "openshift.consolePlugin.namespace %s is a project %s requested, so that user administers it and could run code in every console session and receive every console user's token; delete it, create the namespace with oc create namespace %s and check that only cluster admins may change its Deployments (oc adm policy who-can update deployments.apps -n %s)" $namespace (get $annotations "openshift.io/requester" | toString) $namespace $namespace) }}
 {{- end }}
 {{- end }}
 {{- if not (include "libredb-studio.discoveryEnabled" .) }}
@@ -1104,6 +1104,6 @@ controls the operator.
 {{- fail "openshift.consolePlugin.enabled needs openshift.consoleLink.enabled with openshift.consoleLink.location=ApplicationMenu: the console plugin finds Studio only through the console link named libredb-studio, which only that link is" }}
 {{- end }}
 {{- if not (get $plugin "image" | default "" | toString | trim) }}
-{{- fail (printf "openshift.consolePlugin.image is empty: set the plugin image as a reference pinned by digest%s" (ternary "; under the operator it comes from RELATED_IMAGE_PLUGIN in the operator's Deployment" "" (eq $operator "true"))) }}
+{{- fail (printf "openshift.consolePlugin.image is empty: set the plugin image as a reference pinned by digest%s" (ternary "; under the operator it comes from RELATED_IMAGE_PLUGIN in the operator's Deployment" "; an upgrade with --reuse-values from chart 0.1.116 or earlier keeps that release's values, which have no plugin image, so upgrade with --reset-then-reuse-values or set it" (eq $operator "true"))) }}
 {{- end }}
 {{- end }}

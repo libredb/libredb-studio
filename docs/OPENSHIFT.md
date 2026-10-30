@@ -280,15 +280,19 @@ The plugin renders with `openshift.consolePlugin.enabled` on the cluster Studio,
 - this patch, which the chart's install notes print, and which adds `libredb-studio` to `spec.plugins` once and keeps the other plugins in their order:
 
   ```sh
-  set -eu
-  plugins=$(oc get consoles.operator.openshift.io cluster -o jsonpath='{.spec.plugins}')
-  case "$plugins" in *'"libredb-studio"'*) exit 0 ;; esac
-  if [ -z "$plugins" ]; then
-    oc patch consoles.operator.openshift.io cluster --type=json -p '[{"op":"add","path":"/spec/plugins","value":["libredb-studio"]}]'
-  else
-    oc patch consoles.operator.openshift.io cluster --type=json -p '[{"op":"add","path":"/spec/plugins/-","value":"libredb-studio"}]'
-  fi
+  (
+    set -eu
+    plugins=$(oc get consoles.operator.openshift.io cluster -o jsonpath='{.spec.plugins}')
+    case "$plugins" in *'"libredb-studio"'*) exit 0 ;; esac
+    if [ -z "$plugins" ]; then
+      oc patch consoles.operator.openshift.io cluster --type=json -p '[{"op":"add","path":"/spec/plugins","value":["libredb-studio"]}]'
+    else
+      oc patch consoles.operator.openshift.io cluster --type=json -p '[{"op":"add","path":"/spec/plugins/-","value":"libredb-studio"}]'
+    fi
+  )
   ```
+
+  The parentheses run it in a subshell, so its `exit` and `set -eu` leave the shell it is pasted into running.
 
 Turning it on restarts the console pods, which may sign people out once.
 Neither the chart nor the operator patches the console's configuration: turning the plugin on changes every console session, so it stays a cluster admin's act, and a Helm hook Job that did it would leave a binding to `patch` the console's configuration behind whenever a later hook failed under the Helm the console embeds before v3.19.
@@ -300,11 +304,13 @@ So whoever may change that server's Deployment runs code in every console sessio
 
 - Under the operator, the server runs in the operator's own namespace, which the operator sets; a `LibreDBStudio` chooses neither the namespace nor the image.
 - On a Helm install, `openshift.consolePlugin.namespace` names it.
-  Create it with `oc create namespace <namespace>` right before the install, which fails if the name is taken, never with `oc new-project` or the console's Create Project, and check that `oc get rolebindings -n <namespace>` lists only cluster-admin bindings.
-  The chart refuses Studio's own namespace, a discovered namespace and a project someone requested (it carries `openshift.io/requester`, and its requester administers it); the last check looks the namespace up, so `helm template` and a client-side dry run skip it.
+  Create it with `oc create namespace <namespace>` right before the install, which fails if the name is taken, never with `oc new-project` or the console's Create Project.
+  Then check that no RoleBinding there names a user or a group of users; the `system:deployers`, `system:image-builders` and `system:image-pullers` bindings OpenShift adds to every namespace are expected, and `oc adm policy who-can update deployments.apps -n <namespace>` decides.
+  The chart refuses Studio's own namespace, a discovered namespace and a project someone requested (it carries `openshift.io/requester`, and its requester administers it); the last check looks the namespace up, so `helm template` and a client-side dry run skip it, and it relies on the cluster's project request template setting `openshift.io/requester`, as the default template does.
 
 The server runs an image pinned by digest, as its own ServiceAccount with no token, with a read-only root and the nginx configuration the image bakes in, which logs no request header.
 Its NetworkPolicy admits only the `openshift-console` namespace on TCP 9443 and allows no egress.
+NetworkPolicies add up, so another policy in that namespace or an AdminNetworkPolicy allow rule that selects the server's pods widens what it may reach.
 The ConsolePlugin declares no proxy and no content security policy.
 The chart README's [The console plugin](../charts/libredb-studio/README.md#the-console-plugin) has the values.
 
@@ -510,7 +516,9 @@ oc delete namespace libredb-studio
 Uninstalling leaves `libredb-studio` in `spec.plugins` of `consoles.operator.openshift.io/cluster` when the console plugin was turned on, on either path.
 Removing that entry is a required step.
 The console stays Available and not Degraded with a stale entry, and the console operator logs that the plugin is not found every few seconds, but the entry trusts the next ConsolePlugin named `libredb-studio` in advance: whoever creates one later has it load in every console session without a cluster admin turning it on again.
-Remove it by its index in the list, `0` below; the `test` operation refuses the patch when that index holds another plugin:
+On a Helm install, remove the ConsolePlugin, with `helm uninstall` or `openshift.consolePlugin.enabled=false`, before deleting the plugin namespace or Studio's namespace.
+The cluster-scoped ConsolePlugin outlives both and still names the server's Service, which anyone who may then create a namespace of that name, through a project request too, could serve to every console session.
+Remove the entry by its index in the list, `0` below; the `test` operation refuses the patch when that index holds another plugin:
 
 ```sh
 oc get consoles.operator.openshift.io cluster -o jsonpath='{.spec.plugins}'

@@ -463,7 +463,7 @@ Every key `overrideValues` pins accepts a string in the chart's `values.schema.j
 
 The console plugin's server receives every console user's token, so the resource chooses neither where it runs nor what it runs.
 `overrideValues` pins `openshift.consolePlugin.namespace` to `$OPERATOR_NAMESPACE` and `openshift.consolePlugin.image` to `$RELATED_IMAGE_PLUGIN`, two variables of the manager's own Deployment (`operator/config/manager/manager.yaml`): `OPERATOR_NAMESPACE` comes from the downward API (`metadata.namespace`, the operator's own namespace), and `RELATED_IMAGE_PLUGIN` is the plugin image pinned by digest, the same reference as the chart's default.
-With either unset the reconcile fails naming it.
+With either unset, a resource that enables the plugin fails to reconcile, naming it.
 The ConsolePlugin renders, like the ConsoleLink, only for the resource in the operator's own namespace.
 The CSV carries `console.openshift.io/plugins: '["libredb-studio"]'`, so the install form offers the plugin's toggle, which defaults to Disabled on a community catalog, and `make -C operator bundle` lists `RELATED_IMAGE_PLUGIN` in `spec.relatedImages`.
 The plugin needs OpenShift 4.19 or later; the console link works without it.

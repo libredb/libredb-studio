@@ -355,14 +355,14 @@ The Deployment runs as its own ServiceAccount with no token, with the restricted
 3. An empty `namespace` (and under the operator, an unset `OPERATOR_NAMESPACE`).
 4. The release's own namespace.
 5. A namespace `discovery.kubernetes.namespaces` lists.
-6. On the Helm path only, a namespace that `lookup` finds carrying `openshift.io/requester`, which every project made through a project request carries and whose requester administers it; skipped where `lookup` returns nothing (`helm template`, a client-side dry run, a namespace that does not exist yet).
+6. On the Helm path only, a namespace that `lookup` finds carrying `openshift.io/requester`, which the default project request template sets on every project made through a project request and whose requester administers it; skipped where `lookup` returns nothing (`helm template`, a client-side dry run, a namespace that does not exist yet), and blind to a requested project whose custom project request template drops that annotation.
    The operator path pins the operator's own namespace instead.
 7. A release that renders no locator: discovery off, or no `ApplicationMenu` console link.
 8. An empty `image` (and under the operator, an unset `RELATED_IMAGE_PLUGIN`).
 
 Guards 4 to 6 share one reason: the console sends every console user's token to the server and runs the plugin in every console session, so whoever may change that Deployment holds both, and the namespace must be one only cluster admins write.
 
-**NetworkPolicy.** The server's policy selects exactly its pods and admits only the `openshift-console` namespace on TCP 9443, with no egress rule: nginx needs nothing else, and a compromised server or image cannot send what it receives anywhere.
+**NetworkPolicy.** The server's policy selects exactly its pods and admits only the `openshift-console` namespace on TCP 9443, with no egress rule: nginx needs nothing else, and while no other NetworkPolicy and no AdminNetworkPolicy allow rule selects those pods (policies add up), a compromised server or image cannot send what it receives anywhere.
 
 **No enable Job.** The chart renders no Job, ClusterRole or ClusterRoleBinding for the plugin and offers no value that would.
 A hook Job that patches `consoles.operator.openshift.io` would need a hook ServiceAccount bound to `patch` on the console configuration, and the Helm the console embeds before v3.19.0 (v3.17 on 4.19, v3.18 on 4.20 and 4.21) deletes only the failed hook when a later hook fails, leaving that binding behind, where `helm uninstall` never removes it.

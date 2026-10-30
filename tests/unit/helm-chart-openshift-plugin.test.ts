@@ -314,7 +314,7 @@ describe("the console plugin guards, each naming the value to change", () => {
     );
     expect(guard).toContain('{{- if hasKey $annotations "openshift.io/requester" }}');
     expect(guard).toContain("oc create namespace");
-    expect(guard).toContain("oc get rolebindings -n");
+    expect(guard).toContain("oc adm policy who-can update deployments.apps -n");
   });
 
   test("(7) refuses a release without discovery, which renders no locator", () => {
@@ -333,8 +333,13 @@ describe("the console plugin guards, each naming the value to change", () => {
     );
   });
 
-  test("(8) refuses an empty image", () => {
-    refused(pluginOn({ "openshift.consolePlugin.image": "" }), "openshift.consolePlugin.image is empty");
+  test("(8) refuses an empty image, and says how an upgrade from a chart without the plugin gets it", () => {
+    refused(
+      pluginOn({ "openshift.consolePlugin.image": "" }),
+      "openshift.consolePlugin.image is empty",
+      "--reuse-values from chart 0.1.116 or earlier",
+      "--reset-then-reuse-values",
+    );
   });
 
   test("(8) under the operator, the empty image names RELATED_IMAGE_PLUGIN", () => {
@@ -346,6 +351,12 @@ describe("the console plugin guards, each naming the value to change", () => {
       "openshift.consolePlugin.image is empty",
       "RELATED_IMAGE_PLUGIN",
     );
+    expect(
+      template([
+        ...pluginOn({ "openshift.consolePlugin.image": "" }),
+        ...set("operator.managed=true", `operator.clusterStudioNamespace=${NAMESPACE}`),
+      ]).stderr,
+    ).not.toContain("--reset-then-reuse-values");
   });
 });
 
@@ -465,6 +476,17 @@ describe("the plugin server and the ConsolePlugin", () => {
     for (const kind of ["ServiceAccount", "Deployment", "Service"]) one(other, kind, SERVER);
   });
 
+  test("the server's labels are its own: the release's topology labels stay off it", () => {
+    const topology = render([
+      ...PLUGIN_ON,
+      ...set("openshift.topology.partOf=foo-operator", "openshift.topology.runtime=nginx"),
+    ]);
+    const own = one(topology, "ServiceAccount", SERVER).metadata.labels;
+    expect(own).toMatchObject({ "app.kubernetes.io/component": "console-plugin" });
+    expect(one(topology, "Deployment", SERVER).metadata.labels).toEqual(own);
+    expect(deploymentSpec(topology).template.metadata.labels).toEqual(own);
+  });
+
   test("the values set the replicas, pull policy, resources and image", () => {
     const image = `registry.example/mirror/plugin@sha256:${"c".repeat(64)}`;
     const spec = deploymentSpec(
@@ -557,7 +579,7 @@ describe("guard (6) with a Namespace in place of the lookup", () => {
       `openshift.consolePlugin.namespace ${PLUGIN_NAMESPACE} is a project dev-a requested`,
       "every console session",
       `oc create namespace ${PLUGIN_NAMESPACE}`,
-      `oc get rolebindings -n ${PLUGIN_NAMESPACE}`,
+      `oc adm policy who-can update deployments.apps -n ${PLUGIN_NAMESPACE}`,
     );
   });
 
@@ -573,6 +595,36 @@ describe("guard (6) with a Namespace in place of the lookup", () => {
     expect({ exitCode: run.exitCode, stderr: run.stderr }).toEqual({ exitCode: 0, stderr: "" });
   });
 });
+
+/**
+ * The enable patch the notes and docs/OPENSHIFT.md print, the block from a line holding only "(" to its ")". A cluster
+ * admin pastes it into an interactive shell, so its exit and its set -eu must stay in the subshell: run it with a stub
+ * oc, then a failing command, and the shell still reaches the line after it.
+ */
+function expectEnableSnippetBehaves(text: string, plugins: string, patch: string | null): void {
+  const block = /^([ \t]*)\(\n[\s\S]*?\n\1\)$/m.exec(text)?.[0];
+  expect(block).toBeDefined();
+  expect(block).toContain("set -eu");
+  const stub = mkdtempSync(join(tmpdir(), "libredb-enable-snippet-"));
+  try {
+    writeFileSync(
+      join(stub, "oc"),
+      '#!/bin/sh\nif [ "$1" = get ]; then printf %s "$STUB_PLUGINS"; else echo "oc $*"; fi\n',
+      { mode: 0o755 },
+    );
+    const run = Bun.spawnSync(["bash", "-c", `${block}\nfalse\necho still-running`], {
+      env: { PATH: `${stub}:${process.env.PATH}`, STUB_PLUGINS: plugins },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stdout = run.stdout.toString();
+    expect(stdout).toContain("still-running");
+    if (patch === null) expect(stdout).not.toContain("oc patch");
+    else expect(stdout).toContain(patch);
+  } finally {
+    rmSync(stub, { recursive: true, force: true });
+  }
+}
 
 describe("install notes with the console plugin", () => {
   // helm template never emits NOTES.txt, so the real file is wrapped in a named template inside a private copy of the
@@ -604,12 +656,23 @@ describe("install notes with the console plugin", () => {
   test("names the plugin namespace, who may write it, and how a cluster admin turns the plugin on and off", () => {
     const text = notes(PLUGIN_ON);
     expect(text).toContain(`OpenShift console plugin: server libredb-studio-console-plugin in ${PLUGIN_NAMESPACE}`);
-    expect(text).toContain(`oc get rolebindings -n ${PLUGIN_NAMESPACE}`);
+    expect(text).toContain(`oc adm policy who-can update deployments.apps -n ${PLUGIN_NAMESPACE}`);
+    expect(text).toContain("system:image-pullers");
+    expect(text).not.toContain("only cluster admins may hold RoleBindings");
     expect(text).toContain("oc create namespace");
     expect(text).toContain("Console plugins");
     expect(text).toContain("/spec/plugins/-");
     expect(text).toContain('case "$plugins" in *\'"libredb-studio"\'*) exit 0 ;; esac');
     expect(text).toContain("remove libredb-studio from spec.plugins");
+    expect(text).toContain(`before deleting ${PLUGIN_NAMESPACE} or ${NAMESPACE}`);
+  });
+
+  test.each([
+    ['["libredb-studio"]', null],
+    ["", '"path":"/spec/plugins","value":["libredb-studio"]'],
+    ['["other"]', '"path":"/spec/plugins/-","value":"libredb-studio"'],
+  ])("the enable patch leaves the pasting shell running (spec.plugins %p)", (plugins, patch) => {
+    expectEnableSnippetBehaves(notes(PLUGIN_ON), plugins, patch);
   });
 
   test("under the operator, leaves the turning on to the install form and the console", () => {
@@ -638,7 +701,10 @@ describe("the chart README documents the console plugin", () => {
   test.each([
     "OpenShift 4.19 or later",
     "oc create namespace",
-    "oc get rolebindings -n",
+    "oc adm policy who-can update deployments.apps -n",
+    "system:image-pullers",
+    "--reset-then-reuse-values",
+    "before deleting the plugin namespace or Studio's namespace",
     "openshift.io/requester",
     "`helm template` and a client-side dry run skip it",
     "openshift-console",
@@ -655,6 +721,34 @@ describe("the chart README documents the console plugin", () => {
     for (const key of Object.keys(values.openshift.consolePlugin)) {
       expect(readme).toContain(`| \`openshift.consolePlugin.${key}\` |`);
     }
+  });
+});
+
+describe("docs/OPENSHIFT.md on the console plugin", () => {
+  const doc = readFileSync(join(import.meta.dir, "../../docs/OPENSHIFT.md"), "utf8");
+  const plugin = doc.slice(
+    doc.indexOf("## The console plugin"),
+    doc.indexOf("\n## ", doc.indexOf("## The console plugin") + 1),
+  );
+  const uninstall = doc.slice(doc.indexOf("## Uninstall"));
+
+  test.each([
+    ['["libredb-studio"]', null],
+    ["", '"path":"/spec/plugins","value":["libredb-studio"]'],
+    ['["other"]', '"path":"/spec/plugins/-","value":"libredb-studio"'],
+  ])("the enable patch leaves the pasting shell running (spec.plugins %p)", (plugins, patch) => {
+    expectEnableSnippetBehaves(plugin, plugins, patch);
+  });
+
+  test("names who-can as the check, and the system bindings every namespace holds", () => {
+    expect(plugin).toContain("oc adm policy who-can update deployments.apps -n <namespace>");
+    expect(plugin).toContain("system:image-pullers");
+    expect(plugin).not.toContain("lists only cluster-admin bindings");
+  });
+
+  test("Uninstall removes the ConsolePlugin before the namespaces it names", () => {
+    expect(uninstall.length).toBeGreaterThan(0);
+    expect(uninstall).toContain("before deleting the plugin namespace or Studio's namespace");
   });
 });
 

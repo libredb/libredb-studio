@@ -1066,11 +1066,13 @@ It lists the database resources the signed-in user may list, and never reads a S
 The console runs the plugin in every console session and sends each console user's token to its server on every asset fetch, so whoever may change that server's Deployment runs code in every console session and receives every console user's token.
 The render therefore fails when `openshift.consolePlugin.namespace` is empty, is the release's own namespace or is listed in `discovery.kubernetes.namespaces`, and, on a Helm install, when the namespace is a project someone requested (it carries `openshift.io/requester`, and its requester administers it).
 That last check looks the namespace up in the cluster, so `helm template` and a client-side dry run skip it; `helm install`, `helm upgrade` and `--dry-run=server` run it.
-Create the namespace with `oc create namespace` right before the install, which fails if the name is taken, never with `oc new-project` or the console's Create Project, and check that only cluster-admin bindings are listed there:
+It also relies on the cluster's project request template setting `openshift.io/requester`, as the default template does; a custom template that drops it hides a requested project from the check.
+Create the namespace with `oc create namespace` right before the install, which fails if the name is taken, never with `oc new-project` or the console's Create Project.
+Then check who may change Deployments there: no RoleBinding may name a user or a group of users, while the `system:deployers`, `system:image-builders` and `system:image-pullers` bindings OpenShift adds to every namespace are expected, and `oc adm policy who-can update deployments.apps -n <namespace>` decides:
 
 ```bash
 oc create namespace libredb-console-plugin
-oc get rolebindings -n libredb-console-plugin
+oc adm policy who-can update deployments.apps -n libredb-console-plugin
 ```
 
 ```yaml
@@ -1083,12 +1085,17 @@ openshift:
 ```
 
 The server runs the image in `openshift.consolePlugin.image`, a whole reference pinned by digest (a tag alone fails the schema), as its own ServiceAccount with no token, with a read-only root filesystem, and serves TLS on 9443 with a certificate the service CA issues into the Secret `libredb-studio-console-plugin-cert`.
-Its NetworkPolicy admits only the `openshift-console` namespace on TCP 9443 and allows no egress, so a compromised server cannot send what it receives anywhere.
+Its NetworkPolicy admits only the `openshift-console` namespace on TCP 9443 and allows no egress.
+NetworkPolicies add up, so while no other policy in that namespace and no AdminNetworkPolicy allow rule selects the server's pods, a compromised server cannot send what it receives anywhere.
 No value changes the server's command, environment or nginx configuration, which the image bakes in, and the ConsolePlugin declares no proxy and no content security policy.
 
 The chart renders no Job: a cluster admin turns the plugin on, on the console's Console plugins page (Administration > Cluster Settings > Configuration > Console), or with the patch the install notes print, which adds `libredb-studio` to `spec.plugins` of `consoles.operator.openshift.io/cluster` once and keeps the other plugins in their order.
 Turning it on restarts the console pods, which may sign people out once.
 On uninstall remove the entry again (docs/OPENSHIFT.md, "Uninstall"): a stale entry trusts the next ConsolePlugin named `libredb-studio` without asking.
+Remove the ConsolePlugin, with `helm uninstall` or `openshift.consolePlugin.enabled=false`, before deleting the plugin namespace or Studio's namespace.
+The cluster-scoped ConsolePlugin outlives both and still names the server's Service, which anyone who may then create a namespace of that name, through a project request too, could serve to every console session.
+
+An upgrade with `--reuse-values` from chart 0.1.116 or earlier keeps that release's values, which have no plugin image, so turning the plugin on fails naming `openshift.consolePlugin.image`: upgrade with `--reset-then-reuse-values`, or set the image.
 
 ### The cluster's trusted CA bundle
 
