@@ -907,7 +907,7 @@ helm uninstall libredb
 | `podDisruptionBudget.minAvailable` | Min available pods (set only one of minAvailable/maxUnavailable) | `1` |
 | `podDisruptionBudget.maxUnavailable` | Max unavailable pods (unset minAvailable with `null` to use) | unset |
 | `networkPolicy.enabled` | Render the NetworkPolicy: `true` always, `false` never, unset only in openshift sign-in mode with discovery on, where it confines database egress to the discovered namespaces. On OpenShift, and in openshift mode, it also allows egress on UDP and TCP 5353 (DNS) and TCP 6443 (API server) | unset |
-| `serviceAccount.create` | Create a ServiceAccount for the pod; `false` runs it as `serviceAccount.name`, or the namespace's `default` account when that is empty | `true` |
+| `serviceAccount.create` | Create a ServiceAccount for the pod; `false` runs it as `serviceAccount.name`, or the namespace's `default` account when that is empty, and fails the render under the OLM operator | `true` |
 | `serviceAccount.automountServiceAccountToken` | Mount an API token into the pod. Set on the pod spec as well as on the created ServiceAccount, so it also holds for an account the chart does not create; only `true` mounts one. Studio reads the token only for Vault Kubernetes auth (`VAULT_ROLE`) | `false` |
 | `postgresql.enabled` | Deploy PostgreSQL subchart | `false` |
 | `postgresql.tls.enabled` | Serve the subchart over TLS. Off, the chart adds `sslmode=disable` to the storage URL; on, it adds none and Studio connects with TLS | `false` |
@@ -1048,6 +1048,7 @@ With discovery on, that link is named `libredb-studio` and labelled `app.kuberne
 The OpenShift console plugin is not part of this release.
 
 Under the OLM operator, a ConsoleLink, a discovered namespace other than the release's, the access review's ClusterRole and ClusterRoleBinding and a Rancher NavLink render only for the `LibreDBStudio` in `operator.clusterStudioNamespace`, which the operator sets to the namespace it is installed in, the only one it reconciles; elsewhere the render fails naming the value.
+Studio's pod shares that namespace with the operator, so under the operator the render also fails with `serviceAccount.create=false`: the pod always runs as the ServiceAccount its release creates.
 
 ### The cluster's trusted CA bundle
 

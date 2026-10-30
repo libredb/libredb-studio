@@ -862,6 +862,17 @@ object>").
 {{- end }}
 
 {{/*
+Under operator.managed, refuses serviceAccount.create=false. The operator runs in the cluster
+Studio's namespace, so another account there may be the operator's own; Studio's pod always runs
+with the ServiceAccount its release creates. Included from deployment.yaml.
+*/}}
+{{- define "libredb-studio.operatorServiceAccountGuard" -}}
+{{- if and (include "libredb-studio.operatorManaged" .) (not .Values.serviceAccount.create) }}
+{{- fail "serviceAccount.create=false is not available through the operator: Studio's pod runs with the ServiceAccount its release creates, never another account of the operator's namespace" }}
+{{- end }}
+{{- end }}
+
+{{/*
 The openshift-mode render guards. Each mirrors a refusal of Studio's openshift preflight or a
 constraint of this mode, so a values set Studio would refuse to start with fails the render
 instead, naming the value to fix. Included from deployment.yaml.

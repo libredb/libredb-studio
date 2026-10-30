@@ -252,6 +252,37 @@ describe("the ServiceAccount the OAuth client id names", () => {
  * reconciles; the guard stays as defense in depth. The discovery render is gated in every sign-in mode, not only
  * openshift mode.
  */
+/**
+ * Under the operator, Studio's pod shares the operator's namespace, and with it the operator's own ServiceAccount, so
+ * the chart refuses serviceAccount.create=false there: the pod always runs as the account its release creates.
+ */
+describe("the ServiceAccount under the operator", () => {
+  test.each([
+    ["the boolean", set("operator.managed=true")],
+    ["the string", ["--set-string", "operator.managed=true"]],
+  ])("operator.managed as %s with serviceAccount.create=false fails naming serviceAccount.create", (_, managed) => {
+    const run = template([
+      ...managed,
+      ...set(
+        `operator.clusterStudioNamespace=${NAMESPACE}`,
+        "serviceAccount.create=false",
+        "serviceAccount.name=other",
+      ),
+    ]);
+    expect(run.exitCode).not.toBe(0);
+    expect(run.stderr).toMatch(/execution error at [^\n]*: serviceAccount\.create/);
+  });
+
+  test("a Helm install with serviceAccount.create=false still renders", () => {
+    render(set("serviceAccount.create=false", "serviceAccount.name=other"));
+  });
+
+  test("the default operator render still renders, with the release's own ServiceAccount", () => {
+    const docs = render(set("operator.managed=true", `operator.clusterStudioNamespace=${NAMESPACE}`));
+    expect(all(docs, "ServiceAccount")).toHaveLength(1);
+  });
+});
+
 describe("the operator namespace guard on discovery (O14)", () => {
   const MODES: Array<[string, string[]]> = [
     ["local", set("authProvider=local")],
