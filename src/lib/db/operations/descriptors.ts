@@ -33,6 +33,7 @@ import { mongoAgentReadInput } from "./mongo-admission";
 import { qdrantapiAgentReadInput } from "./qdrantapi-admission";
 import { rediscliAgentReadInput } from "./rediscli-admission";
 import { etcdctlAgentReadInput } from "./etcdctl-admission";
+import { oxiacliAgentReadInput } from "./oxiacli-admission";
 import { weaviateapiAgentReadInput } from "./weaviateapi-admission";
 import { agentPlanExecutionSqlInput, agentQueryReadSqlInput, agentReadSqlInput } from "./statement-guard";
 import type { RegistrableOperationDescriptor } from "./types";
@@ -628,6 +629,40 @@ const etcdctlQueryReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+const OXIACLI_READ_BOUNDARY =
+  "Oxia: the provider's closed table of metadata reads (agent-statement.ts), read with the editor's own oxia command " +
+  "parser and sent over the gRPC stub, which holds only GetShardAssignments, Read, List and RangeScan: the shard map " +
+  "of the connection's own namespace, one EQUAL get with no partition key, index or comparison for one key the " +
+  "request names, and a List of a range the request names, counted in Studio. Oxia has no authorization, so no " +
+  "principal can be proved and the table is the boundary: no write, delete, session, notification, sequence or other " +
+  "namespace is reachable. Key names and stored values are withheld: nothing lists keys or reads a value, every " +
+  "answer is projected to names, counts and sizes (agent-metadata-read.ts), an Oxia failure is worded by its " +
+  "category alone, and a key count past the row budget or a result past the byte budget is refused, never truncated.";
+
+/**
+ * One Oxia metadata read the model wrote, on an `oxia` connection.
+ *
+ * R1 on a structural boundary: the table can name no write and no read of a key name or value, over a stub that holds
+ * only reads. Its own id, and not a widened `sql.query.read`, so the SQL contract and its audit action stay exactly what
+ * they were.
+ */
+const oxiacliQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "oxiacli.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: oxiacliAgentReadInput,
+  verification: {
+    reviewedBy: "Oxia agent execution design review",
+    boundary: OXIACLI_READ_BOUNDARY,
+    verifiedOn: "2026-10-30",
+  },
+};
+
 const REDISCLI_READ_BOUNDARY =
   "Redis: the provider's closed table of metadata reads, each flagged readonly by the server's own COMMAND INFO and " +
   "none flagged write, admin, pubsub, may_replicate or script_runner, in no write, admin, dangerous, scripting or " +
@@ -872,6 +907,7 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   milvusrpcQueryReadDescriptor,
   rediscliQueryReadDescriptor,
   etcdctlQueryReadDescriptor,
+  oxiacliQueryReadDescriptor,
 ]);
 
 /**

@@ -77,6 +77,8 @@ describe("MCP_STATEMENT_ARMS", () => {
     expect(mcpStatementToolFor("redis")).toBeNull();
     expect(MCP_STATEMENT_ARMS.etcdctl).toBeNull();
     expect(mcpStatementToolFor("etcd")).toBeNull();
+    expect(MCP_STATEMENT_ARMS.oxiacli).toBeNull();
+    expect(mcpStatementToolFor("oxia")).toBeNull();
   });
 
   test("is built from the languages' MCP facets, one arm per declared facet, in the registry's order", () => {
@@ -404,6 +406,7 @@ describe("the tool each engine is read with", () => {
       milvusrpc: null,
       rediscli: null,
       etcdctl: null,
+      oxiacli: null,
     };
     expect(servingStatementArms(arms)).toEqual([RUN_READ_QUERY_ARM]);
     const registerTool = mock((_name: string) => undefined);

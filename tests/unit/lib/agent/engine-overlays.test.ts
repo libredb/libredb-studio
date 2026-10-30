@@ -26,6 +26,9 @@ import { REDISCLI_PACK } from "@/lib/agent/languages/rediscli/index";
 import * as ETCDCTL_CLIENT_OVERLAYS from "@/lib/agent/languages/etcdctl/engines/client";
 import * as ETCD from "@/lib/agent/languages/etcdctl/engines/etcd";
 import { ETCDCTL_PACK } from "@/lib/agent/languages/etcdctl/index";
+import * as OXIACLI_CLIENT_OVERLAYS from "@/lib/agent/languages/oxiacli/engines/client";
+import * as OXIA from "@/lib/agent/languages/oxiacli/engines/oxia";
+import { OXIACLI_PACK } from "@/lib/agent/languages/oxiacli/index";
 import * as KUBECTL_CLIENT_OVERLAYS from "@/lib/agent/languages/kubectl/engines/client";
 import * as KUBERNETES from "@/lib/agent/languages/kubectl/engines/kubernetes";
 import * as LIBREDBKV_CLIENT_OVERLAYS from "@/lib/agent/languages/libredbkv/engines/client";
@@ -123,6 +126,8 @@ const ENGINE_MODULES: Readonly<Record<string, Readonly<Record<string, unknown>>>
   "rediscli/engines/client": REDISCLI_CLIENT_OVERLAYS,
   "etcdctl/engines/etcd": ETCD,
   "etcdctl/engines/client": ETCDCTL_CLIENT_OVERLAYS,
+  "oxiacli/engines/oxia": OXIA,
+  "oxiacli/engines/client": OXIACLI_CLIENT_OVERLAYS,
 };
 
 /** Every overlay an engine module exports, named `<module>#<export>`. */
@@ -162,6 +167,7 @@ describe("the engine registry", () => {
       "weaviate",
       "influxdb",
       "influxdb3",
+      "oxia",
       "kubernetes",
       "libredb",
     ]);
@@ -211,7 +217,7 @@ describe("the engine registry", () => {
 
   test("every engine module's server overlay holds a dialect and overridable members, its client one a dialect alone (ruling 2)", () => {
     const exported = exportedOverlays();
-    expect(exported).toHaveLength(50);
+    expect(exported).toHaveLength(52);
     // The one other export is the PostgreSQL retry's rewrite, which its tests call directly.
     expect(
       Object.entries(ENGINE_MODULES)
@@ -281,6 +287,7 @@ describe("the engine packs", () => {
     expect(agentEnginePack("milvus")).toBe(MILVUSRPC_PACK);
     expect(agentEnginePack("redis")).toBe(REDISCLI_PACK);
     expect(agentEnginePack("etcd")).toBe(ETCDCTL_PACK);
+    expect(agentEnginePack("oxia")).toBe(OXIACLI_PACK);
   });
 
   test.each(SQL_ENGINES)("%s is the SQL pack member for member, with its own dialect on the server facet", (type) => {
@@ -334,6 +341,7 @@ describe("engineServerDialect", () => {
       "milvus",
       "redis",
       "etcd",
+      "oxia",
     ] as DatabaseType[]) {
       expect(Object.keys(engineServerOverlay(type))).toEqual([]);
     }
@@ -561,6 +569,7 @@ describe("the client dialect", () => {
       "milvus",
       "redis",
       "etcd",
+      "oxia",
     ] as const) {
       expect(engineClientPack(type).dialect).toBeUndefined();
     }

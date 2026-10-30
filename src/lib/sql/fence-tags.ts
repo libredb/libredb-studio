@@ -109,8 +109,8 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // An ```influxdb3 block holds one DataFusion SQL statement. No alias is registered below: `sql` names no
   // engine, and `influxql` and `flux` are not this type-id's language.
   influxdb3: true,
-  // A ```oxia block holds one `oxia client` read command the editor runs as it is (O14). No alias: `oxia` already
-  // names the engine and its CLI.
+  // A ```oxia block holds one `oxia client` read command the editor runs as it is (O14). The `oxiacli` alias below
+  // names the agent's language, and it still names this engine: see its entry.
   oxia: true,
   // A ```databend block holds one statement in Databend's SQL, sent as it is to `POST /v1/query`. No alias: `sql`
   // names no engine, and `mysql` names the MySQL-wire driver Databend no longer connects through.
@@ -180,6 +180,7 @@ export const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "milvusrpc",
   "rediscli",
   "etcdctl",
+  "oxiacli",
 ]);
 
 /**
@@ -237,6 +238,8 @@ export const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.free
   rediscli: "redis",
   // The agent's name for the etcdctl command language, and `etcd` is the only type-id that runs it.
   etcdctl: "etcd",
+  // The agent's name for the Oxia command language, and `oxia` is the only type-id that runs it.
+  oxiacli: "oxia",
 });
 
 /**

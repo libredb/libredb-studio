@@ -539,8 +539,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // neither provider implements `queryReadOnly`.
   influxdb: true,
   influxdb3: true,
-  // Outside this version, as etcd's: Oxia key paths name Pulsar tenants, namespaces and topics (SEC-05), so no MCP
-  // surface lists them until one is designed (BACKLOG B100).
+  // Outside this version, as etcd's: Oxia key paths name Pulsar tenants, namespaces and topics (SEC-05), the
+  // provider's read-only query path is agent mode's alone and reads metadata only, and no MCP surface is decided for
+  // it yet (BACKLOG B100).
   oxia: false,
   databend: true,
   // Outside this version, as etcd's and Oxia's: the provider implements no queryReadOnly, and no MCP surface
@@ -650,6 +651,8 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   influxdb: false,
   // Agent mode executes statements on InfluxDB 3, and MCP read stays closed on it until a change of its own opens it.
   influxdb3: false,
+  // Agent mode executes metadata-only reads on Oxia, and MCP read stays closed on it until a change of its own opens
+  // it.
   oxia: false,
   databend: false,
   s3: false,

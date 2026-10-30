@@ -128,6 +128,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "milvus",
   "redis",
   "etcd",
+  "oxia",
 ];
 
 /**

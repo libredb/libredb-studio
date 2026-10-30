@@ -160,6 +160,7 @@ describe("the plan-estimate operation of each language", () => {
       milvusrpc: null,
       rediscli: null,
       etcdctl: null,
+      oxiacli: null,
     });
     expect(Object.isFrozen(AGENT_PLAN_ESTIMATE_OPERATION)).toBe(true);
   });

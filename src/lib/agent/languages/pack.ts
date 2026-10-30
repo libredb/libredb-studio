@@ -114,6 +114,11 @@ type EtcdctlOperationId =
   /** One etcd metadata read the model wrote, on an `etcd` connection; see `etcdctlQueryReadDescriptor`. */
   "etcdctl.query.read";
 
+/** The oxiacli command language's operation: its one read. */
+type OxiacliOperationId =
+  /** One Oxia metadata read the model wrote, on an `oxia` connection; see `oxiacliQueryReadDescriptor`. */
+  "oxiacli.query.read";
+
 /**
  * The canonical operations each family's tools drive, by family. `AgentOperationId` in `tools.ts` is the core's two
  * curated ids and every row here, so a family's ids are written once, beside the family's other types.
@@ -130,6 +135,7 @@ export interface AgentFamilyOperationIds {
   readonly milvusrpc: MilvusrpcOperationId;
   readonly rediscli: RediscliOperationId;
   readonly etcdctl: EtcdctlOperationId;
+  readonly oxiacli: OxiacliOperationId;
 }
 
 /** kubectl's goal verifiers. */
@@ -183,6 +189,8 @@ export interface AgentFamilyVerifierIds {
   readonly rediscli: never;
   /** None: its workflows are judged by the core's own rules. */
   readonly etcdctl: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly oxiacli: never;
 }
 
 /** The operation a family's model-written reads are evaluated under: its row's `<family>.query.read`. */
@@ -445,6 +453,7 @@ export interface AgentFamilyEvidenceTools {
   readonly milvusrpc: never;
   readonly rediscli: never;
   readonly etcdctl: never;
+  readonly oxiacli: never;
 }
 
 /** Every pack's evidence tool: a member of the core's `AgentToolName`, declared by the pack that offers it. */
@@ -463,6 +472,7 @@ export interface AgentFamilyReadingDenyCodes {
   readonly milvusrpc: never;
   readonly rediscli: never;
   readonly etcdctl: never;
+  readonly oxiacli: never;
 }
 
 /** Every pack's reading refusal code: a member of the core's `AgentReadingDenyCode`, declared by its pack. */
@@ -481,6 +491,7 @@ export interface AgentFamilyShortfalls {
   readonly milvusrpc: never;
   readonly rediscli: never;
   readonly etcdctl: never;
+  readonly oxiacli: never;
 }
 
 /** Every pack's verdict shortfall: a member of the core's `AgentGoalShortfall`, declared by its pack. */
@@ -499,6 +510,7 @@ export interface AgentFamilyVariantRequirements {
   readonly milvusrpc: never;
   readonly rediscli: never;
   readonly etcdctl: never;
+  readonly oxiacli: never;
 }
 
 /** Every pack's variant requirement: a member of the core's `AgentVariantRequirement`, declared by its pack. */
@@ -551,6 +563,7 @@ export interface AgentFamilyEvidenceEvents {
   readonly milvusrpc: never;
   readonly rediscli: never;
   readonly etcdctl: never;
+  readonly oxiacli: never;
 }
 
 /** Every pack's evidence event, as the ledger stores it less its timestamp. */
@@ -739,6 +752,7 @@ export interface AgentFamilyDialectRows {
   milvusrpc: { client: Record<never, never>; server: Record<never, never> };
   rediscli: { client: Record<never, never>; server: Record<never, never> };
   etcdctl: { client: Record<never, never>; server: Record<never, never> };
+  oxiacli: { client: Record<never, never>; server: Record<never, never> };
 }
 
 /** The dialect-bound members of each family, client and server. */

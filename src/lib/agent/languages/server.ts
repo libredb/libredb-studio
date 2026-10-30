@@ -25,6 +25,7 @@ import { CYPHER_SERVER_PACK } from "./cypher/server";
 import { MILVUSRPC_SERVER_PACK } from "./milvusrpc/server";
 import { REDISCLI_SERVER_PACK } from "./rediscli/server";
 import { ETCDCTL_SERVER_PACK } from "./etcdctl/server";
+import { OXIACLI_SERVER_PACK } from "./oxiacli/server";
 import type { AgentLanguageServerAdapter, AgentLanguageServerPack, EvidenceToolName } from "./pack";
 import { SQL_STATEMENT_DEFINITIONS } from "./sql/definitions";
 import { SQL_RECOMMEND_CHANGE } from "./sql/recommendation";
@@ -48,6 +49,7 @@ const SERVER_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageServe
   milvusrpc: MILVUSRPC_SERVER_PACK,
   rediscli: REDISCLI_SERVER_PACK,
   etcdctl: ETCDCTL_SERVER_PACK,
+  oxiacli: OXIACLI_SERVER_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageServerPack>);
 
 /** The server pack for `language`, or a named error when the id is not a language this server knows. */
@@ -93,6 +95,7 @@ export const LANGUAGE_BASE_DEFINITIONS = mergeDisjoint(
     MILVUSRPC_SERVER_PACK.baseDefinitions,
     REDISCLI_SERVER_PACK.baseDefinitions,
     ETCDCTL_SERVER_PACK.baseDefinitions,
+    OXIACLI_SERVER_PACK.baseDefinitions,
   ],
   "LANGUAGE_BASE_DEFINITIONS",
 );
@@ -120,6 +123,7 @@ export const WORKFLOW_TOOL_RULES: Readonly<
   milvusrpc: MILVUSRPC_SERVER_PACK.workflowToolRules,
   rediscli: REDISCLI_SERVER_PACK.workflowToolRules,
   etcdctl: ETCDCTL_SERVER_PACK.workflowToolRules,
+  oxiacli: OXIACLI_SERVER_PACK.workflowToolRules,
 } satisfies Record<AgentStatementLanguageId, Partial<Record<AgentRunWorkflowType, string>>>);
 
 /**
@@ -139,6 +143,7 @@ export const LANGUAGE_SHORTFALL_NOTICES = mergeDisjoint(
     MILVUSRPC_SERVER_PACK.shortfallNotices,
     REDISCLI_SERVER_PACK.shortfallNotices,
     ETCDCTL_SERVER_PACK.shortfallNotices,
+    OXIACLI_SERVER_PACK.shortfallNotices,
   ],
   "LANGUAGE_SHORTFALL_NOTICES",
 );

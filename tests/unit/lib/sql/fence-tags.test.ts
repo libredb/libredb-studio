@@ -54,6 +54,12 @@ describe("fenceTagEngine", () => {
     expect(fenceTagEngine("etcd")).toBe("etcd");
   });
 
+  test("oxiacli names oxia, the agent's name for the only command language Oxia runs", () => {
+    expect(fenceTagEngine("oxiacli")).toBe("oxia");
+    expect(isQueryFenceTag("oxiacli")).toBe(true);
+    expect(fenceTagEngine("oxia")).toBe("oxia");
+  });
+
   test("etcdctl names etcd, the agent's name for the only command language etcd runs", () => {
     expect(fenceTagEngine("etcdctl")).toBe("etcd");
     expect(isQueryFenceTag("etcdctl")).toBe(true);

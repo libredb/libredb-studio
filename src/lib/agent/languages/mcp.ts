@@ -86,6 +86,8 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   rediscli: null,
   // No MCP statement tool yet: MCP read stays closed on etcd until a change of its own declares one and opens it.
   etcdctl: null,
+  // No MCP statement tool yet: MCP read stays closed on Oxia until a change of its own declares one and opens it.
+  oxiacli: null,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageMcpFacet | null>);
 
 /** A facet some language declares, with its tool's name as a literal. */

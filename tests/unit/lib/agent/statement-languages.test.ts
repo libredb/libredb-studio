@@ -10,6 +10,7 @@ import { fingerprintQdrantapi, qdrantapiRowCapAdvice } from "@/lib/agent/languag
 import { fingerprintMilvusrpc, milvusrpcRowCapAdvice } from "@/lib/agent/languages/milvusrpc/adapter";
 import { fingerprintRediscli, rediscliRowCapAdvice } from "@/lib/agent/languages/rediscli/adapter";
 import { etcdctlRowCapAdvice, fingerprintEtcdctl } from "@/lib/agent/languages/etcdctl/adapter";
+import { fingerprintOxiacli, oxiacliRowCapAdvice } from "@/lib/agent/languages/oxiacli/adapter";
 import { languageServer, languageServerPack } from "@/lib/agent/languages/server";
 import {
   admitLibredbkvStatement,
@@ -57,6 +58,12 @@ import {
   etcdctlAgentReadInput,
 } from "@/lib/db/operations/etcdctl-admission";
 import { ETCD_AGENT_SENTENCES } from "@/lib/db/providers/keyvalue/etcd/agent-statement";
+import {
+  admitOxiacliStatement,
+  OXIACLI_AGENT_MAX_STATEMENT_CHARS,
+  oxiacliAgentReadInput,
+} from "@/lib/db/operations/oxiacli-admission";
+import { OXIA_AGENT_SENTENCES } from "@/lib/db/providers/keyvalue/oxia/agent-statement";
 import { INFLUXQL_AGENT_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-statement";
 import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 
@@ -888,5 +895,69 @@ describe("the etcdctl language's server adapter and admission", () => {
   test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
     expect(Object.keys(AGENT_WORKFLOW_VARIANTS.etcdctl).sort()).toEqual(["investigation", "operations"]);
     expect(AGENT_WORKFLOW_VARIANTS.etcdctl.investigation?.canAutoExecute).toBe(false);
+  });
+});
+
+describe("the oxiacli language's server adapter and admission", () => {
+  test("the fingerprint is the read the reader sends, so one read written two ways is one identity", () => {
+    const one = fingerprintOxiacli("get /admin/policies");
+    expect(fingerprintOxiacli("get '/admin/policies'")).toBe(one);
+    expect(fingerprintOxiacli("oxia client get /admin/policies")).toBe(one);
+    expect(fingerprintOxiacli("get /admin/other")).not.toBe(one);
+    expect(fingerprintOxiacli("shards")).not.toBe(one);
+    expect(fingerprintOxiacli("list /a /z")).toBe(fingerprintOxiacli("list -s /a -e /z"));
+    expect(fingerprintOxiacli("ls --prefix /a/")).toBe(fingerprintOxiacli("list --prefix=/a/"));
+  });
+
+  test("the fingerprint is total: a refused command is identified by its raw text, so it is refused again", () => {
+    const raw = "range-scan --prefix /admin/";
+    expect(fingerprintOxiacli(raw)).toBe(fingerprintOxiacli(raw));
+    expect(fingerprintOxiacli(raw)).toMatch(/^[0-9a-f]{64}$/);
+    expect(fingerprintOxiacli(`${raw} `)).not.toBe(fingerprintOxiacli(raw));
+  });
+
+  test("every read answers one row, so the advice names the narrower count", () => {
+    expect(AGENT_LANGUAGE_COPY.oxiacli.adviceKeys).toEqual([]);
+    expect(oxiacliRowCapAdvice("list", "2")).toBe(
+      "Ask for at most 2 rows: shards, get and list each answer one row, and a list counts at most 2 keys, so count a narrower range with list -s <min> -e <max> or a longer --prefix.",
+    );
+    expect(languageServer("oxiacli").shapeAdvice).toContain("a valid oxia command");
+  });
+
+  test("the admission is the provider's reader, plus a length the agent's contract names", () => {
+    expect(admitOxiacliStatement("shards")).toBeNull();
+    expect(admitOxiacliStatement("range-scan")).toEqual({
+      code: "metadata-only",
+      message: OXIA_AGENT_SENTENCES.metadataOnly,
+    });
+    expect(admitOxiacliStatement("get -t floor /a")?.code).toBe("arguments");
+    const long = `get /${"k".repeat(OXIACLI_AGENT_MAX_STATEMENT_CHARS)}`;
+    expect(admitOxiacliStatement(long)).toEqual({
+      code: "agent-too-large",
+      message: `The command is longer than ${OXIACLI_AGENT_MAX_STATEMENT_CHARS} characters, the most an agent read takes: shorten it. Nothing was sent.`,
+    });
+    expect(languageServer("oxiacli").admit?.("list --prefix /a/")).toBeNull();
+  });
+
+  test("an ungrounded run is sent to a read it holds, and plan mode is told none of the reader's rules", () => {
+    const ungrounded = languageServerPack("oxiacli").grounding.ungrounded;
+    expect(ungrounded?.("The capture failed.", { singular: "shard", plural: "shards" })).toBe(
+      "The capture failed.\nSo nothing about this namespace's keys has been established for you: not one shard name, and none will be, since key names are withheld from agent mode. Read what you need with run_read_query, starting with shards.",
+    );
+    expect(languageServerPack("oxiacli").grounding.planningRules).toBeUndefined();
+  });
+
+  test("the descriptor's input is strict, carries the command, and refuses what the admission refuses", () => {
+    expect(oxiacliAgentReadInput.safeParse({ statement: "shards" }).success).toBe(true);
+    expect(oxiacliAgentReadInput.safeParse({ statement: "shards", sql: "x" }).success).toBe(false);
+    const refused = oxiacliAgentReadInput.safeParse({ statement: "notifications" });
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues[0]?.path).toEqual(["statement"]);
+    expect(refused.error?.issues[0]?.message).toBe(OXIA_AGENT_SENTENCES.metadataOnly);
+  });
+
+  test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
+    expect(Object.keys(AGENT_WORKFLOW_VARIANTS.oxiacli).sort()).toEqual(["investigation", "operations"]);
+    expect(AGENT_WORKFLOW_VARIANTS.oxiacli.investigation?.canAutoExecute).toBe(false);
   });
 });

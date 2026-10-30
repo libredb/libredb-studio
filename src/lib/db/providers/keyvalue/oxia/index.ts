@@ -10,11 +10,16 @@
  * verdict and its lifetime), each call's deadline, the run registry, and the one failure path every call takes.
  *
  * `cancelQuery` exists because a run can be stopped; every Oxia run reads, so there is no write already sent to
- * protect. No `getPoolStats`, no `queryReadOnly` (SB2-10: no agent execution and no MCP read on this engine in v1)
- * and no transaction methods: each is detected by presence.
+ * protect. No `getPoolStats` and no transaction methods: each is detected by presence.
+ *
+ * `queryReadOnly` is the agent's: a closed table of metadata reads (`agent-statement.ts`) over the stub that holds only
+ * reads, answered through a metadata-only projection (`agent-metadata-read.ts`). Oxia has no authorization, so the
+ * table is the boundary. Key names count as stored values, so a handle opened for any agent-mode profile lists no key
+ * and reads no value on any surface. MCP read stays closed on this engine.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
 import type {
   ActiveSessionDetails,
   Container,
@@ -37,6 +42,8 @@ import type {
   ProviderLabels,
   ProviderOptions,
   QueryResult,
+  ReadOnlyStatementBudget,
+  ReadOnlyStatementMode,
   SlowQueryStats,
   StorageStats,
   TableStats,
@@ -48,6 +55,14 @@ import {
   type RunRegistry,
 } from "@/lib/db/utils/bounded-limiter";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import {
+  OXIA_AGENT_COUNT_SENTENCES,
+  OXIA_METADATA_ONLY,
+  type OxiaAgentAnswer,
+  oxiaAgentFailure,
+  oxiaAgentResult,
+} from "./agent-metadata-read";
+import { type OxiaAgentPlan, readOxiaAgentStatement } from "./agent-statement";
 import type { OxiaCallOptions, OxiaClient, OxiaSnapshot } from "./client";
 import { parseOxiaCommand } from "./commands";
 import {
@@ -83,13 +98,27 @@ import {
 } from "./objects";
 import { type OrderVerdict, verdictIsProvisional } from "./order";
 import { oxiaResult } from "./results";
-import { detectKeyOrder, limitedOxiaClient, type OxiaSurface } from "./walks";
+import {
+  detectKeyOrder,
+  limitedOxiaClient,
+  listRange,
+  type OxiaSurface,
+  prefixListPage,
+  readKeyAnywhere,
+} from "./walks";
 
 /** One process-wide table for every Oxia provider: 4 calls per provider, 16 per process, a queue of 64 (SB1-9.1). */
 const oxiaLimiter = engineLimiter("oxia", OXIA_LIMITER_OPTIONS);
 
 /** SB2-5.3: a command has no binding, and dropping the values would run another command than the one built. */
 const PARAMETERS_REFUSAL = "Oxia commands take no parameters: write the values in the command.";
+
+const PROFILE_REQUIRED = "Read-only execution requires a provider opened under the agent read-only profile";
+const NO_ESTIMATE = "Oxia composes no estimating plan for the agent";
+
+/** The refusal of an editor surface that reads keys or values, on a handle opened for an agent-mode profile. */
+const PROFILE_SURFACE_REFUSED =
+  "An Oxia handle opened for agent mode answers only the agent's metadata reads, through queryReadOnly, and lists no key or value: key names count as stored values.";
 
 /** The failures that mean the shard map moved: the brief cache is dropped, so "run it again" reads it afresh. */
 const MAP_MOVED: ReadonlySet<string> = new Set(["not-leader", "leader-changing", "shard-not-found"]);
@@ -143,6 +172,23 @@ export class OxiaProvider extends BaseDatabaseProvider {
     super(config, options);
   }
 
+  /**
+   * Whether this handle was opened for the agent read-only profile by an acquisition that sends statements
+   * (`sendsStatements`). Only then does `queryReadOnly` answer; the operations profile's acquisitions send no statement.
+   */
+  private get readOnlyProfile(): boolean {
+    return this.execution.readOnly === true && this.execution.sendsStatements === true;
+  }
+
+  /**
+   * Whether this handle was opened for any agent-mode profile: every execution profile opens `readOnly` and no editor
+   * handle does. On such a handle no surface names a key or reads a value, and the editor's command path is refused;
+   * the editor's own handles keep every read.
+   */
+  private get agentProfile(): boolean {
+    return this.execution.readOnly === true;
+  }
+
   // ==========================================================================
   // Declarations (SB2-9.1, SB2-9.2)
   // ==========================================================================
@@ -171,6 +217,8 @@ export class OxiaProvider extends BaseDatabaseProvider {
       containerLevels: [],
       objectKinds: OXIA_OBJECT_KINDS,
       keyScan: OXIA_KEY_SCAN,
+      // Key names and values are stored values: the agent's answers carry the shard map's counts and named keys' metadata.
+      metadataOnly: OXIA_METADATA_ONLY,
       // Nothing a read runs changes the tree.
       schemaRefreshPattern: "(?!)",
     };
@@ -340,6 +388,7 @@ export class OxiaProvider extends BaseDatabaseProvider {
   public async query(text: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
     if (params !== undefined && params.length > 0) throw new DatabaseConfigError(PARAMETERS_REFUSAL, OXIA_TYPE);
     const session = this.requireSession();
+    if (this.agentProfile) throw new RefusedBeforeSendError(PROFILE_SURFACE_REFUSED, OXIA_TYPE, text);
     const { options } = session;
     const parsed = parseOxiaCommand(text, {
       endpoint: oxiaEndpointText(options),
@@ -372,6 +421,80 @@ export class OxiaProvider extends BaseDatabaseProvider {
     }
   }
 
+  /**
+   * One agent command. Only on a handle opened under the agent read-only profile; the command is read by
+   * `readOxiaAgentStatement` against the closed table and refused before anything is sent when it is not one of the
+   * metadata reads. Then, under the request's deadline, the shard map is read afresh (never the brief cache) and the
+   * read's own calls are sent over the read-only stub, in the connection's namespace, with no partition key, index,
+   * comparison or header of the request's own, only the connection's token. Its answer is the metadata-only projection,
+   * refused past the row or byte budget rather than cut, and an Oxia failure is worded by its category alone.
+   */
+  public async queryReadOnly(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    const session = this.requireSession();
+    if (!this.readOnlyProfile) throw new RefusedBeforeSendError(PROFILE_REQUIRED, OXIA_TYPE, statement);
+    assertReadOnlyBudget(budget, OXIA_TYPE);
+    if (mode !== "execute") throw new RefusedBeforeSendError(NO_ESTIMATE, OXIA_TYPE, statement);
+    const reading = readOxiaAgentStatement(statement);
+    if (!reading.ok) throw new RefusedBeforeSendError(reading.message, OXIA_TYPE, statement);
+    const started = Date.now();
+    // The session's lifetime, so a disconnect ends the read, and the request's deadline on every call and permit wait.
+    const call: OxiaCallOptions = {
+      signal: session.lifetime.signal,
+      deadline: Date.now() + budget.statementTimeoutMs,
+    };
+    try {
+      const answer = await this.agentRead(session, reading.plan, budget, call);
+      return oxiaAgentResult(answer, budget, statement, Date.now() - started);
+    } catch (error) {
+      throw oxiaAgentFailure(error, budget, statement) ?? error;
+    }
+  }
+
+  /** The reads of `plan` over the limited client, and their answer as the projection reads it. */
+  private async agentRead(
+    session: OxiaSession,
+    plan: OxiaAgentPlan,
+    budget: ReadOnlyStatementBudget,
+    call: OxiaCallOptions,
+  ): Promise<OxiaAgentAnswer> {
+    const { client } = session.surface;
+    const snapshot = await client.getSnapshot(call);
+    switch (plan.op) {
+      case "shards":
+        return { op: plan.op, snapshot };
+      case "key metadata": {
+        const found = await readKeyAnywhere(client, snapshot, plan.key, call);
+        if (!("holders" in found)) return { op: plan.op, record: found.record };
+        if (found.holders > 1) throw new QueryError(OXIA_AGENT_COUNT_SENTENCES.manyHolders(found.holders), OXIA_TYPE);
+        return { op: plan.op, record: undefined };
+      }
+      case "key count": {
+        const { order } = await session.surface.order(call);
+        const limit = budget.maxResultRows;
+        const { range } = plan;
+        const answer =
+          range.kind === "prefix"
+            ? await prefixListPage(client, snapshot, order, { prefix: range.prefix, limit }, call)
+            : await listRange(
+                client,
+                snapshot,
+                order,
+                { range: { startInclusive: range.min, endExclusive: range.max }, limit },
+                call,
+              );
+        // The keys stay here: only how many there are is answered, and a range Studio could not count to its end is
+        // refused rather than answered as the part it read.
+        if (answer.stoppedBy !== undefined) throw new QueryError(OXIA_AGENT_COUNT_SENTENCES.overBytes, OXIA_TYPE);
+        if (answer.more) throw new QueryError(OXIA_AGENT_COUNT_SENTENCES.overRows(limit), OXIA_TYPE);
+        return { op: plan.op, count: answer.keys.length };
+      }
+    }
+  }
+
   /** Stops a running or queued run by its id and answers true; an id that names no run answers false. */
   public async cancelQuery(queryId: string): Promise<boolean> {
     return this.runs.cancel(queryId);
@@ -392,6 +515,10 @@ export class OxiaProvider extends BaseDatabaseProvider {
 
   public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
     requireRoot(container);
+    if (this.agentProfile && kind === "key") {
+      this.ensureConnected();
+      throw new QueryError(PROFILE_SURFACE_REFUSED, OXIA_TYPE);
+    }
     return this.read("object read", (surface, call) => listOxiaObjects(surface, kind, call));
   }
 
@@ -405,6 +532,10 @@ export class OxiaProvider extends BaseDatabaseProvider {
   }
 
   public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
+    if (this.agentProfile && kind === "key") {
+      this.ensureConnected();
+      throw new QueryError(PROFILE_SURFACE_REFUSED, OXIA_TYPE);
+    }
     return this.read("object read", (surface, call) => readOxiaObjectSource(surface, path, kind, limit, call));
   }
 
@@ -415,6 +546,10 @@ export class OxiaProvider extends BaseDatabaseProvider {
   public async scanKeysPage(options: KeyScanOptions): Promise<KeyScanPage> {
     // The options are refused before the session is read, so a refused page sends nothing.
     readOxiaKeyScanOptions(options);
+    if (this.agentProfile) {
+      this.ensureConnected();
+      throw new QueryError(PROFILE_SURFACE_REFUSED, OXIA_TYPE);
+    }
     return this.read("Keys panel page", (surface, call) => scanOxiaKeysPage(surface, options, call));
   }
 

@@ -38,7 +38,8 @@ export type AgentStatementLanguageId =
   | "cypher"
   | "milvusrpc"
   | "rediscli"
-  | "etcdctl";
+  | "etcdctl"
+  | "oxiacli";
 
 /** Literal-typed, so `AgentEngineFamily` in `languages/pack.ts` reads each engine's language by type. */
 export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
@@ -71,7 +72,7 @@ export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
   weaviate: "weaviateapi",
   influxdb: "influxql",
   influxdb3: "sql",
-  oxia: null,
+  oxia: "oxiacli",
   databend: null,
   s3: null,
   kubernetes: "kubectl",
