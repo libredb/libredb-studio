@@ -20,6 +20,7 @@ import {
   DRUID_ERROR_CATEGORIES,
   DRUID_TRANSPORT_FAILURE,
   type DruidErrorCategory,
+  type DruidCancelOutcome,
   type DruidQueryOptions,
   type DruidQueryResult,
   type DruidRow,
@@ -160,6 +161,18 @@ describe("DruidTransportError.is", () => {
   });
 });
 
+describe("DruidTransportError.isServerAnswer", () => {
+  test("is true for every category the cluster classifies a failure into", () => {
+    for (const category of Object.values(DRUID_ERROR_CATEGORIES)) {
+      expect(errorIn(category).isServerAnswer()).toBe(true);
+    }
+  });
+
+  test("is false for a failure that never reached the cluster or came back unread", () => {
+    expect(new DruidTransportError("The operation was aborted").isServerAnswer()).toBe(false);
+  });
+});
+
 describe("DruidTransportError.isMonitoringUnavailable", () => {
   // Spec section 5: these three are the ordinary configurations of a locked-down
   // cluster - basic security refusing the credentials, a role without the
@@ -211,6 +224,15 @@ describe("the DruidTransport contract", () => {
     async query(sql: string, opts?: DruidQueryOptions): Promise<DruidQueryResult> {
       this.calls.push({ sql, opts });
       return this.result;
+    }
+
+    async agentQuery(sql: string): Promise<DruidQueryResult> {
+      this.calls.push({ sql });
+      return this.result;
+    }
+
+    async cancel(): Promise<DruidCancelOutcome> {
+      return "not-found";
     }
 
     async close(): Promise<void> {

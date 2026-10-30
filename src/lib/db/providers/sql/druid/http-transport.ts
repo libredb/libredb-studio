@@ -42,6 +42,9 @@ import type { DatabaseConnection } from "@/lib/db/types";
 import { quoteUnsafeIntegers } from "@/lib/db/utils/json-integers";
 import { uniqueFieldNames } from "@/lib/db/utils/result-fields";
 import {
+  type DruidAgentQueryOptions,
+  DruidAnswerTooLargeError,
+  type DruidCancelOutcome,
   DRUID_TRANSPORT_FAILURE,
   type DruidQueryOptions,
   type DruidQueryResult,
@@ -67,6 +70,17 @@ const DEFAULT_PORT = 8888;
 
 /** Spec section 11: the Broker serves this same path, and so does the Router. */
 const SQL_PATH = "/druid/v2/sql";
+
+/**
+ * The engine every agent statement runs on, written into its request context and never taken from the caller. The
+ * native engine refuses every write on this endpoint (`agent-boundary.ts`), and a request that named `msq-task` or
+ * `msq-dart` would select another (tests/fixtures/druid/37.0.0/agent-boundary/ capture 01).
+ */
+const AGENT_ENGINE = "native";
+
+/** The answers to a cancel (capture 03): the statement was told to stop, or no statement holds the id. */
+const CANCEL_ACCEPTED = 202;
+const CANCEL_NOT_FOUND = 404;
 
 /** Live-verified: without this header the endpoint answers 400 before parsing the SQL. */
 const JSON_CONTENT_TYPE = "application/json";
@@ -483,6 +497,28 @@ function toParameter(value: unknown): DruidParameter {
   throw unmappable(`a value of type ${typeName(value)}`);
 }
 
+/**
+ * The body as text, read chunk by chunk and counted in bytes as it arrives: the moment the count passes `maxBytes`
+ * the read is cancelled, which releases the connection, and the call fails without reading the rest.
+ */
+async function readCapped(response: Response, maxBytes: number): Promise<string> {
+  if (response.body === null) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = "";
+  for (;;) {
+    // oxlint-disable-next-line no-await-in-loop -- a stream is read one chunk after the other, and each is counted before the next.
+    const { done, value } = await reader.read();
+    if (done) return text + decoder.decode();
+    bytes += value.byteLength;
+    if (bytes > maxBytes) break;
+    text += decoder.decode(value, { stream: true });
+  }
+  await reader.cancel();
+  throw new DruidAnswerTooLargeError(maxBytes);
+}
+
 // ============================================================================
 // Transport
 // ============================================================================
@@ -490,6 +526,7 @@ function toParameter(value: unknown): DruidParameter {
 export class DruidHttpTransport implements DruidTransport {
   public readonly kind = "http" as const;
 
+  private readonly origin: ReturnType<typeof httpOrigin>;
   private readonly endpoint: string;
   private readonly authorization: string | undefined;
 
@@ -498,8 +535,8 @@ export class DruidHttpTransport implements DruidTransport {
     // `connectionFields`, and an explicit `disable` has to turn TLS OFF as well as
     // an explicit mode turns it on (the #264 lesson).
     const secure = config.ssl !== undefined && config.ssl.mode !== "disable";
-    const origin = httpOrigin(secure ? "https" : "http", config.host ?? DEFAULT_HOST, config.port ?? DEFAULT_PORT);
-    this.endpoint = endpointUrl(origin, SQL_PATH);
+    this.origin = httpOrigin(secure ? "https" : "http", config.host ?? DEFAULT_HOST, config.port ?? DEFAULT_PORT);
+    this.endpoint = endpointUrl(this.origin, SQL_PATH);
     // Spec section 1, live-verified: a default install loads no security extension
     // and IGNORES this header entirely - a bogus Basic header still answers 200 -
     // so credentials are optional, and sending none is the normal case. When they
@@ -525,6 +562,59 @@ export class DruidHttpTransport implements DruidTransport {
     if (!outcome.ok) throw envelopeError(parseJson(outcome.text), `Druid request failed with HTTP ${outcome.status}`);
 
     return toQueryResult(parseRows(outcome.text), executionTimeMs, outcome.unavailableSegments);
+  }
+
+  /**
+   * One agent statement. The body is written here in full and in a fixed order: the statement, the result format and
+   * its header flags, and a context holding exactly the native engine, the caller's query id and the caller's timeout.
+   * No parameter is sent and no context key is taken from the caller, so nothing a statement or a previous request
+   * names can select another engine. The answer is read as it streams, and the read stops the moment it passes
+   * `maxResponseBytes`.
+   */
+  public async agentQuery(sql: string, opts: DruidAgentQueryOptions): Promise<DruidQueryResult> {
+    const body = JSON.stringify({
+      query: sql,
+      resultFormat: RESULT_FORMAT,
+      ...HEADER_FLAGS,
+      context: { engine: AGENT_ENGINE, sqlQueryId: opts.queryId, timeout: opts.timeoutMs },
+    });
+
+    const startedAt = performance.now();
+    const outcome = await this.send(body, undefined, { signal: opts.signal, maxResponseBytes: opts.maxResponseBytes });
+    const executionTimeMs = performance.now() - startedAt;
+
+    if (!outcome.ok) throw envelopeError(parseJson(outcome.text), `Druid request failed with HTTP ${outcome.status}`);
+
+    return toQueryResult(parseRows(outcome.text), executionTimeMs, outcome.unavailableSegments);
+  }
+
+  /**
+   * `DELETE /druid/v2/sql/{id}`: asks the server to stop the statement running under `queryId`. Measured on 37.0.0
+   * (capture 03): 202 when a statement held the id, 404 when none does any longer. A statement the Broker computes
+   * itself, over inline data, keeps running after a 202, so a cancel ends the wait, and the work only where the data
+   * servers do it.
+   */
+  public async cancel(queryId: string, signal: AbortSignal): Promise<DruidCancelOutcome> {
+    const url = endpointUrl(this.origin, `${SQL_PATH}/${encodeURIComponent(queryId)}`);
+    let response: Response;
+    let text: string;
+    try {
+      response = await httpTransportFetch(url, {
+        method: "DELETE",
+        headers: this.authorization === undefined ? {} : { authorization: this.authorization },
+        redirect: "manual",
+        signal,
+      });
+      text = await response.text();
+    } catch (error) {
+      if (error instanceof DatabaseConfigError) throw error;
+      throw transportError(error, url);
+    }
+
+    rejectRedirect(response, url);
+    if (response.status === CANCEL_ACCEPTED) return "cancelled";
+    if (response.status === CANCEL_NOT_FOUND) return "not-found";
+    throw envelopeError(parseJson(text), `Druid refused the cancel with HTTP ${response.status}`);
   }
 
   /**
@@ -557,12 +647,18 @@ export class DruidHttpTransport implements DruidTransport {
     return `${envelope.slice(0, -1)},"parameters":${serializeParameters(parameters)}}`;
   }
 
-  private async send(body: string, clientDeadlineMs?: number): Promise<HttpOutcome> {
+  private async send(
+    body: string,
+    clientDeadlineMs?: number,
+    bounds?: { signal: AbortSignal; maxResponseBytes: number },
+  ): Promise<HttpOutcome> {
     // Spec section 6, second half: one signal for the request AND the body read. A
     // response whose headers arrive promptly can still stall mid-body, and awaiting
     // text() below is otherwise unbounded - which a server-side deadline cannot
     // help with, since it only starts counting once the statement was accepted.
-    const signal = clientDeadlineMs === undefined ? undefined : AbortSignal.timeout(clientDeadlineMs);
+    // An agent statement brings its own signal, the deadline of its whole call.
+    const signal =
+      bounds?.signal ?? (clientDeadlineMs === undefined ? undefined : AbortSignal.timeout(clientDeadlineMs));
 
     let response: Response;
     let text: string;
@@ -578,9 +674,9 @@ export class DruidHttpTransport implements DruidTransport {
         redirect: "manual",
         ...(signal ? { signal } : {}),
       });
-      text = await response.text();
+      text = bounds === undefined ? await response.text() : await readCapped(response, bounds.maxResponseBytes);
     } catch (error) {
-      if (error instanceof DatabaseConfigError) throw error;
+      if (error instanceof DatabaseConfigError || error instanceof DruidAnswerTooLargeError) throw error;
       // A refused socket, an abort and a truncated body all arrive here, and all
       // have to leave as the seam's own error type.
       throw transportError(error, this.endpoint);

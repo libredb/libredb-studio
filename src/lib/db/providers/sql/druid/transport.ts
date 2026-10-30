@@ -165,6 +165,24 @@ export interface DruidQueryOptions {
 }
 
 /**
+ * One agent statement's request. Every field is the caller's for this request alone, and the implementation writes
+ * each into the request itself, so nothing one request names reaches the next.
+ */
+export interface DruidAgentQueryOptions {
+  /** The id the statement runs under on the server, fresh for each request, so a cancel names this statement alone. */
+  readonly queryId: string;
+  /** The server-side deadline, in milliseconds. */
+  readonly timeoutMs: number;
+  /** Ends the wait at the caller's deadline or cancel; the work on the server is the cancel's to end. */
+  readonly signal: AbortSignal;
+  /** The most bytes of the answer read: past it the read stops and the call fails with `DruidAnswerTooLargeError`. */
+  readonly maxResponseBytes: number;
+}
+
+/** What a cancel answered: the statement was told to stop, or no statement holds the id any longer. */
+export type DruidCancelOutcome = "cancelled" | "not-found";
+
+/**
  * How much later than `timeoutMs` a caller should set `clientDeadlineMs`.
  *
  * The two deadlines above are a race unless the client one is deliberately the
@@ -189,6 +207,13 @@ export interface DruidTransport {
   /** Widen when a non-HTTP implementation appears. */
   readonly kind: "http";
   query(sql: string, opts?: DruidQueryOptions): Promise<DruidQueryResult>;
+  /**
+   * One statement of the agent read-only profile: sent under the native engine, its own query id and its own timeout,
+   * with no parameters, and read to at most `maxResponseBytes`.
+   */
+  agentQuery(sql: string, opts: DruidAgentQueryOptions): Promise<DruidQueryResult>;
+  /** Asks the server to stop the statement running under `queryId`. */
+  cancel(queryId: string, signal: AbortSignal): Promise<DruidCancelOutcome>;
   close(): Promise<void>;
 }
 
@@ -309,8 +334,22 @@ export class DruidTransportError extends Error {
     return this.category === DRUID_ERROR_CATEGORIES[category];
   }
 
+  /** True when the cluster itself classified this failure, as against one that never reached it or came back unread. */
+  isServerAnswer(): boolean {
+    return this.category !== DRUID_TRANSPORT_FAILURE;
+  }
+
   /** True when a monitoring read should degrade to empty instead of surfacing this. */
   isMonitoringUnavailable(): boolean {
     return MONITORING_UNAVAILABLE_CATEGORIES.includes(this.category);
+  }
+}
+
+/** An agent statement's answer that passed the byte cap it was read under, so it was not read further. */
+export class DruidAnswerTooLargeError extends DruidTransportError {
+  constructor(public readonly maxResponseBytes: number) {
+    super(`Druid's answer passed ${maxResponseBytes} bytes, so it was not read further`);
+    this.name = "DruidAnswerTooLargeError";
+    Object.setPrototypeOf(this, DruidAnswerTooLargeError.prototype);
   }
 }
