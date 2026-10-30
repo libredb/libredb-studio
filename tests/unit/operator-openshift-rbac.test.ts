@@ -247,7 +247,10 @@ describe("the manager ClusterRole", () => {
   });
 
   test("holds no rule on LibreDBStudios, so a watch wider than the operator's namespace cannot sync", () => {
-    expect(clusterRules().filter((rule) => rule.apiGroups?.includes("studio.libredb.org"))).toEqual([]);
+    const operatorGroup = "studio.libredb.org";
+    expect(clusterRules().filter((rule) => (rule.apiGroups ?? []).some((group) => group === operatorGroup))).toEqual(
+      [],
+    );
     expect(clusterRules().flatMap((rule) => rule.resources ?? [])).not.toContain("libredbstudios");
   });
 
