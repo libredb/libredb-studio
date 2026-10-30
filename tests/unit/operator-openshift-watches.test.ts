@@ -381,12 +381,14 @@ describe("the console plugin under the operator", () => {
     expect(run.stdout.toString()).not.toContain("attacker.example");
     const docs = renderedDocs(OPERATOR_ENV);
     const deployment = docs.find((doc) => doc.kind === "Deployment" && metadataOf(doc).name === PLUGIN_SERVER);
-    expect(deployment && metadataOf(deployment).namespace).toBe(OPERATOR_NAMESPACE);
-    const containers = (deployment?.spec as { template: { spec: { containers: Array<{ image: string }> } } }).template
+    if (!deployment) throw new Error(`no Deployment ${PLUGIN_SERVER} in the render`);
+    expect(metadataOf(deployment).namespace).toBe(OPERATOR_NAMESPACE);
+    const containers = (deployment.spec as { template: { spec: { containers: Array<{ image: string }> } } }).template
       .spec.containers;
     expect(containers.map((container) => container.image)).toEqual([PLUGIN_IMAGE]);
     const plugin = docs.find((doc) => doc.kind === "ConsolePlugin");
-    expect((plugin?.spec as { backend: { service: { namespace: string } } }).backend.service.namespace).toBe(
+    if (!plugin) throw new Error("no ConsolePlugin in the render");
+    expect((plugin.spec as { backend: { service: { namespace: string } } }).backend.service.namespace).toBe(
       OPERATOR_NAMESPACE,
     );
   });
