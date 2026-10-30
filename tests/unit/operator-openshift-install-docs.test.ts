@@ -163,6 +163,21 @@ describe("the move's step 4 as the doc words it", () => {
     expect(at("helm upgrade")).toBe(LINES.length - 1);
   });
 
+  test("the chart repository the Helm upgrade names is added first, as the chart README adds it", () => {
+    const readme = readFileSync(join(CHART_DIR, "README.md"), "utf8");
+    const add = LINES.find((line) => line.startsWith("helm repo add "));
+    if (!add) throw new Error("no helm repo add in step 4");
+    expect(readme).toContain(add);
+    const repo = add.split(" ")[3];
+    expect(LINES[LINES.length - 1]).toContain(` ${repo}/libredb-studio `);
+  });
+
+  test("step 3 leaves no 1.1.0 CSV before step 4", () => {
+    expect(step(MOVE, 3)).toContain(
+      "`oc get csv -n openshift-operators | grep libredb-studio-operator` prints nothing",
+    );
+  });
+
   test("the patch and the Helm flags render nothing outside the team's namespace from a spec that reaches out", () => {
     const patchLine = LINES.find((line) => line.startsWith("oc patch libredbstudio"));
     const patchJson = patchLine?.match(/-p '([^']+)'/)?.[1];

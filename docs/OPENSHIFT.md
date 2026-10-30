@@ -59,6 +59,8 @@ The operator manages only its own namespace: it reconciles the `LibreDBStudio` t
    oc -n libredb-studio patch installplan <name> --type merge -p '{"spec":{"approved":true}}'
    ```
 
+   Confirm the install in Installed Operators in `libredb-studio` (Status Succeeded) or with `oc get csv -n libredb-studio`, because the install page can keep showing progress after the install has finished.
+
 2. Check that only cluster admins may write in the namespace:
 
    ```sh
@@ -164,7 +166,7 @@ oc get libredbstudios -A
 Operator 1.1.0 installs for all namespaces, in `openshift-operators`, and OLM cannot move an install to another install mode.
 An upgrade InstallPlan for a later version applies the new CRD and CSV, but the new CSV fails with the reason `UnsupportedOperatorGroup` and 1.1.0 keeps running; installing the new version in another namespace while 1.1.0 is installed fails as well.
 So 1.1.0 is uninstalled first, keeping its resources, each team's `LibreDBStudio` becomes a Helm release, and the new version is installed for the namespace of the cluster's Studio.
-This procedure follows from OLM's and the operator's behaviour and has not yet run end to end on a cluster.
+This procedure ran end to end on OpenShift 4.22 (CRC 4.22.14) with Helm 4.1.3.
 
 1. List the resources:
 
@@ -176,14 +178,16 @@ This procedure follows from OLM's and the operator's behaviour and has not yet r
 2. Approve no InstallPlan of the new version, and install it in no other namespace yet.
    An approved InstallPlan, which Automatic approval approves at once, applies the new CRD even though the new CSV shows `Failed`, and so does an install in another namespace: 1.1.0 then runs on under the new CRD, so make the [upgrade checks](#upgrading-the-operator) on every resource at once, copying backup dumps out first.
    Then go on with step 3.
-3. Uninstall 1.1.0 and keep its resources: in Installed Operators in `openshift-operators`, Uninstall Operator, with "Delete all operand instances for this operator" left unchecked, its default.
-   From the CLI, delete the Subscription and every `libredb-studio-operator` CSV in `openshift-operators`:
+3. Uninstall 1.1.0 and keep its resources: in Installed Operators in `openshift-operators`, run Uninstall Operator on the LibreDB Studio row that offers it (the new version's row, showing Failed, once an upgrade InstallPlan was approved), with "Delete all operand instances for this operator" left unchecked where the dialog shows it.
+   The console removes the Subscription and that row's CSV only, so then delete every `libredb-studio-operator` CSV left in `openshift-operators` with the second command below.
+   From the CLI, run both commands, which delete the Subscription and every `libredb-studio-operator` CSV in `openshift-operators`:
 
    ```sh
    oc delete subscription libredb-studio-operator -n openshift-operators
    oc get csv -n openshift-operators -o name | grep libredb-studio-operator | xargs oc delete -n openshift-operators
    ```
 
+   Either way, check that `oc get csv -n openshift-operators | grep libredb-studio-operator` prints nothing before step 4, since a 1.1.0 CSV left in place keeps reconciling every namespace.
    Keep the CRD: deleting it deletes every `LibreDBStudio` and what each one owns.
    The Studios keep running, and nothing reconciles them until step 5.
 4. Move each team Studio to a Helm release of the same name in the same namespace.
@@ -192,18 +196,23 @@ This procedure follows from OLM's and the operator's behaviour and has not yet r
    Then a user with `edit` or `admin` in the team's namespace runs:
 
    ```sh
+   helm repo add libredb https://libredb.org/libredb-studio/
+   helm repo update libredb
    oc patch libredbstudio <name> -n <namespace> --type merge -p '{"metadata":{"finalizers":null},"spec":{"postgresql":{"extraDeploy":null,"namespaceOverride":null,"metrics":{"serviceMonitor":{"namespace":null},"prometheusRule":{"namespace":null}}}}}'
    oc get libredbstudio <name> -n <namespace> -o jsonpath='{.spec}' > <name>-values.json
    oc delete libredbstudio <name> -n <namespace> --cascade=orphan
    helm upgrade <name> libredb/libredb-studio --version 0.1.117 -n <namespace> -f <name>-values.json --set discovery.kubernetes.enabled=false --set openshift.consoleLink.enabled=false
    ```
 
+   The first two commands add the chart repository, as the [chart README](../charts/libredb-studio/README.md) shows; `oci://ghcr.io/libredb/charts/libredb-studio` in place of `libredb/libredb-studio` needs neither.
    The patch removes the finalizer while nothing reconciles, so the operator cannot add it back, and clears the four values the new CRD refuses in the same write, since on OpenShift 4.16 a resource that still holds one takes no write once the new CRD is applied; add to it any `route` entry the new CRD refuses.
    The orphaning delete then leaves the Studio's objects and its data claim in place, and Helm upgrades the same release, whose objects already carry Helm's ownership labels and annotations, because the operator installs through Helm.
    The two `--set` flags keep the release to the team's namespace: a team Studio discovers no other namespace and renders no ConsoleLink.
 5. Install the new version for a specific namespace, as [Install from OperatorHub](#install-from-operatorhub) shows; the install applies the new CRD, so make the [upgrade checks](#upgrading-the-operator) on the cluster's Studio first.
    Prefer the recommended `libredb-studio` with a new `LibreDBStudio` there, moving the old cluster Studio to Helm as in step 4, since an existing namespace's RoleBindings and requester show only who may write there now.
-   Keep the namespace that holds the old cluster Studio only when it has been one only cluster admins write since it was created: the operator then takes the existing resource over in place, the same release name and history in that namespace, upgraded to the new chart at its first reconcile.
+   Keep the namespace that holds the old cluster Studio only when it has been one only cluster admins write since it was created: the operator then takes the existing resource over in place, upgraded to the new chart at its first reconcile.
+   The release name and its revision numbering continue in that namespace, while only the latest revision record remains.
+   In that namespace, skip `oc create namespace`, which fails there, and create only the OperatorGroup and the Subscription, naming that namespace in place of `libredb-studio`.
 6. A `LibreDBStudio` left in another namespace is ignored.
    One that still carries the 1.1.0 finalizer blocks its own deletion, and its namespace's, until the finalizer is removed as in step 4.
 
