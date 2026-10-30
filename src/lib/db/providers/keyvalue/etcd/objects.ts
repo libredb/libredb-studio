@@ -131,11 +131,23 @@ export type EtcdObjectClient = Pick<
 >;
 
 /**
- * Spec 4.1: prefix, key (enumeratedBy "key-browser"), member, lease, user and role (the last three
+ * Spec 4.1: prefix, key (enumeratedBy "key-browser"), member, lease, user and role (all but the key and the member
  * countIsListing). Every kind but the key draws a folder; the key has a Source tab and a value edit.
+ *
+ * The prefix's count is refused exactly when its listing would be: by a refused read of the grants, and on an
+ * agent-mode handle by the metadata-only sentence, so the grounding walk carries that sentence to the model rather
+ * than an empty folder. A run reads these declarations from a provider it never connects, so the declaration is the
+ * type's, never one handle's.
  */
 export const ETCD_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
-  { id: "prefix", role: "relation", label: "Key Prefix", labelPlural: "Key Prefixes", hasColumns: true },
+  {
+    id: "prefix",
+    role: "relation",
+    label: "Key Prefix",
+    labelPlural: "Key Prefixes",
+    hasColumns: true,
+    countIsListing: true,
+  },
   {
     id: "key",
     role: "config",

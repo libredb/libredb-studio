@@ -800,6 +800,23 @@ describe("agent mode over the real adapter: metadata only", () => {
     await provider.disconnect();
   });
 
+  test("the grounding capture on an agent-mode handle carries the key-prefix folder's reason to the model", async () => {
+    const provider = await operationsHandle();
+    // A run reads its capabilities from a provider it never connects (`driveAgentRun`), so the walk sees the
+    // type's declarations, never the agent handle's.
+    const capture = await captureContextSnapshot({
+      ...agentContext(provider, ETCD),
+      capabilities: new EtcdProvider(ETCD).getCapabilities(),
+    });
+    if (capture.kind !== "captured") throw new Error(`expected a capture, got ${capture.kind}`);
+    const { snapshot } = capture;
+    expect(snapshot.kinds?.find((kind) => kind.id === "prefix")?.unavailable).toBe(
+      "Agent mode on etcd reads metadata only, and key names count as stored values, so no key, key prefix or key range is listed to it.",
+    );
+    expect(snapshot.objects.filter((object) => object.kind === "prefix")).toEqual([]);
+    await provider.disconnect();
+  });
+
   test("the grounding capture on an agent-mode handle names no group and no key, and says why", async () => {
     const provider = await operationsHandle();
     const captured = JSON.stringify(await snapshotOf(provider, ETCD));

@@ -137,7 +137,7 @@ const names = (rows: readonly DatabaseObject[]) => rows.map((row) => row.name);
 const textOf = (document: ObjectSourceDocument, index: number) => (document.parts[index] as { text: string }).text;
 
 describe("the declaration (spec 4.1, 3.4)", () => {
-  test("six kinds in 4.1's order: the key enumerated by the Keys panel alone and editable, three whose count is their listing", () => {
+  test("six kinds in 4.1's order: the key enumerated by the Keys panel alone and editable, four whose count is their listing", () => {
     expect(ETCD_OBJECT_KINDS.map((kind) => [kind.id, kind.role, kind.label, kind.labelPlural])).toEqual([
       ["prefix", "relation", "Key Prefix", "Key Prefixes"],
       ["key", "config", "Key", "Keys"],
@@ -153,6 +153,7 @@ describe("the declaration (spec 4.1, 3.4)", () => {
       acceptsSourceEdits: true,
     });
     expect(ETCD_OBJECT_KINDS.filter((kind) => kind.countIsListing === true).map((kind) => kind.id)).toEqual([
+      "prefix",
       "lease",
       "user",
       "role",
