@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B151 · 81
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B152 · 82
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -8515,6 +8515,17 @@ Kept so that the engine joined on the members measured on it, and nothing compos
 Found 2026-10-30 with agent execution on Apache Druid.
 
 **Done when:** the Druid overlay gains an estimating plan whose `EXPLAIN PLAN FOR` the agent path's fence admits, measured on 37.0, and a profile composition, or a recorded decision that it keeps none, with tests for each; cited in `docs/AGENT.md`.
+
+### B152. LibreDB's command language has no MCP statement tool
+
+Agent mode executes LibreDB read commands under the `libredbkv` statement language, on a read-only handle per statement (`docs/providers/libredb.md` section 15), and its MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`), so no MCP tool runs a LibreDB command; `MCP_STATEMENT_READ.libredb` is false and the MCP metadata tools work (`MCP_EXPOSABLE.libredb` is true).
+A facet declared with an empty served set would add its tool name to `list_connections`' `read_tool` values and to the route's schema map while serving nothing, so none is declared until MCP read opens.
+The language also offers no query optimization and no database assessment, since the store has no query plan and no table profile; plan mode drafts there and the operations workflow runs.
+Kept so that MCP exposure of a LibreDB file is a decision of its own rather than a side effect of agent mode joining.
+
+Found 2026-10-30 with agent execution on LibreDB.
+
+**Done when:** the owner opens MCP read for LibreDB, the `libredbkv` pack declares its MCP facet (`src/lib/agent/languages/libredbkv/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) fenced by the agent's own admission, and `MCP_STATEMENT_READ.libredb` is true, with tests; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

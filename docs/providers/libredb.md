@@ -333,8 +333,9 @@ condition as a clear `ConnectionError` (see [§10](#10-error-handling)):
   the same file, which is exactly how the sample-edit case reproduced. A borrowed handle is never
   disconnected by its borrower and never cached under the profiled key: it belongs to the live
   connection. Two bounds keep the agent's isolation invariant intact — only `agent-operations`
-  borrows (it sends no statement of the model's, so `agent-read-only` and `agent-handover` are
-  still refused on this engine), and an acquisition is not borrowed for a connection that
+  borrows (it sends no statement of the model's; `agent-read-only` and `agent-handover` open a
+  read-only handle of their own beside the writer, [§15](#15-agent-mode-a-read-only-handle-per-statement)),
+  and an acquisition is not borrowed for a connection that
   configures an `agentUser`, because a reuse cannot substitute one principal for another.
   LibreDB declares `agentCredential: "none"`, since an embedded file has no user to sign an agent in
   as, so such an acquisition refuses the agent credential before its own handle opens the file.
@@ -1413,3 +1414,66 @@ Connection targets reserve Studio's storage database, its WAL/SHM files and boot
 credentials (including backups and temporary files). This applies to every role.
 Checks normalize paths, resolve symbolic links and compare existing file identities
 so hard links cannot alias reserved files. Other user database files beside them remain usable.
+
+## 15. Agent mode: a read-only handle per statement
+
+Agent mode executes LibreDB read commands through `queryReadOnly` in [`libredb.ts`](../../src/lib/db/providers/embedded/libredb.ts), on handles opened through the read-only file adapter in [`libredb-read-only-file.ts`](../../src/lib/db/providers/embedded/libredb-read-only-file.ts), with the command reader in [`libredb-command.ts`](../../src/lib/db/providers/embedded/libredb-command.ts).
+Every fact below was measured on `@libredb/libredb` 0.2.2 against real files, under Bun 1.4.4 and Node.js 26, and the tests named in 15.7 replay it on every run.
+MCP read stays closed on this engine (`MCP_STATEMENT_READ.libredb` is false) until a change of its own opens it, as `docs/BACKLOG.md` B152 records.
+
+### 15.1 The boundary is the handle
+
+The boundary is engine-enforced through the engine's own file seam: LibreDB has no read-only mode and no principal, and it reaches the disk only through the `FileSystem` it is given, writing through exactly one call of it, the write-ahead log's `append` (a commit appends, then fsyncs; recovery truncates a torn tail, then fsyncs).
+The read-only adapter opens the file with the `r` flag, a descriptor the operating system does not write through, and refuses a missing file rather than creating it.
+Its `append` refuses before any write call, so the kernel answers the commit `FAILED` and latches the handle, refusing every later call on it until it is closed; its `truncate` and `fsync` change nothing, so recovery drops a torn tail from the handle's memory and leaves the bytes on disk as found.
+It declares no `lock`, so the kernel takes no `<path>.lock`: a profiled reader opens beside the editor's writer, which holds the lock, instead of being refused `LOCKED`, and the writer opens beside a reader that opened first.
+Measured: a reader opened beside a held writer reads what the writer has committed, and a `kv.set`, a `kv.delete` and a raw `transact` write on it each fail with the store file and the writer's `.lock` byte-identical and their modification times unchanged.
+The adapter is Studio's own rather than the package's `readonlyFileSystem()`, which belongs to the package's command-line inspector and reads by path on every call; this one reads through the descriptor it opened, so every read of one handle addresses one file.
+
+### 15.2 A handle of its own for every statement
+
+A handle is a snapshot of what was committed when it opened.
+So every agent statement opens its own handle through the adapter and closes it when the statement ends: the read sees what the writer has committed by then, no latch a refused write left on one handle reaches the next statement, and the read-only property belongs to the statement's own handle rather than to a verdict kept from an earlier call.
+The profiled provider also holds a handle for the agent's object reads (the inventory its grounding walks); before every such read it compares the file's identity, size and modification time with those of its snapshot and reopens the snapshot through the adapter when they changed.
+The acquisition in `src/lib/db/factory.ts` passes the execution context to the provider, and a handle is read-only only when it was opened for an acquisition that sends statements (`agent-read-only` and `agent-handover`), so `queryReadOnly` refuses a handle the editor or the operations profile opened, before anything is read.
+The operations profile is unchanged: it borrows the editor's open handle (`findOpenSingleWriterProvider`), and with none open it opens one of its own as the editor does.
+
+### 15.3 The statement path
+
+The command is read before the file is opened, with the agent's form of the command reader (`readLibreDBReadCommand`), which is a parse rather than a pattern match: the text is one line, tokenized as the editor tokenizes it, and its first word is looked up in a closed table of the three reads, each with its exact arguments.
+`get <key>` reads one key, `prefix <p>` every key that starts with `p`, and `range <start> <end>` the keys from `start` up to but not including `end`.
+`put` and `delete` are refused by name, in any case and inside quotes; any other first word is refused as no command; a second line (a line feed, a carriage return, U+0085, U+2028 or U+2029 anywhere in the text), a comment, an unmatched quote, an empty prefix and a wrong number of arguments are each refused with a sentence that names what to change.
+The agent's admission ([`src/lib/db/operations/libredbkv-admission.ts`](../../src/lib/db/operations/libredbkv-admission.ts)) is the same reader, plus a 4,096-character bound, so the agent's tool path and the provider refuse the same commands with the same sentence.
+The reader is defence in depth: a write it admitted would still fail on the handle, with the file unchanged.
+The reserved catalog namespace is left out of every answer, a `get` of a reserved key included, as in the editor.
+A key the kernel refuses, such as one holding a lone surrogate, is the statement's error to repair.
+
+### 15.4 The budgets, and what the time budget does not stop
+
+A result past the row budget is refused, never cut: the scan stops one key past the budget, so the refusal says at least that many keys match and the total is not known.
+A result past the byte budget is refused as soon as the rows read so far pass it.
+The read runs inside this server's own thread, synchronously, and cannot be stopped midway, so a read that outran the time budget is refused when it ends, as SQLite's in-process fallback is: the time budget ends the answer, not the work.
+LibreDB has no query plan, so an estimating-plan request is refused.
+
+### 15.5 The agent credential
+
+An embedded file has no user to sign an agent in as, so the engine declares `agentCredential: "none"`, and an `agentUser`, an `agentPassword` or both are refused under every agent profile before the provider opens the file.
+
+### 15.6 Agent language pack
+
+Statement-language family: `libredbkv`.
+Overlay: [`src/lib/agent/languages/libredbkv/engines/libredb.ts`](../../src/lib/agent/languages/libredbkv/engines/libredb.ts), with its client row in [`src/lib/agent/languages/libredbkv/engines/client.ts`](../../src/lib/agent/languages/libredbkv/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`.
+Both overlays are empty, so the engine resolves to the `libredbkv` family pack itself.
+The `libredbkv` statement-language family has no dialect-bound member.
+This overlay overrides no Shared member, so every Shared member is the `libredbkv` statement-language family's own.
+The pack id is `libredbkv` and not the editor language's `libredb`, because a pack id must differ from every type-id.
+The family offers the investigation and the data-analysis workflows, each through `run_read_query` with one read command, and the operations workflow; it offers no query optimization and no database assessment, since the store has no plan, no profile and no index for their tools to read, and no workflow hands an answer to the editor.
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+
+### 15.7 Boundary record
+
+- [`tests/unit/db/libredb/read-only-file.test.ts`](../../tests/unit/db/libredb/read-only-file.test.ts): the adapter against the real kernel, a held writer beside it, a bypassed `kv.set`, `delete` and raw transaction write with the file and the lock compared byte for byte, a missing file, and a torn tail.
+- [`tests/unit/db/libredb/command.test.ts`](../../tests/unit/db/libredb/command.test.ts): every admitted form, and every refused spelling of a write, a second line and a malformed command.
+- [`tests/integration/db/libredb-provider.test.ts`](../../tests/integration/db/libredb-provider.test.ts), "the agent read-only profile": the refusal on an editor and an operations handle, a reader and a writer coexisting in both orders without `LOCKED`, the writes refused before the open and the writes sent around the reader through `query()` failing on the handle, a handle per statement, the budgets, and a missing or foreign file.
+- [`tests/isolated/factory.test.ts`](../../tests/isolated/factory.test.ts), "single-writer file reuse": the agent read-only acquisition opening its own read-only handle beside the held writer and never the writable one, the editor opening beside a profiled reader that opened first, the operations borrow unchanged, and the agent credential refused under the read-only profile with the file unchanged.
