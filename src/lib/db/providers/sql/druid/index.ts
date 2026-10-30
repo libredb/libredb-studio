@@ -499,8 +499,9 @@ export class DruidProvider extends SQLBaseProvider {
    * the cancel, while one the Broker computes itself, over inline data, keeps running to its end (capture 03), so the
    * cancel ends the wait, and the work only there.
    *
-   * Budgets refuse rather than truncate: an answer past twice the byte budget and its envelope is not read further,
-   * and a result past the row or the byte budget is refused. Refused outside the profile and for an estimating plan,
+   * Budgets refuse rather than truncate: an answer past twice the byte budget and its envelope is not read further
+   * and its query id is cancelled, and a result past the row or the byte budget is refused. Rows are counted once the
+   * byte-capped answer is read, so the byte cap is what bounds a result of many small rows. Refused outside the profile and for an estimating plan,
    * which the agent does not compose here.
    */
   public async queryReadOnly(
@@ -548,8 +549,10 @@ export class DruidProvider extends SQLBaseProvider {
           });
         } catch (error) {
           if (error instanceof DruidAnswerTooLargeError) {
+            // Closing the read does not stop the server's work, so the statement's own id is cancelled too.
+            const cancel = await this.cancelAgentStatement(transport, queryId);
             throw new QueryError(
-              `${byteBudgetSentence(maxResponseBytes, budget.maxResultBytes)}; the server's answer passed that many bytes and was not read further`,
+              `${byteBudgetSentence(maxResponseBytes, budget.maxResultBytes)}; the server's answer passed that many bytes and was not read further; ${cancel}`,
               this.type,
               sql,
             );

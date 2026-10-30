@@ -2115,7 +2115,8 @@ Text ending inside a comment, a string or a name is refused; that includes a pla
 
 Each statement goes out on a request of its own (`DruidTransport.agentQuery` in [`http-transport.ts`](../../src/lib/db/providers/sql/druid/http-transport.ts)) whose body holds the statement, the array result format and its three header flags, and the context above, in that order and nothing else: no parameter, and no key a previous request named.
 One deadline, the budget's, bounds the check and the statement together, and the server stops the statement at the same `timeout` (504, category `TIMEOUT`).
-The answer is read as it streams and the read is cancelled the moment it passes twice the byte budget plus 64 KiB; a result past the row or the byte budget is refused, never cut.
+The answer is read as it streams and the read is cancelled the moment it passes twice the byte budget plus 64 KiB, and the statement's own query id is then cancelled on the server as past the deadline (15.4), since closing the read alone leaves the server's work running; a result past the row or the byte budget is refused, never cut.
+Rows are counted once that byte-capped answer is read, and no row bound is sent to the server, so a result of many small rows is bounded by the byte cap, not by the row budget, until it is refused.
 A statement the server refuses, a datasource the user may not read included, is answered as the statement's failure, so the agent can repair it; a check that cannot be read is the environment's.
 
 ### 15.4 The cancel past the deadline

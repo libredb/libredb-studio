@@ -3176,7 +3176,7 @@ describe("queryReadOnly", () => {
     );
   });
 
-  test("refuses an answer the transport stopped reading at its byte cap", async () => {
+  test("refuses an answer the transport stopped reading at its byte cap, and cancels the statement's own id", async () => {
     const recorded = recording(async (_sql, opts) => {
       throw new DruidAnswerTooLargeError(opts.maxResponseBytes);
     });
@@ -3184,8 +3184,25 @@ describe("queryReadOnly", () => {
     const error = await provider.queryReadOnly("SELECT s FROM t", AGENT_BUDGET).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(QueryError);
     expect((error as Error).message).toStartWith("Read-only execution exceeded the byte budget");
-    expect((error as Error).message).toEndWith("; the server's answer passed that many bytes and was not read further");
-    expect(recorded.cancels).toEqual([]);
+    expect((error as Error).message).toEndWith(
+      "; the server's answer passed that many bytes and was not read further; the server accepted the cancel of its query id",
+    );
+    const statement = recorded.agent.at(-1);
+    expect(statement?.sql).toBe("SELECT s FROM t");
+    expect(recorded.cancels.map((cancel) => cancel.queryId)).toEqual([statement?.opts.queryId ?? "no statement"]);
+  });
+
+  test("still refuses on the byte cap when the cancel after it cannot be confirmed", async () => {
+    const recorded = recording(async (_sql, opts) => {
+      throw new DruidAnswerTooLargeError(opts.maxResponseBytes);
+    });
+    recorded.answerCancel(async () => {
+      throw new DruidTransportError("Druid refused the cancel with HTTP 403");
+    });
+    const provider = await open(recorded);
+    await expect(provider.queryReadOnly("SELECT s FROM t", AGENT_BUDGET)).rejects.toThrow(
+      "was not read further; its cancel could not be confirmed: Druid refused the cancel with HTTP 403",
+    );
   });
 
   test("a statement the server stopped at its own timeout is refused on the time budget, and nothing is cancelled", async () => {
