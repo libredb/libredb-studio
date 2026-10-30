@@ -257,7 +257,7 @@ Bodies over 65536 bytes are `413 { "error": "Request body is too large" }`, unpa
 
 | `action` | Body | Answer |
 |---|---|---|
-| `register-options` | `{ "password": "...", "code"?: "123456" }` | `{ "options": PublicKeyCredentialCreationOptionsJSON }`, and sets the `passkey-registration` cookie |
+| `register-options` | `{ "password": "...", "code"?: "123456" }` | `{ "options": PublicKeyCredentialCreationOptionsJSON }`, and sets the `passkey-registration` cookie (`__Host-passkey-registration` on HTTPS) |
 | `register-verify` | `{ "response": RegistrationResponseJSON, "name"?: "..." }` | `{ "passkey": {...} }`; clears the cookie whatever the outcome |
 | `rename` | `{ "id": "...", "name": "..." }` | `{ "passkey": {...} }` |
 | `remove` | `{ "id": "...", "password": "...", "code"?: "123456" }` | `{ "ok": true }`, and re-issues the caller's session cookie |
@@ -282,7 +282,7 @@ Signs in with a passkey, without an email; no session is needed.
 
 | `action` | Body | Answer |
 |---|---|---|
-| `options` | `{ "action": "options" }` | `{ "options": PublicKeyCredentialRequestOptionsJSON }` (no `allowCredentials`, `userVerification: "required"`), and sets the `passkey-sign-in` cookie; writes nothing to the store |
+| `options` | `{ "action": "options" }` | `{ "options": PublicKeyCredentialRequestOptionsJSON }` (no `allowCredentials`, `userVerification: "required"`), and sets the `passkey-sign-in` cookie (`__Host-passkey-sign-in` on HTTPS); writes nothing to the store |
 | `verify` | `{ "action": "verify", "response": AuthenticationResponseJSON }` | `{ "success": true, "role": "admin" \| "user" }`, and sets the session cookie; clears the ceremony cookie whatever the outcome |
 
 Every refusal answers the same `401 { "success": false, "message": "That passkey could not sign you in. If it was removed from Studio, delete it from your password manager too. Sign in with your password." }`, whatever the reason, and the reason is recorded only in the audit log.

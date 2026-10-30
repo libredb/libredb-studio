@@ -909,6 +909,8 @@ The OIDC subsystem follows three core principles:
     ╘════════════════════════════════════════════════════════════════╛
 ```
 
+The diagram shows the plain names; on HTTPS the cookies are `__Host-oidc-state` and `__Host-auth-token` at `Path=/` (see the [Cookie Security Summary](#cookie-security-summary)).
+
 ### OIDC Logout Flow
 
 ```
@@ -1111,6 +1113,8 @@ The OIDC login flow requires carrying three values from the login route to the c
 └─────────────────────────────────────────────┘
 ```
 
+On HTTPS the state cookie is `__Host-oidc-state` at `Path=/`; see the [Cookie Security Summary](#cookie-security-summary).
+
 **Why JWT and not a plain cookie?**
 - The state must be tamper-proof — an attacker shouldn't be able to forge a state cookie
 - JWT signing with a key derived from `JWT_SECRET` provides integrity verification without needing server-side storage
@@ -1147,6 +1151,8 @@ After OIDC (or local) authentication:
 │    path: /                                  │
 └─────────────────────────────────────────────┘
 ```
+
+On HTTPS the session cookie is `__Host-auth-token` at `Path=/`; see the [Cookie Security Summary](#cookie-security-summary).
 
 An OIDC session's payload also carries `idpSubject` and `idpIssuer`, described under [Session Identity](#session-identity).
 
