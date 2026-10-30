@@ -102,6 +102,32 @@ spec:
       port: 9443
       targetPort: 9443
 ---
+{{- /* Only the console's pods fetch the plugin's assets, and nginx needs nothing else: no egress
+       rule, so a compromised server or image cannot send what it receives anywhere. */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $name }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "libredb-studio.consolePluginLabels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "libredb-studio.consolePluginSelectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: openshift-console
+      ports:
+        - protocol: TCP
+          port: 9443
+  egress: []
+---
 apiVersion: console.openshift.io/v1
 kind: ConsolePlugin
 metadata:

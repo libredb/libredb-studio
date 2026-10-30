@@ -48,12 +48,25 @@ interface Manifest {
   spec?: Record<string, unknown>;
 }
 
+/** The output of every render this file makes, for the file-wide checks at its end. */
+const RENDERED: string[] = [];
+
 function template(args: string[], chart = CHART_DIR): { exitCode: number; stdout: string; stderr: string } {
   const run = Bun.spawnSync(["helm", "template", RELEASE, chart, "--namespace", NAMESPACE, ...args], {
     stdout: "pipe",
     stderr: "pipe",
   });
-  return { exitCode: run.exitCode, stdout: run.stdout.toString(), stderr: run.stderr.toString() };
+  const result = { exitCode: run.exitCode, stdout: run.stdout.toString(), stderr: run.stderr.toString() };
+  if (result.exitCode === 0) RENDERED.push(result.stdout);
+  return result;
+}
+
+/** Each document of a render with the template it came from, from helm's "# Source:" line. */
+function sourced(stdout: string): Array<{ source: string; doc: Manifest }> {
+  return stdout
+    .split(/^---$/m)
+    .map((chunk) => ({ source: /^# Source: (.+)$/m.exec(chunk)?.[1] ?? "", doc: parse(chunk) as Manifest | null }))
+    .filter((entry): entry is { source: string; doc: Manifest } => entry.doc != null);
 }
 
 function render(args: string[]): Manifest[] {
@@ -430,6 +443,7 @@ describe("the plugin server and the ConsolePlugin", () => {
       { stdout: "pipe", stderr: "pipe" },
     );
     expect(run.exitCode).toBe(0);
+    RENDERED.push(run.stdout.toString());
     const other = parseAllDocuments(run.stdout.toString())
       .map((doc) => doc.toJSON() as Manifest)
       .filter(Boolean);
@@ -456,6 +470,43 @@ describe("the plugin server and the ConsolePlugin", () => {
       imagePullPolicy: "Always",
       resources: { requests: { cpu: "10m", memory: "50Mi" }, limits: { memory: "128Mi" } },
     });
+  });
+});
+
+describe("the plugin server's NetworkPolicy", () => {
+  test("admits only the console's namespace on 9443 and allows no egress", () => {
+    const docs = render(PLUGIN_ON);
+    const policy = one(docs, "NetworkPolicy", SERVER);
+    expect(policy.metadata.namespace).toBe(PLUGIN_NAMESPACE);
+    expect(policy.spec).toEqual({
+      podSelector: { matchLabels: { "app.kubernetes.io/name": SERVER, "app.kubernetes.io/instance": RELEASE } },
+      policyTypes: ["Ingress", "Egress"],
+      ingress: [
+        {
+          from: [{ namespaceSelector: { matchLabels: { "kubernetes.io/metadata.name": "openshift-console" } } }],
+          ports: [{ protocol: "TCP", port: 9443 }],
+        },
+      ],
+      egress: [],
+    });
+    expect((policy.spec as { podSelector: { matchLabels: unknown } }).podSelector.matchLabels).toEqual(
+      deploymentSpec(docs).selector.matchLabels,
+    );
+  });
+
+  test("selects none of Studio's pods, and Studio's own policy none of the server's", () => {
+    const docs = render(PLUGIN_ON);
+    const studioLabels = one(docs, "Deployment", "studio-libredb-studio").spec as unknown as DeploymentSpec;
+    const pluginSelector = deploymentSpec(docs).selector.matchLabels;
+    const matches = (selector: Record<string, string>, labels: Record<string, string>) =>
+      Object.entries(selector).every(([key, value]) => labels[key] === value);
+    expect(matches(pluginSelector, studioLabels.template.metadata.labels)).toBe(false);
+    expect(matches(studioLabels.selector.matchLabels, deploymentSpec(docs).template.metadata.labels)).toBe(false);
+  });
+
+  test("is not rendered without the plugin", () => {
+    const docs = render(pluginOn({ "openshift.consolePlugin.enabled": "false" }));
+    expect(docs.filter((doc) => doc.kind === "NetworkPolicy" && doc.metadata.name === SERVER)).toEqual([]);
   });
 });
 
@@ -506,5 +557,33 @@ describe("guard (6) with a Namespace in place of the lookup", () => {
       requested,
     );
     expect({ exitCode: run.exitCode, stderr: run.stderr }).toEqual({ exitCode: 0, stderr: "" });
+  });
+});
+
+/**
+ * Runs last: every render the cases above made. No standing right comes from the plugin wiring, and nothing the
+ * chart renders may change the console's configuration (consoles.operator.openshift.io), which only a cluster admin
+ * edits to turn the plugin on.
+ */
+describe("across every render of this file", () => {
+  test("console-plugin.yaml renders no Job, CronJob, ClusterRole or ClusterRoleBinding", () => {
+    const fromPlugin = RENDERED.flatMap(sourced).filter(({ source }) =>
+      source.endsWith("/templates/console-plugin.yaml"),
+    );
+    expect(fromPlugin.some(({ doc }) => doc.kind === "ConsolePlugin")).toBe(true);
+    expect(new Set(fromPlugin.map(({ doc }) => doc.kind))).toEqual(
+      new Set(["ServiceAccount", "Deployment", "Service", "NetworkPolicy", "ConsolePlugin"]),
+    );
+  });
+
+  test("no object grants a verb on consoles.operator.openshift.io", () => {
+    const rules = RENDERED.flatMap(sourced).flatMap(({ doc }) => doc.rules ?? []);
+    expect(rules.length).toBeGreaterThan(0);
+    const consoleRules = rules.filter(
+      (rule) =>
+        (rule.apiGroups ?? []).some((group) => group === "operator.openshift.io" || group === "*") &&
+        (rule.resources ?? []).some((resource) => resource === "consoles" || resource === "*"),
+    );
+    expect(consoleRules).toEqual([]);
   });
 });
