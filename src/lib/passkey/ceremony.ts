@@ -12,9 +12,10 @@
 import { createHash, randomBytes } from "node:crypto";
 import { jwtVerify, SignJWT } from "jose";
 import { cookies } from "next/headers";
-import { shouldMarkCookieSecure } from "@/lib/auth";
+import { cookieDeletion } from "@/lib/auth-cookies";
 import { derivedSigningKey } from "@/lib/config/auth-env";
 import { getBasePath } from "@/lib/config/base-path";
+import { studioCookie } from "@/lib/studio-cookie";
 import {
   PASSKEY_CEREMONY_TTL_SECONDS,
   PASSKEY_CHALLENGE_BYTES,
@@ -89,11 +90,12 @@ async function open(
     .setIssuedAt(iat)
     .setExpirationTime(exp)
     .sign(await derivedSigningKey(CEREMONY_LABEL));
-  (await cookies()).set(cookieName, token, {
+  const scope = await studioCookie(cookieName, cookiePath());
+  (await cookies()).set(scope.name, token, {
     httpOnly: true,
-    secure: await shouldMarkCookieSecure(),
+    secure: scope.secure,
     sameSite: "strict",
-    path: cookiePath(),
+    path: scope.path,
     maxAge: PASSKEY_CEREMONY_TTL_SECONDS,
   });
   return { challenge, rpId, expiresAt: new Date(exp * 1000).toISOString() };
@@ -107,8 +109,9 @@ async function take(
   clock: () => number,
 ): Promise<Record<string, unknown> | null> {
   const store = await cookies();
-  const token = store.get(cookieName)?.value;
-  store.delete({ name: cookieName, path: cookiePath() });
+  const scope = await studioCookie(cookieName, cookiePath());
+  const token = store.get(scope.name)?.value;
+  store.delete(cookieDeletion(scope));
   if (!token) return null;
   // Outside the try: a missing or short JWT_SECRET is the server's fault, not a bad token.
   const key = await derivedSigningKey(CEREMONY_LABEL);

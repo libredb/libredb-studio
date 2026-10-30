@@ -17,13 +17,8 @@ import { AuthConfigError } from "@/lib/auth-errors";
 import { storedAccountAllows } from "@/lib/local-accounts";
 import { authenticateBearer } from "@/lib/oidc-bearer";
 import { openShiftRecordCheck } from "@/lib/openshift-auth/session";
-import {
-  type CookieScope,
-  SESSION_COOKIE,
-  cookieDeletion,
-  cookieScope,
-  secureCookieDecision,
-} from "@/lib/auth-cookies";
+import { type CookieScope, SESSION_COOKIE, cookieDeletion } from "@/lib/auth-cookies";
+import { studioCookie } from "@/lib/studio-cookie";
 
 export { isLoopbackHost, readCookieSecureOverride, resetCookieSecurityWarning } from "@/lib/auth-cookies";
 
@@ -172,7 +167,7 @@ async function sessionWithRecord(
   cookieStore: Awaited<ReturnType<typeof cookies>>,
   session: UserPayload & { iat?: number },
 ): Promise<UserPayload | null> {
-  const marker = cookieStore.get(ACCESS_REVIEW_RETRY_COOKIE)?.value;
+  const marker = cookieStore.get((await retryMarkerCookie()).name)?.value;
   if (authProvider() === "openshift") return openShiftSessionWithRole(cookieStore, session, marker);
   // A session openshift sign-in minted reads as signed out in every other mode: no marker, the cookie cleared.
   if (session.sessionHandle !== undefined) return null;
@@ -229,18 +224,18 @@ async function settleRecordCheck(
   check: GroupsRecordCheck,
   missMessage: string,
 ): Promise<boolean> {
-  const markerPath = getBasePath() || "/";
+  const marker = await retryMarkerCookie();
   if (check.kind === "kept") {
-    if (check.clearMarker) cookieStore.delete({ name: ACCESS_REVIEW_RETRY_COOKIE, path: markerPath });
+    if (check.clearMarker) cookieStore.delete(cookieDeletion(marker));
     return true;
   }
   if (check.marker !== null) {
-    cookieStore.set(ACCESS_REVIEW_RETRY_COOKIE, check.marker, {
+    cookieStore.set(marker.name, check.marker, {
       httpOnly: true,
-      secure: await shouldMarkCookieSecure(),
+      secure: marker.secure,
       sameSite: "lax",
       maxAge: ACCESS_REVIEW_RETRY_MAX_AGE_SECONDS,
-      path: markerPath,
+      path: marker.path,
     });
   }
   logger.info(missMessage, { route: "auth", loop: check.marker === "loop" });
@@ -262,33 +257,13 @@ export async function getSession(): Promise<UserPayload | null> {
   return reading.kind === "authenticated" ? reading.session : null;
 }
 
-/**
- * Whether an auth cookie should carry the Secure flag, and so a `__Host-` name: the decision in
- * src/lib/auth-cookies.ts, `secureCookieDecision`, over this request's Host and x-forwarded-proto headers.
- */
-export async function shouldMarkCookieSecure(): Promise<boolean> {
-  let request: { host: string | null; forwardedProto: string | null } | undefined;
-  try {
-    const headerStore = await headers();
-    request = { host: headerStore.get("host"), forwardedProto: headerStore.get("x-forwarded-proto") };
-  } catch {
-    // No request scope (headers() throws): the decision keeps the stricter default.
-    request = undefined;
-  }
-  return secureCookieDecision(request);
-}
-
-/**
- * The name, path and Secure flag a Studio cookie takes in this request: `__Host-<base name>` at Path=/ whenever it is
- * Secure, else the base name at `plainPath` (src/lib/auth-cookies.ts). Set with all three, read by `name` alone and
- * deleted with `cookieDeletion`.
- */
-export async function studioCookie(baseName: string, plainPath: string): Promise<CookieScope> {
-  return cookieScope(baseName, plainPath, await shouldMarkCookieSecure());
-}
-
 function sessionCookie(): Promise<CookieScope> {
   return studioCookie(SESSION_COOKIE, getBasePath() || "/");
+}
+
+/** The access review's retry marker (src/lib/kubernetes-access/session-guard.ts), scoped like the session cookie. */
+function retryMarkerCookie(): Promise<CookieScope> {
+  return studioCookie(ACCESS_REVIEW_RETRY_COOKIE, getBasePath() || "/");
 }
 
 export async function login(

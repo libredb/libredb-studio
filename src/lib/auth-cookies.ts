@@ -15,6 +15,9 @@ import { logger } from "@/lib/logger";
 /** The session cookie's base name. */
 export const SESSION_COOKIE = "auth-token";
 
+/** The OIDC sign-in state cookie's base name: the PKCE verifier, state, nonce and return path, between login and callback. */
+export const OIDC_STATE_COOKIE = "oidc-state";
+
 export const HOST_COOKIE_PREFIX = "__Host-";
 
 /** Hosts whose traffic never leaves the machine (port is stripped before the check). */

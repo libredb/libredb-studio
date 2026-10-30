@@ -23,7 +23,9 @@ mock.module("next/headers", () => ({
     set: (name: string, value: string, options?: Record<string, unknown>) =>
       writes.push({ op: "set", name, value, options }),
     delete: (cookie: string | { name: string }) =>
-      writes.push({ op: "delete", name: typeof cookie === "string" ? cookie : cookie.name }),
+      typeof cookie === "string"
+        ? writes.push({ op: "delete", name: cookie })
+        : writes.push({ op: "delete", name: cookie.name, options: cookie }),
   }),
   headers: async () => ({ get: () => null }),
 }));
@@ -128,5 +130,57 @@ describe("what the review leaves alone", () => {
     await signedInAt(T - 600_000);
     expect(await getSession()).toMatchObject(DEV_A);
     expect(writes).toEqual([]);
+  });
+});
+
+// Whenever the auth cookies are Secure, the marker is __Host-access-review-retry at Path=/, and a plain-named marker
+// is never read.
+describe("the retry marker with host-prefixed names", () => {
+  beforeEach(() => {
+    process.env.AUTH_COOKIE_SECURE = "true";
+  });
+  afterEach(() => {
+    delete process.env.AUTH_COOKIE_SECURE;
+  });
+
+  async function signedInSecure(mintedAt: number): Promise<void> {
+    setSystemTime(new Date(mintedAt));
+    jar["__Host-auth-token"] = { value: await signJWT(DEV_A) };
+    setSystemTime(new Date(T));
+  }
+
+  test("a miss arms __Host-access-review-retry at Path=/ with Secure and clears the __Host- session", async () => {
+    await signedInSecure(T - 600_000);
+    expect(await getSession()).toBeNull();
+    expect(writes.filter((write) => write.op === "delete")).toEqual([
+      { op: "delete", name: "__Host-auth-token", options: { name: "__Host-auth-token", path: "/", secure: true } },
+    ]);
+    expect(writes.find((write) => write.op === "set")).toEqual({
+      op: "set",
+      name: "__Host-access-review-retry",
+      value: String(T_SECONDS),
+      options: { httpOnly: true, secure: true, sameSite: "lax", maxAge: 300, path: "/" },
+    });
+  });
+
+  test("a kept session clears __Host-access-review-retry with Secure", async () => {
+    await signedInSecure(T - 2000);
+    recordGroups(ISSUER, "u-rjs2h", [], T - 2000);
+    jar["__Host-access-review-retry"] = { value: String(T_SECONDS - 3) };
+    expect(await getSession()).toMatchObject(DEV_A);
+    expect(writes).toEqual([
+      {
+        op: "delete",
+        name: "__Host-access-review-retry",
+        options: { name: "__Host-access-review-retry", path: "/", secure: true },
+      },
+    ]);
+  });
+
+  test("a plain-named marker is never read: minted after it, a miss arms the marker instead of tripping the loop", async () => {
+    await signedInSecure(T - 1000);
+    jar["access-review-retry"] = { value: String(T_SECONDS - 2) };
+    expect(await getSession()).toBeNull();
+    expect(writes.find((write) => write.op === "set")?.value).toBe(String(T_SECONDS));
   });
 });

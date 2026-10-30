@@ -1,8 +1,9 @@
 /**
  * The `openshift-state` cookie: the PKCE verifier, the state value and the return path of one sign-in, between the
  * login route and the callback. HS256 under a key derived for this purpose only (never the session key, never the
- * OIDC state key), its own header `typ`, five minutes; no nonce, because this flow has no ID token. The cookie path is
- * the narrowest that reaches the callback, `<basePath>/api/auth/openshift`.
+ * OIDC state key), its own header `typ`, five minutes; no nonce, because this flow has no ID token. While the auth
+ * cookies are not Secure the cookie path is the narrowest that reaches the callback, `<basePath>/api/auth/openshift`;
+ * with Secure on, its `__Host-` name puts it at Path=/ (src/lib/auth-cookies.ts).
  */
 
 import { jwtVerify, SignJWT } from "jose";
@@ -47,7 +48,7 @@ export async function decryptOpenShiftState(token: string): Promise<OpenShiftSta
   };
 }
 
-/** The path the cookie is set and deleted with. */
+/** The path the cookie is set and deleted with while the auth cookies are not Secure. */
 export function openShiftStateCookiePath(): string {
   return withBasePath("/api/auth/openshift");
 }

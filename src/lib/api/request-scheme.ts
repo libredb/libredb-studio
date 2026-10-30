@@ -6,7 +6,7 @@ import { readTrustProxyHeaders } from "@/lib/security/config";
  * (GET /api/admin/discovery) warns while the session cookie can travel over plain HTTP.
  *
  * Never base a security decision on this. x-forwarded-proto and x-forwarded-host are attacker-supplied
- * unless a reverse proxy overwrites them, which is why shouldMarkCookieSecure() in src/lib/auth.ts will
+ * unless a reverse proxy overwrites them, which is why secureCookieDecision() in src/lib/auth-cookies.ts will
  * not drop the Secure flag on their word. They are read here only behind readTrustProxyHeaders(), the
  * gate origin-check.ts uses for x-forwarded-host. CapRover's nginx overwrites X-Forwarded-Proto with $scheme.
  */

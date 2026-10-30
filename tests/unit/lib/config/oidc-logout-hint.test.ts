@@ -63,10 +63,20 @@ describe("config/oidc-logout-hint", () => {
   });
 
   test("a token fits the cookie up to 3800 bytes, counted in UTF-8", () => {
-    expect(fitsLogoutHintCookie("a".repeat(3800))).toBe(true);
-    expect(fitsLogoutHintCookie("a".repeat(3801))).toBe(false);
+    expect(fitsLogoutHintCookie("a".repeat(3800), OIDC_LOGOUT_HINT_COOKIE)).toBe(true);
+    expect(fitsLogoutHintCookie("a".repeat(3801), OIDC_LOGOUT_HINT_COOKIE)).toBe(false);
     // 1900 two-byte characters are 3800 bytes; one more is over.
-    expect(fitsLogoutHintCookie("é".repeat(1900))).toBe(true);
-    expect(fitsLogoutHintCookie("é".repeat(1901))).toBe(false);
+    expect(fitsLogoutHintCookie("é".repeat(1900), OIDC_LOGOUT_HINT_COOKIE)).toBe(true);
+    expect(fitsLogoutHintCookie("é".repeat(1901), OIDC_LOGOUT_HINT_COOKIE)).toBe(false);
+  });
+
+  // A browser drops a cookie whose name and value together exceed 4096 bytes, so a long __Host- name under a base
+  // path counts against the token.
+  test("the cookie's name counts: name and value stay within 4096 bytes", () => {
+    const longName = `__Host-oidc-logout-hint.${"s".repeat(273)}`;
+    expect(longName.length).toBe(297);
+    expect(fitsLogoutHintCookie("a".repeat(3800), longName)).toBe(false);
+    expect(fitsLogoutHintCookie("a".repeat(3799), longName)).toBe(true);
+    expect(fitsLogoutHintCookie("a".repeat(3800), "__Host-oidc-logout-hint.tools.libredb")).toBe(true);
   });
 });

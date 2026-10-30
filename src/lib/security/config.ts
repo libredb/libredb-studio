@@ -23,7 +23,7 @@ const CSP_DEFAULT_REPORT_ONLY = false;
 
 // withSecurityHeaders runs on every proxied request, so an unrecognized value must warn at most
 // once per flag per process, not once per request (same reasoning as auth-cookies.ts's cookie-security
-// warnOnce, which is latched because shouldMarkCookieSecure() runs on every login).
+// warnOnce, which is latched because secureCookieDecision() runs on every login).
 const warnedFlags = new Set<string>();
 
 /** Test seam: clears the warn-once latches so each case observes a fresh process. */

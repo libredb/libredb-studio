@@ -516,3 +516,57 @@ describe("GET /api/auth/openshift/callback, the role from the user's own review"
     expect(decodeJwt(minted()[0].value ?? "").role).toBe("user");
   });
 });
+
+// Whenever the auth cookies are Secure, the callback reads __Host-openshift-state alone and deletes it with Secure at
+// Path=/, mints __Host-auth-token, and ends the record a replaced __Host-auth-token names.
+describe("GET /api/auth/openshift/callback with host-prefixed names", () => {
+  const PREFIXED_STATE_DELETE: CookieWrite = {
+    op: "delete",
+    name: "__Host-openshift-state",
+    options: { name: "__Host-openshift-state", path: "/", secure: true },
+  };
+  const mintedPrefixed = () => jar.written("__Host-auth-token").filter((write) => write.op === "set");
+
+  beforeEach(() => {
+    process.env.AUTH_COOKIE_SECURE = "true";
+  });
+
+  afterEach(() => {
+    delete process.env.AUTH_COOKIE_SECURE;
+  });
+
+  test("signs in through __Host-openshift-state and mints __Host-auth-token", async () => {
+    const res = await signIn();
+    expect(res.headers.get("location")).toBe("https://studio.apps.example.com/");
+    expect(jar.reads).toContain("__Host-openshift-state");
+    expect(jar.reads).not.toContain("openshift-state");
+    expect(jar.written("__Host-openshift-state").filter((write) => write.op === "delete")).toEqual([
+      PREFIXED_STATE_DELETE,
+    ]);
+    expect(mintedPrefixed()).toHaveLength(1);
+    expect(mintedPrefixed()[0].options).toMatchObject({ path: "/", secure: true });
+    expect(minted()).toEqual([]);
+  });
+
+  test("a plain-named state cookie is never read: openshift_state_missing", async () => {
+    const { params } = await approvedSignIn(loginGET, cluster);
+    const state = jar.values.get("__Host-openshift-state") ?? "";
+    jar.values.delete("__Host-openshift-state");
+    jar.values.set("openshift-state", state);
+    const res = await GET(callbackRequest(params));
+    expect(res.headers.get("location")).toBe(`${LOGIN_PAGE}openshift_state_missing`);
+    expect(mintedPrefixed()).toEqual([]);
+  });
+
+  test("signing in again ends the record the replaced __Host-auth-token names", async () => {
+    await signIn();
+    const old = mintedPrefixed()[0].value ?? "";
+    jar.writes.length = 0;
+    await signIn();
+    const fresh = mintedPrefixed()[0].value ?? "";
+    jar.values.set("__Host-auth-token", old);
+    expect(await getSession()).toBeNull();
+    jar.values.set("__Host-auth-token", fresh);
+    expect(await getSession()).toMatchObject({ username: "dev-a" });
+  });
+});

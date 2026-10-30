@@ -778,3 +778,72 @@ describe("GET /api/auth/oidc/callback", () => {
     });
   });
 });
+
+// Whenever the auth cookies are Secure, the callback reads __Host-oidc-state alone, deletes it with Secure at Path=/ on
+// every exit that consumes the state, and keeps the logout hint as __Host-oidc-logout-hint at Path=/.
+describe("GET /api/auth/oidc/callback with host-prefixed names", () => {
+  const callbackUrl = "https://studio.example.com/api/auth/oidc/callback?code=auth-code&state=test-state";
+  const STATE_DELETION = { name: "__Host-oidc-state", path: "/", secure: true };
+
+  beforeEach(() => {
+    process.env.AUTH_COOKIE_SECURE = "true";
+    mockDecryptState.mockClear();
+    mockCookieGet.mockClear();
+    setCookies.clear();
+    setCookieOptions.clear();
+    mockCookieStore.delete.mockClear();
+    mockMapOIDCRole.mockReturnValue("user");
+    mockExchangeCode.mockImplementation(async () => exchanged({ ...defaultClaims }));
+    mockCookieGet.mockImplementation((name: string) =>
+      name === "__Host-oidc-state" ? { value: "encrypted-state-cookie" } : undefined,
+    );
+  });
+
+  afterEach(() => {
+    delete process.env.AUTH_COOKIE_SECURE;
+    delete process.env.OIDC_LOGOUT_HINT;
+    mockCookieGet.mockImplementation(() => ({ value: "encrypted-state-cookie" }));
+  });
+
+  test("signs in from __Host-oidc-state, sets __Host-auth-token and deletes the state with Secure", async () => {
+    const res = await GET(new Request(callbackUrl));
+    expect(res.headers.get("location")).toBe("https://studio.example.com/");
+    expect(mockCookieGet).toHaveBeenCalledWith("__Host-oidc-state");
+    expect(setCookies.has("__Host-auth-token")).toBe(true);
+    expect(setCookies.has("auth-token")).toBe(false);
+    expect(mockCookieStore.delete).toHaveBeenCalledWith(STATE_DELETION);
+  });
+
+  test("a plain-named state cookie is never read: the callback answers oidc_state_missing", async () => {
+    mockCookieGet.mockImplementation((name: string) =>
+      name === "oidc-state" ? { value: "encrypted-state-cookie" } : undefined,
+    );
+    const res = await GET(new Request(callbackUrl));
+    expect(res.headers.get("location")).toContain("error=oidc_state_missing");
+    expect(mockDecryptState).not.toHaveBeenCalledWith("encrypted-state-cookie");
+  });
+
+  test("a state that does not decrypt and a sign-in with no role both delete __Host-oidc-state with Secure", async () => {
+    mockDecryptState.mockImplementationOnce(async () => {
+      throw new Error("Invalid token");
+    });
+    expect((await GET(new Request(callbackUrl))).headers.get("location")).toContain("error=oidc_state_invalid");
+    expect(mockCookieStore.delete).toHaveBeenCalledWith(STATE_DELETION);
+
+    mockCookieStore.delete.mockClear();
+    mockMapOIDCRole.mockReturnValue(null);
+    expect((await GET(new Request(callbackUrl))).headers.get("location")).toContain("error=oidc_no_role");
+    expect(mockCookieStore.delete).toHaveBeenCalledWith(STATE_DELETION);
+  });
+
+  test("the logout hint is __Host-oidc-logout-hint at Path=/, and a token too large deletes it with Secure", async () => {
+    process.env.OIDC_LOGOUT_HINT = "true";
+    await GET(new Request(callbackUrl));
+    expect(setCookies.get("__Host-oidc-logout-hint")).toBe(ID_TOKEN);
+    expect(setCookieOptions.get("__Host-oidc-logout-hint")).toMatchObject({ path: "/", secure: true, httpOnly: true });
+
+    mockExchangeCode.mockImplementationOnce(async () => exchanged({ ...defaultClaims }, "a".repeat(3801)));
+    await GET(new Request(callbackUrl));
+    expect(mockCookieStore.delete).toHaveBeenCalledWith({ name: "__Host-oidc-logout-hint", path: "/", secure: true });
+  });
+});

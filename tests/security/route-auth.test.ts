@@ -407,6 +407,8 @@ describe("routes that reach a provider require a session", () => {
     "@/lib/audit": "the in-process audit ring buffer",
     "@/lib/auth": "session cookie minting and reading",
     "@/lib/auth-compare": "constant-time credential comparison",
+    "@/lib/auth-cookies":
+      "the Secure decision and the name and path each Studio cookie takes from it; computation only, opens nothing",
     "@/lib/auth-errors": "the auth failure taxonomy",
     "@/lib/config/auth-env": "reads JWT_SECRET and AUTH_SESSION_TTL_SECONDS from process.env; opens nothing",
     "@/lib/config/base-path": "prefixes redirect URLs and cookie paths; these routes use no fetch or provider",
@@ -486,6 +488,7 @@ describe("routes that reach a provider require a session", () => {
     "@/lib/storage/owner-key":
       "derives the storage row key from the session, the username or under governance sub: and the identity provider's subject, reading GOVERNANCE_SOURCE through @/lib/governance/config; opens nothing",
     "@/lib/storage/types": "the storage backend's interfaces",
+    "@/lib/studio-cookie": "reads the request's Host and x-forwarded-proto headers to scope a cookie; opens nothing",
     "@/lib/totp": "second-factor verification: an HMAC over the submitted code and an in-process spent-step map",
   };
 

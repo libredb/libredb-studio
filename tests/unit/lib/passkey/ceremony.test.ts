@@ -123,13 +123,43 @@ describe("passkey ceremony", () => {
     setEnv("NODE_ENV", "production");
     await openSignInCeremony(RP_ID);
 
-    expect(cookieJar.get(SIGN_IN)?.options?.secure).toBe(true);
+    expect(cookieJar.get(`__Host-${SIGN_IN}`)?.options?.secure).toBe(true);
 
     resetCookieJar();
     requestHeaders.set("host", "localhost:3000");
     await openSignInCeremony(RP_ID);
 
     expect(cookieJar.get(SIGN_IN)?.options?.secure).toBe(false);
+  });
+
+  // Whenever the cookie is Secure its name carries __Host-, so it sits at Path=/ instead of the passkey API path; taking
+  // the ceremony reads that name alone and deletes it with Secure.
+  test("with Secure on, the ceremony cookies are __Host- names at Path=/, read and deleted by that name alone", async () => {
+    setEnv("AUTH_COOKIE_SECURE", "true");
+    const opened = await openSignInCeremony(RP_ID, clock);
+    await openRegistrationCeremony(REGISTRATION_INPUT);
+
+    expect([...cookieJar.keys()]).toEqual([`__Host-${SIGN_IN}`, `__Host-${REGISTRATION}`]);
+    for (const name of cookieJar.keys()) {
+      expect(cookieJar.get(name)?.options).toEqual({
+        httpOnly: true,
+        secure: true,
+        sameSite: "strict",
+        path: "/",
+        maxAge: 600,
+      });
+    }
+
+    expect(await takeSignInCeremony(clock)).toEqual(opened);
+    expect(deletedCookies).toEqual([{ name: `__Host-${SIGN_IN}`, path: "/", secure: true }]);
+
+    // A plain-named cookie holding a valid ceremony is never read in Secure mode.
+    const plain = await openSignInCeremony(RP_ID, clock);
+    putCookie(SIGN_IN, cookieValue(`__Host-${SIGN_IN}`));
+    cookieJar.delete(`__Host-${SIGN_IN}`);
+    expect(plain.rpId).toBe(RP_ID);
+    expect(await takeSignInCeremony(clock)).toBeNull();
+    expect(cookieJar.has(SIGN_IN)).toBe(true);
   });
 
   test("the challenge is 32 random bytes and its digest is the SHA-256 of those bytes", async () => {
@@ -306,6 +336,8 @@ describe("passkey ceremony", () => {
     await openSignInCeremony(RP_ID);
     setEnv("JWT_SECRET", undefined);
     setEnv("NODE_ENV", "production");
+    // Loopback over plain http keeps the cookie's plain name in production, so the take reads the cookie just opened.
+    requestHeaders.set("host", "localhost:3000");
 
     await expect(takeSignInCeremony()).rejects.toThrow(AuthConfigError);
   });

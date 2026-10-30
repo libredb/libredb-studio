@@ -11,11 +11,14 @@ const LOGOUT_HINT_OFF = new Set(["false", "0", "off", "no"]);
 
 export const OIDC_LOGOUT_HINT_COOKIE = "oidc-logout-hint";
 
-/**
- * The largest ID token kept, in bytes. A browser drops a cookie whose name, value and attributes exceed 4096 bytes,
- * so a larger token is not written at all rather than written and silently lost.
- */
+/** The largest ID token kept, in bytes. */
 const OIDC_LOGOUT_HINT_MAX_BYTES = 3800;
+
+/**
+ * A browser drops a cookie whose name and value together exceed 4096 bytes, so a token that would not fit beside the
+ * cookie's name is not written at all rather than written and silently lost.
+ */
+const COOKIE_NAME_AND_VALUE_MAX_BYTES = 4096;
 
 /** True when OIDC_LOGOUT_HINT is on; unset, empty, an off spelling or an unrecognised value leaves it off. */
 export function readOidcLogoutHint(): boolean {
@@ -31,12 +34,19 @@ export function readOidcLogoutHint(): boolean {
   return false;
 }
 
-/** The hint cookie's path: only POST <BASE_PATH>/api/auth/logout receives it. */
+/**
+ * The hint cookie's path while the auth cookies are not Secure: only POST <BASE_PATH>/api/auth/logout receives it.
+ * With Secure on, its `__Host-` name puts it at Path=/ (src/lib/auth-cookies.ts).
+ */
 export function oidcLogoutHintCookiePath(): string {
   return withBasePath("/api/auth/logout");
 }
 
-/** Whether an ID token is small enough to keep in the hint cookie. */
-export function fitsLogoutHintCookie(idToken: string): boolean {
-  return Buffer.byteLength(idToken, "utf8") <= OIDC_LOGOUT_HINT_MAX_BYTES;
+/** Whether an ID token is small enough to keep in the hint cookie named `cookieName`. */
+export function fitsLogoutHintCookie(idToken: string, cookieName: string): boolean {
+  const tokenBytes = Buffer.byteLength(idToken, "utf8");
+  return (
+    tokenBytes <= OIDC_LOGOUT_HINT_MAX_BYTES &&
+    Buffer.byteLength(cookieName, "utf8") + tokenBytes <= COOKIE_NAME_AND_VALUE_MAX_BYTES
+  );
 }

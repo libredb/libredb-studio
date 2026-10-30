@@ -511,7 +511,7 @@ describe("the shipped template sources agree with each other", () => {
 
   test("a plain-HTTP deployment, and only that, drops the Secure cookie flag", () => {
     // NODE_ENV=production marks auth cookies Secure for every non-loopback host
-    // (src/lib/auth.ts, shouldMarkCookieSecure), so on http:// the browser
+    // (src/lib/auth-cookies.ts, secureCookieDecision), so on http:// the browser
     // discards the login cookie and the sign-in loops back to the login page.
     const install = readSrc("install.sh");
     expect(install.match(/AUTH_COOKIE_SECURE/g)).toHaveLength(1);

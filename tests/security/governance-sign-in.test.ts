@@ -297,13 +297,16 @@ describe("routes under governance", () => {
   // getSession() is every route's session check only while nothing else reads the session cookie: a module that read
   // and verified it itself would skip the governed rule. The proxy reads it too, for the signature alone, to route a
   // page request; it decides no data, and every route it lets through checks the session again.
+  // The session cookie's name is written once, as SESSION_COOKIE in src/lib/auth-cookies.ts, and every reader names it
+  // through that constant (its __Host- name on HTTPS is built from it), so a module that names either one is a reader.
   test("only src/lib/auth.ts reads the session cookie for a route, and only src/proxy.ts besides it", () => {
+    const SESSION_COOKIE_NAMED = /\bSESSION_COOKIE\b|["'](?:__Host-)?auth-token["']/;
     const readers: string[] = [];
     const walk = (dir: string): void => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const path = join(dir, entry.name);
         if (entry.isDirectory()) walk(path);
-        else if (/\.tsx?$/.test(entry.name) && /\.get\(\s*["']auth-token["']\s*\)/.test(readFileSync(path, "utf8"))) {
+        else if (/\.tsx?$/.test(entry.name) && SESSION_COOKIE_NAMED.test(readFileSync(path, "utf8"))) {
           // Forward slashes whatever the platform, so the expectation below holds on the Windows leg of CI.
           readers.push(relative(ROOT, path).split(sep).join("/"));
         }
@@ -311,6 +314,6 @@ describe("routes under governance", () => {
     };
     walk(SRC);
 
-    expect(readers.sort()).toEqual(["src/lib/auth.ts", "src/proxy.ts"]);
+    expect(readers.sort()).toEqual(["src/lib/auth-cookies.ts", "src/lib/auth.ts", "src/proxy.ts"]);
   });
 });
