@@ -294,6 +294,7 @@ None: Weaviate has no maintenance operation in v1, so no Admin > Operations card
 ## 9. Capabilities & labels
 
 `queryLanguage` `json` with `queryDialect` `weaviate`, `containerLevels` empty, `enforcesReadOnly` true, every `supports*` false, `defaultPort` 8080.
+`agentCredential` is `"token"` and `metadataOnly` states the agent's nine projections (section 15.5); `queryReadOnly` answers on a handle opened for the agent read-only profile only (section 15).
 The labels name a Collection and an Object, "Read Objects" and "Generate Request", and the statement language plan mode states is generated from the route table.
 
 ### SQL writing
@@ -377,3 +378,80 @@ The refusal reason it prints, verbatim:
 - Weaviate REST reference and OpenAPI document, v1.40.2.
 - Weaviate source, `usecases/objects/validation/properties_validation.go`, `entities/schema/validation.go`, `adapters/handlers/rest/server.go`, v1.40.2.
 - The design: issue [#1566](https://github.com/libredb/libredb-studio/issues/1566).
+
+## 15. Agent mode
+
+Agent mode reads Weaviate's metadata through `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/vector/weaviate/index.ts).
+The request reader is [`metadata-request.ts`](../../src/lib/db/providers/vector/weaviate/metadata-request.ts), and the viewer proof, the metadata-only projection and the wording of a failure are [`metadata-read.ts`](../../src/lib/db/providers/vector/weaviate/metadata-read.ts).
+Every claim below cites a capture under [`tests/fixtures/weaviate/1.40.2/agent-boundary/`](../../tests/fixtures/weaviate/1.40.2/agent-boundary/), recorded by its `run.sh` against digest-pinned 1.40.2 servers with every request sent raw, past every Studio check.
+
+### 15.1 The boundary
+
+The boundary is a structural closed table: the client's 20 GET and POST operations (`WEAVIATE_OPS` in `client.ts`, the routes in `routes.ts`) name no write, and the REST client builds no other path.
+On top of it the key is proved a viewer, so the server's own RBAC refuses what the table could ever let through.
+A viewer's object write, tenant status change and collection drop are each answered 403 naming `create_data`, `update_tenants` or `delete_collections`, with the count, the tenant and the collection unchanged after (`write-object-viewer`, `write-tenant-viewer`, `write-schema-viewer` and their `-after` captures), while the root user's same object write is answered and moves the count from 3 to 4 (`write-object-root`, `write-count-after-root`).
+
+### 15.2 The viewer proof
+
+A handle opened for the agent read-only profile by an acquisition that sends statements refuses a connection with no key before any client is built: a server that takes anonymous reads cannot say who reads.
+After the meta read it asks `GET /v1/users/own-info` and again before every request, under that request's deadline, with no verdict kept.
+The key is a viewer when the answer is 200, names at least one role and no OIDC group, and every action of every role is one of the built-in `viewer` role's twelve read actions (`own-info-viewer`).
+The root user, the built-in `admin` role and a custom role holding `update_data` are refused (`own-info-root`, `own-info-admin`, `own-info-widened`), as is a server with RBAC off, which answers `"roles": null` (`own-info-keyonly`), and a 401, which both an RBAC server and an anonymous one answer a request with no key (`own-info-anonymous`, `own-info-anonymous-open`).
+A role widened between two requests is refused at the next one (`own-info-drift-before`, `own-info-drift-after`).
+The operations profile sends no request of the model's, so it opens with any key and no proof, and plan mode keeps grounding on an administrator's key.
+
+### 15.3 What an agent request may be
+
+One request in the console's own grammar, every body key closed at every level (section 5.3), naming one of the meta, schema, collection, shard, tenant list, tenant, alias list, alias, node and collection-node reads, or `POST /v1/aggregate/{collection}` with `tenant` and `returnMetrics` only.
+An object list, a read by id and every search answer stored property values and, on request, vectors (`objects-viewer`, `object-viewer`, `search-*-viewer`), so each is refused before anything is sent, as are an aggregate's `where` and `groupBy`, which count by stored values.
+The console's grammar already refuses GraphQL, every write, near-text and hybrid at any `alpha` but 0.
+With a provider key on the server, hybrid at `alpha` 0.5, near-text, a GraphQL `nearText` and a `generate` each send the model provider's endpoint a request, while hybrid at `alpha` 0, bm25, near-object and an aggregate send none (`egress-*`); no agent request reaches a search at all.
+The connection sets only its `Authorization` header, so no module key such as `X-OpenAI-Api-Key` is ever forwarded, and the agent's request carries no consistency level or header the caller chose.
+
+### 15.4 Tenants
+
+On a collection with `autoTenantActivation` on, a viewer's count, object list and shard read of a `COLD` tenant each set it `HOT`, while the tenant's own record does not (`wake-*`); with it off, the count is refused 422 and the tenant stays `COLD` (`manual-aggregate`, `manual-record-after`).
+So a request naming a tenant reads the tenant's own record first and is refused unless it is `HOT`, with no further request sent.
+A tenant an administrator sets `COLD` between that read and the request is woken by it; the window is one round trip, and the request is a count or a shard read (B153).
+
+### 15.5 Metadata only
+
+Weaviate declares `ProviderCapabilities.metadataOnly`: every answer is projected through [`src/lib/db/redaction/metadata-only.ts`](../../src/lib/db/redaction/metadata-only.ts) by a typed projection per operation, each column a name, a count or a flag read from a fixed place in the server's answer.
+
+| Operation | Columns |
+| --- | --- |
+| meta | `version`, `modules` (how many) |
+| schema | `collection`, `vectorizer`, `properties`, `named_vectors`, `multi_tenant`, `auto_tenant_activation`, `replication_factor` |
+| one collection | `property` (nested ones as `parent.child`), `data_type`, `tokenization`, `filterable`, `searchable` |
+| shards | `shard`, `status`, `vector_queue_size` |
+| tenants, one tenant | `tenant`, `status` |
+| aliases, one alias | `alias`, `collection` |
+| nodes | `node`, `status`, `version`, `objects`, `shards` |
+| nodes with `output=verbose` | `node`, `collection`, `shard`, `objects`, `vector_indexing_status`, `loaded` |
+| aggregate | `collection`, `tenant`, `count` |
+
+A column's name comes from the projection, never from a key the store holds, and nothing the projection does not name reaches a row: no description, module setting, base URL or host name.
+A cell that does not fit its kind, such as an object, a list or a vector where a name or a count stands, or a name holding a line break, withholds the whole answer, naming the column and never the value.
+A server refusal is worded by its status and category alone, never the server's message.
+A result past the row or byte budget is refused, never cut, and an estimating plan is refused.
+
+### 15.6 Agent language pack
+
+Statement-language family: `weaviateapi`.
+Overlay: [`src/lib/agent/languages/weaviateapi/engines/weaviate.ts`](../../src/lib/agent/languages/weaviateapi/engines/weaviate.ts), with its client row in [`src/lib/agent/languages/weaviateapi/engines/client.ts`](../../src/lib/agent/languages/weaviateapi/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`.
+Both overlays are empty, so the engine resolves to the `weaviateapi` family pack itself.
+The `weaviateapi` statement-language family has no dialect-bound member.
+This overlay overrides no Shared member, so every Shared member is the `weaviateapi` statement-language family's own.
+The family offers the investigation workflow, through `run_read_query` with one Weaviate request, and the operations workflow; it offers no data analysis, since its answers carry no stored value, and no query optimization or database assessment, since the server composes no plan and no profile, and no workflow hands an answer to the editor.
+The workflow classifier offers the model only these two.
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+No MCP tool runs a Weaviate request: the family declares no MCP facet, and `MCP_STATEMENT_READ.weaviate` is false (B153).
+
+### 15.7 Tests
+
+- `tests/unit/db/weaviate/metadata-request.test.ts`: the operations an agent request may name, and every refusal before the network.
+- `tests/unit/db/weaviate/metadata-read.test.ts`: the viewer proof over each `own-info-*` capture, every projection over the captured answers, and answers that carry a stored value where a name, a count or a flag stands.
+- `tests/unit/db/weaviate/agent-provider.test.ts`: the open, the proof before every request, the exact request lines and bodies through the REST client, the tenant refusal, the wording of a failure and the budgets.
+- `tests/integration/db/weaviate-provider.test.ts`: the boundary replayed from the captures, the viewer's writes beside the positive control.
+- `tests/unit/lib/db/redaction/metadata-only.test.ts`: the shared projection helpers.
