@@ -4,8 +4,9 @@
  * Pure, and safe in a browser bundle. It reads the text with the editor's own parser (`commands.ts`), so a command is
  * read by one grammar wherever it is written, and then admits only the parsed commands of a closed table of metadata
  * reads, each mapped to the one fixed request the provider sends: no flag, revision, range end, limit or consistency
- * the request wrote reaches the server. Everything else is refused with a sentence that quotes nothing the request
- * wrote.
+ * the request wrote reaches the server. Everything else is refused with the agent's own sentence, or, for a request
+ * the editor's parser cannot read (a second command, a bad argument, shell syntax), the parser's sentence followed by
+ * the agent's reads. No refusal quotes a stored value: at most it names the request's own command word or flag.
  *
  * Metadata only. Key names count as stored values, since applications put ids, emails and tokens in them, so nothing
  * here lists keys or reads a value: no ranged or prefix get but the count of every key, no keys-only read, no watch,
@@ -67,8 +68,8 @@ export const ETCD_AGENT_SENTENCES = {
   metadataOnly: `That is not one of agent mode's reads: key names and stored values are withheld, so nothing that lists keys or reads a value is sent, and neither is a write, a watch, a txn or a maintenance call. ${AGENT_READS} ${NOTHING_SENT}`,
   flags: `An agent read takes no flag but the two of the key count: the request's revision, range, limit, consistency, sort and timeout are the provider's, never the request's. ${AGENT_READS} ${NOTHING_SENT}`,
   key: `get takes exactly one key, a non-empty name of at most ${ETCD_AGENT_MAX_KEY_BYTES} bytes, and no range end. ${NOTHING_SENT}`,
-  /** `message` is the editor parser's refusal, which quotes no value the request wrote. */
-  request: (message: string): string => `${message} ${NOTHING_SENT}`,
+  /** `message` is the editor parser's refusal, which quotes no stored value; the agent's reads follow it. */
+  request: (message: string): string => `${message} ${AGENT_READS} ${NOTHING_SENT}`,
 } as const;
 
 function refuse(code: EtcdAgentRefusalCode, message: string): EtcdAgentReading {
@@ -81,6 +82,34 @@ function admit(plan: EtcdAgentPlan): EtcdAgentReading {
 
 /** The parser's refusals that say the command is one Studio's etcdctl grammar does not read at all. */
 const NOT_A_COMMAND: ReadonlySet<CommandRefusalCode> = new Set(["empty"]);
+
+/**
+ * The parser's refusals of a command the table does not hold. Their editor sentences list the editor's commands or
+ * point to its admin panels, which agent mode has neither of, so the agent reads its own sentence instead.
+ */
+const OUTSIDE_THE_TABLE: ReadonlySet<CommandRefusalCode> = new Set([
+  "unknown-command",
+  "maintenance-command",
+  "not-offered",
+  "blocking-command",
+]);
+
+/** The parser's refusals of a flag. The editor's sentences list flags the agent's reads do not take. */
+const FLAG_REFUSALS: ReadonlySet<CommandRefusalCode> = new Set([
+  "unknown-flag",
+  "refused-flag",
+  "global-flag",
+  "conflicting-flags",
+  "limit-too-large",
+]);
+
+/** A refusal of the editor's parser, worded for the agent. */
+function parserRefusal(code: CommandRefusalCode, message: string): EtcdAgentReading {
+  if (NOT_A_COMMAND.has(code)) return refuse("request", ETCD_AGENT_SENTENCES.empty);
+  if (OUTSIDE_THE_TABLE.has(code)) return refuse("metadata-only", ETCD_AGENT_SENTENCES.metadataOnly);
+  if (FLAG_REFUSALS.has(code)) return refuse("arguments", ETCD_AGENT_SENTENCES.flags);
+  return refuse("request", ETCD_AGENT_SENTENCES.request(message));
+}
 
 /** The parsed get the table admits: one key, or the count of every key, and no other flag. */
 function readGet(command: Extract<EtcdCommand, { kind: "get" }>): EtcdAgentReading {
@@ -107,9 +136,7 @@ export function readEtcdAgentStatement(text: string): EtcdAgentReading {
   if (text.trim() === "") return refuse("request", ETCD_AGENT_SENTENCES.empty);
   const parsed = parseEtcdCommand(text, PARSE_LIMITS);
   if (!parsed.ok) {
-    return NOT_A_COMMAND.has(parsed.refusal.code)
-      ? refuse("request", ETCD_AGENT_SENTENCES.empty)
-      : refuse("request", ETCD_AGENT_SENTENCES.request(parsed.refusal.message));
+    return parserRefusal(parsed.refusal.code, parsed.refusal.message);
   }
   if (parsed.parsed.commandTimeoutMs !== undefined) return refuse("arguments", ETCD_AGENT_SENTENCES.flags);
   const { command } = parsed.parsed;

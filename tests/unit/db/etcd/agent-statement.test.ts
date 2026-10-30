@@ -99,7 +99,7 @@ describe("every request outside the table is refused before anything is sent", (
     expect(readEtcdAgentStatement(text)).toEqual({ ok: false, code: "request", message: ETCD_AGENT_SENTENCES.empty });
   });
 
-  test("a request the editor's parser refuses is refused with the parser's sentence, which quotes no value", () => {
+  test("a second command is refused with the parser's sentence, which quotes no value", () => {
     const second = readEtcdAgentStatement("get /app/config\nput /app/config secret-value");
     expect(second.ok).toBe(false);
     if (second.ok) return;
@@ -107,10 +107,40 @@ describe("every request outside the table is refused before anything is sent", (
     expect(second.message).toContain("Line 2 holds a second command");
     expect(second.message).not.toContain("secret-value");
     expect(second.message.endsWith("Nothing was sent.")).toBe(true);
-    const unknown = readEtcdAgentStatement("snapshot save /tmp/x");
-    expect(unknown).toMatchObject({ ok: false, code: "request" });
-    const refused = readEtcdAgentStatement("get /app/config --print-value-only");
-    expect(refused).toMatchObject({ ok: false, code: "request" });
+  });
+
+  test.each([
+    ["foo", "metadata-only"],
+    ["ge /app/config", "metadata-only"],
+    ["compaction 5", "metadata-only"],
+    ["defrag", "metadata-only"],
+    ["member add m2 --peer-urls=http://m2:2380", "metadata-only"],
+    ["snapshot save /tmp/x", "metadata-only"],
+    ["user list", "metadata-only"],
+    ["lock /app/lock", "metadata-only"],
+  ] as const)("%s is a command outside the table, refused with the agent's own sentence", (text, code) => {
+    expect(readEtcdAgentStatement(text)).toEqual({ ok: false, code, message: ETCD_AGENT_SENTENCES.metadataOnly });
+  });
+
+  test.each([
+    "get /app/config --secretflag",
+    "get /app/config --print-value-only",
+    "get /app/config --endpoints=http://x:2379",
+    "get /app/config --prefix --from-key",
+    "get /app/config --limit=999999999999",
+    "get /app/config --limit=1 --limit=2",
+  ])("%s carries a flag the agent's reads do not take, refused with the agent's own sentence", (text) => {
+    expect(readEtcdAgentStatement(text)).toEqual({ ok: false, code: "arguments", message: ETCD_AGENT_SENTENCES.flags });
+  });
+
+  test("a refusal passed on from the parser ends with the reads the table holds", () => {
+    const second = readEtcdAgentStatement("get /app/config\nget /app/other");
+    expect(second.ok).toBe(false);
+    if (!second.ok) {
+      expect(second.message).toContain("endpoint status, member list, alarm list, auth status, lease list");
+      expect(second.message).not.toContain("put");
+      expect(second.message).not.toContain("Admin");
+    }
   });
 
   test("a refusal never quotes the key the command named", () => {
@@ -130,6 +160,8 @@ describe("every request outside the table is refused before anything is sent", (
       expect(sentence).toContain("endpoint status, member list, alarm list, auth status, lease list");
       expect(sentence.endsWith("Nothing was sent.")).toBe(true);
     }
-    expect(ETCD_AGENT_SENTENCES.request("Refused.")).toBe("Refused. Nothing was sent.");
+    expect(ETCD_AGENT_SENTENCES.request("Refused.")).toMatch(
+      /^Refused\. Agent mode on etcd reads metadata only: .* Nothing was sent\.$/,
+    );
   });
 });
