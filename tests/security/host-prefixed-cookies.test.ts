@@ -10,7 +10,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import * as realOidc from "@/lib/oidc";
 import { CookieJar, type CookieWrite } from "../helpers/openshift-auth/cookie-jar";
 import { type FakeCluster, startFakeCluster } from "../helpers/openshift-auth/fake-cluster";
@@ -208,7 +208,7 @@ describe("with Secure on, every cookie the real routes write is a __Host- cookie
   async function signInEveryWay(): Promise<void> {
     process.env.NEXT_PUBLIC_AUTH_PROVIDER = "local";
     const password = await passwordLogin(
-      new Request("https://studio.example.com/api/auth/login", {
+      new NextRequest("https://studio.example.com/api/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json", "x-forwarded-for": "192.0.2.10" },
         body: JSON.stringify({ email: process.env.ADMIN_EMAIL, password: process.env.ADMIN_PASSWORD }),
@@ -226,9 +226,7 @@ describe("with Secure on, every cookie the real routes write is a __Host- cookie
       new Request("https://studio.example.com/api/auth/oidc/callback?code=c-1&state=s-1"),
     );
     expect(callback.headers.get("location")).toBe("https://studio.example.com/");
-    const logout = await logoutRoute(
-      new Request("https://studio.example.com/api/auth/logout", { method: "POST" }) as never,
-    );
+    const logout = await logoutRoute(new NextRequest("https://studio.example.com/api/auth/logout", { method: "POST" }));
     expect(logout.status).toBe(200);
 
     cluster.reset();

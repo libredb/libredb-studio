@@ -35,13 +35,13 @@ mock.module("@/lib/oidc", () => ({
 }));
 
 let jar: Record<string, { value: string } | undefined> = {};
-const deleted: { name: string; path?: string }[] = [];
+const deleted: { name: string; path?: string; secure?: boolean }[] = [];
 
 mock.module("next/headers", () => ({
   cookies: mock(async () => ({
     get: (name: string) => jar[name],
     set: mock(() => {}),
-    delete: (cookie: { name: string; path?: string }) => deleted.push(cookie),
+    delete: (cookie: { name: string; path?: string; secure?: boolean }) => deleted.push(cookie),
   })),
   headers: mock(async () => ({ get: () => null })),
 }));

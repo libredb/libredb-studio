@@ -12,7 +12,7 @@ import * as oidcBearer from "@/lib/oidc-bearer";
 
 let mockCookieStore: Record<string, { value: string } | undefined> = {};
 let mockSetCalls: Array<{ name: string; value: string; opts: unknown }> = [];
-let mockDeleteCalls: Array<string | { name: string; path: string }> = [];
+let mockDeleteCalls: Array<string | { name: string; path: string; secure?: boolean }> = [];
 
 // ============================================================================
 // Module Mocks — only next/headers
@@ -28,7 +28,7 @@ mock.module("next/headers", () => ({
       mockSetCalls.push({ name, value, opts });
       mockCookieStore[name] = { value };
     },
-    delete: (cookie: string | { name: string; path: string }) => {
+    delete: (cookie: string | { name: string; path: string; secure?: boolean }) => {
       mockDeleteCalls.push(cookie);
       delete mockCookieStore[typeof cookie === "string" ? cookie : cookie.name];
     },
