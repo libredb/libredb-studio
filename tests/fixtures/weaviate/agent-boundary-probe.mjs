@@ -272,6 +272,23 @@ async function main() {
   await setCold("Tenanted");
   await capture("wake-shards", "viewer", "GET", "/v1/schema/Tenanted/shards?tenant=cold");
   await capture("wake-record-after-shards", "viewer", "GET", tenantRecord, undefined, "after the viewer's shard read");
+  // The same collection read with no tenant named: the shard read and the count, then the node reads that name none.
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 1_000));
+  await setCold("Tenanted");
+  await capture("wake-shards-no-tenant", "viewer", "GET", "/v1/schema/Tenanted/shards");
+  await settle();
+  await capture("wake-record-after-shards-no-tenant", "viewer", "GET", tenantRecord, undefined, "after the shard read");
+  await setCold("Tenanted");
+  await capture("wake-aggregate-no-tenant", "viewer", "POST", "/v1/aggregate/Tenanted", {});
+  await settle();
+  await capture("wake-record-after-aggregate-no-tenant", "viewer", "GET", tenantRecord, undefined, "after the count");
+  await setCold("Tenanted");
+  await capture("wake-collection-nodes", "viewer", "GET", "/v1/nodes/Tenanted?output=verbose");
+  await settle();
+  await capture("wake-record-after-collection-nodes", "viewer", "GET", tenantRecord, undefined, "after the node read");
+  await capture("wake-nodes", "viewer", "GET", "/v1/nodes?output=verbose");
+  await settle();
+  await capture("wake-record-after-nodes", "viewer", "GET", tenantRecord, undefined, "after every node's read");
   await capture("manual-aggregate", "viewer", "POST", "/v1/aggregate/TenantedManual", { tenant: "cold" });
   await capture("manual-record-after", "viewer", "GET", "/v1/schema/TenantedManual/tenants/cold");
 

@@ -411,7 +411,8 @@ The connection sets only its `Authorization` header, so no module key such as `X
 ### 15.4 Tenants
 
 On a collection with `autoTenantActivation` on, a viewer's count, object list and shard read of a `COLD` tenant each set it `HOT`, while the tenant's own record does not (`wake-*`); with it off, the count is refused 422 and the tenant stays `COLD` (`manual-aggregate`, `manual-record-after`).
-So a request naming a tenant reads the tenant's own record first and is refused unless it is `HOT`, with no further request sent.
+The same shard read naming no tenant wakes the `COLD` one too (`wake-shards-no-tenant`, `wake-record-after-shards-no-tenant`), and a count naming none is refused 422 (`wake-aggregate-no-tenant`); node reads, the whole cluster's and the collection's, wake none (`wake-*nodes`).
+So a request naming a tenant reads the tenant's own record first and is refused unless it is `HOT`, with no further request sent, and a shard read or count of a multi-tenant collection naming no tenant is refused after the collection's own record is read, before anything else is sent.
 A tenant an administrator sets `COLD` between that read and the request is woken by it; the window is one round trip, and the request is a count or a shard read (B153).
 
 ### 15.5 Metadata only

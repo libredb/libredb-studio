@@ -295,6 +295,36 @@ describe("one agent request", () => {
     expect(lines(wire)).not.toContain("GET /v1/schema/Tenanted/shards?tenant=cold");
   });
 
+  test("on 1.40.2 a shard read naming no tenant wakes a COLD one, while the node reads do not", () => {
+    const status = (name: string) => (JSON.parse(agentAnswer(name).text) as { activityStatus: string }).activityStatus;
+    expect(status("wake-record-after-shards-no-tenant")).toBe("HOT");
+    expect(agentAnswer("wake-aggregate-no-tenant").status).toBe(422);
+    expect(status("wake-record-after-aggregate-no-tenant")).toBe("COLD");
+    expect(status("wake-record-after-collection-nodes")).toBe("COLD");
+    expect(status("wake-record-after-nodes")).toBe("COLD");
+  });
+
+  const tenantless: readonly [string, string][] = [
+    ["GET /v1/schema/Tenanted/shards", "(?tenant=...)"],
+    ["POST /v1/aggregate/Tenanted {}", '("tenant": "...")'],
+  ];
+  for (const [text, hint] of tenantless) {
+    test(`a multi-tenant collection's ${text.split(" ")[0]} naming no tenant is refused after the collection read alone`, async () => {
+      const { provider, wire } = await connected(
+        agentServer("viewer", {
+          "GET /v1/schema/Tenanted": agentCollectionAnswer("Tenanted"),
+          "GET /v1/schema/Tenanted/shards": agentAnswer("wake-shards-no-tenant"),
+          "POST /v1/aggregate/Tenanted": agentAnswer("wake-aggregate-no-tenant"),
+        }),
+      );
+      const error = await rejection(provider.queryReadOnly(text, BUDGET));
+      expect((error as Error).message).toContain(
+        `The collection "Tenanted" is multi-tenant, so the request needs a tenant ${hint}. Nothing was read`,
+      );
+      expect(lines(wire)).toEqual(["GET /v1/users/own-info", "GET /v1/schema/Tenanted"]);
+    });
+  }
+
   test("a HOT tenant is counted after its record is read", async () => {
     const { provider, wire } = await connected(
       agentServer("viewer", {

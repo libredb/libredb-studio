@@ -452,7 +452,8 @@ const WEAVIATEAPI_READ_BOUNDARY =
   "proves the key a viewer (metadata-read.ts): GET /v1/users/own-info must name at least one role and every action must " +
   "be one of the viewer role's twelve read actions, so a connection with no key, an admin key, a role that writes and " +
   "a server with RBAC off are refused. A request naming a tenant reads the tenant's own record first and is refused " +
-  "unless it is HOT, so no read wakes a tenant; object reads, searches, GraphQL, every module call, filters and " +
+  "unless it is HOT, and a shard read or count of a multi-tenant collection naming no tenant is refused, since a " +
+  "shard read naming none wakes them; object reads, searches, GraphQL, every module call, filters and " +
   "groupBy are refused before anything is sent. Every answer is projected to names, counts and flags " +
   "(metadata-only.ts), and a result past the row or byte budget is refused, never truncated.";
 
