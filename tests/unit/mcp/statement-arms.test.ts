@@ -83,6 +83,8 @@ describe("MCP_STATEMENT_ARMS", () => {
     expect(mcpStatementToolFor("rabbitmq")).toBeNull();
     expect(MCP_STATEMENT_ARMS.kafkaread).toBeNull();
     expect(mcpStatementToolFor("kafka")).toBeNull();
+    expect(MCP_STATEMENT_ARMS.s3api).toBeNull();
+    expect(mcpStatementToolFor("s3")).toBeNull();
   });
 
   test("is built from the languages' MCP facets, one arm per declared facet, in the registry's order", () => {
@@ -413,6 +415,7 @@ describe("the tool each engine is read with", () => {
       oxiacli: null,
       rabbitread: null,
       kafkaread: null,
+      s3api: null,
     };
     expect(servingStatementArms(arms)).toEqual([RUN_READ_QUERY_ARM]);
     const registerTool = mock((_name: string) => undefined);

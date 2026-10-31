@@ -35,6 +35,9 @@ import { RABBITREAD_PACK } from "@/lib/agent/languages/rabbitread/index";
 import * as KAFKAREAD_CLIENT_OVERLAYS from "@/lib/agent/languages/kafkaread/engines/client";
 import * as KAFKA from "@/lib/agent/languages/kafkaread/engines/kafka";
 import { KAFKAREAD_PACK } from "@/lib/agent/languages/kafkaread/index";
+import * as S3API_CLIENT_OVERLAYS from "@/lib/agent/languages/s3api/engines/client";
+import * as S3 from "@/lib/agent/languages/s3api/engines/s3";
+import { S3API_PACK } from "@/lib/agent/languages/s3api/index";
 import * as KUBECTL_CLIENT_OVERLAYS from "@/lib/agent/languages/kubectl/engines/client";
 import * as KUBERNETES from "@/lib/agent/languages/kubectl/engines/kubernetes";
 import * as LIBREDBKV_CLIENT_OVERLAYS from "@/lib/agent/languages/libredbkv/engines/client";
@@ -138,6 +141,8 @@ const ENGINE_MODULES: Readonly<Record<string, Readonly<Record<string, unknown>>>
   "rabbitread/engines/client": RABBITREAD_CLIENT_OVERLAYS,
   "kafkaread/engines/kafka": KAFKA,
   "kafkaread/engines/client": KAFKAREAD_CLIENT_OVERLAYS,
+  "s3api/engines/s3": S3,
+  "s3api/engines/client": S3API_CLIENT_OVERLAYS,
 };
 
 /** Every overlay an engine module exports, named `<module>#<export>`. */
@@ -179,6 +184,7 @@ describe("the engine registry", () => {
       "influxdb",
       "influxdb3",
       "oxia",
+      "s3",
       "kubernetes",
       "rabbitmq",
       "libredb",
@@ -229,7 +235,7 @@ describe("the engine registry", () => {
 
   test("every engine module's server overlay holds a dialect and overridable members, its client one a dialect alone (ruling 2)", () => {
     const exported = exportedOverlays();
-    expect(exported).toHaveLength(56);
+    expect(exported).toHaveLength(58);
     // The one other export is the PostgreSQL retry's rewrite, which its tests call directly.
     expect(
       Object.entries(ENGINE_MODULES)
@@ -302,6 +308,7 @@ describe("the engine packs", () => {
     expect(agentEnginePack("oxia")).toBe(OXIACLI_PACK);
     expect(agentEnginePack("rabbitmq")).toBe(RABBITREAD_PACK);
     expect(agentEnginePack("kafka")).toBe(KAFKAREAD_PACK);
+    expect(agentEnginePack("s3")).toBe(S3API_PACK);
   });
 
   test.each(SQL_ENGINES)("%s is the SQL pack member for member, with its own dialect on the server facet", (type) => {
@@ -358,6 +365,7 @@ describe("engineServerDialect", () => {
       "oxia",
       "rabbitmq",
       "kafka",
+      "s3",
     ] as DatabaseType[]) {
       expect(Object.keys(engineServerOverlay(type))).toEqual([]);
     }
@@ -588,6 +596,7 @@ describe("the client dialect", () => {
       "oxia",
       "rabbitmq",
       "kafka",
+      "s3",
     ] as const) {
       expect(engineClientPack(type).dialect).toBeUndefined();
     }

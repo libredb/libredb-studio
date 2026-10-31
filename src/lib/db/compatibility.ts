@@ -544,8 +544,8 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // it yet (BACKLOG B100).
   oxia: false,
   databend: true,
-  // Outside this version, as etcd's and Oxia's: the provider implements no queryReadOnly, and no MCP surface
-  // that lists buckets but never an object key is designed yet (BACKLOG B104).
+  // Closed, as etcd's and Oxia's: agent mode reads S3's metadata, and no MCP surface that lists buckets but never an
+  // object key is designed yet (BACKLOG B104).
   s3: false,
   // Offered with every answer machine-redacted: `run_kubectl_read` runs the agent's
   // `queryReadOnly`, whose output masks every Secret name, and `inspect_schema` lists relations alone, which no
@@ -658,6 +658,8 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // it.
   oxia: false,
   databend: false,
+  // Agent mode executes metadata-only reads on S3, and MCP read stays closed on it until a change of its own opens it
+  // (BACKLOG B104).
   s3: false,
   kubernetes: true,
   mqtt: false,

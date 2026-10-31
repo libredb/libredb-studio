@@ -28,6 +28,7 @@ import { ETCDCTL_SERVER_PACK } from "./etcdctl/server";
 import { OXIACLI_SERVER_PACK } from "./oxiacli/server";
 import { RABBITREAD_SERVER_PACK } from "./rabbitread/server";
 import { KAFKAREAD_SERVER_PACK } from "./kafkaread/server";
+import { S3API_SERVER_PACK } from "./s3api/server";
 import type { AgentLanguageServerAdapter, AgentLanguageServerPack, EvidenceToolName } from "./pack";
 import { SQL_STATEMENT_DEFINITIONS } from "./sql/definitions";
 import { SQL_RECOMMEND_CHANGE } from "./sql/recommendation";
@@ -54,6 +55,7 @@ const SERVER_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageServe
   oxiacli: OXIACLI_SERVER_PACK,
   rabbitread: RABBITREAD_SERVER_PACK,
   kafkaread: KAFKAREAD_SERVER_PACK,
+  s3api: S3API_SERVER_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageServerPack>);
 
 /** The server pack for `language`, or a named error when the id is not a language this server knows. */
@@ -102,6 +104,7 @@ export const LANGUAGE_BASE_DEFINITIONS = mergeDisjoint(
     OXIACLI_SERVER_PACK.baseDefinitions,
     RABBITREAD_SERVER_PACK.baseDefinitions,
     KAFKAREAD_SERVER_PACK.baseDefinitions,
+    S3API_SERVER_PACK.baseDefinitions,
   ],
   "LANGUAGE_BASE_DEFINITIONS",
 );
@@ -132,6 +135,7 @@ export const WORKFLOW_TOOL_RULES: Readonly<
   oxiacli: OXIACLI_SERVER_PACK.workflowToolRules,
   rabbitread: RABBITREAD_SERVER_PACK.workflowToolRules,
   kafkaread: KAFKAREAD_SERVER_PACK.workflowToolRules,
+  s3api: S3API_SERVER_PACK.workflowToolRules,
 } satisfies Record<AgentStatementLanguageId, Partial<Record<AgentRunWorkflowType, string>>>);
 
 /**
@@ -154,6 +158,7 @@ export const LANGUAGE_SHORTFALL_NOTICES = mergeDisjoint(
     OXIACLI_SERVER_PACK.shortfallNotices,
     RABBITREAD_SERVER_PACK.shortfallNotices,
     KAFKAREAD_SERVER_PACK.shortfallNotices,
+    S3API_SERVER_PACK.shortfallNotices,
   ],
   "LANGUAGE_SHORTFALL_NOTICES",
 );

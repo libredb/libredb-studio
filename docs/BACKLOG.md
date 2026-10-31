@@ -8343,13 +8343,19 @@ So neither a proof of the user's grants nor a fence over the statement text boun
 
 **Done when:** a statement contract for Databend is measured and `queryReadOnly` implements it, `AGENT_EXECUTION_ENGINES` and the engines `run_read_query` serves name Databend, and an agent run and an MCP call each drive a SELECT-shaped writer to its refusal in a test.
 
-### B104. S3-compatible object storage has no agent execution and no MCP surface
+### B104. S3's agent reads are metadata only, and it has no MCP surface
 
-`MCP_EXPOSABLE.s3` is false, so agent execution and MCP `run_read_query` refuse it (the provider implements no `queryReadOnly`, and no MCP surface that lists buckets but never returns an object key is designed yet).
+Agent mode executes S3 metadata reads under the `s3api` statement language, one AWS CLI command per call naming one of six reads: the bucket listing, one bucket's head, location and versioning, one whole bucket's object count and total size, and one object's head for the exact key the command names (`docs/providers/s3.md`, section 15).
+The boundary is the provider's structural closed table: every agent-mode surface reads through a client that holds those six reads alone, each a GET or a HEAD over a byte transport that sends nothing else, with no follow-up GET after a HEAD and no prefix, delimiter or start position on a listing, so no object read, key or version listing, tagging, policy or ACL read, write, delete or presigned URL can be sent.
+Object keys count as stored values, since key paths name tenants and people, and bodies, user metadata, tags, ETags, version ids, owners and ACL grants, bucket policies, CORS and lifecycle rules, endpoints and presigned URLs stay off the agent path, so every answer is projected to names, counts and flags (`ProviderCapabilities.metadataOnly`, `src/lib/db/redaction/metadata-only.ts`); a bucket is counted whole and never by prefix, since narrower counts would reveal key names, and a bucket larger than the row budget is refused rather than counted in part.
+On a handle of either agent profile the console, the Keys panel and every object and bucket source are refused, no key is listed, and the overview, storage, session, slow-query, table, index and performance readings answer their reason rather than an empty reading.
+So the language offers the investigation and the operations workflow only: data analysis needs stored values, and query optimization and database assessment need a plan and a profile S3 does not compose.
+`MCP_EXPOSABLE.s3` is false, so a seed with `mcp: true` on an S3 connection fails the whole file, and the language's MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) with `MCP_STATEMENT_READ.s3` false, so MCP `run_read_query` refuses an S3 connection, because no MCP surface that lists buckets but never returns an object key is designed yet.
+Kept so that key exposure, object and tag reads and MCP access are decisions of their own rather than side effects of agent mode joining.
 
-Found 2026-10-09 while designing the S3 provider.
+Found 2026-10-09 while designing the S3 provider; narrowed 2026-10-31 when agent mode joined S3.
 
-**Done when:** an MCP metadata surface that lists buckets and never returns an object key is designed; `MCP_EXPOSABLE.s3` turns true for it; and agent execution serves a `queryReadOnly` that runs one console read command, which MCP serves through its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), with tests; cited in `docs/AGENT.md` beside B103.
+**Done when:** the owner rules on which object keys and values agent mode may read on S3 and how they are redacted, the `s3api` pack offers the workflows that ruling opens, an MCP metadata surface that lists buckets and never returns an object key is designed and `MCP_EXPOSABLE.s3` turns true for it, a per-engine exposure ruling opens MCP statement read for S3, the pack declares its MCP facet (`src/lib/agent/languages/s3api/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same table and projection, and `MCP_STATEMENT_READ.s3` is true, with tests that every MCP answer carries no object key or value; cited in `docs/AGENT.md`.
 
 ### B107. Firestore has no agent execution and no MCP surface
 

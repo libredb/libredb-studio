@@ -72,6 +72,12 @@ describe("fenceTagEngine", () => {
     expect(fenceTagEngine("kafka")).toBe("kafka");
   });
 
+  test("s3api names s3, the agent's name for the only metadata read command language S3 runs", () => {
+    expect(fenceTagEngine("s3api")).toBe("s3");
+    expect(isQueryFenceTag("s3api")).toBe(true);
+    expect(fenceTagEngine("s3")).toBe("s3");
+  });
+
   test("etcdctl names etcd, the agent's name for the only command language etcd runs", () => {
     expect(fenceTagEngine("etcdctl")).toBe("etcd");
     expect(isQueryFenceTag("etcdctl")).toBe(true);

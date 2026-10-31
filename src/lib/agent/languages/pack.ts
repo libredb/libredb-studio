@@ -129,6 +129,11 @@ type KafkareadOperationId =
   /** One Kafka metadata read the model wrote, on a `kafka` connection; see `kafkareadQueryReadDescriptor`. */
   "kafkaread.query.read";
 
+/** The s3api command language's operation: its one read. */
+type S3apiOperation =
+  /** One S3 metadata read the model wrote, on an `s3` connection; see `s3apiQueryReadDescriptor`. */
+  "s3api.query.read";
+
 /**
  * The canonical operations each family's tools drive, by family. `AgentOperationId` in `tools.ts` is the core's two
  * curated ids and every row here, so a family's ids are written once, beside the family's other types.
@@ -148,6 +153,7 @@ export interface AgentFamilyOperationIds {
   readonly oxiacli: OxiacliOperationId;
   readonly rabbitread: RabbitreadOperationId;
   readonly kafkaread: KafkareadOperationId;
+  readonly s3api: S3apiOperation;
 }
 
 /** kubectl's goal verifiers. */
@@ -207,6 +213,8 @@ export interface AgentFamilyVerifierIds {
   readonly rabbitread: never;
   /** None: its workflows are judged by the core's own rules. */
   readonly kafkaread: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly s3api: never;
 }
 
 /** The operation a family's model-written reads are evaluated under: its row's `<family>.query.read`. */
@@ -472,6 +480,7 @@ export interface AgentFamilyEvidenceTools {
   readonly oxiacli: never;
   readonly rabbitread: never;
   readonly kafkaread: never;
+  readonly s3api: never;
 }
 
 /** Every pack's evidence tool: a member of the core's `AgentToolName`, declared by the pack that offers it. */
@@ -493,6 +502,7 @@ export interface AgentFamilyReadingDenyCodes {
   readonly oxiacli: never;
   readonly rabbitread: never;
   readonly kafkaread: never;
+  readonly s3api: never;
 }
 
 /** Every pack's reading refusal code: a member of the core's `AgentReadingDenyCode`, declared by its pack. */
@@ -514,6 +524,7 @@ export interface AgentFamilyShortfalls {
   readonly oxiacli: never;
   readonly rabbitread: never;
   readonly kafkaread: never;
+  readonly s3api: never;
 }
 
 /** Every pack's verdict shortfall: a member of the core's `AgentGoalShortfall`, declared by its pack. */
@@ -535,6 +546,7 @@ export interface AgentFamilyVariantRequirements {
   readonly oxiacli: never;
   readonly rabbitread: never;
   readonly kafkaread: never;
+  readonly s3api: never;
 }
 
 /** Every pack's variant requirement: a member of the core's `AgentVariantRequirement`, declared by its pack. */
@@ -590,6 +602,7 @@ export interface AgentFamilyEvidenceEvents {
   readonly oxiacli: never;
   readonly rabbitread: never;
   readonly kafkaread: never;
+  readonly s3api: never;
 }
 
 /** Every pack's evidence event, as the ledger stores it less its timestamp. */
@@ -781,6 +794,7 @@ export interface AgentFamilyDialectRows {
   oxiacli: { client: Record<never, never>; server: Record<never, never> };
   rabbitread: { client: Record<never, never>; server: Record<never, never> };
   kafkaread: { client: Record<never, never>; server: Record<never, never> };
+  s3api: { client: Record<never, never>; server: Record<never, never> };
 }
 
 /** The dialect-bound members of each family, client and server. */

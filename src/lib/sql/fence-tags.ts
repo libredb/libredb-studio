@@ -185,6 +185,7 @@ export const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "oxiacli",
   "rabbitread",
   "kafkaread",
+  "s3api",
 ]);
 
 /**
@@ -248,6 +249,8 @@ export const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.free
   rabbitread: "rabbitmq",
   // The agent's name for the Kafka metadata read request language, and `kafka` is the only type-id that runs it.
   kafkaread: "kafka",
+  // The agent's name for the S3 metadata read command language, and `s3` is the only type-id that runs it.
+  s3api: "s3",
 });
 
 /**

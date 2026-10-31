@@ -20,6 +20,7 @@ import {
   connectableProductCount,
   EXTERNAL_DATABASE_TYPES,
   MCP_EXPOSABLE,
+  MCP_STATEMENT_READ,
   READ_ONLY_ENFORCED,
   SHIPPED_DATABASE_TYPES,
   WIRE_COMPATIBLE_ENGINES,
@@ -205,6 +206,12 @@ const OUTLINE: readonly string[] = [
   "## 13. Known limitations",
   "## Migration DDL",
   "## 14. References",
+  "## 15. Agent mode",
+  "### 15.1 The boundary",
+  "### 15.2 What an agent command may be",
+  "### 15.3 Metadata only",
+  "### 15.4 Agent language pack",
+  "### 15.5 Tests",
 ];
 
 /** The "Before you connect" block, exactly. */
@@ -484,10 +491,13 @@ describe("docs/providers/s3.md: the connection, as the dialog and the builder st
     expect(mode).toContain(readOnlyHint(DB_UI_CONFIG.s3));
     expect(mode).toContain("`READ_ONLY_ENFORCED.s3` is true");
     expect(MCP_EXPOSABLE.s3).toBe(false);
-    expect(AGENT_EXECUTION_ENGINES).not.toContain("s3");
+    expect(MCP_STATEMENT_READ.s3).toBe(false);
+    expect(AGENT_EXECUTION_ENGINES).toContain("s3");
     const machine = flat(sectionOf(DOC, "### 3.6 Machine access"));
-    expect(machine).toContain("No agent execution and no MCP");
+    expect(machine).toContain("Agent mode reads metadata only, and MCP stays closed");
     expect(machine).toContain("`MCP_EXPOSABLE.s3` is false");
+    expect(machine).toContain("`MCP_STATEMENT_READ.s3` is false");
+    expect(machine).toContain("no agent-mode path lists a key");
   });
 
   test("13. section 4.3 lists the shared SSL panel's modes in the dialog's order", () => {
@@ -1183,7 +1193,7 @@ const S3_ENTRIES: Readonly<Record<string, string>> = {
   D274: "Large Parquet row groups preview fewer columns or none",
   U109: "The object tree is not paged, so an account with thousands of buckets lists them in one folder",
   // U110 ("Databend declares a User placeholder the dialog never draws") was settled by SF-039 and deleted.
-  B104: "S3-compatible object storage has no agent execution and no MCP surface",
+  B104: "S3's agent reads are metadata only, and it has no MCP surface",
 };
 
 describe("the backlog record of the S3 provider", () => {
@@ -1223,7 +1233,7 @@ describe("the backlog record of the S3 provider", () => {
     expect(b103).toBeGreaterThan(-1);
     expect(b104).toBeGreaterThan(b103);
     expect(AGENT_DOC).toContain(
-      "- **B104**: S3-compatible object storage is served by plan mode only: MCP is not offered for it (`MCP_EXPOSABLE.s3` is false), and its provider implements no `queryReadOnly`, so agent execution and MCP `run_read_query` refuse it, because no MCP surface that never returns a key is designed yet (`docs/providers/s3.md` section 3.6).",
+      "- **B104**: S3's `s3api` statement language reads metadata only, through six GET and HEAD reads alone, so no object key the request did not name, body, user metadata, tag, ETag, version id, owner, ACL, policy or endpoint reaches an agent answer, a bucket is counted whole and never by prefix, and data analysis, query optimization and database assessment are not offered; MCP is not offered for it (`MCP_EXPOSABLE.s3` is false) and it has no MCP statement tool (`MCP_STATEMENT_READ.s3` is false), so MCP `run_read_query` refuses it, because no MCP surface that lists buckets but never returns an object key is designed yet (`docs/providers/s3.md` sections 3.6 and 15).",
     );
   });
 });

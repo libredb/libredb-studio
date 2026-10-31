@@ -13,6 +13,7 @@ import { etcdctlRowCapAdvice, fingerprintEtcdctl } from "@/lib/agent/languages/e
 import { fingerprintOxiacli, oxiacliRowCapAdvice } from "@/lib/agent/languages/oxiacli/adapter";
 import { fingerprintRabbitread, rabbitreadRowCapAdvice } from "@/lib/agent/languages/rabbitread/adapter";
 import { fingerprintKafkaread, kafkareadRowCapAdvice } from "@/lib/agent/languages/kafkaread/adapter";
+import { fingerprintS3api, s3apiRowCapAdvice } from "@/lib/agent/languages/s3api/adapter";
 import { languageServer, languageServerPack } from "@/lib/agent/languages/server";
 import {
   admitLibredbkvStatement,
@@ -78,6 +79,12 @@ import {
   kafkareadAgentReadInput,
 } from "@/lib/db/operations/kafkaread-admission";
 import { KAFKA_AGENT_SENTENCES } from "@/lib/db/providers/stream/kafka/agent-statement";
+import {
+  admitS3apiStatement,
+  S3API_AGENT_MAX_STATEMENT_CHARS,
+  s3apiAgentReadInput,
+} from "@/lib/db/operations/s3api-admission";
+import { S3_AGENT_SENTENCES } from "@/lib/db/providers/objectstore/s3/agent-statement";
 import { INFLUXQL_AGENT_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-statement";
 import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 
@@ -1112,5 +1119,72 @@ describe("the kafkaread language's server adapter and admission", () => {
   test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
     expect(Object.keys(AGENT_WORKFLOW_VARIANTS.kafkaread).sort()).toEqual(["investigation", "operations"]);
     expect(AGENT_WORKFLOW_VARIANTS.kafkaread.investigation?.canAutoExecute).toBe(false);
+  });
+});
+
+describe("the s3api language's server adapter and admission", () => {
+  const READ = "aws s3api head-object --bucket sales --key 2026/orders.csv";
+
+  test("the fingerprint is the plan the reader sends, so one read written two ways is one identity", () => {
+    const one = fingerprintS3api(READ);
+    expect(fingerprintS3api("s3api head-object --key=2026/orders.csv --bucket=sales")).toBe(one);
+    expect(fingerprintS3api("aws s3api head-object --bucket sales --key 2026/other.csv")).not.toBe(one);
+    expect(fingerprintS3api("aws s3api head-bucket --bucket sales")).not.toBe(one);
+    expect(fingerprintS3api("aws s3 ls s3://sales --recursive --summarize")).toBe(
+      fingerprintS3api("aws s3 ls s3://sales/ --summarize --recursive"),
+    );
+  });
+
+  test("the fingerprint is total: a refused command is identified by its raw text, so it is refused again", () => {
+    const raw = "aws s3api list-objects-v2 --bucket sales";
+    expect(fingerprintS3api(raw)).toBe(fingerprintS3api(raw));
+    expect(fingerprintS3api(raw)).toMatch(/^[0-9a-f]{64}$/);
+    expect(fingerprintS3api(`${raw} `)).not.toBe(fingerprintS3api(raw));
+  });
+
+  test("every read answers one row but the bucket listing, and the advice offers no narrower count", () => {
+    expect(AGENT_LANGUAGE_COPY.s3api.adviceKeys).toEqual([]);
+    expect(s3apiRowCapAdvice(READ, "2")).toBe(
+      "Ask for at most 2 rows: aws s3api list-buckets answers one row per bucket and every other read one row, and a bucket's summary counts it only when it holds at most 2 objects; a count over a prefix is not one of agent mode's reads, since it would reveal key names.",
+    );
+    expect(languageServer("s3api").shapeAdvice).toContain("a valid AWS CLI command");
+  });
+
+  test("the admission is the provider's reader, plus a length the agent's contract names", () => {
+    expect(admitS3apiStatement(READ)).toBeNull();
+    expect(admitS3apiStatement("")).toEqual({ code: "request", message: S3_AGENT_SENTENCES.empty });
+    expect(admitS3apiStatement("aws s3api list-object-versions --bucket sales")).toEqual({
+      code: "metadata-only",
+      message: S3_AGENT_SENTENCES.metadataOnly,
+    });
+    const long = `aws s3api head-object --bucket sales --key ${"k".repeat(S3API_AGENT_MAX_STATEMENT_CHARS)}`;
+    expect(admitS3apiStatement(long)).toEqual({
+      code: "agent-too-large",
+      message: `The command is longer than ${S3API_AGENT_MAX_STATEMENT_CHARS} characters, the most an agent read takes: shorten it. Nothing was sent.`,
+    });
+    expect(languageServer("s3api").admit?.(READ)).toBeNull();
+  });
+
+  test("an ungrounded run is sent to a read it holds, and plan mode is told none of the reader's rules", () => {
+    const ungrounded = languageServerPack("s3api").grounding.ungrounded;
+    expect(ungrounded?.("The capture failed.", { singular: "bucket", plural: "buckets" })).toBe(
+      "The capture failed.\nSo nothing about this store has been established for you: not one bucket name, and no object key will be, since keys are withheld from agent mode. Read what you need with run_read_query, starting with aws s3api list-buckets.",
+    );
+    expect(languageServerPack("s3api").grounding.planningRules).toBeUndefined();
+    expect(languageServerPack("s3api").grounding.omissionAdvice).toContain("no object key is listed");
+  });
+
+  test("the descriptor's input is strict, carries the command, and refuses what the admission refuses", () => {
+    expect(s3apiAgentReadInput.safeParse({ statement: READ }).success).toBe(true);
+    expect(s3apiAgentReadInput.safeParse({ statement: READ, sql: "x" }).success).toBe(false);
+    const refused = s3apiAgentReadInput.safeParse({ statement: "aws s3api get-object-tagging --bucket a --key b" });
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues[0]?.path).toEqual(["statement"]);
+    expect(refused.error?.issues[0]?.message).toStartWith("That is not one of agent mode's reads");
+  });
+
+  test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
+    expect(Object.keys(AGENT_WORKFLOW_VARIANTS.s3api).sort()).toEqual(["investigation", "operations"]);
+    expect(AGENT_WORKFLOW_VARIANTS.s3api.investigation?.canAutoExecute).toBe(false);
   });
 });

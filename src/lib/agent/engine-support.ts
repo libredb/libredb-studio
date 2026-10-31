@@ -131,6 +131,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "oxia",
   "rabbitmq",
   "kafka",
+  "s3",
 ];
 
 /**

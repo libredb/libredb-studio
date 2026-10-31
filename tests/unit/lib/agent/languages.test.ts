@@ -131,6 +131,7 @@ const LANGUAGE_IDS: Readonly<Record<AgentStatementLanguageId, true>> = {
   oxiacli: true,
   rabbitread: true,
   kafkaread: true,
+  s3api: true,
 };
 
 describe("the server packs", () => {
@@ -270,6 +271,7 @@ describe("the language packs", () => {
       "oxiacli",
       "rabbitread",
       "kafkaread",
+      "s3api",
     ]);
     expect(Object.isFrozen(LANGUAGE_TOOL_ARMS)).toBe(true);
   });
@@ -423,6 +425,7 @@ describe("the prompt tables the packs hold", () => {
       "oxiacli",
       "rabbitread",
       "kafkaread",
+      "s3api",
     ]);
     expect(Object.isFrozen(WORKFLOW_TOOL_RULES)).toBe(true);
     for (const id of ids) {
@@ -529,6 +532,7 @@ describe("the client packs", () => {
         "oxiacli",
         "rabbitread",
         "kafkaread",
+        "s3api",
       ]);
     }
   });
@@ -551,6 +555,7 @@ describe("the client packs", () => {
       oxiacli: null,
       rabbitread: null,
       kafkaread: null,
+      s3api: null,
     });
   });
 

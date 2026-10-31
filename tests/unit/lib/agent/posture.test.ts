@@ -376,6 +376,26 @@ describe("the posture on Apache Kafka", () => {
   });
 });
 
+describe("the posture on S3-compatible object storage", () => {
+  const posture = agentPosture({
+    mode: "agent",
+    engine: "s3",
+    engineLabel: "S3-compatible object storage",
+    handover: false,
+  });
+
+  test("names exactly what the agent reads: bucket metadata, totals and named objects, never a key or a value", () => {
+    expect(posture.qualifier).toBe(
+      `metadata only, ${STATEMENT_BUDGETS.maxResultRows} rows and ${STATEMENT_BUDGETS.statementTimeoutMs / 1000} s per read, over a client that holds only GET and HEAD reads of bucket metadata`,
+    );
+    expect(posture.body).toContain(
+      "never an object key it was not given, a body, user metadata, a tag, an ETag, a version id, an owner, an ACL, a policy or the endpoint",
+    );
+    expect(posture.body).toContain("A bucket is counted whole and never by prefix");
+    expect(posture.body).not.toMatch(/lists keys|previews|object contents are shown/);
+  });
+});
+
 describe("autoExecuteTerms", () => {
   // No default: a caller that names no language would be shown SQL's terms on whatever engine it is on, SQL's
   // read-only session included, on an engine that has none.

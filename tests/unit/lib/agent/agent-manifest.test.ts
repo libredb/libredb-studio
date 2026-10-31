@@ -163,6 +163,7 @@ describe("the plan-estimate operation of each language", () => {
       oxiacli: null,
       rabbitread: null,
       kafkaread: null,
+      s3api: null,
     });
     expect(Object.isFrozen(AGENT_PLAN_ESTIMATE_OPERATION)).toBe(true);
   });

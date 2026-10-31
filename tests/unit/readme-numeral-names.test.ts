@@ -27,6 +27,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
 import { EXTERNAL_DATABASE_TYPES } from "@/lib/db/compatibility";
 
@@ -67,10 +68,11 @@ const namedIn = (line: string): readonly string[] => ENGINE_NAMES.filter((name) 
 /**
  * EVERY list that claims the fleet, not only the longest one.
  *
- * MEASURED, and the threshold is the measurement: across the nine files, a line names either at most
- * a handful of engines or at least 28 of the 36, with nothing in between. So 28 is the line between
- * "a sentence that mentions some engines" and "a list that claims the fleet", and every list above it
- * has to name all of them.
+ * MEASURED first, at 36 engines: a line named either at most a handful of engines or at least 28 of
+ * them, with nothing in between, so 28 was the line between "a sentence that mentions some engines"
+ * and "a list that claims the fleet". The agent-mode sentence has since grown into that gap, since it
+ * names every engine agent mode executes on, so the line is now one past that list's own length: a
+ * list naming more engines than agent mode executes on claims the fleet, and has to name all of them.
  *
  * The first design took only the LONGEST list per file, and a planted violation showed why that is
  * wrong: removing one name from one list of a file that has two left the suite green, because the
@@ -80,7 +82,7 @@ const namedIn = (line: string): readonly string[] => ENGINE_NAMES.filter((name) 
  * is why README.md's SSL/TLS sentence passes: its list leaves OPC UA out, and the clause after it says
  * why, so the line as a whole names every engine and the reader is not misled.
  */
-const FLEET_LIST_THRESHOLD = 28;
+const FLEET_LIST_THRESHOLD = AGENT_EXECUTION_ENGINES.length + 1;
 
 const fleetLists = (text: string): readonly string[] =>
   text.split("\n").filter((line) => namedIn(line).length >= FLEET_LIST_THRESHOLD);

@@ -123,6 +123,7 @@ const HANDOVER_CHIPS: Readonly<Record<AgentStatementLanguageId, readonly Handove
   oxiacli: [],
   rabbitread: [],
   kafkaread: [],
+  s3api: [],
 };
 
 export function ConsentCard({

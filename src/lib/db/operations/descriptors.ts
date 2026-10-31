@@ -36,6 +36,7 @@ import { etcdctlAgentReadInput } from "./etcdctl-admission";
 import { oxiacliAgentReadInput } from "./oxiacli-admission";
 import { kafkareadAgentReadInput } from "./kafkaread-admission";
 import { rabbitreadAgentReadInput } from "./rabbitread-admission";
+import { s3apiAgentReadInput } from "./s3api-admission";
 import { weaviateapiAgentReadInput } from "./weaviateapi-admission";
 import { agentPlanExecutionSqlInput, agentQueryReadSqlInput, agentReadSqlInput } from "./statement-guard";
 import type { RegistrableOperationDescriptor } from "./types";
@@ -700,6 +701,41 @@ const kafkareadQueryReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+const S3API_READ_BOUNDARY =
+  "S3: the provider's structural closed table, read with the console's own parser: one read of a closed table of six " +
+  "metadata reads (the bucket listing, one bucket's head, location and versioning, one whole bucket's object count " +
+  "and total size, and one object's head for the exact key the command names), sent through an agent client that " +
+  "holds those six reads alone over a byte transport that sends GET and HEAD only, so no object GET, ranged read, " +
+  "listing by prefix or delimiter, version listing, tagging, policy or ACL read, write, delete or presigned URL can be " +
+  "sent, and neither HEAD is followed by a GET. " +
+  "Object keys, bodies, user metadata, tags, ETags, version ids, owners, ACLs, policies and the endpoint are withheld: " +
+  "every answer is projected to names, counts and flags (agent-metadata-read.ts), a bucket is counted whole and never " +
+  "by prefix, a listing or count past the row budget is refused, and a result past the byte budget is refused, never " +
+  "truncated.";
+
+/**
+ * One S3 metadata read the model wrote, on an `s3` connection.
+ *
+ * R1 on a structural boundary: the agent's client holds six GET and HEAD reads alone. Its own id, and not a widened
+ * `sql.query.read`, so the SQL contract and its audit action stay exactly what they were.
+ */
+const s3apiQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "s3api.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: s3apiAgentReadInput,
+  verification: {
+    reviewedBy: "S3 agent execution design review",
+    boundary: S3API_READ_BOUNDARY,
+    verifiedOn: "2026-10-31",
+  },
+};
+
 const RABBITREAD_READ_BOUNDARY =
   "RabbitMQ: the provider's structural closed table, read with the editor's own read request parser: one read of one " +
   "stream, its AMQP 0-9-1 client holding encoders for the handshake and channel open, basic.qos, basic.consume, " +
@@ -984,6 +1020,7 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   oxiacliQueryReadDescriptor,
   rabbitreadQueryReadDescriptor,
   kafkareadQueryReadDescriptor,
+  s3apiQueryReadDescriptor,
 ]);
 
 /**
