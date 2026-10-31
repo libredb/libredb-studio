@@ -817,7 +817,7 @@ On every handle opened for an agent-mode profile the transport is wrapped by the
 Measured raw, a target with a token parameter carries it in its scrape URL, its global URL, its last error and as `__param_token`, and a target whose address holds userinfo carries it in `__address__` and `instance` (and, on VictoriaMetrics, in its scrape URL) (`rawTargets`); the agent's target names carry neither (`surfaces.targets`).
 The projection runs on the decoded answer, so a target's path segment, its scrape URL and a digest of its labels, is built from the projected answer and carries nothing withheld, not even as a digest.
 A PromQL answer's labels are projected the same way, so `up` names a target whose address holds userinfo by its host and port.
-What the projection cannot reach is a label value an expression rewrites (`label_replace`) so that it no longer reads as a URL or an address, and a matcher that selects on a stored value; both stay with what the server stores, a residual recorded in [B161](../BACKLOG.md#b161-prometheuss-agent-reads-withhold-the-flags-and-url-secrets-and-it-has-no-mcp-statement-read).
+The projection goes by a value's shape, so what it cannot reach is a label value an expression rewrites (`label_replace`) so that it no longer reads as a URL or an address, and a matcher that selects on a stored value; both stay with what the server stores, the posture and the grounding name both, and the residual is recorded in [B161](../BACKLOG.md#b161-prometheuss-agent-reads-withhold-the-flags-and-url-secrets-and-it-has-no-mcp-statement-read).
 
 ### 14.4 Values, and what each path reads
 

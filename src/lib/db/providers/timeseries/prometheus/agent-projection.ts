@@ -49,6 +49,9 @@ export const PROMETHEUS_AGENT_PROJECTION = Object.freeze({
   flags:
     "Agent mode does not read the server's command-line flags: they carry file paths, listen addresses, URLs and local configuration, so they are withheld on every agent-mode reading. This is Studio's choice, not the server's answer.",
   urls: "Every URL a target, a rule, an alert or a PromQL answer's labels carry is kept to its scheme, host, port and path in agent mode, because a scrape URL's query string can carry a token and a URL's userinfo a user name and password; an address written with userinfo keeps its host, port and path, and every scrape parameter of a target is withheld.",
+  /** What the projection cannot reach, named for the model beside what it withholds (B161). */
+  residual:
+    "The projection goes by a value's shape: a label value an expression rewrites with label_replace so that it no longer reads as a URL or an address is answered as rewritten, and a label matcher selects on the value the server stores, so never use either to read a value the projection withholds.",
 });
 
 /** Where a URL or an address inside free text ends: whitespace, and the characters RFC 3986 never lets one hold. */

@@ -11,7 +11,7 @@ import { PROMQL_ADAPTER } from "./adapter";
 import { PROMQL_TOOL_OVERRIDES } from "./definitions";
 
 /** What is withheld and why, the same words in the rule, the grounding advice and the ungrounded note. */
-const WITHHELD = `${PROMETHEUS_AGENT_PROJECTION.flags} ${PROMETHEUS_AGENT_PROJECTION.urls}`;
+const WITHHELD = `${PROMETHEUS_AGENT_PROJECTION.flags} ${PROMETHEUS_AGENT_PROJECTION.urls} ${PROMETHEUS_AGENT_PROJECTION.residual}`;
 
 /** How a read is written, and how it stays inside the row budget. */
 const PROMQL_READ_RULE =

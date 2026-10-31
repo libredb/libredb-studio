@@ -23,7 +23,7 @@ import { PROMETHEUS_AGENT_PROJECTION } from "@/lib/db/providers/timeseries/prome
 import { PROMETHEUS_AGENT_READS } from "@/lib/db/providers/timeseries/prometheus/agent-statement";
 
 const BUDGETS = AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets;
-const WITHHELD = `${PROMETHEUS_AGENT_PROJECTION.flags} ${PROMETHEUS_AGENT_PROJECTION.urls}`;
+const WITHHELD = `${PROMETHEUS_AGENT_PROJECTION.flags} ${PROMETHEUS_AGENT_PROJECTION.urls} ${PROMETHEUS_AGENT_PROJECTION.residual}`;
 
 describe("the server adapter", () => {
   test("the fingerprint is the expression the reader admits, outer whitespace aside", () => {
@@ -102,6 +102,14 @@ describe("the prompt texts", () => {
     expect(grounding.planningRules).toBeUndefined();
   });
 
+  test("the withheld text says the projection goes by shape and names the two reads it cannot reach", () => {
+    expect(PROMETHEUS_AGENT_PROJECTION.residual).toStartWith("The projection goes by a value's shape");
+    expect(PROMETHEUS_AGENT_PROJECTION.residual).toContain("label_replace");
+    expect(PROMETHEUS_AGENT_PROJECTION.residual).toContain("a label matcher selects on the value the server stores");
+    expect(WORKFLOW_TOOL_RULES.promql.investigation).toContain(PROMETHEUS_AGENT_PROJECTION.residual);
+    expect(languageServerPack("promql").grounding.omissionAdvice).toContain(PROMETHEUS_AGENT_PROJECTION.residual);
+  });
+
   test("the investigation, the data analysis and the operations workflow are offered, and nothing auto-executes", () => {
     expect(Object.keys(AGENT_WORKFLOW_VARIANTS.promql).sort()).toEqual([
       "data-analysis",
@@ -128,6 +136,9 @@ describe("the posture on Prometheus", () => {
     expect(posture.body).toContain("Withheld are the server's command-line flags");
     expect(posture.body).toContain("no admin, remote-write, OTLP or lifecycle call can be sent");
     expect(posture.body).not.toMatch(/metadata only|annotation|scrape health/);
+    expect(posture.body).toContain(
+      "The projection goes by a value's shape, so two reads reach what the server stores: a label value a read rewrites with label_replace so that it no longer reads as a URL or an address is answered as the read wrote it, and a label matcher selects on the value the server stores, so a read can test a value the projection withholds.",
+    );
     const widened = agentPosture({ mode: "agent", engine: "prometheus", engineLabel: "Prometheus", handover: true });
     expect(widened).toEqual(posture);
     expect(PROMQL_CLIENT_PACK.posture.handoverTerms()).toContain("the hand-over is not offered on this engine");
