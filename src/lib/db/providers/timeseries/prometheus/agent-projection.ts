@@ -216,9 +216,7 @@ export function projectRuleGroup(group: PrometheusRuleGroup): PrometheusRuleGrou
  * `instance` built from an address with userinfo keeps its host and port, and a label holding a URL its scheme, host,
  * port and path. A scalar and a string carry no label.
  */
-export function projectQueryAnswer(
-  answer: PrometheusAnswer<PrometheusQueryData>,
-): PrometheusAnswer<PrometheusQueryData> {
+function projectQueryAnswer(answer: PrometheusAnswer<PrometheusQueryData>): PrometheusAnswer<PrometheusQueryData> {
   const data = answer.value;
   if (data.shape !== "vector" && data.shape !== "matrix") return answer;
   const series = data.series.map((entry) => ({ ...entry, labels: projectLabels(entry.labels) }));
