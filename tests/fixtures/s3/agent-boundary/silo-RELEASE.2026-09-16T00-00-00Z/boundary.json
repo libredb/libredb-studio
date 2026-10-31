@@ -1,0 +1,802 @@
+{
+  "server": "silo",
+  "image": "pgsty/silo:RELEASE.2026-09-16T00-00-00Z@sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46",
+  "date": "2026-10-31",
+  "region": "us-east-1",
+  "reader": "a key made for the run, holding the read policy beside run.sh",
+  "root": "the root key the server was started with, made for the run",
+  "seeded": {
+    "buckets": [
+      "agent-demo",
+      "agent-versions"
+    ],
+    "namedKey": "named/report.csv",
+    "unnamedKeys": 3,
+    "tagged": true,
+    "markers": [
+      "body",
+      "metadata",
+      "tag",
+      "unnamedKey"
+    ],
+    "etags": 6,
+    "versionIds": 2
+  },
+  "snapshot": {
+    "seeded": 6,
+    "agentLeftUnchanged": true,
+    "rawCallsChangedIt": true,
+    "objectsAfterRaw": 6
+  },
+  "agent": [
+    {
+      "statement": "aws s3api list-buckets",
+      "as": "reader",
+      "requests": [
+        "GET /?max-buckets=10000"
+      ],
+      "fields": [
+        "bucket",
+        "created"
+      ],
+      "rows": [
+        {
+          "bucket": "agent-demo",
+          "created": "2026-10-31T03:20:47.506Z"
+        },
+        {
+          "bucket": "agent-versions",
+          "created": "2026-10-31T03:20:47.511Z"
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api head-bucket --bucket agent-demo",
+      "as": "reader",
+      "requests": [
+        "HEAD /agent-demo"
+      ],
+      "fields": [
+        "bucket",
+        "exists",
+        "region"
+      ],
+      "rows": [
+        {
+          "bucket": "agent-demo",
+          "exists": true,
+          "region": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api head-bucket --bucket agent-missing",
+      "as": "reader",
+      "requests": [
+        "HEAD /agent-missing"
+      ],
+      "fields": [
+        "bucket",
+        "exists",
+        "region"
+      ],
+      "rows": [
+        {
+          "bucket": "agent-missing",
+          "exists": false,
+          "region": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api get-bucket-location --bucket agent-demo",
+      "as": "reader",
+      "requests": [
+        "GET /agent-demo?location="
+      ],
+      "fields": [
+        "bucket",
+        "location"
+      ],
+      "rows": [
+        {
+          "bucket": "agent-demo",
+          "location": "us-east-1"
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api get-bucket-versioning --bucket agent-demo",
+      "as": "reader",
+      "requests": [
+        "GET /agent-demo?versioning="
+      ],
+      "fields": [
+        "bucket",
+        "status",
+        "mfa_delete"
+      ],
+      "rows": [
+        {
+          "bucket": "agent-demo",
+          "status": "never enabled",
+          "mfa_delete": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api get-bucket-versioning --bucket agent-versions",
+      "as": "reader",
+      "requests": [
+        "GET /agent-versions?versioning="
+      ],
+      "fields": [
+        "bucket",
+        "status",
+        "mfa_delete"
+      ],
+      "rows": [
+        {
+          "bucket": "agent-versions",
+          "status": "Enabled",
+          "mfa_delete": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3 ls s3://agent-demo --recursive --summarize",
+      "as": "reader",
+      "requests": [
+        "GET /agent-demo?encoding-type=url&list-type=2&max-keys=200&prefix="
+      ],
+      "fields": [
+        "bucket",
+        "objects",
+        "total_size_bytes"
+      ],
+      "rows": [
+        {
+          "bucket": "agent-demo",
+          "objects": 4,
+          "total_size_bytes": 104
+        }
+      ]
+    },
+    {
+      "statement": "aws s3 ls s3://agent-versions/ --recursive --summarize",
+      "as": "reader",
+      "requests": [
+        "GET /agent-versions?encoding-type=url&list-type=2&max-keys=200&prefix="
+      ],
+      "fields": [
+        "bucket",
+        "objects",
+        "total_size_bytes"
+      ],
+      "rows": [
+        {
+          "bucket": "agent-versions",
+          "objects": 1,
+          "total_size_bytes": 26
+        }
+      ]
+    },
+    {
+      "statement": "aws s3 ls s3://agent-missing --recursive --summarize",
+      "as": "reader",
+      "requests": [
+        "GET /agent-missing?encoding-type=url&list-type=2&max-keys=200&prefix="
+      ],
+      "refused": "The bucket does not exist, or this connection's key may not see it. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api head-object --bucket agent-demo --key named/report.csv",
+      "as": "reader",
+      "requests": [
+        "HEAD /agent-demo/named/report.csv"
+      ],
+      "fields": [
+        "bucket",
+        "exists",
+        "size_bytes",
+        "last_modified",
+        "storage_class"
+      ],
+      "rows": [
+        {
+          "bucket": "agent-demo",
+          "exists": true,
+          "size_bytes": 26,
+          "last_modified": "2026-10-31T03:20:47.000Z",
+          "storage_class": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api head-object --bucket agent-versions --key named/report.csv",
+      "as": "reader",
+      "requests": [
+        "HEAD /agent-versions/named/report.csv"
+      ],
+      "fields": [
+        "bucket",
+        "exists",
+        "size_bytes",
+        "last_modified",
+        "storage_class"
+      ],
+      "rows": [
+        {
+          "bucket": "agent-versions",
+          "exists": true,
+          "size_bytes": 26,
+          "last_modified": "2026-10-31T03:20:47.000Z",
+          "storage_class": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api head-object --bucket agent-demo --key named/absent.csv",
+      "as": "reader",
+      "requests": [
+        "HEAD /agent-demo/named/absent.csv"
+      ],
+      "fields": [
+        "bucket",
+        "exists",
+        "size_bytes",
+        "last_modified",
+        "storage_class"
+      ],
+      "rows": [
+        {
+          "bucket": "agent-demo",
+          "exists": false,
+          "size_bytes": null,
+          "last_modified": null,
+          "storage_class": null
+        }
+      ],
+      "warnings": [
+        "A HEAD that finds nothing does not say whether the key or the bucket is missing: read the bucket with aws s3api head-bucket to tell them apart."
+      ]
+    },
+    {
+      "statement": "aws s3api head-object --bucket agent-missing --key named/report.csv",
+      "as": "reader",
+      "requests": [
+        "HEAD /agent-missing/named/report.csv"
+      ],
+      "refused": "The bucket does not exist, or this connection's key may not see it. The server's own words are not passed on to agent mode, since an S3 error can repeat a key or a bucket the read did not name."
+    },
+    {
+      "statement": "aws s3api list-buckets",
+      "as": "root",
+      "requests": [
+        "GET /?max-buckets=10000"
+      ],
+      "fields": [
+        "bucket",
+        "created"
+      ],
+      "rows": [
+        {
+          "bucket": "agent-demo",
+          "created": "2026-10-31T03:20:47.506Z"
+        },
+        {
+          "bucket": "agent-versions",
+          "created": "2026-10-31T03:20:47.511Z"
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api head-bucket --bucket agent-demo",
+      "as": "root",
+      "requests": [
+        "HEAD /agent-demo"
+      ],
+      "fields": [
+        "bucket",
+        "exists",
+        "region"
+      ],
+      "rows": [
+        {
+          "bucket": "agent-demo",
+          "exists": true,
+          "region": null
+        }
+      ]
+    },
+    {
+      "statement": "aws s3 ls s3://agent-demo --recursive --summarize",
+      "as": "reader",
+      "requests": [
+        "GET /agent-demo?encoding-type=url&list-type=2&max-keys=2&prefix="
+      ],
+      "refused": "Read-only execution exceeded the row budget: the bucket holds more than 2 objects, and Studio counts a bucket's objects only up to the row budget, refusing a larger count rather than cutting it. A count over a prefix is not one of agent mode's reads, since it would reveal key names."
+    },
+    {
+      "statement": "aws s3 ls s3://agent-demo --recursive --summarize",
+      "as": "reader",
+      "requests": [
+        "GET /agent-demo?encoding-type=url&list-type=2&max-keys=5&prefix="
+      ],
+      "fields": [
+        "bucket",
+        "objects",
+        "total_size_bytes"
+      ],
+      "rows": [
+        {
+          "bucket": "agent-demo",
+          "objects": 4,
+          "total_size_bytes": 104
+        }
+      ]
+    },
+    {
+      "statement": "aws s3api list-buckets",
+      "as": "reader",
+      "pinned": "agent-demo",
+      "requests": [],
+      "fields": [
+        "bucket",
+        "created"
+      ],
+      "rows": [
+        {
+          "bucket": "agent-demo",
+          "created": null
+        }
+      ],
+      "warnings": [
+        "This connection is pinned to one bucket, so no bucket listing was sent: the pinned bucket is answered, and its creation time is not read."
+      ]
+    },
+    {
+      "statement": "aws s3api head-bucket --bucket agent-versions",
+      "as": "reader",
+      "pinned": "agent-demo",
+      "requests": [],
+      "refused": "The command names a bucket other than this connection's agent-demo: the Bucket field on the connection decides which bucket Studio reads. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
+    },
+    {
+      "statement": "aws s3api list-objects-v2 --bucket agent-demo",
+      "as": "reader",
+      "requests": [],
+      "refused": "That is not one of agent mode's reads: object keys, bodies, user metadata, tags, ETags, version ids, owners, ACLs, policies and endpoints are withheld, so nothing that lists keys or versions, reads an object or its tags, or writes is sent. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
+    },
+    {
+      "statement": "aws s3api list-objects-v2 --bucket agent-demo",
+      "as": "root",
+      "requests": [],
+      "refused": "That is not one of agent mode's reads: object keys, bodies, user metadata, tags, ETags, version ids, owners, ACLs, policies and endpoints are withheld, so nothing that lists keys or versions, reads an object or its tags, or writes is sent. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
+    },
+    {
+      "statement": "aws s3api list-objects-v2 --bucket agent-demo --prefix agent",
+      "as": "reader",
+      "requests": [],
+      "refused": "A listing or count over a prefix, a delimiter level, a name prefix or a start position is withheld, since narrower and narrower counts would reveal key names: agent mode counts only a whole bucket, and lists every bucket name. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
+    },
+    {
+      "statement": "aws s3api list-objects-v2 --bucket agent-demo --prefix agent",
+      "as": "root",
+      "requests": [],
+      "refused": "A listing or count over a prefix, a delimiter level, a name prefix or a start position is withheld, since narrower and narrower counts would reveal key names: agent mode counts only a whole bucket, and lists every bucket name. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
+    },
+    {
+      "statement": "aws s3api list-object-versions --bucket agent-versions",
+      "as": "reader",
+      "requests": [],
+      "refused": "That is not one of agent mode's reads: object keys, bodies, user metadata, tags, ETags, version ids, owners, ACLs, policies and endpoints are withheld, so nothing that lists keys or versions, reads an object or its tags, or writes is sent. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
+    },
+    {
+      "statement": "aws s3api list-object-versions --bucket agent-versions",
+      "as": "root",
+      "requests": [],
+      "refused": "That is not one of agent mode's reads: object keys, bodies, user metadata, tags, ETags, version ids, owners, ACLs, policies and endpoints are withheld, so nothing that lists keys or versions, reads an object or its tags, or writes is sent. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
+    },
+    {
+      "statement": "aws s3api get-object-tagging --bucket agent-demo --key named/report.csv",
+      "as": "reader",
+      "requests": [],
+      "refused": "That is not one of agent mode's reads: object keys, bodies, user metadata, tags, ETags, version ids, owners, ACLs, policies and endpoints are withheld, so nothing that lists keys or versions, reads an object or its tags, or writes is sent. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
+    },
+    {
+      "statement": "aws s3api get-object-tagging --bucket agent-demo --key named/report.csv",
+      "as": "root",
+      "requests": [],
+      "refused": "That is not one of agent mode's reads: object keys, bodies, user metadata, tags, ETags, version ids, owners, ACLs, policies and endpoints are withheld, so nothing that lists keys or versions, reads an object or its tags, or writes is sent. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
+    },
+    {
+      "statement": "preview s3://agent-demo/named/report.csv",
+      "as": "reader",
+      "requests": [],
+      "refused": "That is not one of agent mode's reads: object keys, bodies, user metadata, tags, ETags, version ids, owners, ACLs, policies and endpoints are withheld, so nothing that lists keys or versions, reads an object or its tags, or writes is sent. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
+    },
+    {
+      "statement": "preview s3://agent-demo/named/report.csv",
+      "as": "root",
+      "requests": [],
+      "refused": "That is not one of agent mode's reads: object keys, bodies, user metadata, tags, ETags, version ids, owners, ACLs, policies and endpoints are withheld, so nothing that lists keys or versions, reads an object or its tags, or writes is sent. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
+    },
+    {
+      "statement": "aws s3api get-object --bucket agent-demo --key named/report.csv out.csv",
+      "as": "reader",
+      "requests": [],
+      "refused": "That is not one of agent mode's reads: object keys, bodies, user metadata, tags, ETags, version ids, owners, ACLs, policies and endpoints are withheld, so nothing that lists keys or versions, reads an object or its tags, or writes is sent. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
+    },
+    {
+      "statement": "aws s3api get-object --bucket agent-demo --key named/report.csv out.csv",
+      "as": "root",
+      "requests": [],
+      "refused": "That is not one of agent mode's reads: object keys, bodies, user metadata, tags, ETags, version ids, owners, ACLs, policies and endpoints are withheld, so nothing that lists keys or versions, reads an object or its tags, or writes is sent. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
+    },
+    {
+      "statement": "aws s3 ls s3://agent-demo/agent --recursive --summarize",
+      "as": "reader",
+      "requests": [],
+      "refused": "A listing or count over a prefix, a delimiter level, a name prefix or a start position is withheld, since narrower and narrower counts would reveal key names: agent mode counts only a whole bucket, and lists every bucket name. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
+    },
+    {
+      "statement": "aws s3 ls s3://agent-demo/agent --recursive --summarize",
+      "as": "root",
+      "requests": [],
+      "refused": "A listing or count over a prefix, a delimiter level, a name prefix or a start position is withheld, since narrower and narrower counts would reveal key names: agent mode counts only a whole bucket, and lists every bucket name. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
+    },
+    {
+      "statement": "aws s3api put-object --bucket agent-demo --key raw/agent.txt",
+      "as": "reader",
+      "requests": [],
+      "refused": "That is not one of agent mode's reads: object keys, bodies, user metadata, tags, ETags, version ids, owners, ACLs, policies and endpoints are withheld, so nothing that lists keys or versions, reads an object or its tags, or writes is sent. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
+    },
+    {
+      "statement": "aws s3api put-object --bucket agent-demo --key raw/agent.txt",
+      "as": "root",
+      "requests": [],
+      "refused": "That is not one of agent mode's reads: object keys, bodies, user metadata, tags, ETags, version ids, owners, ACLs, policies and endpoints are withheld, so nothing that lists keys or versions, reads an object or its tags, or writes is sent. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
+    },
+    {
+      "statement": "aws s3api delete-object --bucket agent-demo --key named/report.csv",
+      "as": "reader",
+      "requests": [],
+      "refused": "That is not one of agent mode's reads: object keys, bodies, user metadata, tags, ETags, version ids, owners, ACLs, policies and endpoints are withheld, so nothing that lists keys or versions, reads an object or its tags, or writes is sent. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
+    },
+    {
+      "statement": "aws s3api delete-object --bucket agent-demo --key named/report.csv",
+      "as": "root",
+      "requests": [],
+      "refused": "That is not one of agent mode's reads: object keys, bodies, user metadata, tags, ETags, version ids, owners, ACLs, policies and endpoints are withheld, so nothing that lists keys or versions, reads an object or its tags, or writes is sent. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
+    },
+    {
+      "statement": "aws s3api head-object --bucket agent-demo --key named/report.csv --endpoint-url http://127.0.0.1:19310",
+      "as": "reader",
+      "requests": [],
+      "refused": "An agent read takes no flag but its --bucket and --key: the endpoint, region, output, paging and every other option are the connection's or Studio's, never the request's. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
+    },
+    {
+      "statement": "aws s3api head-object --bucket agent-demo --key named/report.csv --endpoint-url http://127.0.0.1:19310",
+      "as": "root",
+      "requests": [],
+      "refused": "An agent read takes no flag but its --bucket and --key: the endpoint, region, output, paging and every other option are the connection's or Studio's, never the request's. Agent mode on S3 reads metadata only, one command per read: aws s3api list-buckets for every bucket's name and creation time, aws s3api head-bucket, get-bucket-location or get-bucket-versioning --bucket BUCKET for one bucket, aws s3 ls s3://BUCKET --recursive --summarize for one whole bucket's object count and total size, never its keys, and aws s3api head-object --bucket BUCKET --key KEY for one object the request names in full, answered with its existence, size, last-modified time and storage class. Nothing was sent."
+    }
+  ],
+  "surfaces": [
+    {
+      "surface": "connect",
+      "requests": [
+        "GET /?max-buckets=10000"
+      ]
+    },
+    {
+      "surface": "countObjects",
+      "requests": [
+        "GET /?max-buckets=10000"
+      ],
+      "answer": {
+        "bucket": {
+          "count": 2
+        }
+      }
+    },
+    {
+      "surface": "listObjects bucket",
+      "requests": [
+        "GET /?max-buckets=10000"
+      ],
+      "answer": [
+        {
+          "path": [
+            "agent-demo"
+          ],
+          "name": "agent-demo",
+          "kind": "bucket",
+          "status": "created 2026-10-31"
+        },
+        {
+          "path": [
+            "agent-versions"
+          ],
+          "name": "agent-versions",
+          "kind": "bucket",
+          "status": "created 2026-10-31"
+        }
+      ]
+    },
+    {
+      "surface": "listObjects object",
+      "requests": [],
+      "refused": "Agent mode on S3 reads metadata only: bucket names, creation times, existence, regions, locations and versioning status, a whole bucket's object count and total size, and one named object's existence, size, last-modified time and storage class. Object keys count as stored values, since key paths name tenants and people, so no key is listed in agent mode. Count a bucket's objects with aws s3 ls s3://BUCKET --recursive --summarize through run_read_query."
+    },
+    {
+      "surface": "readObjectSource bucket",
+      "requests": [],
+      "refused": "Agent mode on S3 reads metadata only: bucket names, creation times, existence, regions, locations and versioning status, a whole bucket's object count and total size, and one named object's existence, size, last-modified time and storage class. An object's or a bucket's source holds the endpoint, the ETag, the version id, user metadata, tags and a preview of the content, which agent mode does not read."
+    },
+    {
+      "surface": "readObjectSource object",
+      "requests": [],
+      "refused": "Agent mode on S3 reads metadata only: bucket names, creation times, existence, regions, locations and versioning status, a whole bucket's object count and total size, and one named object's existence, size, last-modified time and storage class. An object's or a bucket's source holds the endpoint, the ETag, the version id, user metadata, tags and a preview of the content, which agent mode does not read."
+    },
+    {
+      "surface": "scanKeysPage",
+      "requests": [],
+      "refused": "Agent mode on S3 reads metadata only: bucket names, creation times, existence, regions, locations and versioning status, a whole bucket's object count and total size, and one named object's existence, size, last-modified time and storage class. Object keys count as stored values, since key paths name tenants and people, so no key is listed in agent mode. The Keys panel is not read on an agent-mode handle."
+    },
+    {
+      "surface": "query",
+      "requests": [],
+      "refused": "Agent mode on S3 reads metadata only: bucket names, creation times, existence, regions, locations and versioning status, a whole bucket's object count and total size, and one named object's existence, size, last-modified time and storage class. Object keys count as stored values, since key paths name tenants and people, so no key is listed in agent mode. The editor's console, which lists keys and previews objects, is refused on an agent-mode handle; agent reads go through queryReadOnly."
+    },
+    {
+      "surface": "getHealth",
+      "requests": [
+        "GET /?max-buckets=10000"
+      ],
+      "answer": {
+        "databaseSize": "Agent mode on S3 reads metadata only: bucket names, creation times, existence, regions, locations and versioning status, a whole bucket's object count and total size, and one named object's existence, size, last-modified time and storage class. S3 reports no size for the whole store, so none is reported; a bucket's total is read with run_read_query.",
+        "cacheHitRatio": "N/A",
+        "slowQueries": [],
+        "activeSessions": []
+      }
+    },
+    {
+      "surface": "getOverview",
+      "requests": [],
+      "refused": "Agent mode on S3 reads metadata only: bucket names, creation times, existence, regions, locations and versioning status, a whole bucket's object count and total size, and one named object's existence, size, last-modified time and storage class. S3 reports no server version, uptime or connection figures, so no overview reading is taken; this is not a reading of none."
+    },
+    {
+      "surface": "getStorageStats",
+      "requests": [],
+      "refused": "Agent mode on S3 reads metadata only: bucket names, creation times, existence, regions, locations and versioning status, a whole bucket's object count and total size, and one named object's existence, size, last-modified time and storage class. S3 reports no storage figure for the whole store, so no storage reading is taken; a bucket's total size is read with run_read_query."
+    },
+    {
+      "surface": "getTableStats",
+      "requests": [],
+      "refused": "Agent mode on S3 reads metadata only: bucket names, creation times, existence, regions, locations and versioning status, a whole bucket's object count and total size, and one named object's existence, size, last-modified time and storage class. S3 has no tables, so no table reading is taken; a bucket's object count is read with run_read_query."
+    },
+    {
+      "surface": "getSlowQueries",
+      "requests": [],
+      "refused": "Agent mode on S3 reads metadata only: bucket names, creation times, existence, regions, locations and versioning status, a whole bucket's object count and total size, and one named object's existence, size, last-modified time and storage class. S3 keeps no query log, so no slow-query reading is taken; this is not a reading of none."
+    },
+    {
+      "surface": "getActiveSessions",
+      "requests": [],
+      "refused": "Agent mode on S3 reads metadata only: bucket names, creation times, existence, regions, locations and versioning status, a whole bucket's object count and total size, and one named object's existence, size, last-modified time and storage class. S3 does not list client sessions, so no session reading is taken; this is not a reading of none."
+    }
+  ],
+  "raw": [
+    {
+      "call": "GetObject",
+      "as": "reader",
+      "status": 200,
+      "carried": [
+        "marker body",
+        "marker metadata",
+        "an ETag"
+      ]
+    },
+    {
+      "call": "GetObject ranged bytes=0-3",
+      "as": "reader",
+      "status": 206,
+      "carried": [
+        "marker metadata",
+        "an ETag"
+      ]
+    },
+    {
+      "call": "HeadObject (all headers)",
+      "as": "reader",
+      "status": 200,
+      "carried": [
+        "marker metadata",
+        "an ETag"
+      ]
+    },
+    {
+      "call": "ListObjectsV2",
+      "as": "reader",
+      "status": 200,
+      "carried": [
+        "marker unnamedKey",
+        "an ETag"
+      ]
+    },
+    {
+      "call": "ListObjectsV2 prefix",
+      "as": "reader",
+      "status": 200,
+      "carried": [
+        "marker unnamedKey",
+        "an ETag"
+      ]
+    },
+    {
+      "call": "ListObjectsV2 start-after",
+      "as": "reader",
+      "status": 200,
+      "carried": [
+        "marker unnamedKey",
+        "an ETag"
+      ]
+    },
+    {
+      "call": "ListObjectVersions",
+      "as": "reader",
+      "status": 200,
+      "carried": [
+        "an ETag",
+        "a version id"
+      ]
+    },
+    {
+      "call": "GetObjectTagging",
+      "as": "reader",
+      "status": 200,
+      "carried": [
+        "marker tag"
+      ]
+    },
+    {
+      "call": "GetBucketPolicy",
+      "as": "reader",
+      "status": 403,
+      "carried": []
+    },
+    {
+      "call": "GetBucketAcl",
+      "as": "reader",
+      "status": 403,
+      "carried": []
+    },
+    {
+      "call": "PutObject",
+      "as": "reader",
+      "status": 403
+    },
+    {
+      "call": "DeleteObject",
+      "as": "reader",
+      "status": 403
+    },
+    {
+      "call": "PutObjectTagging",
+      "as": "reader",
+      "status": 403
+    },
+    {
+      "call": "CreateBucket",
+      "as": "reader",
+      "status": 403
+    },
+    {
+      "call": "GetObject",
+      "as": "root",
+      "status": 200,
+      "carried": [
+        "marker body",
+        "marker metadata",
+        "an ETag"
+      ]
+    },
+    {
+      "call": "GetObject ranged bytes=0-3",
+      "as": "root",
+      "status": 206,
+      "carried": [
+        "marker metadata",
+        "an ETag"
+      ]
+    },
+    {
+      "call": "HeadObject (all headers)",
+      "as": "root",
+      "status": 200,
+      "carried": [
+        "marker metadata",
+        "an ETag"
+      ]
+    },
+    {
+      "call": "ListObjectsV2",
+      "as": "root",
+      "status": 200,
+      "carried": [
+        "marker unnamedKey",
+        "an ETag"
+      ]
+    },
+    {
+      "call": "ListObjectsV2 prefix",
+      "as": "root",
+      "status": 200,
+      "carried": [
+        "marker unnamedKey",
+        "an ETag"
+      ]
+    },
+    {
+      "call": "ListObjectsV2 start-after",
+      "as": "root",
+      "status": 200,
+      "carried": [
+        "marker unnamedKey",
+        "an ETag"
+      ]
+    },
+    {
+      "call": "ListObjectVersions",
+      "as": "root",
+      "status": 200,
+      "carried": [
+        "an ETag",
+        "a version id"
+      ]
+    },
+    {
+      "call": "GetObjectTagging",
+      "as": "root",
+      "status": 200,
+      "carried": [
+        "marker tag"
+      ]
+    },
+    {
+      "call": "GetBucketPolicy",
+      "as": "root",
+      "status": 404,
+      "carried": []
+    },
+    {
+      "call": "GetBucketAcl",
+      "as": "root",
+      "status": 200,
+      "carried": []
+    },
+    {
+      "call": "PutObject",
+      "as": "root",
+      "status": 200
+    },
+    {
+      "call": "DeleteObject",
+      "as": "root",
+      "status": 204
+    },
+    {
+      "call": "PutObjectTagging",
+      "as": "root",
+      "status": 200
+    },
+    {
+      "call": "CreateBucket",
+      "as": "root",
+      "status": 200
+    }
+  ],
+  "leaks": []
+}
