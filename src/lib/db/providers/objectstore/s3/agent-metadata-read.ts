@@ -301,9 +301,8 @@ function statusSentence(error: S3ServerError): string {
     case 501:
       return S3_AGENT_FAILURE_SENTENCES.unsupported;
     default:
-      return error.status >= 200 && error.status < 300
-        ? S3_AGENT_FAILURE_SENTENCES.unreadable
-        : S3_AGENT_FAILURE_SENTENCES.status(error.status);
+      // A 2xx failure always carries its problem, worded above.
+      return S3_AGENT_FAILURE_SENTENCES.status(error.status);
   }
 }
 
