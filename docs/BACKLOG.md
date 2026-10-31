@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D413, U17 · 303
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U179 · 165
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U181 · 167
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -6170,6 +6170,7 @@ Seen again 2026-10-30 on Milvus 3.0.2 in a browser pass: two runs on a reader as
 Seen again 2026-10-30 on Redis 8.10.2 and Valkey 9.1.2 in a browser pass: a reader run asked to pass `SET`, `DEL`, `EXPIRE`, `FLUSHALL`, `CONFIG SET` and `PUBLISH`, and one asked for eleven exact key listings, value reads, `INFO`, `CLIENT LIST`, `EVAL_RO` and writes, had each refused before anything was sent (`STATEMENT_NOT_ADMITTED`) and finished `answered` with the key count or the schema inventory and no word of the refusals (runs `arun_99eba3db246d4afe90057698e9fad5dc`, `arun_9fbf210c14aa4292837cf7fdaab84d60`); two earlier Redis runs asked for the same list drafted none of it.
 Seen again 2026-10-30 on etcd v3.7.2 in a browser pass: reader runs asked to pass eleven exact writes and maintenance calls (`put`, `del`, `compaction`, `defrag`, `lease grant`, `lease revoke`, `snapshot save`, `member add`, `auth disable`, `alarm disarm`, `move-leader`) and eleven key listings and value reads had each refused before anything was sent (`STATEMENT_NOT_ADMITTED`) and finished `answered` with one claim about the schema inventory and no word of the refusals (runs `arun_5aeadd9883d64e93b4d622e5010805af`, `arun_50519bcbf3ae48ee9811496b84559669`); a third, asked for six refused forms and one admitted read, reported only the read (run `arun_17ddc9181e6844fc9e00b444ce387241`).
 Seen again 2026-10-31 on Oxia 0.18.0 in a browser pass, three times: runs asked to pass five exact range and prefix counts and a `range-scan`, six comparison, secondary-index and partition-key gets, and six writes (`put`, `delete`, `delete-range`, a sequence put, an `oxia client put` and a second `put`) had each refused before anything was sent (`STATEMENT_NOT_ADMITTED`) and finished `answered` with one claim about the shard inventory and no word of the refusals (runs `arun_edb5f3a078e6409e9146d6a253775610`, `arun_54f99a1a809741f7ad7e5abfb7a98795`, `arun_3963a0fa92a34eec9e10d816026e936a`); a fourth, asked for six refused forms and one admitted read, did report each refusal (run `arun_511a965b46ce48c394e928c97996dff3`).
+Seen again 2026-10-31 on RabbitMQ 4.3.6 in a browser pass: a run asked to pass a publish, a purge, a `basic.get` with an ack, a queue declare, a queue delete and a read of a classic queue to `run_read_query` had the five writes refused before anything was sent (`STATEMENT_NOT_ADMITTED`) and the read refused by the stream-only type check, and finished `answered` with two claims about the schema inventory and no word of the six refusals (run `arun_79922a5829284b4ebfcbf93460ad9193`); the classic and the quorum queue held their six messages each before and after.
 
 **Done when:** a run whose only drafted statement was refused either reports that refusal in its answer, held by the run's verifier, or ends in a state other than `answered`, with an agent test that forces the refusal.
 
@@ -6221,6 +6222,7 @@ Seen again 2026-10-30 on Neo4j Enterprise 5.26.31 in a browser pass: the picker 
 Seen 2026-10-30 on LibreDB in a browser pass.
 Seen again 2026-10-30 on Redis 8.10.2 in a browser pass: the picker offered Optimize, Assess and Analyze, which the `rediscli` family does not offer (`docs/providers/redis.md` section 16.5), and Analyze was refused with the same sentence although investigation runs there.
 Seen again 2026-10-30 on etcd v3.7.2 in a browser pass: the picker offered Optimize, Assess and Analyze, which the `etcdctl` family does not offer (`docs/providers/etcd.md` section 15.5), and Optimize was refused with the same sentence although investigation runs there.
+Seen again 2026-10-31 on RabbitMQ 4.3.6 in a browser pass: the picker offered Optimize, Assess and Analyze, which the `rabbitread` family does not offer (`docs/providers/rabbitmq.md` section 17.4), and Analyze was refused with the same sentence although investigation runs there.
 
 **Done when:** the refusal names the workflows the connection's statement language does offer, read from `AGENT_WORKFLOW_VARIANTS` rather than fixed text, the picker marks or hides a workflow that language has no variant for, and a test pins the sentence for `libredbkv`.
 
@@ -6233,6 +6235,7 @@ Seen again 2026-10-30 on InfluxDB 2.9.1, after the same Optimize refusal (U162).
 Seen again 2026-10-30 on Weaviate 1.40.2, after the Analyze refusal (U162).
 Seen again 2026-10-30 on Neo4j Enterprise 5.26.31, after the Optimize refusal (U162).
 Seen again 2026-10-30 on etcd v3.7.2, after the Optimize refusal (U162).
+Seen again 2026-10-31 on RabbitMQ 4.3.6, after the Analyze refusal (U162).
 
 **Done when:** a refused start does not announce the stored conversation as ended by a reload (it keeps the conversation, or says the start was refused), with a hook test that refuses a start after a finished run.
 
@@ -6268,6 +6271,7 @@ A request naming a `COLD` tenant, and a shard read or count of a multi-tenant co
 The ledger records each as `class: "database-error"`, the rail heads it "The database refused the statement" over Studio's own sentence ("The tenant `cold` is COLD. Studio does not activate a tenant by reading it ..."), and each spends a repair attempt.
 Three such refusals in one run exhausted the budget, so the fourth request was refused with "This run has used all of its repair attempts" and the run stopped drafting.
 Seen 2026-10-30 on Weaviate 1.40.2 in a browser pass (run `arun_d7928d6c386d47ec84395091ff3adcad`); the tenant stayed `COLD` throughout.
+Seen again 2026-10-31 on RabbitMQ 4.3.6 in a browser pass: an agent read request naming a classic or a quorum queue is refused by Studio's stream-only type check after one management GET and before any AMQP frame (`docs/providers/rabbitmq.md` section 17.1), yet the ledger recorded each as `class: "database-error"`, so each spent a repair attempt (`RepairLedger` in `src/lib/agent/repair-ledger.ts`), and the rail headed it "The database refused the statement" over Studio's own sentence ("\"jobs-classic\" is a classic queue; Studio reads streams only, because reading a queue removes messages.") (runs `arun_3060ac4c7f324f6180ff1762e3679cb8`, `arun_79922a5829284b4ebfcbf93460ad9193`).
 The same misattribution for a declined operations panel is U159.
 
 **Done when:** a tenant refusal Studio makes is recorded and headed as refused before the read it guards, with the provider's sentence as the detail, it does not count as a repair attempt, and an agent test pins both.
@@ -6384,6 +6388,7 @@ Seen 2026-10-31 on Oxia 0.18.0 in a browser pass (runs `arun_ad725d1c2ca14394983
 Two Automatic starts on Oxia whose objective asked the agent to call `run_read_query` with exact commands, once range counts and once writes, were opened as Operate ("Opened as Operate, read from your objective."), a workflow that has no `run_read_query`.
 Each run took the six operations readings and answered with them, so the commands the user named were never drafted; the same objective started with Investigate chosen under Advanced drafted and refused each one.
 Seen 2026-10-31 on Oxia 0.18.0 in a browser pass (runs `arun_ab46aeacecef44a386743551d8d2e6d0`, `arun_cbf596339a664ddca6a244ae5bdd199f`); the classifier is not engine-specific.
+Seen again 2026-10-31 on RabbitMQ 4.3.6 in a browser pass: an Automatic start asking the agent to publish, purge, take and ack, declare and delete was opened as Operate, took the sessions reading and answered with it and the schema inventory, so none of the five was drafted (run `arun_509c4fc718744d4ba56ffc48abfd3052`); the same requests started under Investigate were drafted and each refused (run `arun_79922a5829284b4ebfcbf93460ad9193`).
 
 **Done when:** an objective that names `run_read_query` or asks for statements to be run opens a workflow that holds `run_read_query`, held by a classifier test over such objectives.
 
@@ -6394,6 +6399,24 @@ The rail showed no step for any of the fourteen, so a reader cannot tell whether
 Seen 2026-10-31 on Oxia 0.18.0 in a browser pass (run `arun_ec7de588bc264344b907cce84d730e6b`); nothing reached the server, and the same commands sent one per turn were each recorded and refused.
 
 **Done when:** every tool call a turn makes leaves a ledger entry the rail shows, run, refused or held with its reason, with an investigation test that makes more calls in one turn than the ceiling allows.
+
+### U180. An operations reading the provider answers empty without asking the engine reaches the model as the engine's own empty reading
+
+On RabbitMQ the sessions, slow-query, table, index and storage readings answer empty with no GET by design (`getActiveSessions` and its siblings in `src/lib/db/providers/stream/rabbitmq/index.ts`, `docs/providers/rabbitmq.md` section 7), yet `inspect_operations` stores each as a 0-row artifact like any reading the engine answered.
+The rail captions each with "A moment, not a history: this reading says what the engine reported as it was taken." (`POINT_IN_TIME_CAVEAT` in `src/components/agent/timeline.ts`), and the run prompt tells the model that an empty reading is an answer (`OPERATIONS_TOOL_RULE` in `src/lib/agent/languages/shared.ts`).
+Two Operate runs answered "At the time of this reading, the engine reported zero active sessions." and "Sessions reading was empty (0 rows): no active sessions were listed at the time of the reading.", although the broker was never asked.
+Seen 2026-10-31 on RabbitMQ 4.3.6 in a browser pass (runs `arun_509c4fc718744d4ba56ffc48abfd3052`, `arun_56ed2b0f38f7417287484281f6b1a775`); not checked on other providers whose panels answer empty by design.
+D39 is the same gap for a slow-query source that could not be read.
+
+**Done when:** a reading the provider answers without asking the engine reaches the model and the rail marked as not read, with the provider's reason, decided from a provider capability rather than a type-id branch, and an operations test pins what the model's tool result says for such a reading.
+
+### U181. A RabbitMQ agent request that is not JSON is refused with two example requests that differ
+
+The refusal joins the editor parser's sentence and agent mode's own (`RABBITMQ_AGENT_SENTENCES.request` in `src/lib/db/providers/stream/rabbitmq/agent-statement.ts`), and for a request that is not JSON both carry an example.
+A drafted `publish "hello" to the orders stream` was refused with "A RabbitMQ read request is one JSON object, such as" an example starting `"from": "last"`, followed by "Agent mode on RabbitMQ reads one stream at a time, written as the editor's read request, one JSON object such as" a second example starting `"from": "first"`: two examples one sentence apart that start at different places, shown in the rail and sent to the model.
+Seen 2026-10-31 on RabbitMQ 4.3.6 in a browser pass, five times in one run (run `arun_79922a5829284b4ebfcbf93460ad9193`); nothing was sent.
+
+**Done when:** a refused request that is not JSON reads one example, with agent mode's sentence saying only what the read answers after the parser's, and `tests/unit/db/rabbitmq/agent-statement.test.ts` pins the sentence for a request that is not JSON.
 
 ## Dependencies
 
