@@ -81,7 +81,7 @@ describe("each agent read's full requests", () => {
   test("one topic's offsets: Metadata, then ListOffsets at -2 and at -1, and no timestamp lookup", async () => {
     const { provider, calls } = await agentHandle(READ_ONLY);
     await provider.queryReadOnly('{"read": "offsets", "topic": "orders"}', BUDGET);
-    const metadata = ["admin.metadata", [{ topics: ["orders"], autocreateTopics: false }]];
+    const metadata: [string, unknown[]] = ["admin.metadata", [{ topics: ["orders"], autocreateTopics: false }]];
     expect(calls).toEqual([
       metadata,
       metadata,
