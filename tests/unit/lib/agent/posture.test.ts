@@ -90,6 +90,30 @@ describe("agentPosture in plan mode", () => {
     expect(onMongo).toEqual(onPostgres);
   });
 
+  /**
+   * Modbus's grounding is the connection's register map, which sends the device nothing, but opening the connection
+   * dials it, so "nothing else reaches the database" was not true there. Its language pack names the dial for what it
+   * is, and the plan posture is otherwise the shared one.
+   */
+  test("on Modbus it names the dial that opening the connection makes, and says no request is sent", () => {
+    const onModbus = agentPosture({
+      mode: "planning",
+      engine: "modbus",
+      engineLabel: getDBConfig("modbus").label,
+      handover: true,
+    });
+
+    expect(onModbus.tone).toBe("safe");
+    expect(onModbus.headline).toBe("Executes nothing it drafts");
+    expect(onModbus.qualifier).toBe(
+      "the register map grounds it; opening the connection dials the device, and no request is sent to it",
+    );
+    expect(onModbus.title).toBe("Plan mode drafts, and never runs what it drafted");
+    expect(onModbus.body).toBe(
+      "Plan mode never sends the request it wrote. It is grounded on the connection's register map, which is read without a request to the device, and it is where the inventory in Run details came from. Opening the connection to read it dials the device's port and closes the connection again, and no Modbus request is sent to the device.",
+    );
+  });
+
   test("the hand-over tick cannot widen plan mode", () => {
     const ticked = agentPosture({
       mode: "planning",

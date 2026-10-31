@@ -231,14 +231,16 @@ describe("the panel's documentation describes the rail in the words it renders",
   });
 
   test("the guide's strip table has one row for each reading the posture renders, and no other", () => {
-    // Every reading the strip can show, from the module that writes it: plan mode, agent mode with no connection
-    // resolved, agent mode on every engine with the hand-over consented and not, and agent mode on every engine after
-    // a run on the connection was refused for the connection itself. The engine is labelled the way the guide names
-    // one, so the arm that names it renders the guide's own placeholder.
+    // Every reading the strip can show, from the module that writes it: plan mode with no connection resolved and on
+    // every engine (a language pack may declare its own plan posture), agent mode with no connection resolved, agent
+    // mode on every engine with the hand-over consented and not, and agent mode on every engine after a run on the
+    // connection was refused for the connection itself. The engine is labelled the way the guide names one, so the arm
+    // that names it renders the guide's own placeholder.
     const label = "`<engine>`";
     const engines = Object.keys(AGENT_STATEMENT_LANGUAGE) as DatabaseType[];
     const postures = [
       agentPosture({ mode: "planning", engine: null, engineLabel: label, handover: false }),
+      ...engines.map((engine) => agentPosture({ mode: "planning", engine, engineLabel: label, handover: false })),
       agentPosture({ mode: "agent", engine: null, engineLabel: label, handover: false }),
       ...engines.flatMap((engine) =>
         [false, true].map((handover) => agentPosture({ mode: "agent", engine, engineLabel: label, handover })),

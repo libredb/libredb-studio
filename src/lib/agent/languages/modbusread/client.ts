@@ -26,6 +26,21 @@ function modbusreadReadsPosture(bounds: StatementBudgets): AgentPosture {
   };
 }
 
+/**
+ * Plan mode on Modbus. Its grounding is the connection's register map, which sends the device nothing, but the
+ * acquisition that reads it opens the connection, and Modbus's `connect` dials the device's port and closes it again,
+ * so the shared "nothing else reaches the database" would not be true. No Modbus request is sent.
+ */
+function modbusreadPlanPosture(): AgentPosture {
+  return {
+    tone: "safe",
+    headline: "Executes nothing it drafts",
+    qualifier: "the register map grounds it; opening the connection dials the device, and no request is sent to it",
+    title: "Plan mode drafts, and never runs what it drafted",
+    body: "Plan mode never sends the request it wrote. It is grounded on the connection's register map, which is read without a request to the device, and it is where the inventory in Run details came from. Opening the connection to read it dials the device's port and closes the connection again, and no Modbus request is sent to the device.",
+  };
+}
+
 export const MODBUSREAD_CLIENT_PACK = Object.freeze({
   /** Modbus's words. The noun is REQUEST, the console's own word, and the argument is `statement`. */
   copy: Object.freeze({
@@ -68,5 +83,6 @@ export const MODBUSREAD_CLIENT_PACK = Object.freeze({
     widened: modbusreadReadsPosture,
     handoverTerms: () =>
       "A Modbus answer is never run in your editor: the hand-over is not offered on this engine, so the run produces its answer on its own read-only path only.",
+    plan: modbusreadPlanPosture,
   }),
 } satisfies AgentLanguageClientPack);

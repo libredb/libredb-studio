@@ -2555,7 +2555,8 @@ own.
 
 | Level | The pill says | The qualifier beside it | When |
 | --- | --- | --- | --- |
-| `safe` | *Executes nothing it drafts* | *one schema read grounds it, nothing else reaches the database* | Plan mode, on every engine, with or without the hand-over |
+| `safe` | *Executes nothing it drafts* | *one schema read grounds it, nothing else reaches the database* | Plan mode, on every engine but Modbus, with or without the hand-over |
+| `safe` | *Executes nothing it drafts* | *the register map grounds it; opening the connection dials the device, and no request is sent to it* | Plan mode on Modbus, whose language pack declares its own plan posture (`posture.plan`), since its grounding sends the device nothing while opening the connection dials it |
 | `reads` | *Reads only* | the policy row's own per-statement row cap and timeout, *enforced by the engine* | Agent mode on a SQL engine in `AGENT_EXECUTION_ENGINES`, hand-over not ticked |
 | `reads` | *Reads only* | the same row cap and timeout, *enforced by Studio's request allowlist* | Agent mode on Kubernetes, ticked or not: no kubectl variant offers the hand-over, so there is nothing to widen |
 | `reads` | *Reads only* | the same row cap and timeout per command, *enforced by the server* | Agent mode on MongoDB, ticked or not: no mongo variant offers the hand-over, so there is nothing to widen |

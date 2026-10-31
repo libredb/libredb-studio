@@ -344,6 +344,7 @@ The `modbusread` statement-language family has no dialect-bound member.
 This overlay overrides no Shared member, so every Shared member is the `modbusread` statement-language family's own.
 The family offers the investigation workflow, through `run_read_query` with one request, and the operations workflow; it offers no query optimization or database assessment, since a device has no plan and no profile, and no data analysis, whose tools assume a store of records, and no workflow hands an answer to the editor.
 The workflow classifier offers the model only these two.
+Plan mode's safety strip is the family's own (`posture.plan` in [`client.ts`](../../src/lib/agent/languages/modbusread/client.ts)): "the register map grounds it; opening the connection dials the device, and no request is sent to it", because the grounding reads the map and sends the device nothing, while the acquisition's `connect` dials the device's port and closes it again, so the shared strip's "nothing else reaches the database" would not be true here.
 The editor language id stays `modbus`, and the fence alias `modbusread` names this engine.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
 No MCP tool runs a Modbus request: the family declares no MCP facet, `MCP_EXPOSABLE.modbus` and `MCP_STATEMENT_READ.modbus` are false ([B160](../BACKLOG.md#b160-modbuss-agent-reads-are-paced-per-device-and-it-has-no-mcp-surface)), and `READ_ONLY_ENFORCED.modbus` is unchanged.

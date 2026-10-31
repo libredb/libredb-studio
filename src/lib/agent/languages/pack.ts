@@ -752,6 +752,12 @@ export interface AgentLanguageClientPack {
      * registered in the manifest does not compile until it says what its hand-over is.
      */
     readonly handoverTerms: (budgets: StatementBudgets) => string;
+    /**
+     * What plan mode says in this language, where the shared plan posture is not true of it. Absent on every language
+     * whose grounding is a schema read of the engine; Modbus's grounding is the register map, which sends the device
+     * nothing, while opening the connection dials it, so "nothing else reaches the database" would be false there.
+     */
+    readonly plan?: () => AgentPosture;
   };
 }
 

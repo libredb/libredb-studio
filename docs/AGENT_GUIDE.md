@@ -445,7 +445,8 @@ It is one of the readings below and not a mood, and the qualifier beside the pil
 
 | The pill says | Beside it | When |
 | --- | --- | --- |
-| *Executes nothing it drafts* | *one schema read grounds it, nothing else reaches the database* | **Plan** mode, on every engine — production included. The one reach is the schema capture that grounds the draft: metadata only, no data rows |
+| *Executes nothing it drafts* | *one schema read grounds it, nothing else reaches the database* | **Plan** mode, on every engine but Modbus — production included. The one reach is the schema capture that grounds the draft: metadata only, no data rows |
+| *Executes nothing it drafts* | *the register map grounds it; opening the connection dials the device, and no request is sent to it* | **Plan** mode on Modbus. The draft is grounded on the connection's register map, which sends the device nothing; opening the connection dials the device's port and closes it again |
 | *Reads only* | *200 rows and 10 s per statement, enforced by the engine* | **Agent** mode on one of the SQL engines it executes on |
 | *Reads only, and one statement in your editor* | *500 rows, no time limit, same read-only session* | The same, with **auto-execute** ticked for the run being opened — and it stays that reading while that run is going |
 | *Reads only* | *200 rows and 10 s per statement, enforced by Studio's request allowlist* | **Agent** mode on Kubernetes, where auto-execute is not offered, so there is nothing to widen |
