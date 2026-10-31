@@ -81,9 +81,9 @@ function whole(ops: QueryOps): boolean {
   );
 }
 
-/** Whether every aggregation is a plain count; a sum or an average reads the values it adds up. */
+/** Whether the one aggregation is a count; a sum or an average reads the values it adds up. */
 function countsOnly(aggregations: readonly AggregationSpec[]): boolean {
-  return aggregations.length === 1 && aggregations[0].op === "count" && aggregations[0].field === undefined;
+  return aggregations.length === 1 && aggregations[0].op === "count";
 }
 
 /** A segment holding a C0 control character or DEL, which no path a request names needs. */
