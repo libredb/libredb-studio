@@ -11,6 +11,9 @@ import {
   ModbusPacingTimeout,
 } from "@/lib/db/providers/industrial/modbus/agent-pacing";
 
+// A pending promise is awaited and then matched, never matched with `.resolves` or `.rejects`: on Windows, bun 1.4.4
+// left `await expect(pending).resolves` unsettled for good once a refused waiter's deadline timer had fired, while
+// `expect(await pending)` settled (measured on windows-latest).
 const GAP = 60;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const far = () => performance.now() + 5000;
@@ -87,8 +90,8 @@ describe("two reads of one device", () => {
       dialledAt = performance.now();
       return "ok";
     });
-    await expect(failing).rejects.toThrow("device gone");
-    await expect(next).resolves.toBe("ok");
+    expect(((await failing.catch((error: unknown) => error)) as Error).message).toBe("device gone");
+    expect(await next).toBe("ok");
     expect(dialledAt - failedAt).toBeGreaterThanOrEqual(GAP - 2);
   });
 });
@@ -111,7 +114,7 @@ describe("a wait counts against the read's own deadline", () => {
     expect((refused as ModbusPacingTimeout).waitedMs).toBeGreaterThanOrEqual(15);
     expect((refused as ModbusPacingTimeout).waitedMs).toBeLessThan(80);
     expect(ran).toBe(false);
-    await expect(first).resolves.toBe("first");
+    expect(await first).toBe("first");
   });
 
   test("a refused waiter keeps its place, so the read behind it still waits for the read in front", async () => {
@@ -132,9 +135,10 @@ describe("a wait counts against the read's own deadline", () => {
     const key = deviceKey("plc", 502);
     await pacer.run(key, far(), async () => "first");
     const started = performance.now();
-    await expect(pacer.run(key, performance.now() + 100, async () => "second")).rejects.toBeInstanceOf(
-      ModbusPacingTimeout,
-    );
+    const refused = await pacer
+      .run(key, performance.now() + 100, async () => "second")
+      .catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(ModbusPacingTimeout);
     expect(performance.now() - started).toBeLessThan(90);
   });
 
