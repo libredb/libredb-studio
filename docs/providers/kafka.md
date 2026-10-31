@@ -144,6 +144,7 @@ Two checks hold the guarantee, and both are required.
 The seam guard, [`tests/unit/db/kafka/seam-guard.test.ts`](../../tests/unit/db/kafka/seam-guard.test.ts), fails the build if `@platformatic/kafka` is loaded anywhere in the repository but `platformatic-client.ts` and the fixture seed `docker/kafka/seed-binary.ts`, or if the provider calls a member of the library's objects outside this allowlist: `metadata`, `listTopics`, `describeConfigs`, `listGroups`, `describeGroups`, `listConsumerGroupOffsets`, `listOffsets`, `listOffsetsWithTimestamps`, `describeLogDirs`, `findCoordinator`, `listApis`, `close`, `connect` on the one-off `Connection` of a consumer-protocol group's description, `get` on the fetch `ConnectionPool`, and the two raw calls `consumerGroupDescribeV0` and `fetchV13`.
 So `consume`, `commit`, `joinGroup`, `leaveGroup`, `Producer`, `createTopics`, `deleteTopics`, `alterConfigs`, `incrementalAlterConfigs`, `alterConsumerGroupOffsets` and `deleteRecords` cannot be written in the provider, and neither can an `autocreateTopics` other than the literal `false` or a Consumer `groupProtocol` other than `"classic"`.
 Every member of the library classes the adapter holds is classified against the installed package as allowed, forbidden or unused, so a client version that adds a member fails the guard until someone classifies it.
+The guard also pins the agent read path ([§15.1](#151-the-boundary)): `KafkaAgentReadClient` picks the client's `metadata`, `listTopics` and `offsets` alone, every agent-mode module names no other client type, imports only the modules and names it lists, and calls nothing else on its client, and the provider hands an agent-mode surface a new object holding those three reads and nothing more.
 The guard is syntactic: it catches an ordinary edit that reaches the library outside the adapter or calls a member outside the allowlist, and its docblock states the ways code written to hide a load or a call can pass it, which are stated rather than chased.
 The second check is behavioural: the live harness snapshots the broker before and after its whole run (the topic and group lists, every partition's earliest and latest offsets, every group's committed offsets, the topic and broker configs, and on `kafka-auth` the ACLs) and fails on any difference, and it asserts that the broker log names no group-coordinator entry for the Consumer's group id, `libredb-studio-never-joined`, which the constructor requires and the broker never receives, and no automatic topic creation.
 The diff catches a future client version whose read path starts joining a group, committing or writing, which the seam guard cannot see.
@@ -482,6 +483,7 @@ A broker below ListGroups v5, such as Apache Kafka before 3.8, reports no group 
 A classic group is described by `describeGroups`, and a `consumer` group by ConsumerGroupDescribe (API 69), because `describeGroups` reports a KIP-848 group as `Dead` while the broker says `Empty`, and API 69 refuses a classic one.
 An error API 69 answers for the group is read by its protocol error name, as [§10](#10-error-handling) reads any other and never by the broker's text: a refused group or topic is an `AuthenticationError` naming it, a coordinator that moved or is still loading a `QueryError` naming the error, and `GROUP_ID_NOT_FOUND`, for an id with no consumer-protocol group, a `QueryError` saying so.
 A group's existence is decided by the listing, because `describeGroups` answers `Dead` for a name that does not exist.
+The kind declares `countIsListing`, since its count is its listing's length, so on an agent-mode handle, where groups are not read, the refused count carries its reason into the grounding walk rather than an empty folder ([§15.3](#153-metadata-only)).
 Lag per partition is the high watermark minus the committed offset, the log end `kafka-consumer-groups.sh --describe` measures against, for every partition of each topic the group has committed on or is assigned.
 A partition with no committed offset shows lag as `null` with the note "no committed offset", never 0 and never the whole log, and a committed or assigned topic whose latest offsets cannot be read, an internal topic or one with a leaderless partition, keeps its rows with no latest offset and the reason.
 The broker leaves every topic the principal may not describe out of a group's committed offsets, with no error, and the protocol gives the provider no way to see it: such a topic the group only committed on has no rows, and one a member of a classic group is assigned keeps its rows with no committed or latest offset and the broker's refusal as the reason.
@@ -538,6 +540,15 @@ Each surface reads the Kafka protocol only, and a surface that cannot give an ho
 A principal without Describe on the cluster is refused the log directories, and one without DescribeConfigs on the cluster the broker configs, and each refusal degrades only its own figure; any other failure, and a refusal of any other read, still fails the panel.
 The `operations` agent workflow reads these surfaces on every engine in both modes, so agent runs reach the broker through them too.
 
+On a handle opened for an agent-mode profile, which the `operations` workflow, plan-mode grounding and MCP open, every surface reads through the agent's client, which holds the Metadata and ListOffsets reads alone ([§15](#15-agent-mode)), so no surface reads a config or a log directory there:
+
+| Method | On an agent-mode handle |
+|---|---|
+| `getHealth()` | the forced broker read alone; `databaseSize` is the sentence that the size on disk needs the log directories, which agent mode does not read, never a figure or "N/A" |
+| `getOverview()`, `getStorageStats()` | refused with that reason: the overview needs the broker configs and the log directories, storage the log directories |
+| `getTableStats()`, `getIndexStats()`, `getSlowQueries()`, `getActiveSessions()` | refused with the reason Kafka has no such figure, rather than answered `[]`, so the model reads that the reading was not taken, never an empty reading as the broker's answer |
+| `getPerformanceMetrics()` | unchanged, every metric absent; the agent's operations readings do not read it |
+
 ---
 
 ## 8. Maintenance
@@ -557,6 +568,7 @@ A direct call of `runMaintenance` is refused with a `QueryError`.
 - `supportsExplain`, `supportsTransactions`, `supportsMaintenance`, `supportsInlineRowEdit`, `supportsTestDataGeneration`, `supportsResultPagination`, `supportsExternalQueryLimiting`, `supportsConnectionString`: all `false`.
 - `tablesAreDerivedGroupings: false`: a topic is a relation the broker holds, unlike a Redis key prefix.
 - `declaresForeignKeys: false`, `statementTerminator: "none"`, `defaultPort: 9092`, `containerLevels: []`, `maintenanceOperations: []`, and the three object kinds of [§6.1](#61-the-object-surface-789).
+- `metadataOnly`: the four agent reads' columns and kinds ([§15.3](#153-metadata-only)); a record's key, value, headers and timestamp are stored values, so no agent answer holds one.
 - `schemaRefreshPattern: "(?!)"`, which matches nothing: no read request changes what the tree shows, and the base class's SQL pattern would reload the whole tree after a read of a topic named like `orders-drop`.
 - No `keyScan`: a topic listing is a catalog read, so there is no key browser and no Browse Keys.
 
@@ -763,7 +775,7 @@ See [`docs/API_DOCS.md`](../API_DOCS.md) for the full request and response contr
 - **No Schema Registry decoding**, so Avro, Protobuf and JSON Schema values show their schema id ([§5.3](#53-decoding)).
 - **No live tail, no streaming results and no push subscriptions.**
 - **No ksqlDB and no SQL over Kafka**: ksqlDB's licence forbids offering it as a competing service, most clusters do not run it, and its queries create server-side groups and topics; SQL over Kafka, if ever wanted, is a separate type-id.
-- **No agent execute mode for read requests**, out of scope for the whole #424 epic; plan mode grounds through the object surface and drafts a read request for the user to run.
+- **Agent mode reads metadata only, and sends no fetch** ([§15](#15-agent-mode), `docs/BACKLOG.md` B157): no record, group, config or log directory reaches an agent answer, and MCP `run_read_query` stays closed on Kafka.
 - **A client certificate the broker refuses reads as a lost connection** ([§4.3](#43-tls)).
 - **A broker with a failed log directory fails the overview, health and storage panels** with `KAFKA_STORAGE_ERROR`, where the rest of the object surface keeps working ([§11.4](#114-the-live-read-only-check), `docs/BACKLOG.md` D125).
 
@@ -789,3 +801,90 @@ The refusal reason it prints, verbatim:
 - Kafka protocol: <https://kafka.apache.org/protocol>
 - KIP-848, the consumer group protocol: <https://cwiki.apache.org/confluence/display/KAFKA/KIP-848%3A+The+Next+Generation+of+the+Consumer+Rebalance+Protocol>
 - KIP-516, topic identifiers: <https://cwiki.apache.org/confluence/display/KAFKA/KIP-516%3A+Topic+Identifiers>
+
+---
+
+## 15. Agent mode
+
+Agent mode reads Kafka metadata through `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/stream/kafka/index.ts).
+The request reader is [`agent-statement.ts`](../../src/lib/db/providers/stream/kafka/agent-statement.ts), the reads and their metadata-only projection are [`agent-metadata-read.ts`](../../src/lib/db/providers/stream/kafka/agent-metadata-read.ts), and every other surface of an agent-mode handle is [`agent-surface.ts`](../../src/lib/db/providers/stream/kafka/agent-surface.ts).
+Every claim below about the broker cites a capture under [`tests/fixtures/kafka/4.3.1/agent-boundary/`](../../tests/fixtures/kafka/4.3.1/agent-boundary/) or [`tests/fixtures/redpanda/26.2.2/agent-boundary/`](../../tests/fixtures/redpanda/26.2.2/agent-boundary/), each recorded by its `run.sh` against a fresh digest-pinned broker with automatic topic creation on, with every refused call sent raw by the broker's own Java tools, past every Studio check, and the broker snapshot of [§3.2](#32-read-only-by-construction-k4) taken before and after.
+On Apache Kafka the raw calls are sent twice: as `agent-reader`, a SCRAM-SHA-512 user over TLS under `StandardAuthorizer` that holds Describe on every topic, every group and the cluster and nothing else, and as the plaintext listener's super user, the writable positive control; Redpanda runs with no authentication, so each call is sent once, as that control.
+
+### 15.1 The boundary
+
+The boundary is a structural closed table: every agent-mode surface reads through `KafkaAgentReadClient` ([`client.ts`](../../src/lib/db/providers/stream/kafka/client.ts)), which picks the client's `metadata`, `listTopics` and `offsets` alone, and the provider hands those surfaces a new object holding those three reads and nothing more.
+On the wire that is the Metadata request, sent with `allowAutoTopicCreation` the literal `false`, and the ListOffsets request at the earliest (-2) and latest (-1) sentinels; [`agent-boundary.test.ts`](../../tests/unit/db/kafka/agent-boundary.test.ts) pins each read's full requests at the library, and the seam guard pins the client type, the agent modules' imports and calls, and that object ([§3.2](#32-read-only-by-construction-k4)).
+So no fetch, produce, topic or config change, record deletion, offset commit, group, config, log-directory or ACL read, and no timestamp lookup can be sent, and no request names an internal topic ([§3.3](#33-never-creating-a-topic)).
+
+A Describe ACL is not that boundary, so no credential is required of the agent: measured on 4.3.1 as `agent-reader` (`raw`, `as: "reader"`), the broker refuses a produce, a fetch, a topic creation and deletion, a record deletion, an offset reset and a config change with an authorization error and the snapshot does not move, but it answers a ListOffsets at the max-timestamp sentinel (-3) and by timestamp, which only the closed table keeps off the agent's path.
+As the super user (`as: "super"`) every one of those calls acts: the produce and the auto-creating producer's Metadata add records and a topic, the record deletion moves a log start, the reset moves a group's committed offset, the config change and the topic creation and deletion all show in the snapshot, and the fetch returns a record; Redpanda 26.2.2 does the same, except that it refuses the max-timestamp sentinel as an unsupported version.
+The agent's own reads, as `agent-reader` and as the super user, leave the snapshot unchanged, and a read of a topic that does not exist answers that it does not exist and creates nothing on either broker (`agent`, `missingTopicCreated: false`), where the producer's Metadata for another missing name, auto-creation allowed, created it.
+
+### 15.2 What an agent request may be
+
+One JSON object of at most four keys, `read`, `topic`, `after` and `limit`, each written once:
+
+| `read` | Takes | Sends |
+| --- | --- | --- |
+| `"topics"` | `after` (the last topic name of the answer before), `limit` | Metadata of every topic, then Metadata of the page's topics |
+| `"brokers"` | `after` (the last node id), `limit` | one brokers-only Metadata |
+| `"partitions"` | `topic`, `after` (the last partition id), `limit` | one Metadata naming the topic |
+| `"offsets"` | `topic`, `after`, `limit` | one Metadata naming the topic, then ListOffsets at -2 and at -1 |
+
+`limit` is 1 to 500, default 50; one past the run's row budget is refused before anything is sent, and a page the request's own limit leaves unfinished says that more follow and how to read on, without naming what follows.
+`after` is compared in Studio against what the broker answered and is never sent.
+A topic must be a legal Kafka topic name, other than `.` and `..`, and never one of Kafka's internal topics.
+Any other key, a timestamp, an offset sentinel, an isolation level, a partition filter, a group or an auto-creation flag above all, any other `read`, a key written twice, and text that is not one JSON object are refused before anything is sent, each in agent mode's own sentence followed by the list of reads, and no refusal quotes what the request wrote.
+The admission refuses a request longer than 4,096 characters.
+Each read runs under the request's time budget, the wait and not the work, and nothing of one call is kept for the next.
+
+### 15.3 Metadata only
+
+Topic names, partition ids, broker node ids and racks and the cluster id are object names; a record's key, value, headers and timestamp are stored values, and a record's timestamp can be the producer's own, so no read fetches a record or looks anything up by time, and no request can count or filter by a value.
+A broker's advertised host and port, topic and broker configs, log-directory paths and consumer groups (their ids, members, client ids and hosts, committed offsets and lag) are not read on the agent path either.
+Kafka declares `ProviderCapabilities.metadataOnly`, and every answer is projected through [`src/lib/db/redaction/metadata-only.ts`](../../src/lib/db/redaction/metadata-only.ts):
+
+| Read | Columns |
+| --- | --- |
+| `topics` | `topic` (name), `partitions`, `replication_factor`, `offline_partitions`, `under_replicated_partitions` (counts) |
+| `brokers` | `node_id` (count), `rack` and `cluster_id` (names, null when the broker gives none) |
+| `partitions` | `partition`, `leader` (counts, `leader` null when there is none), `replicas`, `in_sync_replicas`, `offline_replicas` (node ids as one name, `1,2,3`, null when empty), `offline` (flag) |
+| `offsets` | `partition`, `earliest_offset`, `end_offset` (the log end), `offset_span` (counts; a side the broker did not answer is null, never 0) |
+
+An offset span is how far a partition's offsets reach, not how many records it holds: compaction, transaction markers and retention make the two differ, and the posture, the tool description and the workflow rules all say so.
+A cell that does not fit its column, an offset past 2^53 - 1 among them, withholds the whole answer, naming the column and never the value, and a result past the byte budget is refused, never cut.
+A failure is worded by its category alone, never by the client's message, which can carry an advertised host and port: a missing topic says nothing was created, an authorization refusal, an unreachable broker and an unreadable answer each have their sentence, and a timeout is the time budget's refusal; the captures hold every refusal word for word.
+
+Each agent-mode path reads this much:
+
+| Path | Handle | What it reads |
+| --- | --- | --- |
+| Investigation reads | agent read-only profile | one read of [§15.2](#152-what-an-agent-request-may-be)'s table, projected as above |
+| Investigation grounding, plan-mode grounding, the operations workflow and MCP `inspect_schema` | either agent profile | topic names and statuses, broker node ids, and a topic's columns `partition`, `earliest_offset`, `end_offset` and `offset_span`; consumer groups are counted as withheld with their reason, which the grounding walk carries since the kind declares `countIsListing` |
+| Operations readings | operations profile | health from one forced Metadata read, its size on disk the reason it is not read; the overview, storage, session, slow-query, table and index readings answer their reason rather than an empty reading ([§7](#7-monitoring--health)) |
+| MCP `run_read_query` | none | closed: `MCP_STATEMENT_READ.kafka` is false |
+
+On a handle of either agent profile the editor's read request, which fetches records, and an object's source, which holds configs, group members and committed offsets, are refused; an editor handle keeps every read.
+
+### 15.4 Agent language pack
+
+Statement-language family: `kafkaread`.
+Overlay: [`src/lib/agent/languages/kafkaread/engines/kafka.ts`](../../src/lib/agent/languages/kafkaread/engines/kafka.ts), with its client row in [`src/lib/agent/languages/kafkaread/engines/client.ts`](../../src/lib/agent/languages/kafkaread/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`.
+Both overlays are empty, so the engine resolves to the `kafkaread` family pack itself.
+The `kafkaread` statement-language family has no dialect-bound member.
+This overlay overrides no Shared member, so every Shared member is the `kafkaread` statement-language family's own.
+The family offers the investigation workflow, through `run_read_query` with one read request, and the operations workflow; it offers no data analysis, since its answers carry no stored value, and no query optimization or database assessment, since the broker composes no plan and no profile, and no workflow hands an answer to the editor.
+The workflow classifier offers the model only these two.
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+No MCP tool runs a Kafka read request: the family declares no MCP facet, and `MCP_STATEMENT_READ.kafka` is false (B157).
+A fetch joins the agent path only once a decompressed-size cap or an isolated process bounds one ([§5.4](#54-bounds)).
+
+### 15.5 Tests
+
+- `tests/unit/db/kafka/agent-statement.test.ts`: the plan every admitted request is read to, and every refusal before the network in agent mode's own words.
+- `tests/unit/db/kafka/agent-metadata-read.test.ts`: each read's calls on the agent's client, its rows, the budgets, the deadline and the wording of every failure category.
+- `tests/unit/db/kafka/agent-provider.test.ts`: the profile, every request refused before anything is sent, and every surface of either agent profile over a client whose every other member throws, with no broker address in any answer.
+- `tests/unit/db/kafka/agent-boundary.test.ts`: each read's full requests at the library, and every agent-mode surface held to Metadata and ListOffsets.
+- `tests/live/kafka-agent-boundary.ts`, through each `run.sh`: the captures above, whose `leaks` list of seeded record markers, broker addresses, log-directory roots and group ids found in an agent answer is empty.

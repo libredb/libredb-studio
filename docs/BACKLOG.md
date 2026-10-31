@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B156 · 86
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B157 · 87
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -6407,6 +6407,7 @@ The rail captions each with "A moment, not a history: this reading says what the
 Two Operate runs answered "At the time of this reading, the engine reported zero active sessions." and "Sessions reading was empty (0 rows): no active sessions were listed at the time of the reading.", although the broker was never asked.
 Seen 2026-10-31 on RabbitMQ 4.3.6 in a browser pass (runs `arun_509c4fc718744d4ba56ffc48abfd3052`, `arun_56ed2b0f38f7417287484281f6b1a775`); not checked on other providers whose panels answer empty by design.
 D39 is the same gap for a slow-query source that could not be read.
+Apache Kafka's agent-mode handle does not have this shape: its overview, storage, session, slow-query, table and index readings answer their reason, which the model reads as a refusal rather than an empty reading (`docs/providers/kafka.md` section 15.3).
 
 **Done when:** a reading the provider answers without asking the engine reaches the model and the rail marked as not read, with the provider's reason, decided from a provider capability rather than a type-id branch, and an operations test pins what the model's tool result says for such a reading.
 
@@ -8841,6 +8842,21 @@ Kept so that key-name and value exposure, `INFO`, MCP exposure and the relatives
 Found 2026-10-30 with agent execution on Redis.
 
 **Done when:** the owner rules on whether agent mode may read key names, which stored values it may read on Redis and how they are redacted, and whether `INFO` sections join the table as a named exception, the `rediscli` pack offers the workflows that ruling opens, the owner opens MCP read for Redis, the pack declares its MCP facet (`src/lib/agent/languages/rediscli/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same proof and projection, and `MCP_STATEMENT_READ.redis` is true, with tests; cited in `docs/AGENT.md`.
+
+### B157. Apache Kafka's agent reads are metadata only, and it has no MCP statement tool
+
+Agent mode executes Kafka metadata reads under the `kafkaread` statement language, one JSON request of at most four keys per call naming one of four reads: the topic listing, the broker listing, one topic's partitions and one topic's earliest and end offsets (`docs/providers/kafka.md`, section 15).
+The boundary is the provider's structural closed table: every agent-mode surface reads through a client that holds the Metadata request, sent with topic auto-creation off, and the ListOffsets request at the earliest and latest sentinels alone, so no fetch, produce, topic, config, ACL or group call, offset commit or timestamp lookup can be sent, and no internal topic is ever named.
+A record's key, value, headers and timestamp count as stored values, and a broker's advertised host and port, topic and broker configs, log-directory paths and consumer groups (their ids, members, client ids and hosts, committed offsets and lag) stay off the agent path, so every answer is projected to names, counts and offsets (`ProviderCapabilities.metadataOnly`, `src/lib/db/redaction/metadata-only.ts`); no request filters, counts or looks up by time or by a value, since a record's timestamp can be the producer's own and a lookup by time would bisect stored timestamps.
+Fetch stays off the agent path because the client decompresses a fetch answer whole, with no output cap, in the shared server process (`docs/providers/kafka.md` section 5.4), and neither a row cap nor a client timer bounds that.
+On a handle of either agent profile the editor's read and an object's source are refused, a topic is described by the offset read's columns, consumer groups are counted as withheld with their reason, which the grounding walk carries, and the overview, storage, session, slow-query, table and index readings answer their reason rather than an empty reading.
+So the language offers the investigation and the operations workflow only: data analysis needs stored values, and query optimization and database assessment need a plan and a profile the broker does not compose.
+Its MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) and `MCP_STATEMENT_READ.kafka` is false, so MCP `run_read_query` refuses a Kafka connection, while `MCP_EXPOSABLE.kafka` stays true for the two metadata tools, which read through the same narrowed client and carry names and counts only.
+Kept so that record exposure, group and config exposure, a bounded fetch and MCP statement read are decisions of their own rather than side effects of agent mode joining.
+
+Found 2026-10-31 when agent mode joined Apache Kafka.
+
+**Done when:** the owner rules on which record values, groups and configs agent mode may read on Kafka and how they are redacted, a fetch on the agent path is bounded by a decompressed-size cap or an isolated process with memory and termination limits, with compressed-bomb tests, the `kafkaread` pack offers the workflows that ruling opens, a per-engine exposure ruling opens MCP statement read for Kafka, the pack declares its MCP facet (`src/lib/agent/languages/kafkaread/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same table and projection, and `MCP_STATEMENT_READ.kafka` is true, with tests that every MCP answer carries no record value; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 
