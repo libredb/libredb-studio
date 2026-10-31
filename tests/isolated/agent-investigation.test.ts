@@ -31,6 +31,9 @@ import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka/index";
+import { OPCUA_CAPABILITIES } from "@/lib/db/providers/industrial/opcua/capabilities";
+import { OPCUA_LABELS } from "@/lib/db/providers/industrial/opcua/labels";
+import { languageServerPack } from "@/lib/agent/languages/server";
 import { EtcdProvider } from "@/lib/db/providers/keyvalue/etcd/index";
 import { InfluxDB3Provider, InfluxDBProvider } from "@/lib/db/providers/timeseries/influxdb/index";
 import type { DatabaseProvider, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
@@ -2294,6 +2297,51 @@ describe("planning mode runs no statement of the user's", () => {
         would invent a different one.
       */
       expect(rules).not.toContain("NO STATEMENT AT ALL");
+    });
+
+    /*
+      OPC UA is never grounded: an address space is browsed one level at a time rather than listed, so no
+      inventory reaches a plan. Measured in a browser on OPC PLC 2.15.10, a plan asked for the read of two
+      node ids its question named was given the refusal above, answered "NO STATEMENT" and asked for the
+      inventory, although the posture says the request is drafted from the question and the node ids it
+      names. A language that drafts from the question's own names says so (`ungroundedPlanning`), and its
+      plan is given the statement contract and those rules in place of the refusal, with no sentence about
+      an inventory it does not have.
+    */
+    test("an ungrounded OPC UA plan is given the statement contract and told to use only the node ids its question names", async () => {
+      const b = boot(freshDataDir());
+      const run = await b.service.start({
+        mode: "planning",
+        actor: ACTOR,
+        connectionId: "conn_1",
+        objective: OBJECTIVE,
+        statementLanguage: "opcuaread",
+      });
+      const script = scriptedModel(answersProse("a plan"), answersProse("a plan"));
+
+      await runInvestigation(run.runId, {
+        service: b.service,
+        model: await modelOver(script.fetch),
+        resources: {
+          ...b.resources,
+          connection: { ...CONNECTION, type: "opcua" },
+          capabilities: OPCUA_CAPABILITIES,
+          labels: OPCUA_LABELS,
+        },
+      });
+
+      const rules = rulesOfTurn(script.turns[0] as Turn);
+      expect(rules).not.toContain("No schema inventory is available to this run");
+      expect(rules).toContain("written in this opcua database's own query language");
+      expect(rules).toContain(`Write it in ${OPCUA_LABELS.statementLanguage}.`);
+      expect(rules).toContain("Put it in a single fenced block tagged `opcua`");
+      for (const rule of languageServerPack("opcuaread").grounding.ungroundedPlanning ?? [])
+        expect(rules).toContain(rule);
+      expect(languageServerPack("opcuaread").grounding.ungroundedPlanning?.length).toBeGreaterThan(0);
+      // No sentence sends it to an inventory it was never shown.
+      expect(rules).not.toContain("that is not in that inventory");
+      expect(rules).not.toContain("built only from names in the inventory");
+      expect(rules).toContain("begin a line with `NO STATEMENT:`");
     });
 
     /*

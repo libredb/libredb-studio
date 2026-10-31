@@ -154,6 +154,11 @@ type PromqlOperation =
   /** One PromQL read the model wrote, on a `prometheus` connection; see `promqlQueryReadDescriptor`. */
   "promql.query.read";
 
+/** The opcuaread request language's operation: its one read. */
+type OpcuareadOperation =
+  /** One OPC UA read the model wrote, on an `opcua` connection; see `opcuareadQueryReadDescriptor`. */
+  "opcuaread.query.read";
+
 /** The s3api command language's operation: its one read. */
 type S3apiOperation =
   /** One S3 metadata read the model wrote, on an `s3` connection; see `s3apiQueryReadDescriptor`. */
@@ -184,6 +189,7 @@ export interface AgentFamilyOperationIds {
   readonly netconfrpc: NetconfrpcOperation;
   readonly modbusread: ModbusreadOperation;
   readonly promql: PromqlOperation;
+  readonly opcuaread: OpcuareadOperation;
 }
 
 /** kubectl's goal verifiers. */
@@ -255,6 +261,8 @@ export interface AgentFamilyVerifierIds {
   readonly modbusread: never;
   /** None: its workflows are judged by the core's own rules. */
   readonly promql: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly opcuaread: never;
 }
 
 /** The operation a family's model-written reads are evaluated under: its row's `<family>.query.read`. */
@@ -350,6 +358,12 @@ export interface AgentLanguageGrounding {
   readonly sampledFields?: boolean;
   /** What a plan-mode draft in this language is told on top of the shared contract (`planningStatementContract`). */
   readonly planningRules?: readonly string[];
+  /**
+   * Where the language's engine is never listed, so no inventory ever grounds a plan, what an ungrounded plan-mode draft
+   * is told in place of the no-inventory refusal: it is given the statement contract without its inventory sentences,
+   * and these rules say where its names come from instead. Absent, an ungrounded plan refuses as it always has.
+   */
+  readonly ungroundedPlanning?: readonly string[];
 }
 
 /** What a run is told about a shortfall, and whether it is narrowed to its verdict's tools while it acts on it. */
@@ -526,6 +540,7 @@ export interface AgentFamilyEvidenceTools {
   readonly netconfrpc: never;
   readonly modbusread: never;
   readonly promql: never;
+  readonly opcuaread: never;
 }
 
 /** Every pack's evidence tool: a member of the core's `AgentToolName`, declared by the pack that offers it. */
@@ -553,6 +568,7 @@ export interface AgentFamilyReadingDenyCodes {
   readonly netconfrpc: never;
   readonly modbusread: never;
   readonly promql: never;
+  readonly opcuaread: never;
 }
 
 /** Every pack's reading refusal code: a member of the core's `AgentReadingDenyCode`, declared by its pack. */
@@ -580,6 +596,7 @@ export interface AgentFamilyShortfalls {
   readonly netconfrpc: never;
   readonly modbusread: never;
   readonly promql: never;
+  readonly opcuaread: never;
 }
 
 /** Every pack's verdict shortfall: a member of the core's `AgentGoalShortfall`, declared by its pack. */
@@ -607,6 +624,7 @@ export interface AgentFamilyVariantRequirements {
   readonly netconfrpc: never;
   readonly modbusread: never;
   readonly promql: never;
+  readonly opcuaread: never;
 }
 
 /** Every pack's variant requirement: a member of the core's `AgentVariantRequirement`, declared by its pack. */
@@ -668,6 +686,7 @@ export interface AgentFamilyEvidenceEvents {
   readonly netconfrpc: never;
   readonly modbusread: never;
   readonly promql: never;
+  readonly opcuaread: never;
 }
 
 /** Every pack's evidence event, as the ledger stores it less its timestamp. */
@@ -871,6 +890,7 @@ export interface AgentFamilyDialectRows {
   netconfrpc: { client: Record<never, never>; server: Record<never, never> };
   modbusread: { client: Record<never, never>; server: Record<never, never> };
   promql: { client: Record<never, never>; server: Record<never, never> };
+  opcuaread: { client: Record<never, never>; server: Record<never, never> };
 }
 
 /** The dialect-bound members of each family, client and server. */

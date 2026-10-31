@@ -13,6 +13,8 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { boundedAgentClient } from "@/lib/db/providers/industrial/opcua/agent-read";
+import type { OpcuaReadOnlyClient } from "@/lib/db/providers/industrial/opcua/client";
 
 const PROVIDER = path.join(
   import.meta.dir,
@@ -141,5 +143,57 @@ describe("the client seam", () => {
     // `library.ts` is the bridge; `session.ts` states the rules over it and must stay clean, so a
     // test of those rules can run with the library outside its import graph (#1677).
     expect(importers).toEqual(["library.ts"]);
+  });
+});
+
+/**
+ * The agent's client is narrower still. An agent read reaches the server only through `boundedAgentClient`, which holds
+ * the read members of the seam and nothing else: no GetEndpoints and no CloseSession of its own, and, since the seam has
+ * none, no Write, Call, AddNodes, DeleteNodes, AddReferences, DeleteReferences, HistoryUpdate, RegisterNodes,
+ * TranslateBrowsePathsToNodeIds, TransferSubscriptions or CreateSubscription.
+ */
+describe("the agent's client", () => {
+  test("holds exactly the eight read members of the seam, and its request count", () => {
+    const session = new Proxy({} as OpcuaReadOnlyClient, {
+      get: () => () => {
+        throw new Error("not called");
+      },
+    });
+    const client = boundedAgentClient(session, { deadlineAt: Number.POSITIVE_INFINITY, timeoutMs: 1, now: () => 0 });
+    expect(Object.keys(client).sort()).toEqual(
+      [
+        "browse",
+        "browseNext",
+        "historyRead",
+        "historyReadNext",
+        "limits",
+        "read",
+        "releaseBrowseContinuationPoints",
+        "releaseHistoryContinuationPoint",
+        "requests",
+      ].sort(),
+    );
+    expect(Object.isFrozen(client)).toBe(true);
+  });
+
+  test("refuses a request at or past its deadline before the session is asked anything", async () => {
+    const asked: string[] = [];
+    const session = new Proxy({} as OpcuaReadOnlyClient, {
+      get: (_target, member) => async () => {
+        asked.push(String(member));
+        return [];
+      },
+    });
+    let now = 0;
+    const client = boundedAgentClient(session, { deadlineAt: 10, timeoutMs: 10, now: () => now });
+    await client.browse(["i=85"]);
+    now = 10;
+    const refused = await client.read(["i=2256"]).then(
+      () => "answered",
+      (error: Error) => error.message,
+    );
+    expect(refused).toStartWith("Read-only execution exceeded the time budget: the read did not finish within 10ms");
+    expect(asked).toEqual(["browse"]);
+    expect(client.requests()).toBe(1);
   });
 });

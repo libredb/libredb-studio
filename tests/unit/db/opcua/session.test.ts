@@ -187,6 +187,37 @@ describe("history reads are built explicitly, never left to the library", () => 
   });
 });
 
+describe("browse", () => {
+  test("follows hierarchical references forward by default, and inverse only when asked, in full requests", async () => {
+    const sent: unknown[] = [];
+    const base = bridge([endpoint("SignAndEncrypt", PLC_THUMB)], fresh());
+    const client = await openReadOnlySession(
+      {
+        ...base,
+        openSession: async (opened) => ({
+          ...(await base.openSession(opened)),
+          browse: async (nodes) => {
+            sent.push(...nodes);
+            return [];
+          },
+        }),
+      },
+      options(),
+    );
+    await client.browse(["i=85"]);
+    await client.browse(["ns=3;s=SlowUInt1"], "inverse");
+    await client.browse(["i=2253"], "forward");
+    const request = (nodeId: string, browseDirection: number) => ({
+      nodeId,
+      referenceTypeId: "i=33",
+      includeSubtypes: true,
+      browseDirection,
+      resultMask: 63,
+    });
+    expect(sent).toEqual([request("i=85", 0), request("ns=3;s=SlowUInt1", 1), request("i=2253", 0)]);
+  });
+});
+
 describe("browse continuation points", () => {
   test("following one does not release it, and releasing one does", async () => {
     const record = fresh();

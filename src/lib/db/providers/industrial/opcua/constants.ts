@@ -42,6 +42,14 @@ export const OPCUA_OBJECTS_FOLDER = "i=85" as const;
 export const OPCUA_POLICY_NONE = "http://opcfoundation.org/UA/SecurityPolicy#None" as const;
 
 /**
+ * The OPC Foundation's namespace URI, which is namespace 0 on every server (Part 6 5.2.2.9).
+ *
+ * An identifier, for the same reason as the policy URI above: a server's namespace table holds these
+ * bytes, and it is compared, never dereferenced.
+ */
+export const OPCUA_FOUNDATION_NAMESPACE = "http://opcfoundation.org/UA/" as const;
+
+/**
  * The reference type a level listing follows, with its subtypes: HierarchicalReferences, `i=33`.
  *
  * Measured on the documented OPC PLC fixture: following this and its subtypes reaches 6,769 nodes

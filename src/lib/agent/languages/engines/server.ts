@@ -30,6 +30,7 @@ import { SNMP_SERVER_OVERLAY } from "../snmpget/engines/snmp";
 import { NETCONF_SERVER_OVERLAY } from "../netconfrpc/engines/netconf";
 import { MODBUS_SERVER_OVERLAY } from "../modbusread/engines/modbus";
 import { PROMETHEUS_SERVER_OVERLAY } from "../promql/engines/prometheus";
+import { OPCUA_SERVER_OVERLAY } from "../opcuaread/engines/opcua";
 import type { AgentStatementLanguageId } from "../../agent-manifest";
 import { statementFamilyOf } from "../client";
 import { defineOverlay } from "../overlay";
@@ -94,6 +95,7 @@ const SERVER_OVERLAYS: AgentEngineServerOverlays = Object.freeze({
   netconf: Object.freeze({ ...NETCONF_SERVER_OVERLAY }),
   modbus: Object.freeze({ ...MODBUS_SERVER_OVERLAY }),
   prometheus: Object.freeze({ ...PROMETHEUS_SERVER_OVERLAY }),
+  opcua: Object.freeze({ ...OPCUA_SERVER_OVERLAY }),
 } satisfies AgentEngineServerOverlays);
 
 /** What an engine with no dialect answers: every member unsupported. */
