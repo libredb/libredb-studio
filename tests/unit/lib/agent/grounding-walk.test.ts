@@ -19,6 +19,7 @@ import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import type { AgentToolContext } from "@/lib/agent/tools";
 import type { AgentContextSnapshot, AgentInventory } from "@/lib/agent/types";
 import { QueryError } from "@/lib/db/errors";
+import { RunReadAllowance } from "@/lib/db/read-allowance";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
@@ -74,7 +75,7 @@ interface Stub {
 
 function stub(options: Stub = {}) {
   const listObjects = mock(
-    async (container: readonly string[], kind: string) =>
+    async (container: readonly string[], kind: string, ..._options: unknown[]) =>
       options.objects?.(container, kind) ?? [
         kind === "secrets"
           ? { path: [...container, SECRET_NAME], name: SECRET_NAME, kind }
@@ -82,7 +83,7 @@ function stub(options: Stub = {}) {
       ],
   );
   const countObjects = mock(
-    async (container: readonly string[]) =>
+    async (container: readonly string[], ..._options: unknown[]) =>
       options.counts?.(container) ?? { pods: { count: 1 }, secrets: { count: 2 } },
   );
   const listContainers = mock(
@@ -93,7 +94,9 @@ function stub(options: Stub = {}) {
         { path: ["shop"], name: "shop", level: 0 },
       ],
   );
-  const describeObjects = mock(async (_container: readonly string[], _kind: string) => ({ details: [] }));
+  const describeObjects = mock(async (_container: readonly string[], _kind: string, ..._rest: unknown[]) => ({
+    details: [],
+  }));
   const provider = { listObjects, countObjects, listContainers, describeObjects } as unknown as DatabaseProvider;
   const context: AgentToolContext = {
     runId: "run-1",
@@ -865,5 +868,33 @@ describe("an object with no columns", () => {
     expect(lines.find((line) => line.includes("orders"))).toMatch(
       /orders \(Table\): no columns derivable from the stored definition$/,
     );
+  });
+});
+
+describe("the run's read allowance on the walk's reads", () => {
+  test("each count, listing and bulk describe is handed the drive's allowance, so a billing engine can charge it", async () => {
+    const harness = stub({ kinds: [POD] });
+    const allowance = new RunReadAllowance(10);
+    const capture = await captureContextSnapshot({ ...harness.context, readAllowance: allowance });
+    expect(capture.kind).toBe("captured");
+    expect(harness.countObjects.mock.calls.map((call) => call[1])).toEqual([
+      { readAllowance: allowance },
+      { readAllowance: allowance },
+    ]);
+    expect(harness.listObjects.mock.calls.map((call) => call[2])).toEqual([
+      { readAllowance: allowance },
+      { readAllowance: allowance },
+    ]);
+    expect(harness.describeObjects.mock.calls.map((call) => call[3])).toEqual([
+      { readAllowance: allowance },
+      { readAllowance: allowance },
+    ]);
+  });
+
+  test("a context that carries no allowance hands the reads none, as before", async () => {
+    const { harness } = await captured({ kinds: [POD] });
+    expect(harness.countObjects.mock.calls.every((call) => call.length === 1)).toBe(true);
+    expect(harness.listObjects.mock.calls.every((call) => call.length === 2)).toBe(true);
+    expect(harness.describeObjects.mock.calls.every((call) => call.length === 3)).toBe(true);
   });
 });

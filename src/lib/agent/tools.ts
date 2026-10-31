@@ -92,6 +92,7 @@ import type {
   DatabaseProvider,
   ObjectDetail,
   ObjectKindSpec,
+  ObjectReadOptions,
   ProviderCapabilities,
   ProviderLabels,
   ReadOnlyStatementBudget,
@@ -2575,7 +2576,7 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
         // no bound at all, which is the only worse answer.
         try {
           const walked = await withinGrantedTime(
-            walkObjectInventory(provider, context.capabilities, declared),
+            walkObjectInventory(provider, context.capabilities, declared, objectReadArguments(context)),
             budget.statementTimeoutMs,
             () => new AgentSchemaReadTimeout(budget.statementTimeoutMs),
           );
@@ -2641,6 +2642,7 @@ async function walkObjectInventory(
   provider: DatabaseProvider,
   capabilities: ProviderCapabilities,
   declared: readonly ObjectKindSpec[],
+  readArguments: readonly [ObjectReadOptions] | readonly [],
 ): Promise<{ readonly inventory: AgentInventory; readonly defaultContainer?: readonly string[] }> {
   const listObjects = provider.listObjects.bind(provider);
   const describeObjects = provider.describeObjects.bind(provider);
@@ -2668,7 +2670,7 @@ async function walkObjectInventory(
 
   let pairs = 0;
   for (const container of containers) {
-    const counts = await countForGrounding(provider, container);
+    const counts = await countForGrounding(provider, container, readArguments);
     for (const spec of applicableKinds(declared, kindsOf.get(JSON.stringify(container)))) {
       const count = Object.hasOwn(counts, spec.id) ? counts[spec.id] : undefined;
       if (count !== undefined && !isCountUnavailable(count) && count.count === 0) continue;
@@ -2695,7 +2697,7 @@ async function walkObjectInventory(
       }
       pairs += 1;
       const listed: DatabaseObject[] = [];
-      for (const object of await listObjects(container, spec.id)) {
+      for (const object of await listObjects(container, spec.id, ...readArguments)) {
         if (objects.length + listed.length >= INVENTORY_LIMIT) {
           // Overwrites a pair-limit reason where both bit, the same way the route resolves
           // it: the object limit is the one a reader can see reflected in what they hold.
@@ -2710,7 +2712,7 @@ async function walkObjectInventory(
       // round trip for an empty answer.
       let details: readonly ObjectDetail[] = [];
       if (listed.length > 0) {
-        const batch = await describeObjects(container, spec.id, listed.length);
+        const batch = await describeObjects(container, spec.id, listed.length, ...readArguments);
         details = batch.details;
         // The provider's own bound in the provider's own words. Reported even when the listing
         // fitted, because a complete list of objects whose columns were cut is still an
@@ -2901,9 +2903,19 @@ function unlistedReason(message: string): string {
 async function countForGrounding(
   provider: DatabaseProvider,
   container: readonly string[],
+  readArguments: readonly [ObjectReadOptions] | readonly [],
 ): Promise<Record<string, KindCount>> {
   const countObjects = provider.countObjects?.bind(provider);
-  return countObjects === undefined ? {} : await countObjects(container);
+  return countObjects === undefined ? {} : await countObjects(container, ...readArguments);
+}
+
+/**
+ * The trailing argument the walk hands each object read: the drive's billed-read allowance, so an engine that bills
+ * every read charges the grounding's listings to the run as it charges the run's statements. No argument at all when
+ * the context carries none, so a read outside a drive is called exactly as the editor's routes call it.
+ */
+function objectReadArguments(context: AgentToolContext): readonly [ObjectReadOptions] | readonly [] {
+  return context.readAllowance === undefined ? [] : [{ readAllowance: context.readAllowance }];
 }
 
 /**
