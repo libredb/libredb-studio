@@ -224,8 +224,8 @@
           {
             "collection": "users",
             "exists": true,
-            "created": "2026-10-31T05:30:01.581141Z",
-            "updated": "2026-10-31T05:30:01.581141Z"
+            "created": "2026-10-31T05:51:02.715943Z",
+            "updated": "2026-10-31T05:51:02.715943Z"
           }
         ],
         "warnings": []
@@ -1094,7 +1094,7 @@
         },
         "withNoAuthorization": {
           "status": 200,
-          "carriedMarker": false
+          "carriedMarker": true
         }
       }
     ],
@@ -1112,15 +1112,15 @@
   "snapshot": {
     "before": {
       "documents": 24,
-      "sha256": "351bc5e8ebb7da55417e3670ab896de674c5ce536823f776eab9d3bc67c88762"
+      "sha256": "aca587385146d862077d282cfe075403abfd69f2bf5ce51c306f3b7797c6e2e5"
     },
     "afterAgent": {
       "documents": 24,
-      "sha256": "351bc5e8ebb7da55417e3670ab896de674c5ce536823f776eab9d3bc67c88762"
+      "sha256": "aca587385146d862077d282cfe075403abfd69f2bf5ce51c306f3b7797c6e2e5"
     },
     "afterRaw": {
       "documents": 26,
-      "sha256": "55a494e2313c23a0ff557fe78e455519c7447bb5a46cb8708f04aaa7c2643b02"
+      "sha256": "365893988f8d6f8daa04cfd3239e5bd0949b74f6c7c56c8eb2a4f95762f8c96c"
     },
     "agentLeftUnchanged": true,
     "rawWritesChangedIt": true

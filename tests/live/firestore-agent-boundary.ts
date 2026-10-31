@@ -49,12 +49,22 @@ const READ_ONLY: ProviderExecutionContext = { readOnly: true, sendsStatements: t
 const OPERATIONS: ProviderExecutionContext = { readOnly: true, sendsStatements: false };
 
 /** What the seeded documents carry: none may reach an agent answer. */
-const MARKERS = { value: "agent-marker-value", field: "agentMarkerField", id: "agent-marker-tenant" } as const;
+const MARKERS = {
+  value: "agent-marker-value",
+  field: "agentMarkerField",
+  id: "agent-marker-tenant",
+  total: "4242424",
+} as const;
+
+/** Whether an answer carried any seeded stored value back: one test for every raw call. */
+function carriesMarker(text: string): boolean {
+  return [MARKERS.value, MARKERS.id, MARKERS.total].some((marker) => text.includes(marker));
+}
 
 /** The marker documents, beside docker/firestore/seed.json's: one per kind of stored value. */
 const MARKER_DOCS = [
   { path: `tenants/${MARKERS.id}`, fields: { [MARKERS.field]: { stringValue: MARKERS.value } } },
-  { path: `tenants/${MARKERS.id}/invoices/i1`, fields: { total: { integerValue: "42" } } },
+  { path: `tenants/${MARKERS.id}/invoices/i1`, fields: { total: { integerValue: MARKERS.total } } },
   { path: "tenants/acme", fields: { plan: { stringValue: MARKERS.value } } },
 ];
 
@@ -280,12 +290,11 @@ async function rawReads(): Promise<unknown[]> {
       what,
       asOwner: {
         status: owner.status,
-        carriedMarker:
-          owner.text.includes(MARKERS.value) || owner.text.includes(MARKERS.id) || owner.text.includes("42"),
+        carriedMarker: carriesMarker(owner.text),
       },
       withNoAuthorization: {
         status: anonymous.status,
-        carriedMarker: anonymous.text.includes(MARKERS.value) || anonymous.text.includes(MARKERS.id),
+        carriedMarker: carriesMarker(anonymous.text),
       },
     });
   }
@@ -317,7 +326,7 @@ async function main(): Promise<void> {
   const writes = await rawWrites();
   const afterRaw = await fingerprint();
   const texts = [...reads.texts, ...agentRead.texts, ...operations.texts].join("\n");
-  const leaks = [MARKERS.value, MARKERS.field, MARKERS.id, "Alice", "Istanbul"].filter((marker) =>
+  const leaks = [MARKERS.value, MARKERS.field, MARKERS.id, MARKERS.total, "Alice", "Istanbul"].filter((marker) =>
     texts.includes(marker),
   );
   const capture = {
