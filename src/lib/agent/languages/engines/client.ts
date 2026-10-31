@@ -22,6 +22,7 @@ import { REDIS_CLIENT_OVERLAY } from "../rediscli/engines/client";
 import { ETCD_CLIENT_OVERLAY } from "../etcdctl/engines/client";
 import { OXIA_CLIENT_OVERLAY } from "../oxiacli/engines/client";
 import { RABBITMQ_CLIENT_OVERLAY } from "../rabbitread/engines/client";
+import { KAFKA_CLIENT_OVERLAY } from "../kafkaread/engines/client";
 import { defineOverlay, dialectOnly } from "../overlay";
 import type { AgentEngineClientDialect, AgentEngineClientOverlays, AgentEnginePack, AgentEngineType } from "../pack";
 import {
@@ -70,6 +71,7 @@ const CLIENT_OVERLAYS: AgentEngineClientOverlays = Object.freeze({
   etcd: Object.freeze({ family: "etcdctl", overlay: dialectOnly(ETCD_CLIENT_OVERLAY) }),
   oxia: Object.freeze({ family: "oxiacli", overlay: dialectOnly(OXIA_CLIENT_OVERLAY) }),
   rabbitmq: Object.freeze({ family: "rabbitread", overlay: dialectOnly(RABBITMQ_CLIENT_OVERLAY) }),
+  kafka: Object.freeze({ family: "kafkaread", overlay: dialectOnly(KAFKA_CLIENT_OVERLAY) }),
 } satisfies AgentEngineClientOverlays);
 
 /**

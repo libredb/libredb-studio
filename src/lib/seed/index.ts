@@ -131,7 +131,7 @@ export async function getSeedListing(roles: string[]): Promise<SeedListing> {
     The SQLite sample leads the built-ins, and the order is the point: a client with
     no persisted active connection selects the first of this list, so whichever sample
     comes first is what a brand-new administrator lands on. Agent mode executes statements on
-    PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia and RabbitMQ; the order was set while the LibreDB engine's
+    PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ and Apache Kafka; the order was set while the LibreDB engine's
     provider had no read-only statement path, when leading with it put every
     zero-config administrator on the one connection an agent run could not execute
     against, and it is kept: the SQLite sample offers every agent workflow, where the

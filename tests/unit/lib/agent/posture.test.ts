@@ -360,6 +360,22 @@ describe("the posture on RabbitMQ", () => {
   });
 });
 
+describe("the posture on Apache Kafka", () => {
+  const posture = agentPosture({ mode: "agent", engine: "kafka", engineLabel: "Apache Kafka", handover: false });
+
+  test("names exactly what the agent reads: names, counts and offsets, never a record or a broker address", () => {
+    expect(posture.qualifier).toBe(
+      `metadata only, ${STATEMENT_BUDGETS.maxResultRows} rows and ${STATEMENT_BUDGETS.statementTimeoutMs / 1000} s per read, over a client that holds only Metadata and ListOffsets`,
+    );
+    expect(posture.body).toContain(
+      "never a record's key, value, headers or timestamp, a broker's host and port, a config, a log directory or a consumer group",
+    );
+    expect(posture.body).toContain("An offset span is reported as a span, never as a message count.");
+    expect(posture.body).toContain("sent with topic auto-creation off");
+    expect(posture.body).not.toMatch(/message cells|values are shown|reads records/);
+  });
+});
+
 describe("autoExecuteTerms", () => {
   // No default: a caller that names no language would be shown SQL's terms on whatever engine it is on, SQL's
   // read-only session included, on an engine that has none.

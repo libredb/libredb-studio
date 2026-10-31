@@ -80,9 +80,10 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // `promql` alias below spells the language, and it still names this engine: see its entry.
   prometheus: true,
   // A ```kafka block holds a JSON read request the editor sends to the provider as it is
-  // (#1088). No alias is registered below: `json` is the tempting one and it is the wrong one,
-  // because a MongoDB document is JSON too, and `fenceTagEngine` is what decides whether a plan's
-  // deliverable was written for THIS connection.
+  // (#1088). The `kafkaread` alias below names the agent's language, and it still names this
+  // engine: see its entry. `json` is the tempting alias and it is the wrong one, because a MongoDB
+  // document is JSON too, and `fenceTagEngine` is what decides whether a plan's deliverable was
+  // written for THIS connection.
   kafka: true,
   // An ```etcd block holds one etcdctl command the editor runs as it is (#1089). `sh`, `bash` and
   // `shell` name no engine, which is the reason `sql` maps to no engine in `ALIAS_ENGINES`; the
@@ -183,6 +184,7 @@ export const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "etcdctl",
   "oxiacli",
   "rabbitread",
+  "kafkaread",
 ]);
 
 /**
@@ -244,6 +246,8 @@ export const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.free
   oxiacli: "oxia",
   // The agent's name for the RabbitMQ read request language, and `rabbitmq` is the only type-id that runs it.
   rabbitread: "rabbitmq",
+  // The agent's name for the Kafka metadata read request language, and `kafka` is the only type-id that runs it.
+  kafkaread: "kafka",
 });
 
 /**

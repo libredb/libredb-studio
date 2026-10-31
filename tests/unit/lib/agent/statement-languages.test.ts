@@ -12,6 +12,7 @@ import { fingerprintRediscli, rediscliRowCapAdvice } from "@/lib/agent/languages
 import { etcdctlRowCapAdvice, fingerprintEtcdctl } from "@/lib/agent/languages/etcdctl/adapter";
 import { fingerprintOxiacli, oxiacliRowCapAdvice } from "@/lib/agent/languages/oxiacli/adapter";
 import { fingerprintRabbitread, rabbitreadRowCapAdvice } from "@/lib/agent/languages/rabbitread/adapter";
+import { fingerprintKafkaread, kafkareadRowCapAdvice } from "@/lib/agent/languages/kafkaread/adapter";
 import { languageServer, languageServerPack } from "@/lib/agent/languages/server";
 import {
   admitLibredbkvStatement,
@@ -71,6 +72,12 @@ import {
   rabbitreadAgentReadInput,
 } from "@/lib/db/operations/rabbitread-admission";
 import { RABBITMQ_AGENT_SENTENCES } from "@/lib/db/providers/stream/rabbitmq/agent-statement";
+import {
+  admitKafkareadStatement,
+  KAFKAREAD_AGENT_MAX_STATEMENT_CHARS,
+  kafkareadAgentReadInput,
+} from "@/lib/db/operations/kafkaread-admission";
+import { KAFKA_AGENT_SENTENCES } from "@/lib/db/providers/stream/kafka/agent-statement";
 import { INFLUXQL_AGENT_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-statement";
 import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 
@@ -1039,5 +1046,71 @@ describe("the rabbitread language's server adapter and admission", () => {
   test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
     expect(Object.keys(AGENT_WORKFLOW_VARIANTS.rabbitread).sort()).toEqual(["investigation", "operations"]);
     expect(AGENT_WORKFLOW_VARIANTS.rabbitread.investigation?.canAutoExecute).toBe(false);
+  });
+});
+
+describe("the kafkaread language's server adapter and admission", () => {
+  const READ = '{"read": "offsets", "topic": "orders", "limit": 5}';
+
+  test("the fingerprint is the plan the reader sends, so one read written two ways is one identity", () => {
+    const one = fingerprintKafkaread(READ);
+    expect(fingerprintKafkaread('{"limit":5,"topic":"orders","read":"offsets"}')).toBe(one);
+    expect(fingerprintKafkaread('{"read": "offsets", "topic": "orders", "limit": 6}')).not.toBe(one);
+    expect(fingerprintKafkaread('{"read": "partitions", "topic": "orders", "limit": 5}')).not.toBe(one);
+    // A default written out is the read left out.
+    expect(fingerprintKafkaread('{"read": "topics"}')).toBe(fingerprintKafkaread('{"read": "topics", "limit": 50}'));
+  });
+
+  test("the fingerprint is total: a refused request is identified by its raw text, so it is refused again", () => {
+    const raw = '{"read": "fetch", "topic": "orders"}';
+    expect(fingerprintKafkaread(raw)).toBe(fingerprintKafkaread(raw));
+    expect(fingerprintKafkaread(raw)).toMatch(/^[0-9a-f]{64}$/);
+    expect(fingerprintKafkaread(`${raw} `)).not.toBe(fingerprintKafkaread(raw));
+  });
+
+  test("a read answers one row per topic, broker or partition, and the advice names the limit and the cursor", () => {
+    expect(AGENT_LANGUAGE_COPY.kafkaread.adviceKeys).toEqual([]);
+    expect(kafkareadRowCapAdvice(READ, "2")).toBe(
+      'Ask for at most 2 rows: a read answers one row per topic, broker or partition, up to its "limit", so write "limit": 2 or less, and read on with "after" set to the last name or id you read.',
+    );
+    expect(languageServer("kafkaread").shapeAdvice).toContain("a valid read request");
+  });
+
+  test("the admission is the provider's reader, plus a length the agent's contract names", () => {
+    expect(admitKafkareadStatement(READ)).toBeNull();
+    expect(admitKafkareadStatement("")).toEqual({ code: "request", message: KAFKA_AGENT_SENTENCES.empty });
+    expect(admitKafkareadStatement('{"read": "fetch"}')).toEqual({
+      code: "metadata-only",
+      message: KAFKA_AGENT_SENTENCES.notARead,
+    });
+    const long = JSON.stringify({ read: "topics", after: "a".repeat(KAFKAREAD_AGENT_MAX_STATEMENT_CHARS) });
+    expect(admitKafkareadStatement(long)).toEqual({
+      code: "agent-too-large",
+      message: `The read request is longer than ${KAFKAREAD_AGENT_MAX_STATEMENT_CHARS} characters, the most an agent read takes: shorten it. Nothing was sent.`,
+    });
+    expect(languageServer("kafkaread").admit?.(READ)).toBeNull();
+  });
+
+  test("an ungrounded run is sent to a read it holds, and plan mode is told none of the reader's rules", () => {
+    const ungrounded = languageServerPack("kafkaread").grounding.ungrounded;
+    expect(ungrounded?.("The capture failed.", { singular: "topic", plural: "topics" })).toBe(
+      'The capture failed.\nSo nothing about this cluster has been established for you: not one topic name. List the topics with run_read_query, {"read": "topics"}; answers carry names, counts and offsets only.',
+    );
+    expect(languageServerPack("kafkaread").grounding.planningRules).toBeUndefined();
+    expect(languageServerPack("kafkaread").grounding.omissionAdvice).toContain("by its partitions and offsets only");
+  });
+
+  test("the descriptor's input is strict, carries the request, and refuses what the admission refuses", () => {
+    expect(kafkareadAgentReadInput.safeParse({ statement: READ }).success).toBe(true);
+    expect(kafkareadAgentReadInput.safeParse({ statement: READ, sql: "x" }).success).toBe(false);
+    const refused = kafkareadAgentReadInput.safeParse({ statement: "fetch orders" });
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues[0]?.path).toEqual(["statement"]);
+    expect(refused.error?.issues[0]?.message).toStartWith("A Kafka agent read is one JSON object");
+  });
+
+  test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
+    expect(Object.keys(AGENT_WORKFLOW_VARIANTS.kafkaread).sort()).toEqual(["investigation", "operations"]);
+    expect(AGENT_WORKFLOW_VARIANTS.kafkaread.investigation?.canAutoExecute).toBe(false);
   });
 });

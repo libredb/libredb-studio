@@ -90,6 +90,8 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   oxiacli: null,
   // No MCP statement tool yet: MCP read stays closed on RabbitMQ until a change of its own declares one and opens it.
   rabbitread: null,
+  // No MCP statement tool yet: MCP read stays closed on Kafka until a change of its own declares one and opens it.
+  kafkaread: null,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageMcpFacet | null>);
 
 /** A facet some language declares, with its tool's name as a literal. */

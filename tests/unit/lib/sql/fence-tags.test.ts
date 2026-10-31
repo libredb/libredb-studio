@@ -66,6 +66,12 @@ describe("fenceTagEngine", () => {
     expect(fenceTagEngine("rabbitmq")).toBe("rabbitmq");
   });
 
+  test("kafkaread names kafka, the agent's name for the only metadata read language Kafka runs", () => {
+    expect(fenceTagEngine("kafkaread")).toBe("kafka");
+    expect(isQueryFenceTag("kafkaread")).toBe(true);
+    expect(fenceTagEngine("kafka")).toBe("kafka");
+  });
+
   test("etcdctl names etcd, the agent's name for the only command language etcd runs", () => {
     expect(fenceTagEngine("etcdctl")).toBe("etcd");
     expect(isQueryFenceTag("etcdctl")).toBe(true);

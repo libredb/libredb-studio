@@ -34,6 +34,7 @@ import { qdrantapiAgentReadInput } from "./qdrantapi-admission";
 import { rediscliAgentReadInput } from "./rediscli-admission";
 import { etcdctlAgentReadInput } from "./etcdctl-admission";
 import { oxiacliAgentReadInput } from "./oxiacli-admission";
+import { kafkareadAgentReadInput } from "./kafkaread-admission";
 import { rabbitreadAgentReadInput } from "./rabbitread-admission";
 import { weaviateapiAgentReadInput } from "./weaviateapi-admission";
 import { agentPlanExecutionSqlInput, agentQueryReadSqlInput, agentReadSqlInput } from "./statement-guard";
@@ -665,6 +666,40 @@ const oxiacliQueryReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+const KAFKAREAD_READ_BOUNDARY =
+  "Kafka: the provider's structural closed table: one read of a closed table of four metadata reads (the topic " +
+  "listing, the broker listing, one topic's partitions, one topic's earliest and end offsets), sent through an agent " +
+  "client that holds the Metadata request, with topic auto-creation off, and the ListOffsets request at the earliest " +
+  "and latest sentinels alone, so no fetch, produce, topic, config, ACL or group call, offset commit or timestamp " +
+  "lookup can be sent, and no internal topic is ever named. " +
+  "A record's key, value, headers and timestamp, a broker's host and port, configs, log directories and consumer " +
+  "groups are withheld: every answer is projected to names, counts and offsets (agent-metadata-read.ts), a request " +
+  "whose limit passes the row budget is refused before it is sent, and a result past the byte budget is refused, " +
+  "never truncated.";
+
+/**
+ * One Kafka metadata read the model wrote, on a `kafka` connection.
+ *
+ * R1 on a structural boundary: the agent's client holds the Metadata and ListOffsets reads alone. Its own id, and not
+ * a widened `sql.query.read`, so the SQL contract and its audit action stay exactly what they were.
+ */
+const kafkareadQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "kafkaread.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: kafkareadAgentReadInput,
+  verification: {
+    reviewedBy: "Kafka agent execution design review",
+    boundary: KAFKAREAD_READ_BOUNDARY,
+    verifiedOn: "2026-10-31",
+  },
+};
+
 const RABBITREAD_READ_BOUNDARY =
   "RabbitMQ: the provider's structural closed table, read with the editor's own read request parser: one read of one " +
   "stream, its AMQP 0-9-1 client holding encoders for the handshake and channel open, basic.qos, basic.consume, " +
@@ -948,6 +983,7 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   etcdctlQueryReadDescriptor,
   oxiacliQueryReadDescriptor,
   rabbitreadQueryReadDescriptor,
+  kafkareadQueryReadDescriptor,
 ]);
 
 /**

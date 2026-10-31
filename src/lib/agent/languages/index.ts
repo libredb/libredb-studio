@@ -23,6 +23,7 @@ import { REDISCLI_PACK } from "./rediscli/index";
 import { ETCDCTL_PACK } from "./etcdctl/index";
 import { OXIACLI_PACK } from "./oxiacli/index";
 import { RABBITREAD_PACK } from "./rabbitread/index";
+import { KAFKAREAD_PACK } from "./kafkaread/index";
 import type { AgentEvidenceTool, AgentLanguagePack, EvidenceToolName, LanguageToolArms } from "./pack";
 import { SQL_PACK } from "./sql/index";
 
@@ -40,6 +41,7 @@ const PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguagePack>> = Obj
   etcdctl: ETCDCTL_PACK,
   oxiacli: OXIACLI_PACK,
   rabbitread: RABBITREAD_PACK,
+  kafkaread: KAFKAREAD_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguagePack>);
 
 /** The pack for `language`, or a named error when the id is not a language this server knows. */
@@ -64,6 +66,7 @@ export const LANGUAGE_TOOL_ARMS: Readonly<Record<AgentStatementLanguageId, Langu
   etcdctl: ETCDCTL_PACK.execution.arms,
   oxiacli: OXIACLI_PACK.execution.arms,
   rabbitread: RABBITREAD_PACK.execution.arms,
+  kafkaread: KAFKAREAD_PACK.execution.arms,
 } satisfies Record<AgentStatementLanguageId, LanguageToolArms>);
 
 /**
@@ -85,6 +88,7 @@ export const AGENT_EVIDENCE_TOOLS: Readonly<Record<EvidenceToolName, AgentEviden
     ETCDCTL_PACK.execution.evidenceTools,
     OXIACLI_PACK.execution.evidenceTools,
     RABBITREAD_PACK.execution.evidenceTools,
+    KAFKAREAD_PACK.execution.evidenceTools,
   ],
   "AGENT_EVIDENCE_TOOLS",
 );

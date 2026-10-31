@@ -129,9 +129,9 @@ describe("who may call queryReadOnly", () => {
 
   test("an estimate and a budget the shared check refuses are refused before anything is sent", async () => {
     const { provider, calls } = await connected(READ_ONLY);
-    expect(((await rejection(provider.queryReadOnly('{"read": "topics"}', BUDGET, "estimate"))) as Error).message).toBe(
-      "Kafka composes no estimating plan for the agent",
-    );
+    expect(
+      ((await rejection(provider.queryReadOnly('{"read": "topics"}', BUDGET, "estimate-plan"))) as Error).message,
+    ).toBe("Kafka composes no estimating plan for the agent");
     expect(
       await rejection(provider.queryReadOnly('{"read": "topics"}', { ...BUDGET, maxResultRows: 0 })),
     ).toBeInstanceOf(Error);
