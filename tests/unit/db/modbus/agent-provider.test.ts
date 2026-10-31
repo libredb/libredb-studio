@@ -544,6 +544,8 @@ describe("what an agent-mode handle answers outside queryReadOnly", () => {
     const dev = await device();
     const health = await provider(dev.port, { execution: OPERATIONS, map: "" }).getHealth();
     expect(health.databaseSize).toBe("unknown");
+    // The dial closes at once, so the device's side may see it after the health answer returns.
+    await arrives(() => dev.connections.length === 1);
     expect(dev.received).toHaveLength(0);
     expect(dev.connections).toHaveLength(1);
   });
