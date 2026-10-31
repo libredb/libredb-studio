@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B159 · 88
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B160 · 89
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -8972,6 +8972,22 @@ Kept so that MCP access, and any widening of what agent mode reads on NETCONF, a
 Found 2026-10-31 when agent mode joined NETCONF.
 
 **Done when:** a per-engine exposure ruling opens MCP for NETCONF, an MCP surface that withholds the same nodes from the device's own modules is designed and `MCP_EXPOSABLE.netconf` turns true for it, the pack declares its MCP facet (`src/lib/agent/languages/netconfrpc/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same table and withholding, and `MCP_STATEMENT_READ.netconf` is true, with tests that no MCP answer carries a key, a password hash, an access rule or a value of a `nacm:default-deny-all` node; cited in `docs/AGENT.md`.
+
+### B160. Modbus's agent reads are paced per device, and it has no MCP surface
+
+Agent mode executes Modbus reads under the `modbusread` request language, one JSON request per call in the console's three shapes: points the connection's register map names, one block of one table, or the device identification objects (`docs/providers/modbus.md`, section 8).
+The boundary is the provider's structural closed table: the request reaches the device only through the request builders of `pdu.ts`, Read Coils, Read Discrete Inputs, Read Holding Registers and Read Input Registers, chosen by the table and never by the request, and Read Device Identification, behind the valve that re-reads every outbound frame before `socket.write` and refuses every other function code, so no write, diagnostic, file record or FIFO request can be sent on the agent path.
+Modbus TCP has no credential, and the pinned fixture takes a raw write from any client (measured: function codes 5, 6, 15, 16, 22 and 23 each answered and changed the value), so no principal can be the boundary: the table is.
+Values are the device's own readings, so they are answered as the console renders them, an identification object as text only when its bytes round-trip as text with no control byte and as hex otherwise.
+A device that serves one client at a time answers nobody else while a read holds it, measured on a single-client libmodbus device, so agent reads of one device never overlap across every run and connection of the server process, a one-second gap follows each, measured from its close, the wait counts against the read's time budget, and one run sends at most 64 device requests, charged before the socket; a lane is the device's host and port, so one device written as a name and as an address is two lanes.
+On a handle of either agent profile the console is refused, the overview, performance, storage, session, slow-query, table and index readings answer their reason rather than an empty reading, and the dial of `connect` and the read of health take their turn on the device's lane.
+So the language offers the investigation and the operations workflow only.
+`MCP_EXPOSABLE.modbus` is false, and the language's MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) with `MCP_STATEMENT_READ.modbus` false, so MCP `run_read_query` refuses a Modbus connection, because no MCP surface that paces a device and counts its requests is designed yet, and an MCP client has no register map to form a points read from.
+Kept so that MCP access, and any widening of what agent mode sends to a device or how often, are decisions of their own rather than side effects of agent mode joining.
+
+Found 2026-10-31 when agent mode joined Modbus.
+
+**Done when:** a per-engine exposure ruling opens MCP for Modbus, an MCP surface that reads through the same closed table, takes its turn on the same per-device lanes and bounds its requests per call is designed and `MCP_EXPOSABLE.modbus` turns true for it, the pack declares its MCP facet (`src/lib/agent/languages/modbusread/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), and `MCP_STATEMENT_READ.modbus` is true, with tests that an MCP read and an agent read of one device never overlap and that no MCP request can carry a write function code; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

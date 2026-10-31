@@ -84,6 +84,12 @@ describe("fenceTagEngine", () => {
     expect(fenceTagEngine("firestore")).toBe("firestore");
   });
 
+  test("modbusread names modbus, the agent's name for the only read request language Modbus runs", () => {
+    expect(fenceTagEngine("modbusread")).toBe("modbus");
+    expect(isQueryFenceTag("modbusread")).toBe(true);
+    expect(fenceTagEngine("modbus")).toBe("modbus");
+  });
+
   test("netconfrpc names netconf, the agent's name for the only read request language NETCONF runs", () => {
     expect(fenceTagEngine("netconfrpc")).toBe("netconf");
     expect(isQueryFenceTag("netconfrpc")).toBe(true);

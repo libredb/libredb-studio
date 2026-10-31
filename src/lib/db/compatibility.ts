@@ -571,7 +571,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   mtconnect: true,
   // MCP is outside this provider's first version. A read also needs the register map kept with
   // the connection, because Modbus has no discovery and a name means only what that document
-  // says it means, so an MCP client has nothing to form a read from on its own.
+  // says it means, so an MCP client has nothing to form a read from on its own. Agent mode reads
+  // the device paced and counted per run, and no MCP surface that paces a device is designed yet
+  // (BACKLOG B160).
   modbus: false,
   // Closed: agent mode reads NETCONF configuration and state with keys, password hashes, access rules and every node
   // the device's own YANG marks nacm:default-deny-all withheld, and no MCP surface that withholds them is designed yet;
@@ -675,6 +677,8 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   rabbitmq: false,
   opcua: false,
   mtconnect: false,
+  // Agent mode executes paced reads on Modbus, and MCP read stays closed on it until a change of its own opens it
+  // (BACKLOG B160).
   modbus: false,
   // Agent mode executes reads on NETCONF with the withheld nodes pruned, and MCP read stays closed on it until a
   // change of its own opens it (BACKLOG B159).

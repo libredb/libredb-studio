@@ -45,7 +45,8 @@ export type AgentStatementLanguageId =
   | "s3api"
   | "fsquery"
   | "snmpget"
-  | "netconfrpc";
+  | "netconfrpc"
+  | "modbusread";
 
 /** Literal-typed, so `AgentEngineFamily` in `languages/pack.ts` reads each engine's language by type. */
 export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
@@ -87,7 +88,7 @@ export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
   rabbitmq: "rabbitread",
   opcua: null,
   mtconnect: null,
-  modbus: null,
+  modbus: "modbusread",
   netconf: "netconfrpc",
   snmp: "snmpget",
   sparkplug: null,

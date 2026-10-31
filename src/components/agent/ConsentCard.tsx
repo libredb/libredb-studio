@@ -127,6 +127,7 @@ const HANDOVER_CHIPS: Readonly<Record<AgentStatementLanguageId, readonly Handove
   fsquery: [],
   snmpget: [],
   netconfrpc: [],
+  modbusread: [],
 };
 
 export function ConsentCard({

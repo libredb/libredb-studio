@@ -529,13 +529,14 @@ export async function createDatabaseProvider(
     }
 
     // Modbus TCP: a device or a gateway, read over a raw socket by this repository's own client
-    // through the shared egress rule. Read-only whatever the flag says, as for the two above, so
-    // no execution context rides along. No library: the client is ours, so the import is the
-    // provider module and nothing else.
+    // through the shared egress rule. Read-only whatever the flag says, by construction: the valve
+    // refuses every function code but the four reads and 43/14. No library: the client is ours, so
+    // the import is the provider module and nothing else. The execution context decides whether the
+    // handle answers agent reads; an agent-mode handle refuses the console and paces the device.
     case "modbus": {
       // The explicit /index specifier keeps this dynamic import statically analysable.
       const { ModbusProvider } = await import("./providers/industrial/modbus/index");
-      return new ModbusProvider(connection, options);
+      return new ModbusProvider(connection, options, execution);
     }
 
     // Platforms - dynamically imported
@@ -1373,7 +1374,7 @@ export type ExecutionProfile = "agent-read-only" | "agent-operations" | "agent-h
  * handle or transaction, a least-privilege principal the server's own answers prove, or a
  * Studio-enforced request allowlist plus the identity's own authorization), and only the
  * providers of AGENT_EXECUTION_ENGINES implement that: PostgreSQL, SQLite,
- * DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP and NETCONF (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
+ * DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF and Modbus (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
  * at all — it calls the curated reporting methods every provider implements — so
  * requiring a read-only STATEMENT path of it would refuse an engine over a capability
  * the profile never uses. `agent-handover` sends a statement too — the one a run

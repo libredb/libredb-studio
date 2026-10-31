@@ -135,6 +135,7 @@ const LANGUAGE_IDS: Readonly<Record<AgentStatementLanguageId, true>> = {
   fsquery: true,
   snmpget: true,
   netconfrpc: true,
+  modbusread: true,
 };
 
 describe("the server packs", () => {
@@ -278,6 +279,7 @@ describe("the language packs", () => {
       "fsquery",
       "snmpget",
       "netconfrpc",
+      "modbusread",
     ]);
     expect(Object.isFrozen(LANGUAGE_TOOL_ARMS)).toBe(true);
   });
@@ -435,6 +437,7 @@ describe("the prompt tables the packs hold", () => {
       "fsquery",
       "snmpget",
       "netconfrpc",
+      "modbusread",
     ]);
     expect(Object.isFrozen(WORKFLOW_TOOL_RULES)).toBe(true);
     for (const id of ids) {
@@ -545,6 +548,7 @@ describe("the client packs", () => {
         "fsquery",
         "snmpget",
         "netconfrpc",
+        "modbusread",
       ]);
     }
   });
@@ -571,6 +575,7 @@ describe("the client packs", () => {
       fsquery: null,
       snmpget: null,
       netconfrpc: null,
+      modbusread: null,
     });
   });
 

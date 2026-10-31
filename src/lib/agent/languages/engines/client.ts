@@ -27,6 +27,7 @@ import { S3_CLIENT_OVERLAY } from "../s3api/engines/client";
 import { FIRESTORE_CLIENT_OVERLAY } from "../fsquery/engines/client";
 import { SNMP_CLIENT_OVERLAY } from "../snmpget/engines/client";
 import { NETCONF_CLIENT_OVERLAY } from "../netconfrpc/engines/client";
+import { MODBUS_CLIENT_OVERLAY } from "../modbusread/engines/client";
 import { defineOverlay, dialectOnly } from "../overlay";
 import type { AgentEngineClientDialect, AgentEngineClientOverlays, AgentEnginePack, AgentEngineType } from "../pack";
 import {
@@ -80,6 +81,7 @@ const CLIENT_OVERLAYS: AgentEngineClientOverlays = Object.freeze({
   firestore: Object.freeze({ family: "fsquery", overlay: dialectOnly(FIRESTORE_CLIENT_OVERLAY) }),
   snmp: Object.freeze({ family: "snmpget", overlay: dialectOnly(SNMP_CLIENT_OVERLAY) }),
   netconf: Object.freeze({ family: "netconfrpc", overlay: dialectOnly(NETCONF_CLIENT_OVERLAY) }),
+  modbus: Object.freeze({ family: "modbusread", overlay: dialectOnly(MODBUS_CLIENT_OVERLAY) }),
 } satisfies AgentEngineClientOverlays);
 
 /**

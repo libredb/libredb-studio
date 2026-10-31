@@ -28,6 +28,7 @@ import { S3API_PACK } from "./s3api/index";
 import { FSQUERY_PACK } from "./fsquery/index";
 import { SNMPGET_PACK } from "./snmpget/index";
 import { NETCONFRPC_PACK } from "./netconfrpc/index";
+import { MODBUSREAD_PACK } from "./modbusread/index";
 import type { AgentEvidenceTool, AgentLanguagePack, EvidenceToolName, LanguageToolArms } from "./pack";
 import { SQL_PACK } from "./sql/index";
 
@@ -50,6 +51,7 @@ const PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguagePack>> = Obj
   fsquery: FSQUERY_PACK,
   snmpget: SNMPGET_PACK,
   netconfrpc: NETCONFRPC_PACK,
+  modbusread: MODBUSREAD_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguagePack>);
 
 /** The pack for `language`, or a named error when the id is not a language this server knows. */
@@ -79,6 +81,7 @@ export const LANGUAGE_TOOL_ARMS: Readonly<Record<AgentStatementLanguageId, Langu
   fsquery: FSQUERY_PACK.execution.arms,
   snmpget: SNMPGET_PACK.execution.arms,
   netconfrpc: NETCONFRPC_PACK.execution.arms,
+  modbusread: MODBUSREAD_PACK.execution.arms,
 } satisfies Record<AgentStatementLanguageId, LanguageToolArms>);
 
 /**
@@ -105,6 +108,7 @@ export const AGENT_EVIDENCE_TOOLS: Readonly<Record<EvidenceToolName, AgentEviden
     FSQUERY_PACK.execution.evidenceTools,
     SNMPGET_PACK.execution.evidenceTools,
     NETCONFRPC_PACK.execution.evidenceTools,
+    MODBUSREAD_PACK.execution.evidenceTools,
   ],
   "AGENT_EVIDENCE_TOOLS",
 );
