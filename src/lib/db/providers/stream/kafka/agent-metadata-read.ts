@@ -56,12 +56,12 @@ export type KafkaAgentAnswer =
   | { readonly op: "partitions"; readonly partitions: readonly KafkaPartitionMetadata[]; readonly more: boolean }
   | { readonly op: "offsets"; readonly offsets: readonly KafkaAgentPartitionOffsets[]; readonly more: boolean };
 
-const SAFE = BigInt(Number.MAX_SAFE_INTEGER);
-
 /** A bigint as a number where one holds it exactly; anything else is left as it is, which the count kind refuses. */
 function countOf(value: bigint | undefined): unknown {
   if (value === undefined) return null;
-  return value <= SAFE && value >= -SAFE ? Number(value) : value;
+  // A number that rounds back to the same bigint holds it exactly; the count kind then checks it is a safe integer.
+  const number = Number(value);
+  return BigInt(number) === value ? number : value;
 }
 
 /** Node ids as one name, "1,2,3"; none is null, so an empty list is never read as a name. */

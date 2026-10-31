@@ -170,6 +170,7 @@ describe("the engine registry", () => {
       "mongodb",
       "couchbase",
       "redis",
+      "kafka",
       "etcd",
       "neo4j",
       "milvus",
