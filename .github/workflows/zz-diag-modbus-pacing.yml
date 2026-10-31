@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "tests/live/zz-diag-pacing.ts"
+      - "tests/live/zz-diag-seven.test.ts"
       - ".github/workflows/zz-diag-modbus-pacing.yml"
 permissions:
   contents: read
@@ -17,11 +18,13 @@ jobs:
         with:
           bun-version: "1.4.4"
       - uses: ./.github/actions/bun-install
-      - name: diag script
+      - name: six then seven under bun test
         timeout-minutes: 2
         continue-on-error: true
-        run: bun tests/live/zz-diag-pacing.ts
-      - name: pacing test file alone
-        timeout-minutes: 3
+        run: bun test tests/live/zz-diag-seven.test.ts --timeout 5000
+      - name: seven alone under bun test
+        timeout-minutes: 2
         continue-on-error: true
-        run: bun test tests/unit/db/modbus/agent-pacing.test.ts --timeout 5000
+        env:
+          DIAG_SKIP_SIX: "1"
+        run: bun test tests/live/zz-diag-seven.test.ts --timeout 5000
