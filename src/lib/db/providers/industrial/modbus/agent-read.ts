@@ -45,6 +45,9 @@ import type { ReadRequest } from "./request";
 import { ModbusSession, ModbusTimeout } from "./session";
 import { ModbusDecodeError, REGISTERS_OF_TYPE } from "./values";
 
+/** How far past the session's request timer the socket's own timer is set on the agent path. */
+const SOCKET_TIMER_MARGIN_MS = 1000;
+
 /** The most device requests one agent run may send to Modbus devices, across all its reads and resumes. */
 export const MODBUS_AGENT_RUN_REQUESTS = 64;
 
@@ -213,10 +216,16 @@ async function readOnDevice(input: ModbusAgentReadInput, dial: Dialer, deadlineA
   const expired = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new ModbusAgentError(F.deadline(ms))), left);
   });
+  // The session's own request timer words a device's silence; the socket's timer is set past it so the two never
+  // race and silence is never worded as an unreachable device.
   const work = opened.then((socket) =>
-    runRead(input.plan, input.map, new ModbusSession(socketWire(socket, input.endpoint)), input.unitId, {
-      refuseCutWalk: true,
-    }),
+    runRead(
+      input.plan,
+      input.map,
+      new ModbusSession(socketWire(socket, input.endpoint, REQUEST_TIMEOUT_MS + SOCKET_TIMER_MARGIN_MS)),
+      input.unitId,
+      { refuseCutWalk: true },
+    ),
   );
   // The loser of the race settles later with nobody listening; it is read here so it is never an unhandled rejection.
   work.catch(() => undefined);

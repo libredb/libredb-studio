@@ -205,7 +205,7 @@ describe("every refusal is made before a socket exists", () => {
 
   test("an estimating plan is not composed", async () => {
     const dev = await device();
-    const error = await refusal(provider(dev.port).queryReadOnly('{"identify": "basic"}', budget(), "estimate"));
+    const error = await refusal(provider(dev.port).queryReadOnly('{"identify": "basic"}', budget(), "estimate-plan"));
     expect(error.message).toBe(MODBUS_PROVIDER_SENTENCES.noEstimate);
     expect(dev.connections).toHaveLength(0);
   });
@@ -444,9 +444,7 @@ describe("the time budget and the device's failures", () => {
         budget({ statementTimeoutMs: 8000 }),
       ),
     );
-    expect([MODBUS_AGENT_FAILURE_SENTENCES.silence, MODBUS_AGENT_FAILURE_SENTENCES.unreachable]).toContain(
-      error.message,
-    );
+    expect(error.message).toBe(MODBUS_AGENT_FAILURE_SENTENCES.silence);
     expect(error.message).not.toContain(TIME_BUDGET_PREFIX);
   }, 10_000);
 });
