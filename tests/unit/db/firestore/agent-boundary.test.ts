@@ -90,7 +90,7 @@ function inTheTable(request: SentWireRequest): boolean {
     );
   if (request.path === `${DOCUMENTS}:batchGet`)
     return new RegExp(
-      `^\\{"documents":\\["${PROVIDER_DOCS.replace(/[()]/g, "\\$&")}/[^"]+"\\],"mask":\\{"fieldPaths":\\[\\]\\}\\}$`,
+      `^\\{"documents":\\["${PROVIDER_DOCS.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/[^"]+"\\],"mask":\\{"fieldPaths":\\[\\]\\}\\}$`,
     ).test(body);
   return false;
 }
