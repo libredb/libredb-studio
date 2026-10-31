@@ -46,6 +46,7 @@
  * (a URI the table does not hold, an identifier that does not decode) refuses the read.
  */
 import type { OpcuaNodeId, OpcuaReadOnlyClient, OpcuaReference } from "./client";
+import { OPCUA_FOUNDATION_NAMESPACE } from "./constants";
 import { browseChunkSize, chunked } from "./limits";
 
 /** One standard node agent mode never reads, nor anything the server answers beneath it. */
@@ -208,9 +209,6 @@ export const OPCUA_WITHHELD_SENTENCE = `Withheld from agent mode, by node id wit
   ", ",
 )}; they hold certificates and trust lists, account names, role identity mappings, every open session's client, user identity and endpoint, and the PubSub key management objects. In namespace 0 agent mode reads only the Root and Objects folders, the Server object, ServerArray, NamespaceArray, ServerStatus, ServiceLevel, Auditing, ServerCapabilities without its RoleSet, and ServerDiagnostics with its EnabledFlag and ServerDiagnosticsSummary counters; every other namespace-0 node is refused with its reason.`;
 
-/** The OPC Foundation's namespace URI, which is namespace 0 on every server (Part 6 5.2.2.9). */
-const OPC_FOUNDATION_NAMESPACE = "http://opcfoundation.org/UA/";
-
 const MAX_UINT16 = 65_535;
 const MAX_UINT32 = 4_294_967_295;
 const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -266,7 +264,7 @@ export function canonicalNodeId(nodeId: OpcuaNodeId, namespaces?: readonly strin
   const identifier = canonicalIdentifier(rest);
   if (identifier === undefined) return undefined;
   if (uri !== undefined) {
-    if (uri === OPC_FOUNDATION_NAMESPACE) index = 0;
+    if (uri === OPCUA_FOUNDATION_NAMESPACE) index = 0;
     else if (namespaces === undefined) return `nsu=${uri};${identifier}`;
     else {
       const found = namespaces.indexOf(uri);
