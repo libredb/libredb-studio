@@ -330,7 +330,7 @@ The register map is the connection's own configuration, and its point names reac
 | Path | Handle | What it reads |
 | --- | --- | --- |
 | Investigation reads | agent read-only profile | one request of [section 8.2](#82-what-an-agent-request-may-be), paced as [section 8.3](#83-pacing) says |
-| Investigation grounding, plan-mode grounding and the operations workflow's inventory | either agent profile | the register map's units and points by name, which sends nothing to the device; with no map every count is `unavailable`, never zero |
+| Investigation grounding, plan-mode grounding and the operations workflow's inventory | either agent profile | the register map's units and points by name, which sends nothing to the device; with no map it lists no unit and no point, and the grounding then says the device reported none rather than that the map is absent ([U189](../BACKLOG.md#u189-a-modbus-connection-with-no-register-map-is-grounded-as-a-device-that-reported-nothing)) |
 | Connect and health | either agent profile | the console's own dial, and health's one-point read (a dial alone with no map), each taking its turn on the device's lane and waiting at most 9,000 ms for it |
 | Console, overview, performance, storage, session, slow-query, table and index readings | either agent profile | nothing: each is refused with its reason, never answered with Studio's own figures or an empty reading |
 
