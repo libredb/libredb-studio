@@ -8,11 +8,14 @@
  * "no units published" (`agent-units.ts`). The result reaches the model inside the untrusted-content fence like every
  * other result.
  *
- * WHAT IS WITHHELD. Before every read, on the read's own session, the withheld set is read (`withheldNodes` in
- * `agent-withheld.ts`): the standard roots and everything the server answers beneath them. A value read answers a node
- * inside it as a row typed `Withheld`, never sent, with the reason as a warning; a history read or a browse of one is
- * refused; a browse steps over every child inside it, warning its kind, so `Server` and `ServerCapabilities` stay
- * browsable.
+ * WHAT IS WITHHELD. Before every read, on the read's own session, every node id is put in one key, an `nsu=` URI
+ * through the server's NamespaceArray, and the withheld set is read (`withheldNodes` in `agent-withheld.ts`): the
+ * standard roots and everything the server answers beneath them, beside the namespace-0 nodes outside agent mode's
+ * list, which are refused whatever the walk saw. Where the server would not let this identity browse a withheld node,
+ * each node the read answers outside namespace 0 is placed from below by its parents (`deniedAncestry`) before it is
+ * sent or listed. A value read answers a refused node as a row typed `Withheld`, never sent, with the reason as a
+ * warning; a history read or a browse of one is refused; a browse steps over every refused child, warning its kind,
+ * so `Server` and `ServerCapabilities` stay browsable.
  *
  * ONE SESSION PER READ, closed on every path out, so nothing of one read (a continuation point, a cached limit, the
  * withheld set) reaches the next. Budgets refuse rather than cut: a value read naming more nodes than the row budget is
@@ -35,13 +38,24 @@ import type { OpcuaAgentPlan } from "./agent-statement";
 import { readUnits, type OpcuaUnits } from "./agent-units";
 import {
   canonicalNodeId,
+  deniedAncestry,
+  namesNamespaceUri,
+  type OpcuaKeyOf,
   OpcuaWithheldWalkError,
   type OpcuaWithheldNode,
   type OpcuaWithheldSet,
+  refusalOf,
   withheldNodes,
   withheldReason,
 } from "./agent-withheld";
-import type { OpcuaDataValue, OpcuaNodeId, OpcuaReadOnlyClient, OpcuaReference, OpcuaServerLimits } from "./client";
+import type {
+  OpcuaBrowseDirection,
+  OpcuaDataValue,
+  OpcuaNodeId,
+  OpcuaReadOnlyClient,
+  OpcuaReference,
+  OpcuaServerLimits,
+} from "./client";
 import { OPCUA_TYPE } from "./constants";
 import { messageOf, statusSentence } from "./errors";
 import { historyEndSentence, readHistory } from "./history";
@@ -107,6 +121,15 @@ export const OPCUA_AGENT_FAILURE_SENTENCES = {
   session: `The read could not open its session with the server, so nothing was read. ${NO_SERVER_TEXT} The connection test in the editor names the cause.`,
   /** The connection failed during the read with no status code. */
   transport: `The connection to the server failed during the read, so it was not answered. ${NO_SERVER_TEXT}`,
+  /** The server's NamespaceArray, needed to resolve an `nsu=` id, could not be read. */
+  namespaceTable: (status: string): string =>
+    `A node id names its namespace by URI, and the server's namespace table (NamespaceArray, i=2255) could not be read (the server answered ${status}), so Studio cannot tell which node it names and refuses the read rather than guess.`,
+  /** An `nsu=` URI the server's NamespaceArray does not hold. */
+  unknownNamespace:
+    "A node id names a namespace URI that this server's namespace table (NamespaceArray, i=2255) does not hold, so Studio cannot tell which node it names and refuses the read rather than guess.",
+  /** A node id the server answered that has no key. */
+  unkeyed:
+    "The server answered a node id Studio cannot put in one spelling (such as a node on another server), so it cannot tell whether that node is withheld and refuses the read rather than answer it unchecked.",
 } as const;
 
 const F = OPCUA_AGENT_FAILURE_SENTENCES;
@@ -138,6 +161,37 @@ export function agentFailure(error: unknown, sessionOpened: boolean): OpcuaAgent
   if (code !== undefined) return new OpcuaAgentError(F.status(code));
   if (!sessionOpened || error instanceof DatabaseConfigError) return new OpcuaAgentError(F.session);
   return new OpcuaAgentError(F.transport);
+}
+
+/** The server's NamespaceArray, a standard node read only when an `nsu=` id needs it. */
+const OPCUA_NAMESPACE_ARRAY = "i=2255";
+
+/** The server's namespace table, read on the read's own session. */
+async function namespaceTable(client: Pick<OpcuaReadOnlyClient, "read">): Promise<readonly string[]> {
+  const [answer] = await client.read([OPCUA_NAMESPACE_ARRAY]);
+  const value = answer?.value;
+  if (
+    answer?.statusCode !== "Good" ||
+    !Array.isArray(value) ||
+    !value.every((entry): entry is string => typeof entry === "string")
+  )
+    return fail(F.namespaceTable(answer?.statusCode ?? "nothing"));
+  return value;
+}
+
+/**
+ * The key of every node id one read meets, from the request or the server. The namespace table is read once, on the
+ * read's own session, the first time an `nsu=` id needs it, and dropped with the read.
+ */
+function keyResolver(client: Pick<OpcuaReadOnlyClient, "read">): OpcuaKeyOf {
+  let table: Promise<readonly string[]> | undefined;
+  return async (nodeId) => {
+    const key = canonicalNodeId(nodeId);
+    if (key === undefined) return fail(F.unkeyed);
+    if (!namesNamespaceUri(key)) return key;
+    table ??= namespaceTable(client);
+    return canonicalNodeId(key, await table) ?? fail(F.unknownNamespace);
+  };
 }
 
 /** The services an agent read may call: the read services of the seam, and nothing else. */
@@ -174,9 +228,9 @@ export function boundedAgentClient(
       charge();
       return session.limits();
     },
-    browse: async (nodeIds: readonly OpcuaNodeId[]) => {
+    browse: async (nodeIds: readonly OpcuaNodeId[], direction?: OpcuaBrowseDirection) => {
       charge();
-      return session.browse(nodeIds);
+      return direction === undefined ? session.browse(nodeIds) : session.browse(nodeIds, direction);
     },
     browseNext: async (points: readonly Uint8Array[]) => {
       charge();
@@ -221,8 +275,39 @@ export function preflight(plan: OpcuaAgentPlan, budget: ReadOnlyStatementBudget)
     : undefined;
 }
 
-const withheldIn = (set: OpcuaWithheldSet, nodeId: OpcuaNodeId): OpcuaWithheldNode | undefined =>
-  set.get(canonicalNodeId(nodeId) ?? nodeId);
+/** What one read knows about its server: how to key an id, the withheld set, and the size of a Browse. */
+interface OpcuaAgentScope {
+  readonly keyOf: OpcuaKeyOf;
+  readonly withheld: OpcuaWithheldSet;
+  readonly browseChunk: number;
+}
+
+/**
+ * Why each of `keys` is refused, by key: the standing refusals and the walk's set, and, where the walk was left
+ * unfinished, what the nodes' own parents say (`deniedAncestry`). `clean` names nodes this read already confirmed.
+ */
+async function refusals(
+  client: OpcuaAgentClient,
+  keys: readonly OpcuaNodeId[],
+  scope: OpcuaAgentScope,
+  clean?: ReadonlySet<OpcuaNodeId>,
+): Promise<ReadonlyMap<OpcuaNodeId, OpcuaWithheldNode>> {
+  const found = new Map<OpcuaNodeId, OpcuaWithheldNode>();
+  for (const key of keys) {
+    const refused = refusalOf(scope.withheld, key);
+    if (refused !== undefined) found.set(key, refused);
+  }
+  const below = await deniedAncestry(
+    client,
+    keys.filter((key) => !found.has(key)),
+    scope.withheld,
+    scope.keyOf,
+    scope.browseChunk,
+    clean,
+  );
+  for (const [key, root] of below) found.set(key, root);
+  return found;
+}
 
 /**
  * Whether a node's row carries a value that needs its units: a Variable or a VariableType, and any node whose Read
@@ -248,11 +333,12 @@ function reasons(kinds: readonly OpcuaWithheldNode[]): string[] {
 async function readValues(
   client: OpcuaAgentClient,
   nodeIds: readonly OpcuaNodeId[],
-  withheld: OpcuaWithheldSet,
+  scope: OpcuaAgentScope,
   limits: OpcuaServerLimits,
 ): Promise<OpcuaAgentAnswer> {
   const met: OpcuaWithheldNode[] = [];
-  const sent = [...new Set(nodeIds.filter((nodeId) => withheldIn(withheld, nodeId) === undefined))];
+  const refused = await refusals(client, [...new Set(nodeIds)], scope);
+  const sent = [...new Set(nodeIds.filter((nodeId) => !refused.has(nodeId)))];
   const values: OpcuaDataValue[] = [];
   for (const batch of chunked(sent, readChunkSize(limits))) {
     // oxlint-disable-next-line no-await-in-loop -- one chunk at a time keeps a read inside the server's operation limit.
@@ -260,13 +346,13 @@ async function readValues(
   }
   const byId = new Map(values.map((value) => [value.nodeId, value]));
   const variables = sent.filter((nodeId) => isValueBearing(byId.get(nodeId)));
-  const units = await readUnits(client, variables, withheld, {
+  const units = await readUnits(client, variables, unitRefused(scope), {
     browse: browseChunkSize(limits),
     read: readChunkSize(limits),
   });
   const consoleRows = new Map(valueRows(sent, values).rows.map((row) => [row.nodeId as OpcuaNodeId, row]));
   const rows = nodeIds.map((nodeId) => {
-    const kind = withheldIn(withheld, nodeId);
+    const kind = refused.get(nodeId);
     if (kind !== undefined) {
       met.push(kind);
       return {
@@ -284,14 +370,30 @@ async function readValues(
   return { fields: [...OPCUA_AGENT_VALUE_COLUMNS], rows, warnings: reasons(met) };
 }
 
+/**
+ * Whether a property node the units lookup found is not read: one with no key of its own here, or one refused by the
+ * read's withheld set or the namespace-0 list. Its unit is then answered as not read, never guessed.
+ */
+const unitRefused =
+  (scope: OpcuaAgentScope) =>
+  (nodeId: OpcuaNodeId): boolean => {
+    const key = canonicalNodeId(nodeId);
+    return key === undefined || namesNamespaceUri(key) || refusalOf(scope.withheld, key) !== undefined;
+  };
+
+/** The refusal of one node a history read or a browse names, when it is refused on this read. */
+async function refuseIfWithheld(client: OpcuaAgentClient, nodeId: OpcuaNodeId, scope: OpcuaAgentScope): Promise<void> {
+  const kind = (await refusals(client, [nodeId], scope)).get(nodeId);
+  if (kind !== undefined) fail(withheldReason(kind));
+}
+
 async function readHistoryOf(
   client: OpcuaAgentClient,
   plan: Extract<OpcuaAgentPlan, { kind: "history" }>,
-  withheld: OpcuaWithheldSet,
+  scope: OpcuaAgentScope,
   budget: ReadOnlyStatementBudget,
 ): Promise<OpcuaAgentAnswer> {
-  const kind = withheldIn(withheld, plan.nodeId);
-  if (kind !== undefined) fail(withheldReason(kind));
+  await refuseIfWithheld(client, plan.nodeId, scope);
   // A limit the request wrote within the budget is the request's own; otherwise one value past the budget is read, so
   // a window holding exactly the budget is answered and one more value is refused.
   const own = plan.limitStated && plan.limit <= budget.maxResultRows;
@@ -313,7 +415,7 @@ async function readHistoryOf(
     (history.end === "value-cap" && own) ||
     (history.end === "refused" && history.values.length === 0);
   if (!answered) fail(F.historyIncomplete(sentence));
-  const units = (await readUnits(client, [plan.nodeId], withheld)).get(plan.nodeId);
+  const units = (await readUnits(client, [plan.nodeId], unitRefused(scope))).get(plan.nodeId);
   // oxlint-disable-next-line no-map-spread -- each row is a new object, the console's row with the units beside it.
   const rows = historyRows(plan.nodeId, history.values).rows.map((row) => ({ ...row, ...unitColumns(units) }));
   return { fields: [...OPCUA_AGENT_VALUE_COLUMNS], rows, warnings: [sentence] };
@@ -322,11 +424,10 @@ async function readHistoryOf(
 async function browseOf(
   client: OpcuaAgentClient,
   nodeId: OpcuaNodeId,
-  withheld: OpcuaWithheldSet,
+  scope: OpcuaAgentScope,
   budget: ReadOnlyStatementBudget,
 ): Promise<OpcuaAgentAnswer> {
-  const kind = withheldIn(withheld, nodeId);
-  if (kind !== undefined) fail(withheldReason(kind));
+  await refuseIfWithheld(client, nodeId, scope);
   const [first] = await client.browse([nodeId]);
   if (first === undefined) return fail(F.transport);
   const ok = (status: string): boolean => status.startsWith("Good") || status.startsWith("Uncertain");
@@ -346,16 +447,28 @@ async function browseOf(
     references.push(...next.references);
     point = next.continuationPoint;
   }
+  const keyed: { readonly key: OpcuaNodeId; readonly reference: OpcuaReference }[] = [];
+  for (const reference of references) {
+    // oxlint-disable-next-line no-await-in-loop -- a URI is resolved by one table read, held for this read only.
+    keyed.push({ key: await scope.keyOf(reference.nodeId), reference });
+  }
+  // The children of a node this read confirmed are placed from below too, stopping at that node.
+  const refused = await refusals(
+    client,
+    keyed.map((child) => child.key),
+    scope,
+    new Set([nodeId]),
+  );
   const met: OpcuaWithheldNode[] = [];
   const rows: Record<string, unknown>[] = [];
-  for (const reference of references) {
-    const inside = withheldIn(withheld, reference.nodeId);
+  for (const { key, reference } of keyed) {
+    const inside = refused.get(key);
     if (inside !== undefined) {
       met.push(inside);
       continue;
     }
     rows.push({
-      nodeId: canonicalNodeId(reference.nodeId) ?? reference.nodeId,
+      nodeId: key,
       browseName: reference.browseName,
       displayName: reference.displayName,
       nodeClass: reference.nodeClass,
@@ -366,21 +479,35 @@ async function browseOf(
   return { fields: [...OPCUA_AGENT_BROWSE_COLUMNS], rows, warnings: reasons(met) };
 }
 
+/** The plan with every `nsu=` id put in its key, through the server's NamespaceArray. */
+async function keyedPlan(plan: OpcuaAgentPlan, keyOf: OpcuaKeyOf): Promise<OpcuaAgentPlan> {
+  if (plan.kind !== "read") return { ...plan, nodeId: await keyOf(plan.nodeId) };
+  const nodeIds: OpcuaNodeId[] = [];
+  for (const nodeId of plan.nodeIds) {
+    // oxlint-disable-next-line no-await-in-loop -- the table is read once, by the first id that needs it.
+    nodeIds.push(await keyOf(nodeId));
+  }
+  return { kind: "read", nodeIds };
+}
+
 /** The answer of one admitted read over one session's agent client, the withheld set read first. */
 export async function runOpcuaAgentRead(
   client: OpcuaAgentClient,
-  plan: OpcuaAgentPlan,
+  admitted: OpcuaAgentPlan,
   budget: ReadOnlyStatementBudget,
 ): Promise<OpcuaAgentAnswer> {
   const limits = await client.limits();
-  const withheld = await withheldNodes(client, browseChunkSize(limits));
+  const keyOf = keyResolver(client);
+  const plan = await keyedPlan(admitted, keyOf);
+  const browseChunk = browseChunkSize(limits);
+  const scope: OpcuaAgentScope = { keyOf, withheld: await withheldNodes(client, keyOf, browseChunk), browseChunk };
   switch (plan.kind) {
     case "read":
-      return readValues(client, plan.nodeIds, withheld, limits);
+      return readValues(client, plan.nodeIds, scope, limits);
     case "history":
-      return readHistoryOf(client, plan, withheld, budget);
+      return readHistoryOf(client, plan, scope, budget);
     case "browse":
-      return browseOf(client, plan.nodeId, withheld, budget);
+      return browseOf(client, plan.nodeId, scope, budget);
   }
 }
 

@@ -34,8 +34,8 @@ export interface OpcuaUnits {
   readonly euRange: string;
 }
 
-const UNITS_WITHHELD = "units not read: the node that holds them is withheld from agent mode";
-const RANGE_WITHHELD = "range not read: the node that holds it is withheld from agent mode";
+const UNITS_WITHHELD = "units not read: the node that holds them is not read in agent mode";
+const RANGE_WITHHELD = "range not read: the node that holds it is not read in agent mode";
 
 const HAS_PROPERTY = "i=46";
 const EU_INFORMATION = "i=887";
@@ -111,13 +111,14 @@ function rangeFrom(answer: OpcuaDataValue | undefined): string {
 /**
  * The units and range of each variable, by its node id as given.
  *
- * `withheld` holds the read's withheld set: a property node inside it is never read. `chunks` overrides the request
+ * `refused` says which property nodes the read may not read (its withheld set, the namespace-0 list, an id with no
+ * key): such a node is never read, and its unit is answered as not read. `chunks` overrides the request
  * sizes for a test; the provider passes the server's own limits through `browseChunkSize` and `readChunkSize`.
  */
 export async function readUnits(
   client: Pick<OpcuaReadOnlyClient, "browse" | "browseNext" | "read">,
   variables: readonly OpcuaNodeId[],
-  withheld: { has(nodeId: OpcuaNodeId): boolean },
+  refused: (nodeId: OpcuaNodeId) => boolean,
   chunks: { readonly browse: number; readonly read: number } = {
     browse: browseChunkSize({}),
     read: readChunkSize({}),
@@ -160,8 +161,7 @@ export async function readUnits(
     }
   }
 
-  const isWithheld = (id: OpcuaNodeId | undefined): boolean =>
-    id !== undefined && withheld.has(canonicalNodeId(id) ?? id);
+  const isWithheld = (id: OpcuaNodeId | undefined): boolean => id !== undefined && refused(id);
   const toRead = [...found.values()]
     .flatMap((properties) => [properties.euRange, properties.engineeringUnits])
     .filter((id): id is OpcuaNodeId => id !== undefined && !isWithheld(id));

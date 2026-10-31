@@ -15,8 +15,13 @@ import {
 import { OPCUA_AGENT_READS } from "@/lib/db/providers/industrial/opcua/agent-statement";
 import { OPCUA_AGENT_WITHHELD } from "@/lib/db/providers/industrial/opcua/agent-surface";
 import { OPCUA_NO_RANGE, OPCUA_NO_UNITS } from "@/lib/db/providers/industrial/opcua/agent-units";
-import { OPCUA_WITHHELD_NODES, withheldReason } from "@/lib/db/providers/industrial/opcua/agent-withheld";
+import {
+  OPCUA_NAMESPACE0_OUTSIDE,
+  OPCUA_WITHHELD_NODES,
+  withheldReason,
+} from "@/lib/db/providers/industrial/opcua/agent-withheld";
 import type {
+  OpcuaBrowseResult,
   OpcuaDataValue,
   OpcuaHistoryPage,
   OpcuaNodeId,
@@ -64,7 +69,7 @@ function plant() {
       node("ns=0;i=14053", "CertificateGroups", "Object"),
       node("ns=0;i=25709", "ResetToServerDefaults", "Method"),
     ],
-    "ns=0;i=14053": [],
+    "i=14053": [],
     "i=15606": [],
     "i=3706": [node("ns=7;i=1324504778", "ClientSession1", "Object")],
     "ns=7;i=1324504778": [node("ns=7;i=1324504823", "SessionSecurityDiagnostics")],
@@ -189,7 +194,7 @@ async function agentHandle(
 const WALK = [
   "limits",
   `browse ${OPCUA_WITHHELD_NODES.map((entry) => entry.nodeId).join(",")}`,
-  "browse ns=0;i=14053,ns=7;i=1324504778",
+  "browse i=14053,ns=7;i=1324504778",
   "browse ns=7;i=1324504823",
 ];
 
@@ -304,6 +309,22 @@ describe("a value read", () => {
     const result = await provider.queryReadOnly('{"read": ["ns=3;s=Unclassed"]}', BUDGET);
     expect(record.calls.slice(WALK.length)).toEqual(["read ns=3;s=Unclassed", "browse ns=3;s=Unclassed"]);
     expect(result.rows[0]).toMatchObject({ value: "5", units: OPCUA_NO_UNITS, euRange: OPCUA_NO_RANGE });
+  });
+
+  test("a units property the read may not read is never read, and its unit is answered as not read", async () => {
+    const space = plant();
+    space.values["ns=3;s=Odd"] = { value: 1, nodeClass: "Variable" };
+    space.tree["ns=3;s=Odd"] = [
+      node("ns=0;i=16192", "EngineeringUnits", "Variable", "ns=0;i=46"),
+      node("ns=7;i=1324504823", "EURange", "Variable", "ns=0;i=46"),
+    ];
+    const { provider, record } = await agentHandle(space);
+    const result = await provider.queryReadOnly('{"read": ["ns=3;s=Odd"]}', BUDGET);
+    expect(record.calls.slice(WALK.length)).toEqual(["read ns=3;s=Odd", "browse ns=3;s=Odd"]);
+    expect(result.rows[0]).toMatchObject({
+      units: "units not read: the node that holds them is not read in agent mode",
+      euRange: "range not read: the node that holds it is not read in agent mode",
+    });
   });
 
   test("a node with no value is not looked up for units, and answers none", async () => {
@@ -441,15 +462,12 @@ describe("a browse", () => {
         nodeClass: "Variable",
         referenceTypeId: "i=47",
       },
-      {
-        nodeId: "i=11492",
-        browseName: "GetMonitoredItems",
-        displayName: "GetMonitoredItems",
-        nodeClass: "Method",
-        referenceTypeId: "i=47",
-      },
     ]);
-    expect(result.warnings?.map((warning) => warning.message)).toEqual([withheldReason(OPCUA_WITHHELD_NODES[0])]);
+    // ServerConfiguration is a withheld root, and the GetMonitoredItems method a namespace-0 node outside the list.
+    expect(result.warnings?.map((warning) => warning.message)).toEqual([
+      withheldReason(OPCUA_WITHHELD_NODES[0]),
+      withheldReason(OPCUA_NAMESPACE0_OUTSIDE),
+    ]);
   });
 
   test("a browse of a per-session node is refused with its reason before it is browsed", async () => {
@@ -526,6 +544,205 @@ describe("a browse", () => {
     const { provider } = await agentHandle();
     await expect(provider.queryReadOnly('{"browse": "ns=3;s=Nowhere"}', BUDGET)).rejects.toThrow(
       OPCUA_AGENT_FAILURE_SENTENCES.status("BadNodeIdUnknown"),
+    );
+  });
+});
+
+describe("node ids are compared as one key", () => {
+  /** The fixture's namespace table, as OPC PLC 2.15.10 answers i=2255, shortened. */
+  const TABLE = ["http://opcfoundation.org/UA/", "urn:OpcPlc:host", "http://microsoft.com/Opc/OpcPlc/", "urn:plant"];
+
+  const withTable = (statusCode = "Good", value: unknown = TABLE) => {
+    const space = plant();
+    space.values["i=2255"] = { value, statusCode };
+    space.values["ns=3;s=Pump"] = { value: 3, nodeClass: "Variable" };
+    space.tree["ns=3;s=Pump"] = [];
+    return space;
+  };
+
+  test("an nsu= id is put in its index through the server's NamespaceArray, read on the read's session", async () => {
+    const { provider, record } = await agentHandle(withTable());
+    const result = await provider.queryReadOnly('{"read": ["nsu=urn:plant;s=Pump"]}', BUDGET);
+    expect(record.calls).toEqual(["limits", "read i=2255", ...WALK.slice(1), "read ns=3;s=Pump", "browse ns=3;s=Pump"]);
+    expect(result.rows[0]).toMatchObject({ nodeId: "ns=3;s=Pump", value: "3", units: OPCUA_NO_UNITS });
+  });
+
+  test("the table is read again on the next read: nothing of it is held", async () => {
+    const { provider, record } = await agentHandle(withTable());
+    await provider.queryReadOnly('{"read": ["nsu=urn:plant;s=Pump"]}', BUDGET);
+    await provider.queryReadOnly('{"browse": "nsu=urn:plant;s=Pump"}', BUDGET);
+    expect(record.calls.filter((call) => call === "read i=2255")).toHaveLength(2);
+  });
+
+  test("a URI the table does not hold, or a table the server will not answer, refuses the read", async () => {
+    const unknown = await agentHandle(withTable());
+    await expect(unknown.provider.queryReadOnly('{"read": ["nsu=urn:elsewhere;s=Pump"]}', BUDGET)).rejects.toThrow(
+      OPCUA_AGENT_FAILURE_SENTENCES.unknownNamespace,
+    );
+    expect(unknown.record.calls).toEqual(["limits", "read i=2255"]);
+    // A table the server answers Bad is not read, whatever value comes with it.
+    const refused = await agentHandle(withTable("BadUserAccessDenied"));
+    await expect(refused.provider.queryReadOnly('{"browse": "nsu=urn:plant;s=Pump"}', BUDGET)).rejects.toThrow(
+      OPCUA_AGENT_FAILURE_SENTENCES.namespaceTable("BadUserAccessDenied"),
+    );
+    const malformed = await agentHandle(withTable("Good", ["urn:a", 7]));
+    await expect(malformed.provider.queryReadOnly('{"history": "nsu=urn:plant;s=Pump"}', BUDGET)).rejects.toThrow(
+      OPCUA_AGENT_FAILURE_SENTENCES.namespaceTable("Good"),
+    );
+    const silent = await agentHandle(withTable(), { read: async () => [] });
+    await expect(silent.provider.queryReadOnly('{"read": ["nsu=urn:plant;s=Pump"]}', BUDGET)).rejects.toThrow(
+      OPCUA_AGENT_FAILURE_SENTENCES.namespaceTable("nothing"),
+    );
+  });
+
+  test("a withheld root written with namespace 0's URI is refused before anything is sent", async () => {
+    const { provider, record } = await agentHandle();
+    await expect(
+      provider.queryReadOnly('{"browse": "nsu=http://opcfoundation.org/UA/;i=3706"}', BUDGET),
+    ).rejects.toThrow(withheldReason(OPCUA_WITHHELD_NODES[2]));
+    expect(record.calls).toEqual([]);
+  });
+
+  test("a withheld node reached through its namespace URI is withheld after the table resolves it", async () => {
+    const space = withTable("Good", ["http://opcfoundation.org/UA/", "a", "b", "c", "d", "e", "f", "urn:diagnostics"]);
+    const { provider, record } = await agentHandle(space);
+    const result = await provider.queryReadOnly('{"read": ["nsu=urn:diagnostics;i=1324504823"]}', BUDGET);
+    expect(result.rows[0]).toMatchObject({ nodeId: "ns=7;i=1324504823", statusCode: OPCUA_WITHHELD_STATUS });
+    expect(record.calls.filter((call) => call.startsWith("read "))).toEqual(["read i=2255"]);
+    await expect(provider.queryReadOnly('{"history": "nsu=urn:diagnostics;i=1324504778"}', BUDGET)).rejects.toThrow(
+      withheldReason(OPCUA_WITHHELD_NODES[2]),
+    );
+  });
+
+  test("a per-session node with an opaque id is withheld in every base64 spelling of it", async () => {
+    const space = plant();
+    space.tree["i=3706"] = [node("ns=7;b=AQ==", "ClientSession2", "Object")];
+    space.tree["ns=7;b=AQ=="] = [];
+    const { provider, record } = await agentHandle(space);
+    const result = await provider.queryReadOnly('{"read": ["ns=7;b=AQ", "ns=7;b=AR==", "ns=7;b=AR"]}', BUDGET);
+    expect(result.rows.map((row) => [row.nodeId, row.statusCode])).toEqual([
+      ["ns=7;b=AQ==", OPCUA_WITHHELD_STATUS],
+      ["ns=7;b=AQ==", OPCUA_WITHHELD_STATUS],
+      ["ns=7;b=AQ==", OPCUA_WITHHELD_STATUS],
+    ]);
+    expect(record.calls.filter((call) => call.startsWith("read "))).toEqual([]);
+    await expect(provider.queryReadOnly('{"browse": "ns=7;b=AR"}', BUDGET)).rejects.toThrow(
+      withheldReason(OPCUA_WITHHELD_NODES[2]),
+    );
+  });
+
+  test("an opaque id that does not decode is refused before anything is sent", async () => {
+    const { provider, record } = await agentHandle();
+    await expect(provider.queryReadOnly('{"read": ["ns=7;b=A=Q="]}', BUDGET)).rejects.toThrow(
+      "its identifier does not decode",
+    );
+    expect(record.calls).toEqual([]);
+  });
+
+  test("a child the server answers with no key refuses the browse", async () => {
+    const space = plant();
+    space.tree["ns=3;s=Remote"] = [node("ns=0;i=5;namespaceUri:urn:x;serverIndex:2", "Elsewhere", "Object")];
+    const { provider } = await agentHandle(space);
+    await expect(provider.queryReadOnly('{"browse": "ns=3;s=Remote"}', BUDGET)).rejects.toThrow(
+      OPCUA_AGENT_FAILURE_SENTENCES.unkeyed,
+    );
+  });
+});
+
+describe("namespace 0 outside agent mode's list", () => {
+  test("a value read answers it withheld with its reason and never sends it; a listed node is read", async () => {
+    const { provider, record } = await agentHandle();
+    const result = await provider.queryReadOnly('{"read": ["i=12642", "ns=0;i=16192", "i=2256"]}', BUDGET);
+    expect(result.rows.map((row) => [row.nodeId, row.statusCode])).toEqual([
+      ["i=12642", OPCUA_WITHHELD_STATUS],
+      ["i=16192", OPCUA_WITHHELD_STATUS],
+      ["i=2256", "Good"],
+    ]);
+    expect(result.warnings?.map((warning) => warning.message)).toEqual([withheldReason(OPCUA_NAMESPACE0_OUTSIDE)]);
+    expect(record.calls.filter((call) => call.startsWith("read "))).toEqual(["read i=2256"]);
+  });
+
+  test("a history read or a browse of one is refused before anything is sent", async () => {
+    const { provider, record } = await agentHandle();
+    for (const request of ['{"history": "i=12642"}', '{"browse": "i=15644"}', '{"browse": "ns=0;i=14053"}'])
+      await expect(provider.queryReadOnly(request, BUDGET)).rejects.toThrow(withheldReason(OPCUA_NAMESPACE0_OUTSIDE));
+    expect(record.calls).toEqual([]);
+  });
+});
+
+describe("a walk the server leaves unfinished for this identity", () => {
+  /**
+   * OPC PLC 2.15.10's answer to an anonymous session: the session diagnostics array is not browsed, and here a
+   * per-session node beneath it would still answer its Read. An inverse browse answers each node's parents.
+   */
+  function deniedPlant(parents: Record<string, readonly OpcuaReference[]>) {
+    const space = plant();
+    space.values["ns=7;i=99"] = { value: "urn:client-app", nodeClass: "Variable" };
+    space.tree["ns=3;s=Plant"] = [node("ns=3;s=SlowUInt1", "SlowUInt1"), node("ns=7;i=99", "Session", "Variable")];
+    const inverse: string[] = [];
+    const browse = async (
+      ids: readonly OpcuaNodeId[],
+      direction?: "forward" | "inverse",
+    ): Promise<readonly OpcuaBrowseResult[]> => {
+      if (direction === "inverse") {
+        inverse.push(ids.join(","));
+        return ids.map((nodeId) => ({ nodeId, references: parents[nodeId] ?? [], statusCode: "Good" }));
+      }
+      return ids.map((nodeId) => ({
+        nodeId,
+        references: space.tree[nodeId] ?? [],
+        statusCode: nodeId === "i=3707" ? "BadUserAccessDenied" : nodeId in space.tree ? "Good" : "BadNodeIdUnknown",
+      }));
+    };
+    return { space, inverse, browse };
+  }
+
+  const PARENTS = {
+    "ns=7;i=99": [node("ns=0;i=3707", "SessionDiagnosticsArray"), node("ns=3;s=Plant", "Plant", "Object")],
+    "ns=3;s=SlowUInt1": [node("ns=3;s=Plant", "Plant", "Object")],
+    "ns=3;s=Plant": [node("ns=0;i=85", "Objects", "Object")],
+  };
+
+  test("a node beneath the unbrowsed node is answered withheld, though its Read would succeed, and is never sent", async () => {
+    const fake = deniedPlant(PARENTS);
+    const { provider, record } = await agentHandle(fake.space, { browse: fake.browse });
+    const result = await provider.queryReadOnly('{"read": ["ns=7;i=99", "ns=3;s=SlowUInt1"]}', BUDGET);
+    expect(result.rows.map((row) => [row.nodeId, row.statusCode, row.value])).toEqual([
+      ["ns=7;i=99", OPCUA_WITHHELD_STATUS, null],
+      ["ns=3;s=SlowUInt1", "Good", "7"],
+    ]);
+    expect(result.warnings?.map((warning) => warning.message)).toEqual([withheldReason(OPCUA_WITHHELD_NODES[3])]);
+    expect(record.calls.filter((call) => call.startsWith("read "))).toEqual(["read ns=3;s=SlowUInt1"]);
+    expect(fake.inverse).toEqual(["ns=7;i=99,ns=3;s=SlowUInt1", "ns=3;s=Plant"]);
+  });
+
+  test("a history read or a browse of one is refused with its reason", async () => {
+    const fake = deniedPlant(PARENTS);
+    const { provider, record } = await agentHandle(fake.space, { browse: fake.browse });
+    await expect(provider.queryReadOnly('{"history": "ns=7;i=99"}', BUDGET)).rejects.toThrow(
+      withheldReason(OPCUA_WITHHELD_NODES[3]),
+    );
+    await expect(provider.queryReadOnly('{"browse": "ns=7;i=99"}', BUDGET)).rejects.toThrow(
+      withheldReason(OPCUA_WITHHELD_NODES[3]),
+    );
+    expect(record.calls.filter((call) => call.startsWith("historyRead"))).toEqual([]);
+  });
+
+  test("a browse steps over a child beneath it, the browsed node ending every other line", async () => {
+    const fake = deniedPlant(PARENTS);
+    const { provider } = await agentHandle(fake.space, { browse: fake.browse });
+    const result = await provider.queryReadOnly('{"browse": "ns=3;s=Plant"}', BUDGET);
+    expect(result.rows.map((row) => row.nodeId)).toEqual(["ns=3;s=SlowUInt1"]);
+    expect(result.warnings?.map((warning) => warning.message)).toEqual([withheldReason(OPCUA_WITHHELD_NODES[3])]);
+    // The browsed node, then its children; SlowUInt1's only parent is the browsed node, so nothing more is climbed.
+    expect(fake.inverse).toEqual(["ns=3;s=Plant", "ns=3;s=SlowUInt1,ns=7;i=99"]);
+  });
+
+  test("a node whose parents cannot be read is refused rather than answered unchecked", async () => {
+    const fake = deniedPlant({});
+    const { provider } = await agentHandle(fake.space, { browse: fake.browse });
+    await expect(provider.queryReadOnly('{"read": ["ns=3;s=SlowUInt1"]}', BUDGET)).rejects.toThrow(
+      "a node answered no parent",
     );
   });
 });

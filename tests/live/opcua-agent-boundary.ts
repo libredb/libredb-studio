@@ -151,6 +151,39 @@ async function withheldRaw(port: number, who: Who) {
   }
 }
 
+/**
+ * What standard namespace-0 nodes beneath the withheld roots answer read raw, by status only: the default application
+ * group's TrustList (i=12642), CertificateGroups (i=14053), the Anonymous role (i=15644) and its Identities (i=16192).
+ * Agent mode refuses each by its id, whatever a walk saw.
+ */
+async function standardDescendantsRaw(port: number, who: Who) {
+  const raw = await rawSession(port, who);
+  try {
+    const answers = [];
+    for (const nodeId of ["i=12642", "i=14053", "i=15644", "i=16192"]) {
+      const browsed = await browseRaw(raw.session, nodeId);
+      const read = await raw.session.read({ nodeId, attributeId: AttributeIds.Value });
+      answers.push({ nodeId, browse: browsed.statusCode.name, read: read.statusCode.name });
+    }
+    return answers;
+  } finally {
+    await raw.close();
+  }
+}
+
+/** The URI of the namespace OPC PLC's telemetry nodes live in (ns=3), read raw; entry 1 names the host and is not used. */
+async function telemetryNamespace(port: number): Promise<string> {
+  const raw = await rawSession(port, "anonymous");
+  try {
+    const table = await raw.session.read({ nodeId: "i=2255", attributeId: AttributeIds.Value });
+    const uri = (table.value.value as string[] | null)?.[3];
+    if (typeof uri !== "string") throw new Error("the fixture's namespace table has no entry 3");
+    return uri;
+  } finally {
+    await raw.close();
+  }
+}
+
 /** Whether the administrator's own session diagnostics carry its account name, measured and recorded as a flag. */
 async function sessionDiagnosticsCarryIdentity(
   port: number,
@@ -299,7 +332,13 @@ try {
     user: await withheldRaw(USERS_PORT, "user"),
     administrator: await withheldRaw(USERS_PORT, "administrator"),
   };
+  capture.standardDescendantsRaw = {
+    anonymous: await standardDescendantsRaw(ANON_PORT, "anonymous"),
+    user: await standardDescendantsRaw(USERS_PORT, "user"),
+    administrator: await standardDescendantsRaw(USERS_PORT, "administrator"),
+  };
   capture.sessionDiagnostics = await sessionDiagnosticsCarryIdentity(USERS_PORT);
+  const telemetry = await telemetryNamespace(ANON_PORT);
 
   // A raw Write of a variable's own value, and a raw Call, on the capture's own anonymous client.
   {
@@ -343,6 +382,10 @@ try {
   for (const statement of [
     JSON.stringify({ read: [ANALOG, PLAIN] }),
     JSON.stringify({ read: ["i=12637", "i=15606", "i=3706", "i=2256"] }),
+    JSON.stringify({ read: ["i=12642", "i=16192", "i=2255"] }),
+    JSON.stringify({ read: [`nsu=${telemetry};s=SlowUInt1`] }),
+    JSON.stringify({ read: ["nsu=urn:not-on-this-server;s=SlowUInt1"] }),
+    JSON.stringify({ browse: "i=15644" }),
     JSON.stringify({ browse: "i=85" }),
     JSON.stringify({ browse: "i=2253" }),
     JSON.stringify({ browse: "i=2268" }),

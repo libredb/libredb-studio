@@ -97,19 +97,33 @@ describe("everything else is refused before anything is sent, with the list of r
     expect(refusal('{"history": "ns=3;s=x", "attributeId": 13}')).toContain('names "attributeId"');
   });
 
-  test("an nsu= namespace other than namespace 0's is refused, since its index would take a read to know", () => {
-    expect(refusal('{"read": ["nsu=urn:plant;s=x"]}')).toBe(
-      OPCUA_AGENT_SENTENCES.request(
-        "nsu=urn:plant;s=x names its namespace by URI. Agent mode reads a node id written with its namespace index (ns=3;s=...), or in namespace 0 with no prefix (i=2256).",
-      ),
-    );
-    expect(refusal('{"browse": "nsu=urn:plant;i=5"}')).toContain("names its namespace by URI");
-    expect(refusal('{"history": "nsu=urn:plant;i=5"}')).toContain("names its namespace by URI");
-    // Namespace 0's own URI is namespace 0.
+  test("an nsu= namespace keeps its URI for the server's namespace table, and namespace 0's URI is namespace 0", () => {
+    expect(readOpcuaAgentStatement('{"read": ["nsu=urn:plant;s=x", "nsu=urn:plant;b=AR"]}')).toEqual({
+      ok: true,
+      plan: { kind: "read", nodeIds: ["nsu=urn:plant;s=x", "nsu=urn:plant;b=AQ=="] },
+    });
     expect(readOpcuaAgentStatement('{"browse": "nsu=http://opcfoundation.org/UA/;i=2253"}')).toEqual({
       ok: true,
       plan: { kind: "browse", nodeId: "i=2253" },
     });
+  });
+
+  test("an id that cannot be put in one spelling is refused with the list of reads", () => {
+    const sentence =
+      "A node id in the request cannot be put in one spelling: its identifier does not decode, so Studio cannot tell which node it names.";
+    expect(refusal('{"read": ["ns=2;b=A=Q="]}')).toBe(OPCUA_AGENT_SENTENCES.request(sentence));
+    expect(refusal('{"browse": "nsu=urn:plant;ns=2;i=5"}')).toContain("cannot be put in one spelling");
+    expect(refusal('{"history": "ns=2;b=A"}')).toContain("cannot be put in one spelling");
+  });
+
+  test("a history read or a browse of a namespace-0 node outside the list is refused with its reason", () => {
+    expect(refusal('{"browse": "i=12642"}', "withheld")).toStartWith(
+      "A namespace-0 node outside agent mode's list is not read",
+    );
+    expect(refusal('{"history": "ns=0;i=16192"}', "withheld")).toEndWith("Nothing was sent.");
+    expect(readOpcuaAgentStatement('{"browse": "i=2268"}').ok).toBe(true);
+    // A value read naming one is admitted: its row is answered withheld, and the node never sent.
+    expect(readOpcuaAgentStatement('{"read": ["i=12642"]}').ok).toBe(true);
   });
 
   test("a history read or a browse of a withheld root is refused with its reason, in any spelling", () => {

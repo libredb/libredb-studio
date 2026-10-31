@@ -21,6 +21,9 @@ const property = (nodeId: string, browseName: string, referenceTypeId = "ns=0;i=
   mayHaveChildren: true,
 });
 
+/** No property node is refused. */
+const NONE = (): boolean => false;
+
 const EU = {
   namespaceUri: "http://www.opcfoundation.org/UA/units/un/cefact",
   unitId: 12890,
@@ -74,7 +77,7 @@ describe("readUnits", () => {
         "ns=6;s=Analog_EngineeringUnits": { value: EU, dataTypeId: "ns=0;i=887" },
       },
     );
-    const units = await readUnits(fake.client, ["ns=6;s=Analog"], new Set());
+    const units = await readUnits(fake.client, ["ns=6;s=Analog"], NONE);
     expect(units.get("ns=6;s=Analog")).toEqual({
       units: "mV",
       unitId: 12890,
@@ -87,7 +90,7 @@ describe("readUnits", () => {
 
   test("a variable with neither property answers that none is published, and nothing more is read", async () => {
     const fake = server({ "ns=3;s=SlowUInt1": [] }, {});
-    const units = await readUnits(fake.client, ["ns=3;s=SlowUInt1"], new Set());
+    const units = await readUnits(fake.client, ["ns=3;s=SlowUInt1"], NONE);
     expect(units.get("ns=3;s=SlowUInt1")).toEqual({
       units: OPCUA_NO_UNITS,
       unitId: null,
@@ -102,7 +105,7 @@ describe("readUnits", () => {
       { "ns=3;s=X": [property("ns=3;s=X_EU", "EngineeringUnits", "ns=0;i=47")] },
       { "ns=3;s=X_EU": { value: EU, dataTypeId: "ns=0;i=887" } },
     );
-    expect((await readUnits(fake.client, ["ns=3;s=X"], new Set())).get("ns=3;s=X")?.units).toBe(OPCUA_NO_UNITS);
+    expect((await readUnits(fake.client, ["ns=3;s=X"], NONE)).get("ns=3;s=X")?.units).toBe(OPCUA_NO_UNITS);
   });
 
   test("a property of the wrong data type, or a value of the wrong shape, is never read as a unit", async () => {
@@ -118,7 +121,7 @@ describe("readUnits", () => {
         "ns=3;s=B_R": { value: { low: "0" }, dataTypeId: "ns=0;i=884" },
       },
     );
-    const units = await readUnits(fake.client, ["ns=3;s=A", "ns=3;s=B"], new Set());
+    const units = await readUnits(fake.client, ["ns=3;s=A", "ns=3;s=B"], NONE);
     expect(units.get("ns=3;s=A")).toEqual({
       units: "units not readable: the EngineeringUnits property is not an EUInformation",
       unitId: null,
@@ -139,7 +142,7 @@ describe("readUnits", () => {
         "ns=3;s=A_R": { value: { low: 0, high: 1 }, dataTypeId: "ns=0;i=885" },
       },
     );
-    const units = await readUnits(fake.client, ["ns=3;s=A"], new Set());
+    const units = await readUnits(fake.client, ["ns=3;s=A"], NONE);
     expect(units.get("ns=3;s=A")?.units).toBe(
       "units not readable: the EngineeringUnits property is not an EUInformation",
     );
@@ -154,7 +157,7 @@ describe("readUnits", () => {
         "ns=3;s=A_R": { statusCode: "BadNotReadable" },
       },
     );
-    const units = await readUnits(fake.client, ["ns=3;s=A"], new Set());
+    const units = await readUnits(fake.client, ["ns=3;s=A"], NONE);
     expect(units.get("ns=3;s=A")?.units).toBe("units not readable: the server answered BadUserAccessDenied");
     expect(units.get("ns=3;s=A")?.euRange).toBe("range not readable: the server answered BadNotReadable");
   });
@@ -162,14 +165,14 @@ describe("readUnits", () => {
   test("a property the read left unanswered says so", async () => {
     const fake = server({ "ns=3;s=A": [property("ns=3;s=A_EU", "EngineeringUnits")] }, {});
     fake.client.read = async () => [];
-    expect((await readUnits(fake.client, ["ns=3;s=A"], new Set())).get("ns=3;s=A")?.units).toBe(
+    expect((await readUnits(fake.client, ["ns=3;s=A"], NONE)).get("ns=3;s=A")?.units).toBe(
       "units not readable: the server answered nothing",
     );
   });
 
   test("a variable whose browse is refused says so for both, never no units", async () => {
     const fake = server({}, {}, { "ns=3;s=Gone": "BadNodeIdUnknown" });
-    expect((await readUnits(fake.client, ["ns=3;s=Gone"], new Set())).get("ns=3;s=Gone")).toEqual({
+    expect((await readUnits(fake.client, ["ns=3;s=Gone"], NONE)).get("ns=3;s=Gone")).toEqual({
       units: "units not readable: the server answered BadNodeIdUnknown",
       unitId: null,
       unitNamespace: null,
@@ -180,7 +183,7 @@ describe("readUnits", () => {
   test("a browse answered with nothing for a variable says so", async () => {
     const fake = server({}, {});
     fake.client.browse = async () => [];
-    expect((await readUnits(fake.client, ["ns=3;s=A"], new Set())).get("ns=3;s=A")?.units).toBe(
+    expect((await readUnits(fake.client, ["ns=3;s=A"], NONE)).get("ns=3;s=A")?.units).toBe(
       "units not readable: the server answered nothing",
     );
   });
@@ -192,7 +195,7 @@ describe("readUnits", () => {
       { "ns=3;s=B#next": "BadContinuationPointInvalid" },
       { "ns=3;s=A": [property("ns=3;s=A_EU", "EngineeringUnits")], "ns=3;s=B": [] },
     );
-    const units = await readUnits(fake.client, ["ns=3;s=A", "ns=3;s=B"], new Set());
+    const units = await readUnits(fake.client, ["ns=3;s=A", "ns=3;s=B"], NONE);
     expect(units.get("ns=3;s=A")?.units).toBe("mV");
     expect(units.get("ns=3;s=B")?.units).toBe("units not readable: the server answered BadContinuationPointInvalid");
   });
@@ -200,19 +203,19 @@ describe("readUnits", () => {
   test("a continuation answered with nothing says so", async () => {
     const fake = server({ "ns=3;s=A": [] }, {}, {}, { "ns=3;s=A": [] });
     fake.client.browseNext = async () => [];
-    expect((await readUnits(fake.client, ["ns=3;s=A"], new Set())).get("ns=3;s=A")?.units).toBe(
+    expect((await readUnits(fake.client, ["ns=3;s=A"], NONE)).get("ns=3;s=A")?.units).toBe(
       "units not readable: the server answered nothing",
     );
   });
 
-  test("a property node inside the withheld set is never read", async () => {
+  test("a property node the read may not read is never read, and its unit is answered as not read", async () => {
     const fake = server(
       { "ns=3;s=A": [property("ns=7;i=1", "EngineeringUnits"), property("ns=7;i=2", "EURange")] },
       {},
     );
-    const units = await readUnits(fake.client, ["ns=3;s=A"], new Set(["ns=7;i=1", "ns=7;i=2"]));
-    expect(units.get("ns=3;s=A")?.units).toBe("units not read: the node that holds them is withheld from agent mode");
-    expect(units.get("ns=3;s=A")?.euRange).toBe("range not read: the node that holds it is withheld from agent mode");
+    const units = await readUnits(fake.client, ["ns=3;s=A"], (id: string) => ["ns=7;i=1", "ns=7;i=2"].includes(id));
+    expect(units.get("ns=3;s=A")?.units).toBe("units not read: the node that holds them is not read in agent mode");
+    expect(units.get("ns=3;s=A")?.euRange).toBe("range not read: the node that holds it is not read in agent mode");
     expect(fake.calls).toEqual(["browse ns=3;s=A"]);
   });
 
@@ -227,7 +230,7 @@ describe("readUnits", () => {
         "ns=3;s=B_EU": { value: { displayName: null }, dataTypeId: "i=887" },
       },
     );
-    const units = await readUnits(fake.client, ["ns=3;s=A", "ns=3;s=B"], new Set());
+    const units = await readUnits(fake.client, ["ns=3;s=A", "ns=3;s=B"], NONE);
     expect(units.get("ns=3;s=A")).toMatchObject({
       units: "unitId 4408652 (no display name published)",
       unitId: 4408652,
@@ -240,7 +243,7 @@ describe("readUnits", () => {
 
   test("no variable, no request", async () => {
     const fake = server({}, {});
-    expect((await readUnits(fake.client, [], new Set())).size).toBe(0);
+    expect((await readUnits(fake.client, [], NONE)).size).toBe(0);
     expect(fake.calls).toEqual([]);
   });
 
@@ -249,7 +252,7 @@ describe("readUnits", () => {
     const ids = ["ns=3;s=1", "ns=3;s=2", "ns=3;s=3"];
     for (const id of ids) tree[id] = [property(`${id}_EU`, "EngineeringUnits")];
     const fake = server(tree, {});
-    await readUnits(fake.client, ids, new Set(), { browse: 2, read: 2 });
+    await readUnits(fake.client, ids, NONE, { browse: 2, read: 2 });
     expect(fake.calls.map((call) => call.split(" ")[0])).toEqual(["browse", "browse", "read", "read"]);
   });
 });

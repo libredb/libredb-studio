@@ -203,6 +203,74 @@
       }
     ]
   },
+  "standardDescendantsRaw": {
+    "anonymous": [
+      {
+        "nodeId": "i=12642",
+        "browse": "Good",
+        "read": "BadAttributeIdInvalid"
+      },
+      {
+        "nodeId": "i=14053",
+        "browse": "Good",
+        "read": "BadAttributeIdInvalid"
+      },
+      {
+        "nodeId": "i=15644",
+        "browse": "Good",
+        "read": "BadAttributeIdInvalid"
+      },
+      {
+        "nodeId": "i=16192",
+        "browse": "Good",
+        "read": "Good"
+      }
+    ],
+    "user": [
+      {
+        "nodeId": "i=12642",
+        "browse": "Good",
+        "read": "BadAttributeIdInvalid"
+      },
+      {
+        "nodeId": "i=14053",
+        "browse": "Good",
+        "read": "BadAttributeIdInvalid"
+      },
+      {
+        "nodeId": "i=15644",
+        "browse": "Good",
+        "read": "BadAttributeIdInvalid"
+      },
+      {
+        "nodeId": "i=16192",
+        "browse": "Good",
+        "read": "Good"
+      }
+    ],
+    "administrator": [
+      {
+        "nodeId": "i=12642",
+        "browse": "Good",
+        "read": "BadAttributeIdInvalid"
+      },
+      {
+        "nodeId": "i=14053",
+        "browse": "Good",
+        "read": "BadAttributeIdInvalid"
+      },
+      {
+        "nodeId": "i=15644",
+        "browse": "Good",
+        "read": "BadAttributeIdInvalid"
+      },
+      {
+        "nodeId": "i=16192",
+        "browse": "Good",
+        "read": "Good"
+      }
+    ]
+  },
   "sessionDiagnostics": {
     "sessions": 1,
     "carriesAccountName": true
@@ -224,7 +292,7 @@
       "services": {
         "open": 1,
         "limits": 1,
-        "browse": 11,
+        "browse": 15,
         "read": 2,
         "close": 1
       },
@@ -330,14 +398,115 @@
       ]
     },
     {
-      "statement": "{\"browse\":\"i=85\"}",
+      "statement": "{\"read\":[\"i=12642\",\"i=16192\",\"i=2255\"]}",
       "services": {
         "open": 1,
         "limits": 1,
         "browse": 11,
+        "read": 1,
         "close": 1
       },
-      "rowCount": 9,
+      "rowCount": 3,
+      "fields": [
+        "nodeId",
+        "value",
+        "shape",
+        "statusCode",
+        "sourceTimestamp",
+        "serverTimestamp",
+        "units",
+        "unitId",
+        "unitNamespace",
+        "euRange"
+      ],
+      "rows": [
+        {
+          "nodeId": "i=12642",
+          "statusCode": "Withheld",
+          "shape": null,
+          "units": null,
+          "unitId": null,
+          "unitNamespace": null,
+          "euRange": null
+        },
+        {
+          "nodeId": "i=16192",
+          "statusCode": "Withheld",
+          "shape": null,
+          "units": null,
+          "unitId": null,
+          "unitNamespace": null,
+          "euRange": null
+        },
+        {
+          "nodeId": "i=2255",
+          "statusCode": "Good",
+          "shape": "array",
+          "units": "no units published",
+          "unitId": null,
+          "unitNamespace": null,
+          "euRange": "no range published"
+        }
+      ],
+      "warnings": [
+        "Server.ServerConfiguration (i=12637) is withheld from agent mode with everything beneath it: it holds the server's certificate groups and trust lists, its user management with every account name, its configuration file and the methods that change them. Nothing of it is read or answered.",
+        "Server.ServerCapabilities.RoleSet (i=15606) is withheld from agent mode with everything beneath it: it holds every role's identity mappings (user names, certificate thumbprints, group ids) and the applications and endpoints each role admits. Nothing of it is read or answered."
+      ]
+    },
+    {
+      "statement": "{\"read\":[\"nsu=http://microsoft.com/Opc/OpcPlc/;s=SlowUInt1\"]}",
+      "services": {
+        "open": 1,
+        "limits": 1,
+        "read": 2,
+        "browse": 15,
+        "close": 1
+      },
+      "rowCount": 1,
+      "fields": [
+        "nodeId",
+        "value",
+        "shape",
+        "statusCode",
+        "sourceTimestamp",
+        "serverTimestamp",
+        "units",
+        "unitId",
+        "unitNamespace",
+        "euRange"
+      ],
+      "rows": [
+        {
+          "nodeId": "ns=3;s=SlowUInt1",
+          "statusCode": "Good",
+          "shape": "number",
+          "units": "no units published",
+          "unitId": null,
+          "unitNamespace": null,
+          "euRange": "no range published"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "statement": "{\"read\":[\"nsu=urn:not-on-this-server;s=SlowUInt1\"]}",
+      "services": 2,
+      "refused": "OpcuaAgentError: A node id names a namespace URI that this server's namespace table (NamespaceArray, i=2255) does not hold, so Studio cannot tell which node it names and refuses the read rather than guess."
+    },
+    {
+      "statement": "{\"browse\":\"i=15644\"}",
+      "services": 0,
+      "refused": "RefusedBeforeSendError: A namespace-0 node outside agent mode's list is not read: namespace 0 holds standard nodes agent mode does not read: beside the type definitions, the server's configuration, roles, sessions, subscriptions, redundancy and namespace metadata live in namespace 0, and only the Root and Objects folders, the Server object, ServerArray, NamespaceArray, ServerStatus, ServiceLevel, Auditing, ServerCapabilities without its RoleSet, and ServerDiagnostics with its EnabledFlag and ServerDiagnosticsSummary counters are read. Nothing of it is read or answered. Nothing was sent."
+    },
+    {
+      "statement": "{\"browse\":\"i=85\"}",
+      "services": {
+        "open": 1,
+        "limits": 1,
+        "browse": 12,
+        "close": 1
+      },
+      "rowCount": 7,
       "fields": [
         "nodeId",
         "browseName",
@@ -347,26 +516,8 @@
       ],
       "rows": [
         {
-          "nodeId": "ns=3;s=OpcPlc",
-          "browseName": "OpcPlc",
-          "nodeClass": "Object",
-          "referenceTypeId": "i=35"
-        },
-        {
-          "nodeId": "i=2253",
-          "browseName": "Server",
-          "nodeClass": "Object",
-          "referenceTypeId": "i=35"
-        },
-        {
-          "nodeId": "ns=4;i=5",
-          "browseName": "Boilers",
-          "nodeClass": "Object",
-          "referenceTypeId": "i=35"
-        },
-        {
-          "nodeId": "ns=2;i=6094",
-          "browseName": "DeviceTopology",
+          "nodeId": "ns=2;i=6078",
+          "browseName": "NetworkSet",
           "nodeClass": "Object",
           "referenceTypeId": "i=35"
         },
@@ -377,20 +528,14 @@
           "referenceTypeId": "i=35"
         },
         {
-          "nodeId": "ns=2;i=6078",
-          "browseName": "NetworkSet",
+          "nodeId": "ns=2;i=6094",
+          "browseName": "DeviceTopology",
           "nodeClass": "Object",
           "referenceTypeId": "i=35"
         },
         {
-          "nodeId": "i=31915",
-          "browseName": "Locations",
-          "nodeClass": "Object",
-          "referenceTypeId": "i=35"
-        },
-        {
-          "nodeId": "i=23470",
-          "browseName": "Aliases",
+          "nodeId": "ns=3;s=OpcPlc",
+          "browseName": "OpcPlc",
           "nodeClass": "Object",
           "referenceTypeId": "i=35"
         },
@@ -399,9 +544,23 @@
           "browseName": "DeviceSet",
           "nodeClass": "Object",
           "referenceTypeId": "i=35"
+        },
+        {
+          "nodeId": "ns=4;i=5",
+          "browseName": "Boilers",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=35"
+        },
+        {
+          "nodeId": "i=2253",
+          "browseName": "Server",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=35"
         }
       ],
-      "warnings": []
+      "warnings": [
+        "A namespace-0 node outside agent mode's list is not read: namespace 0 holds standard nodes agent mode does not read: beside the type definitions, the server's configuration, roles, sessions, subscriptions, redundancy and namespace metadata live in namespace 0, and only the Root and Objects folders, the Server object, ServerArray, NamespaceArray, ServerStatus, ServiceLevel, Auditing, ServerCapabilities without its RoleSet, and ServerDiagnostics with its EnabledFlag and ServerDiagnosticsSummary counters are read. Nothing of it is read or answered."
+      ]
     },
     {
       "statement": "{\"browse\":\"i=2253\"}",
@@ -411,7 +570,7 @@
         "browse": 11,
         "close": 1
       },
-      "rowCount": 22,
+      "rowCount": 6,
       "fields": [
         "nodeId",
         "browseName",
@@ -433,12 +592,6 @@
           "referenceTypeId": "i=46"
         },
         {
-          "nodeId": "i=15004",
-          "browseName": "UrisVersion",
-          "nodeClass": "Variable",
-          "referenceTypeId": "i=46"
-        },
-        {
           "nodeId": "i=2256",
           "browseName": "ServerStatus",
           "nodeClass": "Variable",
@@ -447,18 +600,6 @@
         {
           "nodeId": "i=2267",
           "browseName": "ServiceLevel",
-          "nodeClass": "Variable",
-          "referenceTypeId": "i=46"
-        },
-        {
-          "nodeId": "i=12885",
-          "browseName": "EstimatedReturnTime",
-          "nodeClass": "Variable",
-          "referenceTypeId": "i=46"
-        },
-        {
-          "nodeId": "i=17634",
-          "browseName": "LocalTime",
           "nodeClass": "Variable",
           "referenceTypeId": "i=46"
         },
@@ -473,27 +614,10 @@
           "browseName": "ServerDiagnostics",
           "nodeClass": "Object",
           "referenceTypeId": "i=47"
-        },
-        {
-          "nodeId": "i=2295",
-          "browseName": "VendorServerInfo",
-          "nodeClass": "Object",
-          "referenceTypeId": "i=47"
-        },
-        {
-          "nodeId": "i=2296",
-          "browseName": "ServerRedundancy",
-          "nodeClass": "Object",
-          "referenceTypeId": "i=47"
-        },
-        {
-          "nodeId": "i=11715",
-          "browseName": "Namespaces",
-          "nodeClass": "Object",
-          "referenceTypeId": "i=47"
         }
       ],
       "warnings": [
+        "A namespace-0 node outside agent mode's list is not read: namespace 0 holds standard nodes agent mode does not read: beside the type definitions, the server's configuration, roles, sessions, subscriptions, redundancy and namespace metadata live in namespace 0, and only the Root and Objects folders, the Server object, ServerArray, NamespaceArray, ServerStatus, ServiceLevel, Auditing, ServerCapabilities without its RoleSet, and ServerDiagnostics with its EnabledFlag and ServerDiagnosticsSummary counters are read. Nothing of it is read or answered.",
         "Server.ServerConfiguration (i=12637) is withheld from agent mode with everything beneath it: it holds the server's certificate groups and trust lists, its user management with every account name, its configuration file and the methods that change them. Nothing of it is read or answered."
       ]
     },
@@ -502,10 +626,10 @@
       "services": {
         "open": 1,
         "limits": 1,
-        "browse": 11,
+        "browse": 12,
         "close": 1
       },
-      "rowCount": 24,
+      "rowCount": 23,
       "fields": [
         "nodeId",
         "browseName",
@@ -588,7 +712,8 @@
         }
       ],
       "warnings": [
-        "Server.ServerCapabilities.RoleSet (i=15606) is withheld from agent mode with everything beneath it: it holds every role's identity mappings (user names, certificate thumbprints, group ids) and the applications and endpoints each role admits. Nothing of it is read or answered."
+        "Server.ServerCapabilities.RoleSet (i=15606) is withheld from agent mode with everything beneath it: it holds every role's identity mappings (user names, certificate thumbprints, group ids) and the applications and endpoints each role admits. Nothing of it is read or answered.",
+        "A namespace-0 node outside agent mode's list is not read: namespace 0 holds standard nodes agent mode does not read: beside the type definitions, the server's configuration, roles, sessions, subscriptions, redundancy and namespace metadata live in namespace 0, and only the Root and Objects folders, the Server object, ServerArray, NamespaceArray, ServerStatus, ServiceLevel, Auditing, ServerCapabilities without its RoleSet, and ServerDiagnostics with its EnabledFlag and ServerDiagnosticsSummary counters are read. Nothing of it is read or answered."
       ]
     },
     {
@@ -621,105 +746,15 @@
     },
     {
       "statement": "{\"browse\":\"i=14443\"}",
-      "services": {
-        "open": 1,
-        "limits": 1,
-        "browse": 11,
-        "close": 1
-      },
-      "rowCount": 17,
-      "fields": [
-        "nodeId",
-        "browseName",
-        "displayName",
-        "nodeClass",
-        "referenceTypeId"
-      ],
-      "rows": [
-        {
-          "nodeId": "i=15215",
-          "browseName": "GetSecurityKeys",
-          "nodeClass": "Method",
-          "referenceTypeId": "i=47"
-        },
-        {
-          "nodeId": "i=15440",
-          "browseName": "GetSecurityGroup",
-          "nodeClass": "Method",
-          "referenceTypeId": "i=47"
-        },
-        {
-          "nodeId": "i=17364",
-          "browseName": "SetSecurityKeys",
-          "nodeClass": "Method",
-          "referenceTypeId": "i=47"
-        },
-        {
-          "nodeId": "i=17366",
-          "browseName": "AddConnection",
-          "nodeClass": "Method",
-          "referenceTypeId": "i=47"
-        },
-        {
-          "nodeId": "i=17369",
-          "browseName": "RemoveConnection",
-          "nodeClass": "Method",
-          "referenceTypeId": "i=47"
-        },
-        {
-          "nodeId": "i=17371",
-          "browseName": "PublishedDataSets",
-          "nodeClass": "Object",
-          "referenceTypeId": "i=47"
-        },
-        {
-          "nodeId": "i=23658",
-          "browseName": "SubscribedDataSets",
-          "nodeClass": "Object",
-          "referenceTypeId": "i=47"
-        },
-        {
-          "nodeId": "i=25451",
-          "browseName": "PubSubConfiguration",
-          "nodeClass": "Object",
-          "referenceTypeId": "i=47"
-        },
-        {
-          "nodeId": "i=17405",
-          "browseName": "Status",
-          "nodeClass": "Object",
-          "referenceTypeId": "i=47"
-        },
-        {
-          "nodeId": "i=17409",
-          "browseName": "Diagnostics",
-          "nodeClass": "Object",
-          "referenceTypeId": "i=47"
-        },
-        {
-          "nodeId": "i=23678",
-          "browseName": "PubSubCapablities",
-          "nodeClass": "Object",
-          "referenceTypeId": "i=47"
-        },
-        {
-          "nodeId": "i=23685",
-          "browseName": "DataSetClasses",
-          "nodeClass": "Object",
-          "referenceTypeId": "i=47"
-        }
-      ],
-      "warnings": [
-        "Server.PublishSubscribe.SecurityGroups (i=15443) is withheld from agent mode with everything beneath it: it holds the PubSub security groups that keys are issued for. Nothing of it is read or answered.",
-        "Server.PublishSubscribe.KeyPushTargets (i=25440) is withheld from agent mode with everything beneath it: it holds the servers PubSub keys are pushed to, with their endpoints and identities. Nothing of it is read or answered."
-      ]
+      "services": 0,
+      "refused": "RefusedBeforeSendError: A namespace-0 node outside agent mode's list is not read: namespace 0 holds standard nodes agent mode does not read: beside the type definitions, the server's configuration, roles, sessions, subscriptions, redundancy and namespace metadata live in namespace 0, and only the Root and Objects folders, the Server object, ServerArray, NamespaceArray, ServerStatus, ServiceLevel, Auditing, ServerCapabilities without its RoleSet, and ServerDiagnostics with its EnabledFlag and ServerDiagnosticsSummary counters are read. Nothing of it is read or answered. Nothing was sent."
     },
     {
       "statement": "{\"history\":\"ns=3;s=HistorianInt32\",\"limit\":5}",
       "services": {
         "open": 1,
         "limits": 1,
-        "browse": 11,
+        "browse": 15,
         "historyRead": 1,
         "releaseHistoryContinuationPoint": 1,
         "close": 1
@@ -790,7 +825,7 @@
     },
     {
       "statement": "{\"history\":\"ns=3;s=HistorianInt32\"}",
-      "services": 13,
+      "services": 17,
       "refused": "OpcuaAgentError: Read-only execution exceeded the row budget: the window holds at least 51 values and the row budget is 50, so the history read is refused rather than cut; give it a narrower window or a limit of at most 50."
     },
     {
@@ -798,7 +833,7 @@
       "services": {
         "open": 1,
         "limits": 1,
-        "browse": 11,
+        "browse": 15,
         "historyRead": 1,
         "close": 1
       },
@@ -828,12 +863,12 @@
     {
       "statement": "{\"write\":\"ns=6;s=DataAccess_AnalogType_Int32\",\"value\":1}",
       "services": 0,
-      "refused": "RefusedBeforeSendError: A request names \"read\", \"history\" or \"browse\", and this names \"write\". Agent mode on OPC UA reads with one JSON request per read: {\"read\": [\"ns=3;s=SlowUInt1\", ...]} reads the current value of each node, with its engineering units and EU range where the server publishes them; {\"history\": \"ns=3;s=HistorianInt32\", \"start\": \"2026-10-31T00:00:00Z\", \"end\": \"2026-10-31T01:00:00Z\", \"limit\": 100} reads one node's raw history (start, end and limit optional); {\"browse\": \"i=85\"} lists the children of one node, starting from the Objects folder i=85. A node id is written with its namespace index (ns=3;s=...), or in namespace 0 with no prefix (i=2256). Only Browse, BrowseNext, Read and HistoryRead are sent, never a Write, a method Call, a subscription or a node change. Withheld from agent mode, by node id with everything beneath it: Server.ServerConfiguration (i=12637), Server.ServerCapabilities.RoleSet (i=15606), Server.ServerDiagnostics.SessionsDiagnosticsSummary (i=3706), SessionsDiagnosticsSummary.SessionDiagnosticsArray (i=3707), SessionsDiagnosticsSummary.SessionSecurityDiagnosticsArray (i=3708), Server.PublishSubscribe.SecurityGroups (i=15443), Server.PublishSubscribe.KeyPushTargets (i=25440); they hold certificates and trust lists, account names, role identity mappings, every open session's client, user identity and endpoint, and the PubSub key management objects. Nothing was sent."
+      "refused": "RefusedBeforeSendError: A request names \"read\", \"history\" or \"browse\", and this names \"write\". Agent mode on OPC UA reads with one JSON request per read: {\"read\": [\"ns=3;s=SlowUInt1\", ...]} reads the current value of each node, with its engineering units and EU range where the server publishes them; {\"history\": \"ns=3;s=HistorianInt32\", \"start\": \"2026-10-31T00:00:00Z\", \"end\": \"2026-10-31T01:00:00Z\", \"limit\": 100} reads one node's raw history (start, end and limit optional); {\"browse\": \"i=85\"} lists the children of one node, starting from the Objects folder i=85. A node id is written with its namespace index (ns=3;s=...) or its namespace URI (nsu=urn:...;s=...), or in namespace 0 with no prefix (i=2256). Only Browse, BrowseNext, Read and HistoryRead are sent, never a Write, a method Call, a subscription or a node change. Withheld from agent mode, by node id with everything beneath it: Server.ServerConfiguration (i=12637), Server.ServerCapabilities.RoleSet (i=15606), Server.ServerDiagnostics.SessionsDiagnosticsSummary (i=3706), SessionsDiagnosticsSummary.SessionDiagnosticsArray (i=3707), SessionsDiagnosticsSummary.SessionSecurityDiagnosticsArray (i=3708), Server.PublishSubscribe.SecurityGroups (i=15443), Server.PublishSubscribe.KeyPushTargets (i=25440); they hold certificates and trust lists, account names, role identity mappings, every open session's client, user identity and endpoint, and the PubSub key management objects. In namespace 0 agent mode reads only the Root and Objects folders, the Server object, ServerArray, NamespaceArray, ServerStatus, ServiceLevel, Auditing, ServerCapabilities without its RoleSet, and ServerDiagnostics with its EnabledFlag and ServerDiagnosticsSummary counters; every other namespace-0 node is refused with its reason. Nothing was sent."
     },
     {
       "statement": "{\"read\":[\"ns=6;s=DataAccess_AnalogType_Int32\"],\"indexRange\":\"0:1\"}",
       "services": 0,
-      "refused": "RefusedBeforeSendError: A value read takes \"read\" only, and this names \"indexRange\". Agent mode on OPC UA reads with one JSON request per read: {\"read\": [\"ns=3;s=SlowUInt1\", ...]} reads the current value of each node, with its engineering units and EU range where the server publishes them; {\"history\": \"ns=3;s=HistorianInt32\", \"start\": \"2026-10-31T00:00:00Z\", \"end\": \"2026-10-31T01:00:00Z\", \"limit\": 100} reads one node's raw history (start, end and limit optional); {\"browse\": \"i=85\"} lists the children of one node, starting from the Objects folder i=85. A node id is written with its namespace index (ns=3;s=...), or in namespace 0 with no prefix (i=2256). Only Browse, BrowseNext, Read and HistoryRead are sent, never a Write, a method Call, a subscription or a node change. Withheld from agent mode, by node id with everything beneath it: Server.ServerConfiguration (i=12637), Server.ServerCapabilities.RoleSet (i=15606), Server.ServerDiagnostics.SessionsDiagnosticsSummary (i=3706), SessionsDiagnosticsSummary.SessionDiagnosticsArray (i=3707), SessionsDiagnosticsSummary.SessionSecurityDiagnosticsArray (i=3708), Server.PublishSubscribe.SecurityGroups (i=15443), Server.PublishSubscribe.KeyPushTargets (i=25440); they hold certificates and trust lists, account names, role identity mappings, every open session's client, user identity and endpoint, and the PubSub key management objects. Nothing was sent."
+      "refused": "RefusedBeforeSendError: A value read takes \"read\" only, and this names \"indexRange\". Agent mode on OPC UA reads with one JSON request per read: {\"read\": [\"ns=3;s=SlowUInt1\", ...]} reads the current value of each node, with its engineering units and EU range where the server publishes them; {\"history\": \"ns=3;s=HistorianInt32\", \"start\": \"2026-10-31T00:00:00Z\", \"end\": \"2026-10-31T01:00:00Z\", \"limit\": 100} reads one node's raw history (start, end and limit optional); {\"browse\": \"i=85\"} lists the children of one node, starting from the Objects folder i=85. A node id is written with its namespace index (ns=3;s=...) or its namespace URI (nsu=urn:...;s=...), or in namespace 0 with no prefix (i=2256). Only Browse, BrowseNext, Read and HistoryRead are sent, never a Write, a method Call, a subscription or a node change. Withheld from agent mode, by node id with everything beneath it: Server.ServerConfiguration (i=12637), Server.ServerCapabilities.RoleSet (i=15606), Server.ServerDiagnostics.SessionsDiagnosticsSummary (i=3706), SessionsDiagnosticsSummary.SessionDiagnosticsArray (i=3707), SessionsDiagnosticsSummary.SessionSecurityDiagnosticsArray (i=3708), Server.PublishSubscribe.SecurityGroups (i=15443), Server.PublishSubscribe.KeyPushTargets (i=25440); they hold certificates and trust lists, account names, role identity mappings, every open session's client, user identity and endpoint, and the PubSub key management objects. In namespace 0 agent mode reads only the Root and Objects folders, the Server object, ServerArray, NamespaceArray, ServerStatus, ServiceLevel, Auditing, ServerCapabilities without its RoleSet, and ServerDiagnostics with its EnabledFlag and ServerDiagnosticsSummary counters; every other namespace-0 node is refused with its reason. Nothing was sent."
     }
   ],
   "agentAdministrator": {
