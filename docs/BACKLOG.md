@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D413, U17 · 303
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U187 · 173
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U186 · 172
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -6483,15 +6483,6 @@ Seen 2026-10-31 on SNMP (Net-SNMP snmpd 5.9.4, the `docker/snmp` image) in a bro
 
 **Done when:** a plan-mode run of a prose deliverable is told the engine's `statementLanguage` wherever it declares one, or the section 13.3 claim is narrowed to the investigation workflow, with a plan-prompt test on an operations run for an engine that declares a label.
 
-### U187. The SNMP withheld-module sentence names 1.3.6.1.6.3 as where the modules are, and a model read the whole subtree as withheld
-
-`SNMP_WITHHELD_MODULES_TEXT` in `src/lib/db/providers/network/snmp/agent-statement.ts`, which the tool description, the investigation rule, the grounding advice and every refusal repeat, opens "the security and target modules under 1.3.6.1.6.3 (SNMP-TARGET-MIB, ..., SNMP-COMMUNITY-MIB)" and gives those six modules no root of their own, while it gives one to each of the other five.
-Asked to walk 1.3.6.1.6.3 and report what came back, a model answered "I did not run `walk 1.3.6.1.6.3`: this is a withheld security/target subtree" and cited the grounding, although the walk is admitted and steps over the six modules; told in the objective that only some modules under 1.3.6.1.6.3 are withheld, the next run walked it and got the engine and MPD objects, 8 rows, with the six warnings.
-The plan-mode label (`SNMP_STATEMENT_LANGUAGE` in `labels.ts`) uses the same words.
-Seen 2026-10-31 on SNMP (Net-SNMP snmpd 5.9.4, the `docker/snmp` image) in a browser pass (runs `arun_15a170c28021445b8c546b4bcefb8f57`, `arun_a961a04311ea4cd081260a772ac3d8a3`).
-
-**Done when:** the sentence names each of the six framework modules by its own root (1.3.6.1.6.3.12 to .16 and .18), as it names the other five, with the plan-mode label, `docs/providers/snmp.md` section 13, `docs/AGENT.md` and B158 following, and a test that holds every withheld root to appear in the sentence.
-
 ## Dependencies
 
 ### P1. The desktop shell's `glib` advisory has no reachable fix while Tauri v2 targets GTK 3
@@ -8939,7 +8930,8 @@ Found 2026-10-31 when agent mode joined Apache Kafka.
 Agent mode executes SNMP reads under the `snmpget` statement language, one of the console's four commands per call, `get`, `next`, `walk` and `table`, read with the console's own parser and resolver (`docs/providers/snmp.md`, section 13).
 The boundary is the provider's structural closed table: the agent's client holds the Get, GetNext and GetBulk requests alone, RFC 3411's Read Class, over an exchange whose valve parses every outgoing datagram and refuses any other PDU, so no Set or notification can be sent on the agent path, and a GetBulk keeps the documented max-repetitions cap of 50 and a request the documented bound of 400 identifiers.
 A v2c community cannot be proved read-only from the client: measured on the Net-SNMP 5.9.4 fixture, a raw Set with its read-only community is refused `noAccess`, but the rights of a community live in the access control tables, which are among the withheld modules, so no credential is the boundary.
-Values are the device's own management readings, so they are answered, rendered as the console renders them; withheld instead, by the prefix of the resolved identifier, are the security and target modules under 1.3.6.1.6.3, `SNMP-TARGET-MIB`, `SNMP-NOTIFICATION-MIB`, `SNMP-PROXY-MIB`, `SNMP-USER-BASED-SM-MIB`, `SNMP-VIEW-BASED-ACM-MIB` and `SNMP-COMMUNITY-MIB`, the transport security modules `SNMP-SSH-TM-MIB`, `SNMP-TSM-MIB` and `SNMP-TLS-TM-MIB`, `SNMP-USM-DH-OBJECTS-MIB` and Net-SNMP's `NET-SNMP-VACM-MIB`, whose values and instance suffixes can carry community strings, user names, keys, security names and group names: an identifier inside one is never sent, an answer landing inside one is a `withheld` row with no value or instance, a walk or table covering one steps over it, so no request starts inside it, and warns it by name, and a walk or table inside one is refused before anything is sent.
+Values are the device's own management readings, so they are answered, rendered as the console renders them; withheld instead, by the prefix of the resolved identifier, are `SNMP-TARGET-MIB` (1.3.6.1.6.3.12), `SNMP-NOTIFICATION-MIB` (1.3.6.1.6.3.13), `SNMP-PROXY-MIB` (1.3.6.1.6.3.14), `SNMP-USER-BASED-SM-MIB` (1.3.6.1.6.3.15), `SNMP-VIEW-BASED-ACM-MIB` (1.3.6.1.6.3.16) and `SNMP-COMMUNITY-MIB` (1.3.6.1.6.3.18), the transport security modules `SNMP-SSH-TM-MIB` (1.3.6.1.2.1.189), `SNMP-TSM-MIB` (1.3.6.1.2.1.190) and `SNMP-TLS-TM-MIB` (1.3.6.1.2.1.198), `SNMP-USM-DH-OBJECTS-MIB` (1.3.6.1.3.101) and Net-SNMP's `NET-SNMP-VACM-MIB` (1.3.6.1.4.1.8072.1.9), whose values and instance suffixes can carry community strings, user names, keys, security names and group names: an identifier inside one is never sent, an answer landing inside one is a `withheld` row with no value or instance, a walk or table covering one steps over it, so no request starts inside it, and warns it by name, and a walk or table inside one is refused before anything is sent.
+Every other identifier under 1.3.6.1.6.3, the engine and MPD objects among them, is read, so `walk 1.3.6.1.6.3` is admitted and steps over the six framework modules.
 On a handle of either agent profile the console is refused, and the overview, performance, storage, session, slow-query, table and index readings answer their reason rather than an empty reading; health is the console's own Get of `sysDescr.0` and `sysUpTime.0`.
 So the language offers the investigation and the operations workflow only: query optimization and database assessment need a plan and a profile an agent does not have, and the data analysis's tools assume a store of records.
 `MCP_EXPOSABLE.snmp` is false, and the language's MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) with `MCP_STATEMENT_READ.snmp` false, so MCP `run_read_query` refuses an SNMP connection, because no MCP surface that withholds the security and target modules is designed yet.

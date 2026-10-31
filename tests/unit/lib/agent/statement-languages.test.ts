@@ -1289,7 +1289,7 @@ describe("the fsquery language's server adapter and admission", () => {
 describe("the snmpget language's server adapter and admission", () => {
   const READ = "get sysDescr.0";
   const WITHHELD =
-    "Withheld from agent mode are the security and target modules under 1.3.6.1.6.3 (SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB), the transport security modules SNMP-SSH-TM-MIB (1.3.6.1.2.1.189), SNMP-TSM-MIB (1.3.6.1.2.1.190) and SNMP-TLS-TM-MIB (1.3.6.1.2.1.198), SNMP-USM-DH-OBJECTS-MIB (1.3.6.1.3.101) and Net-SNMP's NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9), since they hold community strings, user names, keys and access rules: nothing of them is read or answered.";
+    "Withheld from agent mode are SNMP-TARGET-MIB (1.3.6.1.6.3.12), SNMP-NOTIFICATION-MIB (1.3.6.1.6.3.13), SNMP-PROXY-MIB (1.3.6.1.6.3.14), SNMP-USER-BASED-SM-MIB (1.3.6.1.6.3.15), SNMP-VIEW-BASED-ACM-MIB (1.3.6.1.6.3.16) and SNMP-COMMUNITY-MIB (1.3.6.1.6.3.18), the transport security modules SNMP-SSH-TM-MIB (1.3.6.1.2.1.189), SNMP-TSM-MIB (1.3.6.1.2.1.190) and SNMP-TLS-TM-MIB (1.3.6.1.2.1.198), SNMP-USM-DH-OBJECTS-MIB (1.3.6.1.3.101) and Net-SNMP's NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9), since they hold community strings, user names, keys and access rules; every other identifier under 1.3.6.1.6.3, the engine and MPD objects among them, is readable, and a walk that covers a withheld module steps over that module and answers the rest. Nothing of a withheld module is read or answered.";
 
   test("the fingerprint is the plan the reader sends, so one read written two ways is one identity", () => {
     const one = fingerprintSnmpget(READ);

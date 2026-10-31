@@ -744,12 +744,14 @@ const SNMPGET_READ_BOUNDARY =
   "GetBulk requests alone, RFC 3411's Read Class, over an exchange whose valve parses every outgoing datagram and " +
   "refuses any other PDU, so no Set, notification or Response can be sent; a GetBulk's max-repetitions stays at the " +
   "documented cap of 50 and a request carries at most 400 identifiers. " +
-  "The security and target modules under 1.3.6.1.6.3 (SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, " +
-  "SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB), the transport security modules " +
-  "SNMP-SSH-TM-MIB, SNMP-TSM-MIB and SNMP-TLS-TM-MIB, SNMP-USM-DH-OBJECTS-MIB and Net-SNMP's NET-SNMP-VACM-MIB are " +
-  "withheld by identifier prefix: an identifier inside one is never sent, an answer landing inside one is answered " +
-  "withheld without its value or instance, a walk or table covering one steps over it, so no request starts inside " +
-  "it, and a walk or table inside one is refused before anything is sent. A v2c community cannot be proved " +
+  "SNMP-TARGET-MIB (1.3.6.1.6.3.12), SNMP-NOTIFICATION-MIB (1.3.6.1.6.3.13), SNMP-PROXY-MIB (1.3.6.1.6.3.14), " +
+  "SNMP-USER-BASED-SM-MIB (1.3.6.1.6.3.15), SNMP-VIEW-BASED-ACM-MIB (1.3.6.1.6.3.16) and SNMP-COMMUNITY-MIB " +
+  "(1.3.6.1.6.3.18), the transport security modules SNMP-SSH-TM-MIB (1.3.6.1.2.1.189), SNMP-TSM-MIB " +
+  "(1.3.6.1.2.1.190) and SNMP-TLS-TM-MIB (1.3.6.1.2.1.198), SNMP-USM-DH-OBJECTS-MIB (1.3.6.1.3.101) and Net-SNMP's " +
+  "NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9) are withheld by identifier prefix: an identifier inside one is never " +
+  "sent, an answer landing inside one is answered withheld without its value or instance, a walk or table covering " +
+  "one steps over it, so no request starts inside it, and a walk or table inside one is refused before anything is " +
+  "sent. Every other identifier under 1.3.6.1.6.3, the engine and MPD objects among them, is read. A v2c community cannot be proved " +
   "read-only from the client, and the tables that would prove it are the withheld ones, so the table is the boundary. " +
   "A walk or table past the row budget and a result past the byte budget are refused, never truncated.";
 

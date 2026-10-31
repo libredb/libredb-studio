@@ -11,7 +11,7 @@ import { SNMPGET_ADAPTER } from "./adapter";
 import { SNMPGET_TOOL_OVERRIDES } from "./definitions";
 
 /** Which modules are withheld and why, the same words in the rule, the grounding advice and the ungrounded note. */
-const WITHHELD = `Withheld from agent mode are ${SNMP_WITHHELD_MODULES_TEXT}, since they hold community strings, user names, keys and access rules: nothing of them is read or answered.`;
+const WITHHELD = `${SNMP_WITHHELD_MODULES_TEXT} Nothing of a withheld module is read or answered.`;
 
 const SNMPGET_WORKFLOW_TOOL_RULES: Readonly<Partial<Record<AgentRunWorkflowType, string>>> = Object.freeze({
   investigation: [

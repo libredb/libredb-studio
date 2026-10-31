@@ -206,4 +206,14 @@ describe("what is refused before anything is sent", () => {
     expect(SNMP_AGENT_SENTENCES.reads).toContain(SNMP_WITHHELD_MODULES_TEXT);
     expect(SNMP_AGENT_SENTENCES.reads).not.toContain("limit");
   });
+
+  test("the withheld sentence names every withheld module by its own root, and says the rest of 1.3.6.1.6.3 is read", () => {
+    for (const entry of SNMP_WITHHELD_SUBTREES) {
+      expect(SNMP_WITHHELD_MODULES_TEXT).toContain(`${entry.module} (${entry.root.join(".")})`);
+    }
+    expect(SNMP_WITHHELD_MODULES_TEXT).not.toContain("modules under 1.3.6.1.6.3");
+    expect(SNMP_WITHHELD_MODULES_TEXT).toContain(
+      "every other identifier under 1.3.6.1.6.3, the engine and MPD objects among them, is readable",
+    );
+  });
 });

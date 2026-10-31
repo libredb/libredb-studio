@@ -331,6 +331,8 @@ Withheld, by the prefix of the parsed and resolved identifier and never by the t
 | `SNMP-VIEW-BASED-ACM-MIB` (RFC 3415) | 1.3.6.1.6.3.16 | the access control tables, indexed by security names |
 | `SNMP-COMMUNITY-MIB` (RFC 3584) | 1.3.6.1.6.3.18 | the community strings and the security names they map to |
 
+Every other identifier under 1.3.6.1.6.3, the SNMP engine and MPD objects among them, is read: only the six framework roots above are withheld, never the subtree that holds them, and `walk 1.3.6.1.6.3` is admitted and steps over the six.
+The sentence agent mode repeats in its tool description, its investigation rule, its grounding and every refusal (`SNMP_WITHHELD_MODULES_TEXT` in [`agent-statement.ts`](../../src/lib/db/providers/network/snmp/agent-statement.ts)), and the plan-mode label, name each of the eleven modules by its own root, never as the modules under 1.3.6.1.6.3, since a model read that wording as the whole subtree withheld and refused the admitted walk.
 The bundled modules define none of the eleven, so no name resolves into them and only a numeric identifier reaches them; the roots are the module identities those RFCs assign, and `netSnmpVacmMIB` (`netSnmpObjects 9`) in the image's own `NET-SNMP-VACM-MIB.txt`.
 An instance suffix there can spell a name (the access control tables are indexed by security name, Net-SNMP's by group name), so a value is not the only thing withheld:
 

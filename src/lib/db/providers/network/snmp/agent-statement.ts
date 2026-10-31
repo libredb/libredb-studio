@@ -6,7 +6,7 @@
  * written: the four commands `get`, `next`, `walk` and `table`, and `walk`'s `limit`, as the console writes them.
  * Everything else, a `set` included, is refused with the parser's sentence followed by agent mode's list of commands.
  *
- * WHAT IS WITHHELD, AND WHY BY PREFIX. The SNMP framework's security and target modules under 1.3.6.1.6.3, the SSH,
+ * WHAT IS WITHHELD, AND WHY BY PREFIX. The SNMP framework's security and target modules (1.3.6.1.6.3.12 to .16 and .18), the SSH,
  * TSM and TLS transport security modules, the USM Diffie-Hellman key-change objects and Net-SNMP's own access control
  * extension hold what an agent is reached and authorized with: community strings, SNMPv3 user names and keys, the
  * access control tables, the notification and proxy targets, the certificate-to-name maps. Their instance suffixes
@@ -146,11 +146,16 @@ export type SnmpAgentReading =
 
 const NOTHING_SENT = "Nothing was sent.";
 
-/** The withheld modules, named before anything counts them; every agent-facing sentence on SNMP uses these words. */
+/**
+ * The withheld modules, each named with its own root before anything counts them, and what stays readable beside
+ * them; every agent-facing sentence on SNMP uses these words. The six framework modules are named one by one, never
+ * as "the modules under 1.3.6.1.6.3", since a model read that as the whole subtree withheld and refused an admitted
+ * walk of it, which steps over the six and answers the engine and MPD objects.
+ */
 export const SNMP_WITHHELD_MODULES_TEXT =
-  "the security and target modules under 1.3.6.1.6.3 (SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB), the transport security modules SNMP-SSH-TM-MIB (1.3.6.1.2.1.189), SNMP-TSM-MIB (1.3.6.1.2.1.190) and SNMP-TLS-TM-MIB (1.3.6.1.2.1.198), SNMP-USM-DH-OBJECTS-MIB (1.3.6.1.3.101) and Net-SNMP's NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9)";
+  "Withheld from agent mode are SNMP-TARGET-MIB (1.3.6.1.6.3.12), SNMP-NOTIFICATION-MIB (1.3.6.1.6.3.13), SNMP-PROXY-MIB (1.3.6.1.6.3.14), SNMP-USER-BASED-SM-MIB (1.3.6.1.6.3.15), SNMP-VIEW-BASED-ACM-MIB (1.3.6.1.6.3.16) and SNMP-COMMUNITY-MIB (1.3.6.1.6.3.18), the transport security modules SNMP-SSH-TM-MIB (1.3.6.1.2.1.189), SNMP-TSM-MIB (1.3.6.1.2.1.190) and SNMP-TLS-TM-MIB (1.3.6.1.2.1.198), SNMP-USM-DH-OBJECTS-MIB (1.3.6.1.3.101) and Net-SNMP's NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9), since they hold community strings, user names, keys and access rules; every other identifier under 1.3.6.1.6.3, the engine and MPD objects among them, is readable, and a walk that covers a withheld module steps over that module and answers the rest.";
 
-const AGENT_READS = `Agent mode on SNMP reads with the console's four commands, one per read: get OID [OID ...] for the named instances, next OID [OID ...] for the instance after each, walk SUBTREE for every instance under a subtree, and table ENTRY for a conceptual table's rows, named by its entry (ifEntry), each OID written numerically (1.3.6.1.2.1.1.1.0) or by a name the bundled MIB modules define (sysDescr.0, ifTable, ifEntry); ${SNMP_WITHHELD_MODULES_TEXT} are withheld, and a walk steps over them.`;
+const AGENT_READS = `Agent mode on SNMP reads with the console's four commands, one per read: get OID [OID ...] for the named instances, next OID [OID ...] for the instance after each, walk SUBTREE for every instance under a subtree, and table ENTRY for a conceptual table's rows, named by its entry (ifEntry), each OID written numerically (1.3.6.1.2.1.1.1.0) or by a name the bundled MIB modules define (sysDescr.0, ifTable, ifEntry). ${SNMP_WITHHELD_MODULES_TEXT}`;
 
 export const SNMP_AGENT_SENTENCES = {
   reads: AGENT_READS,
