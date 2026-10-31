@@ -37,6 +37,9 @@ const KINDS = [
   "private-key-type",
   "key-type",
   "password-type",
+  "leafref that may point at a withheld node",
+  "unresolved leafref",
+  "keyed by a withheld leaf",
 ];
 
 const connection = {
@@ -115,16 +118,30 @@ describe("what the client facet and plan mode are told", () => {
     const posture = NETCONFRPC_CLIENT_PACK.posture.reads({ maxResultRows: 200, statementTimeoutMs: 10_000 } as never);
     for (const kind of KINDS) expect(posture.body).toContain(kind);
     for (const read of ["get-config", "get-data", "get-schema"]) expect(posture.qualifier).toContain(read);
+    for (const kind of [
+      "ietf-keystore",
+      "ietf-netconf-acm",
+      "nacm:default-deny-all",
+      "crypt-hash",
+      "ietf-crypto-types secrets",
+      "leafrefs to a withheld node",
+      "unresolved leafrefs",
+      "entries of lists keyed by a withheld leaf",
+    ]) {
+      expect(posture.qualifier).toContain(kind);
+    }
     expect(posture.body).toContain("refused past them rather than cut");
     expect(Object.keys(NETCONFRPC_CLIENT_PACK.variants).sort()).toEqual(["investigation", "operations"]);
     expect(NETCONFRPC_CLIENT_PACK.variants.investigation.canAutoExecute).toBe(false);
     expect(NETCONFRPC_CLIENT_PACK.posture.handoverTerms()).toContain("never run in your editor");
   });
 
-  test("the statement language names both request shapes, no XML or other operation, and every withheld kind", () => {
+  test("the statement language names only the request the editor runs, no XML or other operation, and every withheld kind", () => {
     const language = NETCONF_LABELS.statementLanguage as string;
     expect(language).toContain('{"datastore": "running", "path": "ietf-interfaces:interfaces", "limit": 100}');
-    expect(language).toContain('{"schema": "ietf-interfaces"}');
+    // The console refuses a schema request, so plan mode, which drafts for the editor, is never offered one.
+    expect(language).not.toContain('"schema"');
+    expect(language).toContain("A draft never reads a node agent mode withholds.");
     expect(language).toContain("There is no XML, no edit-config or other operation");
     expect(language).toContain(NETCONF_WITHHELD_TEXT);
     expect(language).toContain("never a value the device holds");

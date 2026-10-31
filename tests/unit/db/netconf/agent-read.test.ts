@@ -17,6 +17,7 @@ import {
   runNetconfAgentReadWithin,
 } from "@/lib/db/providers/network/netconf/agent-read";
 import { readNetconfAgentStatement, type NetconfAgentPlan } from "@/lib/db/providers/network/netconf/agent-statement";
+import { NETCONF_SCHEMA_BUDGET } from "@/lib/db/providers/network/netconf/agent-withheld";
 import { XmlReaderError } from "@/lib/db/providers/network/netconf/reader-port";
 import { ALLOWED_OPERATIONS } from "@/lib/db/providers/network/netconf/requests";
 import { NetconfSessionError } from "@/lib/db/providers/network/netconf/session";
@@ -128,6 +129,18 @@ describe("a read answers values, with every withheld node in its place and warne
     expect(device.sent.at(-1)?.operation).toBe("get-data");
   });
 
+  test("a container whose every entry is keyed by a withheld leaf answers no row, only the warning", async () => {
+    const { answer } = await run('{"datastore": "running", "path": "ex-if:users"}');
+    expect(answer.fields).toEqual([]);
+    expect(answer.rows).toEqual([]);
+    expect(answer.withheld).toContainEqual({ path: "ex-if:users/user", kind: "keyed by a withheld leaf", nodes: 1 });
+    // The same container with an entry left answers it as the console does.
+    const kept = await run('{"datastore": "running", "path": "ex-if:users"}', {
+      data: `<users xmlns="urn:example:ex-if"><note>n</note></users>`,
+    });
+    expect(kept.answer.rows).toEqual([{ note: "n" }]);
+  });
+
   test("a schema request answers the module text the check already read, with no second request", async () => {
     const { answer, device } = await run('{"schema": "ex-if"}');
     expect(answer).toEqual({
@@ -170,6 +183,34 @@ describe("refused after the check and before the read is sent", () => {
     expect(read.message).toBe(F.notInLibrary("absent"));
     noRead(read.device.sent);
     expect((await refused('{"schema": "absent"}')).message).toBe(F.notInLibrary("absent"));
+    // A module named on a later node is Studio's refusal too, never worded as the device's answer.
+    const later = await refused('{"datastore": "running", "path": "ex-if:interfaces/absent:interface"}');
+    expect(later.message).toBe(F.notInLibrary("absent"));
+    noRead(later.device.sent);
+  });
+
+  test("fail closed past the check's total: more module texts than it reads, or more bytes, refused as Studio's", async () => {
+    const BASE = 'xmlns="urn:ietf:params:xml:ns:netconf:base:1.0"';
+    const library = (names: readonly string[]): string =>
+      `<rpc-reply ${BASE}><data><modules-state xmlns="urn:ietf:params:xml:ns:yang:ietf-yang-library">${names
+        .map((name) => `<module><name>${name}</name><namespace>urn:example:${name}</namespace></module>`)
+        .join("")}</modules-state></data></rpc-reply>`;
+    const many = await refused(READ, {
+      libraryReply: library(Array.from({ length: NETCONF_SCHEMA_BUDGET.maxTexts + 1 }, (_, index) => `m${index}`)),
+    });
+    expect(many.message).toBe(F.schemaTooLarge);
+    expect(many.device.sent.map((request) => request.operation)).toEqual(["get"]);
+    // Each text just under the reader's cap for one message; the fifth passes the total, and nothing more is fetched.
+    const names = ["m0", "m1", "m2", "m3", "m4", "m5"];
+    const big = `module m { prefix m; } /* ${"x".repeat(3_500_000)} */`;
+    const heavy = await refused(READ, {
+      libraryReply: library(names),
+      texts: Object.fromEntries(names.map((name) => [name, big])),
+    });
+    expect(heavy.message).toBe(F.schemaTooLarge);
+    expect(heavy.message).toContain("This is Studio's refusal, not the device's answer.");
+    expect(heavy.device.sent.filter((request) => request.operation === "get-schema")).toHaveLength(5);
+    noRead(heavy.device.sent);
   });
 
   test("fail closed: a library refused, a module text refused, or a text that breaks the grammar, never answered unchecked", async () => {

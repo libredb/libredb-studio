@@ -533,6 +533,7 @@ Every refusal is worded by agent mode and followed by its list of reads, and the
 
 A device's configuration and state are its management data, so the agent reads them, as text, inside the untrusted-content fence like every other result.
 Before every read, the session reads the YANG library and the text of every module and submodule it lists with `get-schema`, and `agent-withheld.ts` compiles what is withheld from them: on the fixture that is 59 texts, about 890 KB, in 45 ms.
+The check is linear in the texts and bounded in total: more than 1,000 texts, 16 MiB or 400,000 statements in all refuses the read in Studio's words before it is decided (`NETCONF_SCHEMA_BUDGET`), since the check runs on the server's event loop; at that bound a synthetic set compiles in under a second.
 Withheld, each named by its own identifier:
 
 | Kind | What it covers | Why |
@@ -540,14 +541,19 @@ Withheld, each named by its own identifier:
 | `ietf-keystore` | every node in the module's namespace | the device's private and symmetric keys (RFC 9642) |
 | `ietf-netconf-acm` | every node in the module's namespace | the access control groups and rules (RFC 8341) |
 | `nacm:default-deny-all` | every data node a module marks with the extension, and its subtree | RFC 8341 section 3.5.1.2, the protocol's own mark for a node too sensitive to read by default |
-| `crypt-hash` | every leaf typed `crypt-hash` of `iana-crypt-hash` or `ietf-system`, a typedef or union deriving from it, and a leafref pointing at such a leaf | a password hash (RFC 7317) |
+| `crypt-hash` | every leaf typed `crypt-hash` of `iana-crypt-hash` or `ietf-system`, or a typedef or union deriving from it | a password hash (RFC 7317) |
 | `ietf-crypto-types secret` | every node of the `private-key-type`, `key-type` and `password-type` choices of `ietf-crypto-types` | cleartext, hidden and encrypted private keys, symmetric keys and passwords (RFC 9640 section 2.1, which defines no key typedef) |
 | `keyed by a withheld leaf` | every entry of a list whose key leaf is withheld | an entry's path would carry the key |
+| `unresolved leafref` | every leafref whose target Studio cannot find in the modules the device serves, or whose path it cannot read | it could carry a withheld value |
+
+A leafref carries the value of the leaf it points at, so every leafref that may point at a withheld node is withheld with that node's kind: through its own `type leafref`, a typedef or a union deriving from one, a relative path anchored at the leaf (each `..` pops a step), or another leafref, resolved to a fixed point.
+A leafref whose path steps into `ietf-keystore` or `ietf-netconf-acm` takes that module's kind, so RFC 9642's `asymmetric-key-ref`, the `central-keystore-reference` of the fixture's SSH host key, never answers the keystore key's name.
 
 The marks, the types and the choices are read from the device's own module texts, never from a list of node names, and a node is matched by the chain of data-node names from where it is declared, so a grouping's node is withheld wherever it is used, whatever namespace it takes there.
 A read whose library, any module text or that text's grammar cannot be read is refused rather than answered unchecked, worded as Studio's refusal.
+A module that any node of the path names and the library does not list is refused the same way, before the read is sent.
 A path that names a withheld node, a node inside one, or filters on a withheld key is refused before it is sent, since even an empty answer would tell whether a guessed value exists.
-A read covering a withheld node answers `[withheld]` in its place, never its value or a child of it, drops every entry keyed by a withheld leaf, and warns each with its path, its kind and its reason; that report passes through the shared metadata-only projection, so it holds a path, a kind and a count and nothing else.
+A read covering a withheld node answers `[withheld]` in its place, never its value or a child of it, drops every entry keyed by a withheld leaf (a node left with no entry answers no row, never an empty one), and warns each with its path, its kind and its reason; that report passes through the shared metadata-only projection, so it holds a path, a kind and a count and nothing else.
 
 Measured on the fixture under the read-only account (`tests/fixtures/netconf/2.8.7/agent-boundary/`): the `hashed-password` leaf of each password user in `ietf-netconf-server` is answered raw, the keystore's host key entry answers its name and formats while NACM itself prunes its cleartext private key, and `nacm` is not answered at all; Studio withholds all three whatever NACM does.
 

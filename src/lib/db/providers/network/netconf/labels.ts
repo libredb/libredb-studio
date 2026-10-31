@@ -9,11 +9,11 @@ import type { ProviderLabels } from "@/lib/db/types";
 import { NETCONF_WITHHELD_TEXT } from "./agent-withheld";
 
 /**
- * What a statement on this engine is written in, for plan mode: the console's JSON read request and the schema
- * request. Its name alone would send a model to raw NETCONF XML (`<rpc><edit-config>...`) or to a RESTCONF URL, and
- * neither runs here.
+ * What a statement on this engine is written in, for plan mode: the console's JSON read request, the one shape the
+ * editor runs (agent mode's schema request is agent mode's alone). Its name alone would send a model to raw NETCONF XML
+ * (`<rpc><edit-config>...`) or to a RESTCONF URL, and neither runs here.
  */
-const NETCONF_STATEMENT_LANGUAGE = `one NETCONF read request this editor runs, a JSON object written as the console writes it: {"datastore": "running", "path": "ietf-interfaces:interfaces", "limit": 100}, which reads the configuration (running, candidate or startup) or the configuration and state (operational or intended) under a path that names its module on its first node, one more name per level and a list entry's keys after = (interface=eth0); or {"schema": "ietf-interfaces"} for one module's YANG text. There is no XML, no edit-config or other operation, and no RESTCONF URL. ${NETCONF_WITHHELD_TEXT} The inventory names each module's top-level nodes, never a value the device holds`;
+const NETCONF_STATEMENT_LANGUAGE = `one NETCONF read request this editor runs, a JSON object written as the console writes it: {"datastore": "running", "path": "ietf-interfaces:interfaces", "limit": 100}, which reads the configuration (running, candidate or startup) or the configuration and state (operational or intended) under a path that names its module on its first node, one more name per level and a list entry's keys after = (interface=eth0). There is no XML, no edit-config or other operation, and no RESTCONF URL. A draft never reads a node agent mode withholds. ${NETCONF_WITHHELD_TEXT} The inventory names each module's top-level nodes, never a value the device holds`;
 
 export const NETCONF_LABELS: ProviderLabels = Object.freeze({
   statementLanguage: NETCONF_STATEMENT_LANGUAGE,

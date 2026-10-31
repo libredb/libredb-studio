@@ -7,7 +7,9 @@
  * fetches the text of every module and submodule the library lists with `<get-schema>` and compiles the withheld policy
  * from them (`agent-withheld.ts`) before anything else is sent, so a module set that changed between two reads is read
  * as it is now. On the fixture that is 59 texts and about 890 KB in 45 ms. A library, a module text or a parse that
- * fails refuses the read before it is sent: a read the check could not decide is never answered unchecked.
+ * fails refuses the read before it is sent: a read the check could not decide is never answered unchecked. So does a
+ * device that serves more module text than the check's total (`NETCONF_SCHEMA_BUDGET`), before more is fetched, since
+ * the check runs on the server's event loop.
  *
  * VALUES ARE ANSWERED. A device's configuration and state are its management data, so the agent reads them, as text,
  * and the result travels to the model inside the untrusted-content fence like every other result. A withheld node
@@ -33,7 +35,9 @@ import type { QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
 import { NetconfAgentError, type NetconfAgentClient, type NetconfAgentLibrary } from "./agent-client";
 import type { NetconfAgentPlan } from "./agent-statement";
 import {
+  NETCONF_SCHEMA_BUDGET,
   NETCONF_WITHHELD_REASONS,
+  NetconfSchemaBudgetError,
   NetconfWithheldPolicy,
   type NetconfModuleText,
   type NetconfWithheldRow,
@@ -57,6 +61,7 @@ const STUDIO = "This is Studio's refusal, not the device's answer.";
 
 export const NETCONF_AGENT_FAILURE_SENTENCES = {
   schemaUnread: `Studio could not read every YANG module this device serves (its library, a module's text, or that text's grammar), so it cannot decide which nodes are withheld, and the read is refused rather than answered unchecked. ${STUDIO}`,
+  schemaTooLarge: `This device serves more YANG module text than Studio checks for one read (more than ${NETCONF_SCHEMA_BUDGET.maxTexts} texts, ${NETCONF_SCHEMA_BUDGET.maxBytes} bytes or ${NETCONF_SCHEMA_BUDGET.maxStatements} statements in all), so it cannot decide which nodes are withheld, and the read is refused rather than answered unchecked. ${STUDIO}`,
   notInLibrary: (module: string): string =>
     `This device's YANG library names no module or submodule ${module}, so nothing was read. ${STUDIO}`,
   withheldPath: (at: string, kind: keyof typeof NETCONF_WITHHELD_REASONS): string =>
@@ -86,10 +91,16 @@ async function moduleTexts(client: NetconfAgentClient, library: NetconfAgentLibr
     { name: entry.name, revision: entry.revision },
     ...entry.submodules.map((sub) => ({ name: sub.name, revision: sub.revision })),
   ]);
+  if (entries.length > NETCONF_SCHEMA_BUDGET.maxTexts) throw new NetconfSchemaBudgetError("too many module texts");
   const texts: NetconfModuleText[] = [];
+  let bytes = 0;
   for (const entry of entries) {
     // oxlint-disable-next-line no-await-in-loop -- one request in flight per session (`docs/providers/netconf.md` 3.4).
-    texts.push({ name: entry.name, text: await client.schema(entry.name, entry.revision) });
+    const text = await client.schema(entry.name, entry.revision);
+    bytes += text.length;
+    // Past the total, nothing more is fetched: the check would refuse the read whatever the rest held.
+    if (bytes > NETCONF_SCHEMA_BUDGET.maxBytes) throw new NetconfSchemaBudgetError("too many module bytes");
+    texts.push({ name: entry.name, text });
   }
   return texts;
 }
@@ -103,6 +114,7 @@ async function checkOf(
     const texts = await moduleTexts(client, library);
     return { library, texts, policy: NetconfWithheldPolicy.compile(library.modules, texts) };
   } catch (error) {
+    if (error instanceof NetconfSchemaBudgetError) return fail(F.schemaTooLarge);
     if (error instanceof NetconfAgentError || error instanceof YangTextError || error instanceof XmlReaderError) {
       return fail(F.schemaUnread);
     }
@@ -129,6 +141,10 @@ async function runNetconfAgentRead(
   const first = plan.path[0]?.module as string;
   const firstText = textOf(first);
   if (firstText === undefined || !namespaces.has(first)) return fail(F.notInLibrary(first));
+  // Every module a later node names is checked here too, so the request builder never meets one the library lacks.
+  for (const node of plan.path) {
+    if (node.module !== undefined && !namespaces.has(node.module)) return fail(F.notInLibrary(node.module));
+  }
   const refusal = policy.pathRefusal(plan.path, (module) => namespaces.get(module));
   if (refusal !== undefined) return fail(F.withheldPath(refusal.at, refusal.kind));
 
@@ -141,6 +157,9 @@ async function runNetconfAgentRead(
   const names = plan.path.map((node) => node.name);
   const parent = elementAt(pruned.data, names.slice(0, -1));
   if (parent === undefined) return { fields: [], rows: [], withheld };
+  // A node whose every child was an entry keyed by a withheld leaf answers no row: an empty one would be Studio's.
+  const target = elementAt(parent, names.slice(-1));
+  if (target !== undefined && pruned.emptied.has(target)) return { fields: [], rows: [], withheld };
   const built = rowsIn(parent, names.at(-1) as string, scanYangModule(firstText), {
     maxRows: Number.MAX_SAFE_INTEGER,
     maxCellChars: Number.MAX_SAFE_INTEGER,

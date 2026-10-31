@@ -5,10 +5,13 @@
  */
 import { describe, expect, test } from "bun:test";
 import {
+  MAX_TYPE_DERIVATION,
   NETCONF_METADATA_ONLY,
+  NETCONF_SCHEMA_BUDGET,
   NETCONF_WITHHELD_MODULES,
   NETCONF_WITHHELD_REASONS,
   NETCONF_WITHHELD_TEXT,
+  NetconfSchemaBudgetError,
   NetconfWithheldPolicy,
   WITHHELD_CELL,
   withheldRows,
@@ -56,6 +59,7 @@ const SSH_SERVER = `module ietf-ssh-server {
         leaf same-last-name { type leafref { path "../../elsewhere/name"; } }
         leaf one-step { type leafref { path "../name"; } }
       }
+      container elsewhere { leaf name { type string; } }
     }
   }
 }`;
@@ -163,6 +167,265 @@ describe("which chains each kind withholds", () => {
       YangTextError,
     );
     expect(() => NetconfWithheldPolicy.compile([], [{ name: "x", text: "submodule x { }" }])).toThrow(YangTextError);
+  });
+});
+
+describe("leafrefs, resolved to a fixed point", () => {
+  const SYS = `module ietf-system {
+    prefix sys;
+    import iana-crypt-hash { prefix ianach; }
+    container system { container authentication { list user { key name; leaf name { type string; } leaf password { type ianach:crypt-hash; } } } }
+  }`;
+  // RFC 9642's own shapes: the keystore's key list and the typedef other modules point at it with.
+  const KEYSTORE = `module ietf-keystore {
+    prefix ks;
+    typedef asymmetric-key-ref { type leafref { path "/ks:keystore/ks:asymmetric-keys/ks:asymmetric-key/ks:name"; } }
+    container keystore { container asymmetric-keys { list asymmetric-key { key name; leaf name { type string; } } } }
+  }`;
+  const ACME = `module acme {
+    prefix a;
+    import ietf-system { prefix sys; }
+    import iana-crypt-hash { prefix ianach; }
+    import ietf-keystore { prefix ks; }
+    typedef password-ref { type leafref { path "/sys:system/sys:authentication/sys:user/sys:password"; } }
+    typedef plain-ref { type leafref { path "/a:box/a:plain"; } }
+    container box {
+      leaf plain { type string; }
+      leaf absolute { type leafref { path "../../sys:system/sys:authentication/sys:user/sys:password"; } }
+      list r { key n; leaf n { type string; } leaf sibling { type leafref { path "../hp"; } } leaf hp { type ianach:crypt-hash; } }
+      leaf chained { type leafref { path "../absolute"; } }
+      leaf chained-twice { type leafref { path "../chained"; } }
+      leaf through-typedef { type a:password-ref; }
+      leaf through-union { type union { type a:password-ref; type string; } }
+      leaf into-keystore { type leafref { path "/ks:keystore/ks:asymmetric-keys/ks:asymmetric-key/ks:name"; } }
+      container host-key { container public-key { leaf central-keystore-reference { type ks:asymmetric-key-ref; } } }
+      leaf to-plain { type a:plain-ref; }
+      leaf to-nowhere { type leafref { path "/a:box/a:absent"; } }
+      leaf no-path { type leafref; }
+      leaf unreadable-path { type leafref { path "deref(../plain)/../x"; } }
+      leaf not-relative { type leafref { path "box/plain"; } }
+      leaf bare-up { type leafref { path "../.."; } }
+      leaf to-acm { type leafref { path "/nacm:nacm/nacm:groups/nacm:group/nacm:name"; } }
+    }
+    import ietf-netconf-acm { prefix nacm; }
+  }`;
+  const leafrefs = NetconfWithheldPolicy.compile(
+    [],
+    [
+      { name: "iana-crypt-hash", text: CRYPT_HASH },
+      { name: "ietf-system", text: SYS },
+      { name: "ietf-keystore", text: KEYSTORE },
+      { name: "acme", text: ACME },
+    ],
+  );
+
+  test("an absolute path, a relative path anchored at the leaf, a chain of leafrefs, a typedef and a union", () => {
+    for (const leaf of ["absolute", "chained", "chained-twice", "through-typedef", "through-union"]) {
+      expect(leafrefs.chainMatch(["box", leaf])).toEqual({ kind: "crypt-hash" });
+    }
+    // `../hp` pops the leaf itself, so it is its sibling crypt-hash leaf in the same entry.
+    expect(leafrefs.chainMatch(["box", "r", "sibling"])).toEqual({ kind: "crypt-hash" });
+  });
+
+  test("a leafref into a module withheld whole takes that module's kind, through RFC 9642's asymmetric-key-ref typedef too", () => {
+    expect(leafrefs.chainMatch(["box", "into-keystore"])).toEqual({ kind: "ietf-keystore" });
+    expect(
+      leafrefs.chainMatch([
+        "netconf-server",
+        "listen",
+        "endpoints",
+        "endpoint",
+        "ssh",
+        "ssh-server-parameters",
+        "server-identity",
+        "box",
+        "host-key",
+        "public-key",
+        "central-keystore-reference",
+      ]),
+    ).toEqual({ kind: "ietf-keystore" });
+    expect(leafrefs.chainMatch(["box", "to-acm"])).toEqual({ kind: "ietf-netconf-acm" });
+  });
+
+  test("a leafref whose target no module declares, or whose path cannot be read, is withheld as unresolved", () => {
+    for (const leaf of ["to-nowhere", "no-path", "unreadable-path", "not-relative", "bare-up"]) {
+      expect(leafrefs.chainMatch(["box", leaf])).toEqual({ kind: "unresolved leafref" });
+    }
+    // A leafref through a typedef to a plain leaf is read like the leaf.
+    expect(leafrefs.chainMatch(["box", "to-plain"])).toBeUndefined();
+    expect(leafrefs.chainMatch(["box", "plain"])).toBeUndefined();
+  });
+
+  test("a chain of leafrefs declared before what it points at, whatever the order, reaches the fixed point", () => {
+    const backwards = NetconfWithheldPolicy.compile(
+      [],
+      [
+        {
+          name: "m",
+          text: `module m { prefix m; import iana-crypt-hash { prefix h; }
+            container c { leaf a { type leafref { path "../b"; } } leaf b { type leafref { path "../d"; } } leaf d { type h:crypt-hash; } }
+          }`,
+        },
+        { name: "iana-crypt-hash", text: CRYPT_HASH },
+      ],
+    );
+    expect(backwards.chainMatch(["c", "a"])).toEqual({ kind: "crypt-hash" });
+    expect(backwards.chainMatch(["c", "b"])).toEqual({ kind: "crypt-hash" });
+  });
+
+  test("a waiting leafref is reached whichever way a later withheld chain meets its target: longer or shorter", () => {
+    const policyOf = (body: string) =>
+      NetconfWithheldPolicy.compile(
+        [],
+        [
+          { name: "iana-crypt-hash", text: CRYPT_HASH },
+          { name: "m", text: `module m { prefix m; import iana-crypt-hash { prefix h; } ${body} }` },
+        ],
+      );
+    // long waits on [top, b], which ends with the grouping's [b], withheld after it.
+    const down = policyOf(`
+      container top { leaf long { type leafref { path "/m:top/m:b"; } } }
+      grouping g { leaf b { type leafref { path "../d"; } } leaf d { type h:crypt-hash; } }`);
+    expect(down.chainMatch(["top", "long"])).toEqual({ kind: "crypt-hash" });
+    // short waits on [b], the end of top's [top, b], withheld after it.
+    const up = policyOf(`
+      grouping early { leaf short { type leafref { path "../../b"; } } }
+      container top { leaf b { type leafref { path "../d"; } } leaf d { type h:crypt-hash; } }`);
+    expect(up.chainMatch(["x", "short"])).toEqual({ kind: "crypt-hash" });
+  });
+
+  test("a relative path above a grouping's root keeps the names it can, so it matches by their end", () => {
+    const grouped = NetconfWithheldPolicy.compile(
+      [],
+      [
+        {
+          name: "m",
+          text: `module m { prefix m; import iana-crypt-hash { prefix h; }
+            grouping g { leaf ref { type leafref { path "../../secret/hash"; } } }
+            container secret { leaf hash { type h:crypt-hash; } }
+          }`,
+        },
+        { name: "iana-crypt-hash", text: CRYPT_HASH },
+      ],
+    );
+    expect(grouped.chainMatch(["anywhere", "ref"])).toEqual({ kind: "crypt-hash" });
+  });
+
+  test("a type holding more leafrefs than Studio follows is withheld as unresolved", () => {
+    const members = Array.from({ length: 33 }, () => 'type leafref { path "../plain"; }').join(" ");
+    const wide = NetconfWithheldPolicy.compile(
+      [],
+      [
+        {
+          name: "m",
+          text: `module m { prefix m; container c { leaf plain { type string; } leaf u { type union { ${members} } } } }`,
+        },
+      ],
+    );
+    expect(wide.chainMatch(["c", "u"])).toEqual({ kind: "unresolved leafref" });
+    const narrow = NetconfWithheldPolicy.compile(
+      [],
+      [
+        {
+          name: "m",
+          text: `module m { prefix m; container c { leaf plain { type string; } leaf u { type union { ${members.slice(0, members.lastIndexOf(" type"))} } } } }`,
+        },
+      ],
+    );
+    expect(narrow.chainMatch(["c", "u"])).toBeUndefined();
+  });
+});
+
+describe("which kind a chain meets", () => {
+  test("of two withheld chains an element's chain ends with, the one withheld first names it", () => {
+    const both = NetconfWithheldPolicy.compile(
+      [],
+      [
+        { name: "iana-crypt-hash", text: CRYPT_HASH },
+        {
+          name: "m",
+          text: `module m { prefix m; import iana-crypt-hash { prefix h; } import ietf-netconf-acm { prefix n; }
+            container x { leaf y { type string; n:default-deny-all; } }
+            grouping g { leaf y { type h:crypt-hash; } }
+          }`,
+        },
+      ],
+    );
+    expect(both.chainMatch(["x", "y"])).toEqual({ kind: "nacm:default-deny-all" });
+    expect(both.chainMatch(["z", "y"])).toEqual({ kind: "crypt-hash" });
+  });
+});
+
+describe("typedefs", () => {
+  test("a typedef deriving from a crypt-hash typedef declared after it is a password hash", () => {
+    const later = NetconfWithheldPolicy.compile(
+      [],
+      [
+        {
+          name: "m",
+          text: `module m { prefix m; import iana-crypt-hash { prefix h; }
+            typedef first { type m:second; }
+            typedef second { type h:crypt-hash; }
+            container c { leaf p { type first; } }
+          }`,
+        },
+      ],
+    );
+    expect(later.chainMatch(["c", "p"])).toEqual({ kind: "crypt-hash" });
+  });
+
+  test("a typedef that derives from itself, or deeper than Studio follows, refuses the whole policy", () => {
+    expect(() =>
+      NetconfWithheldPolicy.compile(
+        [],
+        [{ name: "m", text: "module m { prefix m; typedef a { type b; } typedef b { type a; } leaf l { type a; } }" }],
+      ),
+    ).toThrow(YangTextError);
+    // `length` typedefs, each deriving from the next, the last from string.
+    const chain = (length: number): string =>
+      `module m { prefix m; ${Array.from({ length: length - 1 }, (_, index) => `typedef t${index} { type t${index + 1}; }`).join(" ")} typedef t${length - 1} { type string; } leaf l { type t0; } }`;
+    expect(() => NetconfWithheldPolicy.compile([], [{ name: "m", text: chain(MAX_TYPE_DERIVATION) }])).not.toThrow();
+    expect(() => NetconfWithheldPolicy.compile([], [{ name: "m", text: chain(MAX_TYPE_DERIVATION + 1) }])).toThrow(
+      YangTextError,
+    );
+  });
+});
+
+describe("the check's total budget", () => {
+  const text = (name: string): NetconfModuleText => ({
+    name,
+    text: `module ${name} { prefix p; leaf l { type string; } }`,
+  });
+  // Each of these texts holds four statements: module, prefix, leaf and type.
+  const one = text("a").text.length;
+
+  test("texts, bytes and statements: exactly the budget is compiled, one more is refused", () => {
+    const budget = { maxTexts: 2, maxBytes: 2 * one, maxStatements: 8 };
+    expect(() => NetconfWithheldPolicy.compile([], [text("a"), text("b")], budget)).not.toThrow();
+    expect(() => NetconfWithheldPolicy.compile([], [text("a"), text("b"), text("c")], budget)).toThrow(
+      new NetconfSchemaBudgetError("the device serves more than 2 module texts"),
+    );
+    expect(() => NetconfWithheldPolicy.compile([], [text("a"), text("bb")], { ...budget, maxBytes: 2 * one })).toThrow(
+      new NetconfSchemaBudgetError(`the device's module texts hold more than ${2 * one} bytes`),
+    );
+    expect(() => NetconfWithheldPolicy.compile([], [text("a"), text("b")], { ...budget, maxStatements: 7 })).toThrow(
+      new NetconfSchemaBudgetError("the device's module texts hold more than 7 statements"),
+    );
+    expect(NETCONF_SCHEMA_BUDGET).toEqual({ maxTexts: 1_000, maxBytes: 16 * 1024 * 1024, maxStatements: 400_000 });
+  });
+
+  test("a chain deeper than any answer nests is kept by its end, so it still withholds", () => {
+    const deep = Array.from({ length: 70 }, (_, index) => `n${index}`);
+    const policy = NetconfWithheldPolicy.compile(
+      [],
+      [
+        {
+          name: "m",
+          text: `module m { prefix m; import ietf-netconf-acm { prefix n; } augment "/${deep.join("/")}" { leaf s { type string; n:default-deny-all; } } }`,
+        },
+      ],
+    );
+    expect(policy.chainMatch([...deep.slice(-63), "s"])).toEqual({ kind: "nacm:default-deny-all" });
   });
 });
 
@@ -327,6 +590,8 @@ describe("the withheld report", () => {
       "password-type",
       "ietf-crypto-types",
       "keyed by a withheld leaf",
+      "leafref that may point at a withheld node",
+      "unresolved leafref",
     ]) {
       expect(NETCONF_WITHHELD_TEXT).toContain(identifier);
     }
