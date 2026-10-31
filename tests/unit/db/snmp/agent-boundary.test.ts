@@ -13,13 +13,13 @@
  */
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { posix } from "node:path";
+import path from "node:path";
 import { readSnmpAgentStatement } from "@/lib/db/providers/network/snmp/agent-statement";
 import { FIXTURE_COMMUNITY } from "../../../fixtures/snmp/identity";
 
-const ROOT = posix.resolve(import.meta.dir.replaceAll("\\", "/"), "../../../..");
-const SNMP = posix.join(ROOT, "src/lib/db/providers/network/snmp");
-const read = (relative: string) => readFileSync(posix.join(ROOT, relative), "utf8");
+const ROOT = path.resolve(import.meta.dir, "../../../..");
+const SNMP = path.join(ROOT, "src/lib/db/providers/network/snmp");
+const read = (relative: string) => readFileSync(path.join(ROOT, relative), "utf8");
 const AGENT_MODULES = readdirSync(SNMP)
   .filter((file) => file.startsWith("agent-"))
   .sort();

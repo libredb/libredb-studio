@@ -5,7 +5,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { posix } from "node:path";
+import path from "node:path";
 import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
@@ -15,8 +15,8 @@ import { SNMP_WITHHELD_SUBTREES } from "@/lib/db/providers/network/snmp/agent-st
 import { SNMP_LABELS } from "@/lib/db/providers/network/snmp/labels";
 import type { DatabaseConnection } from "@/lib/types";
 
-const ROOT = posix.resolve(import.meta.dir.replaceAll("\\", "/"), "../../../..");
-const read = (relative: string) => readFileSync(posix.join(ROOT, relative), "utf8");
+const ROOT = path.resolve(import.meta.dir, "../../../..");
+const read = (relative: string) => readFileSync(path.join(ROOT, relative), "utf8");
 const BUDGET = { statementTimeoutMs: 1_000, maxResultRows: 5, maxResultBytes: 1_000 };
 
 const connection = {
