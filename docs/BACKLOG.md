@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D413, U17 · 303
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U187 · 173
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U190 · 176
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B160 · 89
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B160 · 88
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -6174,6 +6174,7 @@ Seen again 2026-10-31 on RabbitMQ 4.3.6 in a browser pass: a run asked to pass a
 Seen again 2026-10-31 on S3 (Silo `RELEASE.2026-09-16T00-00-00Z`) in a browser pass: runs asked to pass one exact refused read each (`aws s3 ls s3://inventory/`, `list-objects-v2`, `get-bucket-lifecycle-configuration`, `get-bucket-tagging`, `presign`, an `--endpoint-url` and a `--region` form) and one exact write each on a root key (`put-object`, `cp`, `rb`, `put-object-tagging`, `put-bucket-policy`, a two-command form) had each refused before anything was sent (`STATEMENT_NOT_ADMITTED`) and finished `answered` with one claim about the bucket inventory and no word of the refusal (runs `arun_713aa40604ac4de189fc22586ec41c47`, `arun_5ef81af257124c628859fe57de6fe3ff`, `arun_14b873ffcd8244079cd0dc6ecc2d1916`, `arun_068ba83db5a54c2ab8398dc54e54071d`, `arun_83d8daf749914a058e642c01fea60ddb`, `arun_6b0198f3888741b98545304450b6379a`, `arun_1bbcb0d5133a4f68ab62fb972de0e90c`, `arun_e3458052be144abab886bfa7c733ebcf`, `arun_281f080e959747dfb6d795840ddf1f4f`, `arun_19fa75eaf4544a76a05b611562b4b8ec`, `arun_ee4b5ac6209a4e6284d9f04e3d9c4632`, `arun_b2ac00fc2ddb4205b22985eec8cbf316`, `arun_c7b70a2c33d6422fafce5b36b2d3ab0f`); the other runs of the same pass did report their refusal, and the store's state hashed the same before and after.
 Seen again 2026-10-31 on Firestore (emulator `cloud-firestore-emulator` 1.22.0) in a browser pass, three times: a run asked to pass `listDocuments()`, a document query, a filtered, an ordered and a limited count, a sum, an average, `findNearest`, `explain()` and `getAll` to `run_read_query` had each refused before anything was sent (`STATEMENT_NOT_ADMITTED`) and finished `answered` with one named document's times and the schema inventory and no word of the ten refusals (run `arun_dcfb2aeecfa44152987451deb6088471`); a run asked for an exact `set`, and one asked for an `update`, a `delete`, an `add`, a transaction, a batch commit and a `recursiveDelete`, had each refused the same way and finished `answered` with the schema inventory alone (runs `arun_5010ac7af4e141309799a258eac0f295`, `arun_288f56c17baf4850b422c0f4c2d5e9f5`).
 
+Seen again 2026-10-31 on Modbus (pymodbus 3.12.1, the pinned `docker/modbus` image) in a browser pass, twice: runs asked to pass a write value, function codes 6, 16, 5, 15, 22, 23, 8, 20 and 21, a broadcast to unit 0, an address past 65535, 126 registers, 2001 coils, a block past the end of the table, a point the map does not name and a request of two shapes to `run_read_query` had each refused before anything was sent (`STATEMENT_NOT_ADMITTED`) and finished `answered` with one claim about the schema inventory and no word of the refusals; the second run's `compose_report` was declined once with `UNVERIFIABLE_EVIDENCE` (runs `arun_42ec8a779aeb46aebc1b6a09d01f94d2`, `arun_4b8655e77e344804995cb0e1b236e1f3`); the device's registers and coils hashed the same before and after.
 **Done when:** a run whose only drafted statement was refused either reports that refusal in its answer, held by the run's verifier, or ends in a state other than `answered`, with an agent test that forces the refusal.
 
 ### U158. On the dev server the login form submitted as a GET on `127.0.0.1`
@@ -6197,6 +6198,7 @@ Seen again 2026-10-31 on Firestore (emulator `cloud-firestore-emulator` 1.22.0) 
 Seen again 2026-10-31 on SNMP (Net-SNMP snmpd 5.9.4, the `docker/snmp` image) in a browser pass: on an agent-mode handle the provider answers the overview, performance, session, slow-query, table, index and storage readings with its own reason before anything is sent (`SNMP_AGENT_WITHHELD` in `src/lib/db/providers/network/snmp/agent-surface.ts`, thrown as a `QueryError`); an Operate run took the session, slow-query and storage readings, each was recorded `class: "database-error"` and headed "The database refused the statement", and the three spent the run's repair attempts, so the next two readings were refused with `REPAIR_BUDGET_EXHAUSTED` and never reached their own reasons (run `arun_b816f169df4344fb9b7fa304f82164b0`).
 Seen again 2026-10-31 on NETCONF (Netopeer2 2.8.7, the `docker/netconf` image) in a browser pass: an Operate run's session and slow-query readings, which the provider answers with its own reason before anything is sent (`SENTENCES.noSessions` and `SENTENCES.noMetrics` in `src/lib/db/providers/network/netconf/index.ts`), were recorded `class: "database-error"` and headed "The database refused the statement", and after those two the next three readings were refused with `REPAIR_BUDGET_EXHAUSTED` (run `arun_bb2f5ed16af74230899d9021479f16ac`).
 
+Seen again 2026-10-31 on Modbus (pymodbus 3.12.1, the pinned `docker/modbus` image) in a browser pass: on an agent-mode handle the provider answers the overview, performance, session, slow-query, table, index and storage readings with its own reason before anything is sent (`MODBUS_AGENT_WITHHELD` in `src/lib/db/providers/industrial/modbus/agent-surface.ts`, thrown as a `QueryError`); an Operate run took the session, slow-query and storage readings, each was recorded `class: "database-error"` and headed "The database refused the statement", and the three spent the run's repair attempts, so the next two readings were refused with `REPAIR_BUDGET_EXHAUSTED` (run `arun_d3b3e98e21bd4ebbaba7ebe000b8cba0`).
 **Done when:** a panel the provider declines without sending a statement is recorded as not sent and headed "Refused before the database" with the provider's sentence as the detail, it does not count as a repair attempt, and a timeline test and an agent test pin both.
 
 ### U160. A run whose goal verdict is unanswered heads its report "Answer" with a "succeeded" pill
@@ -6236,6 +6238,7 @@ Seen again 2026-10-31 on Firestore (emulator `cloud-firestore-emulator` 1.22.0) 
 Seen again 2026-10-31 on SNMP (Net-SNMP snmpd 5.9.4, the `docker/snmp` image) in a browser pass: the picker offered Optimize, Assess and Analyze, which the `snmpget` family does not offer (`docs/providers/snmp.md` section 13.4), and Optimize was refused with the same sentence although investigation runs there.
 Seen again 2026-10-31 on NETCONF (Netopeer2 2.8.7, the `docker/netconf` image) in a browser pass: the picker offered Optimize, Assess and Analyze, which the `netconfrpc` family does not offer (`docs/providers/netconf.md` section 14.4), and Optimize was refused with the same sentence although investigation runs there.
 
+Seen again 2026-10-31 on Modbus (pymodbus 3.12.1, the pinned `docker/modbus` image) in a browser pass: the picker offered Optimize, Assess and Analyze, which the `modbusread` family does not offer (`docs/providers/modbus.md` section 8.5), and Optimize was refused with the same sentence although investigation runs there.
 **Done when:** the refusal names the workflows the connection's statement language does offer, read from `AGENT_WORKFLOW_VARIANTS` rather than fixed text, the picker marks or hides a workflow that language has no variant for, and a test pins the sentence for `libredbkv`.
 
 ### U163. A refused run start announces the previous conversation as ended by a page reload
@@ -6291,6 +6294,7 @@ Seen again 2026-10-31 on SNMP (Net-SNMP snmpd 5.9.4, the `docker/snmp` image) in
 The same misattribution for a declined operations panel is U159.
 Seen again 2026-10-31 on NETCONF (Netopeer2 2.8.7, the `docker/netconf` image) in a browser pass: a list past the 200-row budget and one past the request's own `limit` are refused by Studio and never cut, a path into a withheld node is refused before the data read is sent, and a schema request for a module the library does not list is refused before any read (`NETCONF_AGENT_FAILURE_SENTENCES` in `src/lib/db/providers/network/netconf/agent-read.ts`, `docs/providers/netconf.md` section 14.3), yet the ledger recorded each `class: "database-error"` and the rail headed it "The database refused the statement" over Studio's sentence ending "This is Studio's refusal, not the device's answer."; the two budget refusals used the run's repair attempts, so the third request was refused with `REPAIR_BUDGET_EXHAUSTED` (runs `arun_cf9408b3280f47b197b2587e10aa9861`, `arun_82bb0508b63c4ffc9c5302d9e57b3dfc`, `arun_3dc145fd3ed34e589ae2325ccdb83f5a`). A module withheld whole is refused as not sent, so the misattribution is the provider's error class for these four sentences, not the rail.
 
+Seen again 2026-10-31 on Modbus (the single-client libmodbus device built from `tests/fixtures/modbus/2.3.0/agent-boundary/single-client/`) in a browser pass: a points read that would pass the run's 64 device requests is refused by Studio before anything is sent (`MODBUS_AGENT_FAILURE_SENTENCES.requestBound` in `src/lib/db/providers/industrial/modbus/agent-read.ts`, a `RefusedBeforeSendError`), and the rail headed it "Refused before the database" over Studio's sentence, yet the ledger recorded it `class: "database-error"`, which spends a repair attempt (run `arun_40f9c0fbd47b4345b4362e2de3103189`).
 **Done when:** a tenant refusal Studio makes is recorded and headed as refused before the read it guards, with the provider's sentence as the detail, it does not count as a repair attempt, and an agent test pins both.
 
 ### U167. Qdrant's console calls `GET /snapshots` a snapshot create, delete, download, upload or recover route
@@ -6458,6 +6462,7 @@ Seen again 2026-10-31 on Firestore (emulator `cloud-firestore-emulator` 1.22.0) 
 Seen again 2026-10-31 on SNMP (Net-SNMP snmpd 5.9.4, the `docker/snmp` image) in a browser pass: `getHealth` sends the console's Get of `sysDescr.0` and `sysUpTime.0` and the agent answered both, yet the artifact holds `activeConnections` null and `databaseSize` and `cacheHitRatio` set to Studio's reasons, so neither value the agent sent reaches the model, under the same caption, and the Operate run answered that "these database-level health measures are unavailable from this reading" (run `arun_b816f169df4344fb9b7fa304f82164b0`); the overview's reason no longer points the model at those two values (`SNMP_AGENT_WITHHELD.overview`).
 Seen again 2026-10-31 on NETCONF (Netopeer2 2.8.7, the `docker/netconf` image) in a browser pass: `getHealth` (`src/lib/db/providers/network/netconf/index.ts`) sends nothing and answers from the YANG library read when the handle opened, in 0 ms, yet its artifact holds `activeConnections` null, `databaseSize` "52 modules in the YANG library" and `cacheHitRatio` "unknown" under the caption that the reading says what the engine reported as it was taken, and the Operate run answered that the reading "does not establish that the NETCONF device is healthy or unhealthy" (run `arun_bb2f5ed16af74230899d9021479f16ac`).
 
+Seen again 2026-10-31 on Modbus (pymodbus 3.12.1, the pinned `docker/modbus` image) in a browser pass: on an agent-mode handle `getHealth` (`src/lib/db/providers/industrial/modbus/index.ts`) reads the register map's first point on the device's lane, so the reading exists only because the device answered, yet its artifact holds `activeConnections` null, `databaseSize` "9 points", which is the register map's count and not anything the device reported, and `cacheHitRatio` "unknown", under the same caption, and the Operate run answered that the reading "does not establish that the Modbus device is reachable or healthy" (run `arun_d3b3e98e21bd4ebbaba7ebe000b8cba0`).
 **Done when:** a health reading the provider takes only to prove the engine answered says so in a field the model and the rail read, without a type-id branch, and an operations test pins what the model's tool result says for it.
 
 
@@ -6496,6 +6501,33 @@ Withholding the entry errs toward withholding, as section 14.3 says; the reason 
 Seen 2026-10-31 on NETCONF (Netopeer2 2.8.7, the `docker/netconf` image) in a browser pass (runs `arun_1428f9a917f549ea9364961417ccc617`, `arun_82bb0508b63c4ffc9c5302d9e57b3dfc`).
 
 **Done when:** a node withheld because its name chain matches a withheld node declared elsewhere is answered with a reason that says so and names where the match was declared, never the matched node's own reason as a fact about it, in the warning, the path refusal and the rail, with a withheld-policy test on a grouping-root leaf whose name another module's list uses.
+
+### U188. The Modbus agent grounding and rail call register map points tables
+
+The Modbus provider declares no `entityName`, so its labels keep the base provider's "Table" and `inventoryNoun` (`src/lib/agent/inventory-noun.ts`) gives a Modbus run the noun "table".
+The grounding a run reads opens "Schema inventory for this run ... 9 table(s) read" over the nine points of a register map and lists each as "1.banner (Holding register): no columns derivable from the stored definition", the rail reads "Schema captured 9 tables" and "Schema snapshot ctx_7b69 · 9 tables", and a plan-mode answer "9 tables read".
+A model repeated it: "The schema inventory names unit 1 holding-register entries including 1.hr0 ... and reports no columns derivable from their stored definitions."
+Seen 2026-10-31 on Modbus (pymodbus 3.12.1, the pinned `docker/modbus` image, and the single-client libmodbus device) in a browser pass (runs `arun_9ca0a6b938724f46a52986272efdf724`, `arun_86493ebf47b74dc09f93084b9b6bf21b`, `arun_94b8f6972b6145a5a9886483953cdd53`).
+`entityName` also labels the editor's object panel, so declaring it is a decision about both surfaces.
+
+**Done when:** a Modbus run's grounding and rail count register map points as points, the column line is not said of a point, the noun comes from the provider's own declaration rather than a type-id branch, and a context-snapshot test pins the grounding of a Modbus capture.
+
+### U189. A Modbus connection with no register map is grounded as a device that reported nothing
+
+With no map, `listContainers` answers no unit, so the provider inventory (`src/lib/agent/tools.ts`) never asks `countObjects`, whose answer with no map is `unavailable`, and the snapshot holds no object and no kind marked unavailable.
+`packContextForTask` (`src/lib/agent/context-snapshot.ts`) then writes "This database reported no tables." inside the fence and the rail reads "0 tables", although nothing was asked of the device; the investigation rule beside it says that a connection with no map lists none, which says nothing about what the device holds.
+Asked how many coils and registers the device has, a run read the identification objects and answered that "The captured schema inventory reports no database tables" (run `arun_27f866a8e0c143c682b8dc44a8366378`).
+Seen 2026-10-31 on Modbus (pymodbus 3.12.1, the pinned `docker/modbus` image) in a browser pass, on a seeded connection with no `registerMap`.
+
+**Done when:** the capture of a connection whose inventory cannot be read without its configuration says so in the grounding and the rail instead of "reported no", decided from a provider declaration rather than a type-id branch, and a context-snapshot test pins the grounding of a Modbus connection with no map.
+
+### U190. A Modbus point the map declares as a string is answered as its register words
+
+`valueOfPoint` in `src/lib/db/providers/industrial/modbus/read.ts` answers the words themselves for any type without a fixed width, so a point of type `string` reads as a list of 16-bit numbers, in the console and in agent mode, and a run that wants the text decodes it itself.
+Asked to decode the eight words of a planted `VALMARK-5dec470b` high byte first, one run answered `VALMARK-5decG70b` (the word 0x3437, "47", read as "G7"), cited to the artifact that holds the words (run `arun_9ca0a6b938724f46a52986272efdf724`); a later run decoded a 39-word string correctly (run `arun_f44d910c2cc740e2b9cff949644fa496`).
+Seen 2026-10-31 on Modbus (pymodbus 3.12.1, the pinned `docker/modbus` image) in a browser pass.
+
+**Done when:** a point of type `string` is answered as text under the rule identification objects follow (text only when its bytes round-trip as text with no control byte, hex otherwise), in the console and in agent mode, with a read test on a string point that holds a control byte.
 
 ## Dependencies
 
@@ -8696,16 +8728,6 @@ Kept so that key-name and value exposure and MCP exposure are decisions of their
 Found 2026-10-27 while designing read-only agent and MCP execution for every provider; narrowed 2026-10-30 when agent mode joined etcd.
 
 **Done when:** the owner rules on whether agent mode may read key names and which values it may read on etcd and how they are redacted, the `etcdctl` pack offers the workflows that ruling opens, a per-engine exposure ruling opens MCP for etcd, the pack declares its MCP facet (`src/lib/agent/languages/etcdctl/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same proof and projection, and `MCP_EXPOSABLE.etcd` and `MCP_STATEMENT_READ.etcd` are true, with tests that every MCP answer carries no value; cited in `docs/AGENT.md`.
-
-### B137. Modbus has no agent execution and no MCP surface
-
-`MCP_EXPOSABLE.modbus` is false and the provider implements no `queryReadOnly`, so agent execution and every MCP tool refuse a Modbus connection.
-Modbus has no discovery, so a register means only what the connection's register map says, and an MCP client has nothing to form a read from on its own.
-A device that serves one client at a time left a second client's read unanswered for 3003 ms in the measured fixture, so an agent read can starve the plant's own HMI unless the provider paces it (`docs/providers/modbus.md`).
-
-Found 2026-10-27 while designing read-only agent and MCP execution for every provider.
-
-**Done when:** the provider implements `queryReadOnly` through the read request builders in `pdu.ts` and the `valve.ts` allowlist, with a test that pins both, paces agent reads so a single-client device is never held past a stated bound, and joins `AGENT_EXECUTION_ENGINES`; MCP stays closed until a per-engine exposure ruling opens it; cited in `docs/AGENT.md`.
 
 ### B138. NETCONF has no agent execution and no MCP surface
 
