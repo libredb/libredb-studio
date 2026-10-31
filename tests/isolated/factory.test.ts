@@ -3141,18 +3141,12 @@ describe("acquireExecutionProfileProvider", () => {
     expect(getExecutionProfileCacheStats().size).toBe(0);
   });
 
-  test("refuses firestore the agent's read-only profile, the gate the explain-analyze descriptor's capability check is not", async () => {
-    // `sql.explain.analyze` requires only `supportsExplain`, which Firestore declares for the editor's Explain button
-    // (Firestore spec 5.7), so the refusal of a plan execution on Firestore is this profile gate: no `queryReadOnly`.
+  test("refuses trino the agent's read-only profile, the gate the explain-analyze descriptor's capability check is not", async () => {
+    // `sql.explain.analyze` requires only `supportsExplain`, which Trino declares for the editor's Explain button, so
+    // the refusal of a plan execution on Trino is this profile gate: no `queryReadOnly`.
     expect(sqlExplainAnalyzeDescriptor.requiredCapabilities).toEqual(["supportsExplain"]);
     const error: unknown = await acquireExecutionProfileProvider(
-      makeConnection("firestore", {
-        id: "firestore-profile",
-        host: undefined,
-        port: undefined,
-        password: undefined,
-        database: "demo-studio",
-      }),
+      makeConnection("trino", { id: "trino-profile" }),
       "agent-read-only",
     ).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ExecutionProfileError);

@@ -12,6 +12,7 @@ import {
   FirestoreProvider,
   sessionBase,
 } from "@/lib/db/providers/document/firestore";
+import { FIRESTORE_METADATA_ONLY } from "@/lib/db/providers/document/firestore/agent-metadata-read";
 import { validateFirestoreConnection } from "@/lib/db/providers/document/firestore/connection-options";
 import { ERROR_SENTENCES } from "@/lib/db/providers/document/firestore/errors";
 import { FIRESTORE_KEY_SCAN } from "@/lib/db/providers/document/firestore/key-scan";
@@ -70,6 +71,7 @@ describe("declarations", () => {
       objectKinds: FIRESTORE_OBJECT_KINDS,
       keyScan: FIRESTORE_KEY_SCAN,
       schemaRefreshPattern: "(?!)",
+      metadataOnly: FIRESTORE_METADATA_ONLY,
     });
     expect(new RegExp(capabilities.schemaRefreshPattern).test('db.collection("users").limit(1)')).toBe(false);
     expect(seams.lanes).toHaveLength(0);

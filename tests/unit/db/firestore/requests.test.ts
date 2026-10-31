@@ -196,6 +196,17 @@ describe("the seven requests", () => {
     const most = Array.from({ length: 1_000 }, (_, index) => `${ROOT}/c/d${index}`);
     expect(buildRequest(T, { kind: "batchGet", body: { documents: most } }).cap).toBe("large");
   });
+
+  test("a batchGet mask naming no field asks for none: the document's name and times alone", () => {
+    const body = { documents: [`${ROOT}/users/alice`], mask: { fieldPaths: [] } };
+    expect(buildRequest(T, { kind: "batchGet", body })).toEqual({
+      method: "POST",
+      path: `${BASE}/documents:batchGet`,
+      query: [],
+      body: '{"documents":["projects/demo-libredb/databases/(default)/documents/users/alice"],"mask":{"fieldPaths":[]}}',
+      cap: "large",
+    });
+  });
 });
 
 describe("the colon refusal (spec 5.3, S5)", () => {
@@ -361,8 +372,13 @@ describe("everything outside the table is refused before a request exists", () =
     ],
     ["a batchGet without documents", { kind: "batchGet", body: {} }, R.batchGetDocuments],
     [
-      "a batchGet mask with no path",
-      { kind: "batchGet", body: { documents: [doc], mask: { fieldPaths: [] } } },
+      "a batchGet mask whose paths are not a list",
+      { kind: "batchGet", body: { documents: [doc], mask: { fieldPaths: "a" } } },
+      R.maskFieldPaths,
+    ],
+    [
+      "a batchGet mask with an empty path",
+      { kind: "batchGet", body: { documents: [doc], mask: { fieldPaths: [""] } } },
       R.maskFieldPaths,
     ],
     [

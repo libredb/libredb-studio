@@ -68,7 +68,7 @@ export const REQUEST_SENTENCES = Object.freeze({
   pageSize: (max: number): string => `A page size must be an integer from 1 to ${max}`,
   pageToken: "A page token must be a non-empty string",
   showMissing: "showMissing must be true or false",
-  maskFieldPaths: "A field mask names one or more non-empty field paths",
+  maskFieldPaths: "A field mask names one or more non-empty field paths; only a batchGet mask may name none",
   bodyObject: (key: string): string => `The ${key} of a Firestore request must be an object`,
   explainOptions: "explainOptions must be exactly { analyze: true } or { analyze: false }",
   batchGetDocuments: "batchGet names 1 to 1,000 documents, each a full document name in this connection's database",
@@ -240,6 +240,8 @@ function batchGetDocuments(target: FirestoreTarget, documents: unknown): void {
 
 function batchGetMask(mask: unknown): void {
   if (!isRecord(mask) || Object.keys(mask).length !== 1) throw refuse(REQUEST_SENTENCES.maskFieldPaths);
+  // A mask naming no field asks for none, so the answer is each document's name and times alone: the agent's read.
+  if (Array.isArray(mask.fieldPaths) && mask.fieldPaths.length === 0) return;
   fieldPaths(mask.fieldPaths);
 }
 

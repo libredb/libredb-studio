@@ -15,11 +15,21 @@
  * by the connection's query timeout plus 5 seconds; this class hands it the timeout. A statement runs under the run
  * registry, so `cancelQuery` aborts it by its id and the run answers the cancel. Each session keeps the credential's
  * kind and secret forms, which every request's error context carries, so no Google message quoting the credential
- * reaches a user. Read-only whatever a profile asks: the closed request table admits reads only. No `queryReadOnly`,
- * so no agent statement execution and no MCP read.
+ * reaches a user. Read-only whatever a profile asks: the closed request table admits reads only.
+ *
+ * `queryReadOnly` is the agent's: one read of a closed table of four metadata reads (`agent-statement.ts`), sent
+ * through the agent's client (`FirestoreAgentClient`), which holds those requests alone and charges each one to the
+ * run's read allowance before it is sent, and answered through a metadata-only projection (`agent-metadata-read.ts`):
+ * collection ids, a whole collection's or collection group's document count, and a named document's existence and
+ * create and update times, never a document id or path, a field name or a field value. On a handle opened for any
+ * agent-mode profile every other surface goes through that client too (`agent-surface.ts`): collections are listed with
+ * `__name__` alone and only within a run's allowance, fields are never sampled, the console, the Keys panel and the
+ * Source tab are refused, and every reading Firestore does not report answers its reason. MCP read stays closed on this
+ * engine.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { DatabaseConfigError, QueryCancelledError, QueryError } from "@/lib/db/errors";
+import { DatabaseConfigError, QueryCancelledError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
 import type {
   ActiveSessionDetails,
   Container,
@@ -33,6 +43,7 @@ import type {
   MaintenanceResult,
   ObjectDetail,
   ObjectDetailBatch,
+  ObjectReadOptions,
   ObjectSourceDocument,
   PerformanceMetrics,
   PreparedQuery,
@@ -41,6 +52,8 @@ import type {
   ProviderExecutionContext,
   ProviderOptions,
   QueryResult,
+  ReadOnlyStatementBudget,
+  ReadOnlyStatementMode,
   SlowQueryStats,
   StorageStats,
   TableStats,
@@ -48,11 +61,26 @@ import type {
 import { createRunRegistry, type RunRegistry } from "@/lib/db/utils/bounded-limiter";
 import { secretForms } from "@/lib/db/utils/server-text";
 import type { DatabaseConnection, QueryWarning } from "@/lib/types";
+import { createFirestoreAgentClient, type FirestoreAgentClient } from "./agent-client";
+import {
+  FIRESTORE_METADATA_ONLY,
+  firestoreAgentFailure,
+  firestoreAgentResult,
+  runFirestoreAgentRead,
+} from "./agent-metadata-read";
+import { readFirestoreAgentStatement } from "./agent-statement";
+import {
+  agentCountObjects,
+  agentDescribeObjects,
+  agentListObjects,
+  FIRESTORE_AGENT_WITHHELD,
+  type FirestoreAgentSurfaceCall,
+} from "./agent-surface";
 import { validateFirestoreConnection } from "./connection-options";
 import { executeStatement } from "./console/execute";
 import { DEFAULT_DATABASE_ID, FIRESTORE_TYPE, LIMITS } from "./constants";
 import { type EmulatorAddress, emulatorAddressOf, type FirestoreAuth, resolveFirestoreAuth } from "./credential-policy";
-import { databaseResourceRefusal, ERROR_SENTENCES } from "./errors";
+import { databaseResourceRefusal, ERROR_SENTENCES, googleErrorOf } from "./errors";
 import { FIRESTORE_KEY_SCAN, scanFirestoreLevel } from "./key-scan";
 import { FIRESTORE_LABELS } from "./labels";
 import type { FirestoreTarget } from "./names";
@@ -79,6 +107,10 @@ export const FIRESTORE_PROVIDER_SENTENCES = Object.freeze({
     "A pasted access token lasts about an hour and Studio never refreshes it: paste a new one when Firestore refuses it, or use a service-account key",
   parameters: "Firestore statements take no parameters: write the values in the statement.",
   maintenance: "Firestore has no maintenance operation, and Studio only reads it.",
+  profileRequired: "Read-only execution requires a provider opened under the agent read-only profile",
+  noEstimate: "Firestore composes no estimating plan for the agent",
+  noAllowance:
+    "Firestore bills every read, so an agent read needs the run's read allowance, and this one carries none: nothing was sent",
 });
 
 const S = FIRESTORE_PROVIDER_SENTENCES;
@@ -88,6 +120,8 @@ const EDITIONS: Readonly<Record<string, string>> = { STANDARD: "Standard", ENTER
 /** One connected session: the client, what every request's context carries, its lifetime, and what the probe found. */
 interface FirestoreSession {
   readonly client: FirestoreClient;
+  /** The agent's client over the same Firestore client: the agent's reads alone, each charged before it is sent. */
+  readonly agentClient: FirestoreAgentClient;
   readonly base: CallBase;
   /** Aborted at disconnect, so no request outlives its session. */
   readonly lifetime: AbortController;
@@ -186,6 +220,50 @@ export class FirestoreProvider extends BaseDatabaseProvider {
     this.emulator = emulatorAddressOf(this.seams.env);
   }
 
+  /**
+   * Whether this handle was opened for the agent read-only profile by an acquisition that sends statements
+   * (`sendsStatements`). Only then does `queryReadOnly` answer; the operations profile's acquisitions send no statement.
+   */
+  private get readOnlyProfile(): boolean {
+    return this.execution.readOnly === true && this.execution.sendsStatements === true;
+  }
+
+  /**
+   * Whether this handle was opened for any agent-mode profile: every execution profile opens `readOnly` and no editor
+   * handle does. On such a handle every surface reads through the agent's client; the editor's own handles keep every
+   * read.
+   */
+  private get agentProfile(): boolean {
+    return this.execution.readOnly === true;
+  }
+
+  /**
+   * One agent-mode surface over the agent's client, whose failure is worded by its category alone; Studio's own
+   * refusals pass as they are.
+   */
+  private async agentRead<T>(
+    options: ObjectReadOptions | undefined,
+    work: (client: FirestoreAgentClient, call: FirestoreAgentSurfaceCall) => Promise<T>,
+  ): Promise<T> {
+    const session = this.requireSession();
+    const call: FirestoreAgentSurfaceCall = {
+      signal: session.lifetime.signal,
+      base: session.base,
+      allowance: options?.readAllowance,
+    };
+    try {
+      return await work(session.agentClient, call);
+    } catch (error) {
+      throw firestoreAgentFailure(error, { statementTimeoutMs: this.queryTimeout }, undefined, false) ?? error;
+    }
+  }
+
+  /** The refusal of a surface an agent-mode handle does not read, after the connection check every surface makes. */
+  private agentWithheld(sentence: string): never {
+    this.ensureConnected();
+    throw new QueryError(sentence, FIRESTORE_TYPE);
+  }
+
   // ==========================================================================
   // Declarations
   // ==========================================================================
@@ -219,6 +297,9 @@ export class FirestoreProvider extends BaseDatabaseProvider {
       keyScan: FIRESTORE_KEY_SCAN,
       // No statement changes the tree, so no run re-reads it, which would bill a listing.
       schemaRefreshPattern: "(?!)",
+      // Document ids, paths, field names and field values are stored values: an agent read answers names, counts and
+      // flags.
+      metadataOnly: FIRESTORE_METADATA_ONLY,
     };
   }
 
@@ -254,9 +335,9 @@ export class FirestoreProvider extends BaseDatabaseProvider {
       probed = await probe(client, base, auth, lifetime.signal);
     } catch (error) {
       closeSession({ client, lifetime });
-      throw error;
+      throw this.probeFailure(error);
     }
-    this.session = { client, base, lifetime, ...probed };
+    this.session = { client, agentClient: createFirestoreAgentClient(client), base, lifetime, ...probed };
     this.setConnected(true);
   }
 
@@ -265,6 +346,15 @@ export class FirestoreProvider extends BaseDatabaseProvider {
     this.session = null;
     this.setConnected(false);
     if (session !== null) closeSession(session);
+  }
+
+  /**
+   * A probe's failure: on an agent-mode handle a Google refusal is worded by its category alone, since Google's words
+   * are not passed on to agent mode; Studio's own sentences, and every failure on an editor handle, pass as they are.
+   */
+  private probeFailure(error: unknown): unknown {
+    if (!this.agentProfile || googleErrorOf(error) === undefined) return error;
+    return firestoreAgentFailure(error, { statementTimeoutMs: this.queryTimeout }, undefined, false) as QueryError;
   }
 
   /** The warnings the last `connect()` found, for Test Connection; [] with no session. */
@@ -300,6 +390,8 @@ export class FirestoreProvider extends BaseDatabaseProvider {
   public async query(text: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
     if (params !== undefined && params.length > 0) throw new DatabaseConfigError(S.parameters, FIRESTORE_TYPE);
     const session = this.requireSession();
+    // The console reads documents, whose ids, fields and values are stored values: never on an agent handle.
+    if (this.agentProfile) throw new RefusedBeforeSendError(FIRESTORE_AGENT_WITHHELD.query, FIRESTORE_TYPE, text);
     const run = this.runs.begin(queryId, session.lifetime.signal);
     try {
       // `...base` gives ExecuteDeps its credential and its secret forms (contract change 3).
@@ -317,6 +409,41 @@ export class FirestoreProvider extends BaseDatabaseProvider {
     }
   }
 
+  /**
+   * One agent statement. Only on a handle opened under the agent read-only profile, and only with the run's read
+   * allowance; the statement is read by `readFirestoreAgentStatement` and refused before anything is sent when it is
+   * not one read of the closed table. Then the read runs over the agent's client, each request charged to the allowance
+   * before it is sent, under the request's time budget and the session's lifetime, with nothing kept from one call for
+   * the next, and its answer is the metadata-only projection, refused past the row or byte budget rather than cut. A
+   * failure is worded by its category, never by Google's words.
+   */
+  public async queryReadOnly(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    const session = this.requireSession();
+    if (!this.readOnlyProfile) throw new RefusedBeforeSendError(S.profileRequired, FIRESTORE_TYPE, statement);
+    assertReadOnlyBudget(budget, FIRESTORE_TYPE);
+    if (mode !== "execute") throw new RefusedBeforeSendError(S.noEstimate, FIRESTORE_TYPE, statement);
+    const allowance = budget.readAllowance;
+    if (allowance === undefined) throw new RefusedBeforeSendError(S.noAllowance, FIRESTORE_TYPE, statement);
+    const reading = readFirestoreAgentStatement(statement);
+    if (!reading.ok) throw new RefusedBeforeSendError(reading.message, FIRESTORE_TYPE, statement);
+    const deadline = this.seams.timeoutSignal(budget.statementTimeoutMs);
+    const signal = AbortSignal.any([session.lifetime.signal, deadline]);
+    const started = this.seams.now();
+    try {
+      const answer = await runFirestoreAgentRead(session.agentClient, reading.plan, {
+        budget,
+        call: { signal, base: session.base, allowance },
+      });
+      return firestoreAgentResult(answer, budget, this.seams.now() - started);
+    } catch (error) {
+      throw firestoreAgentFailure(error, budget, statement, deadline.aborted) ?? error;
+    }
+  }
+
   /** Stops a running statement by its id and answers true; an id that names no run answers false. */
   public async cancelQuery(queryId: string): Promise<boolean> {
     return this.runs.cancel(queryId);
@@ -330,27 +457,48 @@ export class FirestoreProvider extends BaseDatabaseProvider {
     return [];
   }
 
-  public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
+  public async countObjects(
+    container: readonly string[],
+    options?: ObjectReadOptions,
+  ): Promise<Record<string, KindCount>> {
+    if (this.agentProfile) return this.agentRead(options, (client, call) => agentCountObjects(client, container, call));
     return this.read((client, signal, base) => countFirestoreObjects(client, container, signal, base));
   }
 
-  public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+  public async listObjects(
+    container: readonly string[],
+    kind: string,
+    options?: ObjectReadOptions,
+  ): Promise<DatabaseObject[]> {
+    if (this.agentProfile)
+      return this.agentRead(options, (client, call) => agentListObjects(client, container, kind, call));
     return this.read((client, signal, base) => listFirestoreObjects(client, container, kind, signal, base));
   }
 
   public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
+    // A field expand samples documents, whose field names and values are stored values.
+    if (this.agentProfile) this.agentWithheld(FIRESTORE_AGENT_WITHHELD.fields);
     return this.read((client, signal, base) => describeFirestoreObject(client, path, kind, signal, base));
   }
 
-  public async describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+  public async describeObjects(
+    container: readonly string[],
+    kind: string,
+    limit?: number,
+    options?: ObjectReadOptions,
+  ): Promise<ObjectDetailBatch> {
+    if (this.agentProfile)
+      return this.agentRead(options, (client, call) => agentDescribeObjects(client, container, kind, limit, call));
     return this.read((client, signal, base) => describeFirestoreObjects(client, container, kind, limit, signal, base));
   }
 
   public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
+    if (this.agentProfile) this.agentWithheld(FIRESTORE_AGENT_WITHHELD.source);
     return this.read((client, signal, base) => readFirestoreSource(client, path, kind, limit, signal, base));
   }
 
   public async scanKeysPage(options: KeyScanOptions): Promise<KeyScanPage> {
+    if (this.agentProfile) this.agentWithheld(FIRESTORE_AGENT_WITHHELD.keys);
     return this.read((client, signal, base) => scanFirestoreLevel(options, client, signal, base));
   }
 
@@ -360,11 +508,15 @@ export class FirestoreProvider extends BaseDatabaseProvider {
 
   public async getHealth(): Promise<HealthInfo> {
     this.requireSession();
-    return { databaseSize: "N/A", cacheHitRatio: "N/A", slowQueries: [], activeSessions: [] };
+    // On an agent-mode handle the size Firestore does not report is its reason, not a reading.
+    const databaseSize = this.agentProfile ? FIRESTORE_AGENT_WITHHELD.databaseSize : "N/A";
+    return { databaseSize, cacheHitRatio: "N/A", slowQueries: [], activeSessions: [] };
   }
 
   /** What the connect probe found; nothing is read for it. */
   public async getOverview(): Promise<DatabaseOverview> {
+    // On an agent-mode handle the zeros below would read as the server's own figures; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(FIRESTORE_AGENT_WITHHELD.overview);
     const session = this.requireSession();
     return {
       version: session.version,
@@ -378,32 +530,44 @@ export class FirestoreProvider extends BaseDatabaseProvider {
 
   /** Nothing is measured, so every optional figure is absent. */
   public async getPerformanceMetrics(): Promise<PerformanceMetrics> {
+    // On an agent-mode handle an empty answer would read as the server's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(FIRESTORE_AGENT_WITHHELD.performance);
     this.ensureConnected();
     return {};
   }
 
   /** Firestore keeps no query log Studio reads. */
   public async getSlowQueries(): Promise<SlowQueryStats[]> {
+    // On an agent-mode handle an empty answer would read as the server's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(FIRESTORE_AGENT_WITHHELD.slowQueries);
     this.ensureConnected();
     return [];
   }
 
   public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
+    // On an agent-mode handle an empty answer would read as the server's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(FIRESTORE_AGENT_WITHHELD.sessions);
     this.ensureConnected();
     return [];
   }
 
   public async getTableStats(): Promise<TableStats[]> {
+    // On an agent-mode handle an empty answer would read as the server's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(FIRESTORE_AGENT_WITHHELD.tableStats);
     this.ensureConnected();
     return [];
   }
 
   public async getIndexStats(): Promise<IndexStats[]> {
+    // On an agent-mode handle an empty answer would read as the server's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(FIRESTORE_AGENT_WITHHELD.indexStats);
     this.ensureConnected();
     return [];
   }
 
   public async getStorageStats(): Promise<StorageStats[]> {
+    // On an agent-mode handle an empty answer would read as the server's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(FIRESTORE_AGENT_WITHHELD.storage);
     this.ensureConnected();
     return [];
   }
