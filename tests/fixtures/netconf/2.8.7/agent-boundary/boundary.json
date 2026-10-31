@@ -18,7 +18,8 @@
     "nacm:default-deny-all",
     "crypt-hash",
     "ietf-crypto-types secret",
-    "keyed by a withheld leaf"
+    "keyed by a withheld leaf",
+    "unresolved leafref"
   ],
   "raw": {
     "running ietf-keystore:keystore": {
@@ -90,7 +91,7 @@
         "enabled": "true"
       },
       "holdsWithheldMarker": false,
-      "ms": 44
+      "ms": 68
     },
     {
       "statement": {
@@ -106,7 +107,23 @@
         "ietf-netconf-server:netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/client-authentication/users/user/password/hashed-password is withheld from agent mode (crypt-hash): its type is crypt-hash, a password hash, so its value is not answered."
       ],
       "holdsWithheldMarker": true,
-      "ms": 64
+      "ms": 66
+    },
+    {
+      "statement": {
+        "datastore": "operational",
+        "path": "ietf-netconf-server:netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/server-identity"
+      },
+      "fields": [
+        "host-key"
+      ],
+      "rows": 1,
+      "withheldCells": 0,
+      "warnings": [
+        "ietf-netconf-server:netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/server-identity/host-key/public-key/central-keystore-reference is withheld from agent mode (ietf-keystore): the ietf-keystore module holds the device's private and symmetric keys, so its value is not answered."
+      ],
+      "holdsWithheldMarker": true,
+      "ms": 68
     },
     {
       "statement": {
@@ -121,7 +138,7 @@
       "withheldCells": 0,
       "warnings": [],
       "holdsWithheldMarker": false,
-      "ms": 68
+      "ms": 65
     },
     {
       "statement": {
@@ -129,7 +146,7 @@
         "path": "ietf-keystore:keystore"
       },
       "refused": "RefusedBeforeSendError",
-      "message": "ietf-keystore is withheld from agent mode whole, so nothing of it is read, its YANG text included. Agent mode on NETCONF reads with one JSON request per read: {\"datastore\": \"running\", \"path\": \"ietf-interfaces:interfaces\", \"limit\": 100} reads the configuration (running, candidate or startup, with get-config) or the configuration and state (operational or intended, with get-data) under a path that names its module on its first node, one more name per level and a list entry's keys after = (interface=eth0), and a list holding more entries than the limit or the row budget is refused rather than cut; {\"schema\": \"ietf-interfaces\"} reads one module's YANG text (get-schema). No other operation and no other field is sent. Withheld from agent mode, decided from the YANG modules the device itself serves: the ietf-keystore module whole (the device's keys); the ietf-netconf-acm module whole (its access control groups and rules); every data node a module marks nacm:default-deny-all, with its subtree; every leaf typed crypt-hash (a password hash, of iana-crypt-hash or ietf-system, or a type derived from it); the private-key-type, key-type and password-type choices of ietf-crypto-types (private keys, symmetric keys and passwords); and every entry of a list keyed by a withheld leaf. A withheld node answers its path and its reason, never its value; every other node, configuration and state alike, is read. Nothing was sent."
+      "message": "ietf-keystore is withheld from agent mode whole, so nothing of it is read, its YANG text included. Agent mode on NETCONF reads with one JSON request per read: {\"datastore\": \"running\", \"path\": \"ietf-interfaces:interfaces\", \"limit\": 100} reads the configuration (running, candidate or startup, with get-config) or the configuration and state (operational or intended, with get-data) under a path that names its module on its first node, one more name per level and a list entry's keys after = (interface=eth0), and a list holding more entries than the limit or the row budget is refused rather than cut; {\"schema\": \"ietf-interfaces\"} reads one module's YANG text (get-schema). No other operation and no other field is sent. Withheld from agent mode, decided from the YANG modules the device itself serves: the ietf-keystore module whole (the device's keys); the ietf-netconf-acm module whole (its access control groups and rules); every data node a module marks nacm:default-deny-all, with its subtree; every leaf typed crypt-hash (a password hash, of iana-crypt-hash or ietf-system, or a type derived from it); the private-key-type, key-type and password-type choices of ietf-crypto-types (private keys, symmetric keys and passwords); every leafref that may point at a withheld node, which is withheld as that node is; every unresolved leafref, one whose target cannot be found in the device's modules; and every entry of a list keyed by a withheld leaf. A withheld node answers its path and its reason, never its value; every other node, configuration and state alike, is read. Nothing was sent."
     },
     {
       "statement": {
@@ -146,7 +163,7 @@
         "operation": "edit-config"
       },
       "refused": "RefusedBeforeSendError",
-      "message": "The read request holds a field agent mode does not read (operation). Agent mode on NETCONF reads with one JSON request per read: {\"datastore\": \"running\", \"path\": \"ietf-interfaces:interfaces\", \"limit\": 100} reads the configuration (running, candidate or startup, with get-config) or the configuration and state (operational or intended, with get-data) under a path that names its module on its first node, one more name per level and a list entry's keys after = (interface=eth0), and a list holding more entries than the limit or the row budget is refused rather than cut; {\"schema\": \"ietf-interfaces\"} reads one module's YANG text (get-schema). No other operation and no other field is sent. Withheld from agent mode, decided from the YANG modules the device itself serves: the ietf-keystore module whole (the device's keys); the ietf-netconf-acm module whole (its access control groups and rules); every data node a module marks nacm:default-deny-all, with its subtree; every leaf typed crypt-hash (a password hash, of iana-crypt-hash or ietf-system, or a type derived from it); the private-key-type, key-type and password-type choices of ietf-crypto-types (private keys, symmetric keys and passwords); and every entry of a list keyed by a withheld leaf. A withheld node answers its path and its reason, never its value; every other node, configuration and state alike, is read. Nothing was sent."
+      "message": "The read request holds a field agent mode does not read (operation). Agent mode on NETCONF reads with one JSON request per read: {\"datastore\": \"running\", \"path\": \"ietf-interfaces:interfaces\", \"limit\": 100} reads the configuration (running, candidate or startup, with get-config) or the configuration and state (operational or intended, with get-data) under a path that names its module on its first node, one more name per level and a list entry's keys after = (interface=eth0), and a list holding more entries than the limit or the row budget is refused rather than cut; {\"schema\": \"ietf-interfaces\"} reads one module's YANG text (get-schema). No other operation and no other field is sent. Withheld from agent mode, decided from the YANG modules the device itself serves: the ietf-keystore module whole (the device's keys); the ietf-netconf-acm module whole (its access control groups and rules); every data node a module marks nacm:default-deny-all, with its subtree; every leaf typed crypt-hash (a password hash, of iana-crypt-hash or ietf-system, or a type derived from it); the private-key-type, key-type and password-type choices of ietf-crypto-types (private keys, symmetric keys and passwords); every leafref that may point at a withheld node, which is withheld as that node is; every unresolved leafref, one whose target cannot be found in the device's modules; and every entry of a list keyed by a withheld leaf. A withheld node answers its path and its reason, never its value; every other node, configuration and state alike, is read. Nothing was sent."
     }
   ]
 }

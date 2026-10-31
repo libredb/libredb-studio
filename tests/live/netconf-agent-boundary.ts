@@ -208,6 +208,10 @@ const capture = {
     await agentRead(
       '{"datastore": "operational", "path": "ietf-netconf-server:netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/client-authentication/users"}',
     ),
+    // The SSH host key's central-keystore-reference is RFC 9642's asymmetric-key-ref, a leafref into the keystore.
+    await agentRead(
+      '{"datastore": "operational", "path": "ietf-netconf-server:netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/server-identity"}',
+    ),
     await agentRead('{"schema": "ietf-interfaces"}'),
     await agentRead('{"datastore": "running", "path": "ietf-keystore:keystore"}'),
     await agentRead(
