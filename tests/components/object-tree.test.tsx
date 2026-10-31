@@ -4,7 +4,8 @@ import "../helpers/mock-navigation";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ObjectTree } from "@/components/object-tree";
+import { createRef } from "react";
+import { ObjectTree, type ObjectTreeHandle } from "@/components/object-tree";
 import { treeWindow } from "@/components/object-tree/ObjectTree";
 import { TREE_ROW_HEIGHT } from "@/components/object-tree/TreeRow";
 import { useTreeNodes } from "@/components/object-tree/use-tree-nodes";
@@ -227,6 +228,42 @@ describe("ObjectTree refresh token", () => {
     );
     rerender(<ObjectTree connection={connectionOf("pg")} capabilities={oneLevel} deferred refreshToken={1} />);
     await waitFor(() => expect(screen.getByTestId("tree-deferred")).toBeTruthy());
+    expect(calls).toHaveLength(0);
+  });
+});
+
+/**
+ * #1986. The reader's half of the same re-read: the sidebar's refresh control reaches `refresh`
+ * through the tree's ref, so a table another client made appears without a page reload.
+ */
+describe("ObjectTree refresh handle", () => {
+  test("re-reads the containers, keeps an expanded container open, and draws what the new answer adds", async () => {
+    const tables: DatabaseObject[] = [{ path: ["app", "orders"], name: "orders", kind: "table" }];
+    const calls = installFetch(routesFor({ table: tables }, { table: { count: 1 }, view: { count: 0 } }));
+    const handle = createRef<ObjectTreeHandle>();
+    render(<ObjectTree ref={handle} connection={connectionOf("pg")} capabilities={oneLevel} />);
+    await expandApp();
+    await userEvent.click(row(/Tables/));
+    await screen.findByText("orders");
+
+    tables.push({ path: ["app", "made_elsewhere"], name: "made_elsewhere", kind: "table" });
+    const before = calls.length;
+    act(() => handle.current?.refresh());
+
+    expect(await screen.findByText("made_elsewhere")).toBeTruthy();
+    expect(calls.slice(before).map((call) => call.route)).toContain("containers");
+    expect(row(/app/).getAttribute("aria-expanded")).toBe("true");
+  });
+
+  // The handle is the guarded `refresh` and not a read of its own: a deferred tree still hands one
+  // over, and pressing it reads nothing, which the token test above pins for the shell's counter.
+  test("a deferred tree hands over its refresh, and reads nothing when asked", async () => {
+    const calls = installFetch(routesFor({}, { table: { count: 2 }, view: { count: 0 } }));
+    const handle = createRef<ObjectTreeHandle>();
+    render(<ObjectTree ref={handle} connection={connectionOf("pg")} capabilities={oneLevel} deferred />);
+    await screen.findByTestId("tree-deferred");
+    expect(handle.current).not.toBeNull();
+    act(() => handle.current!.refresh());
     expect(calls).toHaveLength(0);
   });
 });
