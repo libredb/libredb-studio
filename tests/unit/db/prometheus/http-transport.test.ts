@@ -1648,25 +1648,64 @@ describe("failures, classified by errorType and never by the HTTP status (5.5)",
     );
   });
 
-  test("any other answer that is not the envelope offers its possible sources and decides none (captured from VictoriaMetrics)", async () => {
-    // A real answer of this kind: VictoriaMetrics v1.152.0 does not serve the runtime read, and refuses
-    // it with a plain-text 400 of its own.
-    const answer = captureVm("runtimeinfo");
-    reply(captureVmOf("runtimeinfo"));
+  /** What the transport says of a path the server answered as one it does not serve, written out here. */
+  const unservedMessage = (path: string): string =>
+    `The server does not serve ${path}: it answered HTTP 400 naming that path as unsupported, as VictoriaMetrics ` +
+    "answers a Prometheus API path it does not implement.";
 
-    const failure = await failureOf(() => transportWith().runtimeInfo());
+  test.each<[string, string, (transport: PrometheusTransport) => Promise<unknown>]>([
+    ["runtimeinfo", "/api/v1/status/runtimeinfo", (transport) => transport.runtimeInfo()],
+    ["flags", "/api/v1/status/flags", (transport) => transport.flags()],
+    ["scrape-pools", "/api/v1/scrape_pools", (transport) => transport.scrapePools()],
+  ])(
+    "VictoriaMetrics' 400 for %s is the server not serving the path, not a failure to reach it (captured from VictoriaMetrics)",
+    async (name, path, read) => {
+      const answer = captureVm(name);
+      reply(captureVmOf(name));
 
-    // The control: the capture is a plain-text refusal, so the message below describes a real one.
-    expect(answer.status).toBe(400);
-    expect(answer.text).toContain("unsupported path requested");
-    expect(failure.category).toBe("protocol");
-    expect(failure.detail).toEqual({ status: 400 });
-    // The subject is the server: VictoriaMetrics answered here, so "Prometheus answered" would be false.
-    expect(failure.message).toBe(
-      "The server answered /api/v1/status/runtimeinfo with HTTP 400 and a body that is not a Prometheus API " +
-        "response. A proxy or a login page in front of the server answers this way, and so does a server " +
-        "that does not serve this path. The body is not shown.",
-    );
+      const failure = await failureOf(() => read(transportWith()));
+
+      // The control: the capture is VictoriaMetrics' own refusal of exactly this path.
+      expect(answer.status).toBe(400);
+      expect(answer.text).toBe(`unsupported path requested: "${path}"\n`);
+      expect(failure.category).toBe("unserved");
+      expect(failure.detail).toEqual({ status: 400 });
+      expect(failure.message).toBe(unservedMessage(path));
+    },
+  );
+
+  test.each<[string, Reply]>([
+    ["names another path", plain('unsupported path requested: "/api/v1/status/flags"\n', 400)],
+    ["names the path without its quotes", plain("unsupported path requested: /api/v1/status/runtimeinfo\n", 400)],
+    ["says more than the refusal", plain('unsupported path requested: "/api/v1/status/runtimeinfo"\nmarker\n', 400)],
+    ["comes with another status", plain('unsupported path requested: "/api/v1/status/runtimeinfo"\n', 404)],
+    ["is a login page", plain("<html><title>Sign in marker-login</title></html>", 400)],
+  ])(
+    "a body that %s is still a protocol failure that decides none of its sources (CONSTRUCTED)",
+    async (_label, answer) => {
+      reply(answer);
+
+      const failure = await failureOf(() => transportWith().runtimeInfo());
+
+      expect(failure.category).toBe("protocol");
+      expect(failure.detail).toEqual({ status: answer.status });
+      expect(failure.message).toBe(
+        `The server answered /api/v1/status/runtimeinfo with HTTP ${answer.status} and a body that is not a ` +
+          `Prometheus API response. ${PROXY_SOURCES} The body is not shown.`,
+      );
+    },
+  );
+
+  test("the refusal is matched against the path the request was sent to, a base path included (CONSTRUCTED)", async () => {
+    // A server under a base path is asked for /base/api/v1/status/flags and names that path in its refusal; the
+    // message names the API path the transport read, the one every other message names.
+    const endpoint: PrometheusEndpoint = { url: (pathname) => new URL(`/base${pathname}`, ORIGIN) };
+    reply(plain('unsupported path requested: "/base/api/v1/status/flags"\n', 400));
+
+    const failure = await failureOf(() => transportWith({}, { endpoint }).flags());
+
+    expect(failure.category).toBe("unserved");
+    expect(failure.message).toBe(unservedMessage("/api/v1/status/flags"));
   });
 
   test.each<[RequestFailureReason, string, RequestFailureDetail]>([

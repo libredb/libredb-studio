@@ -325,6 +325,8 @@ const FORBIDDEN_STATUS = 403;
 const SERVICE_UNAVAILABLE_STATUS = 503;
 /** The one liveness answer that says the path does not exist, and so the only one that sends the probe on. */
 const NOT_FOUND_STATUS = 404;
+/** The status VictoriaMetrics refuses a path it does not serve with, beside `unsupportedPathText`. */
+const BAD_REQUEST_STATUS = 400;
 
 const MS_PER_SECOND = 1000;
 
@@ -529,11 +531,14 @@ function parseEnvelope(body: string): Record<string, unknown> | null {
  * A body that is not the envelope stays out of every message (fact 2): a 401 or 403 is a refused
  * credential, anything else a protocol failure that names only the path and the status.
  */
-function readEnvelope(path: string, response: InboundResponse): EnvelopeContent {
+function readEnvelope(path: string, requestedPath: string, response: InboundResponse): EnvelopeContent {
   const envelope = parseEnvelope(response.body);
   if (envelope === null) {
     if (response.status === UNAUTHORIZED_STATUS || response.status === FORBIDDEN_STATUS) {
       throw refusedCredentials(path, response.status);
+    }
+    if (response.status === BAD_REQUEST_STATUS && response.body === unsupportedPathText(requestedPath)) {
+      throw unservedPath(path);
     }
     throw notAnApiAnswer(path, response.status);
   }
@@ -542,12 +547,39 @@ function readEnvelope(path: string, response: InboundResponse): EnvelopeContent 
 }
 
 /**
+ * The whole body VictoriaMetrics answers a path it does not serve with, for the path the request was sent to:
+ * `unsupported path requested: %q` and a newline (measured on v1.152.0 for `/api/v1/status/runtimeinfo`,
+ * `/api/v1/status/flags` and `/api/v1/scrape_pools`, `tests/fixtures/prometheus/victoriametrics-v1.152.0/`).
+ * `JSON.stringify` spells Go's `%q` for a path of printable ASCII without a quote or a backslash, which every
+ * path this client sends is. The body is compared whole against this text, never searched: a page that only
+ * contains the phrase, or that names another path, is not the server's refusal of this request.
+ */
+function unsupportedPathText(requestedPath: string): string {
+  return `unsupported path requested: ${JSON.stringify(requestedPath)}\n`;
+}
+
+/**
+ * A read the server answered as a path it does not serve: an answer from the server itself, so the
+ * connection is not in question and the category is not `protocol`. The message names the API path, as
+ * every other message here does, and quotes none of the body, though the body is known text.
+ */
+function unservedPath(path: string): PrometheusTransportError {
+  return new PrometheusTransportError(
+    "unserved",
+    `The server does not serve ${path}: it answered HTTP ${BAD_REQUEST_STATUS} naming that path as unsupported, ` +
+      "as VictoriaMetrics answers a Prometheus API path it does not implement.",
+    { status: BAD_REQUEST_STATUS },
+  );
+}
+
+/**
  * A body that is not the envelope and not a refused credential, described by what is known: the path,
  * the status, and the sources an answer like it can have, none of them asserted, because the status
  * alone cannot say who answered. A 503 is what Prometheus's own ready gate writes on every API path this
  * client reads while the server starts up and while it shuts down, and also what a proxy answers with no
  * ready server behind it. Any other status can be a proxy's page, a login page, or a server that does not
- * serve the path, the way VictoriaMetrics answers `/api/v1/status/runtimeinfo` with a 400 of its own.
+ * serve the path in words this client does not know; VictoriaMetrics' own words for that are read apart
+ * (`unsupportedPathText`).
  */
 function notAnApiAnswer(path: string, status: number): PrometheusTransportError {
   const sources =
@@ -1066,7 +1098,7 @@ class PrometheusHttpTransport implements PrometheusTransport {
   }
 
   private async read(path: string, request: OutboundRequest): Promise<EnvelopeContent> {
-    return readEnvelope(path, await this.exchange(request));
+    return readEnvelope(path, request.url.pathname, await this.exchange(request));
   }
 
   /**

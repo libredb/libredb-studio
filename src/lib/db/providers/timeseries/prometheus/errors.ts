@@ -51,6 +51,9 @@ export function toDatabaseError(error: unknown, context: ErrorContext): Error {
     case "bad_data":
     case "execution":
     case "unmeasurable":
+    // The server's answer that it does not serve the path: it was reached, so this is not a ConnectionError, which
+    // the agent path reads as a server it could not reach and ends a run on.
+    case "unserved":
       return new QueryError(error.message, provider, query);
     case "timeout":
     case "deadline":

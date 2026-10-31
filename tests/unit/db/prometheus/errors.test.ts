@@ -46,6 +46,7 @@ describe("the class each category becomes (5.5)", () => {
     ["bad_data", "QueryError", QueryError],
     ["execution", "QueryError", QueryError],
     ["unmeasurable", "QueryError", QueryError],
+    ["unserved", "QueryError", QueryError],
     ["not_found", "QueryError", QueryError],
     ["not_acceptable", "QueryError", QueryError],
     ["timeout", "TimeoutError", TimeoutError],

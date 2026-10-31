@@ -1402,6 +1402,10 @@ function vmCaptureName(request: Sent): string | undefined {
   switch (`${request.method} ${pathname}`) {
     case "GET /api/v1/status/buildinfo":
       return "buildinfo";
+    case "GET /api/v1/status/runtimeinfo":
+      return "runtimeinfo";
+    case "GET /api/v1/status/flags":
+      return "flags";
     case "GET /api/v1/label/__name__/values":
       return "label-values-names";
     case "GET /api/v1/metadata":
@@ -1533,6 +1537,73 @@ describe("a relative whose answers leave descriptions out, end to end (VictoriaM
     expect(uncaptured).toEqual([]);
     await provider.disconnect();
   });
+
+  /** What the provider says of a path VictoriaMetrics answers as unsupported, written out here. */
+  const unserved = (path: string): string =>
+    `The server does not serve ${path}: it answered HTTP 400 naming that path as unsupported, as VictoriaMetrics ` +
+    "answers a Prometheus API path it does not implement.";
+
+  test("the Storage tab says the server does not serve the runtime read, as the server's answer and not an unreachable server", async () => {
+    // The control: VictoriaMetrics refused the runtime read with its own text for exactly that path.
+    expect(captureVm("runtimeinfo").text).toBe('unsupported path requested: "/api/v1/status/runtimeinfo"\n');
+    const provider = await connected();
+
+    const failure = await provider.getStorageStats().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+
+    expect(failure).toBeInstanceOf(QueryError);
+    expect(failure).not.toBeInstanceOf(ConnectionError);
+    expect((failure as Error).message).toBe(unserved("/api/v1/status/runtimeinfo"));
+    expect(uncaptured).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("the Overview tab says the server does not serve the flags read (the other reads built inline)", async () => {
+    // Inline: the runtime read and the label scan answered as Prometheus answers them, so the flags read is the one
+    // read the overview is refused on, and its sentence is the one the tab shows.
+    expect(captureVm("flags").text).toBe('unsupported path requested: "/api/v1/status/flags"\n');
+    override = (request) => {
+      if (request.url.pathname === "/api/v1/status/runtimeinfo") {
+        const answer = capture("runtimeinfo");
+        return { status: answer.status, body: answer.text, headers: answer.headers };
+      }
+      if (request.url.pathname === "/api/v1/status/tsdb") return tsdbAnswer(request.url.searchParams);
+      return vmCaptured(request);
+    };
+    const provider = await connected();
+
+    const failure = await provider.getOverview().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+
+    expect(failure).toBeInstanceOf(QueryError);
+    expect((failure as Error).message).toBe(unserved("/api/v1/status/flags"));
+    expect(uncaptured).toEqual([]);
+    await provider.disconnect();
+  });
+
+  test("the Scrape pools folder says the server does not serve the path, and the other kinds still count", async () => {
+    expect(captureVm("scrape-pools").text).toBe('unsupported path requested: "/api/v1/scrape_pools"\n');
+    const targets = captureVmBody<Envelope<TargetsData>>("targets-active").data.activeTargets;
+    const provider = await connected();
+
+    const counts = await provider.countObjects([]);
+    const listing = await provider.listObjects([], "scrape_pool").then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+
+    expect(counts.scrape_pool).toEqual({ unavailable: unserved("/api/v1/scrape_pools") });
+    expect(counts.target).toEqual({ count: targets.length });
+    expect(counts.metric).toMatchObject({ count: expect.any(Number) });
+    expect(listing).toBeInstanceOf(QueryError);
+    expect((listing as Error).message).toBe(unserved("/api/v1/scrape_pools"));
+    expect(uncaptured).toEqual([]);
+    await provider.disconnect();
+  });
 });
 
 // ============================================================================
@@ -1612,6 +1683,22 @@ describe("errors, end to end", () => {
     const message = await messageOf(failure);
     expect(message.length).toBeGreaterThan(0);
     expect(message).not.toContain("gateway-node-19");
+  });
+
+  test("a 400 with any other plain-text body is still a ConnectionError, never read as a path the server does not serve (built inline)", async () => {
+    // Inline: VictoriaMetrics' refusal text naming a path other than the one the runtime read was sent to.
+    override = (request) =>
+      request.url.pathname === "/api/v1/status/runtimeinfo"
+        ? text('unsupported path requested: "/api/v1/status/flags"\n', 400)
+        : undefined;
+    const provider = await connected();
+    const failure = provider.getStorageStats();
+
+    await expect(failure).rejects.toBeInstanceOf(ConnectionError);
+    const message = await messageOf(failure);
+    expect(message).toContain("/api/v1/status/runtimeinfo with HTTP 400");
+    expect(message).not.toContain("does not serve /api");
+    await provider.disconnect();
   });
 
   test("a refused connection is a ConnectionError (built inline)", async () => {

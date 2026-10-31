@@ -239,22 +239,22 @@
       }
     ],
     "stateBefore": {
-      "startTime": "2026-10-31T19:12:19.560155785Z",
-      "lastConfigTime": "2026-10-31T19:12:19Z",
+      "startTime": "2026-10-31T20:06:44.666947366Z",
+      "lastConfigTime": "2026-10-31T20:06:44Z",
       "seedSamplesAtFixedInstant": [
         "7"
       ],
       "headSeriesAtLeast": true,
-      "headMinTime": 1793473940998
+      "headMinTime": 1793477205998
     },
     "stateAfterStudio": {
-      "startTime": "2026-10-31T19:12:19.560155785Z",
-      "lastConfigTime": "2026-10-31T19:12:19Z",
+      "startTime": "2026-10-31T20:06:44.666947366Z",
+      "lastConfigTime": "2026-10-31T20:06:44Z",
       "seedSamplesAtFixedInstant": [
         "7"
       ],
       "headSeriesAtLeast": true,
-      "headMinTime": 1793473940998
+      "headMinTime": 1793477205998
     },
     "studioLeftStateUnchanged": true,
     "rawTargets": [
@@ -457,7 +457,7 @@
         "path": "/api/v1/admin/tsdb/snapshot",
         "status": 200,
         "bytes": 72,
-        "body": "{\"status\":\"success\",\"data\":{\"name\":\"20261031T191305Z-4e785c687708102b\"}}"
+        "body": "{\"status\":\"success\",\"data\":{\"name\":\"20261031T200731Z-5bb104dde40b32ac\"}}"
       },
       {
         "method": "POST",
@@ -489,11 +489,11 @@
       }
     ],
     "stateAfterRaw": {
-      "startTime": "2026-10-31T19:12:19.560155785Z",
-      "lastConfigTime": "2026-10-31T19:13:05Z",
+      "startTime": "2026-10-31T20:06:44.666947366Z",
+      "lastConfigTime": "2026-10-31T20:07:31Z",
       "seedSamplesAtFixedInstant": [],
       "headSeriesAtLeast": true,
-      "headMinTime": 1793473940998
+      "headMinTime": 1793477205998
     }
   },
   "victoriametrics": {
@@ -560,7 +560,7 @@
         "parseError": {
           "ok": false,
           "error": "QueryError",
-          "message": "The server could not parse the expression (category bad_data): error when executing query=\"sum(up) by\" for (time=1793473955808, step=300000): ModifierExpr: identList: unexpected token \"\"; want \"(\"; unparsed data: \"\""
+          "message": "The server could not parse the expression (category bad_data): error when executing query=\"sum(up) by\" for (time=1793477220916, step=300000): ModifierExpr: identList: unexpected token \"\"; want \"(\"; unparsed data: \"\""
         },
         "timeBudget": {
           "ok": false,
@@ -631,8 +631,8 @@
         },
         "storage": {
           "ok": false,
-          "error": "ConnectionError",
-          "message": "The server answered /api/v1/status/runtimeinfo with HTTP 400 and a body that is not a Prometheus API response. A proxy or a login page in front of the server answers this way, and so does a server that does not serve this path. The body is not shown."
+          "error": "QueryError",
+          "message": "The server does not serve /api/v1/status/runtimeinfo: it answered HTTP 400 naming that path as unsupported, as VictoriaMetrics answers a Prometheus API path it does not implement."
         },
         "tables": {
           "ok": true,
@@ -850,7 +850,7 @@
         "path": "/snapshot/create",
         "status": 200,
         "bytes": 60,
-        "body": "{\"status\":\"ok\",\"snapshot\":\"20261031191305-18E3B30BC21DE15E\"}"
+        "body": "{\"status\":\"ok\",\"snapshot\":\"20261031200730-18E3B603FA0AB090\"}"
       },
       {
         "method": "GET",

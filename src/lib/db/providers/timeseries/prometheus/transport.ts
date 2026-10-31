@@ -46,6 +46,7 @@ export type PrometheusErrorCategory =
   | "aborted" // the caller cancelled
   | "credential" // a credential refused before any request (#1085 S3)
   | "protocol" // a body that is not the API envelope, or an envelope of the wrong shape
+  | "unserved" // the server's own refusal of a path it does not serve, VictoriaMetrics' 400
   | "unmeasurable"; // a monitoring read with no exact number to give (M2), or no number sent at all
 
 /** What a failure may say about itself without echoing a credential, a header or a body (#1085 S3). */

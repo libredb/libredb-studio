@@ -146,6 +146,10 @@ export const PROMETHEUS_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze(
     label: "Scrape pool",
     labelPlural: "Scrape pools",
     childKinds: [TARGET_KIND],
+    // Its count is its listing, so a refused count is a refused listing: VictoriaMetrics does not serve
+    // /api/v1/scrape_pools, and the agent's grounding walk then leaves the kind out with that sentence
+    // instead of sending the listing and losing the whole inventory on it.
+    countIsListing: true,
     ...JSON_SOURCE,
   },
   {

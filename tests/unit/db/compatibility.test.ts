@@ -316,9 +316,12 @@ describe("wire-compatibility registry", () => {
     expect(caveats).toContain("PromQL info");
     // A metadata entry, a target and the TSDB status each lack a member Prometheus sends, and each
     // is read without it, so the Tables tab, a metric's Source tab and the Targets folder answer.
-    // The message shown for a path the server does not serve names that path and its status, and
-    // no longer says a proxy or a login page answered. None of those old claims may come back.
+    // The message shown for a path the server does not serve says so as the server's own answer, and
+    // no longer offers a proxy, a login page or that server as its possible causes. None of those old
+    // claims may come back.
+    expect(caveats).toContain("rather than a server that cannot be reached");
     for (const resolved of [
+      "among the causes it offers",
       "Tables tab of the monitoring dashboard fails",
       "Source tab fails",
       "Targets folder fails",

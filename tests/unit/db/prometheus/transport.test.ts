@@ -48,6 +48,7 @@ const EVERY_CATEGORY: Record<PrometheusErrorCategory, true> = {
   aborted: true,
   credential: true,
   protocol: true,
+  unserved: true,
   unmeasurable: true,
 };
 
@@ -102,7 +103,7 @@ describe("PrometheusTransportError", () => {
   test("carries every category of the union verbatim", () => {
     const categories = Object.keys(EVERY_CATEGORY);
 
-    expect(categories).toHaveLength(15);
+    expect(categories).toHaveLength(16);
     expect(categories.map((category) => new PrometheusTransportError(category, "probe").category)).toEqual(categories);
   });
 

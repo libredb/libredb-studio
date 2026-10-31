@@ -63,14 +63,14 @@ The cancel row runs `sum(count_over_time(label_replace({__name__=~".+"}, "probe_
 |---|---|---|
 | `connect` | answered | answered |
 | `getHealth` | answered | answered |
-| `getOverview` | answered | failed: `ConnectionError` The server answered /api/v1/status/flags with HTTP 400 and a body that is not a Prometheus API response. A proxy or a login page in front of the server answers this way, and so does a server that does not serve this path. The body is not shown. |
+| `getOverview` | answered | failed: `QueryError` The server does not serve /api/v1/status/flags: it answered HTTP 400 naming that path as unsupported, as VictoriaMetrics answers a Prometheus API path it does not implement. |
 | `getPerformanceMetrics` | answered | answered |
 | `getMonitoringData` | answered | answered, with its overview and storage panels failed on the 400s above |
 | `getSlowQueries` | answered | answered |
 | `getActiveSessions` | answered | answered |
 | `getTableStats` | answered, 50 metrics | answered, 10 metrics |
 | `getIndexStats` | answered | answered |
-| `getStorageStats` | answered | failed: `ConnectionError` The server answered /api/v1/status/runtimeinfo with HTTP 400 and a body that is not a Prometheus API response. A proxy or a login page in front of the server answers this way, and so does a server that does not serve this path. The body is not shown. |
+| `getStorageStats` | answered | failed: `QueryError` The server does not serve /api/v1/status/runtimeinfo: it answered HTTP 400 naming that path as unsupported, as VictoriaMetrics answers a Prometheus API path it does not implement. |
 | `listContainers` | answered | answered |
 | `countObjects` | answered | answered, with the scrape pool count unavailable on the `listObjects:scrape_pool` message |
 | `listObjects:metric` | answered | answered |
@@ -89,7 +89,7 @@ The cancel row runs `sum(count_over_time(label_replace({__name__=~".+"}, "probe_
 | `describeObject:alerting_rule` | answered | skipped: listObjects returned no object to describe |
 | `describeObjects:alerting_rule` | answered | answered |
 | `readObjectSource:alerting_rule` | answered | skipped: listObjects returned no object to read |
-| `listObjects:scrape_pool` | answered | failed: `ConnectionError` The server answered /api/v1/scrape_pools with HTTP 400 and a body that is not a Prometheus API response. A proxy or a login page in front of the server answers this way, and so does a server that does not serve this path. The body is not shown. |
+| `listObjects:scrape_pool` | answered | failed: `QueryError` The server does not serve /api/v1/scrape_pools: it answered HTTP 400 naming that path as unsupported, as VictoriaMetrics answers a Prometheus API path it does not implement. |
 | `describeObject:scrape_pool` | answered | skipped: listObjects did not list the scrape pool prometheus to describe |
 | `describeObjects:scrape_pool` | answered | answered |
 | `readObjectSource:scrape_pool` | answered | skipped: listObjects did not list the scrape pool prometheus to read |
@@ -118,7 +118,10 @@ A metric's columns are the same on both servers: `prometheus_http_requests_total
 The overview reads the first two at once, beside the build and TSDB status reads, so its message names whichever of the two answered first, which can differ from one call to the next: `getOverview` named `/api/v1/status/flags` in the pass above, as the overview panel of the monitoring read did, and `/api/v1/status/runtimeinfo` in an earlier pass the same day.
 The storage row reads the first, and the Scrape pools folder the third, whose count then reads unavailable with the folder's message.
 The storage row also needs the head statistics, which the TSDB status below does not carry, and the provider refuses a status without them as unmeasured rather than show an empty head (`storageStatsFrom` in `monitoring.ts`).
-Each message names the path and the status, and offers the sources such an answer can have without choosing one: a proxy or a login page in front of the server, or a server that does not serve the path, which is what answered here.
+Each of the three refusals is the server's own answer, so each is a `QueryError` saying the server does not serve that path, not a `ConnectionError`, which would read as a server Studio could not reach.
+The transport reads a `400` that way only when its whole body is VictoriaMetrics' text for the path the request was sent to, `unsupported path requested: "<the path>"` and a newline (`unsupportedPathText` in `http-transport.ts`); a `400` with any other body, which a proxy or a login page answers too, stays the `ConnectionError` of [section 10](#10-error-handling).
+The class and message in those three rows are re-read on 2026-10-31 against the same image by digest, after the classification changed, where the overview named `/api/v1/status/runtimeinfo`, the other of its two paths; every other row is the 2026-09-23 pass.
+On the agent path the refusals are a reason rather than a failure ([section 14.4](#144-values-and-what-each-path-reads)).
 
 **Three documents lack a member Prometheus sends, and are read without it.**
 Each of those members only describes its object, so the provider reads the document without it and puts nothing in its place, while a member that identifies or classifies an object stays required (`transport.ts`).
@@ -500,6 +503,7 @@ The tree draws one flat root folder per declared kind, and a child's row name sa
 | `target` | `config`, `attachedTo: scrape_pool` | `[pool, targetSegment]` | `<instance> (<pool>)` | no | the target | `down` or `unknown`, the engine's word |
 
 The declaration order is the agent walk's order: metric, rule_group, recording_rule, alerting_rule, scrape_pool, target (M7).
+`scrape_pool` declares `countIsListing`, since its count is its listing: where the count was refused, as VictoriaMetrics refuses `/api/v1/scrape_pools`, the agent's grounding walk sends no listing and carries the refusal as the kind's reason, so the inventory keeps every other kind.
 Identity is the engine's own, decided from the upstream source:
 
 - `groupKey` is `<file>;<group>`, the key Prometheus uses, because group names need not be unique across files.
@@ -650,6 +654,7 @@ Mapped from the envelope's `errorType`, not from the HTTP status, as Druid and T
 | any 3xx | `ConnectionError` naming the status and the `Location` origin |
 | TLS handshake or verification failure | `ConnectionError` carrying the Node error code |
 | refused connection, reset, DNS failure | `ConnectionError` |
+| a `400` whose whole body is `unsupported path requested: "<the path>"` and a newline, for the path the request was sent to, the answer VictoriaMetrics gives a path it does not serve | `QueryError` saying the server does not serve that path |
 | a body that is not the API envelope (a proxy's HTML page, a 502, or the plain-text 503 the server's own ready gate, `testReady` in `web/web.go`, answers while it starts up or shuts down) | `ConnectionError` naming the path and the status and the sources such an answer can have, without choosing one and without quoting the body |
 | a response past `RESPONSE_BYTE_CAP` | `QueryError` naming the cap |
 | an overview whose metric count cannot be measured (M2), or a storage row whose TSDB status carries no head statistics | `QueryError` |
@@ -824,8 +829,8 @@ The projection goes by a value's shape, so what it cannot reach is a label value
 | Path | Handle | What it reads |
 | --- | --- | --- |
 | Investigation and data-analysis reads | agent read-only profile | one expression of [section 14.2](#142-what-an-agent-read-may-be) |
-| Investigation grounding, plan-mode grounding and the operations workflow's inventory | either agent profile | the metric names of the last hour with their label names, the rule groups and rules, and the scrape pools and targets, by name, through the projection; the series' label sets are read to learn their label names, and the names alone are kept |
-| Health, storage and table readings | either agent profile | the server's own answers, as on an editor handle, never the flags; the server publishes no byte count, and the storage and table readings' shape requires one, so each byte figure is a 0 with the text beside it saying it is a placeholder, not a measurement |
+| Investigation grounding, plan-mode grounding and the operations workflow's inventory | either agent profile | the metric names of the last hour with their label names, the rule groups and rules, and the scrape pools and targets, by name, through the projection; the series' label sets are read to learn their label names, and the names alone are kept; a server that does not serve the scrape pool listing, VictoriaMetrics, leaves that kind out with its refusal as the kind's reason, and every other kind is read |
+| Health, storage and table readings | either agent profile | the server's own answers, as on an editor handle, never the flags; the server publishes no byte count, and the storage and table readings' shape requires one, so each byte figure is a 0 with the text beside it saying it is a placeholder, not a measurement; on VictoriaMetrics the storage reading is refused with the server not serving `/api/v1/status/runtimeinfo` (`surfaces.storage` in the capture), a reason the model reads, so an operations run that takes it goes on to its report |
 | Console, overview, performance, slow-query, session and index readings | either agent profile | nothing: each is refused with its reason, never answered with Studio's own figures or an empty reading |
 
 ### 14.5 Agent language pack

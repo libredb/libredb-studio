@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D413, U17 · 302
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U191 · 176
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U190 · 175
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -6519,17 +6519,6 @@ Asked to decode the eight words of a planted `VALMARK-5dec470b` high byte first,
 Seen 2026-10-31 on Modbus (pymodbus 3.12.1, the pinned `docker/modbus` image) in a browser pass.
 
 **Done when:** a point of type `string` is answered as text under the rule identification objects follow (text only when its bytes round-trip as text with no control byte, hex otherwise), in the console and in agent mode, with a read test on a string point that holds a control byte.
-
-### U191. A VictoriaMetrics path it does not serve is read as an unreachable server, which fails an Operate run and leaves every agent run ungrounded
-
-VictoriaMetrics answers `/api/v1/status/runtimeinfo`, `/api/v1/status/flags` and `/api/v1/scrape_pools` with `400` and the plain text `unsupported path requested: "<the path>"` (`docs/providers/prometheus.md` section 3), and the transport reports each as a `ConnectionError` ("The server answered ... with HTTP 400 and a body that is not a Prometheus API response. A proxy or a login page in front of the server answers this way, and so does a server that does not serve this path.").
-On the agent path a `ConnectionError` reads as a server Studio could not reach, so two things follow on every VictoriaMetrics connection.
-An Operate run that takes the storage reading, which reads `runtimeinfo` beside the TSDB status (`readStorageStats` in `src/lib/db/providers/timeseries/prometheus/monitoring.ts`), ends `failed` with "The server could not carry this run. The reason is in the server log." and no report, although the health reading before it was answered; `storageStatsFrom`'s own refusal for a status with no head statistics, the one VictoriaMetrics answers, is a `QueryError` that would have reached the model as a reason, and it is never reached because `runtimeinfo` fails first.
-And the object inventory read for grounding fails on the `scrape_pool` kind (`listObjects([], "scrape_pool")` refused, while `metric`, `rule_group` and `target` answer on every profile), so the investigation, data-analysis and plan runs are grounded on nothing and the run records `context-unavailable` with "This run could not reach this prometheus database to ask it for its schema", although the server answered every other read of the same run.
-Seen 2026-10-31 on VictoriaMetrics v1.152.0 (by digest) in a browser pass (Operate run `arun_a717578985f9496cbe1e94c7909ef142`, investigation run `arun_142513659a9443e1baa16871944d49c9`, which answered from four PromQL reads with no inventory); the capture `tests/fixtures/prometheus/v3.13.3/agent-boundary/boundary.json` records the storage `ConnectionError` under `victoriametrics.agent.surfaces.storage`.
-Not fixed in the PR that opened agent mode on Prometheus: the classification is the transport's, shared by the editor's panels and tree, and the editor's Storage tab and Scrape pools folder show the same message.
-
-**Done when:** a `400` whose body names an unsupported path is reported as the server not serving that path, not as an unreachable server, so the storage reading on VictoriaMetrics answers its no-head-statistics reason, an Operate run that takes it ends with a report, and the inventory leaves out a kind the server does not serve while keeping the others, with a provider test on each of the three VictoriaMetrics answers and an agent test that a refused storage reading does not fail the run.
 
 ## Dependencies
 

@@ -201,6 +201,13 @@ describe("VictoriaMetrics v1.152.0", () => {
       expect(["/api/v1/import", "/api/v1/admin/tsdb/delete_series", "/snapshot/create"]).not.toContain(request.path);
     }
   });
+
+  test("the storage reading is the server's answer that it does not serve the runtime read, not an unreachable server", () => {
+    const storage = server.agent.surfaces.storage;
+    expect(storage.ok).toBe(false);
+    expect(storage.error).toBe("QueryError");
+    expect(storage.message).toStartWith("The server does not serve /api/v1/status/runtimeinfo:");
+  });
 });
 
 test("the capture holds no URL with a query token or userinfo", () => {
