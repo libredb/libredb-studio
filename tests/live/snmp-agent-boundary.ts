@@ -61,8 +61,11 @@ async function counter(oid: readonly number[]): Promise<number> {
   return [...answer.varbinds[0].value].reduce((n, b) => n * 256 + b, 0);
 }
 
-/** One withheld subtree read raw with GetNext, recorded by counts and flags alone. */
-async function rawSubtree(root: readonly number[]) {
+/**
+ * One withheld subtree read raw with GetNext, recorded by counts and flags alone. `depth` is how many sub-identifiers
+ * below the root name a column, the table's entry and column (or the scalar), so no recorded prefix reaches an index.
+ */
+async function rawSubtree(root: readonly number[], depth: number) {
   const columns = new Set<string>();
   let instances = 0;
   let carriesCommunity = false;
@@ -76,7 +79,7 @@ async function rawSubtree(root: readonly number[]) {
     instances += 1;
     const dotted = varbind.oid.join(".");
     // The column is the table's entry and column (or the scalar), the identifier without what follows them.
-    columns.add(varbind.oid.slice(0, root.length + 4).join("."));
+    columns.add(varbind.oid.slice(0, root.length + depth).join("."));
     if (new TextDecoder().decode(varbind.value).includes(FIXTURE_COMMUNITY)) carriesCommunity = true;
     if (dotted.includes(SUFFIX)) suffixSpellsCommunity = true;
     from = varbind.oid;
@@ -115,8 +118,12 @@ async function agentRead(statement: string, budget: ReadOnlyStatementBudget = BU
 
 const setsAtStart = await counter(IN_SETS);
 const withheld = [];
+// The framework's modules hold their tables one node down (vacmObjects, usmMIBObjects); Net-SNMP's extension holds
+// nsVacmAccessTable at its root, so its column is one sub-identifier nearer, and the next is the group name's length.
+const COLUMN_DEPTH: Readonly<Record<string, number>> = { "NET-SNMP-VACM-MIB": 3 };
 for (const entry of SNMP_WITHHELD_SUBTREES) {
-  withheld.push({ module: entry.module, root: entry.root.join("."), raw: await rawSubtree(entry.root) });
+  const depth = COLUMN_DEPTH[entry.module] ?? 4;
+  withheld.push({ module: entry.module, root: entry.root.join("."), raw: await rawSubtree(entry.root, depth) });
 }
 
 // What sends nothing (refused, or a withheld identifier answered without asking): the agent's input counter, read raw
@@ -126,8 +133,8 @@ const notSent = [];
 for (const statement of [
   "set 1.3.6.1.2.1.1.5.0 s changed",
   "walk 1",
-  "walk 1.3.6.1.6.3",
   "walk 1.3.6.1.6.3.18",
+  "walk 1.3.6.1.4.1.8072.1.9",
   "table 1.3.6.1.6.3.16.1.2",
   "bulkwalk 1.3.6.1.2.1",
   "get 1.3.6.1.6.3.18.1.1.1.2.1",
@@ -146,8 +153,29 @@ for (const statement of [
   "walk 1.3.6.1.4.1.8072.9999.9999",
   "table 1.3.6.1.4.1.8072.9999.9999.10.1",
   "next 1.3.6.1.6.3.11.99 1.3.6.1.6.3.14.99",
+  "walk 1.3.6.1.6.3",
 ]) {
   reads.push(await agentRead(statement));
+}
+
+/**
+ * Walks that cover a withheld subtree and step over it, recorded by their size, their warnings and how many answered
+ * objects lie inside a withheld subtree (none may), never by their rows: the enterprise subtree is large.
+ */
+const WIDE: ReadOnlyStatementBudget = { maxResultRows: 5_000, maxResultBytes: 4_000_000, statementTimeoutMs: 20_000 };
+const steppedOver = [];
+for (const statement of ["walk 1.3.6.1.4.1.8072.1", "walk 1.3.6.1.4.1"]) {
+  const read = await agentRead(statement, WIDE);
+  const answered = "rows" in read ? read : undefined;
+  const objects = (answered?.rows ?? []).map((row) => String(row.object).split(".").map(Number));
+  steppedOver.push({
+    statement,
+    rowCount: answered?.rowCount,
+    refused: "refused" in read ? read.message : undefined,
+    warned: (answered?.warnings ?? []).map((warning) => warning.message.split(" ")[0]),
+    insideWithheld: objects.filter((oid) => SNMP_WITHHELD_SUBTREES.some((entry) => isWithinSubtree(entry.root, oid)))
+      .length,
+  });
 }
 const overBudget = await agentRead("walk ifEntry", { ...BUDGET, maxResultRows: 3 });
 const setsAtEnd = await counter(IN_SETS);
@@ -164,6 +192,7 @@ const capture = {
   notSent,
   notSentReachedNothing: { snmpInPktsBefore: pktsBefore, snmpInPktsAfter: pktsAfter, rawReadsBetween: 1 },
   reads,
+  steppedOver,
   overBudget,
   health: { description: health.description, uptimeRead: health.uptime !== "" },
   agentPathSentNoSet: { snmpInSetRequestsAtStart: setsAtStart, snmpInSetRequestsAtEnd: setsAtEnd },

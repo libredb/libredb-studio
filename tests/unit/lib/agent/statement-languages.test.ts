@@ -1289,7 +1289,7 @@ describe("the fsquery language's server adapter and admission", () => {
 describe("the snmpget language's server adapter and admission", () => {
   const READ = "get sysDescr.0";
   const WITHHELD =
-    "The security and target modules under 1.3.6.1.6.3 (SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB) are withheld from agent mode, since they hold community strings, user names and access rules: nothing of them is read or answered.";
+    "Withheld from agent mode are the security and target modules under 1.3.6.1.6.3 (SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB), the transport security modules SNMP-SSH-TM-MIB (1.3.6.1.2.1.189), SNMP-TSM-MIB (1.3.6.1.2.1.190) and SNMP-TLS-TM-MIB (1.3.6.1.2.1.198), SNMP-USM-DH-OBJECTS-MIB (1.3.6.1.3.101) and Net-SNMP's NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9), since they hold community strings, user names, keys and access rules: nothing of them is read or answered.";
 
   test("the fingerprint is the plan the reader sends, so one read written two ways is one identity", () => {
     const one = fingerprintSnmpget(READ);
@@ -1321,12 +1321,18 @@ describe("the snmpget language's server adapter and admission", () => {
     expect(advice).toContain(WITHHELD);
     const rule = WORKFLOW_TOOL_RULES.snmpget.investigation as string;
     expect(rule).toContain(WITHHELD);
+    expect(rule).toContain(
+      "a walk or table covering one, such as walk mib-2 (1.3.6.1.2.1) or walk 1.3.6.1.4.1, steps over it",
+    );
   });
 
   test("the admission is the provider's reader, plus a length the agent's contract names", () => {
     expect(admitSnmpgetStatement(READ)).toBeNull();
     expect(admitSnmpgetStatement("")).toEqual({ code: "request", message: SNMP_AGENT_SENTENCES.empty });
-    expect(admitSnmpgetStatement("walk 1")?.code).toBe("withheld");
+    expect(admitSnmpgetStatement("walk 1.3.6.1.4.1.8072.1.9")?.code).toBe("withheld");
+    expect(admitSnmpgetStatement("walk 1.3.6.1.4.1")).toBeNull();
+    // The admission reads a walk's limit as the provider does, whatever the run's row budget.
+    expect(admitSnmpgetStatement("walk ifDescr limit 600")).toBeNull();
     const long = `get ${"1.".repeat(SNMPGET_AGENT_MAX_STATEMENT_CHARS)}1`;
     expect(admitSnmpgetStatement(long)).toEqual({
       code: "agent-too-large",

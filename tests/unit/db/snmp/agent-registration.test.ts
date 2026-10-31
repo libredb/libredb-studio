@@ -54,6 +54,7 @@ describe("what plan mode is told", () => {
     expect(language).toContain("there is no set");
     for (const entry of SNMP_WITHHELD_SUBTREES) expect(language).toContain(entry.module);
     expect(language).toContain("never a value the agent holds");
+    expect(language).not.toContain("limit");
   });
 });
 

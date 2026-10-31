@@ -745,9 +745,11 @@ const SNMPGET_READ_BOUNDARY =
   "refuses any other PDU, so no Set, notification or Response can be sent; a GetBulk's max-repetitions stays at the " +
   "documented cap of 50 and a request carries at most 400 identifiers. " +
   "The security and target modules under 1.3.6.1.6.3 (SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, " +
-  "SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB) are withheld by identifier prefix: an " +
-  "identifier inside one is never sent, an answer landing inside one is answered withheld without its value or " +
-  "instance, and a walk or table reaching one is refused before anything is sent. A v2c community cannot be proved " +
+  "SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB), the transport security modules " +
+  "SNMP-SSH-TM-MIB, SNMP-TSM-MIB and SNMP-TLS-TM-MIB, SNMP-USM-DH-OBJECTS-MIB and Net-SNMP's NET-SNMP-VACM-MIB are " +
+  "withheld by identifier prefix: an identifier inside one is never sent, an answer landing inside one is answered " +
+  "withheld without its value or instance, a walk or table covering one steps over it, so no request starts inside " +
+  "it, and a walk or table inside one is refused before anything is sent. A v2c community cannot be proved " +
   "read-only from the client, and the tables that would prove it are the withheld ones, so the table is the boundary. " +
   "A walk or table past the row budget and a result past the byte budget are refused, never truncated.";
 

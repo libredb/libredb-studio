@@ -164,6 +164,30 @@ describe("every request is pinned in full", () => {
   });
 });
 
+describe("a walk covering withheld subtrees", () => {
+  test("steps over them on the wire: no request starts inside one, nothing of one is answered, each is warned", async () => {
+    const { provider, agent } = await connected(READ_ONLY);
+    const result = await provider.queryReadOnly("walk 1.3.6.1.6", { ...BUDGET, maxResultRows: 20 });
+    expect(result.rows).toEqual([]);
+    expect(result.warnings?.map((warning) => warning.message.split(" ")[0])).toEqual([
+      "SNMP-TARGET-MIB",
+      "SNMP-NOTIFICATION-MIB",
+      "SNMP-PROXY-MIB",
+      "SNMP-USER-BASED-SM-MIB",
+      "SNMP-VIEW-BASED-ACM-MIB",
+      "SNMP-COMMUNITY-MIB",
+    ]);
+    expect(leaks(result)).toBe(false);
+    // The connect probe, the GetBulk from the subtree, which lands in the community module, and the GetBulk past it.
+    expect(
+      agent.requests.slice(1).map((request) => [request.pdu, request.oids, request.second, request.third]),
+    ).toEqual([
+      [0xa5, ["1.3.6.1.6"], 0, 50],
+      [0xa5, ["1.3.6.1.6.3.19"], 0, 50],
+    ]);
+  });
+});
+
 describe("the closed table", () => {
   const ATTACKS = [
     "set 1.3.6.1.2.1.1.5.0 s changed",
@@ -171,13 +195,13 @@ describe("the closed table", () => {
     "inform 1.3.6.1.2.1.1.5.0",
     "bulkwalk 1.3.6.1.2.1",
     "walk 1",
-    "walk .1.3.6.1.6",
-    "walk 1.3.6.1.6.3",
+    "get 1",
     "walk 1.3.6.1.6.3.18",
     "table 1.3.6.1.6.3.16.1.2",
-    "walk snmpModules",
+    "walk 1.3.6.1.4.1.8072.1.9",
+    "walk .1.3.6.1.2.1.198",
     "get 1.3.6.1.4294967296",
-    "walk 1.3.6.1.2.1 limit 6",
+    "walk 1.3.6.1.2.1 limit 5001",
     "get sysDescr.0; set sysName.0",
     "",
   ];

@@ -439,7 +439,7 @@ describe("the posture on SNMP", () => {
 
   test("names exactly what the agent reads: the device's values through four named commands, never a write", () => {
     expect(posture.qualifier).toBe(
-      `${STATEMENT_BUDGETS.maxResultRows} rows and ${STATEMENT_BUDGETS.statementTimeoutMs / 1000} s per read, over a client that sends only Get, GetNext and GetBulk, with the security and target modules withheld`,
+      `${STATEMENT_BUDGETS.maxResultRows} rows and ${STATEMENT_BUDGETS.statementTimeoutMs / 1000} s per read, over a client that sends only Get, GetNext and GetBulk, with the SNMP security modules withheld`,
     );
     expect(posture.body).toContain(
       "each one of the console's four commands, get, next, walk and table, and answers the device's values as the console renders them",
@@ -448,10 +448,14 @@ describe("the posture on SNMP", () => {
     expect(posture.body).not.toMatch(/metadata only|those three/);
   });
 
-  test("names the six withheld modules before it counts them, and why", () => {
+  test("names every withheld module, and why, and counts none of them", () => {
     expect(posture.body).toContain(
-      "Six modules are withheld, because they hold community strings, user names and access rules: SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB;",
+      "Withheld, because they hold community strings, user names, keys and access rules, are SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB, SNMP-COMMUNITY-MIB, SNMP-SSH-TM-MIB, SNMP-TSM-MIB, SNMP-TLS-TM-MIB, SNMP-USM-DH-OBJECTS-MIB and Net-SNMP's NET-SNMP-VACM-MIB;",
     );
+    expect(posture.body).toContain(
+      "a walk that covers one steps over it and names it, and a walk inside one is refused",
+    );
+    expect(posture.body).not.toMatch(/\b(?:Six|six|Eleven|eleven) modules\b/);
     expect(posture.body).toContain("The community never reaches an answer.");
   });
 });

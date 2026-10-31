@@ -15,7 +15,7 @@ const AGENT_READS =
 
 /** Each reading an agent-mode handle does not take, with its reason. No sentence names a value the agent holds. */
 export const SNMP_AGENT_WITHHELD = {
-  query: `${AGENT_READS} The console reads any subtree, the withheld security and target modules under 1.3.6.1.6.3 included, so it is refused on an agent-mode handle; agent reads go through queryReadOnly.`,
+  query: `${AGENT_READS} The console reads any subtree, the withheld security modules included, so it is refused on an agent-mode handle; agent reads go through queryReadOnly.`,
   overview: `${AGENT_READS} The overview's connection and size figures are not figures an SNMP agent reports, so no overview is taken; the health reading carries the agent's own sysDescr.0 and sysUpTime.0.`,
   performance: `${AGENT_READS} An SNMP agent publishes no performance reading in a form Studio reads, so none is taken; this is not a reading of none.`,
   slowQueries: `${AGENT_READS} An SNMP agent keeps no statement history, so no slow-query reading is taken; this is not a reading of none.`,

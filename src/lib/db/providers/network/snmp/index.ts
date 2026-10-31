@@ -19,7 +19,7 @@
  * modules through `mib-tree.ts`, so they work before `connect` and cost the agent no request.
  *
  * `queryReadOnly` is the agent's: one command of the console's four, read by `agent-statement.ts` and refused before
- * anything is sent when it is not one of them or when it would walk a withheld security or target subtree, then sent
+ * anything is sent when it is not one of them or when it would walk inside a withheld security subtree, then sent
  * over an exchange opened for that read alone through the agent's client (`agent-client.ts`), which holds Get, GetNext
  * and GetBulk only, and answered by `agent-read.ts` with values rendered as the console renders them, refused past the
  * row, byte or time budget rather than cut. On a handle opened for any agent-mode profile the console is refused and
@@ -68,7 +68,7 @@ import { allNotices } from "./mib";
 import { failureFromStatus } from "./errors";
 import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
 import { createSnmpAgentClient } from "./agent-client";
-import { runSnmpAgentRead, SNMP_AGENT_FAILURE_SENTENCES, SnmpAgentError, snmpAgentResult } from "./agent-read";
+import { runSnmpAgentReadWithin, snmpAgentResult } from "./agent-read";
 import { readSnmpAgentStatement } from "./agent-statement";
 import { SNMP_AGENT_WITHHELD } from "./agent-surface";
 
@@ -379,9 +379,9 @@ export class SnmpProvider extends BaseDatabaseProvider {
   /**
    * One agent statement. Only on a handle opened under the agent read-only profile; the statement is read by
    * `readSnmpAgentStatement` and refused before anything is sent when it is not one of the console's four commands or
-   * when it would walk a withheld subtree. The read runs over an exchange opened for it alone, with the request's time
-   * budget as every request's deadline and as the read's own, and closed when it ends, so nothing of one call reaches
-   * the next; the console's pending notices are not touched. Its answer is refused past the row, byte or time budget
+   * when it would walk inside a withheld subtree. The read runs over an exchange opened for it alone, with the
+   * request's time budget as every request's deadline and as the read's own (`runSnmpAgentReadWithin`), and closed
+   * when it ends, so nothing of one call reaches the next; the console's pending notices are not touched. Its answer is refused past the row, byte or time budget
    * rather than cut, and a failure is worded by its category.
    */
   public async queryReadOnly(
@@ -397,23 +397,15 @@ export class SnmpProvider extends BaseDatabaseProvider {
     }
     assertReadOnlyBudget(budget, "snmp");
     if (mode !== "execute") throw new RefusedBeforeSendError(SNMP_PROVIDER_SENTENCES.noEstimate, "snmp", statement);
-    const reading = readSnmpAgentStatement(statement, budget.maxResultRows);
+    const reading = readSnmpAgentStatement(statement);
     if (!reading.ok) throw new RefusedBeforeSendError(reading.message, "snmp", statement);
     const ms = budget.statementTimeoutMs;
     const exchange = await openExchange({ target, community: this.connectionInput().community ?? "", deadlineMs: ms });
     const started = Date.now();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const deadline = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new SnmpAgentError(SNMP_AGENT_FAILURE_SENTENCES.silence(ms))), ms);
-    });
     try {
-      const answer = await Promise.race([
-        runSnmpAgentRead(createSnmpAgentClient(exchange), reading.plan, budget),
-        deadline,
-      ]);
+      const answer = await runSnmpAgentReadWithin(createSnmpAgentClient(exchange), reading.plan, budget);
       return snmpAgentResult(answer, budget, Date.now() - started);
     } finally {
-      clearTimeout(timer);
       exchange.close();
     }
   }

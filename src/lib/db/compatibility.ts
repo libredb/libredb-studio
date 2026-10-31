@@ -577,7 +577,7 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // has to deal with configuration values: a read-only account still reads password hashes and keystore entries
   // out of the configuration, which is why the catalog carries names only (docs/providers/netconf.md 6.3).
   netconf: false,
-  // Closed: agent mode reads SNMP values with the security and target modules withheld, and no MCP surface that
+  // Closed: agent mode reads SNMP values with the SNMP security modules withheld, and no MCP surface that
   // withholds them is designed yet (BACKLOG B158).
   snmp: false,
   // Outside this version, for the reason MQTT's entry gives rather than for the absence of a read query path:
@@ -676,7 +676,7 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   mtconnect: false,
   modbus: false,
   netconf: false,
-  // Agent mode executes reads on SNMP with the security and target modules withheld, and MCP read stays closed on it
+  // Agent mode executes reads on SNMP with the SNMP security modules withheld, and MCP read stays closed on it
   // until a change of its own opens it (BACKLOG B158).
   snmp: false,
   sparkplug: false,

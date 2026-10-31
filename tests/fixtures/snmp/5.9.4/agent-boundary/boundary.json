@@ -8,6 +8,61 @@
   },
   "withheld": [
     {
+      "module": "SNMP-SSH-TM-MIB",
+      "root": "1.3.6.1.2.1.189",
+      "raw": {
+        "instances": 0,
+        "columnPrefixes": [],
+        "carriesCommunity": false,
+        "suffixSpellsCommunity": false
+      }
+    },
+    {
+      "module": "SNMP-TSM-MIB",
+      "root": "1.3.6.1.2.1.190",
+      "raw": {
+        "instances": 0,
+        "columnPrefixes": [],
+        "carriesCommunity": false,
+        "suffixSpellsCommunity": false
+      }
+    },
+    {
+      "module": "SNMP-TLS-TM-MIB",
+      "root": "1.3.6.1.2.1.198",
+      "raw": {
+        "instances": 0,
+        "columnPrefixes": [],
+        "carriesCommunity": false,
+        "suffixSpellsCommunity": false
+      }
+    },
+    {
+      "module": "SNMP-USM-DH-OBJECTS-MIB",
+      "root": "1.3.6.1.3.101",
+      "raw": {
+        "instances": 0,
+        "columnPrefixes": [],
+        "carriesCommunity": false,
+        "suffixSpellsCommunity": false
+      }
+    },
+    {
+      "module": "NET-SNMP-VACM-MIB",
+      "root": "1.3.6.1.4.1.8072.1.9",
+      "raw": {
+        "instances": 12,
+        "columnPrefixes": [
+          "1.3.6.1.4.1.8072.1.9.1.1.2",
+          "1.3.6.1.4.1.8072.1.9.1.1.3",
+          "1.3.6.1.4.1.8072.1.9.1.1.4",
+          "1.3.6.1.4.1.8072.1.9.1.1.5"
+        ],
+        "carriesCommunity": false,
+        "suffixSpellsCommunity": false
+      }
+    },
+    {
       "module": "SNMP-TARGET-MIB",
       "root": "1.3.6.1.6.3.12",
       "raw": {
@@ -101,32 +156,32 @@
     {
       "statement": "set 1.3.6.1.2.1.1.5.0 s changed",
       "refused": "RefusedBeforeSendError",
-      "message": "`set` is not a command this provider has: it reads and never writes. Agent mode on SNMP reads with the console's four commands, one per read: get OID [OID ...] for the named instances, next OID [OID ...] for the instance after each, walk SUBTREE [limit N] for every instance under a subtree, and table ENTRY for a conceptual table's rows, named by its entry (ifEntry), each OID written numerically (1.3.6.1.2.1.1.1.0) or by a name the bundled MIB modules define (sysDescr.0, ifTable, ifEntry); the security and target modules under 1.3.6.1.6.3 (SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB) are withheld. Nothing was sent."
+      "message": "`set` is not a command this provider has: it reads and never writes. Agent mode on SNMP reads with the console's four commands, one per read: get OID [OID ...] for the named instances, next OID [OID ...] for the instance after each, walk SUBTREE for every instance under a subtree, and table ENTRY for a conceptual table's rows, named by its entry (ifEntry), each OID written numerically (1.3.6.1.2.1.1.1.0) or by a name the bundled MIB modules define (sysDescr.0, ifTable, ifEntry); the security and target modules under 1.3.6.1.6.3 (SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB), the transport security modules SNMP-SSH-TM-MIB (1.3.6.1.2.1.189), SNMP-TSM-MIB (1.3.6.1.2.1.190) and SNMP-TLS-TM-MIB (1.3.6.1.2.1.198), SNMP-USM-DH-OBJECTS-MIB (1.3.6.1.3.101) and Net-SNMP's NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9) are withheld, and a walk steps over them. Nothing was sent."
     },
     {
       "statement": "walk 1",
       "refused": "RefusedBeforeSendError",
-      "message": "A walk of 1 would read inside SNMP-TARGET-MIB (1.3.6.1.6.3.12), which holds the addresses notifications and proxied requests are sent to, and the security names that reach them and is withheld from agent mode, so the walk is refused rather than read; walk a subtree that does not reach it, such as mib-2 (1.3.6.1.2.1) or one of its groups. Agent mode on SNMP reads with the console's four commands, one per read: get OID [OID ...] for the named instances, next OID [OID ...] for the instance after each, walk SUBTREE [limit N] for every instance under a subtree, and table ENTRY for a conceptual table's rows, named by its entry (ifEntry), each OID written numerically (1.3.6.1.2.1.1.1.0) or by a name the bundled MIB modules define (sysDescr.0, ifTable, ifEntry); the security and target modules under 1.3.6.1.6.3 (SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB) are withheld. Nothing was sent."
-    },
-    {
-      "statement": "walk 1.3.6.1.6.3",
-      "refused": "RefusedBeforeSendError",
-      "message": "A walk of 1.3.6.1.6.3 would read inside SNMP-TARGET-MIB (1.3.6.1.6.3.12), which holds the addresses notifications and proxied requests are sent to, and the security names that reach them and is withheld from agent mode, so the walk is refused rather than read; walk a subtree that does not reach it, such as mib-2 (1.3.6.1.2.1) or one of its groups. Agent mode on SNMP reads with the console's four commands, one per read: get OID [OID ...] for the named instances, next OID [OID ...] for the instance after each, walk SUBTREE [limit N] for every instance under a subtree, and table ENTRY for a conceptual table's rows, named by its entry (ifEntry), each OID written numerically (1.3.6.1.2.1.1.1.0) or by a name the bundled MIB modules define (sysDescr.0, ifTable, ifEntry); the security and target modules under 1.3.6.1.6.3 (SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB) are withheld. Nothing was sent."
+      "message": "an object identifier is sent with at least two sub-identifiers, such as 1.3. Agent mode on SNMP reads with the console's four commands, one per read: get OID [OID ...] for the named instances, next OID [OID ...] for the instance after each, walk SUBTREE for every instance under a subtree, and table ENTRY for a conceptual table's rows, named by its entry (ifEntry), each OID written numerically (1.3.6.1.2.1.1.1.0) or by a name the bundled MIB modules define (sysDescr.0, ifTable, ifEntry); the security and target modules under 1.3.6.1.6.3 (SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB), the transport security modules SNMP-SSH-TM-MIB (1.3.6.1.2.1.189), SNMP-TSM-MIB (1.3.6.1.2.1.190) and SNMP-TLS-TM-MIB (1.3.6.1.2.1.198), SNMP-USM-DH-OBJECTS-MIB (1.3.6.1.3.101) and Net-SNMP's NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9) are withheld, and a walk steps over them. Nothing was sent."
     },
     {
       "statement": "walk 1.3.6.1.6.3.18",
       "refused": "RefusedBeforeSendError",
-      "message": "A walk of 1.3.6.1.6.3.18 would read inside SNMP-COMMUNITY-MIB (1.3.6.1.6.3.18), which holds the community strings and the security names they map to and is withheld from agent mode, so the walk is refused rather than read; walk a subtree that does not reach it, such as mib-2 (1.3.6.1.2.1) or one of its groups. Agent mode on SNMP reads with the console's four commands, one per read: get OID [OID ...] for the named instances, next OID [OID ...] for the instance after each, walk SUBTREE [limit N] for every instance under a subtree, and table ENTRY for a conceptual table's rows, named by its entry (ifEntry), each OID written numerically (1.3.6.1.2.1.1.1.0) or by a name the bundled MIB modules define (sysDescr.0, ifTable, ifEntry); the security and target modules under 1.3.6.1.6.3 (SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB) are withheld. Nothing was sent."
+      "message": "A walk of 1.3.6.1.6.3.18 would read inside SNMP-COMMUNITY-MIB (1.3.6.1.6.3.18), which holds the community strings and the security names they map to and is withheld from agent mode, so the walk is refused rather than read; walk a subtree outside it, such as mib-2 (1.3.6.1.2.1) or one of its groups. Agent mode on SNMP reads with the console's four commands, one per read: get OID [OID ...] for the named instances, next OID [OID ...] for the instance after each, walk SUBTREE for every instance under a subtree, and table ENTRY for a conceptual table's rows, named by its entry (ifEntry), each OID written numerically (1.3.6.1.2.1.1.1.0) or by a name the bundled MIB modules define (sysDescr.0, ifTable, ifEntry); the security and target modules under 1.3.6.1.6.3 (SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB), the transport security modules SNMP-SSH-TM-MIB (1.3.6.1.2.1.189), SNMP-TSM-MIB (1.3.6.1.2.1.190) and SNMP-TLS-TM-MIB (1.3.6.1.2.1.198), SNMP-USM-DH-OBJECTS-MIB (1.3.6.1.3.101) and Net-SNMP's NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9) are withheld, and a walk steps over them. Nothing was sent."
+    },
+    {
+      "statement": "walk 1.3.6.1.4.1.8072.1.9",
+      "refused": "RefusedBeforeSendError",
+      "message": "A walk of 1.3.6.1.4.1.8072.1.9 would read inside NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9), which holds Net-SNMP's access control extension, indexed by the group names that may read or write each view and is withheld from agent mode, so the walk is refused rather than read; walk a subtree outside it, such as mib-2 (1.3.6.1.2.1) or one of its groups. Agent mode on SNMP reads with the console's four commands, one per read: get OID [OID ...] for the named instances, next OID [OID ...] for the instance after each, walk SUBTREE for every instance under a subtree, and table ENTRY for a conceptual table's rows, named by its entry (ifEntry), each OID written numerically (1.3.6.1.2.1.1.1.0) or by a name the bundled MIB modules define (sysDescr.0, ifTable, ifEntry); the security and target modules under 1.3.6.1.6.3 (SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB), the transport security modules SNMP-SSH-TM-MIB (1.3.6.1.2.1.189), SNMP-TSM-MIB (1.3.6.1.2.1.190) and SNMP-TLS-TM-MIB (1.3.6.1.2.1.198), SNMP-USM-DH-OBJECTS-MIB (1.3.6.1.3.101) and Net-SNMP's NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9) are withheld, and a walk steps over them. Nothing was sent."
     },
     {
       "statement": "table 1.3.6.1.6.3.16.1.2",
       "refused": "RefusedBeforeSendError",
-      "message": "A table of 1.3.6.1.6.3.16.1.2 would read inside SNMP-VIEW-BASED-ACM-MIB (1.3.6.1.6.3.16), which holds the access control tables, indexed by the security names that may read or write each view and is withheld from agent mode, so the table is refused rather than read; walk a subtree that does not reach it, such as mib-2 (1.3.6.1.2.1) or one of its groups. Agent mode on SNMP reads with the console's four commands, one per read: get OID [OID ...] for the named instances, next OID [OID ...] for the instance after each, walk SUBTREE [limit N] for every instance under a subtree, and table ENTRY for a conceptual table's rows, named by its entry (ifEntry), each OID written numerically (1.3.6.1.2.1.1.1.0) or by a name the bundled MIB modules define (sysDescr.0, ifTable, ifEntry); the security and target modules under 1.3.6.1.6.3 (SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB) are withheld. Nothing was sent."
+      "message": "A table of 1.3.6.1.6.3.16.1.2 would read inside SNMP-VIEW-BASED-ACM-MIB (1.3.6.1.6.3.16), which holds the access control tables, indexed by the security names that may read or write each view and is withheld from agent mode, so the table is refused rather than read; walk a subtree outside it, such as mib-2 (1.3.6.1.2.1) or one of its groups. Agent mode on SNMP reads with the console's four commands, one per read: get OID [OID ...] for the named instances, next OID [OID ...] for the instance after each, walk SUBTREE for every instance under a subtree, and table ENTRY for a conceptual table's rows, named by its entry (ifEntry), each OID written numerically (1.3.6.1.2.1.1.1.0) or by a name the bundled MIB modules define (sysDescr.0, ifTable, ifEntry); the security and target modules under 1.3.6.1.6.3 (SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB), the transport security modules SNMP-SSH-TM-MIB (1.3.6.1.2.1.189), SNMP-TSM-MIB (1.3.6.1.2.1.190) and SNMP-TLS-TM-MIB (1.3.6.1.2.1.198), SNMP-USM-DH-OBJECTS-MIB (1.3.6.1.3.101) and Net-SNMP's NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9) are withheld, and a walk steps over them. Nothing was sent."
     },
     {
       "statement": "bulkwalk 1.3.6.1.2.1",
       "refused": "RefusedBeforeSendError",
-      "message": "`bulkwalk` is not a separate command here: `walk` uses GetBulk already. Agent mode on SNMP reads with the console's four commands, one per read: get OID [OID ...] for the named instances, next OID [OID ...] for the instance after each, walk SUBTREE [limit N] for every instance under a subtree, and table ENTRY for a conceptual table's rows, named by its entry (ifEntry), each OID written numerically (1.3.6.1.2.1.1.1.0) or by a name the bundled MIB modules define (sysDescr.0, ifTable, ifEntry); the security and target modules under 1.3.6.1.6.3 (SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB) are withheld. Nothing was sent."
+      "message": "`bulkwalk` is not a separate command here: `walk` uses GetBulk already. Agent mode on SNMP reads with the console's four commands, one per read: get OID [OID ...] for the named instances, next OID [OID ...] for the instance after each, walk SUBTREE for every instance under a subtree, and table ENTRY for a conceptual table's rows, named by its entry (ifEntry), each OID written numerically (1.3.6.1.2.1.1.1.0) or by a name the bundled MIB modules define (sysDescr.0, ifTable, ifEntry); the security and target modules under 1.3.6.1.6.3 (SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB), the transport security modules SNMP-SSH-TM-MIB (1.3.6.1.2.1.189), SNMP-TSM-MIB (1.3.6.1.2.1.190) and SNMP-TLS-TM-MIB (1.3.6.1.2.1.198), SNMP-USM-DH-OBJECTS-MIB (1.3.6.1.3.101) and Net-SNMP's NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9) are withheld, and a walk steps over them. Nothing was sent."
     },
     {
       "statement": "get 1.3.6.1.6.3.18.1.1.1.2.1",
@@ -172,8 +227,8 @@
     }
   ],
   "notSentReachedNothing": {
-    "snmpInPktsBefore": 63,
-    "snmpInPktsAfter": 64,
+    "snmpInPktsBefore": 80,
+    "snmpInPktsAfter": 81,
     "rawReadsBetween": 1
   },
   "reads": [
@@ -198,7 +253,7 @@
         },
         {
           "object": "1.3.6.1.2.1.1.3.0",
-          "value": "12",
+          "value": "13",
           "type": "number"
         }
       ]
@@ -301,7 +356,7 @@
           "column3": "6",
           "column4": "1500",
           "column5": "4294967295",
-          "column6": "2abffd33bc40",
+          "column6": "jMrS#=",
           "column7": "1",
           "column8": "1",
           "column9": "0",
@@ -470,6 +525,95 @@
           "message": "SNMP-PROXY-MIB (1.3.6.1.6.3.14) is withheld from agent mode: it holds the proxy forwarding rules and the security names they map, so no value or instance of it is read or answered."
         }
       ]
+    },
+    {
+      "statement": "walk 1.3.6.1.6.3",
+      "rowCount": 8,
+      "fields": [
+        "object",
+        "value",
+        "type"
+      ],
+      "rows": [
+        {
+          "object": "1.3.6.1.6.3.1.1.6.1.0",
+          "value": "476761343",
+          "type": "number"
+        },
+        {
+          "object": "1.3.6.1.6.3.10.2.1.1.0",
+          "value": "80001f8880df26a73da5a4e56a00000000",
+          "type": "hex"
+        },
+        {
+          "object": "1.3.6.1.6.3.10.2.1.2.0",
+          "value": "1",
+          "type": "number"
+        },
+        {
+          "object": "1.3.6.1.6.3.10.2.1.3.0",
+          "value": "0",
+          "type": "number"
+        },
+        {
+          "object": "1.3.6.1.6.3.10.2.1.4.0",
+          "value": "1500",
+          "type": "number"
+        },
+        {
+          "object": "1.3.6.1.6.3.11.2.1.1.0",
+          "value": "0",
+          "type": "number"
+        },
+        {
+          "object": "1.3.6.1.6.3.11.2.1.2.0",
+          "value": "0",
+          "type": "number"
+        },
+        {
+          "object": "1.3.6.1.6.3.11.2.1.3.0",
+          "value": "0",
+          "type": "number"
+        }
+      ],
+      "warnings": [
+        {
+          "message": "SNMP-TARGET-MIB (1.3.6.1.6.3.12) is withheld from agent mode: it holds the addresses notifications and proxied requests are sent to, and the security names that reach them, so no value or instance of it is read or answered."
+        },
+        {
+          "message": "SNMP-NOTIFICATION-MIB (1.3.6.1.6.3.13) is withheld from agent mode: it holds the notification filters and the targets they name, so no value or instance of it is read or answered."
+        },
+        {
+          "message": "SNMP-PROXY-MIB (1.3.6.1.6.3.14) is withheld from agent mode: it holds the proxy forwarding rules and the security names they map, so no value or instance of it is read or answered."
+        },
+        {
+          "message": "SNMP-USER-BASED-SM-MIB (1.3.6.1.6.3.15) is withheld from agent mode: it holds the SNMPv3 user names and their key-change objects, so no value or instance of it is read or answered."
+        },
+        {
+          "message": "SNMP-VIEW-BASED-ACM-MIB (1.3.6.1.6.3.16) is withheld from agent mode: it holds the access control tables, indexed by the security names that may read or write each view, so no value or instance of it is read or answered."
+        },
+        {
+          "message": "SNMP-COMMUNITY-MIB (1.3.6.1.6.3.18) is withheld from agent mode: it holds the community strings and the security names they map to, so no value or instance of it is read or answered."
+        }
+      ]
+    }
+  ],
+  "steppedOver": [
+    {
+      "statement": "walk 1.3.6.1.4.1.8072.1",
+      "rowCount": 1250,
+      "warned": [
+        "NET-SNMP-VACM-MIB"
+      ],
+      "insideWithheld": 0
+    },
+    {
+      "statement": "walk 1.3.6.1.4.1",
+      "rowCount": 1701,
+      "warned": [
+        "NET-SNMP-VACM-MIB"
+      ],
+      "insideWithheld": 0
     }
   ],
   "overBudget": {

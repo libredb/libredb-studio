@@ -6,23 +6,31 @@
 import { describe, expect, test } from "bun:test";
 import {
   readSnmpAgentStatement,
+  resumeAfter,
   SNMP_AGENT_SENTENCES,
+  SNMP_WITHHELD_MODULES_TEXT,
   SNMP_WITHHELD_SUBTREES,
   withheldReason,
   withheldSubtreeOf,
+  withheldWithin,
 } from "@/lib/db/providers/network/snmp/agent-statement";
 import { MIB_NAMES } from "@/lib/db/providers/network/snmp/mib-names";
 import { MAX_REPETITIONS_CAP } from "@/lib/db/providers/network/snmp/statement";
 
-const refusedWith = (text: string, maxRows?: number) => {
-  const reading = readSnmpAgentStatement(text, maxRows);
+const refusedWith = (text: string) => {
+  const reading = readSnmpAgentStatement(text);
   if (reading.ok) throw new Error(`admitted: ${text}`);
   return reading;
 };
 
 describe("the withheld subtrees", () => {
-  test("are the six security and target modules' roots under 1.3.6.1.6.3", () => {
+  test("are the security, target and transport security modules' roots, and Net-SNMP's access extension, in agent order", () => {
     expect(SNMP_WITHHELD_SUBTREES.map((entry) => [entry.module, entry.root.join(".")])).toEqual([
+      ["SNMP-SSH-TM-MIB", "1.3.6.1.2.1.189"],
+      ["SNMP-TSM-MIB", "1.3.6.1.2.1.190"],
+      ["SNMP-TLS-TM-MIB", "1.3.6.1.2.1.198"],
+      ["SNMP-USM-DH-OBJECTS-MIB", "1.3.6.1.3.101"],
+      ["NET-SNMP-VACM-MIB", "1.3.6.1.4.1.8072.1.9"],
       ["SNMP-TARGET-MIB", "1.3.6.1.6.3.12"],
       ["SNMP-NOTIFICATION-MIB", "1.3.6.1.6.3.13"],
       ["SNMP-PROXY-MIB", "1.3.6.1.6.3.14"],
@@ -46,10 +54,28 @@ describe("the withheld subtrees", () => {
     expect(withheldSubtreeOf([1, 3, 6, 1, 6, 3, 1])).toBeUndefined();
     expect(withheldSubtreeOf([1, 3, 6, 1, 6, 3])).toBeUndefined();
     expect(withheldSubtreeOf([1, 3, 6, 1, 6, 3, 180])).toBeUndefined();
+    expect(withheldSubtreeOf([1, 3, 6, 1, 4, 1, 8072, 1, 9, 1, 1, 2])?.module).toBe("NET-SNMP-VACM-MIB");
+    expect(withheldSubtreeOf([1, 3, 6, 1, 4, 1, 8072, 1, 10])).toBeUndefined();
+    expect(withheldSubtreeOf([1, 3, 6, 1, 4, 1, 8072, 1, 90])).toBeUndefined();
+    expect(withheldSubtreeOf([1, 3, 6, 1, 2, 1, 198, 2, 2, 1, 4])?.module).toBe("SNMP-TLS-TM-MIB");
+    expect(withheldSubtreeOf([1, 3, 6, 1, 2, 1, 19])).toBeUndefined();
+    expect(withheldSubtreeOf([1, 3, 6, 1, 3, 101, 1])?.module).toBe("SNMP-USM-DH-OBJECTS-MIB");
+  });
+
+  test("a walk steps over every root it contains and resumes past it, past adjacent roots together", () => {
+    expect(withheldWithin([1, 3, 6, 1, 4, 1]).map((entry) => entry.module)).toEqual(["NET-SNMP-VACM-MIB"]);
+    expect(withheldWithin([1, 3, 6, 1, 2, 1])).toHaveLength(3);
+    expect(withheldWithin([1])).toEqual(SNMP_WITHHELD_SUBTREES);
+    expect(withheldWithin([1, 3, 6, 1, 2, 1, 2])).toEqual([]);
+    const at = (module: string) => SNMP_WITHHELD_SUBTREES.find((entry) => entry.module === module)!;
+    expect(resumeAfter(at("NET-SNMP-VACM-MIB")).join(".")).toBe("1.3.6.1.4.1.8072.1.10");
+    expect(resumeAfter(at("SNMP-TARGET-MIB")).join(".")).toBe("1.3.6.1.6.3.17");
+    expect(resumeAfter(at("SNMP-COMMUNITY-MIB")).join(".")).toBe("1.3.6.1.6.3.19");
+    expect(resumeAfter(at("SNMP-SSH-TM-MIB")).join(".")).toBe("1.3.6.1.2.1.191");
   });
 
   test("a withheld row's reason names the module and its root and nothing below it", () => {
-    const community = SNMP_WITHHELD_SUBTREES[5];
+    const community = SNMP_WITHHELD_SUBTREES[10];
     expect(withheldReason(community)).toBe(
       "SNMP-COMMUNITY-MIB (1.3.6.1.6.3.18) is withheld from agent mode: it holds the community strings and the security names they map to, so no value or instance of it is read or answered.",
     );
@@ -82,23 +108,34 @@ describe("what is admitted", () => {
     expect(readSnmpAgentStatement("next 1.3.6.1.6.3.17").ok).toBe(true);
   });
 
-  test("a walk carries the console's max-repetitions, narrowed by limit", () => {
+  test("a walk carries the console's max-repetitions, a limit narrowing the first request's and capping no rows", () => {
     expect(readSnmpAgentStatement("walk ifTable")).toEqual({
       ok: true,
       plan: { command: "walk", subtree: [1, 3, 6, 1, 2, 1, 2, 2], maxRepetitions: MAX_REPETITIONS_CAP },
     });
-    expect(readSnmpAgentStatement("walk 1.3.6.1.2.1 limit 7", 100)).toEqual({
+    expect(readSnmpAgentStatement("walk 1.3.6.1.2.1 limit 7")).toEqual({
       ok: true,
       plan: { command: "walk", subtree: [1, 3, 6, 1, 2, 1], maxRepetitions: 7 },
     });
   });
 
-  test("a table, and walks beside the withheld subtrees that reach none of them", () => {
+  test("a table, walks beside the withheld subtrees, and walks covering them, which step over them", () => {
     expect(readSnmpAgentStatement("table ifTable")).toEqual({
       ok: true,
       plan: { command: "table", table: [1, 3, 6, 1, 2, 1, 2, 2], maxRepetitions: MAX_REPETITIONS_CAP },
     });
-    for (const subtree of ["1.3.6.1.6.3.10", "1.3.6.1.6.3.17", "1.3.6.1.6.3.1", "1.3.6.1.4.1", "1.3.6.1.6.3.180"]) {
+    const beside = ["1.3.6.1.6.3.10", "1.3.6.1.6.3.17", "1.3.6.1.6.3.1", "1.3.6.1.6.3.180", "1.3.6.1.4.1.8072.1.10"];
+    const covering = [
+      "1.3",
+      ".1.3.6",
+      "1.3.6.1.6",
+      "1.3.6.1.6.3",
+      "snmpModules",
+      "1.3.6.1.4.1",
+      "1.3.6.1.2.1",
+      "mib-2",
+    ];
+    for (const subtree of [...beside, ...covering]) {
       expect(readSnmpAgentStatement(`walk ${subtree}`).ok).toBe(true);
     }
   });
@@ -128,26 +165,30 @@ describe("what is refused before anything is sent", () => {
     );
     expect(refusedWith("get snmpCommunityName.1").message).toContain("snmpCommunityName");
     expect(refusedWith("walk 1.3 limit 0").code).toBe("request");
+    for (const text of ["walk 1", "table .1", "get 1", "next 1.3 2"]) {
+      expect(refusedWith(text).message).toBe(
+        `an object identifier is sent with at least two sub-identifiers, such as 1.3. ${SNMP_AGENT_SENTENCES.reads} Nothing was sent.`,
+      );
+    }
     expect(refusedWith("walk 1.3.6.1.2.1 extra").code).toBe("request");
   });
 
-  test("a walk limit above the request's row budget is the console's own refusal", () => {
-    expect(refusedWith("walk 1.3.6.1.2.1 limit 4", 3).message).toStartWith(
-      "`limit` is above this walk's row budget of 3. ",
+  test("a walk limit is read under the console's walk budget whatever the run's row budget, so admission and provider agree", () => {
+    expect(readSnmpAgentStatement("walk 1.3.6.1.2.1 limit 600").ok).toBe(true);
+    expect(refusedWith("walk 1.3.6.1.2.1 limit 5001").message).toStartWith(
+      "`limit` is above this walk's row budget of 5000. ",
     );
   });
 
-  test("a walk or table of any root above the withheld subtrees, or inside one, is refused by prefix", () => {
+  test("a walk or table inside a withheld subtree, or of its root, is refused by prefix", () => {
     const cases: Array<[string, string]> = [
-      ["walk 1", "SNMP-TARGET-MIB"],
-      ["walk .1.3.6", "SNMP-TARGET-MIB"],
-      ["walk 1.3.6.1.6", "SNMP-TARGET-MIB"],
-      ["walk 1.3.6.1.6.3", "SNMP-TARGET-MIB"],
-      ["walk snmpModules", "SNMP-TARGET-MIB"],
       ["walk 1.3.6.1.6.3.18", "SNMP-COMMUNITY-MIB"],
       ["walk .1.3.6.1.6.3.16.1.2", "SNMP-VIEW-BASED-ACM-MIB"],
       ["table 1.3.6.1.6.3.15.1.2.2", "SNMP-USER-BASED-SM-MIB"],
-      ["table 1.3.6.1.6.3", "SNMP-TARGET-MIB"],
+      ["walk 1.3.6.1.4.1.8072.1.9", "NET-SNMP-VACM-MIB"],
+      ["table .1.3.6.1.4.1.8072.1.9.1.1", "NET-SNMP-VACM-MIB"],
+      ["walk 1.3.6.1.2.1.198.2", "SNMP-TLS-TM-MIB"],
+      ["walk 1.3.6.1.3.101", "SNMP-USM-DH-OBJECTS-MIB"],
     ];
     for (const [text, module] of cases) {
       const reading = refusedWith(text);
@@ -156,7 +197,13 @@ describe("what is refused before anything is sent", () => {
       expect(reading.message.endsWith(`${SNMP_AGENT_SENTENCES.reads} Nothing was sent.`)).toBe(true);
     }
     expect(refusedWith("walk 1.3.6.1.6.3.18.1.1.1.2.1").message).toStartWith(
-      "A walk of 1.3.6.1.6.3.18.1.1.1.2.1 would read inside SNMP-COMMUNITY-MIB (1.3.6.1.6.3.18), which holds the community strings and the security names they map to and is withheld from agent mode, so the walk is refused rather than read; walk a subtree that does not reach it, such as mib-2 (1.3.6.1.2.1) or one of its groups.",
+      "A walk of 1.3.6.1.6.3.18.1.1.1.2.1 would read inside SNMP-COMMUNITY-MIB (1.3.6.1.6.3.18), which holds the community strings and the security names they map to and is withheld from agent mode, so the walk is refused rather than read; walk a subtree outside it, such as mib-2 (1.3.6.1.2.1) or one of its groups.",
     );
+  });
+
+  test("the agent's list of commands names every withheld module before anything counts them, and no limit", () => {
+    for (const entry of SNMP_WITHHELD_SUBTREES) expect(SNMP_WITHHELD_MODULES_TEXT).toContain(entry.module);
+    expect(SNMP_AGENT_SENTENCES.reads).toContain(SNMP_WITHHELD_MODULES_TEXT);
+    expect(SNMP_AGENT_SENTENCES.reads).not.toContain("limit");
   });
 });

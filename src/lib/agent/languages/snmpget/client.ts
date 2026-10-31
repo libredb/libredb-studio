@@ -11,7 +11,7 @@ import type { AgentLanguageClientPack, StatementBudgets } from "../pack";
 /**
  * Agent mode on SNMP: the boundary is the provider's structural closed table, a client that holds Get, GetNext and
  * GetBulk alone behind the valve that refuses every other PDU. Its answers carry the device's values, never anything
- * of the six withheld security and target modules.
+ * of the withheld security modules, which the body names before anything counts them.
  */
 function snmpgetReadsPosture(bounds: StatementBudgets): AgentPosture {
   const rows = bounds.maxResultRows;
@@ -19,9 +19,9 @@ function snmpgetReadsPosture(bounds: StatementBudgets): AgentPosture {
   return {
     tone: "reads",
     headline: "Reads only",
-    qualifier: `${rows} rows and ${seconds} s per read, over a client that sends only Get, GetNext and GetBulk, with the security and target modules withheld`,
+    qualifier: `${rows} rows and ${seconds} s per read, over a client that sends only Get, GetNext and GetBulk, with the SNMP security modules withheld`,
     title: "Agent mode reads the SNMP agent's values with get, next, walk and table, and never writes",
-    body: `Agent mode runs SNMP reads it wrote itself, each one of the console's four commands, get, next, walk and table, and answers the device's values as the console renders them, text shown only when it is showable and bytes otherwise in hex, bounded to ${rows} rows and ${seconds} seconds each and refused past them rather than cut. Six modules are withheld, because they hold community strings, user names and access rules: SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB; an object inside one is answered withheld and never asked for, and a walk that would reach one is refused. Studio's agent client holds only the Get, GetNext and GetBulk requests, and every datagram passes a check that refuses any other, so it cannot send a Set or a notification. The community never reaches an answer. Nothing reaches your editor.`,
+    body: `Agent mode runs SNMP reads it wrote itself, each one of the console's four commands, get, next, walk and table, and answers the device's values as the console renders them, text shown only when it is showable and bytes otherwise in hex, bounded to ${rows} rows and ${seconds} seconds each and refused past them rather than cut. Withheld, because they hold community strings, user names, keys and access rules, are SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB, SNMP-COMMUNITY-MIB, SNMP-SSH-TM-MIB, SNMP-TSM-MIB, SNMP-TLS-TM-MIB, SNMP-USM-DH-OBJECTS-MIB and Net-SNMP's NET-SNMP-VACM-MIB; an object inside one is answered withheld and never asked for, a walk that covers one steps over it and names it, and a walk inside one is refused. Studio's agent client holds only the Get, GetNext and GetBulk requests, and every datagram passes a check that refuses any other, so it cannot send a Set or a notification. The community never reaches an answer. Nothing reaches your editor.`,
   };
 }
 
@@ -32,7 +32,7 @@ export const SNMPGET_CLIENT_PACK = Object.freeze({
     noun: "command",
     argument: "statement",
     writes:
-      "every Set and notification, and every read of the security and target modules that hold community strings, user names and access rules",
+      "every Set and notification, and every read of the security modules that hold community strings, user names, keys and access rules",
     reached: "the agent",
     defect: "your command",
     adviceKeys: Object.freeze([]),

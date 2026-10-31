@@ -10,14 +10,17 @@
  * WHAT IS WITHHELD. An identifier inside one of the withheld subtrees (`SNMP_WITHHELD_SUBTREES`) is never sent: a `get`
  * or a `next` naming one answers a row naming the subtree's root, typed `withheld`, with no value, and a warning
  * saying why. A `next` whose answer lands inside one answers the same row, never the identifier the agent sent back,
- * whose instance suffix can encode a community or a user name, and never its value. The reader refuses every walk and
- * table that could reach one, so a walk's answers never lie inside one; a varbind that did would refuse the read as a
- * defect here rather than reach an answer.
+ * whose instance suffix can encode a community or a user name, and never its value. A `walk` or a `table` steps over
+ * every withheld subtree its own subtree contains: the agent's answer is read only up to the first object inside one,
+ * the next GetBulk starts past that subtree's root (`resumeAfter`), so no request ever starts inside one, and the
+ * answer warns every subtree the walk contains, whether or not this agent holds it, so the warning tells the model
+ * nothing about the device. The reader refuses a walk or table that lies inside one before anything is sent.
  *
- * Budgets refuse rather than cut: a walk or a table past the row budget, the request's time budget or the walk's
- * request and byte bounds is refused, and so is a walk the agent left unfinished (silence, an empty answer, or an
- * answer that did not move forward), since a part of a subtree read as the whole of it is the failure the console's
- * walk names. Nothing of one read is kept for the next.
+ * Budgets refuse rather than cut: a walk past the row budget, a table holding more rows than it, a read past the
+ * request's time budget and a walk past the console's request and byte bounds are refused, and so is a walk the
+ * agent left unfinished (an empty answer, or an answer that did not move forward), since a part of a subtree read as
+ * the whole of it is the failure the console's walk names. A refusal of Studio's own budget is worded as Studio's:
+ * silence is named only when the agent answered nothing at all. Nothing of one read is kept for the next.
  */
 import { QueryError } from "@/lib/db/errors";
 import {
@@ -29,13 +32,20 @@ import {
 } from "@/lib/db/providers/sql/read-only-budget";
 import type { QueryResult, QueryWarning, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { SnmpAgentClient } from "./agent-client";
-import { type SnmpAgentPlan, type SnmpWithheldSubtree, withheldReason, withheldSubtreeOf } from "./agent-statement";
+import {
+  resumeAfter,
+  type SnmpAgentPlan,
+  type SnmpWithheldSubtree,
+  withheldReason,
+  withheldSubtreeOf,
+  withheldWithin,
+} from "./agent-statement";
 import { failureFromStatus, type SnmpFailure } from "./errors";
 import type { Response, ResponseVarbind } from "./message";
 import { isWithinSubtree } from "./objects";
-import { startWalk, stepWalk, type WalkEnd, type WalkState } from "./read";
+import { budgetSpent, startWalk, stepWalk, type WalkEnd, type WalkState } from "./read";
 import { EXCEPTION_TAGS, syntaxFromTag, tableRows, toWalkVarbind } from "./rows";
-import { DEFAULT_WALK_BUDGET, type WalkBudget } from "./statement";
+import { DEFAULT_WALK_BUDGET, MAX_REPETITIONS_CAP, type WalkBudget } from "./statement";
 import { renderValue } from "./values";
 
 const SNMP_TYPE = "snmp";
@@ -65,8 +75,12 @@ export const SNMP_AGENT_FAILURE_SENTENCES = {
     `The ${command} was not answered: ${why}, so the agent's answer is part of the subtree at most, and Studio refuses it rather than answering a part as the whole.`,
   walkBound: (command: string, bound: string): string =>
     `Read-only execution exceeded the ${command}'s ${bound} bound before the subtree ended, so the ${command} was refused rather than answered in part; walk a narrower subtree.`,
-  insideWithheld:
-    "The agent answered a walk with an object inside a withheld subtree, which a walk the reader admitted cannot reach, so the read was refused and nothing of it is answered.",
+  /** Studio's time budget ran out on a walk or table whose every step the agent answered. */
+  walkTime: (command: string, ms: number): string =>
+    `${TIME_BUDGET_PREFIX}: the agent was still answering the ${command} after ${ms}ms, Studio's time budget for one read, so the ${command} was refused rather than answered in part; walk a narrower subtree.`,
+  /** Studio's time budget ran out on a read the agent had answered at least once. */
+  deadline: (ms: number): string =>
+    `${TIME_BUDGET_PREFIX}: the read did not finish within ${ms}ms, Studio's time budget for one read, while the agent was still answering, so it was refused rather than answered in part; ask for less in one read, such as a narrower subtree.`,
   tableOverRows: (rows: number, allowed: number): string =>
     `${ROW_BUDGET_PREFIX}: the table holds at least ${rows} rows and the row budget is ${allowed}, so it is refused rather than cut; read one column with walk, or name instances with get.`,
 } as const;
@@ -166,7 +180,7 @@ function walkEndRefusal(command: string, end: WalkEnd, rows: number, budget: Rea
   if (end.reason === "subtree") return "";
   if (end.reason === "budget") {
     if (end.budget === "rows") return rowBudgetSentence(rows, budget.maxResultRows);
-    if (end.budget === "wallMs") return F.silence(budget.statementTimeoutMs);
+    if (end.budget === "wallMs") return F.walkTime(command, budget.statementTimeoutMs);
     return F.walkBound(command, end.budget === "requests" ? "request" : "inbound byte");
   }
   if (end.reason === "notForward") return F.walkIncomplete(command, "the agent's answers did not move forward");
@@ -175,11 +189,24 @@ function walkEndRefusal(command: string, end: WalkEnd, rows: number, budget: Rea
   return F.walkIncomplete(command, "the agent answered a step with no objects");
 }
 
+/** The walk's state after one more request that read nothing it keeps. */
+const chargedStep = (state: WalkState): WalkState => ({ ...state, requests: state.requests + 1 });
+
+/** A table row's index, as `tableRows` keys it, or undefined for a varbind that is no table cell. */
+function tableIndexOf(subtree: readonly number[], varbind: ResponseVarbind): string | undefined {
+  const rest = varbind.oid.slice(subtree.length);
+  return EXCEPTION_TAGS[varbind.tag] === undefined && rest.length >= 2 ? rest.slice(1).join(".") : undefined;
+}
+
 /**
  * A `walk` or a `table`: GetBulk steps under the console's walk state machine (`stepWalk`), every answered varbind
  * past the subtree dropped as the console drops it. A walk's row bound is one past the row budget, so a subtree of
- * exactly the budget is answered and one row more is refused; a table's is the console's varbind bound, and its rows
- * are refused past the row budget once the table is built.
+ * exactly the budget is answered and one row more is refused. A table is bounded by its rows, the indexes it has
+ * read, refused as soon as it holds one more than the row budget, so a wide table of few rows is answered; the
+ * console's request, byte and time bounds hold both.
+ *
+ * Each answer is read up to the first object inside a withheld subtree; nothing of that object or after it is kept,
+ * the step is charged to the budgets like any other, and the next GetBulk starts past the subtree's root.
  */
 async function readSubtree(
   client: SnmpAgentClient,
@@ -191,38 +218,61 @@ async function readSubtree(
 ): Promise<SnmpAgentAnswer> {
   const bounds: WalkBudget = {
     ...DEFAULT_WALK_BUDGET,
-    rows: command === "walk" ? budget.maxResultRows + 1 : DEFAULT_WALK_BUDGET.rows,
+    rows: command === "walk" ? budget.maxResultRows + 1 : Number.POSITIVE_INFINITY,
     wallMs: budget.statementTimeoutMs,
   };
   const scoped: ResponseVarbind[] = [];
+  const indexes = new Set<string>();
   let state: WalkState = startWalk(now());
   let from: readonly number[] = subtree;
   let repetitions = maxRepetitions;
   for (;;) {
     // oxlint-disable-next-line no-await-in-loop -- each step asks from where the one before it ended.
     const answer = answered(await client.getBulk(from, repetitions), budget.statementTimeoutMs);
-    for (const varbind of answer.varbinds) {
+    // The first object past the subtree ends the walk, and the first inside a withheld subtree ends what is read.
+    const cut = answer.varbinds.findIndex(
+      (varbind) => !isWithinSubtree(subtree, varbind.oid) || withheldSubtreeOf(varbind.oid) !== undefined,
+    );
+    // An object past the subtree ends the walk even when it lies inside a withheld subtree: it is dropped either way.
+    const at = cut === -1 ? undefined : answer.varbinds[cut].oid;
+    const landed = at === undefined || !isWithinSubtree(subtree, at) ? undefined : withheldSubtreeOf(at);
+    const read = cut === -1 ? answer.varbinds : answer.varbinds.slice(0, landed === undefined ? cut + 1 : cut);
+    for (const varbind of read) {
       if (!isWithinSubtree(subtree, varbind.oid)) break;
-      if (withheldSubtreeOf(varbind.oid) !== undefined) fail(F.insideWithheld);
       scoped.push(varbind);
+      const index = command === "table" ? tableIndexOf(subtree, varbind) : undefined;
+      if (index !== undefined) indexes.add(index);
+      if (indexes.size > budget.maxResultRows) fail(F.tableOverRows(indexes.size, budget.maxResultRows));
     }
-    const step = stepWalk(subtree, bounds, state, answer.varbinds.map(toWalkVarbind), now());
-    state = step.state;
-    if (step.kind === "stop") {
-      const refusal = walkEndRefusal(command, step.end, state.rows, budget);
-      if (refusal !== "") fail(refusal);
-      break;
+    if (landed !== undefined && read.length === 0) {
+      // An answer that opens inside a withheld subtree is read as nothing, and the step is charged all the same.
+      state = chargedStep(state);
+      const spent = budgetSpent(state, bounds, now());
+      if (spent !== undefined)
+        fail(walkEndRefusal(command, { reason: "budget", complete: false, budget: spent }, state.rows, budget));
+    } else {
+      const step = stepWalk(subtree, bounds, state, read.map(toWalkVarbind), now());
+      state = step.state;
+      if (step.kind === "stop") {
+        const refusal = walkEndRefusal(command, step.end, state.rows, budget);
+        if (refusal !== "") fail(refusal);
+        break;
+      }
+      from = step.request.oids[0];
+      repetitions = step.request.maxRepetitions as number;
     }
-    from = step.request.oids[0];
-    repetitions = step.request.maxRepetitions as number;
+    if (landed !== undefined) {
+      from = resumeAfter(landed);
+      repetitions = MAX_REPETITIONS_CAP;
+    }
   }
+  const withheld = withheldWithin(subtree);
   if (command === "table") {
     const rows = tableRows(subtree, scoped);
-    if (rows.length > budget.maxResultRows) fail(F.tableOverRows(rows.length, budget.maxResultRows));
-    return { fields: rows.length === 0 ? ["index"] : Object.keys(rows[0]), rows, withheld: [] };
+    return { fields: rows.length === 0 ? ["index"] : Object.keys(rows[0]), rows, withheld };
   }
   const rows = scoped.filter((varbind) => EXCEPTION_TAGS[varbind.tag] === undefined).map(rendered);
-  return { fields: ["object", "value", "type"], rows, withheld: [] };
+  return { fields: ["object", "value", "type"], rows, withheld };
 }
 
 /** The answer of one admitted read, through the agent's client alone. */
@@ -240,6 +290,39 @@ export async function runSnmpAgentRead(
       return readSubtree(client, "walk", plan.subtree, plan.maxRepetitions, budget, now);
     case "table":
       return readSubtree(client, "table", plan.table, plan.maxRepetitions, budget, now);
+  }
+}
+
+/**
+ * The answer of one admitted read, raced against the request's time budget as a whole. When the budget runs out, the
+ * refusal is silence only if the agent answered nothing at all in this read; once it has answered, the refusal is
+ * Studio's own time budget, since the agent was answering when Studio stopped asking.
+ */
+export async function runSnmpAgentReadWithin(
+  client: SnmpAgentClient,
+  plan: SnmpAgentPlan,
+  budget: ReadOnlyStatementBudget,
+  now: () => number = Date.now,
+): Promise<SnmpAgentAnswer> {
+  const ms = budget.statementTimeoutMs;
+  let heard = false;
+  const note = (answer: Response | SnmpFailure): Response | SnmpFailure => {
+    if ("varbinds" in answer) heard = true;
+    return answer;
+  };
+  const tracked: SnmpAgentClient = {
+    get: async (oids) => note(await client.get(oids)),
+    getNext: async (oids) => note(await client.getNext(oids)),
+    getBulk: async (oid, maxRepetitions) => note(await client.getBulk(oid, maxRepetitions)),
+  };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new SnmpAgentError(heard ? F.deadline(ms) : F.silence(ms))), ms);
+  });
+  try {
+    return await Promise.race([runSnmpAgentRead(tracked, plan, budget, now), deadline]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 

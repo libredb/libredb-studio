@@ -6,18 +6,18 @@ import { UNAVAILABLE_TEXT } from "../../tool-contracts";
 import type { AgentRunWorkflowType } from "../../types";
 import type { AgentLanguageGrounding, AgentLanguageServerPack } from "../pack";
 import { OPERATIONS_TOOL_RULE } from "../shared";
+import { SNMP_WITHHELD_MODULES_TEXT } from "@/lib/db/providers/network/snmp/agent-statement";
 import { SNMPGET_ADAPTER } from "./adapter";
 import { SNMPGET_TOOL_OVERRIDES } from "./definitions";
 
-/** Why the six modules are withheld, the same words in the rule, the grounding advice and the ungrounded note. */
-const WITHHELD =
-  "The security and target modules under 1.3.6.1.6.3 (SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB) are withheld from agent mode, since they hold community strings, user names and access rules: nothing of them is read or answered.";
+/** Which modules are withheld and why, the same words in the rule, the grounding advice and the ungrounded note. */
+const WITHHELD = `Withheld from agent mode are ${SNMP_WITHHELD_MODULES_TEXT}, since they hold community strings, user names, keys and access rules: nothing of them is read or answered.`;
 
 const SNMPGET_WORKFLOW_TOOL_RULES: Readonly<Partial<Record<AgentRunWorkflowType, string>>> = Object.freeze({
   investigation: [
     "Read the agent with run_read_query, one console command at a time on one line: get OID [OID ...] for named instances, next OID for the instance after one, walk SUBTREE for every instance under a subtree, and table ENTRY for a conceptual table's rows, named by its entry (table ifEntry).",
     "Name an object as the inventory names it, or numerically, and walk the narrowest subtree that answers the question, such as one column (walk ifDescr) or one group (walk system), since a walk or table holding more instances than the row budget is refused rather than cut.",
-    `${WITHHELD} A get or next landing inside one answers a row typed withheld, and a walk or table reaching one, such as walk 1, is refused; walk mib-2 (1.3.6.1.2.1) or the enterprise subtree (1.3.6.1.4.1) instead.`,
+    `${WITHHELD} A get or next landing inside one answers a row typed withheld; a walk or table covering one, such as walk mib-2 (1.3.6.1.2.1) or walk 1.3.6.1.4.1, steps over it and names it in a warning; and a walk or table inside one is refused.`,
     "Values are the device's own readings, answered as the console renders them, and the inventory lists what the bundled MIB modules define, not what this agent serves, so a listed table may hold no rows here.",
     "Report what the evidence supports, and nothing further.",
   ].join(" "),

@@ -42,6 +42,13 @@ interface Capture {
     readonly rawReadsBetween: number;
   };
   readonly reads: ReadonlyArray<{ readonly statement: string; readonly rowCount?: number; readonly refused?: string }>;
+  readonly steppedOver: ReadonlyArray<{
+    readonly statement: string;
+    readonly rowCount?: number;
+    readonly refused?: string;
+    readonly warned: readonly string[];
+    readonly insideWithheld: number;
+  }>;
   readonly overBudget: { readonly refused: string; readonly message: string };
   readonly agentPathSentNoSet: { readonly snmpInSetRequestsAtStart: number; readonly snmpInSetRequestsAtEnd: number };
 }
@@ -102,13 +109,18 @@ describe("the capture", () => {
         expect(entry.rows?.every((row) => (row as { type: string }).type === "withheld")).toBe(true);
       } else {
         expect(entry.refused).toBe("RefusedBeforeSendError");
-        expect(readSnmpAgentStatement(entry.statement, 50).ok).toBe(false);
+        expect(readSnmpAgentStatement(entry.statement).ok).toBe(false);
       }
     }
   });
 
   test("the withheld subtrees answered raw, and on this fixture none carries the community", () => {
     expect(CAPTURE.withheld.map((entry) => entry.root)).toEqual([
+      "1.3.6.1.2.1.189",
+      "1.3.6.1.2.1.190",
+      "1.3.6.1.2.1.198",
+      "1.3.6.1.3.101",
+      "1.3.6.1.4.1.8072.1.9",
       "1.3.6.1.6.3.12",
       "1.3.6.1.6.3.13",
       "1.3.6.1.6.3.14",
@@ -120,6 +132,8 @@ describe("the capture", () => {
     expect(CAPTURE.withheld.find((entry) => entry.module === "SNMP-VIEW-BASED-ACM-MIB")?.raw.instances).toBeGreaterThan(
       0,
     );
+    // So does Net-SNMP's own access table, indexed by group name, under the enterprise subtree.
+    expect(CAPTURE.withheld.find((entry) => entry.module === "NET-SNMP-VACM-MIB")?.raw.instances).toBeGreaterThan(0);
     for (const entry of CAPTURE.withheld) {
       expect(entry.raw.carriesCommunity).toBe(false);
       expect(entry.raw.suffixSpellsCommunity).toBe(false);
@@ -130,6 +144,18 @@ describe("the capture", () => {
     for (const entry of CAPTURE.reads)
       expect(`${entry.statement}: ${entry.refused ?? "answered"}`).toBe(`${entry.statement}: answered`);
     expect(CAPTURE.overBudget.refused).toBe("SnmpAgentError");
+    const framework = CAPTURE.reads.find((entry) => entry.statement === "walk 1.3.6.1.6.3");
+    expect(framework?.rowCount).toBeGreaterThan(0);
+  });
+
+  test("a walk of the enterprise subtree steps over Net-SNMP's access table: none of it answered, its reason warned", () => {
+    expect(
+      CAPTURE.steppedOver.map((entry) => [entry.statement, entry.refused, entry.warned, entry.insideWithheld]),
+    ).toEqual([
+      ["walk 1.3.6.1.4.1.8072.1", undefined, ["NET-SNMP-VACM-MIB"], 0],
+      ["walk 1.3.6.1.4.1", undefined, ["NET-SNMP-VACM-MIB"], 0],
+    ]);
+    for (const entry of CAPTURE.steppedOver) expect(entry.rowCount).toBeGreaterThan(0);
     expect(CAPTURE.overBudget.message).toStartWith("Read-only execution exceeded the row budget: ");
   });
 });
