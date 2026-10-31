@@ -2053,7 +2053,7 @@ at least the longest deadline it wants to serve, and a stream cut mid-run has no
 | `maxConcurrentExecutions` | 1 | The loop is sequential; a run cannot fan out — and a second consequence rides on the same 1: a failed statement's recorded span is a DELTA over the run's charged total, so an execution in flight alongside it would have its time attributed to whichever one failed. |
 | One model call | 90 s | Whichever of this and the run's remaining time is smaller applies. Not per workflow: how long one request may hang is a property of the transport, not of the question. |
 | Repair attempts | 3 | Statements that failed **at the database**, and statements a provider's fence or the run read allowance refused before sending. |
-| Billed reads | 10,000 per run | Every budget-taking read the run hands a provider (statements, `readCatalogReadOnly`, the cluster readings), grounding and sampling statements included, on an engine that bills each read; carried across resumes; no engine charges it yet. |
+| Billed reads | 10,000 per run | Every budget-taking read the run hands a provider (statements, `readCatalogReadOnly`, the cluster readings), grounding and sampling statements included, on an engine that bills each read; carried across resumes; Firestore is the one engine that charges it. |
 
 The statement budget, the database time and the wall clock are enforced through the policy the run's
 workflow names, and the version carries the workflow so a recorded deny code traces back to the

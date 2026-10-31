@@ -636,7 +636,7 @@ Each agent-mode path reads this much:
 | Path | Handle | What it reads |
 | --- | --- | --- |
 | Investigation reads | agent read-only profile | one read of [section 15.2](#152-what-an-agent-statement-may-be)'s table, projected as above |
-| Investigation grounding, plan-mode grounding and the operations workflow | either agent profile | root collection ids, each with `__name__` as its one column, from three charged id listings; the document kind is refused with its reason and the walk skips it, since the Keys panel enumerates it; a walk whose read carries no allowance sends nothing, and the kind carries its reason into the run's grounding |
+| Investigation grounding, plan-mode grounding and the operations workflow | either agent profile | root collection ids, each with `__name__` as its one column, from three charged id listings (the count, the listing and the bulk describe); the walk never asks for the document kind, since the Keys panel enumerates it (`enumeratedBy: "key-browser"`), so the grounding names no document kind and carries no reason for one, and the run is told that document ids, field names and values are withheld by `run_read_query`'s description and the investigation rule in agent mode and by the `statementLanguage` label in plan mode; `listObjects` asked for the document kind directly refuses it with its reason; a walk whose read carries no allowance sends nothing, and the collection kind carries that reason into the run's grounding |
 | Field expand, Keys panel, Source tab, console | either agent profile | nothing: each is refused with its reason |
 | Operations readings | operations profile | health from the connect probe, its size the reason Firestore reports none, and every other reading its reason, never an empty reading |
 

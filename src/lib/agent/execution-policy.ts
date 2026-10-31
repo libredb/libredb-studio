@@ -383,7 +383,7 @@ export const AGENT_WORKFLOW_BUDGETS: Readonly<Record<AgentRunWorkflowType, Agent
  *
  * Each settled step records what the run has spent, and a resumed drive opens its allowance with that figure, so a
  * resume continues the run's allowance rather than starting a fresh one, as the statement count and the database time
- * do. An engine that charges it reads it off the budget it is handed; no engine charges it yet.
+ * do. An engine that charges it reads it off the budget it is handed; Firestore is the one engine that charges it.
  */
 export const AGENT_RUN_READ_ALLOWANCE = 10_000;
 
