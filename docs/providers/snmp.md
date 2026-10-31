@@ -281,6 +281,7 @@ So no Set, notification or Response can be sent on the agent path; a GetBulk car
 
 A v2c community cannot be proved read-only from the client.
 Measured raw (`rawSet`), a Set with the fixture's read-only community is refused by the agent with `noAccess`; the agent path's own reads leave the agent's `snmpInSetRequests` where it was (`agentPathSentNoSet`).
+That counter is no witness on its own: `run.sh` sends the refused raw Set before the capture reads it, and it still reads 0, so Net-SNMP does not count a Set it refuses `noAccess`, and the evidence that the agent path sends no Set is the closed table and the `snmpInPkts` count below.
 The rights of a community live in the view-based access control tables, which are among the withheld modules below, so neither a credential nor a proof read is the boundary: the table is.
 Every statement the reader refuses, and every `get` or `next` of a withheld identifier, reaches the agent not at all: its `snmpInPkts`, read raw before and after them, moved by the one read after them alone (`notSentReachedNothing`).
 
