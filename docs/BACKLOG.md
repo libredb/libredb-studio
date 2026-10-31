@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B160 · 88
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B160 · 87
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -8719,15 +8719,6 @@ Kept so that key-name and value exposure and MCP exposure are decisions of their
 Found 2026-10-27 while designing read-only agent and MCP execution for every provider; narrowed 2026-10-30 when agent mode joined etcd.
 
 **Done when:** the owner rules on whether agent mode may read key names and which values it may read on etcd and how they are redacted, the `etcdctl` pack offers the workflows that ruling opens, a per-engine exposure ruling opens MCP for etcd, the pack declares its MCP facet (`src/lib/agent/languages/etcdctl/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same proof and projection, and `MCP_EXPOSABLE.etcd` and `MCP_STATEMENT_READ.etcd` are true, with tests that every MCP answer carries no value; cited in `docs/AGENT.md`.
-
-### B138. NETCONF has no agent execution and no MCP surface
-
-`MCP_EXPOSABLE.netconf` is false and the provider implements no `queryReadOnly`, so agent execution and every MCP tool refuse a NETCONF connection.
-Its agent PR waits on prerequisite hardening work.
-
-Found 2026-10-27 while designing read-only agent and MCP execution for every provider.
-
-**Done when:** the prerequisite hardening has landed, the provider implements `queryReadOnly` over a closed read-operation table with a test that pins it, and joins `AGENT_EXECUTION_ENGINES`; MCP stays closed until a per-engine exposure ruling opens it; cited in `docs/AGENT.md`.
 
 ### B140. ClickHouse is offered profile_table and compare_plans with nothing to read them by
 
