@@ -811,12 +811,13 @@ Samples, label values, rule and target state are the server's monitoring data, s
 On every handle opened for an agent-mode profile the transport is wrapped by the projection, so the object surface, the grounding walk and the monitoring readings read its answers and nothing else:
 
 - The server's command-line flags are withheld whole, before anything is sent: they carry file paths, listen addresses, URLs and local configuration (the capture lists 73 flag names, `config.file`, `storage.tsdb.path` and `web.external-url` among them). The overview, which reads its connection ceiling from them, is withheld with that reason.
-- Every URL a target, a rule or an alert carries keeps only its scheme, host, port and path, followed by `[userinfo, query string and fragment withheld]` when it lost any of them: a target's scrape URL and last error, every label and discovered label, a rule's expression, labels and last error, and an alert's labels and annotations. A URL that does not parse is withheld whole. An address written with userinfo (`user:password@host:port`) keeps its host and port.
+- Every URL a target, a rule, an alert or a PromQL answer carries keeps only its scheme, host, port and path, followed by `[userinfo, query string and fragment withheld]` when it lost any of them: a target's scrape URL and last error, every label and discovered label, a rule's expression, labels and last error, an alert's labels and annotations, and every label of a series a PromQL answer carries. An address written with userinfo (`user:password@host:port/path`) keeps its host, port and path, and a URL with no scheme (`//host/path`) its host and path, never a query string or a fragment. A URL that does not parse, and a word whose `://` has no scheme in front of it, are withheld whole.
 - Every scrape parameter among a target's discovered labels (`__param_<name>`) is withheld.
 
 Measured raw, a target with a token parameter carries it in its scrape URL, its global URL, its last error and as `__param_token`, and a target whose address holds userinfo carries it in `__address__` and `instance` (and, on VictoriaMetrics, in its scrape URL) (`rawTargets`); the agent's target names carry neither (`surfaces.targets`).
 The projection runs on the decoded answer, so a target's path segment, its scrape URL and a digest of its labels, is built from the projected answer and carries nothing withheld, not even as a digest.
-What it does not reach is a PromQL answer: a series keeps the labels the server stores, so an `instance` built from an address with userinfo, or an alert label holding a URL, is answered as stored on the query path, and a model could select it by a matcher; that is a residual recorded in [B161](../BACKLOG.md#b161-prometheuss-agent-reads-withhold-the-flags-and-url-secrets-and-it-has-no-mcp-statement-read).
+A PromQL answer's labels are projected the same way, so `up` names a target whose address holds userinfo by its host and port.
+What the projection cannot reach is a label value an expression rewrites (`label_replace`) so that it no longer reads as a URL or an address, and a matcher that selects on a stored value; both stay with what the server stores, a residual recorded in [B161](../BACKLOG.md#b161-prometheuss-agent-reads-withhold-the-flags-and-url-secrets-and-it-has-no-mcp-statement-read).
 
 ### 14.4 Values, and what each path reads
 
@@ -824,7 +825,7 @@ What it does not reach is a PromQL answer: a series keeps the labels the server 
 | --- | --- | --- |
 | Investigation and data-analysis reads | agent read-only profile | one expression of [section 14.2](#142-what-an-agent-read-may-be) |
 | Investigation grounding, plan-mode grounding and the operations workflow's inventory | either agent profile | the metric names of the last hour with their label names, the rule groups and rules, and the scrape pools and targets, by name, through the projection; the series' label sets are read to learn their label names, and the names alone are kept |
-| Health, storage and table readings | either agent profile | the server's own answers, as on an editor handle, never the flags |
+| Health, storage and table readings | either agent profile | the server's own answers, as on an editor handle, never the flags; the server publishes no byte count, and the storage and table readings' shape requires one, so each byte figure is a 0 with the text beside it saying it is a placeholder, not a measurement |
 | Console, overview, performance, slow-query, session and index readings | either agent profile | nothing: each is refused with its reason, never answered with Studio's own figures or an empty reading |
 
 ### 14.5 Agent language pack

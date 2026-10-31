@@ -14,6 +14,8 @@ import {
   projectUrlText,
 } from "@/lib/db/providers/timeseries/prometheus/agent-projection";
 import type {
+  PrometheusAnswer,
+  PrometheusQueryData,
   PrometheusRuleGroup,
   PrometheusTarget,
   PrometheusTransport,
@@ -65,6 +67,36 @@ describe("projectUrlText", () => {
     expect(projectUrlText(`address ${USER}:${SECRET}@localhost:9090: too many colons in address`)).toBe(
       `address localhost:9090: ${MARK} too many colons in address`,
     );
+  });
+
+  test("drops an address's query string and fragment with its userinfo, never only the userinfo", () => {
+    expect(projectUrlText(`${USER}:${SECRET}@localhost:9100/metrics?token=${SECRET}`)).toBe(
+      `localhost:9100/metrics ${MARK}`,
+    );
+    expect(projectUrlText(`${USER}:${SECRET}@localhost:9100/metrics#${SECRET}`)).toBe(`localhost:9100/metrics ${MARK}`);
+    expect(projectUrlText(`${USER}:${SECRET}@localhost:9100/metrics?token=a@${SECRET}`)).toBe(
+      `localhost:9100/metrics ${MARK}`,
+    );
+    expect(projectUrlText(`//${USER}:${SECRET}@localhost/path?token=${SECRET}`)).toBe(`localhost/path ${MARK}`);
+    // A `?` inside what reads as userinfo leaves no address that can be told from it, so nothing of it is kept.
+    expect(projectUrlText(`${USER}:a?${SECRET}@localhost`)).toBe(PROMETHEUS_AGENT_PROJECTION.unreadableUrl);
+  });
+
+  test("projects a protocol-relative URL, and leaves one with nothing to drop as written", () => {
+    expect(projectUrlText(`//localhost/path?token=${SECRET}`)).toBe(`//localhost/path ${MARK}`);
+    expect(projectUrlText(`(//${USER}@localhost:9100/x#${SECRET})`)).toBe(`(//localhost:9100/x ${MARK}`);
+    expect(projectUrlText("//localhost/path")).toBe("//localhost/path");
+    expect(projectUrlText(`//[${SECRET}/x?token=${SECRET}`)).toBe(PROMETHEUS_AGENT_PROJECTION.unreadableUrl);
+  });
+
+  test("withholds a word whose :// has no scheme in front of it, and anything before a URL is projected too", () => {
+    for (const word of [`://${USER}:${SECRET}@h/x?token=${SECRET}`, `1://${USER}:${SECRET}@h/x?token=${SECRET}`]) {
+      expect(projectUrlText(`see ${word}`)).toBe(`see ${PROMETHEUS_AGENT_PROJECTION.unreadableUrl}`);
+    }
+    const projected = projectUrlText(`${USER}:${SECRET}@h/http://example.invalid/a`);
+    expect(projected).not.toContain(SECRET);
+    expect(projected).not.toContain(USER);
+    expect(projected).toEndWith("http://example.invalid/a");
   });
 
   test("leaves text with no URL and no userinfo alone, an e-mail address included", () => {
@@ -224,6 +256,37 @@ describe("projectAgentTransport", () => {
     expect(JSON.stringify(await projected.rules(filter))).not.toContain(SECRET);
     expect(inner.rules).toHaveBeenLastCalledWith(filter);
     expect(JSON.stringify(await projected.rules())).not.toContain(SECRET);
+  });
+
+  test("projects every label of a vector or a matrix answer, and keeps its samples and notices", async () => {
+    const series = {
+      labels: { __name__: "up", instance: `${USER}:${SECRET}@localhost:9090`, link: `http://h/x?token=${SECRET}` },
+      samples: [{ at: 1, value: "1" }],
+      histograms: [],
+    };
+    const notices = [{ level: "warning" as const, message: "kept" }];
+    const answerOf = (value: PrometheusQueryData): Promise<PrometheusAnswer<PrometheusQueryData>> => {
+      const inner = fakeTransport();
+      inner.query = mock(() => Promise.resolve({ value, notices, truncatedByServer: true }));
+      return projectAgentTransport(inner).query("up", { timeoutMs: 1000, seriesLimit: 10 });
+    };
+    const [vector, matrix, scalar] = await Promise.all([
+      answerOf({ shape: "vector", series: [series] }),
+      answerOf({ shape: "matrix", series: [series] }),
+      answerOf({ shape: "scalar", sample: { at: 1, value: "2" } }),
+    ]);
+    const projected = {
+      labels: { __name__: "up", instance: `localhost:9090 ${MARK}`, link: `http://h/x ${MARK}` },
+      samples: [{ at: 1, value: "1" }],
+      histograms: [],
+    };
+    expect(vector).toEqual({ value: { shape: "vector", series: [projected] }, notices, truncatedByServer: true });
+    expect(matrix).toEqual({ value: { shape: "matrix", series: [projected] }, notices, truncatedByServer: true });
+    expect(scalar).toEqual({
+      value: { shape: "scalar", sample: { at: 1, value: "2" } },
+      notices,
+      truncatedByServer: true,
+    });
   });
 
   test("withholds the flags with the reason and never asks the server for them", async () => {

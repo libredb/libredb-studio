@@ -22,4 +22,10 @@ export const PROMETHEUS_AGENT_WITHHELD = {
   slowQueries: `${AGENT_READS} The server's API returns no query log, so no slow-query reading is taken; this is not a reading of none.`,
   sessions: `${AGENT_READS} The server's API publishes no session list, every request being a separate stateless call, so no session reading is taken; this is not a reading of none.`,
   indexStats: `${AGENT_READS} A Prometheus TSDB has no secondary index object to describe, so no index reading is taken; this is not a reading of none.`,
+  /**
+   * Not a withheld reading but the text beside the storage and table readings' byte figures: the server publishes no
+   * byte count, and those readings' shape requires a number, so the 0 there is said not to be one.
+   */
+  byteCount:
+    "N/A: the server publishes no byte count of what it stores, so the byte figure beside this, 0, is a placeholder the reading's shape requires, not a measurement.",
 } as const;

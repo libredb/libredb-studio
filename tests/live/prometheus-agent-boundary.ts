@@ -11,7 +11,8 @@
  * targets and rules. Those two are read only to prove their absence: before anything is written the whole capture is
  * checked for either one and for any URL that still carries a query string or userinfo, and the script stops if one is
  * there. The capture records no credential value at all: a raw target is recorded by which of its fields carry a query
- * string or userinfo, never by a field's value, and the flags by their names alone.
+ * string or userinfo, never by a field's value, an agent read by whether its rows carried a generated value, as a
+ * boolean, and the flags by their names alone.
  *
  * Every request the provider sends goes through a recording sender in front of the real one, so the capture holds
  * every request Studio sent (method, path and the names of its parameters), and the server's state is read before
@@ -159,9 +160,11 @@ async function rawTargets(origin: string) {
 
 async function agentReads(origin: string, sent: SentRecord[]) {
   const reader = await open(origin, READ_ONLY, sent);
-  const rows = (result: { rowCount: number; fields: string[] }) => ({
+  // Whether an answer carried a value run.sh generated, as a boolean: `up` names the userinfo target by its labels.
+  const rows = (result: { rowCount: number; fields: string[]; rows: unknown[] }) => ({
     rowCount: result.rowCount,
     fields: result.fields,
+    carriesGeneratedValue: SECRETS.some((secret) => JSON.stringify(result.rows).includes(secret)),
   });
   const reads = {
     vector: await outcome(() => reader.queryReadOnly("up", BUDGET), rows),

@@ -589,7 +589,12 @@ export class PrometheusProvider extends BaseDatabaseProvider {
    */
   public getTableStats(options: { schema?: string } = {}): Promise<TableStats[]> {
     if (options.schema !== undefined && options.schema !== PROMETHEUS_SCHEMA_NAME) return Promise.resolve([]);
-    return this.guarded(() => readTableStats(this.requireTransport()));
+    return this.guarded(async () => {
+      const tables = await readTableStats(this.requireTransport());
+      // The model reads the text beside the 0 the shape requires, so on an agent-mode handle the text says why.
+      if (this.agentProfile) for (const table of tables) table.totalSize = PROMETHEUS_AGENT_WITHHELD.byteCount;
+      return tables;
+    });
   }
 
   /** Empty: a Prometheus TSDB has no secondary index object to describe. */
@@ -599,7 +604,11 @@ export class PrometheusProvider extends BaseDatabaseProvider {
   }
 
   public getStorageStats(): Promise<StorageStats[]> {
-    return this.guarded(() => readStorageStats(this.requireTransport()));
+    return this.guarded(async () => {
+      const stores = await readStorageStats(this.requireTransport());
+      if (this.agentProfile) for (const store of stores) store.size = PROMETHEUS_AGENT_WITHHELD.byteCount;
+      return stores;
+    });
   }
 
   /**

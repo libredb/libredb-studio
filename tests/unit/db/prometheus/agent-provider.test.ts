@@ -422,6 +422,43 @@ describe("how an answer counts against the row budget", () => {
     expect(error.message).toBe("Read-only execution exceeded the row budget: 4 rows > 3 allowed");
   });
 
+  test("a matrix counts native histogram points like samples: the budget itself is answered, one histogram past it is refused", async () => {
+    const provider = await agentProvider();
+    const histogram = (at: number) => [at, { count: "1", sum: "1", buckets: [[0, "0", "1", "1"]] }];
+    const answer = (histograms: number) =>
+      envelope({
+        resultType: "matrix",
+        result: [
+          {
+            metric: { __name__: "latency", instance: "host-0:9100" },
+            values: [[1790000000, "1"]],
+            histograms: Array.from({ length: histograms }, (_, index) => histogram(1790000001 + index)),
+          },
+        ],
+      });
+    queryAnswer = () => Promise.resolve(answer(2));
+    expect((await provider.queryReadOnly("latency[1m]", BUDGET)).rowCount).toBe(3);
+    queryAnswer = () => Promise.resolve(answer(3));
+    const error = await failureOf(provider.queryReadOnly("latency[1m]", BUDGET));
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error.message).toBe("Read-only execution exceeded the row budget: 4 rows > 3 allowed");
+  });
+
+  test("a series' labels reach the answer projected: an instance with userinfo keeps its host and port", async () => {
+    const provider = await agentProvider();
+    queryAnswer = () =>
+      Promise.resolve(
+        envelope({
+          resultType: "vector",
+          result: [{ metric: { __name__: "up", instance: `${USER}:${SECRET}@localhost:9090` }, value: [1, "1"] }],
+        }),
+      );
+    const result = await provider.queryReadOnly("up", BUDGET);
+    expect(JSON.stringify(result)).not.toContain(SECRET);
+    expect(JSON.stringify(result)).not.toContain(USER);
+    expect(JSON.stringify(result.rows)).toContain(`localhost:9090 ${PROMETHEUS_AGENT_PROJECTION.mark}`);
+  });
+
   test("a scalar and a string count one", async () => {
     const provider = await agentProvider();
     queryAnswer = () => Promise.resolve(replay("query-scalar"));
@@ -610,6 +647,26 @@ describe("the other surfaces of an agent-mode handle", () => {
     expect((await provider.getStorageStats()).length).toBeGreaterThan(0);
     expect((await provider.getTableStats()).length).toBeGreaterThan(0);
     expect(sent.some((request) => request.pathname.endsWith("/flags"))).toBe(false);
+  });
+
+  test("storage and table readings say beside each byte figure that the server publishes none", async () => {
+    const provider = await agentProvider(OPERATIONS);
+    const storage = await provider.getStorageStats();
+    expect(storage.map((store) => [store.size, store.sizeBytes])).toEqual([[PROMETHEUS_AGENT_WITHHELD.byteCount, 0]]);
+    const tables = await provider.getTableStats();
+    expect(tables.length).toBeGreaterThan(0);
+    for (const table of tables) {
+      expect([table.totalSize, table.totalSizeBytes, table.tableSize]).toEqual([
+        PROMETHEUS_AGENT_WITHHELD.byteCount,
+        0,
+        undefined,
+      ]);
+    }
+    expect(PROMETHEUS_AGENT_WITHHELD.byteCount).toContain("publishes no byte count");
+    const editor = new PrometheusProvider(connection(), {}, {}, deps());
+    await editor.connect();
+    expect((await editor.getStorageStats())[0].size).toBe("N/A");
+    expect((await editor.getTableStats())[0].totalSize).toBe("N/A");
   });
 
   test("the object tree names every target and rule by its projected answer, nothing withheld even as a digest", async () => {

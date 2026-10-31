@@ -41,6 +41,7 @@ interface AgentCapture {
 interface TargetShape {
   readonly scrapePool: string;
   readonly scrapeUrl: { readonly query: boolean; readonly userinfo: boolean };
+  readonly instance: { readonly query: boolean; readonly userinfo: boolean };
   readonly address: { readonly query: boolean; readonly userinfo: boolean };
   readonly scrapeParameters: readonly string[];
 }
@@ -136,6 +137,14 @@ describe.each([
     expect(server.rawTargets.some((target) => target.scrapeUrl.query)).toBe(true);
     expect(server.rawTargets.some((target) => target.address.userinfo)).toBe(true);
     expect(server.rawTargets.some((target) => target.scrapeParameters.includes("__param_token"))).toBe(true);
+  });
+
+  test("up names the userinfo target, and no read's rows carried a generated value, while the raw instance label did", () => {
+    expect(server.rawTargets.some((target) => target.instance.userinfo)).toBe(true);
+    expect((server.agent.reads.vector.answer as { rowCount: number }).rowCount).toBe(server.rawTargets.length);
+    for (const read of Object.values(server.agent.reads).filter((outcome) => outcome.ok)) {
+      expect((read.answer as { carriesGeneratedValue: boolean }).carriesGeneratedValue).toBe(false);
+    }
   });
 
   test("the overview is withheld with its reason", () => {

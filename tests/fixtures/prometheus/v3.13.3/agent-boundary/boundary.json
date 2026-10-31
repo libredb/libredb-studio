@@ -22,7 +22,8 @@
               "job",
               "timestamp",
               "value"
-            ]
+            ],
+            "carriesGeneratedValue": false
           }
         },
         "matrix": {
@@ -32,7 +33,8 @@
             "fields": [
               "timestamp",
               "value"
-            ]
+            ],
+            "carriesGeneratedValue": false
           }
         },
         "aggregate": {
@@ -43,7 +45,8 @@
               "job",
               "timestamp",
               "value"
-            ]
+            ],
+            "carriesGeneratedValue": false
           }
         },
         "alerts": {
@@ -56,7 +59,8 @@
               "alertstate",
               "timestamp",
               "value"
-            ]
+            ],
+            "carriesGeneratedValue": false
           }
         },
         "rowBudget": {
@@ -67,7 +71,7 @@
         "byteBudget": {
           "ok": false,
           "error": "QueryError",
-          "message": "Read-only execution exceeded the byte budget: 501 bytes > 10 allowed"
+          "message": "Read-only execution exceeded the byte budget: 521 bytes > 10 allowed"
         },
         "parseError": {
           "ok": false,
@@ -235,22 +239,22 @@
       }
     ],
     "stateBefore": {
-      "startTime": "2026-10-31T18:35:58.950934555Z",
-      "lastConfigTime": "2026-10-31T18:35:59Z",
+      "startTime": "2026-10-31T19:12:19.560155785Z",
+      "lastConfigTime": "2026-10-31T19:12:19Z",
       "seedSamplesAtFixedInstant": [
         "7"
       ],
       "headSeriesAtLeast": true,
-      "headMinTime": 1793471760998
+      "headMinTime": 1793473940998
     },
     "stateAfterStudio": {
-      "startTime": "2026-10-31T18:35:58.950934555Z",
-      "lastConfigTime": "2026-10-31T18:35:59Z",
+      "startTime": "2026-10-31T19:12:19.560155785Z",
+      "lastConfigTime": "2026-10-31T19:12:19Z",
       "seedSamplesAtFixedInstant": [
         "7"
       ],
       "headSeriesAtLeast": true,
-      "headMinTime": 1793471760998
+      "headMinTime": 1793473940998
     },
     "studioLeftStateUnchanged": true,
     "rawTargets": [
@@ -453,7 +457,7 @@
         "path": "/api/v1/admin/tsdb/snapshot",
         "status": 200,
         "bytes": 72,
-        "body": "{\"status\":\"success\",\"data\":{\"name\":\"20261031T183645Z-00d3a96a13cf0c86\"}}"
+        "body": "{\"status\":\"success\",\"data\":{\"name\":\"20261031T191305Z-4e785c687708102b\"}}"
       },
       {
         "method": "POST",
@@ -485,11 +489,11 @@
       }
     ],
     "stateAfterRaw": {
-      "startTime": "2026-10-31T18:35:58.950934555Z",
-      "lastConfigTime": "2026-10-31T18:36:45Z",
+      "startTime": "2026-10-31T19:12:19.560155785Z",
+      "lastConfigTime": "2026-10-31T19:13:05Z",
       "seedSamplesAtFixedInstant": [],
       "headSeriesAtLeast": true,
-      "headMinTime": 1793471760998
+      "headMinTime": 1793473940998
     }
   },
   "victoriametrics": {
@@ -505,7 +509,8 @@
               "job",
               "timestamp",
               "value"
-            ]
+            ],
+            "carriesGeneratedValue": false
           }
         },
         "matrix": {
@@ -515,7 +520,8 @@
             "fields": [
               "timestamp",
               "value"
-            ]
+            ],
+            "carriesGeneratedValue": false
           }
         },
         "aggregate": {
@@ -526,7 +532,8 @@
               "job",
               "timestamp",
               "value"
-            ]
+            ],
+            "carriesGeneratedValue": false
           }
         },
         "alerts": {
@@ -536,7 +543,8 @@
             "fields": [
               "timestamp",
               "value"
-            ]
+            ],
+            "carriesGeneratedValue": false
           }
         },
         "rowBudget": {
@@ -547,12 +555,12 @@
         "byteBudget": {
           "ok": false,
           "error": "QueryError",
-          "message": "Read-only execution exceeded the byte budget: 537 bytes > 10 allowed"
+          "message": "Read-only execution exceeded the byte budget: 557 bytes > 10 allowed"
         },
         "parseError": {
           "ok": false,
           "error": "QueryError",
-          "message": "The server could not parse the expression (category bad_data): error when executing query=\"sum(up) by\" for (time=1793471775188, step=300000): ModifierExpr: identList: unexpected token \"\"; want \"(\"; unparsed data: \"\""
+          "message": "The server could not parse the expression (category bad_data): error when executing query=\"sum(up) by\" for (time=1793473955808, step=300000): ModifierExpr: identList: unexpected token \"\"; want \"(\"; unparsed data: \"\""
         },
         "timeBudget": {
           "ok": false,
@@ -566,7 +574,8 @@
             "fields": [
               "timestamp",
               "value"
-            ]
+            ],
+            "carriesGeneratedValue": false
           }
         }
       },
@@ -841,7 +850,7 @@
         "path": "/snapshot/create",
         "status": 200,
         "bytes": 60,
-        "body": "{\"status\":\"ok\",\"snapshot\":\"20261031183645-18E3B1100B89CCC8\"}"
+        "body": "{\"status\":\"ok\",\"snapshot\":\"20261031191305-18E3B30BC21DE15E\"}"
       },
       {
         "method": "GET",
