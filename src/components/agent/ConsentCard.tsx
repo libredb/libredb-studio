@@ -125,6 +125,7 @@ const HANDOVER_CHIPS: Readonly<Record<AgentStatementLanguageId, readonly Handove
   kafkaread: [],
   s3api: [],
   fsquery: [],
+  snmpget: [],
 };
 
 export function ConsentCard({

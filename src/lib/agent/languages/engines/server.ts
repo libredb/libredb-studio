@@ -26,6 +26,7 @@ import { RABBITMQ_SERVER_OVERLAY } from "../rabbitread/engines/rabbitmq";
 import { KAFKA_SERVER_OVERLAY } from "../kafkaread/engines/kafka";
 import { S3_SERVER_OVERLAY } from "../s3api/engines/s3";
 import { FIRESTORE_SERVER_OVERLAY } from "../fsquery/engines/firestore";
+import { SNMP_SERVER_OVERLAY } from "../snmpget/engines/snmp";
 import type { AgentStatementLanguageId } from "../../agent-manifest";
 import { statementFamilyOf } from "../client";
 import { defineOverlay } from "../overlay";
@@ -86,6 +87,7 @@ const SERVER_OVERLAYS: AgentEngineServerOverlays = Object.freeze({
   kafka: Object.freeze({ ...KAFKA_SERVER_OVERLAY }),
   s3: Object.freeze({ ...S3_SERVER_OVERLAY }),
   firestore: Object.freeze({ ...FIRESTORE_SERVER_OVERLAY }),
+  snmp: Object.freeze({ ...SNMP_SERVER_OVERLAY }),
 } satisfies AgentEngineServerOverlays);
 
 /** What an engine with no dialect answers: every member unsupported. */

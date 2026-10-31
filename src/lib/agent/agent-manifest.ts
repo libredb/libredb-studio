@@ -43,7 +43,8 @@ export type AgentStatementLanguageId =
   | "rabbitread"
   | "kafkaread"
   | "s3api"
-  | "fsquery";
+  | "fsquery"
+  | "snmpget";
 
 /** Literal-typed, so `AgentEngineFamily` in `languages/pack.ts` reads each engine's language by type. */
 export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
@@ -87,7 +88,7 @@ export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
   mtconnect: null,
   modbus: null,
   netconf: null,
-  snmp: null,
+  snmp: "snmpget",
   sparkplug: null,
   libredb: "libredbkv",
 } as const satisfies Record<DatabaseType, AgentStatementLanguageId | null>);

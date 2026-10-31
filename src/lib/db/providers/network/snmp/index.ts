@@ -17,10 +17,18 @@
  * that lets only a Get, a GetNext or a GetBulk leave. The catalog surfaces (`listObjects`,
  * `describeObject`, `describeObjects`) send nothing at all: they answer from the bundled MIB
  * modules through `mib-tree.ts`, so they work before `connect` and cost the agent no request.
+ *
+ * `queryReadOnly` is the agent's: one command of the console's four, read by `agent-statement.ts` and refused before
+ * anything is sent when it is not one of them or when it would walk a withheld security or target subtree, then sent
+ * over an exchange opened for that read alone through the agent's client (`agent-client.ts`), which holds Get, GetNext
+ * and GetBulk only, and answered by `agent-read.ts` with values rendered as the console renders them, refused past the
+ * row, byte or time budget rather than cut. On a handle opened for any agent-mode profile the console is refused and
+ * every reading the agent does not report answers its reason (`agent-surface.ts`). MCP read stays closed on this
+ * engine.
  */
 import { randomInt } from "node:crypto";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { callerBoundTruncationReason } from "@/lib/db/object-kinds";
 import type {
   ActiveSessionDetails,
@@ -34,9 +42,12 @@ import type {
   ObjectDetail,
   ObjectDetailBatch,
   PerformanceMetrics,
+  ProviderExecutionContext,
   ProviderLabels,
   ProviderOptions,
   QueryResult,
+  ReadOnlyStatementBudget,
+  ReadOnlyStatementMode,
   SlowQueryStats,
   StorageStats,
   TableStats,
@@ -55,6 +66,17 @@ import { PDU_GET, PDU_GET_BULK, PDU_GET_NEXT } from "./valve";
 import type { ResponseVarbind } from "./message";
 import { allNotices } from "./mib";
 import { failureFromStatus } from "./errors";
+import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
+import { createSnmpAgentClient } from "./agent-client";
+import { runSnmpAgentRead, SNMP_AGENT_FAILURE_SENTENCES, SnmpAgentError, snmpAgentResult } from "./agent-read";
+import { readSnmpAgentStatement } from "./agent-statement";
+import { SNMP_AGENT_WITHHELD } from "./agent-surface";
+
+/** Studio's own refusals on the agent's statement path, made before anything is sent. */
+export const SNMP_PROVIDER_SENTENCES = Object.freeze({
+  profileRequired: "Read-only execution requires a provider opened under the agent read-only profile",
+  noEstimate: "SNMP composes no estimating plan for the agent",
+});
 
 /**
  * How long an exchange waits before it calls the agent silent, when nothing else is asked for.
@@ -127,8 +149,36 @@ export class SnmpProvider extends BaseDatabaseProvider {
    * Public, because the base's is protected and a provider is the thing that opens it. The
    * house does the same in every provider that has its own transport to inject.
    */
-  public constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
+  public constructor(
+    config: DatabaseConnection,
+    options: ProviderOptions = {},
+    private readonly execution: ProviderExecutionContext = {},
+  ) {
     super(config, options);
+  }
+
+  /**
+   * Whether this handle was opened for the agent read-only profile by an acquisition that sends statements
+   * (`sendsStatements`). Only then does `queryReadOnly` answer; the operations profile's acquisitions send no statement.
+   */
+  private get readOnlyProfile(): boolean {
+    return this.execution.readOnly === true && this.execution.sendsStatements === true;
+  }
+
+  /**
+   * Whether this handle was opened for any agent-mode profile: every execution profile opens `readOnly` and no editor
+   * handle does. On such a handle the console is refused and every reading the agent does not report answers its reason.
+   */
+  private get agentProfile(): boolean {
+    return this.execution.readOnly === true;
+  }
+
+  /** The refusal of a reading an agent-mode handle does not take, after the connection check every reading makes. */
+  private agentWithheld(sentence: string, what: string): never {
+    if (this.exchange === undefined) {
+      throw new DatabaseConfigError(`This connection is not open: \`connect\` comes before ${what}.`);
+    }
+    throw new QueryError(sentence, "snmp");
   }
 
   public getLabels(): ProviderLabels {
@@ -304,6 +354,7 @@ export class SnmpProvider extends BaseDatabaseProvider {
     if (exchange === undefined) {
       throw new DatabaseConfigError("This connection is not open: `connect` comes before a statement.");
     }
+    if (this.agentProfile) throw new RefusedBeforeSendError(SNMP_AGENT_WITHHELD.query, "snmp", statement);
     const { rows, note } = await this.run(exchange, parsed);
     // Field names come from the rows rather than from a fixed list: a table's columns are
     // whatever the agent had, and naming them here would mean naming them twice.
@@ -323,6 +374,48 @@ export class SnmpProvider extends BaseDatabaseProvider {
       executionTime: Date.now() - started,
       ...(warnings.length === 0 ? {} : { warnings }),
     };
+  }
+
+  /**
+   * One agent statement. Only on a handle opened under the agent read-only profile; the statement is read by
+   * `readSnmpAgentStatement` and refused before anything is sent when it is not one of the console's four commands or
+   * when it would walk a withheld subtree. The read runs over an exchange opened for it alone, with the request's time
+   * budget as every request's deadline and as the read's own, and closed when it ends, so nothing of one call reaches
+   * the next; the console's pending notices are not touched. Its answer is refused past the row, byte or time budget
+   * rather than cut, and a failure is worded by its category.
+   */
+  public async queryReadOnly(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    if (!this.readOnlyProfile)
+      throw new RefusedBeforeSendError(SNMP_PROVIDER_SENTENCES.profileRequired, "snmp", statement);
+    const target = this.target;
+    if (target === undefined) {
+      throw new DatabaseConfigError("This connection is not open: `connect` comes before a statement.");
+    }
+    assertReadOnlyBudget(budget, "snmp");
+    if (mode !== "execute") throw new RefusedBeforeSendError(SNMP_PROVIDER_SENTENCES.noEstimate, "snmp", statement);
+    const reading = readSnmpAgentStatement(statement, budget.maxResultRows);
+    if (!reading.ok) throw new RefusedBeforeSendError(reading.message, "snmp", statement);
+    const ms = budget.statementTimeoutMs;
+    const exchange = await openExchange({ target, community: this.connectionInput().community ?? "", deadlineMs: ms });
+    const started = Date.now();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new SnmpAgentError(SNMP_AGENT_FAILURE_SENTENCES.silence(ms))), ms);
+    });
+    try {
+      const answer = await Promise.race([
+        runSnmpAgentRead(createSnmpAgentClient(exchange), reading.plan, budget),
+        deadline,
+      ]);
+      return snmpAgentResult(answer, budget, Date.now() - started);
+    } finally {
+      clearTimeout(timer);
+      exchange.close();
+    }
   }
 
   /**
@@ -503,6 +596,8 @@ export class SnmpProvider extends BaseDatabaseProvider {
    * does report about itself.
    */
   public async getOverview(): Promise<DatabaseOverview> {
+    // On an agent-mode handle the zeros below would read as the agent's own figures; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(SNMP_AGENT_WITHHELD.overview, "an overview");
     const exchange = this.exchange;
     if (exchange === undefined) {
       throw new DatabaseConfigError("This connection is not open: `connect` comes before an overview.");
@@ -537,30 +632,42 @@ export class SnmpProvider extends BaseDatabaseProvider {
    * publishes none of these. A refusal would say "ask later"; empty says "there is none".
    */
   public async getPerformanceMetrics(): Promise<PerformanceMetrics> {
+    // On an agent-mode handle an empty answer would read as the agent's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(SNMP_AGENT_WITHHELD.performance, "a reading");
     return {};
   }
 
   public async getSlowQueries(): Promise<SlowQueryStats[]> {
+    // On an agent-mode handle an empty answer would read as the agent's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(SNMP_AGENT_WITHHELD.slowQueries, "a reading");
     // An agent keeps no statement history: there is no statement, only a read of a name.
     return [];
   }
 
   public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
+    // On an agent-mode handle an empty answer would read as the agent's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(SNMP_AGENT_WITHHELD.sessions, "a reading");
     // UDP has no session to be active. Every message stands alone (RFC 3416 section 2.4).
     return [];
   }
 
   public async getTableStats(): Promise<TableStats[]> {
+    // On an agent-mode handle an empty answer would read as the agent's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(SNMP_AGENT_WITHHELD.tableStats, "a reading");
     // A conceptual table is a shape the MIB declares, not a stored object with statistics.
     return [];
   }
 
   public async getIndexStats(): Promise<IndexStats[]> {
+    // On an agent-mode handle an empty answer would read as the agent's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(SNMP_AGENT_WITHHELD.indexStats, "a reading");
     // An INDEX clause names a row's key; it is not an index with a size or a scan count.
     return [];
   }
 
   public async getStorageStats(): Promise<StorageStats[]> {
+    // On an agent-mode handle an empty answer would read as the agent's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(SNMP_AGENT_WITHHELD.storage, "a reading");
     // An agent reports no storage of its own, and the device's storage is a MIB to read
     // rather than a property of this connection.
     return [];

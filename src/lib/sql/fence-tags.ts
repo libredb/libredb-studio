@@ -187,6 +187,7 @@ export const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "kafkaread",
   "s3api",
   "fsquery",
+  "snmpget",
 ]);
 
 /**
@@ -254,6 +255,8 @@ export const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.free
   s3api: "s3",
   // The agent's name for the Firestore metadata read statement language, and `firestore` is the only type-id that runs it.
   fsquery: "firestore",
+  // The agent's name for the SNMP read command language, and `snmp` is the only type-id that runs it.
+  snmpget: "snmp",
 });
 
 /**

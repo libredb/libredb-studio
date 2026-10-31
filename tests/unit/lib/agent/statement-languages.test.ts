@@ -15,7 +15,8 @@ import { fingerprintRabbitread, rabbitreadRowCapAdvice } from "@/lib/agent/langu
 import { fingerprintKafkaread, kafkareadRowCapAdvice } from "@/lib/agent/languages/kafkaread/adapter";
 import { fingerprintS3api, s3apiRowCapAdvice } from "@/lib/agent/languages/s3api/adapter";
 import { fingerprintFsquery, fsqueryRowCapAdvice } from "@/lib/agent/languages/fsquery/adapter";
-import { languageServer, languageServerPack } from "@/lib/agent/languages/server";
+import { fingerprintSnmpget, snmpgetRowCapAdvice } from "@/lib/agent/languages/snmpget/adapter";
+import { languageServer, languageServerPack, WORKFLOW_TOOL_RULES } from "@/lib/agent/languages/server";
 import {
   admitLibredbkvStatement,
   LIBREDBKV_AGENT_MAX_STATEMENT_CHARS,
@@ -92,6 +93,12 @@ import {
   fsqueryAgentReadInput,
 } from "@/lib/db/operations/fsquery-admission";
 import { FIRESTORE_AGENT_SENTENCES } from "@/lib/db/providers/document/firestore/agent-statement";
+import {
+  admitSnmpgetStatement,
+  SNMPGET_AGENT_MAX_STATEMENT_CHARS,
+  snmpgetAgentReadInput,
+} from "@/lib/db/operations/snmpget-admission";
+import { SNMP_AGENT_SENTENCES } from "@/lib/db/providers/network/snmp/agent-statement";
 import { INFLUXQL_AGENT_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-statement";
 import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 
@@ -1276,5 +1283,77 @@ describe("the fsquery language's server adapter and admission", () => {
   test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
     expect(Object.keys(AGENT_WORKFLOW_VARIANTS.fsquery).sort()).toEqual(["investigation", "operations"]);
     expect(AGENT_WORKFLOW_VARIANTS.fsquery.investigation?.canAutoExecute).toBe(false);
+  });
+});
+
+describe("the snmpget language's server adapter and admission", () => {
+  const READ = "get sysDescr.0";
+  const WITHHELD =
+    "The security and target modules under 1.3.6.1.6.3 (SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB) are withheld from agent mode, since they hold community strings, user names and access rules: nothing of them is read or answered.";
+
+  test("the fingerprint is the plan the reader sends, so one read written two ways is one identity", () => {
+    const one = fingerprintSnmpget(READ);
+    expect(fingerprintSnmpget("  get   .1.3.6.1.2.1.1.1.0 ")).toBe(one);
+    expect(fingerprintSnmpget("get sysName.0")).not.toBe(one);
+    expect(fingerprintSnmpget("next sysDescr.0")).not.toBe(one);
+  });
+
+  test("the fingerprint is total: a refused statement is identified by its raw text, so it is refused again", () => {
+    const raw = "set sysName.0 s x";
+    expect(fingerprintSnmpget(raw)).toBe(fingerprintSnmpget(raw));
+    expect(fingerprintSnmpget(raw)).toMatch(/^[0-9a-f]{64}$/);
+    expect(fingerprintSnmpget(`${raw} `)).not.toBe(fingerprintSnmpget(raw));
+  });
+
+  test("the row-cap advice names a narrower subtree, never a cut", () => {
+    expect(AGENT_LANGUAGE_COPY.snmpget.adviceKeys).toEqual([]);
+    expect(snmpgetRowCapAdvice(READ, "2")).toBe(
+      "Ask for at most 2 rows: get and next answer one row per object they name, walk one row per instance under its subtree and table one row per index, so walk a narrower subtree (one column, such as ifDescr, rather than ifEntry) or name the instances with get.",
+    );
+    expect(languageServer("snmpget").shapeAdvice).toContain("a valid console command");
+  });
+
+  test("the grounding advice names what grounding carries, the catalog's declarations, and the withheld modules", () => {
+    const advice = languageServerPack("snmpget").grounding.omissionAdvice;
+    expect(advice).toContain(
+      "Object groups are listed from the bundled MIB modules with their declared columns, never with a value.",
+    );
+    expect(advice).toContain(WITHHELD);
+    const rule = WORKFLOW_TOOL_RULES.snmpget.investigation as string;
+    expect(rule).toContain(WITHHELD);
+  });
+
+  test("the admission is the provider's reader, plus a length the agent's contract names", () => {
+    expect(admitSnmpgetStatement(READ)).toBeNull();
+    expect(admitSnmpgetStatement("")).toEqual({ code: "request", message: SNMP_AGENT_SENTENCES.empty });
+    expect(admitSnmpgetStatement("walk 1")?.code).toBe("withheld");
+    const long = `get ${"1.".repeat(SNMPGET_AGENT_MAX_STATEMENT_CHARS)}1`;
+    expect(admitSnmpgetStatement(long)).toEqual({
+      code: "agent-too-large",
+      message: `The command is longer than ${SNMPGET_AGENT_MAX_STATEMENT_CHARS} characters, the most an agent read takes: shorten it. Nothing was sent.`,
+    });
+    expect(languageServer("snmpget").admit?.(READ)).toBeNull();
+  });
+
+  test("an ungrounded run is sent to a read it holds and told what is withheld; plan mode is told none of the reader's rules", () => {
+    const ungrounded = languageServerPack("snmpget").grounding.ungrounded;
+    expect(ungrounded?.("The capture failed.", { singular: "object group", plural: "object groups" })).toBe(
+      `The capture failed.\nSo nothing about this agent has been established for you: not one object group name. ${WITHHELD} Read what you need with run_read_query, starting with get sysDescr.0 sysUpTime.0.`,
+    );
+    expect(languageServerPack("snmpget").grounding.planningRules).toBeUndefined();
+  });
+
+  test("the descriptor's input is strict, carries the statement, and refuses what the admission refuses", () => {
+    expect(snmpgetAgentReadInput.safeParse({ statement: READ }).success).toBe(true);
+    expect(snmpgetAgentReadInput.safeParse({ statement: READ, sql: "x" }).success).toBe(false);
+    const refused = snmpgetAgentReadInput.safeParse({ statement: "set sysName.0 s x" });
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues[0]?.path).toEqual(["statement"]);
+    expect(refused.error?.issues[0]?.message).toStartWith("`set` is not a command this provider has");
+  });
+
+  test("only the investigation and the operations workflow are offered", () => {
+    expect(Object.keys(AGENT_WORKFLOW_VARIANTS.snmpget).sort()).toEqual(["investigation", "operations"]);
+    expect(AGENT_WORKFLOW_VARIANTS.snmpget.investigation?.canAutoExecute).toBe(false);
   });
 });

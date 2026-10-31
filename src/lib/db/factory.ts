@@ -519,13 +519,13 @@ export async function createDatabaseProvider(
       const { MTConnectProvider } = await import("./providers/industrial/mtconnect/index");
       return new MTConnectProvider(connection, options);
     }
-    // SNMP: an agent on a device, read over UDP by this repository's own client through the
-    // shared egress rule. Read-only not by a flag but by construction: the outgoing valve parses
-    // every datagram and refuses any PDU that is not a Get, GetNext or GetBulk, so a Set never
-    // reaches the socket. No library, so the import is the provider module itself.
+    // SNMP: an agent on a device, read over UDP by this repository's own client through the shared egress rule.
+    // Read-only by construction: the outgoing valve parses every datagram and refuses any PDU that is not a Get,
+    // GetNext or GetBulk, so a Set never reaches the socket. No library, so the import is the provider module itself.
+    // The execution context decides whether the handle answers agent reads; an agent-mode handle refuses the console.
     case "snmp": {
       const { SnmpProvider } = await import("./providers/network/snmp/index");
-      return new SnmpProvider(connection, options);
+      return new SnmpProvider(connection, options, execution);
     }
 
     // Modbus TCP: a device or a gateway, read over a raw socket by this repository's own client
@@ -1373,7 +1373,7 @@ export type ExecutionProfile = "agent-read-only" | "agent-operations" | "agent-h
  * handle or transaction, a least-privilege principal the server's own answers prove, or a
  * Studio-enforced request allowlist plus the identity's own authorization), and only the
  * providers of AGENT_EXECUTION_ENGINES implement that: PostgreSQL, SQLite,
- * DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage and Firestore (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
+ * DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore and SNMP (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
  * at all — it calls the curated reporting methods every provider implements — so
  * requiring a read-only STATEMENT path of it would refuse an engine over a capability
  * the profile never uses. `agent-handover` sends a statement too — the one a run

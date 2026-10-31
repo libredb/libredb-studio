@@ -38,6 +38,7 @@ import { kafkareadAgentReadInput } from "./kafkaread-admission";
 import { rabbitreadAgentReadInput } from "./rabbitread-admission";
 import { s3apiAgentReadInput } from "./s3api-admission";
 import { fsqueryAgentReadInput } from "./fsquery-admission";
+import { snmpgetAgentReadInput } from "./snmpget-admission";
 import { weaviateapiAgentReadInput } from "./weaviateapi-admission";
 import { agentPlanExecutionSqlInput, agentQueryReadSqlInput, agentReadSqlInput } from "./statement-guard";
 import type { RegistrableOperationDescriptor } from "./types";
@@ -737,6 +738,42 @@ const s3apiQueryReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+const SNMPGET_READ_BOUNDARY =
+  "SNMP: the provider's structural closed table, read with the console's own parser and resolver: one of the " +
+  "console's four commands (get, next, walk and table), sent through an agent client that holds the Get, GetNext and " +
+  "GetBulk requests alone, RFC 3411's Read Class, over an exchange whose valve parses every outgoing datagram and " +
+  "refuses any other PDU, so no Set, notification or Response can be sent; a GetBulk's max-repetitions stays at the " +
+  "documented cap of 50 and a request carries at most 400 identifiers. " +
+  "The security and target modules under 1.3.6.1.6.3 (SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, " +
+  "SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB) are withheld by identifier prefix: an " +
+  "identifier inside one is never sent, an answer landing inside one is answered withheld without its value or " +
+  "instance, and a walk or table reaching one is refused before anything is sent. A v2c community cannot be proved " +
+  "read-only from the client, and the tables that would prove it are the withheld ones, so the table is the boundary. " +
+  "A walk or table past the row budget and a result past the byte budget are refused, never truncated.";
+
+/**
+ * One SNMP read the model wrote, on an `snmp` connection.
+ *
+ * R1 on a structural boundary: the agent's client holds Get, GetNext and GetBulk alone. Its own id, and not a widened
+ * `sql.query.read`, so the SQL contract and its audit action stay exactly what they were.
+ */
+const snmpgetQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "snmpget.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: snmpgetAgentReadInput,
+  verification: {
+    reviewedBy: "SNMP agent execution design review",
+    boundary: SNMPGET_READ_BOUNDARY,
+    verifiedOn: "2026-10-31",
+  },
+};
+
 const FSQUERY_READ_BOUNDARY =
   "Firestore: the provider's structural closed table, read with the console's own parser: one read of a closed table " +
   "of four metadata reads (the root collection ids, the subcollection ids of one document the statement names in full, " +
@@ -1060,6 +1097,7 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   kafkareadQueryReadDescriptor,
   s3apiQueryReadDescriptor,
   fsqueryQueryReadDescriptor,
+  snmpgetQueryReadDescriptor,
 ]);
 
 /**

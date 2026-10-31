@@ -17,7 +17,15 @@ import type { ProviderLabels } from "@/lib/db/types";
  * scalars, and the thing inside it is an instance, which is what a row is here. "Object" alone
  * would be ambiguous: in SNMP it names the definition, not the value.
  */
+/**
+ * What a statement on this engine is written in, for plan mode: the console's four commands. Its name alone would send
+ * a model to Net-SNMP's tools (`snmpget -v2c ...`) or to a Set, and neither runs here.
+ */
+const SNMP_STATEMENT_LANGUAGE =
+  "one SNMP console command this editor runs, written as the console writes it: get OID [OID ...] for named instances, next OID [OID ...] for the instance after each, walk SUBTREE [limit N] for every instance under a subtree, or table ENTRY for a conceptual table's rows, named by its entry (table ifEntry), each OID written numerically (1.3.6.1.2.1.1.1.0) or by a name the bundled MIB modules define (sysDescr.0, ifDescr); there is no set and no Net-SNMP tool syntax, and the security and target modules under 1.3.6.1.6.3 (SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB and SNMP-COMMUNITY-MIB) are never drafted, since agent mode withholds them; the inventory names the bundled MIB modules' tables and scalar groups with their declared columns, never a value the agent holds";
+
 export const SNMP_LABELS: ProviderLabels = Object.freeze({
+  statementLanguage: SNMP_STATEMENT_LANGUAGE,
   entityName: "Object group",
   entityNamePlural: "Object groups",
   rowName: "Instance",

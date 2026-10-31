@@ -70,6 +70,7 @@ describe("canonical operation registry", () => {
       "rabbitread.query.read",
       "rediscli.query.read",
       "s3api.query.read",
+      "snmpget.query.read",
       "sql.explain.analyze",
       "sql.explain.estimate",
       "sql.query.read",
@@ -208,6 +209,7 @@ describe("the statement-read operations", () => {
       "rabbitread.query.read",
       "rediscli.query.read",
       "s3api.query.read",
+      "snmpget.query.read",
       "sql.query.read",
       "weaviateapi.query.read",
     ]);

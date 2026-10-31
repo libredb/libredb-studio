@@ -133,6 +133,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "kafka",
   "s3",
   "firestore",
+  "snmp",
 ];
 
 /**

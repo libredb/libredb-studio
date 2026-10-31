@@ -26,6 +26,7 @@ import { RABBITREAD_PACK } from "./rabbitread/index";
 import { KAFKAREAD_PACK } from "./kafkaread/index";
 import { S3API_PACK } from "./s3api/index";
 import { FSQUERY_PACK } from "./fsquery/index";
+import { SNMPGET_PACK } from "./snmpget/index";
 import type { AgentEvidenceTool, AgentLanguagePack, EvidenceToolName, LanguageToolArms } from "./pack";
 import { SQL_PACK } from "./sql/index";
 
@@ -46,6 +47,7 @@ const PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguagePack>> = Obj
   kafkaread: KAFKAREAD_PACK,
   s3api: S3API_PACK,
   fsquery: FSQUERY_PACK,
+  snmpget: SNMPGET_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguagePack>);
 
 /** The pack for `language`, or a named error when the id is not a language this server knows. */
@@ -73,6 +75,7 @@ export const LANGUAGE_TOOL_ARMS: Readonly<Record<AgentStatementLanguageId, Langu
   kafkaread: KAFKAREAD_PACK.execution.arms,
   s3api: S3API_PACK.execution.arms,
   fsquery: FSQUERY_PACK.execution.arms,
+  snmpget: SNMPGET_PACK.execution.arms,
 } satisfies Record<AgentStatementLanguageId, LanguageToolArms>);
 
 /**
@@ -97,6 +100,7 @@ export const AGENT_EVIDENCE_TOOLS: Readonly<Record<EvidenceToolName, AgentEviden
     KAFKAREAD_PACK.execution.evidenceTools,
     S3API_PACK.execution.evidenceTools,
     FSQUERY_PACK.execution.evidenceTools,
+    SNMPGET_PACK.execution.evidenceTools,
   ],
   "AGENT_EVIDENCE_TOOLS",
 );
