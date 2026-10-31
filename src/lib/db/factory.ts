@@ -528,11 +528,10 @@ export async function createDatabaseProvider(
       return new SnmpProvider(connection, options, execution);
     }
 
-    // Modbus TCP: a device or a gateway, read over a raw socket by this repository's own client
-    // through the shared egress rule. Read-only whatever the flag says, by construction: the valve
-    // refuses every function code but the four reads and 43/14. No library: the client is ours, so
-    // the import is the provider module and nothing else. The execution context decides whether the
-    // handle answers agent reads; an agent-mode handle refuses the console and paces the device.
+    // Modbus TCP: a device or a gateway, read over a raw socket by this repository's own client through the shared
+    // egress rule. Read-only by construction: the valve refuses every function code but the four reads and 43/14. No
+    // library, so the import is the provider module. The execution context decides whether the handle answers agent
+    // reads; an agent-mode handle refuses the console and paces the device.
     case "modbus": {
       // The explicit /index specifier keeps this dynamic import statically analysable.
       const { ModbusProvider } = await import("./providers/industrial/modbus/index");
