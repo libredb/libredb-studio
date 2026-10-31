@@ -201,10 +201,11 @@ jobs:
           - runner: ubuntu-24.04-arm
             platform: linux-arm64
           # macos-13 (the previous Intel label) was retired from hosted
-          # runners; macos-15-intel is the free x64 image, macos-14 is arm64.
+          # runners; macos-15-intel is the free x64 image, macos-15 is arm64
+          # (macos-14 was retired on 2026-11-02 after scheduled brownouts).
           - runner: macos-15-intel
             platform: darwin-x64
-          - runner: macos-14
+          - runner: macos-15
             platform: darwin-arm64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20

@@ -29,6 +29,8 @@
   <a href="https://www.postgresql.org/download/products/1/#:~:text=LibreDB%20Studio">Software Catalogue</a>
   ·
   <a href="https://wiki.postgresql.org/wiki/Community_Guide_to_PostgreSQL_GUI_Tools#LibreDB_Studio">Community Guide to GUI Tools</a>
+  ·
+  <a href="https://wiki.postgresql.org/wiki/Design_Tools#LibreDB_Studio">Design Tools</a>
 </p>
 <p align="center">
   А также в официальной документации
@@ -57,9 +59,10 @@
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>,
   <a href="https://doris.apache.org/docs/4.x/connection-integration/data-integration/libredb-studio/">Apache Doris</a>,
   <a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem#:~:text=LibreDB%20Studio">Apache Kafka</a>,
-  <a href="https://cassandra.apache.org/_/ecosystem.html">Apache Cassandra</a>
-  и
+  <a href="https://cassandra.apache.org/_/ecosystem.html">Apache Cassandra</a>,
   <a href="https://druid.apache.org/libraries/#:~:text=LibreDB%20Studio">Apache Druid</a>
+  и
+  <a href="https://github.com/oxia-db/oxia/blob/main/ADOPTERS.md#adopters-list">Oxia</a>
 </p>
 
 <p align="center">
@@ -208,7 +211,7 @@ ER-диаграмма для Elasticsearch и OpenSearch показывает и
 Главная функция ИИ в Studio — **панель агента** рядом с редактором. Вы пишете вопрос, например *«в каком отделе больше всего сотрудников?»* или *«почему этот запрос медленный?»*, и нажимаете Start. Агент составляет SQL-запросы к подключённой базе, читает результаты и пишет отчёт, **в котором каждое утверждение ссылается на результат, из которого оно получено**.
 
 - **Только чтение, и это гарантирует сама база.** Все запросы агента выполняются в режиме только для чтения средствами СУБД: в PostgreSQL это транзакция только для чтения, в SQLite `PRAGMA query_only`, в DuckDB подключение `READ_ONLY` с дополнительной проверкой на уровне SQL. В SQL Server таких транзакций нет, поэтому Studio проверяет, что у учётной записи нет прав на запись, ограничивает число строк и всегда откатывает транзакцию. Запись и DDL отклоняются ещё до обращения к базе. `EXPLAIN ANALYZE` по умолчанию запрещён, потому что он выполняет запрос. Каждый запрос агента проверяется политикой и записывается в аудит (`executeAuditedOperation`, `src/lib/db/operations/execution.ts:129`). На запросы, которые вы сами запускаете в редакторе, эти проверки не распространяются (`src/app/api/db/query/route.ts:312`).
-- **Режим Agent работает только с PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant и Neo4j.** Только для них реализован режим только для чтения (`queryReadOnly`); у каждой из них своя граница, и она описана в её документации. Для остальных СУБД запуск в режиме Agent отклоняется ещё до начала работы. Режим **Plan** доступен для любого подключения: в нём модель ничего не выполняет и не записывает, а только готовит запрос, который вы запустите сами. Схему базы для подсказок (GROUNDING) Studio читает для всех СУБД. Если прочитать схему не удалось, агент прямо об этом сообщает и не выдумывает таблицы.
+- **Режим Agent работает только с PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ и Apache Kafka.** Только для них реализован режим только для чтения (`queryReadOnly`); у каждой из них своя граница, и она описана в её документации. Для остальных СУБД запуск в режиме Agent отклоняется ещё до начала работы. Режим **Plan** доступен для любого подключения: в нём модель ничего не выполняет и не записывает, а только готовит запрос, который вы запустите сами. Схему базы для подсказок (GROUNDING) Studio читает для всех СУБД. Если прочитать схему не удалось, агент прямо об этом сообщает и не выдумывает таблицы.
 - **Три сценария**: **Investigate** (ответить на вопрос), **Optimize** (сравнить планы выполнения, предложить индекс или переписать запрос), **Assess** (оценить таблицы: только подсчёт строк, сами значения не читаются).
 - **Ничего не запускается само.** Агент не начинает работу без вас, не пишет в редактор и не выполняет то, что сам рекомендует. Запустить предложенный запрос можете только вы.
 - **Без доказательств нет утверждений.** Агент не может написать вывод без ссылки на результат запроса. В конце он сам указывает, удалось ли ответить на вопрос: *«Run answered»* или *«Run did not answer»*.

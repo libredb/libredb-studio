@@ -343,7 +343,7 @@ function providerOver(
 ) {
   const built: FakeClient[] = [];
   const handed: KafkaConnectionOptions[] = [];
-  const provider = new KafkaProvider(CONNECTION, options, async (clientOptions) => {
+  const provider = new KafkaProvider(CONNECTION, options, {}, async (clientOptions) => {
     handed.push(clientOptions);
     const fake = fakeClient(answers);
     built.push(fake);
@@ -457,6 +457,8 @@ describe("the domains this file walks", () => {
       // Read nothing and answer the protocol's honest absences: "listContainers answers ..." below, and
       // the integration test's "storage comes from the log dirs; the surfaces the protocol cannot fill
       // are empty; maintenance is refused".
+      // The agent profiles' read and composition: tests/unit/db/kafka/agent-provider.test.ts walks them.
+      agent: ["queryReadOnly", "readOnlyProfile", "agentProfile", "agentClient", "agentGuarded", "agentWithheld"],
       noRead: [
         "listContainers",
         "getPerformanceMetrics",
@@ -540,7 +542,7 @@ describe("connect", () => {
       // would connect where it should fail.
       let asked = 0;
       const built: FakeClient[] = [];
-      const provider = new KafkaProvider(CONNECTION, { queryTimeout: QUERY_TIMEOUT_MS }, async () => {
+      const provider = new KafkaProvider(CONNECTION, { queryTimeout: QUERY_TIMEOUT_MS }, {}, async () => {
         asked++;
         if (asked === 1) throw failure;
         const fake = fakeClient();

@@ -456,10 +456,12 @@ The flag has no effect unless `NEXT_PUBLIC_AUTH_PROVIDER=oidc`.
 
 By default the end-session request Studio sends on logout names the client and the return address, but not the session to end.
 Without a hint, some providers, Keycloak among them, ask the user to confirm the logout.
-With `OIDC_LOGOUT_HINT=true`, the OIDC callback keeps the raw ID token in the cookie `oidc-logout-hint`, and `POST /api/auth/logout` adds it to the end-session request as `id_token_hint`.
+With `OIDC_LOGOUT_HINT=true`, the OIDC callback keeps the raw ID token in the cookie `oidc-logout-hint` (`__Host-oidc-logout-hint` on HTTPS), and `POST /api/auth/logout` adds it to the end-session request as `id_token_hint`.
 The values `true`, `1`, `on` and `yes` (trimmed, any case) turn it on; unset or empty leaves it off, and any other value leaves it off with a warning in the server log.
 
-- The cookie is `httpOnly` and `SameSite=Lax`, `Secure` under the same rule as the session cookie, scoped to `<BASE_PATH>/api/auth/logout` so no other request carries it, and lives as long as the session (`AUTH_SESSION_TTL_SECONDS`).
+- The cookie is `httpOnly` and `SameSite=Lax`, `Secure` under the same rule as the session cookie, and lives as long as the session (`AUTH_SESSION_TTL_SECONDS`).
+  Without the Secure flag it is scoped to `<BASE_PATH>/api/auth/logout`, so no other request carries it.
+  With the flag on it is `__Host-oidc-logout-hint` at `Path=/`, as the prefix requires, so it rides every request to the host; the token is kept only while the cookie's name and value fit 4096 bytes.
 - A token over 3800 bytes is not kept, because a browser drops a cookie over 4096 bytes; a hint kept by an earlier sign-in is deleted instead, and logout proceeds without a hint.
 - Logout sends the hint only when its `sub` equals the session's identity provider subject, and deletes the cookie whether it sent it or not.
 - The hint is added on the Zitadel and the discovered end-session paths; Auth0's `/v2/logout` takes no hint, so its URL stays the same.
@@ -907,6 +909,8 @@ The OIDC subsystem follows three core principles:
     ╘════════════════════════════════════════════════════════════════╛
 ```
 
+The diagram shows the plain names; on HTTPS the cookies are `__Host-oidc-state` and `__Host-auth-token` at `Path=/` (see the [Cookie Security Summary](#cookie-security-summary)).
+
 ### OIDC Logout Flow
 
 ```
@@ -1039,17 +1043,19 @@ export async function login(role: Role, username?: string, sessionVersion?: numb
   const idp = identity ? { idpSubject: identity.subject, idpIssuer: identity.issuer } : {};
   const token = await signJWT({ role, username: username || role, sessionVersion, ...idp });
   const cookieStore = await cookies();
-  cookieStore.set('auth-token', token, {
+  // auth-token at the base path, or __Host-auth-token at / whenever the cookie is Secure
+  const scope = await studioCookie('auth-token', getBasePath() || '/');
+  cookieStore.set(scope.name, token, {
     httpOnly: true,
-    secure: await shouldMarkCookieSecure(),
+    secure: scope.secure,
     sameSite: 'lax',
     maxAge: sessionTtlSeconds(),     // AUTH_SESSION_TTL_SECONDS, 24 hours when unset
-    path: getBasePath() || '/',
+    path: scope.path,
   });
 }
 ```
 
-`shouldMarkCookieSecure()` also decides the flag on the `oidc-state` cookie, so both cookies of the flow always agree. It resolves in this order:
+The same decision (`secureCookieDecision()` in `src/lib/auth-cookies.ts`) sets the flag, and with it the `__Host-` name, on the `oidc-state` cookie, so both cookies of the flow always agree. It resolves in this order:
 
 1. `AUTH_COOKIE_SECURE` when set (`on`/`true`/`1` vs `off`/`false`/`0`) — the operator's explicit answer, needed when the browser itself reaches the app over plain HTTP on a non-loopback host (LAN or home server). TLS terminated at an ingress does not need it: the browser still speaks HTTPS. On the Helm chart this is `config.authCookieSecure` (three-state; unset leaves this default in place), added in chart 0.1.52.
 2. Off outside production.
@@ -1069,8 +1075,8 @@ The proxy (Next.js 16 middleware) has zero OIDC awareness:
 // Public routes — includes /api/auth/* which covers OIDC routes
 const publicPaths = ['/api/auth', '/_next', '/favicon.ico', '/api/db/health'];
 
-// All auth checks use the same auth-token JWT
-const token = request.cookies.get('auth-token')?.value;
+// All auth checks use the same session JWT, auth-token or __Host-auth-token by the same decision
+const token = request.cookies.get(cookieScope('auth-token', getBasePath() || '/', secure).name)?.value;
 const payload = token ? await verifyJWT(token) : null;
 ```
 
@@ -1106,6 +1112,8 @@ The OIDC login flow requires carrying three values from the login route to the c
 │    path: /                                  │
 └─────────────────────────────────────────────┘
 ```
+
+On HTTPS the state cookie is `__Host-oidc-state` at `Path=/`; see the [Cookie Security Summary](#cookie-security-summary).
 
 **Why JWT and not a plain cookie?**
 - The state must be tamper-proof — an attacker shouldn't be able to forge a state cookie
@@ -1143,6 +1151,8 @@ After OIDC (or local) authentication:
 │    path: /                                  │
 └─────────────────────────────────────────────┘
 ```
+
+On HTTPS the session cookie is `__Host-auth-token` at `Path=/`; see the [Cookie Security Summary](#cookie-security-summary).
 
 An OIDC session's payload also carries `idpSubject` and `idpIssuer`, described under [Session Identity](#session-identity).
 
@@ -1221,10 +1231,14 @@ Forces the OIDC provider to show the login screen on every SSO click, even if th
 
 ### Cookie Security Summary
 
-| Cookie | HttpOnly | Secure | SameSite | MaxAge | Signed |
-|--------|----------|--------|----------|--------|--------|
-| `oidc-state` | Yes | Yes (prod) | Lax | 5 min | JWT (HS256) |
-| `auth-token` | Yes | Yes (prod) | Lax | 24 hours | JWT (HS256) |
+| Cookie | Name and path with Secure | HttpOnly | Secure | SameSite | MaxAge | Signed |
+|--------|---------------------------|----------|--------|----------|--------|--------|
+| `oidc-state` | `__Host-oidc-state`, `/` | Yes | Yes (prod) | Lax | 5 min | JWT (HS256) |
+| `auth-token` | `__Host-auth-token`, `/` | Yes | Yes (prod) | Lax | 24 hours | JWT (HS256) |
+| `oidc-logout-hint` | `__Host-oidc-logout-hint`, `/` | Yes | Yes (prod) | Lax | session lifetime | No (the provider's ID token) |
+
+Without the Secure flag each cookie keeps the name in the first column, at the base path (`/api/auth/logout` under it for the logout hint).
+Under a base path the `__Host-` name also carries the path's segments joined by dots, so `/tools/libredb` gives `__Host-auth-token.tools.libredb`.
 
 ---
 
@@ -1408,7 +1422,7 @@ Both OIDC routes redirect to `/login?error=<code>` on failure, and record the sa
 |------------|-------|-------|------|
 | `oidc_config` | login, callback | `AuthConfigError`, or the governed sign-in rule | Missing `OIDC_*` env vars, a non-`https://` issuer, or a missing/too-short JWT secret; in governance mode also an ID token with an empty `sub` or an `iss` other than `OIDC_ISSUER` |
 | `oidc_discovery` | login | Any other error before discovery answered | Issuer does not resolve, TLS failure, response is not JSON or names a different issuer |
-| `oidc_state_missing` | callback | `oidc-state` cookie not found | Cookie expired (>5 min) or blocked by browser |
+| `oidc_state_missing` | callback | `oidc-state` (`__Host-oidc-state` on HTTPS) cookie not found | Cookie expired (>5 min) or blocked by browser, or a sign-in started before the cookie's name changed (an upgrade, or a change of `AUTH_COOKIE_SECURE`) |
 | `oidc_state_invalid` | callback | State decryption failed or state mismatch | Tampered cookie, wrong JWT_SECRET, or CSRF attempt |
 | `oidc_no_claims` | callback | Token exchange returned no claims, or no string `sub` or `iss` | Provider returned invalid/empty ID token |
 | `oidc_no_role` | callback | `mapOIDCRole()` returned null: `OIDC_USER_ROLES` is set and the role claim holds no admin or user role | The account has no role at the provider; no session is created, and the audit record names the account |

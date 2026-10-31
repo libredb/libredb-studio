@@ -236,6 +236,24 @@ describe("POST /api/auth/logout (OIDC_LOGOUT_HINT)", () => {
     expect(cookieStore._deleted).toEqual([{ name: "oidc-logout-hint", path: "/api/auth/logout" }]);
   });
 
+  // Whenever the auth cookies are Secure the hint is __Host-oidc-logout-hint at Path=/: only that name is read, and it
+  // is deleted with Secure.
+  test("with Secure on, reads and deletes __Host-oidc-logout-hint alone", async () => {
+    process.env.AUTH_COOKIE_SECURE = "true";
+    try {
+      const hint = await idToken("subject-alice");
+      cookieStore.set("oidc-logout-hint", hint);
+      expect((await redirectUrl()).searchParams.has("id_token_hint")).toBe(false);
+      expect(cookieStore._deleted).toEqual([]);
+
+      cookieStore.set("__Host-oidc-logout-hint", hint);
+      expect((await redirectUrl()).searchParams.get("id_token_hint")).toBe(hint);
+      expect(cookieStore._deleted).toEqual([{ name: "__Host-oidc-logout-hint", path: "/", secure: true }]);
+    } finally {
+      delete process.env.AUTH_COOKIE_SECURE;
+    }
+  });
+
   test("a hint whose sub differs from the session is not sent and the cookie is still deleted", async () => {
     cookieStore.set("oidc-logout-hint", await idToken("subject-mallory"));
 

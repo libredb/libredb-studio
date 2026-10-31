@@ -1,0 +1,573 @@
+{
+  "$captured": {
+    "image": "redpandadata/redpanda:v26.2.2@sha256:468bd13a9f2bd24794cb7fddc867c767fb1008b9a07b297b89fde48c564d7d96",
+    "date": "2026-10-31",
+    "runtime": "bun 1.4.4",
+    "autoCreateTopics": true,
+    "principals": "no authentication: every call is the writable positive control",
+    "note": "`agent` runs the provider's agent reads and every agent-mode surface, with the broker snapshot and the topic list before and after. `raw` sends each call the agent's closed table never sends, with the broker's own tools, past every Studio check, with the snapshot before and after each principal's calls. `leaks` lists every seeded record marker, broker address, log-directory root and group id an agent answer holds, and must be empty."
+  },
+  "markers": {
+    "key": "agent-marker-key",
+    "value": "agent-marker-value",
+    "header": "agent-marker-header"
+  },
+  "seededSnapshot": 145,
+  "agent": [
+    {
+      "principal": "the plaintext listener's principal, which may create topics",
+      "reads": [
+        {
+          "statement": "{\"read\": \"topics\"}",
+          "answer": {
+            "answered": {
+              "fields": [
+                "topic",
+                "partitions",
+                "replication_factor",
+                "offline_partitions",
+                "under_replicated_partitions"
+              ],
+              "rows": [
+                {
+                  "topic": "audit",
+                  "partitions": 1,
+                  "replication_factor": 1,
+                  "offline_partitions": 0,
+                  "under_replicated_partitions": 0
+                },
+                {
+                  "topic": "disposable",
+                  "partitions": 1,
+                  "replication_factor": 1,
+                  "offline_partitions": 0,
+                  "under_replicated_partitions": 0
+                },
+                {
+                  "topic": "orders",
+                  "partitions": 3,
+                  "replication_factor": 1,
+                  "offline_partitions": 0,
+                  "under_replicated_partitions": 0
+                }
+              ],
+              "rowCount": 3,
+              "executionTime": 2
+            }
+          }
+        },
+        {
+          "statement": "{\"read\": \"topics\", \"after\": \"audit\", \"limit\": 1}",
+          "answer": {
+            "answered": {
+              "fields": [
+                "topic",
+                "partitions",
+                "replication_factor",
+                "offline_partitions",
+                "under_replicated_partitions"
+              ],
+              "rows": [
+                {
+                  "topic": "disposable",
+                  "partitions": 1,
+                  "replication_factor": 1,
+                  "offline_partitions": 0,
+                  "under_replicated_partitions": 0
+                }
+              ],
+              "rowCount": 1,
+              "executionTime": 0,
+              "warnings": [
+                {
+                  "message": "More topics follow this answer: read on with \"after\" set to the last topic of this answer."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "statement": "{\"read\": \"brokers\"}",
+          "answer": {
+            "answered": {
+              "fields": [
+                "node_id",
+                "rack",
+                "cluster_id"
+              ],
+              "rows": [
+                {
+                  "node_id": 0,
+                  "rack": null,
+                  "cluster_id": "redpanda.8902e623-1c76-4d06-b393-54500f7c0707"
+                }
+              ],
+              "rowCount": 1,
+              "executionTime": 1
+            }
+          }
+        },
+        {
+          "statement": "{\"read\": \"partitions\", \"topic\": \"orders\"}",
+          "answer": {
+            "answered": {
+              "fields": [
+                "partition",
+                "leader",
+                "replicas",
+                "in_sync_replicas",
+                "offline_replicas",
+                "offline"
+              ],
+              "rows": [
+                {
+                  "partition": 0,
+                  "leader": 0,
+                  "replicas": "0",
+                  "in_sync_replicas": "0",
+                  "offline_replicas": null,
+                  "offline": false
+                },
+                {
+                  "partition": 1,
+                  "leader": 0,
+                  "replicas": "0",
+                  "in_sync_replicas": "0",
+                  "offline_replicas": null,
+                  "offline": false
+                },
+                {
+                  "partition": 2,
+                  "leader": 0,
+                  "replicas": "0",
+                  "in_sync_replicas": "0",
+                  "offline_replicas": null,
+                  "offline": false
+                }
+              ],
+              "rowCount": 3,
+              "executionTime": 0
+            }
+          }
+        },
+        {
+          "statement": "{\"read\": \"offsets\", \"topic\": \"orders\"}",
+          "answer": {
+            "answered": {
+              "fields": [
+                "partition",
+                "earliest_offset",
+                "end_offset",
+                "offset_span"
+              ],
+              "rows": [
+                {
+                  "partition": 0,
+                  "earliest_offset": 0,
+                  "end_offset": 3,
+                  "offset_span": 3
+                },
+                {
+                  "partition": 1,
+                  "earliest_offset": 0,
+                  "end_offset": 4,
+                  "offset_span": 4
+                },
+                {
+                  "partition": 2,
+                  "earliest_offset": 0,
+                  "end_offset": 2,
+                  "offset_span": 2
+                }
+              ],
+              "rowCount": 3,
+              "executionTime": 3
+            }
+          }
+        },
+        {
+          "statement": "{\"read\": \"offsets\", \"topic\": \"missing-agent-read\"}",
+          "answer": {
+            "refused": "QueryError: The topic does not exist. Nothing was created: an agent read asks the broker never to create a topic. The broker's own words are not passed on to agent mode, since they can name a broker's address."
+          }
+        },
+        {
+          "statement": "{\"read\": \"partitions\", \"topic\": \"missing-agent-read\"}",
+          "answer": {
+            "refused": "QueryError: The topic does not exist. Nothing was created: an agent read asks the broker never to create a topic. The broker's own words are not passed on to agent mode, since they can name a broker's address."
+          }
+        },
+        {
+          "statement": "{\"read\": \"fetch\", \"topic\": \"orders\"}",
+          "answer": {
+            "refused": "RefusedBeforeSendError: That is not one of agent mode's reads: a record's key, value, headers and timestamp, consumer groups, configs and log directories are withheld, so no fetch, produce, group, config, log-directory or administrative call is sent. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        },
+        {
+          "statement": "{\"read\": \"offsets\", \"topic\": \"orders\", \"timestamp\": \"2026-10-31T00:00:00Z\"}",
+          "answer": {
+            "refused": "RefusedBeforeSendError: The request holds a key agent mode does not read: its keys are read, topic, after and limit, so no timestamp, offset sentinel, isolation level, partition filter, group or auto-creation flag can be written. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        },
+        {
+          "statement": "{\"read\": \"offsets\", \"topic\": \"orders\", \"time\": -3}",
+          "answer": {
+            "refused": "RefusedBeforeSendError: The request holds a key agent mode does not read: its keys are read, topic, after and limit, so no timestamp, offset sentinel, isolation level, partition filter, group or auto-creation flag can be written. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        },
+        {
+          "statement": "{\"read\": \"partitions\", \"topic\": \"__consumer_offsets\"}",
+          "answer": {
+            "refused": "RefusedBeforeSendError: That is one of Kafka's internal topics, which agent mode never names in a request. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        },
+        {
+          "statement": "{\"read\": \"groups\"}",
+          "answer": {
+            "refused": "RefusedBeforeSendError: That is not one of agent mode's reads: a record's key, value, headers and timestamp, consumer groups, configs and log directories are withheld, so no fetch, produce, group, config, log-directory or administrative call is sent. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        },
+        {
+          "statement": "{\"read\": \"configs\", \"topic\": \"orders\"}",
+          "answer": {
+            "refused": "RefusedBeforeSendError: That is not one of agent mode's reads: a record's key, value, headers and timestamp, consumer groups, configs and log directories are withheld, so no fetch, produce, group, config, log-directory or administrative call is sent. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        },
+        {
+          "statement": "{\"read\": \"topics\", \"allowAutoTopicCreation\": true}",
+          "answer": {
+            "refused": "RefusedBeforeSendError: The request holds a key agent mode does not read: its keys are read, topic, after and limit, so no timestamp, offset sentinel, isolation level, partition filter, group or auto-creation flag can be written. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        },
+        {
+          "statement": "{\"read\": \"offsets\", \"topic\": \"..\"}",
+          "answer": {
+            "refused": "RefusedBeforeSendError: \"topic\" must be a Kafka topic name: 1 to 249 of the characters a-z, A-Z, 0-9, \".\", \"_\" and \"-\", other than \".\" and \"..\". Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        }
+      ],
+      "surfaces": {
+        "countObjects": {
+          "answered": {
+            "topic": {
+              "count": 3
+            },
+            "consumer_group": {
+              "unavailable": "Agent mode on Kafka reads metadata only, through the Metadata and ListOffsets requests: topic names, partitions, broker node ids and racks, the cluster id, and each partition's earliest and end offsets. Consumer groups (their ids, members, client ids and hosts, committed offsets and lag) are not read in agent mode, so none is listed or counted."
+            },
+            "broker": {
+              "count": 1
+            }
+          }
+        },
+        "listBrokers": {
+          "answered": [
+            {
+              "path": [
+                "0"
+              ],
+              "name": "0",
+              "kind": "broker"
+            }
+          ]
+        },
+        "listGroups": {
+          "refused": "QueryError: Agent mode on Kafka reads metadata only, through the Metadata and ListOffsets requests: topic names, partitions, broker node ids and racks, the cluster id, and each partition's earliest and end offsets. Consumer groups (their ids, members, client ids and hosts, committed offsets and lag) are not read in agent mode, so none is listed or counted."
+        },
+        "describeTopic": {
+          "answered": {
+            "path": [
+              "orders"
+            ],
+            "columns": [
+              {
+                "name": "partition",
+                "type": "integer",
+                "nullable": false,
+                "isPrimary": false
+              },
+              {
+                "name": "earliest_offset",
+                "type": "integer",
+                "nullable": true,
+                "isPrimary": false
+              },
+              {
+                "name": "end_offset",
+                "type": "integer",
+                "nullable": true,
+                "isPrimary": false
+              },
+              {
+                "name": "offset_span",
+                "type": "integer",
+                "nullable": true,
+                "isPrimary": false
+              }
+            ],
+            "indexes": [],
+            "foreignKeys": []
+          }
+        },
+        "topicSource": {
+          "refused": "QueryError: Agent mode on Kafka reads metadata only, through the Metadata and ListOffsets requests: topic names, partitions, broker node ids and racks, the cluster id, and each partition's earliest and end offsets. An object's source holds configs, consumer group members and committed offsets, which agent mode does not read."
+        },
+        "health": {
+          "answered": {
+            "databaseSize": "Agent mode on Kafka reads metadata only, through the Metadata and ListOffsets requests: topic names, partitions, broker node ids and racks, the cluster id, and each partition's earliest and end offsets. The size on disk is read from the brokers' log directories, which agent mode does not read, so it is not reported.",
+            "cacheHitRatio": "N/A",
+            "slowQueries": [],
+            "activeSessions": []
+          }
+        },
+        "storage": {
+          "refused": "QueryError: Agent mode on Kafka reads metadata only, through the Metadata and ListOffsets requests: topic names, partitions, broker node ids and racks, the cluster id, and each partition's earliest and end offsets. Storage is read from the brokers' log directories, which agent mode does not read, so no storage reading is taken."
+        },
+        "sessions": {
+          "refused": "QueryError: Agent mode on Kafka reads metadata only, through the Metadata and ListOffsets requests: topic names, partitions, broker node ids and racks, the cluster id, and each partition's earliest and end offsets. Kafka reports no client sessions over its protocol, so no session reading is taken; this is not a reading of none."
+        },
+        "editorRead": {
+          "refused": "RefusedBeforeSendError: Agent mode on Kafka reads metadata only, through the Metadata and ListOffsets requests: topic names, partitions, broker node ids and racks, the cluster id, and each partition's earliest and end offsets. A record's key, value, headers and timestamp are stored values, so the editor's read request, which fetches records, is refused on an agent-mode handle; agent reads go through queryReadOnly."
+        }
+      },
+      "missingTopicCreated": false,
+      "topicsAdded": [],
+      "snapshotDiff": []
+    }
+  ],
+  "raw": [
+    {
+      "as": "super",
+      "calls": [
+        {
+          "call": "Produce",
+          "command": "kafka-console-producer.sh --topic orders",
+          "exitCode": 0,
+          "answered": [],
+          "recordsReturned": 0,
+          "offsetsAnswered": 0
+        },
+        {
+          "call": "Fetch (an assigned partition, no group)",
+          "command": "kafka-console-consumer.sh --topic orders --partition 0 --offset earliest --max-messages 1 --timeout-ms 8000",
+          "exitCode": 0,
+          "answered": [],
+          "recordsReturned": 1,
+          "offsetsAnswered": 0
+        },
+        {
+          "call": "CreateTopics",
+          "command": "kafka-topics.sh --create --topic raw-created --partitions 1",
+          "exitCode": 0,
+          "answered": [],
+          "recordsReturned": 0,
+          "offsetsAnswered": 0
+        },
+        {
+          "call": "DeleteTopics",
+          "command": "kafka-topics.sh --delete --topic disposable",
+          "exitCode": 0,
+          "answered": [],
+          "recordsReturned": 0,
+          "offsetsAnswered": 0
+        },
+        {
+          "call": "DeleteRecords",
+          "command": "kafka-delete-records.sh --offset-json-file /dev/stdin",
+          "exitCode": 0,
+          "answered": [],
+          "recordsReturned": 0,
+          "offsetsAnswered": 0
+        },
+        {
+          "call": "OffsetCommit (a group's offsets reset)",
+          "command": "kafka-consumer-groups.sh --reset-offsets --group seeded-group --topic orders --to-latest --execute",
+          "exitCode": 0,
+          "answered": [],
+          "recordsReturned": 0,
+          "offsetsAnswered": 0
+        },
+        {
+          "call": "IncrementalAlterConfigs",
+          "command": "kafka-configs.sh --alter --entity-type topics --entity-name orders --add-config retention.ms=86400001",
+          "exitCode": 0,
+          "answered": [],
+          "recordsReturned": 0,
+          "offsetsAnswered": 0
+        },
+        {
+          "call": "ListOffsets by timestamp",
+          "command": "kafka-get-offsets.sh --topic orders --time 1793409257064",
+          "exitCode": 0,
+          "answered": [],
+          "recordsReturned": 0,
+          "offsetsAnswered": 3
+        },
+        {
+          "call": "ListOffsets at the max-timestamp sentinel (-3)",
+          "command": "kafka-get-offsets.sh --topic orders --time -3",
+          "exitCode": 0,
+          "answered": [
+            "Skip getting offsets for topic-partition orders-0 due to error: org.apache.kafka.common.errors.UnsupportedVersionException: The node does not support LIST_OFFSETS with version in range [7,11]. The supported range is [0,6].",
+            "Skip getting offsets for topic-partition orders-1 due to error: org.apache.kafka.common.errors.UnsupportedVersionException: The node does not support LIST_OFFSETS with version in range [7,11]. The supported range is [0,6].",
+            "Skip getting offsets for topic-partition orders-2 due to error: org.apache.kafka.common.errors.UnsupportedVersionException: The node does not support LIST_OFFSETS with version in range [7,11]. The supported range is [0,6]."
+          ],
+          "recordsReturned": 0,
+          "offsetsAnswered": 0
+        },
+        {
+          "call": "Metadata with auto-creation allowed (a producer's, to a missing topic)",
+          "command": "kafka-console-producer.sh --topic missing-producer-control --command-property max.block.ms=8000",
+          "exitCode": 0,
+          "answered": [],
+          "recordsReturned": 0,
+          "offsetsAnswered": 0
+        }
+      ],
+      "snapshotDiff": [
+        "- rpk group describe seeded-group |  | orders  0          3               0                 0               -                                 missing from list offsets (1)",
+        "- rpk topic describe -a disposable | CONFIGS | ======= (1)",
+        "- rpk topic describe -a disposable | CONFIGS | CONFIGS (1)",
+        "- rpk topic describe -a disposable | CONFIGS | KEY                                   VALUE          SOURCE (1)",
+        "- rpk topic describe -a disposable | CONFIGS | cleanup.policy                        delete         DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | compression.type                      producer       DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | delete.retention.ms                   -1             DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | flush.bytes                           262144         DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | flush.ms                              100            DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | initial.retention.local.target.bytes  -1             DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | initial.retention.local.target.ms     -1             DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | max.compaction.lag.ms                 9223372036854  DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | max.message.bytes                     1048576        DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | message.timestamp.after.max.ms        3600000        DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | message.timestamp.before.max.ms       9223372036854  DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | message.timestamp.type                CreateTime     DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | min.cleanable.dirty.ratio             0.5            DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | min.compaction.lag.ms                 0              DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | redpanda.iceberg.mode                 disabled       DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | redpanda.leaders.preference           none           DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | redpanda.remote.allowgaps             false          DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | redpanda.remote.delete                true           DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | redpanda.remote.read                  false          DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | redpanda.remote.write                 false          DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | redpanda.schema.registry.context      .              DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | redpanda.storage.mode                 unset          DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | redpanda.storage.mode.impl            unset          DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | retention.bytes                       -1             DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | retention.local.target.bytes          -1             DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | retention.local.target.ms             86400000       DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | retention.ms                          604800000      DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | segment.bytes                         134217728      DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | segment.ms                            1209600000     DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | CONFIGS | write.caching                         true           DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a disposable | PARTITIONS | 0          0       1      [0]       0                 0 (1)",
+        "- rpk topic describe -a disposable | PARTITIONS | ========== (1)",
+        "- rpk topic describe -a disposable | PARTITIONS | PARTITION  LEADER  EPOCH  REPLICAS  LOG-START-OFFSET  HIGH-WATERMARK (1)",
+        "- rpk topic describe -a disposable | PARTITIONS | PARTITIONS (1)",
+        "- rpk topic describe -a disposable | SUMMARY | ======= (1)",
+        "- rpk topic describe -a disposable | SUMMARY | NAME        disposable (1)",
+        "- rpk topic describe -a disposable | SUMMARY | PARTITIONS  1 (1)",
+        "- rpk topic describe -a disposable | SUMMARY | REPLICAS    1 (1)",
+        "- rpk topic describe -a disposable | SUMMARY | SUMMARY (1)",
+        "- rpk topic describe -a orders | CONFIGS | retention.ms                          604800000      DEFAULT_CONFIG (1)",
+        "- rpk topic describe -a orders | PARTITIONS | 0          0       1      [0]       0                 3 (1)",
+        "- rpk topic list |  | NAME        PARTITIONS  REPLICAS (1)",
+        "- rpk topic list |  | audit       1           1 (1)",
+        "- rpk topic list |  | disposable  1           1 (1)",
+        "- rpk topic list |  | orders      3           1 (1)",
+        "+ rpk group describe seeded-group |  | orders  0          4               0                 0               -                                 missing from list offsets (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | ======= (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | CONFIGS (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | KEY                                   VALUE          SOURCE (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | cleanup.policy                        delete         DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | compression.type                      producer       DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | delete.retention.ms                   -1             DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | flush.bytes                           262144         DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | flush.ms                              100            DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | initial.retention.local.target.bytes  -1             DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | initial.retention.local.target.ms     -1             DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | max.compaction.lag.ms                 9223372036854  DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | max.message.bytes                     1048576        DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | message.timestamp.after.max.ms        3600000        DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | message.timestamp.before.max.ms       9223372036854  DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | message.timestamp.type                CreateTime     DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | min.cleanable.dirty.ratio             0.5            DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | min.compaction.lag.ms                 0              DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | redpanda.iceberg.mode                 disabled       DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | redpanda.leaders.preference           none           DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | redpanda.remote.allowgaps             false          DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | redpanda.remote.delete                true           DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | redpanda.remote.read                  false          DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | redpanda.remote.write                 false          DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | redpanda.schema.registry.context      .              DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | redpanda.storage.mode                 unset          DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | redpanda.storage.mode.impl            unset          DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | retention.bytes                       -1             DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | retention.local.target.bytes          -1             DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | retention.local.target.ms             86400000       DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | retention.ms                          604800000      DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | segment.bytes                         134217728      DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | segment.ms                            1209600000     DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | CONFIGS | write.caching                         true           DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a missing-producer-control | PARTITIONS | 0          0       1      [0]       0                 1 (1)",
+        "+ rpk topic describe -a missing-producer-control | PARTITIONS | ========== (1)",
+        "+ rpk topic describe -a missing-producer-control | PARTITIONS | PARTITION  LEADER  EPOCH  REPLICAS  LOG-START-OFFSET  HIGH-WATERMARK (1)",
+        "+ rpk topic describe -a missing-producer-control | PARTITIONS | PARTITIONS (1)",
+        "+ rpk topic describe -a missing-producer-control | SUMMARY | ======= (1)",
+        "+ rpk topic describe -a missing-producer-control | SUMMARY | NAME        missing-producer-control (1)",
+        "+ rpk topic describe -a missing-producer-control | SUMMARY | PARTITIONS  1 (1)",
+        "+ rpk topic describe -a missing-producer-control | SUMMARY | REPLICAS    1 (1)",
+        "+ rpk topic describe -a missing-producer-control | SUMMARY | SUMMARY (1)",
+        "+ rpk topic describe -a orders | CONFIGS | retention.ms                          86400001       DYNAMIC_TOPIC_CONFIG (1)",
+        "+ rpk topic describe -a orders | PARTITIONS | 0          0       1      [0]       1                 4 (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | ======= (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | CONFIGS (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | KEY                                   VALUE          SOURCE (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | cleanup.policy                        delete         DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | compression.type                      producer       DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | delete.retention.ms                   -1             DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | flush.bytes                           262144         DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | flush.ms                              100            DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | initial.retention.local.target.bytes  -1             DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | initial.retention.local.target.ms     -1             DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | max.compaction.lag.ms                 9223372036854  DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | max.message.bytes                     1048576        DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | message.timestamp.after.max.ms        3600000        DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | message.timestamp.before.max.ms       9223372036854  DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | message.timestamp.type                CreateTime     DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | min.cleanable.dirty.ratio             0.5            DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | min.compaction.lag.ms                 0              DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | redpanda.iceberg.mode                 disabled       DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | redpanda.leaders.preference           none           DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | redpanda.remote.allowgaps             false          DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | redpanda.remote.delete                true           DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | redpanda.remote.read                  false          DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | redpanda.remote.write                 false          DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | redpanda.schema.registry.context      .              DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | redpanda.storage.mode                 unset          DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | redpanda.storage.mode.impl            unset          DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | retention.bytes                       -1             DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | retention.local.target.bytes          -1             DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | retention.local.target.ms             86400000       DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | retention.ms                          604800000      DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | segment.bytes                         134217728      DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | segment.ms                            1209600000     DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | CONFIGS | write.caching                         true           DEFAULT_CONFIG (1)",
+        "+ rpk topic describe -a raw-created | PARTITIONS | 0          0       1      [0]       0                 0 (1)",
+        "+ rpk topic describe -a raw-created | PARTITIONS | ========== (1)",
+        "+ rpk topic describe -a raw-created | PARTITIONS | PARTITION  LEADER  EPOCH  REPLICAS  LOG-START-OFFSET  HIGH-WATERMARK (1)",
+        "+ rpk topic describe -a raw-created | PARTITIONS | PARTITIONS (1)",
+        "+ rpk topic describe -a raw-created | SUMMARY | ======= (1)",
+        "+ rpk topic describe -a raw-created | SUMMARY | NAME        raw-created (1)",
+        "+ rpk topic describe -a raw-created | SUMMARY | PARTITIONS  1 (1)",
+        "+ rpk topic describe -a raw-created | SUMMARY | REPLICAS    1 (1)",
+        "+ rpk topic describe -a raw-created | SUMMARY | SUMMARY (1)",
+        "+ rpk topic list |  | NAME                      PARTITIONS  REPLICAS (1)",
+        "+ rpk topic list |  | audit                     1           1 (1)",
+        "+ rpk topic list |  | missing-producer-control  1           1 (1)",
+        "+ rpk topic list |  | orders                    3           1 (1)",
+        "+ rpk topic list |  | raw-created               1           1 (1)"
+      ]
+    }
+  ],
+  "leaks": []
+}

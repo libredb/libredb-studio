@@ -124,6 +124,7 @@ async function provider(
   current = new RabbitMQProvider(
     { ...CONNECTION, ...options.connection },
     {},
+    {},
     { managementTransport: management, ...(options.dial === undefined ? {} : { dial: options.dial }) },
   );
   if (options.connect !== false) await current.connect();

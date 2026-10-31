@@ -38,6 +38,7 @@ import {
   ETCD_DEFAULT_PORT,
   etcdErrorConnection,
 } from "@/lib/db/providers/keyvalue/etcd/connection-options";
+import { ETCD_METADATA_ONLY } from "@/lib/db/providers/keyvalue/etcd/agent-metadata-read";
 import { applyEtcdValueEdit, buildEtcdValueEdit, type EtcdEditPlanStamp } from "@/lib/db/providers/keyvalue/etcd/edit";
 import { toEtcdError, toProviderError } from "@/lib/db/providers/keyvalue/etcd/errors";
 import { ETCD_READ_BOUNDS, executeCommand } from "@/lib/db/providers/keyvalue/etcd/execute";
@@ -85,6 +86,9 @@ import { KEY_SPACE_HEADER, type KeySpaceEntry, keySpaceRange, permissionDenied }
 import { howItFailed } from "../../../helpers/spawn-outcome";
 
 const QUERY_TIMEOUT = 5_000;
+/** What the editor's command path answers on a handle opened for an agent-mode profile. */
+const AGENT_SURFACE_REFUSED =
+  "An etcd handle opened for agent mode answers only the agent's metadata reads, through queryReadOnly, and lists no key, value or key range.";
 const PASSWORD = "unit-reader-password";
 const encode = (text: string) => new TextEncoder().encode(text);
 
@@ -373,6 +377,7 @@ describe("the declarations, with no client (spec 3.1, 6.2, 6.3)", () => {
       objectKinds: ETCD_OBJECT_KINDS,
       keyScan: ETCD_KEY_SCAN,
       enforcesReadOnly: true,
+      metadataOnly: ETCD_METADATA_ONLY,
       schemaRefreshPattern: ETCD_SCHEMA_REFRESH_PATTERN,
     };
     expect(provider.getCapabilities()).toEqual(declared);
@@ -401,7 +406,6 @@ describe("the declarations, with no client (spec 3.1, 6.2, 6.3)", () => {
     const { provider } = build(CONNECTION, etcdClient());
     for (const method of [
       "getPoolStats",
-      "queryReadOnly",
       "endOpenQueryTransaction",
       "beginTransaction",
       "commitTransaction",
@@ -410,7 +414,14 @@ describe("the declarations, with no client (spec 3.1, 6.2, 6.3)", () => {
       expect({ method, present: method in provider }).toEqual({ method, present: false });
     }
     // The controls: the methods this provider does implement are found the same way.
-    for (const method of ["cancelQuery", "scanKeysPage", "readObjectSource", "buildObjectEdit", "applyObjectEdit"]) {
+    for (const method of [
+      "cancelQuery",
+      "queryReadOnly",
+      "scanKeysPage",
+      "readObjectSource",
+      "buildObjectEdit",
+      "applyObjectEdit",
+    ]) {
       expect({ method, present: method in provider }).toEqual({ method, present: true });
     }
   });
@@ -2139,8 +2150,11 @@ describe("the query path (spec 5.1, 5.4, E6)", () => {
       if (!built.built) throw new Error(`the read-write build refused the edit: ${JSON.stringify(built.refusal)}`);
       const mark = client.calls.length;
       const sentence = readOnlySentence(source);
+      // An execution profile's handle is agent mode's, whose editor command path is refused whatever it holds.
+      const agentMode = (execution as { readOnly?: boolean }).readOnly === true;
+      const commandRefusal = agentMode ? AGENT_SURFACE_REFUSED : sentence;
       const writes = ["put /app/cfg value", "del /app/ --prefix", "lease grant 60", "lease revoke 694d8147df1dc4c8"];
-      await Promise.all(writes.map((text) => expect(provider.query(text)).rejects.toThrow(sentence)));
+      await Promise.all(writes.map((text) => expect(provider.query(text)).rejects.toThrow(commandRefusal)));
       // An edit and each maintenance operation are refused the same way, through the surface's context.
       await Promise.all(
         ETCD_MAINTENANCE_OPERATIONS.map((type) =>
@@ -2152,8 +2166,13 @@ describe("the query path (spec 5.1, 5.4, E6)", () => {
       const applied = await provider.applyObjectEdit(built.plan);
       expect({ ...applied, duration: 0 }).toEqual({ outcome: "refused", refusal, duration: 0 });
       expect(client.calls.length).toBe(mark);
-      // A read still runs.
-      expect((await provider.query("get /app/cfg")).rowCount).toBe(1);
+      // A read still runs on an editor handle, and is refused with no request on an agent-mode one.
+      if (agentMode) {
+        await expect(provider.query("get /app/cfg")).rejects.toThrow(AGENT_SURFACE_REFUSED);
+        expect(client.calls.length).toBe(mark);
+      } else {
+        expect((await provider.query("get /app/cfg")).rowCount).toBe(1);
+      }
     },
   );
 

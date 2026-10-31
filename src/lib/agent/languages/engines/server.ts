@@ -18,6 +18,12 @@ import { MONGODB_SERVER_OVERLAY } from "../mongo/engines/mongodb";
 import { WEAVIATE_SERVER_OVERLAY } from "../weaviateapi/engines/weaviate";
 import { QDRANT_SERVER_OVERLAY } from "../qdrantapi/engines/qdrant";
 import { NEO4J_SERVER_OVERLAY } from "../cypher/engines/neo4j";
+import { MILVUS_SERVER_OVERLAY } from "../milvusrpc/engines/milvus";
+import { REDIS_SERVER_OVERLAY } from "../rediscli/engines/redis";
+import { ETCD_SERVER_OVERLAY } from "../etcdctl/engines/etcd";
+import { OXIA_SERVER_OVERLAY } from "../oxiacli/engines/oxia";
+import { RABBITMQ_SERVER_OVERLAY } from "../rabbitread/engines/rabbitmq";
+import { KAFKA_SERVER_OVERLAY } from "../kafkaread/engines/kafka";
 import type { AgentStatementLanguageId } from "../../agent-manifest";
 import { statementFamilyOf } from "../client";
 import { defineOverlay } from "../overlay";
@@ -70,6 +76,12 @@ const SERVER_OVERLAYS: AgentEngineServerOverlays = Object.freeze({
   weaviate: Object.freeze({ ...WEAVIATE_SERVER_OVERLAY }),
   qdrant: Object.freeze({ ...QDRANT_SERVER_OVERLAY }),
   neo4j: Object.freeze({ ...NEO4J_SERVER_OVERLAY }),
+  milvus: Object.freeze({ ...MILVUS_SERVER_OVERLAY }),
+  redis: Object.freeze({ ...REDIS_SERVER_OVERLAY }),
+  etcd: Object.freeze({ ...ETCD_SERVER_OVERLAY }),
+  oxia: Object.freeze({ ...OXIA_SERVER_OVERLAY }),
+  rabbitmq: Object.freeze({ ...RABBITMQ_SERVER_OVERLAY }),
+  kafka: Object.freeze({ ...KAFKA_SERVER_OVERLAY }),
 } satisfies AgentEngineServerOverlays);
 
 /** What an engine with no dialect answers: every member unsupported. */

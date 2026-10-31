@@ -1,0 +1,47 @@
+{
+  "$captured": {
+    "image": "valkey/valkey:9.1.2@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd",
+    "version": "9.1.2",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "surface": "what the server says it is with extended-redis-compatibility on, where it has the switch"
+  },
+  "configSet": {
+    "argv": [
+      "CONFIG",
+      "SET",
+      "extended-redis-compatibility",
+      "yes"
+    ],
+    "outcome": "ok",
+    "reply": "OK"
+  },
+  "hello": [
+    "server",
+    "redis",
+    "version",
+    "7.2.4",
+    "proto",
+    "2",
+    "id",
+    "850",
+    "mode",
+    "standalone",
+    "role",
+    "master",
+    "modules",
+    [
+      [
+        "name",
+        "lua",
+        "ver",
+        "1",
+        "path",
+        "lua",
+        "args",
+        []
+      ]
+    ]
+  ],
+  "infoServer": "# Server\r\nredis_version:7.2.4\r\nserver_name:valkey\r\nvalkey_version:9.1.2\r\nvalkey_release_stage:ga\r\nredis_git_sha1:00000000\r\nredis_git_dirty:0\r\nredis_build_id:16129465b18d72a\r\nredis_mode:standalone\r\nos:Linux 6.8.0-147-generic x86_64\r\narch_bits:64\r\nmonotonic_clock:X86 TSC @ 2803.21 ticks/us\r\nmultiplexing_api:epoll\r\ngcc_version:14.2.0\r\nprocess_id:7\r\nprocess_supervised:no\r\nrun_id:bb531ed0385992a214c0e93ec33681639327b7fd\r\ntcp_port:6379\r\nserver_time_usec:1793379181962579\r\nuptime_in_seconds:2\r\nuptime_in_days:0\r\nhz:10\r\nconfigured_hz:10\r\nclients_hz:10\r\nlru_clock:14994285\r\nexecutable:/data/valkey-server\r\nconfig_file:\r\nio_threads_active:0\r\navailability_zone:\r\nlistener0:name=tcp,bind=*,bind=-::*,port=6379\r\n"
+}

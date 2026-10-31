@@ -388,7 +388,7 @@ the chart values.
 
 The spec does not mirror two values.
 `extraObjects` is refused by a CEL rule in the CRD (#1526).
-The operator applies the release with its own cluster-wide service account, so a manifest listed there would be created with the operator's permissions instead of those of whoever wrote the resource, and the editor role is meant to grant no RBAC.
+The operator applies the release with its own service account, so a manifest listed there would be created with the operator's permissions instead of those of whoever wrote the resource, and the editor role is meant to grant no RBAC.
 Plain Helm applies a release with the installer's own credentials, and Argo CD within the limits of its AppProject, so the chart offers the value there.
 `postgresql`, the bundled PostgreSQL subchart, takes only the values Studio's storage needs: `enabled`, `auth`, `image`, `primary`, `tls`, `metrics`, `volumePermissions` and `commonLabels`.
 The API server drops any other key under it (strict field validation, the `kubectl` default, refuses it instead) and refuses `postgresql.extraDeploy`, `postgresql.namespaceOverride` and the `metrics` ServiceMonitor and PrometheusRule namespaces with a message, so every object of the subchart stays in the resource's namespace.
@@ -407,7 +407,7 @@ Before upgrading the operator to this release, check each existing resource:
 - Under `route`, clear any `kind` other than `HTTPRoute` and any `apiVersion` outside `gateway.networking.k8s.io`, and keep at most 64 keys, for the same reason.
 - The subchart's ServiceMonitor and PrometheusRule are created in the resource's namespace from now on, so a monitoring stack that selected them in another namespace must select that one.
 The chart's Rancher mode is not offered through the operator in this release: the operator's role grants no `ui.cattle.io` `NavLink` and no ClusterRole or ClusterRoleBinding, so a resource with `rancher.navLink.enabled` or `accessReview.enabled` fails to reconcile, and Rancher installs go through Helm or Rancher's Apps page.
-Kubernetes discovery is offered: any resource may discover its own namespace, and discovering other namespaces is limited to one resource, as the next section says.
+Kubernetes discovery is offered for the one resource the operator reconciles, the cluster's Studio in the operator's own namespace, as the next section says.
 
 Publishing works in two stages:
 
@@ -447,27 +447,43 @@ PR touches `operator/`. The operator Makefile derives `VERSION` from
 ### OpenShift mode and the cluster Studio namespace
 
 The operator renders the chart's OpenShift sign-in mode (`authProvider: openshift`, see [OPENSHIFT.md](OPENSHIFT.md)) and the console objects that go with it: the `route.openshift.io` Route with the host the resource sets, and with `openshift.consoleLink.enabled` a `console.openshift.io` ConsoleLink in the application menu or on the dashboards of the namespaces it names.
-No ConsolePlugin ships in this release.
+With `openshift.consolePlugin.enabled` it also renders the OpenShift console plugin: the cluster-scoped ConsolePlugin `libredb-studio` and the plugin's nginx server (a ServiceAccount, Deployment, Service and NetworkPolicy named `libredb-studio-console-plugin`) in the operator's own namespace.
 Every authenticated user may read ConsoleLinks, so the operator ships no reader role, and a link carries no discovered namespace.
 
 A ConsoleLink is cluster-scoped and Kubernetes discovery renders a Role in each namespace it discovers, while any user who may edit a namespace may create a `LibreDBStudio` there.
-So the operator renders the ConsoleLink and discovery of any namespace other than the resource's own for one resource only: the one in the namespace a cluster admin names as `LIBREDB_CLUSTER_STUDIO_NAMESPACE` in the Subscription's `spec.config.env`.
-Discovery of the resource's own namespace renders for any resource.
-A resource in any other namespace that asks for them fails to reconcile with a message naming `operator.clusterStudioNamespace`, and with the variable unset no resource may render them.
+So the operator manages only its own namespace.
+The CSV supports the OwnNamespace install mode and no other, and suggests the namespace `libredb-studio` (`operatorframework.io/suggested-namespace`), which the console's install form preselects and creates when it does not exist; OwnNamespace is the only mode that keeps the operator to one namespace the install itself can keep to cluster admins, and the only one the console offers besides all namespaces.
+The controller watches only the namespace its pod runs in: `config/manager/manager.yaml` sets `WATCH_NAMESPACE`, the variable helm-operator reads (empty means every namespace), from the downward API field `metadata.namespace`, which is one name and never empty.
+`generate bundle` rewrites every `WATCH_NAMESPACE` to the `olm.targetNamespaces` annotation, so `make -C operator bundle` puts `metadata.namespace` back and fails unless it landed exactly once.
+A `LibreDBStudio` in another namespace never enters the controller's cache, so it gets no status, no finalizer and no objects.
+`operator/watches.yaml` sets `operator.clusterStudioNamespace` from `$WATCH_NAMESPACE`, so the chart renders the ConsoleLink and discovery of other namespaces for the resource in the operator's own namespace, and the chart's guard refusing them elsewhere stays as defense in depth.
 The operator sets `operator.managed` and `operator.clusterStudioNamespace` itself through `overrideValues` in `operator/watches.yaml`, which win over the resource's spec, so a resource cannot change either.
 helm-operator applies `overrideValues` like `helm --set-string`, so each one reaches the chart as a string: the chart receives `operator.managed` as the string `"true"`, and a boolean must never be pinned that way, since the string `"false"` is truthy in a template.
+Every key `overrideValues` pins accepts a string in the chart's `values.schema.json`, which `tests/unit/operator-openshift-watches.test.ts` checks key by key.
 
-The manager role grants what these objects need and no more: Routes and `routes/custom-host` (`create` to set a Route's host, `update` to change it), ConsoleLinks, and read on the four kinds discovery lists (CloudNativePG and EDB `clusters`, Crunchy `postgresclusters` and `mongodbcommunity`), because Kubernetes lets the operator create the exporter's Roles only with verbs it holds itself.
-It grants no ClusterRole, ClusterRoleBinding, access review or ConsolePlugin, and `tests/unit/operator-openshift-rbac.test.ts` pins it to a reviewed list.
+The console plugin's server receives every console user's token, so the resource chooses neither where it runs nor what it runs.
+`overrideValues` pins `openshift.consolePlugin.namespace` to `$WATCH_NAMESPACE` and `openshift.consolePlugin.image` to `$RELATED_IMAGE_PLUGIN`, two variables of the manager's own Deployment (`operator/config/manager/manager.yaml`): `WATCH_NAMESPACE` is the operator's own namespace from the downward API, so the watched, cluster Studio and plugin namespaces are one value, and `RELATED_IMAGE_PLUGIN` is the plugin image pinned by digest, the same reference as the chart's default.
+The plugin's server shares that namespace with the cluster Studio, and the chart refuses any other plugin namespace under the operator; the namespaced Role covers its ServiceAccount, Deployment, Service and NetworkPolicy, so only the two ConsolePlugin rules join the ClusterRole.
+With either unset, a resource that enables the plugin fails to reconcile, naming it.
+The ConsolePlugin renders, like the ConsoleLink, only for the resource in the operator's own namespace.
+The CSV carries `console.openshift.io/plugins: '["libredb-studio"]'`, so the install form offers the plugin's toggle, which defaults to Disabled on a community catalog, and `make -C operator bundle` lists `RELATED_IMAGE_PLUGIN` in `spec.relatedImages`.
+The plugin needs OpenShift 4.19 or later; the console link works without it.
+
+The manager's rights are split in two.
+The Role `manager-namespace-role` (`config/rbac/namespace_role.yaml`) holds everything a release renders in the operator's namespace, the Helm release Secrets and the `LibreDBStudio` kind included, and `make -C operator bundle` turns it into the CSV's `permissions`, which OLM grants in the install namespace only.
+The ClusterRole `manager-role` (`config/rbac/role.yaml`) becomes the CSV's `clusterPermissions` and holds only what must reach other namespaces or cluster-scoped kinds: Roles and RoleBindings, `get` on Secrets and Services and read on the four kinds discovery lists (CloudNativePG and EDB `clusters`, Crunchy `postgresclusters` and `mongodbcommunity`), because Kubernetes lets the operator create the exporter's Roles only with verbs it holds itself, ConsoleLinks, ConsolePlugins in two rules, and `get` on Namespaces.
+It holds no rule on `libredbstudios` and no `list` or `watch` on Secrets, so a controller whose watch is widened past its namespace cannot fill its cache and exits instead of reconciling.
+The first `consoleplugins` rule holds `create`, `list` and `watch`, which a name cannot limit; the second holds `delete`, `get`, `patch` and `update` only for `resourceNames: [libredb-studio]`, the one name the chart renders, so the operator can rewrite or delete no other plugin.
+Neither grants a ClusterRole, ClusterRoleBinding or access review, nor anything on `consoles`, and `tests/unit/operator-openshift-rbac.test.ts` pins both to reviewed lists.
 The operator's service account still creates token and subject access reviews through the separate metrics auth role, which guards its metrics endpoint.
+An operator 1.1.0 install, which runs for all namespaces, is not upgraded in place: the new CSV fails with `UnsupportedOperatorGroup` and 1.1.0 keeps running, so [OPENSHIFT.md](OPENSHIFT.md#moving-from-operator-110) gives the move.
 
-The CSV declares the seven `features.operators.openshift.io` annotations OperatorHub reads, all `"false"` in this release: no `relatedImages` or digests yet, no FIPS build, no cluster proxy for Studio's token exchange and API calls, no cluster TLS profile and no cloud token authentication.
+The CSV declares the seven `features.operators.openshift.io` annotations OperatorHub reads, all `"false"` in this release: Studio's own image is still a tag (only the plugin's is in `relatedImages` by digest), no FIPS build, no cluster proxy for Studio's token exchange and API calls, no cluster TLS profile and no cloud token authentication.
 `make -C operator bundle` stamps `com.redhat.openshift.versions: "v4.16"` into `bundle/metadata/annotations.yaml` after `generate bundle` rewrites it, so the bundle records OpenShift 4.16 as its floor; 4.14 and 4.15 are untested.
 The annotation does not decide which catalogs list the bundle: in FBC mode the submission's `ci.yaml` `catalog_mapping` does, so the floor holds only once that mapping starts at v4.16.
 The submission's `ci.yaml` maps v4.15 to v4.22 today (the rendered catalogs below); the intended mapping is v4.16 to v4.22 without the end-of-life v4.17 row, an owner pull request on community-operators-prod outside this repository.
 
-OLM v1 can install the same bundle as a ClusterExtension from a ClusterCatalog.
-A ClusterExtension has no Subscription, so `LIBREDB_CLUSTER_STUDIO_NAMESPACE` stays unset there unless the controller's environment is set another way, and the operator then renders no cross-namespace or cluster-scoped object.
+OLM v1 installs a bundle whose only install mode is OwnNamespace only behind the `NewOLMOwnSingleNamespace` feature gate, which OpenShift 4.19 to 4.22 enable only in the TechPreviewNoUpgrade and DevPreviewNoUpgrade feature sets (4.18 does not define it), as a ClusterExtension with `spec.config.inline.watchNamespace` equal to its install namespace; that path is untested.
 
 ### An FBC release is two upstream PRs
 
@@ -1382,14 +1398,29 @@ A later pre-release takes the next odd minor, 0.3.x, and stays above the release
 [`vscode-extension-release.yml`](../.github/workflows/vscode-extension-release.yml) runs on a pushed `vscode-extension-*` tag.
 Its `verify` job runs `vscode-extension/scripts/release-tag.mjs`, which refuses a tag that is not `vscode-extension-` plus the manifest's `version`, and refuses a tag whose commit is not on `main`.
 Its `gates` job then calls [`vscode-extension.yml`](../.github/workflows/vscode-extension.yml), the same reusable workflow every pull request runs, smoke matrix included, which uploads the tested VSIX as the `vscode-extension-vsix` workflow artifact and the packaged build's `dist/*.js.map` as `vscode-extension-sourcemaps`.
-It publishes nothing: the workflow has no publish job and no environment, and `tests/unit/vscode-extension-workflow.test.ts` holds that until a PR adds one.
-No GitHub Release is created either.
+Its `publish` job then uploads that same VSIX with `npm run publish:marketplace` ([`vscode-extension/scripts/publish.mjs`](../vscode-extension/scripts/publish.mjs)), which runs `vsce publish --oidc --packagePath <file>`, plus `--pre-release` on an odd minor; nothing is rebuilt.
+It runs in the `vscode-marketplace` GitHub environment, which only `vscode-extension-*` tags can deploy to, and waits for no approval, like the product's automated channels: pushing the tag publishes the version, and only members with push access can push one.
+Its only credential is the job's GitHub OIDC token (`id-token: write`), which vsce trades for a short-lived Marketplace token against the trusted publisher configured on the `libredb` publisher; no Marketplace token is stored in the repository.
+`tests/unit/vscode-extension-workflow.test.ts` holds the job to that shape: after `gates`, the tested artifact, that environment, no stored secret, no Open VSX.
+No GitHub Release is created.
 `npm-publish.yml`, `docker-build-push.yml` and `aws-ami-build.yml` run on every `release: published` and skip only the chart's `libredb-studio-` prefix, so a GitHub Release for the extension would start a product publish and, while the `aws-marketplace` channel is live, an AMI build from the root `package.json` version.
 `operator-release.yml` runs on it too, but already skips a tag that is not an app semver.
 
+### What the publish job relies on outside the repository
+
+Two settings, both the owner's, configured on 31 October 2026:
+
+1. The `vscode-marketplace` environment under the repository's Settings > Environments, with deployments limited to `vscode-extension-*` tags and no required reviewers.
+   Its name is part of the trusted publishing policy below, so the job keeps the environment even without an approval step.
+2. The trusted publishing policy `VS Code Extension Release` on the `libredb` publisher's management page (`https://marketplace.visualstudio.com/manage`, Trusted Publishing), provider GitHub Actions, naming the repository owner `libredb`, the repository `libredb-studio`, the workflow `vscode-extension-release.yml` and the environment `vscode-marketplace`.
+   The Marketplace binds the owner and the repository by their numeric ids (251081537 and 1121989093), so a repository recreated under the same name does not match it.
+   A change to any of those four names, such as renaming the workflow file or the environment, needs the policy edited in the same change, or the token exchange is refused.
+
+The token exchange needs `@vscode/vsce` 4.1.0 or later, the first stable release with [microsoft/vscode-vsce#1337](https://github.com/microsoft/vscode-vsce/pull/1337); 4.0.0 fails it ([microsoft/vscode-vsce#1275](https://github.com/microsoft/vscode-vsce/issues/1275)).
+
 ### Publishing a version by hand
 
-Until a publish job exists, the owner uploads the VSIX the gates tested; nothing is rebuilt for the upload.
+When the publish job cannot run, the owner uploads the VSIX the gates tested; nothing is rebuilt for the upload.
 
 1. Download the `vscode-extension-vsix` artifact of the tag's `vscode-extension-release.yml` run, or of `main`'s `vscode-extension.yml` run at the tagged commit, and check that its manifest names `Publisher="libredb"`, the version, and, on an odd minor, the `PreRelease` property.
 2. Install it into a fresh VS Code profile (`code --user-data-dir <dir> --extensions-dir <dir> --install-extension <file>`) and run one query on each v0 engine.
@@ -1404,19 +1435,20 @@ The listing's text and images come from the packed `README.md`; the management p
 - The Marketplace publisher id is `libredb`, display name LibreDB; it cannot change, and the extension's id is `libredb.libredb-studio`.
 - The publisher is owned by named members' Microsoft accounts, added by User ID on the publisher's Members page, so no single account holds it.
 - 0.1.0 was uploaded by hand from `main` at 15fff4b04 (the `vscode-extension-vsix` artifact of run 39575773660), with no token, after a check on the four v0 engines in a fresh VS Code profile.
+- The publish job authenticates by trusted publishing (`vsce publish --oidc`), decided on 22 October 2026 over Entra ID workload identity federation and an organization-scoped PAT: it stores no secret and needs no Azure tenant, and global Azure DevOps PATs retire on 1 December 2026.
+- The environment's required reviewers were removed on 31 October 2026, after 0.4.1: the reviewers were the same members who can push a tag, so the approval added a second click rather than a second person, and no other automated channel has one.
+- 0.4.1 was the first version the publish job uploaded, on 30 October 2026 (UTC), from the `vscode-extension-0.4.1` tag on `main` at 0b97ace52 (run 41137115534); the Marketplace's Trusted Publishing page showed the policy as used by that run, and `code --install-extension libredb.libredb-studio` installed 0.4.1 in a fresh profile.
 - The tag namespace is `vscode-extension-<version>`, as in "Cutting a version" above and `CLAUDE.md`'s "Tag namespace" paragraph.
 
 ### Still open
 
-- The Marketplace authentication for a publish job, before global Azure DevOps PATs retire on 2026-12-01: trusted publishing (`vsce publish --oidc` with `id-token: write`) or Entra ID (`--azure-credential`).
-- The publish job: `vsce publish --pre-release --packagePath <file>` of the VSIX the gates tested, from a GitHub environment that requires a reviewer, and who that reviewer is.
 - When the `VS Code Extension` job and its macOS and Windows smoke matrix become required checks.
 - Whether the extension ever gets GitHub Releases; if it does, `npm-publish.yml`, `docker-build-push.yml` and `aws-ami-build.yml` must first learn to skip `vscode-extension-` tags.
 - The Open VSX namespace `libredb`, and when to publish there (`ovsx publish --pre-release`) for Cursor, Windsurf and VSCodium, after their extension host runtimes are measured.
 
 ### Its channel row
 
-The extension is the `vscode-marketplace` row of [`distribution/channels.yaml`](../distribution/channels.yaml): `kind: marketplace`, `runtime: channel_supplied`, `method: manual_ui`.
+The extension is the `vscode-marketplace` row of [`distribution/channels.yaml`](../distribution/channels.yaml): `kind: marketplace`, `runtime: channel_supplied`, `method: ci_publish`, `sla: on_demand`.
 `evaluateChannel` in `scripts/distribution-check.mjs` compares a pinned row with the root `package.json` version, which is not the extension's, so the row has `strategy: none` and the listed version is checked by hand, as Azure's and AWS's are.
 A pin that reads the listing's version against `vscode-extension/package.json` would need its own comparison in the checker, and its test.
 
@@ -1480,7 +1512,7 @@ All channels have now had their first live run (the Snap publish completed its f
 0.9.52, validated per this runbook). Right after publishing a release:
 
 1. Watch the `release-artifacts` run: all four tarball legs green (if the `macos-15-intel` or
-   `macos-14` runner labels ever disappear, check the current labels in
+   `macos-15` runner labels ever disappear, check the current labels in
    [actions/runner-images](https://github.com/actions/runner-images) - do not fall back to
    retired `macos-13` or paid `-large` labels blindly), `.deb`/`.rpm` uploaded with `.sha256`
    sidecars, `SHA256SUMS` complete, tap push and snap jobs behaving per their secrets.

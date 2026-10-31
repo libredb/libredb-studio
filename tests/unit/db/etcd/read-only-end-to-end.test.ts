@@ -121,7 +121,7 @@ describe("a read-only etcd seed, from the seed file to the provider (#1089 E6)",
     expect(clients).toHaveLength(0);
   });
 
-  test("a provider the operations profile opens on the writable seed refuses the write, and sends nothing (E12)", async () => {
+  test("a provider the operations profile opens on the writable seed refuses the command, and sends nothing (E12)", async () => {
     const connection = await resolveConnection(
       { connectionId: "seed:cluster-write" },
       { role: "admin", username: "a" },
@@ -132,7 +132,8 @@ describe("a read-only etcd seed, from the seed file to the provider (#1089 E6)",
     const [client] = clients;
     const mark = client.calls.length;
 
-    await expect(provider.query(WRITE)).rejects.toThrow(readOnlySentence("execution-profile"));
+    // An agent-mode handle answers no editor command at all, a write included, and reads no key either.
+    await expect(provider.query(WRITE)).rejects.toThrow("An etcd handle opened for agent mode answers only");
     expect(sentAfter(client, mark)).toEqual([]);
   });
 });

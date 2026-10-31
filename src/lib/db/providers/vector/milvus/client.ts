@@ -370,6 +370,43 @@ export interface WireReleaseCollectionRequest {
   readonly collection_name: string;
 }
 
+/**
+ * The read-only proof's own reads (`read-only-proof.ts`): who the agent's user is and what its roles grant. Neither
+ * request carries a database, so the adapter writes none.
+ */
+export interface WireUserEntity {
+  readonly name: string;
+}
+export interface WireRoleEntity {
+  readonly name: string;
+  readonly description?: string;
+}
+export interface WireSelectUserRequest {
+  readonly user: WireUserEntity;
+  readonly include_role_info: boolean;
+}
+export interface WireObjectEntity {
+  readonly name: string;
+}
+export interface WirePrivilegeEntity {
+  readonly name: string;
+}
+export interface WireGrantorEntity {
+  readonly user: WireUserEntity | null;
+  readonly privilege: WirePrivilegeEntity | null;
+}
+/** As a request it names the role alone; as an answer, one grant: an object, its name, a privilege and a database. */
+export interface WireGrantEntity {
+  readonly role: WireRoleEntity | null;
+  readonly object?: WireObjectEntity | null;
+  readonly object_name?: string;
+  readonly grantor?: WireGrantorEntity | null;
+  readonly db_name?: string;
+}
+export interface WireSelectGrantRequest {
+  readonly entity: WireGrantEntity;
+}
+
 // -- milvus.proto: answers -----------------------------------------------------------------------------------------
 
 export interface WireGetVersionResponse {
@@ -495,6 +532,24 @@ export interface WireSearchResults {
   readonly session_ts: MilvusInt64;
 }
 
+export interface WireListCredUsersResponse {
+  readonly status: WireStatus | null;
+  readonly usernames: readonly string[];
+}
+export interface WireUserResult {
+  readonly user: WireUserEntity | null;
+  readonly roles: readonly WireRoleEntity[];
+  readonly description: string;
+}
+export interface WireSelectUserResponse {
+  readonly status: WireStatus | null;
+  readonly results: readonly WireUserResult[];
+}
+export interface WireSelectGrantResponse {
+  readonly status: WireStatus | null;
+  readonly entities: readonly WireGrantEntity[];
+}
+
 // -- the public names the seam uses ---------------------------------------------------------------------------------
 
 export type Status = WireStatus;
@@ -530,6 +585,9 @@ export type ListAliasesResponse = WireListAliasesResponse;
 export type DescribeAliasResponse = WireDescribeAliasResponse;
 export type QueryResults = WireQueryResults;
 export type SearchResults = WireSearchResults;
+export type ListCredUsersResponse = WireListCredUsersResponse;
+export type SelectUserResponse = WireSelectUserResponse;
+export type SelectGrantResponse = WireSelectGrantResponse;
 
 /** The adapter adds the deadline per method class (E14) and the authorization metadata. */
 export interface CallOptions {
@@ -539,7 +597,7 @@ export interface CallOptions {
   readonly signal: AbortSignal;
 }
 
-/** E15's allowlist plus `close()`, and nothing else. */
+/** E15's allowlist, the read-only proof's three privilege reads, and `close()`; nothing else. */
 export interface MilvusClient {
   getVersion(o: CallOptions): Promise<GetVersionResponse>;
   checkHealth(o: CallOptions): Promise<CheckHealthResponse>;
@@ -565,6 +623,12 @@ export interface MilvusClient {
   loadCollection(r: LoadCollectionRequest, o: CallOptions): Promise<Status>;
   /** maintenance.ts only. */
   releaseCollection(r: ReleaseCollectionRequest, o: CallOptions): Promise<Status>;
+  /** read-only-proof.ts only: the user list, which a read-only user must be refused. */
+  listCredUsers(o: CallOptions): Promise<ListCredUsersResponse>;
+  /** read-only-proof.ts only: one user and its roles. */
+  selectUser(r: WireSelectUserRequest, o: CallOptions): Promise<SelectUserResponse>;
+  /** read-only-proof.ts only: one role's grants. */
+  selectGrant(r: WireSelectGrantRequest, o: CallOptions): Promise<SelectGrantResponse>;
   /** Closes the channel; later calls reject with the `closed` category and send nothing. */
   close(): void;
 }
@@ -591,6 +655,9 @@ export const MILVUS_CLIENT_METHODS = [
   "hybridSearch",
   "loadCollection",
   "releaseCollection",
+  "listCredUsers",
+  "selectUser",
+  "selectGrant",
   "close",
 ] as const satisfies readonly (keyof MilvusClient)[];
 

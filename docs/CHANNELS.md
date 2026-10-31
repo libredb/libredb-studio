@@ -76,7 +76,7 @@ Live channels by platform: **Linux 10 · macOS 4 · Windows 6 · Container 7 · 
 | [Desktop app (AppImage, .deb)](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Automated, every release | [desktop/README.md](../desktop/README.md) |
 | [AppImageHub](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Manual, on demand | [desktop/README.md](../desktop/README.md) |
 | [Linux .deb / .rpm](https://github.com/libredb/libredb-studio/releases/latest) | OS / desktop packages | Linux | live | Automated, every release | [DISTRIBUTION.md](DISTRIBUTION.md) |
-| [VS Code extension](https://marketplace.visualstudio.com/items?itemName=libredb.libredb-studio) | OS / desktop packages | Linux, macOS, Windows | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
+| [VS Code extension](https://marketplace.visualstudio.com/items?itemName=libredb.libredb-studio) | OS / desktop packages | Linux, macOS, Windows | live | Automated, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |
 | [CapRover auto-connect](https://github.com/caprover/one-click-apps) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [deploy/caprover/README.md](../deploy/caprover/README.md) |
 | [CapRover official](https://github.com/caprover/one-click-apps) | PaaS catalogs (listed) | Cloud | live | Manual, on demand | [deploy/caprover/README.md](../deploy/caprover/README.md) |
 | [CasaOS App Store](https://github.com/IceWhaleTech/CasaOS-AppStore) | PaaS catalogs (listed) | Container | live | Manual, on demand | [DISTRIBUTION.md](DISTRIBUTION.md) |

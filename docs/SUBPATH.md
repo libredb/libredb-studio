@@ -114,6 +114,10 @@ The passkey ceremony cookies, `passkey-registration` and `passkey-sign-in`, use 
 `PASSKEY_ORIGIN` stays the bare origin, `https://example.com`: the prefix never belongs in it, because a passkey belongs to the host and not to a path.
 See [PASSKEYS.md](PASSKEYS.md).
 
+Those paths hold while the cookies are not Secure (plain HTTP).
+On HTTPS every Studio cookie has a `__Host-` name, which a browser accepts only at `Path=/`, so the name carries the base path instead: `/tools/libredb` gives `__Host-auth-token.tools.libredb`, and two Studios under different base paths on one host keep separate cookies.
+At `Path=/` the browser also sends Studio's cookies to other applications served on the same host; they are same-origin with Studio already.
+
 The default Monaco asset URL becomes `/tools/libredb/monaco/vs`. An explicit
 `NEXT_PUBLIC_MONACO_VS_PATH` override is used exactly as configured, including an external
 asset origin; do not add the prefix a second time.

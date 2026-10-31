@@ -333,6 +333,49 @@ describe("the posture on Kubernetes", () => {
   });
 });
 
+describe("the posture on Oxia", () => {
+  const posture = agentPosture({ mode: "agent", engine: "oxia", engineLabel: "Oxia", handover: false });
+  const rows = STATEMENT_BUDGETS.maxResultRows;
+
+  test("claims the count of every key in the namespace, never a count over a range a command names", () => {
+    // A count over a named range or prefix is refused before the network, so the rail may not offer it.
+    expect(posture.body).not.toMatch(/keys in a range a command names|a range holding more than/);
+    expect(posture.body).toContain("the count of every key in the namespace, never their names");
+    expect(posture.body).toContain(`a namespace holding more than ${rows} keys is refused rather than counted in part`);
+  });
+});
+
+describe("the posture on RabbitMQ", () => {
+  const posture = agentPosture({ mode: "agent", engine: "rabbitmq", engineLabel: "RabbitMQ", handover: false });
+
+  test("names exactly what the agent reads: each message's offset and body size, never a value", () => {
+    expect(posture.qualifier).toBe(
+      `metadata only, ${STATEMENT_BUDGETS.maxResultRows} rows and ${STATEMENT_BUDGETS.statementTimeoutMs / 1000} s per read, over a client that cannot take a message`,
+    );
+    expect(posture.body).toContain(
+      "answers each message's offset and body size, never its body, headers, properties or routing key",
+    );
+    expect(posture.body).toContain("refuses a classic or quorum queue before any frame");
+    expect(posture.body).not.toMatch(/payload|headers are shown|message cells/);
+  });
+});
+
+describe("the posture on Apache Kafka", () => {
+  const posture = agentPosture({ mode: "agent", engine: "kafka", engineLabel: "Apache Kafka", handover: false });
+
+  test("names exactly what the agent reads: names, counts and offsets, never a record or a broker address", () => {
+    expect(posture.qualifier).toBe(
+      `metadata only, ${STATEMENT_BUDGETS.maxResultRows} rows and ${STATEMENT_BUDGETS.statementTimeoutMs / 1000} s per read, over a client that holds only Metadata and ListOffsets`,
+    );
+    expect(posture.body).toContain(
+      "never a record's key, value, headers or timestamp, a broker's host and port, a config, a log directory or a consumer group",
+    );
+    expect(posture.body).toContain("An offset span is reported as a span, never as a message count.");
+    expect(posture.body).toContain("sent with topic auto-creation off");
+    expect(posture.body).not.toMatch(/message cells|values are shown|reads records/);
+  });
+});
+
 describe("autoExecuteTerms", () => {
   // No default: a caller that names no language would be shown SQL's terms on whatever engine it is on, SQL's
   // read-only session included, on an engine that has none.

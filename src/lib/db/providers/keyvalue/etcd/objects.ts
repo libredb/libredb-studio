@@ -105,6 +105,12 @@ export interface EtcdSurfaceContext {
    */
   readonly unscoped?: true;
   readonly readOnly?: ReadOnlySource;
+  /**
+   * Set on a handle opened for an agent-mode profile, whose every refusal the agent reads: what the user may read is
+   * named by how many ranges and never by one, since a range is a key name (E13), and a lost quorum's `Status.errors`
+   * by how many there are, never by their text.
+   */
+  readonly rangesCounted?: true;
   readonly signal: AbortSignal;
   readonly now: () => number;
   readonly errors: EtcdErrorConnection;
@@ -125,11 +131,23 @@ export type EtcdObjectClient = Pick<
 >;
 
 /**
- * Spec 4.1: prefix, key (enumeratedBy "key-browser"), member, lease, user and role (the last three
+ * Spec 4.1: prefix, key (enumeratedBy "key-browser"), member, lease, user and role (all but the key and the member
  * countIsListing). Every kind but the key draws a folder; the key has a Source tab and a value edit.
+ *
+ * The prefix's count is refused exactly when its listing would be: by a refused read of the grants, and on an
+ * agent-mode handle by the metadata-only sentence, so the grounding walk carries that sentence to the model rather
+ * than an empty folder. A run reads these declarations from a provider it never connects, so the declaration is the
+ * type's, never one handle's.
  */
 export const ETCD_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
-  { id: "prefix", role: "relation", label: "Key Prefix", labelPlural: "Key Prefixes", hasColumns: true },
+  {
+    id: "prefix",
+    role: "relation",
+    label: "Key Prefix",
+    labelPlural: "Key Prefixes",
+    hasColumns: true,
+    countIsListing: true,
+  },
   {
     id: "key",
     role: "config",
@@ -276,7 +294,8 @@ export function surfaceErrorContext(
   detail: { readonly write?: boolean; readonly range?: string; readonly rangesCounted?: boolean } = {},
 ): EtcdErrorContext {
   const user = scopedBy(context);
-  const ranges = detail.rangesCounted === true ? countedScope(context.readable) : describeScope(context.readable);
+  const counted = detail.rangesCounted === true || context.rangesCounted === true;
+  const ranges = counted ? countedScope(context.readable) : describeScope(context.readable);
   return {
     command,
     write: detail.write === true,
@@ -586,16 +605,23 @@ function isListedKind(kind: string): kind is ListedKind {
 /**
  * Every kind the tree draws a folder for, each read on its own, so a refused or failed read answers that
  * kind `{ unavailable }` in the provider's words and the others are still counted; the key is left out
- * (spec 3.4). A thrown value that is not a database error is a defect and surfaces as itself.
+ * (spec 3.4). A thrown value that is not a database error is a defect and surfaces as itself. A kind `withheld`
+ * names is answered `{ unavailable }` with its sentence and sends nothing.
  */
 export async function countEtcdObjects(
   client: EtcdObjectClient,
   context: EtcdSurfaceContext,
+  withheld: Readonly<Record<string, string>> = {},
 ): Promise<Record<string, KindCount>> {
-  const settled = await Promise.allSettled(LISTED_KINDS.map((kind) => readKind(client, context, kind)));
+  const settled = await Promise.allSettled(
+    LISTED_KINDS.map((kind) =>
+      Object.hasOwn(withheld, kind) ? Promise.resolve(undefined) : readKind(client, context, kind),
+    ),
+  );
   return Object.fromEntries(
     LISTED_KINDS.map((kind, index): [string, KindCount] => {
-      const outcome = settled[index];
+      if (Object.hasOwn(withheld, kind)) return [kind, { unavailable: withheld[kind] }];
+      const outcome = settled[index] as PromiseSettledResult<Reading>;
       if (outcome.status === "rejected") {
         if (!(outcome.reason instanceof DatabaseError)) throw outcome.reason;
         return [kind, { unavailable: outcome.reason.message }];

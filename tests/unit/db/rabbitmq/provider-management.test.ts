@@ -32,7 +32,7 @@ import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
 import { RabbitMQProvider } from "@/lib/db/providers/stream/rabbitmq/index";
-import type { QueryResult } from "@/lib/db/types";
+import type { ProviderExecutionContext, QueryResult } from "@/lib/db/types";
 import { McpConnectionContext } from "@/lib/mcp/context";
 import { InspectSchemaInputSchema, inspectSchema } from "@/lib/mcp/tools/inspect-schema";
 import type { ManagedConnection } from "@/lib/seed/types";
@@ -77,19 +77,26 @@ const BROKER: StubBroker = {
   },
 };
 
-function provider(connection: DatabaseConnection = rabbitmqConnection(), queryTimeout = 60_000) {
+function provider(
+  connection: DatabaseConnection = rabbitmqConnection(),
+  queryTimeout = 60_000,
+  execution: ProviderExecutionContext = {},
+) {
   const stub = createManagementStub();
   const deadlines = manualDeadlines();
-  const instance = new RabbitMQProvider(
-    connection,
-    { queryTimeout },
-    { managementTransport: stub.factory, deadlineSignal: deadlines.factory },
-  );
+  const instance = new RabbitMQProvider(connection, { queryTimeout }, execution, {
+    managementTransport: stub.factory,
+    deadlineSignal: deadlines.factory,
+  });
   return { stub, deadlines, provider: instance };
 }
 
-async function connected(broker: StubBroker = BROKER, connection?: DatabaseConnection) {
-  const built = provider(connection);
+async function connected(
+  broker: StubBroker = BROKER,
+  connection?: DatabaseConnection,
+  execution: ProviderExecutionContext = {},
+) {
+  const built = provider(connection, 60_000, execution);
   answerBroker(built.stub, broker);
   await built.provider.connect();
   const mark = built.stub.requests.length;
@@ -385,6 +392,29 @@ describe("machine surfaces", () => {
     expect(text.lastIndexOf(name)).toBeLessThan(end);
   });
 
+  test("on an agent-mode handle the grounding describes each stream by the agent read's columns, never a message cell", async () => {
+    const connection = rabbitmqConnection();
+    const { provider: p } = await connected(BROKER, connection, { readOnly: true, sendsStatements: false });
+    // A run reads its capabilities from a provider it never connects, so the walk sees the type's declarations.
+    const capture = await captureContextSnapshot({
+      ...agentContext(p, connection),
+      capabilities: new RabbitMQProvider(connection).getCapabilities(),
+    });
+    if (capture.kind !== "captured") throw new Error("expected a capture");
+    const streams = capture.snapshot.objects.filter((object) => object.kind === "stream");
+    expect(streams.map((object) => object.path)).toEqual([
+      ["/", "st-events"],
+      ["/", "st-orders"],
+    ]);
+    for (const stream of streams) {
+      expect(stream.columns?.map((column) => column.name)).toEqual(["offset", "body_bytes"]);
+    }
+    const text = packContextForTask(capture.snapshot, "how many messages does st-orders hold");
+    for (const cell of ["payload", "routing_key", "headers", "properties", "payload_encoding"]) {
+      expect(text).not.toContain(cell);
+    }
+  });
+
   async function inspect(p: RabbitMQProvider, connection: DatabaseConnection) {
     const context = new McpConnectionContext({ username: "alice", role: "admin" });
     const managed: ManagedConnection = {
@@ -401,6 +431,19 @@ describe("machine surfaces", () => {
       { context, signal: new AbortController().signal },
     );
   }
+
+  test("inspect_schema on the operations profile it acquires describes a stream by the agent read's columns", async () => {
+    const connection = rabbitmqConnection();
+    const { provider: p } = await connected({ vhosts: { "/": { streams: ["st-orders"] } } }, connection, {
+      readOnly: true,
+      sendsStatements: false,
+    });
+    const result = await inspect(p, connection);
+    expect(result.isError).not.toBe(true);
+    const text = JSON.stringify(result);
+    expect(text).toContain("body_bytes");
+    for (const cell of ["payload", "routing_key", "payload_encoding"]) expect(text).not.toContain(cell);
+  });
 
   test("inspect_schema is 2 GETs: the virtual hosts and the chosen one's Streams page; names only inside the fence", async () => {
     const connection = rabbitmqConnection();

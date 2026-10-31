@@ -1,0 +1,187 @@
+# The manager's rights in its own namespace, the only one it watches
+# (WATCH_NAMESPACE in config/manager/manager.yaml): the Helm release Secrets,
+# the LibreDBStudio kind and everything a release renders there. make bundle
+# turns this Role, bound by namespace_role_binding.yaml, into the CSV's
+# permissions, which OLM grants in the install namespace only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    app.kubernetes.io/name: libredb-studio-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: manager-namespace-role
+rules:
+# We need to manage Helm release secrets
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - "*"
+# We need to create events on CRs about things happening during reconciliation
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+
+##
+## Rules for studio.libredb.org/v1alpha1, Kind: LibreDBStudio
+##
+- apiGroups:
+  - studio.libredb.org
+  resources:
+  - libredbstudios
+  - libredbstudios/status
+  - libredbstudios/finalizers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  - services
+  - services/finalizers
+  - endpoints
+  - persistentvolumeclaims
+  - events
+  - configmaps
+  - secrets
+  - serviceaccounts
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  - daemonsets
+  - replicasets
+  - statefulsets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+# The chart renders these behind feature flags (ingress.enabled,
+# networkPolicy.enabled, autoscaling.enabled, podDisruptionBudget.enabled)
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ingresses
+  - networkpolicies
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - autoscaling
+  resources:
+  - horizontalpodautoscalers
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - policy
+  resources:
+  - poddisruptionbudgets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+# The bundled PostgreSQL subchart can render these behind its own flags
+# (passwordUpdateJob -> Job, backup -> CronJob; its rbac.create Role and
+# RoleBinding are covered by role.yaml)
+- apiGroups:
+  - batch
+  resources:
+  - jobs
+  - cronjobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+# The chart renders an HTTPRoute per enabled route.<name> (route.main.enabled);
+# without this rule the release fails with "cannot get resource httproutes"
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - httproutes
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+# (postgresql.metrics.serviceMonitor / prometheusRule flags; rules for CRDs
+# that may not exist on the cluster are harmless)
+- apiGroups:
+  - monitoring.coreos.com
+  resources:
+  - servicemonitors
+  - prometheusrules
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+# openshiftRoute.enabled renders a route.openshift.io Route with the host the
+# resource sets; setting spec.host needs create on routes/custom-host, and
+# changing it on an existing Route needs update there, or the API server
+# refuses the Route
+- apiGroups:
+  - route.openshift.io
+  resources:
+  - routes
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - route.openshift.io
+  resources:
+  - routes/custom-host
+  verbs:
+  - create
+  - update

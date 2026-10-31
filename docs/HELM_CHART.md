@@ -42,6 +42,7 @@ charts/libredb-studio/
     ├── access-review.yaml     # ClusterRole and binding for the Kubernetes access review (default off)
     ├── kubernetes-discovery.yaml # Discovery exporter, its RBAC and the export Secret (default off)
     ├── consolelink.yaml       # OpenShift console link (openshift.consoleLink, default off)
+    ├── console-plugin.yaml    # OpenShift console plugin server and ConsolePlugin (openshift.consolePlugin, default off)
     └── NOTES.txt              # Post-install usage instructions
 ```
 
@@ -326,12 +327,52 @@ With the review on the chart writes no `ADMIN_PASSWORD`, `USER_EMAIL` or `USER_P
   The default is unset (`null`), so an upgrade with `--reuse-values` from a chart that carried `false` keeps the opt-out; the install notes warn when the policy is off in this mode.
 
 **Render guards.** `openshiftModeGuards` in `_helpers.tpl`, included in `deployment.yaml` right after `authProviderGuard`, refuses every values set the openshift preflight refuses or the mode cannot run, naming the value: no Route or no fixed Route host, an account the chart does not create, more than one replica, an identity provider role claim, MCP, the agent, the ServiceAccount review's own values, inline passwords, governance, a hand-wired `openshift-oauth` volume or mount, a mounted API token or, with discovery on, the exporter's account as Studio's, an OAuth redirect annotation beside the chart's two, under the operator an `extraEnv` admin target, and an effective image tag that is a version at or below 1.1.0, the last release without the mode.
-Three guards hold in every sign-in mode: `authProviderGuard` refuses an `extraEnv` `NEXT_PUBLIC_AUTH_PROVIDER` naming another mode than `authProvider`, which every guard keys on, `discoveryOnOpenShiftGuard` refuses discovery with `oidc` sign-in where `config.openshift.io/v1` is served, and under `operator.managed` the discovery template, the ConsoleLink, the access review's ClusterRole and binding and the Rancher NavLink render a cross-namespace or cluster-scoped object only for the release in `operator.clusterStudioNamespace` (`clusterStudioNamespaceGuard`), because any namespace editor may create a `LibreDBStudio` that the cluster-wide operator reconciles.
+Three guards hold in every sign-in mode: `authProviderGuard` refuses an `extraEnv` `NEXT_PUBLIC_AUTH_PROVIDER` naming another mode than `authProvider`, which every guard keys on, `discoveryOnOpenShiftGuard` refuses discovery with `oidc` sign-in where `config.openshift.io/v1` is served, and under `operator.managed` the discovery template, the ConsoleLink, the access review's ClusterRole and binding and the Rancher NavLink render a cross-namespace or cluster-scoped object only for the release in `operator.clusterStudioNamespace` (`clusterStudioNamespaceGuard`), which the operator sets to its own namespace, the only one it reconciles.
+Under `operator.managed`, `operatorServiceAccountGuard` also refuses `serviceAccount.create=false`, because Studio's pod shares the operator's namespace and must never run as another account there.
 
 **ConsoleLink.** `consolelink.yaml` renders the Tier 0 link only where `console.openshift.io/v1` is served or forced, and only for a host the release's Route or Ingress serves; with discovery on, the `ApplicationMenu` link is the locator, named `libredb-studio` with the label `app.kubernetes.io/name: libredb-studio`, and any other link takes the release-derived name `<namespace>.<fullname>` without that label.
 No reader role ships: the console already lets every authenticated user read ConsoleLinks.
 
 `tests/unit/helm-chart-openshift-mode.test.ts` pins these rules.
+
+### 14. OpenShift console plugin
+
+`openshift.consolePlugin` renders the server of the OpenShift console plugin and its cluster-scoped ConsolePlugin from `console-plugin.yaml` ([chart README](../charts/libredb-studio/README.md#the-console-plugin)).
+The plugin, built in its own repository, lists the database resources the signed-in user may list and opens one in Studio, which it finds through the locator ConsoleLink `libredb-studio`; it reads no Secret, and Studio reviews again with the user's own token.
+
+**Values.** `enabled` (off), `namespace` (where the server runs, empty by default), `image` (a whole reference pinned by digest; the schema refuses a tag alone and admits the empty string so the guard can name the value), `imagePullPolicy`, `replicas` (1 to 5) and `resources` (`requests` and `limits` with `cpu` and `memory` only).
+The block is closed: any other key, an enable switch or a patcher image included, fails the schema.
+Under the operator, `operator/watches.yaml` pins `namespace` to the operator's own namespace (`$WATCH_NAMESPACE`), which is the cluster Studio namespace, and `image` to `$RELATED_IMAGE_PLUGIN`, so a `LibreDBStudio` can neither move the server nor swap its image.
+
+**Objects.** A ServiceAccount, Deployment, Service and NetworkPolicy named `libredb-studio-console-plugin` in the plugin namespace, and the ConsolePlugin `libredb-studio` with a Service backend on 9443, `i18n.loadType: Preload`, and no `proxy` and no `contentSecurityPolicy`.
+The names are fixed whatever `nameOverride` or `fullnameOverride` say: the ConsolePlugin is a cluster-wide singleton, so a second release collides on it and Helm's ownership check refuses the install.
+The Deployment runs as its own ServiceAccount with no token, with the restricted security context, a read-only root, the service CA's serving certificate read-only at `/var/cert` and an `emptyDir` at `/tmp`, and no command, arguments or environment: the image bakes its nginx configuration in, which logs no request header.
+
+**Guards.** `consolePluginGuards` in `_helpers.tpl`, in this order, each naming the value to change:
+
+1. `console.openshift.io/v1` not served and `global.compatibility.openshift.apis` not `force`.
+2. Under the operator, a release outside `operator.clusterStudioNamespace` (`clusterStudioNamespaceGuard`).
+3. An empty `namespace`; under the operator an unset `WATCH_NAMESPACE` empties `operator.clusterStudioNamespace` too, so guard 2 answers first.
+4. On the Helm path, the release's own namespace.
+   Under the operator, any namespace other than `operator.clusterStudioNamespace`, the operator's own namespace and, after guard 2, the release's: the server shares that namespace with the cluster Studio, which only cluster admins write.
+5. A namespace `discovery.kubernetes.namespaces` lists.
+6. On both paths, the plugin namespace, and on the Helm path also the release's namespace, when `lookup` finds it carrying `openshift.io/requester`, which the default project request template sets on every project made through a project request and whose requester administers it; skipped where `lookup` returns nothing (`helm template`, a client-side dry run, a namespace that does not exist yet), and blind to a requested project whose custom project request template drops that annotation.
+   With the plugin on, the release's namespace falls under the cluster Studio namespace rule ([docs/OPENSHIFT.md](OPENSHIFT.md#the-cluster-studio-namespace)): only cluster admins may hold RoleBindings there.
+   Under the operator the two are one namespace, the operator's own, and the operator's ClusterRole already holds `get` on namespaces.
+7. A release that renders no locator: discovery off, or no `ApplicationMenu` console link.
+8. An empty `image` (and under the operator, an unset `RELATED_IMAGE_PLUGIN`).
+9. A `nameOverride`, `fullnameOverride` or release name that gives Studio the server's name `libredb-studio-console-plugin`: Studio's selector labels would then match the server's pods, and under the operator its objects would take the server's names in the same namespace.
+
+Guards 4 to 6 share one reason: the console sends every console user's token to the server and runs the plugin in every console session, so whoever may change that Deployment holds both, and the namespace must be one only cluster admins write.
+On the operator path that is the operator's namespace itself: whoever writes it already controls the operator, Studio's ServiceAccount there holds no right on the server's objects, Studio's pod mounts no API token by default, and, by guard 9, the server's selector labels match none of Studio's.
+
+**NetworkPolicy.** The server's policy selects exactly its pods and admits only the `openshift-console` namespace on TCP 9443, with no egress rule: nginx needs nothing else, and while no other NetworkPolicy and no AdminNetworkPolicy allow rule selects those pods (policies add up), a compromised server or image cannot send what it receives anywhere.
+
+**No enable Job.** The chart renders no Job, ClusterRole or ClusterRoleBinding for the plugin and offers no value that would.
+A hook Job that patches `consoles.operator.openshift.io` would need a hook ServiceAccount bound to `patch` on the console configuration, and the Helm the console embeds before v3.19.0 (v3.17 on 4.19, v3.18 on 4.20 and 4.21) deletes only the failed hook when a later hook fails, leaving that binding behind, where `helm uninstall` never removes it.
+Turning the plugin on is a one-time cluster-admin act that changes every console session, so a cluster admin does it on the console's Console plugins page or with the guarded patch the install notes print, and the operator path offers the install form's toggle.
+
+`tests/unit/helm-chart-openshift-plugin.test.ts` pins these rules.
 
 ## Release Pipeline
 
@@ -555,13 +596,12 @@ With openshift sign-in, people sign in with their OpenShift account and no passw
 ```bash
 helm install libredb libredb/libredb-studio \
   --set authProvider=openshift \
-  --set image.tag="$STUDIO_TAG" \
   --set openshiftRoute.enabled=true \
   --set openshiftRoute.host=studio-data.apps.example.com \
   --set openshift.consoleLink.enabled=true
 ```
 
-`$STUDIO_TAG` is a release after 1.1.0, which the render requires until `appVersion` moves past it; the chart README's "OpenShift sign-in" section lists what the mode renders and refuses, and section 13 above explains why.
+The render refuses openshift mode while the effective `image.tag` is 1.1.0 or earlier, which the default `appVersion`, 1.2.0, is not; the chart README's "OpenShift sign-in" section lists what the mode renders and refuses, and section 13 above explains why.
 
 ### External Secrets (Vault / ESO)
 ```bash

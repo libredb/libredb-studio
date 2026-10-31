@@ -69,11 +69,17 @@ function target(module: string, specifier: string): string {
 const isNodeSocket = (specifier: string) => /^(node:)?(net|tls)$/.test(specifier);
 
 /** The imports of `text` that reach another provider: an alias under providers/ outside this one, or a path out of it. */
+/**
+ * The one module of another provider's directory every agent read path imports: the read-only budget's checks and
+ * shared refusal sentences, which every provider's `queryReadOnly` words its row, byte and time refusals with.
+ */
+const SHARED_BUDGET_MODULE = "@/lib/db/providers/sql/read-only-budget";
+
 function foreignProviderImports(module: string, text: string): string[] {
   return importsOf(text)
     .filter(({ specifier }) =>
       specifier.startsWith("@/lib/db/providers/")
-        ? !specifier.startsWith("@/lib/db/providers/stream/rabbitmq/")
+        ? !specifier.startsWith("@/lib/db/providers/stream/rabbitmq/") && specifier !== SHARED_BUDGET_MODULE
         : target(module, specifier).startsWith("../"),
     )
     .map(({ specifier }) => `${module} imports ${specifier}`);
@@ -153,6 +159,10 @@ describe("the import guard", () => {
     expect(
       foreignProviderImports("render.ts", 'import { z } from "@/lib/db/providers/stream/rabbitmq/limits";\n'),
     ).toEqual([]);
+    expect(foreignProviderImports("index.ts", `import { w } from "${SHARED_BUDGET_MODULE}";\n`)).toEqual([]);
+    expect(foreignProviderImports("index.ts", 'import { w } from "@/lib/db/providers/sql/postgres";\n')).toEqual([
+      "index.ts imports @/lib/db/providers/sql/postgres",
+    ]);
   });
 
   test("nothing under amqp/ imports management/, read.ts, results.ts or index.ts", () => {

@@ -9,7 +9,7 @@ Tracking issue: [#1089](https://github.com/libredb/libredb-studio/issues/1089), 
 
 Studio reads and writes an etcd cluster through a subset of `etcdctl`'s command line, shows its keys as prefix groups in the object tree and every key in the Keys panel, edits a key's value through a guarded transaction, and offers compaction, defragmentation and alarm disarm to an admin.
 It is Kubernetes-aware: every write that touches a Kubernetes key prefix or kube-apiserver's `compact_rev_key` is refused before any write is sent, a Kubernetes protobuf or encrypted value and every secret are withheld on every surface, and a Kubernetes JSON or CBOR value is shown with its label.
-It is bound to Studio's RBAC through a seed-declared read-only mode, admin-only cluster operations and machine-access refusals: no agent execution and no MCP.
+It is bound to Studio's RBAC through a seed-declared read-only mode, admin-only cluster operations and machine-access rules: agent mode reads the cluster's metadata only ([section 15](#15-agent-mode)), and no MCP.
 
 ### Concept mapping
 
@@ -139,8 +139,9 @@ The same recipe, with what each field does, is in [SEED_CONNECTIONS.md](../SEED_
 
 ### 3.5 Machine access (E12)
 
-The provider implements no read-only query path, so the agent's execution mode refuses etcd, and plan mode drafts reads for the user to run.
-The `agent-operations` profile, which reaches every engine, opens the provider read-only, so it is refused every write in the third sentence of the table above.
+The provider's read-only query path is agent mode's alone and reads metadata only, under a user the server proves reads only ([section 15](#15-agent-mode)), and plan mode drafts reads for the user to run.
+Every agent profile, the `agent-operations` profile that reaches every engine included, opens the provider read-only, so it is refused every write in the third sentence of the table above, and lists no key, key prefix or key range.
+MCP stays closed: key names and values can carry secrets, and what an MCP client may read of an etcd cluster is a decision of its own (BACKLOG B136).
 An etcd seed with `mcp: true` is refused when the seed file loads: "mcp is not offered for etcd: the product does not expose this engine to MCP clients. Remove mcp from this connection."
 
 ### 3.6 Measurements
@@ -562,3 +563,127 @@ The refusal reason it prints, verbatim:
 - The design: issue [#1089](https://github.com/libredb/libredb-studio/issues/1089), "Cloud-native control plane".
 - etcd's [API reference](https://etcd.io/docs/v3.7/learning/api/) and its [authentication guide](https://etcd.io/docs/v3.7/op-guide/authentication/), v3.7.
 - [`docker/etcd/README.md`](../../docker/etcd/README.md) and [`tests/fixtures/etcd/README.md`](../../tests/fixtures/etcd/README.md).
+
+## 15. Agent mode
+
+Agent mode reads etcd's metadata through `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/keyvalue/etcd/index.ts).
+The command reader and its closed table are [`agent-statement.ts`](../../src/lib/db/providers/keyvalue/etcd/agent-statement.ts), the read-only proof is [`agent-read-only-proof.ts`](../../src/lib/db/providers/keyvalue/etcd/agent-read-only-proof.ts), and the metadata-only projection and the wording of a failure are [`agent-metadata-read.ts`](../../src/lib/db/providers/keyvalue/etcd/agent-metadata-read.ts).
+Every claim below cites a capture under [`tests/fixtures/etcd/v3.7.2/agent-boundary/`](../../tests/fixtures/etcd/v3.7.2/agent-boundary/), recorded by its `run.sh` against two digest-pinned v3.7.2 servers, one with authentication on and one with it off, with every request sent raw over gRPC, past every Studio check.
+
+### 15.1 The boundary
+
+The boundary is a structural closed table, with a user the server proves reads only on top of it.
+A command is read with the editor's own etcdctl parser ([section 5.1](#51-the-grammar)), and only these parsed commands are admitted, each mapped to one fixed request:
+
+| Command | Request sent |
+| --- | --- |
+| `endpoint status` | `Maintenance/Status` |
+| `member list` | `Cluster/MemberList`, linearizable |
+| `alarm list` | `Maintenance/Alarm` GET |
+| `auth status` | `Auth/AuthStatus` |
+| `lease list` | `Lease/LeaseLeases` |
+| `lease timetolive <id>` | `Lease/LeaseTimeToLive` without its keys |
+| `get "" --prefix --count-only` (or `--from-key`) | `KV/Range` of every key, `count_only`, limit 1 |
+| `get <key>` | `KV/Range` of that one key, limit 1 |
+
+No flag of the request's own reaches the server: a revision, a range end, a limit, a sort, `--keys-only`, a serializable consistency and `--command-timeout` are refused, and the `get` of one key takes no range end.
+`put`, `del`, `txn` (a read-only one included), `watch`, `lease grant`, `lease revoke`, `lease keep-alive`, `lease timetolive --keys`, `endpoint health`, `user` and `role` reads, and every command the editor refuses are refused before anything is sent.
+A count over a prefix is refused too: counts of nested prefixes would spell the key names under them one byte at a time.
+An etcd connection has no key prefix of its own to fix a request to; what one user may read is its roles' READ ranges, which the server enforces on every `get` (a key outside them is refused, `reader-range.json`).
+
+### 15.2 The read-only proof
+
+A handle opened for the agent read-only profile by an acquisition that sends statements refuses, before any socket, a connection that names no user, by password or by client certificate, and one that signs in as `root`.
+When the handle opens, and again before every command, under that command's deadline, the server is asked:
+
+- `AuthStatus` must answer `enabled`: with authentication off etcd answers every request from anyone, writes, compaction, defragmentation, snapshots and user changes included (`auth-off.json`).
+- `UserGet` of the user itself must list no `root` role: a user granted the root role may do everything `root` may (`root-role.json`).
+- `RoleGet` of each of its roles must list READ permissions only: WRITE or READWRITE on any range refuses the profile.
+
+etcd v3.7.2 answers `UserGet` of the user itself and `RoleGet` of its own roles to a user who is not root, and refuses it every other user and role (`reader-range.json`: `userGetRoot` and `roleGet:agent_read_all(not held)` are `permission denied`).
+A user whose own reads are refused is refused the profile, never assumed a reader.
+
+etcd permissions are key ranges, so a write probe on a key the proof picks cannot see a user that writes only its own range: a user holding READWRITE or WRITE on `/scratch/` is refused a put on a random key and admitted one under `/scratch/` (`readwrite-range.json`, `write-range.json`).
+That is why the proof reads the roles rather than probing a write.
+
+What the measured users get:
+
+| User | Writes | Verdict |
+| --- | --- | --- |
+| no user, authentication off | every one admitted | refused before any socket: the connection names no user |
+| `root` | every one admitted | refused before any socket, by name |
+| a user holding the root role | every one admitted | refused: root role |
+| READ on every key | every key write, compaction, defragmentation, snapshot, member and user change refused; a lease granted and revoked | proved |
+| READ on `/app/` | as above | proved |
+| READ on `/app/`, READWRITE on `/scratch/` | a put and a delete under `/scratch/` admitted | refused: a role grants READWRITE |
+| READ on `/app/`, WRITE on `/scratch/` | a put and a delete under `/scratch/` admitted | refused: a role grants WRITE |
+| no role | every write refused | proved |
+
+A User and Password on a server with authentication off never reach the proof: the connection itself is refused when it opens, with "Authentication is not enabled on this etcd, so the User and Password would not be used. Clear them to connect."
+Nothing is kept between two proofs: WRITE granted to a role after a command passed is read at the next one, and the same token writes with it at once (`midrun.json`), so the command is refused and never sent.
+A call the roles do not govern is the server's to admit: v3.7.2 grants and revokes a lease for any authenticated user, a READ-only one included (`reader-all.json`, `leaseGrant`), so the proof cannot rule those out, and the closed table, which sends no lease grant, no lease revoke and no write, is what stops them.
+A transport failure is raised as itself, never read as a verdict.
+The operations profile sends no command of the model's, so it opens with any user and no proof, and plan mode keeps grounding on a privileged connection, root included.
+
+### 15.3 What an agent command may be
+
+One etcdctl command, read by the editor's parser.
+A command outside the table, an abbreviated command and a flag the table's reads do not take are refused with agent mode's own sentence, which lists the reads it holds.
+A request the parser cannot read, such as a second command or shell syntax, is refused with the parser's sentence followed by that list.
+A key is 1 to 4,096 bytes and is written as the editor reads one ([section 5.1](#51-the-grammar)).
+The request sent carries the command's own key and the provider's limit and nothing else of the request's: no revision, header or prefix, and only the connection's token, which the provider renews itself.
+Everything else is refused before anything is sent, by a sentence that quotes no stored value: at most it names the command's own command word or flag.
+
+### 15.4 Metadata only
+
+Key names count as stored values, since applications put ids, emails and tokens in them, so agent mode never lists a key, a key prefix, a key range or a value, and reads per-key metadata only for a key its own command names.
+Each agent-mode path reads this much:
+
+| Path | Handle | What it reads |
+| --- | --- | --- |
+| Investigation commands | agent read-only profile | the closed table above, projected to names, counts and sizes |
+| Investigation grounding, plan-mode grounding and the operations workflow | either agent profile | the members, lease ids, user and role names; the key-prefix folder is withheld with the reason and lists nothing |
+| Operations readings | operations profile | health and storage from `Status` and the alarm list, a lost quorum naming how many errors `Status` holds, never their text; table statistics are refused, since each row would name a key prefix |
+| MCP | none | closed: `MCP_EXPOSABLE.etcd` is false |
+
+On a handle of either agent profile the Keys panel walk, a key's, a role's and a lease's source, the table statistics and the editor's command path are refused, and a refusal names what the user may read by how many ranges, never by one.
+An editor handle keeps every read.
+etcd declares `ProviderCapabilities.metadataOnly`: every answer is projected through [`src/lib/db/redaction/metadata-only.ts`](../../src/lib/db/redaction/metadata-only.ts), and no answer repeats the key it was asked about.
+
+| Read | Columns |
+| --- | --- |
+| `endpoint status` | `version`, `storage_version`, `member_id`, `leader_id`, `is_learner`, `db_size_bytes`, `db_size_in_use_bytes`, `db_size_quota_bytes` (null for a disabled quota), `raft_term`, `raft_index`, `raft_applied_index`, `errors` (how many, never their text) |
+| `member list` | `member_id`, `name`, `is_learner`, `peer_urls` and `client_urls` (how many, never an address) |
+| `alarm list` | `member_id`, `alarm` |
+| `auth status` | `enabled`, `auth_revision` |
+| `lease list` | `lease_id` |
+| `lease timetolive` | `lease_id`, `exists`, `ttl_seconds`, `granted_ttl_seconds` (null for a lease etcd no longer holds) |
+| the key count | `keys` |
+| `get <key>` | `exists`, `create_revision`, `mod_revision`, `version`, `lease_id` (null for none), `value_bytes`; all but `exists` null for a missing key |
+
+Ids are written as etcdctl prints them: a member's `%x`, a lease's `%016x`.
+An answer that does not fit its column withholds the whole answer, naming the column and never the value.
+An etcd failure is worded by its category alone, since an etcd error can repeat a key: a refused key reaches agent mode as the user not being granted the read, a deadline as the time budget's refusal.
+A result past the row or byte budget is refused, never cut, and an estimating plan is refused.
+
+### 15.5 Agent language pack
+
+Statement-language family: `etcdctl`.
+Overlay: [`src/lib/agent/languages/etcdctl/engines/etcd.ts`](../../src/lib/agent/languages/etcdctl/engines/etcd.ts), with its client row in [`src/lib/agent/languages/etcdctl/engines/client.ts`](../../src/lib/agent/languages/etcdctl/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`.
+Both overlays are empty, so the engine resolves to the `etcdctl` family pack itself.
+The `etcdctl` statement-language family has no dialect-bound member.
+This overlay overrides no Shared member, so every Shared member is the `etcdctl` statement-language family's own.
+The family offers the investigation workflow, through `run_read_query` with one etcdctl command, and the operations workflow; it offers no data analysis, since its answers carry no stored value, and no query optimization or database assessment, since the server composes no plan and no profile, and no workflow hands an answer to the editor.
+The workflow classifier offers the model only these two.
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+No MCP tool runs an etcdctl command: the family declares no MCP facet, and `MCP_STATEMENT_READ.etcd` is false (B136).
+
+### 15.6 Tests
+
+- `tests/unit/db/etcd/agent-statement.test.ts`: the request of every read, and every refusal before the network.
+- `tests/unit/db/etcd/agent-read-only-proof.test.ts`: the proof over every principal's captures, a grant made during the run included.
+- `tests/unit/db/etcd/agent-metadata-read.test.ts`: every projection over the captured answers, and the wording of every failure.
+- `tests/unit/db/etcd/agent-provider.test.ts`: the open, the proof before every command, the exact request sent, the object surface and the monitoring reads of either agent profile, and the wording of a failure.
+- `tests/unit/db/etcd/agent-boundary.test.ts`: the captured writes as the boundary test, with the root user as the positive control and the server's state compared before and after.
+- `tests/integration/db/etcd-provider.test.ts`: over the real adapter, `queryReadOnly` refused on an editor handle, and on an operations-profile handle a grounding capture that names no key prefix and no key, the key-prefix folder withheld and the table statistics refused.

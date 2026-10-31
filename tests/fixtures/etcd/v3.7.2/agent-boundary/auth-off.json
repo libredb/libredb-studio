@@ -1,0 +1,737 @@
+{
+  "$captured": {
+    "image": "gcr.io/etcd-development/etcd:v3.7.2@sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "version": "3.7.2",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "principal": "none",
+    "surface": "authentication off: every request is answered with no token"
+  },
+  "reads": {
+    "authStatus": {
+      "outcome": "ok",
+      "answer": {
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "5",
+          "raft_term": "2"
+        },
+        "enabled": false,
+        "authRevision": "1"
+      }
+    },
+    "status": {
+      "outcome": "ok",
+      "answer": {
+        "errors": [],
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "5",
+          "raft_term": "2"
+        },
+        "version": "3.7.2",
+        "dbSize": "20480",
+        "leader": "13051616627965907132",
+        "raftIndex": "12",
+        "raftTerm": "2",
+        "raftAppliedIndex": "12",
+        "dbSizeInUse": "16384",
+        "isLearner": false,
+        "storageVersion": "3.7.0",
+        "dbSizeQuota": "2147483648",
+        "downgradeInfo": {
+          "enabled": false,
+          "targetVersion": ""
+        }
+      }
+    },
+    "memberListLinearizable": {
+      "outcome": "ok",
+      "answer": {
+        "members": [
+          {
+            "peerURLs": [
+              "http://127.0.0.1:2380"
+            ],
+            "clientURLs": [
+              "http://127.0.0.1:2379"
+            ],
+            "ID": "13051616627965907132",
+            "name": "pr39-etcd-open",
+            "isLearner": false
+          }
+        ],
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "0",
+          "raft_term": "2"
+        }
+      }
+    },
+    "memberListSerializable": {
+      "outcome": "ok",
+      "answer": {
+        "members": [
+          {
+            "peerURLs": [
+              "http://127.0.0.1:2380"
+            ],
+            "clientURLs": [
+              "http://127.0.0.1:2379"
+            ],
+            "ID": "13051616627965907132",
+            "name": "pr39-etcd-open",
+            "isLearner": false
+          }
+        ],
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "0",
+          "raft_term": "2"
+        }
+      }
+    },
+    "alarmGet": {
+      "outcome": "ok",
+      "answer": {
+        "alarms": [],
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "5",
+          "raft_term": "2"
+        }
+      }
+    },
+    "leaseLeases": {
+      "outcome": "ok",
+      "answer": {
+        "leases": [
+          {
+            "ID": "5817702450143070728"
+          }
+        ],
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "5",
+          "raft_term": "2"
+        }
+      }
+    },
+    "leaseTimeToLive": {
+      "outcome": "ok",
+      "answer": {
+        "keys": [],
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "5",
+          "raft_term": "2"
+        },
+        "ID": "5817702450143070728",
+        "TTL": "3599",
+        "grantedTTL": "3600"
+      }
+    },
+    "leaseTimeToLiveKeys": {
+      "outcome": "ok",
+      "answer": {
+        "keys": [
+          {
+            "$text": "/app/session"
+          }
+        ],
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "5",
+          "raft_term": "2"
+        },
+        "ID": "5817702450143070728",
+        "TTL": "3599",
+        "grantedTTL": "3600"
+      }
+    },
+    "rangeKey": {
+      "outcome": "ok",
+      "answer": {
+        "kvs": [
+          {
+            "key": {
+              "$text": "/app/config"
+            },
+            "create_revision": "2",
+            "mod_revision": "2",
+            "version": "1",
+            "value": {
+              "$text": "fixture-config-value"
+            },
+            "lease": "0"
+          }
+        ],
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "5",
+          "raft_term": "2"
+        },
+        "more": false,
+        "count": "1"
+      }
+    },
+    "rangeKeyLeased": {
+      "outcome": "ok",
+      "answer": {
+        "kvs": [
+          {
+            "key": {
+              "$text": "/app/session"
+            },
+            "create_revision": "5",
+            "mod_revision": "5",
+            "version": "1",
+            "value": {
+              "$text": "fixture-session"
+            },
+            "lease": "5817702450143070728"
+          }
+        ],
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "5",
+          "raft_term": "2"
+        },
+        "more": false,
+        "count": "1"
+      }
+    },
+    "rangeKeyMissing": {
+      "outcome": "ok",
+      "answer": {
+        "kvs": [],
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "5",
+          "raft_term": "2"
+        },
+        "more": false,
+        "count": "0"
+      }
+    },
+    "rangeKeyOutside": {
+      "outcome": "ok",
+      "answer": {
+        "kvs": [
+          {
+            "key": {
+              "$text": "/other/credential"
+            },
+            "create_revision": "4",
+            "mod_revision": "4",
+            "version": "1",
+            "value": {
+              "$text": "fixture-outside-value"
+            },
+            "lease": "0"
+          }
+        ],
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "5",
+          "raft_term": "2"
+        },
+        "more": false,
+        "count": "1"
+      }
+    },
+    "rangeCountAll": {
+      "outcome": "ok",
+      "answer": {
+        "kvs": [],
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "5",
+          "raft_term": "2"
+        },
+        "more": false,
+        "count": "4"
+      }
+    },
+    "rangeCountApp": {
+      "outcome": "ok",
+      "answer": {
+        "kvs": [],
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "5",
+          "raft_term": "2"
+        },
+        "more": false,
+        "count": "3"
+      }
+    },
+    "rangeKeysOnlyAll": {
+      "outcome": "ok",
+      "answer": {
+        "kvs": [
+          {
+            "key": {
+              "$text": "/app/config"
+            },
+            "create_revision": "2",
+            "mod_revision": "2",
+            "version": "1",
+            "value": {
+              "$text": ""
+            },
+            "lease": "0"
+          },
+          {
+            "key": {
+              "$text": "/app/feature"
+            },
+            "create_revision": "3",
+            "mod_revision": "3",
+            "version": "1",
+            "value": {
+              "$text": ""
+            },
+            "lease": "0"
+          },
+          {
+            "key": {
+              "$text": "/app/session"
+            },
+            "create_revision": "5",
+            "mod_revision": "5",
+            "version": "1",
+            "value": {
+              "$text": ""
+            },
+            "lease": "0"
+          },
+          {
+            "key": {
+              "$text": "/other/credential"
+            },
+            "create_revision": "4",
+            "mod_revision": "4",
+            "version": "1",
+            "value": {
+              "$text": ""
+            },
+            "lease": "0"
+          }
+        ],
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "5",
+          "raft_term": "2"
+        },
+        "more": false,
+        "count": "4"
+      }
+    },
+    "rangeSerializableKey": {
+      "outcome": "ok",
+      "answer": {
+        "kvs": [
+          {
+            "key": {
+              "$text": "/app/config"
+            },
+            "create_revision": "2",
+            "mod_revision": "2",
+            "version": "1",
+            "value": {
+              "$text": "fixture-config-value"
+            },
+            "lease": "0"
+          }
+        ],
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "5",
+          "raft_term": "2"
+        },
+        "more": false,
+        "count": "1"
+      }
+    },
+    "txnReadOnly": {
+      "outcome": "ok",
+      "answer": {
+        "responses": [
+          {
+            "response_range": {
+              "kvs": [
+                {
+                  "key": {
+                    "$text": "/app/config"
+                  },
+                  "create_revision": "2",
+                  "mod_revision": "2",
+                  "version": "1",
+                  "value": {
+                    "$text": "fixture-config-value"
+                  },
+                  "lease": "0"
+                }
+              ],
+              "header": {
+                "cluster_id": "0",
+                "member_id": "0",
+                "revision": "5",
+                "raft_term": "0"
+              },
+              "more": false,
+              "count": "1"
+            },
+            "response": "response_range"
+          }
+        ],
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "5",
+          "raft_term": "2"
+        },
+        "succeeded": true
+      }
+    },
+    "watchKey": {
+      "outcome": "ok",
+      "answer": {
+        "events": [],
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "5",
+          "raft_term": "2"
+        },
+        "watch_id": "0",
+        "created": true,
+        "canceled": false,
+        "compact_revision": "0",
+        "cancel_reason": "",
+        "fragment": false
+      }
+    }
+  },
+  "probes": {
+    "put": {
+      "outcome": "ok",
+      "answer": {
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "6",
+          "raft_term": "2"
+        },
+        "prev_kv": null
+      }
+    },
+    "putInScratchRange": {
+      "outcome": "ok",
+      "answer": {
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "7",
+          "raft_term": "2"
+        },
+        "prev_kv": null
+      }
+    },
+    "deleteRange": {
+      "outcome": "ok",
+      "answer": {
+        "prev_kvs": [],
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "8",
+          "raft_term": "2"
+        },
+        "deleted": "1"
+      }
+    },
+    "deleteRangeInScratchRange": {
+      "outcome": "ok",
+      "answer": {
+        "prev_kvs": [],
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "9",
+          "raft_term": "2"
+        },
+        "deleted": "1"
+      }
+    },
+    "txnPut": {
+      "outcome": "ok",
+      "answer": {
+        "responses": [
+          {
+            "response_put": {
+              "header": {
+                "cluster_id": "0",
+                "member_id": "0",
+                "revision": "10",
+                "raft_term": "0"
+              },
+              "prev_kv": null
+            },
+            "response": "response_put"
+          }
+        ],
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "10",
+          "raft_term": "2"
+        },
+        "succeeded": true
+      }
+    },
+    "txnDeleteProbe": {
+      "outcome": "ok",
+      "answer": {
+        "responses": [
+          {
+            "response_delete_range": {
+              "prev_kvs": [],
+              "header": {
+                "cluster_id": "0",
+                "member_id": "0",
+                "revision": "11",
+                "raft_term": "0"
+              },
+              "deleted": "1"
+            },
+            "response": "response_delete_range"
+          }
+        ],
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "11",
+          "raft_term": "2"
+        },
+        "succeeded": true
+      }
+    },
+    "compactRevisionOne": {
+      "outcome": "ok",
+      "answer": {
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "11",
+          "raft_term": "2"
+        }
+      }
+    },
+    "leaseGrant": {
+      "outcome": "ok",
+      "answer": {
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "11",
+          "raft_term": "2"
+        },
+        "ID": "5817702450143070751",
+        "TTL": "5",
+        "error": ""
+      }
+    },
+    "leaseRevokeGranted": {
+      "outcome": "ok",
+      "answer": {
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "11",
+          "raft_term": "2"
+        }
+      }
+    },
+    "leaseRevokeUnknown": {
+      "outcome": "error",
+      "code": 5,
+      "details": "etcdserver: requested lease not found"
+    },
+    "alarmDeactivateNone": {
+      "outcome": "ok",
+      "answer": {
+        "alarms": [],
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "11",
+          "raft_term": "2"
+        }
+      }
+    },
+    "defragment": {
+      "outcome": "ok",
+      "answer": {
+        "header": null
+      }
+    },
+    "hashKV": {
+      "outcome": "ok",
+      "answer": {
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "11",
+          "raft_term": "2"
+        },
+        "hash": 250176284,
+        "compact_revision": "1",
+        "hash_revision": "11"
+      }
+    },
+    "snapshot": {
+      "outcome": "ok",
+      "answer": {
+        "firstChunkBytes": 20480
+      }
+    },
+    "memberRemoveUnknown": {
+      "outcome": "error",
+      "code": 5,
+      "details": "etcdserver: member not found"
+    },
+    "userAdd": {
+      "outcome": "ok",
+      "answer": {
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "11",
+          "raft_term": "2"
+        }
+      }
+    },
+    "userDeleteAdded": {
+      "outcome": "ok",
+      "answer": {
+        "header": {
+          "cluster_id": "2995664963432777440",
+          "member_id": "13051616627965907132",
+          "revision": "11",
+          "raft_term": "2"
+        }
+      }
+    },
+    "roleRevokeUnknown": {
+      "outcome": "error",
+      "code": 9,
+      "details": "etcdserver: role name not found"
+    }
+  },
+  "stateBefore": {
+    "revision": "5",
+    "keys": [
+      {
+        "key": {
+          "$text": "/app/config"
+        },
+        "modRevision": "2"
+      },
+      {
+        "key": {
+          "$text": "/app/feature"
+        },
+        "modRevision": "3"
+      },
+      {
+        "key": {
+          "$text": "/app/session"
+        },
+        "modRevision": "5"
+      },
+      {
+        "key": {
+          "$text": "/other/credential"
+        },
+        "modRevision": "4"
+      }
+    ],
+    "leases": [
+      {
+        "ID": "5817702450143070728"
+      }
+    ],
+    "auth": {
+      "header": {
+        "cluster_id": "2995664963432777440",
+        "member_id": "13051616627965907132",
+        "revision": "5",
+        "raft_term": "2"
+      },
+      "enabled": false,
+      "authRevision": "1"
+    }
+  },
+  "stateAfter": {
+    "revision": "11",
+    "keys": [
+      {
+        "key": {
+          "$text": "/app/config"
+        },
+        "modRevision": "2"
+      },
+      {
+        "key": {
+          "$text": "/app/feature"
+        },
+        "modRevision": "3"
+      },
+      {
+        "key": {
+          "$text": "/app/session"
+        },
+        "modRevision": "5"
+      },
+      {
+        "key": {
+          "$text": "/other/credential"
+        },
+        "modRevision": "4"
+      }
+    ],
+    "leases": [
+      {
+        "ID": "5817702450143070728"
+      }
+    ],
+    "auth": {
+      "header": {
+        "cluster_id": "2995664963432777440",
+        "member_id": "13051616627965907132",
+        "revision": "11",
+        "raft_term": "2"
+      },
+      "enabled": false,
+      "authRevision": "3"
+    }
+  }
+}

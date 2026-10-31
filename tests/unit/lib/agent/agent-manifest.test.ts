@@ -157,6 +157,12 @@ describe("the plan-estimate operation of each language", () => {
       weaviateapi: null,
       qdrantapi: null,
       cypher: null,
+      milvusrpc: null,
+      rediscli: null,
+      etcdctl: null,
+      oxiacli: null,
+      rabbitread: null,
+      kafkaread: null,
     });
     expect(Object.isFrozen(AGENT_PLAN_ESTIMATE_OPERATION)).toBe(true);
   });
@@ -493,7 +499,7 @@ describe("workflowAvailability", () => {
   });
 
   test("operations on an engine with no language opens under the one operations variant", () => {
-    expect(workflowAvailability("agent", "operations", "redis")).toEqual({
+    expect(workflowAvailability("agent", "operations", "sparkplug")).toEqual({
       open: true,
       statementLanguage: null,
       variant: requiredVariant("sql", "operations"),
@@ -501,7 +507,7 @@ describe("workflowAvailability", () => {
   });
 
   test("a plan on an engine with no language opens under no variant", () => {
-    expect(workflowAvailability("planning", "investigation", "redis")).toEqual({
+    expect(workflowAvailability("planning", "investigation", "sparkplug")).toEqual({
       open: true,
       statementLanguage: null,
       variant: null,
@@ -646,7 +652,7 @@ describe("workflowAvailability", () => {
 
   test("a run on an engine with no language persists nothing either", () => {
     for (const mode of ["agent", "planning"] as const) {
-      const open = workflowAvailability(mode, "operations", "redis");
+      const open = workflowAvailability(mode, "operations", "sparkplug");
       if (!open.open) throw new Error("refused");
       expect(persistedRunFacts(mode, "operations", open), mode).toEqual({});
     }

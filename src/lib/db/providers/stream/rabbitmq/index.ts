@@ -8,13 +8,24 @@
  * the seams.
  *
  * Read-only whatever `readOnly` says: no route of the management client writes, and the AMQP client has no encoder
- * for a publish, a get or a queue method. No `queryReadOnly`, so no agent statement execution and no MCP read.
+ * for a publish, a get or a queue method.
  *
- * The seams are test seams the factory never passes, and no connection field reaches them.
+ * `queryReadOnly` is the agent's: one read request of the editor's own shape (`agent-statement.ts`), sent through the
+ * same type check and read client, and answered through a metadata-only projection (`agent-metadata-read.ts`): each
+ * message's offset and body size, never its body, headers, properties or routing key. Read permission in RabbitMQ also
+ * grants a take and a purge, so no credential can be the boundary, and the structural closed table is: the encoder
+ * table, the stream-only type check before any frame and the `x-stream-offset` 406 backstop. On a handle opened for
+ * any agent-mode profile the editor's read and an object's source are refused, and a stream's columns are the agent
+ * read's. MCP read stays closed on this engine.
+ *
+ * The seams are test seams the factory never passes, and no connection field reaches them; they come fourth, after
+ * the execution context the factory passes.
  */
 import { getAppVersion } from "@/lib/app-version";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
+import { RefusedBeforeSendError } from "@/lib/db/errors";
 import { createNodeTransport } from "@/lib/db/http/node-transport";
+import { assertReadOnlyBudget, rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
 import type {
   ActiveSessionDetails,
   Container,
@@ -31,8 +42,11 @@ import type {
   PerformanceMetrics,
   ProviderCapabilities,
   ProviderLabels,
+  ProviderExecutionContext,
   ProviderOptions,
   QueryResult,
+  ReadOnlyStatementBudget,
+  ReadOnlyStatementMode,
   SlowQueryStats,
   StorageStats,
   TableStats,
@@ -40,6 +54,13 @@ import type {
 import { createRunRegistry, type RunRegistry } from "@/lib/db/utils/bounded-limiter";
 import type { DatabaseConnection, QueryWarning } from "@/lib/types";
 import { testConnectionCautions } from "./access-check";
+import {
+  RABBITMQ_AGENT_STREAM_COLUMNS,
+  RABBITMQ_METADATA_ONLY,
+  rabbitmqAgentFailure,
+  rabbitmqAgentResult,
+} from "./agent-metadata-read";
+import { readRabbitMQAgentStatement } from "./agent-statement";
 import { type AmqpDial, dialAmqp } from "./amqp/dial";
 import { type RabbitMQEndpoints, readConnectionOptions } from "./connection-options";
 import {
@@ -50,12 +71,15 @@ import {
   isOwnError,
   NOT_CONNECTED,
   PROVIDER_CLOSED,
+  queryError,
   rabbitmqBoundary,
 } from "./errors";
 import { RABBITMQ_LABELS } from "./labels";
 import {
   type DeadlineSignalFactory,
   RABBITMQ_DEFAULT_MANAGEMENT_PORT,
+  RABBITMQ_READ_DEADLINE_MS,
+  RABBITMQ_TYPE,
   type RabbitMQClock,
   SYSTEM_CLOCK,
   systemDeadlineSignal,
@@ -79,7 +103,7 @@ import {
   RABBITMQ_OBJECT_KINDS,
   type StreamListingMemo,
 } from "./objects";
-import { rabbitmqReadLimiter, runRead } from "./read";
+import { type ReadDependencies, rabbitmqReadLimiter, runAgentRead, runRead } from "./read";
 import { readSource } from "./source";
 import { createTrackingProbe, type TrackingProbe } from "./tracking-probe";
 
@@ -108,6 +132,13 @@ interface RabbitMQSession {
   readonly tracking: TrackingProbe;
   readonly streams: StreamListingMemo;
 }
+
+const PROFILE_REQUIRED = "Read-only execution requires a provider opened under the agent read-only profile";
+const NO_ESTIMATE = "RabbitMQ composes no estimating plan for the agent";
+
+/** The refusal of an editor surface that renders stored values, on a handle opened for an agent-mode profile. */
+const PROFILE_SURFACE_REFUSED =
+  "A RabbitMQ handle opened for agent mode answers only the agent's metadata reads, through queryReadOnly: a message's body, headers, properties and routing key, and an object's arguments, bindings and policies, are withheld.";
 
 /** The route a member names when an unexpected failure is reported: its main GET's label. */
 const label = (id: ManagementRouteId) => MANAGEMENT_ROUTES[id].label;
@@ -141,9 +172,31 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
    * Validates nothing and opens nothing: the connection's rules run in `connect()`, so a provider built only for its
    * declarations (the factory's census, `POST /api/db/provider-meta`) touches no socket.
    */
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}, seams: Partial<RabbitMQSeams> = {}) {
+  constructor(
+    config: DatabaseConnection,
+    options: ProviderOptions = {},
+    private readonly execution: ProviderExecutionContext = {},
+    seams: Partial<RabbitMQSeams> = {},
+  ) {
     super(config, options);
     this.seams = { ...DEFAULT_SEAMS, ...seams };
+  }
+
+  /**
+   * Whether this handle was opened for the agent read-only profile by an acquisition that sends statements
+   * (`sendsStatements`). Only then does `queryReadOnly` answer; the operations profile's acquisitions send no statement.
+   */
+  private get readOnlyProfile(): boolean {
+    return this.execution.readOnly === true && this.execution.sendsStatements === true;
+  }
+
+  /**
+   * Whether this handle was opened for any agent-mode profile: every execution profile opens `readOnly` and no editor
+   * handle does. On such a handle no surface renders a message or an object's configuration; the editor's own handles
+   * keep every read.
+   */
+  private get agentProfile(): boolean {
+    return this.execution.readOnly === true;
   }
 
   // ==========================================================================
@@ -178,6 +231,8 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
       objectKinds: RABBITMQ_OBJECT_KINDS,
       // Plan mode reads the default virtual host, not every virtual host of a large broker.
       agentWalkScope: { mode: "session-default" },
+      // Message bodies, headers, properties and routing keys are stored values: an agent read answers offsets and sizes.
+      metadataOnly: RABBITMQ_METADATA_ONLY,
     };
   }
 
@@ -301,20 +356,60 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
   public override async query(text: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
     // After disconnect() the lifetime carries the provider's own closed sentence, and nothing is sent.
     if (this.lifetime.signal.aborted) throw this.lifetime.signal.reason;
-    const { endpoints, management } = this.requireConnected();
-    return runRead(text, params, queryId, {
-      endpoints,
-      management,
+    const session = this.requireConnected();
+    if (this.agentProfile) throw new RefusedBeforeSendError(PROFILE_SURFACE_REFUSED, RABBITMQ_TYPE, text);
+    return runRead(text, params, queryId, this.readDependencies(session, this.queryTimeout));
+  }
+
+  /** What a read needs from this instance, under `queryTimeoutMs`. */
+  private readDependencies(session: RabbitMQSession, queryTimeoutMs: number): ReadDependencies {
+    return {
+      endpoints: session.endpoints,
+      management: session.management,
       readLimiter: this.readLimiter,
       runs: this.runs,
       lifetime: this.lifetime.signal,
-      queryTimeoutMs: this.queryTimeout,
+      queryTimeoutMs,
       dial: this.seams.dial,
       clock: this.seams.clock,
       deadlineSignal: this.seams.deadlineSignal,
       ...(this.seams.onSkippedBytes === undefined ? {} : { onSkippedBytes: this.seams.onSkippedBytes }),
       studioVersion: getAppVersion(),
-    });
+    };
+  }
+
+  /**
+   * One agent read request. Only on a handle opened under the agent read-only profile; the request is read by
+   * `readRabbitMQAgentStatement` with the editor's own parser, and refused before anything is sent when it is not one
+   * read request or when its limit passes the row budget, since a read answers up to its limit and a cut answer is
+   * never given. Then the read runs as the editor's does, the type check before any frame and `x-stream-offset` on the
+   * consume, under D = min(the request's time budget, 30 s), with no queryId, so nothing of one call reaches another.
+   * Its answer is the metadata-only projection, refused past the byte budget and at every stop but the limit and the
+   * stream's own end, and a failure before the broker started the read is the time budget's or errors.ts's own sentence.
+   */
+  public async queryReadOnly(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    if (this.lifetime.signal.aborted) throw this.lifetime.signal.reason;
+    const session = this.requireConnected();
+    if (!this.readOnlyProfile) throw new RefusedBeforeSendError(PROFILE_REQUIRED, RABBITMQ_TYPE, statement);
+    assertReadOnlyBudget(budget, RABBITMQ_TYPE);
+    if (mode !== "execute") throw new RefusedBeforeSendError(NO_ESTIMATE, RABBITMQ_TYPE, statement);
+    const reading = readRabbitMQAgentStatement(statement);
+    if (!reading.ok) throw new RefusedBeforeSendError(reading.message, RABBITMQ_TYPE, statement);
+    if (reading.plan.limit > budget.maxResultRows) {
+      const sentence = rowBudgetSentence(reading.plan.limit, budget.maxResultRows);
+      throw new RefusedBeforeSendError(sentence, RABBITMQ_TYPE, statement);
+    }
+    const deadlineMs = Math.min(budget.statementTimeoutMs, RABBITMQ_READ_DEADLINE_MS);
+    try {
+      const read = await runAgentRead(reading.plan, this.readDependencies(session, deadlineMs));
+      return rabbitmqAgentResult(read, reading.plan, budget, statement);
+    } catch (error) {
+      throw rabbitmqAgentFailure(error, deadlineMs, statement) ?? error;
+    }
   }
 
   /** Stops a running or queued read by its queryId and answers true; an unknown id answers false. */
@@ -342,16 +437,31 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
   }
 
   public describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
-    return this.browse(label("streams-page"), async () => describeKind(this.getCapabilities(), path, kind));
+    return this.browse(label("streams-page"), async () =>
+      describeKind(this.getCapabilities(), path, kind, this.streamColumns()),
+    );
   }
 
   public describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
     return this.browse(label("streams-page"), (s) =>
-      describeKindBatch(s.management, this.getCapabilities(), s.streams, container, kind, limit),
+      describeKindBatch(s.management, this.getCapabilities(), s.streams, container, kind, limit, this.streamColumns()),
     );
   }
 
-  public readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
+  /** A stream's columns as this handle describes them: the agent read's on an agent-mode handle, else the editor's. */
+  private streamColumns() {
+    return this.agentProfile ? RABBITMQ_AGENT_STREAM_COLUMNS : undefined;
+  }
+
+  /**
+   * An object's detail. On an agent-mode handle it is refused: it holds an object's arguments, bindings with their
+   * routing keys and policies, which no agent read answers.
+   */
+  public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
+    if (this.agentProfile) {
+      this.requireConnected();
+      throw queryError(PROFILE_SURFACE_REFUSED);
+    }
     return this.browse(label(kind === "exchange" ? "exchange" : "queue"), (s) =>
       readSource(
         {

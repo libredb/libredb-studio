@@ -34,7 +34,7 @@ export const NO_SERVED_SEEDS: ServedSeeds = { loaded: true, seeds: [] };
  *
  * - `browser-only` — the server cannot rebuild this connection: it has never heard of
  *   it, or it holds a seed of this id that reaches somewhere else. The settings that
- *   decide where it points live in this browser.
+ *   decide where it points are the user's, not the server's, wherever they are stored.
  * - `seed-config-unreadable` — the server could not read its own seed configuration, so
  *   nothing is known about what it can rebuild. Nothing has been established about this
  *   connection at all.

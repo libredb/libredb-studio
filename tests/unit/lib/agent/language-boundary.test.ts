@@ -181,6 +181,12 @@ const ALLOWLIST: Readonly<Record<string, number>> = Object.freeze({
   [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "weaviateapi"`]: 1,
   [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "qdrantapi"`]: 1,
   [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "cypher"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "milvusrpc"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "rediscli"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "etcdctl"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "oxiacli"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "rabbitread"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "kafkaread"`]: 1,
   [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R5a "sql"`]: 1,
   [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "mongo"`]: 1,
   [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "kubectl"`]: 1,
@@ -189,6 +195,12 @@ const ALLOWLIST: Readonly<Record<string, number>> = Object.freeze({
   [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "weaviateapi"`]: 1,
   [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "qdrantapi"`]: 1,
   [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "cypher"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "milvusrpc"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "rediscli"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "etcdctl"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "oxiacli"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "rabbitread"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "kafkaread"`]: 1,
   // The provider capability `queryLanguage`, whose value "influxql" names the editor's language and is spelled as the
   // pack id; the inventory reads it to write an InfluxQL measurement as "db".."m", the spelling the server reads.
   [`${AGENT}/context-snapshot.ts#qualifiedName: R1a "influxql"`]: 1,
@@ -240,6 +252,12 @@ const ALLOWLIST: Readonly<Record<string, number>> = Object.freeze({
   [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "weaviate"`]: 1,
   [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "qdrant"`]: 1,
   [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "neo4j"`]: 1,
+  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "milvus"`]: 1,
+  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "redis"`]: 1,
+  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "etcd"`]: 1,
+  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "oxia"`]: 1,
+  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "rabbitmq"`]: 1,
+  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "kafka"`]: 1,
   [`${AGENT}/config.ts#AgentDurableBackend: R8a "postgres"`]: 1,
   [`${AGENT}/config.ts#SANCTIONED_WORLD_TARGETS: R8a "postgres"`]: 1,
   [`${AGENT}/config.ts#resolveAgentAvailability: R8a "postgres"`]: 1,
@@ -925,7 +943,21 @@ function absorbedFindings(files: readonly string[], planted: Planted = {}): stri
 
 describe("the agent core names no language a pack owns", () => {
   test("the pack ids come from the manifest", () => {
-    expect(PACK_IDS).toEqual(["kubectl", "mongo", "libredbkv", "influxql", "weaviateapi", "qdrantapi", "cypher"]);
+    expect(PACK_IDS).toEqual([
+      "kubectl",
+      "mongo",
+      "libredbkv",
+      "influxql",
+      "weaviateapi",
+      "qdrantapi",
+      "cypher",
+      "milvusrpc",
+      "rediscli",
+      "etcdctl",
+      "oxiacli",
+      "rabbitread",
+      "kafkaread",
+    ]);
   });
 
   test("the real core sources yield exactly the allowlisted findings", () => {
@@ -974,7 +1006,7 @@ describe("every engine overlay is declared satisfies its overlay type", () => {
     const exported = sourcesUnder(LANGUAGES)
       .filter((file) => new RegExp(`^${LANGUAGES}/[^/]+/engines/`).test(file))
       .flatMap((file) => Array.from(read(file).matchAll(/^export const (\w+_(SERVER|CLIENT)_OVERLAY)\b/gm)));
-    expect(exported).toHaveLength(44);
+    expect(exported).toHaveLength(56);
   });
 
   test("an overlay that drops its satisfies fails R6", () => {

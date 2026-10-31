@@ -140,7 +140,12 @@ function groupOf(prefix: string): PrefixGroup {
 export async function readEtcdHealth(client: EtcdMonitoringClient, context: EtcdSurfaceContext): Promise<HealthInfo> {
   const status = await read(() => client.status({ signal: context.signal }), readContext(context, "status read"));
   if (status.leader === "0") {
-    throw toProviderError(new EtcdError("no-leader", status.errors.join("; ")), readContext(context, "status read"));
+    // A handle opened for agent mode reads metadata only, so it counts Status.errors as its investigation reads do.
+    const count = status.errors.length;
+    const detail = context.rangesCounted
+      ? `etcd reported ${count} error${count === 1 ? "" : "s"}, whose text is not passed on to agent mode`
+      : status.errors.join("; ");
+    throw toProviderError(new EtcdError("no-leader", detail), readContext(context, "status read"));
   }
   const alarms = await read(() => client.alarmList({ signal: context.signal }), readContext(context, "alarm list"));
   if (alarms.length > 0) {

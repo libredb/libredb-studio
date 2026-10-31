@@ -12,6 +12,7 @@ import { AuthenticationError, ConnectionError, DatabaseConfigError, QueryError }
 import { MilvusError } from "@/lib/db/providers/vector/milvus/client";
 import type { MilvusConnectionOptions } from "@/lib/db/providers/vector/milvus/connection-options";
 import { MilvusProvider } from "@/lib/db/providers/vector/milvus/index";
+import { MILVUS_METADATA_ONLY } from "@/lib/db/providers/vector/milvus/metadata-read";
 import { MILVUS_LABELS } from "@/lib/db/providers/vector/milvus/labels";
 import { MILVUS_MAINTENANCE_SPECS, previewMilvusMaintenance } from "@/lib/db/providers/vector/milvus/maintenance";
 import {
@@ -124,6 +125,7 @@ describe("the declarations, with no client", () => {
       containerPathShapes: "exact",
       objectKinds: MILVUS_OBJECT_KINDS,
       enforcesReadOnly: true,
+      metadataOnly: MILVUS_METADATA_ONLY,
       schemaRefreshPattern: "(?!)",
     });
   });
@@ -151,19 +153,12 @@ describe("the declarations, with no client", () => {
     expect(provider.getCapabilities().defaultPort).toBe(19530);
   });
 
-  test("what is detected by presence: cancelQuery, the preview and the engine user are there; queryReadOnly, a pool, row edits and a key scan are not", () => {
+  test("what is detected by presence: cancelQuery, the preview, the engine user and queryReadOnly are there; a pool, row edits and a key scan are not", () => {
     const provider: object = over(CATALOG).provider;
-    for (const present of ["cancelQuery", "previewMaintenance", "engineUser", "readObjectSource"]) {
+    for (const present of ["cancelQuery", "previewMaintenance", "engineUser", "readObjectSource", "queryReadOnly"]) {
       expect(present in provider).toBe(true);
     }
-    for (const absent of [
-      "queryReadOnly",
-      "getPoolStats",
-      "buildObjectEdit",
-      "applyObjectEdit",
-      "scanKeysPage",
-      "beginTransaction",
-    ]) {
+    for (const absent of ["getPoolStats", "buildObjectEdit", "applyObjectEdit", "scanKeysPage", "beginTransaction"]) {
       expect(absent in provider).toBe(false);
     }
   });

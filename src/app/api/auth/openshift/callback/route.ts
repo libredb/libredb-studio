@@ -16,10 +16,12 @@ import type { NextResponse } from "next/server";
 import { clientAddress } from "@/lib/api/client-address";
 import { safeReturnPath } from "@/lib/api/session-ended";
 import { login, verifiedSessionCookie } from "@/lib/auth";
+import { cookieDeletion } from "@/lib/auth-cookies";
 import { AuthConfigError } from "@/lib/auth-errors";
 import { authProviderSetting } from "@/lib/config/auth-provider";
 import { withBasePath } from "@/lib/config/base-path";
 import { logger } from "@/lib/logger";
+import { studioCookie } from "@/lib/studio-cookie";
 import { OPENSHIFT_API_CA_FILE_ENV, OPENSHIFT_CALLBACK_PATH, openShiftPublicUrl } from "@/lib/openshift-auth/config";
 import { type ExchangeOutcome, exchangeOpenShiftCode } from "@/lib/openshift-auth/flow";
 import { type IdentityReading, readOpenShiftIdentity } from "@/lib/openshift-auth/identity";
@@ -169,14 +171,15 @@ export async function GET(request: Request): Promise<NextResponse> {
   let result: SignInResult;
   try {
     const cookieStore = await cookies();
-    const stateCookie = cookieStore.get(OPENSHIFT_STATE_COOKIE)?.value;
+    const stateScope = await studioCookie(OPENSHIFT_STATE_COOKIE, openShiftStateCookiePath());
+    const stateCookie = cookieStore.get(stateScope.name)?.value;
     if (stateCookie === undefined) {
       result = { code: "openshift_state_missing" };
     } else {
       try {
         result = await completeSignIn(request, stateCookie, ip);
       } finally {
-        cookieStore.delete({ name: OPENSHIFT_STATE_COOKIE, path: openShiftStateCookiePath() });
+        cookieStore.delete(cookieDeletion(stateScope));
       }
     }
   } catch (error) {

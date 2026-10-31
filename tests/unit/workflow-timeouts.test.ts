@@ -40,7 +40,7 @@ const EXPECTED_TIMEOUTS: Record<string, Record<string, number>> = {
   "vscode-extension.yml": { "vscode-extension": 35, "vscode-extension-smoke": 25 },
   "vscode-extension-insiders.yml": { insiders: 30, coexistence: 20 },
   // Its gates job calls vscode-extension.yml, whose own jobs carry their timeouts.
-  "vscode-extension-release.yml": { verify: 5 },
+  "vscode-extension-release.yml": { verify: 5, publish: 10 },
 };
 
 interface WorkflowJob {

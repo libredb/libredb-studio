@@ -7,6 +7,12 @@ import { fingerprintLibredbkv, libredbkvRowCapAdvice } from "@/lib/agent/languag
 import { fingerprintMongo, mongoRowCapAdvice } from "@/lib/agent/languages/mongo/adapter";
 import { fingerprintWeaviateapi, weaviateapiRowCapAdvice } from "@/lib/agent/languages/weaviateapi/adapter";
 import { fingerprintQdrantapi, qdrantapiRowCapAdvice } from "@/lib/agent/languages/qdrantapi/adapter";
+import { fingerprintMilvusrpc, milvusrpcRowCapAdvice } from "@/lib/agent/languages/milvusrpc/adapter";
+import { fingerprintRediscli, rediscliRowCapAdvice } from "@/lib/agent/languages/rediscli/adapter";
+import { etcdctlRowCapAdvice, fingerprintEtcdctl } from "@/lib/agent/languages/etcdctl/adapter";
+import { fingerprintOxiacli, oxiacliRowCapAdvice } from "@/lib/agent/languages/oxiacli/adapter";
+import { fingerprintRabbitread, rabbitreadRowCapAdvice } from "@/lib/agent/languages/rabbitread/adapter";
+import { fingerprintKafkaread, kafkareadRowCapAdvice } from "@/lib/agent/languages/kafkaread/adapter";
 import { languageServer, languageServerPack } from "@/lib/agent/languages/server";
 import {
   admitLibredbkvStatement,
@@ -36,6 +42,42 @@ import {
   qdrantapiAgentReadInput,
 } from "@/lib/db/operations/qdrantapi-admission";
 import { QDRANT_AGENT_SENTENCES } from "@/lib/db/providers/vector/qdrant/metadata-request";
+import {
+  admitMilvusrpcStatement,
+  MILVUSRPC_AGENT_MAX_STATEMENT_CHARS,
+  milvusrpcAgentReadInput,
+} from "@/lib/db/operations/milvusrpc-admission";
+import { MILVUS_AGENT_SENTENCES } from "@/lib/db/providers/vector/milvus/metadata-request";
+import {
+  admitRediscliStatement,
+  REDISCLI_AGENT_MAX_STATEMENT_CHARS,
+  rediscliAgentReadInput,
+} from "@/lib/db/operations/rediscli-admission";
+import { REDIS_AGENT_SENTENCES } from "@/lib/db/providers/keyvalue/redis-agent-statement";
+import {
+  admitEtcdctlStatement,
+  ETCDCTL_AGENT_MAX_STATEMENT_CHARS,
+  etcdctlAgentReadInput,
+} from "@/lib/db/operations/etcdctl-admission";
+import { ETCD_AGENT_SENTENCES } from "@/lib/db/providers/keyvalue/etcd/agent-statement";
+import {
+  admitOxiacliStatement,
+  OXIACLI_AGENT_MAX_STATEMENT_CHARS,
+  oxiacliAgentReadInput,
+} from "@/lib/db/operations/oxiacli-admission";
+import { OXIA_AGENT_SENTENCES } from "@/lib/db/providers/keyvalue/oxia/agent-statement";
+import {
+  admitRabbitreadStatement,
+  RABBITREAD_AGENT_MAX_STATEMENT_CHARS,
+  rabbitreadAgentReadInput,
+} from "@/lib/db/operations/rabbitread-admission";
+import { RABBITMQ_AGENT_SENTENCES } from "@/lib/db/providers/stream/rabbitmq/agent-statement";
+import {
+  admitKafkareadStatement,
+  KAFKAREAD_AGENT_MAX_STATEMENT_CHARS,
+  kafkareadAgentReadInput,
+} from "@/lib/db/operations/kafkaread-admission";
+import { KAFKA_AGENT_SENTENCES } from "@/lib/db/providers/stream/kafka/agent-statement";
 import { INFLUXQL_AGENT_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-statement";
 import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 
@@ -646,5 +688,429 @@ describe("the cypher language's server adapter and admission", () => {
     expect(refused.success).toBe(false);
     expect(refused.error?.issues[0]?.path).toEqual(["statement"]);
     expect(refused.error?.issues[0]?.message).toContain("An agent statement has no carriage return");
+  });
+});
+
+describe("the milvusrpc language's server adapter and admission", () => {
+  const describe_ = (body: string) => `POST /v2/vectordb/collections/describe\n${body}`;
+
+  test("the fingerprint is the request as the reader reads it, so one read written three ways is one identity", () => {
+    const one = fingerprintMilvusrpc(describe_('{"collectionName": "docs"}'));
+    expect(fingerprintMilvusrpc(`# a describe\n${describe_('{"collectionName": "docs"}')}`)).toBe(one);
+    expect(fingerprintMilvusrpc('POST collections/describe\n{"collectionName": "docs"}')).toBe(one);
+    expect(fingerprintMilvusrpc(describe_('{"dbName": "default", "collectionName": "docs"}'))).toBe(one);
+    expect(fingerprintMilvusrpc(describe_('{"collectionName": "other"}'))).not.toBe(one);
+    expect(fingerprintMilvusrpc("POST /v2/vectordb/collections/list")).not.toBe(
+      fingerprintMilvusrpc("POST /v2/vectordb/databases/list"),
+    );
+  });
+
+  test("the fingerprint is total: a refused request is identified by its raw text, so it is refused again", () => {
+    const raw = 'POST /v2/vectordb/entities/get\n{"collectionName": "docs", "id": 1}';
+    expect(fingerprintMilvusrpc(raw)).toBe(fingerprintMilvusrpc(raw));
+    expect(fingerprintMilvusrpc(raw)).toMatch(/^[0-9a-f]{64}$/);
+    expect(fingerprintMilvusrpc(`${raw} `)).not.toBe(fingerprintMilvusrpc(raw));
+  });
+
+  test("every advice key of the milvusrpc copy has its own sentence", () => {
+    const generic = milvusrpcRowCapAdvice("POST /v2/vectordb/entities/query", "200");
+    const requestFor: Readonly<Record<string, string>> = {
+      databases: "POST /v2/vectordb/databases/list",
+      collections: "POST /v2/vectordb/collections/list",
+      collection: describe_('{"collectionName": "docs"}'),
+      partitions: 'POST /v2/vectordb/partitions/list\n{"collectionName": "docs"}',
+      aliases: "POST /v2/vectordb/aliases/list",
+    };
+    expect([...AGENT_LANGUAGE_COPY.milvusrpc.adviceKeys].sort()).toEqual([
+      "aliases",
+      "collection",
+      "collections",
+      "databases",
+      "partitions",
+    ]);
+    for (const key of AGENT_LANGUAGE_COPY.milvusrpc.adviceKeys) {
+      expect(milvusrpcRowCapAdvice(requestFor[key] as string, "200"), key).not.toBe(generic);
+      expect(milvusrpcRowCapAdvice(requestFor[key] as string, "200"), key).toContain("Ask for at most 200 rows");
+    }
+  });
+
+  test("a request without advice of its own, or one that is refused, gets the generic sentence", () => {
+    const generic = "Ask for at most 200 rows: read one collection instead of the whole list, and run it again.";
+    expect(milvusrpcRowCapAdvice('POST /v2/vectordb/indexes/list\n{"collectionName": "docs"}', "200")).toBe(generic);
+    expect(milvusrpcRowCapAdvice("POST /v2/vectordb/entities/query", "200")).toBe(generic);
+    expect(languageServer("milvusrpc").shapeAdvice).toContain("a valid Milvus request");
+  });
+
+  test("the admission is the provider's reader, plus a length the agent's contract names", () => {
+    expect(admitMilvusrpcStatement("POST /v2/vectordb/collections/list")).toBeNull();
+    expect(admitMilvusrpcStatement('POST /v2/vectordb/entities/get\n{"collectionName": "docs", "id": 1}')).toEqual({
+      code: "metadata-only",
+      message: MILVUS_AGENT_SENTENCES.metadataOnly("entities/get"),
+    });
+    expect(admitMilvusrpcStatement('POST /v2/vectordb/collections/load\n{"collectionName": "docs"}')?.code).toBe(
+      "request",
+    );
+    const long = `POST /v2/vectordb/collections/list\n{"dbName": "${"a".repeat(MILVUSRPC_AGENT_MAX_STATEMENT_CHARS)}"}`;
+    expect(admitMilvusrpcStatement(long)).toEqual({
+      code: "agent-too-large",
+      message: `The request is longer than ${MILVUSRPC_AGENT_MAX_STATEMENT_CHARS} characters, the most an agent read takes: shorten it. Nothing was sent.`,
+    });
+    expect(languageServer("milvusrpc").admit?.("POST /v2/vectordb/databases/list")).toBeNull();
+  });
+
+  test("an ungrounded run is sent to a read it holds, and plan mode is told none of the reader's rules", () => {
+    const ungrounded = languageServerPack("milvusrpc").grounding.ungrounded;
+    expect(ungrounded?.("The capture failed.", { singular: "collection", plural: "collections" })).toBe(
+      "The capture failed.\nSo nothing about this database has been established for you: not one collection name. Read what you need with run_read_query, starting with POST /v2/vectordb/collections/list.",
+    );
+    expect(languageServerPack("milvusrpc").grounding.planningRules).toBeUndefined();
+  });
+
+  test("the descriptor's input is strict, carries the request, and refuses what the admission refuses", () => {
+    expect(milvusrpcAgentReadInput.safeParse({ statement: "POST /v2/vectordb/collections/list" }).success).toBe(true);
+    expect(
+      milvusrpcAgentReadInput.safeParse({ statement: "POST /v2/vectordb/collections/list", sql: "x" }).success,
+    ).toBe(false);
+    const refused = milvusrpcAgentReadInput.safeParse({
+      statement: 'POST /v2/vectordb/entities/query\n{"collectionName": "docs", "filter": "id > 0"}',
+    });
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues[0]?.path).toEqual(["statement"]);
+    expect(refused.error?.issues[0]?.message).toBe(MILVUS_AGENT_SENTENCES.metadataOnly("entities/query"));
+  });
+
+  test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
+    expect(Object.keys(AGENT_WORKFLOW_VARIANTS.milvusrpc).sort()).toEqual(["investigation", "operations"]);
+    expect(AGENT_WORKFLOW_VARIANTS.milvusrpc.investigation?.canAutoExecute).toBe(false);
+  });
+});
+
+describe("the rediscli language's server adapter and admission", () => {
+  test("the fingerprint is the argv the reader sends, so one read written three ways is one identity", () => {
+    const one = fingerprintRediscli("TYPE session:42");
+    expect(fingerprintRediscli("type   session:42")).toBe(one);
+    expect(fingerprintRediscli('TYPE "session:42"')).toBe(one);
+    expect(fingerprintRediscli("TYPE session:43")).not.toBe(one);
+    expect(fingerprintRediscli("TTL session:42")).not.toBe(one);
+  });
+
+  test("the fingerprint is total: a refused command is identified by its raw text, so it is refused again", () => {
+    const raw = "GET session:42";
+    expect(fingerprintRediscli(raw)).toBe(fingerprintRediscli(raw));
+    expect(fingerprintRediscli(raw)).toMatch(/^[0-9a-f]{64}$/);
+    expect(fingerprintRediscli(`${raw} `)).not.toBe(fingerprintRediscli(raw));
+  });
+
+  test("every read answers one row, so the copy names no advice key and the advice names no narrower read", () => {
+    expect(AGENT_LANGUAGE_COPY.rediscli.adviceKeys).toEqual([]);
+    expect(rediscliRowCapAdvice("DBSIZE", "0")).toBe(
+      "Ask for at most 0 rows: every Redis read agent mode runs answers one row, about the database or one key, so read one key at a time.",
+    );
+    expect(languageServer("rediscli").shapeAdvice).toContain("a valid Redis command");
+  });
+
+  test("the admission is the provider's reader, plus a length the agent's contract names", () => {
+    expect(admitRediscliStatement("DBSIZE")).toBeNull();
+    expect(admitRediscliStatement("GET session:42")).toEqual({
+      code: "metadata-only",
+      message: REDIS_AGENT_SENTENCES.metadataOnly,
+    });
+    expect(admitRediscliStatement("TYPE")?.code).toBe("arguments");
+    const long = `TYPE ${"k".repeat(REDISCLI_AGENT_MAX_STATEMENT_CHARS)}`;
+    expect(admitRediscliStatement(long)).toEqual({
+      code: "agent-too-large",
+      message: `The command is longer than ${REDISCLI_AGENT_MAX_STATEMENT_CHARS} characters, the most an agent read takes: shorten it. Nothing was sent.`,
+    });
+    expect(languageServer("rediscli").admit?.("TTL session:42")).toBeNull();
+  });
+
+  test("an ungrounded run is sent to a read it holds, and plan mode is told none of the reader's rules", () => {
+    const ungrounded = languageServerPack("rediscli").grounding.ungrounded;
+    expect(ungrounded?.("The capture failed.", { singular: "key", plural: "keys" })).toBe(
+      "The capture failed.\nSo nothing about this database has been established for you: not one key name, and none will be, since key names are withheld from agent mode. Read what you need with run_read_query, starting with DBSIZE.",
+    );
+    expect(languageServerPack("rediscli").grounding.planningRules).toBeUndefined();
+  });
+
+  test("the descriptor's input is strict, carries the command, and refuses what the admission refuses", () => {
+    expect(rediscliAgentReadInput.safeParse({ statement: "DBSIZE" }).success).toBe(true);
+    expect(rediscliAgentReadInput.safeParse({ statement: "DBSIZE", sql: "x" }).success).toBe(false);
+    const refused = rediscliAgentReadInput.safeParse({ statement: "KEYS *" });
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues[0]?.path).toEqual(["statement"]);
+    expect(refused.error?.issues[0]?.message).toBe(REDIS_AGENT_SENTENCES.metadataOnly);
+  });
+
+  test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
+    expect(Object.keys(AGENT_WORKFLOW_VARIANTS.rediscli).sort()).toEqual(["investigation", "operations"]);
+    expect(AGENT_WORKFLOW_VARIANTS.rediscli.investigation?.canAutoExecute).toBe(false);
+  });
+});
+
+describe("the etcdctl language's server adapter and admission", () => {
+  test("the fingerprint is the request the reader sends, so one read written two ways is one identity", () => {
+    const one = fingerprintEtcdctl("get /app/config");
+    expect(fingerprintEtcdctl('get "/app/config"')).toBe(one);
+    expect(fingerprintEtcdctl("  get /app/config")).toBe(one);
+    expect(fingerprintEtcdctl("get /app/other")).not.toBe(one);
+    expect(fingerprintEtcdctl("endpoint status")).not.toBe(one);
+    expect(fingerprintEtcdctl('get "" --prefix --count-only')).toBe(
+      fingerprintEtcdctl('get "" --from-key --count-only'),
+    );
+  });
+
+  test("the fingerprint is total: a refused command is identified by its raw text, so it is refused again", () => {
+    const raw = "get /app/ --prefix";
+    expect(fingerprintEtcdctl(raw)).toBe(fingerprintEtcdctl(raw));
+    expect(fingerprintEtcdctl(raw)).toMatch(/^[0-9a-f]{64}$/);
+    expect(fingerprintEtcdctl(`${raw} `)).not.toBe(fingerprintEtcdctl(raw));
+  });
+
+  test("only a list can pass the row budget, so the advice names the reads that answer one row", () => {
+    expect(AGENT_LANGUAGE_COPY.etcdctl.adviceKeys).toEqual([]);
+    expect(etcdctlRowCapAdvice("member list", "2")).toBe(
+      "Ask for at most 2 rows: member list, alarm list and lease list answer one row per member, alarm or lease, so read one lease with lease timetolive, or the cluster with endpoint status.",
+    );
+    expect(languageServer("etcdctl").shapeAdvice).toContain("a valid etcdctl command");
+  });
+
+  test("the admission is the provider's reader, plus a length the agent's contract names", () => {
+    expect(admitEtcdctlStatement("endpoint status")).toBeNull();
+    expect(admitEtcdctlStatement("get /app/ --prefix")).toEqual({
+      code: "metadata-only",
+      message: ETCD_AGENT_SENTENCES.metadataOnly,
+    });
+    expect(admitEtcdctlStatement("get /app/config --rev=2")?.code).toBe("arguments");
+    const long = `get /${"k".repeat(ETCDCTL_AGENT_MAX_STATEMENT_CHARS)}`;
+    expect(admitEtcdctlStatement(long)).toEqual({
+      code: "agent-too-large",
+      message: `The command is longer than ${ETCDCTL_AGENT_MAX_STATEMENT_CHARS} characters, the most an agent read takes: shorten it. Nothing was sent.`,
+    });
+    expect(languageServer("etcdctl").admit?.("member list")).toBeNull();
+  });
+
+  test("an ungrounded run is sent to a read it holds, and plan mode is told none of the reader's rules", () => {
+    const ungrounded = languageServerPack("etcdctl").grounding.ungrounded;
+    expect(ungrounded?.("The capture failed.", { singular: "key prefix", plural: "key prefixes" })).toBe(
+      "The capture failed.\nSo nothing about this cluster's keys has been established for you: not one key prefix name, and none will be, since key names are withheld from agent mode. Read what you need with run_read_query, starting with endpoint status.",
+    );
+    expect(languageServerPack("etcdctl").grounding.planningRules).toBeUndefined();
+  });
+
+  test("the descriptor's input is strict, carries the command, and refuses what the admission refuses", () => {
+    expect(etcdctlAgentReadInput.safeParse({ statement: "alarm list" }).success).toBe(true);
+    expect(etcdctlAgentReadInput.safeParse({ statement: "alarm list", sql: "x" }).success).toBe(false);
+    const refused = etcdctlAgentReadInput.safeParse({ statement: "watch /app/config" });
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues[0]?.path).toEqual(["statement"]);
+    expect(refused.error?.issues[0]?.message).toBe(ETCD_AGENT_SENTENCES.metadataOnly);
+  });
+
+  test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
+    expect(Object.keys(AGENT_WORKFLOW_VARIANTS.etcdctl).sort()).toEqual(["investigation", "operations"]);
+    expect(AGENT_WORKFLOW_VARIANTS.etcdctl.investigation?.canAutoExecute).toBe(false);
+  });
+});
+
+describe("the oxiacli language's server adapter and admission", () => {
+  test("the fingerprint is the read the reader sends, so one read written two ways is one identity", () => {
+    const one = fingerprintOxiacli("get /admin/policies");
+    expect(fingerprintOxiacli("get '/admin/policies'")).toBe(one);
+    expect(fingerprintOxiacli("oxia client get /admin/policies")).toBe(one);
+    expect(fingerprintOxiacli("get /admin/other")).not.toBe(one);
+    expect(fingerprintOxiacli("shards")).not.toBe(one);
+    expect(fingerprintOxiacli("ls")).toBe(fingerprintOxiacli("oxia client list"));
+    // A refused count is identified by its raw text, so two spellings of it are two identities.
+    expect(fingerprintOxiacli("list /a /z")).not.toBe(fingerprintOxiacli("list -s /a -e /z"));
+  });
+
+  test("the fingerprint is total: a refused command is identified by its raw text, so it is refused again", () => {
+    const raw = "range-scan --prefix /admin/";
+    expect(fingerprintOxiacli(raw)).toBe(fingerprintOxiacli(raw));
+    expect(fingerprintOxiacli(raw)).toMatch(/^[0-9a-f]{64}$/);
+    expect(fingerprintOxiacli(`${raw} `)).not.toBe(fingerprintOxiacli(raw));
+  });
+
+  test("every read answers one row, and the advice offers no narrower count", () => {
+    expect(AGENT_LANGUAGE_COPY.oxiacli.adviceKeys).toEqual([]);
+    expect(oxiacliRowCapAdvice("list", "2")).toBe(
+      "Ask for at most 2 rows: shards, get and list each answer one row, and list counts the namespace only when it holds at most 2 keys; a count over a narrower range is not one of agent mode's reads, since it would reveal key names.",
+    );
+    expect(languageServer("oxiacli").shapeAdvice).toContain("a valid oxia command");
+  });
+
+  test("the admission is the provider's reader, plus a length the agent's contract names", () => {
+    expect(admitOxiacliStatement("shards")).toBeNull();
+    expect(admitOxiacliStatement("range-scan")).toEqual({
+      code: "metadata-only",
+      message: OXIA_AGENT_SENTENCES.metadataOnly,
+    });
+    expect(admitOxiacliStatement("get -t floor /a")?.code).toBe("arguments");
+    const long = `get /${"k".repeat(OXIACLI_AGENT_MAX_STATEMENT_CHARS)}`;
+    expect(admitOxiacliStatement(long)).toEqual({
+      code: "agent-too-large",
+      message: `The command is longer than ${OXIACLI_AGENT_MAX_STATEMENT_CHARS} characters, the most an agent read takes: shorten it. Nothing was sent.`,
+    });
+    expect(languageServer("oxiacli").admit?.("list")).toBeNull();
+    expect(languageServer("oxiacli").admit?.("list --prefix /a/")).toEqual({
+      code: "metadata-only",
+      message: OXIA_AGENT_SENTENCES.rangeCount,
+    });
+  });
+
+  test("an ungrounded run is sent to a read it holds, and plan mode is told none of the reader's rules", () => {
+    const ungrounded = languageServerPack("oxiacli").grounding.ungrounded;
+    expect(ungrounded?.("The capture failed.", { singular: "shard", plural: "shards" })).toBe(
+      "The capture failed.\nSo nothing about this namespace's keys has been established for you: not one shard name, and none will be, since key names are withheld from agent mode. Read what you need with run_read_query, starting with shards.",
+    );
+    expect(languageServerPack("oxiacli").grounding.planningRules).toBeUndefined();
+  });
+
+  test("the descriptor's input is strict, carries the command, and refuses what the admission refuses", () => {
+    expect(oxiacliAgentReadInput.safeParse({ statement: "shards" }).success).toBe(true);
+    expect(oxiacliAgentReadInput.safeParse({ statement: "shards", sql: "x" }).success).toBe(false);
+    const refused = oxiacliAgentReadInput.safeParse({ statement: "notifications" });
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues[0]?.path).toEqual(["statement"]);
+    expect(refused.error?.issues[0]?.message).toBe(OXIA_AGENT_SENTENCES.metadataOnly);
+  });
+
+  test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
+    expect(Object.keys(AGENT_WORKFLOW_VARIANTS.oxiacli).sort()).toEqual(["investigation", "operations"]);
+    expect(AGENT_WORKFLOW_VARIANTS.oxiacli.investigation?.canAutoExecute).toBe(false);
+  });
+});
+
+describe("the rabbitread language's server adapter and admission", () => {
+  const READ = '{"vhost": "/", "stream": "orders", "from": "first", "limit": 5}';
+
+  test("the fingerprint is the read the reader sends, so one read written two ways is one identity", () => {
+    const one = fingerprintRabbitread(READ);
+    expect(fingerprintRabbitread('{"limit":5,"from":"first","stream":"orders","vhost":"/"}')).toBe(one);
+    expect(fingerprintRabbitread('{"vhost": "/", "stream": "orders", "from": "first", "limit": 6}')).not.toBe(one);
+    expect(fingerprintRabbitread('{"vhost": "/", "stream": "audit", "from": "first", "limit": 5}')).not.toBe(one);
+    // A default written out is the read left out.
+    expect(fingerprintRabbitread('{"vhost": "/", "stream": "orders"}')).toBe(
+      fingerprintRabbitread('{"vhost": "/", "stream": "orders", "from": "last", "limit": 50}'),
+    );
+    expect(fingerprintRabbitread('{"vhost": "/", "stream": "orders", "from": {"offset": 7}}')).toBe(
+      fingerprintRabbitread('{"vhost": "/", "stream": "orders", "from": {"offset": "7"}}'),
+    );
+  });
+
+  test("the fingerprint is total: a refused request is identified by its raw text, so it is refused again", () => {
+    const raw = '{"vhost": "/", "stream": "orders", "ack": true}';
+    expect(fingerprintRabbitread(raw)).toBe(fingerprintRabbitread(raw));
+    expect(fingerprintRabbitread(raw)).toMatch(/^[0-9a-f]{64}$/);
+    expect(fingerprintRabbitread(`${raw} `)).not.toBe(fingerprintRabbitread(raw));
+  });
+
+  test("a read answers one row per message, and the advice names the limit", () => {
+    expect(AGENT_LANGUAGE_COPY.rabbitread.adviceKeys).toEqual([]);
+    expect(rabbitreadRowCapAdvice(READ, "2")).toBe(
+      'Ask for at most 2 rows: a read answers one row per message, up to its "limit", so write "limit": 2 or less, and read on from the offset after the last one you read.',
+    );
+    expect(languageServer("rabbitread").shapeAdvice).toContain("a valid read request");
+  });
+
+  test("the admission is the provider's reader, plus a length the agent's contract names", () => {
+    expect(admitRabbitreadStatement(READ)).toBeNull();
+    expect(admitRabbitreadStatement("")).toEqual({ code: "request", message: RABBITMQ_AGENT_SENTENCES.empty });
+    expect(admitRabbitreadStatement('{"vhost": "/", "stream": "orders", "ack": true}')?.code).toBe("request");
+    const long = JSON.stringify({ vhost: "/", stream: "s".repeat(RABBITREAD_AGENT_MAX_STATEMENT_CHARS) });
+    expect(admitRabbitreadStatement(long)).toEqual({
+      code: "agent-too-large",
+      message: `The read request is longer than ${RABBITREAD_AGENT_MAX_STATEMENT_CHARS} characters, the most an agent read takes: shorten it. Nothing was sent.`,
+    });
+    expect(languageServer("rabbitread").admit?.(READ)).toBeNull();
+  });
+
+  test("an ungrounded run is sent to a read it holds, and plan mode is told none of the reader's rules", () => {
+    const ungrounded = languageServerPack("rabbitread").grounding.ungrounded;
+    expect(ungrounded?.("The capture failed.", { singular: "stream", plural: "streams" })).toBe(
+      "The capture failed.\nSo nothing about this broker has been established for you: not one stream name. Read a stream the question names with run_read_query; each message answers its offset and body size only.",
+    );
+    expect(languageServerPack("rabbitread").grounding.planningRules).toBeUndefined();
+    expect(languageServerPack("rabbitread").grounding.omissionAdvice).toContain("by offset and body size only");
+  });
+
+  test("the descriptor's input is strict, carries the request, and refuses what the admission refuses", () => {
+    expect(rabbitreadAgentReadInput.safeParse({ statement: READ }).success).toBe(true);
+    expect(rabbitreadAgentReadInput.safeParse({ statement: READ, sql: "x" }).success).toBe(false);
+    const refused = rabbitreadAgentReadInput.safeParse({ statement: "basic.get orders" });
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues[0]?.path).toEqual(["statement"]);
+    expect(refused.error?.issues[0]?.message).toStartWith("A RabbitMQ read request is one JSON object");
+  });
+
+  test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
+    expect(Object.keys(AGENT_WORKFLOW_VARIANTS.rabbitread).sort()).toEqual(["investigation", "operations"]);
+    expect(AGENT_WORKFLOW_VARIANTS.rabbitread.investigation?.canAutoExecute).toBe(false);
+  });
+});
+
+describe("the kafkaread language's server adapter and admission", () => {
+  const READ = '{"read": "offsets", "topic": "orders", "limit": 5}';
+
+  test("the fingerprint is the plan the reader sends, so one read written two ways is one identity", () => {
+    const one = fingerprintKafkaread(READ);
+    expect(fingerprintKafkaread('{"limit":5,"topic":"orders","read":"offsets"}')).toBe(one);
+    expect(fingerprintKafkaread('{"read": "offsets", "topic": "orders", "limit": 6}')).not.toBe(one);
+    expect(fingerprintKafkaread('{"read": "partitions", "topic": "orders", "limit": 5}')).not.toBe(one);
+    // A default written out is the read left out.
+    expect(fingerprintKafkaread('{"read": "topics"}')).toBe(fingerprintKafkaread('{"read": "topics", "limit": 50}'));
+  });
+
+  test("the fingerprint is total: a refused request is identified by its raw text, so it is refused again", () => {
+    const raw = '{"read": "fetch", "topic": "orders"}';
+    expect(fingerprintKafkaread(raw)).toBe(fingerprintKafkaread(raw));
+    expect(fingerprintKafkaread(raw)).toMatch(/^[0-9a-f]{64}$/);
+    expect(fingerprintKafkaread(`${raw} `)).not.toBe(fingerprintKafkaread(raw));
+  });
+
+  test("a read answers one row per topic, broker or partition, and the advice names the limit and the cursor", () => {
+    expect(AGENT_LANGUAGE_COPY.kafkaread.adviceKeys).toEqual([]);
+    expect(kafkareadRowCapAdvice(READ, "2")).toBe(
+      'Ask for at most 2 rows: a read answers one row per topic, broker or partition, up to its "limit", so write "limit": 2 or less, and read on with "after" set to the last name or id you read.',
+    );
+    expect(languageServer("kafkaread").shapeAdvice).toContain("a valid read request");
+  });
+
+  test("the admission is the provider's reader, plus a length the agent's contract names", () => {
+    expect(admitKafkareadStatement(READ)).toBeNull();
+    expect(admitKafkareadStatement("")).toEqual({ code: "request", message: KAFKA_AGENT_SENTENCES.empty });
+    expect(admitKafkareadStatement('{"read": "fetch"}')).toEqual({
+      code: "metadata-only",
+      message: KAFKA_AGENT_SENTENCES.notARead,
+    });
+    const long = JSON.stringify({ read: "topics", after: "a".repeat(KAFKAREAD_AGENT_MAX_STATEMENT_CHARS) });
+    expect(admitKafkareadStatement(long)).toEqual({
+      code: "agent-too-large",
+      message: `The read request is longer than ${KAFKAREAD_AGENT_MAX_STATEMENT_CHARS} characters, the most an agent read takes: shorten it. Nothing was sent.`,
+    });
+    expect(languageServer("kafkaread").admit?.(READ)).toBeNull();
+  });
+
+  test("an ungrounded run is sent to a read it holds, and plan mode is told none of the reader's rules", () => {
+    const ungrounded = languageServerPack("kafkaread").grounding.ungrounded;
+    expect(ungrounded?.("The capture failed.", { singular: "topic", plural: "topics" })).toBe(
+      'The capture failed.\nSo nothing about this cluster has been established for you: not one topic name. List the topics with run_read_query, {"read": "topics"}; answers carry names, counts and offsets only.',
+    );
+    expect(languageServerPack("kafkaread").grounding.planningRules).toBeUndefined();
+    expect(languageServerPack("kafkaread").grounding.omissionAdvice).toContain("by its partitions and offsets only");
+  });
+
+  test("the descriptor's input is strict, carries the request, and refuses what the admission refuses", () => {
+    expect(kafkareadAgentReadInput.safeParse({ statement: READ }).success).toBe(true);
+    expect(kafkareadAgentReadInput.safeParse({ statement: READ, sql: "x" }).success).toBe(false);
+    const refused = kafkareadAgentReadInput.safeParse({ statement: "fetch orders" });
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues[0]?.path).toEqual(["statement"]);
+    expect(refused.error?.issues[0]?.message).toStartWith("A Kafka agent read is one JSON object");
+  });
+
+  test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
+    expect(Object.keys(AGENT_WORKFLOW_VARIANTS.kafkaread).sort()).toEqual(["investigation", "operations"]);
+    expect(AGENT_WORKFLOW_VARIANTS.kafkaread.investigation?.canAutoExecute).toBe(false);
   });
 });

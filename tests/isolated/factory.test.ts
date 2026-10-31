@@ -959,6 +959,20 @@ describe("createDatabaseProvider", () => {
     await expect(operations.connect()).rejects.not.toBeInstanceOf(ExecutionProfileError);
   });
 
+  test("the execution context rides along to milvus: an agent open that names no user is refused before any request", async () => {
+    // Port 1 on loopback answers nothing, so an open that dialled would fail as unreachable, not as this refusal.
+    const conn = makeConnection("milvus", { host: "127.0.0.1", port: 1, user: "", password: "" });
+    const profiled = await createDatabaseProvider(conn, {}, { readOnly: true, sendsStatements: true });
+    const error = await profiled.connect().then(
+      () => undefined,
+      (failure: unknown) => failure,
+    );
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_SERVER_UNENFORCED");
+    const operations = await createDatabaseProvider(conn, {}, { readOnly: true, sendsStatements: false });
+    await expect(operations.connect()).rejects.not.toBeInstanceOf(ExecutionProfileError);
+  });
+
   test("the execution context rides along to neo4j: queryReadOnly answers only under the agent profile", async () => {
     const conn = makeConnection("neo4j", {
       port: 17687,
@@ -3113,7 +3127,7 @@ describe("acquireExecutionProfileProvider", () => {
 
   test("refuses a provider type without a read-only statement path", async () => {
     const error: unknown = await acquireExecutionProfileProvider(
-      makeConnection("redis", { id: "redis-profile" }),
+      makeConnection("prometheus", { id: "prometheus-profile" }),
       "agent-read-only",
     ).catch((e: unknown) => e);
 
@@ -3122,7 +3136,7 @@ describe("acquireExecutionProfileProvider", () => {
     // The rule is the method, not the kind of boundary behind it: Kubernetes and MongoDB are granted the profile with
     // no database read-only session.
     expect((error as Error).message).toBe(
-      'Provider type "redis" implements no read-only statement path (queryReadOnly)',
+      'Provider type "prometheus" implements no read-only statement path (queryReadOnly)',
     );
     expect(getExecutionProfileCacheStats().size).toBe(0);
   });
@@ -3146,25 +3160,30 @@ describe("acquireExecutionProfileProvider", () => {
     expect(getExecutionProfileCacheStats().size).toBe(0);
   });
 
-  test("serves the SAME engine under the operations profile, which needs no read-only statement path", async () => {
+  test("serves the SAME engine under the operations profile, whose open proves nothing", async () => {
     // Both directions of the workflow-aware engine gate, on one connection. The
     // restriction is a property of the PROFILE, not of the factory: `agent-read-only`
     // sends model-authored statements and is served only where the engine can bound
     // one, while `agent-operations` sends none and calls the curated reporting methods
     // every provider implements. Asserting them together is what keeps a later
-    // simplification from collapsing the two.
+    // simplification from collapsing the two. Redis proves an ACL user of the agent's own
+    // only for an acquisition that sends statements, so a connection naming none is refused
+    // there and still grounds a plan under the operations profile.
     // A Redis database is a number: the shared fixture's "testdb" is refused at connect.
-    const connection = makeConnection("redis", { id: "redis-operations", database: "0" });
+    const connection = makeConnection("redis", { id: "redis-operations", database: "0", user: "" });
 
     const refused: unknown = await acquireExecutionProfileProvider(connection, "agent-read-only").catch(
       (e: unknown) => e,
     );
     expect(refused).toBeInstanceOf(ExecutionProfileError);
+    expect((refused as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("PROFILE_SERVER_UNENFORCED");
 
     const provider = await acquireExecutionProfileProvider(connection, "agent-operations");
 
     expect(provider.isConnected()).toBe(true);
-    expect(typeof provider.queryReadOnly).not.toBe("function");
+    await expect(
+      provider.queryReadOnly?.("DBSIZE", { maxResultRows: 1, maxResultBytes: 1024, statementTimeoutMs: 1000 }),
+    ).rejects.toThrow("Read-only execution requires a provider opened under the agent read-only profile");
     // It is still a PROFILED acquisition: the operations path may not be handed the
     // editor's writable pool, which is the invariant the profiled cache carries.
     expect(getExecutionProfileCacheStats().size).toBe(1);
@@ -3178,7 +3197,7 @@ describe("acquireExecutionProfileProvider", () => {
     // entries, so a later change to one path's lifecycle cannot reach the other, and
     // neither is ever the editor's writable pool.
     const refused: unknown = await acquireExecutionProfileProvider(
-      makeConnection("redis", { id: "redis-handover" }),
+      makeConnection("prometheus", { id: "prometheus-handover" }),
       "agent-handover",
     ).catch((e: unknown) => e);
     expect(refused).toBeInstanceOf(ExecutionProfileError);

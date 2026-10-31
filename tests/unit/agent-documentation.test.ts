@@ -488,6 +488,12 @@ const READ_ONLY_PROVIDER_FILES: Readonly<Record<string, string>> = {
   weaviate: "src/lib/db/providers/vector/weaviate/index.ts",
   qdrant: "src/lib/db/providers/vector/qdrant/index.ts",
   neo4j: "src/lib/db/providers/graph/neo4j/index.ts",
+  milvus: "src/lib/db/providers/vector/milvus/index.ts",
+  redis: "src/lib/db/providers/keyvalue/redis.ts",
+  etcd: "src/lib/db/providers/keyvalue/etcd/index.ts",
+  oxia: "src/lib/db/providers/keyvalue/oxia/index.ts",
+  rabbitmq: "src/lib/db/providers/stream/rabbitmq/index.ts",
+  kafka: "src/lib/db/providers/stream/kafka/index.ts",
 };
 
 /**
@@ -596,9 +602,9 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
   const list = namedList(AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label));
   const prose = (relative: string) => read(relative).replace(/\n[ \t]*(?:\*|\/\/|#)?[ \t]*/g, " ");
 
-  test("the derived list is today's twenty-two engines", () => {
+  test("the derived list is today's twenty-eight engines", () => {
     expect(list).toBe(
-      "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant and Neo4j",
+      "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ and Apache Kafka",
     );
   });
 
@@ -915,7 +921,23 @@ describe("docs/AGENT.md names every language-pack resolver in its Language packs
   // land without moving this sentence.
   test("its opening sentence counts and names every statement language", () => {
     const ids = Object.keys(AGENT_LANGUAGE_COPY);
-    const COUNT_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+    const COUNT_WORDS = [
+      "zero",
+      "one",
+      "two",
+      "three",
+      "four",
+      "five",
+      "six",
+      "seven",
+      "eight",
+      "nine",
+      "ten",
+      "eleven",
+      "twelve",
+      "thirteen",
+      "fourteen",
+    ];
     expect(ids.length).toBeLessThan(COUNT_WORDS.length);
     expect(section).toContain(
       `Agent mode reads statements in ${COUNT_WORDS[ids.length]} statement languages, ${namedList(ids.map((id) => `\`${id}\``))}, and what it does differently`,

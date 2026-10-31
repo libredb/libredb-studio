@@ -99,6 +99,36 @@ type CypherOperationId =
   /** One Cypher read statement the model wrote, on a `neo4j` connection; see `cypherQueryReadDescriptor`. */
   "cypher.query.read";
 
+/** The Milvus request language's operation: its one read. */
+type MilvusrpcOperationId =
+  /** One Milvus metadata read the model wrote, on a `milvus` connection; see `milvusrpcQueryReadDescriptor`. */
+  "milvusrpc.query.read";
+
+/** The Redis command language's operation: its one read. */
+type RediscliOperationId =
+  /** One Redis metadata read the model wrote, on a `redis` connection; see `rediscliQueryReadDescriptor`. */
+  "rediscli.query.read";
+
+/** The etcdctl command language's operation: its one read. */
+type EtcdctlOperationId =
+  /** One etcd metadata read the model wrote, on an `etcd` connection; see `etcdctlQueryReadDescriptor`. */
+  "etcdctl.query.read";
+
+/** The oxiacli command language's operation: its one read. */
+type OxiacliOperationId =
+  /** One Oxia metadata read the model wrote, on an `oxia` connection; see `oxiacliQueryReadDescriptor`. */
+  "oxiacli.query.read";
+
+/** The rabbitread request language's operation: its one read. */
+type RabbitreadOperationId =
+  /** One RabbitMQ stream read the model wrote, on a `rabbitmq` connection; see `rabbitreadQueryReadDescriptor`. */
+  "rabbitread.query.read";
+
+/** The kafkaread request language's operation: its one read. */
+type KafkareadOperationId =
+  /** One Kafka metadata read the model wrote, on a `kafka` connection; see `kafkareadQueryReadDescriptor`. */
+  "kafkaread.query.read";
+
 /**
  * The canonical operations each family's tools drive, by family. `AgentOperationId` in `tools.ts` is the core's two
  * curated ids and every row here, so a family's ids are written once, beside the family's other types.
@@ -112,6 +142,12 @@ export interface AgentFamilyOperationIds {
   readonly weaviateapi: WeaviateapiOperationId;
   readonly qdrantapi: QdrantapiOperationId;
   readonly cypher: CypherOperationId;
+  readonly milvusrpc: MilvusrpcOperationId;
+  readonly rediscli: RediscliOperationId;
+  readonly etcdctl: EtcdctlOperationId;
+  readonly oxiacli: OxiacliOperationId;
+  readonly rabbitread: RabbitreadOperationId;
+  readonly kafkaread: KafkareadOperationId;
 }
 
 /** kubectl's goal verifiers. */
@@ -159,6 +195,18 @@ export interface AgentFamilyVerifierIds {
   readonly qdrantapi: never;
   /** None: its workflows are judged by the core's own rules. */
   readonly cypher: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly milvusrpc: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly rediscli: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly etcdctl: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly oxiacli: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly rabbitread: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly kafkaread: never;
 }
 
 /** The operation a family's model-written reads are evaluated under: its row's `<family>.query.read`. */
@@ -418,6 +466,12 @@ export interface AgentFamilyEvidenceTools {
   readonly weaviateapi: never;
   readonly qdrantapi: never;
   readonly cypher: never;
+  readonly milvusrpc: never;
+  readonly rediscli: never;
+  readonly etcdctl: never;
+  readonly oxiacli: never;
+  readonly rabbitread: never;
+  readonly kafkaread: never;
 }
 
 /** Every pack's evidence tool: a member of the core's `AgentToolName`, declared by the pack that offers it. */
@@ -433,6 +487,12 @@ export interface AgentFamilyReadingDenyCodes {
   readonly weaviateapi: never;
   readonly qdrantapi: never;
   readonly cypher: never;
+  readonly milvusrpc: never;
+  readonly rediscli: never;
+  readonly etcdctl: never;
+  readonly oxiacli: never;
+  readonly rabbitread: never;
+  readonly kafkaread: never;
 }
 
 /** Every pack's reading refusal code: a member of the core's `AgentReadingDenyCode`, declared by its pack. */
@@ -448,6 +508,12 @@ export interface AgentFamilyShortfalls {
   readonly weaviateapi: never;
   readonly qdrantapi: never;
   readonly cypher: never;
+  readonly milvusrpc: never;
+  readonly rediscli: never;
+  readonly etcdctl: never;
+  readonly oxiacli: never;
+  readonly rabbitread: never;
+  readonly kafkaread: never;
 }
 
 /** Every pack's verdict shortfall: a member of the core's `AgentGoalShortfall`, declared by its pack. */
@@ -463,6 +529,12 @@ export interface AgentFamilyVariantRequirements {
   readonly weaviateapi: never;
   readonly qdrantapi: never;
   readonly cypher: never;
+  readonly milvusrpc: never;
+  readonly rediscli: never;
+  readonly etcdctl: never;
+  readonly oxiacli: never;
+  readonly rabbitread: never;
+  readonly kafkaread: never;
 }
 
 /** Every pack's variant requirement: a member of the core's `AgentVariantRequirement`, declared by its pack. */
@@ -512,6 +584,12 @@ export interface AgentFamilyEvidenceEvents {
   readonly weaviateapi: never;
   readonly qdrantapi: never;
   readonly cypher: never;
+  readonly milvusrpc: never;
+  readonly rediscli: never;
+  readonly etcdctl: never;
+  readonly oxiacli: never;
+  readonly rabbitread: never;
+  readonly kafkaread: never;
 }
 
 /** Every pack's evidence event, as the ledger stores it less its timestamp. */
@@ -697,6 +775,12 @@ export interface AgentFamilyDialectRows {
   weaviateapi: { client: Record<never, never>; server: Record<never, never> };
   qdrantapi: { client: Record<never, never>; server: Record<never, never> };
   cypher: { client: Record<never, never>; server: Record<never, never> };
+  milvusrpc: { client: Record<never, never>; server: Record<never, never> };
+  rediscli: { client: Record<never, never>; server: Record<never, never> };
+  etcdctl: { client: Record<never, never>; server: Record<never, never> };
+  oxiacli: { client: Record<never, never>; server: Record<never, never> };
+  rabbitread: { client: Record<never, never>; server: Record<never, never> };
+  kafkaread: { client: Record<never, never>; server: Record<never, never> };
 }
 
 /** The dialect-bound members of each family, client and server. */

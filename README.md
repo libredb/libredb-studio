@@ -29,6 +29,8 @@
   <a href="https://www.postgresql.org/download/products/1/#:~:text=LibreDB%20Studio">Software Catalogue</a>
   ·
   <a href="https://wiki.postgresql.org/wiki/Community_Guide_to_PostgreSQL_GUI_Tools#LibreDB_Studio">Community Guide to GUI Tools</a>
+  ·
+  <a href="https://wiki.postgresql.org/wiki/Design_Tools#LibreDB_Studio">Design Tools</a>
 </p>
 <p align="center">
   Also listed in official
@@ -57,9 +59,10 @@
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>,
   <a href="https://doris.apache.org/docs/4.x/connection-integration/data-integration/libredb-studio/">Apache Doris</a>,
   <a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem#:~:text=LibreDB%20Studio">Apache Kafka</a>,
-  <a href="https://cassandra.apache.org/_/ecosystem.html">Apache Cassandra</a>
-  and
+  <a href="https://cassandra.apache.org/_/ecosystem.html">Apache Cassandra</a>,
   <a href="https://druid.apache.org/libraries/#:~:text=LibreDB%20Studio">Apache Druid</a>
+  and
+  <a href="https://github.com/oxia-db/oxia/blob/main/ADOPTERS.md#adopters-list">Oxia</a>
   docs
 </p>
 
@@ -219,9 +222,9 @@ what comes back, and finishes by composing a report whose every claim cites the 
   and `EXPLAIN ANALYZE` is default-denied because it would run the statement. This pipeline is the
   agent's alone: statements you run yourself in the editor call the provider directly
   (`src/app/api/db/query/route.ts:312`) and are neither policy-checked nor audited this way.
-- **Agent mode reads PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant and Neo4j.** The read-only profile
+- **Agent mode reads PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ and Apache Kafka.** The read-only profile
   exists only where a provider implements it: `queryReadOnly` on
-  `postgres.ts`, `sqlite.ts`, `duckdb/index.ts`, `mssql.ts`, `mysql.ts`, `kubernetes/index.ts`, `mongodb/index.ts`, `clickhouse/index.ts`, `libsql/index.ts`, `influxdb/sql-provider.ts`, `search/index.ts`, `oracle/index.ts`, `db2/index.ts`, `cassandra/index.ts`, `couchbase/index.ts`, `druid/index.ts`, `libredb.ts`, `influxdb/influxql-provider.ts`, `weaviate/index.ts`, `qdrant/index.ts` and `neo4j/index.ts`, and nowhere else.
+  `postgres.ts`, `sqlite.ts`, `duckdb/index.ts`, `mssql.ts`, `mysql.ts`, `kubernetes/index.ts`, `mongodb/index.ts`, `clickhouse/index.ts`, `libsql/index.ts`, `influxdb/sql-provider.ts`, `search/index.ts`, `oracle/index.ts`, `db2/index.ts`, `cassandra/index.ts`, `couchbase/index.ts`, `druid/index.ts`, `libredb.ts`, `influxdb/influxql-provider.ts`, `weaviate/index.ts`, `qdrant/index.ts`, `neo4j/index.ts`, `milvus/index.ts`, `redis.ts`, `etcd/index.ts`, `oxia/index.ts`, `rabbitmq/index.ts` and `kafka/index.ts`, and nowhere else.
   On Kubernetes the boundary is Studio's request allowlist plus the agent identity's RBAC.
   On MongoDB it is the connection's user: before a run that sends commands reaches its first model turn, the server must show that the user holds only read privileges on the bound database and must refuse a write from it.
   On any
@@ -739,7 +742,7 @@ Deploy your own instance of LibreDB Studio with a single click on DigitalOcean, 
 >
 > **CapRover:** open your CapRover dashboard → **Apps → One-Click Apps/Databases**, search for **LibreDB Studio**, and deploy.
 >
-> **Koyeb:** set a strong `JWT_SECRET` (at least 32 characters — `openssl rand -base64 32`) and credentials before deploying (Koyeb cannot auto-generate secrets). The prefilled values are deliberately unusable: the secret is shorter than the 32-character minimum, so the app stops at boot and says so rather than running on a secret printed in this file. The button uses `STORAGE_PROVIDER=local` — connection metadata lives in the browser, which suits Koyeb's ephemeral filesystem. For persistence across redeploys, switch to `STORAGE_PROVIDER=postgres` and point `STORAGE_POSTGRES_URL` at a Koyeb managed Postgres or Neon database. The button also fills in `LLM_PROVIDER`/`LLM_MODEL`/`LLM_API_KEY`, but Agent mode needs a server-held connection, so its Start button stays disabled until `STORAGE_PROVIDER` is `sqlite` or `postgres` (see [docs/AGENT.md](docs/AGENT.md#turning-it-on)). See [`deploy/koyeb/`](deploy/koyeb/).
+> **Koyeb:** set a strong `JWT_SECRET` (at least 32 characters — `openssl rand -base64 32`) and credentials before deploying (Koyeb cannot auto-generate secrets). The prefilled values are deliberately unusable: the secret is shorter than the 32-character minimum, so the app stops at boot and says so rather than running on a secret printed in this file. The button uses `STORAGE_PROVIDER=local` — connection metadata lives in the browser, which suits Koyeb's ephemeral filesystem. For persistence across redeploys, switch to `STORAGE_PROVIDER=postgres` and point `STORAGE_POSTGRES_URL` at a Koyeb managed Postgres or Neon database. The button also fills in `LLM_PROVIDER`/`LLM_MODEL`/`LLM_API_KEY`, but an agent run starts only on a seed connection the server lists itself, so Start stays disabled on a connection created in the UI whatever `STORAGE_PROVIDER` is (see [docs/AGENT.md](docs/AGENT.md#turning-it-on)). See [`deploy/koyeb/`](deploy/koyeb/).
 >
 > **Fly.io:** the repo ships a ready [`fly.toml`](fly.toml) — full steps (app name, volume, secrets) in [`docs/FLY.md`](docs/FLY.md).
 >

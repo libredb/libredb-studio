@@ -18,11 +18,19 @@
  * authenticates and tells which features the server has, and nothing else. Nothing here loads a collection except
  * `runMaintenance("load")`.
  *
- * No `queryReadOnly`, so agent execution and the MCP read tool refuse this type; no `getPoolStats`, no transaction
- * methods and no object edit: each is detected by presence, and none would do its job here.
+ * `queryReadOnly` is the agent read-only profile's path: the rules of an agent request are in `metadata-request.ts`,
+ * the read-only proof the server answers in `read-only-proof.ts`, and the metadata-only projection and the wording of
+ * a failure in `metadata-read.ts`. No `getPoolStats`, no transaction methods and no object edit: each is detected by
+ * presence, and none would do its job here.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { DatabaseConfigError, QueryCancelledError, QueryError } from "@/lib/db/errors";
+import {
+  DatabaseConfigError,
+  ExecutionProfileError,
+  QueryCancelledError,
+  QueryError,
+  RefusedBeforeSendError,
+} from "@/lib/db/errors";
 import {
   assertContainerPathShape,
   assertObjectPathShape,
@@ -53,13 +61,18 @@ import type {
   ProviderLabels,
   ProviderOptions,
   QueryResult,
+  ReadOnlyStatementBudget,
+  ReadOnlyStatementMode,
   SlowQueryStats,
   StorageStats,
   TableStats,
 } from "@/lib/db/types";
+import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
 import {
   createRunRegistry,
   engineLimiter,
+  LimiterFullError,
+  type LimiterTicket,
   type ProviderLimiter,
   type RunRegistry,
 } from "@/lib/db/utils/bounded-limiter";
@@ -71,7 +84,7 @@ import {
   type MilvusConnectionOptions,
   milvusErrorConnection,
 } from "./connection-options";
-import { type MilvusErrorConnection, toProviderError } from "./errors";
+import { type MilvusErrorConnection, toMilvusError, toProviderError } from "./errors";
 import { executeMilvusConsole } from "./execute";
 import { createGrpcMilvusClient } from "./grpc-client";
 import { MILVUS_LABELS } from "./labels";
@@ -83,6 +96,8 @@ import {
   previewMilvusMaintenance,
   runMilvusMaintenance,
 } from "./maintenance";
+import { MILVUS_METADATA_ONLY, milvusAgentFailure, milvusAgentResult, readMilvusMetadata } from "./metadata-read";
+import { readMilvusAgentStatement } from "./metadata-request";
 import { readMilvusHealth, readMilvusIndexStats, readMilvusOverview, readMilvusTableStats } from "./monitoring-reads";
 import {
   countMilvusCollections,
@@ -97,9 +112,12 @@ import {
   readMilvusCollectionSource,
   surfaceCall,
 } from "./objects";
+import { milvusAgentUser, proveMilvusReadOnly } from "./read-only-proof";
 import { type MilvusVersion, readMilvusVersion } from "./versions";
 
 const BOUND_PARAMS_MESSAGE = "Bound params are not supported: a Milvus request has no placeholders";
+const PROFILE_REQUIRED = "Read-only execution requires a provider opened under the agent read-only profile";
+const NO_ESTIMATE = "Milvus composes no estimating plan for the agent";
 
 /** No request of the console changes the schema, so nothing refreshes the tree after a run. */
 const MILVUS_SCHEMA_REFRESH_PATTERN = "(?!)";
@@ -139,6 +157,14 @@ export class MilvusProvider extends BaseDatabaseProvider {
   private readonly loadLock = new MilvusLoadLock();
 
   /**
+   * Whether this handle was opened for the agent read-only profile by an acquisition that sends statements
+   * (`sendsStatements`). Only then does `connect()` refuse a connection that names no user and prove the user reads
+   * only, and only then does `queryReadOnly` answer. The operations profile's acquisitions send no statement, so they
+   * open unproved, as an editor connection does, and plan mode keeps grounding on any user.
+   */
+  private readonly readOnlyProfile: boolean;
+
+  /**
    * Validates nothing and opens nothing: the connection's rules run in `connect()`, before the factory, so a provider
    * built only for its declarations touches no socket. `execution` carries the read-only mode every agent profile
    * sets, and `createClient` is the seam tests inject a client through.
@@ -150,6 +176,7 @@ export class MilvusProvider extends BaseDatabaseProvider {
     private readonly createClient: MilvusClientFactory<MilvusConnectionOptions> = createGrpcMilvusClient,
   ) {
     super(config, options);
+    this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
   }
 
   // ==========================================================================
@@ -180,6 +207,8 @@ export class MilvusProvider extends BaseDatabaseProvider {
       containerPathShapes: "exact",
       objectKinds: MILVUS_OBJECT_KINDS,
       enforcesReadOnly: true,
+      // Scalar, vector and dynamic field values are stored values: the agent's answers carry names, counts and flags.
+      metadataOnly: MILVUS_METADATA_ONLY,
       schemaRefreshPattern: MILVUS_SCHEMA_REFRESH_PATTERN,
     };
   }
@@ -206,6 +235,8 @@ export class MilvusProvider extends BaseDatabaseProvider {
         executionReadOnly: this.execution.readOnly === true,
         queryTimeout: this.queryTimeout,
       });
+      // The agent read-only profile proves a user, so a connection that names none is refused before any client.
+      const agentUser = this.readOnlyProfile ? milvusAgentUser(options.auth) : undefined;
       const errors = milvusErrorConnection(options);
       client = await this.createClient(options).catch((error: unknown) => {
         throw toProviderError(error, {
@@ -221,6 +252,11 @@ export class MilvusProvider extends BaseDatabaseProvider {
       const answer = await surfaceCall(context, "connection", { database: options.database }, (call) =>
         opened.getVersion(call),
       );
+      if (agentUser !== undefined) {
+        await surfaceCall(context, "connection", { database: options.database }, (call) =>
+          proveMilvusReadOnly(opened, agentUser, call),
+        );
+      }
       this.session = { client, options, errors, version: readMilvusVersion(answer), lifetime };
     } catch (error) {
       // A client that was built holds a channel, so a connect that fails after it closes it.
@@ -294,6 +330,62 @@ export class MilvusProvider extends BaseDatabaseProvider {
       errors: session.errors,
       secretForms: session.options.secretForms,
       now: () => Date.now(),
+    });
+  }
+
+  /**
+   * One agent request. Only on a handle opened under the agent read-only profile; the request is read by
+   * `readMilvusAgentStatement` in the connection's database and refused before anything is sent when it is not a
+   * metadata read. Then, under one permit and the request's own deadline, the server is asked again to prove the user
+   * reads only, with no verdict kept from the open or the request before, and the route's metadata is read. Its answer
+   * is the metadata-only projection, refused past the row or byte budget rather than cut, and a server refusal is
+   * worded without the server's words.
+   */
+  public async queryReadOnly(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    const { session } = this.surface();
+    if (!this.readOnlyProfile) throw new RefusedBeforeSendError(PROFILE_REQUIRED, this.type, statement);
+    assertReadOnlyBudget(budget, "milvus");
+    if (mode !== "execute") throw new RefusedBeforeSendError(NO_ESTIMATE, this.type, statement);
+    const reading = readMilvusAgentStatement(statement, session.options.database);
+    if (!reading.ok) throw new RefusedBeforeSendError(reading.message, this.type, statement);
+    // The open proved this user, so it names one.
+    const user = milvusAgentUser(session.options.auth);
+    const started = Date.now();
+    return this.trackQuery(async () => {
+      const signal = AbortSignal.any([AbortSignal.timeout(budget.statementTimeoutMs), session.lifetime.signal]);
+      try {
+        let ticket: LimiterTicket;
+        try {
+          ticket = await this.limiter.acquire(signal);
+        } catch (error) {
+          // A full queue is refused unchanged; a wait ended by the deadline or the close sent nothing.
+          throw error instanceof LimiterFullError ? error : toMilvusError(error, signal);
+        }
+        try {
+          const call = { db: session.options.database, signal };
+          await proveMilvusReadOnly(session.client, user, call);
+          const rows = await readMilvusMetadata(session.client, reading.plan, call);
+          return milvusAgentResult(rows, budget, statement, Date.now() - started);
+        } finally {
+          ticket.release();
+        }
+      } catch (error) {
+        if (error instanceof ExecutionProfileError || error instanceof QueryError) throw error;
+        throw (
+          milvusAgentFailure(error, budget, statement) ??
+          toProviderError(error, {
+            operation: `${reading.plan.op} request`,
+            write: false,
+            database: reading.plan.db,
+            connection: { ...session.errors, timeoutMs: budget.statementTimeoutMs },
+            secretForms: session.options.secretForms,
+          })
+        );
+      }
     });
   }
 

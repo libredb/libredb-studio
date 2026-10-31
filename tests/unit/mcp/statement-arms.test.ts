@@ -71,6 +71,18 @@ describe("MCP_STATEMENT_ARMS", () => {
     expect(mcpStatementToolFor("qdrant")).toBeNull();
     expect(MCP_STATEMENT_ARMS.cypher).toBeNull();
     expect(mcpStatementToolFor("neo4j")).toBeNull();
+    expect(MCP_STATEMENT_ARMS.milvusrpc).toBeNull();
+    expect(mcpStatementToolFor("milvus")).toBeNull();
+    expect(MCP_STATEMENT_ARMS.rediscli).toBeNull();
+    expect(mcpStatementToolFor("redis")).toBeNull();
+    expect(MCP_STATEMENT_ARMS.etcdctl).toBeNull();
+    expect(mcpStatementToolFor("etcd")).toBeNull();
+    expect(MCP_STATEMENT_ARMS.oxiacli).toBeNull();
+    expect(mcpStatementToolFor("oxia")).toBeNull();
+    expect(MCP_STATEMENT_ARMS.rabbitread).toBeNull();
+    expect(mcpStatementToolFor("rabbitmq")).toBeNull();
+    expect(MCP_STATEMENT_ARMS.kafkaread).toBeNull();
+    expect(mcpStatementToolFor("kafka")).toBeNull();
   });
 
   test("is built from the languages' MCP facets, one arm per declared facet, in the registry's order", () => {
@@ -395,6 +407,12 @@ describe("the tool each engine is read with", () => {
       weaviateapi: null,
       qdrantapi: null,
       cypher: null,
+      milvusrpc: null,
+      rediscli: null,
+      etcdctl: null,
+      oxiacli: null,
+      rabbitread: null,
+      kafkaread: null,
     };
     expect(servingStatementArms(arms)).toEqual([RUN_READ_QUERY_ARM]);
     const registerTool = mock((_name: string) => undefined);

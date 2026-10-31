@@ -47,6 +47,10 @@ export const KAFKA_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
     labelPlural: "Consumer Groups",
     hasSource: true,
     sourceLanguage: "json",
+    // The count is the listing's length, one read, so a refused count is a refused listing: on an agent-mode handle
+    // both are withheld, and the grounding walk carries the reason rather than an empty folder. A run reads this
+    // declaration from a provider it never connects, so it is the type's, never one handle's.
+    countIsListing: true,
   },
   { id: "broker", role: "config", label: "Broker", labelPlural: "Brokers", hasSource: true, sourceLanguage: "json" },
 ] as const);
@@ -54,7 +58,7 @@ export const KAFKA_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
 /** KM1: bounds how many topic names the tree and the inventory hold, below `INVENTORY_LIMIT`. */
 export const KAFKA_TOPIC_LIST_CAP = 2000;
 
-const TOPIC_CAP_SENTENCE = `one topic listing capped at ${KAFKA_TOPIC_LIST_CAP.toLocaleString("en-US")} names`;
+export const TOPIC_CAP_SENTENCE = `one topic listing capped at ${KAFKA_TOPIC_LIST_CAP.toLocaleString("en-US")} names`;
 
 const column = (name: string, type: string): ColumnSchema => ({ name, type, nullable: true, isPrimary: false });
 
@@ -123,30 +127,42 @@ export function topicStatus(topic: KafkaTopicMetadata): string | undefined {
   return undefined;
 }
 
-async function readTopics(client: ObjectsClient): Promise<{ names: string[]; capped: boolean }> {
+/** What a topic listing reads: Metadata alone, which the agent's client also holds. */
+export type TopicListingClient = Pick<KafkaReadClient, "metadata" | "listTopics">;
+
+async function readTopics(client: Pick<KafkaReadClient, "listTopics">): Promise<{ names: string[]; capped: boolean }> {
   const names = await client.listTopics();
   return names.length > KAFKA_TOPIC_LIST_CAP
     ? { names: names.slice(0, KAFKA_TOPIC_LIST_CAP), capped: true }
     : { names, capped: false };
 }
 
+/**
+ * The topic listing, each with its status: Metadata reads alone, with auto-creation off, so an agent-mode handle lists
+ * topics through it too.
+ */
+export async function listTopicObjects(
+  client: TopicListingClient,
+): Promise<{ rows: DatabaseObject[]; capped: boolean }> {
+  const { names, capped } = await readTopics(client);
+  if (names.length === 0) return { rows: [], capped };
+  const metadata = await client.metadata(names);
+  const byName = new Map(metadata.topics.map((t) => [t.name, t]));
+  return {
+    rows: names.map((name) => {
+      const described = byName.get(name);
+      const status = described === undefined ? undefined : topicStatus(described);
+      return { path: [name], name, kind: "topic", ...(status === undefined ? {} : { status }) };
+    }),
+    capped,
+  };
+}
+
 /** The one reader per kind that feeds both the count and the listing, so the count is the listed length (spec 4.3). */
 async function readKind(client: ObjectsClient, kind: string): Promise<{ rows: DatabaseObject[]; capped: boolean }> {
   switch (kind) {
-    case "topic": {
-      const { names, capped } = await readTopics(client);
-      if (names.length === 0) return { rows: [], capped };
-      const metadata = await client.metadata(names);
-      const byName = new Map(metadata.topics.map((t) => [t.name, t]));
-      return {
-        rows: names.map((name) => {
-          const described = byName.get(name);
-          const status = described === undefined ? undefined : topicStatus(described);
-          return { path: [name], name, kind, ...(status === undefined ? {} : { status }) };
-        }),
-        capped,
-      };
-    }
+    case "topic":
+      return listTopicObjects(client);
     case "consumer_group":
       return {
         rows: (await client.listGroups()).map((g) => ({ path: [g.groupId], name: g.groupId, kind })),
@@ -207,16 +223,21 @@ function specFor(capabilities: ProviderCapabilities, path: readonly string[], ki
   return spec;
 }
 
+/**
+ * A topic's columns are the read result's, or on an agent-mode handle the agent read's (`columns`); a group and a
+ * broker have none.
+ */
 export async function describeObject(
-  client: ObjectsClient,
+  client: Pick<KafkaReadClient, "metadata">,
   capabilities: ProviderCapabilities,
   path: readonly string[],
   kind: string,
+  columns: readonly ColumnSchema[] = KAFKA_TOPIC_COLUMNS,
 ): Promise<ObjectDetail> {
   specFor(capabilities, path, kind);
   // Existence of a topic is a metadata read that never creates it (spec 4.5).
   if (kind === "topic") await client.metadata([path[0]]);
-  return { path, columns: kind === "topic" ? KAFKA_TOPIC_COLUMNS : [], indexes: [], foreignKeys: [] };
+  return { path, columns: kind === "topic" ? columns : [], indexes: [], foreignKeys: [] };
 }
 
 /**
@@ -225,17 +246,18 @@ export async function describeObject(
  * this provider's own cap, joined by ", and " when both bite.
  */
 export async function describeObjects(
-  client: ObjectsClient,
+  client: Pick<KafkaReadClient, "listTopics">,
   container: readonly string[],
   kind: string,
   limit?: number,
+  columns: readonly ColumnSchema[] = KAFKA_TOPIC_COLUMNS,
 ): Promise<ObjectDetailBatch> {
   requireRoot(container);
   if (kind !== "topic") return { details: [] };
   const { names, capped } = await readTopics(client);
   const cut = limit !== undefined && names.length > limit;
   const chosen = cut ? names.slice(0, limit) : names;
-  const details = chosen.map((name) => ({ path: [name], columns: KAFKA_TOPIC_COLUMNS, indexes: [], foreignKeys: [] }));
+  const details = chosen.map((name) => ({ path: [name], columns, indexes: [], foreignKeys: [] }));
   if (!cut && !capped) return { details };
   const reasons = [
     ...(cut ? [callerBoundTruncationReason(chosen.length)] : []),

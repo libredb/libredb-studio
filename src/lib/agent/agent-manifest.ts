@@ -35,7 +35,13 @@ export type AgentStatementLanguageId =
   | "influxql"
   | "weaviateapi"
   | "qdrantapi"
-  | "cypher";
+  | "cypher"
+  | "milvusrpc"
+  | "rediscli"
+  | "etcdctl"
+  | "oxiacli"
+  | "rabbitread"
+  | "kafkaread";
 
 /** Literal-typed, so `AgentEngineFamily` in `languages/pack.ts` reads each engine's language by type. */
 export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
@@ -58,23 +64,23 @@ export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
   opensearch: "sql",
   mongodb: "mongo",
   couchbase: "sql",
-  redis: null,
+  redis: "rediscli",
   prometheus: null,
-  kafka: null,
-  etcd: null,
+  kafka: "kafkaread",
+  etcd: "etcdctl",
   neo4j: "cypher",
-  milvus: null,
+  milvus: "milvusrpc",
   qdrant: "qdrantapi",
   weaviate: "weaviateapi",
   influxdb: "influxql",
   influxdb3: "sql",
-  oxia: null,
+  oxia: "oxiacli",
   databend: null,
   s3: null,
   kubernetes: "kubectl",
   mqtt: null,
   firestore: null,
-  rabbitmq: null,
+  rabbitmq: "rabbitread",
   opcua: null,
   mtconnect: null,
   modbus: null,

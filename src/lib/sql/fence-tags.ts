@@ -80,14 +80,14 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // `promql` alias below spells the language, and it still names this engine: see its entry.
   prometheus: true,
   // A ```kafka block holds a JSON read request the editor sends to the provider as it is
-  // (#1088). No alias is registered below: `json` is the tempting one and it is the wrong one,
-  // because a MongoDB document is JSON too, and `fenceTagEngine` is what decides whether a plan's
-  // deliverable was written for THIS connection.
+  // (#1088). The `kafkaread` alias below names the agent's language, and it still names this
+  // engine: see its entry. `json` is the tempting alias and it is the wrong one, because a MongoDB
+  // document is JSON too, and `fenceTagEngine` is what decides whether a plan's deliverable was
+  // written for THIS connection.
   kafka: true,
-  // An ```etcd block holds one etcdctl command the editor runs as it is (#1089). No alias is
-  // registered below: `sh`, `bash` and `shell` name no engine, which is the reason `sql` maps to
-  // no engine in `ALIAS_ENGINES`, and `etcdctl`, which names etcd alone, is left out until plan
-  // runs show a model writing it.
+  // An ```etcd block holds one etcdctl command the editor runs as it is (#1089). `sh`, `bash` and
+  // `shell` name no engine, which is the reason `sql` maps to no engine in `ALIAS_ENGINES`; the
+  // `etcdctl` alias below names the agent's language, and it still names this engine: see its entry.
   etcd: true,
   // A ```neo4j block holds one read-only Cypher statement the editor runs as it is (Neo4j spec 6.4). The
   // `cypher` alias below spells the language, and it still names this engine: see its entry.
@@ -110,8 +110,8 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // An ```influxdb3 block holds one DataFusion SQL statement. No alias is registered below: `sql` names no
   // engine, and `influxql` and `flux` are not this type-id's language.
   influxdb3: true,
-  // A ```oxia block holds one `oxia client` read command the editor runs as it is (O14). No alias: `oxia` already
-  // names the engine and its CLI.
+  // A ```oxia block holds one `oxia client` read command the editor runs as it is (O14). The `oxiacli` alias below
+  // names the agent's language, and it still names this engine: see its entry.
   oxia: true,
   // A ```databend block holds one statement in Databend's SQL, sent as it is to `POST /v1/query`. No alias: `sql`
   // names no engine, and `mysql` names the MySQL-wire driver Databend no longer connects through.
@@ -132,7 +132,8 @@ const ENGINE_FENCE_TAGS: Readonly<Record<DatabaseType, true>> = Object.freeze({
   // A ```firestore block holds one statement of the console's read-only Admin SDK subset. No alias: `firebase` names a
   // platform of many products, and `js` and `javascript` name a language, not an engine.
   firestore: true,
-  // A ```rabbitmq block holds one JSON read request the editor runs as it is.
+  // A ```rabbitmq block holds one JSON read request the editor runs as it is. The `rabbitread` alias below names the
+  // agent's language, and it still names this engine: see its entry.
   rabbitmq: true,
   // An ```opcua block holds one JSON read request, which the console runs as it is.
   opcua: true,
@@ -178,6 +179,12 @@ export const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "libredbkv",
   "weaviateapi",
   "qdrantapi",
+  "milvusrpc",
+  "rediscli",
+  "etcdctl",
+  "oxiacli",
+  "rabbitread",
+  "kafkaread",
 ]);
 
 /**
@@ -229,6 +236,18 @@ export const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.free
   weaviateapi: "weaviate",
   // The agent's name for the Qdrant request language, and `qdrant` is the only type-id that runs it.
   qdrantapi: "qdrant",
+  // The agent's name for the Milvus request language, and `milvus` is the only type-id that runs it.
+  milvusrpc: "milvus",
+  // The agent's name for the Redis command language, and `redis` is the only type-id that runs it.
+  rediscli: "redis",
+  // The agent's name for the etcdctl command language, and `etcd` is the only type-id that runs it.
+  etcdctl: "etcd",
+  // The agent's name for the Oxia command language, and `oxia` is the only type-id that runs it.
+  oxiacli: "oxia",
+  // The agent's name for the RabbitMQ read request language, and `rabbitmq` is the only type-id that runs it.
+  rabbitread: "rabbitmq",
+  // The agent's name for the Kafka metadata read request language, and `kafka` is the only type-id that runs it.
+  kafkaread: "kafka",
 });
 
 /**

@@ -111,6 +111,18 @@ Some rows answer the same request differently because the server's state differe
 - `etcd-auth-password/error-range-no-token`, `etcd-auth-password/error-invalid-auth-token`, `etcd-auth-password/error-auth-revision-old` and `etcd-auth-password/range-token-before-auth-change`: the same `Range` with no token, with an expired token, during an auth change, and after one.
 - `etcd-auth-password/authenticate` and `etcd-auth-password/error-authenticate-wrong-password`: the same user, with its password and with another.
 
+## The agent boundary
+
+`v3.7.2/agent-boundary/` holds what etcd v3.7.2 answered every principal the agent read-only profile may meet, which the agent tests replay through `tests/helpers/etcd-agent.ts`; the catalog below and `ETCD_FIXTURE_NAMES` cover the five service directories only.
+Its `run.sh` writes every file there: it starts two digest-pinned single-member servers of its own, one it turns authentication on for and one left with it off, and runs `tests/live/etcd-agent-boundary.ts`, which seeds them, creates the users and roles with passwords generated for the run, and sends every request raw over gRPC, writes included, past every Studio check.
+It refuses to write a capture that holds any form of a password it sent or a token it received; no capture holds either.
+The containers are removed when the run ends; `ETCD_PREFIX` names them and `ETCD_AUTH_PORT` and `ETCD_OPEN_PORT` pick their loopback ports.
+
+- `auth-off.json`: every read and write probe answered with no token on the server with authentication off.
+- `auth-on-no-token.json`: the same reads with no token on the server with authentication on.
+- `<principal>.json`: per principal, its roles' permissions, the reads the agent's table and proof would send, the write probes, and the server's keys, revision and leases read as root before and after them: `root`, `root-role` (a user holding the root role), `reader-all` (READ on every key), `reader-range` (READ on `/app/`), `readwrite-range` and `write-range` (READ on `/app/`, and READWRITE or WRITE on `/scratch/`) and `no-roles`.
+- `midrun.json`: a READ-only role read, then WRITE granted to it by root, then the same token reading the role again and writing.
+
 ## Catalog
 
 <!-- generated:catalog -->

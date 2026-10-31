@@ -2,6 +2,8 @@ import { withBasePath } from "@/lib/config/base-path";
 import { authProvider } from "@/lib/config/auth-provider";
 import { getSession, logout } from "@/lib/auth";
 import { OIDC_LOGOUT_HINT_COOKIE, oidcLogoutHintCookiePath, readOidcLogoutHint } from "@/lib/config/oidc-logout-hint";
+import { cookieDeletion } from "@/lib/auth-cookies";
+import { studioCookie } from "@/lib/studio-cookie";
 import { buildLogoutUrl, getPublicOrigin } from "@/lib/oidc";
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
@@ -74,8 +76,9 @@ export async function POST(request: NextRequest) {
     // Read once and deleted with the path it was set with, whatever happens to it below, so a hint never outlives
     // the session it was kept for.
     const cookieStore = await cookies();
-    const hint = cookieStore.get(OIDC_LOGOUT_HINT_COOKIE)?.value;
-    if (hint !== undefined) cookieStore.delete({ name: OIDC_LOGOUT_HINT_COOKIE, path: oidcLogoutHintCookiePath() });
+    const hintScope = await studioCookie(OIDC_LOGOUT_HINT_COOKIE, oidcLogoutHintCookiePath());
+    const hint = cookieStore.get(hintScope.name)?.value;
+    if (hint !== undefined) cookieStore.delete(cookieDeletion(hintScope));
 
     // No session means no state transition occurred - "anonymous logged out" would be noise, not a
     // fact, and this route has no rate limit, so recording it unconditionally would let an

@@ -13,13 +13,24 @@
  * surface makes, and each call's AbortSignal and error context.
  *
  * `cancelQuery` exists because a read or a watch can be stopped (spec 5.5), and it answers false for a
- * write already sent. No `getPoolStats`, no `queryReadOnly` (spec E12) and no transaction methods: each is
- * detected by presence, and none would do its job here.
+ * write already sent. No `getPoolStats` and no transaction methods: each is detected by presence, and neither would
+ * do its job here.
+ *
+ * `queryReadOnly` is the agent's: a closed table of metadata reads (`agent-statement.ts`), each sent only after the
+ * server proves the user reads only (`agent-read-only-proof.ts`) and answered through a metadata-only projection
+ * (`agent-metadata-read.ts`). Key names count as stored values, so a handle opened for any agent-mode profile lists no
+ * key, key prefix or key range on any surface.
  */
 import { randomUUID } from "node:crypto";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { connectionFingerprint } from "@/lib/db/connection-fingerprint";
-import { DatabaseConfigError, DatabaseError, QueryError } from "@/lib/db/errors";
+import {
+  DatabaseConfigError,
+  DatabaseError,
+  ExecutionProfileError,
+  QueryError,
+  RefusedBeforeSendError,
+} from "@/lib/db/errors";
 import { findKind, kindHasColumns } from "@/lib/db/object-kinds";
 import type {
   ActiveSessionDetails,
@@ -48,11 +59,17 @@ import type {
   ProviderLabels,
   ProviderOptions,
   QueryResult,
+  ReadOnlyStatementBudget,
+  ReadOnlyStatementMode,
   SlowQueryStats,
   StorageStats,
   TableStats,
 } from "@/lib/db/types";
+import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { type EtcdAgentAnswer, ETCD_METADATA_ONLY, etcdAgentFailure, etcdAgentResult } from "./agent-metadata-read";
+import { etcdAgentUser, proveEtcdReadOnly } from "./agent-read-only-proof";
+import { type EtcdAgentPlan, readEtcdAgentStatement } from "./agent-statement";
 import { type EtcdAuthStatus, type EtcdClient, type EtcdClientFactory, EtcdError, type EtcdPermission } from "./client";
 import { type EtcdParseLimits, parseEtcdCommand } from "./commands";
 import {
@@ -73,6 +90,7 @@ import {
 import { ETCD_READ_BOUNDS, executeCommand } from "./execute";
 import { createGrpcEtcdClient } from "./grpc-client";
 import { ETCD_KEY_SCAN, readKeyScanOptions, scanEtcdKeysPage } from "./key-scan";
+import { ALL_KEYS, fromHexId } from "./keys";
 import { ETCD_LABELS } from "./labels";
 import { ETCD_SCHEMA_REFRESH_PATTERN } from "./lexer";
 import { ETCD_MAINTENANCE_OPERATIONS, ETCD_MAINTENANCE_SPECS, runEtcdMaintenance } from "./maintenance";
@@ -91,6 +109,23 @@ import { type AccessScope, describeScope, ROOT_ROLE, readableScope, writableScop
 import { commandResult } from "./results";
 
 const BOUND_PARAMS_MESSAGE = "Bound params are not supported: an etcdctl command has no placeholders";
+
+const PROFILE_REQUIRED = "Read-only execution requires a provider opened under the agent read-only profile";
+const NO_ESTIMATE = "etcd composes no estimating plan for the agent";
+
+/**
+ * What a surface that would name keys answers on a handle opened for an agent-mode profile: key names count as stored
+ * values, so the agent's grounding and the operations workflow are told why they read none.
+ */
+const KEY_NAMES_WITHHELD =
+  "Agent mode on etcd reads metadata only, and key names count as stored values, so no key, key prefix or key range is listed to it.";
+
+/** The refusal of an editor surface that reads keys or values, on a handle opened for an agent-mode profile. */
+const PROFILE_SURFACE_REFUSED =
+  "An etcd handle opened for agent mode answers only the agent's metadata reads, through queryReadOnly, and lists no key, value or key range.";
+
+/** The kinds whose source names keys or key ranges: a key itself, a role's permissions, a lease's attached keys. */
+const KEY_BEARING_SOURCES: ReadonlySet<string> = new Set(["key", "role", "lease"]);
 
 /**
  * The kind that groups keys (spec 4.1): the one the grants scope, whose names end in `*`, and whose listing is
@@ -246,6 +281,25 @@ export class EtcdProvider extends BaseDatabaseProvider {
   private readonly running = new Map<string, RunningQuery>();
 
   /**
+   * Whether this handle was opened for the agent read-only profile by an acquisition that sends statements
+   * (`sendsStatements`). Only then does `connect()` refuse a connection that names no user or names root and prove the
+   * user reads only, and does `queryReadOnly` answer. The operations profile's acquisitions send no statement, so they
+   * open unproved, as an editor connection does, and plan mode keeps grounding on any user.
+   */
+  private get readOnlyProfile(): boolean {
+    return this.execution.readOnly === true && this.execution.sendsStatements === true;
+  }
+
+  /**
+   * Whether this handle was opened for any agent-mode profile: every execution profile opens `readOnly` and no editor
+   * handle does. On such a handle no surface names a key, a key prefix or a key range, and the editor's command path is
+   * refused; the editor's own handles keep every read.
+   */
+  private get agentProfile(): boolean {
+    return this.execution.readOnly === true;
+  }
+
+  /**
    * Validates nothing and opens nothing (spec 3.1): the connection's rules of E1, E2 and E5 run in
    * `connect()`, before the factory, so a provider built only for its declarations (the factory's census,
    * `POST /api/db/provider-meta`, a route refusing an unconnected request) touches no socket.
@@ -288,6 +342,8 @@ export class EtcdProvider extends BaseDatabaseProvider {
       objectKinds: ETCD_OBJECT_KINDS,
       keyScan: ETCD_KEY_SCAN,
       enforcesReadOnly: true,
+      // Key names and values are stored values: the agent's answers carry the cluster's metadata, counts and sizes.
+      metadataOnly: ETCD_METADATA_ONLY,
       schemaRefreshPattern: ETCD_SCHEMA_REFRESH_PATTERN,
     };
   }
@@ -316,6 +372,9 @@ export class EtcdProvider extends BaseDatabaseProvider {
         queryTimeout: this.queryTimeout,
       });
       const errors = etcdErrorConnection(options);
+      // The agent read-only profile proves a user of the agent's own, so one that names none, or root, is refused
+      // before any socket.
+      const agentUser = this.readOnlyProfile ? etcdAgentUser(options.principal) : undefined;
       client = await this.createClient(options, {
         onAuthStoreChanged: () => {
           this.grantsStale = true;
@@ -323,7 +382,9 @@ export class EtcdProvider extends BaseDatabaseProvider {
       }).catch((error: unknown) => {
         throw toProviderError(error, { command: "connection", write: false, connection: errors });
       });
-      this.session = await this.openSession(client, options, errors);
+      const session = await this.openSession(client, options, errors);
+      if (agentUser !== undefined) await this.prove(session, agentUser, this.callSignal());
+      this.session = session;
     } catch (error) {
       // A client that was built holds a channel, so a connect that fails after it closes it (spec E16). A
       // close that fails too is logged, never thrown over the failure that explains the connect.
@@ -411,6 +472,19 @@ export class EtcdProvider extends BaseDatabaseProvider {
     const user = authStatus.enabled ? principal?.name : undefined;
     const grants = user === undefined ? EVERY_KEY : await readGrants(client, user, roles, errors, signal);
     return { client, options, errors, ...(user === undefined ? {} : { user }), grants, authStatus };
+  }
+
+  /**
+   * The read-only proof at open on `session`'s channel, its answers read now: an etcd failure other than the proof's
+   * own refusal is raised in the provider's words, as a connect step's is.
+   */
+  private async prove(session: EtcdSession, user: string, signal: AbortSignal): Promise<void> {
+    try {
+      await proveEtcdReadOnly(session.client, user, signal);
+    } catch (error) {
+      if (error instanceof ExecutionProfileError) throw error;
+      throw toProviderError(error, grantsContext(user, session.errors));
+    }
   }
 
   private requireSession(): EtcdSession {
@@ -513,6 +587,7 @@ export class EtcdProvider extends BaseDatabaseProvider {
       context: {
         readable: scopes.readable,
         writable: scopes.writable,
+        ...(this.agentProfile ? { rangesCounted: true as const } : {}),
         // Named wherever the connection names a user, root included, since grants last read as root's can be
         // stale and etcd's refusal of a listing or of maintenance then names who signs in (spec 4.3, 7.2).
         // EVERY_KEY, root's and auth off's, scopes nothing; any other grants scope the user, a refused read of
@@ -555,6 +630,7 @@ export class EtcdProvider extends BaseDatabaseProvider {
     // the caller built. An empty list binds nothing and is not a refusal (spec 5.4).
     if (params !== undefined && params.length > 0) throw new DatabaseConfigError(BOUND_PARAMS_MESSAGE, this.type);
     const session = this.requireSession();
+    if (this.agentProfile) throw new RefusedBeforeSendError(PROFILE_SURFACE_REFUSED, this.type, text);
     const parsed = parseEtcdCommand(text, this.parseLimits());
     if (!parsed.ok) throw new QueryError(parsed.refusal.message, this.type);
 
@@ -591,6 +667,69 @@ export class EtcdProvider extends BaseDatabaseProvider {
   }
 
   /**
+   * One agent command. Only on a handle opened under the agent read-only profile; the command is read by
+   * `readEtcdAgentStatement` against the closed table and refused before anything is sent when it is not one of the
+   * metadata reads. Then, with the request's deadline on every call, the server is asked again to prove the user reads
+   * only, with no verdict kept from the open or the command before, and the read's one fixed request is sent: no
+   * revision, range end, limit or header of the request's own, only the connection's token. Its answer is the
+   * metadata-only projection, refused past the row or byte budget rather than cut, and an etcd failure is worded by its
+   * category alone.
+   */
+  public async queryReadOnly(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    const session = this.requireSession();
+    if (!this.readOnlyProfile) throw new RefusedBeforeSendError(PROFILE_REQUIRED, this.type, statement);
+    assertReadOnlyBudget(budget, this.type);
+    if (mode !== "execute") throw new RefusedBeforeSendError(NO_ESTIMATE, this.type, statement);
+    const reading = readEtcdAgentStatement(statement);
+    if (!reading.ok) throw new RefusedBeforeSendError(reading.message, this.type, statement);
+    const started = Date.now();
+    const signal = AbortSignal.timeout(budget.statementTimeoutMs);
+    try {
+      // Set at open from a principal `etcdAgentUser` admitted, so a read-only profile's session always names one.
+      // Called directly, not through `prove`, so a failed proof read reaches `etcdAgentFailure` as etcd's own error
+      // and is worded by its category and the request's budget, as the read's own failure is.
+      await proveEtcdReadOnly(session.client, session.options.principal!.name, signal);
+      const answer = await this.agentRead(session.client, reading.plan, signal);
+      return etcdAgentResult(answer, budget, statement, Date.now() - started);
+    } catch (error) {
+      if (error instanceof ExecutionProfileError) throw error;
+      throw etcdAgentFailure(error, budget, statement) ?? error;
+    }
+  }
+
+  /** The one fixed request of `plan`, and its answer as the projection reads it. */
+  private async agentRead(client: EtcdClient, plan: EtcdAgentPlan, signal: AbortSignal): Promise<EtcdAgentAnswer> {
+    const options = { signal };
+    switch (plan.op) {
+      case "endpoint status":
+        return { op: plan.op, status: await client.status(options) };
+      case "member list":
+        return { op: plan.op, members: (await client.memberList({ linearizable: true }, options)).members };
+      case "alarm list":
+        return { op: plan.op, alarms: await client.alarmList(options) };
+      case "auth status":
+        return { op: plan.op, auth: await client.authStatus(options) };
+      case "lease list":
+        return { op: plan.op, ids: (await client.leaseLeases(options)).ids };
+      case "lease timetolive": {
+        // The parser admitted a lease id of at most 16 hexadecimal digits, which always reads back.
+        const id = fromHexId(plan.leaseHex)!;
+        return { op: plan.op, lease: await client.leaseTimeToLive(id, false, options) };
+      }
+      case "key count":
+        return { op: plan.op, count: (await client.range({ ...ALL_KEYS, limit: 1, countOnly: true }, options)).count };
+      case "key metadata": {
+        const answer = await client.range({ key: plan.key, limit: 1 }, options);
+        return { op: plan.op, kv: answer.kvs[0] };
+      }
+    }
+  }
+
+  /**
    * Stops a read or a watch in flight and answers true (spec 5.5). A write already sent answers false:
    * aborting the call cannot undo a request etcd may have applied, and the cancel route passes that on.
    */
@@ -617,7 +756,13 @@ export class EtcdProvider extends BaseDatabaseProvider {
     // other kinds are counted all the same: the members, which a lost quorum still serves, among them (spec 4.3).
     const grants = await this.walkGrants(session).catch(unreadGrants);
     const { client, context } = this.surfaceOver(session, grants);
-    const counts = await countEtcdObjects(client, context);
+    // On an agent-mode handle the group folder is never walked: a group's name is a key's leading bytes.
+    const counts = await countEtcdObjects(
+      client,
+      context,
+      this.agentProfile ? { [GROUP_KIND]: KEY_NAMES_WITHHELD } : {},
+    );
+    if (this.agentProfile) return counts;
     // A refused read of the grants is the group folder's own sentence (spec 4.7), never a count of no range.
     return grants.state === "refused" ? { ...counts, [GROUP_KIND]: { unavailable: grants.refusal.message } } : counts;
   }
@@ -625,6 +770,10 @@ export class EtcdProvider extends BaseDatabaseProvider {
   public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
     requireRoot(container);
     const walks = kind === GROUP_KIND;
+    if (walks && this.agentProfile) {
+      this.ensureConnected();
+      return [];
+    }
     const { client, grants, context } = walks ? await this.walkSurface() : this.standingSurface();
     if (walks) requireKeysReadable(grants);
     return listEtcdObjects(client, context, kind);
@@ -648,6 +797,10 @@ export class EtcdProvider extends BaseDatabaseProvider {
 
   public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
     const walks = kind === KEY_KIND;
+    if (this.agentProfile && KEY_BEARING_SOURCES.has(kind)) {
+      this.ensureConnected();
+      throw new QueryError(PROFILE_SURFACE_REFUSED, this.type);
+    }
     // A path that names no key is refused before the walk reads the grants, so it sends nothing (spec 4.4, 5.6).
     if (walks) keyOfSourcePath(path);
     const { client, grants, context } = walks ? await this.walkSurface() : this.standingSurface();
@@ -658,6 +811,10 @@ export class EtcdProvider extends BaseDatabaseProvider {
   public async scanKeysPage(options: KeyScanOptions): Promise<KeyScanPage> {
     // The options are read before the walk reads the grants, so a refusal they meet sends nothing (spec 4.6, 5.6).
     readKeyScanOptions(options);
+    if (this.agentProfile) {
+      this.ensureConnected();
+      throw new QueryError(PROFILE_SURFACE_REFUSED, this.type);
+    }
     const { client, grants, context } = await this.walkSurface();
     requireKeysReadable(grants);
     return scanEtcdKeysPage(client, context, options);
@@ -718,6 +875,10 @@ export class EtcdProvider extends BaseDatabaseProvider {
 
   /** One count per listed group, over its readable intersection, read when the panel opens (spec 7.1). */
   public async getTableStats(): Promise<TableStats[]> {
+    if (this.agentProfile) {
+      this.ensureConnected();
+      throw new QueryError(KEY_NAMES_WITHHELD, this.type);
+    }
     const { client, grants, context } = await this.walkSurface();
     requireKeysReadable(grants);
     const groups = await listEtcdObjects(client, context, GROUP_KIND);

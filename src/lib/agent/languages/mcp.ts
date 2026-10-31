@@ -80,6 +80,18 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   qdrantapi: null,
   // No MCP statement tool yet: MCP read stays closed on Neo4j until a change of its own declares one and opens it.
   cypher: null,
+  // No MCP statement tool yet: MCP read stays closed on Milvus until a change of its own declares one and opens it.
+  milvusrpc: null,
+  // No MCP statement tool yet: MCP read stays closed on Redis until a change of its own declares one and opens it.
+  rediscli: null,
+  // No MCP statement tool yet: MCP read stays closed on etcd until a change of its own declares one and opens it.
+  etcdctl: null,
+  // No MCP statement tool yet: MCP read stays closed on Oxia until a change of its own declares one and opens it.
+  oxiacli: null,
+  // No MCP statement tool yet: MCP read stays closed on RabbitMQ until a change of its own declares one and opens it.
+  rabbitread: null,
+  // No MCP statement tool yet: MCP read stays closed on Kafka until a change of its own declares one and opens it.
+  kafkaread: null,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageMcpFacet | null>);
 
 /** A facet some language declares, with its tool's name as a literal. */

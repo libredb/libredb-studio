@@ -87,6 +87,8 @@ The console's modules are pure and shipped to the browser, because the editor, t
 | `sql-grammar.ts` | The SQL grammar facts the editor and the query log read: not SQL text, nothing kept when redacted | browser |
 | `editor-syntax.ts` | The editor's `oxia` Monaco language over the console's lexer | browser |
 | `editor-language.ts` | The engine's editor language row: the `oxia` language, no completion, no formatter, its accent | browser |
+| `agent-statement.ts` | Agent mode's reader of one command: the closed table of metadata reads over the editor's parser, and every refusal in agent mode's words | server |
+| `agent-metadata-read.ts` | Agent mode's metadata-only projection of each read, the budgets and the wording of a failure by its category | server |
 | `index.ts` | The composition root: the session, the declarations, the snapshot cache, the order verdict's lifetime, the run registry and the one failure path | server |
 
 ### 2.3 Registration & lifecycle
@@ -176,7 +178,8 @@ A read-only seed of one standalone server on this machine, managed, with no toke
 
 ### 3.6 Machine access
 
-No agent execution and no MCP: the provider implements no read-only query path, and an Oxia connection is not exposed to MCP clients, because Oxia key paths name Pulsar tenants, namespaces and topics ([B100](../BACKLOG.md#b100-oxia-has-no-agent-execution-and-no-mcp-surface)).
+Agent mode reads metadata only, and MCP stays closed: the provider's read-only query path is agent mode's alone, it answers names, counts and sizes and never a key name or a value, because Oxia key paths name Pulsar tenants, namespaces and topics, and an Oxia connection is not exposed to MCP clients ([B100](../BACKLOG.md#b100-oxias-agent-reads-are-metadata-only-and-it-has-no-mcp-statement-tool)).
+Section 15 states what an agent command may read and what bounds it.
 Plan mode drafts one read command that a person runs, in the grammar of section 5.
 The agent's grounding carries shard rows only, never a key name, a value, version metadata or a leader address, because the `key` kind is enumerated by the Keys panel and no listing of every kind reads it.
 The confirmation gate posts nothing to the query-safety analysis for an Oxia command.
@@ -632,6 +635,7 @@ Every capability is written, since the base's defaults are SQL's:
 | `containerLevels` | `[]` |
 | `objectKinds` | `OXIA_OBJECT_KINDS` |
 | `keyScan` | `OXIA_KEY_SCAN` |
+| `metadataOnly` | `OXIA_METADATA_ONLY` |
 | `schemaRefreshPattern` | `"(?!)"` |
 
 `queryLanguage` `"json"` means only "not SQL", as for etcd; `schemaRefreshPattern` matches nothing, because no read changes the tree.
@@ -775,10 +779,11 @@ The rest start by profile: the `oxia-natural` profile two natural-order servers,
 
 ### 11.4 The raw seeder, the evidence harness and the live check
 
-`tests/live/oxia-seed-raw.ts` is the one writer: it adds the keys the CLI cannot write, those holding U+0000 and the bulk keys, to the two seeded standalone fixtures only, and refuses any other server.
+`tests/live/oxia-seed-raw.ts` is the one writer to the compose fixtures: it adds the keys the CLI cannot write, those holding U+0000 and the bulk keys, to the two seeded standalone fixtures only, and refuses any other server.
 `tests/live/oxia-evidence.ts` records the captures the integration test replays, through the real adapter, and checks that it changed nothing.
 `tests/live/oxia-live-check.ts` drives a real provider against the fixtures on Node and Bun, both server lines, the auth fixture and the cluster, and fails on any key count or version that changed.
 All three run by hand, in that order, after the compose seed.
+`tests/live/oxia-agent-boundary.ts` writes too, only to the two throwaway servers its `run.sh` starts and removes (section 15), and names no compose fixture's port.
 
 ## 12. Running Oxia for Studio
 
@@ -810,7 +815,7 @@ For TLS, start each data server with `--tls-cert-file` and `--tls-key-file`; for
 - A 0.16 standalone server needs the version note of section 4.7 ([D217](../BACKLOG.md#d217-studios-oxia-doc-recommends-0171-because-of-a-016-standalone-lock)).
 - The cluster dial policy is checked live by hand only ([D218](../BACKLOG.md#d218-the-oxia-cluster-dial-policy-is-checked-by-hand-only)).
 - Without `--index`, a key stored on several shards under different partition keys is one key in every walk and `range-scan` shows one record for it, read on the lowest shard id that listed it (read the others with `get -p`), while an `--index` walk shows each shard's copy ([D224](../BACKLOG.md#d224-an-oxia-key-on-several-shards-shows-one-record-in-a-record-walk)).
-- No agent execution and no MCP surface ([B100](../BACKLOG.md#b100-oxia-has-no-agent-execution-and-no-mcp-surface)).
+- Agent mode reads metadata only, and there is no MCP surface ([B100](../BACKLOG.md#b100-oxias-agent-reads-are-metadata-only-and-it-has-no-mcp-statement-tool)).
 - `client_identity` is what the writing client reported, which the server does not check.
 
 ## Migration DDL
@@ -827,6 +832,92 @@ The refusal reason it prints, verbatim:
 
 - Oxia: [repository](https://github.com/oxia-db/oxia), [documentation](https://oxia-db.github.io/), [key sorting](https://oxia-db.github.io/docs/features/oxia-key-sorting).
 - Oxia releases [v0.16.10](https://github.com/oxia-db/oxia/tree/v0.16.10) and [v0.17.1](https://github.com/oxia-db/oxia/tree/v0.17.1); the vendored `client.proto` is from commit `c72b0bfce3fa0058fe200462b64f0d502dd56b02`.
+- Oxia release [v0.18.0](https://github.com/oxia-db/oxia/tree/v0.18.0), the server the agent boundary is measured on (section 15).
 - Upstream [#1450](https://github.com/oxia-db/oxia/pull/1450), the standalone authority fix, and [#1388](https://github.com/oxia-db/oxia/pull/1388), the key order in the shard assignments.
 - The Helm chart: [oxia-db/helm-charts](https://github.com/oxia-db/helm-charts).
 - Pulsar's [metadata store](https://pulsar.apache.org/docs/administration-metadata-store/), which Oxia serves.
+
+## 15. Agent mode
+
+Agent mode reads Oxia's metadata through `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/keyvalue/oxia/index.ts).
+The command reader and its closed table are [`agent-statement.ts`](../../src/lib/db/providers/keyvalue/oxia/agent-statement.ts), and the metadata-only projection and the wording of a failure are [`agent-metadata-read.ts`](../../src/lib/db/providers/keyvalue/oxia/agent-metadata-read.ts).
+Every claim below cites a capture under [`tests/fixtures/oxia/0.18.0/agent-boundary/`](../../tests/fixtures/oxia/0.18.0/agent-boundary/), recorded by its `run.sh` against two digest-pinned 0.18.0 servers, a standalone server with no authentication and a data server with the OIDC provider on, with every call sent raw over gRPC, past every Studio check.
+
+### 15.1 The boundary
+
+The boundary is a structural closed table: Oxia has no authorization, so there is no principal to prove.
+0.18.0 checks a token and nothing else: a call with no token is refused as unauthenticated, and a second subject of the same issuer reads, overwrites and deletes the first subject's key and deletes every key of a shard (`authenticated.json`).
+The server's flags name an authentication provider and no permission, role or ACL.
+So the table is what stops a write, and the stub below it holds only the four read calls the adapter is built from, `GetShardAssignments`, `Read`, `List` and `RangeScan` (section 2.4), so no write, session or notification call exists in the process at all.
+
+A command is read with the editor's own parser (section 5.1), and only these parsed commands are admitted:
+
+| Command | Calls sent |
+| --- | --- |
+| `shards` | `GetShardAssignments` of the connection's own namespace |
+| `get <key>` | the shard map, then one EQUAL `Read` with its value on the key's own shard; on a miss an EQUAL `Read` with no value on every other shard, and the value on the one shard that holds it |
+| `list` | the shard map, then `List` of the whole namespace on every shard, counted in Studio |
+
+`shards` is Studio's own word, since the oxia CLI's client prints no shard map.
+No flag of the request's own reaches the server: a comparison (`-t`), a partition key (`-p`), a secondary index (`--index`), `--hex`, `-v`, `--limit`, a namespace (`-n`), an address (`-a`), a timeout and a token are refused.
+A `list` with a bound or a prefix, by any spelling (`MIN [MAX]`, `-s`, `-e`, `--key-min`, `--key-max`, `--prefix`), is refused before anything is sent: counting narrower and narrower ranges would spell out key names one character at a time, so only the count of every key in the namespace is a read.
+`range-scan`, every write verb, `notifications`, `sequence-updates`, every `oxia` command that is not a client read, and every command the editor refuses are refused before anything is sent.
+The server would honour each of them (`open.json`): a put, a delete and a delete-range change it; a sequence put writes a key the server names and its stream stays open; a session is created and an ephemeral put carries its session id and client identity; notifications stream; a floor get answers a neighbouring key's name; a secondary-index get answers a primary key; a List with internal keys lists `__oxia/`; and a range-scan answers keys with their values.
+Every call carries the connection's namespace, its token and the request's deadline, and nothing of the request's own: another namespace is not served (`open.json`, `shardAssignmentsOtherNamespace`), and the provider reads the shard map afresh for every command, never its brief cache.
+
+### 15.2 What an agent command may be
+
+One command, read by the editor's parser, with or without the `oxia client` lead.
+A command outside the table and a flag the table's reads do not take are refused with agent mode's own sentence, which lists the reads it holds.
+A request the parser cannot read, such as a second command, shell syntax or a key under `__oxia/`, is refused with the parser's sentence followed by that list.
+Every refusal quotes no stored value: at most it names the command's own command word.
+The admission refuses a command longer than 4,096 characters.
+
+### 15.3 Metadata only
+
+Key names count as stored values, since Pulsar and other applications put tenants, topics, ids and emails in them, so agent mode never lists a key or reads a value, and reads per-key metadata only for a key its own command names.
+Each agent-mode path reads this much:
+
+| Path | Handle | What it reads |
+| --- | --- | --- |
+| Investigation commands | agent read-only profile | the closed table above, projected to names, counts and sizes |
+| Investigation grounding, plan-mode grounding and the operations workflow | either agent profile | the shard rows: the text the model receives names each shard by its id only, and the rows' hash ranges and the leader address do not reach it; never a key or a value |
+| Operations readings | operations profile | health from the shard map and `Health/Check`; the overview, sessions, slow queries, table, index and storage readings name nothing, since the client API reports none of them |
+| MCP | none | closed: `MCP_EXPOSABLE.oxia` is false |
+
+On a handle of either agent profile the editor's command path, the Keys panel, the key listing and a key's source are refused, and a shard's source names no key.
+An editor handle keeps every read.
+Oxia declares `ProviderCapabilities.metadataOnly`: every answer is projected through [`src/lib/db/redaction/metadata-only.ts`](../../src/lib/db/redaction/metadata-only.ts), and no answer repeats the key it was asked about.
+
+| Read | Columns |
+| --- | --- |
+| `shards` | `namespace`, `shards`, `leaders` (how many distinct leaders, never an address) |
+| `get <key>` | `exists`, `version_id`, `modifications`, `created`, `modified`, `value_bytes` (null for a value withheld at the receive cap), `ephemeral` (never the session id or the client identity); all but `exists` null for a missing key |
+| `list` | `keys` |
+
+A key count reads every key of the namespace in Studio and answers how many there are, never which: a namespace holding more keys than the row budget is refused rather than answered as the budget, and one whose keys pass the 8 MiB Studio reads to count them is refused too.
+A key stored on several shards under different partition keys answers no one record, so it is refused by how many shards hold it, never by its name.
+An answer that does not fit its column withholds the whole answer, naming the column and never the value.
+An Oxia failure is worded by its category alone, since an Oxia error can repeat a key; a deadline, and a permit wait the deadline ended, is the time budget's refusal.
+A result past the byte budget is refused, never cut, and an estimating plan is refused.
+
+### 15.4 Agent language pack
+
+Statement-language family: `oxiacli`.
+Overlay: [`src/lib/agent/languages/oxiacli/engines/oxia.ts`](../../src/lib/agent/languages/oxiacli/engines/oxia.ts), with its client row in [`src/lib/agent/languages/oxiacli/engines/client.ts`](../../src/lib/agent/languages/oxiacli/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`.
+Both overlays are empty, so the engine resolves to the `oxiacli` family pack itself.
+The `oxiacli` statement-language family has no dialect-bound member.
+This overlay overrides no Shared member, so every Shared member is the `oxiacli` statement-language family's own.
+The family offers the investigation workflow, through `run_read_query` with one command, and the operations workflow; it offers no data analysis, since its answers carry no stored value, and no query optimization or database assessment, since the server composes no plan and no profile, and no workflow hands an answer to the editor.
+The workflow classifier offers the model only these two.
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+No MCP tool runs an Oxia command: the family declares no MCP facet, and `MCP_STATEMENT_READ.oxia` is false (B100).
+
+### 15.5 Tests
+
+- `tests/unit/db/oxia/agent-statement.test.ts`: the plan every read is read to, and every refusal before the network in agent mode's own words.
+- `tests/unit/db/oxia/agent-metadata-read.test.ts`: every projection, the budgets and the wording of every failure.
+- `tests/unit/db/oxia/agent-provider.test.ts`: the profile, the calls each read sends, the shard map read afresh, the count refused past the row budget, the object surface and the monitoring reads of either agent profile, and an editor handle unchanged.
+- `tests/unit/db/oxia/agent-boundary.test.ts`: the captures as the boundary test, with the server honouring every refused call as the positive control, and every read the table holds answering no captured key or value.
+- `tests/unit/db/oxia/grounding.test.ts`: the grounding of an editor and of either agent-profile handle, shard rows alone.

@@ -67,7 +67,7 @@ LibreDB Studio uses JWT (JSON Web Tokens) for authentication. Tokens are stored 
 ### Authentication Flow
 
 1. Client sends credentials to `/api/auth/login`
-2. Server validates and returns JWT in `auth-token` cookie
+2. Server validates and returns JWT in `auth-token` cookie (`__Host-auth-token` on HTTPS, where the cookie is Secure)
 3. Client includes cookie in subsequent requests
 4. Middleware validates token on protected routes
 
@@ -148,7 +148,7 @@ Authenticate user and create session.
 
 **Notes:**
 - Both `email` and `password` are required in the request body; matched against `ADMIN_EMAIL`/`ADMIN_PASSWORD` or `USER_EMAIL`/`USER_PASSWORD` environment variables. `ADMIN_PASSWORD` is mandatory; the `USER_*` account exists only when `USER_PASSWORD` is set
-- Sets `auth-token` HTTP-only cookie on success
+- Sets `auth-token` HTTP-only cookie on success (`__Host-auth-token` at `Path=/` on HTTPS)
 - A body that is not valid JSON gets the 400 above, not a 500 - and, like a wrong password, spends one unit of the client-address rate-limit budget (see "Rate Limiting" below), so a flood of malformed bodies from one address is eventually refused rather than answered indefinitely
 
 ---
@@ -175,7 +175,7 @@ When `NEXT_PUBLIC_AUTH_PROVIDER=oidc`, the response also includes the provider's
 ```
 
 **Notes:**
-- Clears the `auth-token` cookie
+- Clears the `auth-token` cookie (`__Host-auth-token` on HTTPS)
 
 ---
 
@@ -257,7 +257,7 @@ Bodies over 65536 bytes are `413 { "error": "Request body is too large" }`, unpa
 
 | `action` | Body | Answer |
 |---|---|---|
-| `register-options` | `{ "password": "...", "code"?: "123456" }` | `{ "options": PublicKeyCredentialCreationOptionsJSON }`, and sets the `passkey-registration` cookie |
+| `register-options` | `{ "password": "...", "code"?: "123456" }` | `{ "options": PublicKeyCredentialCreationOptionsJSON }`, and sets the `passkey-registration` cookie (`__Host-passkey-registration` on HTTPS) |
 | `register-verify` | `{ "response": RegistrationResponseJSON, "name"?: "..." }` | `{ "passkey": {...} }`; clears the cookie whatever the outcome |
 | `rename` | `{ "id": "...", "name": "..." }` | `{ "passkey": {...} }` |
 | `remove` | `{ "id": "...", "password": "...", "code"?: "123456" }` | `{ "ok": true }`, and re-issues the caller's session cookie |
@@ -282,7 +282,7 @@ Signs in with a passkey, without an email; no session is needed.
 
 | `action` | Body | Answer |
 |---|---|---|
-| `options` | `{ "action": "options" }` | `{ "options": PublicKeyCredentialRequestOptionsJSON }` (no `allowCredentials`, `userVerification: "required"`), and sets the `passkey-sign-in` cookie; writes nothing to the store |
+| `options` | `{ "action": "options" }` | `{ "options": PublicKeyCredentialRequestOptionsJSON }` (no `allowCredentials`, `userVerification: "required"`), and sets the `passkey-sign-in` cookie (`__Host-passkey-sign-in` on HTTPS); writes nothing to the store |
 | `verify` | `{ "action": "verify", "response": AuthenticationResponseJSON }` | `{ "success": true, "role": "admin" \| "user" }`, and sets the session cookie; clears the ceremony cookie whatever the outcome |
 
 Every refusal answers the same `401 { "success": false, "message": "That passkey could not sign you in. If it was removed from Studio, delete it from your password manager too. Sign in with your password." }`, whatever the reason, and the reason is recorded only in the audit log.
@@ -1942,7 +1942,7 @@ could arrive twice.
 { "error": "previousRunId must be a non-empty string when provided" }
 { "error": "This connection reaches every database on its server: name the database the run reads in catalog" }
 {
-  "error": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant and Neo4j. On Apache Spark a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.",
+  "error": "Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ and Apache Kafka. On Apache Spark a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.",
   "refused": "engine-unsupported"
 }
 

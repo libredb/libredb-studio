@@ -29,6 +29,8 @@
   <a href="https://www.postgresql.org/download/products/1/#:~:text=LibreDB%20Studio">Software Catalogue</a>
   ·
   <a href="https://wiki.postgresql.org/wiki/Community_Guide_to_PostgreSQL_GUI_Tools#LibreDB_Studio">Community Guide to GUI Tools</a>
+  ·
+  <a href="https://wiki.postgresql.org/wiki/Design_Tools#LibreDB_Studio">Design Tools</a>
 </p>
 <p align="center">
   또한
@@ -57,9 +59,10 @@
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>,
   <a href="https://doris.apache.org/docs/4.x/connection-integration/data-integration/libredb-studio/">Apache Doris</a>,
   <a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem#:~:text=LibreDB%20Studio">Apache Kafka</a>,
-  <a href="https://cassandra.apache.org/_/ecosystem.html">Apache Cassandra</a>
-  및
+  <a href="https://cassandra.apache.org/_/ecosystem.html">Apache Cassandra</a>,
   <a href="https://druid.apache.org/libraries/#:~:text=LibreDB%20Studio">Apache Druid</a>
+  및
+  <a href="https://github.com/oxia-db/oxia/blob/main/ADOPTERS.md#adopters-list">Oxia</a>
   공식 문서에도 등재되어 있습니다.
 </p>
 
@@ -237,7 +240,7 @@ Studio의 주요 AI 인터페이스는 에디터 옆에 있는 **Agent 사이드
 
 * **데이터를 변경할 수 없는 읽기 전용 Agent.** Agent가 실행하는 모든 쿼리는 별도의 실행 경로를 거칩니다. 데이터베이스 드라이버에 전달되기 전에 허용된 작업인지 확인하고, 실행 내역을 기록하고, 사용량 제한을 확인합니다(`executeAuditedOperation`, `src/lib/db/operations/execution.ts:129`). 또한 각 데이터베이스가 제공하는 읽기 전용 기능을 사용합니다. PostgreSQL에서는 읽기 전용 transaction을 사용하고, SQLite에서는 각 쿼리마다 `PRAGMA query_only`를 다시 설정합니다. DuckDB에서는 `READ_ONLY` 엔진 핸들과 SQL guard를 함께 사용합니다. `READ_ONLY` 설정만으로는 `COPY … TO`, `EXPORT DATABASE`, 로컬 파일을 읽는 table function까지 허용되기 때문입니다. SQL Server에는 읽기 전용 transaction이 없기 때문에 네 단계의 보호 장치를 사용합니다. Connection을 열 때 session principal에 쓰기 권한이 없는지 먼저 확인하고, optimizer를 통해 쿼리를 실제로 실행하지 않은 상태에서 각 쿼리의 허용 여부를 검증합니다. 서버에서 반환되는 행 수도 제한하며, 마지막으로 쿼리를 항상 rollback되는 transaction 안에서 실행합니다. 쓰기 작업과 DDL은 데이터베이스에 전달되기 전에 차단되며, 실제로 쿼리를 실행하는 `EXPLAIN ANALYZE`도 기본적으로 허용되지 않습니다. 이러한 실행 방식은 Agent에만 적용됩니다. 에디터에서 사용자가 직접 실행하는 쿼리는 provider를 바로 호출하며(`src/app/api/db/query/route.ts:312`), Agent에 적용되는 실행 확인이나 기록 과정은 거치지 않습니다.
 
-* **Agent 모드에서 읽기를 지원하는 엔진은 PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j입니다.** 읽기 전용 경로는 이를 구현한 provider에서만 사용할 수 있습니다. 현재 `queryReadOnly`가 구현된 provider는 `postgres.ts`, `sqlite.ts`, `duckdb/index.ts`, `mssql.ts`, `mysql.ts`, `kubernetes/index.ts`, `mongodb/index.ts`, `clickhouse/index.ts`, `libsql/index.ts`, `influxdb/sql-provider.ts`, `search/index.ts`, `oracle/index.ts`, `db2/index.ts`, `cassandra/index.ts`, `couchbase/index.ts`, `druid/index.ts`, `libredb.ts`, `influxdb/influxql-provider.ts`, `weaviate/index.ts`, `qdrant/index.ts`, `neo4j/index.ts`뿐이며, 읽기 전용 경계는 엔진마다 다르고 각 엔진의 문서에 설명되어 있습니다. 다른 엔진에서 쿼리를 실행하는 Agent 모드 workflow를 시작하면 실제 실행이 시작되기 전에 차단됩니다. 요청이 provider factory까지 전달되더라도 `engine-unsupported`로 종료됩니다. **Plan** 모드는 모든 Connection에서 사용할 수 있습니다. Plan 모드에서는 모델이 tool을 사용하거나 쿼리를 실행하지 않으며, 데이터를 변경하지도 않습니다. 사용자가 직접 실행할 쿼리만 작성해 줍니다. GROUNDING은 모든 엔진을 지원합니다. PostgreSQL과 SQLite에서는 서버가 catalog query를 직접 구성하고, 다른 Connection에서는 해당 Connection의 provider를 통해 schema 정보를 가져옵니다. 이는 사이드바에서 이미 사용하는 조회 방식이므로 별도의 읽기 전용 쿼리 실행 기능이 필요하지 않습니다. 따라서 두 제한은 서로 별개입니다. Agent 모드는 위에 적은 엔진에서만 지원되지만 GROUNDING은 모든 엔진에서 사용할 수 있습니다. schema 정보를 가져오지 못한 경우에는 이를 명확하게 알리며 존재하지 않는 테이블명을 임의로 만들어내지 않습니다.
+* **Agent 모드에서 읽기를 지원하는 엔진은 PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka입니다.** 읽기 전용 경로는 이를 구현한 provider에서만 사용할 수 있습니다. 현재 `queryReadOnly`가 구현된 provider는 `postgres.ts`, `sqlite.ts`, `duckdb/index.ts`, `mssql.ts`, `mysql.ts`, `kubernetes/index.ts`, `mongodb/index.ts`, `clickhouse/index.ts`, `libsql/index.ts`, `influxdb/sql-provider.ts`, `search/index.ts`, `oracle/index.ts`, `db2/index.ts`, `cassandra/index.ts`, `couchbase/index.ts`, `druid/index.ts`, `libredb.ts`, `influxdb/influxql-provider.ts`, `weaviate/index.ts`, `qdrant/index.ts`, `neo4j/index.ts`, `milvus/index.ts`, `redis.ts`, `etcd/index.ts`, `oxia/index.ts`, `rabbitmq/index.ts`, `kafka/index.ts`뿐이며, 읽기 전용 경계는 엔진마다 다르고 각 엔진의 문서에 설명되어 있습니다. 다른 엔진에서 쿼리를 실행하는 Agent 모드 workflow를 시작하면 실제 실행이 시작되기 전에 차단됩니다. 요청이 provider factory까지 전달되더라도 `engine-unsupported`로 종료됩니다. **Plan** 모드는 모든 Connection에서 사용할 수 있습니다. Plan 모드에서는 모델이 tool을 사용하거나 쿼리를 실행하지 않으며, 데이터를 변경하지도 않습니다. 사용자가 직접 실행할 쿼리만 작성해 줍니다. GROUNDING은 모든 엔진을 지원합니다. PostgreSQL과 SQLite에서는 서버가 catalog query를 직접 구성하고, 다른 Connection에서는 해당 Connection의 provider를 통해 schema 정보를 가져옵니다. 이는 사이드바에서 이미 사용하는 조회 방식이므로 별도의 읽기 전용 쿼리 실행 기능이 필요하지 않습니다. 따라서 두 제한은 서로 별개입니다. Agent 모드는 위에 적은 엔진에서만 지원되지만 GROUNDING은 모든 엔진에서 사용할 수 있습니다. schema 정보를 가져오지 못한 경우에는 이를 명확하게 알리며 존재하지 않는 테이블명을 임의로 만들어내지 않습니다.
 
 * **세 가지 workflow**: **Investigate**(질문에 답변), **Optimize**(예상 실행 계획을 비교하고 index 추가 또는 쿼리 개선 방법 제안), **Assess**(테이블을 분석하며 통계 수치만 사용하고 실제 데이터 값은 포함하지 않음).
 
@@ -710,7 +713,7 @@ DigitalOcean, Koyeb, Render, Railway, Sealos, CapRover 또는 Dokploy에서 클�
 >
 > **CapRover:** CapRover Panel에서 **Apps → One-Click Apps/Databases**로 이동해 **LibreDB Studio**를 검색한 다음 배포합니다.
 >
-> **Koyeb:** 배포하기 전에 안전한 `JWT_SECRET`(최소 32자, `openssl rand -base64 32`로 생성)과 필요한 인증 정보를 설정해야 합니다. Koyeb에서는 secret을 자동으로 생성할 수 없습니다. 미리 입력된 값은 의도적으로 사용할 수 없게 설정되어 있습니다. 해당 secret은 최소 길이인 32자보다 짧기 때문에 그대로 사용하면 애플리케이션이 실행을 중단하고 이유를 안내합니다. README에 그대로 노출된 secret으로 애플리케이션이 실행되는 것을 방지하기 위한 것입니다. 배포 버튼에는 `STORAGE_PROVIDER=local`이 설정되어 있어 Connection metadata가 브라우저에 저장되며, 이는 Koyeb의 임시 파일 시스템에 적합합니다. 재배포 후에도 Connection을 유지하려면 `STORAGE_PROVIDER=postgres`로 변경하고 `STORAGE_POSTGRES_URL`을 Koyeb에서 호스팅하는 Postgres 또는 Neon 데이터베이스로 설정하세요. 배포 버튼에는 `LLM_PROVIDER`/`LLM_MODEL`/`LLM_API_KEY`도 미리 설정되어 있지만, Agent 모드에서는 서버에 저장된 Connection이 필요합니다. 따라서 `STORAGE_PROVIDER`가 `sqlite` 또는 `postgres`로 설정되기 전까지 Start 버튼은 비활성화됩니다([docs/AGENT.md](docs/AGENT.md#turning-it-on) 참고). 자세한 내용은 [`deploy/koyeb/`](deploy/koyeb/)에서 확인할 수 있습니다.
+> **Koyeb:** 배포하기 전에 안전한 `JWT_SECRET`(최소 32자, `openssl rand -base64 32`로 생성)과 필요한 인증 정보를 설정해야 합니다. Koyeb에서는 secret을 자동으로 생성할 수 없습니다. 미리 입력된 값은 의도적으로 사용할 수 없게 설정되어 있습니다. 해당 secret은 최소 길이인 32자보다 짧기 때문에 그대로 사용하면 애플리케이션이 실행을 중단하고 이유를 안내합니다. README에 그대로 노출된 secret으로 애플리케이션이 실행되는 것을 방지하기 위한 것입니다. 배포 버튼에는 `STORAGE_PROVIDER=local`이 설정되어 있어 Connection metadata가 브라우저에 저장되며, 이는 Koyeb의 임시 파일 시스템에 적합합니다. 재배포 후에도 Connection을 유지하려면 `STORAGE_PROVIDER=postgres`로 변경하고 `STORAGE_POSTGRES_URL`을 Koyeb에서 호스팅하는 Postgres 또는 Neon 데이터베이스로 설정하세요. 배포 버튼에는 `LLM_PROVIDER`/`LLM_MODEL`/`LLM_API_KEY`도 미리 설정되어 있지만, Agent 실행은 서버가 직접 나열하는 seed Connection에서만 시작할 수 있습니다. 따라서 UI에서 만든 Connection에서는 `STORAGE_PROVIDER` 값과 관계없이 Start 버튼이 비활성화됩니다([docs/AGENT.md](docs/AGENT.md#turning-it-on) 참고). 자세한 내용은 [`deploy/koyeb/`](deploy/koyeb/)에서 확인할 수 있습니다.
 >
 > **Fly.io:** repository에 바로 사용할 수 있는 [`fly.toml`](fly.toml)이 포함되어 있습니다. 애플리케이션 이름, volume, secrets를 포함한 전체 배포 과정은 [`docs/FLY.md`](docs/FLY.md)를 참고하세요.
 >

@@ -1,8 +1,8 @@
 /**
  * The Milvus provider's seam guard (vector-family spec E3, E15, E19, 5.11), on the etcd guard's shape.
  *
- * Among the files this guard holds (the provider directory, its generator, its tests, helpers and live harnesses,
- * which tests/unit/db/etcd/seam-guard.test.ts hands over), each list below is held exactly, so a stray importer fails
+ * Among the files this guard holds (the provider directory, its generator, its tests, helpers, live harnesses and the
+ * agent boundary's capture probe, which tests/unit/db/etcd/seam-guard.test.ts hands over), each list below is held exactly, so a stray importer fails
  * by name and a named file that stops importing fails too: who imports @grpc/grpc-js, who imports @grpc/proto-loader,
  * who imports the generated descriptor, who names its file, and who imports the generator. The modules part A builds
  * hold no logger and write nothing to the console (E19); the client's method set is E15's allowlist, mapped one to one
@@ -27,6 +27,8 @@ const ADAPTER = `${MILVUS}/grpc-client.ts`;
 const DESCRIPTOR = `${MILVUS}/proto/descriptor.ts`;
 const GENERATOR = "scripts/generate-milvus-descriptor.mjs";
 const HARNESS = "tests/live/milvus-evidence.ts";
+/** The agent boundary's capture probe, run by hand through its run.sh, which drives grpc-js as the harness does. */
+const AGENT_PROBE = "tests/fixtures/milvus/agent-boundary-probe.ts";
 const ADAPTER_TEST = "tests/unit/db/milvus/grpc-client.test.ts";
 const TLS_TEST = "tests/unit/db/milvus/tls-handshake.test.ts";
 const HANDSHAKE_CASES = "tests/helpers/milvus-handshake-cases.ts";
@@ -38,10 +40,11 @@ const SOURCE_FILE = /\.(c|m)?(t|j)sx?$/;
 /** The files this guard holds; the etcd guard skips exactly these. */
 const MILVUS_HELD: readonly RegExp[] = GRPC_SEAM_HOLDINGS.milvus.held;
 
-const GRPC_IMPORTERS = [HARNESS, ADAPTER_TEST, TLS_TEST, HANDSHAKE_CASES];
+const GRPC_IMPORTERS = [HARNESS, AGENT_PROBE, ADAPTER_TEST, TLS_TEST, HANDSHAKE_CASES];
 const PROTO_LOADER_IMPORTERS = [
   ADAPTER,
   HARNESS,
+  AGENT_PROBE,
   ADAPTER_TEST,
   HANDSHAKE_CASES,
   DESCRIPTOR,
@@ -50,7 +53,7 @@ const PROTO_LOADER_IMPORTERS = [
 ];
 const DESCRIPTOR_IMPORTERS = [ADAPTER];
 const DESCRIPTOR_READERS = [GENERATOR, DESCRIPTOR_TEST, WIRE_FIELDS_TEST, THIS_FILE];
-const GENERATOR_IMPORTERS = [HARNESS, DESCRIPTOR_TEST];
+const GENERATOR_IMPORTERS = [HARNESS, AGENT_PROBE, DESCRIPTOR_TEST];
 /** The modules with no logger and no console output (E19). */
 const NO_LOGGER = [
   `${MILVUS}/client.ts`,
@@ -289,14 +292,18 @@ describe("E3 and E15: the method set", () => {
 
 /**
  * Who may name each narrow client method: the seam that declares it, the adapter that implements it, and its one
- * consumer. Load and Release are maintenance.ts's alone, the bulk describe is objects.ts's alone, and GetMetrics is
- * read by the Load preview alone, so no other module can send any of them.
+ * consumer. Load and Release are maintenance.ts's alone, the bulk describe is objects.ts's alone, GetMetrics is
+ * read by the Load preview alone, and the user list, a user's roles and a role's grants are the agent read-only
+ * proof's alone, so no other module can send any of them.
  */
 const METHOD_HOLDERS: Readonly<Record<string, readonly string[]>> = {
   loadCollection: [`${MILVUS}/client.ts`, ADAPTER, `${MILVUS}/maintenance.ts`],
   releaseCollection: [`${MILVUS}/client.ts`, ADAPTER, `${MILVUS}/maintenance.ts`],
   batchDescribeCollection: [`${MILVUS}/client.ts`, ADAPTER, `${MILVUS}/objects.ts`],
   getMetricsSystemInfo: [`${MILVUS}/client.ts`, ADAPTER, `${MILVUS}/maintenance.ts`],
+  listCredUsers: [`${MILVUS}/client.ts`, ADAPTER, `${MILVUS}/read-only-proof.ts`],
+  selectUser: [`${MILVUS}/client.ts`, ADAPTER, `${MILVUS}/read-only-proof.ts`],
+  selectGrant: [`${MILVUS}/client.ts`, ADAPTER, `${MILVUS}/read-only-proof.ts`],
 };
 
 /** Whether a file names `method` as an identifier or as a string, which is how a `Pick<MilvusClient, "x">` names it. */

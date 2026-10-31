@@ -29,6 +29,8 @@
   <a href="https://www.postgresql.org/download/products/1/#:~:text=LibreDB%20Studio">Software Catalogue</a>
   ·
   <a href="https://wiki.postgresql.org/wiki/Community_Guide_to_PostgreSQL_GUI_Tools#LibreDB_Studio">Community Guide to GUI Tools</a>
+  ·
+  <a href="https://wiki.postgresql.org/wiki/Design_Tools#LibreDB_Studio">Design Tools</a>
 </p>
 <p align="center">
   साथ ही
@@ -57,9 +59,10 @@
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>,
   <a href="https://doris.apache.org/docs/4.x/connection-integration/data-integration/libredb-studio/">Apache Doris</a>,
   <a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem#:~:text=LibreDB%20Studio">Apache Kafka</a>,
-  <a href="https://cassandra.apache.org/_/ecosystem.html">Apache Cassandra</a>
-  और
+  <a href="https://cassandra.apache.org/_/ecosystem.html">Apache Cassandra</a>,
   <a href="https://druid.apache.org/libraries/#:~:text=LibreDB%20Studio">Apache Druid</a>
+  और
+  <a href="https://github.com/oxia-db/oxia/blob/main/ADOPTERS.md#adopters-list">Oxia</a>
   के आधिकारिक docs में भी सूचीबद्ध
 </p>
 
@@ -221,8 +224,8 @@ PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · Du
   Writes और DDL डेटाबेस तक पहुँचने से पहले ही मना कर दिए जाते हैं। `EXPLAIN ANALYZE` statement को सच में चलाता है,
   इसलिए default रूप से बंद है। यह pipeline सिर्फ़ Agent के लिए है: एडिटर में आप जो statements ख़ुद चलाते हैं वे सीधे
   provider को जाते हैं (`src/app/api/db/query/route.ts:312`), यहाँ की policy से नहीं गुज़रते, और ऐसा audit record नहीं बनाते।
-- **Agent mode सिर्फ़ PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant और Neo4j पर**: read-only profile सिर्फ़ उन providers पर है
-  जिन्होंने इसे implement किया है: `postgres.ts`, `sqlite.ts`, `duckdb/index.ts`, `mssql.ts`, `mysql.ts`, `kubernetes/index.ts`, `mongodb/index.ts`, `clickhouse/index.ts`, `libsql/index.ts`, `influxdb/sql-provider.ts`, `search/index.ts`, `oracle/index.ts`, `db2/index.ts`, `cassandra/index.ts`, `couchbase/index.ts`, `druid/index.ts`, `libredb.ts`, `influxdb/influxql-provider.ts`, `weaviate/index.ts`, `qdrant/index.ts` और `neo4j/index.ts`
+- **Agent mode सिर्फ़ PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ और Apache Kafka पर**: read-only profile सिर्फ़ उन providers पर है
+  जिन्होंने इसे implement किया है: `postgres.ts`, `sqlite.ts`, `duckdb/index.ts`, `mssql.ts`, `mysql.ts`, `kubernetes/index.ts`, `mongodb/index.ts`, `clickhouse/index.ts`, `libsql/index.ts`, `influxdb/sql-provider.ts`, `search/index.ts`, `oracle/index.ts`, `db2/index.ts`, `cassandra/index.ts`, `couchbase/index.ts`, `druid/index.ts`, `libredb.ts`, `influxdb/influxql-provider.ts`, `weaviate/index.ts`, `qdrant/index.ts`, `neo4j/index.ts`, `milvus/index.ts`, `redis.ts`, `etcd/index.ts`, `oxia/index.ts`, `rabbitmq/index.ts` और `kafka/index.ts`
   का `queryReadOnly`, और कोई नहीं। हर engine की read-only सीमा अलग है, और वह उस engine के docs में लिखी है।
   बाक़ी engines पर, statements भेजने वाला Agent-mode workflow शुरू होते ही मना कर दिया जाता है,
   run बनने से पहले; और जो अनुरोध provider factory तक पहुँच जाए वह `engine-unsupported` के साथ ख़त्म होता है।

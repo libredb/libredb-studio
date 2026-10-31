@@ -35,13 +35,13 @@ mock.module("@/lib/oidc", () => ({
 }));
 
 let jar: Record<string, { value: string } | undefined> = {};
-const deleted: { name: string; path?: string }[] = [];
+const deleted: { name: string; path?: string; secure?: boolean }[] = [];
 
 mock.module("next/headers", () => ({
   cookies: mock(async () => ({
     get: (name: string) => jar[name],
     set: mock(() => {}),
-    delete: (cookie: { name: string; path?: string }) => deleted.push(cookie),
+    delete: (cookie: { name: string; path?: string; secure?: boolean }) => deleted.push(cookie),
   })),
   headers: mock(async () => ({ get: () => null })),
 }));
@@ -90,5 +90,29 @@ describe("GET /api/auth/oidc/login with the access review on", () => {
     jar["access-review-retry"] = { value: "loop" };
     const response = await signIn();
     expect(response.headers.get("location")).toBe("https://rancher.example.com/oidc/authorize?state=abc");
+  });
+});
+
+// Whenever the auth cookies are Secure the loop guard reads __Host-access-review-retry alone and deletes it with Secure.
+describe("GET /api/auth/oidc/login with the access review on and host-prefixed names", () => {
+  beforeEach(() => {
+    process.env.AUTH_COOKIE_SECURE = "true";
+  });
+  afterEach(() => {
+    delete process.env.AUTH_COOKIE_SECURE;
+  });
+
+  test("a tripped __Host- marker shows the sign-in page and is deleted with Secure at Path=/", async () => {
+    jar["__Host-access-review-retry"] = { value: "loop" };
+    const response = await signIn();
+    expect(response.headers.get("location")).toBe("https://studio.example.com/login?error=oidc_groups_lost");
+    expect(deleted).toEqual([{ name: "__Host-access-review-retry", path: "/", secure: true }]);
+  });
+
+  test("a plain-named tripped marker is ignored", async () => {
+    jar["access-review-retry"] = { value: "loop" };
+    const response = await signIn();
+    expect(response.headers.get("location")).toBe("https://rancher.example.com/oidc/authorize?state=abc");
+    expect(deleted).toEqual([]);
   });
 });

@@ -17,7 +17,7 @@ import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { connectionFieldHint, DB_UI_CONFIG, hostUriSchemes, offersSshTunnel, readOnlyHint } from "@/lib/db-ui-config";
-import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import { CREDENTIAL_WARNINGS, credentialWarningFor, readOnlySeedRefusal } from "@/lib/db/credential-warnings";
 import { createDatabaseProvider } from "@/lib/db/factory";
 import { DEFAULT_QUERY_TIMEOUT } from "@/lib/db/types";
@@ -215,6 +215,12 @@ const OUTLINE: readonly string[] = [
   "## 13. Known limitations",
   "## Migration DDL",
   "## 14. References",
+  "## 15. Agent mode",
+  "### 15.1 The boundary",
+  "### 15.2 What an agent command may be",
+  "### 15.3 Metadata only",
+  "### 15.4 Agent language pack",
+  "### 15.5 Tests",
 ];
 
 /** The modules of the browser set (the Global Constraints of the plan): the rest run on the server. */
@@ -701,6 +707,7 @@ describe("docs/providers/oxia.md quotes what the provider's modules say", () => 
     const written: Record<string, string> = {
       objectKinds: "`OXIA_OBJECT_KINDS`",
       keyScan: "`OXIA_KEY_SCAN`",
+      metadataOnly: "`OXIA_METADATA_ONLY`",
     };
     for (const [key, value] of Object.entries(capabilities)) {
       let cell = written[key];
@@ -910,11 +917,12 @@ describe("docs/providers/oxia.md quotes what the registered type-id declares (pa
     expect(flat(sectionOf(DOC, "### 4.8 Pulsar's oxia:// URL"))).toContain("The URL is not pasted whole");
   });
 
-  test("P5. machine access is what the records say", () => {
+  test("P5. machine access is what the records say: agent mode reads metadata only, and MCP stays closed", () => {
     const machine = flat(sectionOf(DOC, "### 3.6 Machine access"));
-    expect(machine).toContain("No agent execution and no MCP");
+    expect(machine).toContain("Agent mode reads metadata only, and MCP stays closed");
     expect(MCP_EXPOSABLE.oxia).toBe(false);
-    expect(AGENT_EXECUTION_ENGINES).not.toContain("oxia");
+    expect(MCP_STATEMENT_READ.oxia).toBe(false);
+    expect(AGENT_EXECUTION_ENGINES).toContain("oxia");
     expect(machine).toContain(`](../BACKLOG.md#${backlogAnchor("B100")})`);
   });
 

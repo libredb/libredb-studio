@@ -29,6 +29,8 @@
   <a href="https://www.postgresql.org/download/products/1/#:~:text=LibreDB%20Studio">Software Catalogue</a>
   ·
   <a href="https://wiki.postgresql.org/wiki/Community_Guide_to_PostgreSQL_GUI_Tools#LibreDB_Studio">Community Guide to GUI Tools</a>
+  ·
+  <a href="https://wiki.postgresql.org/wiki/Design_Tools#LibreDB_Studio">Design Tools</a>
 </p>
 <p align="center">
   Listado también en la documentación oficial de
@@ -57,9 +59,10 @@
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>,
   <a href="https://doris.apache.org/docs/4.x/connection-integration/data-integration/libredb-studio/">Apache Doris</a>,
   <a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem#:~:text=LibreDB%20Studio">Apache Kafka</a>,
-  <a href="https://cassandra.apache.org/_/ecosystem.html">Apache Cassandra</a>
-  y
+  <a href="https://cassandra.apache.org/_/ecosystem.html">Apache Cassandra</a>,
   <a href="https://druid.apache.org/libraries/#:~:text=LibreDB%20Studio">Apache Druid</a>
+  y
+  <a href="https://github.com/oxia-db/oxia/blob/main/ADOPTERS.md#adopters-list">Oxia</a>
 </p>
 
 <p align="center">

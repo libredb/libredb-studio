@@ -1748,7 +1748,7 @@ string into a flat `key → value` map that the methods below read from.
 | `getHealth()` | `INFO` | `connected_clients`, `used_memory_human`, hit ratio |
 | `getOverview()` | `INFO` + `DBSIZE` | version, uptime, clients, maxclients, memory, key count (`tableCount`) |
 | `getPerformanceMetrics()` | `INFO` | cache hit ratio, `instantaneous_ops_per_sec` → `queriesPerSecond` |
-| `getSlowQueries()` | `SLOWLOG GET 10` | per-entry id, command text, duration (µs → ms) |
+| `getSlowQueries()` | `SLOWLOG GET 10` | per-entry id, command text, duration (µs → ms); on an agent-mode handle the command name and argument count only ([§16.4](#164-metadata-only)) |
 | `getActiveSessions()` | `CLIENT LIST` | one session per client (id, addr, db, flags, cmd, idle) |
 | `getStorageStats()` | `INFO memory` | `used_memory_human`, optional `usagePercent` vs `maxmemory` |
 | `getTableStats()` | — | `[]` (N/A) |
@@ -1840,6 +1840,7 @@ no control offers it.
 | `maintenanceOperations` | `['analyze']` |
 | `supportsConnectionString` | `false` |
 | `defaultPort` | `6379` |
+| `metadataOnly` | one projection per agent read, its columns counts, types and sizes ([§16.4](#164-metadata-only)) |
 | `schemaRefreshPattern` | `(DEL\|FLUSHDB\|FLUSHALL\|RENAME)\b` |
 
 `schemaRefreshPattern` tells the UI which executed commands should trigger a schema (key-pattern)
@@ -2117,9 +2118,10 @@ request/response contract.
   folder reads `3+`. The flat key-prefix list of §6 has no badge and still says nothing.
 - **An `EVAL` script is not an object here**, because Redis publishes no `SCRIPT LIST` — only
   `SCRIPT EXISTS <sha>`, which answers about a sha the caller already has ([§6.1](#61-the-object-surface-789)).
-- **No read-only guard.** The generic `call()` dispatch executes write/destructive commands
+- **No read-only guard in the editor.** The generic `call()` dispatch executes write/destructive commands
   (`SET`, `DEL`, `FLUSHALL`, …) the same as reads. Access control is expected to be enforced by the
-  Redis ACL / user role, not the provider.
+  Redis ACL / user role, not the provider. Agent mode's read path is a different one, with a closed
+  command table and an ACL user proved read-only ([§16](#16-agent-mode)).
 - **Binary values** are stringified via `String(...)`; non-UTF8 binary payloads may not render
   faithfully in the grid.
 - **The plain-command tokenizer has no escape syntax.** Quotes group an argument but cannot be
@@ -2181,3 +2183,118 @@ This Redis provider is a good template for a non-relational backend. To add anot
 7. **Test** with a `mock.module()`-based integration test mirroring the structure above.
 8. **Document** the provider in `docs/providers/<name>.md` using this file as the template, and add
    the query format to `docs/API_DOCS.md`.
+
+---
+
+## 16. Agent mode
+
+Agent mode reads Redis's metadata through `queryReadOnly` in [`redis.ts`](../../src/lib/db/providers/keyvalue/redis.ts).
+The command reader and its closed table are [`redis-agent-statement.ts`](../../src/lib/db/providers/keyvalue/redis-agent-statement.ts), the read-only proof is [`redis-read-only-proof.ts`](../../src/lib/db/providers/keyvalue/redis-read-only-proof.ts), and the metadata-only projection and the wording of a failure are [`redis-metadata-read.ts`](../../src/lib/db/providers/keyvalue/redis-metadata-read.ts).
+Every claim below cites a capture under [`tests/fixtures/redis/8.10.2/agent-boundary/`](../../tests/fixtures/redis/8.10.2/agent-boundary/) or [`tests/fixtures/redis/valkey-9.1.2/agent-boundary/`](../../tests/fixtures/redis/valkey-9.1.2/agent-boundary/), recorded by each directory's `run.sh` against a digest-pinned server with the image's stock configuration, with every command sent raw, past every Studio check; the two servers answered alike unless a line says otherwise.
+
+### 16.1 The boundary
+
+The boundary is a structural closed table, with an ACL user proved read-only on top of it.
+The table holds `DBSIZE`, and for one key the command names `TYPE`, `EXISTS`, `TTL`, `PTTL`, `STRLEN`, `LLEN`, `HLEN`, `SCARD`, `ZCARD`, `XLEN`, `OBJECT ENCODING` and `MEMORY USAGE`.
+Every entry is one the server's own `COMMAND INFO` describes as a read (`command-info.json`): flagged `readonly`, flagged none of `write`, `admin`, `pubsub`, `may_replicate` or `script_runner`, in none of the `@write`, `@admin`, `@dangerous`, `@scripting` or `@pubsub` categories, and with only read-only (`RO`) key specs.
+`tests/unit/db/redis/agent-command-table.test.ts` walks the table against both captures, and fails on `FLUSHALL` (`write`, no key spec), `CONFIG SET` (`admin`), `EVAL` (an `RW` key spec), `PFCOUNT` (an `RW` key spec: it may rewrite the key's cached cardinality and replicate it) and `DEBUG` (`admin`).
+`INFO` fails the walk too: it carries `loading` and `stale` only, no `readonly`, and sits in `@dangerous`, so it is not in the table, and neither the server's sections nor other databases' key counts are read.
+`EVAL_RO` is refused by its `@scripting` category alone on Valkey, which drops its `script_runner` flag.
+`SCAN`, `KEYS`, `RANDOMKEY`, `OBJECT FREQ` and `OBJECT IDLETIME` pass the walk's flags and are left out by the metadata-only rule ([§16.4](#164-metadata-only)).
+
+A user granted only `+@read` is refused `NOPERM` every write the proof probes (`reader.json`), and a `+@read` user may still run `KEYS`, `SCAN`, `GET` and `HGETALL`, which list keys and read values, so the ACL alone is no metadata boundary: the table is.
+
+### 16.2 The read-only proof
+
+A handle opened for the agent read-only profile by an acquisition that sends statements refuses, before any socket, a connection that names no ACL user, which would sign in as `default`, and one that names `default`, which every client that names no user signs in as: a stock server leaves it `on nopass ~* &* +@all`, and it is admitted every probe (`default-nopass.json`).
+When the handle opens, and again before every command, on that command's own connection and in one round trip, the server is asked:
+
+- `HELLO 2`, which a `+@read` user may send (`reader.json`), must answer exactly the seven fields both measured servers answer, in their order (`server`, `version`, `proto`, `id`, `mode`, `role`, `modules`), name `redis` or `valkey`, and the `standalone` mode. Valkey with `extended-redis-compatibility` on names itself `redis` 7.2.4 (`identity-compatibility.json`), and is the server measured either way. A cluster, and a relative whose `HELLO` differs, are refused until measured: Dragonfly's, by its own `HELLO` reference, names itself `redis` in `standalone` mode but adds `dfly_version`. A relative whose `HELLO` copies the measured one exactly is not told apart by it, and is held to the probes' exact wording below.
+- Fifteen probes must each be refused as a command the user does not hold: `DEL`, `UNLINK`, `SET ... XX`, `EXPIRE`, `HDEL`, `LREM`, `SREM`, `ZREM`, `XDEL` and `MOVE` of a key that exists nowhere, `RESTORE` of it with a payload that is not a dump (dangerous), `CONFIG SET` of a parameter that does not exist (admin), `EVALSHA` of a script that does not exist (scripting), `FUNCTION DELETE` of a library that does not exist (scripting) and `SPUBLISH` to a shard channel that exists nowhere (pubsub). Each name is fresh for every proof. Admitted, each changes nothing: a full user is answered every one, and the key count, the probe key and the function list read the same before and after (`full.json`). An admitted `SPUBLISH` is heard only by a subscriber of that one shard channel, never by a pattern subscriber, and is passed to replicas like any publish; `PUBLISH` would also reach every `PSUBSCRIBE` pattern that matches it.
+- The refusal must be the server's own, word for word, naming this user and the probe's command: `NOPERM User <user> has no permissions to run the '<command>' command`, the same on both servers (`reader.json`). The ACL checks the command before the key or channel, so that refusal says the user does not hold the command at all. A user that holds it and is refused only because the probe's key or channel lies outside its patterns, `NOPERM No permissions to access a key` or `... a channel`, may still write where its patterns allow, so it is refused too: a `~app:* +@write` user is refused every key probe that way and deletes `app:in-pattern` (`scoped-writer.json`, `scoped-writer-in-pattern.json`).
+
+What the measured users get:
+
+| User | Probes | Verdict |
+| --- | --- | --- |
+| `default`, stock `nopass +@all` | every one admitted | refused before any socket, by name |
+| `~* &* +@all` | every one admitted | refused: `DEL` |
+| `~* +@read`, `~* +@read +info`, `%R~* +@read +info`, `~app:* +@read +info` | every one refused by command | proved |
+| `%R~* &* +@all` | the key writes refused by key permission; `CONFIG SET` admitted and then refused `ERR` for its unknown parameter | refused: `DEL`, by key permission |
+| `~app:* &* +@read +info +@write` | the key writes refused by key permission, and it deletes keys in `app:*` | refused: `DEL`, by key permission |
+| `~* resetchannels +@read +info +spublish` | `SPUBLISH` refused by channel permission | refused: `SPUBLISH`, by channel permission |
+| `~* +@read +info +del` | `DEL` admitted | refused: `DEL` |
+| `~* +@read +info +set` | `SET ... XX` admitted | refused: `SET` |
+
+Any other answer refuses the profile: a reply says the user may write, and any other error, whether an admitted probe's own error, a renamed command's `ERR unknown command`, a replica's `READONLY` or another server's wording, proves nothing.
+Nothing is kept between two proofs: `+del` granted to a user that passed is caught at its next command (`midrun.json`), and the command is never sent.
+The probes cannot name every write, so a user granted one write command they leave out passes; the closed table, which sends no write, is what stops that user, and the proof is never instead of it.
+A key-pattern reader (`%R~* +@read` or `~app:* +@read`) passes, since it holds no probed command, and a key outside its pattern answers `NOPERM No permissions to access a key` (`prefix.json`), which agent mode is told without the server's words.
+A transport failure is raised as itself, never read as a verdict.
+An agent connection skips ioredis's ready check, whose `INFO` is refused a `+@read` user and would log a warning on every command; the proof's `HELLO` checks the connection instead.
+The operations profile sends no command of the model's, so it opens with any user and no proof, and plan mode keeps grounding on a privileged connection, `default` included.
+
+### 16.3 What an agent command may be
+
+One line, with no control character anywhere, so a second command, an inline `MULTI` or a CRLF is refused; words separated by spaces, each bare (no quote and no backslash) or wrapped in double quotes with `\"` and `\\` as the only escapes.
+The command words are matched case-insensitively against the table, a key is 1 to 1,024 characters, and `MEMORY USAGE` takes `SAMPLES` 1 to 5 and nothing else, since 0 samples every nested value.
+Everything else is refused before anything is sent, by a sentence that quotes nothing the command wrote.
+The command runs on a connection of its own in the connection's database, with the request's deadline as its command timeout, and the connection is closed after it, so no `SELECT`, `CLIENT SETNAME`, protocol switch or open `MULTI` reaches the next command; the argv sent is the reader's, the command words uppercased and the key as written.
+
+### 16.4 Metadata only
+
+Key names count as stored values, since applications put ids, emails and tokens in them, so agent mode never lists a full key name, hash fields, set or sorted-set members or stream field names, and reads per-key metadata only for a key its own command names.
+Each agent-mode path reads this much:
+
+| Path | Handle | What it reads |
+| --- | --- | --- |
+| Investigation commands | agent read-only profile | the closed table below, projected to counts, types and sizes |
+| Investigation grounding | agent read-only profile | the session database's number; each kind's count is withheld with the reason, and no grouping or library is listed |
+| Operations workflow and plan-mode grounding | operations profile | the key groupings and function library names; the slow log, sessions, health and storage reads |
+| MCP `inspect_schema` | operations profile | the key groupings and function library names |
+
+On a handle of either profile, a key grouping names a delimited key's leading segment only (`user:*`), and every key with no `:` after its first character is counted under one grouping, `(keys with no delimiter)`, never under its own name.
+A slow-log entry carries its id, its duration, the command name and the number of arguments it took (`GET (1 argument)`), never an argument; an entry Redis cut at 32 words is counted through its `... (N more arguments)` marker, and an entry whose words are not a list is withheld whole.
+A session row carries the client's id, ACL user, database, flags, last command name, idle time and address, never its `CLIENT SETNAME` name; health and storage carry `INFO` figures only.
+The function library names stay listed on the operations profile: a library name is code the server loaded, not a stored value.
+An editor handle keeps the full slow log, with every argument, and names each key with no delimiter as its own grouping.
+Redis declares `ProviderCapabilities.metadataOnly`: every answer is projected through [`src/lib/db/redaction/metadata-only.ts`](../../src/lib/db/redaction/metadata-only.ts), one row per command, and no answer repeats the key it was asked about.
+
+| Read | Columns |
+| --- | --- |
+| `DBSIZE` | `keys` |
+| `TYPE` | `type` (`none` for a missing key) |
+| `EXISTS` | `exists` |
+| `TTL`, `PTTL` | `exists`, `expires`, `ttl_seconds` or `ttl_milliseconds` (null with no expiry) |
+| `STRLEN`, `LLEN`, `HLEN`, `SCARD`, `ZCARD`, `XLEN` | `length` |
+| `OBJECT ENCODING` | `encoding` (null for a missing key) |
+| `MEMORY USAGE` | `bytes` (null for a missing key) |
+
+A reply that does not fit its column withholds the whole answer, naming the column and never the value.
+A server refusal is worded by its code alone, since a Redis error can repeat a key: `ERR unknown command 'NOSUCHCOMMAND', with args beginning with: 'agent:string'` (`reader.json`) reaches agent mode as "Redis refused the read with ERR", `WRONGTYPE` as a sentence telling it to read the key's `TYPE` first, and a key permission's `NOPERM` as the user not being allowed that key.
+A result past the row or byte budget is refused, never cut, and an estimating plan is refused.
+Under the profile the object surface lists no key or library name: the grounding walk reads the connection's own database alone, each kind's count is withheld with the reason, the listings are empty, and the key walk, a grouping's detail and a raw command are refused.
+
+Two server-side effects of a read are the server's own and are residual: a read of a key that has expired deletes it (lazy expiry, which replicates a `DEL`), and on a server whose `notify-keyspace-events` holds the key-miss class, `TYPE`, `EXISTS` and `TTL` of a missing key publish a `keymiss` event naming that key to the server's own subscribers (`notifications.json`).
+
+### 16.5 Agent language pack
+
+Statement-language family: `rediscli`.
+Overlay: [`src/lib/agent/languages/rediscli/engines/redis.ts`](../../src/lib/agent/languages/rediscli/engines/redis.ts), with its client row in [`src/lib/agent/languages/rediscli/engines/client.ts`](../../src/lib/agent/languages/rediscli/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`.
+Both overlays are empty, so the engine resolves to the `rediscli` family pack itself.
+The `rediscli` statement-language family has no dialect-bound member.
+This overlay overrides no Shared member, so every Shared member is the `rediscli` statement-language family's own.
+The family offers the investigation workflow, through `run_read_query` with one Redis command, and the operations workflow; it offers no data analysis, since its answers carry no stored value, and no query optimization or database assessment, since the server composes no plan and no profile, and no workflow hands an answer to the editor.
+The workflow classifier offers the model only these two.
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+No MCP tool runs a Redis command: the family declares no MCP facet, and `MCP_STATEMENT_READ.redis` is false (B156).
+
+### 16.6 Tests
+
+- `tests/unit/db/redis/agent-command-table.test.ts`: the table walked against both servers' `COMMAND INFO`, with the negative cases.
+- `tests/unit/db/redis/agent-statement.test.ts`: the exact argv of every read, and every refusal before the network.
+- `tests/unit/db/redis/read-only-proof.test.ts`: the proof over every principal's captures, a grant made during the run included.
+- `tests/unit/db/redis/metadata-read.test.ts`: every projection over the captured replies, and the wording of every failure.
+- `tests/unit/db/redis/agent-provider.test.ts`: the open, the proof before every command on its own connection, the argv sent, the object surface under the profile, the slow log reduced to command names and argument counts, and the wording of a failure.
+- `tests/integration/db/redis-provider.test.ts`: `queryReadOnly` refused on an editor handle, and on an operations-profile handle the slow log reduced to command names and argument counts, keys with no delimiter counted under one grouping, and no session name, beside the editor handle's unchanged reads.

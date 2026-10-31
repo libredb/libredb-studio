@@ -108,38 +108,73 @@ async function read(
   const run = beginRun(deps.runs, queryId, AbortSignal.any([deps.deadlineSignal(deadlineMs), deps.lifetime]));
   try {
     const request = parseReadRequest(text);
-    const amqp = deps.endpoints.amqp;
-    if (amqp === null) throw configError(AMQP_PORT_REQUIRED);
-    const seconds = deadlineMs / 1000;
-    const checked = await checkStreamType(deps, request, run.signal, seconds);
-    if (checked.type !== "stream") throw notAStream(request.stream, checked.type);
-    const ticket = await acquireReadSlot(deps.readLimiter, run.signal, {
-      seconds,
-      endpoint: amqp.display,
-      stream: request.stream,
-    });
-    let outcome: StreamReadOutcome;
-    try {
-      outcome = await readStream({
-        endpoint: amqp,
-        vhost: request.vhost,
-        stream: request.stream,
-        from: request.from,
-        limit: request.limit,
-        signal: run.signal,
-        deadlineSeconds: seconds,
-        replicas: { online: checked.online, members: checked.members },
-        dial: deps.dial,
-        clock: deps.clock,
-        studioVersion: deps.studioVersion,
-        ...(deps.onSkippedBytes === undefined ? {} : { onSkippedBytes: deps.onSkippedBytes }),
-      });
-    } finally {
-      ticket.release();
-    }
-    return buildReadResult(outcome, request, deps.clock.now() - startedAt, seconds);
+    const outcome = await readRequest(request, run.signal, deadlineMs, deps);
+    return buildReadResult(outcome, request, deps.clock.now() - startedAt, deadlineMs / 1000);
   } finally {
     run.end();
+  }
+}
+
+/** What an agent read hands its projection: the read's outcome, how long it took, and its deadline D in ms. */
+export interface AgentReadOutcome {
+  readonly outcome: StreamReadOutcome;
+  readonly executionTime: number;
+  readonly deadlineMs: number;
+}
+
+/**
+ * The agent's read of a request its reader already admitted: steps 1 and 3 to 6 as `query()` takes them, under the
+ * deadline D = min(queryTimeoutMs, RABBITMQ_READ_DEADLINE_MS) and the provider's lifetime, with no queryId, so no other
+ * caller reaches the run. It answers the read's raw outcome, never a rendered row, and every failure ends in the one
+ * boundary of errors.ts, as a read's does.
+ */
+export async function runAgentRead(request: ReadRequest, deps: ReadDependencies): Promise<AgentReadOutcome> {
+  const endpoint = deps.endpoints.amqp?.display ?? deps.endpoints.management.display;
+  const deadlineMs = Math.min(deps.queryTimeoutMs, RABBITMQ_READ_DEADLINE_MS);
+  try {
+    const startedAt = deps.clock.now();
+    const signal = AbortSignal.any([deps.deadlineSignal(deadlineMs), deps.lifetime]);
+    const outcome = await readRequest(request, signal, deadlineMs, deps);
+    return { outcome, executionTime: deps.clock.now() - startedAt, deadlineMs };
+  } catch (error) {
+    throw rabbitmqBoundary(error, { site: "read", endpoint, route: STREAM_READ_ROUTE });
+  }
+}
+
+/** Steps 2 to 6 of a validated request under `signal`: the AMQP port, the type check, the read slot and the read. */
+async function readRequest(
+  request: ReadRequest,
+  signal: AbortSignal,
+  deadlineMs: number,
+  deps: ReadDependencies,
+): Promise<StreamReadOutcome> {
+  const amqp = deps.endpoints.amqp;
+  if (amqp === null) throw configError(AMQP_PORT_REQUIRED);
+  const seconds = deadlineMs / 1000;
+  const checked = await checkStreamType(deps, request, signal, seconds);
+  if (checked.type !== "stream") throw notAStream(request.stream, checked.type);
+  const ticket = await acquireReadSlot(deps.readLimiter, signal, {
+    seconds,
+    endpoint: amqp.display,
+    stream: request.stream,
+  });
+  try {
+    return await readStream({
+      endpoint: amqp,
+      vhost: request.vhost,
+      stream: request.stream,
+      from: request.from,
+      limit: request.limit,
+      signal,
+      deadlineSeconds: seconds,
+      replicas: { online: checked.online, members: checked.members },
+      dial: deps.dial,
+      clock: deps.clock,
+      studioVersion: deps.studioVersion,
+      ...(deps.onSkippedBytes === undefined ? {} : { onSkippedBytes: deps.onSkippedBytes }),
+    });
+  } finally {
+    ticket.release();
   }
 }
 

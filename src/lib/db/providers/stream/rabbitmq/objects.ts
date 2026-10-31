@@ -14,6 +14,7 @@ import {
   findKind,
 } from "@/lib/db/object-kinds";
 import type {
+  ColumnSchema,
   Container,
   DatabaseObject,
   KindCount,
@@ -263,10 +264,18 @@ export function requireObjectPath(capabilities: ProviderCapabilities, path: read
   ownRefusal(() => assertObjectPathShape(capabilities, spec, kind, path, PATH_ENGINE));
 }
 
-/** A stream's columns are the read result's, a constant table; a queue and an exchange have none. No GET. */
-export function describeKind(capabilities: ProviderCapabilities, path: readonly string[], kind: string): ObjectDetail {
+/**
+ * A stream's columns are the read result's, a constant table, or on an agent-mode handle the agent read's (`columns`);
+ * a queue and an exchange have none. No GET.
+ */
+export function describeKind(
+  capabilities: ProviderCapabilities,
+  path: readonly string[],
+  kind: string,
+  columns: readonly ColumnSchema[] = RABBITMQ_STREAM_COLUMNS,
+): ObjectDetail {
   requireObjectPath(capabilities, path, kind);
-  return { path, columns: kind === STREAM ? RABBITMQ_STREAM_COLUMNS : [], indexes: [], foreignKeys: [] };
+  return { path, columns: kind === STREAM ? columns : [], indexes: [], foreignKeys: [] };
 }
 
 /**
@@ -280,6 +289,7 @@ export async function describeKindBatch(
   container: readonly string[],
   kind: string,
   limit?: number,
+  columns: readonly ColumnSchema[] = RABBITMQ_STREAM_COLUMNS,
 ): Promise<ObjectDetailBatch> {
   const vhost = vhostOf(capabilities, container);
   requireKind(capabilities, kind);
@@ -289,7 +299,7 @@ export async function describeKindBatch(
   const chosen = cut ? listing.streams.slice(0, limit) : listing.streams;
   const details = chosen.map((row) => ({
     path: [vhost, row.name],
-    columns: RABBITMQ_STREAM_COLUMNS,
+    columns,
     indexes: [],
     foreignKeys: [],
   }));

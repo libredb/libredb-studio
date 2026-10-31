@@ -133,6 +133,23 @@ describe("readEtcdHealth (spec 7.1)", () => {
     expect(client.calls.map((call) => call.method)).toEqual(["status"]);
   });
 
+  test("on a handle opened for agent mode, a lost quorum counts Status.errors and never passes their text on", async () => {
+    const client = createFakeEtcdClient({
+      status: async () =>
+        status({ leader: "0", errors: ["etcdserver: no leader", `memberID:${ETCD_1} alarm:NOSPACE`] }),
+      alarmList: async () => [],
+    });
+    const failure = await readEtcdHealth(client, surface({ rangesCounted: true })).then(
+      () => undefined,
+      (error: unknown) => error as Error,
+    );
+    expect(failure).toBeInstanceOf(ConnectionError);
+    expect(failure?.message).toContain("lost quorum");
+    expect(failure?.message).toContain("(etcd reported 2 errors, whose text is not passed on to agent mode)");
+    expect(failure?.message).not.toContain("NOSPACE");
+    expect(failure?.message).not.toContain("no leader;");
+  });
+
   test("an alarm raised on any member is raised, naming every alarm, since HealthInfo has no field for one", async () => {
     const client = createFakeEtcdClient({
       status: async () => status(),

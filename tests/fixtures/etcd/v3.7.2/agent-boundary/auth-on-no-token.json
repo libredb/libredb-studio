@@ -1,0 +1,123 @@
+{
+  "$captured": {
+    "image": "gcr.io/etcd-development/etcd:v3.7.2@sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "version": "3.7.2",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "principal": "none",
+    "surface": "authentication on: requests sent with no token"
+  },
+  "reads": {
+    "authStatus": {
+      "outcome": "ok",
+      "answer": {
+        "header": {
+          "cluster_id": "10890815359060184063",
+          "member_id": "13264652972854556008",
+          "revision": "5",
+          "raft_term": "2"
+        },
+        "enabled": true,
+        "authRevision": "28"
+      }
+    },
+    "status": {
+      "outcome": "error",
+      "code": 3,
+      "details": "etcdserver: user name is empty"
+    },
+    "memberListLinearizable": {
+      "outcome": "error",
+      "code": 3,
+      "details": "etcdserver: user name is empty"
+    },
+    "memberListSerializable": {
+      "outcome": "error",
+      "code": 3,
+      "details": "etcdserver: user name is empty"
+    },
+    "alarmGet": {
+      "outcome": "error",
+      "code": 3,
+      "details": "etcdserver: user name is empty"
+    },
+    "leaseLeases": {
+      "outcome": "error",
+      "code": 3,
+      "details": "etcdserver: user name is empty"
+    },
+    "leaseTimeToLive": {
+      "outcome": "error",
+      "code": 3,
+      "details": "etcdserver: user name is empty"
+    },
+    "leaseTimeToLiveKeys": {
+      "outcome": "error",
+      "code": 3,
+      "details": "etcdserver: user name is empty"
+    },
+    "rangeKey": {
+      "outcome": "error",
+      "code": 3,
+      "details": "etcdserver: user name is empty"
+    },
+    "rangeKeyLeased": {
+      "outcome": "error",
+      "code": 3,
+      "details": "etcdserver: user name is empty"
+    },
+    "rangeKeyMissing": {
+      "outcome": "error",
+      "code": 3,
+      "details": "etcdserver: user name is empty"
+    },
+    "rangeKeyOutside": {
+      "outcome": "error",
+      "code": 3,
+      "details": "etcdserver: user name is empty"
+    },
+    "rangeCountAll": {
+      "outcome": "error",
+      "code": 3,
+      "details": "etcdserver: user name is empty"
+    },
+    "rangeCountApp": {
+      "outcome": "error",
+      "code": 3,
+      "details": "etcdserver: user name is empty"
+    },
+    "rangeKeysOnlyAll": {
+      "outcome": "error",
+      "code": 3,
+      "details": "etcdserver: user name is empty"
+    },
+    "rangeSerializableKey": {
+      "outcome": "error",
+      "code": 3,
+      "details": "etcdserver: user name is empty"
+    },
+    "txnReadOnly": {
+      "outcome": "error",
+      "code": 3,
+      "details": "etcdserver: user name is empty"
+    },
+    "watchKey": {
+      "outcome": "ok",
+      "answer": {
+        "events": [],
+        "header": {
+          "cluster_id": "10890815359060184063",
+          "member_id": "13264652972854556008",
+          "revision": "5",
+          "raft_term": "2"
+        },
+        "watch_id": "-1",
+        "created": true,
+        "canceled": true,
+        "compact_revision": "0",
+        "cancel_reason": "rpc error: code = InvalidArgument desc = etcdserver: user name is empty",
+        "fragment": false
+      }
+    }
+  }
+}

@@ -519,8 +519,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   redis: true,
   prometheus: true,
   kafka: true,
-  // The first engine MCP is not offered for (#1089 E12): the provider implements no read-only query path, and a seed
-  // that sets `mcp: true` on an etcd connection is refused when the seed file loads.
+  // The first engine MCP is not offered for (#1089 E12): key names and values carry secrets, the provider's read-only
+  // query path is agent mode's alone and reads metadata only, and no MCP surface is decided for it yet (BACKLOG B136),
+  // so a seed that sets `mcp: true` on an etcd connection is refused when the seed file loads.
   etcd: false,
   // Offered for the two metadata tools, `list_connections` and `inspect_schema` (Neo4j spec 6.4).
   // `run_read_query` does not serve it, because the provider implements no `queryReadOnly`.
@@ -538,8 +539,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // neither provider implements `queryReadOnly`.
   influxdb: true,
   influxdb3: true,
-  // Outside this version, as etcd's: Oxia key paths name Pulsar tenants, namespaces and topics (SEC-05), so no MCP
-  // surface lists them until one is designed (BACKLOG B100).
+  // Outside this version, as etcd's: Oxia key paths name Pulsar tenants, namespaces and topics (SEC-05), the
+  // provider's read-only query path is agent mode's alone and reads metadata only, and no MCP surface is decided for
+  // it yet (BACKLOG B100).
   oxia: false,
   databend: true,
   // Outside this version, as etcd's and Oxia's: the provider implements no queryReadOnly, and no MCP surface
@@ -556,7 +558,8 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // client could drive, and every read is billed to the user's project.
   firestore: false,
   // Offered for the two metadata tools, carrying stream names and the fixed read columns only; `run_read_query` does
-  // not serve it, because the provider implements no `queryReadOnly`.
+  // not serve it: the provider's read-only query path is agent mode's alone and reads metadata only, and
+  // MCP_STATEMENT_READ keeps MCP read closed on it (BACKLOG B108).
   rabbitmq: true,
   // Outside this version, as for etcd, Oxia, S3 and MQTT. NOT because there is no read to hand over:
   // the console reads one JSON request and is read-only by construction. Because a node's value
@@ -626,12 +629,20 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   mongodb: true,
   // Agent mode executes statements on Couchbase, and MCP read stays closed on it until a change of its own opens it.
   couchbase: false,
+  // Agent mode executes metadata-only reads on Redis, and MCP read stays closed on it until a change of its own opens
+  // it.
   redis: false,
   prometheus: false,
+  // Agent mode executes metadata-only reads on Kafka, and MCP read stays closed on it until a change of its own opens
+  // it (BACKLOG B157).
   kafka: false,
+  // Agent mode executes metadata-only reads on etcd, and MCP read stays closed on it until a change of its own opens
+  // it.
   etcd: false,
   // Agent mode executes statements on Neo4j, and MCP read stays closed on it until a change of its own opens it.
   neo4j: false,
+  // Agent mode executes metadata-only reads on Milvus, and MCP read stays closed on it until a change of its own
+  // opens it.
   milvus: false,
   // Agent mode executes metadata-only reads on Qdrant, and MCP read stays closed on it until a change of its own
   // opens it.
@@ -643,12 +654,16 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   influxdb: false,
   // Agent mode executes statements on InfluxDB 3, and MCP read stays closed on it until a change of its own opens it.
   influxdb3: false,
+  // Agent mode executes metadata-only reads on Oxia, and MCP read stays closed on it until a change of its own opens
+  // it.
   oxia: false,
   databend: false,
   s3: false,
   kubernetes: true,
   mqtt: false,
   firestore: false,
+  // Agent mode executes metadata-only stream reads on RabbitMQ, and MCP read stays closed on it until a change of its
+  // own opens it.
   rabbitmq: false,
   opcua: false,
   mtconnect: false,

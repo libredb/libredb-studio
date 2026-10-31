@@ -29,6 +29,8 @@
   <a href="https://www.postgresql.org/download/products/1/#:~:text=LibreDB%20Studio">Software Catalogue</a>
   ·
   <a href="https://wiki.postgresql.org/wiki/Community_Guide_to_PostgreSQL_GUI_Tools#LibreDB_Studio">Community Guide to GUI Tools</a>
+  ·
+  <a href="https://wiki.postgresql.org/wiki/Design_Tools#LibreDB_Studio">Design Tools</a>
 </p>
 <p align="center">
   <a href="https://node-oracledb.readthedocs.io/en/latest/user_guide/appendix_b.html#libredb-studio">Oracle</a>、
@@ -57,7 +59,8 @@
   <a href="https://doris.apache.org/docs/4.x/connection-integration/data-integration/libredb-studio/">Apache Doris</a>、
   <a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem#:~:text=LibreDB%20Studio">Apache Kafka</a>、
   <a href="https://cassandra.apache.org/_/ecosystem.html">Apache Cassandra</a>、
-  <a href="https://druid.apache.org/libraries/#:~:text=LibreDB%20Studio">Apache Druid</a>
+  <a href="https://druid.apache.org/libraries/#:~:text=LibreDB%20Studio">Apache Druid</a>、
+  <a href="https://github.com/oxia-db/oxia/blob/main/ADOPTERS.md#adopters-list">Oxia</a>
   の公式ドキュメントにも掲載
 </p>
 
@@ -215,9 +218,9 @@ StudioのAIの中心は、エディタの隣にあるエージェントレール
   書き込みとDDLはデータベースに届く前に拒否され、`EXPLAIN ANALYZE`は文を実際に実行してしまうため既定で
   不許可です。このパイプラインはエージェント専用です。あなたがエディタで自分で実行する文はプロバイダを直接
   呼び出しており（`src/app/api/db/query/route.ts:312`）、ここでのポリシー判定も監査も受けません。
-- **Agentモードが対応するのはPostgreSQL・SQLite・DuckDB・SQL Server・MySQL・Kubernetes・MongoDB・ClickHouse・libSQL・InfluxDB 3 (SQL)・Elasticsearch・OpenSearch・Oracle・Db2 LUW・Apache Cassandra・Couchbase・Apache Druid・LibreDB・InfluxDB (InfluxQL)・Weaviate・Qdrant・Neo4jだけ**：読み取り専用プロファイルは、
+- **Agentモードが対応するのはPostgreSQL・SQLite・DuckDB・SQL Server・MySQL・Kubernetes・MongoDB・ClickHouse・libSQL・InfluxDB 3 (SQL)・Elasticsearch・OpenSearch・Oracle・Db2 LUW・Apache Cassandra・Couchbase・Apache Druid・LibreDB・InfluxDB (InfluxQL)・Weaviate・Qdrant・Neo4j・Milvus・Redis・etcd・Oxia・RabbitMQ・Apache Kafkaだけ**：読み取り専用プロファイルは、
   それを実装したプロバイダにしか存在しません。`postgres.ts`、`sqlite.ts`、`duckdb/index.ts`、
-  `mssql.ts`、`mysql.ts`、`kubernetes/index.ts`、`mongodb/index.ts`、`clickhouse/index.ts`、`libsql/index.ts`、`influxdb/sql-provider.ts`、`search/index.ts`、`oracle/index.ts`、`db2/index.ts`、`cassandra/index.ts`、`couchbase/index.ts`、`druid/index.ts`、`libredb.ts`、`influxdb/influxql-provider.ts`、`weaviate/index.ts`、`qdrant/index.ts`、`neo4j/index.ts`の`queryReadOnly`のみで、他にはありません。
+  `mssql.ts`、`mysql.ts`、`kubernetes/index.ts`、`mongodb/index.ts`、`clickhouse/index.ts`、`libsql/index.ts`、`influxdb/sql-provider.ts`、`search/index.ts`、`oracle/index.ts`、`db2/index.ts`、`cassandra/index.ts`、`couchbase/index.ts`、`druid/index.ts`、`libredb.ts`、`influxdb/influxql-provider.ts`、`weaviate/index.ts`、`qdrant/index.ts`、`neo4j/index.ts`、`milvus/index.ts`、`redis.ts`、`etcd/index.ts`、`oxia/index.ts`、`rabbitmq/index.ts`、`kafka/index.ts`の`queryReadOnly`のみで、他にはありません。
   読み取り専用の境界はエンジンごとに異なり、各エンジンのドキュメントに記されています。それ以外のエンジンでは、文を送るワークフローのAgentモードは
   開始時点で拒否され、Runは作られません。プロバイダのファクトリまで到達したものは`engine-unsupported`で終わります。
   **Plan**モードはどの接続でも開けます。そこでのモデルはツールを使わず、あなたの文を1つも実行せず、何も書き込まず、

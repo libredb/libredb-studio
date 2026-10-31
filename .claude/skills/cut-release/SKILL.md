@@ -1,6 +1,6 @@
 ---
 name: cut-release
-description: Use when releasing libredb-studio - bumping the version for a release, tagging, publishing to npm/Docker/Helm/Snap/winget, monitoring a release chain, or recovering a release run that failed or published partially.
+description: Use when releasing libredb-studio - bumping the version for a release, tagging, publishing to npm/Docker/Helm/Snap/winget/OperatorHub, monitoring a release chain, or recovering a release run that failed or published partially.
 disable-model-invocation: true
 ---
 
@@ -29,6 +29,7 @@ bump commit on main -> all main workflows green -> draft release (hand-written n
      -> npm-publish dispatches npx-engine-smoke with the published version
   -> verify the registry rows moved (Phase 6)
   -> pull `latest`, run it, drive it in a browser on two engines, read the logs (Phase 7)
+  -> catalog PRs, Rancher extension lockstep release, owner-approved (Phase 8)
 ```
 
 Tags carry **no `v` prefix**: `0.9.65`, not `v0.9.65`.
@@ -102,6 +103,27 @@ git push origin main
 The freshness check is meaningless before the commit: it compares the working tree against `HEAD`, so
 uncommitted bump edits always read as drift. CI runs it against the committed state.
 
+**The OpenShift pieces of the bump.**
+They are hand edits too, so they go before `chart:bump`, and the bundle is regenerated after it.
+
+- **Console plugin pin.** The plugin, `libredb/libredb-studio-openshift-plugin`, releases from its own repository and its own `RELEASING.md`; no catalog offers a plugin image until a Studio release pins it.
+  When the release ships a new plugin version, take the digest from the `Image:` line of that plugin release's notes, confirm it with `crane digest ghcr.io/libredb/libredb-studio-openshift-plugin:<plugin-version>`, and write the whole `<plugin-version>@sha256:<digest>` reference into both `openshift.consolePlugin.image` in `charts/libredb-studio/values.yaml` and `RELATED_IMAGE_PLUGIN` in `operator/config/manager/manager.yaml`.
+  `make -C operator bundle` then lists it in the CSV's `spec.relatedImages`; check that it is there.
+  Plugin versions stay 0.x until the first Studio release that ships OpenShift mode.
+- **The chart's image floor.** An openshift-mode render fails while the effective `image.tag` is a semver at or below 1.1.0, and the tag defaults to `appVersion`, so the bump that moves `appVersion` past 1.1.0 lifts the floor for the default image.
+  That bump also turns `the default image, appVersion 1.1.0, fails naming image.tag` in `tests/unit/helm-chart-openshift-mode.test.ts` red: rewrite it to assert the default renders, in the bump PR.
+  Then rewrite the sentences that describe the floor as still in force: `git grep -n -E "after 1\.1\.0|past 1\.1\.0|1\.1\.0 or earlier" -- docs charts/libredb-studio`.
+  Sentences that only say a feature needs an image after 1.1.0 stay true.
+- **Bundle metadata.** After `make -C operator bundle`, the bundle must still carry the OpenShift floor and the seven feature annotations, all `"false"`:
+
+```bash
+grep -c '^  com.redhat.openshift.versions: "v4.16"$' operator/bundle/metadata/annotations.yaml   # 1
+grep -c 'features.operators.openshift.io/' operator/bundle/manifests/libredb-studio-operator.clusterserviceversion.yaml   # 7
+grep -A1 'supported: true' operator/bundle/manifests/libredb-studio-operator.clusterserviceversion.yaml   # OwnNamespace only
+```
+
+The install mode is OwnNamespace and no other (`docs/DISTRIBUTION.md`, "OpenShift operator"), so a CSV that offers AllNamespaces again is a regression, not a refresh.
+
 ## Phase 2 - Verify main before tagging
 
 All six workflows must be green **on the bump commit**, because the tag will point at it:
@@ -165,6 +187,17 @@ Notes conventions: English, no emoji, `##` sections that explain the change and 
 ```
 **Full changelog:** https://github.com/libredb/libredb-studio/compare/<prev>...<new>
 ```
+
+A change that makes users act gets an `Action required:` line near the top, one per change, saying what to do.
+The first release after 1.1.0 carries these:
+
+- Action required: Kubernetes-discovered connection ids change from 12 to 32 hex characters, and old `seed:k8s-<slug>-<12 hex>` links stop resolving.
+- Action required: on a cluster whose domain is not `cluster.local`, set `discovery.kubernetes.clusterDomain` (or `SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN`); otherwise no discovered database is listed.
+- Behaviour change: an unknown `NEXT_PUBLIC_AUTH_PROVIDER` value now refuses boot instead of falling back.
+- Action required (operator): before approving an upgrade's InstallPlan, check every stored `LibreDBStudio` against the upgrade checks in `docs/OPENSHIFT.md`, "Upgrading the operator"; a dropped backup key deletes the backup claim and its dumps.
+- Action required (operator): the operator now installs for its own namespace only, and OLM cannot move a 1.1.0 install there, so a 1.1.0 install is uninstalled and reinstalled as `docs/OPENSHIFT.md`, "Moving from operator 1.1.0", describes.
+
+Security fixes are described as hardening, never as the attack they close: the details live in private notes, not in public release notes, the chart's `artifacthub.io/changes` or a commit body.
 
 ## Phase 4 - Push the tag
 
@@ -342,7 +375,9 @@ None of these belong in the bump commit or the chain; each needs the release to 
 | **winget manifest PR - watch only, do not run `wingetcreate`** | winget has no floating "latest", so every version needs its own manifests in `microsoft/winget-pkgs` - but the `winget` job in `release-artifacts.yml` now submits that PR itself, from `needs: [guard, publish-release, channels]` so it runs strictly after publish (the validation pipeline downloads `InstallerUrl`, which is only public once published). Confirm it: `gh search prs --repo microsoft/winget-pkgs "LibreDB.Studio" --state open`. The job skips cleanly when winget's `update.ci_enabled` is false, when `WINGETCREATE_GITHUB_TOKEN` is missing (classic PAT with `public_repo`; wingetcreate rejects fine-grained PATs), when the package has no listing yet, or when the version is already upstream - so a green job is not by itself proof a PR was opened. Only a genuinely missing PR calls for a manual `wingetcreate` |
 | **CapRover catalog PR - a member opens it, after a test** | `caprover-fork.yml`, dispatched by `docker-build-push.yml` once the images passed their channel E2E, stages both templates on `libredb/caprover-one-click-apps` as `libredb-studio-<version>`, and never opens the PR: the catalog's maintainer takes a version bump only as a PR from someone who tested it (caprover/one-click-apps#1334). Install both templates from the branch on a CapRover, then open the PR from the link in that run's summary. With `update.fork.push: manual` the release run only validates: run the workflow by hand on the tag to push. Without `CAPROVER_CATALOG_TOKEN` no run pushes, by hand or not: add the secret first (deploy/caprover/README.md, "Releasing to the official catalog") |
 | **PaaS template bumps** (railway, dokploy, cosmos, kubero, fly) | `on_demand` channels, several in upstream repos; batch them rather than blocking a release |
-| **OperatorHub / community-operators catalogs** | FBC ships in TWO upstream PRs - bundle first, then rendered catalogs. The second is bot-created only when the bundle directory carries a `release-config.yaml`, and `operator/bundle/` currently ships none, so that PR must be opened by hand |
+| **OperatorHub / community-operators catalogs - watch the bundle PRs, the owner approves any PR opened by hand** | The `submit-catalogs` job in `operator-release.yml` opens the bundle PR on both catalogs after the tag's controller image is public, and writes the `release-config.yaml` that makes `rh-operator-bundle-bot` open the community-operators-prod catalog PR after the bundle PR merges; a skip is a `::warning::` naming its reason (`docs/DISTRIBUTION.md`, "Automated submission"). Confirm both: `gh search prs --repo redhat-openshift-ecosystem/community-operators-prod "libredb-studio-operator" --state open`, and the same on `k8s-operatorhub/community-operators`. The `ci.yaml` `catalog_mapping` decides which OpenShift versions list the bundle, not the CSV's `v4.16` annotation, and today it maps v4.15 to v4.22: moving it to a v4.16 floor without the end-of-life v4.15 and v4.17 rows is a PR on the `libredb/community-operators-prod` fork, then `make catalogs` and `make validate-catalogs` for the mapped versions. That PR, a catalog PR the bot did not open, and any other upstream PR opened by hand are outward steps: draft them and open them only once the owner approves |
+| **Rancher extension - lockstep PR, released the same day by the owner** | `libredb/libredb-studio-rancher-extension` keeps a byte copy of `tests/fixtures/kubernetes-discovery-golden.json`, and its `Golden Fixture Matches Studio` CI job compares it with the file at the Studio tag named in `tests/unit/fixtures/kubernetes-discovery-golden.source.json`. On every release whose fixture differs from the copy, and on the first release after 1.1.0, open the extension PR (its Part E): set `tag` there to the new bare Studio tag, copy the file from that tag (`git show <version>:tests/fixtures/kubernetes-discovery-golden.json`), and adapt the extension's id and host code and tests until they agree. The 32-hex connection id and the dotted FQDN host `<name>-rw.<ns>.svc.<domain>.` are already in the extension's copy, taken from chart tag `libredb-studio-0.1.113` (extension #11), whose panel keeps the Service name up to `.svc` and checks that Studio's host extends it; the first release after 1.1.0 moves `tag` to a product tag. The extension's own `RELEASING.md` publishes it; that release and this Studio release are the owner's actions, proposed together and made the same day |
+| **OpenShift console plugin - separate release** | The plugin repository cuts its own releases, before the Studio release that pins one (Phase 1). Nothing in the Studio chain publishes it, and a plugin bump with no new pinned digest in the chart and `RELATED_IMAGE_PLUGIN` reaches no user |
 | **AUR - watch only while `live`, do not push by hand** | The `aur` job in `release-artifacts.yml` renders `packaging/aur/PKGBUILD` for the tag, builds and `namcap`s it in an Arch container and pushes it to `ssh://aur@aur.archlinux.org/libredb-studio-bin.git`, after `publish-release` because makepkg downloads the tarballs from the release URL. Confirm it: `curl -s https://aur.archlinux.org/rpc/v5/info/libredb-studio-bin` shows `"Version":"<version>-1"`. The job skips cleanly while the `aur` channel is `pending`, when `AUR_SSH_PRIVATE_KEY` is missing, and for a prerelease tag, so a green job is not by itself proof it pushed; read its log. A red build or `namcap` step is a packaging bug: fix `packaging/aur/` in a PR, then push that fix as a `pkgrel` bump by hand (`packaging/aur/README.md`, Releases). Going live (the manual first push from the `channels@libredb.org` account, `status: live`, the secret) is a one-time step, not a release step |
 | **Chocolatey** | Gated off via `update.ci_enabled` in `distribution/channels.yaml` while the first push sits in community moderation |
 
@@ -405,3 +440,4 @@ true on a tag ref.
 - About to declare the release done because no check is red - count the runs by name instead
 - About to close out a release without ever having RUN the published image (Phase 7)
 - About to report an edit as correct from the grid rather than from the engine
+- About to open an upstream catalog PR or release the Rancher extension without the owner's approval

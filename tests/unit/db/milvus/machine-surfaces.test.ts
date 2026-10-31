@@ -2,7 +2,8 @@
  * What a model or an MCP client is handed about a Milvus connection: names and types only. The agent's grounding and
  * `inspect_schema` are captured over a catalog whose function parameters and default values carry markers, and neither
  * capture holds a marker, a row or a vector; both read through the object surface alone and load nothing; and the
- * provider has no read-only statement path, so agent execution and the MCP read tool refuse the type.
+ * model's own requests reach Milvus only through the agent read-only profile's metadata-only path, which MCP read does
+ * not open.
  */
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { captureContextSnapshot } from "@/lib/agent/context-snapshot";
@@ -15,7 +16,10 @@ import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
+import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import { RefusedBeforeSendError } from "@/lib/db/errors";
 import { MilvusProvider } from "@/lib/db/providers/vector/milvus/index";
+import { MILVUS_METADATA_ONLY } from "@/lib/db/providers/vector/milvus/metadata-read";
 import type { DatabaseConnection, QueryResult } from "@/lib/db/types";
 import { McpConnectionContext } from "@/lib/mcp/context";
 import { InspectSchemaInputSchema, inspectSchema } from "@/lib/mcp/tools/inspect-schema";
@@ -163,12 +167,18 @@ describe("inspect_schema", () => {
   });
 });
 
-describe("no statement of the model's runs against Milvus", () => {
-  test("the provider has no read-only statement path, and the type is not an agent execution engine", async () => {
+describe("the model's own requests against Milvus", () => {
+  test("run only on the agent read-only profile, answer metadata only, and MCP read stays closed", async () => {
     const { provider } = await connected();
-    expect("queryReadOnly" in provider).toBe(false);
     const engines: readonly string[] = AGENT_EXECUTION_ENGINES;
-    expect(engines).not.toContain("milvus");
+    expect(engines).toContain("milvus");
+    expect(MCP_STATEMENT_READ.milvus).toBe(false);
+    expect(provider.getCapabilities().metadataOnly).toBe(MILVUS_METADATA_ONLY);
     expect(provider.getCapabilities().supportsExplain).toBe(false);
+    // This handle is read-only but sends no statement, as the operations profile's: it is refused before the wire.
+    const budget = { statementTimeoutMs: 1_000, maxResultRows: 10, maxResultBytes: 1_000 };
+    await expect(provider.queryReadOnly("POST /v2/vectordb/collections/list", budget)).rejects.toBeInstanceOf(
+      RefusedBeforeSendError,
+    );
   });
 });

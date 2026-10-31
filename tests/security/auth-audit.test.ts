@@ -23,7 +23,6 @@ mock.module("@/lib/auth", () => ({
   }),
   logout: mockLogout,
   login: mockLogin,
-  shouldMarkCookieSecure: mock(async () => false),
   signJWT: mock(async () => "mock-token"),
   verifyJWT: mock(async () => null),
 }));

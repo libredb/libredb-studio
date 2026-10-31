@@ -1,0 +1,60 @@
+{
+  "$captured": {
+    "server": "authorization off",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "rpc": "Flush",
+    "principal": "open-reader",
+    "rights": "agent_reader with the same role, on a server with authorization off",
+    "surface": "Flush of agent_scratch",
+    "request": {
+      "db_name": "default",
+      "collection_names": [
+        "agent_scratch"
+      ]
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "coll_segIDs": {
+      "agent_scratch": {
+        "data": [
+          "470121212116930887"
+        ]
+      }
+    },
+    "flush_coll_segIDs": {
+      "agent_scratch": {
+        "data": []
+      }
+    },
+    "coll_seal_times": {
+      "agent_scratch": "1793370239"
+    },
+    "coll_flush_ts": {
+      "agent_scratch": "470121248071090177"
+    },
+    "channel_cps": {
+      "by-dev-rootcoord-dml_1_470121212116931925v0": {
+        "channel_name": "by-dev-rootcoord-dml_1_470121212116931925v0",
+        "msgID": {
+          "$bytes": "AwBcccA0hgY="
+        },
+        "msgGroup": "",
+        "timestamp": "470121213704011798",
+        "WAL_name": "RocksMQ"
+      }
+    },
+    "status": {
+      "extra_info": {},
+      "error_code": "Success",
+      "reason": "",
+      "code": 0,
+      "retriable": false,
+      "detail": ""
+    },
+    "db_name": "default"
+  }
+}

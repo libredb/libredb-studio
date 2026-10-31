@@ -112,6 +112,7 @@ async function everySurface(target: RabbitMQLiveTarget): Promise<number> {
   const provider = new RabbitMQProvider(
     connectionAs(target, "studio-wide-read"),
     {},
+    {},
     {
       dial: async (endpoint, signal) => {
         dials++;
@@ -223,6 +224,7 @@ async function cancelAfterConsumeOk(target: RabbitMQLiveTarget): Promise<void> {
   const holder: { provider?: RabbitMQProvider } = {};
   const provider = new RabbitMQProvider(
     connectionAs(target, "studio-wide-read"),
+    {},
     {},
     {
       dial: async (endpoint, signal) => {

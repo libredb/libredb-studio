@@ -130,8 +130,8 @@ if [ ! -f /etc/libredb-studio.env ]; then
       printf 'HOSTNAME=0.0.0.0\n'
       # In production the app marks its auth cookie Secure for every non-loopback
       # host, and a browser reached over plain http discards such a cookie, so the
-      # login would silently loop back to the login page (src/lib/auth.ts,
-      # shouldMarkCookieSecure). Only the ":80" deployment needs the override: the
+      # login would silently loop back to the login page (src/lib/auth-cookies.ts,
+      # secureCookieDecision). Only the ":80" deployment needs the override: the
       # HTTPS one always speaks https to the browser, self-signed included.
       if [ "$SITE_ADDRESS" = ":80" ]; then printf 'AUTH_COOKIE_SECURE=false\n'; fi
     } > /etc/libredb-studio.env

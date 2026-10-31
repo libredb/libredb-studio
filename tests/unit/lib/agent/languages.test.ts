@@ -125,6 +125,12 @@ const LANGUAGE_IDS: Readonly<Record<AgentStatementLanguageId, true>> = {
   weaviateapi: true,
   qdrantapi: true,
   cypher: true,
+  milvusrpc: true,
+  rediscli: true,
+  etcdctl: true,
+  oxiacli: true,
+  rabbitread: true,
+  kafkaread: true,
 };
 
 describe("the server packs", () => {
@@ -258,6 +264,12 @@ describe("the language packs", () => {
       "weaviateapi",
       "qdrantapi",
       "cypher",
+      "milvusrpc",
+      "rediscli",
+      "etcdctl",
+      "oxiacli",
+      "rabbitread",
+      "kafkaread",
     ]);
     expect(Object.isFrozen(LANGUAGE_TOOL_ARMS)).toBe(true);
   });
@@ -405,6 +417,12 @@ describe("the prompt tables the packs hold", () => {
       "weaviateapi",
       "qdrantapi",
       "cypher",
+      "milvusrpc",
+      "rediscli",
+      "etcdctl",
+      "oxiacli",
+      "rabbitread",
+      "kafkaread",
     ]);
     expect(Object.isFrozen(WORKFLOW_TOOL_RULES)).toBe(true);
     for (const id of ids) {
@@ -505,6 +523,12 @@ describe("the client packs", () => {
         "weaviateapi",
         "qdrantapi",
         "cypher",
+        "milvusrpc",
+        "rediscli",
+        "etcdctl",
+        "oxiacli",
+        "rabbitread",
+        "kafkaread",
       ]);
     }
   });
@@ -521,6 +545,12 @@ describe("the client packs", () => {
       weaviateapi: null,
       qdrantapi: null,
       cypher: null,
+      milvusrpc: null,
+      rediscli: null,
+      etcdctl: null,
+      oxiacli: null,
+      rabbitread: null,
+      kafkaread: null,
     });
   });
 

@@ -22,6 +22,12 @@ import { MONGO_SERVER_PACK } from "./mongo/server";
 import { WEAVIATEAPI_SERVER_PACK } from "./weaviateapi/server";
 import { QDRANTAPI_SERVER_PACK } from "./qdrantapi/server";
 import { CYPHER_SERVER_PACK } from "./cypher/server";
+import { MILVUSRPC_SERVER_PACK } from "./milvusrpc/server";
+import { REDISCLI_SERVER_PACK } from "./rediscli/server";
+import { ETCDCTL_SERVER_PACK } from "./etcdctl/server";
+import { OXIACLI_SERVER_PACK } from "./oxiacli/server";
+import { RABBITREAD_SERVER_PACK } from "./rabbitread/server";
+import { KAFKAREAD_SERVER_PACK } from "./kafkaread/server";
 import type { AgentLanguageServerAdapter, AgentLanguageServerPack, EvidenceToolName } from "./pack";
 import { SQL_STATEMENT_DEFINITIONS } from "./sql/definitions";
 import { SQL_RECOMMEND_CHANGE } from "./sql/recommendation";
@@ -42,6 +48,12 @@ const SERVER_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageServe
   weaviateapi: WEAVIATEAPI_SERVER_PACK,
   qdrantapi: QDRANTAPI_SERVER_PACK,
   cypher: CYPHER_SERVER_PACK,
+  milvusrpc: MILVUSRPC_SERVER_PACK,
+  rediscli: REDISCLI_SERVER_PACK,
+  etcdctl: ETCDCTL_SERVER_PACK,
+  oxiacli: OXIACLI_SERVER_PACK,
+  rabbitread: RABBITREAD_SERVER_PACK,
+  kafkaread: KAFKAREAD_SERVER_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageServerPack>);
 
 /** The server pack for `language`, or a named error when the id is not a language this server knows. */
@@ -84,6 +96,12 @@ export const LANGUAGE_BASE_DEFINITIONS = mergeDisjoint(
     WEAVIATEAPI_SERVER_PACK.baseDefinitions,
     QDRANTAPI_SERVER_PACK.baseDefinitions,
     CYPHER_SERVER_PACK.baseDefinitions,
+    MILVUSRPC_SERVER_PACK.baseDefinitions,
+    REDISCLI_SERVER_PACK.baseDefinitions,
+    ETCDCTL_SERVER_PACK.baseDefinitions,
+    OXIACLI_SERVER_PACK.baseDefinitions,
+    RABBITREAD_SERVER_PACK.baseDefinitions,
+    KAFKAREAD_SERVER_PACK.baseDefinitions,
   ],
   "LANGUAGE_BASE_DEFINITIONS",
 );
@@ -108,6 +126,12 @@ export const WORKFLOW_TOOL_RULES: Readonly<
   weaviateapi: WEAVIATEAPI_SERVER_PACK.workflowToolRules,
   qdrantapi: QDRANTAPI_SERVER_PACK.workflowToolRules,
   cypher: CYPHER_SERVER_PACK.workflowToolRules,
+  milvusrpc: MILVUSRPC_SERVER_PACK.workflowToolRules,
+  rediscli: REDISCLI_SERVER_PACK.workflowToolRules,
+  etcdctl: ETCDCTL_SERVER_PACK.workflowToolRules,
+  oxiacli: OXIACLI_SERVER_PACK.workflowToolRules,
+  rabbitread: RABBITREAD_SERVER_PACK.workflowToolRules,
+  kafkaread: KAFKAREAD_SERVER_PACK.workflowToolRules,
 } satisfies Record<AgentStatementLanguageId, Partial<Record<AgentRunWorkflowType, string>>>);
 
 /**
@@ -124,6 +148,12 @@ export const LANGUAGE_SHORTFALL_NOTICES = mergeDisjoint(
     WEAVIATEAPI_SERVER_PACK.shortfallNotices,
     QDRANTAPI_SERVER_PACK.shortfallNotices,
     CYPHER_SERVER_PACK.shortfallNotices,
+    MILVUSRPC_SERVER_PACK.shortfallNotices,
+    REDISCLI_SERVER_PACK.shortfallNotices,
+    ETCDCTL_SERVER_PACK.shortfallNotices,
+    OXIACLI_SERVER_PACK.shortfallNotices,
+    RABBITREAD_SERVER_PACK.shortfallNotices,
+    KAFKAREAD_SERVER_PACK.shortfallNotices,
   ],
   "LANGUAGE_SHORTFALL_NOTICES",
 );

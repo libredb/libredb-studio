@@ -61,6 +61,7 @@ import { KafkaProvider } from "@/lib/db/providers/stream/kafka";
 import { KafkaError, type KafkaReadClient } from "@/lib/db/providers/stream/kafka/client";
 import { kafkaConnectionOptions } from "@/lib/db/providers/stream/kafka/connection-options";
 import { toDatabaseError } from "@/lib/db/providers/stream/kafka/errors";
+import { KAFKA_METADATA_ONLY } from "@/lib/db/providers/stream/kafka/agent-metadata-read";
 import * as kafkaObjects from "@/lib/db/providers/stream/kafka/objects";
 import { createPlatformaticClient, loadPlatformatic } from "@/lib/db/providers/stream/kafka/platformatic-client";
 import { KAFKA_CELL_LIMIT, KAFKA_RESULT_BYTE_BUDGET, readMessages } from "@/lib/db/providers/stream/kafka/read";
@@ -216,7 +217,7 @@ const LIBRARY_CLIENTS = ["Admin", "Consumer", "ConnectionPool"];
 function unconnected(overrides: Record<string, Answer> = {}, options: ProviderOptions = {}) {
   const recorded = brokerLib(overrides);
   const created: KafkaReadClient[] = [];
-  const provider = new KafkaProvider(CONNECTION, options, async (clientOptions) => {
+  const provider = new KafkaProvider(CONNECTION, options, {}, async (clientOptions) => {
     const client = createPlatformaticClient(clientOptions, recorded.lib);
     created.push(client);
     return client;
@@ -608,7 +609,7 @@ describe("connect and disconnect", () => {
         throw libError("error-request-timeout");
       },
     });
-    const provider = new KafkaProvider(CONNECTION, { queryTimeout: 7_000 }, async (options) =>
+    const provider = new KafkaProvider(CONNECTION, { queryTimeout: 7_000 }, {}, async (options) =>
       createPlatformaticClient(options, recorded.lib),
     );
     const error = await provider.connect().catch((e) => e);
@@ -623,7 +624,7 @@ describe("connect and disconnect", () => {
     };
     // The connect's own failure.
     const refusing = brokerLib({ "admin.metadata": lost });
-    const failed = await new KafkaProvider(typed, {}, async (options) =>
+    const failed = await new KafkaProvider(typed, {}, {}, async (options) =>
       createPlatformaticClient(options, refusing.lib),
     )
       .connect()
@@ -632,7 +633,9 @@ describe("connect and disconnect", () => {
     expect(failed).toMatchObject({ provider: "kafka", host: "localhost", port: 9092 });
     // And a surface's, once connected.
     const recorded = brokerLib({ "admin.listTopics": lost });
-    const provider = new KafkaProvider(typed, {}, async (options) => createPlatformaticClient(options, recorded.lib));
+    const provider = new KafkaProvider(typed, {}, {}, async (options) =>
+      createPlatformaticClient(options, recorded.lib),
+    );
     await provider.connect();
     const later = await provider.listObjects([], "topic").catch((e) => e);
     expect(later).toBeInstanceOf(ConnectionError);
@@ -650,7 +653,7 @@ describe("connect and disconnect", () => {
           throw new Error("close refused");
         },
       });
-      const provider = new KafkaProvider(CONNECTION, {}, async (options) =>
+      const provider = new KafkaProvider(CONNECTION, {}, {}, async (options) =>
         createPlatformaticClient(options, recorded.lib),
       );
       const error = await provider.connect().catch((e) => e);
@@ -728,7 +731,7 @@ describe("connect and disconnect", () => {
 
   test.each(SURFACES)("%s refuses before connect and after disconnect, and sends nothing", async (_name, call) => {
     const recorded = brokerLib();
-    const provider = new KafkaProvider(CONNECTION, {}, async (options) =>
+    const provider = new KafkaProvider(CONNECTION, {}, {}, async (options) =>
       createPlatformaticClient(options, recorded.lib),
     );
     const refusal = () =>
@@ -770,7 +773,7 @@ describe("connect and disconnect", () => {
       ];
       const errors = await Promise.all(
         cases.map((bad) =>
-          new KafkaProvider({ ...CONNECTION, ...bad } as DatabaseConnection, {}, async (options) => {
+          new KafkaProvider({ ...CONNECTION, ...bad } as DatabaseConnection, {}, {}, async (options) => {
             created++;
             return createPlatformaticClient(options, await loadPlatformatic());
           })
@@ -797,6 +800,7 @@ describe("connect and disconnect", () => {
       const provider = new KafkaProvider(
         { ...CONNECTION, saslMechanism: "PLAIN", user: "u", password: "hunter2" } as DatabaseConnection,
         {},
+        {},
         async (options) => {
           created++;
           return createPlatformaticClient(options, brokerLib().lib);
@@ -817,6 +821,7 @@ describe("connect and disconnect", () => {
     let created = 0;
     const provider = new KafkaProvider(
       { ...CONNECTION, sshTunnel: { enabled: true, host: "bastion", port: 22, username: "u" } } as DatabaseConnection,
+      {},
       {},
       async (options) => {
         created++;
@@ -1583,6 +1588,7 @@ describe("declarations", () => {
       defaultPort: 9092,
       containerLevels: kafkaObjects.KAFKA_CONTAINER_LEVELS,
       objectKinds: kafkaObjects.KAFKA_OBJECT_KINDS,
+      metadataOnly: KAFKA_METADATA_ONLY,
     };
     expect(capabilities).toMatchObject(declared);
     // Exactly these members, so no flag the spec does not name (a key browser, an explain format) is declared.
@@ -1731,7 +1737,6 @@ describe("declarations", () => {
     for (const method of [
       "cancelQuery",
       "getPoolStats",
-      "queryReadOnly",
       "endOpenQueryTransaction",
       "scanKeysPage",
       "beginTransaction",
@@ -1742,6 +1747,8 @@ describe("declarations", () => {
     }
     // The control: a method the provider does implement is found the same way.
     expect("readObjectSource" in provider).toBe(true);
+    // queryReadOnly is the agent's metadata read, which answers only on an agent-mode handle.
+    expect("queryReadOnly" in provider).toBe(true);
   });
 });
 
