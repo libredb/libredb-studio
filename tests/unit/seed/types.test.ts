@@ -772,6 +772,45 @@ describe("SeedConnectionSchema: the NETCONF host key pin", () => {
 });
 
 /**
+ * The Modbus register map. Zod strips an undeclared key in silence, and a seeded connection without its map has no
+ * named point to read, in the console or in agent mode.
+ */
+describe("SeedConnectionSchema: the Modbus register map", () => {
+  const map = JSON.stringify({
+    points: [{ name: "tank_level", unit: 1, table: "holding", address: 0, type: "uint16" }],
+  });
+
+  it("carries registerMap through validation", () => {
+    const result = SeedConnectionSchema.safeParse({
+      id: "plc",
+      name: "PLC",
+      type: "modbus",
+      host: "plc.ornek.net",
+      port: 502,
+      roles: ["*"],
+      registerMap: map,
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.registerMap).toBe(map);
+  });
+
+  it("refuses registerMap on another engine, where no provider reads it", () => {
+    const result = SeedConnectionSchema.safeParse({
+      id: "pg",
+      name: "Postgres",
+      type: "postgres",
+      host: "db.ornek.net",
+      roles: ["*"],
+      registerMap: map,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path.join("."))).toEqual(["registerMap"]);
+  });
+});
+
+/**
  * The read-only mode (#1089). Declared for the reason skipObjectScan is (zod strips an undeclared
  * key, and a seed file's mode would validate and vanish, leaving a connection that writes), accepted
  * only on an engine whose provider enforces it, never a reference, never a default, and only on a

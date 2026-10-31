@@ -292,6 +292,13 @@ export const SeedConnectionSchema = z
      * publishes its host key, so it is a literal and never resolved from a reference.
      */
     hostKeyFingerprint: z.string().optional(),
+    /**
+     * Modbus only: the register map, the JSON document the provider parses, saved byte for byte. Declared for the
+     * reason skipObjectScan is: zod strips an undeclared key in silence, and a seeded connection without its map has
+     * no named point to read. Not a secret: Modbus TCP defines no authentication, so it is a literal and never
+     * resolved from a reference.
+     */
+    registerMap: z.string().optional(),
     // And the three OPC UA fields the dialog has no box for: why, at SEED_ONLY_FIELDS.opcua in src/lib/db/connection-fields.ts.
     securityPolicyUri: z.string().optional(),
     clientCertificatePath: z.string().optional(),
