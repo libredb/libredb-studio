@@ -378,10 +378,10 @@ export async function createDatabaseProvider(
     }
 
     case "firestore": {
-      // The explicit /index specifier keeps this dynamic import statically analysable. Read-only whatever the flag
-      // says, so no execution context rides along.
+      // The explicit /index specifier keeps this dynamic import statically analysable. The execution context decides
+      // whether the handle answers agent reads, and every surface of an agent-mode handle reads metadata only.
       const { FirestoreProvider } = await import("./providers/document/firestore/index");
-      return new FirestoreProvider(connection, options);
+      return new FirestoreProvider(connection, options, execution);
     }
 
     // Key-Value Stores - dynamically imported

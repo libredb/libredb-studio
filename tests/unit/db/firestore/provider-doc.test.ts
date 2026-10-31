@@ -68,6 +68,7 @@ async function emulatorProvider(): Promise<FirestoreProvider> {
   const provider = new FirestoreProvider(
     { id: "doc", name: "doc", type: "firestore", database: "demo-libredb", createdAt: new Date(0) },
     { queryTimeout: 30_000 },
+    {},
     { createTransport: script.createTransport, env: { [ENV.emulatorHost]: EMULATOR } },
   );
   await provider.connect();

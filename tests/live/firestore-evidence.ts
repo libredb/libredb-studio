@@ -277,6 +277,7 @@ async function runScenario(scenario: EvidenceScenario): Promise<CaptureSink> {
   const provider = new FirestoreProvider(
     connection(),
     { queryTimeout: QUERY_TIMEOUT_MS },
+    {},
     {
       createTransport: recordingTransport(createNodeTransport, sink),
       env: { FIRESTORE_EMULATOR_HOST: `${FIRESTORE_EMULATOR.host}:${FIRESTORE_EMULATOR.port}` },

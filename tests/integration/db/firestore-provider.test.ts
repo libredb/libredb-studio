@@ -55,6 +55,7 @@ function emulatorProvider(createTransport: ReplayTransport["createTransport"]): 
   return new FirestoreProvider(
     connection,
     { queryTimeout: 30_000 },
+    {},
     { createTransport, env: { FIRESTORE_EMULATOR_HOST: "127.0.0.1:8080" }, ...QUIET },
   );
 }
@@ -334,6 +335,7 @@ function google(
   const provider = new FirestoreProvider(
     connection,
     { queryTimeout: 30_000 },
+    {},
     {
       createTransport: script.createTransport,
       env: options.env ?? {},

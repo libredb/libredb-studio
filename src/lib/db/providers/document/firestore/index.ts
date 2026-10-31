@@ -38,6 +38,7 @@ import type {
   PreparedQuery,
   ProviderCapabilities,
   ProviderLabels,
+  ProviderExecutionContext,
   ProviderOptions,
   QueryResult,
   SlowQueryStats,
@@ -174,7 +175,12 @@ export class FirestoreProvider extends BaseDatabaseProvider {
    * touches no socket. A malformed `FIRESTORE_EMULATOR_HOST` is refused here. The seams are the tests'; the factory
    * never passes them, and no connection field reaches them.
    */
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}, seams: Partial<FirestoreSeams> = {}) {
+  constructor(
+    config: DatabaseConnection,
+    options: ProviderOptions = {},
+    private readonly execution: ProviderExecutionContext = {},
+    seams: Partial<FirestoreSeams> = {},
+  ) {
     super(config, options);
     this.seams = resolveSeams(seams);
     this.emulator = emulatorAddressOf(this.seams.env);

@@ -43,7 +43,7 @@ function seamsOf(handler: WireHandler, env: Record<string, string> = {}): FakeFi
 }
 
 function provider(seams: FakeFirestoreSeams, overrides: Partial<DatabaseConnection> = {}): FirestoreProvider {
-  return new FirestoreProvider(firestoreConnection(overrides), { queryTimeout: 1000 }, seams);
+  return new FirestoreProvider(firestoreConnection(overrides), { queryTimeout: 1000 }, {}, seams);
 }
 
 describe("declarations", () => {
