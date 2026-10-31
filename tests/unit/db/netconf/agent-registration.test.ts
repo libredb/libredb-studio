@@ -151,7 +151,11 @@ describe("what the client facet and plan mode are told", () => {
     expect(language).toContain('{"datastore": "running", "path": "ietf-interfaces:interfaces", "limit": 100}');
     // The console refuses a schema request, so plan mode, which drafts for the editor, is never offered one.
     expect(language).not.toContain('"schema"');
-    expect(language).toContain("A draft never reads a node agent mode withholds.");
+    // An instruction, never a guarantee: nothing checks a draft, and the editor that runs it answers every value.
+    expect(language).toContain(
+      "Never draft a read of a node agent mode withholds: nothing checks a draft, and the editor that runs it answers every value, those included.",
+    );
+    expect(language).not.toContain("A draft never reads");
     expect(language).toContain("There is no XML, no edit-config or other operation");
     expect(language).toContain(NETCONF_WITHHELD_TEXT);
     expect(language).toContain("never a value the device holds");
