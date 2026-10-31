@@ -694,7 +694,8 @@ Measured over all 33 shipped declarations: every engine that enumerates a kind i
 etcd, Oxia, S3, MQTT and OPC UA — is `false` there, so this round wrote a sentence for
 `inspect_schema` to answer with, found no caller that could ever read it, and took it out again.
 An agent run meets the same declaration: with no kind the grounding walk lists, the run is ungrounded and is told to
-browse from the Objects folder with its own read ([section 14.4](#144-values-units-and-what-each-path-reads)).
+read a node id the question names as it is written and to browse from the Objects folder with its own read for any
+other ([section 14.4](#144-values-units-and-what-each-path-reads)).
 
 `countObjects()` answers `{}`. A server publishes no count of its nodes, and a number produced from
 whatever one Browse returned would be a total with nothing behind it: 6,769 nodes on the measured
@@ -1360,7 +1361,7 @@ The lookup's requests count against the read's request bound and time budget lik
 | Path | Handle | What it reads |
 | --- | --- | --- |
 | Investigation reads | agent read-only profile | one request of [section 14.2](#142-what-an-agent-request-may-be), on its own session, the withheld walk first |
-| Investigation grounding and plan-mode grounding | either agent profile | nothing: the one kind is enumerated by the Keys panel, so no inventory is read, and the run is told to browse from the Objects folder, `{"browse": "i=85"}` |
+| Investigation grounding and plan-mode grounding | either agent profile | nothing: the one kind is enumerated by the Keys panel, so no inventory is read, and the run is told to read a node id the question names as it is written, without browsing to it first, and to browse from the Objects folder, `{"browse": "i=85"}`, only for a node the question does not name |
 | Connect | either agent profile | one session opened and closed at once; no session is held by the handle |
 | Console, Keys panel, overview, health, performance, storage, session, slow-query, table and index readings | either agent profile | nothing: each is refused with its reason, never answered with Studio's own figures or an empty reading |
 

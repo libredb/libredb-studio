@@ -97,10 +97,11 @@ describe("the prompt texts", () => {
   test("the rule, the grounding advice and the ungrounded note say how the address space is reached and the units rule", () => {
     const rule = WORKFLOW_TOOL_RULES.opcuaread.investigation as string;
     const browsed =
-      'An OPC UA address space is browsed one level at a time rather than listed, so the run starts with no node named: browse the Objects folder with {"browse": "i=85"} and go down from what it answers.';
+      'An OPC UA address space is browsed one level at a time rather than listed, so no node is listed for the run: read a node id the question names exactly as it is written, without browsing to it first, and browse from the Objects folder with {"browse": "i=85"} only to find a node the question does not name, going down from what it answers.';
     const units =
       "Every value row carries the node's engineering units and EU range as the server publishes them, or \"no units published\": report the unit beside each value, and never assume one from a node's name.";
     expect(rule).toContain(browsed);
+    expect(rule).toContain("Write any other node id exactly as a browse answers it");
     expect(rule).toContain(units);
     expect(rule).toContain(OPCUA_WITHHELD_SENTENCE);
     const grounding = languageServerPack("opcuaread").grounding;

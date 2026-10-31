@@ -12,7 +12,7 @@ import { OPCUAREAD_TOOL_OVERRIDES } from "./definitions";
 
 /** Where the address space comes from, the same words in the rule, the grounding advice and the ungrounded note. */
 const BROWSED =
-  'An OPC UA address space is browsed one level at a time rather than listed, so the run starts with no node named: browse the Objects folder with {"browse": "i=85"} and go down from what it answers.';
+  'An OPC UA address space is browsed one level at a time rather than listed, so no node is listed for the run: read a node id the question names exactly as it is written, without browsing to it first, and browse from the Objects folder with {"browse": "i=85"} only to find a node the question does not name, going down from what it answers.';
 
 /** The units rule, the same words in the rule and the grounding advice. */
 const UNITS =
@@ -21,7 +21,7 @@ const UNITS =
 const OPCUAREAD_WORKFLOW_TOOL_RULES: Readonly<Partial<Record<AgentRunWorkflowType, string>>> = Object.freeze({
   investigation: [
     'Read the server with run_read_query, one JSON request at a time: {"browse": "<node id>"} for the children of one node, {"read": ["<node id>", ...]} for current values, and {"history": "<node id>", "start": "...", "end": "...", "limit": 100} for one node\'s raw history.',
-    `${BROWSED} Write a node id exactly as a browse answers it, and ask for every value you need in one read rather than one read per node.`,
+    `${BROWSED} Write any other node id exactly as a browse answers it, and ask for every value you need in one read rather than one read per node.`,
     UNITS,
     OPCUA_WITHHELD_SENTENCE,
     "Values are the server's own readings, answered as the console renders them.",
