@@ -18,7 +18,7 @@ const FROM_THE_MAP =
 const MODBUSREAD_WORKFLOW_TOOL_RULES: Readonly<Partial<Record<AgentRunWorkflowType, string>>> = Object.freeze({
   investigation: [
     'Read the device with run_read_query, one JSON request at a time: {"read": ["name", ...]} for points the register map names, {"unit": 1, "table": "holding_register", "address": 0, "count": 10} for one block of one table, and {"identify": "basic"} for the device identification objects.',
-    `${FROM_THE_MAP} Name a point exactly as the inventory names it; a block read needs its unit, table and zero-based address, which only the map or the device's documentation can give.`,
+    `${FROM_THE_MAP} The inventory lists each point after its unit and a dot, such as 1.tank_level for the point tank_level of unit 1, and a points read names the point alone, {"read": ["tank_level"]}; a block read needs its unit, table and zero-based address, which only the map or the device's documentation can give.`,
     `Reads of one device are taken one at a time with a ${MODBUS_AGENT_DEVICE_GAP_MS} ms gap after each, and one run sends at most ${MODBUS_AGENT_RUN_REQUESTS} requests to Modbus devices, so ask for every point you need in one read rather than one read per point, and do not read a value again to see whether it changed.`,
     "Values are the device's own readings, answered as the console renders them.",
     "Report what the evidence supports, and nothing further.",

@@ -112,6 +112,18 @@ describe("the prompt texts", () => {
     expect(grounding.planningRules).toBeUndefined();
   });
 
+  test("the rule says a points read names the point without the unit the inventory lists it under", () => {
+    // The inventory names a point by its path, unit first: a browser pass on 2026-10-31 captured `1.banner` for the
+    // map's point `banner`, and a model told to name a point exactly as the inventory names it sent
+    // {"read": ["1.banner"]}, which the reader refuses because the map has no point of that name.
+    const rule = WORKFLOW_TOOL_RULES.modbusread.investigation as string;
+    expect(rule).not.toContain("Name a point exactly as the inventory names it");
+    expect(rule).toContain(
+      'The inventory lists each point after its unit and a dot, such as 1.tank_level for the point tank_level of unit 1, and a points read names the point alone, {"read": ["tank_level"]};',
+    );
+    expect(admitModbusreadStatement('{"read": ["tank_level"]}')).toBeNull();
+  });
+
   test("only the investigation and the operations workflow are offered, and nothing auto-executes", () => {
     expect(Object.keys(AGENT_WORKFLOW_VARIANTS.modbusread).sort()).toEqual(["investigation", "operations"]);
     expect(AGENT_WORKFLOW_VARIANTS.modbusread.investigation?.canAutoExecute).toBe(false);
