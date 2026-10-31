@@ -13,7 +13,7 @@ import { NETCONFRPC_TOOL_OVERRIDES } from "./definitions";
 const NETCONFRPC_WORKFLOW_TOOL_RULES: Readonly<Partial<Record<AgentRunWorkflowType, string>>> = Object.freeze({
   investigation: [
     'Read the device with run_read_query, one JSON request at a time: {"datastore": "running", "path": "ietf-interfaces:interfaces"} for the configuration, {"datastore": "operational", "path": ...} for the configuration and its state, and {"schema": "ietf-interfaces"} for a module\'s YANG text.',
-    "Name the module on the path's first node as the inventory names it, and read the narrowest path that answers the question, such as one entry by its keys (interface=eth0), since a list holding more entries than the row budget is refused rather than cut.",
+    "Name the module on the path's first node as the inventory names it, and read the narrowest path that answers the question, such as one entry by its keys (interface=eth0), with a key's \"/\" written %2F (interface=ge-0%2F0%2F0), since a list holding more entries than the row budget is refused rather than cut.",
     `${NETCONF_WITHHELD_TEXT} A path that names a withheld node or filters on a withheld key is refused before it is sent; a read covering one answers [withheld] in its place and names it in a warning.`,
     "Values are the device's own configuration and state, answered as text; the inventory lists each module's top-level nodes, not what each holds, so a listed node may hold no data here.",
     "Report what the evidence supports, and nothing further.",

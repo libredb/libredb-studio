@@ -144,6 +144,7 @@ describe("what the client facet and plan mode are told", () => {
     expect(NETCONF_AGENT_SENTENCES.reads).toContain(escaped);
     expect(NETCONFRPC_TOOL_OVERRIDES.investigation?.run_read_query?.description).toContain(escaped);
     expect(NETCONF_LABELS.statementLanguage as string).toContain(escaped);
+    expect(NETCONFRPC_SERVER_PACK.workflowToolRules.investigation).toContain(escaped);
   });
 
   test("the statement language names only the request the editor runs, no XML or other operation, and every withheld kind", () => {
