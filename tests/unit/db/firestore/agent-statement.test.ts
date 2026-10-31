@@ -104,6 +104,15 @@ describe("refused before anything is sent, in agent mode's own words", () => {
     expect(refused(text)).toEqual({ ok: false, code: "oracle", message: FIRESTORE_AGENT_SENTENCES.valueOracle });
   });
 
+  test("an aggregate of two counts is refused as more than one count, not as a value read", () => {
+    const reading = refused(
+      'db.collection("users").aggregate({ n: AggregateField.count(), m: AggregateField.count() }).get()',
+    );
+    expect(reading).toEqual({ ok: false, code: "request", message: FIRESTORE_AGENT_SENTENCES.oneCount });
+    expect(FIRESTORE_AGENT_SENTENCES.oneCount).toStartWith("Agent mode reads one count per statement.");
+    expect(FIRESTORE_AGENT_SENTENCES.oneCount).toContain(FIRESTORE_AGENT_SENTENCES.reads);
+  });
+
   test.each([
     ['db.collection("users").get()'],
     ['db.collection("users")'],

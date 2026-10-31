@@ -54,6 +54,7 @@ export const FIRESTORE_AGENT_SENTENCES = {
   reads: AGENT_READS,
   empty: `The request holds no statement. ${AGENT_READS} ${NOTHING_SENT}`,
   narrowed: `A count narrowed by where, orderBy, a cursor (startAt, startAfter, endAt, endBefore), offset, limit or select is withheld, since narrower and narrower counts would reveal stored values: agent mode counts only a whole collection or a whole collection group. ${AGENT_READS} ${NOTHING_SENT}`,
+  oneCount: `Agent mode reads one count per statement. ${AGENT_READS} ${NOTHING_SENT}`,
   valueOracle: `A sum, an average or a nearest-neighbour search reads stored field values, which agent mode never does. ${AGENT_READS} ${NOTHING_SENT}`,
   documents: `That reads documents, whose ids, field names and values count as stored values, so agent mode never sends it. ${AGENT_READS} ${NOTHING_SENT}`,
   documentIds: `listDocuments() lists document ids, which count as stored values, so agent mode never sends it. ${AGENT_READS} ${NOTHING_SENT}`,
@@ -81,9 +82,9 @@ function whole(ops: QueryOps): boolean {
   );
 }
 
-/** Whether the one aggregation is a count; a sum or an average reads the values it adds up. */
+/** Whether every aggregation is a count; a sum or an average reads the values it adds up. */
 function countsOnly(aggregations: readonly AggregationSpec[]): boolean {
-  return aggregations.length === 1 && aggregations[0].op === "count";
+  return aggregations.every((aggregation) => aggregation.op === "count");
 }
 
 /** A segment holding a C0 control character or DEL, which no path a request names needs. */
@@ -108,6 +109,7 @@ function planOf(statement: Statement): FirestoreAgentReading {
     case "aggregate": {
       if (statement.explain !== undefined) return refuse("metadata-only", FIRESTORE_AGENT_SENTENCES.explain);
       if (!countsOnly(statement.aggregations)) return refuse("oracle", FIRESTORE_AGENT_SENTENCES.valueOracle);
+      if (statement.aggregations.length !== 1) return refuse("request", FIRESTORE_AGENT_SENTENCES.oneCount);
       if (!whole(statement.ops)) return refuse("oracle", FIRESTORE_AGENT_SENTENCES.narrowed);
       const { source } = statement;
       if (source.kind === "collectionGroup")
