@@ -1,0 +1,919 @@
+{
+  "measured": "2026-10-31",
+  "server": "Microsoft OPC PLC 2.15.10 by digest (sha256:28bbdaa2e8781fe3b8bda1bbd2d4ebe0ad5bcb1fbb83f69c74b8a92efa7fe75c), started as tests/fixtures/opcua/README.md starts it; a second container adds a non-privileged user and an administrator",
+  "budget": {
+    "maxResultRows": 50,
+    "maxResultBytes": 1000000,
+    "statementTimeoutMs": 10000
+  },
+  "withheldRaw": {
+    "anonymous": [
+      {
+        "kind": "Server.ServerConfiguration",
+        "nodeId": "i=12637",
+        "browse": "Good",
+        "children": 21,
+        "grandchildren": 42,
+        "read": "BadAttributeIdInvalid",
+        "childrenAnsweringAValue": 6
+      },
+      {
+        "kind": "Server.ServerCapabilities.RoleSet",
+        "nodeId": "i=15606",
+        "browse": "Good",
+        "children": 14,
+        "grandchildren": 111,
+        "read": "BadAttributeIdInvalid",
+        "childrenAnsweringAValue": 0
+      },
+      {
+        "kind": "Server.ServerDiagnostics.SessionsDiagnosticsSummary",
+        "nodeId": "i=3706",
+        "browse": "Good",
+        "children": 0,
+        "grandchildren": 0,
+        "read": "BadAttributeIdInvalid",
+        "childrenAnsweringAValue": 0
+      },
+      {
+        "kind": "SessionsDiagnosticsSummary.SessionDiagnosticsArray",
+        "nodeId": "i=3707",
+        "browse": "BadUserAccessDenied",
+        "children": 0,
+        "grandchildren": 0,
+        "read": "BadUserAccessDenied",
+        "childrenAnsweringAValue": 0
+      },
+      {
+        "kind": "SessionsDiagnosticsSummary.SessionSecurityDiagnosticsArray",
+        "nodeId": "i=3708",
+        "browse": "BadUserAccessDenied",
+        "children": 0,
+        "grandchildren": 0,
+        "read": "BadUserAccessDenied",
+        "childrenAnsweringAValue": 0
+      },
+      {
+        "kind": "Server.PublishSubscribe.SecurityGroups",
+        "nodeId": "i=15443",
+        "browse": "Good",
+        "children": 2,
+        "grandchildren": 0,
+        "read": "BadAttributeIdInvalid",
+        "childrenAnsweringAValue": 0
+      },
+      {
+        "kind": "Server.PublishSubscribe.KeyPushTargets",
+        "nodeId": "i=25440",
+        "browse": "Good",
+        "children": 2,
+        "grandchildren": 0,
+        "read": "BadAttributeIdInvalid",
+        "childrenAnsweringAValue": 0
+      }
+    ],
+    "user": [
+      {
+        "kind": "Server.ServerConfiguration",
+        "nodeId": "i=12637",
+        "browse": "Good",
+        "children": 21,
+        "grandchildren": 42,
+        "read": "BadAttributeIdInvalid",
+        "childrenAnsweringAValue": 6
+      },
+      {
+        "kind": "Server.ServerCapabilities.RoleSet",
+        "nodeId": "i=15606",
+        "browse": "Good",
+        "children": 14,
+        "grandchildren": 111,
+        "read": "BadAttributeIdInvalid",
+        "childrenAnsweringAValue": 0
+      },
+      {
+        "kind": "Server.ServerDiagnostics.SessionsDiagnosticsSummary",
+        "nodeId": "i=3706",
+        "browse": "Good",
+        "children": 0,
+        "grandchildren": 0,
+        "read": "BadAttributeIdInvalid",
+        "childrenAnsweringAValue": 0
+      },
+      {
+        "kind": "SessionsDiagnosticsSummary.SessionDiagnosticsArray",
+        "nodeId": "i=3707",
+        "browse": "BadUserAccessDenied",
+        "children": 0,
+        "grandchildren": 0,
+        "read": "BadUserAccessDenied",
+        "childrenAnsweringAValue": 0
+      },
+      {
+        "kind": "SessionsDiagnosticsSummary.SessionSecurityDiagnosticsArray",
+        "nodeId": "i=3708",
+        "browse": "BadUserAccessDenied",
+        "children": 0,
+        "grandchildren": 0,
+        "read": "BadUserAccessDenied",
+        "childrenAnsweringAValue": 0
+      },
+      {
+        "kind": "Server.PublishSubscribe.SecurityGroups",
+        "nodeId": "i=15443",
+        "browse": "Good",
+        "children": 2,
+        "grandchildren": 0,
+        "read": "BadAttributeIdInvalid",
+        "childrenAnsweringAValue": 0
+      },
+      {
+        "kind": "Server.PublishSubscribe.KeyPushTargets",
+        "nodeId": "i=25440",
+        "browse": "Good",
+        "children": 2,
+        "grandchildren": 0,
+        "read": "BadAttributeIdInvalid",
+        "childrenAnsweringAValue": 0
+      }
+    ],
+    "administrator": [
+      {
+        "kind": "Server.ServerConfiguration",
+        "nodeId": "i=12637",
+        "browse": "Good",
+        "children": 21,
+        "grandchildren": 42,
+        "read": "BadAttributeIdInvalid",
+        "childrenAnsweringAValue": 6
+      },
+      {
+        "kind": "Server.ServerCapabilities.RoleSet",
+        "nodeId": "i=15606",
+        "browse": "Good",
+        "children": 14,
+        "grandchildren": 111,
+        "read": "BadAttributeIdInvalid",
+        "childrenAnsweringAValue": 0
+      },
+      {
+        "kind": "Server.ServerDiagnostics.SessionsDiagnosticsSummary",
+        "nodeId": "i=3706",
+        "browse": "Good",
+        "children": 1,
+        "grandchildren": 4,
+        "read": "BadAttributeIdInvalid",
+        "childrenAnsweringAValue": 0
+      },
+      {
+        "kind": "SessionsDiagnosticsSummary.SessionDiagnosticsArray",
+        "nodeId": "i=3707",
+        "browse": "BadUserAccessDenied",
+        "children": 0,
+        "grandchildren": 0,
+        "read": "BadUserAccessDenied",
+        "childrenAnsweringAValue": 0
+      },
+      {
+        "kind": "SessionsDiagnosticsSummary.SessionSecurityDiagnosticsArray",
+        "nodeId": "i=3708",
+        "browse": "BadUserAccessDenied",
+        "children": 0,
+        "grandchildren": 0,
+        "read": "BadUserAccessDenied",
+        "childrenAnsweringAValue": 0
+      },
+      {
+        "kind": "Server.PublishSubscribe.SecurityGroups",
+        "nodeId": "i=15443",
+        "browse": "Good",
+        "children": 2,
+        "grandchildren": 0,
+        "read": "BadAttributeIdInvalid",
+        "childrenAnsweringAValue": 0
+      },
+      {
+        "kind": "Server.PublishSubscribe.KeyPushTargets",
+        "nodeId": "i=25440",
+        "browse": "Good",
+        "children": 2,
+        "grandchildren": 0,
+        "read": "BadAttributeIdInvalid",
+        "childrenAnsweringAValue": 0
+      }
+    ]
+  },
+  "sessionDiagnostics": {
+    "sessions": 1,
+    "carriesAccountName": true
+  },
+  "rawWrite": {
+    "nodeId": "ns=6;s=DataAccess_AnalogType_Int32",
+    "what": "the variable's own value written back, by the capture script and never by Studio",
+    "status": "Good",
+    "valueUnchanged": true
+  },
+  "rawCall": {
+    "method": "Server.GetMonitoredItems (i=11492) for subscription 0, by the capture script and never by Studio",
+    "status": "BadSubscriptionIdInvalid",
+    "resetToServerDefaultsUserExecutable": true
+  },
+  "agentAnonymous": [
+    {
+      "statement": "{\"read\":[\"ns=6;s=DataAccess_AnalogType_Int32\",\"ns=3;s=SlowUInt1\"]}",
+      "services": {
+        "open": 1,
+        "limits": 1,
+        "browse": 11,
+        "read": 2,
+        "close": 1
+      },
+      "rowCount": 2,
+      "fields": [
+        "nodeId",
+        "value",
+        "shape",
+        "statusCode",
+        "sourceTimestamp",
+        "serverTimestamp",
+        "units",
+        "unitId",
+        "unitNamespace",
+        "euRange"
+      ],
+      "rows": [
+        {
+          "nodeId": "ns=6;s=DataAccess_AnalogType_Int32",
+          "statusCode": "Good",
+          "shape": "number",
+          "units": "mV",
+          "unitId": 12890,
+          "unitNamespace": "http://www.opcfoundation.org/UA/units/un/cefact",
+          "euRange": "0 to 100"
+        },
+        {
+          "nodeId": "ns=3;s=SlowUInt1",
+          "statusCode": "Good",
+          "shape": "number",
+          "units": "no units published",
+          "unitId": null,
+          "unitNamespace": null,
+          "euRange": "no range published"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "statement": "{\"read\":[\"i=12637\",\"i=15606\",\"i=3706\",\"i=2256\"]}",
+      "services": {
+        "open": 1,
+        "limits": 1,
+        "browse": 11,
+        "read": 1,
+        "close": 1
+      },
+      "rowCount": 4,
+      "fields": [
+        "nodeId",
+        "value",
+        "shape",
+        "statusCode",
+        "sourceTimestamp",
+        "serverTimestamp",
+        "units",
+        "unitId",
+        "unitNamespace",
+        "euRange"
+      ],
+      "rows": [
+        {
+          "nodeId": "i=12637",
+          "statusCode": "Withheld",
+          "shape": null,
+          "units": null,
+          "unitId": null,
+          "unitNamespace": null,
+          "euRange": null
+        },
+        {
+          "nodeId": "i=15606",
+          "statusCode": "Withheld",
+          "shape": null,
+          "units": null,
+          "unitId": null,
+          "unitNamespace": null,
+          "euRange": null
+        },
+        {
+          "nodeId": "i=3706",
+          "statusCode": "Withheld",
+          "shape": null,
+          "units": null,
+          "unitId": null,
+          "unitNamespace": null,
+          "euRange": null
+        },
+        {
+          "nodeId": "i=2256",
+          "statusCode": "Good",
+          "shape": "object",
+          "units": "no units published",
+          "unitId": null,
+          "unitNamespace": null,
+          "euRange": "no range published"
+        }
+      ],
+      "warnings": [
+        "Server.ServerConfiguration (i=12637) is withheld from agent mode with everything beneath it: it holds the server's certificate groups and trust lists, its user management with every account name, its configuration file and the methods that change them. Nothing of it is read or answered.",
+        "Server.ServerCapabilities.RoleSet (i=15606) is withheld from agent mode with everything beneath it: it holds every role's identity mappings (user names, certificate thumbprints, group ids) and the applications and endpoints each role admits. Nothing of it is read or answered.",
+        "Server.ServerDiagnostics.SessionsDiagnosticsSummary (i=3706) is withheld from agent mode with everything beneath it: it holds one object per open session, with its client's application and name, its user identity and its endpoint. Nothing of it is read or answered."
+      ]
+    },
+    {
+      "statement": "{\"browse\":\"i=85\"}",
+      "services": {
+        "open": 1,
+        "limits": 1,
+        "browse": 11,
+        "close": 1
+      },
+      "rowCount": 9,
+      "fields": [
+        "nodeId",
+        "browseName",
+        "displayName",
+        "nodeClass",
+        "referenceTypeId"
+      ],
+      "rows": [
+        {
+          "nodeId": "ns=3;s=OpcPlc",
+          "browseName": "OpcPlc",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=35"
+        },
+        {
+          "nodeId": "i=2253",
+          "browseName": "Server",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=35"
+        },
+        {
+          "nodeId": "ns=4;i=5",
+          "browseName": "Boilers",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=35"
+        },
+        {
+          "nodeId": "ns=2;i=6094",
+          "browseName": "DeviceTopology",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=35"
+        },
+        {
+          "nodeId": "ns=6;s=ReferenceTest",
+          "browseName": "ReferenceTest",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=35"
+        },
+        {
+          "nodeId": "ns=2;i=6078",
+          "browseName": "NetworkSet",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=35"
+        },
+        {
+          "nodeId": "i=31915",
+          "browseName": "Locations",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=35"
+        },
+        {
+          "nodeId": "i=23470",
+          "browseName": "Aliases",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=35"
+        },
+        {
+          "nodeId": "ns=2;i=5001",
+          "browseName": "DeviceSet",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=35"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "statement": "{\"browse\":\"i=2253\"}",
+      "services": {
+        "open": 1,
+        "limits": 1,
+        "browse": 11,
+        "close": 1
+      },
+      "rowCount": 22,
+      "fields": [
+        "nodeId",
+        "browseName",
+        "displayName",
+        "nodeClass",
+        "referenceTypeId"
+      ],
+      "rows": [
+        {
+          "nodeId": "i=2254",
+          "browseName": "ServerArray",
+          "nodeClass": "Variable",
+          "referenceTypeId": "i=46"
+        },
+        {
+          "nodeId": "i=2255",
+          "browseName": "NamespaceArray",
+          "nodeClass": "Variable",
+          "referenceTypeId": "i=46"
+        },
+        {
+          "nodeId": "i=15004",
+          "browseName": "UrisVersion",
+          "nodeClass": "Variable",
+          "referenceTypeId": "i=46"
+        },
+        {
+          "nodeId": "i=2256",
+          "browseName": "ServerStatus",
+          "nodeClass": "Variable",
+          "referenceTypeId": "i=47"
+        },
+        {
+          "nodeId": "i=2267",
+          "browseName": "ServiceLevel",
+          "nodeClass": "Variable",
+          "referenceTypeId": "i=46"
+        },
+        {
+          "nodeId": "i=12885",
+          "browseName": "EstimatedReturnTime",
+          "nodeClass": "Variable",
+          "referenceTypeId": "i=46"
+        },
+        {
+          "nodeId": "i=17634",
+          "browseName": "LocalTime",
+          "nodeClass": "Variable",
+          "referenceTypeId": "i=46"
+        },
+        {
+          "nodeId": "i=2268",
+          "browseName": "ServerCapabilities",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=47"
+        },
+        {
+          "nodeId": "i=2274",
+          "browseName": "ServerDiagnostics",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=47"
+        },
+        {
+          "nodeId": "i=2295",
+          "browseName": "VendorServerInfo",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=47"
+        },
+        {
+          "nodeId": "i=2296",
+          "browseName": "ServerRedundancy",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=47"
+        },
+        {
+          "nodeId": "i=11715",
+          "browseName": "Namespaces",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=47"
+        }
+      ],
+      "warnings": [
+        "Server.ServerConfiguration (i=12637) is withheld from agent mode with everything beneath it: it holds the server's certificate groups and trust lists, its user management with every account name, its configuration file and the methods that change them. Nothing of it is read or answered."
+      ]
+    },
+    {
+      "statement": "{\"browse\":\"i=2268\"}",
+      "services": {
+        "open": 1,
+        "limits": 1,
+        "browse": 11,
+        "close": 1
+      },
+      "rowCount": 24,
+      "fields": [
+        "nodeId",
+        "browseName",
+        "displayName",
+        "nodeClass",
+        "referenceTypeId"
+      ],
+      "rows": [
+        {
+          "nodeId": "i=2269",
+          "browseName": "ServerProfileArray",
+          "nodeClass": "Variable",
+          "referenceTypeId": "i=46"
+        },
+        {
+          "nodeId": "i=2271",
+          "browseName": "LocaleIdArray",
+          "nodeClass": "Variable",
+          "referenceTypeId": "i=46"
+        },
+        {
+          "nodeId": "i=2272",
+          "browseName": "MinSupportedSampleRate",
+          "nodeClass": "Variable",
+          "referenceTypeId": "i=46"
+        },
+        {
+          "nodeId": "i=2735",
+          "browseName": "MaxBrowseContinuationPoints",
+          "nodeClass": "Variable",
+          "referenceTypeId": "i=46"
+        },
+        {
+          "nodeId": "i=2736",
+          "browseName": "MaxQueryContinuationPoints",
+          "nodeClass": "Variable",
+          "referenceTypeId": "i=46"
+        },
+        {
+          "nodeId": "i=2737",
+          "browseName": "MaxHistoryContinuationPoints",
+          "nodeClass": "Variable",
+          "referenceTypeId": "i=46"
+        },
+        {
+          "nodeId": "i=3704",
+          "browseName": "SoftwareCertificates",
+          "nodeClass": "Variable",
+          "referenceTypeId": "i=46"
+        },
+        {
+          "nodeId": "i=11702",
+          "browseName": "MaxArrayLength",
+          "nodeClass": "Variable",
+          "referenceTypeId": "i=46"
+        },
+        {
+          "nodeId": "i=11703",
+          "browseName": "MaxStringLength",
+          "nodeClass": "Variable",
+          "referenceTypeId": "i=46"
+        },
+        {
+          "nodeId": "i=12911",
+          "browseName": "MaxByteStringLength",
+          "nodeClass": "Variable",
+          "referenceTypeId": "i=46"
+        },
+        {
+          "nodeId": "i=11704",
+          "browseName": "OperationLimits",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=47"
+        },
+        {
+          "nodeId": "i=2996",
+          "browseName": "ModellingRules",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=47"
+        }
+      ],
+      "warnings": [
+        "Server.ServerCapabilities.RoleSet (i=15606) is withheld from agent mode with everything beneath it: it holds every role's identity mappings (user names, certificate thumbprints, group ids) and the applications and endpoints each role admits. Nothing of it is read or answered."
+      ]
+    },
+    {
+      "statement": "{\"browse\":\"i=2274\"}",
+      "services": {
+        "open": 1,
+        "limits": 1,
+        "browse": 11,
+        "close": 1
+      },
+      "rowCount": 1,
+      "fields": [
+        "nodeId",
+        "browseName",
+        "displayName",
+        "nodeClass",
+        "referenceTypeId"
+      ],
+      "rows": [
+        {
+          "nodeId": "i=2294",
+          "browseName": "EnabledFlag",
+          "nodeClass": "Variable",
+          "referenceTypeId": "i=46"
+        }
+      ],
+      "warnings": [
+        "Server.ServerDiagnostics.SessionsDiagnosticsSummary (i=3706) is withheld from agent mode with everything beneath it: it holds one object per open session, with its client's application and name, its user identity and its endpoint. Nothing of it is read or answered."
+      ]
+    },
+    {
+      "statement": "{\"browse\":\"i=14443\"}",
+      "services": {
+        "open": 1,
+        "limits": 1,
+        "browse": 11,
+        "close": 1
+      },
+      "rowCount": 17,
+      "fields": [
+        "nodeId",
+        "browseName",
+        "displayName",
+        "nodeClass",
+        "referenceTypeId"
+      ],
+      "rows": [
+        {
+          "nodeId": "i=15215",
+          "browseName": "GetSecurityKeys",
+          "nodeClass": "Method",
+          "referenceTypeId": "i=47"
+        },
+        {
+          "nodeId": "i=15440",
+          "browseName": "GetSecurityGroup",
+          "nodeClass": "Method",
+          "referenceTypeId": "i=47"
+        },
+        {
+          "nodeId": "i=17364",
+          "browseName": "SetSecurityKeys",
+          "nodeClass": "Method",
+          "referenceTypeId": "i=47"
+        },
+        {
+          "nodeId": "i=17366",
+          "browseName": "AddConnection",
+          "nodeClass": "Method",
+          "referenceTypeId": "i=47"
+        },
+        {
+          "nodeId": "i=17369",
+          "browseName": "RemoveConnection",
+          "nodeClass": "Method",
+          "referenceTypeId": "i=47"
+        },
+        {
+          "nodeId": "i=17371",
+          "browseName": "PublishedDataSets",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=47"
+        },
+        {
+          "nodeId": "i=23658",
+          "browseName": "SubscribedDataSets",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=47"
+        },
+        {
+          "nodeId": "i=25451",
+          "browseName": "PubSubConfiguration",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=47"
+        },
+        {
+          "nodeId": "i=17405",
+          "browseName": "Status",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=47"
+        },
+        {
+          "nodeId": "i=17409",
+          "browseName": "Diagnostics",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=47"
+        },
+        {
+          "nodeId": "i=23678",
+          "browseName": "PubSubCapablities",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=47"
+        },
+        {
+          "nodeId": "i=23685",
+          "browseName": "DataSetClasses",
+          "nodeClass": "Object",
+          "referenceTypeId": "i=47"
+        }
+      ],
+      "warnings": [
+        "Server.PublishSubscribe.SecurityGroups (i=15443) is withheld from agent mode with everything beneath it: it holds the PubSub security groups that keys are issued for. Nothing of it is read or answered.",
+        "Server.PublishSubscribe.KeyPushTargets (i=25440) is withheld from agent mode with everything beneath it: it holds the servers PubSub keys are pushed to, with their endpoints and identities. Nothing of it is read or answered."
+      ]
+    },
+    {
+      "statement": "{\"history\":\"ns=3;s=HistorianInt32\",\"limit\":5}",
+      "services": {
+        "open": 1,
+        "limits": 1,
+        "browse": 11,
+        "historyRead": 1,
+        "releaseHistoryContinuationPoint": 1,
+        "close": 1
+      },
+      "rowCount": 5,
+      "fields": [
+        "nodeId",
+        "value",
+        "shape",
+        "statusCode",
+        "sourceTimestamp",
+        "serverTimestamp",
+        "units",
+        "unitId",
+        "unitNamespace",
+        "euRange"
+      ],
+      "rows": [
+        {
+          "nodeId": "ns=3;s=HistorianInt32",
+          "statusCode": "Good",
+          "shape": "number",
+          "units": "no units published",
+          "unitId": null,
+          "unitNamespace": null,
+          "euRange": "no range published"
+        },
+        {
+          "nodeId": "ns=3;s=HistorianInt32",
+          "statusCode": "Good",
+          "shape": "number",
+          "units": "no units published",
+          "unitId": null,
+          "unitNamespace": null,
+          "euRange": "no range published"
+        },
+        {
+          "nodeId": "ns=3;s=HistorianInt32",
+          "statusCode": "Good",
+          "shape": "number",
+          "units": "no units published",
+          "unitId": null,
+          "unitNamespace": null,
+          "euRange": "no range published"
+        },
+        {
+          "nodeId": "ns=3;s=HistorianInt32",
+          "statusCode": "Good",
+          "shape": "number",
+          "units": "no units published",
+          "unitId": null,
+          "unitNamespace": null,
+          "euRange": "no range published"
+        },
+        {
+          "nodeId": "ns=3;s=HistorianInt32",
+          "statusCode": "Good",
+          "shape": "number",
+          "units": "no units published",
+          "unitId": null,
+          "unitNamespace": null,
+          "euRange": "no range published"
+        }
+      ],
+      "warnings": [
+        "The read reached its cap of 5 values, and the node holds more. A narrower window reads the rest: a server appends history while it is read, so a window with no end has none."
+      ]
+    },
+    {
+      "statement": "{\"history\":\"ns=3;s=HistorianInt32\"}",
+      "services": 13,
+      "refused": "OpcuaAgentError: Read-only execution exceeded the row budget: the window holds at least 51 values and the row budget is 50, so the history read is refused rather than cut; give it a narrower window or a limit of at most 50."
+    },
+    {
+      "statement": "{\"history\":\"ns=3;s=SlowUInt1\"}",
+      "services": {
+        "open": 1,
+        "limits": 1,
+        "browse": 11,
+        "historyRead": 1,
+        "close": 1
+      },
+      "rowCount": 0,
+      "fields": [
+        "nodeId",
+        "value",
+        "shape",
+        "statusCode",
+        "sourceTimestamp",
+        "serverTimestamp",
+        "units",
+        "unitId",
+        "unitNamespace",
+        "euRange"
+      ],
+      "rows": [],
+      "warnings": [
+        "The server answered BadHistoryOperationUnsupported: that node keeps no history. Historizing is an attribute of the node, so only a node whose Historizing is true answers a history read; the others are read for their current value."
+      ]
+    },
+    {
+      "statement": "{\"browse\":\"i=12637\"}",
+      "services": 0,
+      "refused": "RefusedBeforeSendError: Server.ServerConfiguration (i=12637) is withheld from agent mode with everything beneath it: it holds the server's certificate groups and trust lists, its user management with every account name, its configuration file and the methods that change them. Nothing of it is read or answered. Nothing was sent."
+    },
+    {
+      "statement": "{\"write\":\"ns=6;s=DataAccess_AnalogType_Int32\",\"value\":1}",
+      "services": 0,
+      "refused": "RefusedBeforeSendError: A request names \"read\", \"history\" or \"browse\", and this names \"write\". Agent mode on OPC UA reads with one JSON request per read: {\"read\": [\"ns=3;s=SlowUInt1\", ...]} reads the current value of each node, with its engineering units and EU range where the server publishes them; {\"history\": \"ns=3;s=HistorianInt32\", \"start\": \"2026-10-31T00:00:00Z\", \"end\": \"2026-10-31T01:00:00Z\", \"limit\": 100} reads one node's raw history (start, end and limit optional); {\"browse\": \"i=85\"} lists the children of one node, starting from the Objects folder i=85. A node id is written with its namespace index (ns=3;s=...), or in namespace 0 with no prefix (i=2256). Only Browse, BrowseNext, Read and HistoryRead are sent, never a Write, a method Call, a subscription or a node change. Withheld from agent mode, by node id with everything beneath it: Server.ServerConfiguration (i=12637), Server.ServerCapabilities.RoleSet (i=15606), Server.ServerDiagnostics.SessionsDiagnosticsSummary (i=3706), SessionsDiagnosticsSummary.SessionDiagnosticsArray (i=3707), SessionsDiagnosticsSummary.SessionSecurityDiagnosticsArray (i=3708), Server.PublishSubscribe.SecurityGroups (i=15443), Server.PublishSubscribe.KeyPushTargets (i=25440); they hold certificates and trust lists, account names, role identity mappings, every open session's client, user identity and endpoint, and the PubSub key management objects. Nothing was sent."
+    },
+    {
+      "statement": "{\"read\":[\"ns=6;s=DataAccess_AnalogType_Int32\"],\"indexRange\":\"0:1\"}",
+      "services": 0,
+      "refused": "RefusedBeforeSendError: A value read takes \"read\" only, and this names \"indexRange\". Agent mode on OPC UA reads with one JSON request per read: {\"read\": [\"ns=3;s=SlowUInt1\", ...]} reads the current value of each node, with its engineering units and EU range where the server publishes them; {\"history\": \"ns=3;s=HistorianInt32\", \"start\": \"2026-10-31T00:00:00Z\", \"end\": \"2026-10-31T01:00:00Z\", \"limit\": 100} reads one node's raw history (start, end and limit optional); {\"browse\": \"i=85\"} lists the children of one node, starting from the Objects folder i=85. A node id is written with its namespace index (ns=3;s=...), or in namespace 0 with no prefix (i=2256). Only Browse, BrowseNext, Read and HistoryRead are sent, never a Write, a method Call, a subscription or a node change. Withheld from agent mode, by node id with everything beneath it: Server.ServerConfiguration (i=12637), Server.ServerCapabilities.RoleSet (i=15606), Server.ServerDiagnostics.SessionsDiagnosticsSummary (i=3706), SessionsDiagnosticsSummary.SessionDiagnosticsArray (i=3707), SessionsDiagnosticsSummary.SessionSecurityDiagnosticsArray (i=3708), Server.PublishSubscribe.SecurityGroups (i=15443), Server.PublishSubscribe.KeyPushTargets (i=25440); they hold certificates and trust lists, account names, role identity mappings, every open session's client, user identity and endpoint, and the PubSub key management objects. Nothing was sent."
+    }
+  ],
+  "agentAdministrator": {
+    "perSessionRead": {
+      "statement": "{\"read\":[\"<per-session node>\",\"ns=3;s=SlowUInt1\"]}",
+      "services": {
+        "open": 1,
+        "limits": 1,
+        "browse": 16,
+        "read": 1,
+        "close": 1
+      },
+      "rowCount": 2,
+      "fields": [
+        "nodeId",
+        "value",
+        "shape",
+        "statusCode",
+        "sourceTimestamp",
+        "serverTimestamp",
+        "units",
+        "unitId",
+        "unitNamespace",
+        "euRange"
+      ],
+      "rows": [
+        {
+          "nodeId": "<per-session node>",
+          "statusCode": "Withheld",
+          "shape": null,
+          "units": null,
+          "unitId": null,
+          "unitNamespace": null,
+          "euRange": null
+        },
+        {
+          "nodeId": "ns=3;s=SlowUInt1",
+          "statusCode": "Good",
+          "shape": "number",
+          "units": "no units published",
+          "unitId": null,
+          "unitNamespace": null,
+          "euRange": "no range published"
+        }
+      ],
+      "warnings": [
+        "Server.ServerDiagnostics.SessionsDiagnosticsSummary (i=3706) is withheld from agent mode with everything beneath it: it holds one object per open session, with its client's application and name, its user identity and its endpoint. Nothing of it is read or answered."
+      ]
+    },
+    "perSessionBrowse": {
+      "statement": "{\"browse\":\"<per-session node>\"}",
+      "services": 16,
+      "refused": "OpcuaAgentError: Server.ServerDiagnostics.SessionsDiagnosticsSummary (i=3706) is withheld from agent mode with everything beneath it: it holds one object per open session, with its client's application and name, its user identity and its endpoint. Nothing of it is read or answered."
+    },
+    "perSessionHistory": {
+      "statement": "{\"history\":\"<per-session node>\"}",
+      "services": 16,
+      "refused": "OpcuaAgentError: Server.ServerDiagnostics.SessionsDiagnosticsSummary (i=3706) is withheld from agent mode with everything beneath it: it holds one object per open session, with its client's application and name, its user identity and its endpoint. Nothing of it is read or answered."
+    }
+  },
+  "serverState": {
+    "before": {
+      "values": {
+        "ns=6;s=DataAccess_AnalogType_Int32": "0",
+        "ns=3;s=FastNumberOfUpdates": "-1",
+        "ns=3;s=SlowNumberOfUpdates": "-1",
+        "i=2259": "0"
+      },
+      "currentSessionCount": 0
+    },
+    "after": {
+      "values": {
+        "ns=6;s=DataAccess_AnalogType_Int32": "0",
+        "ns=3;s=FastNumberOfUpdates": "-1",
+        "ns=3;s=SlowNumberOfUpdates": "-1",
+        "i=2259": "0"
+      },
+      "currentSessionCount": 0
+    },
+    "configurationUnchanged": true,
+    "sessionsLeftBehind": 0
+  }
+}
