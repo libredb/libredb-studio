@@ -30,7 +30,7 @@ export const PROMETHEUS_AGENT_READS =
   "Agent mode on Prometheus reads with one PromQL expression per read, written as the console writes it and evaluated as an instant query at the server's own now, the way the console runs it; a range vector or a subquery inside the expression is how a read covers a window. The expression alone is sent: no time, range, step, limit or other request parameter can be written, the server's time-out is set from the read's time budget, and an answer past the row or byte budget is refused, never cut. Only the instant query and the provider's own read endpoints are ever called, never a write, an admin or a lifecycle endpoint.";
 
 /** Why a read was refused, in the reader's words; the list of reads follows it. */
-export const PROMETHEUS_AGENT_SENTENCES = {
+const PROMETHEUS_AGENT_SENTENCES = {
   reads: PROMETHEUS_AGENT_READS,
   refusal: (reason: string): string => `${reason} ${PROMETHEUS_AGENT_READS} ${NOTHING_SENT}`,
 } as const;

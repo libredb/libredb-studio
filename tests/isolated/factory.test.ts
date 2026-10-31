@@ -3127,7 +3127,7 @@ describe("acquireExecutionProfileProvider", () => {
 
   test("refuses a provider type without a read-only statement path", async () => {
     const error: unknown = await acquireExecutionProfileProvider(
-      makeConnection("prometheus", { id: "prometheus-profile" }),
+      makeConnection("mtconnect", { id: "mtconnect-profile" }),
       "agent-read-only",
     ).catch((e: unknown) => e);
 
@@ -3136,7 +3136,7 @@ describe("acquireExecutionProfileProvider", () => {
     // The rule is the method, not the kind of boundary behind it: Kubernetes and MongoDB are granted the profile with
     // no database read-only session.
     expect((error as Error).message).toBe(
-      'Provider type "prometheus" implements no read-only statement path (queryReadOnly)',
+      'Provider type "mtconnect" implements no read-only statement path (queryReadOnly)',
     );
     expect(getExecutionProfileCacheStats().size).toBe(0);
   });
@@ -3191,7 +3191,7 @@ describe("acquireExecutionProfileProvider", () => {
     // entries, so a later change to one path's lifecycle cannot reach the other, and
     // neither is ever the editor's writable pool.
     const refused: unknown = await acquireExecutionProfileProvider(
-      makeConnection("prometheus", { id: "prometheus-handover" }),
+      makeConnection("mtconnect", { id: "mtconnect-handover" }),
       "agent-handover",
     ).catch((e: unknown) => e);
     expect(refused).toBeInstanceOf(ExecutionProfileError);

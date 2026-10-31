@@ -55,7 +55,7 @@ export const PROMETHEUS_AGENT_FAILURE_SENTENCES = {
 } as const;
 
 /** The rows an answer counts against the row budget (see the module docblock). */
-export function answerRowCount(data: PrometheusQueryData): number {
+function answerRowCount(data: PrometheusQueryData): number {
   switch (data.shape) {
     case "vector":
       return data.series.length;
