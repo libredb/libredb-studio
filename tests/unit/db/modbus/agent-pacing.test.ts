@@ -2,7 +2,11 @@
  * The pacing of agent reads on one Modbus device: never two in flight, a gap after each measured from the moment the
  * read ended, a wait that counts against the read's own deadline, and a lane released however a read ends.
  */
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
+import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   deviceKey,
   MODBUS_AGENT_DEVICE_GAP_MS,
@@ -27,7 +31,7 @@ function holder(log: Array<{ id: string; from: number; to: number }>, id: string
 }
 
 describe("the gap the provider keeps", () => {
-  test("is the measured one second, and one pacer serves the whole process", () => {
+  test("is a fixed one second, and the agent path has one pacer", () => {
     expect(MODBUS_AGENT_DEVICE_GAP_MS).toBe(1000);
     expect(MODBUS_AGENT_PACER).toBeInstanceOf(ModbusDevicePacer);
   });
@@ -170,5 +174,42 @@ describe("no state outlives its use", () => {
     await pacer.run(deviceKey("a", 502), performance.now() - 1, async () => "never").catch(() => undefined);
     await pacer.run(deviceKey("b", 502), far(), async () => "b");
     expect(pacer.laneCount).toBe(1);
+  });
+});
+
+describe("one set of lanes for the whole process", () => {
+  // Next.js loads this module more than once in one server process (the instrumentation bundle, which resumes agent
+  // runs, apart from the route handlers), so two copies of it must still keep one device to one read at a time.
+  // Each copy is the module's own source under a file name of its own, which the runtime loads as a module apart.
+  const source = resolve(import.meta.dir, "../../../../src/lib/db/providers/industrial/modbus/agent-pacing.ts");
+  const scratch = mkdtempSync(join(tmpdir(), "modbus-pacing-copies-"));
+  afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+
+  async function copy(tag: string): Promise<typeof import("@/lib/db/providers/industrial/modbus/agent-pacing")> {
+    const target = join(scratch, `agent-pacing-${tag}.ts`);
+    copyFileSync(source, target);
+    return import(pathToFileURL(target).href);
+  }
+
+  test("two copies of the module serialize reads of one device, with the gap between them", async () => {
+    const one = await copy("one");
+    const two = await copy("two");
+    expect(one.MODBUS_AGENT_PACER).not.toBe(two.MODBUS_AGENT_PACER);
+    const log: Array<{ id: string; from: number; to: number }> = [];
+    const key = deviceKey("copies.test.invalid", 502);
+    await Promise.all([
+      one.MODBUS_AGENT_PACER.run(key, far(), holder(log, "one", 30)),
+      two.MODBUS_AGENT_PACER.run(key, far(), holder(log, "two", 1)),
+    ]);
+    expect(log.map((entry) => entry.id)).toEqual(["one", "two"]);
+    expect((log[1]?.from ?? 0) - (log[0]?.to ?? 0)).toBeGreaterThanOrEqual(MODBUS_AGENT_DEVICE_GAP_MS - 2);
+  });
+
+  test("a pacer made apart from the process's keeps lanes of its own", async () => {
+    const one = await copy("three");
+    const own = new one.ModbusDevicePacer(1000);
+    await own.run(deviceKey("own.test.invalid", 502), far(), async () => "own");
+    expect(own.laneCount).toBe(1);
+    expect(new one.ModbusDevicePacer(1000).laneCount).toBe(0);
   });
 });

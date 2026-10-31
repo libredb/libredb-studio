@@ -19,8 +19,10 @@
  * ways (a name and its address) is two lanes; the provider doc records that residual.
  *
  * WHY HERE AND NOT ON THE PROVIDER. Providers are cached and shared per connection and profile, and two connections may
- * name one device, so a queue on the provider would let two of them overlap. The lanes live in this module, once per
- * process.
+ * name one device, so a queue on the provider would let two of them overlap. Nor in a module-level value alone: Next.js
+ * loads this module more than once in one server process (instrumentation, which resumes agent runs, is bundled apart
+ * from the route handlers, as `src/lib/db/owner-removal.ts` records), and each copy would keep lanes of its own. So the
+ * process's lanes are kept in a global under a registered symbol, and every copy's pacer reads and writes that one map.
  *
  * A wait counts against the read's own deadline: a read whose turn would come after it is refused before anything is
  * sent, and it keeps its place in the order until the read ahead of it ends, so a refused waiter never lets the read
@@ -29,8 +31,8 @@
  */
 
 /**
- * The gap after one agent read before the next agent read of the same device dials, in milliseconds. See the module
- * comment for the measurement it rests on.
+ * The gap after one agent read before the next agent read of the same device dials, in milliseconds. A fixed value
+ * chosen to leave the plant's client a turn, not a measured one: the module comment records the measurement behind it.
  */
 export const MODBUS_AGENT_DEVICE_GAP_MS = 1000;
 
@@ -66,12 +68,26 @@ export function deviceKey(host: string, port: number): string {
   return `${host.toLowerCase()}|${port}`;
 }
 
-export class ModbusDevicePacer {
-  private readonly lanes = new Map<string, Lane>();
+const LANES_KEY = Symbol.for("libredb-studio.modbus-agent-lanes");
 
+type LanesHolder = { [LANES_KEY]?: Map<string, Lane> };
+
+/** The lanes of this server process, one map however many copies of this module the process loaded. */
+function processLanes(): Map<string, Lane> {
+  const holder = globalThis as LanesHolder;
+  holder[LANES_KEY] ??= new Map();
+  return holder[LANES_KEY];
+}
+
+export class ModbusDevicePacer {
+  /**
+   * `lanes` is the map this pacer queues on: the process's own for the pacer every agent read goes through, a map of
+   * its own for any other.
+   */
   constructor(
     private readonly gapMs: number = MODBUS_AGENT_DEVICE_GAP_MS,
     private readonly clock: PacingClock = REAL_CLOCK,
+    private readonly lanes: Map<string, Lane> = new Map(),
   ) {}
 
   /** How many devices hold a lane now. For the tests that hold that an idle lane is dropped. */
@@ -147,5 +163,8 @@ export class ModbusDevicePacer {
   }
 }
 
-/** The one pacer of this server process: every agent read of every Modbus connection goes through it. */
-export const MODBUS_AGENT_PACER = new ModbusDevicePacer();
+/**
+ * The pacer every agent read of every Modbus connection goes through. Each copy of this module has one, and all of them
+ * queue on the process's one set of lanes.
+ */
+export const MODBUS_AGENT_PACER = new ModbusDevicePacer(MODBUS_AGENT_DEVICE_GAP_MS, REAL_CLOCK, processLanes());
