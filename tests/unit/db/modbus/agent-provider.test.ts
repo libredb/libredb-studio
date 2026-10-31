@@ -314,6 +314,33 @@ describe("the run's device request bound", () => {
     expect(dev.connections).toHaveLength(0);
   });
 
+  test("a read past the bound is refused at once, without waiting for its turn behind another read", async () => {
+    const dev = await device();
+    const pacer = new ModbusDevicePacer(5);
+    let release!: () => void;
+    const held = pacer.run(
+      `127.0.0.1|${dev.port}`,
+      performance.now() + 60_000,
+      () =>
+        new Promise<void>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const allowance = new RunReadAllowance(10_000, { spent: MODBUS_AGENT_RUN_REQUESTS });
+    const started = performance.now();
+    const error = await refusal(
+      provider(dev.port, { pacer }).queryReadOnly(
+        '{"unit": 1, "table": "coil", "address": 0, "count": 1}',
+        budget({ readAllowance: allowance }),
+      ),
+    );
+    expect(error.message).toBe(MODBUS_AGENT_FAILURE_SENTENCES.requestBound(1, 0));
+    expect(performance.now() - started).toBeLessThan(500);
+    release();
+    await held;
+    expect(dev.connections).toHaveLength(0);
+  });
+
   test("two reads of one run that pass the bound together: the second is refused on its turn, not sent", async () => {
     const dev = await device();
     const pacer = new ModbusDevicePacer(5);
