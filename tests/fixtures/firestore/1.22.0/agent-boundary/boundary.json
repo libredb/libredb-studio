@@ -1,0 +1,1129 @@
+{
+  "emulator": {
+    "image": "gcr.io/google.com/cloudsdktool/google-cloud-cli:587.0.0-emulators@sha256:8d8573471c489a409f03891d2c24d177fa531276184f7002b9a2d853d1b3ed54",
+    "component": "cloud-firestore-emulator 1.22.0",
+    "project": "demo-libredb"
+  },
+  "date": "2026-10-31",
+  "budget": {
+    "maxResultRows": 3,
+    "maxResultBytes": 1000000,
+    "statementTimeoutMs": 10000
+  },
+  "emulatorAuthorization": "The emulator authorizes nothing: every raw read and write below is answered the same with the literal Bearer owner and with no authorization header at all.",
+  "production": "A production project's roles/datastore.viewer is not measured here: it needs a Google project and a credential, which the owner runs.",
+  "agentReads": [
+    {
+      "statement": "db.listCollections()",
+      "answer": {
+        "refused": "QueryError",
+        "message": "Read-only execution exceeded the row budget: 4 rows > 3 allowed"
+      },
+      "billedReads": 1,
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/v1/projects/demo-libredb/databases/%28default%29/documents:listCollectionIds",
+          "body": {
+            "pageSize": 4
+          },
+          "status": 200
+        }
+      ]
+    },
+    {
+      "statement": "db.doc(\"tenants/agent-marker-tenant\").listCollections()",
+      "answer": {
+        "fields": [
+          "collection"
+        ],
+        "rows": [
+          {
+            "collection": "invoices"
+          }
+        ],
+        "warnings": []
+      },
+      "billedReads": 1,
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/v1/projects/demo-libredb/databases/%28default%29/documents/tenants/agent-marker-tenant:listCollectionIds",
+          "body": {
+            "pageSize": 4
+          },
+          "status": 200
+        }
+      ]
+    },
+    {
+      "statement": "db.collection(\"products\").count()",
+      "answer": {
+        "fields": [
+          "collection",
+          "documents"
+        ],
+        "rows": [
+          {
+            "collection": "products",
+            "documents": 3
+          }
+        ],
+        "warnings": []
+      },
+      "billedReads": 1,
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/v1/projects/demo-libredb/databases/%28default%29/documents:runAggregationQuery",
+          "body": {
+            "structuredAggregationQuery": {
+              "structuredQuery": {
+                "from": [
+                  {
+                    "collectionId": "products"
+                  }
+                ]
+              },
+              "aggregations": [
+                {
+                  "alias": "count",
+                  "count": {
+                    "upTo": "4"
+                  }
+                }
+              ]
+            }
+          },
+          "status": 200
+        }
+      ]
+    },
+    {
+      "statement": "db.collection(\"orders\").count()",
+      "answer": {
+        "refused": "QueryError",
+        "message": "Read-only execution exceeded the row budget: the collection holds more than 3 documents, and Studio counts documents only up to the row budget, refusing a larger count rather than cutting it. A narrower count is not one of agent mode's reads, since it would reveal stored values."
+      },
+      "billedReads": 1,
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/v1/projects/demo-libredb/databases/%28default%29/documents:runAggregationQuery",
+          "body": {
+            "structuredAggregationQuery": {
+              "structuredQuery": {
+                "from": [
+                  {
+                    "collectionId": "orders"
+                  }
+                ]
+              },
+              "aggregations": [
+                {
+                  "alias": "count",
+                  "count": {
+                    "upTo": "4"
+                  }
+                }
+              ]
+            }
+          },
+          "status": 200
+        }
+      ]
+    },
+    {
+      "statement": "db.collectionGroup(\"orders\").count()",
+      "answer": {
+        "refused": "QueryError",
+        "message": "Read-only execution exceeded the row budget: the collection holds more than 3 documents, and Studio counts documents only up to the row budget, refusing a larger count rather than cutting it. A narrower count is not one of agent mode's reads, since it would reveal stored values."
+      },
+      "billedReads": 1,
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/v1/projects/demo-libredb/databases/%28default%29/documents:runAggregationQuery",
+          "body": {
+            "structuredAggregationQuery": {
+              "structuredQuery": {
+                "from": [
+                  {
+                    "collectionId": "orders",
+                    "allDescendants": true
+                  }
+                ]
+              },
+              "aggregations": [
+                {
+                  "alias": "count",
+                  "count": {
+                    "upTo": "4"
+                  }
+                }
+              ]
+            }
+          },
+          "status": 200
+        }
+      ]
+    },
+    {
+      "statement": "db.collection(\"users/alice/orders\").count()",
+      "answer": {
+        "fields": [
+          "collection",
+          "documents"
+        ],
+        "rows": [
+          {
+            "collection": "orders",
+            "documents": 2
+          }
+        ],
+        "warnings": []
+      },
+      "billedReads": 1,
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/v1/projects/demo-libredb/databases/%28default%29/documents/users/alice:runAggregationQuery",
+          "body": {
+            "structuredAggregationQuery": {
+              "structuredQuery": {
+                "from": [
+                  {
+                    "collectionId": "orders"
+                  }
+                ]
+              },
+              "aggregations": [
+                {
+                  "alias": "count",
+                  "count": {
+                    "upTo": "4"
+                  }
+                }
+              ]
+            }
+          },
+          "status": 200
+        }
+      ]
+    },
+    {
+      "statement": "db.doc(\"users/alice\").get()",
+      "answer": {
+        "fields": [
+          "collection",
+          "exists",
+          "created",
+          "updated"
+        ],
+        "rows": [
+          {
+            "collection": "users",
+            "exists": true,
+            "created": "2026-10-31T05:30:01.581141Z",
+            "updated": "2026-10-31T05:30:01.581141Z"
+          }
+        ],
+        "warnings": []
+      },
+      "billedReads": 1,
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/v1/projects/demo-libredb/databases/%28default%29/documents:batchGet",
+          "body": {
+            "documents": [
+              "projects/demo-libredb/databases/(default)/documents/users/alice"
+            ],
+            "mask": {
+              "fieldPaths": []
+            }
+          },
+          "status": 200
+        }
+      ]
+    },
+    {
+      "statement": "db.doc(\"users/nobody\").get()",
+      "answer": {
+        "fields": [
+          "collection",
+          "exists",
+          "created",
+          "updated"
+        ],
+        "rows": [
+          {
+            "collection": "users",
+            "exists": false,
+            "created": null,
+            "updated": null
+          }
+        ],
+        "warnings": []
+      },
+      "billedReads": 1,
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/v1/projects/demo-libredb/databases/%28default%29/documents:batchGet",
+          "body": {
+            "documents": [
+              "projects/demo-libredb/databases/(default)/documents/users/nobody"
+            ],
+            "mask": {
+              "fieldPaths": []
+            }
+          },
+          "status": 200
+        }
+      ]
+    },
+    {
+      "statement": "db.collection(\"users\").where(\"age\", \">=\", 18).count()",
+      "answer": {
+        "refused": "RefusedBeforeSendError",
+        "message": "A count narrowed by where, orderBy, a cursor (startAt, startAfter, endAt, endBefore), offset, limit or select is withheld, since narrower and narrower counts would reveal stored values: agent mode counts only a whole collection or a whole collection group. Agent mode on Firestore reads metadata only, one statement per read: db.listCollections() for the root collection ids, db.doc(\"PATH\").listCollections() for the subcollection ids of one document the request names in full, db.collection(\"PATH\").count() or db.collectionGroup(\"ID\").count() for one whole collection's document count, with nothing narrowing it, and db.doc(\"PATH\").get() for whether one document the request names in full exists and when it was created and last updated, never its fields. Nothing was sent."
+      },
+      "billedReads": 0,
+      "requests": []
+    },
+    {
+      "statement": "db.collection(\"users\").orderBy(\"age\").startAt(30).count()",
+      "answer": {
+        "refused": "RefusedBeforeSendError",
+        "message": "A count narrowed by where, orderBy, a cursor (startAt, startAfter, endAt, endBefore), offset, limit or select is withheld, since narrower and narrower counts would reveal stored values: agent mode counts only a whole collection or a whole collection group. Agent mode on Firestore reads metadata only, one statement per read: db.listCollections() for the root collection ids, db.doc(\"PATH\").listCollections() for the subcollection ids of one document the request names in full, db.collection(\"PATH\").count() or db.collectionGroup(\"ID\").count() for one whole collection's document count, with nothing narrowing it, and db.doc(\"PATH\").get() for whether one document the request names in full exists and when it was created and last updated, never its fields. Nothing was sent."
+      },
+      "billedReads": 0,
+      "requests": []
+    },
+    {
+      "statement": "db.collection(\"users\").limit(1).count()",
+      "answer": {
+        "refused": "RefusedBeforeSendError",
+        "message": "A count narrowed by where, orderBy, a cursor (startAt, startAfter, endAt, endBefore), offset, limit or select is withheld, since narrower and narrower counts would reveal stored values: agent mode counts only a whole collection or a whole collection group. Agent mode on Firestore reads metadata only, one statement per read: db.listCollections() for the root collection ids, db.doc(\"PATH\").listCollections() for the subcollection ids of one document the request names in full, db.collection(\"PATH\").count() or db.collectionGroup(\"ID\").count() for one whole collection's document count, with nothing narrowing it, and db.doc(\"PATH\").get() for whether one document the request names in full exists and when it was created and last updated, never its fields. Nothing was sent."
+      },
+      "billedReads": 0,
+      "requests": []
+    },
+    {
+      "statement": "db.collection(\"users\").aggregate({ total: AggregateField.sum(\"age\") })",
+      "answer": {
+        "refused": "RefusedBeforeSendError",
+        "message": "A sum, an average or a nearest-neighbour search reads stored field values, which agent mode never does. Agent mode on Firestore reads metadata only, one statement per read: db.listCollections() for the root collection ids, db.doc(\"PATH\").listCollections() for the subcollection ids of one document the request names in full, db.collection(\"PATH\").count() or db.collectionGroup(\"ID\").count() for one whole collection's document count, with nothing narrowing it, and db.doc(\"PATH\").get() for whether one document the request names in full exists and when it was created and last updated, never its fields. Nothing was sent."
+      },
+      "billedReads": 0,
+      "requests": []
+    },
+    {
+      "statement": "db.collection(\"users\").get()",
+      "answer": {
+        "refused": "RefusedBeforeSendError",
+        "message": "That reads documents, whose ids, field names and values count as stored values, so agent mode never sends it. Agent mode on Firestore reads metadata only, one statement per read: db.listCollections() for the root collection ids, db.doc(\"PATH\").listCollections() for the subcollection ids of one document the request names in full, db.collection(\"PATH\").count() or db.collectionGroup(\"ID\").count() for one whole collection's document count, with nothing narrowing it, and db.doc(\"PATH\").get() for whether one document the request names in full exists and when it was created and last updated, never its fields. Nothing was sent."
+      },
+      "billedReads": 0,
+      "requests": []
+    },
+    {
+      "statement": "db.collection(\"users\").listDocuments()",
+      "answer": {
+        "refused": "RefusedBeforeSendError",
+        "message": "listDocuments() lists document ids, which count as stored values, so agent mode never sends it. Agent mode on Firestore reads metadata only, one statement per read: db.listCollections() for the root collection ids, db.doc(\"PATH\").listCollections() for the subcollection ids of one document the request names in full, db.collection(\"PATH\").count() or db.collectionGroup(\"ID\").count() for one whole collection's document count, with nothing narrowing it, and db.doc(\"PATH\").get() for whether one document the request names in full exists and when it was created and last updated, never its fields. Nothing was sent."
+      },
+      "billedReads": 0,
+      "requests": []
+    },
+    {
+      "statement": "db.getAll(db.doc(\"users/alice\"))",
+      "answer": {
+        "refused": "RefusedBeforeSendError",
+        "message": "That reads documents, whose ids, field names and values count as stored values, so agent mode never sends it. Agent mode on Firestore reads metadata only, one statement per read: db.listCollections() for the root collection ids, db.doc(\"PATH\").listCollections() for the subcollection ids of one document the request names in full, db.collection(\"PATH\").count() or db.collectionGroup(\"ID\").count() for one whole collection's document count, with nothing narrowing it, and db.doc(\"PATH\").get() for whether one document the request names in full exists and when it was created and last updated, never its fields. Nothing was sent."
+      },
+      "billedReads": 0,
+      "requests": []
+    },
+    {
+      "statement": "db.collection(\"users\").count().explain()",
+      "answer": {
+        "refused": "RefusedBeforeSendError",
+        "message": "explain() answers a query plan that names indexed fields and, with analyze, runs the query, so agent mode never sends it. Agent mode on Firestore reads metadata only, one statement per read: db.listCollections() for the root collection ids, db.doc(\"PATH\").listCollections() for the subcollection ids of one document the request names in full, db.collection(\"PATH\").count() or db.collectionGroup(\"ID\").count() for one whole collection's document count, with nothing narrowing it, and db.doc(\"PATH\").get() for whether one document the request names in full exists and when it was created and last updated, never its fields. Nothing was sent."
+      },
+      "billedReads": 0,
+      "requests": []
+    },
+    {
+      "statement": "db.doc(\"users/alice\").set({ admin: true })",
+      "answer": {
+        "refused": "RefusedBeforeSendError",
+        "message": "Studio is read-only for Firestore in this version (line 1, column 23: \"set({ admin: true })\") Agent mode on Firestore reads metadata only, one statement per read: db.listCollections() for the root collection ids, db.doc(\"PATH\").listCollections() for the subcollection ids of one document the request names in full, db.collection(\"PATH\").count() or db.collectionGroup(\"ID\").count() for one whole collection's document count, with nothing narrowing it, and db.doc(\"PATH\").get() for whether one document the request names in full exists and when it was created and last updated, never its fields. Nothing was sent."
+      },
+      "billedReads": 0,
+      "requests": []
+    },
+    {
+      "statement": "the allowance's last unit, then one read past it",
+      "answer": {
+        "first": 1,
+        "second": {
+          "refused": "ReadAllowanceExceededError",
+          "message": "Read-only execution exceeded the read allowance: a document read needs 1 billed reads, and 0 of the 1 this run may spend is left"
+        }
+      },
+      "billedReads": 1,
+      "requests": [
+        {
+          "method": "POST",
+          "path": "/v1/projects/demo-libredb/databases/%28default%29/documents/users/alice:listCollectionIds",
+          "body": {
+            "pageSize": 4
+          },
+          "status": 200
+        }
+      ]
+    }
+  ],
+  "surfaces": {
+    "agentReadOnly": [
+      {
+        "surface": "countObjects, no allowance",
+        "answer": {
+          "collection": {
+            "unavailable": "Agent mode on Firestore reads metadata only: collection ids, a whole collection's document count, and whether a document the request names in full exists and when it was created and last updated. Firestore bills every read, so an agent-mode handle sends one only within an agent run's read allowance, and this read carries none: nothing was sent. Read the collection ids with db.listCollections() through run_read_query."
+          }
+        },
+        "billedReads": 0,
+        "requests": []
+      },
+      {
+        "surface": "countObjects",
+        "answer": {
+          "collection": {
+            "count": 8
+          }
+        },
+        "billedReads": 1,
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/projects/demo-libredb/databases/%28default%29/documents:listCollectionIds",
+            "body": {
+              "pageSize": 1000
+            },
+            "status": 200
+          }
+        ]
+      },
+      {
+        "surface": "listObjects collection",
+        "answer": [
+          {
+            "path": [
+              "ids"
+            ],
+            "name": "ids",
+            "kind": "collection"
+          },
+          {
+            "path": [
+              "orders"
+            ],
+            "name": "orders",
+            "kind": "collection"
+          },
+          {
+            "path": [
+              "orphans"
+            ],
+            "name": "orphans",
+            "kind": "collection"
+          },
+          {
+            "path": [
+              "products"
+            ],
+            "name": "products",
+            "kind": "collection"
+          },
+          {
+            "path": [
+              "tenants"
+            ],
+            "name": "tenants",
+            "kind": "collection"
+          },
+          {
+            "path": [
+              "users"
+            ],
+            "name": "users",
+            "kind": "collection"
+          },
+          {
+            "path": [
+              "Ａ-col"
+            ],
+            "name": "Ａ-col",
+            "kind": "collection"
+          },
+          {
+            "path": [
+              "𐐀-col"
+            ],
+            "name": "𐐀-col",
+            "kind": "collection"
+          }
+        ],
+        "billedReads": 1,
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/projects/demo-libredb/databases/%28default%29/documents:listCollectionIds",
+            "body": {
+              "pageSize": 1000
+            },
+            "status": 200
+          }
+        ]
+      },
+      {
+        "surface": "listObjects document",
+        "answer": {
+          "refused": "QueryError",
+          "message": "Agent mode on Firestore reads metadata only: collection ids, a whole collection's document count, and whether a document the request names in full exists and when it was created and last updated. Document ids, paths, field names and field values count as stored values, since they name users and tenants, so none of them is read in agent mode. Documents are never listed in agent mode; count a collection with db.collection(\"ID\").count() through run_read_query."
+        },
+        "billedReads": 0,
+        "requests": []
+      },
+      {
+        "surface": "describeObjects collection",
+        "answer": {
+          "details": [
+            {
+              "path": [
+                "ids"
+              ],
+              "columns": [
+                {
+                  "name": "__name__",
+                  "type": "reference",
+                  "nullable": false,
+                  "isPrimary": true
+                }
+              ],
+              "indexes": [],
+              "foreignKeys": []
+            },
+            {
+              "path": [
+                "orders"
+              ],
+              "columns": [
+                {
+                  "name": "__name__",
+                  "type": "reference",
+                  "nullable": false,
+                  "isPrimary": true
+                }
+              ],
+              "indexes": [],
+              "foreignKeys": []
+            },
+            {
+              "path": [
+                "orphans"
+              ],
+              "columns": [
+                {
+                  "name": "__name__",
+                  "type": "reference",
+                  "nullable": false,
+                  "isPrimary": true
+                }
+              ],
+              "indexes": [],
+              "foreignKeys": []
+            },
+            {
+              "path": [
+                "products"
+              ],
+              "columns": [
+                {
+                  "name": "__name__",
+                  "type": "reference",
+                  "nullable": false,
+                  "isPrimary": true
+                }
+              ],
+              "indexes": [],
+              "foreignKeys": []
+            },
+            {
+              "path": [
+                "tenants"
+              ],
+              "columns": [
+                {
+                  "name": "__name__",
+                  "type": "reference",
+                  "nullable": false,
+                  "isPrimary": true
+                }
+              ],
+              "indexes": [],
+              "foreignKeys": []
+            },
+            {
+              "path": [
+                "users"
+              ],
+              "columns": [
+                {
+                  "name": "__name__",
+                  "type": "reference",
+                  "nullable": false,
+                  "isPrimary": true
+                }
+              ],
+              "indexes": [],
+              "foreignKeys": []
+            },
+            {
+              "path": [
+                "Ａ-col"
+              ],
+              "columns": [
+                {
+                  "name": "__name__",
+                  "type": "reference",
+                  "nullable": false,
+                  "isPrimary": true
+                }
+              ],
+              "indexes": [],
+              "foreignKeys": []
+            },
+            {
+              "path": [
+                "𐐀-col"
+              ],
+              "columns": [
+                {
+                  "name": "__name__",
+                  "type": "reference",
+                  "nullable": false,
+                  "isPrimary": true
+                }
+              ],
+              "indexes": [],
+              "foreignKeys": []
+            }
+          ]
+        },
+        "billedReads": 1,
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/projects/demo-libredb/databases/%28default%29/documents:listCollectionIds",
+            "body": {
+              "pageSize": 1000
+            },
+            "status": 200
+          }
+        ]
+      },
+      {
+        "surface": "describeObject collection",
+        "answer": {
+          "refused": "QueryError",
+          "message": "Agent mode on Firestore reads metadata only: collection ids, a whole collection's document count, and whether a document the request names in full exists and when it was created and last updated. Document ids, paths, field names and field values count as stored values, since they name users and tenants, so none of them is read in agent mode. A collection's fields are sampled from its documents, so agent mode lists each collection with __name__ as its one column."
+        },
+        "billedReads": 0,
+        "requests": []
+      },
+      {
+        "surface": "readObjectSource document",
+        "answer": {
+          "refused": "QueryError",
+          "message": "Agent mode on Firestore reads metadata only: collection ids, a whole collection's document count, and whether a document the request names in full exists and when it was created and last updated. Document ids, paths, field names and field values count as stored values, since they name users and tenants, so none of them is read in agent mode. A document's Source tab holds its fields, which agent mode does not read."
+        },
+        "billedReads": 0,
+        "requests": []
+      },
+      {
+        "surface": "scanKeysPage",
+        "answer": {
+          "refused": "QueryError",
+          "message": "Agent mode on Firestore reads metadata only: collection ids, a whole collection's document count, and whether a document the request names in full exists and when it was created and last updated. Document ids, paths, field names and field values count as stored values, since they name users and tenants, so none of them is read in agent mode. The Keys panel, which lists document ids, is not read on an agent-mode handle."
+        },
+        "billedReads": 0,
+        "requests": []
+      },
+      {
+        "surface": "query",
+        "answer": {
+          "refused": "RefusedBeforeSendError",
+          "message": "Agent mode on Firestore reads metadata only: collection ids, a whole collection's document count, and whether a document the request names in full exists and when it was created and last updated. Document ids, paths, field names and field values count as stored values, since they name users and tenants, so none of them is read in agent mode. The editor's console, which reads documents, is refused on an agent-mode handle; agent reads go through queryReadOnly."
+        },
+        "billedReads": 0,
+        "requests": []
+      },
+      {
+        "surface": "getHealth",
+        "answer": {
+          "databaseSize": "Agent mode on Firestore reads metadata only: collection ids, a whole collection's document count, and whether a document the request names in full exists and when it was created and last updated. Firestore reports no size for the database, so none is reported.",
+          "cacheHitRatio": "N/A",
+          "slowQueries": [],
+          "activeSessions": []
+        },
+        "billedReads": 0,
+        "requests": []
+      },
+      {
+        "surface": "getOverview",
+        "answer": {
+          "refused": "QueryError",
+          "message": "Agent mode on Firestore reads metadata only: collection ids, a whole collection's document count, and whether a document the request names in full exists and when it was created and last updated. Firestore reports no uptime, connection or object figures, so no overview reading is taken; this is not a reading of none."
+        },
+        "billedReads": 0,
+        "requests": []
+      },
+      {
+        "surface": "getTableStats",
+        "answer": {
+          "refused": "QueryError",
+          "message": "Agent mode on Firestore reads metadata only: collection ids, a whole collection's document count, and whether a document the request names in full exists and when it was created and last updated. Firestore reports no per-collection statistics Studio reads, so no table reading is taken; a collection's document count is read with run_read_query."
+        },
+        "billedReads": 0,
+        "requests": []
+      }
+    ],
+    "operations": [
+      {
+        "surface": "countObjects, no allowance",
+        "answer": {
+          "collection": {
+            "unavailable": "Agent mode on Firestore reads metadata only: collection ids, a whole collection's document count, and whether a document the request names in full exists and when it was created and last updated. Firestore bills every read, so an agent-mode handle sends one only within an agent run's read allowance, and this read carries none: nothing was sent. Read the collection ids with db.listCollections() through run_read_query."
+          }
+        },
+        "billedReads": 0,
+        "requests": []
+      },
+      {
+        "surface": "countObjects",
+        "answer": {
+          "collection": {
+            "count": 8
+          }
+        },
+        "billedReads": 1,
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/projects/demo-libredb/databases/%28default%29/documents:listCollectionIds",
+            "body": {
+              "pageSize": 1000
+            },
+            "status": 200
+          }
+        ]
+      },
+      {
+        "surface": "listObjects collection",
+        "answer": [
+          {
+            "path": [
+              "ids"
+            ],
+            "name": "ids",
+            "kind": "collection"
+          },
+          {
+            "path": [
+              "orders"
+            ],
+            "name": "orders",
+            "kind": "collection"
+          },
+          {
+            "path": [
+              "orphans"
+            ],
+            "name": "orphans",
+            "kind": "collection"
+          },
+          {
+            "path": [
+              "products"
+            ],
+            "name": "products",
+            "kind": "collection"
+          },
+          {
+            "path": [
+              "tenants"
+            ],
+            "name": "tenants",
+            "kind": "collection"
+          },
+          {
+            "path": [
+              "users"
+            ],
+            "name": "users",
+            "kind": "collection"
+          },
+          {
+            "path": [
+              "Ａ-col"
+            ],
+            "name": "Ａ-col",
+            "kind": "collection"
+          },
+          {
+            "path": [
+              "𐐀-col"
+            ],
+            "name": "𐐀-col",
+            "kind": "collection"
+          }
+        ],
+        "billedReads": 1,
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/projects/demo-libredb/databases/%28default%29/documents:listCollectionIds",
+            "body": {
+              "pageSize": 1000
+            },
+            "status": 200
+          }
+        ]
+      },
+      {
+        "surface": "listObjects document",
+        "answer": {
+          "refused": "QueryError",
+          "message": "Agent mode on Firestore reads metadata only: collection ids, a whole collection's document count, and whether a document the request names in full exists and when it was created and last updated. Document ids, paths, field names and field values count as stored values, since they name users and tenants, so none of them is read in agent mode. Documents are never listed in agent mode; count a collection with db.collection(\"ID\").count() through run_read_query."
+        },
+        "billedReads": 0,
+        "requests": []
+      },
+      {
+        "surface": "describeObjects collection",
+        "answer": {
+          "details": [
+            {
+              "path": [
+                "ids"
+              ],
+              "columns": [
+                {
+                  "name": "__name__",
+                  "type": "reference",
+                  "nullable": false,
+                  "isPrimary": true
+                }
+              ],
+              "indexes": [],
+              "foreignKeys": []
+            },
+            {
+              "path": [
+                "orders"
+              ],
+              "columns": [
+                {
+                  "name": "__name__",
+                  "type": "reference",
+                  "nullable": false,
+                  "isPrimary": true
+                }
+              ],
+              "indexes": [],
+              "foreignKeys": []
+            },
+            {
+              "path": [
+                "orphans"
+              ],
+              "columns": [
+                {
+                  "name": "__name__",
+                  "type": "reference",
+                  "nullable": false,
+                  "isPrimary": true
+                }
+              ],
+              "indexes": [],
+              "foreignKeys": []
+            },
+            {
+              "path": [
+                "products"
+              ],
+              "columns": [
+                {
+                  "name": "__name__",
+                  "type": "reference",
+                  "nullable": false,
+                  "isPrimary": true
+                }
+              ],
+              "indexes": [],
+              "foreignKeys": []
+            },
+            {
+              "path": [
+                "tenants"
+              ],
+              "columns": [
+                {
+                  "name": "__name__",
+                  "type": "reference",
+                  "nullable": false,
+                  "isPrimary": true
+                }
+              ],
+              "indexes": [],
+              "foreignKeys": []
+            },
+            {
+              "path": [
+                "users"
+              ],
+              "columns": [
+                {
+                  "name": "__name__",
+                  "type": "reference",
+                  "nullable": false,
+                  "isPrimary": true
+                }
+              ],
+              "indexes": [],
+              "foreignKeys": []
+            },
+            {
+              "path": [
+                "Ａ-col"
+              ],
+              "columns": [
+                {
+                  "name": "__name__",
+                  "type": "reference",
+                  "nullable": false,
+                  "isPrimary": true
+                }
+              ],
+              "indexes": [],
+              "foreignKeys": []
+            },
+            {
+              "path": [
+                "𐐀-col"
+              ],
+              "columns": [
+                {
+                  "name": "__name__",
+                  "type": "reference",
+                  "nullable": false,
+                  "isPrimary": true
+                }
+              ],
+              "indexes": [],
+              "foreignKeys": []
+            }
+          ]
+        },
+        "billedReads": 1,
+        "requests": [
+          {
+            "method": "POST",
+            "path": "/v1/projects/demo-libredb/databases/%28default%29/documents:listCollectionIds",
+            "body": {
+              "pageSize": 1000
+            },
+            "status": 200
+          }
+        ]
+      },
+      {
+        "surface": "describeObject collection",
+        "answer": {
+          "refused": "QueryError",
+          "message": "Agent mode on Firestore reads metadata only: collection ids, a whole collection's document count, and whether a document the request names in full exists and when it was created and last updated. Document ids, paths, field names and field values count as stored values, since they name users and tenants, so none of them is read in agent mode. A collection's fields are sampled from its documents, so agent mode lists each collection with __name__ as its one column."
+        },
+        "billedReads": 0,
+        "requests": []
+      },
+      {
+        "surface": "readObjectSource document",
+        "answer": {
+          "refused": "QueryError",
+          "message": "Agent mode on Firestore reads metadata only: collection ids, a whole collection's document count, and whether a document the request names in full exists and when it was created and last updated. Document ids, paths, field names and field values count as stored values, since they name users and tenants, so none of them is read in agent mode. A document's Source tab holds its fields, which agent mode does not read."
+        },
+        "billedReads": 0,
+        "requests": []
+      },
+      {
+        "surface": "scanKeysPage",
+        "answer": {
+          "refused": "QueryError",
+          "message": "Agent mode on Firestore reads metadata only: collection ids, a whole collection's document count, and whether a document the request names in full exists and when it was created and last updated. Document ids, paths, field names and field values count as stored values, since they name users and tenants, so none of them is read in agent mode. The Keys panel, which lists document ids, is not read on an agent-mode handle."
+        },
+        "billedReads": 0,
+        "requests": []
+      },
+      {
+        "surface": "query",
+        "answer": {
+          "refused": "RefusedBeforeSendError",
+          "message": "Agent mode on Firestore reads metadata only: collection ids, a whole collection's document count, and whether a document the request names in full exists and when it was created and last updated. Document ids, paths, field names and field values count as stored values, since they name users and tenants, so none of them is read in agent mode. The editor's console, which reads documents, is refused on an agent-mode handle; agent reads go through queryReadOnly."
+        },
+        "billedReads": 0,
+        "requests": []
+      },
+      {
+        "surface": "getHealth",
+        "answer": {
+          "databaseSize": "Agent mode on Firestore reads metadata only: collection ids, a whole collection's document count, and whether a document the request names in full exists and when it was created and last updated. Firestore reports no size for the database, so none is reported.",
+          "cacheHitRatio": "N/A",
+          "slowQueries": [],
+          "activeSessions": []
+        },
+        "billedReads": 0,
+        "requests": []
+      },
+      {
+        "surface": "getOverview",
+        "answer": {
+          "refused": "QueryError",
+          "message": "Agent mode on Firestore reads metadata only: collection ids, a whole collection's document count, and whether a document the request names in full exists and when it was created and last updated. Firestore reports no uptime, connection or object figures, so no overview reading is taken; this is not a reading of none."
+        },
+        "billedReads": 0,
+        "requests": []
+      },
+      {
+        "surface": "getTableStats",
+        "answer": {
+          "refused": "QueryError",
+          "message": "Agent mode on Firestore reads metadata only: collection ids, a whole collection's document count, and whether a document the request names in full exists and when it was created and last updated. Firestore reports no per-collection statistics Studio reads, so no table reading is taken; a collection's document count is read with run_read_query."
+        },
+        "billedReads": 0,
+        "requests": []
+      }
+    ]
+  },
+  "raw": {
+    "reads": [
+      {
+        "what": "a document get",
+        "asOwner": {
+          "status": 200,
+          "carriedMarker": true
+        },
+        "withNoAuthorization": {
+          "status": 200,
+          "carriedMarker": true
+        }
+      },
+      {
+        "what": "a document get with a field mask",
+        "asOwner": {
+          "status": 200,
+          "carriedMarker": true
+        },
+        "withNoAuthorization": {
+          "status": 200,
+          "carriedMarker": true
+        }
+      },
+      {
+        "what": "listDocuments",
+        "asOwner": {
+          "status": 200,
+          "carriedMarker": true
+        },
+        "withNoAuthorization": {
+          "status": 200,
+          "carriedMarker": true
+        }
+      },
+      {
+        "what": "a batchGet with no mask",
+        "asOwner": {
+          "status": 200,
+          "carriedMarker": true
+        },
+        "withNoAuthorization": {
+          "status": 200,
+          "carriedMarker": true
+        }
+      },
+      {
+        "what": "a runQuery",
+        "asOwner": {
+          "status": 200,
+          "carriedMarker": true
+        },
+        "withNoAuthorization": {
+          "status": 200,
+          "carriedMarker": true
+        }
+      },
+      {
+        "what": "a filtered count",
+        "asOwner": {
+          "status": 200,
+          "carriedMarker": false
+        },
+        "withNoAuthorization": {
+          "status": 200,
+          "carriedMarker": false
+        }
+      },
+      {
+        "what": "a sum",
+        "asOwner": {
+          "status": 200,
+          "carriedMarker": true
+        },
+        "withNoAuthorization": {
+          "status": 200,
+          "carriedMarker": false
+        }
+      }
+    ],
+    "writes": [
+      {
+        "what": "a commit, with no authorization",
+        "status": 200
+      },
+      {
+        "what": "a document PATCH, with no authorization",
+        "status": 200
+      }
+    ]
+  },
+  "snapshot": {
+    "before": {
+      "documents": 24,
+      "sha256": "351bc5e8ebb7da55417e3670ab896de674c5ce536823f776eab9d3bc67c88762"
+    },
+    "afterAgent": {
+      "documents": 24,
+      "sha256": "351bc5e8ebb7da55417e3670ab896de674c5ce536823f776eab9d3bc67c88762"
+    },
+    "afterRaw": {
+      "documents": 26,
+      "sha256": "55a494e2313c23a0ff557fe78e455519c7447bb5a46cb8708f04aaa7c2643b02"
+    },
+    "agentLeftUnchanged": true,
+    "rawWritesChangedIt": true
+  },
+  "leaks": []
+}
