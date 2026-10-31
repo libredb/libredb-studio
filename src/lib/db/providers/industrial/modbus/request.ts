@@ -112,7 +112,7 @@ function describe(value: unknown): string {
   return typeof value;
 }
 
-function parsePoints(body: Record<string, unknown>, knownNames: ReadonlySet<string>): ReadRequest {
+function parsePoints(body: Record<string, unknown>, knownNames: ReadonlySet<string> | null): ReadRequest {
   onlyKnownKeys(body, POINTS_KEYS, "named point");
   const names = body.read;
   if (!Array.isArray(names)) refuse(`"read" must be a list of point names, and it is ${describe(names)}.`);
@@ -123,6 +123,8 @@ function parsePoints(body: Record<string, unknown>, knownNames: ReadonlySet<stri
     if (name.length === 0) refuse("A point name cannot be empty.");
     if (seen.has(name)) refuse(`"${name}" is named twice, and reading it twice returns the same row twice.`);
     seen.add(name);
+    // No map in hand: the names are read against the connection's map later, before any socket.
+    if (knownNames === null) continue;
     if (knownNames.size === 0)
       refuse(
         `This connection carries no register map, so "${name}" names nothing. Modbus has no discovery: a name means what the map says it means.`,
@@ -193,9 +195,11 @@ function parseIdentify(body: Record<string, unknown>): ReadRequest {
 /**
  * Parses one read request. `knownNames` is the set of point names the connection's register map
  * declares; it is empty when the connection carries no map, and a named read is refused then
- * rather than returning rows for names that cannot exist.
+ * rather than returning rows for names that cannot exist. `null` reads the shape alone, for a
+ * reader with no connection in hand (the agent's admission), and the caller that has the map reads
+ * the names against it again before anything is sent.
  */
-export function parseReadRequest(text: string, knownNames: ReadonlySet<string>): ReadRequest {
+export function parseReadRequest(text: string, knownNames: ReadonlySet<string> | null): ReadRequest {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
