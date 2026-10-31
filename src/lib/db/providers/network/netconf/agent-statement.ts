@@ -46,7 +46,7 @@ export type NetconfAgentReading =
 
 const NOTHING_SENT = "Nothing was sent.";
 
-const AGENT_READS = `Agent mode on NETCONF reads with one JSON request per read: {"datastore": "running", "path": "ietf-interfaces:interfaces", "limit": 100} reads the configuration (running, candidate or startup, with get-config) or the configuration and state (operational or intended, with get-data) under a path that names its module on its first node, one more name per level and a list entry's keys after = (interface=eth0), and a list holding more entries than the limit or the row budget is refused rather than cut; {"schema": "ietf-interfaces"} reads one module's YANG text (get-schema). No other operation and no other field is sent. ${NETCONF_WITHHELD_TEXT}`;
+const AGENT_READS = `Agent mode on NETCONF reads with one JSON request per read: {"datastore": "running", "path": "ietf-interfaces:interfaces", "limit": 100} reads the configuration (running, candidate or startup, with get-config) or the configuration and state (operational or intended, with get-data) under a path that names its module on its first node, one more name per level and a list entry's keys after = (interface=eth0), with a key's "/" written %2F (interface=ge-0%2F0%2F0), and a list holding more entries than the limit or the row budget is refused rather than cut; {"schema": "ietf-interfaces"} reads one module's YANG text (get-schema). No other operation and no other field is sent. ${NETCONF_WITHHELD_TEXT}`;
 
 export const NETCONF_AGENT_SENTENCES = {
   reads: AGENT_READS,

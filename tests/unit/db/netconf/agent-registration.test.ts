@@ -138,6 +138,14 @@ describe("what the client facet and plan mode are told", () => {
     expect(NETCONFRPC_CLIENT_PACK.posture.handoverTerms()).toContain("never run in your editor");
   });
 
+  test("every text that teaches the path says a key's '/' is percent-encoded, since a device's interface names hold one", () => {
+    // Measured on the fixture: a model taught only (interface=eth0) wrote interface=ge-0/0/1, refused three times.
+    const escaped = 'a key\'s "/" written %2F (interface=ge-0%2F0%2F0)';
+    expect(NETCONF_AGENT_SENTENCES.reads).toContain(escaped);
+    expect(NETCONFRPC_TOOL_OVERRIDES.investigation?.run_read_query?.description).toContain(escaped);
+    expect(NETCONF_LABELS.statementLanguage as string).toContain(escaped);
+  });
+
   test("the statement language names only the request the editor runs, no XML or other operation, and every withheld kind", () => {
     const language = NETCONF_LABELS.statementLanguage as string;
     expect(language).toContain('{"datastore": "running", "path": "ietf-interfaces:interfaces", "limit": 100}');
