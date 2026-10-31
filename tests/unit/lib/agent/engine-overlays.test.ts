@@ -50,6 +50,9 @@ import { NETCONFRPC_PACK } from "@/lib/agent/languages/netconfrpc/index";
 import * as MODBUSREAD_CLIENT_OVERLAYS from "@/lib/agent/languages/modbusread/engines/client";
 import * as MODBUS from "@/lib/agent/languages/modbusread/engines/modbus";
 import { MODBUSREAD_PACK } from "@/lib/agent/languages/modbusread/index";
+import * as PROMQL_CLIENT_OVERLAYS from "@/lib/agent/languages/promql/engines/client";
+import * as PROMETHEUS from "@/lib/agent/languages/promql/engines/prometheus";
+import { PROMQL_PACK } from "@/lib/agent/languages/promql/index";
 import * as KUBECTL_CLIENT_OVERLAYS from "@/lib/agent/languages/kubectl/engines/client";
 import * as KUBERNETES from "@/lib/agent/languages/kubectl/engines/kubernetes";
 import * as LIBREDBKV_CLIENT_OVERLAYS from "@/lib/agent/languages/libredbkv/engines/client";
@@ -163,6 +166,8 @@ const ENGINE_MODULES: Readonly<Record<string, Readonly<Record<string, unknown>>>
   "netconfrpc/engines/client": NETCONFRPC_CLIENT_OVERLAYS,
   "modbusread/engines/modbus": MODBUS,
   "modbusread/engines/client": MODBUSREAD_CLIENT_OVERLAYS,
+  "promql/engines/prometheus": PROMETHEUS,
+  "promql/engines/client": PROMQL_CLIENT_OVERLAYS,
 };
 
 /** Every overlay an engine module exports, named `<module>#<export>`. */
@@ -195,6 +200,7 @@ describe("the engine registry", () => {
       "mongodb",
       "couchbase",
       "redis",
+      "prometheus",
       "kafka",
       "etcd",
       "neo4j",
@@ -259,7 +265,7 @@ describe("the engine registry", () => {
 
   test("every engine module's server overlay holds a dialect and overridable members, its client one a dialect alone (ruling 2)", () => {
     const exported = exportedOverlays();
-    expect(exported).toHaveLength(66);
+    expect(exported).toHaveLength(68);
     // The one other export is the PostgreSQL retry's rewrite, which its tests call directly.
     expect(
       Object.entries(ENGINE_MODULES)
@@ -337,6 +343,7 @@ describe("the engine packs", () => {
     expect(agentEnginePack("snmp")).toBe(SNMPGET_PACK);
     expect(agentEnginePack("netconf")).toBe(NETCONFRPC_PACK);
     expect(agentEnginePack("modbus")).toBe(MODBUSREAD_PACK);
+    expect(agentEnginePack("prometheus")).toBe(PROMQL_PACK);
   });
 
   test.each(SQL_ENGINES)("%s is the SQL pack member for member, with its own dialect on the server facet", (type) => {
@@ -398,6 +405,7 @@ describe("engineServerDialect", () => {
       "snmp",
       "netconf",
       "modbus",
+      "prometheus",
     ] as DatabaseType[]) {
       expect(Object.keys(engineServerOverlay(type))).toEqual([]);
     }
@@ -633,6 +641,7 @@ describe("the client dialect", () => {
       "snmp",
       "netconf",
       "modbus",
+      "prometheus",
     ] as const) {
       expect(engineClientPack(type).dialect).toBeUndefined();
     }

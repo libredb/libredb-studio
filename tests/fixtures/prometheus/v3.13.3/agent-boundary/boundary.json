@@ -1,0 +1,855 @@
+{
+  "measured": "2026-10-31",
+  "servers": {
+    "prometheus": "prom/prometheus@sha256:6976aa8a60fec930796ce5772b8d12da7a318a5daa8d40d69c5c7819a05eeed7, --web.enable-admin-api --web.enable-remote-write-receiver --web.enable-lifecycle --query.max-samples=100000",
+    "victoriametrics": "victoriametrics/victoria-metrics@sha256:86ca5fdb6d87d56ba047b044039019ba2bd9042b36e35f6ea34e437b6c825cef"
+  },
+  "budget": {
+    "maxResultRows": 200,
+    "maxResultBytes": 1000000,
+    "statementTimeoutMs": 10000
+  },
+  "prometheus": {
+    "agent": {
+      "reads": {
+        "vector": {
+          "ok": true,
+          "answer": {
+            "rowCount": 4,
+            "fields": [
+              "__name__",
+              "instance",
+              "job",
+              "timestamp",
+              "value"
+            ]
+          }
+        },
+        "matrix": {
+          "ok": true,
+          "answer": {
+            "rowCount": 6,
+            "fields": [
+              "timestamp",
+              "value"
+            ]
+          }
+        },
+        "aggregate": {
+          "ok": true,
+          "answer": {
+            "rowCount": 4,
+            "fields": [
+              "job",
+              "timestamp",
+              "value"
+            ]
+          }
+        },
+        "alerts": {
+          "ok": true,
+          "answer": {
+            "rowCount": 1,
+            "fields": [
+              "__name__",
+              "alertname",
+              "alertstate",
+              "timestamp",
+              "value"
+            ]
+          }
+        },
+        "rowBudget": {
+          "ok": false,
+          "error": "QueryError",
+          "message": "Read-only execution exceeded the row budget: 2 rows > 1 allowed"
+        },
+        "byteBudget": {
+          "ok": false,
+          "error": "QueryError",
+          "message": "Read-only execution exceeded the byte budget: 501 bytes > 10 allowed"
+        },
+        "parseError": {
+          "ok": false,
+          "error": "QueryError",
+          "message": "The server could not parse the expression (category bad_data): invalid parameter \"query\": 1:11: parse error: unexpected end of input in grouping opts, expected \"(\""
+        },
+        "timeBudget": {
+          "ok": false,
+          "error": "TimeoutError",
+          "message": "Read-only execution exceeded the time budget: no answer within 1ms, the read's time budget, so Studio stopped the read and refused it. This is Studio's refusal, not the server's answer. Ask for less: a narrower selector, an aggregation, a shorter range or a larger subquery step."
+        },
+        "sampleLimit": {
+          "ok": false,
+          "error": "QueryError",
+          "message": "The server refused to evaluate the expression (category execution), within the read's time budget of 10000ms: an evaluation that would load more samples than the server's own limit allows, or one that matches many series to many, is refused this way. The server's own text is not quoted. Ask for less: a narrower selector, an aggregation, a shorter range or a larger subquery step."
+        }
+      },
+      "refusedBeforeSend": {
+        "requestParameter": {
+          "ok": false,
+          "error": "RefusedBeforeSendError",
+          "message": "The character \"&\" is not PromQL (character 3), so the text is not one expression: agent mode sends the expression alone, and a request parameter cannot be written beside it. Agent mode on Prometheus reads with one PromQL expression per read, written as the console writes it and evaluated as an instant query at the server's own now, the way the console runs it; a range vector or a subquery inside the expression is how a read covers a window. The expression alone is sent: no time, range, step, limit or other request parameter can be written, the server's time-out is set from the read's time budget, and an answer past the row or byte budget is refused, never cut. Only the instant query and the provider's own read endpoints are ever called, never a write, an admin or a lifecycle endpoint. Nothing was sent."
+        },
+        "jsonRequest": {
+          "ok": false,
+          "error": "RefusedBeforeSendError",
+          "message": "The character \":\" cannot stand inside a label matcher's braces (character 9): only label names, quoted strings, commas and the matchers =, !=, =~ and !~ can. Agent mode on Prometheus reads with one PromQL expression per read, written as the console writes it and evaluated as an instant query at the server's own now, the way the console runs it; a range vector or a subquery inside the expression is how a read covers a window. The expression alone is sent: no time, range, step, limit or other request parameter can be written, the server's time-out is set from the read's time budget, and an answer past the row or byte budget is refused, never cut. Only the instant query and the provider's own read endpoints are ever called, never a write, an admin or a lifecycle endpoint. Nothing was sent."
+        },
+        "dashboardVariable": {
+          "ok": false,
+          "error": "RefusedBeforeSendError",
+          "message": "$ is not PromQL: a dashboard variable such as $__range, $__interval or $__rate_interval is a dashboard's time-range directive, which only a dashboard expands (character 9); write the duration itself, such as [5m]. Agent mode on Prometheus reads with one PromQL expression per read, written as the console writes it and evaluated as an instant query at the server's own now, the way the console runs it; a range vector or a subquery inside the expression is how a read covers a window. The expression alone is sent: no time, range, step, limit or other request parameter can be written, the server's time-out is set from the read's time budget, and an answer past the row or byte budget is refused, never cut. Only the instant query and the provider's own read endpoints are ever called, never a write, an admin or a lifecycle endpoint. Nothing was sent."
+        },
+        "console": {
+          "ok": false,
+          "error": "RefusedBeforeSendError",
+          "message": "Agent mode on Prometheus reads PromQL through queryReadOnly, and the object tree, health, storage and table readings from the server's own read endpoints. The console is not held to an agent read's row, byte and time budgets, so it is refused on an agent-mode handle; agent reads go through queryReadOnly."
+        }
+      },
+      "refusalsSentNothing": true,
+      "surfaces": {
+        "targets": {
+          "ok": true,
+          "answer": [
+            "127.0.0.1:1 (studio-token-down)",
+            "localhost:9090 (prometheus)",
+            "localhost:9090 (studio-token-query)",
+            "localhost:9090 [userinfo, query string and fragment withheld] (studio-userinfo)"
+          ]
+        },
+        "alertingRules": {
+          "ok": true,
+          "answer": [
+            "StudioCaptureFiring (studio-capture)"
+          ]
+        },
+        "ruleSources": {
+          "ok": true,
+          "answer": [
+            true
+          ]
+        },
+        "health": {
+          "ok": true,
+          "answer": [
+            "activeSessions",
+            "cacheHitRatio",
+            "databaseSize",
+            "slowQueries"
+          ]
+        },
+        "storage": {
+          "ok": true,
+          "answer": 1
+        },
+        "tables": {
+          "ok": true,
+          "answer": 50
+        },
+        "overview": {
+          "ok": false,
+          "error": "QueryError",
+          "message": "Agent mode on Prometheus reads PromQL through queryReadOnly, and the object tree, health, storage and table readings from the server's own read endpoints. The overview's connection ceiling is read from the server's command-line flags. Agent mode does not read the server's command-line flags: they carry file paths, listen addresses, URLs and local configuration, so they are withheld on every agent-mode reading. This is Studio's choice, not the server's answer. So no overview is taken; the version and the uptime are in the health reading and in PromQL (prometheus_build_info, process_start_time_seconds)."
+        }
+      }
+    },
+    "sentByStudio": [
+      {
+        "method": "GET",
+        "path": "/-/healthy",
+        "urlParameters": [],
+        "formParameters": [],
+        "count": 1
+      },
+      {
+        "method": "GET",
+        "path": "/-/ready",
+        "urlParameters": [],
+        "formParameters": [],
+        "count": 1
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/rules",
+        "urlParameters": [
+          "exclude_alerts"
+        ],
+        "formParameters": [],
+        "count": 3
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/rules",
+        "urlParameters": [
+          "rule_group[]",
+          "file[]",
+          "rule_name[]"
+        ],
+        "formParameters": [],
+        "count": 1
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/status/buildinfo",
+        "urlParameters": [],
+        "formParameters": [],
+        "count": 3
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/status/runtimeinfo",
+        "urlParameters": [],
+        "formParameters": [],
+        "count": 1
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/status/tsdb",
+        "urlParameters": [
+          "limit",
+          "topN"
+        ],
+        "formParameters": [],
+        "count": 2
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/targets",
+        "urlParameters": [
+          "state"
+        ],
+        "formParameters": [],
+        "count": 1
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/query",
+        "urlParameters": [],
+        "formParameters": [
+          "query",
+          "timeout",
+          "limit"
+        ],
+        "count": 9
+      }
+    ],
+    "stateBefore": {
+      "startTime": "2026-10-31T18:35:58.950934555Z",
+      "lastConfigTime": "2026-10-31T18:35:59Z",
+      "seedSamplesAtFixedInstant": [
+        "7"
+      ],
+      "headSeriesAtLeast": true,
+      "headMinTime": 1793471760998
+    },
+    "stateAfterStudio": {
+      "startTime": "2026-10-31T18:35:58.950934555Z",
+      "lastConfigTime": "2026-10-31T18:35:59Z",
+      "seedSamplesAtFixedInstant": [
+        "7"
+      ],
+      "headSeriesAtLeast": true,
+      "headMinTime": 1793471760998
+    },
+    "studioLeftStateUnchanged": true,
+    "rawTargets": [
+      {
+        "scrapePool": "prometheus",
+        "scrapeUrl": {
+          "query": false,
+          "userinfo": false
+        },
+        "globalUrl": {
+          "query": false,
+          "userinfo": false
+        },
+        "lastError": {
+          "query": false,
+          "userinfo": false
+        },
+        "instance": {
+          "query": false,
+          "userinfo": false
+        },
+        "address": {
+          "query": false,
+          "userinfo": false
+        },
+        "scrapeParameters": []
+      },
+      {
+        "scrapePool": "studio-token-down",
+        "scrapeUrl": {
+          "query": true,
+          "userinfo": false
+        },
+        "globalUrl": {
+          "query": true,
+          "userinfo": false
+        },
+        "lastError": {
+          "query": true,
+          "userinfo": false
+        },
+        "instance": {
+          "query": false,
+          "userinfo": false
+        },
+        "address": {
+          "query": false,
+          "userinfo": false
+        },
+        "scrapeParameters": [
+          "__param_token"
+        ]
+      },
+      {
+        "scrapePool": "studio-token-query",
+        "scrapeUrl": {
+          "query": true,
+          "userinfo": false
+        },
+        "globalUrl": {
+          "query": true,
+          "userinfo": false
+        },
+        "lastError": {
+          "query": false,
+          "userinfo": false
+        },
+        "instance": {
+          "query": false,
+          "userinfo": false
+        },
+        "address": {
+          "query": false,
+          "userinfo": false
+        },
+        "scrapeParameters": [
+          "__param_token"
+        ]
+      },
+      {
+        "scrapePool": "studio-userinfo",
+        "scrapeUrl": {
+          "query": false,
+          "userinfo": false
+        },
+        "globalUrl": {
+          "query": false,
+          "userinfo": false
+        },
+        "lastError": {
+          "query": false,
+          "userinfo": false
+        },
+        "instance": {
+          "query": false,
+          "userinfo": true
+        },
+        "address": {
+          "query": false,
+          "userinfo": true
+        },
+        "scrapeParameters": []
+      }
+    ],
+    "flags": {
+      "count": 73,
+      "names": [
+        "agent",
+        "alertmanager.drain-notification-queue-on-shutdown",
+        "alertmanager.notification-batch-size",
+        "alertmanager.notification-queue-capacity",
+        "auto-gomaxprocs",
+        "auto-gomemlimit",
+        "auto-gomemlimit.ratio",
+        "config.auto-reload",
+        "config.auto-reload-interval",
+        "config.file",
+        "enable-feature",
+        "log.format",
+        "log.level",
+        "query.lookback-delta",
+        "query.max-concurrency",
+        "query.max-samples",
+        "query.timeout",
+        "rules.alert.for-grace-period",
+        "rules.alert.for-outage-tolerance",
+        "rules.alert.resend-delay",
+        "rules.max-concurrent-evals",
+        "scrape.adjust-timestamps",
+        "scrape.discovery-reload-interval",
+        "scrape.timestamp-tolerance",
+        "storage.agent.checkpoint-batch-size",
+        "storage.agent.checkpoint-from-in-memory-series",
+        "storage.agent.no-lockfile",
+        "storage.agent.path",
+        "storage.agent.retention.max-time",
+        "storage.agent.retention.min-time",
+        "storage.agent.wal-compression",
+        "storage.agent.wal-compression-type",
+        "storage.agent.wal-segment-size",
+        "storage.agent.wal-truncate-frequency",
+        "storage.remote.flush-deadline",
+        "storage.remote.read-concurrent-limit",
+        "storage.remote.read-max-bytes-in-frame",
+        "storage.remote.read-sample-limit",
+        "storage.tsdb.allow-overlapping-compaction",
+        "storage.tsdb.block-reload-interval",
+        "storage.tsdb.delay-compact-file.path",
+        "storage.tsdb.delayed-compaction.max-percent",
+        "storage.tsdb.head-chunks-write-queue-size",
+        "storage.tsdb.max-block-chunk-segment-size",
+        "storage.tsdb.max-block-duration",
+        "storage.tsdb.min-block-duration",
+        "storage.tsdb.no-lockfile",
+        "storage.tsdb.path",
+        "storage.tsdb.retention.size",
+        "storage.tsdb.retention.time",
+        "storage.tsdb.samples-per-chunk",
+        "storage.tsdb.wal-compression",
+        "storage.tsdb.wal-compression-type",
+        "storage.tsdb.wal-segment-size",
+        "web.config.file",
+        "web.console.libraries",
+        "web.console.templates",
+        "web.cors.origin",
+        "web.enable-admin-api",
+        "web.enable-lifecycle",
+        "web.enable-otlp-receiver",
+        "web.enable-remote-write-receiver",
+        "web.external-url",
+        "web.listen-address",
+        "web.max-connections",
+        "web.max-notifications-subscribers",
+        "web.page-title",
+        "web.read-timeout",
+        "web.remote-write-receiver.accepted-protobuf-messages",
+        "web.route-prefix",
+        "web.search.max-limit",
+        "web.user-assets",
+        "write-documentation"
+      ]
+    },
+    "rawRequests": [
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/tsdb/delete_series",
+        "status": 204,
+        "bytes": 0,
+        "body": ""
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/tsdb/clean_tombstones",
+        "status": 204,
+        "bytes": 0,
+        "body": ""
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/tsdb/snapshot",
+        "status": 200,
+        "bytes": 72,
+        "body": "{\"status\":\"success\",\"data\":{\"name\":\"20261031T183645Z-00d3a96a13cf0c86\"}}"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/write",
+        "status": 400,
+        "bytes": 18,
+        "body": "s2: corrupt input\n"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/otlp/v1/metrics",
+        "status": 404,
+        "bytes": 72,
+        "body": "otlp write receiver needs to be enabled with --web.enable-otlp-receiver\n"
+      },
+      {
+        "method": "POST",
+        "path": "/-/reload",
+        "status": 200,
+        "bytes": 0,
+        "body": ""
+      },
+      {
+        "method": "POST",
+        "path": "/-/quit",
+        "status": 200,
+        "bytes": 34,
+        "body": "Requesting termination... Goodbye!"
+      }
+    ],
+    "stateAfterRaw": {
+      "startTime": "2026-10-31T18:35:58.950934555Z",
+      "lastConfigTime": "2026-10-31T18:36:45Z",
+      "seedSamplesAtFixedInstant": [],
+      "headSeriesAtLeast": true,
+      "headMinTime": 1793471760998
+    }
+  },
+  "victoriametrics": {
+    "agent": {
+      "reads": {
+        "vector": {
+          "ok": true,
+          "answer": {
+            "rowCount": 4,
+            "fields": [
+              "__name__",
+              "instance",
+              "job",
+              "timestamp",
+              "value"
+            ]
+          }
+        },
+        "matrix": {
+          "ok": true,
+          "answer": {
+            "rowCount": 5,
+            "fields": [
+              "timestamp",
+              "value"
+            ]
+          }
+        },
+        "aggregate": {
+          "ok": true,
+          "answer": {
+            "rowCount": 4,
+            "fields": [
+              "job",
+              "timestamp",
+              "value"
+            ]
+          }
+        },
+        "alerts": {
+          "ok": true,
+          "answer": {
+            "rowCount": 0,
+            "fields": [
+              "timestamp",
+              "value"
+            ]
+          }
+        },
+        "rowBudget": {
+          "ok": false,
+          "error": "QueryError",
+          "message": "Read-only execution exceeded the row budget: 4 rows > 1 allowed"
+        },
+        "byteBudget": {
+          "ok": false,
+          "error": "QueryError",
+          "message": "Read-only execution exceeded the byte budget: 537 bytes > 10 allowed"
+        },
+        "parseError": {
+          "ok": false,
+          "error": "QueryError",
+          "message": "The server could not parse the expression (category bad_data): error when executing query=\"sum(up) by\" for (time=1793471775188, step=300000): ModifierExpr: identList: unexpected token \"\"; want \"(\"; unparsed data: \"\""
+        },
+        "timeBudget": {
+          "ok": false,
+          "error": "TimeoutError",
+          "message": "Read-only execution exceeded the time budget: no answer within 1ms, the read's time budget, so Studio stopped the read and refused it. This is Studio's refusal, not the server's answer. Ask for less: a narrower selector, an aggregation, a shorter range or a larger subquery step."
+        },
+        "sampleLimit": {
+          "ok": true,
+          "answer": {
+            "rowCount": 1,
+            "fields": [
+              "timestamp",
+              "value"
+            ]
+          }
+        }
+      },
+      "refusedBeforeSend": {
+        "requestParameter": {
+          "ok": false,
+          "error": "RefusedBeforeSendError",
+          "message": "The character \"&\" is not PromQL (character 3), so the text is not one expression: agent mode sends the expression alone, and a request parameter cannot be written beside it. Agent mode on Prometheus reads with one PromQL expression per read, written as the console writes it and evaluated as an instant query at the server's own now, the way the console runs it; a range vector or a subquery inside the expression is how a read covers a window. The expression alone is sent: no time, range, step, limit or other request parameter can be written, the server's time-out is set from the read's time budget, and an answer past the row or byte budget is refused, never cut. Only the instant query and the provider's own read endpoints are ever called, never a write, an admin or a lifecycle endpoint. Nothing was sent."
+        },
+        "jsonRequest": {
+          "ok": false,
+          "error": "RefusedBeforeSendError",
+          "message": "The character \":\" cannot stand inside a label matcher's braces (character 9): only label names, quoted strings, commas and the matchers =, !=, =~ and !~ can. Agent mode on Prometheus reads with one PromQL expression per read, written as the console writes it and evaluated as an instant query at the server's own now, the way the console runs it; a range vector or a subquery inside the expression is how a read covers a window. The expression alone is sent: no time, range, step, limit or other request parameter can be written, the server's time-out is set from the read's time budget, and an answer past the row or byte budget is refused, never cut. Only the instant query and the provider's own read endpoints are ever called, never a write, an admin or a lifecycle endpoint. Nothing was sent."
+        },
+        "dashboardVariable": {
+          "ok": false,
+          "error": "RefusedBeforeSendError",
+          "message": "$ is not PromQL: a dashboard variable such as $__range, $__interval or $__rate_interval is a dashboard's time-range directive, which only a dashboard expands (character 9); write the duration itself, such as [5m]. Agent mode on Prometheus reads with one PromQL expression per read, written as the console writes it and evaluated as an instant query at the server's own now, the way the console runs it; a range vector or a subquery inside the expression is how a read covers a window. The expression alone is sent: no time, range, step, limit or other request parameter can be written, the server's time-out is set from the read's time budget, and an answer past the row or byte budget is refused, never cut. Only the instant query and the provider's own read endpoints are ever called, never a write, an admin or a lifecycle endpoint. Nothing was sent."
+        },
+        "console": {
+          "ok": false,
+          "error": "RefusedBeforeSendError",
+          "message": "Agent mode on Prometheus reads PromQL through queryReadOnly, and the object tree, health, storage and table readings from the server's own read endpoints. The console is not held to an agent read's row, byte and time budgets, so it is refused on an agent-mode handle; agent reads go through queryReadOnly."
+        }
+      },
+      "refusalsSentNothing": true,
+      "surfaces": {
+        "targets": {
+          "ok": true,
+          "answer": [
+            "127.0.0.1:1 (studio-token-down)",
+            "pr33-agent-prometheus:9090 (prometheus)",
+            "pr33-agent-prometheus:9090 (studio-token-query)",
+            "pr33-agent-prometheus:9090 [userinfo, query string and fragment withheld] (studio-userinfo)"
+          ]
+        },
+        "alertingRules": {
+          "ok": true,
+          "answer": []
+        },
+        "ruleSources": {
+          "ok": true,
+          "answer": []
+        },
+        "health": {
+          "ok": true,
+          "answer": [
+            "activeSessions",
+            "cacheHitRatio",
+            "databaseSize",
+            "slowQueries"
+          ]
+        },
+        "storage": {
+          "ok": false,
+          "error": "ConnectionError",
+          "message": "The server answered /api/v1/status/runtimeinfo with HTTP 400 and a body that is not a Prometheus API response. A proxy or a login page in front of the server answers this way, and so does a server that does not serve this path. The body is not shown."
+        },
+        "tables": {
+          "ok": true,
+          "answer": 50
+        },
+        "overview": {
+          "ok": false,
+          "error": "QueryError",
+          "message": "Agent mode on Prometheus reads PromQL through queryReadOnly, and the object tree, health, storage and table readings from the server's own read endpoints. The overview's connection ceiling is read from the server's command-line flags. Agent mode does not read the server's command-line flags: they carry file paths, listen addresses, URLs and local configuration, so they are withheld on every agent-mode reading. This is Studio's choice, not the server's answer. So no overview is taken; the version and the uptime are in the health reading and in PromQL (prometheus_build_info, process_start_time_seconds)."
+        }
+      }
+    },
+    "sentByStudio": [
+      {
+        "method": "GET",
+        "path": "/-/healthy",
+        "urlParameters": [],
+        "formParameters": [],
+        "count": 1
+      },
+      {
+        "method": "GET",
+        "path": "/-/ready",
+        "urlParameters": [],
+        "formParameters": [],
+        "count": 1
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/rules",
+        "urlParameters": [
+          "exclude_alerts"
+        ],
+        "formParameters": [],
+        "count": 2
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/status/buildinfo",
+        "urlParameters": [],
+        "formParameters": [],
+        "count": 3
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/status/runtimeinfo",
+        "urlParameters": [],
+        "formParameters": [],
+        "count": 1
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/status/tsdb",
+        "urlParameters": [
+          "limit",
+          "topN"
+        ],
+        "formParameters": [],
+        "count": 2
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/targets",
+        "urlParameters": [
+          "state"
+        ],
+        "formParameters": [],
+        "count": 1
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/query",
+        "urlParameters": [],
+        "formParameters": [
+          "query",
+          "timeout",
+          "limit"
+        ],
+        "count": 9
+      }
+    ],
+    "rawTargets": [
+      {
+        "scrapePool": "prometheus",
+        "scrapeUrl": {
+          "query": false,
+          "userinfo": false
+        },
+        "globalUrl": {
+          "query": false,
+          "userinfo": false
+        },
+        "lastError": {
+          "query": false,
+          "userinfo": false
+        },
+        "instance": {
+          "query": false,
+          "userinfo": false
+        },
+        "address": {
+          "query": false,
+          "userinfo": false
+        },
+        "scrapeParameters": []
+      },
+      {
+        "scrapePool": "studio-token-down",
+        "scrapeUrl": {
+          "query": true,
+          "userinfo": false
+        },
+        "globalUrl": {
+          "query": false,
+          "userinfo": false
+        },
+        "lastError": {
+          "query": true,
+          "userinfo": false
+        },
+        "instance": {
+          "query": false,
+          "userinfo": false
+        },
+        "address": {
+          "query": false,
+          "userinfo": false
+        },
+        "scrapeParameters": [
+          "__param_token"
+        ]
+      },
+      {
+        "scrapePool": "studio-token-query",
+        "scrapeUrl": {
+          "query": true,
+          "userinfo": false
+        },
+        "globalUrl": {
+          "query": false,
+          "userinfo": false
+        },
+        "lastError": {
+          "query": false,
+          "userinfo": false
+        },
+        "instance": {
+          "query": false,
+          "userinfo": false
+        },
+        "address": {
+          "query": false,
+          "userinfo": false
+        },
+        "scrapeParameters": [
+          "__param_token"
+        ]
+      },
+      {
+        "scrapePool": "studio-userinfo",
+        "scrapeUrl": {
+          "query": false,
+          "userinfo": true
+        },
+        "globalUrl": {
+          "query": false,
+          "userinfo": false
+        },
+        "lastError": {
+          "query": false,
+          "userinfo": false
+        },
+        "instance": {
+          "query": false,
+          "userinfo": true
+        },
+        "address": {
+          "query": false,
+          "userinfo": true
+        },
+        "scrapeParameters": []
+      }
+    ],
+    "rawRequests": [
+      {
+        "method": "GET",
+        "path": "/api/v1/status/flags",
+        "status": 400,
+        "bytes": 51,
+        "body": "unsupported path requested: \"/api/v1/status/flags\"\n"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/import",
+        "status": 204,
+        "bytes": 0,
+        "body": ""
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/tsdb/delete_series",
+        "status": 204,
+        "bytes": 0,
+        "body": ""
+      },
+      {
+        "method": "GET",
+        "path": "/internal/force_merge",
+        "status": 200,
+        "bytes": 0,
+        "body": ""
+      },
+      {
+        "method": "GET",
+        "path": "/snapshot/create",
+        "status": 200,
+        "bytes": 60,
+        "body": "{\"status\":\"ok\",\"snapshot\":\"20261031183645-18E3B1100B89CCC8\"}"
+      },
+      {
+        "method": "GET",
+        "path": "/-/reload",
+        "status": 200,
+        "bytes": 0,
+        "body": ""
+      }
+    ]
+  }
+}

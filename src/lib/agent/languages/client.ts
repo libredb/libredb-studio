@@ -28,6 +28,7 @@ import { FSQUERY_CLIENT_PACK } from "./fsquery/client";
 import { SNMPGET_CLIENT_PACK } from "./snmpget/client";
 import { NETCONFRPC_CLIENT_PACK } from "./netconfrpc/client";
 import { MODBUSREAD_CLIENT_PACK } from "./modbusread/client";
+import { PROMQL_CLIENT_PACK } from "./promql/client";
 import { LIBREDBKV_CLIENT_PACK } from "./libredbkv/client";
 import { MONGO_CLIENT_PACK } from "./mongo/client";
 import type {
@@ -77,6 +78,7 @@ const CLIENT_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageClien
   snmpget: SNMPGET_CLIENT_PACK,
   netconfrpc: NETCONFRPC_CLIENT_PACK,
   modbusread: MODBUSREAD_CLIENT_PACK,
+  promql: PROMQL_CLIENT_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageClientPack>);
 
 /** The client facet for `language`. The record is total, so a typed id always has one. */
@@ -126,6 +128,7 @@ export const AGENT_EVIDENCE_EVENTS = mergeDisjoint(
     SNMPGET_CLIENT_PACK.evidenceEvents,
     NETCONFRPC_CLIENT_PACK.evidenceEvents,
     MODBUSREAD_CLIENT_PACK.evidenceEvents,
+    PROMQL_CLIENT_PACK.evidenceEvents,
   ],
   "AGENT_EVIDENCE_EVENTS",
 ) satisfies AgentEvidenceEventSpecs<AgentPackEvidenceEvent>;
@@ -156,6 +159,7 @@ export const AGENT_PACK_SHORTFALL_SENTENCES = mergeDisjoint(
     SNMPGET_CLIENT_PACK.shortfallSentences,
     NETCONFRPC_CLIENT_PACK.shortfallSentences,
     MODBUSREAD_CLIENT_PACK.shortfallSentences,
+    PROMQL_CLIENT_PACK.shortfallSentences,
   ],
   "AGENT_PACK_SHORTFALL_SENTENCES",
 ) satisfies Record<AgentPackShortfall, string>;
@@ -182,6 +186,7 @@ export const AGENT_PACK_READING_REFUSAL_HEADLINES = mergeDisjoint(
     SNMPGET_CLIENT_PACK.readingRefusalHeadlines,
     NETCONFRPC_CLIENT_PACK.readingRefusalHeadlines,
     MODBUSREAD_CLIENT_PACK.readingRefusalHeadlines,
+    PROMQL_CLIENT_PACK.readingRefusalHeadlines,
   ],
   "AGENT_PACK_READING_REFUSAL_HEADLINES",
 ) satisfies Record<AgentPackReadingDenyCode, string>;
@@ -211,6 +216,7 @@ export const AGENT_PACK_REQUIREMENTS = mergeDisjoint(
     SNMPGET_CLIENT_PACK.requirements,
     NETCONFRPC_CLIENT_PACK.requirements,
     MODBUSREAD_CLIENT_PACK.requirements,
+    PROMQL_CLIENT_PACK.requirements,
   ],
   "AGENT_PACK_REQUIREMENTS",
 ) satisfies Record<AgentPackVariantRequirement, AgentVariantRequirementSpec>;

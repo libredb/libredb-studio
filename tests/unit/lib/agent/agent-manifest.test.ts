@@ -168,6 +168,7 @@ describe("the plan-estimate operation of each language", () => {
       snmpget: null,
       netconfrpc: null,
       modbusread: null,
+      promql: null,
     });
     expect(Object.isFrozen(AGENT_PLAN_ESTIMATE_OPERATION)).toBe(true);
   });
@@ -431,7 +432,7 @@ describe("workflowAvailability", () => {
     }
   });
 
-  test.each(["prometheus"] as const)(
+  test.each(["mtconnect"] as const)(
     "%s opens operations and planning, and refuses a statement workflow in agent mode",
     (type) => {
       expect(workflowAvailability("agent", "operations", type).open).toBe(true);

@@ -136,6 +136,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "snmp",
   "netconf",
   "modbus",
+  "prometheus",
 ];
 
 /**

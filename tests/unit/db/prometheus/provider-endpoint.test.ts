@@ -158,7 +158,7 @@ async function expectRefusedWithoutEcho(
  * and only whether its request arrived is read.
  */
 async function expectConcatenationReachesThisServer(config: DatabaseConnection): Promise<void> {
-  const naive = new PrometheusProvider(config, {}, { endpoint: concatenatingEndpoint });
+  const naive = new PrometheusProvider(config, {}, {}, { endpoint: concatenatingEndpoint });
   await naive.connect().catch(() => undefined);
   expect(hits.length).toBeGreaterThan(0);
   expect(hits.every((hit) => hit.host === `127.0.0.1:${port}`)).toBe(true);
@@ -282,6 +282,7 @@ describe("the default endpoint takes its scheme from the TLS panel", () => {
     // Only the request function is injected: the endpoint is still the default under test.
     const provider = new PrometheusProvider(
       connection({ host: "prometheus.test", port: 9443, ssl: { mode } }),
+      {},
       {},
       { send: recorder(seen) },
     );

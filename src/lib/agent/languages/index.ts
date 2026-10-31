@@ -29,6 +29,7 @@ import { FSQUERY_PACK } from "./fsquery/index";
 import { SNMPGET_PACK } from "./snmpget/index";
 import { NETCONFRPC_PACK } from "./netconfrpc/index";
 import { MODBUSREAD_PACK } from "./modbusread/index";
+import { PROMQL_PACK } from "./promql/index";
 import type { AgentEvidenceTool, AgentLanguagePack, EvidenceToolName, LanguageToolArms } from "./pack";
 import { SQL_PACK } from "./sql/index";
 
@@ -52,6 +53,7 @@ const PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguagePack>> = Obj
   snmpget: SNMPGET_PACK,
   netconfrpc: NETCONFRPC_PACK,
   modbusread: MODBUSREAD_PACK,
+  promql: PROMQL_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguagePack>);
 
 /** The pack for `language`, or a named error when the id is not a language this server knows. */
@@ -82,6 +84,7 @@ export const LANGUAGE_TOOL_ARMS: Readonly<Record<AgentStatementLanguageId, Langu
   snmpget: SNMPGET_PACK.execution.arms,
   netconfrpc: NETCONFRPC_PACK.execution.arms,
   modbusread: MODBUSREAD_PACK.execution.arms,
+  promql: PROMQL_PACK.execution.arms,
 } satisfies Record<AgentStatementLanguageId, LanguageToolArms>);
 
 /**
@@ -109,6 +112,7 @@ export const AGENT_EVIDENCE_TOOLS: Readonly<Record<EvidenceToolName, AgentEviden
     SNMPGET_PACK.execution.evidenceTools,
     NETCONFRPC_PACK.execution.evidenceTools,
     MODBUSREAD_PACK.execution.evidenceTools,
+    PROMQL_PACK.execution.evidenceTools,
   ],
   "AGENT_EVIDENCE_TOOLS",
 );

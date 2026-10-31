@@ -46,7 +46,8 @@ export type AgentStatementLanguageId =
   | "fsquery"
   | "snmpget"
   | "netconfrpc"
-  | "modbusread";
+  | "modbusread"
+  | "promql";
 
 /** Literal-typed, so `AgentEngineFamily` in `languages/pack.ts` reads each engine's language by type. */
 export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
@@ -70,7 +71,7 @@ export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
   mongodb: "mongo",
   couchbase: "sql",
   redis: "rediscli",
-  prometheus: null,
+  prometheus: "promql",
   kafka: "kafkaread",
   etcd: "etcdctl",
   neo4j: "cypher",

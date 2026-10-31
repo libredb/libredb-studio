@@ -638,6 +638,8 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // Agent mode executes metadata-only reads on Redis, and MCP read stays closed on it until a change of its own opens
   // it.
   redis: false,
+  // Agent mode executes PromQL reads on Prometheus, with the flags and every URL's userinfo and query string withheld,
+  // and MCP read stays closed on it until a change of its own opens it (BACKLOG B161).
   prometheus: false,
   // Agent mode executes metadata-only reads on Kafka, and MCP read stays closed on it until a change of its own opens
   // it (BACKLOG B157).

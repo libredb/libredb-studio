@@ -41,6 +41,7 @@ import { fsqueryAgentReadInput } from "./fsquery-admission";
 import { snmpgetAgentReadInput } from "./snmpget-admission";
 import { netconfrpcAgentReadInput } from "./netconfrpc-admission";
 import { modbusreadAgentReadInput } from "./modbusread-admission";
+import { promqlAgentReadInput } from "./promql-admission";
 import { weaviateapiAgentReadInput } from "./weaviateapi-admission";
 import { agentPlanExecutionSqlInput, agentQueryReadSqlInput, agentReadSqlInput } from "./statement-guard";
 import type { RegistrableOperationDescriptor } from "./types";
@@ -855,6 +856,41 @@ const modbusreadQueryReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+const PROMQL_READ_BOUNDARY =
+  "Prometheus: the provider's structural closed table: one PromQL expression, read before it is sent by a lexer that " +
+  "mirrors the top level of the v3.13.3 lexer, and sent through the console's own request builder as the one form a " +
+  "read takes, POST /api/v1/query with the expression, a timeout set from the time budget and a limit one series past " +
+  "the row budget, and no other parameter; every other request the transport builds is a GET of a path in its closed " +
+  "table of read endpoints, so no admin (delete_series, clean_tombstones, snapshot), remote-write, OTLP, lifecycle " +
+  "(/-/reload, /-/quit) or VictoriaMetrics import or admin endpoint can be reached, and PromQL has no construct that " +
+  "writes. On an agent-mode handle the server's flags are withheld and every URL a target, a rule or an alert carries " +
+  "is kept to its scheme, host, port and path. A result past the row budget (a vector's series, a matrix's samples) " +
+  "or the byte budget is refused, never truncated.";
+
+/**
+ * One PromQL read the model wrote, on a `prometheus` connection.
+ *
+ * R1 on a structural boundary: the transport builds requests only to its own read paths, and the one POST is the
+ * instant query. Its own id, and not a widened `sql.query.read`, so the SQL contract and its audit action stay exactly
+ * what they were.
+ */
+const promqlQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "promql.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: promqlAgentReadInput,
+  verification: {
+    reviewedBy: "Prometheus agent execution design review",
+    boundary: PROMQL_READ_BOUNDARY,
+    verifiedOn: "2026-10-31",
+  },
+};
+
 const FSQUERY_READ_BOUNDARY =
   "Firestore: the provider's structural closed table, read with the console's own parser: one read of a closed table " +
   "of four metadata reads (the root collection ids, the subcollection ids of one document the statement names in full, " +
@@ -1181,6 +1217,7 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   snmpgetQueryReadDescriptor,
   netconfrpcQueryReadDescriptor,
   modbusreadQueryReadDescriptor,
+  promqlQueryReadDescriptor,
 ]);
 
 /**

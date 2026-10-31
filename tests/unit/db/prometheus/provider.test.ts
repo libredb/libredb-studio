@@ -270,7 +270,7 @@ async function connectedProvider(
   overrides: Partial<DatabaseConnection> = {},
   options: ProviderOptions = {},
 ): Promise<PrometheusProvider> {
-  const provider = new PrometheusProvider(connection(overrides), options, deps());
+  const provider = new PrometheusProvider(connection(overrides), options, {}, deps());
   await provider.connect();
   sent = [];
   return provider;
@@ -315,10 +315,10 @@ describe("connect", () => {
     }) as typeof fetch;
 
     // Neither `endpoint` nor `send` is injected: the composition every real connection gets (#1086).
-    const provider = new PrometheusProvider(connection(), {}, { now: () => NOW_MS });
+    const provider = new PrometheusProvider(connection(), {}, {}, { now: () => NOW_MS });
     await provider.connect();
     // The control: the port is the connection's own, not a constant the adapter writes.
-    await new PrometheusProvider(connection({ port: 9091 }), {}, { now: () => NOW_MS }).connect();
+    await new PrometheusProvider(connection({ port: 9091 }), {}, {}, { now: () => NOW_MS }).connect();
 
     expect(provider.isConnected()).toBe(true);
     expect(fetched).toEqual([
@@ -335,7 +335,7 @@ describe("connect", () => {
     };
 
     for (const ssl of [undefined, { mode: "disable" as const }, { mode: "require" as const }]) {
-      await new PrometheusProvider(connection({ ssl }), {}, { endpoint, send, now: () => NOW_MS }).connect();
+      await new PrometheusProvider(connection({ ssl }), {}, {}, { endpoint, send, now: () => NOW_MS }).connect();
     }
 
     expect(asked).toEqual([
@@ -346,12 +346,12 @@ describe("connect", () => {
   });
 
   test("hands the connection's user and password to the transport as its Basic credential", async () => {
-    await new PrometheusProvider(connection({ user: "reader", password: "secret" }), {}, deps()).connect();
+    await new PrometheusProvider(connection({ user: "reader", password: "secret" }), {}, {}, deps()).connect();
     expect(authorizationOf(sent[0])).toBe(`Basic ${Buffer.from("reader:secret").toString("base64")}`);
 
     // The control: a connection with neither sends no credential at all.
     sent = [];
-    await new PrometheusProvider(connection(), {}, deps()).connect();
+    await new PrometheusProvider(connection(), {}, {}, deps()).connect();
     expect(authorizationOf(sent[0])).toBeUndefined();
   });
 
@@ -363,7 +363,7 @@ describe("connect", () => {
   test.each(LINE_FEED_CREDENTIALS)(
     "a line feed in %s is refused before any request, and neither the error nor the log carries it (#1085 S3)",
     async (_where, credential) => {
-      const provider = new PrometheusProvider(connection(credential), {}, deps());
+      const provider = new PrometheusProvider(connection(credential), {}, {}, deps());
 
       const failure = await provider.connect().then(
         () => new Error("connect resolved with a line feed in the credential"),
@@ -385,7 +385,7 @@ describe("connect", () => {
 
   test("an unreachable server is a ConnectionError, logged, and the provider stays disconnected", async () => {
     respond = () => Promise.reject(new RequestFailure("network", "connect ECONNREFUSED 127.0.0.1:9090"));
-    const provider = new PrometheusProvider(connection(), {}, deps());
+    const provider = new PrometheusProvider(connection(), {}, {}, deps());
 
     await expect(provider.connect()).rejects.toBeInstanceOf(ConnectionError);
     expect(provider.isConnected()).toBe(false);
@@ -397,7 +397,7 @@ describe("connect", () => {
     // plain-text 401, and no envelope.
     respond = async () => replay("auth-no-credentials");
 
-    await expect(new PrometheusProvider(connection(), {}, deps()).connect()).rejects.toBeInstanceOf(
+    await expect(new PrometheusProvider(connection(), {}, {}, deps()).connect()).rejects.toBeInstanceOf(
       AuthenticationError,
     );
   });
@@ -409,7 +409,7 @@ describe("connect", () => {
       fetched.push(String(input));
       return new Response(buildinfo.text, { status: buildinfo.status, headers: buildinfo.headers });
     }) as typeof fetch;
-    const provider = new PrometheusProvider(connection(), {}, { endpoint: () => TEST_ENDPOINT, now: () => NOW_MS });
+    const provider = new PrometheusProvider(connection(), {}, {}, { endpoint: () => TEST_ENDPOINT, now: () => NOW_MS });
 
     await provider.connect();
 
@@ -560,7 +560,7 @@ describe("the bounds connect() hands the transport (#1085 S5)", () => {
 
   test("every request carries the response byte cap: connect, a query, a monitoring read and an object read", async () => {
     respond = oneMetricListing;
-    const provider = new PrometheusProvider(connection(), {}, deps());
+    const provider = new PrometheusProvider(connection(), {}, {}, deps());
 
     await provider.connect();
     await provider.query("up");
@@ -592,7 +592,7 @@ describe("the bounds connect() hands the transport (#1085 S5)", () => {
       respond = oneMetricListing;
       // Not the product's default, so a deadline written as a constant is told apart from the
       // connection's own.
-      const provider = new PrometheusProvider(connection(), { queryTimeout: 4321 }, deps());
+      const provider = new PrometheusProvider(connection(), { queryTimeout: 4321 }, {}, deps());
 
       await provider.connect();
       await provider.getTableStats();
@@ -606,7 +606,7 @@ describe("the bounds connect() hands the transport (#1085 S5)", () => {
 
       // The control: with none configured it is the product's own default.
       sent = [];
-      await new PrometheusProvider(connection(), {}, deps()).connect();
+      await new PrometheusProvider(connection(), {}, {}, deps()).connect();
       expect(sent.map(deadlineOf)).toEqual([DEFAULT_QUERY_TIMEOUT]);
     } finally {
       timeout.mockRestore();
@@ -645,7 +645,7 @@ describe("the bounds connect() hands the transport (#1085 S5)", () => {
 
 describe("query", () => {
   test("a provider that is not connected refuses before anything is sent", async () => {
-    const provider = new PrometheusProvider(connection(), {}, deps());
+    const provider = new PrometheusProvider(connection(), {}, {}, deps());
 
     await expect(provider.query("up")).rejects.toBeInstanceOf(DatabaseConfigError);
     expect(sent).toEqual([]);
@@ -1234,7 +1234,7 @@ describe("the object surface", () => {
   test("readObjectSource", () => expectDelegated("readObjectSource", [["up"], "metric", 100], SOURCE));
 
   test("a provider that is not connected refuses the object surface before anything is sent", async () => {
-    const provider = new PrometheusProvider(connection(), {}, deps());
+    const provider = new PrometheusProvider(connection(), {}, {}, deps());
 
     await expect(provider.listObjects([], "metric")).rejects.toBeInstanceOf(DatabaseConfigError);
     expect(sent).toEqual([]);
@@ -1267,7 +1267,7 @@ describe("the object surface", () => {
       request.url.pathname === "/api/v1/label/__name__/values"
         ? Promise.resolve(json('{"status":"success","data":["up"]}'))
         : captured(request);
-    const provider = new PrometheusProvider(connection(), {}, { endpoint: () => TEST_ENDPOINT, send });
+    const provider = new PrometheusProvider(connection(), {}, {}, { endpoint: () => TEST_ENDPOINT, send });
     await provider.connect();
     const listings = (): SentRequest[] =>
       sent.filter((request) => request.pathname === "/api/v1/label/__name__/values");

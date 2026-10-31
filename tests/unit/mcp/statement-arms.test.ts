@@ -93,6 +93,8 @@ describe("MCP_STATEMENT_ARMS", () => {
     expect(mcpStatementToolFor("netconf")).toBeNull();
     expect(MCP_STATEMENT_ARMS.modbusread).toBeNull();
     expect(mcpStatementToolFor("modbus")).toBeNull();
+    expect(MCP_STATEMENT_ARMS.promql).toBeNull();
+    expect(mcpStatementToolFor("prometheus")).toBeNull();
   });
 
   test("is built from the languages' MCP facets, one arm per declared facet, in the registry's order", () => {
@@ -428,6 +430,7 @@ describe("the tool each engine is read with", () => {
       snmpget: null,
       netconfrpc: null,
       modbusread: null,
+      promql: null,
     };
     expect(servingStatementArms(arms)).toEqual([RUN_READ_QUERY_ARM]);
     const registerTool = mock((_name: string) => undefined);

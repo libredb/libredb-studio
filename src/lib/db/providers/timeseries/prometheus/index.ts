@@ -30,10 +30,18 @@
  *
  * `getPoolStats` is absent: every call is one stateless request, and the pool-stats route answers
  * its own fallback for a provider that has none.
+ *
+ * `queryReadOnly` is the agent's: one PromQL expression, read by `agent-statement.ts` and refused before anything is
+ * sent when it is not an expression the console would send, then run as the console runs it, one instant query
+ * through the same request builder and the same query slots, with the server's time-out set from the read's time
+ * budget, and answered by `agent-read.ts`, refused past the row, byte or time budget rather than cut. On a handle
+ * opened for any agent-mode profile the transport is wrapped by `agent-projection.ts` (every URL a target, a rule or an
+ * alert carries kept to its scheme, host, port and path; the flags withheld), the console is refused, and every
+ * reading the agent does not take answers its reason (`agent-surface.ts`). MCP read stays closed on this engine.
  */
 
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { endpointUrl, httpOrigin } from "@/lib/db/http/endpoint";
 import type {
   ActiveSessionDetails,
@@ -52,14 +60,22 @@ import type {
   PerformanceMetrics,
   PreparedQuery,
   ProviderCapabilities,
+  ProviderExecutionContext,
   ProviderLabels,
   ProviderOptions,
   QueryResult,
+  ReadOnlyStatementBudget,
+  ReadOnlyStatementMode,
   SlowQueryStats,
   StorageStats,
   TableStats,
 } from "@/lib/db/types";
+import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { projectAgentTransport } from "./agent-projection";
+import { prometheusAgentFailure, prometheusAgentResult } from "./agent-read";
+import { readPrometheusAgentStatement } from "./agent-statement";
+import { PROMETHEUS_AGENT_WITHHELD } from "./agent-surface";
 import { createQueryLimiter, QUERY_CONCURRENCY_LIMIT, type QueryLimiter } from "./concurrency";
 import { type ErrorContext, toDatabaseError } from "./errors";
 import { createHttpTransport, type PrometheusEndpoint, RESPONSE_BYTE_CAP } from "./http-transport";
@@ -106,6 +122,12 @@ const EMPTY_EXPRESSION_MESSAGE =
   "The PromQL text holds no expression once its # comments and whitespace are removed, so nothing was sent to the server.";
 const BOUND_VALUES_MESSAGE = "PromQL has no parameter binding, so a statement with bound values cannot be sent.";
 const CANCELLED_MESSAGE = "The query was cancelled.";
+
+/** Studio's own refusals on the agent's statement path, made before anything is sent. */
+export const PROMETHEUS_PROVIDER_SENTENCES = Object.freeze({
+  profileRequired: "Read-only execution requires a provider opened under the agent read-only profile",
+  noEstimate: "Prometheus composes no estimating plan for the agent",
+});
 const DISCONNECTED_MESSAGE = "The connection was closed while the query was running or waiting to run.";
 
 /**
@@ -180,12 +202,45 @@ export class PrometheusProvider extends BaseDatabaseProvider {
   /** Aborted by `disconnect()`: the signal of the object surface's existence read, wherever that read is. */
   private lifetime: AbortController | null = null;
 
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}, deps: PrometheusProviderDeps = {}) {
+  constructor(
+    config: DatabaseConnection,
+    options: ProviderOptions = {},
+    private readonly execution: ProviderExecutionContext = {},
+    deps: PrometheusProviderDeps = {},
+  ) {
     super(config, options);
     this.deps = deps;
     // An arrow rather than `Date.now` itself, so the clock is looked up at every call.
     this.now = deps.now ?? (() => Date.now());
     this.validate();
+  }
+
+  /**
+   * Whether this handle was opened for the agent read-only profile by an acquisition that sends statements
+   * (`sendsStatements`). Only then does `queryReadOnly` answer; the operations profile's acquisitions send no statement.
+   */
+  private get readOnlyProfile(): boolean {
+    return this.execution.readOnly === true && this.execution.sendsStatements === true;
+  }
+
+  /**
+   * Whether this handle was opened for any agent-mode profile: every execution profile opens `readOnly` and no editor
+   * handle does. On such a handle the transport is projected, the console is refused, and every reading the agent does
+   * not take answers its reason.
+   */
+  private get agentProfile(): boolean {
+    return this.execution.readOnly === true;
+  }
+
+  /**
+   * The refusal of a reading an agent-mode handle does not take, after the connection check every reading makes, as a
+   * rejection like every other failure of a reading.
+   */
+  private agentWithheld<T>(sentence: string): Promise<T> {
+    return this.guarded(() => {
+      this.ensureConnected();
+      throw new QueryError(sentence, this.type);
+    });
   }
 
   // ==========================================================================
@@ -296,7 +351,7 @@ export class PrometheusProvider extends BaseDatabaseProvider {
       // value that cannot go into a URL or a header is refused here, before any request carries it.
       // The URL's scheme follows the same TLS answer as the sender, so an https URL never takes the
       // plaintext path.
-      const transport = createHttpTransport(
+      const built = createHttpTransport(
         { user: this.config.user, password: this.config.password },
         {
           send: this.deps.send ?? createSendRequest(tls),
@@ -305,6 +360,8 @@ export class PrometheusProvider extends BaseDatabaseProvider {
           maxResponseBytes: RESPONSE_BYTE_CAP,
         },
       );
+      // An agent-mode handle reads every answer through the projection, so nothing it withholds reaches a consumer.
+      const transport = this.agentProfile ? projectAgentTransport(built) : built;
       // One read proves the server answers the API envelope at this address, with this credential.
       await transport.buildInfo();
       const lifetime = new AbortController();
@@ -354,6 +411,7 @@ export class PrometheusProvider extends BaseDatabaseProvider {
 
   public async query(sql: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
     const transport = this.requireTransport();
+    if (this.agentProfile) throw new RefusedBeforeSendError(PROMETHEUS_AGENT_WITHHELD.query, this.type, sql);
     // PromQL has no binding, and dropping the values would run a different statement from the one
     // the caller built. An empty array binds nothing and is not a refusal.
     if (params !== undefined && params.length > 0) {
@@ -410,6 +468,48 @@ export class PrometheusProvider extends BaseDatabaseProvider {
   }
 
   /**
+   * One agent read. Only on a handle opened under the agent read-only profile; the statement is read by
+   * `readPrometheusAgentStatement` and refused before anything is sent when it is not one PromQL expression. It runs as
+   * the console's query runs, through the same request builder and the same query slots, with the read's time budget
+   * as the server's time-out and as the deadline of the whole read, the wait for a slot included, and one series past
+   * the row budget as the server's `limit`. Its answer is refused past the row, byte or time budget rather than cut,
+   * and a failure is worded by its category (`agent-read.ts`). Nothing of one read is kept for the next.
+   */
+  public async queryReadOnly(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    if (!this.readOnlyProfile) {
+      throw new RefusedBeforeSendError(PROMETHEUS_PROVIDER_SENTENCES.profileRequired, this.type, statement);
+    }
+    const transport = this.requireTransport();
+    assertReadOnlyBudget(budget, this.type);
+    if (mode !== "execute") {
+      throw new RefusedBeforeSendError(PROMETHEUS_PROVIDER_SENTENCES.noEstimate, this.type, statement);
+    }
+    const reading = readPrometheusAgentStatement(statement);
+    if (!reading.ok) throw new RefusedBeforeSendError(reading.message, this.type, statement);
+
+    const ms = budget.statementTimeoutMs;
+    const controller = new AbortController();
+    this.running.add(controller);
+    const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(ms)]);
+    try {
+      let started = 0;
+      const answer = await this.limiter.run(() => {
+        started = Date.now();
+        return transport.query(reading.expression, { timeoutMs: ms, seriesLimit: budget.maxResultRows, signal });
+      }, signal);
+      return prometheusAgentResult(answer, budget, Date.now() - started);
+    } catch (error) {
+      throw prometheusAgentFailure(error, budget, this.errorContext(statement));
+    } finally {
+      this.running.delete(controller);
+    }
+  }
+
+  /**
    * Abort one query by the caller's own name for it, whether it is running or still waiting for a
    * slot; a waiting one leaves the queue without ever reaching the server. False when no query
    * carries the name, which is what the cancel route reports as nothing to cancel.
@@ -458,21 +558,27 @@ export class PrometheusProvider extends BaseDatabaseProvider {
   }
 
   public getOverview(): Promise<DatabaseOverview> {
+    // On an agent-mode handle the overview would need the withheld flags; the reason is answered instead.
+    if (this.agentProfile) return this.agentWithheld(PROMETHEUS_AGENT_WITHHELD.overview);
     return this.guarded(() => readOverview(this.requireTransport(), (ms) => this.formatDuration(ms)));
   }
 
   /** No hit ratio or throughput is published as a number the API measures (#1085 6.2), so nothing is filled in. */
   public getPerformanceMetrics(): Promise<PerformanceMetrics> {
+    // On an agent-mode handle an empty answer would read as the server's own; the reason is answered instead.
+    if (this.agentProfile) return this.agentWithheld(PROMETHEUS_AGENT_WITHHELD.performance);
     return Promise.resolve({});
   }
 
   /** Empty: the HTTP API returns no query log. `getLabels().slowQueriesEmptyState` says so in the panel. */
   public getSlowQueries(): Promise<SlowQueryStats[]> {
+    if (this.agentProfile) return this.agentWithheld(PROMETHEUS_AGENT_WITHHELD.slowQueries);
     return Promise.resolve([]);
   }
 
   /** Empty: the HTTP API publishes no session list. `getLabels().sessionsEmptyState` says so in the panel. */
   public getActiveSessions(): Promise<ActiveSessionDetails[]> {
+    if (this.agentProfile) return this.agentWithheld(PROMETHEUS_AGENT_WITHHELD.sessions);
     return Promise.resolve([]);
   }
 
@@ -488,6 +594,7 @@ export class PrometheusProvider extends BaseDatabaseProvider {
 
   /** Empty: a Prometheus TSDB has no secondary index object to describe. */
   public getIndexStats(): Promise<IndexStats[]> {
+    if (this.agentProfile) return this.agentWithheld(PROMETHEUS_AGENT_WITHHELD.indexStats);
     return Promise.resolve([]);
   }
 

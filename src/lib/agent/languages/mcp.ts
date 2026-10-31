@@ -102,6 +102,8 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   netconfrpc: null,
   // No MCP statement tool yet: MCP read stays closed on Modbus until a change of its own declares one and opens it.
   modbusread: null,
+  // No MCP statement tool yet: MCP read stays closed on Prometheus until a change of its own declares one and opens it.
+  promql: null,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageMcpFacet | null>);
 
 /** A facet some language declares, with its tool's name as a literal. */

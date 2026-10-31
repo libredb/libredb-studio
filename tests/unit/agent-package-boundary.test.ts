@@ -240,7 +240,7 @@ function isAgentModule(file: string): boolean {
  * provider's read-only profile (its bounded read and the boundary it proves at
  * open) is `queryReadOnly`'s own code, split out of `mongodb/index.ts`, and
  * ships with the provider the same way, as do the ClickHouse, libSQL, Oracle, Db2, Cassandra, Couchbase, Druid, Neo4j,
- * etcd, Oxia, RabbitMQ, Kafka, S3, Firestore, SNMP, NETCONF and Modbus providers'.
+ * etcd, Oxia, RabbitMQ, Kafka, S3, Firestore, SNMP, NETCONF, Modbus and Prometheus providers'.
  */
 const NOT_AGENT_CODE: ReadonlySet<string> = new Set([
   "src/lib/db/providers/platform/kubernetes/agent-readings.ts",
@@ -288,6 +288,10 @@ const NOT_AGENT_CODE: ReadonlySet<string> = new Set([
   "src/lib/db/providers/industrial/modbus/agent-pacing.ts",
   "src/lib/db/providers/industrial/modbus/agent-read.ts",
   "src/lib/db/providers/industrial/modbus/agent-surface.ts",
+  "src/lib/db/providers/timeseries/prometheus/agent-statement.ts",
+  "src/lib/db/providers/timeseries/prometheus/agent-projection.ts",
+  "src/lib/db/providers/timeseries/prometheus/agent-read.ts",
+  "src/lib/db/providers/timeseries/prometheus/agent-surface.ts",
 ]);
 
 // ---------------------------------------------------------------------------

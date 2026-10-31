@@ -149,6 +149,11 @@ type ModbusreadOperation =
   /** One Modbus read the model wrote, on a `modbus` connection; see `modbusreadQueryReadDescriptor`. */
   "modbusread.query.read";
 
+/** The PromQL language's operation: its one read. */
+type PromqlOperation =
+  /** One PromQL read the model wrote, on a `prometheus` connection; see `promqlQueryReadDescriptor`. */
+  "promql.query.read";
+
 /** The s3api command language's operation: its one read. */
 type S3apiOperation =
   /** One S3 metadata read the model wrote, on an `s3` connection; see `s3apiQueryReadDescriptor`. */
@@ -178,6 +183,7 @@ export interface AgentFamilyOperationIds {
   readonly snmpget: SnmpgetOperation;
   readonly netconfrpc: NetconfrpcOperation;
   readonly modbusread: ModbusreadOperation;
+  readonly promql: PromqlOperation;
 }
 
 /** kubectl's goal verifiers. */
@@ -247,6 +253,8 @@ export interface AgentFamilyVerifierIds {
   readonly netconfrpc: never;
   /** None: its workflows are judged by the core's own rules. */
   readonly modbusread: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly promql: never;
 }
 
 /** The operation a family's model-written reads are evaluated under: its row's `<family>.query.read`. */
@@ -517,6 +525,7 @@ export interface AgentFamilyEvidenceTools {
   readonly snmpget: never;
   readonly netconfrpc: never;
   readonly modbusread: never;
+  readonly promql: never;
 }
 
 /** Every pack's evidence tool: a member of the core's `AgentToolName`, declared by the pack that offers it. */
@@ -543,6 +552,7 @@ export interface AgentFamilyReadingDenyCodes {
   readonly snmpget: never;
   readonly netconfrpc: never;
   readonly modbusread: never;
+  readonly promql: never;
 }
 
 /** Every pack's reading refusal code: a member of the core's `AgentReadingDenyCode`, declared by its pack. */
@@ -569,6 +579,7 @@ export interface AgentFamilyShortfalls {
   readonly snmpget: never;
   readonly netconfrpc: never;
   readonly modbusread: never;
+  readonly promql: never;
 }
 
 /** Every pack's verdict shortfall: a member of the core's `AgentGoalShortfall`, declared by its pack. */
@@ -595,6 +606,7 @@ export interface AgentFamilyVariantRequirements {
   readonly snmpget: never;
   readonly netconfrpc: never;
   readonly modbusread: never;
+  readonly promql: never;
 }
 
 /** Every pack's variant requirement: a member of the core's `AgentVariantRequirement`, declared by its pack. */
@@ -655,6 +667,7 @@ export interface AgentFamilyEvidenceEvents {
   readonly snmpget: never;
   readonly netconfrpc: never;
   readonly modbusread: never;
+  readonly promql: never;
 }
 
 /** Every pack's evidence event, as the ledger stores it less its timestamp. */
@@ -857,6 +870,7 @@ export interface AgentFamilyDialectRows {
   snmpget: { client: Record<never, never>; server: Record<never, never> };
   netconfrpc: { client: Record<never, never>; server: Record<never, never> };
   modbusread: { client: Record<never, never>; server: Record<never, never> };
+  promql: { client: Record<never, never>; server: Record<never, never> };
 }
 
 /** The dialect-bound members of each family, client and server. */

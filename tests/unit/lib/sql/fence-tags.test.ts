@@ -84,6 +84,12 @@ describe("fenceTagEngine", () => {
     expect(fenceTagEngine("firestore")).toBe("firestore");
   });
 
+  test("promql names prometheus, the agent's name for the PromQL language Prometheus runs", () => {
+    expect(fenceTagEngine("promql")).toBe("prometheus");
+    expect(isQueryFenceTag("promql")).toBe(true);
+    expect(fenceTagEngine("prometheus")).toBe("prometheus");
+  });
+
   test("modbusread names modbus, the agent's name for the only read request language Modbus runs", () => {
     expect(fenceTagEngine("modbusread")).toBe("modbus");
     expect(isQueryFenceTag("modbusread")).toBe(true);

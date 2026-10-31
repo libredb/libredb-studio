@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B160 · 86
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B161 · 86
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -8642,15 +8642,6 @@ Found 2026-10-27 while designing read-only agent and MCP execution for every pro
 
 **Done when:** either a way to prove each reachable catalog's connector credential read-only at open, or an engine switch that disables pass-through table functions, is found and measured, a boundary test with a writable positive control shows a pass-through write refused, and Trino then joins agent execution through `queryReadOnly` with its `MCP_STATEMENT_READ` row false until the owner opens MCP read for it; cited in `docs/AGENT.md`.
 
-### B131. Prometheus has no agent execution and no MCP statement read
-
-The Prometheus provider implements no `queryReadOnly`, so agent execution refuses it and no MCP tool runs PromQL; plan mode and the MCP metadata tools work (`MCP_EXPOSABLE.prometheus` is true, `MCP_STATEMENT_READ.prometheus` is false).
-Agent execute mode for PromQL is a recorded non-goal of #1085 and of the #424 epic (`docs/providers/prometheus.md`, Known limitations), so this is a product decision and not a missing boundary: the provider's closed `PATHS` table, whose only non-GET call is `POST /api/v1/query`, and a query language with no write construct would serve as a structural closed table.
-
-Found 2026-10-27 while designing read-only agent and MCP execution for every provider.
-
-**Done when:** the owner reverses the #1085 non-goal, Prometheus implements `queryReadOnly` over the pinned `PATHS` table with a test that pins it, refuses a handle not opened under the agent profile, joins `AGENT_EXECUTION_ENGINES` under a `promql` statement language, and MCP serves it through its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) once the owner opens its MCP read; cited in `docs/AGENT.md`.
-
 ### B132. MTConnect has no agent execution and no MCP statement read
 
 The MTConnect provider implements no `queryReadOnly`, so agent execution refuses it and no MCP tool runs a request line; the MCP metadata tools work (`MCP_EXPOSABLE.mtconnect` is true, `MCP_STATEMENT_READ.mtconnect` is false).
@@ -8975,6 +8966,24 @@ Kept so that MCP access, and any widening of what agent mode sends to a device o
 Found 2026-10-31 when agent mode joined Modbus.
 
 **Done when:** a per-engine exposure ruling opens MCP for Modbus, an MCP surface that reads through the same closed table, takes its turn on the same per-device lanes and bounds its requests per call is designed and `MCP_EXPOSABLE.modbus` turns true for it, the pack declares its MCP facet (`src/lib/agent/languages/modbusread/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), and `MCP_STATEMENT_READ.modbus` is true, with tests that an MCP read and an agent read of one device never overlap and that no MCP request can carry a write function code; cited in `docs/AGENT.md`.
+
+### B161. Prometheus's agent reads withhold the flags and URL secrets, and it has no MCP statement read
+
+Agent mode executes PromQL reads under the `promql` statement language, one expression per call, evaluated as an instant query at the server's now, the way the console runs it (`docs/providers/prometheus.md`, section 14).
+The boundary is the provider's structural closed table: the transport builds requests only to its own read paths, every one a GET except the instant query, `POST /api/v1/query`, whose form the console's request builder writes (the expression, a `timeout` set from the read's time budget and a `limit` one series past the row budget), and PromQL has no construct that writes, so no admin, remote-write, OTLP, lifecycle or VictoriaMetrics import or admin endpoint can be reached on the agent path.
+No credential can be the boundary: measured on Prometheus 3.13.3 with the admin, remote-write and lifecycle flags on, the server took every raw admin and lifecycle request the capture script sent, and VictoriaMetrics v1.152.0 took its own import and admin requests the same way.
+The reader mirrors the top level of the v3.13.3 lexer, so a dashboard variable, a request parameter, a JSON request and an unbalanced bracket are refused before anything is sent; `query_range` is not admitted, so a window is a range vector or a subquery inside the expression.
+A vector counts one row per series and a matrix one per sample, and an answer past the row or byte budget is refused, never cut; a server time-out and the server's own sample limit are worded by category with the time budget, never in the server's text.
+Samples and labels are answered as the console renders them; withheld on every agent-mode handle are the server's command-line flags, which carry paths, addresses and local configuration, and every URL's userinfo, query string and fragment in a target, rule or alert answer, with every scrape parameter of a target, so a target is named by its address without userinfo.
+A PromQL answer is not projected: a series keeps the labels the server stores, so an `instance` built from a target address that holds userinfo, or an alert label that holds a URL with a token, reaches the model on the query path as stored, and a matcher could select on it; projecting query answers would not close it, since `label_replace` can copy a value into any label, so it is recorded as a residual of the server's configuration.
+On a handle of either agent profile the console is refused, and the overview, performance, slow-query, session and index readings answer their reason rather than an empty reading.
+So the language offers the investigation, the data analysis and the operations workflow; query optimization and database assessment need a plan and a profile the server does not give.
+`MCP_STATEMENT_READ.prometheus` is false and the language's MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`), so MCP `run_read_query` refuses a Prometheus connection; `MCP_EXPOSABLE.prometheus` stays true, and the MCP metadata tools, which acquire an agent-mode handle, read through the same projection.
+Kept so that MCP statement reads, and any widening of what agent mode reads on Prometheus, are decisions of their own rather than side effects of agent mode joining.
+
+Found 2026-10-31 when agent mode joined Prometheus.
+
+**Done when:** a change of its own opens MCP statement reads on Prometheus: the pack declares its MCP facet (`src/lib/agent/languages/promql/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same closed table, budgets and projection, and `MCP_STATEMENT_READ.prometheus` is true, with tests that an MCP read sends only the instant query's form and that no MCP answer carries the flags or a URL's userinfo or query string; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

@@ -33,6 +33,7 @@ import { FSQUERY_SERVER_PACK } from "./fsquery/server";
 import { SNMPGET_SERVER_PACK } from "./snmpget/server";
 import { NETCONFRPC_SERVER_PACK } from "./netconfrpc/server";
 import { MODBUSREAD_SERVER_PACK } from "./modbusread/server";
+import { PROMQL_SERVER_PACK } from "./promql/server";
 import type { AgentLanguageServerAdapter, AgentLanguageServerPack, EvidenceToolName } from "./pack";
 import { SQL_STATEMENT_DEFINITIONS } from "./sql/definitions";
 import { SQL_RECOMMEND_CHANGE } from "./sql/recommendation";
@@ -64,6 +65,7 @@ const SERVER_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageServe
   snmpget: SNMPGET_SERVER_PACK,
   netconfrpc: NETCONFRPC_SERVER_PACK,
   modbusread: MODBUSREAD_SERVER_PACK,
+  promql: PROMQL_SERVER_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageServerPack>);
 
 /** The server pack for `language`, or a named error when the id is not a language this server knows. */
@@ -117,6 +119,7 @@ export const LANGUAGE_BASE_DEFINITIONS = mergeDisjoint(
     SNMPGET_SERVER_PACK.baseDefinitions,
     NETCONFRPC_SERVER_PACK.baseDefinitions,
     MODBUSREAD_SERVER_PACK.baseDefinitions,
+    PROMQL_SERVER_PACK.baseDefinitions,
   ],
   "LANGUAGE_BASE_DEFINITIONS",
 );
@@ -152,6 +155,7 @@ export const WORKFLOW_TOOL_RULES: Readonly<
   snmpget: SNMPGET_SERVER_PACK.workflowToolRules,
   netconfrpc: NETCONFRPC_SERVER_PACK.workflowToolRules,
   modbusread: MODBUSREAD_SERVER_PACK.workflowToolRules,
+  promql: PROMQL_SERVER_PACK.workflowToolRules,
 } satisfies Record<AgentStatementLanguageId, Partial<Record<AgentRunWorkflowType, string>>>);
 
 /**
@@ -179,6 +183,7 @@ export const LANGUAGE_SHORTFALL_NOTICES = mergeDisjoint(
     SNMPGET_SERVER_PACK.shortfallNotices,
     NETCONFRPC_SERVER_PACK.shortfallNotices,
     MODBUSREAD_SERVER_PACK.shortfallNotices,
+    PROMQL_SERVER_PACK.shortfallNotices,
   ],
   "LANGUAGE_SHORTFALL_NOTICES",
 );
