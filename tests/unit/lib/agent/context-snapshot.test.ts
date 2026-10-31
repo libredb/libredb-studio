@@ -13,6 +13,7 @@ import {
 } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
+import { inventoryNoun } from "@/lib/agent/inventory-noun";
 import { engineServerDialect } from "@/lib/agent/languages/engines/server";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import { assertPersistableState } from "@/lib/agent/state-guard";
@@ -51,6 +52,7 @@ import {
   listEtcdObjects,
 } from "@/lib/db/providers/keyvalue/etcd/objects";
 import { prefixRangeEnd } from "@/lib/db/providers/keyvalue/etcd/keys";
+import { MODBUS_NO_MAP_INVENTORY_SENTENCE, ModbusProvider } from "@/lib/db/providers/industrial/modbus/index";
 import {
   countObjects as countKafkaObjects,
   describeObjects as describeKafkaObjects,
@@ -3288,6 +3290,72 @@ describe("an inventory that knows what its objects ARE", () => {
     expect(packContextForTask({ ...refused, objects: [] }, "summarise the orders")).toContain(note);
     expect(packOperationsInventory(refused)).toContain(note);
     expect(packContextForTask(kinded(), "summarise the orders")).not.toContain("could not be read");
+  });
+
+  /**
+   * U189: a Modbus connection with no register map. No request lists what a device holds, so with no map nothing of
+   * the device was listed, and the grounding says that with the provider's reason rather than "This database
+   * reported no tables", which a run read as a device holding nothing.
+   */
+  test("a Modbus connection with no register map is grounded as unlisted, with the provider's reason", async () => {
+    const connection = {
+      id: "conn-1",
+      name: "plant",
+      type: "modbus",
+      host: "10.0.0.5",
+      port: 502,
+      createdAt: new Date(0),
+    } as DatabaseConnection;
+    const provider = new ModbusProvider(connection);
+    const labels = provider.getLabels();
+    const capture = await captureContextSnapshot({
+      runId: "run-1",
+      modelId: "unmeasured-model-for-tests",
+      mode: "planning",
+      workflowType: "investigation",
+      actor: { sessionId: "session-1", role: "user" },
+      connection,
+      capabilities: provider.getCapabilities(),
+      labels,
+      registry: createCanonicalOperationRegistry(),
+      scope: createTargetScope("conn-1"),
+      tracker: new ExecutionBudgetTracker(),
+      artifacts: new ExecutionArtifactStore<QueryResult>({ ttlMs: 60_000, maxArtifacts: 16 }),
+      deadline: new AgentRunDeadline(
+        AGENT_WORKFLOW_BUDGETS.investigation.policy.budgets.maxTotalRunMs * 2,
+        frozenClock,
+      ),
+      repairs: new AgentRepairLedger(),
+      acquireProvider: mock(async () => provider),
+      clock: frozenClock,
+    });
+    if (capture.kind !== "captured") throw new Error(`expected a capture, got ${capture.kind}`);
+    const noun = inventoryNoun(labels);
+    const packed = packContextForTask(capture.snapshot, "how many coils does the device have", { noun });
+
+    expect(capture.snapshot.objects).toEqual([]);
+    expect(packed).toContain(
+      `\nNone of the Coils, Discrete inputs, Input registers and Holding registers could be listed: ${MODBUS_NO_MAP_INVENTORY_SENTENCE}.\nNothing was listed, so this inventory says nothing about which ${noun.plural} the database holds.\n`,
+    );
+    expect(packed).not.toContain("reported no");
+    expect(packOperationsInventory(capture.snapshot, { noun })).toContain(
+      `Nothing was listed, so this inventory says nothing about which ${noun.plural} the database holds.`,
+    );
+  });
+
+  test("an empty inventory with one kind unread and another read still reports none of the read kind", () => {
+    const partly = kinded({
+      objects: [],
+      kinds: [
+        { id: "table", role: "relation", label: "Table", labelPlural: "Tables" },
+        { id: "user", role: "config", label: "User", labelPlural: "Users", unavailable: "refused" },
+      ],
+    });
+
+    const packed = packContextForTask(partly, "summarise the orders");
+    expect(packed).toContain("The Users could not be read: refused.");
+    expect(packed).toContain("This database reported no tables.");
+    expect(packed).not.toContain("Nothing was listed");
   });
 
   test("the operations packing names the kinds and the incompleteness too", () => {

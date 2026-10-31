@@ -77,7 +77,9 @@
 import { createHash } from "node:crypto";
 import type { AgentCatalogCapture, ComposedKindResolver, TableIndex } from "./catalog-rows";
 import type { AgentCatalogKind } from "./composed-sql-primitives";
+import { namedList } from "./engine-support";
 import { type AgentInventoryNoun, TABLE_INVENTORY_NOUN } from "./inventory-noun";
+import { unlistedInventoryReason } from "./inventory-objects";
 import { engineServerDialect } from "./languages/engines/server";
 import {
   type AgentObjectInventoryRead,
@@ -1238,10 +1240,17 @@ function inventoryNotes(inventory: AgentInventory, shown: readonly AgentInventor
   // bound both decide that, so a declared kind can have nothing below it, and a sampled
   // kind named there would tell a run to discount numbers it was never shown.
   const rendered = new Set(shown.map((object) => object.kind));
+  // An inventory its provider could not list without configuration the connection lacks (U189): every kind carries
+  // the one sentence, so it is said once for all of them rather than once per kind.
+  const unlisted = unlistedInventoryReason(inventory);
+  if (unlisted !== undefined) {
+    const plurals = (inventory.kinds ?? []).map((kind) => kind.labelPlural);
+    notes.push(`None of the ${namedList(plurals)} could be listed: ${unlisted}.`);
+  }
   for (const kind of inventory.kinds ?? []) {
     // The one kind note NOT gated on what was rendered: a kind the walk could not read has nothing
     // below it by construction, and that absence is exactly what the note is about (#1089 4.7).
-    if (kind.unavailable !== undefined) {
+    if (kind.unavailable !== undefined && unlisted === undefined) {
       notes.push(
         `The ${kind.labelPlural} could not be read: ${kind.unavailable}. Do not read their absence below as an absence in the database.`,
       );
@@ -1279,6 +1288,17 @@ function inventoryNotes(inventory: AgentInventory, shown: readonly AgentInventor
     );
   }
   return notes;
+}
+
+/**
+ * The last line of an inventory that holds no object. "Reported no" only where the engine was asked: an inventory its
+ * provider could not list without configuration the connection lacks asked the engine nothing (U189), and a run told
+ * "This database reported no tables" there answered that a Modbus device with no register map held nothing.
+ */
+function emptyInventorySentence(inventory: AgentInventory, noun: AgentInventoryNoun): string {
+  return unlistedInventoryReason(inventory) === undefined
+    ? `This database reported no ${noun.plural}.`
+    : `Nothing was listed, so this inventory says nothing about which ${noun.plural} the database holds.`;
 }
 
 /** The label an object's kind was declared with, or nothing at all where none is known. */
@@ -1397,7 +1417,7 @@ export function packContextForTask(
     // The notes come BEFORE the empty sentence, because a reading that stopped at a limit
     // before it listed anything is the one case where "this database reported no tables"
     // is read as a fact about the database rather than about the reading (#789).
-    return `${lead}${fenceUntrustedContent([header, ...inventoryNotes(snapshot, []), `This database reported no ${noun.plural}.`].join("\n"), source)}`;
+    return `${lead}${fenceUntrustedContent([header, ...inventoryNotes(snapshot, []), emptyInventorySentence(snapshot, noun)].join("\n"), source)}`;
   }
 
   const terms = taskTerms(objective);
@@ -1477,7 +1497,7 @@ export function packOperationsInventory(
   const header = `Schema inventory for this run — fingerprint ${snapshot.fingerprint}, ${snapshot.objects.length} ${noun.singular}(s) read at epoch ${snapshot.capturedAtMs}ms and not re-read since. Names and the indexes on each; no columns and no relations are included.`;
   if (snapshot.objects.length === 0) {
     // The same reason as the task packing: an empty inventory that TRUNCATED says so.
-    return `${lead}${fenceUntrustedContent([header, ...inventoryNotes(snapshot, []), `This database reported no ${noun.plural}.`].join("\n"), source)}`;
+    return `${lead}${fenceUntrustedContent([header, ...inventoryNotes(snapshot, []), emptyInventorySentence(snapshot, noun)].join("\n"), source)}`;
   }
 
   // Names no tool, in either mode: an operations agent run holds no `inspect_schema`

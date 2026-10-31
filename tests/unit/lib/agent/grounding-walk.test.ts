@@ -71,6 +71,8 @@ interface Stub {
   readonly containersUnder?: (parent?: readonly string[]) => readonly Container[];
   readonly counts?: (container: readonly string[]) => Record<string, KindCount>;
   readonly objects?: (container: readonly string[], kind: string) => readonly DatabaseObject[];
+  /** Declares `inventoryNeedsConfiguration`, answering this; absent leaves the method undeclared. */
+  readonly needs?: { readonly reason: string | undefined };
 }
 
 function stub(options: Stub = {}) {
@@ -97,7 +99,14 @@ function stub(options: Stub = {}) {
   const describeObjects = mock(async (_container: readonly string[], _kind: string, ..._rest: unknown[]) => ({
     details: [],
   }));
-  const provider = { listObjects, countObjects, listContainers, describeObjects } as unknown as DatabaseProvider;
+  const inventoryNeedsConfiguration = mock(async () => options.needs?.reason);
+  const provider = {
+    listObjects,
+    countObjects,
+    listContainers,
+    describeObjects,
+    ...(options.needs === undefined ? {} : { inventoryNeedsConfiguration }),
+  } as unknown as DatabaseProvider;
   const context: AgentToolContext = {
     runId: "run-1",
     modelId: "unmeasured-model-for-tests",
@@ -120,7 +129,7 @@ function stub(options: Stub = {}) {
     acquireProvider: mock(async () => provider),
     clock: frozenClock,
   };
-  return { context, listObjects, countObjects, listContainers, describeObjects };
+  return { context, listObjects, countObjects, listContainers, describeObjects, inventoryNeedsConfiguration };
 }
 
 async function captured(
@@ -219,6 +228,46 @@ describe("a kind whose names are withheld", () => {
       expect(packed).toContain(`The Secrets could not be read: ${refusal}.`);
       expect(packed).toContain("this server counted at least 3 of them");
     }
+  });
+});
+
+/**
+ * U189: a provider whose inventory cannot be listed without configuration the connection lacks says so, and the walk
+ * asks it nothing more. Every kind carries the provider's sentence as `unavailable`, the note a refused kind already
+ * has, and the packings say that nothing was listed instead of "This database reported no tables".
+ */
+describe("an inventory its provider cannot list without configuration", () => {
+  const reason = "this connection keeps no map, so none of its objects can be listed";
+
+  test("is read from the provider's declaration, lists nothing and carries the reason on every kind", async () => {
+    const { snapshot, harness } = await captured({ needs: { reason } });
+
+    expect(harness.inventoryNeedsConfiguration).toHaveBeenCalledTimes(1);
+    expect(harness.listContainers).not.toHaveBeenCalled();
+    expect(harness.countObjects).not.toHaveBeenCalled();
+    expect(harness.listObjects).not.toHaveBeenCalled();
+    expect(snapshot.objects).toEqual([]);
+    expect(snapshot.kinds?.map((kind) => [kind.id, kind.unavailable])).toEqual([
+      ["pods", reason],
+      ["secrets", reason],
+    ]);
+    for (const packed of packings(snapshot)) {
+      expect(packed).toContain(`None of the Pods and Secrets could be listed: ${reason}.`);
+      expect(packed).toContain(
+        "Nothing was listed, so this inventory says nothing about which tables the database holds.",
+      );
+      expect(packed).not.toContain("could not be read");
+      expect(packed).not.toContain("reported no");
+    }
+  });
+
+  test("a provider that declares the method and answers none is walked as before", async () => {
+    const { snapshot, harness } = await captured({ needs: { reason: undefined } });
+
+    expect(harness.inventoryNeedsConfiguration).toHaveBeenCalledTimes(1);
+    expect(harness.listContainers).toHaveBeenCalled();
+    expect(snapshot.objects.length).toBeGreaterThan(0);
+    expect(snapshot.kinds?.every((kind) => kind.unavailable === undefined)).toBe(true);
   });
 });
 

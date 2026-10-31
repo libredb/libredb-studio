@@ -15,6 +15,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   atBoundary,
+  MODBUS_NO_MAP_INVENTORY_SENTENCE,
   MODBUS_NO_REVOCATION_SENTENCE,
   MODBUS_READ_ONLY_HINT,
   ModbusProvider,
@@ -180,6 +181,22 @@ describe("the tree comes from the map, with no device traffic", () => {
     }
   });
 
+  /**
+   * U189: with no map nothing of the device can be listed, which is not a device that holds nothing. The provider
+   * says so with its own reason, and the agent's grounding reads that declaration instead of reading no unit as none.
+   */
+  test("declares that its inventory needs a register map when the connection keeps none, with its reason", async () => {
+    expect(await provider().inventoryNeedsConfiguration()).toBe(MODBUS_NO_MAP_INVENTORY_SENTENCE);
+    expect(await provider({ registerMap: "[]" }).inventoryNeedsConfiguration()).toBe(MODBUS_NO_MAP_INVENTORY_SENTENCE);
+    expect(MODBUS_NO_MAP_INVENTORY_SENTENCE).toBe(
+      "this connection keeps no register map, and Modbus has no request that lists what a device holds, so none of its points can be listed",
+    );
+  });
+
+  test("declares nothing once a map is kept, since the map is then the inventory", async () => {
+    expect(await provider({ registerMap: MAP }).inventoryNeedsConfiguration()).toBeUndefined();
+  });
+
   test("with a map the units are listed in numeric order", async () => {
     const containers = await provider({ registerMap: MAP }).listContainers();
     expect(containers.map((c: { name: string }) => c.name)).toEqual(["1", "10"]);
@@ -217,6 +234,7 @@ describe("what the provider refuses rather than fakes", () => {
     ["listObjects", (p: ReturnType<typeof provider>) => p.listObjects(["1"], "coil")],
     ["countObjects", (p: ReturnType<typeof provider>) => p.countObjects(["1"])],
     ["listContainers", (p: ReturnType<typeof provider>) => p.listContainers()],
+    ["inventoryNeedsConfiguration", (p: ReturnType<typeof provider>) => p.inventoryNeedsConfiguration()],
     ["getHealth", (p: ReturnType<typeof provider>) => p.getHealth()],
     ["getOverview", (p: ReturnType<typeof provider>) => p.getOverview()],
   ])("%s converts a malformed map at the boundary too", async (_name, call) => {

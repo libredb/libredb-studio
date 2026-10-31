@@ -204,6 +204,13 @@ function mapOf(config: DatabaseConnection): string | undefined {
   return config.registerMap;
 }
 
+/**
+ * Why a connection with no register map lists nothing of its device, completing "could be listed:" in the agent's
+ * grounding (`DatabaseProvider.inventoryNeedsConfiguration`).
+ */
+export const MODBUS_NO_MAP_INVENTORY_SENTENCE =
+  "this connection keeps no register map, and Modbus has no request that lists what a device holds, so none of its points can be listed";
+
 /** Studio's own refusals on the agent's statement path, made before anything is sent. */
 export const MODBUS_PROVIDER_SENTENCES = Object.freeze({
   profileRequired: "Read-only execution requires a provider opened under the agent read-only profile",
@@ -430,6 +437,16 @@ export class ModbusProvider extends BaseDatabaseProvider {
     } catch (error) {
       throw atBoundary(error);
     }
+  }
+
+  /**
+   * With no map, nothing of the device can be listed (U189): no Modbus request lists what a device holds, so this
+   * provider's inventory is the connection's register map, and with none kept `listContainers` answers no unit. That
+   * empty answer is no answer about the device, and this says so, so the agent's grounding does not read it as a
+   * device holding nothing. A malformed map rises as configuration, as on every other surface.
+   */
+  public async inventoryNeedsConfiguration(): Promise<string | undefined> {
+    return readMap(this.config).isEmpty ? MODBUS_NO_MAP_INVENTORY_SENTENCE : undefined;
   }
 
   public async listContainers(): Promise<Container[]> {

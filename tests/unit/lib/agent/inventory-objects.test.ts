@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { addressableObjects } from "@/lib/agent/inventory-objects";
+import { addressableObjects, unlistedInventoryReason } from "@/lib/agent/inventory-objects";
 import type { AgentInventory, AgentInventoryKind, AgentInventoryObject } from "@/lib/agent/types";
 
 /**
@@ -80,5 +80,49 @@ describe("addressableObjects", () => {
     const inventory: AgentInventory = { objects: [object("film"), object("actor")] };
 
     expect(addressableObjects(inventory).map((entry) => entry.name)).toEqual(["film", "actor"]);
+  });
+});
+
+/**
+ * U189: the provider's reason where nothing of an inventory was listed because the connection lacks the configuration
+ * its provider needs to list one. Each case below is an inventory that must NOT be read as such.
+ */
+describe("unlistedInventoryReason", () => {
+  const reason = "no map is kept";
+
+  test("is the shared sentence where no object was listed and every kind carries it", () => {
+    const inventory: AgentInventory = {
+      objects: [],
+      kinds: [kind("coil", "relation", { unavailable: reason }), kind("register", "relation", { unavailable: reason })],
+    };
+    expect(unlistedInventoryReason(inventory)).toBe(reason);
+  });
+
+  test("is nothing where an object was listed", () => {
+    const inventory: AgentInventory = {
+      objects: [object("run", "coil")],
+      kinds: [kind("coil", "relation", { unavailable: reason })],
+    };
+    expect(unlistedInventoryReason(inventory)).toBeUndefined();
+  });
+
+  test("is nothing where one kind was read, or two kinds were refused for different reasons", () => {
+    expect(
+      unlistedInventoryReason({
+        objects: [],
+        kinds: [kind("coil", "relation", { unavailable: reason }), kind("register", "relation")],
+      }),
+    ).toBeUndefined();
+    expect(
+      unlistedInventoryReason({
+        objects: [],
+        kinds: [kind("user", "config", { unavailable: reason }), kind("role", "config", { unavailable: "other" })],
+      }),
+    ).toBeUndefined();
+  });
+
+  test("is nothing where no kind is declared, which is an inventory recorded before kinds existed", () => {
+    expect(unlistedInventoryReason({ objects: [] })).toBeUndefined();
+    expect(unlistedInventoryReason({ objects: [], kinds: [] })).toBeUndefined();
   });
 });

@@ -145,7 +145,13 @@ import { offersRefusalExamples } from "./models";
 import type { ColumnSchema, DatabaseConnection, QueryResult } from "@/lib/types";
 import { type ProfileTargetResolution, type ResolvedProfileTarget, resolveProfileTarget } from "./inventory-address";
 import { addressableObjects } from "./inventory-objects";
-import type { AgentInventory, AgentInventoryObject, AgentUnlistedParent, AgentUnlistedParentsNotNamed } from "./types";
+import type {
+  AgentInventory,
+  AgentInventoryKind,
+  AgentInventoryObject,
+  AgentUnlistedParent,
+  AgentUnlistedParentsNotNamed,
+} from "./types";
 import { composeCatalogRead, composeEstimatingExplain, composeStatisticsAvailabilityProbe } from "./composed-sql";
 import {
   type AgentCatalogKind,
@@ -2647,6 +2653,19 @@ async function walkObjectInventory(
   const listObjects = provider.listObjects.bind(provider);
   const describeObjects = provider.describeObjects.bind(provider);
 
+  // Asked before any container (U189): a provider whose inventory is configuration the connection lacks lists no
+  // container, and that empty answer is no answer about what the engine holds. Every kind then carries the provider's
+  // sentence as `unavailable`, the note a refused kind already has, and `context-snapshot.ts` says nothing was listed.
+  const needs = await provider.inventoryNeedsConfiguration?.();
+  if (needs !== undefined) {
+    return {
+      inventory: {
+        objects: [],
+        kinds: declared.map((spec) => inventoryKind(spec, capabilities, { unavailable: needs })),
+      },
+    };
+  }
+
   // A provider that declares a walk scope is read in its session-default container and the ones it names; the
   // rest are counted, and a parent the scope reads nothing below whose listing failed is named, so the inventory
   // can say what it did not read.
@@ -2751,20 +2770,14 @@ async function walkObjectInventory(
     if (truncated !== undefined) break;
   }
 
-  const kinds = declared.map((spec) => ({
-    id: spec.id,
-    role: spec.role,
-    label: spec.label,
-    labelPlural: spec.labelPlural,
-    ...(sampledFrom.has(spec.id) ? { sampledFrom: sampledFrom.get(spec.id) } : {}),
-    ...(unavailable.has(spec.id) ? { unavailable: unavailable.get(spec.id) } : {}),
-    ...(withheld.has(spec.id) ? { withheldCount: withheld.get(spec.id) } : {}),
-    ...(withheldUncounted.has(spec.id) ? { withheldUncounted: true as const } : {}),
-    // The refusal `tablesAreDerivedGroupings` carries is about the rows of the inventory,
-    // which are the relation kinds: a Redis Function Library is a named object and a Redis
-    // key pattern is not, and both are declared by the one provider that sets the flag.
-    ...(capabilities.tablesAreDerivedGroupings === true && spec.role === "relation" ? { derivedGroupings: true } : {}),
-  }));
+  const kinds = declared.map((spec) =>
+    inventoryKind(spec, capabilities, {
+      ...(sampledFrom.has(spec.id) ? { sampledFrom: sampledFrom.get(spec.id) } : {}),
+      ...(unavailable.has(spec.id) ? { unavailable: unavailable.get(spec.id) } : {}),
+      ...(withheld.has(spec.id) ? { withheldCount: withheld.get(spec.id) } : {}),
+      ...(withheldUncounted.has(spec.id) ? { withheldUncounted: true as const } : {}),
+    }),
+  );
 
   // The deepest level's words, because the scope keeps or skips containers at that level.
   const level = capabilities.containerLevels?.[containerDepth(capabilities) - 1];
@@ -2786,6 +2799,25 @@ async function walkObjectInventory(
       : {}),
   };
   return defaultContainer === undefined ? { inventory } : { inventory, defaultContainer };
+}
+
+/** What the inventory records of a declared kind: its declaration, what the walk read of it, and the derived mark. */
+function inventoryKind(
+  spec: ObjectKindSpec,
+  capabilities: ProviderCapabilities,
+  read: Omit<AgentInventoryKind, "id" | "role" | "label" | "labelPlural" | "derivedGroupings">,
+): AgentInventoryKind {
+  return {
+    id: spec.id,
+    role: spec.role,
+    label: spec.label,
+    labelPlural: spec.labelPlural,
+    ...read,
+    // The refusal `tablesAreDerivedGroupings` carries is about the rows of the inventory,
+    // which are the relation kinds: a Redis Function Library is a named object and a Redis
+    // key pattern is not, and both are declared by the one provider that sets the flag.
+    ...(capabilities.tablesAreDerivedGroupings === true && spec.role === "relation" ? { derivedGroupings: true } : {}),
+  };
 }
 
 /**

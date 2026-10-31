@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D413, U17 · 303
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U190 · 176
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U190 · 175
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -6511,15 +6511,6 @@ Seen 2026-10-31 on Modbus (pymodbus 3.12.1, the pinned `docker/modbus` image, an
 `entityName` also labels the editor's object panel, so declaring it is a decision about both surfaces.
 
 **Done when:** a Modbus run's grounding and rail count register map points as points, the column line is not said of a point, the noun comes from the provider's own declaration rather than a type-id branch, and a context-snapshot test pins the grounding of a Modbus capture.
-
-### U189. A Modbus connection with no register map is grounded as a device that reported nothing
-
-With no map, `listContainers` answers no unit, so the provider inventory (`src/lib/agent/tools.ts`) never asks `countObjects`, whose answer with no map is `unavailable`, and the snapshot holds no object and no kind marked unavailable.
-`packContextForTask` (`src/lib/agent/context-snapshot.ts`) then writes "This database reported no tables." inside the fence and the rail reads "0 tables", although nothing was asked of the device; the investigation rule beside it says that a connection with no map lists none, which says nothing about what the device holds.
-Asked how many coils and registers the device has, a run read the identification objects and answered that "The captured schema inventory reports no database tables" (run `arun_27f866a8e0c143c682b8dc44a8366378`).
-Seen 2026-10-31 on Modbus (pymodbus 3.12.1, the pinned `docker/modbus` image) in a browser pass, on a seeded connection with no `registerMap`.
-
-**Done when:** the capture of a connection whose inventory cannot be read without its configuration says so in the grounding and the rail instead of "reported no", decided from a provider declaration rather than a type-id branch, and a context-snapshot test pins the grounding of a Modbus connection with no map.
 
 ### U190. A Modbus point the map declares as a string is answered as its register words
 

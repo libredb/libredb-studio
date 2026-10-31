@@ -2352,6 +2352,18 @@ export interface DatabaseProvider {
    * gap that cannot occur is a guard nothing executes.
    */
   listContainers(parent?: readonly string[]): Promise<Container[]>;
+  /**
+   * Why this connection's inventory cannot be listed at all without configuration it lacks, in the provider's own
+   * words, or `undefined` where it can be listed (U189).
+   *
+   * Optional, declared only by a provider whose engine has no request that lists what it holds, so its inventory is
+   * the configuration a connection keeps: Modbus, whose objects are the connection's register map. With none kept,
+   * such a provider lists no container, and a reader of that empty answer could not tell "holds nothing" from
+   * "was asked nothing". The agent's grounding reads this before it walks (`walkObjectInventory` in
+   * `src/lib/agent/tools.ts`), marks every kind unavailable with this sentence and says nothing was listed, instead of
+   * "reported no tables". The sentence completes "could be listed:", so it is written in lower case and with no stop.
+   */
+  inventoryNeedsConfiguration?(): Promise<string | undefined>;
   /** Per-kind counts for one container. A refused read is `{ unavailable }`, never 0. */
   countObjects(container: readonly string[], options?: ObjectReadOptions): Promise<Record<string, KindCount>>;
   /** Objects of one kind in one container. Names only: columns come from describeObject. */

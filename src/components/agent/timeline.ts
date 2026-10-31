@@ -3,6 +3,7 @@ import { mergeDisjoint } from "@/lib/agent/disjoint-merge";
 import { AGENT_MAX_REPAIR_ATTEMPTS, AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
 import type { AgentGoalShortfall } from "@/lib/agent/goal-verifier";
 import { type AgentInventoryNoun, TABLE_INVENTORY_NOUN } from "@/lib/agent/inventory-noun";
+import { unlistedInventoryReason } from "@/lib/agent/inventory-objects";
 import type { AgentPlanAccess, AgentPlanSummary } from "@/lib/agent/plan-summary";
 import {
   AGENT_PACK_READING_REFUSAL_HEADLINES,
@@ -1071,6 +1072,17 @@ function describeRefusal(refusal: AgentToolRefusal): Omit<AgentTimelineItem, "id
 }
 
 /**
+ * What a capture covered, in the engine's word. A capture its provider could not list without configuration the
+ * connection lacks says so with the provider's reason (U189): "0 tables" there read as a database holding none,
+ * although nothing was asked of it. An entry with no inventory on it is counted as it always was.
+ */
+function capturedCount(event: Extract<AgentRunEvent, { kind: "context-captured" }>, noun: AgentInventoryNoun): string {
+  const unlisted = event.snapshot === undefined ? undefined : unlistedInventoryReason(event.snapshot);
+  if (unlisted !== undefined) return `no ${noun.plural} listed (${unlisted})`;
+  return `${event.tableCount} ${event.tableCount === 1 ? noun.singular : noun.plural}`;
+}
+
+/**
  * How old a reused inventory was, in the coarsest unit that is still true (B56).
  *
  * Coarse on purpose. What a reader has to decide is whether the reading predates a
@@ -1134,7 +1146,7 @@ function describeEvent(
         // Redis keyspace while the sidebar beside it said Key Patterns and the model
         // had been told key patterns — the same defect the prompt half of #414 fixed,
         // in the half a user actually reads.
-        detail: `${event.tableCount} ${event.tableCount === 1 ? noun.singular : noun.plural}, fingerprint ${event.fingerprint.slice(0, 8)}`,
+        detail: `${capturedCount(event, noun)}, fingerprint ${event.fingerprint.slice(0, 8)}`,
       };
     case "context-reused":
       return {
