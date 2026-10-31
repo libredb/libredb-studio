@@ -1166,6 +1166,13 @@ describe("MSSQLProvider", () => {
       expect(result.wasLimited).toBe(true);
     });
 
+    test("bounds the outer SELECT of a CTE whose body holds a set operator", () => {
+      const result = provider.prepareQuery("WITH c AS (SELECT 1 AS a UNION SELECT 2) SELECT a FROM c", { limit: 50 });
+
+      expect(result.query).toBe("WITH c AS (SELECT 1 AS a UNION SELECT 2) SELECT TOP 50 a FROM c");
+      expect(result.wasLimited).toBe(true);
+    });
+
     test.each<[string, string, string]>([
       [
         "a window function",

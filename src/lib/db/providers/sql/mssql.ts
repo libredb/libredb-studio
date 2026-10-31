@@ -94,10 +94,11 @@ const MSSQL_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
  * A `TOP n` splice at a known outer `SELECT`, or `null` when that insertion point
  * already carries a TOP.
  *
- * The insertion point comes from `readLeadingKeyword` rather than from a
- * `^\s*SELECT\s+` rewrite, because that pattern silently matched nothing behind a
- * leading comment while the caller had already committed to `wasLimited: true`
- * (#275). `DISTINCT` is found the same way, so `SELECT /* c *\/ DISTINCT a` places
+ * The insertion point is the outer `SELECT` the caller read with `readOperativeKeyword`
+ * (past leading comments and any CTE list) rather than a `^\s*SELECT\s+` rewrite,
+ * because that pattern silently matched nothing behind a leading comment while the
+ * caller had already committed to `wasLimited: true` (#275). `DISTINCT` is found
+ * after it with `readLeadingKeyword`, so `SELECT /* c *\/ DISTINCT a` places
  * `TOP` after the `DISTINCT` and not between the two - `SELECT TOP n DISTINCT ...`
  * is a syntax error in T-SQL.
  *

@@ -37,7 +37,7 @@ provider — and it has a couple of distinct gaps too:
 
 | Aspect | PostgreSQL | SQL Server |
 |--------|------------|------------|
-| Pagination | `LIMIT … OFFSET` | `TOP n` (no offset) / `OFFSET m ROWS FETCH NEXT n` (auto-adds `ORDER BY`) |
+| Pagination | `LIMIT … OFFSET` | `TOP n` (no offset) / `OFFSET m ROWS FETCH NEXT n` (auto-adds `ORDER BY`); an ordered top-level set operation pages with `OFFSET 0 ROWS FETCH NEXT n ROWS ONLY` even with no offset ([3.2](#32-t-sql-pagination-top-and-offset--fetch)) |
 | Pool + timeouts | `min`/`max`/`idle`/`acquire` + `statement_timeout` | `min`/`max`/`idle` + `connectTimeout` (acquire) + **`requestTimeout` (query timeout) wired** |
 | `rowCount` | driver `rowCount` | **`rowsAffected[0]`** (real affected count for DML) |
 | Encryption | opt-in | **`encrypt: true` by default** (Azure-aware `trustServerCertificate`) |
@@ -1482,7 +1482,7 @@ render those words and send an operation SQL Server declares (#496).
 | `createTable` | declared, see [Create Table form](#create-table-form) |
 | `supportsInlineRowEdit` | `true` — `UPDATE t SET c = v WHERE pk = v` is core T-SQL DML |
 | `supportsTestDataGeneration` | `true` - the row menus offer Generate Test Data on tables, which writes one multi-row `INSERT INTO ... VALUES` |
-| `supportsResultPagination` | `true` — `OFFSET m ROWS FETCH NEXT n ROWS ONLY`, built by this provider's own `prepareQuery` override. Page one is `SELECT TOP n`, so the two pages are structurally different statements, and page two carries the `ORDER BY (SELECT NULL)` T-SQL demands before `OFFSET` — which promises nothing about order (#816) |
+| `supportsResultPagination` | `true` — `OFFSET m ROWS FETCH NEXT n ROWS ONLY`, built by this provider's own `prepareQuery` override. Page one is `SELECT TOP n` (an ordered top-level set operation is the exception: its page one is already `OFFSET 0 ROWS FETCH NEXT n ROWS ONLY`, see [3.2](#32-t-sql-pagination-top-and-offset--fetch)), so the two pages are structurally different statements, and page two carries the `ORDER BY (SELECT NULL)` T-SQL demands before `OFFSET` — which promises nothing about order (#816) |
 | `supportsTransactions` | `true` — the `mssql` package's `Transaction` over one held pool connection, so the trio and the SANDBOX toggle are offered (#464) |
 | `declaresForeignKeys` | `true` — inherited from the base capabilities; read from `sys.foreign_keys`, so an empty list is about the schema or the role, not the engine |
 | `supportsMaintenance` | `true` |
