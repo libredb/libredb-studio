@@ -21,7 +21,8 @@
  */
 
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { QueryError, TimeoutError } from "@/lib/db/errors";
+import { QueryError, RefusedBeforeSendError, TimeoutError } from "@/lib/db/errors";
+import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
 import type {
   KeyScanOptions,
   KeyScanPage,
@@ -40,25 +41,28 @@ import type {
   ObjectDetailBatch,
   PerformanceMetrics,
   ProviderCapabilities,
+  ProviderExecutionContext,
   ProviderLabels,
   ProviderOptions,
   QueryResult,
+  ReadOnlyStatementBudget,
+  ReadOnlyStatementMode,
   SlowQueryStats,
   StorageStats,
   TableStats,
 } from "@/lib/db/types";
 import { NETCONF_PORT } from "./dial";
-import {
-  assertYangIdentifier,
-  buildKeyPath,
-  encodeSegment,
-  levelPage,
-  parseKeyPath,
-  type LevelEntry,
-  type PathNode,
-} from "./keypath";
+import { buildKeyPath, encodeSegment, levelPage, parseKeyPath, type LevelEntry, type PathNode } from "./keypath";
 import { NETCONF_KEY_SCAN, NETCONF_KEY_SEPARATOR, NETCONF_OBJECT_KINDS, assertDeclarationIsSound } from "./objectkinds";
 import { NETCONF_LABELS } from "./labels";
+import { parseReadRequest } from "./read-request";
+import type { NetconfAgentClient } from "./agent-client";
+import { netconfAgentResult, runNetconfAgentReadWithin } from "./agent-read";
+import { readNetconfAgentStatement } from "./agent-statement";
+import { NETCONF_AGENT_WITHHELD } from "./agent-surface";
+import { NETCONF_METADATA_ONLY } from "./agent-withheld";
+
+export { parseReadRequest } from "./read-request";
 import type { TopLevelNode } from "./reader";
 
 /** What the provider learns from the device when the session opens. */
@@ -111,7 +115,6 @@ const SENTENCES = Object.freeze({
     "Keys are listed by the Keys panel, one level at a time, and not by this listing. Open the node and use Browse Keys.",
   readsOnly:
     "This provider reads a device and does not write to it: it sends get, get-config, get-data, get-schema and close-session, and nothing else. A read request names a datastore and a path.",
-  notJson: "A NETCONF read request is JSON: it names a datastore, a path and a limit.",
   /*
    * THE SEPARATOR AT THE END IS THE WHOLE POINT and the old sentence left it out. It read
    * "datastore/module:node and then one name per level", which is the spelling that cannot work:
@@ -125,9 +128,6 @@ const SENTENCES = Object.freeze({
   sourceNodePath: "A node's source is addressed by its datastore, its module and the node, so the path is three names.",
   sourceKeyPath:
     "A key's source is addressed by its key path, which begins with the datastore, so the path is one name.",
-  noDatastore: "This read names no datastore, and this provider sends no unfiltered read.",
-  noPath: "This read names no path, and this provider sends no unfiltered read.",
-  badLimit: "A limit is a whole number of rows, one or more.",
 });
 
 /** The words a write looks like, so a user who types one is told what this provider is. */
@@ -149,24 +149,62 @@ async function openWithNodePorts(config: DatabaseConnection): Promise<DeviceRead
   return openNetconfReader(config, { xml: netconfXmlPort });
 }
 
+/** The agent's door, over the same ports and dynamic imports: one session, nothing read on it yet. */
+async function openAgentWithNodePorts(config: DatabaseConnection): Promise<NetconfAgentClient> {
+  const [{ openNetconfSession }, { netconfXmlPort }, { createNetconfAgentClient }] = await Promise.all([
+    import("./open"),
+    import("./xml"),
+    import("./agent-client"),
+  ]);
+  return createNetconfAgentClient(await openNetconfSession(config, { xml: netconfXmlPort }), netconfXmlPort);
+}
+
+/** Studio's own refusals on the agent's statement path, made before anything is sent. */
+export const NETCONF_PROVIDER_SENTENCES = Object.freeze({
+  profileRequired: "Read-only execution requires a provider opened under the agent read-only profile",
+  noEstimate: "NETCONF composes no estimating plan for the agent",
+});
+
 export class NetconfProvider extends BaseDatabaseProvider {
   private reader: DeviceReader | null = null;
   private readonly openReader: (config: DatabaseConnection) => Promise<DeviceReader>;
+  private readonly openAgent: (config: DatabaseConnection) => Promise<NetconfAgentClient>;
 
   /**
    * The base class constructor is protected, so every provider declares its own.
    *
    * The device layer is injected rather than built here, which is what lets every rule in this
-   * class be tested without a network.
+   * class be tested without a network. The execution context comes third, as on every provider that
+   * reads it, so the injected device layer is fourth, and the agent's door, a session per read, fifth.
    */
   public constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
+    private readonly execution: ProviderExecutionContext = {},
     openReader?: (config: DatabaseConnection) => Promise<DeviceReader>,
+    openAgent?: (config: DatabaseConnection) => Promise<NetconfAgentClient>,
   ) {
     super(config, options);
     assertDeclarationIsSound();
     this.openReader = openReader ?? openWithNodePorts;
+    this.openAgent = openAgent ?? openAgentWithNodePorts;
+  }
+
+  /**
+   * Whether this handle was opened for the agent read-only profile by an acquisition that sends statements
+   * (`sendsStatements`). Only then does `queryReadOnly` answer; the operations profile's acquisitions send no statement.
+   */
+  private get readOnlyProfile(): boolean {
+    return this.execution.readOnly === true && this.execution.sendsStatements === true;
+  }
+
+  /**
+   * Whether this handle was opened for any agent-mode profile: every execution profile opens `readOnly` and no editor
+   * handle does. On such a handle the console, a key's raw XML and the overview's filled-in figures are refused with
+   * their reason, since none of them passes through the withheld-node check.
+   */
+  private get agentProfile(): boolean {
+    return this.execution.readOnly === true;
   }
 
   public override getCapabilities(): ProviderCapabilities {
@@ -196,6 +234,8 @@ export class NetconfProvider extends BaseDatabaseProvider {
       ],
       objectKinds: NETCONF_OBJECT_KINDS,
       keyScan: NETCONF_KEY_SCAN,
+      // Agent reads answer values, and a withheld node answers only its path, its kind and a count.
+      metadataOnly: NETCONF_METADATA_ONLY,
       // Nothing a read runs changes the tree.
       schemaRefreshPattern: "(?!)",
     };
@@ -223,11 +263,38 @@ export class NetconfProvider extends BaseDatabaseProvider {
    */
   public async query(statement: string): Promise<QueryResult> {
     const reader = this.open();
+    if (this.agentProfile) throw new RefusedBeforeSendError(NETCONF_AGENT_WITHHELD.query, "netconf", statement);
     if (WRITE_WORDS.test(statement) && !looksLikeReadRequest(statement)) {
       throw new QueryError(SENTENCES.readsOnly);
     }
     const request = parseReadRequest(statement);
     return reader.rows(request.datastore, request.path, request.limit);
+  }
+
+  /**
+   * One agent statement. Only on a handle opened under the agent read-only profile; the statement is read by
+   * `readNetconfAgentStatement` and refused before anything is sent when it is not one of agent mode's reads. The read
+   * runs over a session opened for it alone (`runNetconfAgentReadWithin`), which first reads the device's YANG modules
+   * and decides what is withheld, and is closed when it ends, so nothing of one call reaches the next. Its answer is
+   * refused past the row, byte or time budget rather than cut, and a failure is worded by its category.
+   */
+  public async queryReadOnly(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    if (!this.readOnlyProfile) {
+      throw new RefusedBeforeSendError(NETCONF_PROVIDER_SENTENCES.profileRequired, "netconf", statement);
+    }
+    this.open();
+    assertReadOnlyBudget(budget, "netconf");
+    if (mode !== "execute")
+      throw new RefusedBeforeSendError(NETCONF_PROVIDER_SENTENCES.noEstimate, "netconf", statement);
+    const reading = readNetconfAgentStatement(statement);
+    if (!reading.ok) throw new RefusedBeforeSendError(reading.message, "netconf", statement);
+    const started = Date.now();
+    const answer = await runNetconfAgentReadWithin(() => this.openAgent(this.config), reading.plan, budget);
+    return netconfAgentResult(answer, budget, Date.now() - started);
   }
 
   public async listContainers(parent?: readonly string[]): Promise<Container[]> {
@@ -442,6 +509,7 @@ export class NetconfProvider extends BaseDatabaseProvider {
    */
   public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
     const reader = this.open();
+    if (this.agentProfile) throw new QueryError(NETCONF_AGENT_WITHHELD.source);
     const bound = limit !== undefined && limit > 0 ? limit : undefined;
     if (kind === "node") {
       const [datastore, moduleName, node] = path;
@@ -480,6 +548,8 @@ export class NetconfProvider extends BaseDatabaseProvider {
 
   public async getOverview(): Promise<DatabaseOverview> {
     const facts = this.open().facts;
+    // On an agent-mode handle the zeros below would read as the device's own figures; the reason is answered instead.
+    if (this.agentProfile) throw new QueryError(NETCONF_AGENT_WITHHELD.overview);
     return {
       // Only the capabilities that change how a read is built. The module list stays out of every
       // panel: RFC 8525 section 6 calls it sensitive.
@@ -535,78 +605,9 @@ export class NetconfProvider extends BaseDatabaseProvider {
   }
 }
 
-export interface ReadRequest {
-  readonly datastore: string;
-  readonly path: readonly PathNode[];
-  readonly limit: number;
-}
-
 function looksLikeReadRequest(statement: string): boolean {
   const text = statement.trim();
   return text.startsWith("{") && text.includes('"datastore"') && text.includes('"path"');
-}
-
-/**
- * Reads the console's JSON request.
- *
- * MEASURED by calling this function with eleven bodies, because the sentence that stood here
- * said it refuses rather than defaults and that is true of two of the three fields, not of the
- * request. `datastore` and `path` are required and refused by name, so a request missing one is
- * told which. `limit` is the only field with a default, and only when it is ABSENT: present and
- * not a positive integer it is refused like the other two, `null` included, because `null` is
- * not `undefined`. A field this shape does not name is neither refused nor defaulted, it is
- * ignored. `docs/providers/netconf.md` section 3.1 states the same three rules.
- */
-export function parseReadRequest(statement: string): ReadRequest {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(statement);
-  } catch {
-    throw new QueryError(SENTENCES.notJson);
-  }
-  // An array parses as an object, so it has to be refused here rather than falling through to the
-  // datastore check, where the message would say the request names no datastore when the real
-  // problem is that it is not a request at all. Found by a test whose expectation was right and
-  // whose code was not.
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new QueryError(SENTENCES.notJson);
-  }
-  const body = parsed as Record<string, unknown>;
-  const datastore = body["datastore"];
-  const path = body["path"];
-  if (typeof datastore !== "string" || datastore === "") throw new QueryError(SENTENCES.noDatastore);
-  if (typeof path !== "string" || path === "") throw new QueryError(SENTENCES.noPath);
-  const limit = body["limit"];
-  if (limit !== undefined && (typeof limit !== "number" || !Number.isInteger(limit) || limit < 1)) {
-    throw new QueryError(SENTENCES.badLimit);
-  }
-  return { datastore, path: parsePathArgument(path), limit: typeof limit === "number" ? limit : 1000 };
-}
-
-function parsePathArgument(path: string): readonly PathNode[] {
-  const nodes = path
-    .split("/")
-    .filter((piece) => piece !== "")
-    .map((piece): PathNode => {
-      const at = piece.indexOf("=");
-      const head = at === -1 ? piece : piece.slice(0, at);
-      const colon = head.indexOf(":");
-      const name = assertYangIdentifier(colon === -1 ? head : head.slice(colon + 1), piece);
-      const moduleName = colon === -1 ? undefined : assertYangIdentifier(head.slice(0, colon), piece);
-      const keys =
-        at === -1
-          ? undefined
-          : piece
-              .slice(at + 1)
-              .split(",")
-              .map(decodeURIComponent);
-      if (moduleName && keys) return { module: moduleName, name, keys };
-      if (moduleName) return { module: moduleName, name };
-      if (keys) return { name, keys };
-      return { name };
-    });
-  if (nodes.length === 0) throw new QueryError(SENTENCES.noPath);
-  return nodes;
 }
 
 /** The text under the caller's bound, with the cut declared rather than silent. */

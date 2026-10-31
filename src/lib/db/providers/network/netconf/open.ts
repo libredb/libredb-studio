@@ -114,11 +114,7 @@ export async function openNetconfReader(
   ports: OpenPorts,
   override?: NetconfCredential,
 ): Promise<DeviceReaderImpl> {
-  const host = config.host;
-  if (typeof host !== "string" || host === "") {
-    throw new DatabaseConfigError("this connection needs the device's address");
-  }
-  const port = typeof config.port === "number" && config.port > 0 ? config.port : NETCONF_PORT;
+  const { host, port } = targetOf(config);
   // EVERY failure below leaves as the house class its SCOPE calls for, and naming the address is
   // part of it. MEASURED without this, through the real route: an address with nobody on it
   // answered HTTP 500 `INTERNAL_ERROR` logged "Unhandled error", and a port that listens and says
@@ -131,12 +127,52 @@ export async function openNetconfReader(
   }
 }
 
+/**
+ * One session and nothing read on it: the agent's door (`agent-client.ts`), which reads the YANG library itself on a
+ * session opened for that one read. The dial, the host key check and the failures are the reader's, through the same
+ * conversion.
+ */
+export async function openNetconfSession(config: DatabaseConnection, ports: OpenPorts): Promise<SessionPort> {
+  const { host, port } = targetOf(config);
+  try {
+    return (await dialSession(config, ports, undefined, { host, port })).session;
+  } catch (failure) {
+    throw asHouseError(failure, { host, port });
+  }
+}
+
+function targetOf(config: DatabaseConnection): DialTarget {
+  const host = config.host;
+  if (typeof host !== "string" || host === "") {
+    throw new DatabaseConfigError("this connection needs the device's address");
+  }
+  return { host, port: typeof config.port === "number" && config.port > 0 ? config.port : NETCONF_PORT };
+}
+
 async function compose(
   config: DatabaseConnection,
   ports: OpenPorts,
   override: NetconfCredential | undefined,
   target: DialTarget,
 ): Promise<DeviceReaderImpl> {
+  const { session, hello } = await dialSession(config, ports, override, target);
+  // From here a session exists, so a failure has to close it rather than leave the device holding a
+  // channel open until its own idle timer runs. The device's session table is a shared resource,
+  // and a provider that leaks one entry per failed open is the provider that exhausts it.
+  try {
+    return await DeviceReaderImpl.open(session, ports.xml, hello);
+  } catch (failure) {
+    await session.close().catch(() => {});
+    throw failure;
+  }
+}
+
+async function dialSession(
+  config: DatabaseConnection,
+  ports: OpenPorts,
+  override: NetconfCredential | undefined,
+  target: DialTarget,
+): Promise<{ session: SessionPort; hello: Awaited<ReturnType<typeof NetconfSession.open>>["hello"] }> {
   const { host } = target;
   const { username, hostKeyFingerprint, privateKey, passphrase, password } =
     override === undefined ? credentialOf(config) : checked(override);
@@ -155,14 +191,6 @@ async function compose(
     ports.ssh ?? nodeSshPort,
     ports.socket ?? nodeSocketPort,
   );
-  // From here a session exists, so a failure has to close it rather than leave the device holding a
-  // channel open until its own idle timer runs. The device's session table is a shared resource,
-  // and a provider that leaks one entry per failed open is the provider that exhausts it.
   const { session, hello } = await NetconfSession.open(transport, limits);
-  try {
-    return await DeviceReaderImpl.open(session as SessionPort, ports.xml, hello);
-  } catch (failure) {
-    await session.close().catch(() => {});
-    throw failure;
-  }
+  return { session: session as SessionPort, hello };
 }

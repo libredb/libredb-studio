@@ -11,6 +11,7 @@ import { expectBe, expectEqual, expectRejects, expectTruthy } from "./helpers";
 import {
   NETCONF_SESSION_LIMITS,
   openNetconfReader,
+  openNetconfSession,
   type NetconfCredential,
 } from "@/lib/db/providers/network/netconf/open";
 import type { SocketPort, SshPort, SshConnectOptions } from "@/lib/db/providers/network/netconf/dial";
@@ -221,5 +222,38 @@ test("a dial failure leaves this function as a ConnectionError that names the ad
   expectTruthy(caught instanceof ConnectionError);
   // The address, because the platform's own sentence here carries none, and a reader told only
   // that a dial failed has not been told which device.
+  expectTruthy((caught as Error).message.includes("1830"));
+});
+
+test("the agent's door opens a session and reads nothing on it, through the same dial and the same conversion", async () => {
+  const { ports: p, seen } = ports();
+  const session = await openNetconfSession(
+    { ...connection, user: "ro-key", privateKey: "a key", hostKeyFingerprint: PIN } as DatabaseConnection,
+    p,
+  );
+  expectEqual(seen.dialled, [{ host: "198.51.100.7", port: 830 }]);
+  // The client's hello alone: the library is the agent client's first read, not this door's.
+  expectBe(seen.written.length, 1);
+  expectTruthy(seen.written[0]?.includes("<hello"));
+  await session.close();
+  expectTruthy(seen.written.some((text) => text.includes("<close-session/>")));
+});
+
+test("the agent's door refuses a missing address by name and names the address of a dial that fails", async () => {
+  await expectRejects(
+    openNetconfSession({ ...connection, host: "" } as DatabaseConnection, ports().ports),
+    DatabaseConfigError,
+  );
+  const { ports: p } = ports({ socketError: new Error("connect ECONNREFUSED") });
+  let caught: unknown;
+  try {
+    await openNetconfSession(
+      { ...connection, port: 1830, user: "ro-key", privateKey: "a key", hostKeyFingerprint: PIN } as DatabaseConnection,
+      p,
+    );
+  } catch (error) {
+    caught = error;
+  }
+  expectTruthy(caught instanceof ConnectionError);
   expectTruthy((caught as Error).message.includes("1830"));
 });

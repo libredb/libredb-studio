@@ -188,6 +188,7 @@ export const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "s3api",
   "fsquery",
   "snmpget",
+  "netconfrpc",
 ]);
 
 /**
@@ -257,6 +258,8 @@ export const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.free
   fsquery: "firestore",
   // The agent's name for the SNMP read command language, and `snmp` is the only type-id that runs it.
   snmpget: "snmp",
+  // The agent's name for the NETCONF read request language, and `netconf` is the only type-id that runs it.
+  netconfrpc: "netconf",
 });
 
 /**

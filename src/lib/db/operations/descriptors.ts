@@ -39,6 +39,7 @@ import { rabbitreadAgentReadInput } from "./rabbitread-admission";
 import { s3apiAgentReadInput } from "./s3api-admission";
 import { fsqueryAgentReadInput } from "./fsquery-admission";
 import { snmpgetAgentReadInput } from "./snmpget-admission";
+import { netconfrpcAgentReadInput } from "./netconfrpc-admission";
 import { weaviateapiAgentReadInput } from "./weaviateapi-admission";
 import { agentPlanExecutionSqlInput, agentQueryReadSqlInput, agentReadSqlInput } from "./statement-guard";
 import type { RegistrableOperationDescriptor } from "./types";
@@ -778,6 +779,43 @@ const snmpgetQueryReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+const NETCONFRPC_READ_BOUNDARY =
+  "NETCONF: the provider's structural closed table, read with the console's own parser: one JSON request per read, " +
+  "the console's read request (a datastore and a path, read with get-config on running, candidate and startup and " +
+  "with get-data on operational and intended) or a schema request for one module's YANG text (get-schema), sent " +
+  "through an agent client whose requests are the reads of the one request builder, which holds get, get-config, " +
+  "get-data, get-schema and close-session and no write, over a session opened for that read alone. Before every read " +
+  "the client reads the device's YANG library and the text of every module it lists, and withholds what they mark: " +
+  "the ietf-keystore and ietf-netconf-acm modules whole, every node a module marks nacm:default-deny-all, every leaf " +
+  "typed crypt-hash, the private-key-type, key-type and password-type choices of ietf-crypto-types, and every entry " +
+  "of a list keyed by a withheld leaf; a read whose modules cannot be read is refused, a path naming a withheld node or " +
+  "filtering on a withheld key is refused before it is sent, and a withheld node in an answer is replaced by " +
+  "[withheld]. NACM's own access-denied on writes is measured, not relied on. A list past the row budget and a " +
+  "result past the byte budget are refused, never truncated.";
+
+/**
+ * One NETCONF read the model wrote, on a `netconf` connection.
+ *
+ * R1 on a structural boundary: the agent's client holds reads alone. Its own id, and not a widened `sql.query.read`, so
+ * the SQL contract and its audit action stay exactly what they were.
+ */
+const netconfrpcQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "netconfrpc.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: netconfrpcAgentReadInput,
+  verification: {
+    reviewedBy: "NETCONF agent execution design review",
+    boundary: NETCONFRPC_READ_BOUNDARY,
+    verifiedOn: "2026-10-31",
+  },
+};
+
 const FSQUERY_READ_BOUNDARY =
   "Firestore: the provider's structural closed table, read with the console's own parser: one read of a closed table " +
   "of four metadata reads (the root collection ids, the subcollection ids of one document the statement names in full, " +
@@ -1102,6 +1140,7 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   s3apiQueryReadDescriptor,
   fsqueryQueryReadDescriptor,
   snmpgetQueryReadDescriptor,
+  netconfrpcQueryReadDescriptor,
 ]);
 
 /**

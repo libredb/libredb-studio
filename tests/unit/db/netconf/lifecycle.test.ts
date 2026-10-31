@@ -37,7 +37,7 @@ test("a provider built with no opener uses the real one, which refuses this conn
 test("connect stores the reader the opener returned, so the provider reads through it", async () => {
   let opened = 0;
   const { reader } = countingReader();
-  const provider = new NetconfProvider(connection, {}, async () => {
+  const provider = new NetconfProvider(connection, {}, {}, async () => {
     opened += 1;
     return reader;
   });
@@ -49,7 +49,7 @@ test("disconnect closes the reader once, and a second disconnect closes nothing"
   // The field is cleared BEFORE close is awaited, which is what makes the repeat safe: a provider
   // that cleared it afterwards would close twice if disconnect were called twice in flight.
   const { reader, closes } = countingReader();
-  const provider = new NetconfProvider(connection, {}, async () => reader);
+  const provider = new NetconfProvider(connection, {}, {}, async () => reader);
   await provider.connect();
   await provider.disconnect();
   expectBe(closes(), 1);
@@ -58,12 +58,12 @@ test("disconnect closes the reader once, and a second disconnect closes nothing"
 });
 
 test("disconnect before connect closes nothing and does not throw", async () => {
-  const provider = new NetconfProvider(connection, {}, async () => countingReader().reader);
+  const provider = new NetconfProvider(connection, {}, {}, async () => countingReader().reader);
   await provider.disconnect();
 });
 
 test("an opener that refuses leaves the provider without a reader", async () => {
-  const provider = new NetconfProvider(connection, {}, async () => {
+  const provider = new NetconfProvider(connection, {}, {}, async () => {
     throw new Error("the device refused the subsystem");
   });
   await expectRejects(provider.connect(), /refused the subsystem/);

@@ -98,6 +98,8 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   fsquery: null,
   // No MCP statement tool yet: MCP read stays closed on SNMP until a change of its own declares one and opens it.
   snmpget: null,
+  // No MCP statement tool yet: MCP read stays closed on NETCONF until a change of its own declares one and opens it.
+  netconfrpc: null,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageMcpFacet | null>);
 
 /** A facet some language declares, with its tool's name as a literal. */

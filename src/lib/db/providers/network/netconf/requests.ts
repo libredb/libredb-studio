@@ -32,6 +32,11 @@ export function escapeXml(text: string): string {
 export interface SubtreeFilter {
   /** The node chain to fetch, as the key path grammar spells it. */
   readonly nodes: readonly PathNode[];
+  /**
+   * The namespace of each module the chain names, from the YANG library the same session read. The agent's reads pass
+   * it, so a read never takes a namespace another connection's library left in the module-scoped map below.
+   */
+  readonly namespaces?: ReadonlyMap<string, string>;
 }
 
 /**
@@ -71,7 +76,7 @@ function filterBody(filter: SubtreeFilter): string {
   const build = (index: number): string => {
     const node = filter.nodes[index];
     if (!node) return "";
-    const ns = node.module ? ` xmlns="${escapeXml(moduleNamespace(node.module))}"` : "";
+    const ns = node.module ? ` xmlns="${escapeXml(namespaceIn(node.module, filter.namespaces))}"` : "";
     const keys = (node.keys ?? []).map((value, position) => {
       const name = assertYangIdentifier(node.keyNames?.[position] ?? "name");
       return `<${name}>${escapeXml(value)}</${name}>`;
@@ -94,6 +99,14 @@ const NAMESPACES = new Map<string, string>();
 
 export function rememberNamespace(module: string, namespace: string): void {
   NAMESPACES.set(module, namespace);
+}
+
+/** The namespace of `module` from `namespaces` when a read carries its own library, else from the map above. */
+function namespaceIn(module: string, namespaces: ReadonlyMap<string, string> | undefined): string {
+  if (namespaces === undefined) return moduleNamespace(module);
+  const known = namespaces.get(module);
+  if (!known) throw new QueryError(`the YANG library of this connection does not name module ${module}`);
+  return known;
 }
 
 export function moduleNamespace(module: string): string {

@@ -237,7 +237,7 @@ function connectionWith(over: Record<string, unknown> = {}): DatabaseConnection 
 const livePorts = { xml: netconfXmlPort, ssh: nodeSshPort, socket: nodeSocketPort };
 
 function providerWith(connection: DatabaseConnection): NetconfProvider {
-  return new NetconfProvider(connection, {}, async (config) => openNetconfReader(config, livePorts));
+  return new NetconfProvider(connection, {}, {}, async (config) => openNetconfReader(config, livePorts));
 }
 
 /** One connection, used and then given back however the body ends. */

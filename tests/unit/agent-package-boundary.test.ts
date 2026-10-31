@@ -240,7 +240,7 @@ function isAgentModule(file: string): boolean {
  * provider's read-only profile (its bounded read and the boundary it proves at
  * open) is `queryReadOnly`'s own code, split out of `mongodb/index.ts`, and
  * ships with the provider the same way, as do the ClickHouse, libSQL, Oracle, Db2, Cassandra, Couchbase, Druid, Neo4j,
- * etcd, Oxia, RabbitMQ, Kafka, S3, Firestore and SNMP providers'.
+ * etcd, Oxia, RabbitMQ, Kafka, S3, Firestore, SNMP and NETCONF providers'.
  */
 const NOT_AGENT_CODE: ReadonlySet<string> = new Set([
   "src/lib/db/providers/platform/kubernetes/agent-readings.ts",
@@ -279,6 +279,11 @@ const NOT_AGENT_CODE: ReadonlySet<string> = new Set([
   "src/lib/db/providers/network/snmp/agent-client.ts",
   "src/lib/db/providers/network/snmp/agent-read.ts",
   "src/lib/db/providers/network/snmp/agent-surface.ts",
+  "src/lib/db/providers/network/netconf/agent-statement.ts",
+  "src/lib/db/providers/network/netconf/agent-client.ts",
+  "src/lib/db/providers/network/netconf/agent-read.ts",
+  "src/lib/db/providers/network/netconf/agent-surface.ts",
+  "src/lib/db/providers/network/netconf/agent-withheld.ts",
 ]);
 
 // ---------------------------------------------------------------------------

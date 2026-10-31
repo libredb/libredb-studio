@@ -375,10 +375,8 @@ query.
 
 Not declared, each for a measured reason: `connectionStringSupport` (4.1), `explainFormat` (no
 engine-side plan exists), `credentialWarnings` (4.3), and no entry in `ENGINE_URI_SCHEMES` (4.1).
-This engine is not in `AGENT_EXECUTION_ENGINES` and has no engine overlay supplying `statistics` or `catalogCapture`: the
-first takes an engine whose provider implements a read-only statement path (`queryReadOnly`), which
-this one does not; the second and third take an engine that answers catalog statistics through SQL, and
-this engine answers no SQL at all.
+This engine is in `AGENT_EXECUTION_ENGINES` (section 14) and has no engine overlay supplying `statistics` or `catalogCapture`: those take an engine that answers catalog statistics through SQL, and this engine answers no SQL at all.
+`metadataOnly` declares the one report a withheld node answers with: its path, its kind and a count, never a value (section 14.3).
 
 ### SQL writing
 
@@ -504,3 +502,70 @@ The refusal reason it prints, verbatim:
 - RFC 8341, NACM (the access control the measurements ran under)
 - RFC 8525, YANG library
 - RFC 8526, NMDA (`<get-data>`, `<subtree-filter>`)
+
+## 14. Agent mode
+
+Agent mode reads a NETCONF device through `queryReadOnly`, on a handle opened under the agent read-only profile only; on an editor handle it is refused before anything is sent.
+The provider takes the execution context as its third constructor argument, the injected device layer fourth and the agent's door, a session per read, fifth.
+
+### 14.1 The boundary
+
+The boundary is the provider's structural closed table.
+`requests.ts` is the one module that writes element text, it builds `get`, `get-config`, `get-data`, `get-schema` and `close-session` from typed arguments, and no function anywhere builds a write.
+The agent's client (`agent-client.ts`) sends only the YANG library read (`get` of `modules-state`), `get-schema` and the console's data read, and its tests pin every full RPC body it can send.
+Each agent read opens its own session and closes it when the read ends, so no session, message id, namespace or module text of one read reaches the next; the filter carries the namespaces of that session's own library rather than the module-scoped map of section 12.
+
+NACM is measured and not relied on.
+On the Netopeer2 fixture, a raw `edit-config` sent under the read-only account by the capture script, never by Studio, answers `access-denied` with the NACM rule list of `docker/netconf/setup.sh` applied, but a device without that rule list would accept it, so the table is the boundary (`tests/fixtures/netconf/2.8.7/agent-boundary/`).
+
+### 14.2 What an agent request may be
+
+One JSON object, read before anything is sent (`agent-statement.ts`):
+
+- `{"datastore": "running", "path": "ietf-interfaces:interfaces", "limit": 100}`, the console's read request read by the console's own parser (section 3.1), `get-config` on running, candidate and startup and `get-data` on operational and intended;
+- `{"schema": "ietf-interfaces"}`, one module's YANG text.
+
+A field neither shape names is refused, where the console ignores it, so a model is never answered a read it believes it narrowed.
+A path names its module on its first node, a key value may not hold the `]]>]]>` separator, and a path into, or a schema of, `ietf-keystore` or `ietf-netconf-acm` is refused by name.
+Every refusal is worded by agent mode and followed by its list of reads, and the admission (`src/lib/db/operations/netconfrpc-admission.ts`) is this same reader with a 4,096-character bound.
+
+### 14.3 Values, and what is withheld
+
+A device's configuration and state are its management data, so the agent reads them, as text, inside the untrusted-content fence like every other result.
+Before every read, the session reads the YANG library and the text of every module and submodule it lists with `get-schema`, and `agent-withheld.ts` compiles what is withheld from them: on the fixture that is 59 texts, about 890 KB, in 45 ms.
+Withheld, each named by its own identifier:
+
+| Kind | What it covers | Why |
+|---|---|---|
+| `ietf-keystore` | every node in the module's namespace | the device's private and symmetric keys (RFC 9642) |
+| `ietf-netconf-acm` | every node in the module's namespace | the access control groups and rules (RFC 8341) |
+| `nacm:default-deny-all` | every data node a module marks with the extension, and its subtree | RFC 8341 section 3.5.1.2, the protocol's own mark for a node too sensitive to read by default |
+| `crypt-hash` | every leaf typed `crypt-hash` of `iana-crypt-hash` or `ietf-system`, a typedef or union deriving from it, and a leafref pointing at such a leaf | a password hash (RFC 7317) |
+| `ietf-crypto-types secret` | every node of the `private-key-type`, `key-type` and `password-type` choices of `ietf-crypto-types` | cleartext, hidden and encrypted private keys, symmetric keys and passwords (RFC 9640 section 2.1, which defines no key typedef) |
+| `keyed by a withheld leaf` | every entry of a list whose key leaf is withheld | an entry's path would carry the key |
+
+The marks, the types and the choices are read from the device's own module texts, never from a list of node names, and a node is matched by the chain of data-node names from where it is declared, so a grouping's node is withheld wherever it is used, whatever namespace it takes there.
+A read whose library, any module text or that text's grammar cannot be read is refused rather than answered unchecked, worded as Studio's refusal.
+A path that names a withheld node, a node inside one, or filters on a withheld key is refused before it is sent, since even an empty answer would tell whether a guessed value exists.
+A read covering a withheld node answers `[withheld]` in its place, never its value or a child of it, drops every entry keyed by a withheld leaf, and warns each with its path, its kind and its reason; that report passes through the shared metadata-only projection, so it holds a path, a kind and a count and nothing else.
+
+Measured on the fixture under the read-only account (`tests/fixtures/netconf/2.8.7/agent-boundary/`): the `hashed-password` leaf of each password user in `ietf-netconf-server` is answered raw, the keystore's host key entry answers its name and formats while NACM itself prunes its cleartext private key, and `nacm` is not answered at all; Studio withholds all three whatever NACM does.
+
+A list holding more entries than the request's `limit` or the row budget is refused rather than cut, an answer past the byte budget is refused, and a read past the time budget, which covers the session, the module check and the read, is refused in Studio's words.
+A failure is worded by its category: an `rpc-error` by its RFC 6241 error-tag alone, never by the device's message, path or info, which can echo a value, and a dial, credential or session failure by its class, never with a credential or host key.
+
+On a handle of either agent profile, the console, a node's or key's source and the overview are refused with their reason, since none passes through the check; the object surface answers names only, as on every handle, and the metric, session, table and storage readings already answer their reason.
+
+### 14.4 Agent language pack
+
+Statement-language family: `netconfrpc`.
+Overlay: [`src/lib/agent/languages/netconfrpc/engines/netconf.ts`](../../src/lib/agent/languages/netconfrpc/engines/netconf.ts), with its client row in [`src/lib/agent/languages/netconfrpc/engines/client.ts`](../../src/lib/agent/languages/netconfrpc/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`.
+Both overlays are empty, so the engine resolves to the `netconfrpc` family pack itself.
+The `netconfrpc` statement-language family has no dialect-bound member.
+This overlay overrides no Shared member, so every Shared member is the `netconfrpc` statement-language family's own.
+The family offers the investigation workflow, through `run_read_query` with one request, and the operations workflow; it offers no query optimization or database assessment, since a device has no plan and no profile, and no data analysis, whose tools assume a store of records, and no workflow hands an answer to the editor.
+The workflow classifier offers the model only these two.
+The editor language id stays `netconf`, and the fence alias `netconfrpc` names this engine.
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+No MCP tool runs a NETCONF request: the family declares no MCP facet, `MCP_EXPOSABLE.netconf` and `MCP_STATEMENT_READ.netconf` are false ([B159](../BACKLOG.md#b159-netconfs-agent-reads-withhold-keys-password-hashes-and-access-rules-and-it-has-no-mcp-surface)), and `READ_ONLY_ENFORCED.netconf` is unchanged.

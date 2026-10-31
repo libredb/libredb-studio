@@ -134,6 +134,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "s3",
   "firestore",
   "snmp",
+  "netconf",
 ];
 
 /**

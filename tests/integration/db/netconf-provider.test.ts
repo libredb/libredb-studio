@@ -239,7 +239,7 @@ describe("the reads, through the framing the device chunked", () => {
 describe("what the provider refuses, with the device on the other end", () => {
   test("a write is refused by this provider, and nothing reaches the device", async () => {
     const { ports, wrote } = replay();
-    const provider = new NetconfProvider(connection(), {}, async (config) => openNetconfReader(config, ports));
+    const provider = new NetconfProvider(connection(), {}, {}, async (config) => openNetconfReader(config, ports));
     await provider.connect();
     const asked = wrote.length;
     await expect(provider.query("<edit-config><target><running/></target></edit-config>")).rejects.toThrow(
@@ -251,7 +251,7 @@ describe("what the provider refuses, with the device on the other end", () => {
 
   test("an SQL statement is refused by the same sentence", async () => {
     const { ports } = replay();
-    const provider = new NetconfProvider(connection(), {}, async (config) => openNetconfReader(config, ports));
+    const provider = new NetconfProvider(connection(), {}, {}, async (config) => openNetconfReader(config, ports));
     await provider.connect();
     await expect(provider.query("UPDATE interfaces SET enabled = false")).rejects.toThrow(
       /reads a device and does not write to it/,

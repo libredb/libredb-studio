@@ -44,7 +44,8 @@ export type AgentStatementLanguageId =
   | "kafkaread"
   | "s3api"
   | "fsquery"
-  | "snmpget";
+  | "snmpget"
+  | "netconfrpc";
 
 /** Literal-typed, so `AgentEngineFamily` in `languages/pack.ts` reads each engine's language by type. */
 export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
@@ -87,7 +88,7 @@ export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
   opcua: null,
   mtconnect: null,
   modbus: null,
-  netconf: null,
+  netconf: "netconfrpc",
   snmp: "snmpget",
   sparkplug: null,
   libredb: "libredbkv",

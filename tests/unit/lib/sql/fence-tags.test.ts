@@ -84,6 +84,12 @@ describe("fenceTagEngine", () => {
     expect(fenceTagEngine("firestore")).toBe("firestore");
   });
 
+  test("netconfrpc names netconf, the agent's name for the only read request language NETCONF runs", () => {
+    expect(fenceTagEngine("netconfrpc")).toBe("netconf");
+    expect(isQueryFenceTag("netconfrpc")).toBe(true);
+    expect(fenceTagEngine("netconf")).toBe("netconf");
+  });
+
   test("snmpget names snmp, the agent's name for the only read command language SNMP runs", () => {
     expect(fenceTagEngine("snmpget")).toBe("snmp");
     expect(isQueryFenceTag("snmpget")).toBe(true);

@@ -117,7 +117,7 @@ export interface NetconfWithheldRow {
 }
 
 /** What a withheld node is answered with: its path and reason, never a value (`metadataOnly`'s one operation). */
-export const NETCONF_WITHHELD_PROJECTION: MetadataProjection<NetconfWithheldRow> = Object.freeze([
+const NETCONF_WITHHELD_PROJECTION: MetadataProjection<NetconfWithheldRow> = Object.freeze([
   { column: "path", kind: "name", read: (row: NetconfWithheldRow) => row.path },
   { column: "withheld", kind: "name", read: (row: NetconfWithheldRow) => row.kind },
   { column: "nodes", kind: "count", read: (row: NetconfWithheldRow) => row.nodes },

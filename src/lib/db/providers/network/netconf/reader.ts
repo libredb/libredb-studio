@@ -17,7 +17,7 @@ import type { QueryResult } from "@/lib/types";
 import { compareUtf8, type LevelEntry, type PathNode } from "./keypath";
 import { READER_LIMITS, type XmlElement, type XmlReaderPort } from "./reader-port";
 import { moduleNamespace, rememberNamespace, type NetconfRequest, type NmdaDatastore } from "./requests";
-import { buildRows } from "./rows";
+import { buildRows, ROW_LIMITS, type RowLimits, type RowSet } from "./rows";
 import { keyNamesOf, scanYangModule, type YangScan } from "./yangkeys";
 
 /** What the reader needs from a session: the five operations and an end. Nothing else. */
@@ -229,12 +229,7 @@ export class DeviceReaderImpl {
       return { rows: [], fields: [], rowCount: 0, executionTime: Date.now() - started };
     }
     const scan = await this.scanOf(moduleName);
-    const keyNames = keyNamesOf(scan, last.name);
-    const descended = keyNames.length === 0 ? listInside(scan, elementAt(parent, [last.name])) : undefined;
-    const built =
-      descended === undefined
-        ? buildRows(parent, last.name, keyNames)
-        : buildRows(descended.holder, descended.list, keyNamesOf(scan, descended.list));
+    const built = rowsIn(parent, last.name, scan);
     const rows = built.rows.slice(0, limit);
     return {
       rows: rows as Record<string, unknown>[],
@@ -313,6 +308,19 @@ export class DeviceReaderImpl {
   }
 }
 
+/**
+ * The rows of the list `name` below `parent`, keyed by the module's own key statement, or of the list a container named
+ * `name` holds (`listInside`). One shaping for the grid and for the agent's reads, so an agent's answer is rendered as
+ * the console renders it.
+ */
+export function rowsIn(parent: XmlElement, name: string, scan: YangScan, limits: RowLimits = ROW_LIMITS): RowSet {
+  const keyNames = keyNamesOf(scan, name);
+  const descended = keyNames.length === 0 ? listInside(scan, elementAt(parent, [name])) : undefined;
+  return descended === undefined
+    ? buildRows(parent, name, keyNames, limits)
+    : buildRows(descended.holder, descended.list, keyNamesOf(scan, descended.list), limits);
+}
+
 /** The `<data>` of a reply, or a refusal carrying the device's own words. */
 function parseReply(xml: XmlReaderPort, reply: string): XmlElement {
   const root = xml.parse(reply, READER_LIMITS);
@@ -355,7 +363,7 @@ function listInside(scan: YangScan, node: XmlElement | undefined): { holder: Xml
 }
 
 /** The element at a chain of names below `from`, or undefined where the chain breaks. */
-function elementAt(from: XmlElement, names: readonly string[]): XmlElement | undefined {
+export function elementAt(from: XmlElement, names: readonly string[]): XmlElement | undefined {
   let at: XmlElement | undefined = from;
   for (const name of names) {
     at = at?.children.find((child) => child.name === name);

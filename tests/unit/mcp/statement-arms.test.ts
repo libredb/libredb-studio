@@ -89,6 +89,8 @@ describe("MCP_STATEMENT_ARMS", () => {
     expect(mcpStatementToolFor("firestore")).toBeNull();
     expect(MCP_STATEMENT_ARMS.snmpget).toBeNull();
     expect(mcpStatementToolFor("snmp")).toBeNull();
+    expect(MCP_STATEMENT_ARMS.netconfrpc).toBeNull();
+    expect(mcpStatementToolFor("netconf")).toBeNull();
   });
 
   test("is built from the languages' MCP facets, one arm per declared facet, in the registry's order", () => {
@@ -422,6 +424,7 @@ describe("the tool each engine is read with", () => {
       s3api: null,
       fsquery: null,
       snmpget: null,
+      netconfrpc: null,
     };
     expect(servingStatementArms(arms)).toEqual([RUN_READ_QUERY_ARM]);
     const registerTool = mock((_name: string) => undefined);
