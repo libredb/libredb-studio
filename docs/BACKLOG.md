@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D413, U17 · 303
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U181 · 167
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U183 · 169
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -6189,6 +6189,7 @@ The provider declined each one with its own sentence ("This engine family publis
 The three refusals also used the run's three repair attempts, so the next call was refused with `REPAIR_BUDGET_EXHAUSTED` and the run stopped drafting.
 Seen 2026-10-30 in a browser pass on Apache Cassandra 5.0.9; not checked on the other engines whose providers decline these panels.
 Seen again 2026-10-30 on etcd v3.7.2 in a browser pass: an Operate run on a reader and one on `root` called `inspect_operations` for the table statistics, which the provider declines on an agent-mode handle before anything is sent ("Agent mode on etcd reads metadata only, and key names count as stored values, so no key, key prefix or key range is listed to it."), and the rail headed it "The database refused the statement"; the `root` run showed one repair attempt spent (runs `arun_991c5b8f9b6f4bdfb1076e7ddbd8b429`, `arun_3c3832b0df50402e8cdd7ad992db7728`).
+Seen again 2026-10-31 on Apache Kafka 4.3.1 in a browser pass: on an agent-mode handle the provider answers the session, slow-query, table, index, storage and overview readings with its own reason before anything is sent (`KAFKA_AGENT_WITHHELD` in `src/lib/db/providers/stream/kafka/agent-surface.ts`, thrown as a `QueryError`), each was recorded `class: "database-error"` and headed "The database refused the statement", and the first three spent the run's three repair attempts, so in one Operate run the health reading, the only one Kafka takes, was never reached and the run ended `succeeded` with "Run did not answer" (runs `arun_f243ffd8e7a243ec828f079675224d66`, `arun_b8f03ec6b4954c0690bec30d223f6502`).
 
 **Done when:** a panel the provider declines without sending a statement is recorded as not sent and headed "Refused before the database" with the provider's sentence as the detail, it does not count as a repair attempt, and a timeline test and an agent test pin both.
 
@@ -6207,6 +6208,7 @@ On Druid the snapshot holds the datasources and the `INFORMATION_SCHEMA` and `sy
 The sidebar beside it said "Datasources 1".
 Seen 2026-10-30 on Apache Druid 37.0.0 in a browser pass; not checked on other engines whose schema lists system tables.
 Seen again 2026-10-30 on etcd v3.7.2 in a browser pass: the engine's noun is "key prefixes", and on an agent-mode handle the snapshot holds no key prefix at all, only members, leases, users and roles, so a reader saw "Schema snapshot ctx_6379 · 2 key prefixes" over one lease and one member, and `root` "10 key prefixes" over one lease, one member, five users and three roles; a model then answered that the inventory "lists two key prefixes: 79caa18e44831205 (Lease) and f0b46276439bf9ca (Member)" (run `arun_4d1f985413ba469dadafbc5bc97110c2`).
+Seen again 2026-10-31 on Apache Kafka 4.3.1 in a browser pass: the agent-mode snapshot holds three topics and broker `1` (kind `broker`), so the rail read "Schema snapshot ctx_e6f8 · 4 topics" and two models answered that the inventory lists four topic names, "1", "audit-log", "orders" and "payments" (runs `arun_b8f03ec6b4954c0690bec30d223f6502`, `arun_d1a92a8b8d23445d893334bfc38f5746`).
 
 **Done when:** the rail's count names only the objects of the noun's kind, or names the system tables as such, from the snapshot's object kinds rather than a type-id branch, with a timeline test on a capture that mixes datasources and system tables.
 
@@ -6223,6 +6225,7 @@ Seen 2026-10-30 on LibreDB in a browser pass.
 Seen again 2026-10-30 on Redis 8.10.2 in a browser pass: the picker offered Optimize, Assess and Analyze, which the `rediscli` family does not offer (`docs/providers/redis.md` section 16.5), and Analyze was refused with the same sentence although investigation runs there.
 Seen again 2026-10-30 on etcd v3.7.2 in a browser pass: the picker offered Optimize, Assess and Analyze, which the `etcdctl` family does not offer (`docs/providers/etcd.md` section 15.5), and Optimize was refused with the same sentence although investigation runs there.
 Seen again 2026-10-31 on RabbitMQ 4.3.6 in a browser pass: the picker offered Optimize, Assess and Analyze, which the `rabbitread` family does not offer (`docs/providers/rabbitmq.md` section 17.4), and Analyze was refused with the same sentence although investigation runs there.
+Seen again 2026-10-31 on Apache Kafka 4.3.1 in a browser pass: the picker offered Optimize, Assess and Analyze, which the `kafkaread` family does not offer (`docs/providers/kafka.md` section 15.4), and Analyze was refused with the same sentence although investigation runs there.
 
 **Done when:** the refusal names the workflows the connection's statement language does offer, read from `AGENT_WORKFLOW_VARIANTS` rather than fixed text, the picker marks or hides a workflow that language has no variant for, and a test pins the sentence for `libredbkv`.
 
@@ -6418,6 +6421,23 @@ A drafted `publish "hello" to the orders stream` was refused with "A RabbitMQ re
 Seen 2026-10-31 on RabbitMQ 4.3.6 in a browser pass, five times in one run (run `arun_79922a5829284b4ebfcbf93460ad9193`); nothing was sent.
 
 **Done when:** a refused request that is not JSON reads one example, with agent mode's sentence saying only what the read answers after the parser's, and `tests/unit/db/rabbitmq/agent-statement.test.ts` pins the sentence for a request that is not JSON.
+
+### U182. Kafka plan mode is told the inventory holds record columns it does not hold, and can draft no metadata read
+
+Plan mode states `getLabels().statementLanguage` verbatim, and on Kafka that sentence describes the editor's record read request and says "the inventory's other columns (key, value, headers and their encodings) are fields each message comes back with" (`src/lib/db/providers/stream/kafka/index.ts`).
+On an agent-mode profile the inventory plan mode reads holds a topic's offset columns instead, `partition`, `earliest_offset`, `end_offset` and `offset_span` (`KAFKA_AGENT_TOPIC_COLUMNS`, `docs/providers/kafka.md` section 15.3), so the sentence names columns the model cannot see and none it can.
+Asked to draft reads for the widest offset span of `orders` and its leader, plan mode drafted nothing and asked the user for "a metadata read interface that returns every orders partition's offset span and leader broker ID"; asked for the first ten messages of a partition, it drafted `{"topic":"orders","partition":1,"from":"earliest","limit":10}`, which the editor accepted and sent (refused by the broker for the Describe-only principal, read as the super user).
+Seen 2026-10-31 on Apache Kafka 4.3.1 in a browser pass (runs `arun_d2b686690b82426298e950e33750609c`, `arun_5ab2032a2aa54bf4b6ade448aeb22d5e`); nothing was executed.
+
+**Done when:** the sentence plan mode reads on Kafka names only columns its inventory holds, or the inventory says which of its columns the editor's request answers, and a plan-mode test pins the sentence against the agent-profile topic columns.
+
+### U183. A Kafka health reading that proved a broker answered reaches the model with no field saying so
+
+On an agent-mode handle `agentHealth` (`src/lib/db/providers/stream/kafka/agent-surface.ts`) forces one Metadata read, so the reading exists only because a broker answered, yet its artifact holds `activeConnections` null, `databaseSize` set to Studio's reason and `cacheHitRatio` "N/A", and the rail captions it "A moment, not a history: this reading says what the engine reported as it was taken." although no column is the engine's report.
+An Operate run asked whether the broker was up took that reading and answered "Broker availability is not established by this run."
+Seen 2026-10-31 on Apache Kafka 4.3.1 in a browser pass (run `arun_b8f03ec6b4954c0690bec30d223f6502`).
+
+**Done when:** a health reading the provider takes only to prove the engine answered says so in a field the model and the rail read, without a type-id branch, and an operations test pins what the model's tool result says for it.
 
 ## Dependencies
 
