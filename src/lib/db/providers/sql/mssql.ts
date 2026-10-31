@@ -2820,13 +2820,10 @@ export class MSSQLProvider extends SQLBaseProvider {
         }
         modifiedSql = `${modifiedSql} OFFSET ${offset} ROWS FETCH NEXT ${effectiveLimit} ROWS ONLY`;
       } else {
-        const outerSelect = readOperativeKeyword(modifiedSql, grammar);
-        if (outerSelect === null || outerSelect.keyword !== "SELECT") {
-          return { query, wasLimited: false, limit: effectiveLimit, offset };
-        }
-
         // Inject TOP N after the outer SELECT, including the SELECT after a CTE.
-        const injected = injectTopAt(modifiedSql, outerSelect, effectiveLimit, grammar);
+        const outerSelect = readOperativeKeyword(modifiedSql, grammar);
+        const injected =
+          outerSelect?.keyword === "SELECT" ? injectTopAt(modifiedSql, outerSelect, effectiveLimit, grammar) : null;
 
         // Nothing to inject into: report the truth rather than a limit that is not
         // there. A malformed CTE or a statement with no outer SELECT cannot be

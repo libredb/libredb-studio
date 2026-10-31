@@ -1102,7 +1102,10 @@ describe("MSSQLProvider", () => {
       ["unnamed first-arm columns", "SELECT COUNT(*) FROM a UNION ALL SELECT COUNT(*) FROM b"],
       ["ORDER BY only in a literal", "SELECT id FROM a UNION ALL SELECT id FROM b WHERE note = 'ORDER BY id'"],
       ["ORDER BY only in a comment", "SELECT id FROM a UNION ALL SELECT id FROM b -- ORDER BY id"],
-      ["ORDER BY only in a subquery", "SELECT id FROM a UNION ALL SELECT id FROM (SELECT TOP 5 id FROM b ORDER BY id) s"],
+      [
+        "ORDER BY only in a subquery",
+        "SELECT id FROM a UNION ALL SELECT id FROM (SELECT TOP 5 id FROM b ORDER BY id) s",
+      ],
       ["ORDER BY only in a window", "SELECT ROW_NUMBER() OVER (ORDER BY id) AS rn FROM a UNION ALL SELECT 1 FROM b"],
     ])("declines an unordered top-level set operation: %s", (_label, sql) => {
       const result = provider.prepareQuery(sql, { limit: 50 });
