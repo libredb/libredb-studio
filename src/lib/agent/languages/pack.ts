@@ -358,6 +358,12 @@ export interface AgentLanguageGrounding {
   readonly sampledFields?: boolean;
   /** What a plan-mode draft in this language is told on top of the shared contract (`planningStatementContract`). */
   readonly planningRules?: readonly string[];
+  /**
+   * Where the language's engine is never listed, so no inventory ever grounds a plan, what an ungrounded plan-mode draft
+   * is told in place of the no-inventory refusal: it is given the statement contract without its inventory sentences,
+   * and these rules say where its names come from instead. Absent, an ungrounded plan refuses as it always has.
+   */
+  readonly ungroundedPlanning?: readonly string[];
 }
 
 /** What a run is told about a shortfall, and whether it is narrowed to its verdict's tools while it acts on it. */

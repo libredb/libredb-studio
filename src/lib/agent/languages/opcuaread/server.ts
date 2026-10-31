@@ -34,13 +34,20 @@ const OPCUAREAD_WORKFLOW_TOOL_RULES: Readonly<Partial<Record<AgentRunWorkflowTyp
  * No `inspect_schema` is offered, and the provider declares no kind the grounding walk lists, so a run is ungrounded
  * and the note says how the address space is reached. `relations` is false: an address space declares no relation
  * the inventory draws. No `planningRules`: they reach plan mode alone, whose statement form is the provider's
- * `statementLanguage` label, so the rules of the agent's reader are never told to it.
+ * `statementLanguage` label, so the rules of the agent's reader are never told to it. A plan is never grounded either,
+ * so `ungroundedPlanning` gives it the statement contract with the question's own node ids as its names, in place of
+ * the no-inventory refusal every grounded engine's plan meets when its inventory cannot be read.
  */
 const OPCUAREAD_GROUNDING: AgentLanguageGrounding = Object.freeze({
   omissionAdvice: `${BROWSED} ${UNITS} ${OPCUA_WITHHELD_SENTENCE}`,
   relations: false,
   ungrounded: (detail: string, noun: AgentInventoryNoun) =>
     `${detail}\nSo nothing about this server has been established for you: not one ${noun.singular} name. ${BROWSED} ${UNITS} ${OPCUA_WITHHELD_SENTENCE}`,
+  ungroundedPlanning: Object.freeze([
+    "No inventory of this server is in this conversation, and none ever will be: an OPC UA address space is browsed one level at a time rather than listed.",
+    "So the node ids of the request you draft are the ones the question names, written exactly as it writes them: invent none, and derive none from a node's name.",
+    "If the question names no node id the request can read, the node ids are what is missing.",
+  ]),
 });
 
 export const OPCUAREAD_SERVER_PACK = Object.freeze({

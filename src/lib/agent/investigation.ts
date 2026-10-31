@@ -394,6 +394,11 @@ interface PlanningEngine {
    * `"collection": "shop.orders"`, which the editor reads as a collection that does not exist and answers with no rows.
    */
   readonly planningRules: readonly string[];
+  /**
+   * What an ungrounded plan of the run's own server pack is told in place of the no-inventory refusal, where its
+   * language's engine is never listed (`AgentLanguageGrounding.ungroundedPlanning`); absent everywhere else.
+   */
+  readonly ungroundedPlanning?: readonly string[];
   /** The tool rules of the run's own server pack, per workflow; `workflowToolRules` reads the record's workflow. */
   readonly toolRules: Readonly<Partial<Record<AgentRunWorkflowType, string>>>;
 }
@@ -408,6 +413,9 @@ function planningEngine(context: AgentToolContext): PlanningEngine {
     derivedGroupings: context.capabilities.tablesAreDerivedGroupings === true,
     ...(context.labels.statementLanguage === undefined ? {} : { statementLanguage: context.labels.statementLanguage }),
     planningRules: server.grounding.planningRules ?? [],
+    ...(server.grounding.ungroundedPlanning === undefined
+      ? {}
+      : { ungroundedPlanning: server.grounding.ungroundedPlanning }),
     toolRules: server.workflowToolRules,
   };
 }
@@ -1189,7 +1197,11 @@ const PLANNING_NO_STATEMENT_RULE = [
  * told those are the names of its collections and fields and not evidence of a
  * relational schema it can join.
  */
-const planningStatementContract = (deliverable: { readonly noun: string }, engine: PlanningEngine): string =>
+const planningStatementContract = (
+  deliverable: { readonly noun: string },
+  engine: PlanningEngine,
+  inventory: boolean = true,
+): string =>
   [
     engine.language === "sql"
       ? `Produce ONE runnable statement: ${deliverable.noun}.`
@@ -1206,10 +1218,15 @@ const planningStatementContract = (deliverable: { readonly noun: string }, engin
     ...engine.planningRules,
     `Put it in a single fenced block tagged \`${engine.type}\` — three backticks, that tag, the statement, three backticks — and put nothing else inside that block.`,
     `Put the rationale AFTER the statement, and keep it brief: which ${engine.noun.plural} it reads, which joins it makes, and why that answers the objective.`,
-    engine.language === "sql"
-      ? `Use no ${engine.noun.singular} name and no column name that is not in that inventory. A name that is not there is one you invented, and the statement will fail on it.`
-      : `Use no name that is not in that inventory. It lists each ${engine.noun.singular} with the columns under it because that is the shape this product records every engine's schema in; on this engine those are the names of its own objects and of the fields inside them, and a name that is not there is one you invented.`,
-    "A statement built only from names in the inventory is still not a statement that is certain to run: the inventory records what EXISTS in this database, not what the user's role is permitted to read.",
+    // An ungrounded plan of a language that drafts from its question's own names has no inventory to be held to.
+    ...(inventory
+      ? [
+          engine.language === "sql"
+            ? `Use no ${engine.noun.singular} name and no column name that is not in that inventory. A name that is not there is one you invented, and the statement will fail on it.`
+            : `Use no name that is not in that inventory. It lists each ${engine.noun.singular} with the columns under it because that is the shape this product records every engine's schema in; on this engine those are the names of its own objects and of the fields inside them, and a name that is not there is one you invented.`,
+          "A statement built only from names in the inventory is still not a statement that is certain to run: the inventory records what EXISTS in this database, not what the user's role is permitted to read.",
+        ]
+      : []),
     PLANNING_NO_STATEMENT_RULE,
   ].join(" ");
 
@@ -1656,7 +1673,9 @@ function systemPrompt(record: AgentRunRecord, grounding: PlanningGrounding, engi
         : planningProseRulesUngrounded(engine)
       : grounding.schemaKnown
         ? planningSchemaRules(grounding, deliverable, engine)
-        : planningNoSchemaRules(deliverable, engine.noun);
+        : engine.ungroundedPlanning === undefined
+          ? planningNoSchemaRules(deliverable, engine.noun)
+          : [...engine.ungroundedPlanning, planningStatementContract(deliverable, engine, false)].join(" ");
   const planningRules = `${PLANNING_TOOLLESS_RULE} ${planningDeliverableRules}`;
   // The language sentence is said only where the engine declares a language of its own;
   // no SQL agent engine does, so the SQL prompt is unchanged.

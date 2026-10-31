@@ -902,6 +902,7 @@ inventory takes the other legitimate ending: a line beginning `NO STATEMENT:` sa
 missing and asking the one question that would unblock it. That marker is a convention in the
 **output**, not a tool, which is what lets a toolless mode make its two outcomes mechanically
 distinguishable.
+A language whose engine is never listed declares `ungroundedPlanning` on its grounding (`AgentLanguageGrounding` in `src/lib/agent/languages/pack.ts`), and its ungrounded plan is given the statement contract without the inventory sentences, with those rules saying where its names come from, in place of the no-inventory refusal; OPC UA is the one such language, whose plan writes only the node ids its question names.
 
 The server reads that block out of the closing prose (`src/lib/agent/plan-statement.ts`) and records it as a **`plan-statement-drafted`** event carrying the SQL, the connection's dialect, the editor language the drive's capabilities resolve to, whether the statement is read-only, and what the identifier check found; the language is what tints the statement on the answer card, which the rail renders without capabilities (#1089).
 It is its own event kind rather than `statement-drafted` because that kind promises a `stepId` tying a draft to a tool invocation, and a toolless run has none.
