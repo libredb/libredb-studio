@@ -183,4 +183,21 @@ describe("the deadline", () => {
     ).toStartWith("Read-only execution exceeded the time budget: the read waited 100ms");
     expect(dev.connections).toHaveLength(0);
   });
+
+  test("a turn refused at the deadline spends nothing of the run's request bound", async () => {
+    const dev = await device();
+    const allowance = new RunReadAllowance(10_000);
+    expect(
+      await message(
+        run(
+          dev.port,
+          { kind: "identify", level: "basic" },
+          { statementTimeoutMs: 100, readAllowance: allowance },
+          performance.now() - 150,
+        ),
+      ),
+    ).toStartWith("Read-only execution exceeded the time budget: the read waited 100ms");
+    expect(allowance.spent()).toBe(0);
+    expect(dev.connections).toHaveLength(0);
+  });
 });

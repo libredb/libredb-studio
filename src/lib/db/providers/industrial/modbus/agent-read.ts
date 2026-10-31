@@ -175,8 +175,8 @@ function categorized(error: unknown): unknown {
 }
 
 /**
- * Runs one admitted agent read: the row and request bounds before its turn, the pacer's turn, the request bound again
- * and its charge, then the read over a socket of its own, raced against what is left of the time budget.
+ * Runs one admitted agent read: the row and request bounds before its turn, the pacer's turn, the deadline and the
+ * request bound again and its charge, then the read over a socket of its own, raced against what is left of the time budget.
  */
 export async function runModbusAgentRead(input: ModbusAgentReadInput, seams: ModbusAgentReadSeams): Promise<ReadRows> {
   const { plan, map, endpoint, budget } = input;
@@ -191,10 +191,13 @@ export async function runModbusAgentRead(input: ModbusAgentReadInput, seams: Mod
   const deadlineAt = input.startedAt + ms;
   try {
     return await seams.pacer.run(deviceKey(endpoint.host, endpoint.port), deadlineAt, async () => {
-      // Checked again on the turn, synchronously with the charge: another read of the run may have spent meanwhile.
+      // The deadline first, then the bound again, then the charge, in one synchronous block: a turn refused for either
+      // reason has spent nothing, and another read of the run may have spent while this one waited.
+      const remainingMs = deadlineAt - performance.now();
+      if (remainingMs <= 0) refuse(F.waited(ms));
       if (cost > left()) refuse(F.requestBound(cost, left()));
       allowance.charge(cost, `a Modbus read of ${cost} device requests`);
-      return await readOnDevice(input, seams.dial, deadlineAt);
+      return await readOnDevice(input, seams.dial, remainingMs);
     });
   } catch (error) {
     if (error instanceof ModbusPacingTimeout) throw new ModbusAgentRefusal(F.waited(error.waitedMs));
@@ -203,14 +206,12 @@ export async function runModbusAgentRead(input: ModbusAgentReadInput, seams: Mod
 }
 
 /**
- * The read itself, over a socket of its own, refused at the deadline. The socket is destroyed before this settles, so
- * the device's lane is held until it is: a dial still in flight at the deadline is awaited, for at most the dial's own
- * bound, and destroyed once it opens.
+ * The read itself, over a socket of its own, refused once `left` milliseconds, what remains of the time budget, have
+ * passed. The socket is destroyed before this settles, so the device's lane is held until it is: a dial still in flight
+ * at the deadline is awaited, for at most the dial's own bound, and destroyed once it opens.
  */
-async function readOnDevice(input: ModbusAgentReadInput, dial: Dialer, deadlineAt: number): Promise<ReadRows> {
+async function readOnDevice(input: ModbusAgentReadInput, dial: Dialer, left: number): Promise<ReadRows> {
   const ms = input.budget.statementTimeoutMs;
-  const left = deadlineAt - performance.now();
-  if (left <= 0) return refuse(F.waited(ms));
   const opened = dial(input.endpoint);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<never>((_, reject) => {
