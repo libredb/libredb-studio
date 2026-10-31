@@ -53,6 +53,15 @@ const NMDA_MODULE = "ietf-netconf-nmda";
 /** The datastores a read may name, and no others. */
 const CONFIG_DATASTORES = new Set(["running", "candidate", "startup"]);
 const NMDA_ONLY_DATASTORES = new Set(["operational", "intended"]);
+/** Every datastore this provider reads, in the order a device's are listed whatever order it named them in. */
+const KNOWN_DATASTORES = ["running", "candidate", "startup", "operational", "intended"] as const;
+/** The module RFC 8342 defines the datastore identities in; an identity of any other module is not one of Studio's. */
+const DATASTORES_NAMESPACE = "urn:ietf:params:xml:ns:yang:ietf-datastores";
+/** RFC 8525's datastore list: `/yang-library/datastore`, each entry naming one datastore by its identity. */
+const DATASTORE_LIST_REQUEST: NetconfRequest = {
+  operation: "get",
+  filter: { nodes: [{ name: "yang-library" }, { name: "datastore" }] },
+};
 
 export class DeviceReaderImpl {
   readonly facts: DeviceFacts;
@@ -71,8 +80,9 @@ export class DeviceReaderImpl {
   /**
    * Opens a reader: reads the YANG library once and derives the facts from it.
    *
-   * The library read is the only request made before the user asks for anything, and section 7
-   * gives its reason: a module's namespace is learned rather than guessed, because a wrong
+   * The library read, and on an NMDA device its RFC 8525 datastore list, are the only requests
+   * made before the user asks for anything. Section 7 gives the library's reason: a module's
+   * namespace is learned rather than guessed, because a wrong
    * namespace answers an empty `<data/>` on both measured servers instead of an error, which a
    * user would read as "nothing there".
    */
@@ -101,10 +111,19 @@ export class DeviceReaderImpl {
       // groupings to others and has no tree of its own, so listing it would draw an empty folder.
       if (textOf(entry, "conformance-type") === "implement") modules.push(name);
     }
-    const datastores = ["running"];
-    if (hello.capabilities.includes(CANDIDATE)) datastores.push("candidate");
-    if (hello.capabilities.includes(STARTUP)) datastores.push("startup");
-    if (nmda) datastores.push("operational", "intended");
+    // An NMDA device names its datastores in RFC 8525's list, and that list is believed over the rule below: MEASURED
+    // 2026-10-31, Netopeer2 2.8.7 lists ietf-netconf-nmda, names running, candidate, startup and operational, and
+    // refuses `<get-data>` on `intended`, which the rule below lists, so the agent's schema capture failed there. Only
+    // an NMDA device is asked, because RFC 8526 section 2 requires RFC 8525 of it and nothing else changes the list.
+    const listed = nmda ? datastoresNamed(parseReply(xml, await session.request(DATASTORE_LIST_REQUEST))) : undefined;
+    // The rule from before the list was read, kept for an NMDA device that answers no list (none measured does) and
+    // for every device without NMDA, whose datastores the hello's capabilities name.
+    const datastores = listed ?? ["running"];
+    if (listed === undefined) {
+      if (hello.capabilities.includes(CANDIDATE)) datastores.push("candidate");
+      if (hello.capabilities.includes(STARTUP)) datastores.push("startup");
+      if (nmda) datastores.push("operational", "intended");
+    }
     return new DeviceReaderImpl(session, xml, {
       datastores,
       /*
@@ -286,18 +305,19 @@ export class DeviceReaderImpl {
   private readOf(datastore: string, path: readonly PathNode[], maxDepth: number | undefined): NetconfRequest {
     const nodes = path.filter((node) => node.name !== "");
     const filter = nodes.length === 0 ? undefined : { nodes };
+    if (!CONFIG_DATASTORES.has(datastore) && !NMDA_ONLY_DATASTORES.has(datastore)) {
+      throw new QueryError(`this engine has no datastore named ${datastore}`);
+    }
+    // A datastore the connection does not list is one the device did not name, so it is refused before it is asked.
+    if (!this.facts.datastores.includes(datastore)) {
+      throw new QueryError(`this device does not serve the ${datastore} datastore`);
+    }
     if (CONFIG_DATASTORES.has(datastore)) {
       return {
         operation: "get-config",
         source: datastore as "running" | "candidate" | "startup",
         ...(filter === undefined ? {} : { filter }),
       };
-    }
-    if (!NMDA_ONLY_DATASTORES.has(datastore)) {
-      throw new QueryError(`this engine has no datastore named ${datastore}`);
-    }
-    if (!this.facts.nmda) {
-      throw new QueryError(`this device does not serve the ${datastore} datastore`);
     }
     return {
       operation: "get-data",
@@ -360,6 +380,28 @@ function listInside(scan: YangScan, node: XmlElement | undefined): { holder: Xml
   const only = [...names][0];
   if (only === undefined || keyNamesOf(scan, only).length === 0) return undefined;
   return { holder: node, list: only };
+}
+
+/**
+ * The datastores an RFC 8525 datastore list names, in `KNOWN_DATASTORES` order, or undefined when the reply holds no
+ * `datastore` entry at all, which is a device that serves no list rather than one that serves no datastore.
+ *
+ * Each entry's `name` is an identityref (RFC 7950 section 9.10.3): `ds:running`, the prefix resolved through the
+ * bindings in scope at that element, an unprefixed name through the default namespace. Only an identity of
+ * `ietf-datastores` counts; an entry of another module, or a datastore Studio does not read, is left out.
+ */
+function datastoresNamed(data: XmlElement): string[] | undefined {
+  const entries = elementAt(data, ["yang-library"])?.children.filter((child) => child.name === "datastore") ?? [];
+  if (entries.length === 0) return undefined;
+  const named = new Set<string>();
+  for (const entry of entries) {
+    const name = entry.children.find((child) => child.name === "name");
+    if (name?.text === undefined) continue;
+    const colon = name.text.indexOf(":");
+    const prefix = colon === -1 ? "" : name.text.slice(0, colon);
+    if (name.bindings.get(prefix) === DATASTORES_NAMESPACE) named.add(name.text.slice(colon + 1));
+  }
+  return KNOWN_DATASTORES.filter((datastore) => named.has(datastore));
 }
 
 /** The element at a chain of names below `from`, or undefined where the chain breaks. */

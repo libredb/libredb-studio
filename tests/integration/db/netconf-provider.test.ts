@@ -16,7 +16,7 @@ import type { DatabaseConnection } from "@/lib/types";
  * actually presented, the session's hello and chunked framing, the reader's YANG scan and path
  * handling, and the provider's own rules. The replies are `tests/fixtures/netconf/session.json`,
  * recorded from Netopeer2 2.8.7 by `tests/live/netconf-evidence.ts`, chunk for chunk as the
- * transport received them - 12 of the 13 exchanges arrive in more than one chunk, up to nine, so
+ * transport received them - 13 of the 14 exchanges arrive in more than one chunk, up to nine, so
  * the framing is reached rather than stepped over.
  *
  * WHAT THE UNIT TESTS DO INSTEAD. `tests/unit/db/netconf/` drives each module against
@@ -153,9 +153,9 @@ describe("the session opens against what the device really said", () => {
   test("the hello is read, and its datastores and modules are the device's", async () => {
     const { ports } = replay();
     const reader = await openNetconfReader(connection(), ports);
-    // Netopeer2 2.8.7 with NMDA: the writable-running, candidate and startup datastores come from
-    // its capabilities, and `operational` and `intended` from the NMDA ones.
-    expect(reader.facts.datastores).toEqual(["running", "candidate", "startup", "operational", "intended"]);
+    // Netopeer2 2.8.7 with NMDA: the datastores are the ones its RFC 8525 datastore list names, which
+    // holds no `intended`, and the device refuses `<get-data>` on it.
+    expect(reader.facts.datastores).toEqual(["running", "candidate", "startup", "operational"]);
     expect(reader.facts.nmda).toBe(true);
     // The count is the device's, not a number chosen here: 52 modules were advertised.
     expect(reader.facts.modules).toContain(MODULE);

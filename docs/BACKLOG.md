@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S10 · 7
-- [Drivers and connections](#drivers-and-connections) — D1-D414, U17 · 304
+- [Drivers and connections](#drivers-and-connections) — D1-D413, U17 · 303
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U187 · 173
@@ -4169,16 +4169,6 @@ Seen 2026-10-30 in the pre-release browser E2E of Studio 1.1.0 (build 12e81a05f)
 Found 2026-10-30 in the pre-release browser E2E; pre-existing.
 
 **Done when:** concurrent cache misses for one cache key share one in-flight open, so a connection is opened once, and a test in `tests/unit/lib/db/` fires concurrent `getOrCreateProvider` calls for one connection and asserts a single `createDatabaseProvider` and a single `connect`.
-
-### D414. NETCONF lists the `intended` datastore on a device that does not serve it, so agent grounding and plan mode fail there
-
-`DeviceReaderImpl.open` in `src/lib/db/providers/network/netconf/reader.ts` adds `operational` and `intended` to the datastores whenever the YANG library lists `ietf-netconf-nmda`, and `listContainers` answers that list.
-Netopeer2 2.8.7 implements `ietf-netconf-nmda` and answers `<get-data>` on `intended` with `Datastore "ietf-datastores:intended" is not supported.`; its RFC 8525 datastore list (`/yang-library/datastore`) names running, candidate, startup and operational only.
-The agent's schema capture walks every listed datastore, so on this device every agent run started with `context-unavailable` (`CATALOG_READ_REFUSED`, that sentence as the detail), the model never received an inventory, and a plan-mode run drafted nothing and asked the user for the YANG inventory (run `arun_86a0d7cf1546458497594a02949c42b0`).
-In the editor the same datastore shows in the tree and a console read of it fails with the same sentence.
-Seen 2026-10-31 on NETCONF (Netopeer2 2.8.7, the `docker/netconf` image) in a browser pass of PR 3.16; pre-existing since #1802, reached by agent mode now.
-
-**Done when:** the datastores a NETCONF reader lists are the ones the device's RFC 8525 datastore list names when it serves one, a reader test pins a library that lists no `intended`, and an agent run on the fixture captures an inventory and plan mode drafts a read from it.
 
 ## Value interpolation
 

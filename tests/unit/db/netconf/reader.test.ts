@@ -41,6 +41,25 @@ const LIBRARY = reply([
   ]),
 ]);
 
+const DATASTORES_NS = "urn:ietf:params:xml:ns:yang:ietf-datastores";
+
+/** One RFC 8525 `datastore` entry, its identity written with `prefix` bound to `namespace`. */
+function datastoreEntry(identity: string, prefix = "ds", namespace = DATASTORES_NS): XmlElement {
+  const name = {
+    ...el("name", prefix === "" ? identity : `${prefix}:${identity}`),
+    bindings: new Map([[prefix, namespace]]),
+  };
+  return el("datastore", undefined, [name, el("schema", "complete")]);
+}
+
+/** A reply to the RFC 8525 datastore list read, naming `entries`. */
+const datastoreList = (entries: XmlElement[]): XmlElement => reply([data([el("yang-library", undefined, entries)])]);
+
+/** A device that names all five datastores this provider reads. */
+const ALL_DATASTORES = datastoreList(
+  ["running", "candidate", "startup", "operational", "intended"].map((identity) => datastoreEntry(identity)),
+);
+
 const DEFAULT_REPLY = '<rpc-reply xmlns="urn:ietf:params:xml:ns:netconf:base:1.0" message-id="1"><data/></rpc-reply>';
 const CANDIDATE = "urn:ietf:params:netconf:capability:candidate:1.0";
 const STARTUP = "urn:ietf:params:netconf:capability:startup:1.0";
@@ -91,7 +110,7 @@ const open = async (h: Harness, capabilities: readonly string[] = [CANDIDATE, ST
  * provider that read the hello would refuse an operation the device serves, so the library decides.
  */
 test("NMDA is decided by the library and not by the hello", async () => {
-  const h = harness([LIBRARY]);
+  const h = harness([LIBRARY, ALL_DATASTORES]);
   const reader = await open(h, [CANDIDATE]);
   expectBe(reader.facts.nmda, true);
   expectBe(
@@ -126,7 +145,7 @@ test("a library without the NMDA module leaves its datastores out", async () => 
  * answer the empty list rather than its neighbour's nodes.
  */
 test("a module's nodes are the ones in its own namespace, and a module with none gets none", async () => {
-  const h = harness([LIBRARY]);
+  const h = harness([LIBRARY, ALL_DATASTORES]);
   const reader = await open(h);
   const mixed = reply([
     data([
@@ -164,7 +183,7 @@ test("a module's nodes are the ones in its own namespace, and a module with none
  * name" alone would pass the first assertion and fail this one.
  */
 test("a container whose only child is a keyed list is read as that list, and one whose child is not stays as it was", async () => {
-  const h = harness([LIBRARY]);
+  const h = harness([LIBRARY, ALL_DATASTORES]);
   const reader = await open(h);
   const schema = reply([
     el("data", "module ietf-interfaces { container interfaces { list interface { key name; } } }"),
@@ -185,7 +204,7 @@ test("a container whose only child is a keyed list is read as that list, and one
 });
 
 test("a read whose path names no module is refused before anything is sent", async () => {
-  const h = harness([LIBRARY]);
+  const h = harness([LIBRARY, ALL_DATASTORES]);
   const reader = await open(h);
   const asked = h.asked.length;
   await expectRejects(reader.rows("running", [{ name: "interfaces" }], 10), /names a module and then the list/);
@@ -193,7 +212,7 @@ test("a read whose path names no module is refused before anything is sent", asy
 });
 
 test("a list whose parent the device does not hold reads as no rows, not as a failure", async () => {
-  const h = harness([LIBRARY]);
+  const h = harness([LIBRARY, ALL_DATASTORES]);
   const reader = await open(h);
   h.answer(reply([data([])]));
   const result = await reader.rows(
@@ -206,8 +225,90 @@ test("a list whose parent the device does not hold reads as no rows, not as a fa
   expectBe(result.rowCount, 0);
 });
 
+/**
+ * MEASURED 2026-10-31 on the fixture (Netopeer2 2.8.7): the library lists `ietf-netconf-nmda`, the
+ * RFC 8525 datastore list names `ds:running`, `ds:candidate`, `ds:startup` and `ds:operational`
+ * and no `intended`, and `<get-data>` on `intended` answers `invalid-value` with `Datastore
+ * "ietf-datastores:intended" is not supported.`. Listing it made the agent's schema capture fail on
+ * every run.
+ */
+test("a device whose RFC 8525 datastore list names no intended lists no intended", async () => {
+  const h = harness([
+    LIBRARY,
+    datastoreList(["running", "candidate", "startup", "operational"].map((identity) => datastoreEntry(identity))),
+  ]);
+  const reader = await open(h);
+  expectEqual(reader.facts.datastores, ["running", "candidate", "startup", "operational"]);
+  expectEqual(h.asked[1], { operation: "get", filter: { nodes: [{ name: "yang-library" }, { name: "datastore" }] } });
+  const asked = h.asked.length;
+  await expectRejects(
+    reader.children("intended", [{ name: "interfaces", module: "ietf-interfaces" }]),
+    /this device does not serve the intended datastore/,
+  );
+  expectBe(h.asked.length, asked, "a datastore the device does not list is refused before anything is sent");
+});
+
+test("a device whose datastore list names intended lists it, in Studio's order whatever the device's", async () => {
+  const h = harness([
+    LIBRARY,
+    datastoreList([
+      datastoreEntry("intended"),
+      datastoreEntry("operational", "ietf-datastores"),
+      datastoreEntry("running", ""),
+      // An identity of another module is not one of Studio's datastores, whatever its local name.
+      datastoreEntry("candidate", "ex", "urn:example:datastores"),
+      datastoreEntry("archive"),
+      el("datastore", undefined, [el("schema", "complete")]),
+      el("module-set"),
+    ]),
+  ]);
+  // The hello advertises candidate and startup, and the list decides: it names neither as Studio reads them.
+  const reader = await open(h);
+  expectEqual(reader.facts.datastores, ["running", "operational", "intended"]);
+});
+
+/**
+ * An NMDA device that answers no datastore list keeps the rule from before RFC 8525 was read: the
+ * hello's configuration datastores plus `operational` and `intended`. RFC 8526 section 2 asks an
+ * NMDA server to implement RFC 8525, so such a device is not conformant, and no measured device is
+ * one; the rule is kept rather than replaced by a guess.
+ */
+test("an NMDA device that answers no datastore list keeps the hello and library rule", async () => {
+  const h = harness([LIBRARY, reply([data([])])]);
+  const reader = await open(h);
+  expectEqual(reader.facts.datastores, ["running", "candidate", "startup", "operational", "intended"]);
+  const empty = harness([LIBRARY, datastoreList([])]);
+  expectEqual((await open(empty, [])).facts.datastores, ["running", "operational", "intended"]);
+});
+
+test("a library without the NMDA module is not asked for a datastore list", async () => {
+  const h = harness([reply([data([el("modules-state", undefined, [moduleEntry("ietf-interfaces", "implement")])])])]);
+  const reader = await open(h);
+  expectEqual(reader.facts.datastores, ["running", "candidate", "startup"]);
+  expectBe(h.asked.length, 1);
+});
+
+test("a configuration datastore the device does not list is refused before anything is sent", async () => {
+  const h = harness([reply([data([el("modules-state", undefined, [moduleEntry("ietf-interfaces", "implement")])])])]);
+  const reader = await open(h, [CANDIDATE]);
+  expectEqual(reader.facts.datastores, ["running", "candidate"]);
+  await expectRejects(
+    reader.children("startup", [{ name: "interfaces", module: "ietf-interfaces" }]),
+    /this device does not serve the startup datastore/,
+  );
+  expectBe(h.asked.length, 1, "nothing but the library read was sent");
+});
+
+test("a refused datastore list read is the device's refusal, not a guess", async () => {
+  const h = harness([
+    LIBRARY,
+    reply([el("rpc-error", undefined, [el("error-tag", "access-denied"), el("error-message", "denied")])]),
+  ]);
+  await expectRejects(open(h), /denied/);
+});
+
 test("the datastores are running plus the ones the hello and the library allow", async () => {
-  const reader = await open(harness([LIBRARY]));
+  const reader = await open(harness([LIBRARY, ALL_DATASTORES]));
   expectEqual(reader.facts.datastores, ["running", "candidate", "startup", "operational", "intended"]);
 });
 
@@ -216,7 +317,7 @@ test("the datastores are running plus the ones the hello and the library allow",
  * listing it would draw a folder that is always empty.
  */
 test("only implemented modules are listed, and they are sorted", async () => {
-  const reader = await open(harness([LIBRARY]));
+  const reader = await open(harness([LIBRARY, ALL_DATASTORES]));
   expectEqual(reader.facts.modules, ["iana-if-type", "ietf-interfaces", "ietf-netconf-nmda"]);
 });
 
@@ -263,7 +364,7 @@ test("a device that answers no library is refused with a sentence", async () => 
  * of the two measured servers refuses `<get-data>` with `operation-not-supported`.
  */
 test("a configuration datastore is read with get-config and an NMDA one with get-data", async () => {
-  const h = harness([LIBRARY]);
+  const h = harness([LIBRARY, ALL_DATASTORES]);
   const reader = await open(h);
   const path = [{ name: "interfaces", module: "ietf-interfaces" }];
   h.answer(reply([data([])]));
@@ -271,11 +372,11 @@ test("a configuration datastore is read with get-config and an NMDA one with get
   h.answer(reply([data([])]));
   await reader.children("operational", path);
   const operations = h.asked.map((request) => request.operation);
-  expectEqual(operations, ["get", "get-config", "get-data"]);
+  expectEqual(operations, ["get", "get", "get-config", "get-data"]);
 });
 
 test("an unknown datastore is refused by name, before anything is asked of the device", async () => {
-  const h = harness([LIBRARY]);
+  const h = harness([LIBRARY, ALL_DATASTORES]);
   const reader = await open(h);
   const asked = h.asked.length;
   await expectRejects(
@@ -286,7 +387,7 @@ test("an unknown datastore is refused by name, before anything is asked of the d
 });
 
 test("the device's own refusal becomes the sentence, with its words kept", async () => {
-  const h = harness([LIBRARY]);
+  const h = harness([LIBRARY, ALL_DATASTORES]);
   const reader = await open(h);
   h.answer(
     reply([
@@ -303,7 +404,7 @@ test("the device's own refusal becomes the sentence, with its words kept", async
 });
 
 test("a level says which entries can be descended and which are terminals", async () => {
-  const h = harness([LIBRARY]);
+  const h = harness([LIBRARY, ALL_DATASTORES]);
   const reader = await open(h);
   h.answer(
     reply([
@@ -323,7 +424,7 @@ test("a level says which entries can be descended and which are terminals", asyn
 });
 
 test("module text is fetched once per connection and kept", async () => {
-  const h = harness([LIBRARY]);
+  const h = harness([LIBRARY, ALL_DATASTORES]);
   const reader = await open(h);
   // For get-schema the text is the data element's own text, so the tree is shaped that way.
   h.answer(reply([el("data", "module ietf-interfaces { list interface { key name; } }")]));
@@ -334,14 +435,14 @@ test("module text is fetched once per connection and kept", async () => {
 });
 
 test("a module the device answers empty is refused, not cached as empty", async () => {
-  const h = harness([LIBRARY]);
+  const h = harness([LIBRARY, ALL_DATASTORES]);
   const reader = await open(h);
   h.answer(reply([el("data", "")]));
   await expectRejects(reader.moduleText("ietf-interfaces"), /no text for the module/);
 });
 
 test("rows carry the list's key columns first and the row count is what was returned", async () => {
-  const h = harness([LIBRARY]);
+  const h = harness([LIBRARY, ALL_DATASTORES]);
   const reader = await open(h);
   h.answer(reply([el("data", "module ietf-interfaces { list interface { key name; } }")]));
   await reader.moduleText("ietf-interfaces");
@@ -366,7 +467,7 @@ test("rows carry the list's key columns first and the row count is what was retu
 });
 
 test("a limit smaller than the answer cuts the rows and the count follows the rows", async () => {
-  const h = harness([LIBRARY]);
+  const h = harness([LIBRARY, ALL_DATASTORES]);
   const reader = await open(h);
   h.answer(reply([el("data", "module ietf-interfaces { list interface { key name; } }")]));
   await reader.moduleText("ietf-interfaces");
@@ -391,7 +492,7 @@ test("a limit smaller than the answer cuts the rows and the count follows the ro
 });
 
 test("closing the reader closes the session once", async () => {
-  const h = harness([LIBRARY]);
+  const h = harness([LIBRARY, ALL_DATASTORES]);
   const reader = await open(h);
   await reader.close();
   expectBe(h.closed.count, 1);
@@ -407,7 +508,7 @@ test("closing the reader closes the session once", async () => {
  */
 test("the reader hands the published limits to the parser, not numbers of its own", async () => {
   const seen: unknown[] = [];
-  const h = harness([LIBRARY]);
+  const h = harness([LIBRARY, ALL_DATASTORES]);
   const recording: XmlReaderPort = {
     parse: (message, limits) => {
       seen.push(limits);
@@ -415,8 +516,10 @@ test("the reader hands the published limits to the parser, not numbers of its ow
     },
   };
   await DeviceReaderImpl.open(h.session, recording, { sessionId: "6", capabilities: [] });
-  expectBe(seen.length, 1);
+  // Two reads at open on an NMDA device: the library and its datastore list, both under the published limits.
+  expectBe(seen.length, 2);
   expectBe(seen[0], READER_LIMITS);
+  expectBe(seen[1], READER_LIMITS);
   // And the record itself is the one published, with the figures it publishes.
   expectBe(READER_LIMITS.maxDepth, 64);
   expectBe(READER_LIMITS.maxElements, 500_000);
@@ -433,7 +536,7 @@ test("the reader hands the published limits to the parser, not numbers of its ow
  * case existed.
  */
 test("a refused source read is the device's sentence, never text sliced out of the refusal", async () => {
-  const h = harness([LIBRARY]);
+  const h = harness([LIBRARY, ALL_DATASTORES]);
   const reader = await open(h);
   h.answer(
     el("rpc-reply", undefined, [
@@ -454,7 +557,7 @@ test("a refused source read is the device's sentence, never text sliced out of t
  * self-closing `<data/>` for an empty answer, and a `<data>` carrying attributes.
  */
 test("the source text is the bytes between the data element's tags, and an empty answer is empty", async () => {
-  const h = harness([LIBRARY]);
+  const h = harness([LIBRARY, ALL_DATASTORES]);
   const reader = await open(h);
   const path = [{ name: "interfaces", module: "ietf-interfaces" }];
   const body = "<interfaces><interface><name>ge-0/0/1</name></interface></interfaces>";
@@ -484,7 +587,7 @@ test("the source text is the bytes between the data element's tags, and an empty
  * A mutation changing `lastIndexOf` to `indexOf` survived until this case existed.
  */
 test("a payload holding its own data element is sliced at the reply's closing tag, not the first", async () => {
-  const h = harness([LIBRARY]);
+  const h = harness([LIBRARY, ALL_DATASTORES]);
   const reader = await open(h);
   const body = "<sensors><sensor><name>s1</name><data>41.2</data></sensor></sensors>";
   h.answer(
@@ -495,7 +598,7 @@ test("a payload holding its own data element is sliced at the reply's closing ta
 });
 
 test("a prefixed data element is sliced like an unprefixed one, in all three of its shapes", async () => {
-  const h = harness([LIBRARY]);
+  const h = harness([LIBRARY, ALL_DATASTORES]);
   const reader = await open(h);
   const path = [{ name: "interfaces", module: "ietf-interfaces" }];
   const body = "<if:interfaces><if:interface><if:name>ge-0/0/1</if:name></if:interface></if:interfaces>";

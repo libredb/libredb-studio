@@ -140,11 +140,22 @@ datastore when the real problem was that it was not a request at all.
 
 MEASURED, and this is the one place where believing the hello would have been wrong: both servers
 announce NMDA in their hello with ZERO capabilities attached, while their YANG library lists
-`ietf-netconf-nmda` and `<get-data>` is served and answers. The provider therefore reads RFC 8525's
-library and decides from it.
+`ietf-netconf-nmda` and `<get-data>` is served and answers. The provider therefore reads the YANG
+library, in the RFC 7895 `modules-state` form that carries each module's conformance type, and
+decides from it.
 
 `<get-config>` serves the configuration datastores, both servers serving it. `<get-data>` is used
 for `operational` and `intended`, which `<get-config>` cannot reach.
+
+The datastores a connection lists are the ones the device names, where it names them.
+On a device whose library lists `ietf-netconf-nmda`, the provider also reads RFC 8525's datastore list (`<get>` of `/yang-library/datastore`) and lists exactly the datastores it names that Studio reads, in the order running, candidate, startup, operational, intended.
+A name counts when its identity resolves to `ietf-datastores`; one of another module, or one Studio does not read, is left out.
+MEASURED 2026-10-31 on Netopeer2 2.8.7: the list names running, candidate, startup and operational, and `<get-data>` on `intended` answers `invalid-value` with `Datastore "ietf-datastores:intended" is not supported.`, so that device lists four datastores and no `intended`.
+Listing `intended` there, as the provider did before it read the list, made the agent's schema capture fail on every run and showed a datastore in the tree that no read could open.
+A device without `ietf-netconf-nmda` is not asked for the list, and its datastores are `running` plus `candidate` and `startup` where the hello advertises those capabilities.
+An NMDA device that answers no datastore entry keeps that rule with `operational` and `intended` added, the rule from before the list was read: RFC 8526 section 2 requires RFC 8525 of an NMDA server and names it as how a client discovers the datastores, no measured device answers without the list, and the rule is kept rather than replaced by a guess.
+A refused list read fails the connection with the device's sentence, as a refused library read does.
+A console read of a datastore the connection does not list is refused before anything is sent: `this device does not serve the intended datastore`.
 
 ### 3.3 `<get-data>` takes `<subtree-filter>`, not `<filter type="subtree">`
 
@@ -304,6 +315,7 @@ Redaction is `none`: a redacted statement is stored as `?`, because a reader gue
 
 Datastore, then module. Declared in `containerLevels`, and the first provider here to declare two
 levels and a Keys panel at the same time.
+The first level lists the datastores section 3.2 derives, so on the Netopeer2 fixture it holds running, candidate, startup and operational and no `intended`.
 
 ### 6.2 Two kinds
 
@@ -438,7 +450,8 @@ answering 39,313 characters, and `<get-data>` on `running` for `/interfaces` ans
 bytes at 5,000 of 5,000 rows.
 
 And the whole provider, through `createDatabaseProvider` rather than through its own seams, which
-is the path a user takes: connect in 58 ms, five datastores, 52 modules, `ietf-interfaces`
+is the path a user takes: connect in 58 ms, four datastores (five before the datastore list of
+section 3.2 was read), 52 modules, `ietf-interfaces`
 answering the one node that is its own, a read answering 3 rows with the columns `name`,
 `description`, `type` and `enabled`, the Keys panel walking two levels with its cursor, a key's
 Source tab holding the device's own XML, a node's Source tab holding the module's YANG text, and a
@@ -527,6 +540,7 @@ On the Netopeer2 fixture, a raw `edit-config` sent under the read-only account b
 One JSON object, read before anything is sent (`agent-statement.ts`):
 
 - `{"datastore": "running", "path": "ietf-interfaces:interfaces", "limit": 100}`, the console's read request read by the console's own parser (section 3.1), `get-config` on running, candidate and startup and `get-data` on operational and intended;
+  the agent's inventory and the tree list only the datastores the device serves (section 3.2), and a request naming one it does not serve is sent and refused by the device, answered by its error-tag in Studio's words (section 14.3): on the fixture, `intended` answers `The device refused the read with the NETCONF error-tag invalid-value.`;
 - `{"schema": "ietf-interfaces"}`, one module's YANG text.
 
 A field neither shape names is refused, where the console ignores it, so a model is never answered a read it believes it narrowed.

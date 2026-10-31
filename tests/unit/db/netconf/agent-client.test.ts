@@ -124,6 +124,23 @@ describe("what it refuses", () => {
     expect(sent).toHaveLength(1);
   });
 
+  /**
+   * MEASURED 2026-10-31 on Netopeer2 2.8.7: its library lists ietf-netconf-nmda, its RFC 8525 datastore list names no
+   * intended, and get-data on intended answers this rpc-error. The agent's client reads no datastore list, so the read
+   * is sent and the device refuses it, and the answer is Studio's sentence for the error-tag, never the device's own.
+   */
+  test("get-data on a datastore the device does not serve, refused by the device's error-tag in Studio's words", async () => {
+    const refused = `<rpc-reply ${BASE}><rpc-error><error-type>application</error-type><error-tag>invalid-value</error-tag><error-severity>error</error-severity><error-message xml:lang="en">Datastore "ietf-datastores:intended" is not supported.</error-message><error-info><bad-element>datastore</bad-element></error-info></rpc-error></rpc-reply>`;
+    const { session, sent } = sessionOf([LIBRARY_REPLY, refused]);
+    const client = createNetconfAgentClient(session, netconfXmlPort);
+    expect((await client.library()).nmda).toBe(true);
+    const caught = await client.read("intended", [{ name: "x" }], new Map()).catch((failure: unknown) => failure);
+    expect(caught).toBeInstanceOf(NetconfAgentError);
+    expect((caught as Error).message).toBe(NETCONF_AGENT_CLIENT_SENTENCES.rpcError("invalid-value"));
+    expect((caught as Error).message).not.toContain("not supported");
+    expect(sent.map((request) => request.operation)).toEqual(["get", "get-data"]);
+  });
+
   test("an rpc-error by its RFC 6241 error-tag alone, never by the device's message, path or info", async () => {
     const SECRET = "not-a-real-secret";
     const error = (tag: string) =>
