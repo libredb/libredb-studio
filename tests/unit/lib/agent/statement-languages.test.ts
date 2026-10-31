@@ -1150,12 +1150,11 @@ describe("the s3api language's server adapter and admission", () => {
     expect(languageServer("s3api").shapeAdvice).toContain("a valid AWS CLI command");
   });
 
-  test("the grounding advice names what grounding carries for a bucket, its name and creation date, and no key", () => {
+  test("the grounding advice names what grounding carries for a bucket, its name alone, and where its date is read", () => {
     const advice = languageServerPack("s3api").grounding.omissionAdvice;
-    expect(advice).toContain(
-      "Buckets are listed to agent mode by name and creation date only, and no object key is listed",
-    );
-    expect(advice).not.toContain("by name only");
+    expect(advice).toContain("Buckets are listed to agent mode by name only, and no object key is listed");
+    expect(advice).not.toContain("creation date only");
+    expect(advice).toContain("aws s3api list-buckets for every bucket's creation time");
   });
 
   test("the admission is the provider's reader, plus a length the agent's contract names", () => {
