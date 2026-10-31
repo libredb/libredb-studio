@@ -804,6 +804,10 @@ bound stands where the grammar places it, and a bound that already stands before
 than doubled past it (#1981). MySQL's spellings are `FOR UPDATE` and `FOR SHARE`, each optionally
 `OF tbl[, tbl]`, `NOWAIT` or `SKIP LOCKED`; both engines also take `LOCK IN SHARE MODE`, and MariaDB
 additionally accepts `WAIT n` there.
+An export tail is treated the same way (#2011): `INTO OUTFILE 'file'` with its `CHARACTER SET`,
+`FIELDS/COLUMNS` and `LINES` options, or `INTO DUMPFILE 'file'`, is stripped and re-attached after the
+injected bound, and a bound that already stands before one is respected. A mid-statement `INTO` (the
+position before `FROM` that the grammar also allows) is not a tail and keeps its place.
 Default page size `DEFAULT_QUERY_LIMIT = 500`; unlimited caps at `MAX_UNLIMITED_ROWS = 100000`.
 
 MySQL's `#` line comment is skipped when the statement type is read, alongside `--` and `/* … */`
