@@ -15,6 +15,7 @@ import type { RunRequest, RunService } from "./run-service";
 export const NOTHING_TO_RUN = "Nothing to run.";
 export const EDITOR_NOT_VISIBLE = "The editor to run is not visible.";
 export const NO_ACTIVE_EDITOR = "Open an editor to run a query.";
+export const RUN_ANYWAY = "Run Anyway";
 export const HIGHLIGHT_MS = 1000;
 export const ROW_LIMIT_MAX = 10_000;
 
@@ -41,7 +42,10 @@ export function readRowLimit(workspace: Pick<typeof vscode.workspace, "getConfig
 export interface RunQueryDeps extends PickerDeps, FailureDeps {
   readonly window: PickerDeps["window"] &
     FailureDeps["window"] &
-    Pick<typeof vscode.window, "activeTextEditor" | "visibleTextEditors" | "createTextEditorDecorationType">;
+    Pick<
+      typeof vscode.window,
+      "activeTextEditor" | "visibleTextEditors" | "createTextEditorDecorationType" | "showWarningMessage"
+    >;
   readonly workspace: Pick<typeof vscode.workspace, "getConfiguration">;
   readonly store: PickerDeps["store"] & Pick<ConnectionStore, "get">;
   readonly client: Pick<BackendClient, "ensureOpen" | "runTarget" | "listContainers">;
@@ -130,8 +134,9 @@ export function showRowLimitError(deps: Pick<RunQueryDeps, "window" | "openUserS
 }
 
 /**
- * Steps 7 to 11 under the prepared run's token: the open, the catalog, query/target and the highlight. Answers the
- * request, or undefined when the run was cancelled, the catalog pick dismissed, or the target holds no code.
+ * Steps 7 to 11 under the prepared run's token: the open, the catalog, query/target, the highlight and, for a target the
+ * web editor would ask about, the confirmation. Answers the request, or undefined when the run was cancelled, the
+ * catalog pick dismissed, the target holds no code or the confirmation declined.
  */
 async function prepare(
   deps: RunQueryDeps,
@@ -173,7 +178,7 @@ async function prepare(
     token,
   );
   if (target.cancelled) return undefined;
-  const { statement, range } = target.value;
+  const { statement, range, dangerous } = target.value;
   if (statement.trim() === "") {
     void deps.window.showInformationMessage(NOTHING_TO_RUN);
     return undefined;
@@ -190,6 +195,10 @@ async function prepare(
   }
   const entry = deps.store.get(connectionId);
   if (entry === undefined) throw new UnknownConnectionError(connectionId);
+  if (dangerous === true) {
+    const answer = await untilCancelled(confirmDangerous(deps, entry.name, statement), token);
+    if (answer.cancelled || !answer.value) return undefined;
+  }
   return {
     documentLabel: documentLabel(document),
     connectionName: entry.name,
@@ -199,6 +208,23 @@ async function prepare(
     ...(catalog === undefined ? {} : { catalog }),
     limit,
   };
+}
+
+/**
+ * The web editor's dialog before a write or a drop, as a modal that shows the statement: true once the person chooses
+ * Run Anyway, false on Cancel or Escape.
+ */
+async function confirmDangerous(
+  deps: Pick<RunQueryDeps, "window">,
+  connectionName: string,
+  statement: string,
+): Promise<boolean> {
+  const choice = await deps.window.showWarningMessage(
+    `This statement may change data, database objects, or permissions. Review it before running it on ${connectionName}.`,
+    { modal: true, detail: statement },
+    RUN_ANYWAY,
+  );
+  return choice === RUN_ANYWAY;
 }
 
 /**

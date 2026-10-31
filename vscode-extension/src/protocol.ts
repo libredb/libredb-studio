@@ -118,10 +118,14 @@ export interface RunTargetParams extends ConnectionIdParams {
   cursor: number;
 }
 
-/** range is absent when the statement is the whole text; statement is "" when the target holds no code. */
+/**
+ * range is absent when the statement is the whole text; statement is "" when the target holds no code; dangerous is
+ * present, as true, when the web editor would ask before running it (isDangerousQuery under the connection's type).
+ */
 export interface RunTargetResult {
   statement: string;
   range?: OffsetRange;
+  dangerous?: true;
 }
 
 export interface RunQueryParams {
