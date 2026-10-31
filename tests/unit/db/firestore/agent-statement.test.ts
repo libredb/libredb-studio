@@ -184,6 +184,7 @@ describe("refused before anything is sent, in agent mode's own words", () => {
     ['db.doc("users/a\\u0000b").get()'],
     ['db.doc("users/a\\u007fb").listCollections()'],
     ['db.collection("users/a\\u0001b/orders").count()'],
+    ['db.doc("users/a\\u001fb").get()'],
     ['db.collectionGroup("o\\u0000").count()'],
   ])("a path holding a control character, NUL included: %s", (text) => {
     expect(refused(text)).toEqual({ ok: false, code: "request", message: FIRESTORE_AGENT_SENTENCES.control });

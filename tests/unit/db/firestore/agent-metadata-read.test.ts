@@ -212,6 +212,20 @@ describe("the document read", () => {
       { collection: "users", exists: true, created: null, updated: null },
     ]);
   });
+
+  test("a server time followed by anything else is answered as null, and the rest never reaches the result", () => {
+    const answer: FirestoreAgentAnswer = {
+      op: "document",
+      collection: "users",
+      exists: true,
+      createTime: "2024-01-01T00:00:00Zmarker",
+      updateTime: "2024-01-01T00:00:00.5Z users/alice",
+    };
+    const result = firestoreAgentResult(answer, BUDGET, 1);
+    expect(result.rows).toEqual([{ collection: "users", exists: true, created: null, updated: null }]);
+    expect(JSON.stringify(result)).not.toContain("marker");
+    expect(JSON.stringify(result)).not.toContain("alice");
+  });
 });
 
 describe("the result", () => {
@@ -279,6 +293,19 @@ describe("the wording of a failure", () => {
     const error = googleFailure(200, "RESOURCE_EXHAUSTED", "quota for users/alice");
     expect(firestoreAgentFailure(error, BUDGET, "s", false)?.message).toBe(F.quota);
   });
+
+  test.each([
+    [403, "PERMISSION_DENIED", F.denied],
+    [404, "NOT_FOUND", F.notFound],
+  ])(
+    "a stream answered 200 whose element carries %i is worded by that code, never as HTTP 200",
+    (code, grpc, sentence) => {
+      const error = googleFailure(200, grpc, "Document users/alice", undefined, code);
+      const message = firestoreAgentFailure(error, BUDGET, "s", false)?.message;
+      expect(message).toBe(sentence);
+      expect(message).not.toContain("200");
+    },
+  );
 
   test("the read's own deadline and a transport timeout are the time budget's refusal", () => {
     const sentence = `${TIME_BUDGET_PREFIX}: no answer within 5000ms`;
