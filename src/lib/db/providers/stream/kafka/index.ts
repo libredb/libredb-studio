@@ -59,7 +59,14 @@ import {
   runKafkaAgentRead,
 } from "./agent-metadata-read";
 import { readKafkaAgentStatement } from "./agent-statement";
-import { agentCountObjects, agentHealth, agentListObjects, KAFKA_AGENT_WITHHELD } from "./agent-surface";
+import {
+  agentCountObjects,
+  agentDescribeObject,
+  agentDescribeObjects,
+  agentHealth,
+  agentListObjects,
+  KAFKA_AGENT_WITHHELD,
+} from "./agent-surface";
 import { type KafkaAgentReadClient, KafkaError, type KafkaReadClient } from "./client";
 import { KAFKA_DEFAULT_PORT, type KafkaConnectionOptions, kafkaConnectionOptions } from "./connection-options";
 import { toDatabaseError } from "./errors";
@@ -383,7 +390,7 @@ export class KafkaProvider extends BaseDatabaseProvider {
   public describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
     if (this.agentProfile) {
       return this.agentGuarded((client) =>
-        objects.describeObject(client, this.getCapabilities(), path, kind, KAFKA_AGENT_TOPIC_COLUMNS),
+        agentDescribeObject(client, this.getCapabilities(), path, kind, KAFKA_AGENT_TOPIC_COLUMNS),
       );
     }
     return this.guarded((client) => objects.describeObject(client, this.getCapabilities(), path, kind));
@@ -392,7 +399,7 @@ export class KafkaProvider extends BaseDatabaseProvider {
   public describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
     if (this.agentProfile) {
       return this.agentGuarded((client) =>
-        objects.describeObjects(client, container, kind, limit, KAFKA_AGENT_TOPIC_COLUMNS),
+        agentDescribeObjects(client, container, kind, limit, KAFKA_AGENT_TOPIC_COLUMNS),
       );
     }
     return this.guarded((client) => objects.describeObjects(client, container, kind, limit));

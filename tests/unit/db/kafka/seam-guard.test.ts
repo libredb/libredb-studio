@@ -2554,6 +2554,7 @@ const AGENT_CLIENT_MEMBERS = ["listTopics", "metadata", "offsets"];
 /** What an agent-mode module may import, and by which names from the provider's own modules. */
 const AGENT_IMPORTS: Readonly<Record<string, readonly string[] | "any">> = {
   "@/lib/db/errors": "any",
+  "@/lib/db/object-kinds": ["findKind"],
   "@/lib/db/providers/sql/read-only-budget": "any",
   "@/lib/db/redaction/metadata-only": "any",
   "@/lib/db/types": "any",
@@ -2565,7 +2566,7 @@ const AGENT_IMPORTS: Readonly<Record<string, readonly string[] | "any">> = {
     "KafkaPartitionMetadata",
     "KafkaTopicMetadata",
   ],
-  "./objects": ["KAFKA_OBJECT_KINDS", "listTopicObjects", "requireRoot", "TOPIC_CAP_SENTENCE"],
+  "./objects": ["describeObject", "describeObjects", "KAFKA_OBJECT_KINDS", "listTopicObjects", "TOPIC_CAP_SENTENCE"],
 };
 
 /** The names a `Pick<KafkaReadClient, ...>` alias of `name` picks, or undefined when `name` is not such an alias. */

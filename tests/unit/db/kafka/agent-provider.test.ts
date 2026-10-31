@@ -9,7 +9,7 @@
 import { describe, expect, test } from "bun:test";
 import { ConnectionError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka";
-import { KAFKA_AGENT_WITHHELD } from "@/lib/db/providers/stream/kafka/agent-surface";
+import { KAFKA_AGENT_SHAPE, KAFKA_AGENT_WITHHELD } from "@/lib/db/providers/stream/kafka/agent-surface";
 import { KAFKA_AGENT_SENTENCES } from "@/lib/db/providers/stream/kafka/agent-statement";
 import {
   type KafkaClusterMetadata,
@@ -276,6 +276,25 @@ describe("every surface of an agent-mode handle", () => {
       'Kafka declares no object kind "acl"',
     );
     expect(await rejection(provider.listObjects(["x"], "topic"))).toBeInstanceOf(Error);
+  });
+
+  test("Studio's own refusal of a container or kind is its own sentence, and nothing is sent", async () => {
+    for (const execution of [READ_ONLY, OPERATIONS]) {
+      const { provider, calls } = await connected(execution);
+      for (const [promise, sentence] of [
+        [provider.describeObject(["orders"], "bogus"), KAFKA_AGENT_SHAPE.kind("bogus")],
+        [provider.listObjects(["x"], "topic"), KAFKA_AGENT_SHAPE.container],
+        [provider.countObjects(["x"]), KAFKA_AGENT_SHAPE.container],
+        [provider.describeObjects(["x"], "topic"), KAFKA_AGENT_SHAPE.container],
+      ] as const) {
+        const error = await rejection(promise);
+        expect(error).toBeInstanceOf(QueryError);
+        expect((error as Error).message).toBe(sentence);
+      }
+      expect(KAFKA_AGENT_SHAPE.kind("bogus")).toBe('Kafka declares no object kind "bogus"');
+      expect(KAFKA_AGENT_SHAPE.container).not.toContain("broker's answer");
+      expect(calls).toEqual([]);
+    }
   });
 
   test("a surface failure is worded by its category", async () => {

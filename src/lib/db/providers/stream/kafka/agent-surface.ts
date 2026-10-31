@@ -10,9 +10,18 @@
  * absence as the broker's own answer. The editor's handles keep every surface.
  */
 import { QueryError } from "@/lib/db/errors";
-import type { DatabaseObject, HealthInfo, KindCount } from "@/lib/db/types";
+import { findKind } from "@/lib/db/object-kinds";
+import type {
+  ColumnSchema,
+  DatabaseObject,
+  HealthInfo,
+  KindCount,
+  ObjectDetail,
+  ObjectDetailBatch,
+  ProviderCapabilities,
+} from "@/lib/db/types";
 import type { KafkaAgentReadClient } from "./client";
-import { KAFKA_OBJECT_KINDS, listTopicObjects, requireRoot, TOPIC_CAP_SENTENCE } from "./objects";
+import { describeObject, describeObjects, KAFKA_OBJECT_KINDS, listTopicObjects, TOPIC_CAP_SENTENCE } from "./objects";
 
 const KAFKA_TYPE = "kafka";
 
@@ -35,6 +44,20 @@ export const KAFKA_AGENT_WITHHELD = {
 
 const refusal = (sentence: string) => new QueryError(sentence, KAFKA_TYPE);
 
+/**
+ * Studio's own refusals of a container or a kind, made before the agent's client is called, so neither reads as a
+ * broker's answer. The container sentence quotes no input.
+ */
+export const KAFKA_AGENT_SHAPE = {
+  container:
+    "A Kafka connection has no container level, so an agent-mode read names none. Nothing was sent to the broker.",
+  kind: (kind: string) => `Kafka declares no object kind ${JSON.stringify(kind)}`,
+} as const;
+
+function requireAgentRoot(container: readonly string[]): void {
+  if (container.length !== 0) throw refusal(KAFKA_AGENT_SHAPE.container);
+}
+
 /** The live brokers, named by node id alone. */
 async function brokerObjects(client: KafkaAgentReadClient): Promise<DatabaseObject[]> {
   const { brokers } = await client.metadata([]);
@@ -49,7 +72,7 @@ export async function agentListObjects(
   container: readonly string[],
   kind: string,
 ): Promise<DatabaseObject[]> {
-  requireRoot(container);
+  requireAgentRoot(container);
   switch (kind) {
     case "topic":
       return (await listTopicObjects(client)).rows;
@@ -58,7 +81,7 @@ export async function agentListObjects(
     case "consumer_group":
       throw refusal(KAFKA_AGENT_WITHHELD.groups);
     default:
-      throw refusal(`Kafka declares no object kind ${JSON.stringify(kind)}`);
+      throw refusal(KAFKA_AGENT_SHAPE.kind(kind));
   }
 }
 
@@ -70,7 +93,7 @@ export async function agentCountObjects(
   client: KafkaAgentReadClient,
   container: readonly string[],
 ): Promise<Record<string, KindCount>> {
-  requireRoot(container);
+  requireAgentRoot(container);
   const topics = await listTopicObjects(client);
   const brokers = await brokerObjects(client);
   const counts: Record<string, KindCount> = {
@@ -91,4 +114,28 @@ export async function agentCountObjects(
 export async function agentHealth(client: KafkaAgentReadClient): Promise<HealthInfo> {
   await client.metadata([]);
   return { databaseSize: KAFKA_AGENT_WITHHELD.logDirs, cacheHitRatio: "N/A", slowQueries: [], activeSessions: [] };
+}
+
+/** A topic's columns on an agent-mode handle are the agent read's; an undeclared kind is Studio's own refusal. */
+export async function agentDescribeObject(
+  client: KafkaAgentReadClient,
+  capabilities: ProviderCapabilities,
+  path: readonly string[],
+  kind: string,
+  columns: readonly ColumnSchema[],
+): Promise<ObjectDetail> {
+  if (findKind(capabilities, kind) === undefined) throw refusal(KAFKA_AGENT_SHAPE.kind(kind));
+  return describeObject(client, capabilities, path, kind, columns);
+}
+
+/** Every listed topic's columns on an agent-mode handle; a container is Studio's own refusal. */
+export async function agentDescribeObjects(
+  client: KafkaAgentReadClient,
+  container: readonly string[],
+  kind: string,
+  limit: number | undefined,
+  columns: readonly ColumnSchema[],
+): Promise<ObjectDetailBatch> {
+  requireAgentRoot(container);
+  return describeObjects(client, container, kind, limit, columns);
 }

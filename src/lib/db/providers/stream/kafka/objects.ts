@@ -111,7 +111,7 @@ export function listContainers(): Container[] {
   return [];
 }
 
-export function requireRoot(container: readonly string[]): void {
+function requireRoot(container: readonly string[]): void {
   if (container.length !== 0) {
     throw new KafkaError(
       "unknown-object",
