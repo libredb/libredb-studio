@@ -68,11 +68,15 @@ const namedIn = (line: string): readonly string[] => ENGINE_NAMES.filter((name) 
 /**
  * EVERY list that claims the fleet, not only the longest one.
  *
- * MEASURED first, at 36 engines: a line named either at most a handful of engines or at least 28 of
- * them, with nothing in between, so 28 was the line between "a sentence that mentions some engines"
- * and "a list that claims the fleet". The agent-mode sentence has since grown into that gap, since it
- * names every engine agent mode executes on, so the line is now one past that list's own length: a
- * list naming more engines than agent mode executes on claims the fleet, and has to name all of them.
+ * MEASURED, and the threshold is the measurement: across the nine files, a line names either at most
+ * a handful of engines or at least 28 of the 36, with nothing in between. So 28 is the line between
+ * "a sentence that mentions some engines" and "a list that claims the fleet", and every list above it
+ * has to name all of them.
+ *
+ * ONE LIST ABOVE IT CLAIMS LESS: the agent-mode sentence names every engine agent mode executes on, and
+ * that list grows past 28 on its way to the fleet. It is recognized by its CONTENT, a line whose named
+ * engines are exactly the agent-mode engines, never by its length, so the threshold stays fixed and a
+ * fleet list missing a dozen engines is still caught.
  *
  * The first design took only the LONGEST list per file, and a planted violation showed why that is
  * wrong: removing one name from one list of a file that has two left the suite green, because the
@@ -82,10 +86,23 @@ const namedIn = (line: string): readonly string[] => ENGINE_NAMES.filter((name) 
  * is why README.md's SSL/TLS sentence passes: its list leaves OPC UA out, and the clause after it says
  * why, so the line as a whole names every engine and the reader is not misled.
  */
-const FLEET_LIST_THRESHOLD = AGENT_EXECUTION_ENGINES.length + 1;
+const FLEET_LIST_THRESHOLD = 28;
+
+/** The agent-mode engines as the READMEs write them; LibreDB is not an external engine, so it is not one of them. */
+const AGENT_ENGINE_NAMES = AGENT_EXECUTION_ENGINES.filter((type) =>
+  (EXTERNAL_DATABASE_TYPES as readonly string[]).includes(type),
+).map((type) => DB_UI_CONFIG[type].label.replace(/^Apache /, ""));
+
+/** Read through `namedIn` too, so a name that holds another (InfluxDB in InfluxDB 3) is counted the same way. */
+const AGENT_NAMED = namedIn(AGENT_ENGINE_NAMES.join(", "));
+const isAgentList = (named: readonly string[]): boolean =>
+  named.length === AGENT_NAMED.length && AGENT_NAMED.every((name) => named.includes(name));
 
 const fleetLists = (text: string): readonly string[] =>
-  text.split("\n").filter((line) => namedIn(line).length >= FLEET_LIST_THRESHOLD);
+  text.split("\n").filter((line) => {
+    const named = namedIn(line);
+    return named.length >= FLEET_LIST_THRESHOLD && !isAgentList(named);
+  });
 
 describe("each README's numeral and its own engine list agree", () => {
   test("the population is the nine READMEs and the registry's own names", () => {
@@ -98,6 +115,21 @@ describe("each README's numeral and its own engine list agree", () => {
     // Kafka as missing from a table that spells them `| **Apache Druid** |`.
     expect(ENGINE_NAMES).toContain("Druid");
     expect(read("README.md")).toContain("| **Apache Druid**");
+  });
+
+  test("a list of more engines than the agent-mode list, short of the fleet, is still a fleet list", () => {
+    // A planted list naming 29 of the engines: above the measured gap and not the agent-mode sentence, so it claims
+    // the fleet whatever the agent-mode list's length becomes.
+    const planted = ENGINE_NAMES.slice(0, 29).join(", ");
+    expect(fleetLists(planted)).toEqual([planted]);
+  });
+
+  test("the agent-mode sentence is recognized by the engines it names, not by its length", () => {
+    const agentList = AGENT_ENGINE_NAMES.join(", ");
+    expect(fleetLists(agentList)).toEqual([]);
+    // One engine more than the agent-mode list is no longer that sentence, and is held to the fleet.
+    const extra = ENGINE_NAMES.find((name) => !namedIn(agentList).includes(name)) as string;
+    expect(fleetLists(`${agentList}, ${extra}`)).toEqual([`${agentList}, ${extra}`]);
   });
 
   test.each(READMES.map((entry) => [entry.file, entry] as const))("%s names every engine it counts", (_, entry) => {
