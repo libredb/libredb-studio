@@ -60,7 +60,8 @@ interface PacingClock {
 
 const REAL_CLOCK: PacingClock = {
   now: () => performance.now(),
-  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  // Timers count whole milliseconds; rounding up keeps a gap from ending before the moment it waits for.
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, Math.ceil(ms))),
 };
 
 /** The key of a device's lane: its address. A host name is compared without case, as DNS compares it. */
@@ -138,13 +139,17 @@ export class ModbusDevicePacer {
     if (left <= 0) throw new ModbusPacingTimeout(this.waited(startedAt, deadlineAt));
     let timer: ReturnType<typeof setTimeout> | undefined;
     const expired = new Promise<"expired">((resolve) => {
-      timer = setTimeout(() => resolve("expired"), left);
+      timer = setTimeout(() => {
+        // Fired, so there is nothing left to clear.
+        timer = undefined;
+        resolve("expired");
+      }, Math.ceil(left));
     });
     try {
       const outcome = await Promise.race([ahead.then(() => "turn" as const), expired]);
       if (outcome === "expired") throw new ModbusPacingTimeout(this.waited(startedAt, deadlineAt));
     } finally {
-      clearTimeout(timer);
+      if (timer !== undefined) clearTimeout(timer);
     }
   }
 

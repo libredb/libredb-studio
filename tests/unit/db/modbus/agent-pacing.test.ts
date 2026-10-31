@@ -207,3 +207,28 @@ describe("one set of lanes for the whole process", () => {
     expect(new ModbusDevicePacer(1000).laneCount).toBe(0);
   });
 });
+
+describe("the timers the pacer sets", () => {
+  // A deadline on performance.now()'s clock leaves a fraction of a millisecond in every wait; timers are set in
+  // whole milliseconds, rounded up so no wait ends before the moment it waits for.
+  test("are whole milliseconds, for the deadline it races and the gap it sleeps", async () => {
+    const delays: number[] = [];
+    const real = globalThis.setTimeout;
+    globalThis.setTimeout = ((handler: () => void, ms?: number) => {
+      delays.push(ms ?? 0);
+      return real(handler, ms);
+    }) as typeof setTimeout;
+    try {
+      const pacer = new ModbusDevicePacer(GAP);
+      const key = deviceKey("plc", 502);
+      const first = pacer.run(key, far(), () => sleep(30).then(() => "first"));
+      await pacer.run(key, performance.now() + 20.5, async () => "late").catch(() => undefined);
+      await first;
+      await pacer.run(key, performance.now() + 500.5, async () => "after the gap");
+    } finally {
+      globalThis.setTimeout = real;
+    }
+    expect(delays.length).toBeGreaterThan(0);
+    for (const delay of delays) expect(Number.isInteger(delay)).toBe(true);
+  });
+});

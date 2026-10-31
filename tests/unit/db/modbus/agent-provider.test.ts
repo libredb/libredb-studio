@@ -415,6 +415,28 @@ describe("the time budget and the device's failures", () => {
     await arrives(() => dev.connections[0]?.closed !== undefined);
   });
 
+  test("the read's deadline timer is set in whole milliseconds", async () => {
+    const dev = await device({ answerAfterMs: 400 });
+    const delays: number[] = [];
+    const real = globalThis.setTimeout;
+    globalThis.setTimeout = ((handler: () => void, ms?: number) => {
+      delays.push(ms ?? 0);
+      return real(handler, ms);
+    }) as typeof setTimeout;
+    try {
+      await refusal(
+        provider(dev.port).queryReadOnly(
+          '{"unit": 1, "table": "holding_register", "address": 0, "count": 1}',
+          budget({ statementTimeoutMs: 100 }),
+        ),
+      );
+    } finally {
+      globalThis.setTimeout = real;
+    }
+    expect(delays.length).toBeGreaterThan(0);
+    for (const delay of delays) expect(Number.isInteger(delay)).toBe(true);
+  });
+
   test("a device exception is the device's refusal, named by its code", async () => {
     const dev = await device({ exception: 0x02 });
     const error = await refusal(

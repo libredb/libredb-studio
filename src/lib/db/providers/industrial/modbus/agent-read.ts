@@ -228,7 +228,8 @@ async function readOnDevice(input: ModbusAgentReadInput, dial: Dialer, left: num
   const opened = dial(input.endpoint);
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expired = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new ModbusAgentError(F.deadline(ms))), left);
+    // Whole milliseconds, rounded up: what remains of the budget is a fraction on performance.now()'s clock.
+    timer = setTimeout(() => reject(new ModbusAgentError(F.deadline(ms))), Math.ceil(left));
   });
   // The session's own request timer words a device's silence; the socket's timer is set past it so the two never
   // race and silence is never worded as an unreachable device.
