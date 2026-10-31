@@ -90,13 +90,13 @@ async function open(
   values: Readonly<Record<string, OpcuaDataValue>> = {},
   record = fresh(),
 ): Promise<{ provider: OpcuaProvider; record: ReturnType<typeof fresh> }> {
-  const provider = new OpcuaProvider(connection(over), {}, async () => fakeServer(tree, values, record), ENV);
+  const provider = new OpcuaProvider(connection(over), {}, {}, async () => fakeServer(tree, values, record), ENV);
   await provider.connect();
   return { provider, record };
 }
 
 describe("the declarations", () => {
-  const provider = new OpcuaProvider(connection(), {}, undefined, ENV);
+  const provider = new OpcuaProvider(connection(), {}, {}, undefined, ENV);
 
   test("read-only is declared true, and it is structural rather than a setting", () => {
     expect(provider.getCapabilities().enforcesReadOnly).toBe(true);
@@ -133,6 +133,7 @@ describe("connecting", () => {
     const provider = new OpcuaProvider(
       connection({ host: "http://plc/" }),
       {},
+      {},
       async () => {
         throw new Error("should not have been reached");
       },
@@ -153,6 +154,7 @@ describe("connecting", () => {
     const withoutVariable = new OpcuaProvider(
       connection(),
       {},
+      {},
       async (options) => {
         reached.push(options.pkiRoot);
         throw new Error("BadConnectionClosed");
@@ -165,6 +167,7 @@ describe("connecting", () => {
 
     const relative = new OpcuaProvider(
       connection(),
+      {},
       {},
       async () => {
         throw new Error("should not have been reached");
@@ -423,7 +426,13 @@ describe("a server that publishes a limit below Studio's own bound", () => {
       readBatches: [] as number[],
       browseBatches: [] as number[],
     };
-    const provider = new OpcuaProvider(connection(), {}, async () => tightServer({ maxNodesPerRead: 30 }, record), ENV);
+    const provider = new OpcuaProvider(
+      connection(),
+      {},
+      {},
+      async () => tightServer({ maxNodesPerRead: 30 }, record),
+      ENV,
+    );
     await provider.connect();
     const result = await provider.query(JSON.stringify({ read: WIDE }));
     expect(result.rows).toHaveLength(9);
@@ -444,6 +453,7 @@ describe("a server that publishes a limit below Studio's own bound", () => {
     };
     const provider = new OpcuaProvider(
       connection(),
+      {},
       {},
       async () => tightServer({ maxNodesPerBrowse: 3 }, record),
       ENV,
@@ -466,7 +476,7 @@ describe("a server that publishes a limit below Studio's own bound", () => {
       readBatches: [] as number[],
       browseBatches: [] as number[],
     };
-    const provider = new OpcuaProvider(connection(), {}, async () => tightServer({}, record), ENV);
+    const provider = new OpcuaProvider(connection(), {}, {}, async () => tightServer({}, record), ENV);
     await provider.connect();
     await provider.query(JSON.stringify({ read: WIDE }));
     expect(record.readBatches).toEqual([9]);
@@ -579,7 +589,7 @@ describe("surfaces a server does not have", () => {
 
 describe("a build with no transport wired in", () => {
   test("says so rather than failing as a network error", async () => {
-    const provider = new OpcuaProvider(connection(), {}, undefined, ENV);
+    const provider = new OpcuaProvider(connection(), {}, {}, undefined, ENV);
     await expect(provider.connect()).rejects.toThrow(QueryError);
     await expect(provider.connect()).rejects.toThrow(/no OPC UA transport/);
   });

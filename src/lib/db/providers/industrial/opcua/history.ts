@@ -91,7 +91,7 @@ function lastTimestamp(values: readonly OpcuaHistoryValue[]): Date | undefined {
  * 100 values on OPC PLC and 1,100 in one response on asyncua.
  */
 export async function readHistory(
-  client: OpcuaReadOnlyClient,
+  client: Pick<OpcuaReadOnlyClient, "historyRead" | "historyReadNext" | "releaseHistoryContinuationPoint">,
   request: {
     readonly nodeId: OpcuaNodeId;
     readonly start?: Date;

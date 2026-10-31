@@ -51,3 +51,6 @@ from the command above, which is why this paragraph exists.
 structural rather than a setting. `history.json` shows `BadContinuationPointInvalid` for a
 continuation whose window differs from the read that handed out the point, which is why the window is
 fixed once per read and travels with every page.
+
+**The agent boundary capture** is in [`2.15.10/agent-boundary/`](2.15.10/agent-boundary/): its `run.sh` starts two fresh containers of the same image, one with a user and an administrator whose passwords it generates for the run, and [`tests/live/opcua-agent-boundary.ts`](../../live/opcua-agent-boundary.ts) records what the agent path answers, what the withheld nodes answer read raw, and what a raw Write and a raw Call do.
+It holds no credential value.

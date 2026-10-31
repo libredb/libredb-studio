@@ -8,9 +8,18 @@
  *
  * ONE SESSION PER CONNECTION, closed on every path out. A server's session table is shared with the
  * plant's own SCADA clients: measured, OPC PLC allows 100 and the in-process server 10.
+ *
+ * AGENT MODE. `queryReadOnly` is the agent's: one read of `agent-statement.ts`'s table (a value read, a history read
+ * or a one-level browse), refused before anything is sent when it is not one, and run by `agent-read.ts` over a session
+ * opened for that read alone and closed when it ends, through a client that holds the read services only and counts
+ * them. Values are answered with their engineering units (`agent-units.ts`), and the server's configuration, role
+ * identities, session diagnostics and PubSub key management are withheld (`agent-withheld.ts`). On a handle opened for
+ * any agent-mode profile no session is held, the console and the Keys panel are refused, and every reading the agent
+ * does not report answers its reason (`agent-surface.ts`). MCP read stays closed on this engine.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
 import type {
   ActiveSessionDetails,
   Container,
@@ -28,14 +37,29 @@ import type {
   ObjectSourceDocument,
   PerformanceMetrics,
   ProviderCapabilities,
+  ProviderExecutionContext,
   ProviderLabels,
   ProviderOptions,
   QueryResult,
+  ReadOnlyStatementBudget,
+  ReadOnlyStatementMode,
   SlowQueryStats,
   StorageStats,
   TableStats,
 } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
+import {
+  agentFailure,
+  boundedAgentClient,
+  opcuaAgentResult,
+  preflight,
+  runOpcuaAgentRead,
+  OpcuaAgentError,
+  OPCUA_AGENT_FAILURE_SENTENCES,
+  type OpcuaAgentAnswer,
+} from "./agent-read";
+import { readOpcuaAgentStatement, type OpcuaAgentPlan } from "./agent-statement";
+import { OPCUA_AGENT_WITHHELD } from "./agent-surface";
 import { OPCUA_CAPABILITIES } from "./capabilities";
 import type { OpcuaReadOnlyClient } from "./client";
 import { OPCUA_OBJECTS_FOLDER, OPCUA_SERVER_STATUS, OPCUA_TYPE } from "./constants";
@@ -54,18 +78,66 @@ import { pathSegments } from "./node-id";
 /** How a session is opened, which production fills with the library and a test with its own. */
 export type OpcuaSessionOpener = (options: OpcuaConnectionOptions) => Promise<OpcuaReadOnlyClient>;
 
+/** Studio's own refusals on the agent's statement path, made before anything is sent. */
+const OPCUA_PROVIDER_SENTENCES = {
+  profileRequired: "Read-only execution requires a provider opened under the agent read-only profile",
+  noEstimate: "OPC UA composes no estimating plan for the agent",
+} as const;
+
 export class OpcuaProvider extends BaseDatabaseProvider {
   private pool: OpcuaSessionPool;
   private connectionOptions: OpcuaConnectionOptions | undefined;
+  /** Whether an agent-mode handle is open: it holds no session, so the pool cannot say. */
+  private agentOpen = false;
 
+  /**
+   * The execution context third and the session opener fourth: the context decides whether this handle answers agent
+   * reads, and a test substitutes its own opener and environment as before.
+   */
   public constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
+    private readonly execution: ProviderExecutionContext = {},
     private readonly openSession?: OpcuaSessionOpener,
     private readonly environment: Readonly<Record<string, string | undefined>> = process.env,
   ) {
     super(config, options);
     this.pool = this.newPool();
+  }
+
+  /**
+   * Whether this handle was opened for the agent read-only profile by an acquisition that sends statements
+   * (`sendsStatements`). Only then does `queryReadOnly` answer; the operations profile's acquisitions send no statement.
+   */
+  private get readOnlyProfile(): boolean {
+    return this.execution.readOnly === true && this.execution.sendsStatements === true;
+  }
+
+  /**
+   * Whether this handle was opened for any agent-mode profile: every execution profile opens `readOnly` and no editor
+   * handle does. Such a handle holds no session, refuses the console and the Keys panel, and answers every reading the
+   * agent does not report with its reason.
+   */
+  private get agentProfile(): boolean {
+    return this.execution.readOnly === true;
+  }
+
+  /** The refusal of a reading an agent-mode handle does not take, after the connection check every reading makes. */
+  private agentWithheld(sentence: string): never {
+    if (!this.agentOpen) throw new DatabaseConfigError("This OPC UA connection is not open.", OPCUA_TYPE);
+    throw new QueryError(sentence, OPCUA_TYPE);
+  }
+
+  /** The session opener, or the refusal of a build that wired none in. */
+  private opener(): OpcuaSessionOpener {
+    if (this.openSession === undefined) {
+      throw new QueryError(
+        "This build has no OPC UA transport wired in. The provider's session is opened through its library " +
+          "bridge, which is supplied where the server runs.",
+        OPCUA_TYPE,
+      );
+    }
+    return this.openSession;
   }
 
   /**
@@ -81,14 +153,7 @@ export class OpcuaProvider extends BaseDatabaseProvider {
   private newPool(): OpcuaSessionPool {
     return new OpcuaSessionPool(async () => {
       const read = this.requireOptions();
-      if (this.openSession === undefined) {
-        throw new QueryError(
-          "This build has no OPC UA transport wired in. The provider's session is opened through its library " +
-            "bridge, which is supplied where the server runs.",
-          OPCUA_TYPE,
-        );
-      }
-      return this.openSession(read);
+      return this.opener()(read);
     });
   }
 
@@ -122,6 +187,16 @@ export class OpcuaProvider extends BaseDatabaseProvider {
       this.config as DatabaseConnection & Record<string, unknown>,
       this.environment,
     );
+    /*
+     * AN AGENT-MODE HANDLE HOLDS NO SESSION. Every agent read opens its own and closes it, so nothing of one read
+     * reaches the next; the connect proves the server answers by opening one session and closing it at once.
+     */
+    if (this.agentProfile) {
+      const session = await this.opener()(this.connectionOptions);
+      await session.close().catch(() => undefined);
+      this.agentOpen = true;
+      return;
+    }
     // A pool that has been closed opens nothing ever again, so a reconnect gets a new one.
     if (this.pool.isSpent()) this.pool = this.newPool();
     await this.pool.acquire();
@@ -129,12 +204,13 @@ export class OpcuaProvider extends BaseDatabaseProvider {
   }
 
   public async disconnect(): Promise<void> {
+    this.agentOpen = false;
     await this.pool.close();
     this.setConnected(false);
   }
 
   public override isConnected(): boolean {
-    return this.pool.isOpen();
+    return this.agentProfile ? this.agentOpen : this.pool.isOpen();
   }
 
   private requireOptions(): OpcuaConnectionOptions {
@@ -153,6 +229,7 @@ export class OpcuaProvider extends BaseDatabaseProvider {
    * thing from "this is not a request" and a reader should hear the difference.
    */
   public async query(text: string): Promise<QueryResult> {
+    if (this.agentProfile) throw new RefusedBeforeSendError(OPCUA_AGENT_WITHHELD.query, OPCUA_TYPE, text);
     const trimmed = text.trim();
     if (trimmed === "") {
       throw new QueryError(
@@ -212,6 +289,71 @@ export class OpcuaProvider extends BaseDatabaseProvider {
     return { ...historyRows(history.nodeId, history.values), warnings };
   }
 
+  /**
+   * One agent read. Only on a handle opened under the agent read-only profile; the request is read by
+   * `readOpcuaAgentStatement` and refused before anything is sent when it is not one of the three reads, when it is a
+   * history read or a browse of a withheld root, or when a value read names more nodes than the row budget. The read
+   * runs over a session opened for it alone and closed when it ends, through `boundedAgentClient`, which holds the read
+   * services and counts them against the request bound and the time budget, and its answer is refused past the row,
+   * byte or time budget rather than cut. A failure is worded by its category, never in the server's text.
+   */
+  public async queryReadOnly(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    if (!this.readOnlyProfile)
+      throw new RefusedBeforeSendError(OPCUA_PROVIDER_SENTENCES.profileRequired, OPCUA_TYPE, statement);
+    if (!this.agentOpen) throw new DatabaseConfigError("This OPC UA connection is not open.", OPCUA_TYPE);
+    assertReadOnlyBudget(budget, OPCUA_TYPE);
+    if (mode !== "execute")
+      throw new RefusedBeforeSendError(OPCUA_PROVIDER_SENTENCES.noEstimate, OPCUA_TYPE, statement);
+    const reading = readOpcuaAgentStatement(statement);
+    if (!reading.ok) throw new RefusedBeforeSendError(reading.message, OPCUA_TYPE, statement);
+    const early = preflight(reading.plan, budget);
+    if (early !== undefined) throw new RefusedBeforeSendError(early, OPCUA_TYPE, statement);
+    const started = Date.now();
+    const answer = await this.agentRead(reading.plan, budget, started);
+    return opcuaAgentResult(answer, budget, Date.now() - started);
+  }
+
+  /**
+   * One read over its own session, raced against the time budget. The session is closed on every path out, the
+   * deadline's included: a read still running when the budget ends meets the deadline at its next request, and its
+   * session is closed then.
+   */
+  private async agentRead(
+    plan: OpcuaAgentPlan,
+    budget: ReadOnlyStatementBudget,
+    started: number,
+  ): Promise<OpcuaAgentAnswer> {
+    const ms = budget.statementTimeoutMs;
+    const options = this.requireOptions();
+    const open = this.opener();
+    let opened = false;
+    const work = (async () => {
+      const session = await open(options);
+      opened = true;
+      try {
+        const client = boundedAgentClient(session, { deadlineAt: started + ms, timeoutMs: ms, now: Date.now });
+        return await runOpcuaAgentRead(client, plan, budget);
+      } finally {
+        await session.close().catch(() => undefined);
+      }
+    })();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new OpcuaAgentError(OPCUA_AGENT_FAILURE_SENTENCES.time(ms))), ms);
+    });
+    try {
+      return await Promise.race([work, deadline]);
+    } catch (error) {
+      throw agentFailure(error, opened);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   // ==========================================================================
   // The Keys panel
   // ==========================================================================
@@ -225,6 +367,7 @@ export class OpcuaProvider extends BaseDatabaseProvider {
    * the eight services the seam allows and the seam's value is that the list is exhaustive.
    */
   public async scanKeysPage(options: KeyScanOptions): Promise<KeyScanPage> {
+    if (this.agentProfile) this.agentWithheld(OPCUA_AGENT_WITHHELD.keys);
     if (options.database !== undefined) {
       throw new DatabaseConfigError(
         "An OPC UA connection reads one server endpoint, so a page names no database.",
@@ -287,19 +430,20 @@ export class OpcuaProvider extends BaseDatabaseProvider {
   }
 
   public async listObjects(): Promise<DatabaseObject[]> {
-    throw new QueryError(OPCUA_NODES_LISTED_ELSEWHERE, OPCUA_TYPE);
+    throw new QueryError(this.agentProfile ? OPCUA_AGENT_WITHHELD.objects : OPCUA_NODES_LISTED_ELSEWHERE, OPCUA_TYPE);
   }
 
   public async describeObject(): Promise<ObjectDetail> {
-    throw new QueryError(OPCUA_NODES_LISTED_ELSEWHERE, OPCUA_TYPE);
+    throw new QueryError(this.agentProfile ? OPCUA_AGENT_WITHHELD.objects : OPCUA_NODES_LISTED_ELSEWHERE, OPCUA_TYPE);
   }
 
   public async describeObjects(): Promise<ObjectDetailBatch> {
-    throw new QueryError(OPCUA_NODES_LISTED_ELSEWHERE, OPCUA_TYPE);
+    throw new QueryError(this.agentProfile ? OPCUA_AGENT_WITHHELD.objects : OPCUA_NODES_LISTED_ELSEWHERE, OPCUA_TYPE);
   }
 
   /** One node's value and attributes, which is what clicking a key opens. */
   public async readObjectSource(path: readonly string[], kind: string): Promise<ObjectSourceDocument> {
+    if (this.agentProfile) this.agentWithheld(OPCUA_AGENT_WITHHELD.keys);
     if (!OPCUA_OBJECT_KINDS.includes(kind as (typeof OPCUA_OBJECT_KINDS)[number])) {
       throw new DatabaseConfigError(`An OPC UA connection has one object kind, ${OPCUA_OBJECT_KINDS[0]}.`, OPCUA_TYPE);
     }
@@ -367,6 +511,8 @@ export class OpcuaProvider extends BaseDatabaseProvider {
   // ==========================================================================
 
   public async getHealth(): Promise<HealthInfo> {
+    // On an agent-mode handle the "unknown" figures and empty lists below would read as the server's own answer.
+    if (this.agentProfile) this.agentWithheld(OPCUA_AGENT_WITHHELD.health);
     return {
       databaseSize: "unknown",
       // A server publishes no cache a client can read, and "unknown" is the honest value.
@@ -392,6 +538,7 @@ export class OpcuaProvider extends BaseDatabaseProvider {
    * card is a readout, and an engine that will not say is not an engine that is broken.
    */
   public async getOverview(): Promise<DatabaseOverview> {
+    if (this.agentProfile) this.agentWithheld(OPCUA_AGENT_WITHHELD.overview);
     const unknown = { version: "unknown", uptime: "unknown", databaseSize: "unknown", tableCount: 0, indexCount: 0 };
     try {
       const status = await this.pool.withSession(async (client) => {
@@ -423,29 +570,35 @@ export class OpcuaProvider extends BaseDatabaseProvider {
    * empty arrays and say why through `getLabels()` instead.
    */
   public async getStorageStats(): Promise<StorageStats[]> {
+    if (this.agentProfile) this.agentWithheld(OPCUA_AGENT_WITHHELD.storage);
     throw new QueryError(OPCUA_NO_TABLE_STATISTICS, OPCUA_TYPE);
   }
 
   public async getPerformanceMetrics(): Promise<PerformanceMetrics> {
+    if (this.agentProfile) this.agentWithheld(OPCUA_AGENT_WITHHELD.performance);
     return {} as PerformanceMetrics;
   }
 
   public async getSlowQueries(): Promise<SlowQueryStats[]> {
+    if (this.agentProfile) this.agentWithheld(OPCUA_AGENT_WITHHELD.slowQueries);
     // A server keeps no query log, because it answers no queries.
     return [];
   }
 
   public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
+    if (this.agentProfile) this.agentWithheld(OPCUA_AGENT_WITHHELD.sessions);
     // CurrentSessionCount is a number, not a session list, and it is not portable either: measured,
     // asyncua answers Good with an empty value and Milo BadNotReadable even when authenticated.
     return [];
   }
 
   public async getTableStats(): Promise<TableStats[]> {
+    if (this.agentProfile) this.agentWithheld(OPCUA_AGENT_WITHHELD.tableStats);
     throw new QueryError(OPCUA_NO_TABLE_STATISTICS, OPCUA_TYPE);
   }
 
   public async getIndexStats(): Promise<IndexStats[]> {
+    if (this.agentProfile) this.agentWithheld(OPCUA_AGENT_WITHHELD.indexStats);
     throw new QueryError(OPCUA_NO_TABLE_STATISTICS, OPCUA_TYPE);
   }
 

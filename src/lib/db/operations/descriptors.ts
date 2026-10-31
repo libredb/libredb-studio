@@ -42,6 +42,7 @@ import { snmpgetAgentReadInput } from "./snmpget-admission";
 import { netconfrpcAgentReadInput } from "./netconfrpc-admission";
 import { modbusreadAgentReadInput } from "./modbusread-admission";
 import { promqlAgentReadInput } from "./promql-admission";
+import { opcuareadAgentReadInput } from "./opcuaread-admission";
 import { weaviateapiAgentReadInput } from "./weaviateapi-admission";
 import { agentPlanExecutionSqlInput, agentQueryReadSqlInput, agentReadSqlInput } from "./statement-guard";
 import type { RegistrableOperationDescriptor } from "./types";
@@ -891,6 +892,41 @@ const promqlQueryReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+const OPCUAREAD_READ_BOUNDARY =
+  "OPC UA: the provider's structural closed seam: one JSON request, a value read or a history read as the console " +
+  "writes it or a one-level browse, read before it is sent with the console's own parser, and run over a session opened " +
+  "for that read alone through a client that holds Browse, BrowseNext, Read and HistoryRead only, with the browse " +
+  "direction, reference type, result mask, attribute list and history details fixed by the provider, so no Write, " +
+  "Call, HistoryUpdate, node or reference change, RegisterNodes, TranslateBrowsePathsToNodeIds or subscription can be " +
+  "sent; the pinned fixture took an anonymous write, which is why the seam is the boundary. Values are answered as the " +
+  "console renders them, each with its node's engineering units and EU range or 'no units published'. Withheld on " +
+  "every agent-mode handle, decided by node id from the server's own address space before every read: " +
+  "ServerConfiguration, RoleSet, the session diagnostics and the PubSub key management objects, with everything " +
+  "beneath them. A read past the row, byte or time budget, or past its request bound, is refused, never truncated.";
+
+/**
+ * One OPC UA read the model wrote, on an `opcua` connection.
+ *
+ * R1 on a structural boundary: the agent's reads reach the server only through the seam's read services. Its own id,
+ * and not a widened `sql.query.read`, so the SQL contract and its audit action stay exactly what they were.
+ */
+const opcuareadQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "opcuaread.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: opcuareadAgentReadInput,
+  verification: {
+    reviewedBy: "OPC UA agent execution design review",
+    boundary: OPCUAREAD_READ_BOUNDARY,
+    verifiedOn: "2026-11-01",
+  },
+};
+
 const FSQUERY_READ_BOUNDARY =
   "Firestore: the provider's structural closed table, read with the console's own parser: one read of a closed table " +
   "of four metadata reads (the root collection ids, the subcollection ids of one document the statement names in full, " +
@@ -1218,6 +1254,7 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   netconfrpcQueryReadDescriptor,
   modbusreadQueryReadDescriptor,
   promqlQueryReadDescriptor,
+  opcuareadQueryReadDescriptor,
 ]);
 
 /**

@@ -7,8 +7,17 @@
  */
 import type { ProviderLabels } from "@/lib/db/types";
 
+/**
+ * What a statement is on this engine, in the words plan mode drafts by: the console's read request. Plan mode drafts
+ * for the editor, so it names the console's two shapes; the browse is agent mode's own and is never drafted. The
+ * withheld nodes are named so a plan never drafts a read of them.
+ */
+const OPCUA_STATEMENT_LANGUAGE =
+  'one OPC UA read request this editor runs, a JSON object: {"read": ["ns=3;s=SlowUInt1", ...]} for the current value of each node, or {"history": "ns=3;s=HistorianInt32", "start": "2026-10-31T00:00:00Z", "end": "2026-10-31T01:00:00Z", "limit": 100} for one node\'s raw history (start, end and limit optional); a node id is written with its namespace index (ns=3;s=...) or in namespace 0 with no prefix (i=2256); there is no write and no method call, and Server.ServerConfiguration (i=12637), RoleSet (i=15606), the session diagnostics (i=3706, i=3707, i=3708) and the PubSub security groups and key push targets (i=15443, i=25440) are never drafted, since agent mode withholds them';
+
 /** A server has nodes, and a Variable node is the row. There is no table and no schema to name. */
 export const OPCUA_LABELS: ProviderLabels = Object.freeze({
+  statementLanguage: OPCUA_STATEMENT_LANGUAGE,
   entityName: "Node",
   entityNamePlural: "Nodes",
   rowName: "Value",

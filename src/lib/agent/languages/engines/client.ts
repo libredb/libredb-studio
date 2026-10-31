@@ -29,6 +29,7 @@ import { SNMP_CLIENT_OVERLAY } from "../snmpget/engines/client";
 import { NETCONF_CLIENT_OVERLAY } from "../netconfrpc/engines/client";
 import { MODBUS_CLIENT_OVERLAY } from "../modbusread/engines/client";
 import { PROMETHEUS_CLIENT_OVERLAY } from "../promql/engines/client";
+import { OPCUA_CLIENT_OVERLAY } from "../opcuaread/engines/client";
 import { defineOverlay, dialectOnly } from "../overlay";
 import type { AgentEngineClientDialect, AgentEngineClientOverlays, AgentEnginePack, AgentEngineType } from "../pack";
 import {
@@ -84,6 +85,7 @@ const CLIENT_OVERLAYS: AgentEngineClientOverlays = Object.freeze({
   netconf: Object.freeze({ family: "netconfrpc", overlay: dialectOnly(NETCONF_CLIENT_OVERLAY) }),
   modbus: Object.freeze({ family: "modbusread", overlay: dialectOnly(MODBUS_CLIENT_OVERLAY) }),
   prometheus: Object.freeze({ family: "promql", overlay: dialectOnly(PROMETHEUS_CLIENT_OVERLAY) }),
+  opcua: Object.freeze({ family: "opcuaread", overlay: dialectOnly(OPCUA_CLIENT_OVERLAY) }),
 } satisfies AgentEngineClientOverlays);
 
 /**

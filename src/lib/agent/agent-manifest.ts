@@ -47,7 +47,8 @@ export type AgentStatementLanguageId =
   | "snmpget"
   | "netconfrpc"
   | "modbusread"
-  | "promql";
+  | "promql"
+  | "opcuaread";
 
 /** Literal-typed, so `AgentEngineFamily` in `languages/pack.ts` reads each engine's language by type. */
 export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
@@ -87,7 +88,7 @@ export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
   mqtt: null,
   firestore: "fsquery",
   rabbitmq: "rabbitread",
-  opcua: null,
+  opcua: "opcuaread",
   mtconnect: null,
   modbus: "modbusread",
   netconf: "netconfrpc",

@@ -169,6 +169,7 @@ describe("the plan-estimate operation of each language", () => {
       netconfrpc: null,
       modbusread: null,
       promql: null,
+      opcuaread: null,
     });
     expect(Object.isFrozen(AGENT_PLAN_ESTIMATE_OPERATION)).toBe(true);
   });
