@@ -284,6 +284,14 @@ describe("the other surfaces of an agent-mode handle", () => {
     expect((await provider.listObjects([], "table")).length).toBeGreaterThan(0);
   });
 
+  test("the overview's reason points the run at no figure the operations health reading drops", () => {
+    // The operations workflow's health reading projects activeConnections, databaseSize and cacheHitRatio alone (the
+    // `health` row of CURATED_READINGS in src/lib/agent/tools.ts), so the agent's description and uptime never reach
+    // the run through it, and a reason saying the health reading carries them sends the model to a figure it never gets.
+    expect(W.overview).not.toContain("sysDescr.0");
+    expect(W.overview).not.toContain("sysUpTime.0");
+  });
+
   test("a reading on an agent-mode handle that never connected says so first", async () => {
     const unopened = new SnmpProvider(connection(9), {}, OPERATIONS);
     await expect(unopened.getOverview()).rejects.toThrow(DatabaseConfigError);
