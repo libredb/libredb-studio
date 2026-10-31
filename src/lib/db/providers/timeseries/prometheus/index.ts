@@ -591,8 +591,14 @@ export class PrometheusProvider extends BaseDatabaseProvider {
     if (options.schema !== undefined && options.schema !== PROMETHEUS_SCHEMA_NAME) return Promise.resolve([]);
     return this.guarded(async () => {
       const tables = await readTableStats(this.requireTransport());
-      // The model reads the text beside the 0 the shape requires, so on an agent-mode handle the text says why.
-      if (this.agentProfile) for (const table of tables) table.totalSize = PROMETHEUS_AGENT_WITHHELD.byteCount;
+      // The model reads the text beside the 0 the shape requires, so on an agent-mode handle the text says why. The
+      // agent's table-stats reading forwards tableSize and never totalSize, so the text is written to both.
+      if (this.agentProfile) {
+        for (const table of tables) {
+          table.totalSize = PROMETHEUS_AGENT_WITHHELD.byteCount;
+          table.tableSize = PROMETHEUS_AGENT_WITHHELD.byteCount;
+        }
+      }
       return tables;
     });
   }

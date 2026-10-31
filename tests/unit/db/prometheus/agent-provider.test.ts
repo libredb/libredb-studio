@@ -655,10 +655,13 @@ describe("the other surfaces of an agent-mode handle", () => {
     expect(storage.map((store) => [store.size, store.sizeBytes])).toEqual([[PROMETHEUS_AGENT_WITHHELD.byteCount, 0]]);
     const tables = await provider.getTableStats();
     expect(tables.length).toBeGreaterThan(0);
+    // The agent's table-stats reading forwards tableSize and totalSizeBytes and never totalSize (`CURATED_READINGS` in
+    // src/lib/agent/tools.ts), so the text has to sit in tableSize for the model to read it beside the 0.
     for (const table of tables) {
-      expect([table.totalSize, table.totalSizeBytes, table.tableSize]).toEqual([
+      expect([table.totalSize, table.totalSizeBytes, table.tableSize, table.tableSizeBytes]).toEqual([
         PROMETHEUS_AGENT_WITHHELD.byteCount,
         0,
+        PROMETHEUS_AGENT_WITHHELD.byteCount,
         undefined,
       ]);
     }
@@ -667,6 +670,7 @@ describe("the other surfaces of an agent-mode handle", () => {
     await editor.connect();
     expect((await editor.getStorageStats())[0].size).toBe("N/A");
     expect((await editor.getTableStats())[0].totalSize).toBe("N/A");
+    expect((await editor.getTableStats())[0].tableSize).toBeUndefined();
   });
 
   test("the object tree names every target and rule by its projected answer, nothing withheld even as a digest", async () => {
