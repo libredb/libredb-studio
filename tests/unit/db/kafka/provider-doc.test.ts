@@ -201,7 +201,7 @@ describe("docs/providers/kafka.md quotes the strings the provider writes", () =>
   test("the refusal of a client library the installation cannot load is the one connect() raises", async () => {
     // The resolution failure section 2.5 describes, which this repository's own install never meets.
     const unresolved = Object.assign(new Error("Cannot find module 'ajv/dist/core'"), { code: "MODULE_NOT_FOUND" });
-    const provider = new KafkaProvider({ ...KAFKA, user: undefined, password: undefined }, {}, async () => {
+    const provider = new KafkaProvider({ ...KAFKA, user: undefined, password: undefined }, {}, {}, async () => {
       throw unresolved;
     });
     let message = "";

@@ -343,7 +343,7 @@ function providerOver(
 ) {
   const built: FakeClient[] = [];
   const handed: KafkaConnectionOptions[] = [];
-  const provider = new KafkaProvider(CONNECTION, options, async (clientOptions) => {
+  const provider = new KafkaProvider(CONNECTION, options, {}, async (clientOptions) => {
     handed.push(clientOptions);
     const fake = fakeClient(answers);
     built.push(fake);
@@ -540,7 +540,7 @@ describe("connect", () => {
       // would connect where it should fail.
       let asked = 0;
       const built: FakeClient[] = [];
-      const provider = new KafkaProvider(CONNECTION, { queryTimeout: QUERY_TIMEOUT_MS }, async () => {
+      const provider = new KafkaProvider(CONNECTION, { queryTimeout: QUERY_TIMEOUT_MS }, {}, async () => {
         asked++;
         if (asked === 1) throw failure;
         const fake = fakeClient();

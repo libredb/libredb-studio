@@ -86,7 +86,7 @@ async function rejectionOf(run: () => unknown): Promise<unknown> {
 /** A provider whose client factory, the library's loader in production, rejects with `failure`. */
 function unloadable(failure: unknown) {
   const calls: unknown[] = [];
-  const provider = new KafkaProvider(CONNECTION, { queryTimeout: 1000 }, async (options) => {
+  const provider = new KafkaProvider(CONNECTION, { queryTimeout: 1000 }, {}, async (options) => {
     calls.push(options);
     throw failure;
   });
@@ -358,7 +358,7 @@ describe("a client library the installation cannot load", () => {
         calls.push("close");
       },
     } as unknown as KafkaReadClient;
-    const provider = new KafkaProvider(CONNECTION, { queryTimeout: 1000 }, async () => client);
+    const provider = new KafkaProvider(CONNECTION, { queryTimeout: 1000 }, {}, async () => client);
     expect(await rejectionOf(() => provider.connect())).toBe(failure);
     expect(calls).toEqual(["metadata", "close"]);
     expect(provider.isConnected()).toBe(false);

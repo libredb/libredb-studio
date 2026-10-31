@@ -216,7 +216,7 @@ const LIBRARY_CLIENTS = ["Admin", "Consumer", "ConnectionPool"];
 function unconnected(overrides: Record<string, Answer> = {}, options: ProviderOptions = {}) {
   const recorded = brokerLib(overrides);
   const created: KafkaReadClient[] = [];
-  const provider = new KafkaProvider(CONNECTION, options, async (clientOptions) => {
+  const provider = new KafkaProvider(CONNECTION, options, {}, async (clientOptions) => {
     const client = createPlatformaticClient(clientOptions, recorded.lib);
     created.push(client);
     return client;
@@ -608,7 +608,7 @@ describe("connect and disconnect", () => {
         throw libError("error-request-timeout");
       },
     });
-    const provider = new KafkaProvider(CONNECTION, { queryTimeout: 7_000 }, async (options) =>
+    const provider = new KafkaProvider(CONNECTION, { queryTimeout: 7_000 }, {}, async (options) =>
       createPlatformaticClient(options, recorded.lib),
     );
     const error = await provider.connect().catch((e) => e);
@@ -623,7 +623,7 @@ describe("connect and disconnect", () => {
     };
     // The connect's own failure.
     const refusing = brokerLib({ "admin.metadata": lost });
-    const failed = await new KafkaProvider(typed, {}, async (options) =>
+    const failed = await new KafkaProvider(typed, {}, {}, async (options) =>
       createPlatformaticClient(options, refusing.lib),
     )
       .connect()
@@ -632,7 +632,9 @@ describe("connect and disconnect", () => {
     expect(failed).toMatchObject({ provider: "kafka", host: "localhost", port: 9092 });
     // And a surface's, once connected.
     const recorded = brokerLib({ "admin.listTopics": lost });
-    const provider = new KafkaProvider(typed, {}, async (options) => createPlatformaticClient(options, recorded.lib));
+    const provider = new KafkaProvider(typed, {}, {}, async (options) =>
+      createPlatformaticClient(options, recorded.lib),
+    );
     await provider.connect();
     const later = await provider.listObjects([], "topic").catch((e) => e);
     expect(later).toBeInstanceOf(ConnectionError);
@@ -650,7 +652,7 @@ describe("connect and disconnect", () => {
           throw new Error("close refused");
         },
       });
-      const provider = new KafkaProvider(CONNECTION, {}, async (options) =>
+      const provider = new KafkaProvider(CONNECTION, {}, {}, async (options) =>
         createPlatformaticClient(options, recorded.lib),
       );
       const error = await provider.connect().catch((e) => e);
@@ -728,7 +730,7 @@ describe("connect and disconnect", () => {
 
   test.each(SURFACES)("%s refuses before connect and after disconnect, and sends nothing", async (_name, call) => {
     const recorded = brokerLib();
-    const provider = new KafkaProvider(CONNECTION, {}, async (options) =>
+    const provider = new KafkaProvider(CONNECTION, {}, {}, async (options) =>
       createPlatformaticClient(options, recorded.lib),
     );
     const refusal = () =>
@@ -770,7 +772,7 @@ describe("connect and disconnect", () => {
       ];
       const errors = await Promise.all(
         cases.map((bad) =>
-          new KafkaProvider({ ...CONNECTION, ...bad } as DatabaseConnection, {}, async (options) => {
+          new KafkaProvider({ ...CONNECTION, ...bad } as DatabaseConnection, {}, {}, async (options) => {
             created++;
             return createPlatformaticClient(options, await loadPlatformatic());
           })
@@ -797,6 +799,7 @@ describe("connect and disconnect", () => {
       const provider = new KafkaProvider(
         { ...CONNECTION, saslMechanism: "PLAIN", user: "u", password: "hunter2" } as DatabaseConnection,
         {},
+        {},
         async (options) => {
           created++;
           return createPlatformaticClient(options, brokerLib().lib);
@@ -817,6 +820,7 @@ describe("connect and disconnect", () => {
     let created = 0;
     const provider = new KafkaProvider(
       { ...CONNECTION, sshTunnel: { enabled: true, host: "bastion", port: 22, username: "u" } } as DatabaseConnection,
+      {},
       {},
       async (options) => {
         created++;

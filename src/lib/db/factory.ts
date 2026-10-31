@@ -434,7 +434,7 @@ export async function createDatabaseProvider(
       // analysable: a bare directory resolves only at runtime, which the bundler
       // cannot trace into a chunk.
       const { KafkaProvider } = await import("./providers/stream/kafka/index");
-      return new KafkaProvider(connection, options);
+      return new KafkaProvider(connection, options, execution);
     }
 
     // Graph databases - dynamically imported

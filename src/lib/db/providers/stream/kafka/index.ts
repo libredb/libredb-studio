@@ -31,6 +31,7 @@ import type {
   ObjectSourceDocument,
   PerformanceMetrics,
   ProviderCapabilities,
+  ProviderExecutionContext,
   ProviderLabels,
   ProviderOptions,
   QueryResult,
@@ -100,6 +101,7 @@ export class KafkaProvider extends BaseDatabaseProvider {
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
+    private readonly execution: ProviderExecutionContext = {},
     private readonly createClient: (o: KafkaConnectionOptions) => Promise<KafkaReadClient> = defaultCreateClient,
   ) {
     super(config, options);
