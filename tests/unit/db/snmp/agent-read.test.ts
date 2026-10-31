@@ -231,6 +231,19 @@ describe("walk and table", () => {
     await expect(refusal).rejects.toThrow(SnmpAgentError);
     await expect(refusal).rejects.toThrow(`${ROW_BUDGET_PREFIX}: 50 rows > 3 allowed`);
     expect(sixty.calls).toHaveLength(1);
+    // Four objects an answer: the walk stops on the first, at one row past the budget, and asks nothing more.
+    const fours = treeClient(
+      Array.from({ length: 60 }, (_, i): [string, number, Uint8Array] => [
+        `1.3.6.1.4.1.9.${i + 1}`,
+        0x02,
+        Uint8Array.of(1),
+      ]),
+      (_call, made) => ({ ...made, varbinds: made.varbinds.slice(0, 4) }),
+    );
+    await expect(runSnmpAgentRead(fours.client, plan("walk 1.3.6.1.4.1.9"), BUDGET)).rejects.toThrow(
+      `${ROW_BUDGET_PREFIX}: 4 rows > 3 allowed`,
+    );
+    expect(fours.calls).toHaveLength(1);
   });
 
   test("a walk past its time budget is refused in the time budget's words", async () => {
