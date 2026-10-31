@@ -457,6 +457,8 @@ describe("the domains this file walks", () => {
       // Read nothing and answer the protocol's honest absences: "listContainers answers ..." below, and
       // the integration test's "storage comes from the log dirs; the surfaces the protocol cannot fill
       // are empty; maintenance is refused".
+      // The agent profiles' read and composition: tests/unit/db/kafka/agent-provider.test.ts walks them.
+      agent: ["queryReadOnly", "readOnlyProfile", "agentProfile", "agentClient", "agentGuarded", "agentWithheld"],
       noRead: [
         "listContainers",
         "getPerformanceMetrics",

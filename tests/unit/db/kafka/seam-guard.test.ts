@@ -2537,3 +2537,174 @@ describe("Kafka seam guard", () => {
     );
   });
 });
+
+// ============================================================================
+// The agent read path: Metadata and ListOffsets alone
+// ============================================================================
+
+/**
+ * The agent-mode modules of the provider. A new file named agent-* is refused until it is listed here, so it is held
+ * to the same rules.
+ */
+const AGENT_MODULES = ["agent-metadata-read.ts", "agent-statement.ts", "agent-surface.ts"];
+
+/** The agent client's members: the Metadata reads (metadata, listTopics) and the ListOffsets read (offsets). */
+const AGENT_CLIENT_MEMBERS = ["listTopics", "metadata", "offsets"];
+
+/** What an agent-mode module may import, and by which names from the provider's own modules. */
+const AGENT_IMPORTS: Readonly<Record<string, readonly string[] | "any">> = {
+  "@/lib/db/errors": "any",
+  "@/lib/db/providers/sql/read-only-budget": "any",
+  "@/lib/db/redaction/metadata-only": "any",
+  "@/lib/db/types": "any",
+  "./agent-statement": "any",
+  "./client": [
+    "KafkaAgentReadClient",
+    "KafkaError",
+    "KafkaErrorCategory",
+    "KafkaPartitionMetadata",
+    "KafkaTopicMetadata",
+  ],
+  "./objects": ["KAFKA_OBJECT_KINDS", "listTopicObjects", "requireRoot", "TOPIC_CAP_SENTENCE"],
+};
+
+/** The names a `Pick<KafkaReadClient, ...>` alias of `name` picks, or undefined when `name` is not such an alias. */
+function pickedMembers(source: string, name: string): string[] | undefined {
+  const sf = ts.createSourceFile("client.ts", source, ts.ScriptTarget.Latest, true);
+  for (const statement of sf.statements) {
+    if (!ts.isTypeAliasDeclaration(statement) || statement.name.text !== name) continue;
+    const type = statement.type;
+    if (!ts.isTypeReferenceNode(type) || type.typeName.getText(sf) !== "Pick") return undefined;
+    const [base, keys] = type.typeArguments ?? [];
+    if (base?.getText(sf) !== "KafkaReadClient" || keys === undefined) return undefined;
+    const literals = ts.isUnionTypeNode(keys) ? keys.types : [keys];
+    return literals.map((literal) => literal.getText(sf).replace(/^"|"$/g, "")).sort();
+  }
+  return undefined;
+}
+
+/** What breaks the agent-path rules in one agent-mode module: a full client named, an import outside the table, a call off it. */
+function agentPathFindings(file: string, source: string): string[] {
+  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+  const findings: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && (node.text === "KafkaReadClient" || node.text === "ObjectsClient")) {
+      findings.push(`${file} names ${node.text}`);
+    }
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+      const from = node.moduleSpecifier.text;
+      const allowed = AGENT_IMPORTS[from];
+      if (allowed === undefined) findings.push(`${file} imports ${from}`);
+      else if (allowed !== "any") {
+        const bindings = node.importClause?.namedBindings;
+        const names =
+          bindings !== undefined && ts.isNamedImports(bindings)
+            ? bindings.elements.map((element) => (element.propertyName ?? element.name).text)
+            : ["*"];
+        for (const imported of names) {
+          if (!allowed.includes(imported)) findings.push(`${file} imports ${imported} from ${from}`);
+        }
+      }
+    }
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+      const target = node.expression.expression;
+      const member = node.expression.name.text;
+      if (ts.isIdentifier(target) && target.text === "client" && !AGENT_CLIENT_MEMBERS.includes(member)) {
+        findings.push(`${file} calls client.${member}`);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return findings;
+}
+
+/** The keys of the object `agentClient()` in index.ts returns, or undefined when it returns no object literal. */
+function agentClientKeys(source: string): string[] | undefined {
+  const sf = ts.createSourceFile("index.ts", source, ts.ScriptTarget.Latest, true);
+  let keys: string[] | undefined;
+  const visit = (node: ts.Node): void => {
+    if (ts.isMethodDeclaration(node) && node.name.getText(sf) === "agentClient") {
+      if (node.type?.getText(sf) !== "KafkaAgentReadClient") return;
+      const returned = node.body?.statements.find(ts.isReturnStatement)?.expression;
+      if (returned !== undefined && ts.isObjectLiteralExpression(returned)) {
+        keys = returned.properties.map((property) => property.name?.getText(sf) ?? "...").sort();
+      }
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return keys;
+}
+
+describe("the agent read path reaches Metadata and ListOffsets alone", () => {
+  const read = (file: string) => readFileSync(join(PROVIDER_DIR, file), "utf8");
+
+  test("the agent client is the full client's Metadata and ListOffsets reads, picked by name", () => {
+    expect(pickedMembers(read("client.ts"), "KafkaAgentReadClient")).toEqual(AGENT_CLIENT_MEMBERS);
+    // The topic listing the agent's surfaces share picks a subset of the same reads.
+    expect(pickedMembers(read("objects.ts"), "TopicListingClient")).toEqual(["listTopics", "metadata"]);
+  });
+
+  test("every agent-mode module is listed, and each names no full client, imports nothing else and calls nothing else", () => {
+    expect(
+      filesUnder(PROVIDER_DIR)
+        .filter((file) => /^agent-/.test(file))
+        .sort(),
+    ).toEqual(AGENT_MODULES);
+    expect(AGENT_MODULES.flatMap((file) => agentPathFindings(file, read(file)))).toEqual([]);
+  });
+
+  test("the provider hands an agent-mode surface a new object holding the three reads alone", () => {
+    expect(agentClientKeys(read("index.ts"))).toEqual(AGENT_CLIENT_MEMBERS);
+  });
+
+  test("the detectors fire on each kind of breach", () => {
+    const client = read("client.ts");
+    expect(
+      pickedMembers(
+        client.replace('"metadata" | "listTopics" | "offsets"', '"metadata" | "listTopics" | "offsets" | "fetch"'),
+        "KafkaAgentReadClient",
+      ),
+    ).toEqual(["fetch", "listTopics", "metadata", "offsets"]);
+    expect(
+      pickedMembers(client.replace("Pick<KafkaReadClient,", "Omit<KafkaReadClient,"), "KafkaAgentReadClient"),
+    ).toBe(undefined);
+    expect(pickedMembers("export type X = string;", "X")).toBeUndefined();
+    expect(pickedMembers('export type X = Pick<Other, "a">;', "X")).toBeUndefined();
+    expect(pickedMembers('export type X = Pick<KafkaReadClient, "a">;', "X")).toEqual(["a"]);
+
+    expect(agentPathFindings("a.ts", 'import type { KafkaReadClient } from "./client";')).toEqual([
+      "a.ts imports KafkaReadClient from ./client",
+      "a.ts names KafkaReadClient",
+    ]);
+    expect(agentPathFindings("a.ts", 'import { readMessages } from "./read";')).toEqual(["a.ts imports ./read"]);
+    expect(agentPathFindings("a.ts", 'import * as objects from "./objects";')).toEqual([
+      "a.ts imports * from ./objects",
+    ]);
+    expect(agentPathFindings("a.ts", 'import { countObjects as listTopicObjects } from "./objects";')).toEqual([
+      "a.ts imports countObjects from ./objects",
+    ]);
+    expect(
+      agentPathFindings("a.ts", "async function f(client) { await client.fetch(); await client.offsets(); }"),
+    ).toEqual(["a.ts calls client.fetch"]);
+    expect(agentPathFindings("a.ts", "type T = ObjectsClient;")).toEqual(["a.ts names ObjectsClient"]);
+
+    const index = read("index.ts");
+    expect(
+      agentClientKeys(
+        index.replace(
+          "listTopics: () => client.listTopics(),",
+          "listTopics: () => client.listTopics(),\n      fetch: client.fetch,",
+        ),
+      ),
+    ).toEqual(["fetch", "listTopics", "metadata", "offsets"]);
+    expect(
+      agentClientKeys(
+        index.replace("private agentClient(): KafkaAgentReadClient {", "private agentClient(): KafkaReadClient {"),
+      ),
+    ).toBe(undefined);
+    expect(agentClientKeys("class A { agentClient(): KafkaAgentReadClient { return this.client; } }")).toBeUndefined();
+  });
+});

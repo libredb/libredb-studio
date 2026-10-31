@@ -61,6 +61,7 @@ import { KafkaProvider } from "@/lib/db/providers/stream/kafka";
 import { KafkaError, type KafkaReadClient } from "@/lib/db/providers/stream/kafka/client";
 import { kafkaConnectionOptions } from "@/lib/db/providers/stream/kafka/connection-options";
 import { toDatabaseError } from "@/lib/db/providers/stream/kafka/errors";
+import { KAFKA_METADATA_ONLY } from "@/lib/db/providers/stream/kafka/agent-metadata-read";
 import * as kafkaObjects from "@/lib/db/providers/stream/kafka/objects";
 import { createPlatformaticClient, loadPlatformatic } from "@/lib/db/providers/stream/kafka/platformatic-client";
 import { KAFKA_CELL_LIMIT, KAFKA_RESULT_BYTE_BUDGET, readMessages } from "@/lib/db/providers/stream/kafka/read";
@@ -1587,6 +1588,7 @@ describe("declarations", () => {
       defaultPort: 9092,
       containerLevels: kafkaObjects.KAFKA_CONTAINER_LEVELS,
       objectKinds: kafkaObjects.KAFKA_OBJECT_KINDS,
+      metadataOnly: KAFKA_METADATA_ONLY,
     };
     expect(capabilities).toMatchObject(declared);
     // Exactly these members, so no flag the spec does not name (a key browser, an explain format) is declared.
@@ -1735,7 +1737,6 @@ describe("declarations", () => {
     for (const method of [
       "cancelQuery",
       "getPoolStats",
-      "queryReadOnly",
       "endOpenQueryTransaction",
       "scanKeysPage",
       "beginTransaction",
@@ -1746,6 +1747,8 @@ describe("declarations", () => {
     }
     // The control: a method the provider does implement is found the same way.
     expect("readObjectSource" in provider).toBe(true);
+    // queryReadOnly is the agent's metadata read, which answers only on an agent-mode handle.
+    expect("queryReadOnly" in provider).toBe(true);
   });
 });
 
