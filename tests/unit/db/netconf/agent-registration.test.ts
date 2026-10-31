@@ -125,12 +125,14 @@ describe("what the client facet and plan mode are told", () => {
       "crypt-hash",
       "ietf-crypto-types secrets",
       "leafrefs to a withheld node",
-      "unresolved leafrefs",
+      "unresolved leafrefs and typedefs",
       "entries of lists keyed by a withheld leaf",
     ]) {
       expect(posture.qualifier).toContain(kind);
     }
     expect(posture.body).toContain("refused past them rather than cut");
+    expect(posture.body).toContain("every leaf whose type names a typedef no module the device serves declares");
+    expect(NETCONFRPC_CLIENT_PACK.copy.writes).toContain("an unresolved leafref or typedef");
     expect(Object.keys(NETCONFRPC_CLIENT_PACK.variants).sort()).toEqual(["investigation", "operations"]);
     expect(NETCONFRPC_CLIENT_PACK.variants.investigation.canAutoExecute).toBe(false);
     expect(NETCONFRPC_CLIENT_PACK.posture.handoverTerms()).toContain("never run in your editor");

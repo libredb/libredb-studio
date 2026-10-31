@@ -544,7 +544,7 @@ Withheld, each named by its own identifier:
 | `crypt-hash` | every leaf typed `crypt-hash` of `iana-crypt-hash` or `ietf-system`, or a typedef or union deriving from it | a password hash (RFC 7317) |
 | `ietf-crypto-types secret` | every node of the `private-key-type`, `key-type` and `password-type` choices of `ietf-crypto-types` | cleartext, hidden and encrypted private keys, symmetric keys and passwords (RFC 9640 section 2.1, which defines no key typedef) |
 | `keyed by a withheld leaf` | every entry of a list whose key leaf is withheld | an entry's path would carry the key |
-| `unresolved leafref` | every leafref whose target Studio cannot find in the modules the device serves, or whose path it cannot read | it could carry a withheld value |
+| `unresolved leafref` | every leafref whose target Studio cannot find in the modules the device serves, or whose path it cannot read, and every leaf whose type names a typedef no module the device serves declares | it could carry a withheld value: an unknown typedef could derive from `crypt-hash` or a leafref to a withheld node |
 
 A leafref carries the value of the leaf it points at, so every leafref that may point at a withheld node is withheld with that node's kind: through its own `type leafref`, a typedef or a union deriving from one, a relative path anchored at the leaf (each `..` pops a step), or another leafref, resolved to a fixed point.
 A leafref whose path steps into `ietf-keystore` or `ietf-netconf-acm` takes that module's kind, so RFC 9642's `asymmetric-key-ref`, the `central-keystore-reference` of the fixture's SSH host key, never answers the keystore key's name.

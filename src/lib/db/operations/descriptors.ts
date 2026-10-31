@@ -788,7 +788,8 @@ const NETCONFRPC_READ_BOUNDARY =
   "the client reads the device's YANG library and the text of every module it lists, and withholds what they mark: " +
   "the ietf-keystore and ietf-netconf-acm modules whole, every node a module marks nacm:default-deny-all, every leaf " +
   "typed crypt-hash, the private-key-type, key-type and password-type choices of ietf-crypto-types, every leafref " +
-  "that may point at a withheld node, every unresolved leafref, and every entry of a list keyed by a withheld leaf; " +
+  "that may point at a withheld node, every unresolved leafref, every leaf whose type names a typedef no module the " +
+  "device serves declares, and every entry of a list keyed by a withheld leaf; " +
   "a read whose modules cannot be read, or that serve more than the check's total, is refused, a path naming a withheld node or " +
   "filtering on a withheld key is refused before it is sent, and a withheld node in an answer is replaced by " +
   "[withheld]. NACM's own access-denied on writes is measured, not relied on. A list past the row budget and a " +

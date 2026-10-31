@@ -13,7 +13,9 @@
  *   ietf-crypto-types secret every node of the `private-key-type`, `key-type` and `password-type` choices of
  *                            ietf-crypto-types (RFC 9640 section 2.1): cleartext, hidden and encrypted private keys,
  *                            symmetric keys and passwords
- *   unresolved leafref       every leafref whose target Studio cannot find in the modules the device serves
+ *   unresolved leafref       every leafref whose target Studio cannot find in the modules the device serves, and
+ *                            every leaf whose type names a typedef no module the device serves declares (what it
+ *                            derives from is unknown, so it could be a password hash or a leafref to a withheld node)
  *
  * A leafref carries the value of the leaf it points at, so a leafref that may point at a withheld node, through its
  * own `type leafref`, a typedef or a union deriving from one, a relative path anchored at the leaf, or another
@@ -63,7 +65,7 @@ export const NETCONF_WITHHELD_REASONS: Readonly<Record<NetconfWithheldKind, stri
   "ietf-crypto-types secret": "it holds a private key, a symmetric key or a password of ietf-crypto-types",
   "keyed by a withheld leaf": "the list is keyed by a withheld leaf, so an entry's path would carry it",
   "unresolved leafref":
-    "it is a leafref whose target Studio cannot find in the YANG modules the device serves, so it could carry a withheld value",
+    "its type is a leafref whose target, or a typedef whose declaration, Studio cannot find in the YANG modules the device serves, so it could carry a withheld value",
 });
 
 /**
@@ -71,7 +73,7 @@ export const NETCONF_WITHHELD_REASONS: Readonly<Record<NetconfWithheldKind, stri
  * uses. No kind is grouped under a parent that would read as wider than it is.
  */
 export const NETCONF_WITHHELD_TEXT =
-  "Withheld from agent mode, decided from the YANG modules the device itself serves: the ietf-keystore module whole (the device's keys); the ietf-netconf-acm module whole (its access control groups and rules); every data node a module marks nacm:default-deny-all, with its subtree; every leaf typed crypt-hash (a password hash, of iana-crypt-hash or ietf-system, or a type derived from it); the private-key-type, key-type and password-type choices of ietf-crypto-types (private keys, symmetric keys and passwords); every leafref that may point at a withheld node, which is withheld as that node is; every unresolved leafref, one whose target cannot be found in the device's modules; and every entry of a list keyed by a withheld leaf. A withheld node answers its path and its reason, never its value; every other node, configuration and state alike, is read.";
+  "Withheld from agent mode, decided from the YANG modules the device itself serves: the ietf-keystore module whole (the device's keys); the ietf-netconf-acm module whole (its access control groups and rules); every data node a module marks nacm:default-deny-all, with its subtree; every leaf typed crypt-hash (a password hash, of iana-crypt-hash or ietf-system, or a type derived from it); the private-key-type, key-type and password-type choices of ietf-crypto-types (private keys, symmetric keys and passwords); every leafref that may point at a withheld node, which is withheld as that node is; every unresolved leafref, one whose target cannot be found in the device's modules, and every leaf whose type names a typedef no module the device serves declares; and every entry of a list keyed by a withheld leaf. A withheld node answers its path and its reason, never its value; every other node, configuration and state alike, is read.";
 
 /** The roots of the crypt-hash kind: the typedef RFC 7317 defines, in the module that now holds it and in its first home. */
 const CRYPT_HASH_TYPEDEFS: readonly string[] = Object.freeze(["iana-crypt-hash:crypt-hash", "ietf-system:crypt-hash"]);
@@ -253,6 +255,27 @@ interface TypeFacts {
 const NO_FACTS: TypeFacts = Object.freeze({ hash: false, leafrefs: Object.freeze([]) });
 const HASH_FACTS: TypeFacts = Object.freeze({ hash: true, leafrefs: Object.freeze([]) });
 
+/** RFC 7950 section 4.2.4's built-in types: a type argument outside this set names a typedef. */
+const BUILT_IN_TYPES: ReadonlySet<string> = new Set([
+  "binary",
+  "bits",
+  "boolean",
+  "decimal64",
+  "empty",
+  "enumeration",
+  "identityref",
+  "instance-identifier",
+  "int8",
+  "int16",
+  "int32",
+  "int64",
+  "string",
+  "uint8",
+  "uint16",
+  "uint32",
+  "uint64",
+]);
+
 /** How many typedefs and unions one type may derive through; a deeper one refuses the read as unreadable. */
 export const MAX_TYPE_DERIVATION = 64;
 /** Leafref paths one type may hold; past it the leaf is withheld as an unresolved leafref. */
@@ -386,10 +409,13 @@ export class NetconfWithheldPolicy {
           leafrefs: leafrefs.length > MAX_TYPE_LEAFREFS ? [{ path: undefined, read }] : leafrefs,
         };
       }
+      if (BUILT_IN_TYPES.has(argument)) return NO_FACTS;
       const name = resolve(argument, read);
       if (CRYPT_HASH_TYPEDEFS.includes(name)) return HASH_FACTS;
       const typedef = typedefs.get(name);
-      if (typedef === undefined) return NO_FACTS;
+      // A typedef no served module declares could derive from anything, a password hash or a leafref to a withheld node
+      // among them, so it stands as one path Studio cannot read: the leaf is withheld as unresolved, never read as plain.
+      if (typedef === undefined) return { hash: false, leafrefs: [{ path: undefined, read }] };
       const known = derived.get(name);
       if (known === "deriving") throw new YangTextError("a typedef derives from itself");
       if (known !== undefined) return known;

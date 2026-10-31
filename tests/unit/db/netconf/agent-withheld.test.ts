@@ -256,6 +256,84 @@ describe("leafrefs, resolved to a fixed point", () => {
     expect(leafrefs.chainMatch(["box", "plain"])).toBeUndefined();
   });
 
+  test("a leaf whose type names a typedef no served module declares is withheld as unresolved, never read as plain", () => {
+    const typed = NetconfWithheldPolicy.compile(
+      [],
+      [
+        {
+          name: "m",
+          text: `module m { prefix m; import absent-types { prefix at; }
+            typedef local-plain { type string; }
+            typedef via-missing { type at:gone; }
+            typedef via-union { type union { type uint8; type at:gone; } }
+            container c {
+              leaf prefixed { type at:gone; }
+              leaf bare { type nowhere; }
+              leaf in-union { type union { type string; type at:gone; } }
+              leaf through-typedef { type via-missing; }
+              leaf through-union-typedef { type via-union; }
+              leaf unbound-prefix { type zz:gone; }
+              leaf builtin { type string; }
+              leaf builtin-union { type union { type uint8; type enumeration { enum a; } } }
+              leaf local { type local-plain; }
+              leaf ident { type identityref { base m:b; } }
+              leaf deviated { type string; }
+            }
+            deviation "/m:c/m:deviated" { deviate replace { type at:gone; } }
+          }`,
+        },
+      ],
+    );
+    for (const leaf of [
+      "prefixed",
+      "bare",
+      "in-union",
+      "through-typedef",
+      "through-union-typedef",
+      "unbound-prefix",
+      "deviated",
+    ]) {
+      expect({ leaf, match: typed.chainMatch(["c", leaf]) }).toEqual({ leaf, match: { kind: "unresolved leafref" } });
+    }
+    for (const leaf of ["builtin", "builtin-union", "local", "ident"]) {
+      expect({ leaf, match: typed.chainMatch(["c", leaf]) }).toEqual({ leaf, match: undefined });
+    }
+    expect(NETCONF_WITHHELD_REASONS["unresolved leafref"]).toContain("a typedef");
+    expect(NETCONF_WITHHELD_TEXT).toContain(
+      "every leaf whose type names a typedef no module the device serves declares",
+    );
+  });
+
+  test("every built-in type of RFC 7950 section 4.2.4 is read as a type, never as a missing typedef", () => {
+    const builtIns = [
+      "binary",
+      "bits",
+      "boolean",
+      "decimal64",
+      "empty",
+      "enumeration",
+      "identityref",
+      "instance-identifier",
+      "int8",
+      "int16",
+      "int32",
+      "int64",
+      "string",
+      "uint8",
+      "uint16",
+      "uint32",
+      "uint64",
+    ];
+    const leaves = builtIns.map((type) => `leaf l-${type} { type ${type}; }`).join(" ");
+    const plain = NetconfWithheldPolicy.compile(
+      [],
+      [{ name: "m", text: `module m { prefix m; container c { ${leaves} } }` }],
+    );
+    for (const type of builtIns) {
+      expect({ type, match: plain.chainMatch(["c", `l-${type}`]) }).toEqual({ type, match: undefined });
+    }
+  });
+
   test("a chain of leafrefs declared before what it points at, whatever the order, reaches the fixed point", () => {
     const backwards = NetconfWithheldPolicy.compile(
       [],
