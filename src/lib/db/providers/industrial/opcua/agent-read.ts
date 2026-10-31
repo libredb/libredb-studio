@@ -224,8 +224,14 @@ export function preflight(plan: OpcuaAgentPlan, budget: ReadOnlyStatementBudget)
 const withheldIn = (set: OpcuaWithheldSet, nodeId: OpcuaNodeId): OpcuaWithheldNode | undefined =>
   set.get(canonicalNodeId(nodeId) ?? nodeId);
 
+/**
+ * Whether a node's row carries a value that needs its units: a Variable or a VariableType, and any node whose Read
+ * answered a value even though its NodeClass attribute was not answered, so no value is ever answered without them.
+ */
 const isValueBearing = (value: OpcuaDataValue | undefined): boolean =>
-  value?.nodeClass === "Variable" || value?.nodeClass === "VariableType";
+  value?.nodeClass === "Variable" ||
+  value?.nodeClass === "VariableType" ||
+  (value?.nodeClass === undefined && value?.value !== null && value?.value !== undefined);
 
 const unitColumns = (units: OpcuaUnits | undefined): Record<string, unknown> => ({
   units: units?.units ?? null,
@@ -299,6 +305,9 @@ async function readHistoryOf(
   if (history.values.length > budget.maxResultRows)
     fail(F.historyOverRows(history.values.length, budget.maxResultRows));
   const sentence = historyEndSentence(history.end, history.values.length, history.statusCode);
+  // A cap is answered only when it is the request's own limit. Studio's cap is one value past the budget, and the
+  // console's own cap of OPCUA_HISTORY_VALUE_CAP values stops a read first when the budget is that large, so a cap
+  // that is not the request's own is a read cut short and is refused.
   const answered =
     history.end === "exhausted" ||
     (history.end === "value-cap" && own) ||

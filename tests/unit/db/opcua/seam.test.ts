@@ -175,4 +175,25 @@ describe("the agent's client", () => {
     );
     expect(Object.isFrozen(client)).toBe(true);
   });
+
+  test("refuses a request at or past its deadline before the session is asked anything", async () => {
+    const asked: string[] = [];
+    const session = new Proxy({} as OpcuaReadOnlyClient, {
+      get: (_target, member) => async () => {
+        asked.push(String(member));
+        return [];
+      },
+    });
+    let now = 0;
+    const client = boundedAgentClient(session, { deadlineAt: 10, timeoutMs: 10, now: () => now });
+    await client.browse(["i=85"]);
+    now = 10;
+    const refused = await client.read(["i=2256"]).then(
+      () => "answered",
+      (error: Error) => error.message,
+    );
+    expect(refused).toStartWith("Read-only execution exceeded the time budget: the read did not finish within 10ms");
+    expect(asked).toEqual(["browse"]);
+    expect(client.requests()).toBe(1);
+  });
 });

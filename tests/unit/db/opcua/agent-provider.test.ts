@@ -296,6 +296,16 @@ describe("a value read", () => {
     expect(result.warnings).toBeUndefined();
   });
 
+  test("a value whose node class the server did not answer is still looked up for units, never answered without", async () => {
+    const space = plant();
+    space.values["ns=3;s=Unclassed"] = { value: 5 };
+    space.tree["ns=3;s=Unclassed"] = [];
+    const { provider, record } = await agentHandle(space);
+    const result = await provider.queryReadOnly('{"read": ["ns=3;s=Unclassed"]}', BUDGET);
+    expect(record.calls.slice(WALK.length)).toEqual(["read ns=3;s=Unclassed", "browse ns=3;s=Unclassed"]);
+    expect(result.rows[0]).toMatchObject({ value: "5", units: OPCUA_NO_UNITS, euRange: OPCUA_NO_RANGE });
+  });
+
   test("a node with no value is not looked up for units, and answers none", async () => {
     const { provider, record } = await agentHandle();
     const result = await provider.queryReadOnly('{"read": ["ns=3;s=Folder"]}', BUDGET);
@@ -377,6 +387,15 @@ describe("a history read", () => {
     await expect(
       limited.provider.queryReadOnly('{"history": "ns=3;s=HistorianInt32", "limit": 50}', BUDGET),
     ).rejects.toThrow(ROW_BUDGET_PREFIX);
+  });
+
+  test("with no limit written, a window past the console's own cap is refused, never cut at that cap", async () => {
+    // A budget as large as the console's cap of 10,000 values: the console stops the read at its cap first.
+    const budget = { ...BUDGET, maxResultRows: 10_000, maxResultBytes: 100_000_000 };
+    const over = await agentHandle(plant(), { history: holding(10_001) });
+    await expect(over.provider.queryReadOnly('{"history": "ns=3;s=HistorianInt32"}', budget)).rejects.toThrow(
+      "The history read was not finished, so it is refused rather than answered in part: The read reached its cap of 10,000 values",
+    );
   });
 
   test("a node that keeps no history answers no rows with the server's reason in Studio's words", async () => {

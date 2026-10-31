@@ -131,6 +131,21 @@ describe("readUnits", () => {
     expect(units.get("ns=3;s=B")?.euRange).toBe("range not readable: the EURange property is not a Range");
   });
 
+  test("a property shaped like a unit but not typed EUInformation or Range is never read as one", async () => {
+    const fake = server(
+      { "ns=3;s=A": [property("ns=3;s=A_EU", "EngineeringUnits"), property("ns=3;s=A_R", "EURange")] },
+      {
+        "ns=3;s=A_EU": { value: EU, dataTypeId: "ns=2;i=887" },
+        "ns=3;s=A_R": { value: { low: 0, high: 1 }, dataTypeId: "ns=0;i=885" },
+      },
+    );
+    const units = await readUnits(fake.client, ["ns=3;s=A"], new Set());
+    expect(units.get("ns=3;s=A")?.units).toBe(
+      "units not readable: the EngineeringUnits property is not an EUInformation",
+    );
+    expect(units.get("ns=3;s=A")?.euRange).toBe("range not readable: the EURange property is not a Range");
+  });
+
   test("a property the server refuses to read says so with its status, never no units", async () => {
     const fake = server(
       { "ns=3;s=A": [property("ns=3;s=A_EU", "EngineeringUnits"), property("ns=3;s=A_R", "EURange")] },
