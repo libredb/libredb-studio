@@ -394,6 +394,13 @@ describe("the posture on S3-compatible object storage", () => {
     expect(posture.body).toContain("A bucket is counted whole and never by prefix");
     expect(posture.body).not.toMatch(/lists keys|previews|object contents are shown/);
   });
+
+  test("names what the client sends: no key listing by prefix, delimiter or start position, and a summary that reads whole-bucket key pages it never passes on", () => {
+    expect(posture.body).toContain(
+      "Studio's agent client holds only those six reads, each a GET or a HEAD, so it cannot read an object, list keys by prefix, delimiter or start position, write, delete or sign a URL; a bucket's summary reads its whole-bucket key pages, which Studio totals and never passes on.",
+    );
+    expect(posture.body).not.toContain("cannot read or list an object");
+  });
 });
 
 describe("autoExecuteTerms", () => {
