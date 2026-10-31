@@ -565,6 +565,19 @@ const OPCUA_SEED_ONLY_FIELDS: SeedOnlyFields = Object.freeze({
   projectionRefusal: null,
 });
 
+/**
+ * NETCONF: the device's SSH host key pin. Only the NETCONF provider reads a top-level `hostKeyFingerprint` (an SSH
+ * tunnel's pin is `sshTunnel.hostKeyFingerprint`), so a seed of another type that carries one would be listed as pinned
+ * and be nothing of the kind. Refused at load by name, as the OPC UA fields are.
+ */
+const NETCONF_SEED_ONLY_FIELDS: SeedOnlyFields = Object.freeze({
+  fields: Object.freeze(["hostKeyFingerprint"] as const),
+  kind: "each",
+  refusal: (field: string) =>
+    `${field} is NETCONF only: no other engine's provider reads it, so this connection would be listed as carrying it and would not. Remove ${field} from this connection.`,
+  projectionRefusal: null,
+});
+
 /** Each type's seed-only fields, or null where a seed of another type may carry every field this type reads. */
 export const SEED_ONLY_FIELDS: Readonly<Record<DatabaseType, SeedOnlyFields | null>> = Object.freeze({
   postgres: null,
@@ -606,7 +619,7 @@ export const SEED_ONLY_FIELDS: Readonly<Record<DatabaseType, SeedOnlyFields | nu
   opcua: OPCUA_SEED_ONLY_FIELDS,
   mtconnect: null,
   modbus: null,
-  netconf: null,
+  netconf: NETCONF_SEED_ONLY_FIELDS,
   snmp: null,
   sparkplug: null,
   libredb: null,

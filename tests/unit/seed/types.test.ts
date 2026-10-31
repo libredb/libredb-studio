@@ -733,6 +733,45 @@ describe("SeedConnectionSchema: OPC UA's mode, pin and deployment paths", () => 
 });
 
 /**
+ * NETCONF's host key pin. The provider refuses an empty pin, and agent mode starts only on a connection the server
+ * lists itself, so a seed that could not carry the pin could never be opened, by agent mode or the editor.
+ */
+describe("SeedConnectionSchema: the NETCONF host key pin", () => {
+  const netconf = {
+    id: "router",
+    name: "Router",
+    type: "netconf",
+    host: "router.ornek.net",
+    port: 830,
+    user: "ro",
+    password: "${NETCONF_PASSWORD}",
+    roles: ["*"],
+  };
+  const pin = "SHA256:ux1QoYIetXzfp0HM4zDEdPuDHyyUC3vkI5cuC3QcRMU";
+
+  it("carries hostKeyFingerprint through validation", () => {
+    const result = SeedConnectionSchema.safeParse({ ...netconf, hostKeyFingerprint: pin });
+
+    expect(result.success).toBe(true);
+    expect(result.data?.hostKeyFingerprint).toBe(pin);
+  });
+
+  it("refuses hostKeyFingerprint on another engine, where no provider reads it", () => {
+    const result = SeedConnectionSchema.safeParse({
+      id: "pg",
+      name: "Postgres",
+      type: "postgres",
+      host: "db.ornek.net",
+      roles: ["*"],
+      hostKeyFingerprint: pin,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path.join("."))).toEqual(["hostKeyFingerprint"]);
+  });
+});
+
+/**
  * The read-only mode (#1089). Declared for the reason skipObjectScan is (zod strips an undeclared
  * key, and a seed file's mode would validate and vanish, leaving a connection that writes), accepted
  * only on an engine whose provider enforces it, never a reference, never a default, and only on a

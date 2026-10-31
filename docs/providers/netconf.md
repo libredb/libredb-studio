@@ -219,6 +219,9 @@ could not use.
 authentication packet is sent, measured directly and measured again through an SSH tunnel, where
 the key checked is the device's and not the bastion's.
 
+A seed carries the pin as `connections[].hostKeyFingerprint` ([`docs/SEED_CONNECTIONS.md`](../SEED_CONNECTIONS.md)), and a seed of any other type is refused for it at load.
+The pin is required, so a seeded NETCONF connection without one never opens, and agent mode, which starts only on a connection the server lists itself, needs a seed that carries it.
+
 The failure carries `expected` and `seen` as FIELDS rather than inside a sentence, so a caller can
 show them without parsing prose. `ssh2` raises its own error afterwards, but the path that fills
 those fields always runs first, and a test holds that order.
@@ -234,6 +237,7 @@ credential all end in the same refusal.
 ### Connection string
 
 `netconf` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/network/netconf/connection-string.ts)).
+Its one seed-only field is `hostKeyFingerprint` (`SEED_ONLY_FIELDS.netconf` in [`connection-fields.ts`](../../src/lib/db/connection-fields.ts)): only the NETCONF provider reads it, so a seed of any other type that carries it is refused at load, naming the field.
 
 ### Execution UI
 

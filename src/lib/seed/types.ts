@@ -286,6 +286,12 @@ export const SeedConnectionSchema = z
      */
     securityMode: z.enum(["None", "Sign", "SignAndEncrypt"]).optional(),
     serverCertificateThumbprint: z.string().optional(),
+    /**
+     * NETCONF only: the device's SSH host key pin, `SHA256:` and base64 as `ssh-keygen -lf` prints it. The provider
+     * refuses an empty pin (RFC 6242 section 6), so a seed without it can never be opened. Not a secret: the device
+     * publishes its host key, so it is a literal and never resolved from a reference.
+     */
+    hostKeyFingerprint: z.string().optional(),
     // And the three OPC UA fields the dialog has no box for: why, at SEED_ONLY_FIELDS.opcua in src/lib/db/connection-fields.ts.
     securityPolicyUri: z.string().optional(),
     clientCertificatePath: z.string().optional(),
