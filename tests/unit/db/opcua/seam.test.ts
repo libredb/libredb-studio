@@ -13,6 +13,8 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { boundedAgentClient } from "@/lib/db/providers/industrial/opcua/agent-read";
+import type { OpcuaReadOnlyClient } from "@/lib/db/providers/industrial/opcua/client";
 
 const PROVIDER = path.join(
   import.meta.dir,
@@ -141,5 +143,36 @@ describe("the client seam", () => {
     // `library.ts` is the bridge; `session.ts` states the rules over it and must stay clean, so a
     // test of those rules can run with the library outside its import graph (#1677).
     expect(importers).toEqual(["library.ts"]);
+  });
+});
+
+/**
+ * The agent's client is narrower still. An agent read reaches the server only through `boundedAgentClient`, which holds
+ * the read members of the seam and nothing else: no GetEndpoints and no CloseSession of its own, and, since the seam has
+ * none, no Write, Call, AddNodes, DeleteNodes, AddReferences, DeleteReferences, HistoryUpdate, RegisterNodes,
+ * TranslateBrowsePathsToNodeIds, TransferSubscriptions or CreateSubscription.
+ */
+describe("the agent's client", () => {
+  test("holds exactly the eight read members of the seam, and its request count", () => {
+    const session = new Proxy({} as OpcuaReadOnlyClient, {
+      get: () => () => {
+        throw new Error("not called");
+      },
+    });
+    const client = boundedAgentClient(session, { deadlineAt: Number.POSITIVE_INFINITY, timeoutMs: 1, now: () => 0 });
+    expect(Object.keys(client).sort()).toEqual(
+      [
+        "browse",
+        "browseNext",
+        "historyRead",
+        "historyReadNext",
+        "limits",
+        "read",
+        "releaseBrowseContinuationPoints",
+        "releaseHistoryContinuationPoint",
+        "requests",
+      ].sort(),
+    );
+    expect(Object.isFrozen(client)).toBe(true);
   });
 });

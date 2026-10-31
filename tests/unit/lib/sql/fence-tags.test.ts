@@ -84,6 +84,12 @@ describe("fenceTagEngine", () => {
     expect(fenceTagEngine("firestore")).toBe("firestore");
   });
 
+  test("opcuaread names opcua, the agent's name for the OPC UA read request language", () => {
+    expect(fenceTagEngine("opcuaread")).toBe("opcua");
+    expect(isQueryFenceTag("opcuaread")).toBe(true);
+    expect(fenceTagEngine("opcua")).toBe("opcua");
+  });
+
   test("promql names prometheus, the agent's name for the PromQL language Prometheus runs", () => {
     expect(fenceTagEngine("promql")).toBe("prometheus");
     expect(isQueryFenceTag("promql")).toBe(true);

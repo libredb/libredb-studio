@@ -27,6 +27,11 @@ directory. Every bound in `constants.ts` is a measurement taken against four ser
 | `errors.ts` | Status codes to sentences, written from four servers' answers |
 | `labels.ts` | The provider's labels |
 | `capabilities.ts` | What is declared before any connection |
+| `agent-statement.ts` | The agent's reader: the console's two reads and a one-level browse, refused before anything is sent otherwise |
+| `agent-withheld.ts` | The nodes agent mode never reads, by node id, and the walk under them before every agent read |
+| `agent-units.ts` | Each value's engineering units and EU range, read from the node's own properties, never guessed |
+| `agent-read.ts` | One agent read on its own session, through a client of the read services alone, budgets refused rather than cut |
+| `agent-surface.ts` | What an agent-mode handle answers outside `queryReadOnly`: each reading's reason |
 | `index.ts` | `OpcuaProvider` |
 
 ## The one rule this directory is built around

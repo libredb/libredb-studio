@@ -493,8 +493,8 @@ export async function createDatabaseProvider(
       return new RabbitMQProvider(connection, options, execution);
     }
 
-    // OPC UA: an industrial address space, browsed level by level. Read-only whatever the flag says,
-    // so no execution context rides along.
+    // OPC UA: an address space browsed level by level, read-only by its seam of eight read services. The execution
+    // context decides whether the handle answers agent reads; an agent-mode handle holds no session.
     case "opcua": {
       // The explicit /index specifier keeps this dynamic import statically analysable.
       const { OpcuaProvider } = await import("./providers/industrial/opcua/index");
@@ -505,7 +505,7 @@ export async function createDatabaseProvider(
       // under Bun 1.4.2 it resolved to a zone-indexed link-local address
       // (`fe80::…%15`) and the error surfaced as an uncaught one. Constructing a provider must not
       // depend on that, so the import happens when a session is actually opened.
-      return new OpcuaProvider(connection, options, async (read) => {
+      return new OpcuaProvider(connection, options, execution, async (read) => {
         const { openLibrarySession } = await import("./providers/industrial/opcua/library");
         return openLibrarySession(read);
       });
@@ -1373,7 +1373,7 @@ export type ExecutionProfile = "agent-read-only" | "agent-operations" | "agent-h
  * handle or transaction, a least-privilege principal the server's own answers prove, or a
  * Studio-enforced request allowlist plus the identity's own authorization), and only the
  * providers of AGENT_EXECUTION_ENGINES implement that: PostgreSQL, SQLite,
- * DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus and Prometheus (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
+ * DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus and OPC UA (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
  * at all — it calls the curated reporting methods every provider implements — so
  * requiring a read-only STATEMENT path of it would refuse an engine over a capability
  * the profile never uses. `agent-handover` sends a statement too — the one a run

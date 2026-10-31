@@ -562,11 +562,10 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // not serve it: the provider's read-only query path is agent mode's alone and reads metadata only, and
   // MCP_STATEMENT_READ keeps MCP read closed on it (BACKLOG B108).
   rabbitmq: true,
-  // Outside this version, as for etcd, Oxia, S3 and MQTT. NOT because there is no read to hand over:
-  // the console reads one JSON request and is read-only by construction. Because a node's value
-  // without its plant is a number with no unit, no range and no neighbour - the engineering units
-  // and the EU range live on nodes of their own, and this version reads neither - so an agent
-  // grounded on an address space would be reasoning about figures it cannot qualify.
+  // Outside this version, as for etcd, Oxia, S3 and MQTT. Agent mode reads values with their
+  // engineering units and withholds the server's configuration, role identities and session
+  // diagnostics, one session per read; no MCP surface that reads through the same withheld set and
+  // units lookup is designed yet (BACKLOG B162).
   opcua: false,
   mtconnect: true,
   // MCP is outside this provider's first version. A read also needs the register map kept with
@@ -677,6 +676,8 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // Agent mode executes metadata-only stream reads on RabbitMQ, and MCP read stays closed on it until a change of its
   // own opens it.
   rabbitmq: false,
+  // Agent mode executes reads with engineering units on OPC UA, and MCP read stays closed on it until a change of its
+  // own opens it (BACKLOG B162).
   opcua: false,
   mtconnect: false,
   // Agent mode executes paced reads on Modbus, and MCP read stays closed on it until a change of its own opens it

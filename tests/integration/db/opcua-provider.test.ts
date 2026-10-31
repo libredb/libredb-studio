@@ -136,7 +136,7 @@ function connection(over: Partial<DatabaseConnection> = {}): DatabaseConnection 
 
 /** A provider over the recording, with the PKI root the connection reader requires. */
 async function connected(calls: Calls, over: Partial<DatabaseConnection> = {}): Promise<OpcuaProvider> {
-  const provider = new OpcuaProvider(connection(over), {}, async () => recordedClient(calls), {
+  const provider = new OpcuaProvider(connection(over), {}, {}, async () => recordedClient(calls), {
     LIBREDB_OPCUA_PKI_ROOT: "/tmp/libredb-opcua-pki",
   });
   await provider.connect();
@@ -405,9 +405,15 @@ describe("the surfaces a server does not have", () => {
 
 describe("the connection's refusals happen before a socket exists", () => {
   test("a password with no username names no identity", async () => {
-    const provider = new OpcuaProvider(connection({ password: "secret" }), {}, async () => recordedClient(fresh()), {
-      LIBREDB_OPCUA_PKI_ROOT: "/tmp/libredb-opcua-pki",
-    });
+    const provider = new OpcuaProvider(
+      connection({ password: "secret" }),
+      {},
+      {},
+      async () => recordedClient(fresh()),
+      {
+        LIBREDB_OPCUA_PKI_ROOT: "/tmp/libredb-opcua-pki",
+      },
+    );
     await expect(provider.connect()).rejects.toThrow(/password with no username/);
   });
 
@@ -420,12 +426,12 @@ describe("the connection's refusals happen before a socket exists", () => {
    */
   test("no PKI variable connects on Studio's own data directory, and a relative one is refused", async () => {
     const record = fresh();
-    const provider = new OpcuaProvider(connection(), {}, async () => recordedClient(record), {});
+    const provider = new OpcuaProvider(connection(), {}, {}, async () => recordedClient(record), {});
     await provider.connect();
     expect(provider.isConnected()).toBe(true);
     await provider.disconnect();
 
-    const relative = new OpcuaProvider(connection(), {}, async () => recordedClient(fresh()), {
+    const relative = new OpcuaProvider(connection(), {}, {}, async () => recordedClient(fresh()), {
       LIBREDB_OPCUA_PKI_ROOT: "pki",
     });
     await expect(relative.connect()).rejects.toThrow(/absolute path/);
@@ -435,6 +441,7 @@ describe("the connection's refusals happen before a socket exists", () => {
     const provider = new OpcuaProvider(
       connection({ host: "https://plc.example.net:4840/" }),
       {},
+      {},
       async () => recordedClient(fresh()),
       { LIBREDB_OPCUA_PKI_ROOT: "/tmp/libredb-opcua-pki" },
     );
@@ -442,7 +449,7 @@ describe("the connection's refusals happen before a socket exists", () => {
   });
 
   test("a build with no transport says so rather than failing obscurely", async () => {
-    const provider = new OpcuaProvider(connection(), {}, undefined, {
+    const provider = new OpcuaProvider(connection(), {}, {}, undefined, {
       LIBREDB_OPCUA_PKI_ROOT: "/tmp/libredb-opcua-pki",
     });
     await expect(provider.connect()).rejects.toBeInstanceOf(QueryError);
