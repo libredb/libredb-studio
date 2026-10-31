@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S10 · 7
-- [Drivers and connections](#drivers-and-connections) — D1-D413, U17 · 302
+- [Drivers and connections](#drivers-and-connections) — D1-D414, U17 · 303
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U190 · 175
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U192 · 177
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -4166,6 +4166,15 @@ Found 2026-10-30 in the pre-release browser E2E; pre-existing.
 
 **Done when:** concurrent cache misses for one cache key share one in-flight open, so a connection is opened once, and a test in `tests/unit/lib/db/` fires concurrent `getOrCreateProvider` calls for one connection and asserts a single `createDatabaseProvider` and a single `connect`.
 
+### D414. The OPC UA console writes an extended node id with a namespace URI or a server index in no Part 6 spelling
+
+`shapeBrowse` in `src/lib/db/providers/industrial/opcua/library.ts` writes each reference's id with `reference.nodeId.toString()`, beside a comment saying it keeps `nsu=` where the server gave one.
+`ExpandedNodeId.toString` in `node-opcua-nodeid` 2.187.0 appends the URI and the index after the identifier instead: measured, an id in namespace 0 with URI `urn:x` and server index 2 is written `ns=0;i=5;namespaceUri:urn:x;serverIndex:2`, and with URI alone `ns=0;i=5;namespaceUri:urn:x`, where Part 6 5.3.1.11 spells them `svr=2;nsu=urn:x;i=5` and `nsu=urn:x;i=5`.
+So a reference a server answers that way is listed in the Keys panel under an id no request can name back, and a Read of it is refused by the console's parser; agent mode refuses the whole read that meets one (`unkeyed` in `agent-read.ts`), which is the stated rule there.
+Not reached on the pinned OPC PLC 2.15.10 fixture, whose references carry neither; found 2026-11-01 while verifying the OPC UA agent read.
+
+**Done when:** `shapeBrowse` writes such an id in the Part 6 spelling (`nsu=` for a URI, `svr=` for a non-zero server index), the comment says what it does, a reference on another server is shown as not readable rather than offered as a key, and a library-bridge test pins both spellings.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -6171,6 +6180,8 @@ Seen again 2026-10-31 on S3 (Silo `RELEASE.2026-09-16T00-00-00Z`) in a browser p
 Seen again 2026-10-31 on Firestore (emulator `cloud-firestore-emulator` 1.22.0) in a browser pass, three times: a run asked to pass `listDocuments()`, a document query, a filtered, an ordered and a limited count, a sum, an average, `findNearest`, `explain()` and `getAll` to `run_read_query` had each refused before anything was sent (`STATEMENT_NOT_ADMITTED`) and finished `answered` with one named document's times and the schema inventory and no word of the ten refusals (run `arun_dcfb2aeecfa44152987451deb6088471`); a run asked for an exact `set`, and one asked for an `update`, a `delete`, an `add`, a transaction, a batch commit and a `recursiveDelete`, had each refused the same way and finished `answered` with the schema inventory alone (runs `arun_5010ac7af4e141309799a258eac0f295`, `arun_288f56c17baf4850b422c0f4c2d5e9f5`).
 
 Seen again 2026-10-31 on Modbus (pymodbus 3.12.1, the pinned `docker/modbus` image) in a browser pass, twice: runs asked to pass a write value, function codes 6, 16, 5, 15, 22, 23, 8, 20 and 21, a broadcast to unit 0, an address past 65535, 126 registers, 2001 coils, a block past the end of the table, a point the map does not name and a request of two shapes to `run_read_query` had each refused before anything was sent (`STATEMENT_NOT_ADMITTED`) and finished `answered` with one claim about the schema inventory and no word of the refusals; the second run's `compose_report` was declined once with `UNVERIFIABLE_EVIDENCE` (runs `arun_42ec8a779aeb46aebc1b6a09d01f94d2`, `arun_4b8655e77e344804995cb0e1b236e1f3`); the device's registers and coils hashed the same before and after.
+Seen again 2026-11-01 on OPC UA (OPC PLC 2.15.10 by digest) in a browser pass: a run asked to pass an exact `write`, `call` and `subscribe` request to `run_read_query` had each refused before anything was sent, then read the two values it was asked to change and finished `answered` with those two values and no word of the three refusals (run `arun_f89f4e62db3444b6a8b8560edbc68235`); the values read the same raw before and after.
+
 **Done when:** a run whose only drafted statement was refused either reports that refusal in its answer, held by the run's verifier, or ends in a state other than `answered`, with an agent test that forces the refusal.
 
 ### U158. On the dev server the login form submitted as a GET on `127.0.0.1`
@@ -6196,6 +6207,8 @@ Seen again 2026-10-31 on NETCONF (Netopeer2 2.8.7, the `docker/netconf` image) i
 
 Seen again 2026-10-31 on Modbus (pymodbus 3.12.1, the pinned `docker/modbus` image) in a browser pass: on an agent-mode handle the provider answers the overview, performance, session, slow-query, table, index and storage readings with its own reason before anything is sent (`MODBUS_AGENT_WITHHELD` in `src/lib/db/providers/industrial/modbus/agent-surface.ts`, thrown as a `QueryError`); an Operate run took the session, slow-query and storage readings, each was recorded `class: "database-error"` and headed "The database refused the statement", and the three spent the run's repair attempts, so the next two readings were refused with `REPAIR_BUDGET_EXHAUSTED` (run `arun_d3b3e98e21bd4ebbaba7ebe000b8cba0`).
 Seen again 2026-10-31 on Prometheus 3.13.3 (prom/prometheus by digest) in a browser pass: on an agent-mode handle the provider answers the session, slow-query and index readings with its own reason before anything is sent (`PROMETHEUS_AGENT_WITHHELD` in `src/lib/db/providers/timeseries/prometheus/agent-surface.ts`, thrown as a `QueryError`); an Operate run took all three after the health, storage and table readings, and each was recorded `class: "database-error"` and headed "The database refused the statement" over Studio's sentence (run `arun_dbdca7a2f72f46148887e45dfef89557`).
+Seen again 2026-11-01 on OPC UA (OPC PLC 2.15.10 by digest) in a browser pass: an Operate run's sessions, health and slow-query panels were each declined by the provider on its agent-mode handle with its own reason (`OPCUA_AGENT_WITHHELD` in `src/lib/db/providers/industrial/opcua/agent-surface.ts`), never a connection failure, yet each was headed "The database refused the statement", the three spent the run's repair attempts, the next three calls were refused with "This run has used all of its repair attempts", and the run ended without a report (run `arun_50b04d75776a4ff0a5f1cf61646745fc`); each reason also opens by naming `run_read_query`, which the operations workflow does not hold.
+
 **Done when:** a panel the provider declines without sending a statement is recorded as not sent and headed "Refused before the database" with the provider's sentence as the detail, it does not count as a repair attempt, and a timeline test and an agent test pin both.
 
 ### U160. A run whose goal verdict is unanswered heads its report "Answer" with a "succeeded" pill
@@ -6237,6 +6250,8 @@ Seen again 2026-10-31 on NETCONF (Netopeer2 2.8.7, the `docker/netconf` image) i
 
 Seen again 2026-10-31 on Modbus (pymodbus 3.12.1, the pinned `docker/modbus` image) in a browser pass: the picker offered Optimize, Assess and Analyze, which the `modbusread` family does not offer (`docs/providers/modbus.md` section 8.5), and Optimize was refused with the same sentence although investigation runs there.
 Seen again 2026-10-31 on Prometheus 3.13.3 (prom/prometheus by digest) in a browser pass: the picker offered Optimize and Assess, which the `promql` family does not offer (`docs/providers/prometheus.md` section 14.5), and Optimize was refused with the same sentence although investigation and data analysis run there.
+Seen again 2026-11-01 on OPC UA (OPC PLC 2.15.10 by digest) in a browser pass: the picker offered Optimize, Assess and Analyze, which the `opcuaread` family does not offer (`docs/providers/opcua.md` section 14.5).
+
 **Done when:** the refusal names the workflows the connection's statement language does offer, read from `AGENT_WORKFLOW_VARIANTS` rather than fixed text, the picker marks or hides a workflow that language has no variant for, and a test pins the sentence for `libredbkv`.
 
 ### U163. A refused run start announces the previous conversation as ended by a page reload
@@ -6294,6 +6309,8 @@ Seen again 2026-10-31 on NETCONF (Netopeer2 2.8.7, the `docker/netconf` image) i
 
 Seen again 2026-10-31 on Modbus (the single-client libmodbus device built from `tests/fixtures/modbus/2.3.0/agent-boundary/single-client/`) in a browser pass: a points read that would pass the run's 64 device requests is refused by Studio before anything is sent (`MODBUS_AGENT_FAILURE_SENTENCES.requestBound` in `src/lib/db/providers/industrial/modbus/agent-read.ts`, a `RefusedBeforeSendError`), and the rail headed it "Refused before the database" over Studio's sentence, yet the ledger recorded it `class: "database-error"`, which spends a repair attempt (run `arun_40f9c0fbd47b4345b4362e2de3103189`).
 Seen again 2026-10-31 on Prometheus 3.13.3 (prom/prometheus by digest) in a browser pass: `prometheus_http_requests_total[1m]`, a matrix of 1536 samples past the 200-row budget, is refused by Studio and never cut (`docs/providers/prometheus.md` section 14.2), yet the ledger recorded it `class: "database-error"` and the rail headed it "The database refused the statement" over Studio's own sentence ("Read-only execution exceeded the row budget: 1536 rows > 200 allowed") (run `arun_d41617c1ac0446f8a248d6a2d8343e81`).
+Seen again 2026-11-01 on OPC UA (OPC PLC 2.15.10 by digest) in a browser pass: `{"history": "ns=3;s=HistorianInt32"}` with no limit and with a limit of 5000, past the 200-row budget, is refused by Studio after 201 values and never cut, and a value read naming an `nsu=` URI the server's NamespaceArray does not hold is refused by Studio after the one Read of that table (`docs/providers/opcua.md` section 14.2), yet the rail headed each "The database refused the statement" (runs `arun_efdfdd1cb5ed4c5d934925da68ba72e0`, `arun_ac9540aa7a004b3497b708bba1b4541b`).
+
 **Done when:** a tenant refusal Studio makes is recorded and headed as refused before the read it guards, with the provider's sentence as the detail, it does not count as a repair attempt, and an agent test pins both.
 
 ### U167. Qdrant's console calls `GET /snapshots` a snapshot create, delete, download, upload or recover route
@@ -6401,6 +6418,7 @@ Applied and run, the editor answers "shards is not a command Studio runs on Oxia
 The other two agent reads, `get <key>` and `list`, run in the editor, where `list` lists the key names agent mode withholds; that is the editor's path and expected.
 Seen 2026-10-31 on Oxia 0.18.0 in a browser pass (runs `arun_ad725d1c2ca14394983f955398cc9d4f`, `arun_a281c29cd2bd481e91b49ffae2008dcf`).
 Seen again 2026-10-31 on SNMP (Net-SNMP snmpd 5.9.4, the `docker/snmp` image) in a browser pass: a plan-mode Operate run drafted seven Net-SNMP tool commands such as `snmpwalk $SNMP_OPTS "$AGENT" .1.3.6.1.2.1.2.2.1.7` (U186), offered with Apply to editor, and the editor refused one when run: "`snmpwalk` is not a command: this provider reads with get, next, walk and table" (run `arun_4994c20824f344fe9cccecbe213b59d4`); the plan-mode investigation draft `table ifEntry` applied and ran.
+Seen again 2026-11-01 on OPC UA (OPC PLC 2.15.10 by digest) in a browser pass: every `{"browse": "<node id>"}` an investigation drafted carried Apply to editor, and the editor answers it "A request names \"read\" or \"history\", and this names \"browse\".", since the browse is agent mode's own read (`docs/providers/opcua.md` section 14.2); the value and history reads run there.
 
 **Done when:** Apply to editor is offered only for a drafted statement the connection's editor grammar admits, or says why it is not, decided from the provider's editor parser or a contract row and not a type-id branch, with an AgentRail test on an Oxia `shards` step.
 
@@ -6519,6 +6537,22 @@ Asked to decode the eight words of a planted `VALMARK-5dec470b` high byte first,
 Seen 2026-10-31 on Modbus (pymodbus 3.12.1, the pinned `docker/modbus` image) in a browser pass.
 
 **Done when:** a point of type `string` is answered as text under the rule identification objects follow (text only when its bytes round-trip as text with no control byte, hex otherwise), in the console and in agent mode, with a read test on a string point that holds a control byte.
+
+### U191. An agent run on a connection whose one object kind only the Keys panel lists is told the provider declares no object kinds
+
+`captureFromProvider` in `src/lib/agent/context-snapshot.ts` answers an `"unsupported"` inventory read with "This server has no inventory to read for a ${type} connection: the provider declares no object kinds, so there is nothing to list."
+`readObjectInventoryForGrounding` (`src/lib/agent/tools.ts`) returns `"unsupported"` when `enumerableKinds` is empty, which is also the case for an engine that declares a kind only the Keys panel enumerates, such as OPC UA's `node` (`objectKinds: OPCUA_OBJECT_KIND_SPECS` in `src/lib/db/providers/industrial/opcua/capabilities.ts`), so the run and the trace are told a fact about the provider that is not true, and the article is fixed to "a", giving "a opcua connection".
+Seen 2026-11-01 on OPC UA (OPC PLC 2.15.10 by digest) in a browser pass: every agent and plan run recorded `context-unavailable` with that sentence (for example `arun_81f972661252411fb53cb2572af14ae9`).
+
+**Done when:** the sentence says the provider declares no kind the object surface lists (naming the Keys panel where a kind is enumerated there) and reads correctly for every type id, with a context-snapshot test for an engine with a Keys-only kind and one with none.
+
+### U192. A plan draft nothing checked is told "What was checked is what this run read of the schema"
+
+`GuardLine` in `src/components/agent/AnswerCard.tsx` always appends `EXECUTION_CAVEAT`, "The run executed nothing. What was checked is what this run read of the schema, which records what exists rather than what your role is permitted to read.", including beside `NAMES_UNREAD_NOTE` and `NO_INVENTORY_NOTE`, which say that nothing checked the names.
+So the same popover says the names were not checked and that a check was made against a schema the run read; on an engine with no inventory, the run read no schema at all.
+Seen 2026-11-01 on OPC UA (OPC PLC 2.15.10 by digest) in a browser pass: a plan draft of `{"read": [...]}` showed "not checked", "The names in this statement were not checked" and the caveat together (run `arun_95edee7dbf9c461cb477b624c9a72525`).
+
+**Done when:** the caveat's second sentence is said only where the names were checked against an inventory, and a component test pins the popover for a checked, an unread and a no-inventory draft.
 
 ## Dependencies
 
@@ -8995,7 +9029,7 @@ In namespace 0 agent mode reads only a list of standard nodes (the Root and Obje
 Node ids are compared as one key: a GUID in lower case, an opaque id as its bytes, and an `nsu=` URI through the server's NamespaceArray, read on the read's session; an id with no key refuses the read.
 An aggregating server that exposes another server's configuration under a namespace of its own is not recognised by these ids.
 A browse or a history read past the row budget, any read past the byte or time budget, and a read needing more than 100 requests are refused, never cut, and one session is opened and closed per read, so nothing is held between reads.
-On a handle of either agent profile the console and the Keys panel are refused, and the overview, health, performance, slow-query, session, table, index and storage readings answer their reason rather than an empty reading; the provider declares no kind the grounding walk lists, so an agent run is ungrounded and is told to browse from the Objects folder.
+On a handle of either agent profile the console and the Keys panel are refused, and the overview, health, performance, slow-query, session, table, index and storage readings answer their reason rather than an empty reading; the provider declares no kind the grounding walk lists, so an agent run is ungrounded and is told to read a node id the question names as it is written and to browse from the Objects folder only for any other.
 So the language offers the investigation and the operations workflow only.
 `MCP_EXPOSABLE.opcua` is false, and the language's MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) with `MCP_STATEMENT_READ.opcua` false, so MCP `run_read_query` refuses an OPC UA connection, because no MCP surface that reads through the same withheld set and units lookup is designed yet; `READ_ONLY_ENFORCED.opcua` is unchanged.
 Kept so that MCP access, and any widening of what agent mode reads on an OPC UA server, are decisions of their own rather than side effects of agent mode joining.
