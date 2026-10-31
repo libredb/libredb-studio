@@ -78,6 +78,12 @@ describe("fenceTagEngine", () => {
     expect(fenceTagEngine("s3")).toBe("s3");
   });
 
+  test("fsquery names firestore, the agent's name for the only metadata read statement language Firestore runs", () => {
+    expect(fenceTagEngine("fsquery")).toBe("firestore");
+    expect(isQueryFenceTag("fsquery")).toBe(true);
+    expect(fenceTagEngine("firestore")).toBe("firestore");
+  });
+
   test("etcdctl names etcd, the agent's name for the only command language etcd runs", () => {
     expect(fenceTagEngine("etcdctl")).toBe("etcd");
     expect(isQueryFenceTag("etcdctl")).toBe(true);

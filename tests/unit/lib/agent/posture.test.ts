@@ -403,6 +403,30 @@ describe("the posture on S3-compatible object storage", () => {
   });
 });
 
+describe("the posture on Google Cloud Firestore", () => {
+  const posture = agentPosture({
+    mode: "agent",
+    engine: "firestore",
+    engineLabel: "Google Cloud Firestore",
+    handover: false,
+  });
+
+  test("names exactly what the agent reads: collection ids, whole counts and named documents' times, never a value", () => {
+    expect(posture.qualifier).toBe(
+      `metadata only, ${STATEMENT_BUDGETS.maxResultRows} rows and ${STATEMENT_BUDGETS.statementTimeoutMs / 1000} s per read, each read charged to the run's read allowance, over a client that holds only collection id listings, whole-collection counts and named-document times`,
+    );
+    expect(posture.body).toContain("never a document id or path it was not given, a field name or a field value");
+    expect(posture.body).toContain("A collection is counted whole, never through a filter");
+    expect(posture.body).not.toMatch(/previews|sampled fields|document contents are shown/);
+  });
+
+  test("names the billing: every read, the grounding's included, is charged to the run's allowance before it is sent", () => {
+    expect(posture.body).toContain(
+      "Firestore bills every read, so each one, the grounding's collection id listings included, is charged to the run's read allowance before it is sent and refused once the allowance is spent.",
+    );
+  });
+});
+
 describe("autoExecuteTerms", () => {
   // No default: a caller that names no language would be shown SQL's terms on whatever engine it is on, SQL's
   // read-only session included, on an engine that has none.

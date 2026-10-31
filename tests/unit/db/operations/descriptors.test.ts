@@ -55,6 +55,7 @@ describe("canonical operation registry", () => {
       "db.operations.read",
       "db.schema.read",
       "etcdctl.query.read",
+      "fsquery.query.read",
       "influxql.query.read",
       "kafkaread.query.read",
       "kubectl.query.read",
@@ -195,6 +196,7 @@ describe("the statement-read operations", () => {
     expect(ids.filter(isStatementReadOperation).sort()).toEqual([
       "cypher.query.read",
       "etcdctl.query.read",
+      "fsquery.query.read",
       "influxql.query.read",
       "kafkaread.query.read",
       "kubectl.query.read",

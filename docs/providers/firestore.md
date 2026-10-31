@@ -26,7 +26,7 @@ Security Rules govern the Firebase client SDKs; a call made with a service accou
 Give Studio a dedicated service account with `roles/datastore.viewer`.
 
 Every read Studio sends is billed to the project, one read per document returned, and a budget alerts but never stops spending; section 8 lists what each surface reads.
-Studio never reads a document without a gesture that names it: connecting, the tree and plan mode read collection ids and database metadata only.
+Studio never reads a document without a gesture that names it: connecting, the tree, plan mode and agent mode read collection ids and database metadata only, and agent mode charges every read it sends to its run's read allowance (section 15).
 
 ## 1. Overview
 
@@ -79,6 +79,7 @@ The embedded workspace has no Keys panel, no connection dialog and no Explain bu
 | `console/execute.ts`, `results.ts` | Running one request and shaping its rows | No, yes |
 | `sampling.ts`, `key-scan.ts`, `cursor.ts`, `objects.ts` | Field sampling, Keys panel levels, the cursor envelope, the object surface | Yes, no, yes, no |
 | `errors.ts` | Google's errors to Studio's error classes and sentences | Yes |
+| `agent-statement.ts`, `agent-client.ts`, `agent-metadata-read.ts`, `agent-surface.ts` | Agent mode: the statement reader and its closed table, the agent's client and its charges, the reads and their metadata-only projection, every other surface of an agent-mode handle (section 15) | Yes, no, no, no |
 
 The editor language is `src/lib/db/providers/document/firestore/editor-syntax.ts` and `editor-completions.ts`, declared to the editor by `editor-language.ts` beside them, and the Explain strategy is `src/lib/explain/firestore-explain.ts`.
 
@@ -97,6 +98,7 @@ Source tab: one `get` and one subcollection listing.
 The transport admits seven requests and refuses everything else before any socket: the database resource (`GET`), `documents.get`, `documents.listDocuments`, `listCollectionIds`, `runQuery`, `runAggregationQuery` and `batchGet`.
 Each is matched on method, path shape, verb, query parameter names and top-level body keys, so `transaction`, `newTransaction`, `readTime`, `recursive` and `requestOptions` never leave Studio, and no transaction is opened.
 `READ_ONLY_ENFORCED.firestore` is true and the provider declares `enforcesReadOnly`.
+A `batchGet` mask may name no field, which asks for each document's name and times alone; agent mode's document read sends that form and no other mask ([section 15](#15-agent-mode)).
 
 ### 3.2 REST, no SDK
 
@@ -112,10 +114,14 @@ The console reads the Admin SDK chain users already write, accepts a closed set 
 
 ### 3.5 Machine access
 
-`MCP_EXPOSABLE.firestore` is false and the provider implements no `queryReadOnly`, so agent execution and MCP `run_read_query` refuse Firestore.
-Plan mode works: it grounds on collection names and `__name__` as each collection's column, at the cost of two root id listings and no document read, and drafts statements fenced with the `firestore` tag.
+Agent mode reads metadata only, and MCP stays closed: `MCP_EXPOSABLE.firestore` is false and `MCP_STATEMENT_READ.firestore` is false, so MCP `run_read_query` refuses Firestore, because no MCP surface that lists collections but never returns a document id is designed yet.
+Agent mode executes one statement of a closed table of four metadata reads through `queryReadOnly` ([section 15](#15-agent-mode)): the root collection ids, the subcollection ids of one document the request names in full, one whole collection's or collection group's document count, and whether one document the request names in full exists and when it was created and last updated.
+Document ids and paths, field names and field values count as stored values, since they name users and tenants and a map's keys are often ids, so no agent-mode path lists a document, samples a field or reads a value.
+Every agent read is billed, so each request, the grounding's collection id listings included, is charged to the run's read allowance before it is sent and refused once the allowance is spent ([section 8](#8-billing)).
+Plan mode works: it grounds on collection ids and `__name__` as each collection's column, at the cost of three root id listings charged to its run, and drafts statements fenced with the `firestore` tag, which it never runs.
 Sampled fields never reach a model.
 The Explain panel's AI tab sends the statement and the plan, which names indexed fields, to the configured model when the user clicks it.
+[B107](../BACKLOG.md#b107-firestores-agent-reads-are-metadata-only-and-it-has-no-mcp-surface) records what stays closed.
 
 ## 4. Connection
 
@@ -433,6 +439,9 @@ Firestore bills every document read, at least one per query, and a budget alerts
 | Explain button | One read |
 | Ordinary run | No background plan |
 | Completions, generators, health, overview, monitoring | No request |
+| Agent read (`run_read_query`) | One collection id listing request per page, one count of at most the row budget plus one documents (one read per 1,000 index entries, at least one), or one document read; each charged to the run's read allowance before it is sent |
+| Agent-mode grounding (plan mode, agent mode, the operations workflow) | Three root id listings, each page charged to the run's read allowance; nothing at all for a read that carries none |
+| Operations readings on an agent-mode handle | No request: each answers its reason |
 
 No statement re-reads the tree.
 Enterprise edition bills 4 KiB read units instead of document reads.
@@ -457,7 +466,8 @@ Health and pulse reuse the connect probe; the overview and the monitoring panels
 | `objectKinds` | `collection` (relation), `document` (Keys panel, Source tab, JSON) |
 | `keyScan` | separator `/`, opaque cursor, prefix pattern, no total, levels rooted at `collection`, 100 by default and 1,000 at most |
 
-`READ_ONLY_ENFORCED.firestore` is true and `MCP_EXPOSABLE.firestore` is false; agent and MCP execution are BACKLOG B107.
+`READ_ONLY_ENFORCED.firestore` is true and `MCP_EXPOSABLE.firestore` is false; MCP stays closed under BACKLOG B107.
+`metadataOnly` states the agent reads' columns ([section 15.3](#153-metadata-only)).
 
 ### SQL writing
 
@@ -541,6 +551,7 @@ Unit tests under `tests/unit/db/firestore/` drive every module through its seams
 `tests/integration/db/firestore-provider.test.ts` runs the real provider over captures of emulator 1.22.0 (`tests/fixtures/firestore/`, recorded by `tests/live/firestore-evidence.ts` from the plan `tests/live/firestore-evidence-plan.ts`) and over built answers for what the emulator cannot give: tokens, IAM, the database resource, index errors and Query Explain.
 On 2026-10-12 a real project's `(default)` database answered as those built answers expect, checked by hand: the database probe, a token grant from a pasted service-account key and from the server's own identity, listings, queries, aggregations, Query Explain with and without `analyze`, an index error and an undecodable page token.
 `e2e/firestore-connection.spec.ts` drives the dialog and `e2e/firestore-provider.spec.ts` browses a stub that replays the captures.
+`tests/fixtures/firestore/1.22.0/agent-boundary/` holds what the emulator answered agent mode's reads, every agent-mode surface and every request the agent's table refuses, recorded by its `run.sh` through `tests/live/firestore-agent-boundary.ts` ([section 15.1](#151-the-boundary)).
 `tests/live/firestore-live-check.ts` runs the same plan against a running emulator:
 
     docker compose -f database-compose.yml up -d firestore firestore-seed
@@ -548,7 +559,7 @@ On 2026-10-12 a real project's `(default)` database answered as those built answ
 
 ## 14. Known limitations
 
-Not supported in this version, each a BACKLOG entry: writes of any kind, Pipelines, Datastore mode, the MongoDB-compatible API (use the `mongodb` type), Firebase Auth user sign-in under Security Rules, service-account impersonation, regional endpoints, real-time listeners, agent statement execution and MCP, collection export, point-in-time reads, `limitToLast`, bytes literals in the console, a read budget meter, an absent-cell marker in the grid, full support for the Enterprise BSON types, and a CI job running the emulator.
+Not supported in this version, each a BACKLOG entry: writes of any kind, Pipelines, Datastore mode, the MongoDB-compatible API (use the `mongodb` type), Firebase Auth user sign-in under Security Rules, service-account impersonation, regional endpoints, real-time listeners, MCP, collection export, point-in-time reads, `limitToLast`, bytes literals in the console, a read budget meter, an absent-cell marker in the grid, full support for the Enterprise BSON types, and a CI job running the emulator.
 An egress HTTPS proxy is not supported.
 
 ## Migration DDL
@@ -561,7 +572,96 @@ The refusal reason it prints, verbatim:
 
 - "A document store keeps no schema, so there is no column definition to change."
 
-## 15. References
+## 15. Agent mode
+
+Agent mode reads Firestore metadata through `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/document/firestore/index.ts).
+The statement reader is [`agent-statement.ts`](../../src/lib/db/providers/document/firestore/agent-statement.ts), the agent's client is [`agent-client.ts`](../../src/lib/db/providers/document/firestore/agent-client.ts), the reads and their metadata-only projection are [`agent-metadata-read.ts`](../../src/lib/db/providers/document/firestore/agent-metadata-read.ts), and every other surface of an agent-mode handle is [`agent-surface.ts`](../../src/lib/db/providers/document/firestore/agent-surface.ts).
+Every claim below about a server cites the capture [`tests/fixtures/firestore/1.22.0/agent-boundary/boundary.json`](../../tests/fixtures/firestore/1.22.0/agent-boundary/boundary.json), recorded by its `run.sh` against a fresh emulator of the digest-pinned image of `database-compose.yml`, seeded with `docker/firestore/seed.json` and documents whose id, field name and value carry markers, and written by [`tests/live/firestore-agent-boundary.ts`](../../tests/live/firestore-agent-boundary.ts) with `maxResultRows: 3`.
+
+### 15.1 The boundary
+
+The boundary is a structural closed table: every agent-mode surface reads through `FirestoreAgentClient`, which holds three kinds of request and nothing more, each built from the fields named here and admitted by the closed request table of [section 3.1](#31-read-only-by-construction) before it is charged and sent.
+
+| Read | Request |
+| --- | --- |
+| `listCollectionIds` | `POST .../documents[/<document path>]:listCollectionIds` with `{"pageSize": n}` and only the page token Studio read from the page before |
+| `countDocuments` | `POST .../documents[/<parent document path>]:runAggregationQuery` with one `count` aggregation and its `upTo`, over `from: [{collectionId}]` (or `allDescendants: true` from the root for a collection group), and no `where`, `orderBy`, `startAt`, `endAt`, `offset`, `limit` or `select` |
+| `documentTimes` | `POST .../documents:batchGet` naming one document of this connection's database, with a `mask` that names no field |
+
+So no query of documents, document get with fields, `listDocuments`, value aggregation, nearest-neighbour search, explain, transaction or write can be sent; the connect probe is the database resource, which reads no document (on the emulator, one id page).
+[`agent-client.test.ts`](../../tests/unit/db/firestore/agent-client.test.ts) pins each request's full method, path, query and body, and [`agent-boundary.test.ts`](../../tests/unit/db/firestore/agent-boundary.test.ts) pins the agent modules' imports and calls and holds every request an agent-mode handle sends, for every surface and for every statement an attacker would write, to the table.
+
+The emulator authorizes nothing, so the table is the whole boundary on it: measured raw (`raw.reads`), a document get, a get with a field mask, `listDocuments`, a `batchGet` with no mask, a `runQuery`, a filtered count and a sum are each answered 200, the same with the literal `Bearer owner` and with no authorization at all, and every one but the filtered count carries the seeded markers back; a commit and a document `PATCH` with no authorization are answered 200 and act (`snapshot.rawWritesChangedIt: true`).
+The agent's own reads leave every document as it was (`snapshot.agentLeftUnchanged: true`), and every statement the table refuses sends no request (`requests: []`).
+A production project's `roles/datastore.viewer` is not measured here, since it needs a Google project and a credential, which the owner runs; a viewer can read every document, so it would not be the boundary either.
+
+### 15.2 What an agent statement may be
+
+One Admin SDK chain starting at `db`, read by the console's own parser ([section 5](#5-query-interface)):
+
+| Statement | Sends |
+| --- | --- |
+| `db.listCollections()` | the root id listing, page by page, each page asking for at most the row budget plus one |
+| `db.doc("PATH").listCollections()`, or the same document named through `db.collection(...).doc(...)` | the id listing under that document |
+| `db.collection("PATH").count()` or `.aggregate({ n: AggregateField.count() })`, with or without `.get()` | one count over the whole collection, at the root or under the document its path names, with `upTo` one past the row budget |
+| `db.collectionGroup("ID").count()` | one count over every collection of that id |
+| `db.doc("PATH").get()`, or `db.doc("PATH")` | one `batchGet` of that document whose mask names no field |
+
+Every other statement is refused before anything is sent, each in agent mode's own sentence followed by the list of reads: a count with `where`, `orderBy`, `startAt`, `startAfter`, `endAt`, `endBefore`, `offset`, `limit` or `select`, since narrower and narrower counts would spell out stored values; a `sum`, an `average` and `findNearest`, which read stored values; a query that returns documents, `getAll` and `listDocuments`, which return documents or document ids; and `explain()`, whose plan names indexed fields and which, with `analyze`, runs the query.
+A statement the parser cannot read (a write, a second statement, a path with an odd segment count, an empty, `.`, `..` or reserved id) is refused with the parser's sentence followed by the reads, and a path holding a control character, NUL included, or a listing or count under a document whose id holds a colon, with agent mode's own; no refusal of agent mode's own quotes a path.
+Percent-encoded text is an id of its own, encoded again on the wire, never decoded into a path, and a statement can name no other project or database: the connection pins both.
+The admission refuses a statement longer than 4,096 characters.
+Each read runs under the request's time budget and the session's lifetime, and nothing of one call is kept for the next: a listing's page tokens live for that read alone.
+
+A listing holding more ids than the row budget is refused, never cut, and so is one that needs more than 10 pages; a count that reaches `upTo` is refused (`Read-only execution exceeded the row budget: the collection holds more than 3 documents`), so Firestore never reads more index entries than that refusal needs.
+
+### 15.3 Metadata only
+
+Collection ids and the database id are object names; document ids and paths, field names and field values count as stored values and stay off the agent's path.
+A document path the request names in full is answered about and never echoed, as S3 answers a named key: the statement already holds it.
+Firestore declares `ProviderCapabilities.metadataOnly`, and every answer is projected through [`src/lib/db/redaction/metadata-only.ts`](../../src/lib/db/redaction/metadata-only.ts):
+
+| Read | Columns |
+| --- | --- |
+| `list-collections` | `collection` (name) |
+| `count` | `collection` (name: the collection's or the group's id), `documents` (count) |
+| `document` | `collection` (name: the id of the collection the document sits in), `exists` (flag), `created`, `updated` (names: Firestore's RFC 3339 times, null when the document is missing or the server sent something that is not a time) |
+
+A collection id the id rules refuse is counted in a note and not listed, a cell that does not fit its column withholds the whole answer, naming the column and never the value, and a result past the byte budget is refused, never cut.
+A failure is worded by its category alone, never by Google's words, since a Firestore error can quote a document path the request did not name: a refused credential, a missing database or parent, an invalid read, an exhausted quota and any other status each have their sentence, a token, transport or unknown failure is worded by its kind, and a timeout is the time budget's refusal.
+Studio's own refusals (the allowance, the row and byte budgets, the closed table) are worded as Studio's, never as a server failure.
+
+Each agent-mode path reads this much:
+
+| Path | Handle | What it reads |
+| --- | --- | --- |
+| Investigation reads | agent read-only profile | one read of [section 15.2](#152-what-an-agent-statement-may-be)'s table, projected as above |
+| Investigation grounding, plan-mode grounding and the operations workflow | either agent profile | root collection ids, each with `__name__` as its one column, from three charged id listings; the document kind is refused with its reason and the walk skips it, since the Keys panel enumerates it; a walk whose read carries no allowance sends nothing, and the kind carries its reason into the run's grounding |
+| Field expand, Keys panel, Source tab, console | either agent profile | nothing: each is refused with its reason |
+| Operations readings | operations profile | health from the connect probe, its size the reason Firestore reports none, and every other reading its reason, never an empty reading |
+
+### 15.4 The read allowance
+
+One billed read is one Firestore document read: a collection id page is charged one, a count one per 1,000 index entries it may read, up to its `upTo` and at least one, and a document read one.
+Each request is admitted by the closed table first, then charged to the run's `RunReadAllowance` (`src/lib/db/read-allowance.ts`) with what it may cost at most, then sent, so a request the table refuses costs nothing and a request past the allowance is refused before it is sent, in Studio's words (`Read-only execution exceeded the read allowance`).
+`queryReadOnly` refuses a budget that carries no allowance, and the grounding walk's count, listing and bulk describe charge the allowance it hands them and send nothing without one.
+Enterprise edition bills 4 KiB read units, which a document read may exceed; the allowance counts documents.
+
+### 15.5 Agent language pack
+
+Statement-language family: `fsquery`.
+Overlay: [`src/lib/agent/languages/fsquery/engines/firestore.ts`](../../src/lib/agent/languages/fsquery/engines/firestore.ts), with its client row in [`src/lib/agent/languages/fsquery/engines/client.ts`](../../src/lib/agent/languages/fsquery/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`.
+Both overlays are empty, so the engine resolves to the `fsquery` family pack itself.
+The `fsquery` statement-language family has no dialect-bound member.
+This overlay overrides no Shared member, so every Shared member is the `fsquery` statement-language family's own.
+The family offers the investigation workflow, through `run_read_query` with one statement, and the operations workflow; it offers no data analysis, since its answers carry no stored value, and no query optimization or database assessment, since the agent reads no plan and no profile, and no workflow hands an answer to the editor.
+The workflow classifier offers the model only these two.
+The editor language id stays `firestore`, and the fence alias `fsquery` names this engine.
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+No MCP tool runs a Firestore statement: the family declares no MCP facet, and `MCP_STATEMENT_READ.firestore` is false ([B107](../BACKLOG.md#b107-firestores-agent-reads-are-metadata-only-and-it-has-no-mcp-surface)).
+
+## 16. References
 
 - Firestore REST API v1: https://cloud.google.com/firestore/docs/reference/rest
 - Query Explain: https://cloud.google.com/firestore/docs/query-explain

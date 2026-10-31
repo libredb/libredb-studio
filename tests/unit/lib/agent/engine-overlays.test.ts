@@ -38,6 +38,9 @@ import { KAFKAREAD_PACK } from "@/lib/agent/languages/kafkaread/index";
 import * as S3API_CLIENT_OVERLAYS from "@/lib/agent/languages/s3api/engines/client";
 import * as S3 from "@/lib/agent/languages/s3api/engines/s3";
 import { S3API_PACK } from "@/lib/agent/languages/s3api/index";
+import * as FSQUERY_CLIENT_OVERLAYS from "@/lib/agent/languages/fsquery/engines/client";
+import * as FIRESTORE from "@/lib/agent/languages/fsquery/engines/firestore";
+import { FSQUERY_PACK } from "@/lib/agent/languages/fsquery/index";
 import * as KUBECTL_CLIENT_OVERLAYS from "@/lib/agent/languages/kubectl/engines/client";
 import * as KUBERNETES from "@/lib/agent/languages/kubectl/engines/kubernetes";
 import * as LIBREDBKV_CLIENT_OVERLAYS from "@/lib/agent/languages/libredbkv/engines/client";
@@ -143,6 +146,8 @@ const ENGINE_MODULES: Readonly<Record<string, Readonly<Record<string, unknown>>>
   "kafkaread/engines/client": KAFKAREAD_CLIENT_OVERLAYS,
   "s3api/engines/s3": S3,
   "s3api/engines/client": S3API_CLIENT_OVERLAYS,
+  "fsquery/engines/firestore": FIRESTORE,
+  "fsquery/engines/client": FSQUERY_CLIENT_OVERLAYS,
 };
 
 /** Every overlay an engine module exports, named `<module>#<export>`. */
@@ -186,6 +191,7 @@ describe("the engine registry", () => {
       "oxia",
       "s3",
       "kubernetes",
+      "firestore",
       "rabbitmq",
       "libredb",
     ]);
@@ -235,7 +241,7 @@ describe("the engine registry", () => {
 
   test("every engine module's server overlay holds a dialect and overridable members, its client one a dialect alone (ruling 2)", () => {
     const exported = exportedOverlays();
-    expect(exported).toHaveLength(58);
+    expect(exported).toHaveLength(60);
     // The one other export is the PostgreSQL retry's rewrite, which its tests call directly.
     expect(
       Object.entries(ENGINE_MODULES)
@@ -309,6 +315,7 @@ describe("the engine packs", () => {
     expect(agentEnginePack("rabbitmq")).toBe(RABBITREAD_PACK);
     expect(agentEnginePack("kafka")).toBe(KAFKAREAD_PACK);
     expect(agentEnginePack("s3")).toBe(S3API_PACK);
+    expect(agentEnginePack("firestore")).toBe(FSQUERY_PACK);
   });
 
   test.each(SQL_ENGINES)("%s is the SQL pack member for member, with its own dialect on the server facet", (type) => {
@@ -366,6 +373,7 @@ describe("engineServerDialect", () => {
       "rabbitmq",
       "kafka",
       "s3",
+      "firestore",
     ] as DatabaseType[]) {
       expect(Object.keys(engineServerOverlay(type))).toEqual([]);
     }
@@ -597,6 +605,7 @@ describe("the client dialect", () => {
       "rabbitmq",
       "kafka",
       "s3",
+      "firestore",
     ] as const) {
       expect(engineClientPack(type).dialect).toBeUndefined();
     }

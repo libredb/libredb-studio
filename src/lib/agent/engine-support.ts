@@ -132,6 +132,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "rabbitmq",
   "kafka",
   "s3",
+  "firestore",
 ];
 
 /**

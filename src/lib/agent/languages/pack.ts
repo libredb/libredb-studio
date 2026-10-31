@@ -129,6 +129,11 @@ type KafkareadOperationId =
   /** One Kafka metadata read the model wrote, on a `kafka` connection; see `kafkareadQueryReadDescriptor`. */
   "kafkaread.query.read";
 
+/** The fsquery statement language's operation: its one read. */
+type FsqueryOperation =
+  /** One Firestore metadata read the model wrote, on a `firestore` connection; see `fsqueryQueryReadDescriptor`. */
+  "fsquery.query.read";
+
 /** The s3api command language's operation: its one read. */
 type S3apiOperation =
   /** One S3 metadata read the model wrote, on an `s3` connection; see `s3apiQueryReadDescriptor`. */
@@ -154,6 +159,7 @@ export interface AgentFamilyOperationIds {
   readonly rabbitread: RabbitreadOperationId;
   readonly kafkaread: KafkareadOperationId;
   readonly s3api: S3apiOperation;
+  readonly fsquery: FsqueryOperation;
 }
 
 /** kubectl's goal verifiers. */
@@ -215,6 +221,8 @@ export interface AgentFamilyVerifierIds {
   readonly kafkaread: never;
   /** None: its workflows are judged by the core's own rules. */
   readonly s3api: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly fsquery: never;
 }
 
 /** The operation a family's model-written reads are evaluated under: its row's `<family>.query.read`. */
@@ -481,6 +489,7 @@ export interface AgentFamilyEvidenceTools {
   readonly rabbitread: never;
   readonly kafkaread: never;
   readonly s3api: never;
+  readonly fsquery: never;
 }
 
 /** Every pack's evidence tool: a member of the core's `AgentToolName`, declared by the pack that offers it. */
@@ -503,6 +512,7 @@ export interface AgentFamilyReadingDenyCodes {
   readonly rabbitread: never;
   readonly kafkaread: never;
   readonly s3api: never;
+  readonly fsquery: never;
 }
 
 /** Every pack's reading refusal code: a member of the core's `AgentReadingDenyCode`, declared by its pack. */
@@ -525,6 +535,7 @@ export interface AgentFamilyShortfalls {
   readonly rabbitread: never;
   readonly kafkaread: never;
   readonly s3api: never;
+  readonly fsquery: never;
 }
 
 /** Every pack's verdict shortfall: a member of the core's `AgentGoalShortfall`, declared by its pack. */
@@ -547,6 +558,7 @@ export interface AgentFamilyVariantRequirements {
   readonly rabbitread: never;
   readonly kafkaread: never;
   readonly s3api: never;
+  readonly fsquery: never;
 }
 
 /** Every pack's variant requirement: a member of the core's `AgentVariantRequirement`, declared by its pack. */
@@ -603,6 +615,7 @@ export interface AgentFamilyEvidenceEvents {
   readonly rabbitread: never;
   readonly kafkaread: never;
   readonly s3api: never;
+  readonly fsquery: never;
 }
 
 /** Every pack's evidence event, as the ledger stores it less its timestamp. */
@@ -795,6 +808,7 @@ export interface AgentFamilyDialectRows {
   rabbitread: { client: Record<never, never>; server: Record<never, never> };
   kafkaread: { client: Record<never, never>; server: Record<never, never> };
   s3api: { client: Record<never, never>; server: Record<never, never> };
+  fsquery: { client: Record<never, never>; server: Record<never, never> };
 }
 
 /** The dialect-bound members of each family, client and server. */

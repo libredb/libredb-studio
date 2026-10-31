@@ -1,6 +1,6 @@
 /**
  * The BACKLOG entries the Firestore provider files (spec 13), each under its own heading, and the B entry cited from
- * docs/AGENT.md beside the other engines that have no agent execution, which is the owner's two-way invariant. The
+ * docs/AGENT.md beside the other engines that have no MCP surface, which is the owner's two-way invariant. The
  * section index's ranges and counts are held by tests/unit/backlog-structure.test.ts.
  */
 import { describe, expect, test } from "bun:test";
@@ -31,7 +31,7 @@ const ENTRIES = [
   "### U116. The grid shows an absent field and a stored null alike",
   "### U117. The Keys panel counts a key and its folder as two entries",
   "### DOC22. docs/ADDING_A_PROVIDER.md names none of six guards a new provider meets",
-  "### B107. Firestore has no agent execution and no MCP surface",
+  "### B107. Firestore's agent reads are metadata only, and it has no MCP surface",
 ];
 
 describe("the Firestore BACKLOG entries (spec 13, and spec 14's two filings)", () => {
@@ -47,7 +47,7 @@ describe("the Firestore BACKLOG entries (spec 13, and spec 14's two filings)", (
   });
 
   test("the B entry is cited from docs/AGENT.md and from the provider doc", () => {
-    expect(AGENT).toContain("- **B107**: Firestore is served by plan mode only");
+    expect(AGENT).toContain("- **B107**: Firestore's `fsquery` statement language reads metadata only");
     expect(DOC).toContain("B107");
   });
 

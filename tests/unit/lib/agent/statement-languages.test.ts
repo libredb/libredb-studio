@@ -14,6 +14,7 @@ import { fingerprintOxiacli, oxiacliRowCapAdvice } from "@/lib/agent/languages/o
 import { fingerprintRabbitread, rabbitreadRowCapAdvice } from "@/lib/agent/languages/rabbitread/adapter";
 import { fingerprintKafkaread, kafkareadRowCapAdvice } from "@/lib/agent/languages/kafkaread/adapter";
 import { fingerprintS3api, s3apiRowCapAdvice } from "@/lib/agent/languages/s3api/adapter";
+import { fingerprintFsquery, fsqueryRowCapAdvice } from "@/lib/agent/languages/fsquery/adapter";
 import { languageServer, languageServerPack } from "@/lib/agent/languages/server";
 import {
   admitLibredbkvStatement,
@@ -85,6 +86,12 @@ import {
   s3apiAgentReadInput,
 } from "@/lib/db/operations/s3api-admission";
 import { S3_AGENT_SENTENCES } from "@/lib/db/providers/objectstore/s3/agent-statement";
+import {
+  admitFsqueryStatement,
+  FSQUERY_AGENT_MAX_STATEMENT_CHARS,
+  fsqueryAgentReadInput,
+} from "@/lib/db/operations/fsquery-admission";
+import { FIRESTORE_AGENT_SENTENCES } from "@/lib/db/providers/document/firestore/agent-statement";
 import { INFLUXQL_AGENT_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-statement";
 import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 
@@ -1193,5 +1200,81 @@ describe("the s3api language's server adapter and admission", () => {
   test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
     expect(Object.keys(AGENT_WORKFLOW_VARIANTS.s3api).sort()).toEqual(["investigation", "operations"]);
     expect(AGENT_WORKFLOW_VARIANTS.s3api.investigation?.canAutoExecute).toBe(false);
+  });
+});
+
+describe("the fsquery language's server adapter and admission", () => {
+  const READ = 'db.doc("users/alice").get()';
+
+  test("the fingerprint is the plan the reader sends, so one read written two ways is one identity", () => {
+    const one = fingerprintFsquery(READ);
+    expect(fingerprintFsquery('await db.collection("users").doc("alice");')).toBe(one);
+    expect(fingerprintFsquery('db.doc("users/bob").get()')).not.toBe(one);
+    expect(fingerprintFsquery('db.doc("users/alice").listCollections()')).not.toBe(one);
+    expect(fingerprintFsquery('db.collection("users").count()')).toBe(
+      fingerprintFsquery('db.collection("users").aggregate({ n: AggregateField.count() }).get()'),
+    );
+  });
+
+  test("the fingerprint is total: a refused statement is identified by its raw text, so it is refused again", () => {
+    const raw = 'db.collection("users").listDocuments()';
+    expect(fingerprintFsquery(raw)).toBe(fingerprintFsquery(raw));
+    expect(fingerprintFsquery(raw)).toMatch(/^[0-9a-f]{64}$/);
+    expect(fingerprintFsquery(`${raw} `)).not.toBe(fingerprintFsquery(raw));
+  });
+
+  test("every read answers one row but the listing, and the advice offers no narrower count", () => {
+    expect(AGENT_LANGUAGE_COPY.fsquery.adviceKeys).toEqual([]);
+    expect(fsqueryRowCapAdvice(READ, "2")).toBe(
+      "Ask for at most 2 rows: db.listCollections() answers one row per collection id and every other read one row, and a collection's count is answered only when it holds at most 2 documents; a count narrowed by where, orderBy, a cursor, offset, limit or select is not one of agent mode's reads, since it would reveal stored values.",
+    );
+    expect(languageServer("fsquery").shapeAdvice).toContain("a valid Firestore statement");
+  });
+
+  test("the grounding advice names what grounding carries for a collection, its id and __name__ alone", () => {
+    const advice = languageServerPack("fsquery").grounding.omissionAdvice;
+    expect(advice).toContain(
+      "Collections are listed to agent mode by id only, each with __name__ as its one column, and no document id, field name or field value is listed",
+    );
+    expect(advice).not.toMatch(/sampled|field type|fields of/);
+  });
+
+  test("the admission is the provider's reader, plus a length the agent's contract names", () => {
+    expect(admitFsqueryStatement(READ)).toBeNull();
+    expect(admitFsqueryStatement("")).toEqual({ code: "request", message: FIRESTORE_AGENT_SENTENCES.empty });
+    expect(admitFsqueryStatement('db.collection("users").listDocuments()')).toEqual({
+      code: "metadata-only",
+      message: FIRESTORE_AGENT_SENTENCES.documentIds,
+    });
+    const long = `db.doc("users/${"k".repeat(FSQUERY_AGENT_MAX_STATEMENT_CHARS)}").get()`;
+    expect(admitFsqueryStatement(long)).toEqual({
+      code: "agent-too-large",
+      message: `The statement is longer than ${FSQUERY_AGENT_MAX_STATEMENT_CHARS} characters, the most an agent read takes: shorten it. Nothing was sent.`,
+    });
+    expect(languageServer("fsquery").admit?.(READ)).toBeNull();
+  });
+
+  test("an ungrounded run is sent to a read it holds, and plan mode is told none of the reader's rules", () => {
+    const ungrounded = languageServerPack("fsquery").grounding.ungrounded;
+    expect(ungrounded?.("The capture failed.", { singular: "collection", plural: "collections" })).toBe(
+      "The capture failed.\nSo nothing about this database has been established for you: not one collection id, and no document id, field name or field value will be, since they are withheld from agent mode. Read what you need with run_read_query, starting with db.listCollections().",
+    );
+    expect(languageServerPack("fsquery").grounding.planningRules).toBeUndefined();
+  });
+
+  test("the descriptor's input is strict, carries the statement, and refuses what the admission refuses", () => {
+    expect(fsqueryAgentReadInput.safeParse({ statement: READ }).success).toBe(true);
+    expect(fsqueryAgentReadInput.safeParse({ statement: READ, sql: "x" }).success).toBe(false);
+    const refused = fsqueryAgentReadInput.safeParse({
+      statement: 'db.collection("users").where("a", "==", 1).count()',
+    });
+    expect(refused.success).toBe(false);
+    expect(refused.error?.issues[0]?.path).toEqual(["statement"]);
+    expect(refused.error?.issues[0]?.message).toStartWith("A count narrowed by where");
+  });
+
+  test("only the investigation and the operations workflow are offered: nothing else reads metadata alone", () => {
+    expect(Object.keys(AGENT_WORKFLOW_VARIANTS.fsquery).sort()).toEqual(["investigation", "operations"]);
+    expect(AGENT_WORKFLOW_VARIANTS.fsquery.investigation?.canAutoExecute).toBe(false);
   });
 });

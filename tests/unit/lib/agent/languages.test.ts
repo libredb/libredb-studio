@@ -132,6 +132,7 @@ const LANGUAGE_IDS: Readonly<Record<AgentStatementLanguageId, true>> = {
   rabbitread: true,
   kafkaread: true,
   s3api: true,
+  fsquery: true,
 };
 
 describe("the server packs", () => {
@@ -272,6 +273,7 @@ describe("the language packs", () => {
       "rabbitread",
       "kafkaread",
       "s3api",
+      "fsquery",
     ]);
     expect(Object.isFrozen(LANGUAGE_TOOL_ARMS)).toBe(true);
   });
@@ -426,6 +428,7 @@ describe("the prompt tables the packs hold", () => {
       "rabbitread",
       "kafkaread",
       "s3api",
+      "fsquery",
     ]);
     expect(Object.isFrozen(WORKFLOW_TOOL_RULES)).toBe(true);
     for (const id of ids) {
@@ -533,6 +536,7 @@ describe("the client packs", () => {
         "rabbitread",
         "kafkaread",
         "s3api",
+        "fsquery",
       ]);
     }
   });
@@ -556,6 +560,7 @@ describe("the client packs", () => {
       rabbitread: null,
       kafkaread: null,
       s3api: null,
+      fsquery: null,
     });
   });
 

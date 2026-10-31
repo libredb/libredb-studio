@@ -37,6 +37,7 @@ import { oxiacliAgentReadInput } from "./oxiacli-admission";
 import { kafkareadAgentReadInput } from "./kafkaread-admission";
 import { rabbitreadAgentReadInput } from "./rabbitread-admission";
 import { s3apiAgentReadInput } from "./s3api-admission";
+import { fsqueryAgentReadInput } from "./fsquery-admission";
 import { weaviateapiAgentReadInput } from "./weaviateapi-admission";
 import { agentPlanExecutionSqlInput, agentQueryReadSqlInput, agentReadSqlInput } from "./statement-guard";
 import type { RegistrableOperationDescriptor } from "./types";
@@ -736,6 +737,43 @@ const s3apiQueryReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+const FSQUERY_READ_BOUNDARY =
+  "Firestore: the provider's structural closed table, read with the console's own parser: one read of a closed table " +
+  "of four metadata reads (the root collection ids, the subcollection ids of one document the statement names in full, " +
+  "one whole collection's or collection group's document count with nothing narrowing it, and one named document's " +
+  "existence and create and update times), sent through an agent client that holds three kinds of request alone " +
+  "(listCollectionIds, a count-only runAggregationQuery with upTo, and a batchGet whose mask names no field) over the " +
+  "closed request table, so no query of documents, document listing, field read, value aggregation, nearest-neighbour " +
+  "search, explain, transaction or write can be sent. " +
+  "Document ids and paths, field names and field values are withheld: every answer is projected to collection ids, " +
+  "counts, flags and times (agent-metadata-read.ts), a collection is counted whole and never through a filter, order, " +
+  "cursor, offset, limit or projection, a listing or count past the row budget is refused, a result past the byte " +
+  "budget is refused, never truncated, and every billed request is charged to the run's read allowance before it is " +
+  "sent.";
+
+/**
+ * One Firestore metadata read the model wrote, on a `firestore` connection.
+ *
+ * R1 on a structural boundary: the agent's client holds three kinds of metadata request alone. Its own id, and not a
+ * widened `sql.query.read`, so the SQL contract and its audit action stay exactly what they were.
+ */
+const fsqueryQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "fsquery.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: fsqueryAgentReadInput,
+  verification: {
+    reviewedBy: "Firestore agent execution design review",
+    boundary: FSQUERY_READ_BOUNDARY,
+    verifiedOn: "2026-10-31",
+  },
+};
+
 const RABBITREAD_READ_BOUNDARY =
   "RabbitMQ: the provider's structural closed table, read with the editor's own read request parser: one read of one " +
   "stream, its AMQP 0-9-1 client holding encoders for the handshake and channel open, basic.qos, basic.consume, " +
@@ -1021,6 +1059,7 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   rabbitreadQueryReadDescriptor,
   kafkareadQueryReadDescriptor,
   s3apiQueryReadDescriptor,
+  fsqueryQueryReadDescriptor,
 ]);
 
 /**

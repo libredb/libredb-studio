@@ -554,8 +554,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // Outside this version, as for etcd, Oxia and S3: a read whose completeness cannot be proved is not a
   // read an agent should be handed without a reader looking at it.
   mqtt: false,
-  // Outside this version, as for etcd, Oxia, S3 and MQTT: the provider implements no read-only query path an MCP
-  // client could drive, and every read is billed to the user's project.
+  // Closed, as etcd's, Oxia's and S3's: agent mode reads Firestore's metadata within a run's read allowance, every read
+  // is billed to the user's project, and no MCP surface that lists collections but never a document id is designed yet
+  // (BACKLOG B107).
   firestore: false,
   // Offered for the two metadata tools, carrying stream names and the fixed read columns only; `run_read_query` does
   // not serve it: the provider's read-only query path is agent mode's alone and reads metadata only, and
@@ -663,6 +664,8 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   s3: false,
   kubernetes: true,
   mqtt: false,
+  // Agent mode executes metadata-only reads on Firestore, and MCP read stays closed on it until a change of its own
+  // opens it (BACKLOG B107).
   firestore: false,
   // Agent mode executes metadata-only stream reads on RabbitMQ, and MCP read stays closed on it until a change of its
   // own opens it.

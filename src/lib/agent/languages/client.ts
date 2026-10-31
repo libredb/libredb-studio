@@ -24,6 +24,7 @@ import { OXIACLI_CLIENT_PACK } from "./oxiacli/client";
 import { RABBITREAD_CLIENT_PACK } from "./rabbitread/client";
 import { KAFKAREAD_CLIENT_PACK } from "./kafkaread/client";
 import { S3API_CLIENT_PACK } from "./s3api/client";
+import { FSQUERY_CLIENT_PACK } from "./fsquery/client";
 import { LIBREDBKV_CLIENT_PACK } from "./libredbkv/client";
 import { MONGO_CLIENT_PACK } from "./mongo/client";
 import type {
@@ -69,6 +70,7 @@ const CLIENT_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageClien
   rabbitread: RABBITREAD_CLIENT_PACK,
   kafkaread: KAFKAREAD_CLIENT_PACK,
   s3api: S3API_CLIENT_PACK,
+  fsquery: FSQUERY_CLIENT_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageClientPack>);
 
 /** The client facet for `language`. The record is total, so a typed id always has one. */
@@ -114,6 +116,7 @@ export const AGENT_EVIDENCE_EVENTS = mergeDisjoint(
     RABBITREAD_CLIENT_PACK.evidenceEvents,
     KAFKAREAD_CLIENT_PACK.evidenceEvents,
     S3API_CLIENT_PACK.evidenceEvents,
+    FSQUERY_CLIENT_PACK.evidenceEvents,
   ],
   "AGENT_EVIDENCE_EVENTS",
 ) satisfies AgentEvidenceEventSpecs<AgentPackEvidenceEvent>;
@@ -140,6 +143,7 @@ export const AGENT_PACK_SHORTFALL_SENTENCES = mergeDisjoint(
     RABBITREAD_CLIENT_PACK.shortfallSentences,
     KAFKAREAD_CLIENT_PACK.shortfallSentences,
     S3API_CLIENT_PACK.shortfallSentences,
+    FSQUERY_CLIENT_PACK.shortfallSentences,
   ],
   "AGENT_PACK_SHORTFALL_SENTENCES",
 ) satisfies Record<AgentPackShortfall, string>;
@@ -162,6 +166,7 @@ export const AGENT_PACK_READING_REFUSAL_HEADLINES = mergeDisjoint(
     RABBITREAD_CLIENT_PACK.readingRefusalHeadlines,
     KAFKAREAD_CLIENT_PACK.readingRefusalHeadlines,
     S3API_CLIENT_PACK.readingRefusalHeadlines,
+    FSQUERY_CLIENT_PACK.readingRefusalHeadlines,
   ],
   "AGENT_PACK_READING_REFUSAL_HEADLINES",
 ) satisfies Record<AgentPackReadingDenyCode, string>;
@@ -187,6 +192,7 @@ export const AGENT_PACK_REQUIREMENTS = mergeDisjoint(
     RABBITREAD_CLIENT_PACK.requirements,
     KAFKAREAD_CLIENT_PACK.requirements,
     S3API_CLIENT_PACK.requirements,
+    FSQUERY_CLIENT_PACK.requirements,
   ],
   "AGENT_PACK_REQUIREMENTS",
 ) satisfies Record<AgentPackVariantRequirement, AgentVariantRequirementSpec>;

@@ -42,7 +42,8 @@ export type AgentStatementLanguageId =
   | "oxiacli"
   | "rabbitread"
   | "kafkaread"
-  | "s3api";
+  | "s3api"
+  | "fsquery";
 
 /** Literal-typed, so `AgentEngineFamily` in `languages/pack.ts` reads each engine's language by type. */
 export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
@@ -80,7 +81,7 @@ export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
   s3: "s3api",
   kubernetes: "kubectl",
   mqtt: null,
-  firestore: null,
+  firestore: "fsquery",
   rabbitmq: "rabbitread",
   opcua: null,
   mtconnect: null,

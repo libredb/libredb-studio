@@ -186,6 +186,7 @@ export const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "rabbitread",
   "kafkaread",
   "s3api",
+  "fsquery",
 ]);
 
 /**
@@ -251,6 +252,8 @@ export const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.free
   kafkaread: "kafka",
   // The agent's name for the S3 metadata read command language, and `s3` is the only type-id that runs it.
   s3api: "s3",
+  // The agent's name for the Firestore metadata read statement language, and `firestore` is the only type-id that runs it.
+  fsquery: "firestore",
 });
 
 /**
