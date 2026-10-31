@@ -1,0 +1,152 @@
+{
+  "measured": "2026-10-31",
+  "device": "docker/netconf (Netopeer2 2.8.7, sysrepo 5.1.0), account ro-pass under the fixture's read-only NACM rule list",
+  "budget": {
+    "maxResultRows": 50,
+    "maxResultBytes": 1000000,
+    "statementTimeoutMs": 20000
+  },
+  "library": {
+    "modules": 59,
+    "texts": 59,
+    "bytes": 888174,
+    "nmda": true
+  },
+  "withheldKinds": [
+    "ietf-keystore",
+    "ietf-netconf-acm",
+    "nacm:default-deny-all",
+    "crypt-hash",
+    "ietf-crypto-types secret",
+    "keyed by a withheld leaf"
+  ],
+  "raw": {
+    "running ietf-keystore:keystore": {
+      "keystore": 1,
+      "keystore/asymmetric-keys": 1,
+      "keystore/asymmetric-keys/asymmetric-key": 1,
+      "keystore/asymmetric-keys/asymmetric-key/name": 1,
+      "keystore/asymmetric-keys/asymmetric-key/public-key-format": 1,
+      "keystore/asymmetric-keys/asymmetric-key/private-key-format": 1
+    },
+    "running ietf-netconf-acm:nacm": {},
+    "operational ietf-netconf-server:netconf-server": {
+      "netconf-server": 1,
+      "netconf-server/listen": 1,
+      "netconf-server/listen/endpoints": 1,
+      "netconf-server/listen/endpoints/endpoint": 1,
+      "netconf-server/listen/endpoints/endpoint/name": 1,
+      "netconf-server/listen/endpoints/endpoint/ssh": 1,
+      "netconf-server/listen/endpoints/endpoint/ssh/tcp-server-parameters": 1,
+      "netconf-server/listen/endpoints/endpoint/ssh/tcp-server-parameters/local-bind": 1,
+      "netconf-server/listen/endpoints/endpoint/ssh/tcp-server-parameters/local-bind/local-address": 1,
+      "netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters": 1,
+      "netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/server-identity": 1,
+      "netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/server-identity/host-key": 1,
+      "netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/server-identity/host-key/name": 1,
+      "netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/server-identity/host-key/public-key": 1,
+      "netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/server-identity/host-key/public-key/central-keystore-reference": 1,
+      "netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/client-authentication": 1,
+      "netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/client-authentication/users": 1,
+      "netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/client-authentication/users/user": 4,
+      "netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/client-authentication/users/user/name": 4,
+      "netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/client-authentication/users/user/public-keys": 2,
+      "netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/client-authentication/users/user/public-keys/inline-definition": 2,
+      "netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/client-authentication/users/user/public-keys/inline-definition/public-key": 2,
+      "netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/client-authentication/users/user/public-keys/inline-definition/public-key/name": 2,
+      "netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/client-authentication/users/user/public-keys/inline-definition/public-key/public-key-format": 2,
+      "netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/client-authentication/users/user/public-keys/inline-definition/public-key/public-key": 2,
+      "netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/client-authentication/users/user/password": 4,
+      "netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/client-authentication/users/user/password/last-modified": 4,
+      "netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/client-authentication/users/user/password/hashed-password": 1,
+      "netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/client-authentication/users/user/keyboard-interactive": 1,
+      "netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/client-authentication/users/user/keyboard-interactive/use-system-auth": 1
+    }
+  },
+  "rawEditConfig": {
+    "sentBy": "this script, on its own SSH channel, never by Studio",
+    "errorTag": "access-denied",
+    "unchanged": true
+  },
+  "agent": [
+    {
+      "statement": {
+        "datastore": "running",
+        "path": "ietf-interfaces:interfaces"
+      },
+      "fields": [
+        "name",
+        "description",
+        "type",
+        "enabled"
+      ],
+      "rows": 3,
+      "withheldCells": 0,
+      "warnings": [],
+      "firstRow": {
+        "name": "ge-0/0/0",
+        "description": "port 0 😀 uplink",
+        "type": "ianaift:ethernetCsmacd",
+        "enabled": "true"
+      },
+      "holdsWithheldMarker": false,
+      "ms": 44
+    },
+    {
+      "statement": {
+        "datastore": "operational",
+        "path": "ietf-netconf-server:netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/client-authentication/users"
+      },
+      "fields": [
+        "user"
+      ],
+      "rows": 1,
+      "withheldCells": 0,
+      "warnings": [
+        "ietf-netconf-server:netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/client-authentication/users/user/password/hashed-password is withheld from agent mode (crypt-hash): its type is crypt-hash, a password hash, so its value is not answered."
+      ],
+      "holdsWithheldMarker": true,
+      "ms": 64
+    },
+    {
+      "statement": {
+        "schema": "ietf-interfaces"
+      },
+      "fields": [
+        "module",
+        "revision",
+        "text"
+      ],
+      "rows": 1,
+      "withheldCells": 0,
+      "warnings": [],
+      "holdsWithheldMarker": false,
+      "ms": 68
+    },
+    {
+      "statement": {
+        "datastore": "running",
+        "path": "ietf-keystore:keystore"
+      },
+      "refused": "RefusedBeforeSendError",
+      "message": "ietf-keystore is withheld from agent mode whole, so nothing of it is read, its YANG text included. Agent mode on NETCONF reads with one JSON request per read: {\"datastore\": \"running\", \"path\": \"ietf-interfaces:interfaces\", \"limit\": 100} reads the configuration (running, candidate or startup, with get-config) or the configuration and state (operational or intended, with get-data) under a path that names its module on its first node, one more name per level and a list entry's keys after = (interface=eth0), and a list holding more entries than the limit or the row budget is refused rather than cut; {\"schema\": \"ietf-interfaces\"} reads one module's YANG text (get-schema). No other operation and no other field is sent. Withheld from agent mode, decided from the YANG modules the device itself serves: the ietf-keystore module whole (the device's keys); the ietf-netconf-acm module whole (its access control groups and rules); every data node a module marks nacm:default-deny-all, with its subtree; every leaf typed crypt-hash (a password hash, of iana-crypt-hash or ietf-system, or a type derived from it); the private-key-type, key-type and password-type choices of ietf-crypto-types (private keys, symmetric keys and passwords); and every entry of a list keyed by a withheld leaf. A withheld node answers its path and its reason, never its value; every other node, configuration and state alike, is read. Nothing was sent."
+    },
+    {
+      "statement": {
+        "datastore": "running",
+        "path": "ietf-netconf-server:netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/client-authentication/users/user=ro-pass/password/hashed-password"
+      },
+      "refused": "NetconfAgentError",
+      "message": "The read of netconf-server/listen/endpoints/endpoint/ssh/ssh-server-parameters/client-authentication/users/user/password/hashed-password meets a node withheld from agent mode (crypt-hash): its type is crypt-hash, a password hash, so the read was refused before it was sent, since even an empty answer would tell whether a guessed value exists; read a node beside it, or its parent, which answers it as [withheld]. This is Studio's refusal, not the device's answer."
+    },
+    {
+      "statement": {
+        "datastore": "running",
+        "path": "ietf-interfaces:interfaces",
+        "operation": "edit-config"
+      },
+      "refused": "RefusedBeforeSendError",
+      "message": "The read request holds a field agent mode does not read (operation). Agent mode on NETCONF reads with one JSON request per read: {\"datastore\": \"running\", \"path\": \"ietf-interfaces:interfaces\", \"limit\": 100} reads the configuration (running, candidate or startup, with get-config) or the configuration and state (operational or intended, with get-data) under a path that names its module on its first node, one more name per level and a list entry's keys after = (interface=eth0), and a list holding more entries than the limit or the row budget is refused rather than cut; {\"schema\": \"ietf-interfaces\"} reads one module's YANG text (get-schema). No other operation and no other field is sent. Withheld from agent mode, decided from the YANG modules the device itself serves: the ietf-keystore module whole (the device's keys); the ietf-netconf-acm module whole (its access control groups and rules); every data node a module marks nacm:default-deny-all, with its subtree; every leaf typed crypt-hash (a password hash, of iana-crypt-hash or ietf-system, or a type derived from it); the private-key-type, key-type and password-type choices of ietf-crypto-types (private keys, symmetric keys and passwords); and every entry of a list keyed by a withheld leaf. A withheld node answers its path and its reason, never its value; every other node, configuration and state alike, is read. Nothing was sent."
+    }
+  ]
+}
