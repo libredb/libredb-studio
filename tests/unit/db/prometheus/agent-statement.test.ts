@@ -45,6 +45,8 @@ describe("what the reader admits", () => {
     "\n  up\r\n",
     'label_replace(up, "x", "$1", "instance", "(.*)")',
     "up[5m+1m]",
+    'up{job="a\\"b"}',
+    "label_replace(up, 'x', 'it\\'s', 'job', '.*')",
     "job:up:sum",
   ])("%p", (text) => {
     expect(admitted(text)).toBe(text);
@@ -107,6 +109,7 @@ describe("what the reader refuses before anything is sent", () => {
     expect(refusedWith("'open").message).toStartWith("A string is not closed");
     expect(refusedWith("`open").message).toStartWith("A string is not closed");
     expect(refusedWith('"line\nbreak"').message).toStartWith("A string is not closed");
+    expect(refusedWith('up{job="ends in an escape\\"}').message).toStartWith("A string is not closed");
     expect(refusedWith("!up").message).toStartWith('"!" stands only in "!=" and "!~"');
     expect(refusedWith("sum(up").message).toStartWith('"(" is not closed');
     expect(refusedWith("up)").message).toStartWith('")" closes nothing');
