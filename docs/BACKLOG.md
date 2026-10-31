@@ -31,7 +31,7 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D413, U17 · 303
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U185 · 171
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U184 · 170
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -6451,16 +6451,7 @@ Seen again 2026-10-31 on Firestore (emulator `cloud-firestore-emulator` 1.22.0) 
 **Done when:** a health reading the provider takes only to prove the engine answered says so in a field the model and the rail read, without a type-id branch, and an operations test pins what the model's tool result says for it.
 
 
-### U184. The Firestore agent-mode panel lists four reads, then speaks of "those three kinds of request"
-
-`fsqueryReadsPosture` in `src/lib/agent/languages/fsquery/client.ts` writes the panel body: it names four reads (the root collection ids, the subcollection ids of a named document, one whole collection's or collection group's count, and a named document's existence and times), then says "Studio's agent client holds only those three kinds of request".
-The three are the client's requests, an id listing, a count and a `batchGet` (`FIRESTORE_AGENT_CLIENT_MEMBERS` in `src/lib/db/providers/document/firestore/agent-client.ts`), which the body never names, so a reader counts four reads and finds no three.
-Seen 2026-10-31 on Firestore (emulator `cloud-firestore-emulator` 1.22.0) in a browser pass; the rest of the panel matches what the run did.
-
-**Done when:** the body names the three requests before it refers to them, or drops the count, and `tests/unit/lib/agent/posture.test.ts` pins the sentence.
-
-
-### U185. A read allowance refusal of a one-unit charge says "needs 1 billed reads"
+### U184. A read allowance refusal of a one-unit charge says "needs 1 billed reads"
 
 `RunReadAllowance.charge` in `src/lib/db/read-allowance.ts` words its refusal with a fixed plural, so a one-unit charge reads "Read-only execution exceeded the read allowance: a document read needs 1 billed reads, and 0 of the 1 this run may spend is left".
 Firestore is the one engine that charges the allowance, and its id pages and document reads are one-unit charges, so this is the sentence a Firestore run's rail shows when the allowance is spent.

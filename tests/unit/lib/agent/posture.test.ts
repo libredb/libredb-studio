@@ -425,6 +425,13 @@ describe("the posture on Google Cloud Firestore", () => {
       "Firestore bills every read, so each one, the grounding's collection id listings included, is charged to the run's read allowance before it is sent and refused once the allowance is spent.",
     );
   });
+
+  test("names the client's three requests before it counts them, so the four reads are not taken for the three", () => {
+    expect(posture.body).toContain(
+      "Studio's agent client holds only three kinds of request, a collection id listing, a count that nothing narrows and a read of one named document's times, so it cannot",
+    );
+    expect(posture.body).not.toContain("those three kinds");
+  });
 });
 
 describe("autoExecuteTerms", () => {
