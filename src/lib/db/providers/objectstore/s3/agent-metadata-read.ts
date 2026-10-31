@@ -62,6 +62,10 @@ export type S3AgentAnswer =
 /** A server time as Studio's ISO form, or null for one it could not read, never the header's own text. */
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 const isoOrNull = (time: string | null): string | null => (time !== null && ISO_TIME.test(time) ? time : null);
+/** A storage class as S3 names one (STANDARD, STANDARD_IA, GLACIER_IR), or null, never other header text. */
+const STORAGE_CLASS = /^[A-Z0-9_]{1,64}$/;
+const storageClassOrNull = (value: string | null): string | null =>
+  value !== null && STORAGE_CLASS.test(value) ? value : null;
 
 const BUCKETS: MetadataProjection<S3AgentBucket> = [
   { column: "bucket", kind: "name", read: (b) => b.name },
@@ -103,7 +107,12 @@ const HEAD_OBJECT: MetadataProjection<HeadObjectAnswer> = [
   { column: "exists", kind: "flag", read: (a) => a.head !== undefined },
   { column: "size_bytes", kind: "count", optional: true, read: (a) => a.head?.size ?? null },
   { column: "last_modified", kind: "name", optional: true, read: (a) => isoOrNull(a.head?.lastModified ?? null) },
-  { column: "storage_class", kind: "name", optional: true, read: (a) => a.head?.storageClass ?? null },
+  {
+    column: "storage_class",
+    kind: "name",
+    optional: true,
+    read: (a) => storageClassOrNull(a.head?.storageClass ?? null),
+  },
 ];
 
 const PROJECTIONS = Object.freeze({

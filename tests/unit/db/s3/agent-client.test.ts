@@ -76,6 +76,11 @@ describe("the full request of each read", () => {
     expect(fake.lines()).toEqual(["HEAD /sales"]);
   });
 
+  test("a region header that is not a region name is answered as no region, never as the header's text", async () => {
+    const { client } = agentClient(() => ({ status: 200, headers: [["x-amz-bucket-region", "tenant-marker/x.csv"]] }));
+    expect(await client.headBucket("sales", call())).toEqual({ bucketRegion: null });
+  });
+
   test("a failed bucket head sends no follow-up GET", async () => {
     const { client, fake } = agentClient(() => ({ status: 404 }));
     const failure = await client.headBucket("sales", call()).catch((error: unknown) => error);

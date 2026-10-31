@@ -271,6 +271,22 @@ describe("one object's head", () => {
     ]);
   });
 
+  test("a last-modified or storage class header that does not parse is answered as null, never as the header's text", async () => {
+    const { run } = harness(() => ({
+      status: 200,
+      headers: [
+        ["content-length", "1"],
+        ["last-modified", `${MARKER}/x.csv`],
+        ["x-amz-storage-class", `${MARKER}/x.csv`],
+      ],
+    }));
+    const answered = result(await run({ op: "head-object", bucket: "s", key: "k" }));
+    expect(answered.rows).toEqual([
+      { bucket: "s", exists: true, size_bytes: 1, last_modified: null, storage_class: null },
+    ]);
+    expect(JSON.stringify(answered)).not.toContain(MARKER);
+  });
+
   test("a 404 is exists false, with the note that a HEAD cannot tell a missing bucket from a missing key", async () => {
     const { run } = harness(() => ({ status: 404, headers: [["x-amz-delete-marker", "true"]] }));
     const answered = result(await run({ op: "head-object", bucket: "s", key: "k" }));
