@@ -827,8 +827,8 @@ const MODBUSREAD_READ_BOUNDARY =
   "and Read Device Identification, 43/14), over a socket opened for that read alone whose valve re-reads every " +
   "outbound frame before socket.write and refuses every other function code, so no write, diagnostic, file record " +
   "or FIFO request can be sent. Modbus has no credential, so values are answered as the console renders them. Agent " +
-  "reads of one device never overlap across every run and connection of the server process, a gap measured on a " +
-  "single-client device follows each, and one run sends a bounded number of device requests; a read past the row, " +
+  "reads of one device never overlap across every run and connection of the server process, a fixed 1,000 ms gap " +
+  "follows each from its socket's close, and one run sends a bounded number of device requests; a read past the row, " +
   "byte or time budget, or past the run's request bound, is refused, never truncated.";
 
 /**

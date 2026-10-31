@@ -25,7 +25,7 @@
  * `queryReadOnly` is the agent's: one request in the console's three shapes, read by `agent-statement.ts` and refused
  * before anything is sent when it is not one of them, then run by `agent-read.ts` within the row, byte, time and run
  * request bounds, on the device's lane (`agent-pacing.ts`): never two agent reads of one device at once, across every
- * run and connection of this process, with a measured gap after each. On a handle opened for any agent-mode profile the
+ * run and connection of this process, with a fixed gap after each. On a handle opened for any agent-mode profile the
  * console is refused and every reading the agent does not report answers its reason (`agent-surface.ts`). MCP read
  * stays closed on this engine.
  */
