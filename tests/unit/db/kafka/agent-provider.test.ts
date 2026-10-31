@@ -154,6 +154,17 @@ describe("refused before anything is sent", () => {
     expect(calls).toEqual([]);
   });
 
+  test("a limit equal to the row budget is admitted, and one past it is refused before anything is sent", async () => {
+    const { provider, calls } = await connected(READ_ONLY);
+    const budget = { ...BUDGET, maxResultRows: 7 };
+    expect((await provider.queryReadOnly('{"read": "topics", "limit": 7}', budget)).rows).toHaveLength(1);
+    calls.length = 0;
+    const error = await rejection(provider.queryReadOnly('{"read": "topics", "limit": 8}', budget));
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect((error as Error).message).toStartWith(ROW_BUDGET_PREFIX);
+    expect(calls).toEqual([]);
+  });
+
   test("a limit past the row budget is refused, never cut", async () => {
     const { provider, calls } = await connected(READ_ONLY);
     const error = await rejection(provider.queryReadOnly('{"read": "topics", "limit": 201}', BUDGET));

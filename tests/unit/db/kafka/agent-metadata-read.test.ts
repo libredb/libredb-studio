@@ -21,7 +21,7 @@ import {
   type KafkaOffsetPosition,
   type KafkaTopicMetadata,
 } from "@/lib/db/providers/stream/kafka/client";
-import { BYTE_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
+import { BYTE_BUDGET_PREFIX, measureResultBytes, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 
 const BUDGET: ReadOnlyStatementBudget = { maxResultRows: 200, maxResultBytes: 1_000_000, statementTimeoutMs: 10_000 };
@@ -288,6 +288,37 @@ describe("one topic's offsets", () => {
 });
 
 describe("budgets and the deadline", () => {
+  test("an answer of exactly the limit says no more follow, and one row past it says more do", async () => {
+    const names = ["a", "b", "c"];
+    const topics = names.map((name) => topic(name, 1));
+    const exact = kafkaAgentResult(
+      await run(clientOver({ names, topics }).client, { op: "topics", limit: 3 }),
+      BUDGET,
+      "s",
+      0,
+    );
+    expect(exact.rows).toHaveLength(3);
+    expect(exact.warnings).toBeUndefined();
+    const short = kafkaAgentResult(
+      await run(clientOver({ names, topics }).client, { op: "topics", limit: 2 }),
+      BUDGET,
+      "s",
+      0,
+    );
+    expect(short.rows).toHaveLength(2);
+    expect(short.warnings).toHaveLength(1);
+  });
+
+  test("an answer of exactly the byte budget is returned, and one byte past it is refused", async () => {
+    const { client } = clientOver({ names: ["a", "b"], topics: [topic("a", 1), topic("b", 1)] });
+    const answer = await run(client, { op: "topics", limit: 50 });
+    const bytes = measureResultBytes(kafkaAgentResult(answer, BUDGET, "s", 0).rows);
+    expect(kafkaAgentResult(answer, { ...BUDGET, maxResultBytes: bytes }, "s", 0).rows).toHaveLength(2);
+    expect(() => kafkaAgentResult(answer, { ...BUDGET, maxResultBytes: bytes - 1 }, "s", 0)).toThrow(
+      BYTE_BUDGET_PREFIX,
+    );
+  });
+
   test("an answer past the byte budget is refused rather than cut", async () => {
     const { client } = clientOver({ names: ["a", "b"], topics: [topic("a", 1), topic("b", 1)] });
     const answer = await run(client, { op: "topics", limit: 50 });
