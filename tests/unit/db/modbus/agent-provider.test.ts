@@ -372,6 +372,20 @@ describe("pacing on one device", () => {
     expect((second?.opened ?? 0) - (first?.closed ?? 0)).toBeGreaterThanOrEqual(75);
   });
 
+  test("a read's execution time is its time on the device, never Studio's wait for its turn or the gap", async () => {
+    // A browser pass on 2026-10-31 saw every agent read of a device that answers in 1 ms reported as taking 1000 ms,
+    // the gap Studio keeps after the read before it, so the rail and the run's database time charged Studio's own wait
+    // to the device.
+    const dev = await device();
+    const pacer = new ModbusDevicePacer(400);
+    const text = '{"unit": 1, "table": "holding_register", "address": 0, "count": 1}';
+    await provider(dev.port, { pacer }).queryReadOnly(text, budget());
+    const asked = performance.now();
+    const second = await provider(dev.port, { pacer }).queryReadOnly(text, budget());
+    expect(performance.now() - asked).toBeGreaterThanOrEqual(395);
+    expect(second.executionTime).toBeLessThan(200);
+  });
+
   test("a read whose turn comes after its time budget is refused in Studio's words, and sends nothing", async () => {
     const dev = await device({ answerAfterMs: 300 });
     const pacer = new ModbusDevicePacer(5);

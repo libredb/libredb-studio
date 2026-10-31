@@ -601,7 +601,7 @@ export class ModbusProvider extends BaseDatabaseProvider {
       },
       this.agentSeams,
     );
-    return modbusAgentResult(read, budget, Math.round(performance.now() - startedAt));
+    return modbusAgentResult(read, budget);
   }
 
   /** The unit a shape that names none runs at: the map's first, which is the one the tree shows. */

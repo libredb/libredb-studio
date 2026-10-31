@@ -154,6 +154,14 @@ export interface ModbusAgentReadInput {
   readonly startedAt: number;
 }
 
+/**
+ * One answered agent read, and how long it held the device: from its turn on the device's lane to its socket's close.
+ * Studio's wait for that turn and the gap before it are not the device's time, so they are not in `deviceMs`.
+ */
+export interface ModbusAgentRead extends ReadRows {
+  readonly deviceMs: number;
+}
+
 export interface ModbusAgentReadSeams {
   readonly dial: Dialer;
   readonly pacer: ModbusDevicePacer;
@@ -178,7 +186,10 @@ function categorized(error: unknown): unknown {
  * Runs one admitted agent read: the row and request bounds before its turn, the pacer's turn, the deadline and the
  * request bound again and its charge, then the read over a socket of its own, raced against what is left of the time budget.
  */
-export async function runModbusAgentRead(input: ModbusAgentReadInput, seams: ModbusAgentReadSeams): Promise<ReadRows> {
+export async function runModbusAgentRead(
+  input: ModbusAgentReadInput,
+  seams: ModbusAgentReadSeams,
+): Promise<ModbusAgentRead> {
   const { plan, map, endpoint, budget } = input;
   const ms = budget.statementTimeoutMs;
   const rows = rowsOf(plan);
@@ -197,7 +208,9 @@ export async function runModbusAgentRead(input: ModbusAgentReadInput, seams: Mod
       if (remainingMs <= 0) refuse(F.waited(ms));
       if (cost > left()) refuse(F.requestBound(cost, left()));
       allowance.charge(cost, `a Modbus read of ${cost} device requests`);
-      return await readOnDevice(input, seams.dial, remainingMs);
+      const turn = performance.now();
+      const read = await readOnDevice(input, seams.dial, remainingMs);
+      return { ...read, deviceMs: Math.round(performance.now() - turn) };
     });
   } catch (error) {
     if (error instanceof ModbusPacingTimeout) throw new ModbusAgentRefusal(F.waited(error.waitedMs));
@@ -243,8 +256,11 @@ async function readOnDevice(input: ModbusAgentReadInput, dial: Dialer, left: num
   }
 }
 
-/** The answer of one read as a result: refused past the row or byte budget rather than cut, its warnings kept. */
-export function modbusAgentResult(read: ReadRows, budget: ReadOnlyStatementBudget, executionTime: number): QueryResult {
+/**
+ * The answer of one read as a result: refused past the row or byte budget rather than cut, its warnings kept, and its
+ * execution time the read's own on the device.
+ */
+export function modbusAgentResult(read: ModbusAgentRead, budget: ReadOnlyStatementBudget): QueryResult {
   const rows = read.rows.map((row) => ({ ...row }));
   // Only an identification answer can get here past the budget: a points or block read was refused before its socket.
   if (rows.length > budget.maxResultRows) fail(F.overAnswerRows(rows.length, budget.maxResultRows));
@@ -254,7 +270,7 @@ export function modbusAgentResult(read: ReadRows, budget: ReadOnlyStatementBudge
     fields: [...read.fields],
     rows,
     rowCount: rows.length,
-    executionTime,
+    executionTime: read.deviceMs,
     ...(read.warnings.length === 0 ? {} : { warnings: read.warnings.map((message) => ({ message })) }),
   };
 }
