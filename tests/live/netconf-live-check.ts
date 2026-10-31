@@ -112,16 +112,16 @@ if (declaredImage !== undefined && declaredImage !== PINNED_IMAGE) {
 /**
  * What the fixture holds, MEASURED 2026-10-15 against `libredb-fixture/netconf:2.8.7`.
  *
- * The five datastores are the device's own capabilities rather than a list chosen here: `running`
- * always, `candidate` and `startup` from `:candidate` and `:startup`, and `operational` and
- * `intended` from the NMDA capability. The module count is of modules the YANG library reports as
+ * The four datastores are the device's own rather than a list chosen here: on this NMDA device they
+ * are the ones its RFC 8525 datastore list names, `running`, `candidate`, `startup` and
+ * `operational`, and not `intended`, which it does not serve (MEASURED 2026-10-31). The module count is of modules the YANG library reports as
  * `implement`, which is fewer than the texts `get-schema` will serve.
  *
  * The interface count is the one thing here a reader can change without rebuilding the image, with
  * `LIBREDB_NETCONF_INTERFACES`, so it is read from the environment and the refusal names the
  * variable rather than calling the device wrong.
  */
-const DATASTORES = ["running", "candidate", "startup", "operational", "intended"];
+const DATASTORES = ["running", "candidate", "startup", "operational"];
 const MODULES = 52;
 const MODULE = "ietf-interfaces";
 const INTERFACES = Number(process.env.NETCONF_LIVE_INTERFACES ?? "5000");
