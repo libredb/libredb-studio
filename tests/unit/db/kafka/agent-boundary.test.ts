@@ -9,6 +9,8 @@
  */
 // oxlint-disable no-await-in-loop -- each surface runs after the one before, so each refusal and each recorded call is its own.
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka";
 import { createPlatformaticClient } from "@/lib/db/providers/stream/kafka/platformatic-client";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
@@ -132,5 +134,59 @@ describe("every agent-mode surface stays inside the closed table", () => {
     const { provider, calls } = await agentHandle({});
     await provider.readObjectSource(["orders"], "topic");
     expect(calls.map(([name]) => name)).toContain("admin.describeConfigs");
+  });
+});
+
+describe("the captured boundary, as the broker answered it", () => {
+  interface Capture {
+    readonly agent: ReadonlyArray<{
+      readonly reads: ReadonlyArray<{ readonly statement: string; readonly answer: { refused?: string } }>;
+      readonly missingTopicCreated: boolean;
+      readonly topicsAdded: readonly string[];
+      readonly snapshotDiff: readonly string[];
+    }>;
+    readonly raw: ReadonlyArray<{
+      readonly as: string;
+      readonly calls: ReadonlyArray<{ readonly call: string; readonly recordsReturned: number }>;
+      readonly snapshotDiff: readonly string[];
+    }>;
+    readonly leaks: readonly string[];
+  }
+  const capture = (relative: string): Capture =>
+    JSON.parse(
+      readFileSync(join(import.meta.dir, "../../../fixtures", relative, "agent-boundary/boundary.json"), "utf8"),
+    );
+
+  test.each(["kafka/4.3.1", "redpanda/26.2.2"])(
+    "%s: the agent's reads change nothing, create no missing topic and leak nothing",
+    (where) => {
+      const { agent, leaks } = capture(where);
+      expect(leaks).toEqual([]);
+      expect(agent.length).toBeGreaterThan(0);
+      for (const run of agent) {
+        expect(run.snapshotDiff).toEqual([]);
+        expect(run.topicsAdded).toEqual([]);
+        expect(run.missingTopicCreated).toBe(false);
+        const missing = run.reads.find((read) => read.statement.includes("missing-agent-read"));
+        expect(missing?.answer.refused).toContain("The topic does not exist. Nothing was created");
+      }
+    },
+  );
+
+  test.each(["kafka/4.3.1", "redpanda/26.2.2"])(
+    "%s: the positive control acts, so the calls the table refuses would",
+    (where) => {
+      const control = capture(where).raw.find((run) => run.as === "super");
+      const added = (control?.snapshotDiff ?? []).filter((line) => line.startsWith("+"));
+      expect(added.some((line) => line.includes("raw-created"))).toBe(true);
+      expect(added.some((line) => line.includes("missing-producer-control"))).toBe(true);
+      expect(control?.calls.find((call) => call.call.startsWith("Fetch"))?.recordsReturned).toBe(1);
+    },
+  );
+
+  test("kafka/4.3.1: the Describe-only reader is refused every write and leaves the snapshot unchanged", () => {
+    const reader = capture("kafka/4.3.1").raw.find((run) => run.as === "reader");
+    expect(reader?.snapshotDiff).toEqual([]);
+    expect(reader?.calls.find((call) => call.call.startsWith("Fetch"))?.recordsReturned).toBe(0);
   });
 });

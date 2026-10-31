@@ -1,0 +1,989 @@
+{
+  "$captured": {
+    "image": "apache/kafka:4.3.1@sha256:77e3df9054047a88b520d0cc46e16696d3b22022e1d580aeccd2632df6532837",
+    "date": "2026-10-31",
+    "runtime": "bun 1.4.4",
+    "autoCreateTopics": true,
+    "principals": "agent-reader: SCRAM-SHA-512 over TLS, Describe on every topic, every group and the cluster, nothing else; the plaintext listener's ANONYMOUS principal is a super user, the writable positive control",
+    "note": "`agent` runs the provider's agent reads and every agent-mode surface, with the broker snapshot and the topic list before and after. `raw` sends each call the agent's closed table never sends, with the broker's own tools, past every Studio check, with the snapshot before and after each principal's calls. `leaks` lists every seeded record marker, broker address, log-directory root and group id an agent answer holds, and must be empty."
+  },
+  "markers": {
+    "key": "agent-marker-key",
+    "value": "agent-marker-value",
+    "header": "agent-marker-header"
+  },
+  "seededSnapshot": 607,
+  "agent": [
+    {
+      "principal": "the plaintext listener's principal, which may create topics",
+      "reads": [
+        {
+          "statement": "{\"read\": \"topics\"}",
+          "answer": {
+            "answered": {
+              "fields": [
+                "topic",
+                "partitions",
+                "replication_factor",
+                "offline_partitions",
+                "under_replicated_partitions"
+              ],
+              "rows": [
+                {
+                  "topic": "audit",
+                  "partitions": 1,
+                  "replication_factor": 1,
+                  "offline_partitions": 0,
+                  "under_replicated_partitions": 0
+                },
+                {
+                  "topic": "disposable",
+                  "partitions": 1,
+                  "replication_factor": 1,
+                  "offline_partitions": 0,
+                  "under_replicated_partitions": 0
+                },
+                {
+                  "topic": "orders",
+                  "partitions": 3,
+                  "replication_factor": 1,
+                  "offline_partitions": 0,
+                  "under_replicated_partitions": 0
+                }
+              ],
+              "rowCount": 3,
+              "executionTime": 4
+            }
+          }
+        },
+        {
+          "statement": "{\"read\": \"topics\", \"after\": \"audit\", \"limit\": 1}",
+          "answer": {
+            "answered": {
+              "fields": [
+                "topic",
+                "partitions",
+                "replication_factor",
+                "offline_partitions",
+                "under_replicated_partitions"
+              ],
+              "rows": [
+                {
+                  "topic": "disposable",
+                  "partitions": 1,
+                  "replication_factor": 1,
+                  "offline_partitions": 0,
+                  "under_replicated_partitions": 0
+                }
+              ],
+              "rowCount": 1,
+              "executionTime": 1,
+              "warnings": [
+                {
+                  "message": "More topics follow this answer: read on with \"after\" set to the last topic of this answer."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "statement": "{\"read\": \"brokers\"}",
+          "answer": {
+            "answered": {
+              "fields": [
+                "node_id",
+                "rack",
+                "cluster_id"
+              ],
+              "rows": [
+                {
+                  "node_id": 1,
+                  "rack": null,
+                  "cluster_id": "8L6g3nShT-eMCtK--X86sw"
+                }
+              ],
+              "rowCount": 1,
+              "executionTime": 1
+            }
+          }
+        },
+        {
+          "statement": "{\"read\": \"partitions\", \"topic\": \"orders\"}",
+          "answer": {
+            "answered": {
+              "fields": [
+                "partition",
+                "leader",
+                "replicas",
+                "in_sync_replicas",
+                "offline_replicas",
+                "offline"
+              ],
+              "rows": [
+                {
+                  "partition": 0,
+                  "leader": 1,
+                  "replicas": "1",
+                  "in_sync_replicas": "1",
+                  "offline_replicas": null,
+                  "offline": false
+                },
+                {
+                  "partition": 1,
+                  "leader": 1,
+                  "replicas": "1",
+                  "in_sync_replicas": "1",
+                  "offline_replicas": null,
+                  "offline": false
+                },
+                {
+                  "partition": 2,
+                  "leader": 1,
+                  "replicas": "1",
+                  "in_sync_replicas": "1",
+                  "offline_replicas": null,
+                  "offline": false
+                }
+              ],
+              "rowCount": 3,
+              "executionTime": 0
+            }
+          }
+        },
+        {
+          "statement": "{\"read\": \"offsets\", \"topic\": \"orders\"}",
+          "answer": {
+            "answered": {
+              "fields": [
+                "partition",
+                "earliest_offset",
+                "end_offset",
+                "offset_span"
+              ],
+              "rows": [
+                {
+                  "partition": 0,
+                  "earliest_offset": 0,
+                  "end_offset": 3,
+                  "offset_span": 3
+                },
+                {
+                  "partition": 1,
+                  "earliest_offset": 0,
+                  "end_offset": 4,
+                  "offset_span": 4
+                },
+                {
+                  "partition": 2,
+                  "earliest_offset": 0,
+                  "end_offset": 2,
+                  "offset_span": 2
+                }
+              ],
+              "rowCount": 3,
+              "executionTime": 6
+            }
+          }
+        },
+        {
+          "statement": "{\"read\": \"offsets\", \"topic\": \"missing-agent-read\"}",
+          "answer": {
+            "refused": "QueryError: The topic does not exist. Nothing was created: an agent read asks the broker never to create a topic. The broker's own words are not passed on to agent mode, since they can name a broker's address."
+          }
+        },
+        {
+          "statement": "{\"read\": \"partitions\", \"topic\": \"missing-agent-read\"}",
+          "answer": {
+            "refused": "QueryError: The topic does not exist. Nothing was created: an agent read asks the broker never to create a topic. The broker's own words are not passed on to agent mode, since they can name a broker's address."
+          }
+        },
+        {
+          "statement": "{\"read\": \"fetch\", \"topic\": \"orders\"}",
+          "answer": {
+            "refused": "RefusedBeforeSendError: That is not one of agent mode's reads: a record's key, value, headers and timestamp, consumer groups, configs and log directories are withheld, so no fetch, produce, group, config, log-directory or administrative call is sent. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        },
+        {
+          "statement": "{\"read\": \"offsets\", \"topic\": \"orders\", \"timestamp\": \"2026-10-31T00:00:00Z\"}",
+          "answer": {
+            "refused": "RefusedBeforeSendError: The request holds a key agent mode does not read: its keys are read, topic, after and limit, so no timestamp, offset sentinel, isolation level, partition filter, group or auto-creation flag can be written. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        },
+        {
+          "statement": "{\"read\": \"offsets\", \"topic\": \"orders\", \"time\": -3}",
+          "answer": {
+            "refused": "RefusedBeforeSendError: The request holds a key agent mode does not read: its keys are read, topic, after and limit, so no timestamp, offset sentinel, isolation level, partition filter, group or auto-creation flag can be written. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        },
+        {
+          "statement": "{\"read\": \"partitions\", \"topic\": \"__consumer_offsets\"}",
+          "answer": {
+            "refused": "RefusedBeforeSendError: That is one of Kafka's internal topics, which agent mode never names in a request. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        },
+        {
+          "statement": "{\"read\": \"groups\"}",
+          "answer": {
+            "refused": "RefusedBeforeSendError: That is not one of agent mode's reads: a record's key, value, headers and timestamp, consumer groups, configs and log directories are withheld, so no fetch, produce, group, config, log-directory or administrative call is sent. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        },
+        {
+          "statement": "{\"read\": \"configs\", \"topic\": \"orders\"}",
+          "answer": {
+            "refused": "RefusedBeforeSendError: That is not one of agent mode's reads: a record's key, value, headers and timestamp, consumer groups, configs and log directories are withheld, so no fetch, produce, group, config, log-directory or administrative call is sent. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        },
+        {
+          "statement": "{\"read\": \"topics\", \"allowAutoTopicCreation\": true}",
+          "answer": {
+            "refused": "RefusedBeforeSendError: The request holds a key agent mode does not read: its keys are read, topic, after and limit, so no timestamp, offset sentinel, isolation level, partition filter, group or auto-creation flag can be written. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        },
+        {
+          "statement": "{\"read\": \"offsets\", \"topic\": \"..\"}",
+          "answer": {
+            "refused": "RefusedBeforeSendError: \"topic\" must be a Kafka topic name: 1 to 249 of the characters a-z, A-Z, 0-9, \".\", \"_\" and \"-\", other than \".\" and \"..\". Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        }
+      ],
+      "surfaces": {
+        "countObjects": {
+          "answered": {
+            "topic": {
+              "count": 3
+            },
+            "consumer_group": {
+              "unavailable": "Agent mode on Kafka reads metadata only, through the Metadata and ListOffsets requests: topic names, partitions, broker node ids and racks, the cluster id, and each partition's earliest and end offsets. Consumer groups (their ids, members, client ids and hosts, committed offsets and lag) are not read in agent mode, so none is listed or counted."
+            },
+            "broker": {
+              "count": 1
+            }
+          }
+        },
+        "listBrokers": {
+          "answered": [
+            {
+              "path": [
+                "1"
+              ],
+              "name": "1",
+              "kind": "broker"
+            }
+          ]
+        },
+        "listGroups": {
+          "refused": "QueryError: Agent mode on Kafka reads metadata only, through the Metadata and ListOffsets requests: topic names, partitions, broker node ids and racks, the cluster id, and each partition's earliest and end offsets. Consumer groups (their ids, members, client ids and hosts, committed offsets and lag) are not read in agent mode, so none is listed or counted."
+        },
+        "describeTopic": {
+          "answered": {
+            "path": [
+              "orders"
+            ],
+            "columns": [
+              {
+                "name": "partition",
+                "type": "integer",
+                "nullable": false,
+                "isPrimary": false
+              },
+              {
+                "name": "earliest_offset",
+                "type": "integer",
+                "nullable": true,
+                "isPrimary": false
+              },
+              {
+                "name": "end_offset",
+                "type": "integer",
+                "nullable": true,
+                "isPrimary": false
+              },
+              {
+                "name": "offset_span",
+                "type": "integer",
+                "nullable": true,
+                "isPrimary": false
+              }
+            ],
+            "indexes": [],
+            "foreignKeys": []
+          }
+        },
+        "topicSource": {
+          "refused": "QueryError: Agent mode on Kafka reads metadata only, through the Metadata and ListOffsets requests: topic names, partitions, broker node ids and racks, the cluster id, and each partition's earliest and end offsets. An object's source holds configs, consumer group members and committed offsets, which agent mode does not read."
+        },
+        "health": {
+          "answered": {
+            "databaseSize": "Agent mode on Kafka reads metadata only, through the Metadata and ListOffsets requests: topic names, partitions, broker node ids and racks, the cluster id, and each partition's earliest and end offsets. The size on disk is read from the brokers' log directories, which agent mode does not read, so it is not reported.",
+            "cacheHitRatio": "N/A",
+            "slowQueries": [],
+            "activeSessions": []
+          }
+        },
+        "storage": {
+          "refused": "QueryError: Agent mode on Kafka reads metadata only, through the Metadata and ListOffsets requests: topic names, partitions, broker node ids and racks, the cluster id, and each partition's earliest and end offsets. Storage is read from the brokers' log directories, which agent mode does not read, so no storage reading is taken."
+        },
+        "sessions": {
+          "refused": "QueryError: Agent mode on Kafka reads metadata only, through the Metadata and ListOffsets requests: topic names, partitions, broker node ids and racks, the cluster id, and each partition's earliest and end offsets. Kafka reports no client sessions over its protocol, so no session reading is taken; this is not a reading of none."
+        },
+        "editorRead": {
+          "refused": "RefusedBeforeSendError: Agent mode on Kafka reads metadata only, through the Metadata and ListOffsets requests: topic names, partitions, broker node ids and racks, the cluster id, and each partition's earliest and end offsets. A record's key, value, headers and timestamp are stored values, so the editor's read request, which fetches records, is refused on an agent-mode handle; agent reads go through queryReadOnly."
+        }
+      },
+      "missingTopicCreated": false,
+      "topicsAdded": [],
+      "snapshotDiff": []
+    },
+    {
+      "principal": "agent-reader over SCRAM-SHA-512 and TLS",
+      "reads": [
+        {
+          "statement": "{\"read\": \"topics\"}",
+          "answer": {
+            "answered": {
+              "fields": [
+                "topic",
+                "partitions",
+                "replication_factor",
+                "offline_partitions",
+                "under_replicated_partitions"
+              ],
+              "rows": [
+                {
+                  "topic": "audit",
+                  "partitions": 1,
+                  "replication_factor": 1,
+                  "offline_partitions": 0,
+                  "under_replicated_partitions": 0
+                },
+                {
+                  "topic": "disposable",
+                  "partitions": 1,
+                  "replication_factor": 1,
+                  "offline_partitions": 0,
+                  "under_replicated_partitions": 0
+                },
+                {
+                  "topic": "orders",
+                  "partitions": 3,
+                  "replication_factor": 1,
+                  "offline_partitions": 0,
+                  "under_replicated_partitions": 0
+                }
+              ],
+              "rowCount": 3,
+              "executionTime": 3
+            }
+          }
+        },
+        {
+          "statement": "{\"read\": \"topics\", \"after\": \"audit\", \"limit\": 1}",
+          "answer": {
+            "answered": {
+              "fields": [
+                "topic",
+                "partitions",
+                "replication_factor",
+                "offline_partitions",
+                "under_replicated_partitions"
+              ],
+              "rows": [
+                {
+                  "topic": "disposable",
+                  "partitions": 1,
+                  "replication_factor": 1,
+                  "offline_partitions": 0,
+                  "under_replicated_partitions": 0
+                }
+              ],
+              "rowCount": 1,
+              "executionTime": 1,
+              "warnings": [
+                {
+                  "message": "More topics follow this answer: read on with \"after\" set to the last topic of this answer."
+                }
+              ]
+            }
+          }
+        },
+        {
+          "statement": "{\"read\": \"brokers\"}",
+          "answer": {
+            "answered": {
+              "fields": [
+                "node_id",
+                "rack",
+                "cluster_id"
+              ],
+              "rows": [
+                {
+                  "node_id": 1,
+                  "rack": null,
+                  "cluster_id": "8L6g3nShT-eMCtK--X86sw"
+                }
+              ],
+              "rowCount": 1,
+              "executionTime": 1
+            }
+          }
+        },
+        {
+          "statement": "{\"read\": \"partitions\", \"topic\": \"orders\"}",
+          "answer": {
+            "answered": {
+              "fields": [
+                "partition",
+                "leader",
+                "replicas",
+                "in_sync_replicas",
+                "offline_replicas",
+                "offline"
+              ],
+              "rows": [
+                {
+                  "partition": 0,
+                  "leader": 1,
+                  "replicas": "1",
+                  "in_sync_replicas": "1",
+                  "offline_replicas": null,
+                  "offline": false
+                },
+                {
+                  "partition": 1,
+                  "leader": 1,
+                  "replicas": "1",
+                  "in_sync_replicas": "1",
+                  "offline_replicas": null,
+                  "offline": false
+                },
+                {
+                  "partition": 2,
+                  "leader": 1,
+                  "replicas": "1",
+                  "in_sync_replicas": "1",
+                  "offline_replicas": null,
+                  "offline": false
+                }
+              ],
+              "rowCount": 3,
+              "executionTime": 0
+            }
+          }
+        },
+        {
+          "statement": "{\"read\": \"offsets\", \"topic\": \"orders\"}",
+          "answer": {
+            "answered": {
+              "fields": [
+                "partition",
+                "earliest_offset",
+                "end_offset",
+                "offset_span"
+              ],
+              "rows": [
+                {
+                  "partition": 0,
+                  "earliest_offset": 0,
+                  "end_offset": 3,
+                  "offset_span": 3
+                },
+                {
+                  "partition": 1,
+                  "earliest_offset": 0,
+                  "end_offset": 4,
+                  "offset_span": 4
+                },
+                {
+                  "partition": 2,
+                  "earliest_offset": 0,
+                  "end_offset": 2,
+                  "offset_span": 2
+                }
+              ],
+              "rowCount": 3,
+              "executionTime": 39
+            }
+          }
+        },
+        {
+          "statement": "{\"read\": \"offsets\", \"topic\": \"missing-agent-read\"}",
+          "answer": {
+            "refused": "QueryError: The topic does not exist. Nothing was created: an agent read asks the broker never to create a topic. The broker's own words are not passed on to agent mode, since they can name a broker's address."
+          }
+        },
+        {
+          "statement": "{\"read\": \"partitions\", \"topic\": \"missing-agent-read\"}",
+          "answer": {
+            "refused": "QueryError: The topic does not exist. Nothing was created: an agent read asks the broker never to create a topic. The broker's own words are not passed on to agent mode, since they can name a broker's address."
+          }
+        },
+        {
+          "statement": "{\"read\": \"fetch\", \"topic\": \"orders\"}",
+          "answer": {
+            "refused": "RefusedBeforeSendError: That is not one of agent mode's reads: a record's key, value, headers and timestamp, consumer groups, configs and log directories are withheld, so no fetch, produce, group, config, log-directory or administrative call is sent. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        },
+        {
+          "statement": "{\"read\": \"offsets\", \"topic\": \"orders\", \"timestamp\": \"2026-10-31T00:00:00Z\"}",
+          "answer": {
+            "refused": "RefusedBeforeSendError: The request holds a key agent mode does not read: its keys are read, topic, after and limit, so no timestamp, offset sentinel, isolation level, partition filter, group or auto-creation flag can be written. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        },
+        {
+          "statement": "{\"read\": \"offsets\", \"topic\": \"orders\", \"time\": -3}",
+          "answer": {
+            "refused": "RefusedBeforeSendError: The request holds a key agent mode does not read: its keys are read, topic, after and limit, so no timestamp, offset sentinel, isolation level, partition filter, group or auto-creation flag can be written. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        },
+        {
+          "statement": "{\"read\": \"partitions\", \"topic\": \"__consumer_offsets\"}",
+          "answer": {
+            "refused": "RefusedBeforeSendError: That is one of Kafka's internal topics, which agent mode never names in a request. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        },
+        {
+          "statement": "{\"read\": \"groups\"}",
+          "answer": {
+            "refused": "RefusedBeforeSendError: That is not one of agent mode's reads: a record's key, value, headers and timestamp, consumer groups, configs and log directories are withheld, so no fetch, produce, group, config, log-directory or administrative call is sent. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        },
+        {
+          "statement": "{\"read\": \"configs\", \"topic\": \"orders\"}",
+          "answer": {
+            "refused": "RefusedBeforeSendError: That is not one of agent mode's reads: a record's key, value, headers and timestamp, consumer groups, configs and log directories are withheld, so no fetch, produce, group, config, log-directory or administrative call is sent. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        },
+        {
+          "statement": "{\"read\": \"topics\", \"allowAutoTopicCreation\": true}",
+          "answer": {
+            "refused": "RefusedBeforeSendError: The request holds a key agent mode does not read: its keys are read, topic, after and limit, so no timestamp, offset sentinel, isolation level, partition filter, group or auto-creation flag can be written. Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        },
+        {
+          "statement": "{\"read\": \"offsets\", \"topic\": \"..\"}",
+          "answer": {
+            "refused": "RefusedBeforeSendError: \"topic\" must be a Kafka topic name: 1 to 249 of the characters a-z, A-Z, 0-9, \".\", \"_\" and \"-\", other than \".\" and \"..\". Agent mode on Kafka reads metadata only, one JSON object per read: {\"read\": \"topics\"} lists topics with their partition and replica counts, {\"read\": \"brokers\"} lists broker node ids and racks, {\"read\": \"partitions\", \"topic\": \"orders\"} lists one topic's partitions with their leader and replicas, and {\"read\": \"offsets\", \"topic\": \"orders\"} answers each partition's earliest and end offsets; each also takes \"limit\" (1 to 500, default 50) and \"after\", the last topic name, node id or partition id of the answer before, to read on. Nothing was sent."
+          }
+        }
+      ],
+      "surfaces": {
+        "countObjects": {
+          "answered": {
+            "topic": {
+              "count": 3
+            },
+            "consumer_group": {
+              "unavailable": "Agent mode on Kafka reads metadata only, through the Metadata and ListOffsets requests: topic names, partitions, broker node ids and racks, the cluster id, and each partition's earliest and end offsets. Consumer groups (their ids, members, client ids and hosts, committed offsets and lag) are not read in agent mode, so none is listed or counted."
+            },
+            "broker": {
+              "count": 1
+            }
+          }
+        },
+        "listBrokers": {
+          "answered": [
+            {
+              "path": [
+                "1"
+              ],
+              "name": "1",
+              "kind": "broker"
+            }
+          ]
+        },
+        "listGroups": {
+          "refused": "QueryError: Agent mode on Kafka reads metadata only, through the Metadata and ListOffsets requests: topic names, partitions, broker node ids and racks, the cluster id, and each partition's earliest and end offsets. Consumer groups (their ids, members, client ids and hosts, committed offsets and lag) are not read in agent mode, so none is listed or counted."
+        },
+        "describeTopic": {
+          "answered": {
+            "path": [
+              "orders"
+            ],
+            "columns": [
+              {
+                "name": "partition",
+                "type": "integer",
+                "nullable": false,
+                "isPrimary": false
+              },
+              {
+                "name": "earliest_offset",
+                "type": "integer",
+                "nullable": true,
+                "isPrimary": false
+              },
+              {
+                "name": "end_offset",
+                "type": "integer",
+                "nullable": true,
+                "isPrimary": false
+              },
+              {
+                "name": "offset_span",
+                "type": "integer",
+                "nullable": true,
+                "isPrimary": false
+              }
+            ],
+            "indexes": [],
+            "foreignKeys": []
+          }
+        },
+        "topicSource": {
+          "refused": "QueryError: Agent mode on Kafka reads metadata only, through the Metadata and ListOffsets requests: topic names, partitions, broker node ids and racks, the cluster id, and each partition's earliest and end offsets. An object's source holds configs, consumer group members and committed offsets, which agent mode does not read."
+        },
+        "health": {
+          "answered": {
+            "databaseSize": "Agent mode on Kafka reads metadata only, through the Metadata and ListOffsets requests: topic names, partitions, broker node ids and racks, the cluster id, and each partition's earliest and end offsets. The size on disk is read from the brokers' log directories, which agent mode does not read, so it is not reported.",
+            "cacheHitRatio": "N/A",
+            "slowQueries": [],
+            "activeSessions": []
+          }
+        },
+        "storage": {
+          "refused": "QueryError: Agent mode on Kafka reads metadata only, through the Metadata and ListOffsets requests: topic names, partitions, broker node ids and racks, the cluster id, and each partition's earliest and end offsets. Storage is read from the brokers' log directories, which agent mode does not read, so no storage reading is taken."
+        },
+        "sessions": {
+          "refused": "QueryError: Agent mode on Kafka reads metadata only, through the Metadata and ListOffsets requests: topic names, partitions, broker node ids and racks, the cluster id, and each partition's earliest and end offsets. Kafka reports no client sessions over its protocol, so no session reading is taken; this is not a reading of none."
+        },
+        "editorRead": {
+          "refused": "RefusedBeforeSendError: Agent mode on Kafka reads metadata only, through the Metadata and ListOffsets requests: topic names, partitions, broker node ids and racks, the cluster id, and each partition's earliest and end offsets. A record's key, value, headers and timestamp are stored values, so the editor's read request, which fetches records, is refused on an agent-mode handle; agent reads go through queryReadOnly."
+        }
+      },
+      "missingTopicCreated": false,
+      "topicsAdded": [],
+      "snapshotDiff": []
+    }
+  ],
+  "raw": [
+    {
+      "as": "reader",
+      "calls": [
+        {
+          "call": "Produce",
+          "command": "kafka-console-producer.sh --topic orders",
+          "exitCode": 0,
+          "answered": [
+            "ERROR [Producer clientId=console-producer] Aborting producer batches due to fatal error (org.apache.kafka.clients.producer.internals.Sender)",
+            "org.apache.kafka.common.errors.ClusterAuthorizationException: Cluster authorization failed.",
+            "ERROR Error when sending message to topic orders with key: null, value: 11 bytes with error: (org.apache.kafka.clients.producer.internals.ErrorLoggingCallback)",
+            "org.apache.kafka.common.errors.ClusterAuthorizationException: Cluster authorization failed."
+          ],
+          "recordsReturned": 0,
+          "offsetsAnswered": 0
+        },
+        {
+          "call": "Fetch (an assigned partition, no group)",
+          "command": "kafka-console-consumer.sh --topic orders --partition 0 --offset earliest --max-messages 1 --timeout-ms 8000",
+          "exitCode": 0,
+          "answered": [
+            "WARN [Consumer clientId=console-consumer, groupId=console-consumer-43988] Not authorized to read from partition orders-0. (org.apache.kafka.clients.consumer.internals.FetchCollector)",
+            "ERROR Error processing message, terminating consumer process:  (org.apache.kafka.tools.consumer.ConsoleConsumer)",
+            "org.apache.kafka.common.errors.TopicAuthorizationException: Not authorized to access topics: [orders]"
+          ],
+          "recordsReturned": 0,
+          "offsetsAnswered": 0
+        },
+        {
+          "call": "CreateTopics",
+          "command": "kafka-topics.sh --create --topic raw-created --partitions 1",
+          "exitCode": 1,
+          "answered": [
+            "Error while executing topic command : Authorization failed.",
+            "ERROR org.apache.kafka.common.errors.TopicAuthorizationException: Authorization failed."
+          ],
+          "recordsReturned": 0,
+          "offsetsAnswered": 0
+        },
+        {
+          "call": "DeleteTopics",
+          "command": "kafka-topics.sh --delete --topic disposable",
+          "exitCode": 1,
+          "answered": [
+            "Error while executing topic command : Topic authorization failed.",
+            "ERROR org.apache.kafka.common.errors.TopicAuthorizationException: Topic authorization failed."
+          ],
+          "recordsReturned": 0,
+          "offsetsAnswered": 0
+        },
+        {
+          "call": "DeleteRecords",
+          "command": "kafka-delete-records.sh --offset-json-file /dev/stdin",
+          "exitCode": 0,
+          "answered": [
+            "partition: orders-0\terror: org.apache.kafka.common.errors.TopicAuthorizationException: Topic authorization failed.",
+            "ERROR [AdminClient clientId=adminclient-1] DeleteRecords request for topic partition orders-0 failed due to an error TOPIC_AUTHORIZATION_FAILED (org.apache.kafka.clients.admin.internals.DeleteRecordsHandler)"
+          ],
+          "recordsReturned": 0,
+          "offsetsAnswered": 0
+        },
+        {
+          "call": "OffsetCommit (a group's offsets reset)",
+          "command": "kafka-consumer-groups.sh --reset-offsets --group seeded-group --topic orders --to-latest --execute",
+          "exitCode": 0,
+          "answered": [
+            "Error: Executing consumer group command failed due to Failed altering group offsets for the following partitions: [orders-0, orders-1, orders-2]",
+            "org.apache.kafka.common.errors.GroupAuthorizationException: Failed altering group offsets for the following partitions: [orders-0, orders-1, orders-2]"
+          ],
+          "recordsReturned": 0,
+          "offsetsAnswered": 0
+        },
+        {
+          "call": "IncrementalAlterConfigs",
+          "command": "kafka-configs.sh --alter --entity-type topics --entity-name orders --add-config retention.ms=86400001",
+          "exitCode": 1,
+          "answered": [
+            "Error while executing config command with args '--bootstrap-server localhost:9095 --command-config /tmp/agent-reader.properties --alter --entity-type topics --entity-name orders --add-config retention.ms=86400001'",
+            "java.util.concurrent.ExecutionException: org.apache.kafka.common.errors.TopicAuthorizationException: Topic authorization failed.",
+            "Caused by: org.apache.kafka.common.errors.TopicAuthorizationException: Topic authorization failed."
+          ],
+          "recordsReturned": 0,
+          "offsetsAnswered": 0
+        },
+        {
+          "call": "ListOffsets by timestamp",
+          "command": "kafka-get-offsets.sh --topic orders --time 1793409162567",
+          "exitCode": 0,
+          "answered": [],
+          "recordsReturned": 0,
+          "offsetsAnswered": 0
+        },
+        {
+          "call": "ListOffsets at the max-timestamp sentinel (-3)",
+          "command": "kafka-get-offsets.sh --topic orders --time -3",
+          "exitCode": 0,
+          "answered": [],
+          "recordsReturned": 0,
+          "offsetsAnswered": 3
+        },
+        {
+          "call": "Metadata with auto-creation allowed (a producer's, to a missing topic)",
+          "command": "kafka-console-producer.sh --topic missing-producer-control --command-property max.block.ms=8000",
+          "exitCode": 0,
+          "answered": [
+            "WARN [Producer clientId=console-producer] The metadata response from the cluster reported a recoverable issue with correlation id 1 : {missing-producer-control=TOPIC_AUTHORIZATION_FAILED} (org.apache.kafka.clients.NetworkClient)",
+            "ERROR [Producer clientId=console-producer] Topic authorization failed for topics [missing-producer-control] (org.apache.kafka.clients.Metadata)",
+            "ERROR Error when sending message to topic missing-producer-control with key: null, value: 15 bytes with error: (org.apache.kafka.clients.producer.internals.ErrorLoggingCallback)",
+            "org.apache.kafka.common.errors.TopicAuthorizationException: Not authorized to access topics: [missing-producer-control]",
+            "ERROR [Producer clientId=console-producer] Error in kafka producer I/O thread while aborting transaction when during closing:  (org.apache.kafka.clients.producer.internals.Sender)",
+            "java.lang.IllegalStateException: Transactional method invoked on a non-transactional producer."
+          ],
+          "recordsReturned": 0,
+          "offsetsAnswered": 0
+        }
+      ],
+      "snapshotDiff": []
+    },
+    {
+      "as": "super",
+      "calls": [
+        {
+          "call": "Produce",
+          "command": "kafka-console-producer.sh --topic orders",
+          "exitCode": 0,
+          "answered": [],
+          "recordsReturned": 0,
+          "offsetsAnswered": 0
+        },
+        {
+          "call": "Fetch (an assigned partition, no group)",
+          "command": "kafka-console-consumer.sh --topic orders --partition 0 --offset earliest --max-messages 1 --timeout-ms 8000",
+          "exitCode": 0,
+          "answered": [],
+          "recordsReturned": 1,
+          "offsetsAnswered": 0
+        },
+        {
+          "call": "CreateTopics",
+          "command": "kafka-topics.sh --create --topic raw-created --partitions 1",
+          "exitCode": 0,
+          "answered": [],
+          "recordsReturned": 0,
+          "offsetsAnswered": 0
+        },
+        {
+          "call": "DeleteTopics",
+          "command": "kafka-topics.sh --delete --topic disposable",
+          "exitCode": 0,
+          "answered": [],
+          "recordsReturned": 0,
+          "offsetsAnswered": 0
+        },
+        {
+          "call": "DeleteRecords",
+          "command": "kafka-delete-records.sh --offset-json-file /dev/stdin",
+          "exitCode": 0,
+          "answered": [],
+          "recordsReturned": 0,
+          "offsetsAnswered": 0
+        },
+        {
+          "call": "OffsetCommit (a group's offsets reset)",
+          "command": "kafka-consumer-groups.sh --reset-offsets --group seeded-group --topic orders --to-latest --execute",
+          "exitCode": 0,
+          "answered": [],
+          "recordsReturned": 0,
+          "offsetsAnswered": 0
+        },
+        {
+          "call": "IncrementalAlterConfigs",
+          "command": "kafka-configs.sh --alter --entity-type topics --entity-name orders --add-config retention.ms=86400001",
+          "exitCode": 0,
+          "answered": [],
+          "recordsReturned": 0,
+          "offsetsAnswered": 0
+        },
+        {
+          "call": "ListOffsets by timestamp",
+          "command": "kafka-get-offsets.sh --topic orders --time 1793409202282",
+          "exitCode": 0,
+          "answered": [],
+          "recordsReturned": 0,
+          "offsetsAnswered": 1
+        },
+        {
+          "call": "ListOffsets at the max-timestamp sentinel (-3)",
+          "command": "kafka-get-offsets.sh --topic orders --time -3",
+          "exitCode": 0,
+          "answered": [],
+          "recordsReturned": 0,
+          "offsetsAnswered": 3
+        },
+        {
+          "call": "Metadata with auto-creation allowed (a producer's, to a missing topic)",
+          "command": "kafka-console-producer.sh --topic missing-producer-control --command-property max.block.ms=8000",
+          "exitCode": 0,
+          "answered": [
+            "WARN [Producer clientId=console-producer] The metadata response from the cluster reported a recoverable issue with correlation id 1 : {missing-producer-control=UNKNOWN_TOPIC_OR_PARTITION} (org.apache.kafka.clients.NetworkClient)"
+          ],
+          "recordsReturned": 0,
+          "offsetsAnswered": 0
+        }
+      ],
+      "snapshotDiff": [
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   cleanup.policy=delete sensitive=false synonyms={DEFAULT_CONFIG:log.cleanup.policy=delete} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   compression.gzip.level=-1 sensitive=false synonyms={DEFAULT_CONFIG:compression.gzip.level=-1} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   compression.lz4.level=9 sensitive=false synonyms={DEFAULT_CONFIG:compression.lz4.level=9} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   compression.type=producer sensitive=false synonyms={DEFAULT_CONFIG:compression.type=producer} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   compression.zstd.level=3 sensitive=false synonyms={DEFAULT_CONFIG:compression.zstd.level=3} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   delete.retention.ms=86400000 sensitive=false synonyms={DEFAULT_CONFIG:log.cleaner.delete.retention.ms=86400000} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   file.delete.delay.ms=60000 sensitive=false synonyms={DEFAULT_CONFIG:log.segment.delete.delay.ms=60000} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   flush.messages=9223372036854775807 sensitive=false synonyms={DEFAULT_CONFIG:log.flush.interval.messages=9223372036854775807} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   flush.ms=9223372036854775807 sensitive=false synonyms={} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   follower.replication.throttled.replicas= sensitive=false synonyms={} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   index.interval.bytes=4096 sensitive=false synonyms={DEFAULT_CONFIG:log.index.interval.bytes=4096} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   leader.replication.throttled.replicas= sensitive=false synonyms={} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   local.retention.bytes=-2 sensitive=false synonyms={DEFAULT_CONFIG:log.local.retention.bytes=-2} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   local.retention.ms=-2 sensitive=false synonyms={DEFAULT_CONFIG:log.local.retention.ms=-2} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   max.compaction.lag.ms=9223372036854775807 sensitive=false synonyms={DEFAULT_CONFIG:log.cleaner.max.compaction.lag.ms=9223372036854775807} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   max.message.bytes=1048588 sensitive=false synonyms={DEFAULT_CONFIG:message.max.bytes=1048588} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   message.timestamp.after.max.ms=3600000 sensitive=false synonyms={DEFAULT_CONFIG:log.message.timestamp.after.max.ms=3600000} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   message.timestamp.before.max.ms=9223372036854775807 sensitive=false synonyms={DEFAULT_CONFIG:log.message.timestamp.before.max.ms=9223372036854775807} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   message.timestamp.type=CreateTime sensitive=false synonyms={DEFAULT_CONFIG:log.message.timestamp.type=CreateTime} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   min.cleanable.dirty.ratio=0.5 sensitive=false synonyms={DEFAULT_CONFIG:log.cleaner.min.cleanable.ratio=0.5} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   min.compaction.lag.ms=0 sensitive=false synonyms={DEFAULT_CONFIG:log.cleaner.min.compaction.lag.ms=0} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   min.insync.replicas=1 sensitive=false synonyms={DYNAMIC_DEFAULT_BROKER_CONFIG:min.insync.replicas=1, DEFAULT_CONFIG:min.insync.replicas=1} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   preallocate=false sensitive=false synonyms={DEFAULT_CONFIG:log.preallocate=false} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   remote.log.copy.disable=false sensitive=false synonyms={} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   remote.log.delete.on.disable=false sensitive=false synonyms={} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   remote.storage.enable=false sensitive=false synonyms={} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   retention.bytes=-1 sensitive=false synonyms={DEFAULT_CONFIG:log.retention.bytes=-1} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   retention.ms=604800000 sensitive=false synonyms={} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   segment.bytes=1073741824 sensitive=false synonyms={DEFAULT_CONFIG:log.segment.bytes=1073741824} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   segment.index.bytes=10485760 sensitive=false synonyms={DEFAULT_CONFIG:log.index.size.max.bytes=10485760} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   segment.jitter.ms=0 sensitive=false synonyms={} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   segment.ms=604800000 sensitive=false synonyms={} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: |   unclean.leader.election.enable=false sensitive=false synonyms={DEFAULT_CONFIG:unclean.leader.election.enable=false} (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic disposable are: | All configs for topic disposable are: (1)",
+        "- kafka-configs.sh --describe --all --entity-type topics | All configs for topic orders are: |   retention.ms=604800000 sensitive=false synonyms={} (1)",
+        "- kafka-consumer-groups.sh --describe --all-groups --offsets |  | seeded-group    orders          0          3               3               0               -               -               - (1)",
+        "- kafka-get-offsets.sh --time -1 |  | __consumer_offsets:2:6 (1)",
+        "- kafka-get-offsets.sh --time -1 |  | disposable:0:0 (1)",
+        "- kafka-get-offsets.sh --time -1 |  | orders:0:3 (1)",
+        "- kafka-get-offsets.sh --time -2 |  | disposable:0:0 (1)",
+        "- kafka-get-offsets.sh --time -2 |  | orders:0:0 (1)",
+        "- kafka-topics.sh --list |  | disposable (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   cleanup.policy=delete sensitive=false synonyms={DEFAULT_CONFIG:log.cleanup.policy=delete} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   compression.gzip.level=-1 sensitive=false synonyms={DEFAULT_CONFIG:compression.gzip.level=-1} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   compression.lz4.level=9 sensitive=false synonyms={DEFAULT_CONFIG:compression.lz4.level=9} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   compression.type=producer sensitive=false synonyms={DEFAULT_CONFIG:compression.type=producer} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   compression.zstd.level=3 sensitive=false synonyms={DEFAULT_CONFIG:compression.zstd.level=3} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   delete.retention.ms=86400000 sensitive=false synonyms={DEFAULT_CONFIG:log.cleaner.delete.retention.ms=86400000} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   file.delete.delay.ms=60000 sensitive=false synonyms={DEFAULT_CONFIG:log.segment.delete.delay.ms=60000} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   flush.messages=9223372036854775807 sensitive=false synonyms={DEFAULT_CONFIG:log.flush.interval.messages=9223372036854775807} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   flush.ms=9223372036854775807 sensitive=false synonyms={} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   follower.replication.throttled.replicas= sensitive=false synonyms={} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   index.interval.bytes=4096 sensitive=false synonyms={DEFAULT_CONFIG:log.index.interval.bytes=4096} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   leader.replication.throttled.replicas= sensitive=false synonyms={} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   local.retention.bytes=-2 sensitive=false synonyms={DEFAULT_CONFIG:log.local.retention.bytes=-2} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   local.retention.ms=-2 sensitive=false synonyms={DEFAULT_CONFIG:log.local.retention.ms=-2} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   max.compaction.lag.ms=9223372036854775807 sensitive=false synonyms={DEFAULT_CONFIG:log.cleaner.max.compaction.lag.ms=9223372036854775807} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   max.message.bytes=1048588 sensitive=false synonyms={DEFAULT_CONFIG:message.max.bytes=1048588} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   message.timestamp.after.max.ms=3600000 sensitive=false synonyms={DEFAULT_CONFIG:log.message.timestamp.after.max.ms=3600000} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   message.timestamp.before.max.ms=9223372036854775807 sensitive=false synonyms={DEFAULT_CONFIG:log.message.timestamp.before.max.ms=9223372036854775807} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   message.timestamp.type=CreateTime sensitive=false synonyms={DEFAULT_CONFIG:log.message.timestamp.type=CreateTime} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   min.cleanable.dirty.ratio=0.5 sensitive=false synonyms={DEFAULT_CONFIG:log.cleaner.min.cleanable.ratio=0.5} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   min.compaction.lag.ms=0 sensitive=false synonyms={DEFAULT_CONFIG:log.cleaner.min.compaction.lag.ms=0} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   min.insync.replicas=1 sensitive=false synonyms={DYNAMIC_DEFAULT_BROKER_CONFIG:min.insync.replicas=1, DEFAULT_CONFIG:min.insync.replicas=1} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   preallocate=false sensitive=false synonyms={DEFAULT_CONFIG:log.preallocate=false} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   remote.log.copy.disable=false sensitive=false synonyms={} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   remote.log.delete.on.disable=false sensitive=false synonyms={} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   remote.storage.enable=false sensitive=false synonyms={} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   retention.bytes=-1 sensitive=false synonyms={DEFAULT_CONFIG:log.retention.bytes=-1} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   retention.ms=604800000 sensitive=false synonyms={} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   segment.bytes=1073741824 sensitive=false synonyms={DEFAULT_CONFIG:log.segment.bytes=1073741824} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   segment.index.bytes=10485760 sensitive=false synonyms={DEFAULT_CONFIG:log.index.size.max.bytes=10485760} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   segment.jitter.ms=0 sensitive=false synonyms={} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   segment.ms=604800000 sensitive=false synonyms={} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: |   unclean.leader.election.enable=false sensitive=false synonyms={DEFAULT_CONFIG:unclean.leader.election.enable=false} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic missing-producer-control are: | All configs for topic missing-producer-control are: (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic orders are: |   retention.ms=86400001 sensitive=false synonyms={DYNAMIC_TOPIC_CONFIG:retention.ms=86400001} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   cleanup.policy=delete sensitive=false synonyms={DEFAULT_CONFIG:log.cleanup.policy=delete} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   compression.gzip.level=-1 sensitive=false synonyms={DEFAULT_CONFIG:compression.gzip.level=-1} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   compression.lz4.level=9 sensitive=false synonyms={DEFAULT_CONFIG:compression.lz4.level=9} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   compression.type=producer sensitive=false synonyms={DEFAULT_CONFIG:compression.type=producer} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   compression.zstd.level=3 sensitive=false synonyms={DEFAULT_CONFIG:compression.zstd.level=3} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   delete.retention.ms=86400000 sensitive=false synonyms={DEFAULT_CONFIG:log.cleaner.delete.retention.ms=86400000} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   file.delete.delay.ms=60000 sensitive=false synonyms={DEFAULT_CONFIG:log.segment.delete.delay.ms=60000} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   flush.messages=9223372036854775807 sensitive=false synonyms={DEFAULT_CONFIG:log.flush.interval.messages=9223372036854775807} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   flush.ms=9223372036854775807 sensitive=false synonyms={} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   follower.replication.throttled.replicas= sensitive=false synonyms={} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   index.interval.bytes=4096 sensitive=false synonyms={DEFAULT_CONFIG:log.index.interval.bytes=4096} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   leader.replication.throttled.replicas= sensitive=false synonyms={} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   local.retention.bytes=-2 sensitive=false synonyms={DEFAULT_CONFIG:log.local.retention.bytes=-2} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   local.retention.ms=-2 sensitive=false synonyms={DEFAULT_CONFIG:log.local.retention.ms=-2} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   max.compaction.lag.ms=9223372036854775807 sensitive=false synonyms={DEFAULT_CONFIG:log.cleaner.max.compaction.lag.ms=9223372036854775807} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   max.message.bytes=1048588 sensitive=false synonyms={DEFAULT_CONFIG:message.max.bytes=1048588} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   message.timestamp.after.max.ms=3600000 sensitive=false synonyms={DEFAULT_CONFIG:log.message.timestamp.after.max.ms=3600000} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   message.timestamp.before.max.ms=9223372036854775807 sensitive=false synonyms={DEFAULT_CONFIG:log.message.timestamp.before.max.ms=9223372036854775807} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   message.timestamp.type=CreateTime sensitive=false synonyms={DEFAULT_CONFIG:log.message.timestamp.type=CreateTime} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   min.cleanable.dirty.ratio=0.5 sensitive=false synonyms={DEFAULT_CONFIG:log.cleaner.min.cleanable.ratio=0.5} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   min.compaction.lag.ms=0 sensitive=false synonyms={DEFAULT_CONFIG:log.cleaner.min.compaction.lag.ms=0} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   min.insync.replicas=1 sensitive=false synonyms={DYNAMIC_DEFAULT_BROKER_CONFIG:min.insync.replicas=1, DEFAULT_CONFIG:min.insync.replicas=1} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   preallocate=false sensitive=false synonyms={DEFAULT_CONFIG:log.preallocate=false} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   remote.log.copy.disable=false sensitive=false synonyms={} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   remote.log.delete.on.disable=false sensitive=false synonyms={} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   remote.storage.enable=false sensitive=false synonyms={} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   retention.bytes=-1 sensitive=false synonyms={DEFAULT_CONFIG:log.retention.bytes=-1} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   retention.ms=604800000 sensitive=false synonyms={} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   segment.bytes=1073741824 sensitive=false synonyms={DEFAULT_CONFIG:log.segment.bytes=1073741824} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   segment.index.bytes=10485760 sensitive=false synonyms={DEFAULT_CONFIG:log.index.size.max.bytes=10485760} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   segment.jitter.ms=0 sensitive=false synonyms={} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   segment.ms=604800000 sensitive=false synonyms={} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: |   unclean.leader.election.enable=false sensitive=false synonyms={DEFAULT_CONFIG:unclean.leader.election.enable=false} (1)",
+        "+ kafka-configs.sh --describe --all --entity-type topics | All configs for topic raw-created are: | All configs for topic raw-created are: (1)",
+        "+ kafka-consumer-groups.sh --describe --all-groups --offsets |  | seeded-group    orders          0          4               4               0               -               -               - (1)",
+        "+ kafka-get-offsets.sh --time -1 |  | __consumer_offsets:2:9 (1)",
+        "+ kafka-get-offsets.sh --time -1 |  | missing-producer-control:0:1 (1)",
+        "+ kafka-get-offsets.sh --time -1 |  | orders:0:4 (1)",
+        "+ kafka-get-offsets.sh --time -1 |  | raw-created:0:0 (1)",
+        "+ kafka-get-offsets.sh --time -2 |  | missing-producer-control:0:0 (1)",
+        "+ kafka-get-offsets.sh --time -2 |  | orders:0:1 (1)",
+        "+ kafka-get-offsets.sh --time -2 |  | raw-created:0:0 (1)",
+        "+ kafka-topics.sh --list |  | missing-producer-control (1)",
+        "+ kafka-topics.sh --list |  | raw-created (1)"
+      ]
+    }
+  ],
+  "leaks": []
+}
