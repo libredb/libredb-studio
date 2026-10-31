@@ -1,6 +1,6 @@
 /**
  * The seams of the S3 provider directory: no file imports another provider's
- * directory, an AWS SDK package, `minio`, `fast-xml-parser` or any XML package; `node:crypto` is imported only by
+ * directory but the read-only budget's shared sentences, which every agent reader words its budgets with, an AWS SDK package, `minio`, `fast-xml-parser` or any XML package; `node:crypto` is imported only by
  * sigv4.ts; `createNodeByteTransport` is named only by index.ts, as the default of `deps.createTransport`; no file
  * names `plaintextSecretRefusal`, whose sentence says a password would cross the network, which is false under SigV4;
  * and no file defines a byte-size formatter, because the shared `formatBytes` exists.
@@ -18,6 +18,8 @@ function posixPath(file: string): string {
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const S3_DIR = join(ROOT, "src/lib/db/providers/objectstore/s3");
 const PROVIDERS_DIR = posixPath(join(ROOT, "src/lib/db/providers"));
+/** The read-only budget's shared sentences, which every provider's agent reader words its budgets with. */
+const READ_ONLY_BUDGET = posixPath(join(ROOT, "src/lib/db/providers/sql/read-only-budget"));
 const S3_DIR_POSIX = posixPath(S3_DIR);
 
 const SPECIFIER = /\bfrom\s+["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)|\bimport\s+["']([^"']+)["']/g;
@@ -47,6 +49,7 @@ function reachesAnotherProvider(file: string, specifier: string): boolean {
   else if (specifier.startsWith(".")) target = resolve(dirname(join(S3_DIR, file)), specifier);
   else return false;
   const posix = posixPath(target);
+  if (posix === READ_ONLY_BUDGET) return false;
   return posix.startsWith(`${PROVIDERS_DIR}/`) && posix !== S3_DIR_POSIX && !posix.startsWith(`${S3_DIR_POSIX}/`);
 }
 
@@ -138,6 +141,7 @@ describe("the S3 provider directory's seams", () => {
       'import { objectPath } from "./encoding";',
       'import { s3Refusal } from "./console/guard";',
       'import { formatBytes } from "@/lib/db/utils/pool-manager";',
+      'import { TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";',
       'import { createHash } from "node:crypto";',
     ].join("\n");
     expect(findings("sigv4.ts", source)).toEqual([]);

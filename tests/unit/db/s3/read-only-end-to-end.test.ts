@@ -1,8 +1,9 @@
 /**
  * Read-only, whatever the flag says. Through `createDatabaseProvider`,
- * with the connection's read-only flag off and on and with an execution profile's, every surface of the provider and
- * every console read reaches the server with GET or HEAD only, and every console write is refused with the parser's
- * sentence before any request. The recorder is a loopback listener answering as an S3 server, because a provider the
+ * with the connection's read-only flag off and on, every surface of the provider and every console read reaches the
+ * server with GET or HEAD only, and every console write is refused with the parser's sentence before any request. On a
+ * handle an agent profile opened, every agent read reaches it with GET or HEAD only, and the console, the Keys panel
+ * and every object source are refused before any request. The recorder is a loopback listener answering as an S3 server, because a provider the
  * factory builds takes no test dependency.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
@@ -35,7 +36,13 @@ beforeAll(async () => {
         return response.end();
       }
       if (query.includes("list-type=2"))
-        return xml(objectsXml({ keys: [{ key: "a.csv", size: CSV.length }], prefixes: ["dir/"] }));
+        // A folder only on a level listing, as a server answers one: a whole-bucket listing sends no delimiter.
+        return xml(
+          objectsXml({
+            keys: [{ key: "a.csv", size: CSV.length }],
+            ...(query.includes("delimiter=") ? { prefixes: ["dir/"] } : {}),
+          }),
+        );
       if (query === "location=") return xml("<LocationConstraint/>");
       if (query === "versioning=") return xml("<VersioningConfiguration/>");
       if (query.includes("versions="))
@@ -102,7 +109,6 @@ const WRITES = [
 describe.each([
   ["the read-only flag off", false, false],
   ["the connection's read-only flag on", true, false],
-  ["an execution profile's read-only flag on", false, true],
 ])("with %s", (_name, readOnly, executionReadOnly) => {
   test("every surface and every console read sends GET or HEAD only; every write is refused before any request", async () => {
     methods.length = 0;
@@ -157,5 +163,62 @@ describe.each([
     await provider.disconnect();
     expect(methods.length).toBeGreaterThan(0);
     expect(new Set(methods)).toEqual(new Set(["GET", "HEAD"]));
+  });
+});
+
+describe.each([
+  ["the agent read-only profile", { readOnly: true, sendsStatements: true }],
+  ["the agent operations profile", { readOnly: true, sendsStatements: false }],
+])("on a handle opened under %s", (name, execution) => {
+  test("every agent read and surface sends GET or HEAD only, and the editor's reads and writes send nothing", async () => {
+    methods.length = 0;
+    const provider: DatabaseProvider = await createDatabaseProvider(
+      s3Connection({ host: "127.0.0.1", port }),
+      {},
+      execution,
+    );
+    await provider.connect();
+    await provider.listObjects([], "bucket");
+    await provider.countObjects([]);
+    await provider.getHealth();
+    if (name === "the agent read-only profile") {
+      const budget = { statementTimeoutMs: 5_000, maxResultRows: 100, maxResultBytes: 1_000_000 };
+      for (const text of [
+        "aws s3api list-buckets",
+        "aws s3api head-bucket --bucket sales",
+        "aws s3api head-object --bucket sales --key a.csv",
+        "aws s3api get-bucket-location --bucket sales",
+        "aws s3api get-bucket-versioning --bucket sales",
+        "aws s3 ls s3://sales --recursive --summarize",
+      ]) {
+        // oxlint-disable-next-line no-await-in-loop -- one read at a time, so every request is one read's.
+        const result = await provider.queryReadOnly?.(text, budget);
+        expect(JSON.stringify(result)).not.toContain("a.csv");
+      }
+    }
+    const sent = methods.length;
+    for (const text of [...READS, ...WRITES]) {
+      // oxlint-disable-next-line no-await-in-loop -- the request count is read after every command alone.
+      const error = await provider.query(text).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(QueryError);
+    }
+    // oxlint-disable-next-line no-await-in-loop -- each refusal is awaited in turn.
+    const surfaces: (() => Promise<unknown> | undefined)[] = [
+      () => provider.scanKeysPage?.({ cursor: "0", count: 10, pattern: "", level: true }),
+      () => provider.readObjectSource?.(["sales/a.csv"], "object"),
+      () => provider.readObjectSource?.(["sales"], "bucket"),
+      () => provider.getOverview(),
+    ];
+    for (const work of surfaces) {
+      // oxlint-disable-next-line no-await-in-loop -- the request count is read after every surface alone.
+      const error = await Promise.resolve()
+        .then(work)
+        .catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(QueryError);
+    }
+    expect(methods.length).toBe(sent);
+    await provider.disconnect();
+    expect(methods.length).toBeGreaterThan(0);
+    expect(methods.filter((method) => method !== "GET" && method !== "HEAD")).toEqual([]);
   });
 });
