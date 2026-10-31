@@ -7,7 +7,8 @@
  * `run-database.ts`, the answer's shape in `influxql-results.ts`, the catalog reads in `influxql-objects.ts`, the
  * monitoring mappings in `monitoring.ts`, the labels in `labels.ts` and every sentence of a failure in `errors.ts`.
  * What stays here is the lifecycle, the declarations, the connect sequence of spec 6.2, and each call's permit,
- * deadline and error context.
+ * deadline and error context. The agent read-only profile's rules live in `influxql-agent-statement.ts` (what an agent
+ * statement may be) and `influxql-agent-read.ts` (the proof of the principal and the strict shaping of an answer).
  *
  * On 1.x and 2.x the read policy is the only boundary before `DROP DATABASE`, so it runs on every text this provider
  * sends, its own catalog texts included (E6), and what it refuses sends nothing (E2). The generation `/ping` reports
@@ -20,7 +21,7 @@
  * server's work (spec 5.6).
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { DatabaseConfigError, ExecutionProfileError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
 import {
   assertContainerPathShape,
@@ -46,9 +47,12 @@ import type {
   PerformanceMetrics,
   PreparedQuery,
   ProviderCapabilities,
+  ProviderExecutionContext,
   ProviderLabels,
   ProviderOptions,
   QueryResult,
+  ReadOnlyStatementBudget,
+  ReadOnlyStatementMode,
   SlowQueryStats,
   StorageStats,
   TableStats,
@@ -78,6 +82,14 @@ import {
   INFLUXDB_DEFAULT_PORT,
 } from "./connection-options";
 import { InfluxAnswerError, InfluxAnswerShapeError, type InfluxErrorContext, toInfluxError } from "./errors";
+import {
+  assertInfluxqlAgentBudget,
+  influxqlAgentReadFailure,
+  influxqlAgentResponseCap,
+  proveInfluxqlAgentPrincipal,
+  shapeInfluxqlAgentAnswer,
+} from "./influxql-agent-read";
+import { readInfluxqlAgentStatement } from "./influxql-agent-statement";
 import { lexInfluxql } from "./influxql-lexer";
 import {
   countInfluxqlMeasurements,
@@ -194,13 +206,27 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
   private readonly limiter: ProviderLimiter = influxdbLimiter();
   private readonly runs: RunRegistry = createRunRegistry();
 
-  /** Validates nothing and opens nothing: the connection's rules run in `connect()`, before the factory. */
+  /**
+   * Whether this handle was opened for the agent read-only profile by an acquisition that sends statements
+   * (`sendsStatements`). Only then does `connect()` prove the principal reads only, and only then does `queryReadOnly`
+   * answer. The operations profile's acquisitions send no statement, so they open unproved, as an editor connection
+   * does, and plan mode keeps grounding on a connection whose principal can write.
+   */
+  private readonly readOnlyProfile: boolean;
+
+  /**
+   * Validates nothing and opens nothing: the connection's rules run in `connect()`, before the factory. `createClient`
+   * is the test seam of the client the open builds: the factory passes three arguments, so a real connection always
+   * builds its own.
+   */
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
+    execution: ProviderExecutionContext = {},
     private readonly createClient: InfluxClientFactory = createInfluxClient,
   ) {
     super(config, options);
+    this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
   }
 
   // ==========================================================================
@@ -287,6 +313,7 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
         { send: (request, read) => this.send(opened, request, read), signal: () => signal, generation },
         options.database,
       );
+      if (this.readOnlyProfile) await this.proveAgentPrincipal(opened, options, generation, signal);
       const previous = this.session;
       this.session = {
         client: opened,
@@ -300,7 +327,7 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
     } catch (error) {
       client?.close();
       const failure =
-        options === undefined
+        options === undefined || error instanceof ExecutionProfileError
           ? (error as Error)
           : this.failure(error, this.errorContext(options, "connect", generation));
       this.setError(failure);
@@ -323,11 +350,12 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
     return this.session!;
   }
 
-  /** One request under its own limiter permit, released when it settles. */
+  /** One request under its own limiter permit, released when it settles; `maxResponseBytes` lowers its response cap. */
   private async send(
     client: InfluxClient<InfluxqlRouteId>,
     request: InfluxRequest<InfluxqlRouteId>,
     signal: AbortSignal,
+    maxResponseBytes?: number,
   ): Promise<InfluxAnswer> {
     let ticket: Awaited<ReturnType<ProviderLimiter["acquire"]>>;
     try {
@@ -336,7 +364,7 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
       throw waitFailure(error);
     }
     try {
-      return await client.send(request, signal);
+      return await client.send(request, signal, maxResponseBytes);
     } finally {
       ticket.release();
     }
@@ -433,6 +461,97 @@ export class InfluxDBProvider extends BaseDatabaseProvider {
     } finally {
       handle.end();
     }
+  }
+
+  // ==========================================================================
+  // Agent read-only profile
+  // ==========================================================================
+
+  /**
+   * The proof that this connection's principal reads only (`influxql-agent-read.ts`), on the client the statements go
+   * out on and under the deadline of the call it precedes. Each proof's write probe names a measurement of its own.
+   */
+  private proveAgentPrincipal(
+    client: InfluxClient<InfluxqlRouteId>,
+    options: InfluxConnectionOptions,
+    generation: InfluxGeneration,
+    signal: AbortSignal,
+  ): Promise<void> {
+    return proveInfluxqlAgentPrincipal({
+      send: (request, read) => this.send(client, request, read),
+      signal,
+      generation,
+      database: options.database,
+      hasUser: Object.hasOwn(options.headers, "authorization"),
+      nonce: Array.from(crypto.getRandomValues(new Uint8Array(8)), (byte) => byte.toString(16).padStart(2, "0")).join(
+        "",
+      ),
+    });
+  }
+
+  /**
+   * One agent statement. Only on a handle opened under the agent read-only profile; the statement is read by
+   * `readInfluxqlAgentStatement` and refused before anything is sent when it is not an agent read. Then, under the
+   * statement's own deadline, the principal is proved again, with no verdict kept from the open or the statement
+   * before, and the statement is sent with the connection's database as `db` and nothing else the caller chose. A
+   * result past the row, cell or byte budget is refused, never cut; past the deadline the request is dropped, which
+   * ends the server's work.
+   */
+  public async queryReadOnly(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    const session = this.requireSession();
+    if (!this.readOnlyProfile) {
+      throw new RefusedBeforeSendError(
+        "Read-only execution requires a provider opened under the agent read-only profile",
+        this.type,
+        statement,
+      );
+    }
+    assertInfluxqlAgentBudget(budget);
+    if (mode !== "execute") {
+      throw new RefusedBeforeSendError("InfluxDB composes no estimating plan for the agent", this.type, statement);
+    }
+    const reading = readInfluxqlAgentStatement(statement);
+    if (!reading.ok) throw new RefusedBeforeSendError(reading.message, this.type, statement);
+    const { client, options, version } = session;
+    const context = this.errorContext(
+      options,
+      "query",
+      version.generation,
+      options.database,
+      budget.statementTimeoutMs,
+    );
+    return this.trackQuery(async () => {
+      const signal = AbortSignal.timeout(budget.statementTimeoutMs);
+      const { result: answer, executionTime } = await this.measureExecution(async () => {
+        try {
+          await this.proveAgentPrincipal(client, options, version.generation, signal);
+          // A SELECT is read chunked; a SHOW or an EXPLAIN whole (R53). The route table fixes every other key.
+          const route: InfluxqlRouteId = reading.statement === "SELECT" ? "query" : "query-unchunked";
+          const values = { db: options.database as string, q: statement };
+          return await this.send(client, { route, values }, signal, influxqlAgentResponseCap(budget));
+        } catch (error) {
+          if (error instanceof ExecutionProfileError) throw error;
+          throw influxqlAgentReadFailure(error, budget, statement) ?? this.failure(error, context);
+        }
+      });
+      try {
+        if (answer.status !== 200) throw new InfluxAnswerError(answer, INFLUXQL_ROUTES.query.path);
+        const shaped = shapeInfluxqlAgentAnswer(answer.text, budget, options.secretForms, statement);
+        return {
+          fields: shaped.fields,
+          rows: shaped.rows,
+          rowCount: shaped.rows.length,
+          executionTime,
+          ...(shaped.warnings.length === 0 ? {} : { warnings: shaped.warnings }),
+        };
+      } catch (error) {
+        throw error instanceof QueryError ? error : this.failure(error, context);
+      }
+    });
   }
 
   /** Aborts a running or waiting run by its id and answers true; an unknown id answers false (spec 5.6). */

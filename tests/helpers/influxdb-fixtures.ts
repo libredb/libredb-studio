@@ -22,6 +22,8 @@ export interface InfluxCapture {
   readonly image: string;
   /** ISO date. */
   readonly capturedAt: string;
+  /** An agent boundary capture's principal and its rights, never its credential. */
+  readonly principal?: string;
   readonly request: {
     readonly method: "GET" | "POST";
     readonly path: string;

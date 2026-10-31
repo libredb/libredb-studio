@@ -205,6 +205,28 @@ describe("filterByRoles: engine-specific fields", () => {
     expect(none.serverCertificateThumbprint).toBeUndefined();
   });
 
+  it("carries a NETCONF connection's host key pin through", () => {
+    // Dropped here, the provider would refuse the seed for an empty pin, so no run could open it.
+    const pin = "SHA256:ux1QoYIetXzfp0HM4zDEdPuDHyyUC3vkI5cuC3QcRMU";
+    const [managed] = filterByRoles([{ ...baseConn, type: "netconf", port: 830, hostKeyFingerprint: pin }], ["user"]);
+    const [none] = filterByRoles([{ ...baseConn, type: "netconf", port: 830 }], ["user"]);
+
+    expect(managed.hostKeyFingerprint).toBe(pin);
+    expect(none.hostKeyFingerprint).toBeUndefined();
+  });
+
+  it("carries a Modbus connection's register map through", () => {
+    // Dropped here, a seeded connection would have no map, so every named-point read would be refused for it.
+    const map = JSON.stringify({
+      points: [{ name: "tank_level", unit: 1, table: "holding", address: 0, type: "uint16" }],
+    });
+    const [managed] = filterByRoles([{ ...baseConn, type: "modbus", port: 502, registerMap: map }], ["user"]);
+    const [none] = filterByRoles([{ ...baseConn, type: "modbus", port: 502 }], ["user"]);
+
+    expect(managed.registerMap).toBe(map);
+    expect(none.registerMap).toBeUndefined();
+  });
+
   it("carries a Db2 connection's consent to a cleartext password through (#786)", () => {
     // Dropped here, the provider would refuse a seed whose file did set the consent.
     const [managed] = filterByRoles([{ ...baseConn, type: "db2", port: 50000, allowInsecureAuth: true }], ["user"]);

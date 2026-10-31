@@ -1,0 +1,551 @@
+{
+  "$captured": {
+    "server": "authorization on",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "rpc": "ListPrivilegeGroups",
+    "principal": "clusterro",
+    "rights": "role agent_clusterro_role: the ClusterReadOnly group on */*",
+    "surface": "ListPrivilegeGroups",
+    "request": {}
+  },
+  "outcome": "pass",
+  "payload": {
+    "privilege_groups": [
+      {
+        "privileges": [
+          {
+            "name": "Query"
+          },
+          {
+            "name": "DescribeCollection"
+          },
+          {
+            "name": "GetLoadState"
+          }
+        ],
+        "group_name": "agent_read_group"
+      },
+      {
+        "privileges": [
+          {
+            "name": "ListDatabases"
+          },
+          {
+            "name": "SelectOwnership"
+          },
+          {
+            "name": "SelectUser"
+          },
+          {
+            "name": "DescribeResourceGroup"
+          },
+          {
+            "name": "ListResourceGroups"
+          },
+          {
+            "name": "ListPrivilegeGroups"
+          },
+          {
+            "name": "GetReplicateConfiguration"
+          },
+          {
+            "name": "ListFileResources"
+          }
+        ],
+        "group_name": "ClusterReadOnly"
+      },
+      {
+        "privileges": [
+          {
+            "name": "ListDatabases"
+          },
+          {
+            "name": "SelectOwnership"
+          },
+          {
+            "name": "SelectUser"
+          },
+          {
+            "name": "DescribeResourceGroup"
+          },
+          {
+            "name": "ListResourceGroups"
+          },
+          {
+            "name": "ListPrivilegeGroups"
+          },
+          {
+            "name": "GetReplicateConfiguration"
+          },
+          {
+            "name": "ListFileResources"
+          },
+          {
+            "name": "FlushAll"
+          },
+          {
+            "name": "TransferNode"
+          },
+          {
+            "name": "TransferReplica"
+          },
+          {
+            "name": "UpdateResourceGroups"
+          },
+          {
+            "name": "AddFileResource"
+          },
+          {
+            "name": "RemoveFileResource"
+          },
+          {
+            "name": "PinSnapshotData"
+          },
+          {
+            "name": "UnpinSnapshotData"
+          }
+        ],
+        "group_name": "ClusterReadWrite"
+      },
+      {
+        "privileges": [
+          {
+            "name": "ListDatabases"
+          },
+          {
+            "name": "SelectOwnership"
+          },
+          {
+            "name": "SelectUser"
+          },
+          {
+            "name": "DescribeResourceGroup"
+          },
+          {
+            "name": "ListResourceGroups"
+          },
+          {
+            "name": "ListPrivilegeGroups"
+          },
+          {
+            "name": "GetReplicateConfiguration"
+          },
+          {
+            "name": "ListFileResources"
+          },
+          {
+            "name": "FlushAll"
+          },
+          {
+            "name": "TransferNode"
+          },
+          {
+            "name": "TransferReplica"
+          },
+          {
+            "name": "UpdateResourceGroups"
+          },
+          {
+            "name": "AddFileResource"
+          },
+          {
+            "name": "RemoveFileResource"
+          },
+          {
+            "name": "PinSnapshotData"
+          },
+          {
+            "name": "UnpinSnapshotData"
+          },
+          {
+            "name": "BackupRBAC"
+          },
+          {
+            "name": "RestoreRBAC"
+          },
+          {
+            "name": "CreateDatabase"
+          },
+          {
+            "name": "DropDatabase"
+          },
+          {
+            "name": "CreateOwnership"
+          },
+          {
+            "name": "DropOwnership"
+          },
+          {
+            "name": "ManageOwnership"
+          },
+          {
+            "name": "CreateResourceGroup"
+          },
+          {
+            "name": "DropResourceGroup"
+          },
+          {
+            "name": "UpdateUser"
+          },
+          {
+            "name": "CreatePrivilegeGroup"
+          },
+          {
+            "name": "DropPrivilegeGroup"
+          },
+          {
+            "name": "OperatePrivilegeGroup"
+          },
+          {
+            "name": "UpdateReplicateConfiguration"
+          },
+          {
+            "name": "Expr"
+          },
+          {
+            "name": "RestoreExternalSnapshot"
+          },
+          {
+            "name": "ExportSnapshot"
+          }
+        ],
+        "group_name": "ClusterAdmin"
+      },
+      {
+        "privileges": [
+          {
+            "name": "ShowCollections"
+          },
+          {
+            "name": "DescribeDatabase"
+          }
+        ],
+        "group_name": "DatabaseReadOnly"
+      },
+      {
+        "privileges": [
+          {
+            "name": "ShowCollections"
+          },
+          {
+            "name": "DescribeDatabase"
+          },
+          {
+            "name": "AlterDatabase"
+          }
+        ],
+        "group_name": "DatabaseReadWrite"
+      },
+      {
+        "privileges": [
+          {
+            "name": "ShowCollections"
+          },
+          {
+            "name": "DescribeDatabase"
+          },
+          {
+            "name": "AlterDatabase"
+          },
+          {
+            "name": "CreateCollection"
+          },
+          {
+            "name": "DropCollection"
+          },
+          {
+            "name": "RenameCollection"
+          }
+        ],
+        "group_name": "DatabaseAdmin"
+      },
+      {
+        "privileges": [
+          {
+            "name": "Query"
+          },
+          {
+            "name": "Search"
+          },
+          {
+            "name": "IndexDetail"
+          },
+          {
+            "name": "GetFlushState"
+          },
+          {
+            "name": "GetLoadState"
+          },
+          {
+            "name": "GetLoadingProgress"
+          },
+          {
+            "name": "HasPartition"
+          },
+          {
+            "name": "ShowPartitions"
+          },
+          {
+            "name": "DescribeCollection"
+          },
+          {
+            "name": "DescribeAlias"
+          },
+          {
+            "name": "GetStatistics"
+          },
+          {
+            "name": "ListAliases"
+          },
+          {
+            "name": "GetImportProgress"
+          },
+          {
+            "name": "ListImport"
+          },
+          {
+            "name": "DescribeSnapshot"
+          },
+          {
+            "name": "ListSnapshots"
+          }
+        ],
+        "group_name": "CollectionReadOnly"
+      },
+      {
+        "privileges": [
+          {
+            "name": "Query"
+          },
+          {
+            "name": "Search"
+          },
+          {
+            "name": "IndexDetail"
+          },
+          {
+            "name": "GetFlushState"
+          },
+          {
+            "name": "GetLoadState"
+          },
+          {
+            "name": "GetLoadingProgress"
+          },
+          {
+            "name": "HasPartition"
+          },
+          {
+            "name": "ShowPartitions"
+          },
+          {
+            "name": "DescribeCollection"
+          },
+          {
+            "name": "DescribeAlias"
+          },
+          {
+            "name": "GetStatistics"
+          },
+          {
+            "name": "ListAliases"
+          },
+          {
+            "name": "GetImportProgress"
+          },
+          {
+            "name": "ListImport"
+          },
+          {
+            "name": "DescribeSnapshot"
+          },
+          {
+            "name": "ListSnapshots"
+          },
+          {
+            "name": "Load"
+          },
+          {
+            "name": "Release"
+          },
+          {
+            "name": "Insert"
+          },
+          {
+            "name": "Delete"
+          },
+          {
+            "name": "Upsert"
+          },
+          {
+            "name": "Import"
+          },
+          {
+            "name": "Flush"
+          },
+          {
+            "name": "Compaction"
+          },
+          {
+            "name": "LoadBalance"
+          },
+          {
+            "name": "CreateIndex"
+          },
+          {
+            "name": "DropIndex"
+          },
+          {
+            "name": "CreatePartition"
+          },
+          {
+            "name": "DropPartition"
+          },
+          {
+            "name": "AddCollectionField"
+          },
+          {
+            "name": "AlterCollectionSchema"
+          },
+          {
+            "name": "RefreshExternalCollection"
+          },
+          {
+            "name": "CreateSnapshot"
+          },
+          {
+            "name": "DropSnapshot"
+          }
+        ],
+        "group_name": "CollectionReadWrite"
+      },
+      {
+        "privileges": [
+          {
+            "name": "Query"
+          },
+          {
+            "name": "Search"
+          },
+          {
+            "name": "IndexDetail"
+          },
+          {
+            "name": "GetFlushState"
+          },
+          {
+            "name": "GetLoadState"
+          },
+          {
+            "name": "GetLoadingProgress"
+          },
+          {
+            "name": "HasPartition"
+          },
+          {
+            "name": "ShowPartitions"
+          },
+          {
+            "name": "DescribeCollection"
+          },
+          {
+            "name": "DescribeAlias"
+          },
+          {
+            "name": "GetStatistics"
+          },
+          {
+            "name": "ListAliases"
+          },
+          {
+            "name": "GetImportProgress"
+          },
+          {
+            "name": "ListImport"
+          },
+          {
+            "name": "DescribeSnapshot"
+          },
+          {
+            "name": "ListSnapshots"
+          },
+          {
+            "name": "Load"
+          },
+          {
+            "name": "Release"
+          },
+          {
+            "name": "Insert"
+          },
+          {
+            "name": "Delete"
+          },
+          {
+            "name": "Upsert"
+          },
+          {
+            "name": "Import"
+          },
+          {
+            "name": "Flush"
+          },
+          {
+            "name": "Compaction"
+          },
+          {
+            "name": "LoadBalance"
+          },
+          {
+            "name": "CreateIndex"
+          },
+          {
+            "name": "DropIndex"
+          },
+          {
+            "name": "CreatePartition"
+          },
+          {
+            "name": "DropPartition"
+          },
+          {
+            "name": "AddCollectionField"
+          },
+          {
+            "name": "AlterCollectionSchema"
+          },
+          {
+            "name": "RefreshExternalCollection"
+          },
+          {
+            "name": "CreateSnapshot"
+          },
+          {
+            "name": "DropSnapshot"
+          },
+          {
+            "name": "CreateAlias"
+          },
+          {
+            "name": "DropAlias"
+          },
+          {
+            "name": "RestoreSnapshot"
+          }
+        ],
+        "group_name": "CollectionAdmin"
+      }
+    ],
+    "status": {
+      "extra_info": {},
+      "error_code": "Success",
+      "reason": "",
+      "code": 0,
+      "retriable": false,
+      "detail": ""
+    }
+  }
+}

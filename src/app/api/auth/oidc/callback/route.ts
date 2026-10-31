@@ -2,7 +2,9 @@ import { getBasePath, withBasePath } from "@/lib/config/base-path";
 import { safeReturnPath } from "@/lib/api/session-ended";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { login, shouldMarkCookieSecure } from "@/lib/auth";
+import { login } from "@/lib/auth";
+import { OIDC_STATE_COOKIE, cookieDeletion } from "@/lib/auth-cookies";
+import { studioCookie } from "@/lib/studio-cookie";
 import { sessionTtlSeconds } from "@/lib/config/auth-env";
 import {
   OIDC_LOGOUT_HINT_COOKIE,
@@ -69,7 +71,8 @@ export async function GET(request: Request) {
 
   try {
     const cookieStore = await cookies();
-    const stateCookie = cookieStore.get("oidc-state")?.value;
+    const stateScope = await studioCookie(OIDC_STATE_COOKIE, getBasePath() || "/");
+    const stateCookie = cookieStore.get(stateScope.name)?.value;
 
     if (!stateCookie) {
       auditFailure("oidc_state_missing", ip);
@@ -85,7 +88,7 @@ export async function GET(request: Request) {
         route: ROUTE,
         error: decryptError instanceof Error ? decryptError.message : "Unknown",
       });
-      cookieStore.delete({ name: "oidc-state", path: getBasePath() || "/" });
+      cookieStore.delete(cookieDeletion(stateScope));
       auditFailure("oidc_state_invalid", ip);
       return NextResponse.redirect(`${origin}${withBasePath("/login")}?error=oidc_state_invalid`);
     }
@@ -115,7 +118,7 @@ export async function GET(request: Request) {
     if (governanceEnabled() && !governedIdentityAccepted(claims.sub, claims.iss)) {
       logger.warn(GOVERNED_IDENTITY_REFUSED_MESSAGE, { route: "oidc/callback" });
       // The exchange consumed the state, so its cookie is deleted as after a sign-in.
-      cookieStore.delete({ name: "oidc-state", path: getBasePath() || "/" });
+      cookieStore.delete(cookieDeletion(stateScope));
       auditFailure("oidc_config", ip);
       return NextResponse.redirect(`${origin}${withBasePath("/login")}?error=oidc_config`);
     }
@@ -135,7 +138,7 @@ export async function GET(request: Request) {
         route: "oidc/callback",
         problem: groupsReading.problem,
       });
-      cookieStore.delete({ name: "oidc-state", path: getBasePath() || "/" });
+      cookieStore.delete(cookieDeletion(stateScope));
       auditFailure("oidc_groups_refused", ip, String(identity));
       return NextResponse.redirect(`${origin}${withBasePath("/login")}?error=oidc_groups_refused`);
     }
@@ -156,7 +159,7 @@ export async function GET(request: Request) {
       // subject cannot be reviewed or the sign-in review does not allow it, so it gets no session. The
       // exchange consumed the state, so its cookie is deleted as after a sign-in. The provider
       // authenticated the account, so the record names it the way login_success does.
-      cookieStore.delete({ name: "oidc-state", path: getBasePath() || "/" });
+      cookieStore.delete(cookieDeletion(stateScope));
       auditFailure("oidc_no_role", ip, String(identity));
       return NextResponse.redirect(`${origin}${withBasePath("/login")}?error=oidc_no_role`);
     }
@@ -168,7 +171,7 @@ export async function GET(request: Request) {
       : { roles: [], overflow: false };
 
     if (overflow) {
-      cookieStore.delete({ name: "oidc-state", path: getBasePath() || "/" });
+      cookieStore.delete(cookieDeletion(stateScope));
       auditFailure("oidc_role_overflow", ip, String(identity));
       return NextResponse.redirect(`${origin}${withBasePath("/login")}?error=oidc_role_overflow`);
     }
@@ -178,7 +181,7 @@ export async function GET(request: Request) {
     // and OIDC_AUTO_REDIRECT would answer each refusal with the next silent sign-in. None is minted, and the login page,
     // which always renders with an error, says an administrator ended the account's sessions.
     if (governanceEnabled() && governedSignInRevoked(claims.sub)) {
-      cookieStore.delete({ name: "oidc-state", path: getBasePath() || "/" });
+      cookieStore.delete(cookieDeletion(stateScope));
       auditFailure("oidc_session_revoked", ip, String(identity));
       return NextResponse.redirect(`${origin}${withBasePath("/login")}?error=oidc_session_revoked`);
     }
@@ -198,22 +201,24 @@ export async function GET(request: Request) {
     );
 
     // Clean up state cookie
-    cookieStore.delete({ name: "oidc-state", path: getBasePath() || "/" });
+    cookieStore.delete(cookieDeletion(stateScope));
 
-    // OIDC_LOGOUT_HINT: keep the raw ID token where only the logout route receives it, for the provider's
-    // end-session request. A token too large for a cookie is not kept, and one kept by an earlier sign-in is removed so
-    // logout never sends a hint for another session.
+    // OIDC_LOGOUT_HINT: keep the raw ID token for the provider's end-session request, where only the logout route
+    // receives it while the auth cookies are not Secure (with Secure on, its __Host- name puts it at Path=/). A token
+    // too large for a cookie is not kept, and one kept by an earlier sign-in is removed so logout never sends a hint for
+    // another session.
     if (readOidcLogoutHint()) {
-      if (fitsLogoutHintCookie(idToken)) {
-        cookieStore.set(OIDC_LOGOUT_HINT_COOKIE, idToken, {
+      const hint = await studioCookie(OIDC_LOGOUT_HINT_COOKIE, oidcLogoutHintCookiePath());
+      if (fitsLogoutHintCookie(idToken, hint.name)) {
+        cookieStore.set(hint.name, idToken, {
           httpOnly: true,
-          secure: await shouldMarkCookieSecure(),
+          secure: hint.secure,
           sameSite: "lax",
           maxAge: sessionTtlSeconds(),
-          path: oidcLogoutHintCookiePath(),
+          path: hint.path,
         });
       } else {
-        cookieStore.delete({ name: OIDC_LOGOUT_HINT_COOKIE, path: oidcLogoutHintCookiePath() });
+        cookieStore.delete(cookieDeletion(hint));
       }
     }
 

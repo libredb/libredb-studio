@@ -5,6 +5,51 @@ import { languageClientPack } from "@/lib/agent/languages/client";
 import { engineClientPack, enginesSupporting } from "@/lib/agent/languages/engines/client";
 import { agentEnginePack } from "@/lib/agent/languages/engines/index";
 import { engineServerDialect, engineServerOverlay } from "@/lib/agent/languages/engines/server";
+import * as INFLUXQL_CLIENT_OVERLAYS from "@/lib/agent/languages/influxql/engines/client";
+import * as INFLUXDB from "@/lib/agent/languages/influxql/engines/influxdb";
+import { INFLUXQL_PACK } from "@/lib/agent/languages/influxql/index";
+import * as WEAVIATEAPI_CLIENT_OVERLAYS from "@/lib/agent/languages/weaviateapi/engines/client";
+import * as WEAVIATE from "@/lib/agent/languages/weaviateapi/engines/weaviate";
+import { WEAVIATEAPI_PACK } from "@/lib/agent/languages/weaviateapi/index";
+import * as QDRANTAPI_CLIENT_OVERLAYS from "@/lib/agent/languages/qdrantapi/engines/client";
+import * as QDRANT from "@/lib/agent/languages/qdrantapi/engines/qdrant";
+import { QDRANTAPI_PACK } from "@/lib/agent/languages/qdrantapi/index";
+import * as CYPHER_CLIENT_OVERLAYS from "@/lib/agent/languages/cypher/engines/client";
+import * as NEO4J from "@/lib/agent/languages/cypher/engines/neo4j";
+import { CYPHER_PACK } from "@/lib/agent/languages/cypher/index";
+import * as MILVUSRPC_CLIENT_OVERLAYS from "@/lib/agent/languages/milvusrpc/engines/client";
+import * as MILVUS from "@/lib/agent/languages/milvusrpc/engines/milvus";
+import { MILVUSRPC_PACK } from "@/lib/agent/languages/milvusrpc/index";
+import * as REDISCLI_CLIENT_OVERLAYS from "@/lib/agent/languages/rediscli/engines/client";
+import * as REDIS from "@/lib/agent/languages/rediscli/engines/redis";
+import { REDISCLI_PACK } from "@/lib/agent/languages/rediscli/index";
+import * as ETCDCTL_CLIENT_OVERLAYS from "@/lib/agent/languages/etcdctl/engines/client";
+import * as ETCD from "@/lib/agent/languages/etcdctl/engines/etcd";
+import { ETCDCTL_PACK } from "@/lib/agent/languages/etcdctl/index";
+import * as OXIACLI_CLIENT_OVERLAYS from "@/lib/agent/languages/oxiacli/engines/client";
+import * as OXIA from "@/lib/agent/languages/oxiacli/engines/oxia";
+import { OXIACLI_PACK } from "@/lib/agent/languages/oxiacli/index";
+import * as RABBITREAD_CLIENT_OVERLAYS from "@/lib/agent/languages/rabbitread/engines/client";
+import * as RABBITMQ from "@/lib/agent/languages/rabbitread/engines/rabbitmq";
+import { RABBITREAD_PACK } from "@/lib/agent/languages/rabbitread/index";
+import * as KAFKAREAD_CLIENT_OVERLAYS from "@/lib/agent/languages/kafkaread/engines/client";
+import * as KAFKA from "@/lib/agent/languages/kafkaread/engines/kafka";
+import { KAFKAREAD_PACK } from "@/lib/agent/languages/kafkaread/index";
+import * as S3API_CLIENT_OVERLAYS from "@/lib/agent/languages/s3api/engines/client";
+import * as S3 from "@/lib/agent/languages/s3api/engines/s3";
+import { S3API_PACK } from "@/lib/agent/languages/s3api/index";
+import * as FSQUERY_CLIENT_OVERLAYS from "@/lib/agent/languages/fsquery/engines/client";
+import * as FIRESTORE from "@/lib/agent/languages/fsquery/engines/firestore";
+import { FSQUERY_PACK } from "@/lib/agent/languages/fsquery/index";
+import * as SNMPGET_CLIENT_OVERLAYS from "@/lib/agent/languages/snmpget/engines/client";
+import * as SNMP from "@/lib/agent/languages/snmpget/engines/snmp";
+import { SNMPGET_PACK } from "@/lib/agent/languages/snmpget/index";
+import * as NETCONFRPC_CLIENT_OVERLAYS from "@/lib/agent/languages/netconfrpc/engines/client";
+import * as NETCONF from "@/lib/agent/languages/netconfrpc/engines/netconf";
+import { NETCONFRPC_PACK } from "@/lib/agent/languages/netconfrpc/index";
+import * as MODBUSREAD_CLIENT_OVERLAYS from "@/lib/agent/languages/modbusread/engines/client";
+import * as MODBUS from "@/lib/agent/languages/modbusread/engines/modbus";
+import { MODBUSREAD_PACK } from "@/lib/agent/languages/modbusread/index";
 import * as KUBECTL_CLIENT_OVERLAYS from "@/lib/agent/languages/kubectl/engines/client";
 import * as KUBERNETES from "@/lib/agent/languages/kubectl/engines/kubernetes";
 import * as LIBREDBKV_CLIENT_OVERLAYS from "@/lib/agent/languages/libredbkv/engines/client";
@@ -88,6 +133,36 @@ const ENGINE_MODULES: Readonly<Record<string, Readonly<Record<string, unknown>>>
   "kubectl/engines/client": KUBECTL_CLIENT_OVERLAYS,
   "libredbkv/engines/libredb": LIBREDB,
   "libredbkv/engines/client": LIBREDBKV_CLIENT_OVERLAYS,
+  "influxql/engines/influxdb": INFLUXDB,
+  "influxql/engines/client": INFLUXQL_CLIENT_OVERLAYS,
+  "weaviateapi/engines/weaviate": WEAVIATE,
+  "weaviateapi/engines/client": WEAVIATEAPI_CLIENT_OVERLAYS,
+  "qdrantapi/engines/qdrant": QDRANT,
+  "qdrantapi/engines/client": QDRANTAPI_CLIENT_OVERLAYS,
+  "cypher/engines/neo4j": NEO4J,
+  "cypher/engines/client": CYPHER_CLIENT_OVERLAYS,
+  "milvusrpc/engines/milvus": MILVUS,
+  "milvusrpc/engines/client": MILVUSRPC_CLIENT_OVERLAYS,
+  "rediscli/engines/redis": REDIS,
+  "rediscli/engines/client": REDISCLI_CLIENT_OVERLAYS,
+  "etcdctl/engines/etcd": ETCD,
+  "etcdctl/engines/client": ETCDCTL_CLIENT_OVERLAYS,
+  "oxiacli/engines/oxia": OXIA,
+  "oxiacli/engines/client": OXIACLI_CLIENT_OVERLAYS,
+  "rabbitread/engines/rabbitmq": RABBITMQ,
+  "rabbitread/engines/client": RABBITREAD_CLIENT_OVERLAYS,
+  "kafkaread/engines/kafka": KAFKA,
+  "kafkaread/engines/client": KAFKAREAD_CLIENT_OVERLAYS,
+  "s3api/engines/s3": S3,
+  "s3api/engines/client": S3API_CLIENT_OVERLAYS,
+  "fsquery/engines/firestore": FIRESTORE,
+  "fsquery/engines/client": FSQUERY_CLIENT_OVERLAYS,
+  "snmpget/engines/snmp": SNMP,
+  "snmpget/engines/client": SNMPGET_CLIENT_OVERLAYS,
+  "netconfrpc/engines/netconf": NETCONF,
+  "netconfrpc/engines/client": NETCONFRPC_CLIENT_OVERLAYS,
+  "modbusread/engines/modbus": MODBUS,
+  "modbusread/engines/client": MODBUSREAD_CLIENT_OVERLAYS,
 };
 
 /** Every overlay an engine module exports, named `<module>#<export>`. */
@@ -119,8 +194,23 @@ describe("the engine registry", () => {
       "opensearch",
       "mongodb",
       "couchbase",
+      "redis",
+      "kafka",
+      "etcd",
+      "neo4j",
+      "milvus",
+      "qdrant",
+      "weaviate",
+      "influxdb",
       "influxdb3",
+      "oxia",
+      "s3",
       "kubernetes",
+      "firestore",
+      "rabbitmq",
+      "modbus",
+      "netconf",
+      "snmp",
       "libredb",
     ]);
     expect(SQL_ENGINES).toEqual([
@@ -169,7 +259,7 @@ describe("the engine registry", () => {
 
   test("every engine module's server overlay holds a dialect and overridable members, its client one a dialect alone (ruling 2)", () => {
     const exported = exportedOverlays();
-    expect(exported).toHaveLength(36);
+    expect(exported).toHaveLength(66);
     // The one other export is the PostgreSQL retry's rewrite, which its tests call directly.
     expect(
       Object.entries(ENGINE_MODULES)
@@ -232,6 +322,21 @@ describe("the engine packs", () => {
     expect(agentEnginePack("mongodb")).toEqual(MONGO_PACK);
     expect(agentEnginePack("kubernetes")).toEqual(KUBECTL_PACK);
     expect(agentEnginePack("libredb")).toBe(LIBREDBKV_PACK);
+    expect(agentEnginePack("influxdb")).toBe(INFLUXQL_PACK);
+    expect(agentEnginePack("weaviate")).toBe(WEAVIATEAPI_PACK);
+    expect(agentEnginePack("qdrant")).toBe(QDRANTAPI_PACK);
+    expect(agentEnginePack("neo4j")).toBe(CYPHER_PACK);
+    expect(agentEnginePack("milvus")).toBe(MILVUSRPC_PACK);
+    expect(agentEnginePack("redis")).toBe(REDISCLI_PACK);
+    expect(agentEnginePack("etcd")).toBe(ETCDCTL_PACK);
+    expect(agentEnginePack("oxia")).toBe(OXIACLI_PACK);
+    expect(agentEnginePack("rabbitmq")).toBe(RABBITREAD_PACK);
+    expect(agentEnginePack("kafka")).toBe(KAFKAREAD_PACK);
+    expect(agentEnginePack("s3")).toBe(S3API_PACK);
+    expect(agentEnginePack("firestore")).toBe(FSQUERY_PACK);
+    expect(agentEnginePack("snmp")).toBe(SNMPGET_PACK);
+    expect(agentEnginePack("netconf")).toBe(NETCONFRPC_PACK);
+    expect(agentEnginePack("modbus")).toBe(MODBUSREAD_PACK);
   });
 
   test.each(SQL_ENGINES)("%s is the SQL pack member for member, with its own dialect on the server facet", (type) => {
@@ -272,7 +377,28 @@ describe("engineServerDialect", () => {
   });
 
   test("a type with no overlay holds an empty one, so its server facet is its family's own", () => {
-    for (const type of ["spark", "toString", "mongodb", "kubernetes", "libredb"] as DatabaseType[]) {
+    for (const type of [
+      "spark",
+      "toString",
+      "mongodb",
+      "kubernetes",
+      "libredb",
+      "influxdb",
+      "weaviate",
+      "qdrant",
+      "neo4j",
+      "milvus",
+      "redis",
+      "etcd",
+      "oxia",
+      "rabbitmq",
+      "kafka",
+      "s3",
+      "firestore",
+      "snmp",
+      "netconf",
+      "modbus",
+    ] as DatabaseType[]) {
       expect(Object.keys(engineServerOverlay(type))).toEqual([]);
     }
     expect(engineServerOverlay("postgres").dialect).toBe(engineServerDialect("postgres"));
@@ -488,7 +614,26 @@ describe("the client dialect", () => {
       influxdb3: { catalogRead: "supported", planEstimate: "supported", catalogCapture: "unsupported" },
     });
     for (const type of SQL_ENGINES) expect(Object.isFrozen(clientDialect(type))).toBe(true);
-    for (const type of ["mongodb", "kubernetes", "libredb"] as const) {
+    for (const type of [
+      "mongodb",
+      "kubernetes",
+      "libredb",
+      "influxdb",
+      "weaviate",
+      "qdrant",
+      "neo4j",
+      "milvus",
+      "redis",
+      "etcd",
+      "oxia",
+      "rabbitmq",
+      "kafka",
+      "s3",
+      "firestore",
+      "snmp",
+      "netconf",
+      "modbus",
+    ] as const) {
       expect(engineClientPack(type).dialect).toBeUndefined();
     }
   });

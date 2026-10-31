@@ -17,7 +17,15 @@ import type { ProviderLabels } from "@/lib/db/types";
  * scalars, and the thing inside it is an instance, which is what a row is here. "Object" alone
  * would be ambiguous: in SNMP it names the definition, not the value.
  */
+/**
+ * What a statement on this engine is written in, for plan mode: the console's four commands. Its name alone would send
+ * a model to Net-SNMP's tools (`snmpget -v2c ...`) or to a Set, and neither runs here.
+ */
+const SNMP_STATEMENT_LANGUAGE =
+  "one SNMP console command this editor runs, written as the console writes it: get OID [OID ...] for named instances, next OID [OID ...] for the instance after each, walk SUBTREE for every instance under a subtree, or table ENTRY for a conceptual table's rows, named by its entry (table ifEntry), each OID written numerically (1.3.6.1.2.1.1.1.0) or by a name the bundled MIB modules define (sysDescr.0, ifDescr); there is no set and no Net-SNMP tool syntax, and SNMP-TARGET-MIB (1.3.6.1.6.3.12), SNMP-NOTIFICATION-MIB (1.3.6.1.6.3.13), SNMP-PROXY-MIB (1.3.6.1.6.3.14), SNMP-USER-BASED-SM-MIB (1.3.6.1.6.3.15), SNMP-VIEW-BASED-ACM-MIB (1.3.6.1.6.3.16) and SNMP-COMMUNITY-MIB (1.3.6.1.6.3.18), the transport security modules SNMP-SSH-TM-MIB (1.3.6.1.2.1.189), SNMP-TSM-MIB (1.3.6.1.2.1.190) and SNMP-TLS-TM-MIB (1.3.6.1.2.1.198), SNMP-USM-DH-OBJECTS-MIB (1.3.6.1.3.101) and Net-SNMP's NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9) are never drafted, since agent mode withholds them, while every other identifier under 1.3.6.1.6.3, the engine and MPD objects among them, may be read, and a walk that covers a withheld module steps over it; the inventory names the bundled MIB modules' tables and scalar groups with their declared columns, never a value the agent holds";
+
 export const SNMP_LABELS: ProviderLabels = Object.freeze({
+  statementLanguage: SNMP_STATEMENT_LANGUAGE,
   entityName: "Object group",
   entityNamePlural: "Object groups",
   rowName: "Instance",

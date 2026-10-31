@@ -59,7 +59,7 @@ function reader(over: Partial<DeviceReader> = {}): DeviceReader {
 const connection = { type: "netconf", name: "n", host: "h" } as unknown as DatabaseConnection;
 
 async function open(device: DeviceReader = reader()): Promise<NetconfProvider> {
-  const provider = new NetconfProvider(connection, {}, async () => device);
+  const provider = new NetconfProvider(connection, {}, {}, async () => device);
   await provider.connect();
   return provider;
 }
@@ -302,7 +302,7 @@ function expectRejectsSync(fn: () => unknown, pattern: RegExp): void {
 }
 
 test("nothing answers before connect", async () => {
-  const provider = new NetconfProvider(connection, {}, async () => reader());
+  const provider = new NetconfProvider(connection, {}, {}, async () => reader());
   await expectRejects(provider.listContainers(), /not open/);
 });
 
@@ -516,7 +516,7 @@ function treeReader(): DeviceReader {
 test("a folder's own prefix lists its level, and every row sits inside it", async () => {
   // The spelling the panel sends when a reader OPENS a folder, and the one its placeholder teaches
   // (`Prefix, e.g. app/config/`, KeyBrowser.tsx:676).
-  const provider = new NetconfProvider(connection, {}, async () => treeReader());
+  const provider = new NetconfProvider(connection, {}, {}, async () => treeReader());
   await provider.connect();
   const pattern = "running/ietf-interfaces:interfaces/";
   const page = await provider.scanKeysPage({ cursor: "0", pattern, count: 10, level: true });
@@ -529,7 +529,7 @@ test("a folder's own prefix lists its level, and every row sits inside it", asyn
 test("a folder is answered as a folder and a leaf as a key, and a name holding the separator is escaped", async () => {
   // Both were answered as keys, so the panel offered nothing to open on an engine whose key space
   // is a tree. `LevelEntry.kind` had said which all along.
-  const provider = new NetconfProvider(connection, {}, async () => treeReader());
+  const provider = new NetconfProvider(connection, {}, {}, async () => treeReader());
   await provider.connect();
   const pattern = "running/ietf-interfaces:interfaces/interface/";
   const page = await provider.scanKeysPage({ cursor: "0", pattern, count: 10, level: true });
@@ -543,7 +543,7 @@ test("the filter box's text is kept as a filter on the level above it", async ()
   // The panel sends the FILTER BOX verbatim, so a half-typed name arrives with no trailing
   // separator. It names the level above and filters that level, which is why `inter` keeps
   // `interface` and `xyz` keeps nothing.
-  const provider = new NetconfProvider(connection, {}, async () => treeReader());
+  const provider = new NetconfProvider(connection, {}, {}, async () => treeReader());
   await provider.connect();
   const kept = await provider.scanKeysPage({
     cursor: "0",
@@ -569,7 +569,7 @@ test("a prefix naming only a datastore and a node is refused by name, not answer
   // level, which `reader.children` refuses because an unfiltered read of a datastore is the one
   // read this provider does not send. MEASURED before this was handled: the level BELOW was listed
   // and the route answered 500 blaming the provider. The refusal names the separator instead.
-  const provider = new NetconfProvider(connection, {}, async () => treeReader());
+  const provider = new NetconfProvider(connection, {}, {}, async () => treeReader());
   await provider.connect();
   await expectRejects(
     provider.scanKeysPage({

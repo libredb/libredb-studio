@@ -1,0 +1,120 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-enterprise",
+    "digest": "sha256:02d30e0a80f0aaed71cfdfaa85c8ea01cf44aacd55510d4a2b4a53f9f1a2e1ad",
+    "date": "2026-10-30T11:35:05.208Z",
+    "database": "neo4j"
+  },
+  "principal": "ext_denied: agent_reader and no_extension (DENY EXECUTE libredbtest.*)",
+  "statement": "SHOW USER PRIVILEGES YIELD access, action, resource, graph, segment, role, user",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 1000
+  },
+  "outcome": "pass",
+  "result": {
+    "fields": [
+      "access",
+      "action",
+      "resource",
+      "graph",
+      "segment",
+      "role",
+      "user"
+    ],
+    "rows": [
+      {
+        "access": "GRANTED",
+        "action": "execute",
+        "resource": "database",
+        "graph": "*",
+        "segment": "FUNCTION(*)",
+        "role": "PUBLIC",
+        "user": "ext_denied"
+      },
+      {
+        "access": "GRANTED",
+        "action": "execute",
+        "resource": "database",
+        "graph": "*",
+        "segment": "PROCEDURE(*)",
+        "role": "PUBLIC",
+        "user": "ext_denied"
+      },
+      {
+        "access": "GRANTED",
+        "action": "access",
+        "resource": "database",
+        "graph": "HOME",
+        "segment": "database",
+        "role": "PUBLIC",
+        "user": "ext_denied"
+      },
+      {
+        "access": "GRANTED",
+        "action": "match",
+        "resource": "all_properties",
+        "graph": "*",
+        "segment": "NODE(*)",
+        "role": "agent_reader",
+        "user": "ext_denied"
+      },
+      {
+        "access": "GRANTED",
+        "action": "match",
+        "resource": "all_properties",
+        "graph": "*",
+        "segment": "RELATIONSHIP(*)",
+        "role": "agent_reader",
+        "user": "ext_denied"
+      },
+      {
+        "access": "GRANTED",
+        "action": "access",
+        "resource": "database",
+        "graph": "*",
+        "segment": "database",
+        "role": "agent_reader",
+        "user": "ext_denied"
+      },
+      {
+        "access": "GRANTED",
+        "action": "show_constraint",
+        "resource": "database",
+        "graph": "*",
+        "segment": "database",
+        "role": "agent_reader",
+        "user": "ext_denied"
+      },
+      {
+        "access": "GRANTED",
+        "action": "show_index",
+        "resource": "database",
+        "graph": "*",
+        "segment": "database",
+        "role": "agent_reader",
+        "user": "ext_denied"
+      },
+      {
+        "access": "DENIED",
+        "action": "execute",
+        "resource": "database",
+        "graph": "*",
+        "segment": "FUNCTION(libredbtest.*)",
+        "role": "no_extension",
+        "user": "ext_denied"
+      },
+      {
+        "access": "DENIED",
+        "action": "execute",
+        "resource": "database",
+        "graph": "*",
+        "segment": "PROCEDURE(libredbtest.*)",
+        "role": "no_extension",
+        "user": "ext_denied"
+      }
+    ],
+    "truncated": false,
+    "queryType": "s"
+  }
+}

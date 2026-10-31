@@ -19,7 +19,10 @@
  * writes it (`collectionNotFound` in tests/helpers/qdrant-surface-fixtures.ts).
  */
 import { describe, expect, test } from "bun:test";
-import { QueryError } from "@/lib/db/errors";
+import { ExecutionProfileError, QueryError } from "@/lib/db/errors";
+import type { QdrantProbe } from "@/lib/db/providers/vector/qdrant/client";
+import { answerFailure } from "@/lib/db/providers/vector/qdrant/errors";
+import { readQdrantProbeAnswer } from "@/lib/db/providers/vector/qdrant/metadata-read";
 import { type QdrantClientFactory, QdrantProvider } from "@/lib/db/providers/vector/qdrant/index";
 import { createRestQdrantClient } from "@/lib/db/providers/vector/qdrant/rest-client";
 import type { DatabaseConnection, ProviderExecutionContext } from "@/lib/db/types";
@@ -27,6 +30,7 @@ import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { QDRANT_ROUTE_FIXTURE } from "../../helpers/qdrant-routes";
 import { recordedLineAnswer, SEEDED_COLLECTIONS, surfaceCapture } from "../../helpers/qdrant-surface-fixtures";
 import { recordingQdrantTransport } from "../../helpers/qdrant-transport";
+import { agentAnswer, agentCapture } from "../../helpers/qdrant-agent";
 
 const CONNECTION: DatabaseConnection = {
   id: "qdrant-integration",
@@ -155,5 +159,66 @@ describe("the recorded server", () => {
       expect(call.method).not.toMatch(/snapshots\/[^/]+$/);
     }
     await provider.disconnect();
+  });
+});
+
+/**
+ * The agent read-only profile's boundary, from what 1.19.1 answered requests sent raw, past every Studio check
+ * (tests/fixtures/qdrant/1.19.1/agent-boundary/, recorded by its run.sh): the read-only principals' writes refused as
+ * authorization refusals with the data unchanged, beside the API key's and a collection rw JWT's same write as the
+ * positive controls; and the read-only proof's answers. The provider's own refusals of each are held in
+ * tests/unit/db/qdrant/metadata-*.test.ts and agent-provider.test.ts.
+ */
+describe("the agent boundary, replayed from 1.19.1", () => {
+  const count = (name: string): number =>
+    (JSON.parse(agentCapture(name).body) as { result: { count: number } }).result.count;
+  const WRITES = [
+    "write-upsert",
+    "write-delete-points",
+    "write-set-payload",
+    "write-snapshot",
+    "write-storage-snapshot",
+    "write-optimizers",
+    "write-cluster",
+    "write-create-collection",
+    "write-delete-collection",
+    "write-alias",
+    "write-index",
+  ];
+
+  test("every read-only principal's write is an authorization refusal, never an input error, and nothing changed", () => {
+    for (const principal of ["read-only", "jwt-read", "jwt-collection-read"]) {
+      for (const write of WRITES) {
+        const refusal = answerFailure(agentAnswer(`${write}-${principal}`));
+        expect({ write, principal, category: refusal?.category }).toEqual({ write, principal, category: "forbidden" });
+        expect(refusal?.detail).toStartWith("Forbidden: ");
+      }
+    }
+    expect(count("write-count-before-full")).toBe(3);
+    expect(count("write-count-after-refused-full")).toBe(3);
+  });
+
+  test("the positive controls: the API key's and a collection rw JWT's same upsert are answered, and the count moves", () => {
+    expect(agentCapture("write-upsert-full").status).toBe(200);
+    expect(count("write-count-after-full-full")).toBe(4);
+    expect(agentCapture("write-upsert-jwt-collection-write").status).toBe(200);
+    expect(count("write-count-after-collection-write-full")).toBe(5);
+  });
+
+  test("the read-only proof: only the read-only principals are refused both no-op writes", () => {
+    const alias: QdrantProbe = { kind: "empty-alias-update" };
+    const remove: QdrantProbe = { kind: "empty-point-delete", collection: "plain" };
+    for (const principal of ["read-only", "jwt-read", "jwt-collection-read"]) {
+      expect(() => readQdrantProbeAnswer(agentAnswer(`proof-alias-${principal}`), alias)).not.toThrow();
+      expect(() => readQdrantProbeAnswer(agentAnswer(`proof-delete-plain-${principal}`), remove)).not.toThrow();
+    }
+    for (const principal of ["full", "jwt-manage", "jwt-no-access", "open-anonymous", "open-key", "anonymous"]) {
+      expect(() => readQdrantProbeAnswer(agentAnswer(`proof-alias-${principal}`), alias)).toThrow(
+        ExecutionProfileError,
+      );
+    }
+    expect(() => readQdrantProbeAnswer(agentAnswer("proof-delete-plain-jwt-collection-write"), remove)).toThrow(
+      ExecutionProfileError,
+    );
   });
 });

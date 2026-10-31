@@ -92,6 +92,7 @@ import type {
   DatabaseProvider,
   ObjectDetail,
   ObjectKindSpec,
+  ObjectReadOptions,
   ProviderCapabilities,
   ProviderLabels,
   ReadOnlyStatementBudget,
@@ -144,7 +145,13 @@ import { offersRefusalExamples } from "./models";
 import type { ColumnSchema, DatabaseConnection, QueryResult } from "@/lib/types";
 import { type ProfileTargetResolution, type ResolvedProfileTarget, resolveProfileTarget } from "./inventory-address";
 import { addressableObjects } from "./inventory-objects";
-import type { AgentInventory, AgentInventoryObject, AgentUnlistedParent, AgentUnlistedParentsNotNamed } from "./types";
+import type {
+  AgentInventory,
+  AgentInventoryKind,
+  AgentInventoryObject,
+  AgentUnlistedParent,
+  AgentUnlistedParentsNotNamed,
+} from "./types";
 import { composeCatalogRead, composeEstimatingExplain, composeStatisticsAvailabilityProbe } from "./composed-sql";
 import {
   type AgentCatalogKind,
@@ -2575,7 +2582,7 @@ export async function readObjectInventoryForGrounding(context: AgentToolContext)
         // no bound at all, which is the only worse answer.
         try {
           const walked = await withinGrantedTime(
-            walkObjectInventory(provider, context.capabilities, declared),
+            walkObjectInventory(provider, context.capabilities, declared, objectReadArguments(context)),
             budget.statementTimeoutMs,
             () => new AgentSchemaReadTimeout(budget.statementTimeoutMs),
           );
@@ -2641,9 +2648,23 @@ async function walkObjectInventory(
   provider: DatabaseProvider,
   capabilities: ProviderCapabilities,
   declared: readonly ObjectKindSpec[],
+  readArguments: readonly [ObjectReadOptions] | readonly [],
 ): Promise<{ readonly inventory: AgentInventory; readonly defaultContainer?: readonly string[] }> {
   const listObjects = provider.listObjects.bind(provider);
   const describeObjects = provider.describeObjects.bind(provider);
+
+  // Asked before any container (U189): a provider whose inventory is configuration the connection lacks lists no
+  // container, and that empty answer is no answer about what the engine holds. Every kind then carries the provider's
+  // sentence as `unavailable`, the note a refused kind already has, and `context-snapshot.ts` says nothing was listed.
+  const needs = await provider.inventoryNeedsConfiguration?.();
+  if (needs !== undefined) {
+    return {
+      inventory: {
+        objects: [],
+        kinds: declared.map((spec) => inventoryKind(spec, capabilities, { unavailable: needs })),
+      },
+    };
+  }
 
   // A provider that declares a walk scope is read in its session-default container and the ones it names; the
   // rest are counted, and a parent the scope reads nothing below whose listing failed is named, so the inventory
@@ -2668,7 +2689,7 @@ async function walkObjectInventory(
 
   let pairs = 0;
   for (const container of containers) {
-    const counts = await countForGrounding(provider, container);
+    const counts = await countForGrounding(provider, container, readArguments);
     for (const spec of applicableKinds(declared, kindsOf.get(JSON.stringify(container)))) {
       const count = Object.hasOwn(counts, spec.id) ? counts[spec.id] : undefined;
       if (count !== undefined && !isCountUnavailable(count) && count.count === 0) continue;
@@ -2695,7 +2716,7 @@ async function walkObjectInventory(
       }
       pairs += 1;
       const listed: DatabaseObject[] = [];
-      for (const object of await listObjects(container, spec.id)) {
+      for (const object of await listObjects(container, spec.id, ...readArguments)) {
         if (objects.length + listed.length >= INVENTORY_LIMIT) {
           // Overwrites a pair-limit reason where both bit, the same way the route resolves
           // it: the object limit is the one a reader can see reflected in what they hold.
@@ -2710,7 +2731,7 @@ async function walkObjectInventory(
       // round trip for an empty answer.
       let details: readonly ObjectDetail[] = [];
       if (listed.length > 0) {
-        const batch = await describeObjects(container, spec.id, listed.length);
+        const batch = await describeObjects(container, spec.id, listed.length, ...readArguments);
         details = batch.details;
         // The provider's own bound in the provider's own words. Reported even when the listing
         // fitted, because a complete list of objects whose columns were cut is still an
@@ -2749,20 +2770,14 @@ async function walkObjectInventory(
     if (truncated !== undefined) break;
   }
 
-  const kinds = declared.map((spec) => ({
-    id: spec.id,
-    role: spec.role,
-    label: spec.label,
-    labelPlural: spec.labelPlural,
-    ...(sampledFrom.has(spec.id) ? { sampledFrom: sampledFrom.get(spec.id) } : {}),
-    ...(unavailable.has(spec.id) ? { unavailable: unavailable.get(spec.id) } : {}),
-    ...(withheld.has(spec.id) ? { withheldCount: withheld.get(spec.id) } : {}),
-    ...(withheldUncounted.has(spec.id) ? { withheldUncounted: true as const } : {}),
-    // The refusal `tablesAreDerivedGroupings` carries is about the rows of the inventory,
-    // which are the relation kinds: a Redis Function Library is a named object and a Redis
-    // key pattern is not, and both are declared by the one provider that sets the flag.
-    ...(capabilities.tablesAreDerivedGroupings === true && spec.role === "relation" ? { derivedGroupings: true } : {}),
-  }));
+  const kinds = declared.map((spec) =>
+    inventoryKind(spec, capabilities, {
+      ...(sampledFrom.has(spec.id) ? { sampledFrom: sampledFrom.get(spec.id) } : {}),
+      ...(unavailable.has(spec.id) ? { unavailable: unavailable.get(spec.id) } : {}),
+      ...(withheld.has(spec.id) ? { withheldCount: withheld.get(spec.id) } : {}),
+      ...(withheldUncounted.has(spec.id) ? { withheldUncounted: true as const } : {}),
+    }),
+  );
 
   // The deepest level's words, because the scope keeps or skips containers at that level.
   const level = capabilities.containerLevels?.[containerDepth(capabilities) - 1];
@@ -2784,6 +2799,25 @@ async function walkObjectInventory(
       : {}),
   };
   return defaultContainer === undefined ? { inventory } : { inventory, defaultContainer };
+}
+
+/** What the inventory records of a declared kind: its declaration, what the walk read of it, and the derived mark. */
+function inventoryKind(
+  spec: ObjectKindSpec,
+  capabilities: ProviderCapabilities,
+  read: Omit<AgentInventoryKind, "id" | "role" | "label" | "labelPlural" | "derivedGroupings">,
+): AgentInventoryKind {
+  return {
+    id: spec.id,
+    role: spec.role,
+    label: spec.label,
+    labelPlural: spec.labelPlural,
+    ...read,
+    // The refusal `tablesAreDerivedGroupings` carries is about the rows of the inventory,
+    // which are the relation kinds: a Redis Function Library is a named object and a Redis
+    // key pattern is not, and both are declared by the one provider that sets the flag.
+    ...(capabilities.tablesAreDerivedGroupings === true && spec.role === "relation" ? { derivedGroupings: true } : {}),
+  };
 }
 
 /**
@@ -2901,9 +2935,19 @@ function unlistedReason(message: string): string {
 async function countForGrounding(
   provider: DatabaseProvider,
   container: readonly string[],
+  readArguments: readonly [ObjectReadOptions] | readonly [],
 ): Promise<Record<string, KindCount>> {
   const countObjects = provider.countObjects?.bind(provider);
-  return countObjects === undefined ? {} : await countObjects(container);
+  return countObjects === undefined ? {} : await countObjects(container, ...readArguments);
+}
+
+/**
+ * The trailing argument the walk hands each object read: the drive's billed-read allowance, so an engine that bills
+ * every read charges the grounding's listings to the run as it charges the run's statements. No argument at all when
+ * the context carries none, so a read outside a drive is called exactly as the editor's routes call it.
+ */
+function objectReadArguments(context: AgentToolContext): readonly [ObjectReadOptions] | readonly [] {
+  return context.readAllowance === undefined ? [] : [{ readAllowance: context.readAllowance }];
 }
 
 /**

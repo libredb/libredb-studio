@@ -106,10 +106,12 @@ describe("vscode-extension-release.yml", () => {
     expect(release().on).toEqual({ push: { tags: ["vscode-extension-*"] } });
   });
 
-  test("reads the repository and no job widens that", () => {
+  test("reads the repository, and only publish widens that, by the OIDC token alone", () => {
     const workflow = release();
     expect(workflow.permissions).toEqual({ contents: "read" });
-    for (const job of Object.values(workflow.jobs)) expect(job.permissions).toBeUndefined();
+    for (const [name, job] of Object.entries(workflow.jobs)) {
+      expect(job.permissions).toEqual(name === "publish" ? { contents: "read", "id-token": "write" } : undefined);
+    }
   });
 
   test("verify refuses a tag that does not name the manifest's version or a commit off main", () => {
@@ -134,27 +136,46 @@ describe("vscode-extension-release.yml", () => {
     expect(gates?.uses).toBe("./.github/workflows/vscode-extension.yml");
   });
 
-  test("pins every action by its full commit SHA, as vscode-extension.yml does", () => {
+  test("pins every action by its full commit SHA, one the other workflows already use", () => {
     for (const step of allSteps(release())) {
       if (step.uses) expect(step.uses).toMatch(/^[\w.-]+\/[\w.-]+@[0-9a-f]{40}$/);
     }
     const pinned = (workflow: Workflow) =>
       new Set(allSteps(workflow).flatMap((step) => (step.uses ? [step.uses] : [])));
-    const ours = pinned(extension);
+    const ours = new Set([...pinned(extension), ...pinned(read("ci.yml"))]);
     for (const uses of pinned(release())) expect(ours.has(uses)).toBe(true);
   });
 
-  // The owner's publishing PR changes this case with the job it adds (main design section 9, items 1 and 2).
-  test("publishes nothing yet: no vsce publish, no Open VSX, no GitHub Release, no environment", () => {
+  test("publish uploads the VSIX the gates tested, from the vscode-marketplace environment", () => {
+    const publish = release().jobs.publish;
+    expect(publish?.needs).toBe("gates");
+    expect(publish?.environment).toBe("vscode-marketplace");
+    const job = steps(release(), "publish");
+    const download = job.findIndex((step) => step.uses?.startsWith("actions/download-artifact@"));
+    expect(job[download]?.with).toEqual({ name: "vscode-extension-vsix", path: "vscode-extension/dist-vsix" });
+    const install = job.findIndex(
+      (step) => step.run === "npm ci --ignore-scripts" && step["working-directory"] === "vscode-extension",
+    );
+    const upload = job.findIndex((step) => step.run === "npm run publish:marketplace");
+    expect(install).toBeGreaterThan(-1);
+    expect(upload).toBeGreaterThan(Math.max(download, install));
+    expect(job[upload]?.["working-directory"]).toBe("vscode-extension");
+    expect(job.some((step) => step.run?.includes("npm run package") || step.run?.includes("npm run build"))).toBe(
+      false,
+    );
+  });
+
+  test("publishes to the Marketplace only: no Open VSX, no GitHub Release, no stored Marketplace token", () => {
     const text = readFileSync(join(WORKFLOWS, RELEASE_FILE), "utf8");
-    const workflow = release();
-    for (const step of allSteps(workflow)) {
+    for (const step of allSteps(release())) {
       const command = `${step.run ?? ""} ${step.uses ?? ""}`;
       expect(command).not.toMatch(/vsce\s+publish|ovsx|gh\s+release/);
       expect(step.uses?.split("@")[0] ?? "").not.toContain("release");
     }
-    for (const job of Object.values(workflow.jobs)) expect(job.environment).toBeUndefined();
-    expect(text).not.toMatch(/^\s*environment:/m);
+    expect(text).not.toMatch(/secrets\.|VSCE_PAT|VSCE_TOKEN|OVSX_PAT/);
+    for (const [name, job] of Object.entries(release().jobs)) {
+      if (name !== "publish") expect(job.environment).toBeUndefined();
+    }
   });
 
   test("the product's tag patterns never match the extension's tags", () => {

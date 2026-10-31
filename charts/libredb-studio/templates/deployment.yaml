@@ -6,6 +6,7 @@ guards below.
 {{- include "libredb-studio.authProviderGuard" . }}
 {{- include "libredb-studio.openshiftModeGuards" . }}
 {{- include "libredb-studio.discoveryOnOpenShiftGuard" . }}
+{{- include "libredb-studio.operatorServiceAccountGuard" . }}
 {{- /*
 Zero-config bootstrap generates JWT_SECRET per pod on its own data volume, so
 two replicas would sign sessions with different keys (intermittent 401s behind

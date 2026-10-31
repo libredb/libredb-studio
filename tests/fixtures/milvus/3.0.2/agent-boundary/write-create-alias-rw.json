@@ -1,0 +1,26 @@
+{
+  "$captured": {
+    "server": "authorization on",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "rpc": "CreateAlias",
+    "principal": "rw",
+    "rights": "role agent_rw_role: the CollectionReadWrite group on default/*",
+    "surface": "CreateAlias on agent_scratch",
+    "request": {
+      "db_name": "default",
+      "collection_name": "agent_scratch",
+      "alias": "agent_alias_rw"
+    }
+  },
+  "outcome": "fail",
+  "payload": {
+    "error": {
+      "code": 7,
+      "details": "PrivilegeCreateAlias: permission deny to agent_rw in the `default` database",
+      "message": "7 PERMISSION_DENIED: PrivilegeCreateAlias: permission deny to agent_rw in the `default` database"
+    }
+  }
+}

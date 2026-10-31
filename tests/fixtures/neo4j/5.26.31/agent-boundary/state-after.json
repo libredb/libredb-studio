@@ -1,0 +1,29 @@
+[
+  {
+    "server": "enterprise",
+    "nodes": {
+      "neo4j": "2",
+      "other": "1"
+    },
+    "markers": null
+  },
+  {
+    "server": "extension",
+    "nodes": {
+      "neo4j": "2",
+      "other": "1"
+    },
+    "markers": {
+      "procedure": true,
+      "function": true
+    }
+  },
+  {
+    "server": "community",
+    "nodes": {
+      "neo4j": "1",
+      "other": null
+    },
+    "markers": null
+  }
+]

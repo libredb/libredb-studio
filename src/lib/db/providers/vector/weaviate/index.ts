@@ -10,11 +10,14 @@
  * What stays here is the lifecycle, the declarations, the connect read, and each surface call's permit, deadline
  * and error context.
  *
- * One limiter covers every client call. No `queryReadOnly`, no transaction method and no maintenance operation:
- * each is detected by presence, and none exists for Weaviate in this version.
+ * One limiter covers every client call. No transaction method and no maintenance operation: each is detected by
+ * presence, and none exists for Weaviate in this version. `queryReadOnly` is the agent read-only profile's path: the
+ * rules of an agent request are in `metadata-request.ts`, the viewer proof, the metadata-only projection and the
+ * wording of a failure in `metadata-read.ts`.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { DatabaseConfigError, ExecutionProfileError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
 import type {
   ActiveSessionDetails,
   Container,
@@ -35,6 +38,8 @@ import type {
   ProviderLabels,
   ProviderOptions,
   QueryResult,
+  ReadOnlyStatementBudget,
+  ReadOnlyStatementMode,
   SlowQueryStats,
   StorageStats,
   TableStats,
@@ -47,7 +52,22 @@ import {
 } from "@/lib/db/utils/bounded-limiter";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import type { QueryWarning } from "@/lib/types";
-import type { WeaviateClient, WeaviateOp, WeaviateRequest, WeaviateRouteTemplates, WeaviateSend } from "./client";
+import {
+  keylessAgentRefusal,
+  proveWeaviateViewer,
+  shapeWeaviateAgentAnswer,
+  WEAVIATE_METADATA_ONLY,
+  weaviateAgentFailure,
+} from "./metadata-read";
+import { readWeaviateAgentStatement } from "./metadata-request";
+import type {
+  WeaviateAnswer,
+  WeaviateClient,
+  WeaviateOp,
+  WeaviateRequest,
+  WeaviateRouteTemplates,
+  WeaviateSend,
+} from "./client";
 import {
   buildWeaviateConnectionOptions,
   WEAVIATE_DEFAULT_PORT,
@@ -98,6 +118,8 @@ export type WeaviateClientFactory = (
 ) => WeaviateClient;
 
 const BOUND_PARAMS_MESSAGE = "Bound params are not supported: a Weaviate request has no placeholders";
+const PROFILE_REQUIRED = "Read-only execution requires a provider opened under the agent read-only profile";
+const NO_ESTIMATE = "Weaviate composes no estimating plan for the agent";
 const NO_MAINTENANCE = "Weaviate has no maintenance operation in this version of Studio, so nothing was sent.";
 
 function requireRoot(container: readonly string[]): void {
@@ -148,6 +170,14 @@ export class WeaviateProvider extends BaseDatabaseProvider {
   private readonly limiter: ProviderLimiter = weaviateLimiter();
   private readonly runs: RunRegistry = createRunRegistry();
 
+  /**
+   * Whether this handle was opened for the agent read-only profile by an acquisition that sends statements
+   * (`sendsStatements`). Only then does `connect()` refuse a connection with no key and prove the key a viewer, and
+   * only then does `queryReadOnly` answer. The operations profile's acquisitions send no statement, so they open
+   * unproved, as an editor connection does, and plan mode keeps grounding on any key.
+   */
+  private readonly readOnlyProfile: boolean;
+
   /** Validates nothing and opens nothing: the connection's rules run in `connect()`, before the factory. */
   constructor(
     config: DatabaseConnection,
@@ -156,6 +186,7 @@ export class WeaviateProvider extends BaseDatabaseProvider {
     private readonly createClient: WeaviateClientFactory = createRestWeaviateClient,
   ) {
     super(config, options);
+    this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
   }
 
   /** Every member written out: the base's defaults are SQL's, so each flag here is a decision (spec 6.2). */
@@ -182,6 +213,8 @@ export class WeaviateProvider extends BaseDatabaseProvider {
       // The secret alone signs in, so the agent's own key is `agentPassword` alone; a user is refused here as it is
       // on the connection.
       agentCredential: "token",
+      // Objects, vectors and their properties are stored values: the agent's answers carry names, counts and flags.
+      metadataOnly: WEAVIATE_METADATA_ONLY,
       // A Weaviate request changes no collection, so no request refreshes the schema.
       schemaRefreshPattern: "(?!)",
     };
@@ -200,6 +233,9 @@ export class WeaviateProvider extends BaseDatabaseProvider {
    * After connection-options.ts's checks, exactly one request: `GET /v1/meta`, which authenticates (anonymous access
    * off answers 401 without a key) and gives the version the path table reads. Nothing is retried, and a client that
    * was built is closed on a failure.
+   *
+   * Opened for the agent read-only profile, a connection with no key is refused before any client is built, and after
+   * the meta read the server is asked who the key is, `GET /v1/users/own-info`, which must name a viewer.
    */
   public async connect(): Promise<void> {
     let client: WeaviateClient | undefined;
@@ -208,9 +244,12 @@ export class WeaviateProvider extends BaseDatabaseProvider {
         executionReadOnly: this.execution.readOnly === true,
         queryTimeout: this.queryTimeout,
       });
+      if (this.readOnlyProfile && !Object.hasOwn(options.headers, "authorization")) throw keylessAgentRefusal();
       client = this.createClient(options, WEAVIATE_ROUTE_TEMPLATES);
       const send = this.sendFor(client, options, "connect");
-      const meta = await send({ op: "meta", params: {}, query: {} }, this.surfaceSignal());
+      const signal = this.surfaceSignal();
+      const meta = await send({ op: "meta", params: {}, query: {} }, signal);
+      if (this.readOnlyProfile) await proveWeaviateViewer(this.answerFor(client, options, "connect"), signal);
       this.session = { client, options, version: readWeaviateVersion(meta.text), paths: pathState() };
     } catch (error) {
       client?.close();
@@ -272,6 +311,29 @@ export class WeaviateProvider extends BaseDatabaseProvider {
     };
   }
 
+  /** One request under its own limiter permit, answered whatever its status; a transport failure is worded. */
+  private answerFor(
+    client: WeaviateClient,
+    options: WeaviateConnectionOptions,
+    phase: WeaviateErrorContext["phase"],
+  ): (request: WeaviateRequest, signal: AbortSignal) => Promise<WeaviateAnswer> {
+    return async (request, signal) => {
+      try {
+        const ticket = await this.limiter.acquire(signal);
+        try {
+          return await client.send(request, signal);
+        } finally {
+          ticket.release();
+        }
+      } catch (error) {
+        throw toProviderError(
+          error,
+          errorContext(options, phase, request.op, Math.min(WEAVIATE_SURFACE_TIMEOUT_MS, this.queryTimeout)),
+        );
+      }
+    };
+  }
+
   private surface(): WeaviateSurfaceContext<WeaviateOp> {
     const session = this.requireSession();
     return {
@@ -306,6 +368,56 @@ export class WeaviateProvider extends BaseDatabaseProvider {
         return toProviderError(answered, context);
       },
       queryTimeoutMs: this.queryTimeout,
+    });
+  }
+
+  /**
+   * One agent request. Only on a handle opened under the agent read-only profile; the request is read by
+   * `readWeaviateAgentStatement` and refused before anything is sent when it is not a metadata read. Then, under the
+   * request's own deadline, the server is asked again who the key is, with no verdict kept from the open or the
+   * request before, and the request runs as the console runs it, the tenant's own record read first so a COLD
+   * tenant is refused rather than woken, with a path memory of its own. Its answer is the metadata-only projection of
+   * its operation, refused past the row or byte budget rather than cut, and a server refusal is worded without the
+   * server's words.
+   */
+  public async queryReadOnly(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    const session = this.requireSession();
+    if (!this.readOnlyProfile) throw new RefusedBeforeSendError(PROFILE_REQUIRED, this.type, statement);
+    assertReadOnlyBudget(budget, "weaviate");
+    if (mode !== "execute") throw new RefusedBeforeSendError(NO_ESTIMATE, this.type, statement);
+    const reading = readWeaviateAgentStatement(statement);
+    if (!reading.ok) throw new RefusedBeforeSendError(reading.message, this.type, statement);
+    const { client, options } = session;
+    const signal = AbortSignal.timeout(budget.statementTimeoutMs);
+    return this.trackQuery(async () => {
+      try {
+        await proveWeaviateViewer(this.answerFor(client, options, "request"), signal);
+        return await executeWeaviate(statement, undefined, {
+          send: (request, read) => client.send(request, read),
+          limiter: this.limiter,
+          runs: this.runs,
+          version: session.version,
+          paths: pathState(),
+          fail: (failure: WeaviateFailure) => {
+            if (failure.kind === "thrown") return failure.error as Error;
+            const answered = failure.op === "graphql" ? graphqlFailure(failure.answer) : answerFailure(failure.answer);
+            return answered as Error;
+          },
+          queryTimeoutMs: budget.statementTimeoutMs,
+          deadline: () => signal,
+          answered: (answer) => shapeWeaviateAgentAnswer(answer, budget, statement),
+        });
+      } catch (error) {
+        if (error instanceof ExecutionProfileError) throw error;
+        throw (
+          weaviateAgentFailure(error, budget, statement) ??
+          toProviderError(error, errorContext(options, "request", reading.plan.route.op, budget.statementTimeoutMs))
+        );
+      }
     });
   }
 

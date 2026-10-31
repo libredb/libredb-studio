@@ -1,0 +1,192 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-enterprise",
+    "digest": "sha256:02d30e0a80f0aaed71cfdfaa85c8ea01cf44aacd55510d4a2b4a53f9f1a2e1ad",
+    "date": "2026-10-30T11:34:52.322Z",
+    "database": "neo4j"
+  },
+  "principal": "neo4j: role admin",
+  "statement": "SHOW USER PRIVILEGES YIELD access, action, resource, graph, segment, role, user",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 1000
+  },
+  "outcome": "pass",
+  "result": {
+    "fields": [
+      "access",
+      "action",
+      "resource",
+      "graph",
+      "segment",
+      "role",
+      "user"
+    ],
+    "rows": [
+      {
+        "access": "GRANTED",
+        "action": "execute",
+        "resource": "database",
+        "graph": "*",
+        "segment": "FUNCTION(*)",
+        "role": "PUBLIC",
+        "user": "neo4j"
+      },
+      {
+        "access": "GRANTED",
+        "action": "execute",
+        "resource": "database",
+        "graph": "*",
+        "segment": "PROCEDURE(*)",
+        "role": "PUBLIC",
+        "user": "neo4j"
+      },
+      {
+        "access": "GRANTED",
+        "action": "access",
+        "resource": "database",
+        "graph": "HOME",
+        "segment": "database",
+        "role": "PUBLIC",
+        "user": "neo4j"
+      },
+      {
+        "access": "GRANTED",
+        "action": "load",
+        "resource": "file",
+        "graph": "*",
+        "segment": "ALL DATA",
+        "role": "admin",
+        "user": "neo4j"
+      },
+      {
+        "access": "GRANTED",
+        "action": "match",
+        "resource": "all_properties",
+        "graph": "*",
+        "segment": "NODE(*)",
+        "role": "admin",
+        "user": "neo4j"
+      },
+      {
+        "access": "GRANTED",
+        "action": "write",
+        "resource": "graph",
+        "graph": "*",
+        "segment": "NODE(*)",
+        "role": "admin",
+        "user": "neo4j"
+      },
+      {
+        "access": "GRANTED",
+        "action": "match",
+        "resource": "all_properties",
+        "graph": "*",
+        "segment": "RELATIONSHIP(*)",
+        "role": "admin",
+        "user": "neo4j"
+      },
+      {
+        "access": "GRANTED",
+        "action": "write",
+        "resource": "graph",
+        "graph": "*",
+        "segment": "RELATIONSHIP(*)",
+        "role": "admin",
+        "user": "neo4j"
+      },
+      {
+        "access": "GRANTED",
+        "action": "transaction_management",
+        "resource": "database",
+        "graph": "*",
+        "segment": "USER(*)",
+        "role": "admin",
+        "user": "neo4j"
+      },
+      {
+        "access": "GRANTED",
+        "action": "access",
+        "resource": "database",
+        "graph": "*",
+        "segment": "database",
+        "role": "admin",
+        "user": "neo4j"
+      },
+      {
+        "access": "GRANTED",
+        "action": "constraint",
+        "resource": "database",
+        "graph": "*",
+        "segment": "database",
+        "role": "admin",
+        "user": "neo4j"
+      },
+      {
+        "access": "GRANTED",
+        "action": "dbms_actions",
+        "resource": "database",
+        "graph": "*",
+        "segment": "database",
+        "role": "admin",
+        "user": "neo4j"
+      },
+      {
+        "access": "GRANTED",
+        "action": "index",
+        "resource": "database",
+        "graph": "*",
+        "segment": "database",
+        "role": "admin",
+        "user": "neo4j"
+      },
+      {
+        "access": "GRANTED",
+        "action": "show_constraint",
+        "resource": "database",
+        "graph": "*",
+        "segment": "database",
+        "role": "admin",
+        "user": "neo4j"
+      },
+      {
+        "access": "GRANTED",
+        "action": "show_index",
+        "resource": "database",
+        "graph": "*",
+        "segment": "database",
+        "role": "admin",
+        "user": "neo4j"
+      },
+      {
+        "access": "GRANTED",
+        "action": "start_database",
+        "resource": "database",
+        "graph": "*",
+        "segment": "database",
+        "role": "admin",
+        "user": "neo4j"
+      },
+      {
+        "access": "GRANTED",
+        "action": "stop_database",
+        "resource": "database",
+        "graph": "*",
+        "segment": "database",
+        "role": "admin",
+        "user": "neo4j"
+      },
+      {
+        "access": "GRANTED",
+        "action": "token",
+        "resource": "database",
+        "graph": "*",
+        "segment": "database",
+        "role": "admin",
+        "user": "neo4j"
+      }
+    ],
+    "truncated": false,
+    "queryType": "s"
+  }
+}

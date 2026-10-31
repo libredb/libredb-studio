@@ -97,9 +97,9 @@ describe("the connection-field records (src/lib/db/connection-fields.ts)", () =>
     expect(CONNECTION_FIELDS.libredb).toEqual(["database"]);
   });
 
-  test("only Elasticsearch and OPC UA declare seed-only fields", () => {
+  test("only Elasticsearch, Modbus, NETCONF and OPC UA declare seed-only fields", () => {
     const declared = (Object.keys(SEED_ONLY_FIELDS) as DatabaseType[]).filter((id) => SEED_ONLY_FIELDS[id] !== null);
-    expect(declared.sort()).toEqual(["elasticsearch", "opcua"]);
+    expect(declared.sort()).toEqual(["elasticsearch", "modbus", "netconf", "opcua"]);
   });
 
   test("a seed-only field is in no other engine's connection fields, so no engine's seed is refused for its own box", () => {

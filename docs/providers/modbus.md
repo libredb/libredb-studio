@@ -147,7 +147,7 @@ only reliable question is the round trip.
 
 ### 4.1 Configuration fields
 
-Host and Port, and nothing else. The default port is 502 (IANA `mbap`).
+Host, Port and the register map ([section 3.1](#31-the-register-map-is-the-data-model)), and nothing else. The default port is 502 (IANA `mbap`).
 
 ### 4.2 There is no credential field
 
@@ -172,6 +172,7 @@ the connection under Node, and under Bun it never reaches the application.
 ### Connection string
 
 `modbus` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/industrial/modbus/connection-string.ts)).
+Its one seed-only field is `registerMap` (`SEED_ONLY_FIELDS.modbus` in [`connection-fields.ts`](../../src/lib/db/connection-fields.ts)): a seed carries the map to the connection, and since only the Modbus provider reads it, a seed of any other type that carries it is refused at load, naming the field.
 
 ### Execution UI
 
@@ -263,6 +264,90 @@ The requirements are in `docs/SECURITY.md` under MB-S1 to MB-S13. The short form
 - The identification walk is bounded (MB-S6).
 - A value is data, never markup (MB-S13).
 - `mbaps` checks the chain and the host name, and not revocation, and says so.
+
+## 8. Agent mode
+
+Agent mode reads a Modbus device through `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/industrial/modbus/index.ts).
+The request reader is [`agent-statement.ts`](../../src/lib/db/providers/industrial/modbus/agent-statement.ts), the reads, their bounds and their answers are [`agent-read.ts`](../../src/lib/db/providers/industrial/modbus/agent-read.ts), the per-device pacing is [`agent-pacing.ts`](../../src/lib/db/providers/industrial/modbus/agent-pacing.ts), and every other surface of an agent-mode handle is [`agent-surface.ts`](../../src/lib/db/providers/industrial/modbus/agent-surface.ts).
+Every claim below about a device cites the capture [`tests/fixtures/modbus/2.3.0/agent-boundary/boundary.json`](../../tests/fixtures/modbus/2.3.0/agent-boundary/boundary.json), recorded by its `run.sh` against a fresh container of the pinned `docker/modbus` fixture (pymodbus 3.12.x) and of a single-client libmodbus device built from `single-client/` beside it, and written by [`tests/live/modbus-agent-boundary.ts`](../../tests/live/modbus-agent-boundary.ts).
+Modbus has no credential, so the capture holds none; the script refuses to write one with a credential-shaped key.
+
+### 8.1 The boundary
+
+The boundary is a structural closed table: an agent read reaches the device only through the console's reader ([`read.ts`](../../src/lib/db/providers/industrial/modbus/read.ts)), whose two builders are `buildRead`, which sends Read Coils (01), Read Discrete Inputs (02), Read Holding Registers (03) or Read Input Registers (04), chosen by the table and never by the request, and `buildIdentification`, which sends Read Device Identification (43/14), over a socket whose one `socket.write` runs after the valve ([section 2.4](#24-the-valve)) re-reads the frame and refuses every other function code.
+So no write, diagnostic, file record or FIFO request can be sent on the agent path.
+[`agent-boundary.test.ts`](../../tests/unit/db/modbus/agent-boundary.test.ts) holds the agent's modules to naming no function code and building no frame, records every frame the agent path writes for every admitted shape (only 01, 02, 03, 04 and 43/14), and replays the capture; [`agent-provider.test.ts`](../../tests/unit/db/modbus/agent-provider.test.ts) pins each read's full request frame (function code, unit, address and quantity) on a real socket.
+
+Modbus TCP has no credential to prove read-only: the pinned fixture takes a raw write from any client.
+Measured raw (`rawWrites`, sent by the capture script on its own socket and never by Studio), function codes 5, 6, 15, 16, 22 and 23 were each answered and each changed the value it targeted, so the table is the boundary.
+Every request the reader refuses reached the device not at all: the capture counts the connections made through a proxy in front of the fixture, and each refusal made none (`refusedBeforeSend`).
+
+### 8.2 What an agent request may be
+
+One JSON object in one of the console's three shapes ([section 5](#5-query-interface)), read by the console's own parser and written as the console writes it:
+
+| Request | Sends |
+| --- | --- |
+| `{"read": ["name", ...]}` | the points the connection's register map names, planned into blocks as the console plans them, one read per block |
+| `{"unit": U, "table": T, "address": A, "count": N}` | one read of one table, optionally decoded with `type`, `wordOrder` and `byteOrder` |
+| `{"identify": "basic" \| "regular" \| "extended"}` | Read Device Identification from object 0, at the map's first unit as the console reads it, for at most 8 rounds |
+
+Every other request is refused before anything is sent, with the parser's sentence followed by agent mode's list of reads: text that is not JSON, any key a shape does not name (`function`, `value`, `objectId`), a table that is not one of the four, unit 0 (the broadcast, which carries writes only) and anything above 255, an address past 65535, a block past the end of the table, more than 125 registers or 2000 bits, a count below one, an identification level other than the three, two shapes in one object, and a point name the connection's map does not declare.
+A points read on a connection with no map is refused as having no map, never answered as an empty device ([section 3.2](#32-no-discovery-and-an-absent-map-is-not-an-empty-device)).
+The admission, which has no connection in hand, reads a point name's shape alone; the provider reads the names against the map again before anything is sent.
+The admission also refuses a request longer than 4,096 characters.
+
+A points or block read answers a number of rows its request decides, so one past the row budget is refused before anything is sent, never cut (`Read-only execution exceeded the row budget: 5 rows > 4 allowed`); an identification answer's rows are the device's, so they are held to the row budget once read; every result is held to the byte budget.
+An identification walk the device was still continuing after 8 rounds is refused rather than answered in part, where the console answers what it has with a warning ([section 3.6](#36-bounds-are-ours-not-the-devices-word)).
+A failure is worded by its category and quotes nothing the device sent: the device's silence for one request's 3,000 ms, its exception by code with this provider's sentence for that code, an answer that cannot be read as an answer to this read, a value the map's declaration cannot decode, an address nothing answers, and settings the egress rule refuses.
+
+### 8.3 Pacing
+
+A device that serves one client at a time answers nobody else while a client holds its connection.
+Measured on the single-client device (`lockout.singleClient`): a second client that sent a read while a first held its connection for 2000 ms was answered 2000 ms later, 0 ms after the first closed, and a client that dialled after a read closed was answered in 0 to 1 ms; one agent read held its connection for 1 ms (`agentReadHoldMs`).
+So the lockout is the hold and nothing after it.
+The pinned fixture cannot show it: it answered a second client in 0 ms while the first held its connection (`lockout.pymodbus`), as [`docker/modbus/README.md`](../../docker/modbus/README.md) records.
+
+So, on the agent path:
+
+- nothing is held open between reads: each read opens its own socket and destroys it before it settles, as the console does ([section 3.4](#34-nothing-is-held-open-between-reads));
+- agent reads of one device never overlap, across every run and every connection of the server process, because the lanes are kept once per process, in a global every copy of the provider's module shares (Next.js loads the module once for the route handlers and again for instrumentation, which resumes agent runs), rather than on the cached provider; a lane is the device's host and port, never the unit, since a gateway serves every unit behind it over one connection, and a host written as a name and as an address is two lanes;
+- a fixed gap of 1,000 ms (`MODBUS_AGENT_DEVICE_GAP_MS`), a chosen value rather than a measured one since the measured lockout is the hold itself, follows each agent read, measured from the moment its socket was destroyed, so the next one cannot queue straight behind it and leave the plant's own client no turn: at the measured hold that leaves the device free for all but about a thousandth of the time an agent spends on it; the capture's two agent reads sent at once through the server's pacer never overlapped (`maxOpen` 1) and the second dialled 999 ms after the first closed, as the proxy in front of the device heard it (`pacing`);
+- one run sends at most 64 device requests (`MODBUS_AGENT_RUN_REQUESTS`), each read charged before it dials with the most it may send, one per planned block, one for a block, and 8 for identification, to the run's own ledger (`ReadOnlyStatementBudget.readAllowance`, one unit per device request), which a resumed run carries; a read that would pass the bound is refused before anything is sent, and a budget that carries no run is refused.
+
+A read's time budget starts when it is asked for and covers its wait for its turn, the gap and the read itself.
+Its execution time, the figure the agent rail and the run's database time show, is its own time on the device, from its turn to its socket's close: the wait and the gap are Studio's, and a read of a device that answers in a millisecond is never shown as taking the gap.
+A read whose turn would come after its budget is refused at once in Studio's words, `Read-only execution exceeded the time budget: the read waited ...`, and keeps its place in the order until the read ahead of it ends, so the read behind it still never overlaps the one in front; a read still running at its deadline is refused in Studio's words and its socket destroyed.
+Neither is ever worded as the device's failure, and the device's silence is never worded as Studio's budget.
+A read that fails or is abandoned frees its lane when its own deadline passes at the latest, since its socket is destroyed by then; a dial still in flight at the deadline is awaited, for at most its own 3,000 ms bound, and destroyed once it opens before the lane is freed.
+
+### 8.4 Values, and what each path reads
+
+Values are the device's own readings, and Modbus has no credential to withhold, so agent mode answers them exactly as the console renders them ([section 3.7](#37-a-value-is-data)): coils and inputs as booleans, registers as words and as values decoded under the register map's declaration, and identification objects, the private objects 0x80 to 0xFF included, as text only when their bytes round-trip as text with no control byte and as hex otherwise.
+Every result reaches the model inside the untrusted-content fence, whose closing marker a device's text cannot spell.
+The register map is the connection's own configuration, and its point names reach the model as object names.
+
+| Path | Handle | What it reads |
+| --- | --- | --- |
+| Investigation reads | agent read-only profile | one request of [section 8.2](#82-what-an-agent-request-may-be), paced as [section 8.3](#83-pacing) says |
+| Investigation grounding, plan-mode grounding and the operations workflow's inventory | either agent profile | the register map's units and points by name, which sends nothing to the device; with no map the provider declares through `inventoryNeedsConfiguration` that nothing can be listed, with its reason that the connection keeps no register map, so the grounding names every kind as unlisted with that reason and says nothing was listed, and the rail reads "no tables listed" with the reason, never that the device reported none |
+| Connect and health | either agent profile | the console's own dial, and health's one-point read (a dial alone with no map), each taking its turn on the device's lane and waiting at most 9,000 ms for it |
+| Console, overview, performance, storage, session, slow-query, table and index readings | either agent profile | nothing: each is refused with its reason, never answered with Studio's own figures or an empty reading |
+
+### 8.5 Agent language pack
+
+Statement-language family: `modbusread`.
+Overlay: [`src/lib/agent/languages/modbusread/engines/modbus.ts`](../../src/lib/agent/languages/modbusread/engines/modbus.ts), with its client row in [`src/lib/agent/languages/modbusread/engines/client.ts`](../../src/lib/agent/languages/modbusread/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`.
+Both overlays are empty, so the engine resolves to the `modbusread` family pack itself.
+The `modbusread` statement-language family has no dialect-bound member.
+This overlay overrides no Shared member, so every Shared member is the `modbusread` statement-language family's own.
+The family offers the investigation workflow, through `run_read_query` with one request, and the operations workflow; it offers no query optimization or database assessment, since a device has no plan and no profile, and no data analysis, whose tools assume a store of records, and no workflow hands an answer to the editor.
+The workflow classifier offers the model only these two.
+Plan mode's safety strip is the family's own (`posture.plan` in [`client.ts`](../../src/lib/agent/languages/modbusread/client.ts)): "the register map grounds it; opening the connection dials the device, and no request is sent to it", because the grounding reads the map and sends the device nothing, while the acquisition's `connect` dials the device's port and closes it again, so the shared strip's "nothing else reaches the database" would not be true here.
+The editor language id stays `modbus`, and the fence alias `modbusread` names this engine.
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+No MCP tool runs a Modbus request: the family declares no MCP facet, `MCP_EXPOSABLE.modbus` and `MCP_STATEMENT_READ.modbus` are false ([B160](../BACKLOG.md#b160-modbuss-agent-reads-are-paced-per-device-and-it-has-no-mcp-surface)), and `READ_ONLY_ENFORCED.modbus` is unchanged.
 
 ## Migration DDL
 

@@ -36,7 +36,7 @@ export function createMockRequest(
 export function createMockCookies() {
   const store = new Map<string, { value: string; options?: Record<string, unknown> }>();
   // Every delete is logged with the path it named, so a test can check a cookie was cleared at its own scope.
-  const deleted: { name: string; path?: string }[] = [];
+  const deleted: { name: string; path?: string; secure?: boolean }[] = [];
 
   return {
     get: (name: string) => {
@@ -46,7 +46,7 @@ export function createMockCookies() {
     set: (name: string, value: string, options?: Record<string, unknown>) => {
       store.set(name, { value, options });
     },
-    delete: (target: string | { name: string; path?: string }) => {
+    delete: (target: string | { name: string; path?: string; secure?: boolean }) => {
       const entry = typeof target === "string" ? { name: target } : target;
       store.delete(entry.name);
       deleted.push(entry);

@@ -19,6 +19,10 @@
  * refused too and a proxy that decodes the path sees no dot segment (QE1). Every other character reaches the server
  * through `encodeURIComponent`, so a collection from before 1.5 named `a:b` still opens. The answer is handed back whatever its status: errors.ts reads it.
  *
+ * Beside the table it sends exactly two more requests, the agent read-only proof's no-op writes (`QdrantProbe`): an
+ * alias update with no action and a point delete of no point. Their methods, paths and bodies are written here and
+ * nowhere else, the delete's collection is held to the same path rule, and no console request can name either.
+ *
  * It has no logger and logs nothing at any level (QE19).
  */
 import { QueryError } from "@/lib/db/errors";
@@ -30,6 +34,7 @@ import {
   type QdrantAnswer,
   type QdrantClient,
   type QdrantOp,
+  type QdrantProbe,
   type QdrantRequest,
   type QdrantRouteTemplate,
   type QdrantRouteTemplates,
@@ -165,6 +170,18 @@ function queryOf(route: Route, request: QdrantRequest): URLSearchParams | undefi
   return params;
 }
 
+/** The read-only proof's two requests, each with its method, path and body fixed; the collection is the one variable. */
+function probeRequest(probe: QdrantProbe): { readonly path: string; readonly body: string } {
+  switch (probe.kind) {
+    case "empty-alias-update":
+      return { path: "/collections/aliases", body: '{"actions":[]}' };
+    case "empty-point-delete":
+      return { path: `/collections/${segmentOf(probe.collection)}/points/delete`, body: '{"points":[]}' };
+    default:
+      return refuse("The request names a probe this client does not send, so nothing was sent.");
+  }
+}
+
 export function createRestQdrantClient(
   options: QdrantConnectionOptions,
   routes: QdrantRouteTemplates,
@@ -179,6 +196,26 @@ export function createRestQdrantClient(
     // A connect that never completes names the host, the port and the seconds waited, as a ConnectionError.
     reportsUnreachable: true,
   });
+  const answered = async (
+    method: "GET" | "POST",
+    url: string,
+    body: string | undefined,
+    signal: AbortSignal,
+  ): Promise<QdrantAnswer> => {
+    const answer = await transport.request({
+      method,
+      url,
+      ...(body === undefined ? {} : { body }),
+      signal,
+      maxResponseBytes: options.responseCapBytes,
+    });
+    return {
+      status: answer.status,
+      contentType: answer.contentType,
+      retryAfter: answer.retryAfter,
+      text: answer.text,
+    };
+  };
   return {
     async send(request: QdrantRequest, signal: AbortSignal): Promise<QdrantAnswer> {
       const route = table.get(request.op as QdrantOp);
@@ -190,19 +227,11 @@ export function createRestQdrantClient(
         refuse("The request gives a body that is not JSON text, so nothing was sent.");
       }
       const url = endpointUrl(options.origin, pathOf(route, request), queryOf(route, request));
-      const answer = await transport.request({
-        method: route.method,
-        url,
-        ...(request.body === undefined ? {} : { body: request.body }),
-        signal,
-        maxResponseBytes: options.responseCapBytes,
-      });
-      return {
-        status: answer.status,
-        contentType: answer.contentType,
-        retryAfter: answer.retryAfter,
-        text: answer.text,
-      };
+      return answered(route.method, url, request.body, signal);
+    },
+    async probe(probe: QdrantProbe, signal: AbortSignal): Promise<QdrantAnswer> {
+      const { path, body } = probeRequest(probe);
+      return answered("POST", endpointUrl(options.origin, path, undefined), body, signal);
     },
     close(): void {
       transport.close();

@@ -3,7 +3,9 @@
  * `console/` directory included, is parsed with the TypeScript compiler, so a file a later task adds is held by the
  * same rules without editing this test.
  *
- * 1. No file imports a module under `src/lib/db/providers/` outside this directory, a type-only import included.
+ * 1. No file imports a module under `src/lib/db/providers/` outside this directory, a type-only import included, but
+ *    the read-only budget's shared sentences (`sql/read-only-budget.ts`), which every `queryReadOnly` raises its row,
+ *    byte and time refusals with.
  * 2. No file names `fetch`.
  * 3. Outside `seams.ts`, no file imports a runtime built-in (`node:` or bare), reads `process.env` or `Date.now`, or
  *    names `setTimeout` or `setInterval`.
@@ -26,6 +28,8 @@ import { platformTimeoutMs } from "../../../helpers/platform-timeout";
 const ROOT = join(import.meta.dir, "..", "..", "..", "..");
 const DIR = "src/lib/db/providers/document/firestore";
 const PROVIDERS = "src/lib/db/providers/";
+/** The one module outside this directory a source may import: the shared refusal sentences of every agent read. */
+const SHARED_BUDGET = "src/lib/db/providers/sql/read-only-budget.ts";
 const SEAMS = `${DIR}/seams.ts`;
 const CLOSED_TABLE = `${DIR}/requests.ts`;
 const SERVER_ONLY: ReadonlySet<string> = new Set(["src/lib/db/http/node-transport.ts", `${DIR}/transport.ts`, SEAMS]);
@@ -216,7 +220,7 @@ function seamFindings(file: string, text: string): string[] {
       continue;
     }
     const target = resolved(specifier, file);
-    if (target.startsWith(PROVIDERS) && !inDirectory(target))
+    if (target.startsWith(PROVIDERS) && !inDirectory(target) && target !== SHARED_BUDGET)
       findings.push(`rule 1: ${file} imports ${specifier}, a module of another provider directory`);
     if (browserSafe && !typeOnly && reachesServer(target)) findings.push(reach(specifier));
   }
@@ -277,6 +281,12 @@ describe("planted violations fail by name", () => {
       "sampling.ts",
       'import { S3_KEY_SCAN } from "@/lib/db/providers/objectstore/s3/key-scan";\n',
       `rule 1: ${DIR}/sampling.ts imports @/lib/db/providers/objectstore/s3/key-scan, a module of another provider directory`,
+    ],
+    [
+      "objects.ts",
+      "objects.ts",
+      'import { SQLBaseProvider } from "@/lib/db/providers/sql/sql-base";\n',
+      `rule 1: ${DIR}/objects.ts imports @/lib/db/providers/sql/sql-base, a module of another provider directory`,
     ],
     [
       "index.ts",
@@ -402,6 +412,7 @@ describe("planted violations fail by name", () => {
 
   test.each([
     ["index.ts", "index.ts", 'import { BaseDatabaseProvider } from "@/lib/db/base-provider";\n'],
+    ["objects.ts", "objects.ts", 'import { ROW_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";\n'],
     ["key-scan.ts", "key-scan.ts", 'import type { KeyScanPage } from "@/lib/db/types";\n'],
     ["seams.ts", "seams.ts", "const at = Date.now();\n"],
     ["seams.ts", "seams.ts", 'import { readFileSync } from "node:fs";\n'],

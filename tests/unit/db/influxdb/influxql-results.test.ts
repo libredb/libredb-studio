@@ -129,7 +129,13 @@ describe("shapeInfluxqlBody over the captures", () => {
       });
 
       test("preview-edge-empty: an empty result, whether zero bytes (3.x) or a bare statement 0", () => {
-        expect(shapeCapture(version, "preview-edge-empty")).toEqual({ fields: [], rows: [], cut: false, warnings: [] });
+        expect(shapeCapture(version, "preview-edge-empty")).toEqual({
+          fields: [],
+          rows: [],
+          cut: false,
+          warnings: [],
+          partial: false,
+        });
       });
 
       test("group-by-room-partial: the tag leads, partial series join across documents, no partial warning (K5)", () => {
@@ -143,6 +149,7 @@ describe("shapeInfluxqlBody over the captures", () => {
         expect(kitchen).toEqual([...kitchen].sort());
         for (const row of shaped.rows) expect(Object.keys(row).sort()).toEqual(["room", "temp", "time"]);
         expect(shaped.warnings).toEqual([]);
+        expect(shaped.partial).toBe(false);
       });
 
       test("regex-from-partial: a measurement column leads because the result spans several names", () => {
@@ -366,6 +373,7 @@ describe("warnings", () => {
     const shaped = shapeInfluxqlBody(body, LIMITS, NO_SECRETS);
     expect(shaped.rows).toHaveLength(2);
     expect(shaped.warnings).toEqual([{ message: INFLUX_ERROR_SENTENCES.partial as string }]);
+    expect(shaped.partial).toBe(true);
     expect(shaped.cut).toBe(false);
   });
 

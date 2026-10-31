@@ -13,17 +13,27 @@
  * One transport per session, built in `connect()` (or in `getHealth()` when no session exists) and closed at
  * `disconnect()`. Only typed keys sign: a blank pair passes no signer, so a request carries no credential at all.
  * The constructor's `deps` are test seams that the factory never passes, and no connection field reaches them, so a
- * user cannot forge time or a transport. No `getPoolStats`, no `queryReadOnly` and no
- * transaction methods: each is detected by presence.
+ * user cannot forge time or a transport. No `getPoolStats` and no transaction methods: each is detected by presence.
+ *
+ * `queryReadOnly` is the agent's: one read of a closed table of metadata reads (`agent-statement.ts`), sent through the
+ * agent's client (`S3AgentClient`), which holds those reads alone over a transport that sends GET and HEAD only, and
+ * answered through a metadata-only projection (`agent-metadata-read.ts`): bucket names, creation times, existence,
+ * regions, locations and versioning status, a whole bucket's object count and total size, and one named object's
+ * existence, size, last-modified time and storage class, never an object key, body, ETag, version id, user metadata,
+ * tag, owner, ACL, policy or the endpoint. On a handle opened for any agent-mode profile every other surface goes
+ * through that client too (`agent-surface.ts`): keys are never listed, an object's or a bucket's source, the console
+ * and the Keys panel are refused, and every reading S3 does not report answers its reason. MCP read stays closed on
+ * this engine.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { AuthenticationError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { AuthenticationError, DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import {
   createNodeByteTransport,
   type NodeByteTransport,
   type NodeByteTransportOptions,
   type RequestSigner,
 } from "@/lib/db/http/node-transport";
+import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
 import type {
   ActiveSessionDetails,
   Container,
@@ -47,6 +57,8 @@ import type {
   ProviderLabels,
   ProviderOptions,
   QueryResult,
+  ReadOnlyStatementBudget,
+  ReadOnlyStatementMode,
   SlowQueryStats,
   StorageStats,
   TableStats,
@@ -59,10 +71,22 @@ import {
 } from "@/lib/db/utils/bounded-limiter";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import type { QueryWarning } from "@/lib/types";
+import { runS3AgentRead, S3_METADATA_ONLY, s3AgentFailure, s3AgentResult } from "./agent-metadata-read";
+import { readS3AgentStatement } from "./agent-statement";
+import {
+  agentCountObjects,
+  agentHealth,
+  agentListObjects,
+  agentProbe,
+  requireAgentRoot,
+  S3_AGENT_WITHHELD,
+} from "./agent-surface";
 import {
   type BucketListing,
+  createS3AgentClient,
   createS3Client,
   limitedS3Client,
+  type S3AgentClient,
   type S3CallOptions,
   type S3Client,
   type S3ClientContext,
@@ -114,6 +138,9 @@ const DEFAULT_DEPS: S3ProviderDeps = {
 /** A command has no binding, and dropping the values would run another command than the one written. */
 const S3_PARAMETERS_REFUSAL = "S3 commands take no parameters: write the values in the command.";
 
+const PROFILE_REQUIRED = "Read-only execution requires a provider opened under the agent read-only profile";
+const NO_ESTIMATE = "S3 composes no estimating plan for the agent";
+
 /** One connected session: its transport, what the connection resolved to, and what every call of it shares. */
 interface S3Session {
   readonly transport: NodeByteTransport;
@@ -121,6 +148,8 @@ interface S3Session {
   readonly context: S3ClientContext;
   /** The limited client. */
   readonly client: S3Client;
+  /** The agent's client over the same transport and limiter: the agent's reads alone. */
+  readonly agentClient: S3AgentClient;
   /** Aborted at disconnect, so no call outlives its session. */
   readonly lifetime: AbortController;
   /** Bucket creation dates the tree read, for the bucket Source part. */
@@ -159,6 +188,45 @@ export class S3Provider extends BaseDatabaseProvider {
     this.deps = { ...DEFAULT_DEPS, ...deps };
   }
 
+  /**
+   * Whether this handle was opened for the agent read-only profile by an acquisition that sends statements
+   * (`sendsStatements`). Only then does `queryReadOnly` answer; the operations profile's acquisitions send no statement.
+   */
+  private get readOnlyProfile(): boolean {
+    return this.execution.readOnly === true && this.execution.sendsStatements === true;
+  }
+
+  /**
+   * Whether this handle was opened for any agent-mode profile: every execution profile opens `readOnly` and no editor
+   * handle does. On such a handle every surface reads through the agent's client; the editor's own handles keep every
+   * read.
+   */
+  private get agentProfile(): boolean {
+    return this.execution.readOnly === true;
+  }
+
+  /**
+   * One agent-mode surface over the agent's client under the surface deadline, whose failure is worded by its category
+   * alone; Studio's own refusals pass as they are.
+   */
+  private async agentRead<T>(
+    work: (client: S3AgentClient, call: S3CallOptions, session: S3Session) => Promise<T>,
+  ): Promise<T> {
+    const session = this.requireSession();
+    const timeoutMs = session.options.surfaceTimeoutMs;
+    try {
+      return await work(session.agentClient, this.callFor(session, timeoutMs), session);
+    } catch (error) {
+      throw s3AgentFailure(error, { statementTimeoutMs: timeoutMs }) ?? error;
+    }
+  }
+
+  /** The refusal of a surface an agent-mode handle does not read, after the connection check every surface makes. */
+  private agentWithheld(sentence: string): never {
+    this.ensureConnected();
+    throw new QueryError(sentence, S3_TYPE);
+  }
+
   // ==========================================================================
   // Declarations
   // ==========================================================================
@@ -189,6 +257,9 @@ export class S3Provider extends BaseDatabaseProvider {
       keyScan: S3_KEY_SCAN,
       // Nothing a read runs changes the tree.
       schemaRefreshPattern: "(?!)",
+      // Object keys, bodies, metadata, tags, ETags and version ids are stored values: an agent read answers names,
+      // counts and flags.
+      metadataOnly: S3_METADATA_ONLY,
     };
   }
 
@@ -211,6 +282,12 @@ export class S3Provider extends BaseDatabaseProvider {
 
   /** The bucket list this count reads is kept for the next bucket listing (`bucketHandoff`). */
   public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
+    if (this.agentProfile) {
+      requireAgentRoot(container);
+      return this.agentRead((client, call, session) =>
+        agentCountObjects(client, container, session.options.pinnedBucket, call),
+      );
+    }
     requireS3Root(container);
     const session = this.requireSession();
     session.bucketHandoff = null;
@@ -236,6 +313,12 @@ export class S3Provider extends BaseDatabaseProvider {
 
   /** Takes the count's bucket list once when it is younger than the surface deadline; otherwise reads its own. */
   public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+    if (this.agentProfile) {
+      requireAgentRoot(container);
+      return this.agentRead((client, call, session) =>
+        agentListObjects(client, container, kind, session.options.pinnedBucket, call),
+      );
+    }
     requireS3Root(container);
     const session = this.requireSession();
     const handoff = session.bucketHandoff;
@@ -267,6 +350,7 @@ export class S3Provider extends BaseDatabaseProvider {
 
   /** A bucket's three parts, or an object's Metadata part and its preview parts. */
   public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
+    if (this.agentProfile) this.agentWithheld(S3_AGENT_WITHHELD.source);
     return this.read(
       (surface, call) =>
         readS3ObjectSource(surface, path, kind, limit, call, {
@@ -318,6 +402,7 @@ export class S3Provider extends BaseDatabaseProvider {
 
   /** Options and cursor are refused by key-scan.ts before any request; a page is one server call at most. */
   public async scanKeysPage(options: KeyScanOptions): Promise<KeyScanPage> {
+    if (this.agentProfile) this.agentWithheld(S3_AGENT_WITHHELD.keys);
     return this.read((surface, call) => scanS3KeysPage(surface, options, call), "ListObjectsV2");
   }
 
@@ -333,6 +418,8 @@ export class S3Provider extends BaseDatabaseProvider {
   public async query(text: string, params?: unknown[], queryId?: string): Promise<QueryResult> {
     if (params !== undefined && params.length > 0) throw new DatabaseConfigError(S3_PARAMETERS_REFUSAL, S3_TYPE);
     const session = this.requireSession();
+    // The console lists keys and previews objects, whose names and cells are stored values: never on an agent handle.
+    if (this.agentProfile) throw new RefusedBeforeSendError(S3_AGENT_WITHHELD.query, S3_TYPE, text);
     const { options } = session;
     const pin = options.pinnedBucket === undefined ? {} : { pinnedBucket: options.pinnedBucket };
     const parsed = parseS3Command(text, {
@@ -359,6 +446,36 @@ export class S3Provider extends BaseDatabaseProvider {
       throw surface.fail(error, "ListBuckets");
     } finally {
       run.end();
+    }
+  }
+
+  /**
+   * One agent command. Only on a handle opened under the agent read-only profile; the command is read by
+   * `readS3AgentStatement` with the connection's pinned bucket and refused before anything is sent when it is not one
+   * read of the closed table. Then the read runs over the agent's client under the request's time budget and the
+   * session's lifetime, with nothing kept from one call for the next, and its answer is the metadata-only projection,
+   * refused past the row or byte budget rather than cut. A failure is worded by its category, never by the server's
+   * words.
+   */
+  public async queryReadOnly(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    const session = this.requireSession();
+    if (!this.readOnlyProfile) throw new RefusedBeforeSendError(PROFILE_REQUIRED, S3_TYPE, statement);
+    assertReadOnlyBudget(budget, S3_TYPE);
+    if (mode !== "execute") throw new RefusedBeforeSendError(NO_ESTIMATE, S3_TYPE, statement);
+    const pin = session.options.pinnedBucket === undefined ? {} : { pinnedBucket: session.options.pinnedBucket };
+    const reading = readS3AgentStatement(statement, pin);
+    if (!reading.ok) throw new RefusedBeforeSendError(reading.message, S3_TYPE, statement);
+    const started = Date.now();
+    try {
+      const call = this.callFor(session, budget.statementTimeoutMs);
+      const answer = await runS3AgentRead(session.agentClient, reading.plan, { budget, call, ...pin });
+      return s3AgentResult(answer, budget, statement, Date.now() - started);
+    } catch (error) {
+      throw s3AgentFailure(error, budget, statement) ?? error;
     }
   }
 
@@ -428,6 +545,7 @@ export class S3Provider extends BaseDatabaseProvider {
         endpointText: s3EndpointText(options),
       },
       client: limitedS3Client(createS3Client(transport), this.limiter),
+      agentClient: createS3AgentClient(transport, this.limiter),
       lifetime: new AbortController(),
       created: new Map(),
       bucketHandoff: null,
@@ -440,14 +558,30 @@ export class S3Provider extends BaseDatabaseProvider {
     const timeoutMs = session.options.surfaceTimeoutMs;
     const surface = this.surfaceFor(session, timeoutMs);
     try {
-      const { listedBuckets } = await probeS3(surface, this.callFor(session, timeoutMs));
+      const call = this.callFor(session, timeoutMs);
+      // An agent-mode handle probes through the agent's client, so even its connect sends nothing outside the table.
+      const { listedBuckets } = this.agentProfile
+        ? await agentProbe(session.agentClient, session.options.pinnedBucket, call)
+        : await probeS3(surface, call);
       session.warnings = listedBuckets === 0 ? [{ message: S3_NO_BUCKETS_WARNING }] : [];
     } catch (error) {
       // Worded before the lifetime ends, so a defect is never turned into the closed-connection sentence.
-      const failure = surface.fail(error, probeOperation(session.options));
+      const failure = this.probeFailure(error, surface, session, timeoutMs);
       closeSession(session);
       throw failure;
     }
+  }
+
+  /**
+   * A probe's failure: on an agent-mode handle worded by its category alone, since the server's words can name a key or
+   * a bucket and the probe's sentence the endpoint; on an editor handle the error table's sentence.
+   */
+  private probeFailure(error: unknown, surface: S3Surface, session: S3Session, timeoutMs: number): unknown {
+    if (this.agentProfile) {
+      const worded = s3AgentFailure(error, { statementTimeoutMs: timeoutMs });
+      if (worded !== undefined) return worded;
+    }
+    return surface.fail(error, probeOperation(session.options));
   }
 
   // ==========================================================================
@@ -509,54 +643,70 @@ export class S3Provider extends BaseDatabaseProvider {
     const timeoutMs = Math.min(S3_HEALTH_DEADLINE_MS, session.options.callTimeoutMs);
     const surface = this.surfaceFor(session, timeoutMs);
     try {
-      const health = await s3Health(surface, this.callFor(session, timeoutMs));
+      const call = this.callFor(session, timeoutMs);
+      const health = this.agentProfile
+        ? await agentHealth(session.agentClient, session.options.pinnedBucket, call)
+        : await s3Health(surface, call);
       if (opened && this.session === null) {
         this.session = session;
         this.setConnected(true);
       } else if (opened) closeSession(session);
       return health;
     } catch (error) {
-      const failure = surface.fail(error, probeOperation(session.options));
+      const failure = this.probeFailure(error, surface, session, timeoutMs);
       if (opened) closeSession(session);
       throw failure;
     }
   }
 
   public async getOverview(): Promise<DatabaseOverview> {
+    if (this.agentProfile) this.agentWithheld(S3_AGENT_WITHHELD.overview);
     return this.read((surface, call) => s3Overview(surface, call));
   }
 
   /** S3 reports no storage figure Studio could chart. */
   public async getStorageStats(): Promise<StorageStats[]> {
+    // On an agent-mode handle an empty answer would read as the server's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(S3_AGENT_WITHHELD.storage);
     this.ensureConnected();
     return [];
   }
 
   /** S3 has no tables; `tableStatsCaption` says where its buckets and objects are. */
   public async getTableStats(): Promise<TableStats[]> {
+    // On an agent-mode handle an empty answer would read as the server's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(S3_AGENT_WITHHELD.tableStats);
     this.ensureConnected();
     return [];
   }
 
   public async getIndexStats(): Promise<IndexStats[]> {
+    // On an agent-mode handle an empty answer would read as the server's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(S3_AGENT_WITHHELD.indexStats);
     this.ensureConnected();
     return [];
   }
 
   /** S3 keeps no query log. */
   public async getSlowQueries(): Promise<SlowQueryStats[]> {
+    // On an agent-mode handle an empty answer would read as the server's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(S3_AGENT_WITHHELD.slowQueries);
     this.ensureConnected();
     return [];
   }
 
   /** S3 does not list client sessions. */
   public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
+    // On an agent-mode handle an empty answer would read as the server's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(S3_AGENT_WITHHELD.sessions);
     this.ensureConnected();
     return [];
   }
 
   /** Nothing is measured, so every optional figure is absent; refused before connect, as every other panel is. */
   public async getPerformanceMetrics(): Promise<PerformanceMetrics> {
+    // On an agent-mode handle an empty answer would read as the server's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(S3_AGENT_WITHHELD.performance);
     this.ensureConnected();
     return {};
   }

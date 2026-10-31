@@ -279,7 +279,20 @@ export interface FakeCatalog {
   readonly metrics?: string;
   /** GetLoadingProgress' answers in turn, the last one repeated; `["100"]` when absent. */
   readonly progress?: readonly string[];
+  /**
+   * What the read-only proof's privilege reads answer: each role a user holds by user name, and each role's grants as
+   * privilege names. Absent, ListCredUsers is refused as Milvus refuses a read-only user, every user holds no role, and
+   * each role grants what `public` grants on Milvus 3.0.2 (IndexDetail, DescribeCollection and ListAliases).
+   */
+  readonly principals?: {
+    readonly listsUsers?: boolean;
+    readonly roles?: Readonly<Record<string, readonly string[]>>;
+    readonly grants?: Readonly<Record<string, readonly string[]>>;
+  };
 }
+
+/** The grants of the role public on Milvus 3.0.2 (tests/fixtures/milvus/3.0.2/agent-boundary/select-grant-public-*). */
+export const PUBLIC_GRANTS: readonly string[] = ["IndexDetail", "DescribeCollection", "ListAliases"];
 
 export type FakeMethod = Exclude<keyof MilvusClient, "close">;
 
@@ -534,6 +547,37 @@ export function createFakeMilvusClient(catalog: FakeCatalog): FakeMilvusClient {
       run("releaseCollection", o, r, () => {
         collectionOf(o.db, r.collection_name);
         return OK;
+      }),
+    listCredUsers: (o) =>
+      run("listCredUsers", o, undefined, () => {
+        if (catalog.principals?.listsUsers !== true) throw permissionDenied("SelectOwnership");
+        return { status: OK, usernames: Object.keys(catalog.principals.roles ?? {}) };
+      }),
+    selectUser: (r, o) =>
+      run("selectUser", o, r, () => ({
+        status: OK,
+        results: [
+          {
+            user: { name: r.user.name },
+            roles: (catalog.principals?.roles?.[r.user.name] ?? []).map((name) => ({ name, description: "" })),
+            description: "",
+          },
+        ],
+      })),
+    selectGrant: (r, o) =>
+      run("selectGrant", o, r, () => {
+        const role = r.entity.role?.name ?? "";
+        const granted = catalog.principals?.grants?.[role] ?? PUBLIC_GRANTS;
+        return {
+          status: OK,
+          entities: granted.map((privilege) => ({
+            role: { name: role, description: "" },
+            object: { name: "Global" },
+            object_name: "*",
+            grantor: { user: { name: "root" }, privilege: { name: privilege } },
+            db_name: "default",
+          })),
+        };
       }),
     close: () => {
       closed += 1;

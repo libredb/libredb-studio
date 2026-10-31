@@ -1,0 +1,16 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-enterprise",
+    "digest": "sha256:02d30e0a80f0aaed71cfdfaa85c8ea01cf44aacd55510d4a2b4a53f9f1a2e1ad",
+    "date": "2026-10-30T11:34:40.208Z",
+    "database": null
+  },
+  "principal": "cidr: agent_reader and cidr_loader (GRANT LOAD ON CIDR 10.0.0.0/8)",
+  "surface": "verify",
+  "outcome": "pass",
+  "result": {
+    "address": "127.0.0.1:17687",
+    "agent": "Neo4j/5.26.31",
+    "protocolVersion": "5.5"
+  }
+}

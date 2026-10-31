@@ -1,0 +1,456 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-enterprise",
+    "digest": "sha256:02d30e0a80f0aaed71cfdfaa85c8ea01cf44aacd55510d4a2b4a53f9f1a2e1ad",
+    "date": "2026-10-30T11:34:52.370Z",
+    "database": "neo4j"
+  },
+  "principal": "neo4j: role admin",
+  "statement": "SHOW FUNCTIONS YIELD name",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 1000
+  },
+  "outcome": "pass",
+  "result": {
+    "fields": [
+      "name"
+    ],
+    "rows": [
+      {
+        "name": "abs"
+      },
+      {
+        "name": "acos"
+      },
+      {
+        "name": "all"
+      },
+      {
+        "name": "any"
+      },
+      {
+        "name": "asin"
+      },
+      {
+        "name": "atan"
+      },
+      {
+        "name": "atan2"
+      },
+      {
+        "name": "avg"
+      },
+      {
+        "name": "btrim"
+      },
+      {
+        "name": "btrim"
+      },
+      {
+        "name": "ceil"
+      },
+      {
+        "name": "char_length"
+      },
+      {
+        "name": "character_length"
+      },
+      {
+        "name": "coalesce"
+      },
+      {
+        "name": "collect"
+      },
+      {
+        "name": "cos"
+      },
+      {
+        "name": "cot"
+      },
+      {
+        "name": "count"
+      },
+      {
+        "name": "date"
+      },
+      {
+        "name": "date.realtime"
+      },
+      {
+        "name": "date.statement"
+      },
+      {
+        "name": "date.transaction"
+      },
+      {
+        "name": "date.truncate"
+      },
+      {
+        "name": "datetime"
+      },
+      {
+        "name": "datetime.fromepoch"
+      },
+      {
+        "name": "datetime.fromepochmillis"
+      },
+      {
+        "name": "datetime.realtime"
+      },
+      {
+        "name": "datetime.statement"
+      },
+      {
+        "name": "datetime.transaction"
+      },
+      {
+        "name": "datetime.truncate"
+      },
+      {
+        "name": "db.nameFromElementId"
+      },
+      {
+        "name": "degrees"
+      },
+      {
+        "name": "duration"
+      },
+      {
+        "name": "duration.between"
+      },
+      {
+        "name": "duration.inDays"
+      },
+      {
+        "name": "duration.inMonths"
+      },
+      {
+        "name": "duration.inSeconds"
+      },
+      {
+        "name": "e"
+      },
+      {
+        "name": "elementId"
+      },
+      {
+        "name": "endNode"
+      },
+      {
+        "name": "exists"
+      },
+      {
+        "name": "exp"
+      },
+      {
+        "name": "file"
+      },
+      {
+        "name": "floor"
+      },
+      {
+        "name": "graph.byElementId"
+      },
+      {
+        "name": "graph.byName"
+      },
+      {
+        "name": "graph.names"
+      },
+      {
+        "name": "graph.propertiesByName"
+      },
+      {
+        "name": "haversin"
+      },
+      {
+        "name": "head"
+      },
+      {
+        "name": "id"
+      },
+      {
+        "name": "isEmpty"
+      },
+      {
+        "name": "isNaN"
+      },
+      {
+        "name": "keys"
+      },
+      {
+        "name": "labels"
+      },
+      {
+        "name": "last"
+      },
+      {
+        "name": "left"
+      },
+      {
+        "name": "length"
+      },
+      {
+        "name": "linenumber"
+      },
+      {
+        "name": "localdatetime"
+      },
+      {
+        "name": "localdatetime.realtime"
+      },
+      {
+        "name": "localdatetime.statement"
+      },
+      {
+        "name": "localdatetime.transaction"
+      },
+      {
+        "name": "localdatetime.truncate"
+      },
+      {
+        "name": "localtime"
+      },
+      {
+        "name": "localtime.realtime"
+      },
+      {
+        "name": "localtime.statement"
+      },
+      {
+        "name": "localtime.transaction"
+      },
+      {
+        "name": "localtime.truncate"
+      },
+      {
+        "name": "log"
+      },
+      {
+        "name": "log10"
+      },
+      {
+        "name": "lower"
+      },
+      {
+        "name": "ltrim"
+      },
+      {
+        "name": "ltrim"
+      },
+      {
+        "name": "max"
+      },
+      {
+        "name": "min"
+      },
+      {
+        "name": "nodes"
+      },
+      {
+        "name": "none"
+      },
+      {
+        "name": "normalize"
+      },
+      {
+        "name": "normalize"
+      },
+      {
+        "name": "nullIf"
+      },
+      {
+        "name": "percentileCont"
+      },
+      {
+        "name": "percentileDisc"
+      },
+      {
+        "name": "pi"
+      },
+      {
+        "name": "point"
+      },
+      {
+        "name": "point.distance"
+      },
+      {
+        "name": "point.withinBBox"
+      },
+      {
+        "name": "properties"
+      },
+      {
+        "name": "radians"
+      },
+      {
+        "name": "rand"
+      },
+      {
+        "name": "randomUUID"
+      },
+      {
+        "name": "range"
+      },
+      {
+        "name": "range"
+      },
+      {
+        "name": "reduce"
+      },
+      {
+        "name": "relationships"
+      },
+      {
+        "name": "replace"
+      },
+      {
+        "name": "reverse"
+      },
+      {
+        "name": "right"
+      },
+      {
+        "name": "round"
+      },
+      {
+        "name": "round"
+      },
+      {
+        "name": "round"
+      },
+      {
+        "name": "rtrim"
+      },
+      {
+        "name": "rtrim"
+      },
+      {
+        "name": "sign"
+      },
+      {
+        "name": "sin"
+      },
+      {
+        "name": "single"
+      },
+      {
+        "name": "size"
+      },
+      {
+        "name": "split"
+      },
+      {
+        "name": "sqrt"
+      },
+      {
+        "name": "startNode"
+      },
+      {
+        "name": "stdev"
+      },
+      {
+        "name": "stdevp"
+      },
+      {
+        "name": "substring"
+      },
+      {
+        "name": "substring"
+      },
+      {
+        "name": "sum"
+      },
+      {
+        "name": "tail"
+      },
+      {
+        "name": "tan"
+      },
+      {
+        "name": "time"
+      },
+      {
+        "name": "time.realtime"
+      },
+      {
+        "name": "time.statement"
+      },
+      {
+        "name": "time.transaction"
+      },
+      {
+        "name": "time.truncate"
+      },
+      {
+        "name": "timestamp"
+      },
+      {
+        "name": "toBoolean"
+      },
+      {
+        "name": "toBooleanList"
+      },
+      {
+        "name": "toBooleanOrNull"
+      },
+      {
+        "name": "toFloat"
+      },
+      {
+        "name": "toFloatList"
+      },
+      {
+        "name": "toFloatOrNull"
+      },
+      {
+        "name": "toInteger"
+      },
+      {
+        "name": "toIntegerList"
+      },
+      {
+        "name": "toIntegerOrNull"
+      },
+      {
+        "name": "toLower"
+      },
+      {
+        "name": "toString"
+      },
+      {
+        "name": "toStringList"
+      },
+      {
+        "name": "toStringOrNull"
+      },
+      {
+        "name": "toUpper"
+      },
+      {
+        "name": "trim"
+      },
+      {
+        "name": "trim"
+      },
+      {
+        "name": "type"
+      },
+      {
+        "name": "upper"
+      },
+      {
+        "name": "valueType"
+      },
+      {
+        "name": "vector.similarity.cosine"
+      },
+      {
+        "name": "vector.similarity.euclidean"
+      }
+    ],
+    "truncated": false,
+    "queryType": "r"
+  }
+}

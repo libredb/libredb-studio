@@ -1,0 +1,20 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-community",
+    "digest": "sha256:d9cfe82983d27f5a75b3aaae8f316d04f9a698a3b7f6103a508f7caf8362f255",
+    "date": "2026-10-30T11:35:08.221Z",
+    "database": "neo4j"
+  },
+  "principal": "neo4j: the only user of Community Edition, every database read-only",
+  "statement": "SHOW USER PRIVILEGES YIELD access, action, resource, graph, segment, role, user",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 1000
+  },
+  "outcome": "fail",
+  "error": {
+    "category": "query",
+    "code": "Neo.ClientError.Statement.UnsupportedAdministrationCommand",
+    "message": "Unsupported administration command: SHOW USER PRIVILEGES YIELD access, action, resource, graph, segment, role, user"
+  }
+}

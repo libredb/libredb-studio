@@ -125,7 +125,12 @@ describe("each provider document's Connection string subsection", () => {
     });
   }
 
-  test("only opcua and elasticsearch declare seed-only fields, so the subsections above name them", () => {
-    expect(ENGINES.filter((type) => SEED_ONLY_FIELDS[type] !== null).sort()).toEqual(["elasticsearch", "opcua"]);
+  test("only opcua, elasticsearch, modbus and netconf declare seed-only fields, so the subsections above name them", () => {
+    expect(ENGINES.filter((type) => SEED_ONLY_FIELDS[type] !== null).sort()).toEqual([
+      "elasticsearch",
+      "modbus",
+      "netconf",
+      "opcua",
+    ]);
   });
 });

@@ -198,7 +198,7 @@ function untouchedDevice(): DeviceReader {
 }
 
 async function openProvider(): Promise<NetconfProvider> {
-  const provider = new NetconfProvider(connection, {}, async () => untouchedDevice());
+  const provider = new NetconfProvider(connection, {}, {}, async () => untouchedDevice());
   await provider.connect();
   return provider;
 }

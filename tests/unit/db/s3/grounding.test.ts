@@ -7,6 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { captureContextSnapshot } from "@/lib/agent/context-snapshot";
 import { AgentRunDeadline } from "@/lib/agent/deadline";
 import { AGENT_WORKFLOW_BUDGETS } from "@/lib/agent/execution-policy";
+import { languageServerPack } from "@/lib/agent/languages/server";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import type { AgentToolContext } from "@/lib/agent/tools";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
@@ -78,6 +79,29 @@ describe("plan-mode grounding on S3", () => {
     expect(JSON.stringify(capture)).not.toContain("AKIDTESTKEY");
     // The count and the listing of the countIsListing kind are answered by one ListBuckets, and no ListObjectsV2 is sent.
     expect(fake.lines().slice(before)).toEqual(["GET /?max-buckets=10000"]);
+  });
+
+  test("the snapshot keeps a bucket's name and drops its creation date, and the advice claims no more", async () => {
+    const connection = s3Connection({ id: "s3-grounding-dates" });
+    const fake = fakeS3Transport(HANDLER);
+    const provider = new S3Provider(connection, {}, {}, { createTransport: fake.createTransport });
+    await provider.connect();
+    // The listing the walk reads carries each bucket's creation date as the object's status.
+    expect((await provider.listObjects([], "bucket")).map((object) => object.status)).toEqual([
+      "created 2026-10-09",
+      "created 2026-10-09",
+    ]);
+
+    const capture = await captureContextSnapshot(agentContext(provider, connection));
+
+    expect(capture.kind).toBe("captured");
+    if (capture.kind !== "captured") return;
+    // The snapshot normalises an object to its name, columns, indexes and foreign keys, so no date reaches the model.
+    expect(JSON.stringify(capture.snapshot.objects)).not.toContain("2026-10-09");
+    const advice = languageServerPack("s3api").grounding.omissionAdvice;
+    expect(advice).toContain("Buckets are listed to agent mode by name only");
+    expect(advice).not.toContain("creation date only");
+    expect(advice).toContain("aws s3api list-buckets for every bucket's creation time");
   });
 
   test("pinned: the one bucket, with no request at all", async () => {

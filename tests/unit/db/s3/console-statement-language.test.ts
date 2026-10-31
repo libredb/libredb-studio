@@ -59,6 +59,12 @@ describe("s3StatementLanguage", () => {
     expect(sentence.endsWith("is the user's to run with the AWS CLI and is never drafted")).toBe(true);
   });
 
+  test("the sentence says the inventory names buckets only, so plan mode is told of no key it cannot see", () => {
+    expect(s3StatementLanguage()).toContain(
+      "the inventory names buckets only and never an object key, so a key or a prefix in a drafted command is one the request itself names;",
+    );
+  });
+
   test("both examples parse and classify as reads", () => {
     expect(S3_STATEMENT_EXAMPLES).toEqual([
       "aws s3 ls s3://sales/2026/",

@@ -62,7 +62,32 @@ import type { DatabaseType } from "@/lib/types";
  * the handle's: an embedded file with no principal, which each statement opens on a handle of its own through Studio's
  * read-only file adapter, with no writer lock, so it opens beside the editor's writer, and with no call that can write
  * the file, the engine's one write path refusing before any write; Studio's reader admits get, prefix and range only.
- * Each provider's own `queryReadOnly` argues its own case.
+ * InfluxDB's (InfluxQL, 1.x and 2.x) is the principal's: a 1.x user refused SHOW USERS as needing the admin privilege,
+ * or a 2.x token that lists no system bucket, refused a no-op DELETE on every database it lists, proven before every
+ * statement, so an admin, a server with authentication off and a principal that can write anywhere, where SELECT ...
+ * INTO would land, are refused; InfluxDB 3 is refused on this path. Studio's reader admits one SELECT, SHOW of the
+ * catalog or EXPLAIN of a SELECT, with no comment. Weaviate's is the provider's closed table of read requests, which
+ * can name no write, with a key the server proves a viewer before every request, so a connection with no key, an
+ * admin key, a role that writes and a server with RBAC off are refused; Studio's reader admits the meta, schema,
+ * shard, tenant, alias and node reads and a bare aggregate count, a COLD tenant is refused rather than woken, and every
+ * answer carries names, counts and flags only. Qdrant's is the provider's closed table of read routes, which can name no
+ * write, with a key proved read-only before every request by its JWT claims, when it has them, granting access r
+ * alone, and by the server refusing an empty alias update and an empty point delete on every collection the key lists,
+ * so a connection with no key, the API key, a JWT that writes any collection or alias and a server with no key
+ * configured are refused; Studio's reader admits the version, collection, alias, count and cluster reads, so no query
+ * reaches the inference address, and every answer carries names, counts and flags only. Neo4j's is the user's, on
+ * Enterprise Edition only: before every statement the server must name Enterprise at a version whose built-in routines
+ * are pinned, every granted privilege of every role must be a read, LOAD must be revoked or denied, and every
+ * procedure and function the user can execute must be a built-in, so an administrator, a user that writes or loads, a
+ * server with an extension the user can run and Community Edition, which has no roles, are refused. Studio's reader
+ * admits one statement of the editor's read policy with no comment, and the server's EXPLAIN classification and a READ
+ * session stand behind it. Milvus's is the provider's gRPC stub filtered to a closed table of RPCs, whose only writes,
+ * Load and Release, no agent request reaches, with a user the server proves read-only before every request: it must
+ * be refused the list of users, and every privilege its roles and public grant must be a read, so a connection naming
+ * no user, root, the admin role, a role that writes, loads or releases and a server with authorization off are
+ * refused; Studio's reader admits the database, collection, schema, statistics, load state, partition, index and alias
+ * reads in the connection's own database, so no search runs a function on the server, and every answer carries names,
+ * counts and flags only. Each provider's own `queryReadOnly` argues its own case.
  * `tests/unit/lib/agent/engine-support.test.ts` is what keeps the two equal - it walks EVERY
  * id in the `DatabaseType` union, reads `queryReadOnly` off the real provider class the
  * factory would construct, and fails if this array and the drivers diverge in either direction.
@@ -96,6 +121,21 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "couchbase",
   "druid",
   "libredb",
+  "influxdb",
+  "weaviate",
+  "qdrant",
+  "neo4j",
+  "milvus",
+  "redis",
+  "etcd",
+  "oxia",
+  "rabbitmq",
+  "kafka",
+  "s3",
+  "firestore",
+  "snmp",
+  "netconf",
+  "modbus",
 ];
 
 /**

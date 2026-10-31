@@ -1,0 +1,20 @@
+{
+  "version": "1.19.1",
+  "name": "agent-boundary/scroll-read-only",
+  "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1@sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+  "capturedAt": "2026-10-30",
+  "principal": "read-only: the server's read-only API key",
+  "request": {
+    "method": "POST",
+    "path": "/collections/plain/points/scroll",
+    "auth": "api-key",
+    "body": {
+      "limit": 3,
+      "with_payload": true,
+      "with_vector": true
+    }
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "body": "{\"result\":{\"points\":[{\"id\":1,\"payload\":{\"city\":\"stored-city-1\",\"note\":\"stored-note-1\",\"meta\":{\"name\":\"stored-nested-1\"}},\"vector\":[0.1,0.2,0.3,0.4]},{\"id\":2,\"payload\":{\"city\":\"stored-city-2\",\"note\":\"stored-note-2\",\"meta\":{\"name\":\"stored-nested-2\"}},\"vector\":[0.2,0.2,0.3,0.4]},{\"id\":3,\"payload\":{\"city\":\"stored-city-3\",\"note\":\"stored-note-3\",\"meta\":{\"name\":\"stored-nested-3\"}},\"vector\":[0.3,0.2,0.3,0.4]}],\"next_page_offset\":null},\"status\":\"ok\",\"time\":0.000089738}"
+}

@@ -51,18 +51,33 @@ describe("canonical operation registry", () => {
     expect(registry.registeredIds()).toEqual([
       "cluster.usage.read",
       "cluster.workloads.read",
+      "cypher.query.read",
       "db.operations.read",
       "db.schema.read",
+      "etcdctl.query.read",
+      "fsquery.query.read",
+      "influxql.query.read",
+      "kafkaread.query.read",
       "kubectl.query.read",
       "libredbkv.query.read",
+      "milvusrpc.query.read",
+      "modbusread.query.read",
       "mongo.plan.estimate",
       "mongo.query.read",
       "mongo.schema.read",
       "mongo.table.profile",
+      "netconfrpc.query.read",
+      "oxiacli.query.read",
+      "qdrantapi.query.read",
+      "rabbitread.query.read",
+      "rediscli.query.read",
+      "s3api.query.read",
+      "snmpget.query.read",
       "sql.explain.analyze",
       "sql.explain.estimate",
       "sql.query.read",
       "sql.table.profile",
+      "weaviateapi.query.read",
     ]);
   });
 
@@ -182,10 +197,25 @@ describe("the statement-read operations", () => {
     // profile exactly as of SQL's.
     const ids = createCanonicalOperationRegistry().registeredIds();
     expect(ids.filter(isStatementReadOperation).sort()).toEqual([
+      "cypher.query.read",
+      "etcdctl.query.read",
+      "fsquery.query.read",
+      "influxql.query.read",
+      "kafkaread.query.read",
       "kubectl.query.read",
       "libredbkv.query.read",
+      "milvusrpc.query.read",
+      "modbusread.query.read",
       "mongo.query.read",
+      "netconfrpc.query.read",
+      "oxiacli.query.read",
+      "qdrantapi.query.read",
+      "rabbitread.query.read",
+      "rediscli.query.read",
+      "s3api.query.read",
+      "snmpget.query.read",
       "sql.query.read",
+      "weaviateapi.query.read",
     ]);
     expect(isStatementReadOperation("mongo.plan.estimate")).toBe(false);
     expect(isStatementReadOperation("mongo.table.profile")).toBe(false);

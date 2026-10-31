@@ -3,7 +3,7 @@
   "publisher": "libredb",
   "displayName": "LibreDB Studio",
   "description": "Browse and query PostgreSQL, MySQL, SQL Server, MongoDB, Redis, ClickHouse, Elasticsearch, Kafka and many more databases with LibreDB Studio.",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "license": "MIT",
   "repository": {
@@ -326,6 +326,7 @@
     "test:browser": "playwright test -c playwright.config.mjs",
     "test:vsix": "node scripts/vsix-install-check.mjs",
     "package": "node scripts/package.mjs",
+    "publish:marketplace": "node scripts/publish.mjs",
     "vscode:prepublish": "npm run build"
   },
   "devDependencies": {
@@ -338,7 +339,7 @@
     "@types/vscode": "1.120.0",
     "@vscode/test-cli": "0.0.15",
     "@vscode/test-electron": "3.1.0",
-    "@vscode/vsce": "4.0.0",
+    "@vscode/vsce": "4.1.0",
     "c8": "12.0.0",
     "esbuild": "0.28.2",
     "mocha": "12.0.3",
@@ -347,13 +348,10 @@
     "yaml": "2.9.1",
     "yauzl": "3.4.0"
   },
-  "//overrides": "@vscode/test-cli 0.0.15, the latest release, asks for mocha ^11.7.6, and both mocha releases in that range depend on serialize-javascript ^6.0.2 and diff ^7.0.0, which carry GHSA-5c6j-r48x-rmvq (remote code execution through RegExp.flags and Date.prototype.toISOString(), fixed in serialize-javascript 7.0.3), GHSA-qj8w-gfj5-8c6v (CPU exhaustion through crafted array-like objects, fixed in 7.0.5) and GHSA-73rr-hh4g-fpgx (a denial of service in diff's parsePatch and applyPatch, fixed in 8.0.3), with no fix inside either range. mocha 12.0.3, the direct pin, takes serialize-javascript ^7.1.1 and diff ^9.0.0, and this entry hands @vscode/test-cli that same mocha through the $mocha reference, so one copy runs the unit, integration and e2e legs and follows the pin. mocha 12 is outside test-cli's range, so it was verified where test-cli drives Mocha, inside the extension host: the e2e leg passes, full and smoke, on both builds of test/vscode-versions.json. test-cli's runner needs only new Mocha(), addFile() and run(), and its JSON stream reporter Mocha.Runner.constants, all of which mocha 12 keeps. None of these packages reaches the VSIX: .vscodeignore lets in only dist/extension.js, dist/backend.js, dist/webview/results.js, dist/webview/results.css, media/icon.png, media/libredb.svg, media/engines/** and the package's own text files. Remove the entry once a @vscode/test-cli release asks for mocha 12: microsoft/vscode-test-cli#118 made that change on 2026-08-31 and is not released yet. @vscode/vsce 4.0.0, the latest release, reaches @azure/msal-node through @azure/identity 4.14.0, whose ^6.0.0 range carries GHSA-xcx6-jx8p-x3h5 (the authorization code flow may disclose parameters to an attacker-controlled endpoint, fixed in 7.1.0) with no fix inside it; the 4.15.0 beta asks for the same range. The @azure/identity entry hands it 7.1.2. msal-node 7.0.0's one breaking change removes responseMode from acquireTokenInteractive, which @azure/identity never passes, and vsce loads @azure/identity only for --azure-credential publishing; neither reaches the VSIX. Remove the entry once an @azure/identity release asks for msal-node 7.1 or later.",
+  "//overrides": "@vscode/test-cli 0.0.15, the latest release, asks for mocha ^11.7.6, and both mocha releases in that range depend on serialize-javascript ^6.0.2 and diff ^7.0.0, which carry GHSA-5c6j-r48x-rmvq (remote code execution through RegExp.flags and Date.prototype.toISOString(), fixed in serialize-javascript 7.0.3), GHSA-qj8w-gfj5-8c6v (CPU exhaustion through crafted array-like objects, fixed in 7.0.5) and GHSA-73rr-hh4g-fpgx (a denial of service in diff's parsePatch and applyPatch, fixed in 8.0.3), with no fix inside either range. mocha 12.0.3, the direct pin, takes serialize-javascript ^7.1.1 and diff ^9.0.0, and this entry hands @vscode/test-cli that same mocha through the $mocha reference, so one copy runs the unit, integration and e2e legs and follows the pin. mocha 12 is outside test-cli's range, so it was verified where test-cli drives Mocha, inside the extension host: the e2e leg passes, full and smoke, on both builds of test/vscode-versions.json. test-cli's runner needs only new Mocha(), addFile() and run(), and its JSON stream reporter Mocha.Runner.constants, all of which mocha 12 keeps. None of these packages reaches the VSIX: .vscodeignore lets in only dist/extension.js, dist/backend.js, dist/webview/results.js, dist/webview/results.css, media/icon.png, media/libredb.svg, media/engines/** and the package's own text files. Remove the entry once a @vscode/test-cli release asks for mocha 12: microsoft/vscode-test-cli#118 made that change on 2026-08-31 and is not released yet.",
   "overrides": {
     "@vscode/test-cli": {
       "mocha": "$mocha"
-    },
-    "@azure/identity": {
-      "@azure/msal-node": "7.1.2"
     }
   },
   "dependencies": {

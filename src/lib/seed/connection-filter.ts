@@ -140,6 +140,12 @@ export function projectSeedConnection(conn: SeedConnection, userRoles: string[])
     // connection listed as pinned that is not pinned is the failure the pin exists to prevent.
     securityMode: conn.securityMode,
     serverCertificateThumbprint: conn.serverCertificateThumbprint,
+    // NETCONF's host key pin, copied for the reason skipObjectScan is: dropped here, the provider would refuse the
+    // seeded connection for an empty pin, so neither the editor nor a run could open it.
+    hostKeyFingerprint: conn.hostKeyFingerprint,
+    // Modbus's register map, copied for the reason skipObjectScan is: dropped here, a seeded connection would have no
+    // map, so the console and agent mode would refuse every named-point read for a map the file did carry.
+    registerMap: conn.registerMap,
     // And the three with no dialog box, copied for the same reason: dropped here, a deployment
     // that mounted a client certificate would dial with a freshly generated one instead, which
     // a server holding a trust list refuses with BadSecurityChecksFailed.

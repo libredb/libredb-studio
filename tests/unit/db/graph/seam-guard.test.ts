@@ -132,6 +132,9 @@ function namesOutsideComments(sf: ts.SourceFile): Array<{ name: string; position
   return found;
 }
 
+/** The shared budget module of every read-only path (see the provider-directory rule below). */
+const SHARED_BUDGET = `${PROVIDERS}/sql/read-only-budget`;
+
 /** Every rule this guard holds, applied to one file's text. `file` is its repository path. */
 function violations(file: string, text: string): string[] {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
@@ -168,7 +171,9 @@ function violations(file: string, text: string): string[] {
     if (file === BASE_PROVIDER && within(target, `${GRAPH}/bolt`) && target !== `${GRAPH}/bolt/client`) {
       out.push(`${where} imports ${specifier}; the base provider may import only bolt/client from the transport`);
     }
-    if (within(file, NEO4J) && within(target, PROVIDERS) && !within(target, NEO4J)) {
+    // `sql/read-only-budget` is the one module every `queryReadOnly` shares (its budget check and refusal sentences),
+    // whatever the provider's directory, so it is not another provider's code.
+    if (within(file, NEO4J) && within(target, PROVIDERS) && !within(target, NEO4J) && target !== SHARED_BUDGET) {
       out.push(`${where} imports ${specifier} from another provider directory`);
     }
   }

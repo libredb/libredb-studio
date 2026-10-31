@@ -140,11 +140,22 @@ datastore when the real problem was that it was not a request at all.
 
 MEASURED, and this is the one place where believing the hello would have been wrong: both servers
 announce NMDA in their hello with ZERO capabilities attached, while their YANG library lists
-`ietf-netconf-nmda` and `<get-data>` is served and answers. The provider therefore reads RFC 8525's
-library and decides from it.
+`ietf-netconf-nmda` and `<get-data>` is served and answers. The provider therefore reads the YANG
+library, in the RFC 7895 `modules-state` form that carries each module's conformance type, and
+decides from it.
 
 `<get-config>` serves the configuration datastores, both servers serving it. `<get-data>` is used
 for `operational` and `intended`, which `<get-config>` cannot reach.
+
+The datastores a connection lists are the ones the device names, where it names them.
+On a device whose library lists `ietf-netconf-nmda`, the provider also reads RFC 8525's datastore list (`<get>` of `/yang-library/datastore`) and lists exactly the datastores it names that Studio reads, in the order running, candidate, startup, operational, intended.
+A name counts when its identity resolves to `ietf-datastores`; one of another module, or one Studio does not read, is left out.
+MEASURED 2026-10-31 on Netopeer2 2.8.7: the list names running, candidate, startup and operational, and `<get-data>` on `intended` answers `invalid-value` with `Datastore "ietf-datastores:intended" is not supported.`, so that device lists four datastores and no `intended`.
+Listing `intended` there, as the provider did before it read the list, made the agent's schema capture fail on every run and showed a datastore in the tree that no read could open.
+A device without `ietf-netconf-nmda` is not asked for the list, and its datastores are `running` plus `candidate` and `startup` where the hello advertises those capabilities.
+An NMDA device that answers no datastore entry keeps that rule with `operational` and `intended` added, the rule from before the list was read: RFC 8526 section 2 requires RFC 8525 of an NMDA server and names it as how a client discovers the datastores, no measured device answers without the list, and the rule is kept rather than replaced by a guess.
+A refused list read fails the connection with the device's sentence, as a refused library read does.
+A console read of a datastore the connection does not list is refused before anything is sent: `this device does not serve the intended datastore`.
 
 ### 3.3 `<get-data>` takes `<subtree-filter>`, not `<filter type="subtree">`
 
@@ -219,6 +230,9 @@ could not use.
 authentication packet is sent, measured directly and measured again through an SSH tunnel, where
 the key checked is the device's and not the bastion's.
 
+A seed carries the pin as `connections[].hostKeyFingerprint` ([`docs/SEED_CONNECTIONS.md`](../SEED_CONNECTIONS.md)), and a seed of any other type is refused for it at load.
+The pin is required, so a seeded NETCONF connection without one never opens, and agent mode, which starts only on a connection the server lists itself, needs a seed that carries it.
+
 The failure carries `expected` and `seen` as FIELDS rather than inside a sentence, so a caller can
 show them without parsing prose. `ssh2` raises its own error afterwards, but the path that fills
 those fields always runs first, and a test holds that order.
@@ -234,6 +248,7 @@ credential all end in the same refusal.
 ### Connection string
 
 `netconf` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/network/netconf/connection-string.ts)).
+Its one seed-only field is `hostKeyFingerprint` (`SEED_ONLY_FIELDS.netconf` in [`connection-fields.ts`](../../src/lib/db/connection-fields.ts)): only the NETCONF provider reads it, so a seed of any other type that carries it is refused at load, naming the field.
 
 ### Execution UI
 
@@ -300,6 +315,7 @@ Redaction is `none`: a redacted statement is stored as `?`, because a reader gue
 
 Datastore, then module. Declared in `containerLevels`, and the first provider here to declare two
 levels and a Keys panel at the same time.
+The first level lists the datastores section 3.2 derives, so on the Netopeer2 fixture it holds running, candidate, startup and operational and no `intended`.
 
 ### 6.2 Two kinds
 
@@ -375,10 +391,8 @@ query.
 
 Not declared, each for a measured reason: `connectionStringSupport` (4.1), `explainFormat` (no
 engine-side plan exists), `credentialWarnings` (4.3), and no entry in `ENGINE_URI_SCHEMES` (4.1).
-This engine is not in `AGENT_EXECUTION_ENGINES` and has no engine overlay supplying `statistics` or `catalogCapture`: the
-first takes an engine whose provider implements a read-only statement path (`queryReadOnly`), which
-this one does not; the second and third take an engine that answers catalog statistics through SQL, and
-this engine answers no SQL at all.
+This engine is in `AGENT_EXECUTION_ENGINES` (section 14) and has no engine overlay supplying `statistics` or `catalogCapture`: those take an engine that answers catalog statistics through SQL, and this engine answers no SQL at all.
+`metadataOnly` declares the one report a withheld node answers with: its path, its kind and a count, never a value (section 14.3).
 
 ### SQL writing
 
@@ -436,7 +450,8 @@ answering 39,313 characters, and `<get-data>` on `running` for `/interfaces` ans
 bytes at 5,000 of 5,000 rows.
 
 And the whole provider, through `createDatabaseProvider` rather than through its own seams, which
-is the path a user takes: connect in 58 ms, five datastores, 52 modules, `ietf-interfaces`
+is the path a user takes: connect in 58 ms, four datastores (five before the datastore list of
+section 3.2 was read), 52 modules, `ietf-interfaces`
 answering the one node that is its own, a read answering 3 rows with the columns `name`,
 `description`, `type` and `enabled`, the Keys panel walking two levels with its cursor, a key's
 Source tab holding the device's own XML, a node's Source tab holding the module's YANG text, and a
@@ -504,3 +519,77 @@ The refusal reason it prints, verbatim:
 - RFC 8341, NACM (the access control the measurements ran under)
 - RFC 8525, YANG library
 - RFC 8526, NMDA (`<get-data>`, `<subtree-filter>`)
+
+## 14. Agent mode
+
+Agent mode reads a NETCONF device through `queryReadOnly`, on a handle opened under the agent read-only profile only; on an editor handle it is refused before anything is sent.
+The provider takes the execution context as its third constructor argument, the injected device layer fourth and the agent's door, a session per read, fifth.
+
+### 14.1 The boundary
+
+The boundary is the provider's structural closed table.
+`requests.ts` is the one module that writes element text, it builds `get`, `get-config`, `get-data`, `get-schema` and `close-session` from typed arguments, and no function anywhere builds a write.
+The agent's client (`agent-client.ts`) sends only the YANG library read (`get` of `modules-state`), `get-schema` and the console's data read, and its tests pin every full RPC body it can send.
+Each agent read opens its own session and closes it when the read ends, so no session, message id, namespace or module text of one read reaches the next; the filter carries the namespaces of that session's own library rather than the module-scoped map of section 12.
+
+NACM is measured and not relied on.
+On the Netopeer2 fixture, a raw `edit-config` sent under the read-only account by the capture script, never by Studio, answers `access-denied` with the NACM rule list of `docker/netconf/setup.sh` applied, but a device without that rule list would accept it, so the table is the boundary (`tests/fixtures/netconf/2.8.7/agent-boundary/`).
+
+### 14.2 What an agent request may be
+
+One JSON object, read before anything is sent (`agent-statement.ts`):
+
+- `{"datastore": "running", "path": "ietf-interfaces:interfaces", "limit": 100}`, the console's read request read by the console's own parser (section 3.1), `get-config` on running, candidate and startup and `get-data` on operational and intended;
+  the agent's inventory and the tree list only the datastores the device serves (section 3.2), and a request naming one it does not serve is sent and refused by the device, answered by its error-tag in Studio's words (section 14.3): on the fixture, `intended` answers `The device refused the read with the NETCONF error-tag invalid-value.`;
+- `{"schema": "ietf-interfaces"}`, one module's YANG text.
+
+A field neither shape names is refused, where the console ignores it, so a model is never answered a read it believes it narrowed.
+A path names its module on its first node, a key value may not hold the `]]>]]>` separator, and a path into, or a schema of, `ietf-keystore` or `ietf-netconf-acm` is refused by name.
+Every refusal is worded by agent mode and followed by its list of reads, and the admission (`src/lib/db/operations/netconfrpc-admission.ts`) is this same reader with a 4,096-character bound.
+
+### 14.3 Values, and what is withheld
+
+A device's configuration and state are its management data, so the agent reads them, as text, inside the untrusted-content fence like every other result.
+Before every read, the session reads the YANG library and the text of every module and submodule it lists with `get-schema`, and `agent-withheld.ts` compiles what is withheld from them: on the fixture that is 59 texts, about 890 KB, in 45 ms.
+The check is linear in the texts and bounded in total: more than 1,000 texts, 16 MiB or 400,000 statements in all refuses the read in Studio's words before it is decided (`NETCONF_SCHEMA_BUDGET`), since the check runs on the server's event loop; at that bound a synthetic set compiles in under a second.
+Withheld, each named by its own identifier:
+
+| Kind | What it covers | Why |
+|---|---|---|
+| `ietf-keystore` | every node in the module's namespace | the device's private and symmetric keys (RFC 9642) |
+| `ietf-netconf-acm` | every node in the module's namespace | the access control groups and rules (RFC 8341) |
+| `nacm:default-deny-all` | every data node a module marks with the extension, and its subtree | RFC 8341 section 3.5.1.2, the protocol's own mark for a node too sensitive to read by default |
+| `crypt-hash` | every leaf typed `crypt-hash` of `iana-crypt-hash` or `ietf-system`, or a typedef or union deriving from it | a password hash (RFC 7317) |
+| `ietf-crypto-types secret` | every node of the `private-key-type`, `key-type` and `password-type` choices of `ietf-crypto-types` | cleartext, hidden and encrypted private keys, symmetric keys and passwords (RFC 9640 section 2.1, which defines no key typedef) |
+| `keyed by a withheld leaf` | every entry of a list whose key leaf is withheld | an entry's path would carry the key |
+| `unresolved leafref` | every leafref whose target Studio cannot find in the modules the device serves, or whose path it cannot read, and every leaf whose type names a typedef no module the device serves declares | it could carry a withheld value: an unknown typedef could derive from `crypt-hash` or a leafref to a withheld node |
+
+A leafref carries the value of the leaf it points at, so every leafref that may point at a withheld node is withheld with that node's kind: through its own `type leafref`, a typedef or a union deriving from one, a relative path anchored at the leaf (each `..` pops a step), or another leafref, resolved to a fixed point.
+A leafref whose path steps into `ietf-keystore` or `ietf-netconf-acm` takes that module's kind, so RFC 9642's `asymmetric-key-ref`, the `central-keystore-reference` of the fixture's SSH host key, never answers the keystore key's name.
+
+The marks, the types and the choices are read from the device's own module texts, never from a list of node names, and a node is matched by the chain of data-node names from where it is declared, so a grouping's node is withheld wherever it is used, whatever namespace it takes there.
+A read whose library, any module text or that text's grammar cannot be read is refused rather than answered unchecked, worded as Studio's refusal.
+A module that any node of the path names and the library does not list is refused the same way, before the read is sent.
+A path that names a withheld node, a node inside one, or filters on a withheld key is refused before it is sent, since even an empty answer would tell whether a guessed value exists.
+A read covering a withheld node answers `[withheld]` in its place, never its value or a child of it, drops every entry keyed by a withheld leaf (a node left with no entry answers no row, never an empty one), and warns each with its path, its kind and its reason; that report passes through the shared metadata-only projection, so it holds a path, a kind and a count and nothing else.
+
+Measured on the fixture under the read-only account (`tests/fixtures/netconf/2.8.7/agent-boundary/`): the `hashed-password` leaf of each password user in `ietf-netconf-server` is answered raw, the keystore's host key entry answers its name and formats while NACM itself prunes its cleartext private key, and `nacm` is not answered at all; Studio withholds all three whatever NACM does.
+
+A list holding more entries than the request's `limit` or the row budget is refused rather than cut, an answer past the byte budget is refused, and a read past the time budget, which covers the session, the module check and the read, is refused in Studio's words.
+A failure is worded by its category: an `rpc-error` by its RFC 6241 error-tag alone, never by the device's message, path or info, which can echo a value, and a dial, credential or session failure by its class, never with a credential or host key.
+
+On a handle of either agent profile, the console, a node's or key's source and the overview are refused with their reason, since none passes through the check; the object surface answers names only, as on every handle, and the metric, session, table and storage readings already answer their reason.
+
+### 14.4 Agent language pack
+
+Statement-language family: `netconfrpc`.
+Overlay: [`src/lib/agent/languages/netconfrpc/engines/netconf.ts`](../../src/lib/agent/languages/netconfrpc/engines/netconf.ts), with its client row in [`src/lib/agent/languages/netconfrpc/engines/client.ts`](../../src/lib/agent/languages/netconfrpc/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`.
+Both overlays are empty, so the engine resolves to the `netconfrpc` family pack itself.
+The `netconfrpc` statement-language family has no dialect-bound member.
+This overlay overrides no Shared member, so every Shared member is the `netconfrpc` statement-language family's own.
+The family offers the investigation workflow, through `run_read_query` with one request, and the operations workflow; it offers no query optimization or database assessment, since a device has no plan and no profile, and no data analysis, whose tools assume a store of records, and no workflow hands an answer to the editor.
+The workflow classifier offers the model only these two.
+The editor language id stays `netconf`, and the fence alias `netconfrpc` names this engine.
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+No MCP tool runs a NETCONF request: the family declares no MCP facet, `MCP_EXPOSABLE.netconf` and `MCP_STATEMENT_READ.netconf` are false ([B159](../BACKLOG.md#b159-netconfs-agent-reads-withhold-keys-password-hashes-and-access-rules-and-it-has-no-mcp-surface)), and `READ_ONLY_ENFORCED.netconf` is unchanged.

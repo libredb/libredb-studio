@@ -32,14 +32,23 @@ const THIS_FILE = "tests/unit/db/oxia/seam-guard.test.ts";
 const ADAPTER = `${OXIA}/grpc-client.ts`;
 const ADAPTER_TEST = "tests/unit/db/oxia/grpc-client.test.ts";
 const RAW_SEEDER = "tests/live/oxia-seed-raw.ts";
+/** Sends the agent's reads and every call its table refuses raw, past every Studio check, to its own throwaway servers. */
+const BOUNDARY_PROBE = "tests/live/oxia-agent-boundary.ts";
 const SOURCE_FILE = /\.(c|m)?(t|j)sx?$/;
 
 /** The files this guard holds; the etcd guard skips exactly these. */
 const OXIA_HELD: readonly RegExp[] = GRPC_SEAM_HOLDINGS.oxia.held;
 
-const GRPC_IMPORTERS: readonly string[] = [ADAPTER_TEST, RAW_SEEDER];
-const PROTO_LOADER_IMPORTERS: readonly string[] = [GENERATOR, DESCRIPTOR, DESCRIPTOR_TEST, ADAPTER, RAW_SEEDER];
-const DESCRIPTOR_IMPORTERS: readonly string[] = [DESCRIPTOR_TEST, ADAPTER];
+const GRPC_IMPORTERS: readonly string[] = [ADAPTER_TEST, RAW_SEEDER, BOUNDARY_PROBE];
+const PROTO_LOADER_IMPORTERS: readonly string[] = [
+  GENERATOR,
+  DESCRIPTOR,
+  DESCRIPTOR_TEST,
+  ADAPTER,
+  RAW_SEEDER,
+  BOUNDARY_PROBE,
+];
+const DESCRIPTOR_IMPORTERS: readonly string[] = [DESCRIPTOR_TEST, ADAPTER, BOUNDARY_PROBE];
 const GENERATOR_IMPORTERS: readonly string[] = [DESCRIPTOR_TEST];
 
 interface RepositoryFile {

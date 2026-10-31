@@ -9,7 +9,7 @@
  *
  * WHAT IS RECORDED, AND WHAT THAT DOES AND DOES NOT REACH. The transport, which is the lowest
  * seam above the socket: every chunk the server sent, in arrival order. On replay the session's
- * FRAMING runs for real, and it is reached - 12 of the 13 recorded exchanges arrive in more than
+ * FRAMING runs for real, and it is reached - 13 of the 14 recorded exchanges arrive in more than
  * one chunk, up to nine.
  *
  * It does NOT reach the UTF-8 boundary. `transportOf` decodes with a `StringDecoder` before
@@ -56,6 +56,7 @@ import type { SshPort, SshSession } from "@/lib/db/providers/network/netconf/dia
 import type { Transport } from "@/lib/db/providers/network/netconf/session";
 import { openNetconfReader } from "@/lib/db/providers/network/netconf/open";
 import { netconfXmlPort } from "@/lib/db/providers/network/netconf/xml";
+import { scrubCredentialValues } from "./netconf-capture-scrub";
 import type { DatabaseConnection } from "@/lib/types";
 
 const DEFAULT_TARGET = "127.0.0.1:1830";
@@ -227,7 +228,12 @@ await reader.close();
 
 mkdirSync(path.resolve(out), { recursive: true });
 const file = path.join(path.resolve(out), "session.json");
-writeFileSync(file, `${JSON.stringify(capture, null, 2)}\n`);
+const written: Capture = {
+  ...capture,
+  hello: scrubCredentialValues(capture.hello),
+  exchanges: capture.exchanges.map((exchange) => ({ ...exchange, chunks: scrubCredentialValues(exchange.chunks) })),
+};
+writeFileSync(file, `${JSON.stringify(written, null, 2)}\n`);
 
 const bytes = capture.exchanges.reduce((sum, one) => sum + one.chunks.join("").length, 0);
 console.log(

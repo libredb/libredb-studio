@@ -4,6 +4,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { OxiaProvider } from "@/lib/db/providers/keyvalue/oxia/index";
+import { OXIA_METADATA_ONLY } from "@/lib/db/providers/keyvalue/oxia/agent-metadata-read";
 import { OXIA_KEY_SCAN } from "@/lib/db/providers/keyvalue/oxia/key-scan";
 import { OXIA_LABELS } from "@/lib/db/providers/keyvalue/oxia/labels";
 import { OXIA_OBJECT_KINDS } from "@/lib/db/providers/keyvalue/oxia/objects";
@@ -43,6 +44,7 @@ describe("getCapabilities (SB2-9.1)", () => {
       containerLevels: [],
       objectKinds: OXIA_OBJECT_KINDS,
       keyScan: OXIA_KEY_SCAN,
+      metadataOnly: OXIA_METADATA_ONLY,
       schemaRefreshPattern: "(?!)",
     });
   });
@@ -99,7 +101,6 @@ describe("construction and presence", () => {
     const { provider } = declaredOnly();
     for (const method of [
       "getPoolStats",
-      "queryReadOnly",
       "endOpenQueryTransaction",
       "beginTransaction",
       "commitTransaction",
@@ -110,7 +111,7 @@ describe("construction and presence", () => {
     ]) {
       expect({ method, present: method in provider }).toEqual({ method, present: false });
     }
-    for (const method of ["cancelQuery", "scanKeysPage", "readObjectSource"]) {
+    for (const method of ["cancelQuery", "scanKeysPage", "readObjectSource", "queryReadOnly"]) {
       expect({ method, present: method in provider }).toEqual({ method, present: true });
     }
   });

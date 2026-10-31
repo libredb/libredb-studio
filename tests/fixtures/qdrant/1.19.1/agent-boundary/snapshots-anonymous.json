@@ -1,0 +1,15 @@
+{
+  "version": "1.19.1",
+  "name": "agent-boundary/snapshots-anonymous",
+  "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1@sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+  "capturedAt": "2026-10-30",
+  "principal": "anonymous: no key, on the server with keys",
+  "request": {
+    "method": "GET",
+    "path": "/collections/plain/snapshots",
+    "auth": "none"
+  },
+  "status": 401,
+  "contentType": null,
+  "body": "Must provide an API key or an Authorization bearer token"
+}

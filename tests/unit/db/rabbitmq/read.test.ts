@@ -748,6 +748,7 @@ describe("through RabbitMQProvider", () => {
     const provider = new RabbitMQProvider(
       rabbitmqConnection(),
       {},
+      {},
       { managementTransport: stub.factory, dial: hanging.dial },
     );
     await provider.connect();
@@ -763,6 +764,7 @@ describe("through RabbitMQProvider", () => {
     const stub = connectedStub();
     const provider = new RabbitMQProvider(
       rabbitmqConnection(),
+      {},
       {},
       { managementTransport: stub.factory, dial: hangingDial().dial },
     );
@@ -780,6 +782,7 @@ describe("through RabbitMQProvider", () => {
     const recording = recordingDial();
     const provider = new RabbitMQProvider(
       rabbitmqConnection({ amqpPort: String(target.port) }),
+      {},
       {},
       { managementTransport: connectedStub().factory, dial: recording.dial },
     );

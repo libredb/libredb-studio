@@ -109,6 +109,7 @@ describe("the dialect and the route table", () => {
     ]);
     expect(WEAVIATE_CLIENT_ROUTES.ready).toEqual({ method: "GET", path: "/v1/.well-known/ready", query: [] });
     expect(WEAVIATE_CLIENT_ROUTES.graphql).toEqual({ method: "POST", path: "/v1/graphql", query: [] });
+    expect(WEAVIATE_CLIENT_ROUTES.own_info).toEqual({ method: "GET", path: "/v1/users/own-info", query: [] });
     expect(Object.values(WEAVIATE_CLIENT_ROUTES).every((route) => route.path.startsWith("/v1/"))).toBe(true);
   });
 });

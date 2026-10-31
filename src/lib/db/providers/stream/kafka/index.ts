@@ -12,9 +12,18 @@
  * No `cancelQuery` and no `getPoolStats` (spec 5.5, 7.1): both are detected by presence, and a read
  * is bounded by its limit, its budgets and its timeout, with no server-side evaluation to stop.
  * `prepareQuery` is the base pass-through: the read request carries its own limit (spec 5.1).
+ *
+ * `queryReadOnly` is the agent's: one read of a closed table of metadata reads (`agent-statement.ts`), sent through
+ * the agent's client, which holds the Metadata and ListOffsets reads alone, and answered through a metadata-only
+ * projection (`agent-metadata-read.ts`): topic names, partitions, broker node ids and racks, the cluster id and each
+ * partition's earliest and end offsets, never a record's key, value, headers or timestamp, a broker's host and port,
+ * a config, a log directory or a consumer group. On a handle opened for any agent-mode profile every other surface
+ * goes through that client too (`agent-surface.ts`): the editor's read and an object's source are refused, and what
+ * needs a withheld read answers its reason. MCP read stays closed on this engine.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { assertReadOnlyBudget, rowBudgetSentence } from "@/lib/db/providers/sql/read-only-budget";
 import type {
   ActiveSessionDetails,
   Container,
@@ -31,15 +40,34 @@ import type {
   ObjectSourceDocument,
   PerformanceMetrics,
   ProviderCapabilities,
+  ProviderExecutionContext,
   ProviderLabels,
   ProviderOptions,
   QueryResult,
+  ReadOnlyStatementBudget,
+  ReadOnlyStatementMode,
   SlowQueryStats,
   StorageStats,
   TableStats,
 } from "@/lib/db/types";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
-import { KafkaError, type KafkaReadClient } from "./client";
+import {
+  KAFKA_AGENT_TOPIC_COLUMNS,
+  KAFKA_METADATA_ONLY,
+  kafkaAgentFailure,
+  kafkaAgentResult,
+  runKafkaAgentRead,
+} from "./agent-metadata-read";
+import { readKafkaAgentStatement } from "./agent-statement";
+import {
+  agentCountObjects,
+  agentDescribeObject,
+  agentDescribeObjects,
+  agentHealth,
+  agentListObjects,
+  KAFKA_AGENT_WITHHELD,
+} from "./agent-surface";
+import { type KafkaAgentReadClient, KafkaError, type KafkaReadClient } from "./client";
 import { KAFKA_DEFAULT_PORT, type KafkaConnectionOptions, kafkaConnectionOptions } from "./connection-options";
 import { toDatabaseError } from "./errors";
 import { healthFrom, overviewFrom, storageFrom } from "./monitoring";
@@ -84,6 +112,9 @@ function unloadableLibrary(error: unknown): KafkaError | undefined {
 /** Every read is held to the same bounds (spec 5.4, K5). */
 const READ_LIMITS: ReadLimits = { resultByteBudget: KAFKA_RESULT_BYTE_BUDGET, cellLimit: KAFKA_CELL_LIMIT };
 
+const PROFILE_REQUIRED = "Read-only execution requires a provider opened under the agent read-only profile";
+const NO_ESTIMATE = "Kafka composes no estimating plan for the agent";
+
 const EMPTY_REQUEST_MESSAGE = 'The editor is empty: write a read request such as {"topic": "orders"}';
 const BOUND_PARAMS_MESSAGE = "Bound params are not supported: a Kafka read request has no placeholders";
 
@@ -100,9 +131,58 @@ export class KafkaProvider extends BaseDatabaseProvider {
   constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
+    private readonly execution: ProviderExecutionContext = {},
     private readonly createClient: (o: KafkaConnectionOptions) => Promise<KafkaReadClient> = defaultCreateClient,
   ) {
     super(config, options);
+  }
+
+  /**
+   * Whether this handle was opened for the agent read-only profile by an acquisition that sends statements
+   * (`sendsStatements`). Only then does `queryReadOnly` answer; the operations profile's acquisitions send no statement.
+   */
+  private get readOnlyProfile(): boolean {
+    return this.execution.readOnly === true && this.execution.sendsStatements === true;
+  }
+
+  /**
+   * Whether this handle was opened for any agent-mode profile: every execution profile opens `readOnly` and no editor
+   * handle does. On such a handle every surface reads through the agent's client; the editor's own handles keep every
+   * read.
+   */
+  private get agentProfile(): boolean {
+    return this.execution.readOnly === true;
+  }
+
+  /**
+   * The connected client narrowed to the agent's reads: a new object holding the Metadata and ListOffsets reads alone,
+   * so no other method of the client is reachable from an agent-mode surface, whatever its type says.
+   */
+  private agentClient(): KafkaAgentReadClient {
+    this.ensureConnected();
+    // Assigned before setConnected(true) and cleared with setConnected(false), so a connected provider has one.
+    const client = this.client!;
+    return {
+      metadata: (topics) => client.metadata(topics),
+      listTopics: () => client.listTopics(),
+      offsets: (topic, at) => client.offsets(topic, at),
+    };
+  }
+
+  /** One agent-mode surface over the agent's client, whose failure is worded by its category alone. */
+  private async agentGuarded<T>(operation: (client: KafkaAgentReadClient) => Promise<T>): Promise<T> {
+    const client = this.agentClient();
+    try {
+      return await operation(client);
+    } catch (error) {
+      throw kafkaAgentFailure(error, this.queryTimeout) ?? error;
+    }
+  }
+
+  /** The refusal of a surface an agent-mode handle does not read, after the connection check every surface makes. */
+  private agentWithheld(sentence: string): never {
+    this.ensureConnected();
+    throw new QueryError(sentence, this.type);
   }
 
   // ==========================================================================
@@ -139,6 +219,8 @@ export class KafkaProvider extends BaseDatabaseProvider {
       defaultPort: KAFKA_DEFAULT_PORT,
       containerLevels: objects.KAFKA_CONTAINER_LEVELS,
       objectKinds: objects.KAFKA_OBJECT_KINDS,
+      // A record's key, value, headers and timestamp are stored values: an agent read answers names, counts and flags.
+      metadataOnly: KAFKA_METADATA_ONLY,
     };
   }
 
@@ -236,6 +318,11 @@ export class KafkaProvider extends BaseDatabaseProvider {
   public async query(text: string, params?: unknown[]): Promise<QueryResult> {
     // Empty text is the provider's refusal, before anything else (spec 5.1).
     if (text.trim() === "") throw new QueryError(EMPTY_REQUEST_MESSAGE, this.type);
+    // The editor's read fetches records, whose cells are stored values: never on an agent-mode handle.
+    if (this.agentProfile) {
+      this.ensureConnected();
+      throw new RefusedBeforeSendError(KAFKA_AGENT_WITHHELD.query, this.type, text);
+    }
     // A read request has no binding, and dropping the values would run a different read from the
     // one the caller built. An empty list binds nothing and is not a refusal.
     if (params !== undefined && params.length > 0) throw new DatabaseConfigError(BOUND_PARAMS_MESSAGE, this.type);
@@ -249,6 +336,37 @@ export class KafkaProvider extends BaseDatabaseProvider {
     });
   }
 
+  /**
+   * One agent read request. Only on a handle opened under the agent read-only profile; the request is read by
+   * `readKafkaAgentStatement` and refused before anything is sent when it is not one read of the closed table or when
+   * its limit passes the row budget. Then the read runs over the agent's client, Metadata and ListOffsets alone, under
+   * the request's time budget, with nothing kept from one call for the next, and its answer is the metadata-only
+   * projection, refused past the byte budget. A failure is worded by its category, never by the broker's words.
+   */
+  public async queryReadOnly(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    this.ensureConnected();
+    if (!this.readOnlyProfile) throw new RefusedBeforeSendError(PROFILE_REQUIRED, this.type, statement);
+    assertReadOnlyBudget(budget, this.type);
+    if (mode !== "execute") throw new RefusedBeforeSendError(NO_ESTIMATE, this.type, statement);
+    const reading = readKafkaAgentStatement(statement);
+    if (!reading.ok) throw new RefusedBeforeSendError(reading.message, this.type, statement);
+    if (reading.plan.limit > budget.maxResultRows) {
+      const sentence = rowBudgetSentence(reading.plan.limit, budget.maxResultRows);
+      throw new RefusedBeforeSendError(sentence, this.type, statement);
+    }
+    const started = Date.now();
+    try {
+      const answer = await runKafkaAgentRead(this.agentClient(), reading.plan, budget.statementTimeoutMs);
+      return kafkaAgentResult(answer, budget, statement, Date.now() - started);
+    } catch (error) {
+      throw kafkaAgentFailure(error, budget.statementTimeoutMs, statement) ?? error;
+    }
+  }
+
   // ==========================================================================
   // Object surface (spec 4), answered by `objects.ts`
   // ==========================================================================
@@ -259,22 +377,37 @@ export class KafkaProvider extends BaseDatabaseProvider {
   }
 
   public countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
+    if (this.agentProfile) return this.agentGuarded((client) => agentCountObjects(client, container));
     return this.guarded((client) => objects.countObjects(client, container));
   }
 
   public listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+    if (this.agentProfile) return this.agentGuarded((client) => agentListObjects(client, container, kind));
     return this.guarded((client) => objects.listObjects(client, container, kind));
   }
 
+  /** A topic's columns: the agent read's on an agent-mode handle, so no surface names a record cell there. */
   public describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
+    if (this.agentProfile) {
+      return this.agentGuarded((client) =>
+        agentDescribeObject(client, this.getCapabilities(), path, kind, KAFKA_AGENT_TOPIC_COLUMNS),
+      );
+    }
     return this.guarded((client) => objects.describeObject(client, this.getCapabilities(), path, kind));
   }
 
   public describeObjects(container: readonly string[], kind: string, limit?: number): Promise<ObjectDetailBatch> {
+    if (this.agentProfile) {
+      return this.agentGuarded((client) =>
+        agentDescribeObjects(client, container, kind, limit, KAFKA_AGENT_TOPIC_COLUMNS),
+      );
+    }
     return this.guarded((client) => objects.describeObjects(client, container, kind, limit));
   }
 
-  public readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
+  /** An object's source holds configs, group members and committed offsets: refused on an agent-mode handle. */
+  public async readObjectSource(path: readonly string[], kind: string, limit?: number): Promise<ObjectSourceDocument> {
+    if (this.agentProfile) this.agentWithheld(KAFKA_AGENT_WITHHELD.source);
     return this.guarded((client) => objects.readObjectSource(client, this.getCapabilities(), path, kind, limit));
   }
 
@@ -308,6 +441,7 @@ export class KafkaProvider extends BaseDatabaseProvider {
   }
 
   public getHealth(): Promise<HealthInfo> {
+    if (this.agentProfile) return this.agentGuarded(agentHealth);
     return this.guarded(async (client) => {
       // The forced broker read must succeed; health reads no broker config (spec 7.1, M-I).
       await client.metadata([]);
@@ -315,7 +449,8 @@ export class KafkaProvider extends BaseDatabaseProvider {
     });
   }
 
-  public getOverview(): Promise<DatabaseOverview> {
+  public async getOverview(): Promise<DatabaseOverview> {
+    if (this.agentProfile) this.agentWithheld(KAFKA_AGENT_WITHHELD.overview);
     return this.guarded(async (client) => {
       const metadata = await client.metadata([]);
       // The lowest listed node, so the figure does not move between loads: on KRaft the Metadata
@@ -332,7 +467,8 @@ export class KafkaProvider extends BaseDatabaseProvider {
     });
   }
 
-  public getStorageStats(): Promise<StorageStats[]> {
+  public async getStorageStats(): Promise<StorageStats[]> {
+    if (this.agentProfile) this.agentWithheld(KAFKA_AGENT_WITHHELD.storage);
     return this.guarded(async (client) => storageFrom(await this.readLogDirs(client)));
   }
 
@@ -344,24 +480,32 @@ export class KafkaProvider extends BaseDatabaseProvider {
 
   /** Empty: Kafka keeps no query log. `getLabels().slowQueriesEmptyState` says so in the panel. */
   public async getSlowQueries(): Promise<SlowQueryStats[]> {
+    // On an agent-mode handle an empty answer would read as the broker's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(KAFKA_AGENT_WITHHELD.slowQueries);
     this.ensureConnected();
     return [];
   }
 
   /** Empty: the protocol reports no client sessions. `getLabels().sessionsEmptyState` says so in the panel. */
   public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
+    // On an agent-mode handle an empty answer would read as the broker's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(KAFKA_AGENT_WITHHELD.sessions);
     this.ensureConnected();
     return [];
   }
 
   /** Empty: a topic has no honest message count, and `TableStats.rowCount` is required (spec 4.3, 7.1). */
   public async getTableStats(): Promise<TableStats[]> {
+    // On an agent-mode handle an empty answer would read as the broker's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(KAFKA_AGENT_WITHHELD.tableStats);
     this.ensureConnected();
     return [];
   }
 
   /** Empty: a topic has no index. */
   public async getIndexStats(): Promise<IndexStats[]> {
+    // On an agent-mode handle an empty answer would read as the broker's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(KAFKA_AGENT_WITHHELD.indexStats);
     this.ensureConnected();
     return [];
   }

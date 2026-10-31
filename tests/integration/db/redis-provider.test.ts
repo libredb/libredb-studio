@@ -2622,6 +2622,123 @@ describe("RedisProvider", () => {
   });
 
   // --------------------------------------------------------------------------
+  // An agent-mode handle: what the operations workflow and plan mode read
+  // --------------------------------------------------------------------------
+
+  describe("an agent-mode handle reads metadata only", () => {
+    /** The marker the browser pass seeded into key names and values, standing in for a stored token. */
+    const MARKER = "MARKER-f1f9cab0";
+    /** The operations profile's open: `readOnly`, and no statement of the model's. */
+    const OPERATIONS = { readOnly: true, sendsStatements: false } as const;
+    let agent: InstanceType<typeof RedisProvider>;
+
+    beforeEach(async () => {
+      agent = new RedisProvider({ ...baseConfig }, {}, OPERATIONS);
+      await agent.connect();
+    });
+
+    afterEach(async () => {
+      mockCallResults.SLOWLOG = MOCK_SLOWLOG_ENTRIES;
+      scanPages = null;
+      mockClientList = MOCK_CLIENT_LIST;
+      await agent.disconnect();
+    });
+
+    test("a slow-log entry carries the command name, the argument count and the timing, never an argument", async () => {
+      mockCallResults.SLOWLOG = [
+        [7, 1700000000, 1500, ["HSET", `user:${MARKER}:profile`, `name-${MARKER}`, "Alice"], "10.0.0.1:5000", MARKER],
+        [8, 1700000001, 2500, ["GET", `token-${MARKER}`], "10.0.0.1:5001", ""],
+        [9, 1700000002, 500, ["PING"], "10.0.0.1:5002", ""],
+      ];
+      const slow = await agent.getSlowQueries();
+      expect(slow).toEqual([
+        { queryId: "7", query: "HSET (3 arguments)", calls: 1, totalTime: 1.5, avgTime: 1.5, rows: 0 },
+        { queryId: "8", query: "GET (1 argument)", calls: 1, totalTime: 2.5, avgTime: 2.5, rows: 0 },
+        { queryId: "9", query: "PING (0 arguments)", calls: 1, totalTime: 0.5, avgTime: 0.5, rows: 0 },
+      ]);
+      expect(JSON.stringify(slow)).not.toContain(MARKER);
+    });
+
+    test("a slow-log entry Redis cut at 32 words counts the arguments its marker names", async () => {
+      // Redis keeps 31 words of a longer argv and makes the 32nd "... (N more arguments)": 1 + 30 + N words were sent.
+      const kept = Array.from({ length: 30 }, (_, index) => `${MARKER}-${index}`);
+      mockCallResults.SLOWLOG = [[1, 1700000000, 1000, ["MSET", ...kept, "... (12 more arguments)"], "", ""]];
+      const [entry] = await agent.getSlowQueries();
+      expect(entry.query).toBe("MSET (42 arguments)");
+    });
+
+    test("a short entry whose last argument reads like the cut marker is counted as it stands", async () => {
+      mockCallResults.SLOWLOG = [[1, 1700000000, 1000, ["SET", MARKER, "... (12 more arguments)"], "", ""]];
+      const [entry] = await agent.getSlowQueries();
+      expect(entry.query).toBe("SET (2 arguments)");
+    });
+
+    test("a slow-log entry whose words are not a list is withheld whole", async () => {
+      mockCallResults.SLOWLOG = [[2, 1700000001, 2500, `HGETALL user:${MARKER}`, "", ""]];
+      const slow = await agent.getSlowQueries();
+      expect(slow.map((entry) => entry.query)).toEqual([
+        "(the entry's command words were not a list, so none is shown)",
+      ]);
+      expect(JSON.stringify(slow)).not.toContain(MARKER);
+    });
+
+    test("an editor handle keeps the full slow log", async () => {
+      mockCallResults.SLOWLOG = [[8, 1700000001, 2500, ["GET", `token-${MARKER}`], "", ""]];
+      await provider.connect();
+      expect((await provider.getSlowQueries()).map((entry) => entry.query)).toEqual([`GET token-${MARKER}`]);
+    });
+
+    test("a key with no delimiter is counted under one grouping, never named, and a grouping names its leading segment only", async () => {
+      scanPages = [
+        `user:${MARKER}:profile`,
+        `user:${MARKER}:cart`,
+        `token-${MARKER}`,
+        `0.token-${MARKER}`,
+        `:${MARKER}`,
+      ];
+      const objects = await agent.listObjects(["0"], "keyspace");
+      expect(objects.map((object) => [object.name, object.rowCount])).toEqual([
+        ["(keys with no delimiter)", 3],
+        ["user:*", 2],
+      ]);
+      expect(await agent.countObjects(["0"])).toMatchObject({ keyspace: { count: 2 } });
+      const { details } = await agent.describeObjects(["0"], "keyspace");
+      expect(details.map((detail) => detail.path)).toEqual([
+        ["0", "(keys with no delimiter)"],
+        ["0", "user:*"],
+      ]);
+      const detail = await agent.describeObject(["0", "(keys with no delimiter)"], "keyspace");
+      expect(detail.path).toEqual(["0", "(keys with no delimiter)"]);
+      expect(JSON.stringify({ objects, details, detail })).not.toContain(MARKER);
+    });
+
+    test("a key with no delimiter is not found by its own name on an agent-mode handle", async () => {
+      scanPages = [`token-${MARKER}`];
+      const error = await agent.describeObject(["0", `token-${MARKER}`], "keyspace").then(
+        () => undefined,
+        (failure: unknown) => failure,
+      );
+      expect(error).toBeInstanceOf(Error);
+    });
+
+    test("an editor handle still names a key with no delimiter as its own grouping", async () => {
+      scanPages = [`token-${MARKER}`, "user:1"];
+      await provider.connect();
+      expect((await provider.listObjects(["0"], "keyspace")).map((object) => object.name)).toEqual([
+        `token-${MARKER}`,
+        "user:*",
+      ]);
+    });
+
+    test("a session row carries no client-supplied connection name", async () => {
+      mockClientList = `id=1 addr=127.0.0.1:6379 name=${MARKER} lib-name=${MARKER} db=0 flags=N cmd=get idle=5 user=studio`;
+      const sessions = await agent.getActiveSessions();
+      expect(sessions.map((session) => session.query)).toEqual(["get"]);
+      expect(JSON.stringify(sessions)).not.toContain(MARKER);
+    });
+  });
+
+  // --------------------------------------------------------------------------
   // getTableStats()
   // --------------------------------------------------------------------------
 
@@ -4495,6 +4612,19 @@ describe("RedisProvider", () => {
         expect(commandsSent()[0]).toBe("FUNCTION LIST LIBRARYNAME libredb_probe WITHCODE");
       });
     });
+  });
+});
+
+describe("the agent read-only path on an editor handle", () => {
+  test("queryReadOnly refuses a handle not opened under the agent read-only profile, before any command", async () => {
+    const editor = new RedisProvider({ ...baseConfig, database: "0" });
+    await editor.connect();
+    capturedCalls.length = 0;
+    await expect(
+      editor.queryReadOnly("DBSIZE", { maxResultRows: 10, maxResultBytes: 1024, statementTimeoutMs: 1000 }),
+    ).rejects.toThrow("Read-only execution requires a provider opened under the agent read-only profile");
+    expect(capturedCalls).toEqual([]);
+    await editor.disconnect();
   });
 });
 

@@ -48,9 +48,63 @@ describe("fenceTagEngine", () => {
     for (const engine of engines) expect(fenceTagEngine(engine)).toBe(engine);
   });
 
-  test("etcd has no alias: the shell tags name no engine, and etcdctl is not registered (#1089)", () => {
+  test("the shell tags name no engine: `sql` and an untagged fence get the same answer (#1089)", () => {
     // `null` is fenceTagEngine's "names no engine", the answer an untagged fence and `sql` get.
-    for (const tag of ["sh", "bash", "shell", "etcdctl"]) expect(fenceTagEngine(tag)).toBeNull();
+    for (const tag of ["sh", "bash", "shell"]) expect(fenceTagEngine(tag)).toBeNull();
+    expect(fenceTagEngine("etcd")).toBe("etcd");
+  });
+
+  test("oxiacli names oxia, the agent's name for the only command language Oxia runs", () => {
+    expect(fenceTagEngine("oxiacli")).toBe("oxia");
+    expect(isQueryFenceTag("oxiacli")).toBe(true);
+    expect(fenceTagEngine("oxia")).toBe("oxia");
+  });
+
+  test("rabbitread names rabbitmq, the agent's name for the only read request language RabbitMQ runs", () => {
+    expect(fenceTagEngine("rabbitread")).toBe("rabbitmq");
+    expect(isQueryFenceTag("rabbitread")).toBe(true);
+    expect(fenceTagEngine("rabbitmq")).toBe("rabbitmq");
+  });
+
+  test("kafkaread names kafka, the agent's name for the only metadata read language Kafka runs", () => {
+    expect(fenceTagEngine("kafkaread")).toBe("kafka");
+    expect(isQueryFenceTag("kafkaread")).toBe(true);
+    expect(fenceTagEngine("kafka")).toBe("kafka");
+  });
+
+  test("s3api names s3, the agent's name for the only metadata read command language S3 runs", () => {
+    expect(fenceTagEngine("s3api")).toBe("s3");
+    expect(isQueryFenceTag("s3api")).toBe(true);
+    expect(fenceTagEngine("s3")).toBe("s3");
+  });
+
+  test("fsquery names firestore, the agent's name for the only metadata read statement language Firestore runs", () => {
+    expect(fenceTagEngine("fsquery")).toBe("firestore");
+    expect(isQueryFenceTag("fsquery")).toBe(true);
+    expect(fenceTagEngine("firestore")).toBe("firestore");
+  });
+
+  test("modbusread names modbus, the agent's name for the only read request language Modbus runs", () => {
+    expect(fenceTagEngine("modbusread")).toBe("modbus");
+    expect(isQueryFenceTag("modbusread")).toBe(true);
+    expect(fenceTagEngine("modbus")).toBe("modbus");
+  });
+
+  test("netconfrpc names netconf, the agent's name for the only read request language NETCONF runs", () => {
+    expect(fenceTagEngine("netconfrpc")).toBe("netconf");
+    expect(isQueryFenceTag("netconfrpc")).toBe(true);
+    expect(fenceTagEngine("netconf")).toBe("netconf");
+  });
+
+  test("snmpget names snmp, the agent's name for the only read command language SNMP runs", () => {
+    expect(fenceTagEngine("snmpget")).toBe("snmp");
+    expect(isQueryFenceTag("snmpget")).toBe(true);
+    expect(fenceTagEngine("snmp")).toBe("snmp");
+  });
+
+  test("etcdctl names etcd, the agent's name for the only command language etcd runs", () => {
+    expect(fenceTagEngine("etcdctl")).toBe("etcd");
+    expect(isQueryFenceTag("etcdctl")).toBe(true);
     expect(fenceTagEngine("etcd")).toBe("etcd");
   });
 
@@ -169,6 +223,30 @@ describe("fenceTagEngine", () => {
     expect(fenceTagEngine("influxdb3")).toBe("influxdb3");
     expect(isQueryFenceTag("influxdb3")).toBe(true);
     expect(fenceTagEngine("sql")).toBeNull();
+  });
+
+  test("weaviateapi names weaviate, the agent's name for the only request language weaviate runs", () => {
+    expect(fenceTagEngine("weaviateapi")).toBe("weaviate");
+    expect(isQueryFenceTag("weaviateapi")).toBe(true);
+    expect(fenceTagEngine("weaviate")).toBe("weaviate");
+  });
+
+  test("rediscli names redis, the agent's name for the only command language redis runs", () => {
+    expect(fenceTagEngine("rediscli")).toBe("redis");
+    expect(isQueryFenceTag("rediscli")).toBe(true);
+    expect(fenceTagEngine("redis")).toBe("redis");
+  });
+
+  test("milvusrpc names milvus, the agent's name for the only request language milvus runs", () => {
+    expect(fenceTagEngine("milvusrpc")).toBe("milvus");
+    expect(isQueryFenceTag("milvusrpc")).toBe(true);
+    expect(fenceTagEngine("milvus")).toBe("milvus");
+  });
+
+  test("qdrantapi names qdrant, the agent's name for the only request language qdrant runs", () => {
+    expect(fenceTagEngine("qdrantapi")).toBe("qdrant");
+    expect(isQueryFenceTag("qdrantapi")).toBe(true);
+    expect(fenceTagEngine("qdrant")).toBe("qdrant");
   });
 
   test("libredbkv names libredb, the agent's name for the only command language libredb runs", () => {

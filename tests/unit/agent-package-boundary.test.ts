@@ -239,7 +239,8 @@ function isAgentModule(file: string): boolean {
  * `cluster.usage.read` and ship in the package with the provider. The MongoDB
  * provider's read-only profile (its bounded read and the boundary it proves at
  * open) is `queryReadOnly`'s own code, split out of `mongodb/index.ts`, and
- * ships with the provider the same way, as do the ClickHouse, libSQL, Oracle, Db2, Cassandra, Couchbase and Druid providers'.
+ * ships with the provider the same way, as do the ClickHouse, libSQL, Oracle, Db2, Cassandra, Couchbase, Druid, Neo4j,
+ * etcd, Oxia, RabbitMQ, Kafka, S3, Firestore, SNMP, NETCONF and Modbus providers'.
  */
 const NOT_AGENT_CODE: ReadonlySet<string> = new Set([
   "src/lib/db/providers/platform/kubernetes/agent-readings.ts",
@@ -254,6 +255,39 @@ const NOT_AGENT_CODE: ReadonlySet<string> = new Set([
   "src/lib/db/providers/sql/cassandra/agent-boundary.ts",
   "src/lib/db/providers/document/couchbase/agent-boundary.ts",
   "src/lib/db/providers/sql/druid/agent-boundary.ts",
+  "src/lib/db/providers/graph/neo4j/agent-boundary.ts",
+  "src/lib/db/providers/graph/neo4j/agent-builtins.ts",
+  "src/lib/db/providers/graph/neo4j/agent-statement.ts",
+  "src/lib/db/providers/keyvalue/etcd/agent-statement.ts",
+  "src/lib/db/providers/keyvalue/etcd/agent-read-only-proof.ts",
+  "src/lib/db/providers/keyvalue/etcd/agent-metadata-read.ts",
+  "src/lib/db/providers/keyvalue/oxia/agent-statement.ts",
+  "src/lib/db/providers/keyvalue/oxia/agent-metadata-read.ts",
+  "src/lib/db/providers/stream/rabbitmq/agent-statement.ts",
+  "src/lib/db/providers/stream/rabbitmq/agent-metadata-read.ts",
+  "src/lib/db/providers/stream/kafka/agent-statement.ts",
+  "src/lib/db/providers/stream/kafka/agent-metadata-read.ts",
+  "src/lib/db/providers/stream/kafka/agent-surface.ts",
+  "src/lib/db/providers/objectstore/s3/agent-statement.ts",
+  "src/lib/db/providers/objectstore/s3/agent-metadata-read.ts",
+  "src/lib/db/providers/objectstore/s3/agent-surface.ts",
+  "src/lib/db/providers/document/firestore/agent-statement.ts",
+  "src/lib/db/providers/document/firestore/agent-client.ts",
+  "src/lib/db/providers/document/firestore/agent-metadata-read.ts",
+  "src/lib/db/providers/document/firestore/agent-surface.ts",
+  "src/lib/db/providers/network/snmp/agent-statement.ts",
+  "src/lib/db/providers/network/snmp/agent-client.ts",
+  "src/lib/db/providers/network/snmp/agent-read.ts",
+  "src/lib/db/providers/network/snmp/agent-surface.ts",
+  "src/lib/db/providers/network/netconf/agent-statement.ts",
+  "src/lib/db/providers/network/netconf/agent-client.ts",
+  "src/lib/db/providers/network/netconf/agent-read.ts",
+  "src/lib/db/providers/network/netconf/agent-surface.ts",
+  "src/lib/db/providers/network/netconf/agent-withheld.ts",
+  "src/lib/db/providers/industrial/modbus/agent-statement.ts",
+  "src/lib/db/providers/industrial/modbus/agent-pacing.ts",
+  "src/lib/db/providers/industrial/modbus/agent-read.ts",
+  "src/lib/db/providers/industrial/modbus/agent-surface.ts",
 ]);
 
 // ---------------------------------------------------------------------------

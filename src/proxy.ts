@@ -1,10 +1,11 @@
-import { WORKSPACE_OWNER_HEADER, withBasePath } from "@/lib/config/base-path";
+import { WORKSPACE_OWNER_HEADER, getBasePath, withBasePath } from "@/lib/config/base-path";
 import { ApiErrorCode } from "@/lib/api/error-codes";
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
 import { AGENT_DRIVE_HEADER, AGENT_DRIVE_PATH, verifyAgentDriveToken } from "@/lib/agent/drive-token";
 import { clientAddress } from "@/lib/api/client-address";
 import { checkOrigin } from "@/lib/api/origin-check";
+import { SESSION_COOKIE, cookieScope, secureCookieDecision } from "@/lib/auth-cookies";
 import { consumeRateLimit } from "@/lib/api/rate-limit";
 import { emitAuditEvent, MAX_AUDIT_FIELD_LENGTH } from "@/lib/audit";
 import { readLaunchConfig } from "@/lib/launch/config";
@@ -147,7 +148,13 @@ export async function proxy(request: NextRequest) {
     return withSecurityHeaders(await mcpGate(request));
   }
 
-  const token = request.cookies.get("auth-token")?.value;
+  // The session cookie's name in this request's mode, decided from the same Host and x-forwarded-proto headers the
+  // route handlers read through headers(), so the proxy and readSession() never disagree on it.
+  const secure = secureCookieDecision({
+    host: request.headers.get("host"),
+    forwardedProto: request.headers.get("x-forwarded-proto"),
+  });
+  const token = request.cookies.get(cookieScope(SESSION_COOKIE, getBasePath() || "/", secure).name)?.value;
 
   // If accessing /login with a valid token, redirect authenticated users
   if (pathname.startsWith("/login")) {

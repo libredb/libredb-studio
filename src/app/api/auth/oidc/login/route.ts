@@ -2,7 +2,8 @@ import { getBasePath, withBasePath } from "@/lib/config/base-path";
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { getOIDCConfig, discoverProvider, generateAuthUrl, encryptState, getPublicOrigin } from "@/lib/oidc";
-import { shouldMarkCookieSecure } from "@/lib/auth";
+import { OIDC_STATE_COOKIE, cookieDeletion } from "@/lib/auth-cookies";
+import { studioCookie } from "@/lib/studio-cookie";
 import { logger } from "@/lib/logger";
 import { clientAddress } from "@/lib/api/client-address";
 import { emitAuditEvent, type AuditReason } from "@/lib/audit";
@@ -40,12 +41,13 @@ export async function GET(request: Request) {
   let discovered = false;
   try {
     const cookieStore = await cookies();
+    const marker = await studioCookie(ACCESS_REVIEW_RETRY_COOKIE, getBasePath() || "/");
 
     // The Kubernetes access review's loop guard (src/lib/kubernetes-access/session-guard.ts): a session's groups record
     // went missing again right after the silent sign-in that wrote it, so another round trip to the provider would only
     // repeat it. The sign-in page says so instead, and the marker is consumed, so signing in by hand tries once more.
-    if (accessReviewEnabled() && retryLoopTripped(cookieStore.get(ACCESS_REVIEW_RETRY_COOKIE)?.value)) {
-      cookieStore.delete({ name: ACCESS_REVIEW_RETRY_COOKIE, path: getBasePath() || "/" });
+    if (accessReviewEnabled() && retryLoopTripped(cookieStore.get(marker.name)?.value)) {
+      cookieStore.delete(cookieDeletion(marker));
       auditFailure("oidc_groups_lost", ip);
       return NextResponse.redirect(`${origin}${withBasePath("/login")}?error=oidc_groups_lost`);
     }
@@ -64,12 +66,13 @@ export async function GET(request: Request) {
     // in the same signed cookie, so the provider round trip cannot alter it.
     const returnTo = safeReturnPath(new URL(request.url).searchParams.get(RETURN_PATH_PARAM));
     const stateCookie = await encryptState(returnTo === null ? state : { ...state, return_to: returnTo });
-    cookieStore.set("oidc-state", stateCookie, {
+    const stateScope = await studioCookie(OIDC_STATE_COOKIE, getBasePath() || "/");
+    cookieStore.set(stateScope.name, stateCookie, {
       httpOnly: true,
-      secure: await shouldMarkCookieSecure(),
+      secure: stateScope.secure,
       sameSite: "lax",
       maxAge: 300, // 5 minutes
-      path: getBasePath() || "/",
+      path: stateScope.path,
     });
 
     return NextResponse.redirect(url.toString());

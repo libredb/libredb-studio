@@ -12,7 +12,8 @@ import { cookies } from "next/headers";
 import type { NextResponse } from "next/server";
 import { RETURN_PATH_PARAM, safeReturnPath } from "@/lib/api/session-ended";
 import { clientAddress } from "@/lib/api/client-address";
-import { shouldMarkCookieSecure } from "@/lib/auth";
+import { cookieDeletion } from "@/lib/auth-cookies";
+import { studioCookie } from "@/lib/studio-cookie";
 import { AuthConfigError } from "@/lib/auth-errors";
 import { getBasePath } from "@/lib/config/base-path";
 import { authProviderSetting } from "@/lib/config/auth-provider";
@@ -58,8 +59,9 @@ export async function GET(request: Request): Promise<NextResponse> {
   const ip = clientAddress(request);
   try {
     const cookieStore = await cookies();
-    if (retryLoopTripped(cookieStore.get(ACCESS_REVIEW_RETRY_COOKIE)?.value)) {
-      cookieStore.delete({ name: ACCESS_REVIEW_RETRY_COOKIE, path: getBasePath() || "/" });
+    const marker = await studioCookie(ACCESS_REVIEW_RETRY_COOKIE, getBasePath() || "/");
+    if (retryLoopTripped(cookieStore.get(marker.name)?.value)) {
+      cookieStore.delete(cookieDeletion(marker));
       logger.info("OpenShift sign-in: the loop guard tripped, so the sign-in page shows instead", {
         route: ROUTE,
         loop: true,
@@ -71,12 +73,13 @@ export async function GET(request: Request): Promise<NextResponse> {
     if (reading.kind !== "ok") return refuse(metadataFailureCode(ROUTE, reading), ip);
     const returnTo = safeReturnPath(new URL(request.url).searchParams.get(RETURN_PATH_PARAM));
     const { url, state } = await openShiftAuthorizationUrl(reading.metadata, returnTo);
-    cookieStore.set(OPENSHIFT_STATE_COOKIE, await encryptOpenShiftState(state), {
+    const stateScope = await studioCookie(OPENSHIFT_STATE_COOKIE, openShiftStateCookiePath());
+    cookieStore.set(stateScope.name, await encryptOpenShiftState(state), {
       httpOnly: true,
-      secure: await shouldMarkCookieSecure(),
+      secure: stateScope.secure,
       sameSite: "lax",
       maxAge: STATE_MAX_AGE_SECONDS,
-      path: openShiftStateCookiePath(),
+      path: stateScope.path,
     });
     return redirectNoStore(url.href);
   } catch (error) {

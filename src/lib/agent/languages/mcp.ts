@@ -72,6 +72,36 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   mongo: MONGO_MCP_FACET,
   // No MCP statement tool yet: MCP read stays closed on LibreDB until a change of its own declares one and opens it.
   libredbkv: null,
+  // No MCP statement tool yet: MCP read stays closed on InfluxDB until a change of its own declares one and opens it.
+  influxql: null,
+  // No MCP statement tool yet: MCP read stays closed on Weaviate until a change of its own declares one and opens it.
+  weaviateapi: null,
+  // No MCP statement tool yet: MCP read stays closed on Qdrant until a change of its own declares one and opens it.
+  qdrantapi: null,
+  // No MCP statement tool yet: MCP read stays closed on Neo4j until a change of its own declares one and opens it.
+  cypher: null,
+  // No MCP statement tool yet: MCP read stays closed on Milvus until a change of its own declares one and opens it.
+  milvusrpc: null,
+  // No MCP statement tool yet: MCP read stays closed on Redis until a change of its own declares one and opens it.
+  rediscli: null,
+  // No MCP statement tool yet: MCP read stays closed on etcd until a change of its own declares one and opens it.
+  etcdctl: null,
+  // No MCP statement tool yet: MCP read stays closed on Oxia until a change of its own declares one and opens it.
+  oxiacli: null,
+  // No MCP statement tool yet: MCP read stays closed on RabbitMQ until a change of its own declares one and opens it.
+  rabbitread: null,
+  // No MCP statement tool yet: MCP read stays closed on Kafka until a change of its own declares one and opens it.
+  kafkaread: null,
+  // No MCP statement tool yet: MCP read stays closed on S3 until a change of its own declares one and opens it.
+  s3api: null,
+  // No MCP statement tool yet: MCP read stays closed on Firestore until a change of its own declares one and opens it.
+  fsquery: null,
+  // No MCP statement tool yet: MCP read stays closed on SNMP until a change of its own declares one and opens it.
+  snmpget: null,
+  // No MCP statement tool yet: MCP read stays closed on NETCONF until a change of its own declares one and opens it.
+  netconfrpc: null,
+  // No MCP statement tool yet: MCP read stays closed on Modbus until a change of its own declares one and opens it.
+  modbusread: null,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageMcpFacet | null>);
 
 /** A facet some language declares, with its tool's name as a literal. */

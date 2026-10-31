@@ -64,6 +64,10 @@ export function recordingClientFactory(
     built.push({ options, routes });
     return {
       send: recording.send,
+      // The surfaces send no probe: only the agent read-only proof does, and its tests drive the real client.
+      async probe() {
+        throw new Error("a surface sent the read-only proof's probe");
+      },
       close() {
         closed += 1;
       },

@@ -1,0 +1,20 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-enterprise",
+    "digest": "sha256:02d30e0a80f0aaed71cfdfaa85c8ea01cf44aacd55510d4a2b4a53f9f1a2e1ad",
+    "date": "2026-10-30T11:35:05.544Z",
+    "database": "neo4j"
+  },
+  "principal": "ext_denied: agent_reader and no_extension (DENY EXECUTE libredbtest.*)",
+  "statement": "RETURN libredbtest.touchFn() AS path",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 100
+  },
+  "outcome": "fail",
+  "error": {
+    "category": "access-mode",
+    "code": "Neo.ClientError.Security.Forbidden",
+    "message": "Executing a user defined function is not allowed for user 'ext_denied' with roles [PUBLIC, agent_reader, no_extension]."
+  }
+}

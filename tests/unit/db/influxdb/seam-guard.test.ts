@@ -6,7 +6,7 @@
  * 1. No file imports a module under `src/lib/db/providers/` outside this directory, with exactly two exceptions: the
  *    specifier `@/lib/db/providers/sql/sql-base`, imported by `sql-provider.ts` (R15), and
  *    `@/lib/db/providers/sql/read-only-budget`, the budget refusals every agent read path shares, imported by
- *    `sql-agent-read.ts`.
+ *    `sql-agent-read.ts` and `influxql-agent-read.ts`.
  * 2. No `influxql-*` module imports an `sql-*` module, and no `sql-*` module imports an `influxql-*` module.
  * 3. No shared-layer module imports an `influxql-*` or `sql-*` module.
  * 4. Only `client.ts` imports `createNodeTransport`, only `connection-options.ts` imports `nodeTlsMaterial`, and
@@ -67,8 +67,10 @@ const BROWSER = [
   "influxql-editor-language",
   // InfluxDB's row of the confirmation gate, which reads only the InfluxQL policy.
   "influxdb-destructive",
+  // The agent's reader of one statement, which reads only the lexer and the policy.
+  "influxql-agent-statement",
 ];
-const INFLUXQL_SERVER = ["influxql-results", "influxql-objects", "influxql-provider"];
+const INFLUXQL_SERVER = ["influxql-results", "influxql-objects", "influxql-provider", "influxql-agent-read"];
 const GRAMMAR = ["influxdb-sql-grammar", "influxdb3-sql-grammar"];
 /** Each type-id's declaration of a per-engine contract, which reads its contract and nothing of this directory. */
 const CONTRACT = ["influxdb-migration-ddl", "influxdb3-migration-ddl"];
@@ -129,6 +131,7 @@ const OUTSIDE_VALUES: Readonly<Record<Layer, readonly string[]>> = {
     "src/lib/db/utils/bounded-limiter.ts",
     "src/lib/db/base-provider.ts",
     "src/lib/db/object-kinds.ts",
+    "src/lib/db/providers/sql/read-only-budget.ts",
   ],
   sql: [
     ...CONNECTION_OUTSIDE,
@@ -279,7 +282,7 @@ function seamFindings(file: string, text: string): string[] {
     if (target.startsWith(PROVIDERS) && !inDirectory(target)) {
       const excepted =
         (name === "sql-provider" && specifier === SQL_BASE) ||
-        (name === "sql-agent-read" && specifier === READ_ONLY_BUDGET);
+        ((name === "sql-agent-read" || name === "influxql-agent-read") && specifier === READ_ONLY_BUDGET);
       if (!excepted) {
         findings.push(`rule 1: ${file} imports ${specifier}, a module of another provider directory`);
       }
@@ -373,6 +376,12 @@ describe("planted violations fail by name", () => {
       "sql-policy.ts",
       'import { readOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";\n',
       `rule 1: ${DIR}/sql-provider.ts imports @/lib/db/providers/sql/read-only-budget, a module of another provider directory`,
+    ],
+    [
+      "influxql-agent-read.ts",
+      "influxql-policy.ts",
+      'import { SQLBaseProvider } from "@/lib/db/providers/sql/sql-base";\n',
+      `rule 1: ${DIR}/influxql-agent-read.ts imports @/lib/db/providers/sql/sql-base, a module of another provider directory`,
     ],
     [
       "sql-agent-read.ts",

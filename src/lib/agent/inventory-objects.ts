@@ -40,3 +40,18 @@ export function addressableObjects(inventory: AgentInventory): readonly AgentInv
   );
   return inventory.objects.filter((object) => object.kind === undefined || addressable.has(object.kind));
 }
+
+/**
+ * The provider's reason where nothing of an inventory was listed because the connection lacks the configuration its
+ * provider needs to list one (U189): no object, and every declared kind carrying the one `unavailable` sentence the
+ * walk wrote from `DatabaseProvider.inventoryNeedsConfiguration`. `undefined` for every other inventory, an empty one
+ * included, so "reported no tables" stays the answer where the engine was asked and answered none.
+ *
+ * Here rather than beside the packing because the rail reads it too, and this module imports nothing but types.
+ */
+export function unlistedInventoryReason(inventory: AgentInventory): string | undefined {
+  const kinds = inventory.kinds ?? [];
+  if (inventory.objects.length > 0 || kinds.length === 0) return undefined;
+  const reason = kinds[0].unavailable;
+  return kinds.every((kind) => kind.unavailable === reason) ? reason : undefined;
+}

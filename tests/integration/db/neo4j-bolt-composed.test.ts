@@ -172,7 +172,7 @@ function fakeDriver() {
 
 async function composed() {
   const { lib, runs, ran } = fakeDriver();
-  const provider = new Neo4jProvider(CONNECTION, {}, (config) => buildBoltClient(config, lib));
+  const provider = new Neo4jProvider(CONNECTION, {}, {}, (config) => buildBoltClient(config, lib));
   await provider.connect();
   return { provider, runs, ran };
 }

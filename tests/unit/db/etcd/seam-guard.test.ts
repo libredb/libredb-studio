@@ -4,8 +4,8 @@
  * The provider reaches etcd through one narrow seam, and this file keeps the seam where it is. It parses source
  * files from disk and fails the build when an ordinary edit crosses a line spec E11 draws:
  *
- * - who imports @grpc/grpc-js (the gate-4 evidence harness and the adapter's two transport tests),
- *   who imports the generated descriptor, who names its file to read it, who imports @grpc/proto-loader, and who
+ * - who imports @grpc/grpc-js (the gate-4 evidence harness, the agent boundary capture and the adapter's two
+ *   transport tests), who imports the generated descriptor, who names its file to read it, who imports @grpc/proto-loader, and who
  *   imports the descriptor's generator, each list held exactly, so a named file that stops importing fails too;
  * - what each module of spec 3.1's pure set imports (other members, the shared types, the repository's error
  *   classes, and types, and only types, from client.ts), and that the four shipped to the browser import no
@@ -60,6 +60,8 @@ const ADAPTER = `${ETCD_PATH}/grpc-client.ts`;
 const DESCRIPTOR = `${ETCD_PATH}/proto/descriptor.ts`;
 const GENERATOR = "scripts/generate-etcd-descriptor.mjs";
 const HARNESS = "tests/live/etcd-evidence.ts";
+/** The agent boundary capture, which sends every request raw, writes included, past every Studio check. */
+const AGENT_HARNESS = "tests/live/etcd-agent-boundary.ts";
 const ADAPTER_TEST = "tests/unit/db/etcd/grpc-client.test.ts";
 const TLS_TEST = "tests/unit/db/etcd/tls-handshake.test.ts";
 const DESCRIPTOR_TEST = "tests/unit/db/etcd/descriptor.test.ts";
@@ -319,14 +321,14 @@ const IMPORT_RULES: readonly ImportRule[] = [
     name: "@grpc/grpc-js importers",
     what: GRPC_JS,
     verb: "imports",
-    named: [HARNESS, ADAPTER_TEST, TLS_TEST],
+    named: [HARNESS, AGENT_HARNESS, ADAPTER_TEST, TLS_TEST],
     holds: importsPackage(GRPC_JS),
   },
   {
     name: "descriptor importers",
     what: DESCRIPTOR,
     verb: "imports",
-    named: [ADAPTER, ADAPTER_TEST, TLS_TEST],
+    named: [ADAPTER, AGENT_HARNESS, ADAPTER_TEST, TLS_TEST],
     holds: importsFile(DESCRIPTOR),
   },
   {
@@ -341,7 +343,7 @@ const IMPORT_RULES: readonly ImportRule[] = [
     what: PROTO_LOADER,
     verb: "imports",
     // The files allowed @grpc/grpc-js, the descriptor's own type-only import, the generator and its test.
-    named: [ADAPTER, HARNESS, ADAPTER_TEST, TLS_TEST, DESCRIPTOR, GENERATOR, DESCRIPTOR_TEST],
+    named: [ADAPTER, HARNESS, AGENT_HARNESS, ADAPTER_TEST, TLS_TEST, DESCRIPTOR, GENERATOR, DESCRIPTOR_TEST],
     holds: importsPackage(PROTO_LOADER),
   },
   {
@@ -1106,11 +1108,12 @@ function inPlantedRepository<T>(
 /** Each import rule's named files, each holding the rule, as a planted repository starts. */
 const HOLDING: Readonly<Record<string, Readonly<Record<string, string>>>> = {
   "@grpc/grpc-js importers": Object.fromEntries(
-    [HARNESS, ADAPTER_TEST, TLS_TEST].map((path) => [path, `import * as grpc from "${GRPC_JS}";\n`]),
+    [HARNESS, AGENT_HARNESS, ADAPTER_TEST, TLS_TEST].map((path) => [path, `import * as grpc from "${GRPC_JS}";\n`]),
   ),
   "descriptor importers": {
     [DESCRIPTOR]: "export const ETCD_DESCRIPTOR = {};\n",
     [ADAPTER]: 'import { ETCD_DESCRIPTOR } from "./proto/descriptor";\n',
+    [AGENT_HARNESS]: 'import { ETCD_DESCRIPTOR } from "@/lib/db/providers/keyvalue/etcd/proto/descriptor";\n',
     [ADAPTER_TEST]: 'import { ETCD_DESCRIPTOR } from "@/lib/db/providers/keyvalue/etcd/proto/descriptor";\n',
     [TLS_TEST]: 'import { ETCD_DESCRIPTOR } from "@/lib/db/providers/keyvalue/etcd/proto/descriptor";\n',
   },
@@ -1121,7 +1124,7 @@ const HOLDING: Readonly<Record<string, Readonly<Record<string, string>>>> = {
     ]),
   ),
   "@grpc/proto-loader importers": Object.fromEntries(
-    [ADAPTER, HARNESS, ADAPTER_TEST, TLS_TEST, DESCRIPTOR, GENERATOR, DESCRIPTOR_TEST].map((path) => [
+    [ADAPTER, HARNESS, AGENT_HARNESS, ADAPTER_TEST, TLS_TEST, DESCRIPTOR, GENERATOR, DESCRIPTOR_TEST].map((path) => [
       path,
       `import { fromJSON } from "${PROTO_LOADER}";\n`,
     ]),
@@ -1607,6 +1610,10 @@ const SPEC_3_1_MODULES: readonly string[] = [
   // The editor's etcd language over the lexer, and its row in the editor language registry.
   "editor-syntax.ts",
   "editor-language.ts",
+  // The agent's read path: its command reader and closed table, its read-only proof, and its metadata-only answers.
+  "agent-statement.ts",
+  "agent-read-only-proof.ts",
+  "agent-metadata-read.ts",
 ];
 
 const SPEC_3_1_DIRECTORY = join(import.meta.dir, "../../../../src/lib/db/providers/keyvalue/etcd");

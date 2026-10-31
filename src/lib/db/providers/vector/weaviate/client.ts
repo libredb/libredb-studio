@@ -9,9 +9,10 @@
  */
 
 /**
- * Every operation the client sends: the console's routes (`routes.ts`) first, in their table order, then the two
- * the console never names, the readiness probe of the health surface and the GraphQL read the encoder writes for a
- * server that serves no REST search (spec 3.3).
+ * Every operation the client sends: the console's routes (`routes.ts`) first, in their table order, then the three
+ * the console never names, the readiness probe of the health surface, the GraphQL read the encoder writes for a
+ * server that serves no REST search (spec 3.3), and the key's own record the agent read-only profile proves a viewer
+ * from (`metadata-read.ts`).
  */
 export const WEAVIATE_OPS = [
   "meta",
@@ -33,12 +34,13 @@ export const WEAVIATE_OPS = [
   "aggregate",
   "ready",
   "graphql",
+  "own_info",
 ] as const;
 
 export type WeaviateOp = (typeof WEAVIATE_OPS)[number];
 
-/** The operations a console request may name: every operation but the two the provider writes itself. */
-export type WeaviateConsoleOp = Exclude<WeaviateOp, "ready" | "graphql">;
+/** The operations a console request may name: every operation but the three the provider writes itself. */
+export type WeaviateConsoleOp = Exclude<WeaviateOp, "ready" | "graphql" | "own_info">;
 
 /** The four search routes and the aggregate route: the operations that run over REST or GraphQL (spec 3.3). */
 export type WeaviateSearchOp = "search_bm25" | "search_hybrid" | "search_near_vector" | "search_near_object";

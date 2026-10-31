@@ -62,7 +62,7 @@ function capturedFactory(answers: Readonly<Record<string, Answer>> = {}) {
 
 async function connected(answers: Readonly<Record<string, Answer>> = {}) {
   const transport = capturedFactory(answers);
-  const provider = new Neo4jProvider(CONNECTION, {}, transport.factory);
+  const provider = new Neo4jProvider(CONNECTION, {}, {}, transport.factory);
   await provider.connect();
   return { provider, ...transport };
 }
@@ -180,7 +180,7 @@ describe("connect", () => {
         },
       };
     };
-    const provider = new Neo4jProvider({ ...CONNECTION, database: "nope" }, {}, factory);
+    const provider = new Neo4jProvider({ ...CONNECTION, database: "nope" }, {}, {}, factory);
     const failure = await provider.connect().catch((error: unknown) => error);
     expect(failure).toBeInstanceOf(QueryError);
     expect((failure as QueryError).message).toBe("Graph not found: nope");
@@ -290,7 +290,7 @@ describe("the monitoring reads", () => {
   });
 
   test("every read refuses a provider that is not connected", async () => {
-    const provider = new Neo4jProvider(CONNECTION, {}, capturedFactory().factory);
+    const provider = new Neo4jProvider(CONNECTION, {}, {}, capturedFactory().factory);
     const reads: Promise<unknown>[] = [
       provider.getOverview(),
       provider.getActiveSessions(),

@@ -237,9 +237,9 @@ describe("the engine overlay types", () => {
   });
 
   test("have one row per family and no default branch", () => {
-    type Widened = AgentStatementLanguageId | "cypher";
+    type Widened = AgentStatementLanguageId | "gremlin";
     // @ts-expect-error: a fourth language has no row until one is written for it, and a default branch would give it one.
-    type Fourth = AgentFamilyDialectRows["cypher" & Widened];
+    type Fourth = AgentFamilyDialectRows["gremlin" & Widened];
     const rows: readonly (keyof AgentFamilyDialect)[] = ["sql", "mongo", "kubectl"];
     const fourth: Fourth | undefined = undefined;
     expect([rows.length, fourth]).toEqual([3, undefined]);

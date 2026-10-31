@@ -11,9 +11,24 @@
  */
 import type { AgentStatementLanguageId } from "../agent-manifest";
 import { mergeDisjoint } from "../disjoint-merge";
+import { INFLUXQL_PACK } from "./influxql/index";
 import { KUBECTL_PACK } from "./kubectl/index";
 import { LIBREDBKV_PACK } from "./libredbkv/index";
 import { MONGO_PACK } from "./mongo/index";
+import { WEAVIATEAPI_PACK } from "./weaviateapi/index";
+import { QDRANTAPI_PACK } from "./qdrantapi/index";
+import { CYPHER_PACK } from "./cypher/index";
+import { MILVUSRPC_PACK } from "./milvusrpc/index";
+import { REDISCLI_PACK } from "./rediscli/index";
+import { ETCDCTL_PACK } from "./etcdctl/index";
+import { OXIACLI_PACK } from "./oxiacli/index";
+import { RABBITREAD_PACK } from "./rabbitread/index";
+import { KAFKAREAD_PACK } from "./kafkaread/index";
+import { S3API_PACK } from "./s3api/index";
+import { FSQUERY_PACK } from "./fsquery/index";
+import { SNMPGET_PACK } from "./snmpget/index";
+import { NETCONFRPC_PACK } from "./netconfrpc/index";
+import { MODBUSREAD_PACK } from "./modbusread/index";
 import type { AgentEvidenceTool, AgentLanguagePack, EvidenceToolName, LanguageToolArms } from "./pack";
 import { SQL_PACK } from "./sql/index";
 
@@ -22,6 +37,21 @@ const PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguagePack>> = Obj
   kubectl: KUBECTL_PACK,
   mongo: MONGO_PACK,
   libredbkv: LIBREDBKV_PACK,
+  influxql: INFLUXQL_PACK,
+  weaviateapi: WEAVIATEAPI_PACK,
+  qdrantapi: QDRANTAPI_PACK,
+  cypher: CYPHER_PACK,
+  milvusrpc: MILVUSRPC_PACK,
+  rediscli: REDISCLI_PACK,
+  etcdctl: ETCDCTL_PACK,
+  oxiacli: OXIACLI_PACK,
+  rabbitread: RABBITREAD_PACK,
+  kafkaread: KAFKAREAD_PACK,
+  s3api: S3API_PACK,
+  fsquery: FSQUERY_PACK,
+  snmpget: SNMPGET_PACK,
+  netconfrpc: NETCONFRPC_PACK,
+  modbusread: MODBUSREAD_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguagePack>);
 
 /** The pack for `language`, or a named error when the id is not a language this server knows. */
@@ -37,6 +67,21 @@ export const LANGUAGE_TOOL_ARMS: Readonly<Record<AgentStatementLanguageId, Langu
   kubectl: KUBECTL_PACK.execution.arms,
   mongo: MONGO_PACK.execution.arms,
   libredbkv: LIBREDBKV_PACK.execution.arms,
+  influxql: INFLUXQL_PACK.execution.arms,
+  weaviateapi: WEAVIATEAPI_PACK.execution.arms,
+  qdrantapi: QDRANTAPI_PACK.execution.arms,
+  cypher: CYPHER_PACK.execution.arms,
+  milvusrpc: MILVUSRPC_PACK.execution.arms,
+  rediscli: REDISCLI_PACK.execution.arms,
+  etcdctl: ETCDCTL_PACK.execution.arms,
+  oxiacli: OXIACLI_PACK.execution.arms,
+  rabbitread: RABBITREAD_PACK.execution.arms,
+  kafkaread: KAFKAREAD_PACK.execution.arms,
+  s3api: S3API_PACK.execution.arms,
+  fsquery: FSQUERY_PACK.execution.arms,
+  snmpget: SNMPGET_PACK.execution.arms,
+  netconfrpc: NETCONFRPC_PACK.execution.arms,
+  modbusread: MODBUSREAD_PACK.execution.arms,
 } satisfies Record<AgentStatementLanguageId, LanguageToolArms>);
 
 /**
@@ -49,6 +94,21 @@ export const AGENT_EVIDENCE_TOOLS: Readonly<Record<EvidenceToolName, AgentEviden
     KUBECTL_PACK.execution.evidenceTools,
     MONGO_PACK.execution.evidenceTools,
     LIBREDBKV_PACK.execution.evidenceTools,
+    INFLUXQL_PACK.execution.evidenceTools,
+    WEAVIATEAPI_PACK.execution.evidenceTools,
+    QDRANTAPI_PACK.execution.evidenceTools,
+    CYPHER_PACK.execution.evidenceTools,
+    MILVUSRPC_PACK.execution.evidenceTools,
+    REDISCLI_PACK.execution.evidenceTools,
+    ETCDCTL_PACK.execution.evidenceTools,
+    OXIACLI_PACK.execution.evidenceTools,
+    RABBITREAD_PACK.execution.evidenceTools,
+    KAFKAREAD_PACK.execution.evidenceTools,
+    S3API_PACK.execution.evidenceTools,
+    FSQUERY_PACK.execution.evidenceTools,
+    SNMPGET_PACK.execution.evidenceTools,
+    NETCONFRPC_PACK.execution.evidenceTools,
+    MODBUSREAD_PACK.execution.evidenceTools,
   ],
   "AGENT_EVIDENCE_TOOLS",
 );

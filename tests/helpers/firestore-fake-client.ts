@@ -60,11 +60,9 @@ export function googleFailure(
   status: string,
   message: string,
   context: ErrorContext = LISTING,
+  code: number = httpStatus,
 ): Error {
-  return mapGoogleError(
-    readGoogleError(httpStatus, JSON.stringify({ error: { code: httpStatus, status, message } })),
-    context,
-  );
+  return mapGoogleError(readGoogleError(httpStatus, JSON.stringify({ error: { code, status, message } })), context);
 }
 
 /**

@@ -2,8 +2,8 @@ apiVersion: v2
 name: libredb-studio
 description: Web-based SQL IDE for cloud-native teams supporting forty-two engines - PostgreSQL, MySQL, SQLite, DuckDB, Oracle, Db2 LUW, SQL Server, MongoDB, Redis, Couchbase, Firestore, ClickHouse, Apache Druid, Elasticsearch, OpenSearch, Trino, BigQuery, Snowflake, Apache Spark, Apache Cassandra, libSQL, Prometheus, Apache Kafka, MQTT, RabbitMQ, etcd, Neo4j, Milvus, Qdrant, Weaviate, InfluxDB, InfluxDB 3, Oxia, Databend, S3-compatible object storage, Kubernetes, OPC UA, MTConnect, Modbus, NETCONF, SNMP and Sparkplug B
 type: application
-version: 0.1.116
-appVersion: "1.1.0"
+version: 0.1.119
+appVersion: "1.2.0"
 kubeVersion: ">=1.26.0-0"
 home: https://github.com/libredb/libredb-studio
 icon: https://raw.githubusercontent.com/libredb/libredb-studio/main/public/logo.svg
@@ -346,10 +346,31 @@ annotations:
   # fails the schema. A Helm install that leaves the value unset renders as before.
   # False: 0.1.116 changes only the README and a values comment, documenting that Helm 4's
   # default server-side apply refuses an extraEnv entry that repeats a variable the chart writes.
-  artifacthub.io/containsSecurityUpdates: "false"
+  # False: 0.1.117 names the operator's own namespace as the source of
+  # operator.clusterStudioNamespace in its descriptions and in the operator namespace guard's
+  # message, and under operator.managed refuses serviceAccount.create=false. No value or default
+  # moves, and a Helm install renders as before.
+  # False: 0.1.118 adds openshift.consolePlugin, disabled unless set, so an install that does not set it
+  # renders as before. On, it renders the OpenShift console plugin's server and the ConsolePlugin
+  # libredb-studio: on a Helm install in a namespace of their own, refused in the release's namespace,
+  # a discovered namespace and a requested project; under the OLM operator in the operator's own
+  # namespace only. No Job: a cluster admin turns the plugin on in the console.
+  # True: 0.1.119 tracks app release 1.2.0, whose image carries hardening an operator should
+  # weigh: dependency updates that close published advisories, display masking that now also
+  # holds in charts, the pivot, its export and the phone layout's result cards, and a host-only
+  # __Host- session cookie on HTTPS, which signs every browser out once on upgrade. It is also
+  # the first default image the openshift-mode floor accepts, and the first that reads the
+  # OpenShift, access review and Kubernetes discovery values 0.1.110 to 0.1.118 added. No
+  # template or value moves; the default image tag is the change.
+  artifacthub.io/containsSecurityUpdates: "true"
   artifacthub.io/images: |
     - name: libredb-studio
-      image: ghcr.io/libredb/libredb-studio:1.1.0
+      image: ghcr.io/libredb/libredb-studio:1.2.0
+      platforms:
+        - linux/amd64
+        - linux/arm64
+    - name: libredb-studio-openshift-plugin
+      image: ghcr.io/libredb/libredb-studio-openshift-plugin:0.1.0@sha256:39698233d019f4e69fe106e634af789291011d59d27d5858a7e4d0b41283d86e
       platforms:
         - linux/amd64
         - linux/arm64
@@ -361,7 +382,16 @@ annotations:
     - name: Source
       url: https://github.com/libredb/libredb-studio
   artifacthub.io/changes: |
-    - "README: overriding a variable the chart writes through extraEnv needs --server-side=false with Helm 4, whose default server-side apply refuses the repeated name"
+    - "Default image 1.2.0 is the first that authProvider openshift accepts, so OpenShift sign-in renders without an image.tag override"
+    - "Sign in through the cluster's OAuth server with authProvider openshift, and gate discovered connections and admin with a Kubernetes access review"
+    - "openshift.consolePlugin (default false) installs the OpenShift console plugin 0.1.0, pinned by digest: on a Helm install in a namespace of its own, and under the OLM operator, in the operator's own namespace"
+    - "Discover CloudNativePG, EDB, Crunchy PGO and MongoDB Community databases, with a Service check, fully qualified hosts and 32 hex connection ids"
+    - "Action required: Kubernetes-discovered connection ids change from 12 to 32 hex characters, so old seed links stop resolving"
+    - "Action required: off cluster.local, set discovery.kubernetes.clusterDomain, or no discovered database is listed"
+    - "Refuse to start when the trusted CA bundle file is missing, unreadable, empty or holds no PEM certificate"
+    - "Hardening: host-only __Host- session cookie on HTTPS, which signs every browser out once, display masking in charts, pivot and result cards, and dependency advisories closed"
+    - "An unknown NEXT_PUBLIC_AUTH_PROVIDER now refuses boot instead of falling back"
+    - "Track app release 1.2.0 (appVersion bump; default image tag follows)"
 dependencies:
   - name: postgresql
     version: "16.x.x"

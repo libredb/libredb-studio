@@ -140,7 +140,8 @@ No InfluxQL statement does what `pivot()`, `join()` or `map()` do, and a stateme
 ### 3.6 Machine access
 
 The type is offered to MCP clients for the two metadata tools (`MCP_EXPOSABLE`), which see database, measurement and column names and types only.
-Agent execution and MCP `run_read_query` refuse InfluxDB, because the provider implements no `queryReadOnly`; plan mode drafts InfluxQL in the language of `statementLanguage` (section 5.1) and runs nothing.
+Agent mode executes InfluxQL on 1.x and 2.x for a principal the server proves read-only before every statement (section 15); no MCP tool runs InfluxQL (B94).
+Plan mode drafts InfluxQL in the language of `statementLanguage` (section 5.1) and runs nothing.
 
 ## 4. Connection
 
@@ -672,7 +673,7 @@ readOnly: true
 - No EXPLAIN strategy: `EXPLAIN` runs as a statement and its plan is rows (D198).
 - The fail-closed lexer refuses some valid reads: the `µ` duration (write `u`), `{` or `[` anywhere outside quotes, and any `$param`.
 - The plaintext consent survives a Host or Port change in the dialog (D204).
-- No agent execution and no MCP `run_read_query` (B94).
+- No MCP statement read, and no dedicated 2.x agent token beside the connection's own credential (B94).
 - The Charts tab defects of section 5.8 (U79, U80).
 
 ## Migration DDL
@@ -693,3 +694,87 @@ The refusal reason it prints, verbatim:
 - The InfluxDB 3 Core HTTP API, its v1-compatible `/query` included: [docs.influxdata.com/influxdb3/core/api](https://docs.influxdata.com/influxdb3/core/api/).
 - [`docker/influxdb/README.md`](../../docker/influxdb/README.md) and [`tests/fixtures/influxdb/README.md`](../../tests/fixtures/influxdb/README.md).
 - The companion type: [influxdb3.md](./influxdb3.md).
+
+## 15. Agent mode: a principal proved read-only before every statement
+
+Agent mode runs InfluxQL on 1.x and 2.x through `queryReadOnly` in [`influxql-provider.ts`](../../src/lib/db/providers/timeseries/influxdb/influxql-provider.ts).
+The v1 `/query` route runs whatever statement the principal may run, so the boundary is the principal: the profile opens only for one the server itself refuses every write.
+Every claim below is a capture under `tests/fixtures/influxdb/1.13.1/agent-boundary/` or `tests/fixtures/influxdb/2.9.1/agent-boundary/`, recorded by each directory's `run.sh` on digest-pinned servers with Studio's read policy bypassed.
+
+### 15.1 The proof
+
+[`influxql-agent-read.ts`](../../src/lib/db/providers/timeseries/influxdb/influxql-agent-read.ts) proves the principal at the open of a connection that sends statements, and again before every agent statement, on the requests of that statement's call and under its deadline, with no verdict kept between them.
+
+1. The line: a 1.x user or a 2.x token (`agentPrincipal` in `GENERATION_TRAITS`).
+   InfluxDB 3 is refused, since Core mints only admin tokens and its own SQL path is measured separately ([influxdb3.md](./influxdb3.md)); a server whose version Studio cannot read is refused with it.
+2. The connection names its database, and the principal lists it.
+3. No administrator.
+   On 1.x, `SHOW USERS` must be refused as needing the admin privilege (`admin-read-reader`); an admin is answered (`admin-read-admin`), and so is anyone on a server with authentication off (`admin-read-auth-off`), refused as a server that does not check who asks.
+   On 2.x every token is answered `not implemented: SHOW USERS`, the operator's included (`admin-read-operator`), so there a token that lists the system buckets `_monitoring` or `_tasks`, as the operator token does (`listing-operator`) and no token scoped to buckets does (`listing-ro`, `listing-readother`), is refused.
+4. No write anywhere it can reach.
+   `SHOW DATABASES` lists every database the principal holds any privilege on, a 1.x `WRITE`-only grant included (`listing-rw`), and each is sent a no-op write, a `DELETE` from a measurement named for that probe alone, of points before 1970.
+   A reader is refused it (`write-probe-reader-home`: 403 `requires WRITE on home`; `write-probe-ro-home`: `insufficient permissions`); a principal that can write is answered it and deletes nothing (`write-probe-rw-other`, `write-probe-rwhome-home`, `write-probe-readother-other`), and is refused.
+   A principal listing more than 32 databases is refused, so a statement's probes stay bounded.
+
+Every answer is matched on its measured status and wording, and anything else refuses the profile.
+A grant widened after the open is caught by the next statement's proof; a grant widened between a proof and the statement it precedes is a window of one statement.
+The operations profile sends no statement, so its acquisitions open unproved and plan mode keeps grounding on a principal that can write.
+
+### 15.2 `SELECT ... INTO`
+
+1.13.1 runs `SELECT ... INTO` as a write.
+Sent past Studio's policy as a user with `READ` on `home` only, it is refused into `home` and into a second database, in every spelling, behind `EXPLAIN`, `EXPLAIN ANALYZE` and inside a subquery (`into-*-reader`), and the databases read the same before and after (`into-state-*-before`, `into-state-*-after-reader`).
+As a user that also holds `WRITE` on the second database, the same statement into that database is answered `written 2` and lands there (`into-second-rw`, `into-state-other-after-rw`).
+So the proof's no-op write on every listed database is what refuses that user, before any statement is sent; the read policy refuses `INTO` before anything is sent as well.
+2.9.1 writes no `SELECT ... INTO` for any token, the operator's included, and the databases read the same before and after (`into-state-*`).
+The top-level form is answered `not implemented: SELECT INTO`, or `database not found: other` to a token that cannot see the second bucket (`into-bound-*`, `into-second-*`).
+The subquery form is refused the same way, or answered with the inner rows and its `INTO` dropped (`into-second-subquery-operator`, `into-second-subquery-readother`).
+A token's write on a bucket it cannot read is out of InfluxQL's reach (`write-probe-rwother-other`: `no dbrp mappings found`).
+
+### 15.3 The statement path
+
+[`influxql-agent-statement.ts`](../../src/lib/db/providers/timeseries/influxdb/influxql-agent-statement.ts) reads each statement before anything is sent: the read policy of section 3.3, then three refusals of its own.
+
+- No carriage return and no comment: both lines end a `--` comment at a lone carriage return and run what follows as a second statement, read a carriage return between two words as a space, and run a statement after a `/* */` comment (`fence-*`).
+  > The statement holds a carriage return, which an agent read does not take: InfluxDB ends a -- comment at one and reads on past it. Write each line break as a plain newline. Nothing was sent.
+- `SHOW` of the catalog only: `DATABASES`, `RETENTION POLICIES`, `MEASUREMENTS`, `SERIES`, `TAG KEYS`, `TAG VALUES`, `FIELD KEYS` and their `CARDINALITY` forms.
+  A 1.13.1 reader with a database is answered `SHOW QUERIES` with another user's running statement and name (`show-queries-during-admin-read-reader`) and `SHOW CONTINUOUS QUERIES` with the text an administrator wrote (`show-continuous-queries-reader`); `SHOW USERS`, `GRANTS`, `STATS`, `DIAGNOSTICS`, `SHARDS`, `SHARD GROUPS`, `SUBSCRIPTIONS` and `KILL QUERY` are answered to an admin alone.
+- `EXPLAIN` of a `SELECT` only.
+
+The statement is sent with the connection's database as `db`; the route table fixes every other key, so no retention policy, epoch or chunking a caller chose reaches the server, and nothing carries from one statement to the next.
+A `SELECT` is read chunked and a `SHOW` or `EXPLAIN` whole, as in section 5.2.
+
+### 15.4 The budgets
+
+A result past the row budget, past the cell budget or past the byte budget is refused with the shared sentence, never cut; the answer's bytes on the wire are capped at six times the byte budget plus 64 KiB, since the server writes `<`, `>` and `&` as six-byte escapes.
+A result the server cut at its `max-row-limit`, which it marks partial, is refused as well, where the editor shows it with a notice (section 5.4):
+
+> Read-only execution was refused: InfluxDB marked this result partial, so the server cut it at its max-row-limit
+
+The time budget is the request's deadline: past it the request is dropped, which ends the server's work (section 5.6).
+An estimating plan is refused, since the server composes none an agent is shown before a statement runs.
+
+### 15.5 The agent credential
+
+An agent credential takes the default form: `agentUser` and `agentPassword` together, a 1.x user granted `READ`.
+On 2.x give the connection itself a token with read permission on its bucket; a 2.x agent token beside the connection's own credential is not offered yet (B94).
+
+### 15.6 Agent language pack
+
+Statement-language family: `influxql`.
+Overlay: [`src/lib/agent/languages/influxql/engines/influxdb.ts`](../../src/lib/agent/languages/influxql/engines/influxdb.ts), with its client row in [`src/lib/agent/languages/influxql/engines/client.ts`](../../src/lib/agent/languages/influxql/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`.
+Both overlays are empty, so the engine resolves to the `influxql` family pack itself.
+The `influxql` statement-language family has no dialect-bound member.
+This overlay overrides no Shared member, so every Shared member is the `influxql` statement-language family's own.
+The family offers the investigation and the data-analysis workflows, each through `run_read_query` with one InfluxQL statement, and the operations workflow; it offers no query optimization and no database assessment, since the server composes no plan an agent is shown before a statement runs, and no workflow hands an answer to the editor.
+The workflow classifier offers the model only these three.
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+No MCP tool runs InfluxQL: the family declares no MCP facet, and `MCP_STATEMENT_READ.influxdb` is false (B94).
+
+### 15.7 Boundary record
+
+- [`tests/unit/db/influxdb/influxql-agent-read.test.ts`](../../tests/unit/db/influxdb/influxql-agent-read.test.ts): the proof replayed from every principal's captures, each request it sends pinned, every refusal and every unreadable answer.
+- [`tests/unit/db/influxdb/influxql-agent-statement.test.ts`](../../tests/unit/db/influxdb/influxql-agent-statement.test.ts): every admitted form, and each refused `SHOW`, comment, carriage return and `INTO` spelling, held to the captures that show the server reading past them.
+- [`tests/integration/db/influxdb-provider.test.ts`](../../tests/integration/db/influxdb-provider.test.ts), "the agent read-only profile": the open and every statement over the captures, URL and form pinned, a grant widened after the open caught by the next statement, the budgets, and the boundary with Studio's admission bypassed.
+

@@ -77,10 +77,12 @@ describe("the etcd fixture directory", () => {
     expect(filesOnDisk()).toEqual([...ETCD_FIXTURE_NAMES]);
   });
 
-  test("beside the five service directories there is only the README and the grammar corpus", () => {
+  test("beside the five service directories there is only the README, the grammar corpus and the agent captures", () => {
     const others = readdirSync(DIR).filter((entry) => !SERVICES.includes(entry));
     expect(others).toContain("README.md");
-    for (const entry of others) expect(["README.md", "grammar-corpus.ts"]).toContain(entry);
+    // v3.7.2/agent-boundary/ holds what the agent read-only profile's principals were answered, which the agent tests
+    // read through tests/helpers/etcd-agent.ts, not through this module's catalog.
+    for (const entry of others) expect(["README.md", "grammar-corpus.ts", "v3.7.2"]).toContain(entry);
   });
 
   test("the README's catalog names every capture once, in the same order", () => {

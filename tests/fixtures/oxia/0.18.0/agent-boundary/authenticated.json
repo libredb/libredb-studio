@@ -1,0 +1,122 @@
+{
+  "$captured": {
+    "image": "oxia/oxia:0.18.0@sha256:65f9898d531c3ca48a3277247650200c8065435fd542ea9a81e51c37b90fff60",
+    "version": "0.18.0",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "server": "data server and coordinator, the OIDC provider with a static key, plaintext",
+    "note": "Two subjects of one issuer and audience; no token is recorded. Authentication is checked, and nothing else: the second subject reads, overwrites and deletes the first subject's key and deletes every key of a shard, so the server holds no per-namespace or per-key permission a token could carry."
+  },
+  "subjects": [
+    "fixture-subject-a",
+    "fixture-subject-b"
+  ],
+  "probes": {
+    "shardAssignmentsNoToken": {
+      "outcome": "error",
+      "code": 16,
+      "details": "empty token"
+    },
+    "listNoToken": {
+      "outcome": "error",
+      "code": 16,
+      "details": "empty token"
+    },
+    "putSubjectA": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "puts": [
+            {
+              "status": "OK",
+              "version": {
+                "version_id": "0",
+                "modifications_count": "0",
+                "created_timestamp": "1793396443375",
+                "modified_timestamp": "1793396443375"
+              }
+            }
+          ],
+          "deletes": [],
+          "delete_ranges": []
+        }
+      ]
+    },
+    "getSubjectB": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "gets": [
+            {
+              "status": "OK",
+              "version": {
+                "version_id": "0",
+                "modifications_count": "0",
+                "created_timestamp": "1793396443375",
+                "modified_timestamp": "1793396443375"
+              },
+              "value": {
+                "$text": "fixture-a"
+              },
+              "_value": "value"
+            }
+          ]
+        }
+      ]
+    },
+    "overwriteSubjectB": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "puts": [
+            {
+              "status": "OK",
+              "version": {
+                "version_id": "1",
+                "modifications_count": "1",
+                "created_timestamp": "1793396443375",
+                "modified_timestamp": "1793396443378"
+              }
+            }
+          ],
+          "deletes": [],
+          "delete_ranges": []
+        }
+      ]
+    },
+    "deleteSubjectB": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "puts": [],
+          "deletes": [
+            {
+              "status": "OK"
+            }
+          ],
+          "delete_ranges": []
+        }
+      ]
+    },
+    "deleteRangeSubjectB": {
+      "outcome": "ok",
+      "messages": [
+        {
+          "puts": [],
+          "deletes": [],
+          "delete_ranges": [
+            {
+              "status": "OK"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "after": {
+    "keys": {
+      "0": [],
+      "1": []
+    }
+  }
+}

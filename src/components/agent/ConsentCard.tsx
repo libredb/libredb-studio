@@ -113,6 +113,21 @@ const HANDOVER_CHIPS: Readonly<Record<AgentStatementLanguageId, readonly Handove
   kubectl: [],
   mongo: [],
   libredbkv: [],
+  influxql: [],
+  weaviateapi: [],
+  qdrantapi: [],
+  cypher: [],
+  milvusrpc: [],
+  rediscli: [],
+  etcdctl: [],
+  oxiacli: [],
+  rabbitread: [],
+  kafkaread: [],
+  s3api: [],
+  fsquery: [],
+  snmpget: [],
+  netconfrpc: [],
+  modbusread: [],
 };
 
 export function ConsentCard({

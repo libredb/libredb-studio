@@ -1,0 +1,18 @@
+{
+  "version": "1.19.1",
+  "name": "agent-boundary/facet-full",
+  "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1@sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+  "capturedAt": "2026-10-30",
+  "principal": "full: the server's API key",
+  "request": {
+    "method": "POST",
+    "path": "/collections/plain/facet",
+    "auth": "api-key",
+    "body": {
+      "key": "city"
+    }
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "body": "{\"result\":{\"hits\":[{\"value\":\"stored-city-1\",\"count\":1},{\"value\":\"stored-city-2\",\"count\":1},{\"value\":\"stored-city-3\",\"count\":1}]},\"status\":\"ok\",\"time\":0.000085505}"
+}

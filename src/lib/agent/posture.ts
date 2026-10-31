@@ -209,8 +209,9 @@ function readsPosture(language: AgentStatementLanguageId): AgentPosture {
 /**
  * The rail's reading of the selected mode, in the order the arms EXCLUDE each other.
  *
- * Plan mode first, because it is engine-independent and the hand-over cannot widen it -
- * there is no statement of the run's to hand over. Then the two arms that know no bounds to
+ * Plan mode first, because the hand-over cannot widen it - there is no statement of the run's
+ * to hand over. It reads the same on every engine except where the engine's language pack
+ * declares a plan posture of its own, because the shared one is not true of it (Modbus). Then the two arms that know no bounds to
  * state: no connection, and an engine agent mode cannot execute a statement on. Only then
  * does the hand-over matter, which is why a ticked hand-over on an unsupported engine still
  * reads as blocked rather than as widened.
@@ -231,9 +232,11 @@ export function agentPosture(input: {
   /** The refusal the last run on THIS connection met for the connection itself, if it met one. */
   readonly refusedHere?: string | null;
 }): AgentPosture {
-  if (input.mode === "planning") return planPosture();
+  const language = input.engine === null ? null : AGENT_STATEMENT_LANGUAGE[input.engine];
+  if (input.mode === "planning") {
+    return (language === null ? undefined : languageClientPack(language).posture.plan?.()) ?? planPosture();
+  }
   if (input.engine === null) return unresolvedPosture();
-  const language = AGENT_STATEMENT_LANGUAGE[input.engine];
   if (language === null) return unsupportedPosture(input.engineLabel);
   if (typeof input.refusedHere === "string") return refusedPosture(input.engineLabel, input.refusedHere);
   return input.handover ? widenedPosture(language) : readsPosture(language);

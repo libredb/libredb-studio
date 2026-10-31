@@ -90,7 +90,7 @@ Under `NEXT_PUBLIC_AUTH_PROVIDER=oidc` Studio offers no passkeys of its own, bec
 `GET /api/auth/passkey` answers 200 with `{"available": false, "mode": "oidc"}` and the reason, so the settings page can say so.
 Every action on `POST /api/auth/passkey` (`register-options`, `register-verify`, `rename`, `remove`) and both actions on `POST /api/auth/passkey/sign-in` refuse with 409.
 
-The two ceremony cookies, `passkey-registration` and `passkey-sign-in`, follow the same Secure rule as the session cookie (`AUTH_COOKIE_SECURE`).
+The two ceremony cookies, `passkey-registration` and `passkey-sign-in`, follow the same Secure rule as the session cookie (`AUTH_COOKIE_SECURE`), and with the flag on they are named `__Host-passkey-registration` and `__Host-passkey-sign-in`.
 
 ---
 
@@ -195,6 +195,7 @@ Server  -> one transaction: challenge marked spent, counter advanced -> JWT sess
 **Ceremonies are bound to the browser that started them.**
 Each registration and sign-in gets a fresh 32-byte challenge, carried in a token signed with a key derived from `JWT_SECRET` for this purpose alone, so a ceremony token is never a session and a session is never a ceremony token.
 The token travels in its own cookie, `passkey-registration` or `passkey-sign-in`: HttpOnly, SameSite=Strict, scoped to `<BASE_PATH>/api/auth/passkey`, valid 600 seconds.
+On HTTPS, where the cookie is Secure, its name carries the `__Host-` prefix and its path is `/`, as the prefix requires.
 The verify request takes the cookie and clears it whatever the outcome, so one cookie serves one attempt, and a cookie issued for registration never completes a sign-in or the reverse.
 A registration cookie also records the account and session version whose password confirmed it, so the confirmation is at most 10 minutes old when the passkey is stored.
 Rotating `JWT_SECRET` fails any ceremony in flight and ends every session; the stored passkeys keep working.

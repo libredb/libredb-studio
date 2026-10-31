@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import { READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
 import { S3_KEY_SCAN } from "@/lib/db/providers/objectstore/s3/key-scan";
+import { S3_METADATA_ONLY } from "@/lib/db/providers/objectstore/s3/agent-metadata-read";
 import { S3_LABELS } from "@/lib/db/providers/objectstore/s3/labels";
 import { S3_OBJECT_KINDS } from "@/lib/db/providers/objectstore/s3/objects";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
@@ -52,6 +53,7 @@ describe("declarations", () => {
       objectKinds: S3_OBJECT_KINDS,
       keyScan: S3_KEY_SCAN,
       schemaRefreshPattern: "(?!)",
+      metadataOnly: S3_METADATA_ONLY,
     });
     expect(asked()).toBe(0);
   });

@@ -114,7 +114,7 @@ describe("seams", () => {
 
   test("a seam passed to the constructor replaces only that seam", () => {
     const clock = { now: () => 0, setTimer: () => () => {} };
-    const seams = seamsOf(new RabbitMQProvider(rabbitmqConnection(), {}, { clock }));
+    const seams = seamsOf(new RabbitMQProvider(rabbitmqConnection(), {}, {}, { clock }));
     expect(seams.clock).toBe(clock);
     expect(seams.deadlineSignal).toBe(systemDeadlineSignal);
   });

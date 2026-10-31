@@ -314,4 +314,28 @@ describe("GET /api/auth/oidc/login", () => {
       expect(mockCookieSet.mock.calls[0][2]).toMatchObject({ path: "/~/libredb", sameSite: "lax", httpOnly: true });
     });
   });
+
+  // Whenever the auth cookies are Secure the state cookie is __Host-oidc-state at Path=/, under a base path too.
+  test("with Secure on, sets __Host-oidc-state at Path=/", async () => {
+    process.env.AUTH_COOKIE_SECURE = "true";
+    try {
+      mockCookieSet.mockClear();
+      await GET(new Request("https://studio.example.com/api/auth/oidc/login"));
+      expect(mockCookieSet.mock.calls[0][0]).toBe("__Host-oidc-state");
+      expect(mockCookieSet.mock.calls[0][2]).toMatchObject({
+        path: "/",
+        secure: true,
+        sameSite: "lax",
+        httpOnly: true,
+      });
+      await withBasePathEnv("/tools/libredb", async () => {
+        mockCookieSet.mockClear();
+        await GET(new Request("https://studio.example.com/tools/libredb/api/auth/oidc/login"));
+        expect(mockCookieSet.mock.calls[0][0]).toBe("__Host-oidc-state.tools.libredb");
+        expect(mockCookieSet.mock.calls[0][2]).toMatchObject({ path: "/", secure: true });
+      });
+    } finally {
+      delete process.env.AUTH_COOKIE_SECURE;
+    }
+  });
 });

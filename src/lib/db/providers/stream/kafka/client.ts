@@ -207,3 +207,12 @@ export interface KafkaReadClient {
   logDirs(topics: readonly KafkaTopicMetadata[]): Promise<KafkaLogDir[]>;
   close(): Promise<void>;
 }
+
+/**
+ * The agent read path's client: the Metadata and ListOffsets reads alone. `metadata` and `listTopics` send Metadata
+ * with the auto-creation flag false and never name an internal topic; `offsets` sends ListOffsets with the earliest
+ * (-2) or latest (-1) sentinel after a Metadata read of the topic. Every agent-mode module types its client with this,
+ * never with `KafkaReadClient`, so a Fetch, a timestamp lookup, a group, config or log-directory read is not callable
+ * on that path at all; tests/unit/db/kafka/seam-guard.test.ts pins both the member list and that typing.
+ */
+export type KafkaAgentReadClient = Pick<KafkaReadClient, "metadata" | "listTopics" | "offsets">;

@@ -98,7 +98,7 @@ A server-side boundary exists only when the key itself is read-only on the serve
 
 MCP is offered (`mcp: true`): `inspect_schema` carries collection names, vector names, sizes, distances and datatypes, sparse vector names, and payload-index field names and types, and its description says that other payload keys may exist.
 It never carries payload values, vectors, collection `metadata`, strict-mode values or a sampled payload key.
-Neither agent execution nor MCP `run_read_query` runs a request: agent execution and MCP `run_read_query` refuse Qdrant, because the provider implements no read-only query path for them.
+Agent execution reads metadata only (section 15), from a key the server proves read-only before every request, and MCP `run_read_query` refuses Qdrant, because the `qdrantapi` statement language declares no MCP tool (`MCP_STATEMENT_READ.qdrant` is false).
 No Qdrant request text reaches an AI route: there is no Explain, and the confirmation gate posts nothing for an analysis.
 
 ### 3.6 Lossless integers
@@ -503,3 +503,85 @@ The refusal reason it prints, verbatim:
 - The design: the vector-family design under issue #424, sections 3, 4 and 6.
 - Qdrant's REST API reference and its OpenAPI document at tag 1.19.1, and its security guide.
 - [`docker/qdrant/README.md`](../../docker/qdrant/README.md) and [`tests/fixtures/vector/README.md`](../../tests/fixtures/vector/README.md).
+
+## 15. Agent mode
+
+Agent mode reads Qdrant's metadata through `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/vector/qdrant/index.ts).
+The request reader is [`metadata-request.ts`](../../src/lib/db/providers/vector/qdrant/metadata-request.ts), and the read-only proof, the metadata-only projection and the wording of a failure are [`metadata-read.ts`](../../src/lib/db/providers/vector/qdrant/metadata-read.ts).
+Every claim below cites a capture under [`tests/fixtures/qdrant/1.19.1/agent-boundary/`](../../tests/fixtures/qdrant/1.19.1/agent-boundary/), recorded by its `run.sh` against digest-pinned 1.19.1 servers, one with an API key, a read-only API key and JWT RBAC and one with no key, with every request sent raw, past every Studio check.
+
+### 15.1 The boundary
+
+The boundary is a structural closed table: the console's 17 GET and POST read routes (`QDRANT_OPS` in `client.ts`, the routes in `routes.ts`) name no write, and the REST client builds no other path from a request.
+Beside them the client sends exactly two more requests, the read-only proof's no-op writes (`QdrantProbe`), whose method, path and body it writes itself and no console request can name.
+On top of the table the key is proved read-only, so the server's own access check refuses what the table could ever let through.
+The read-only API key, a JWT whose access is `r` and a JWT whose access is `r` on one collection are each refused 403 a point upsert, a point delete, a payload change, a collection snapshot and a full snapshot, an optimizer change, a shard replication, a collection create and drop, an alias create and a payload index create (`write-*-read-only`, `write-*-jwt-read`, `write-*-jwt-collection-read`), with the count, the collections, the aliases and the payload indexes unchanged after (`write-count-after-refused-full`, `write-state-*-after-full`).
+The API key's same upsert and a collection `rw` JWT's each add a point (`write-upsert-full`, `write-upsert-jwt-collection-write` and their counts).
+A server with no key configured answers every request, with any key or none (`collections-open-anonymous`, `proof-alias-open-key`): it has no server-side boundary.
+
+### 15.2 The read-only proof
+
+A handle opened for the agent read-only profile by an acquisition that sends statements refuses a connection with no key before any client is built.
+Qdrant has no read of who a key is, so after the two connect reads, and again before every request under that request's deadline with no verdict kept, the server is asked to refuse two writes that change nothing.
+First an alias update with no action: it is refused 403 to the read-only key and to every JWT whose access is `r` or names collections (`proof-alias-read-only`, `proof-alias-jwt-read`, `proof-alias-jwt-collection-read`, `proof-alias-jwt-collection-write`), and answered 200 to the API key, a JWT whose access is `m`, a JWT that names no access and any key on a server with no key configured (`proof-alias-full`, `proof-alias-jwt-manage`, `proof-alias-jwt-no-access`, `proof-alias-open-*`), each of which is refused.
+A JWT that writes one collection is refused that update too, so each collection the key lists (`GET /collections`, which lists a collection-scoped JWT's own collections alone, `collections-jwt-collection-write`) is then sent a point delete of no point.
+It is refused 403 to every read-only principal (`proof-delete-*-read-only`, `proof-delete-*-jwt-read`, `proof-delete-plain-jwt-collection-read`) and read past its access check and answered 400 `Empty update request` to one that can write that collection (`proof-delete-plain-jwt-collection-write`), which is refused; the API key's is answered the same way and changes nothing (`proof-delete-plain-full`).
+Any answer but 403 refuses the profile, as does a list Studio does not read and a key listing more than 32 collections (B154).
+The server's answers alone do not tell every writing JWT apart: a JWT with `rw` on an alias, or on a name no collection or alias has yet, is refused the alias update and lists no collection and no alias (`proof-alias-jwt-alias-write`, `collections-jwt-alias-write`, `aliases-jwt-alias-write` and their `jwt-future-write` twins), so no point delete is sent, while its upsert through the alias is answered and adds a point (`write-upsert-alias-jwt-alias-write`, `write-count-after-alias-write-full`).
+So before anything is sent, and again before every request, Studio reads the claims of a key in a JWT's shape and admits it only when its access is `r`, globally or on each collection it names, beside `exp`, `iat`, `nbf`, `sub` and `value_exists`; any other access, a missing one and any other claim are refused.
+A key with no claims to read, the read-only API key among them, is left to the server's answers.
+The API key's empty alias update, the one write the proof can have answered, changes nothing: the aliases read the same after it (`write-state-aliases-after-full`).
+A collection the key can write that appears after the open is refused at the next request, before the request is sent.
+The operations profile sends no request of the model's, so it opens with any key and no proof, and plan mode keeps grounding on the API key.
+
+### 15.3 What an agent request may be
+
+One request in the console's own grammar, every body key closed at every level (section 5.3), naming `GET /`, `/collections`, `/collections/{collection}`, its `exists`, `aliases` and `cluster` reads, `/aliases`, or `POST /collections/{collection}/points/count` with `exact` only.
+A point read, a scroll, a facet and every query answer stored payloads and, on request, vectors (`points-read-only`, `point-read-only`, `scroll-read-only`, `facet-read-only`, `query-read-only`, `query-groups-read-only`), so each is refused before anything is sent by its route template, never the request's own words, as are the optimization and snapshot lists, which no projection reads, and a count's `filter` and `shard_key`, which count by stored values.
+A read-only key's query whose body names a Document, an Image, an inference object or one in a prefetch makes the server call its configured inference address, while a plain vector query does not (`inference-*-read-only`); no agent request reaches a query at all.
+The connection sets only its `api-key` header, once, and the agent's request carries no query key or header the caller chose beyond the route's own.
+
+### 15.4 Metadata only
+
+Qdrant declares `ProviderCapabilities.metadataOnly`: every answer is projected through [`src/lib/db/redaction/metadata-only.ts`](../../src/lib/db/redaction/metadata-only.ts) by a typed projection per route, each column a name, a count or a flag read from a fixed place in the server's answer.
+
+| Route | Columns |
+| --- | --- |
+| `GET /` | `version`, `commit` |
+| `GET /collections` | `collection` |
+| `GET /collections/{collection}` | `name`, `kind`, `status`, `type`, `size`, `points`, `indexed_vectors`, `segments`, `shards`, `replication_factor`, `optimizer_status` |
+| exists | `collection`, `exists` |
+| `GET /aliases`, a collection's aliases | `alias`, `collection` |
+| count | `collection`, `count` |
+| cluster | `shard`, `location`, `state`, `points` |
+
+A collection read answers one row for the collection itself (`kind` `collection`, with its status, counts, shard number, replication factor and optimizer status), then one per vector (its name, null for the one unnamed vector, its distance and size), one per sparse vector and one per payload index (its field name, data type and point count).
+A column's name comes from the projection, never from a key the store holds, and nothing the projection does not name reaches a row: no HNSW, optimizer, WAL, quantization or strict-mode value, no collection `metadata`, no title, peer id or shard key.
+An optimizer error is answered as `error`, never its text.
+Names are the operator's own: a collection, alias, vector or payload field named after a stored value reaches the answer as that name, checked only to be printable text of 1 to 512 characters on one line.
+A cell that does not fit its kind, such as an object, a list or a vector where a name or a count stands, or a name holding a line break, withholds the whole answer, naming the column and never the value.
+A server refusal is worded by its status and category alone, never the server's message: a collection-scoped JWT reading another collection is answered 403 `Forbidden: Access to collection other is required` (`collection-other-jwt-collection-read`), and agent mode is told only that Qdrant answered HTTP 403.
+A result past the row or byte budget is refused, never cut, and an estimating plan is refused.
+
+### 15.5 Agent language pack
+
+Statement-language family: `qdrantapi`.
+Overlay: [`src/lib/agent/languages/qdrantapi/engines/qdrant.ts`](../../src/lib/agent/languages/qdrantapi/engines/qdrant.ts), with its client row in [`src/lib/agent/languages/qdrantapi/engines/client.ts`](../../src/lib/agent/languages/qdrantapi/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`.
+Both overlays are empty, so the engine resolves to the `qdrantapi` family pack itself.
+The `qdrantapi` statement-language family has no dialect-bound member.
+This overlay overrides no Shared member, so every Shared member is the `qdrantapi` statement-language family's own.
+The family offers the investigation workflow, through `run_read_query` with one Qdrant request, and the operations workflow; it offers no data analysis, since its answers carry no stored value, and no query optimization or database assessment, since the server composes no plan and no profile, and no workflow hands an answer to the editor.
+The workflow classifier offers the model only these two.
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+No MCP tool runs a Qdrant request: the family declares no MCP facet, and `MCP_STATEMENT_READ.qdrant` is false (B154).
+
+### 15.6 Tests
+
+- `tests/unit/db/qdrant/agent-captures.test.ts`: what 1.19.1 answered each principal, held against the captures.
+- `tests/unit/db/qdrant/metadata-request.test.ts`: the routes an agent request may name, and every refusal before the network.
+- `tests/unit/db/qdrant/metadata-read.test.ts`: a JWT's claims, the read-only proof over each `proof-*` capture, every projection over the captured answers, and answers that carry a stored value where a name, a count or a flag stands.
+- `tests/unit/db/qdrant/rest-client-probe.test.ts`: the two probes' full URLs and bodies.
+- `tests/unit/db/qdrant/agent-provider.test.ts`: the open, the proof before every request, the exact request lines, URLs and bodies through the REST client, the wording of a failure and the budgets.
+- `tests/integration/db/qdrant-provider.test.ts`: the boundary replayed from the captures, the read-only principals' writes beside the positive controls.
+- `tests/unit/lib/db/redaction/metadata-only.test.ts`: the shared projection helpers.

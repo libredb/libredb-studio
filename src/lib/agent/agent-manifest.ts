@@ -27,7 +27,26 @@ import type { AgentRunMode, AgentRunWorkflowType } from "./types";
 import { OPERATIONS_VARIANT } from "./workflow-tool-sets";
 
 /** The statement languages agent mode can send. A later engine reuses one or registers a new id here. */
-export type AgentStatementLanguageId = "sql" | "kubectl" | "mongo" | "libredbkv";
+export type AgentStatementLanguageId =
+  | "sql"
+  | "kubectl"
+  | "mongo"
+  | "libredbkv"
+  | "influxql"
+  | "weaviateapi"
+  | "qdrantapi"
+  | "cypher"
+  | "milvusrpc"
+  | "rediscli"
+  | "etcdctl"
+  | "oxiacli"
+  | "rabbitread"
+  | "kafkaread"
+  | "s3api"
+  | "fsquery"
+  | "snmpget"
+  | "netconfrpc"
+  | "modbusread";
 
 /** Literal-typed, so `AgentEngineFamily` in `languages/pack.ts` reads each engine's language by type. */
 export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
@@ -50,28 +69,28 @@ export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
   opensearch: "sql",
   mongodb: "mongo",
   couchbase: "sql",
-  redis: null,
+  redis: "rediscli",
   prometheus: null,
-  kafka: null,
-  etcd: null,
-  neo4j: null,
-  milvus: null,
-  qdrant: null,
-  weaviate: null,
-  influxdb: null,
+  kafka: "kafkaread",
+  etcd: "etcdctl",
+  neo4j: "cypher",
+  milvus: "milvusrpc",
+  qdrant: "qdrantapi",
+  weaviate: "weaviateapi",
+  influxdb: "influxql",
   influxdb3: "sql",
-  oxia: null,
+  oxia: "oxiacli",
   databend: null,
-  s3: null,
+  s3: "s3api",
   kubernetes: "kubectl",
   mqtt: null,
-  firestore: null,
-  rabbitmq: null,
+  firestore: "fsquery",
+  rabbitmq: "rabbitread",
   opcua: null,
   mtconnect: null,
-  modbus: null,
-  netconf: null,
-  snmp: null,
+  modbus: "modbusread",
+  netconf: "netconfrpc",
+  snmp: "snmpget",
   sparkplug: null,
   libredb: "libredbkv",
 } as const satisfies Record<DatabaseType, AgentStatementLanguageId | null>);

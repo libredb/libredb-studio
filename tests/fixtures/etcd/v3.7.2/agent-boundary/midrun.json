@@ -1,0 +1,120 @@
+{
+  "$captured": {
+    "image": "gcr.io/etcd-development/etcd:v3.7.2@sha256:7c6c239825d00e3f6328a69caafd54be92063acf0c2ce78b8394699f52b75dc3",
+    "version": "3.7.2",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "principal": "agent_midrun",
+    "roles": [
+      "agent_midrun"
+    ],
+    "grantedMidRun": "WRITE on the /scratch/ prefix"
+  },
+  "roleBefore": {
+    "outcome": "ok",
+    "answer": {
+      "perm": [
+        {
+          "permType": "READ",
+          "key": {
+            "$text": "/app/"
+          },
+          "range_end": {
+            "$text": "/app0"
+          }
+        }
+      ],
+      "header": {
+        "cluster_id": "10890815359060184063",
+        "member_id": "13264652972854556008",
+        "revision": "21",
+        "raft_term": "2"
+      }
+    }
+  },
+  "putBefore": {
+    "outcome": "error",
+    "code": 7,
+    "details": "etcdserver: permission denied"
+  },
+  "grantAsRoot": {
+    "outcome": "ok",
+    "answer": {
+      "header": {
+        "cluster_id": "10890815359060184063",
+        "member_id": "13264652972854556008",
+        "revision": "21",
+        "raft_term": "2"
+      }
+    }
+  },
+  "authStatusAfterGrant": {
+    "outcome": "ok",
+    "answer": {
+      "header": {
+        "cluster_id": "10890815359060184063",
+        "member_id": "13264652972854556008",
+        "revision": "21",
+        "raft_term": "2"
+      },
+      "enabled": true,
+      "authRevision": "33"
+    }
+  },
+  "roleAfter": {
+    "outcome": "ok",
+    "answer": {
+      "perm": [
+        {
+          "permType": "READ",
+          "key": {
+            "$text": "/app/"
+          },
+          "range_end": {
+            "$text": "/app0"
+          }
+        },
+        {
+          "permType": "WRITE",
+          "key": {
+            "$text": "/scratch/"
+          },
+          "range_end": {
+            "$text": "/scratch0"
+          }
+        }
+      ],
+      "header": {
+        "cluster_id": "10890815359060184063",
+        "member_id": "13264652972854556008",
+        "revision": "21",
+        "raft_term": "2"
+      }
+    }
+  },
+  "putAfter": {
+    "outcome": "ok",
+    "answer": {
+      "header": {
+        "cluster_id": "10890815359060184063",
+        "member_id": "13264652972854556008",
+        "revision": "22",
+        "raft_term": "2"
+      },
+      "prev_kv": null
+    }
+  },
+  "cleanup": {
+    "outcome": "ok",
+    "answer": {
+      "prev_kvs": [],
+      "header": {
+        "cluster_id": "10890815359060184063",
+        "member_id": "13264652972854556008",
+        "revision": "23",
+        "raft_term": "2"
+      },
+      "deleted": "1"
+    }
+  }
+}

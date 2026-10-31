@@ -1,0 +1,134 @@
+{
+  "$captured": {
+    "server": "authorization off",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "rpc": "Query",
+    "principal": "open-anonymous",
+    "rights": "no authorization metadata, on a server with authorization off",
+    "surface": "Query of stored values, scalar and dynamic",
+    "request": {
+      "db_name": "default",
+      "collection_name": "agent_docs",
+      "expr": "id > 0",
+      "output_fields": [
+        "title",
+        "label",
+        "note"
+      ],
+      "query_params": [
+        {
+          "key": "limit",
+          "value": "3"
+        }
+      ],
+      "use_default_consistency": true
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "fields_data": [
+      {
+        "valid_data": [],
+        "type": "VarChar",
+        "field_name": "title",
+        "field_id": "102",
+        "is_dynamic": false,
+        "scalars": {
+          "string_data": {
+            "data": [
+              "stored-title-value-1",
+              "stored-title-value-2",
+              "stored-title-value-3"
+            ]
+          },
+          "data": "string_data"
+        },
+        "field": "scalars"
+      },
+      {
+        "valid_data": [],
+        "type": "VarChar",
+        "field_name": "label",
+        "field_id": "103",
+        "is_dynamic": false,
+        "scalars": {
+          "string_data": {
+            "data": [
+              "stored-label-value-1",
+              "stored-label-value-2",
+              "stored-label-value-3"
+            ]
+          },
+          "data": "string_data"
+        },
+        "field": "scalars"
+      },
+      {
+        "valid_data": [
+          true,
+          true,
+          true
+        ],
+        "type": "JSON",
+        "field_name": "$meta",
+        "field_id": "106",
+        "is_dynamic": true,
+        "scalars": {
+          "json_data": {
+            "data": [
+              {
+                "$bytes": "eyJub3RlIjoic3RvcmVkLWR5bmFtaWMtdmFsdWUifQ=="
+              },
+              {
+                "$bytes": "eyJub3RlIjoic3RvcmVkLWR5bmFtaWMtdmFsdWUifQ=="
+              },
+              {
+                "$bytes": "eyJub3RlIjoic3RvcmVkLWR5bmFtaWMtdmFsdWUifQ=="
+              }
+            ]
+          },
+          "data": "json_data"
+        },
+        "field": "scalars"
+      },
+      {
+        "valid_data": [],
+        "type": "Int64",
+        "field_name": "id",
+        "field_id": "100",
+        "is_dynamic": false,
+        "scalars": {
+          "long_data": {
+            "data": [
+              "1",
+              "2",
+              "3"
+            ]
+          },
+          "data": "long_data"
+        },
+        "field": "scalars"
+      }
+    ],
+    "output_fields": [
+      "label",
+      "note",
+      "title"
+    ],
+    "element_indices": [],
+    "status": {
+      "extra_info": {},
+      "error_code": "Success",
+      "reason": "",
+      "code": 0,
+      "retriable": false,
+      "detail": ""
+    },
+    "collection_name": "agent_docs",
+    "session_ts": "0",
+    "primary_field_name": "id"
+  }
+}

@@ -204,10 +204,74 @@ describe("POST /api/agent/classify", () => {
     expect(mockClassify).toHaveBeenCalledWith("which keys hold a role", { statementLanguage: "libredbkv" });
   });
 
-  test("a connection with no statement language is classified in SQL's terms", async () => {
+  test("an InfluxDB (InfluxQL) connection is classified in its own family's terms", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:metrics", name: "Metrics", type: "influxdb" });
+
+    const res = await POST(classifyRequest({ objective: "which room ran hottest", connectionId: "seed:metrics" }));
+
+    expect(res.status).toBe(200);
+    expect(mockClassify).toHaveBeenCalledWith("which room ran hottest", { statementLanguage: "influxql" });
+  });
+
+  test("a Weaviate connection is classified in its own family's terms", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:vectors", name: "Vectors", type: "weaviate" });
+
+    const res = await POST(
+      classifyRequest({ objective: "how many objects each collection holds", connectionId: "seed:vectors" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockClassify).toHaveBeenCalledWith("how many objects each collection holds", {
+      statementLanguage: "weaviateapi",
+    });
+  });
+
+  test("a Qdrant connection is classified in its own family's terms", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:points", name: "Points", type: "qdrant" });
+
+    const res = await POST(
+      classifyRequest({ objective: "how many points each collection holds", connectionId: "seed:points" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockClassify).toHaveBeenCalledWith("how many points each collection holds", {
+      statementLanguage: "qdrantapi",
+    });
+  });
+
+  test("a Neo4j connection is classified in its own family's terms", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:graph", name: "Graph", type: "neo4j" });
+
+    const res = await POST(classifyRequest({ objective: "who knows whom", connectionId: "seed:graph" }));
+
+    expect(res.status).toBe(200);
+    expect(mockClassify).toHaveBeenCalledWith("who knows whom", { statementLanguage: "cypher" });
+  });
+
+  test("a Milvus connection is classified in its own family's terms", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:vectors", name: "Vectors", type: "milvus" });
+
+    const res = await POST(
+      classifyRequest({ objective: "which collections are loaded", connectionId: "seed:vectors" }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(mockClassify).toHaveBeenCalledWith("which collections are loaded", { statementLanguage: "milvusrpc" });
+  });
+
+  test("a Redis connection is classified in its own family's terms", async () => {
     mockResolveConnection.mockResolvedValueOnce({ id: "seed:cache", name: "Cache", type: "redis" });
 
-    const res = await POST(classifyRequest({ objective: "what is connected", connectionId: "seed:cache" }));
+    const res = await POST(classifyRequest({ objective: "how many keys are there", connectionId: "seed:cache" }));
+
+    expect(res.status).toBe(200);
+    expect(mockClassify).toHaveBeenCalledWith("how many keys are there", { statementLanguage: "rediscli" });
+  });
+
+  test("a connection with no statement language is classified in SQL's terms", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:plant", name: "Plant", type: "sparkplug" });
+
+    const res = await POST(classifyRequest({ objective: "what is connected", connectionId: "seed:plant" }));
 
     expect(res.status).toBe(200);
     expect(mockClassify).toHaveBeenCalledWith("what is connected", { statementLanguage: undefined });

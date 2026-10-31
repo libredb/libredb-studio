@@ -24,9 +24,24 @@ import { z } from "zod";
 import type { ExplainMode } from "@/lib/explain";
 import { readMongoCommand } from "@/lib/db/providers/document/mongodb/envelope";
 import { OperationRegistry } from "./registry";
+import { cypherAgentReadInput } from "./cypher-admission";
+import { influxqlAgentReadInput } from "./influxql-admission";
 import { kubectlAgentReadInput } from "./kubectl-admission";
 import { libredbkvAgentReadInput } from "./libredbkv-admission";
+import { milvusrpcAgentReadInput } from "./milvusrpc-admission";
 import { mongoAgentReadInput } from "./mongo-admission";
+import { qdrantapiAgentReadInput } from "./qdrantapi-admission";
+import { rediscliAgentReadInput } from "./rediscli-admission";
+import { etcdctlAgentReadInput } from "./etcdctl-admission";
+import { oxiacliAgentReadInput } from "./oxiacli-admission";
+import { kafkareadAgentReadInput } from "./kafkaread-admission";
+import { rabbitreadAgentReadInput } from "./rabbitread-admission";
+import { s3apiAgentReadInput } from "./s3api-admission";
+import { fsqueryAgentReadInput } from "./fsquery-admission";
+import { snmpgetAgentReadInput } from "./snmpget-admission";
+import { netconfrpcAgentReadInput } from "./netconfrpc-admission";
+import { modbusreadAgentReadInput } from "./modbusread-admission";
+import { weaviateapiAgentReadInput } from "./weaviateapi-admission";
 import { agentPlanExecutionSqlInput, agentQueryReadSqlInput, agentReadSqlInput } from "./statement-guard";
 import type { RegistrableOperationDescriptor } from "./types";
 
@@ -408,6 +423,552 @@ const libredbkvQueryReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+const INFLUXQL_READ_BOUNDARY =
+  "InfluxDB (InfluxQL, 1.x and 2.x): before the open and before every statement, on the requests of that statement's " +
+  "call, the server proves the connection's principal reads only (influxql-agent-read.ts): a 1.x user must be refused " +
+  "SHOW USERS as needing the admin privilege, a 2.x token must list no system bucket, and every database the principal " +
+  "lists must refuse a no-op DELETE, so an admin, a server with authentication off and a principal that can write any " +
+  "database it lists, where SELECT ... INTO would land, are refused, and InfluxDB 3 is refused on this path. The " +
+  "statement reader admits one SELECT, SHOW of the catalog or EXPLAIN of a SELECT with no comment and no carriage " +
+  "return, refusing INTO, every write and SHOW QUERIES before anything is sent; the statement is sent with the " +
+  "connection's database and nothing else the caller chose, and a result past the row or byte budget is refused, never " +
+  "truncated.";
+
+/**
+ * One InfluxQL read statement the model wrote, on an `influxdb` connection.
+ *
+ * R1 on a boundary the server's own authorization provides: the v1 `/query` route runs any statement the principal may
+ * run, so what bounds the read is a principal the server proves cannot write. Its own id, and not a widened
+ * `sql.query.read`, so the SQL contract and its audit action stay exactly what they were.
+ */
+const influxqlQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "influxql.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: influxqlAgentReadInput,
+  verification: {
+    reviewedBy: "InfluxDB agent execution design review",
+    boundary: INFLUXQL_READ_BOUNDARY,
+    verifiedOn: "2026-10-30",
+  },
+};
+
+const WEAVIATEAPI_READ_BOUNDARY =
+  "Weaviate: the provider's closed table of 20 GET and POST operations, which can name no write, of which an agent " +
+  "request reaches the meta, schema, shard, tenant, alias and node reads and an aggregate count only, every body key " +
+  "closed (metadata-request.ts). Before the open and before every request, under that request's deadline, the server " +
+  "proves the key a viewer (metadata-read.ts): GET /v1/users/own-info must name at least one role and every action must " +
+  "be one of the viewer role's twelve read actions, so a connection with no key, an admin key, a role that writes and " +
+  "a server with RBAC off are refused. A request naming a tenant reads the tenant's own record first and is refused " +
+  "unless it is HOT, and a shard read or count of a multi-tenant collection naming no tenant is refused, since a " +
+  "shard read naming none wakes them; object reads, searches, GraphQL, every module call, filters and " +
+  "groupBy are refused before anything is sent. Every answer is projected to names, counts and flags " +
+  "(metadata-only.ts), and a result past the row or byte budget is refused, never truncated.";
+
+/**
+ * One Weaviate metadata read the model wrote, on a `weaviate` connection.
+ *
+ * R1 on a structural boundary: the client can build no write, and the server proves the key a viewer before every
+ * request. Its own id, and not a widened `sql.query.read`, so the SQL contract and its audit action stay exactly what
+ * they were.
+ */
+const weaviateapiQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "weaviateapi.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: weaviateapiAgentReadInput,
+  verification: {
+    reviewedBy: "Weaviate agent execution design review",
+    boundary: WEAVIATEAPI_READ_BOUNDARY,
+    verifiedOn: "2026-10-30",
+  },
+};
+
+const QDRANTAPI_READ_BOUNDARY =
+  "Qdrant: the provider's closed table of 17 GET and POST read routes, which can name no write, of which an agent " +
+  "request reaches the version, collection list, collection, exists, alias, count and cluster reads only, every body " +
+  "key closed and a count taking exact alone (metadata-request.ts). Before the open and before every request, under " +
+  "that request's deadline, the server proves the key reads only (metadata-read.ts): it must refuse 403 an alias " +
+  "update with no action and a point delete of no point on every collection the key lists, at most 32, so a " +
+  "connection with no key, the API key, a JWT that manages or writes any collection and a server with no key " +
+  "configured are refused. Point reads, scrolls, facets, every query, and so every inference call, the optimization " +
+  "and snapshot lists and every write are refused before anything is sent. Every answer is projected to names, " +
+  "counts and flags (metadata-only.ts), and a result past the row or byte budget is refused, never truncated.";
+
+/**
+ * One Qdrant metadata read the model wrote, on a `qdrant` connection.
+ *
+ * R1 on a structural boundary: the client can build no write a console request names, and the server proves the key
+ * read-only before every request. Its own id, and not a widened `sql.query.read`, so the SQL contract and its audit
+ * action stay exactly what they were.
+ */
+const qdrantapiQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "qdrantapi.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: qdrantapiAgentReadInput,
+  verification: {
+    reviewedBy: "Qdrant agent execution design review",
+    boundary: QDRANTAPI_READ_BOUNDARY,
+    verifiedOn: "2026-10-30",
+  },
+};
+
+const CYPHER_READ_BOUNDARY =
+  "Neo4j Enterprise Edition: before the open and before every statement, under that statement's deadline, the server " +
+  "proves the connection's user reads only (agent-boundary.ts): Enterprise Edition at a version whose built-in " +
+  "procedures and functions are pinned, every granted privilege of every role a read, no LOAD that a DENY LOAD ON ALL " +
+  "DATA does not override, and no executable procedure or function outside the built-ins, so an administrator, a user " +
+  "that writes or loads, a server with an extension the user can run and Community Edition are refused. The statement " +
+  "reader admits one statement under the editor's read policy with no comment and no carriage return, refusing every " +
+  "write, LOAD CSV, USE and any other procedure before anything is sent; the server's EXPLAIN classification runs before " +
+  "it, it runs in a READ session on the connection's database, and a result past the row or byte budget is refused, " +
+  "never truncated.";
+
+/**
+ * One Cypher read statement the model wrote, on a `neo4j` connection.
+ *
+ * R1 on a boundary the server's own authorization provides: a READ session still runs LOAD CSV and any procedure an
+ * extension adds, so what bounds the read is a user the server proves cannot write, load or run an extension. Its own
+ * id, and not a widened `sql.query.read`, so the SQL contract and its audit action stay exactly what they were.
+ */
+const cypherQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "cypher.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: cypherAgentReadInput,
+  verification: {
+    reviewedBy: "Neo4j agent execution design review",
+    boundary: CYPHER_READ_BOUNDARY,
+    verifiedOn: "2026-10-30",
+  },
+};
+
+const MILVUSRPC_READ_BOUNDARY =
+  "Milvus: the provider's gRPC stub filtered to a closed table of RPCs, whose only writes are Load and Release, which " +
+  "the admin's maintenance route alone sends; an agent request reaches the database, collection, schema, statistics, " +
+  "load state, partition, index and alias reads only, in the console's grammar with every body key closed and the " +
+  "connection's own database on every call (metadata-request.ts). Before the open and before every request, under " +
+  "that request's deadline, the server proves the user reads only (read-only-proof.ts): it must refuse the user " +
+  "PERMISSION_DENIED the list of users, and every privilege its roles and public grant must be a read, so a connection " +
+  "naming no user, root, the admin role, a role that writes, loads or releases, an unknown privilege group and a " +
+  "server with authorization off are refused. Queries, gets and searches, and so every function a search runs on the " +
+  "server, are refused before anything is sent. Every answer is projected to names, counts and flags " +
+  "(metadata-only.ts), and a result past the row or byte budget is refused, never truncated.";
+
+/**
+ * One Milvus metadata read the model wrote, on a `milvus` connection.
+ *
+ * R1 on a structural boundary: the stub can name no write an agent request reaches, and the server proves the user
+ * read-only before every request. Its own id, and not a widened `sql.query.read`, so the SQL contract and its audit
+ * action stay exactly what they were.
+ */
+const milvusrpcQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "milvusrpc.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: milvusrpcAgentReadInput,
+  verification: {
+    reviewedBy: "Milvus agent execution design review",
+    boundary: MILVUSRPC_READ_BOUNDARY,
+    verifiedOn: "2026-10-30",
+  },
+};
+
+const ETCDCTL_READ_BOUNDARY =
+  "etcd: the provider's closed table of metadata reads (agent-statement.ts), read with the editor's own etcdctl " +
+  "parser and mapped to one fixed request each: endpoint status, member list, alarm list, auth status, lease list, " +
+  "lease timetolive without its keys, the count of every key, and one key's metadata, with no revision, range end, " +
+  "limit or consistency of the request's own. Before the open and before every command the server proves the user " +
+  "reads only (agent-read-only-proof.ts): authentication must be on, the user must not be root or hold the root role, " +
+  "and every permission of every role, read from the server with UserGet and RoleGet, must be READ, so a user that " +
+  "writes even one key range is refused; a call the roles do not govern, such as a lease grant, is stopped by the " +
+  "table, which sends none. Key names and stored values are withheld: nothing lists keys, reads a value or watches, " +
+  "every answer is projected to names, counts and sizes (agent-metadata-read.ts), an etcd failure is worded by its " +
+  "category alone, and a result past the row or byte budget is refused, never truncated.";
+
+/**
+ * One etcd metadata read the model wrote, on an `etcd` connection.
+ *
+ * R1 on a structural boundary: the table can name no write and no read of a key name or value, and the server proves
+ * the user read-only before every command. Its own id, and not a widened `sql.query.read`, so the SQL contract and its
+ * audit action stay exactly what they were.
+ */
+const etcdctlQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "etcdctl.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: etcdctlAgentReadInput,
+  verification: {
+    reviewedBy: "etcd agent execution design review",
+    boundary: ETCDCTL_READ_BOUNDARY,
+    verifiedOn: "2026-10-30",
+  },
+};
+
+const OXIACLI_READ_BOUNDARY =
+  "Oxia: the provider's closed table of metadata reads (agent-statement.ts), read with the editor's own oxia command " +
+  "parser and sent over the gRPC stub, which holds only GetShardAssignments, Read, List and RangeScan: the shard map " +
+  "of the connection's own namespace, one EQUAL get with no partition key, index or comparison for one key the " +
+  "request names, and a List of the whole namespace, counted in Studio; a count over a range or prefix the request " +
+  "names is refused, since narrower counts would reveal key names. Oxia has no authorization, so no " +
+  "principal can be proved and the table is the boundary: no write, delete, session, notification, sequence or other " +
+  "namespace is reachable. Key names and stored values are withheld: nothing lists keys or reads a value, every " +
+  "answer is projected to names, counts and sizes (agent-metadata-read.ts), an Oxia failure is worded by its " +
+  "category alone, and a key count past the row budget or a result past the byte budget is refused, never truncated.";
+
+/**
+ * One Oxia metadata read the model wrote, on an `oxia` connection.
+ *
+ * R1 on a structural boundary: the table can name no write and no read of a key name or value, over a stub that holds
+ * only reads. Its own id, and not a widened `sql.query.read`, so the SQL contract and its audit action stay exactly what
+ * they were.
+ */
+const oxiacliQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "oxiacli.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: oxiacliAgentReadInput,
+  verification: {
+    reviewedBy: "Oxia agent execution design review",
+    boundary: OXIACLI_READ_BOUNDARY,
+    verifiedOn: "2026-10-30",
+  },
+};
+
+const KAFKAREAD_READ_BOUNDARY =
+  "Kafka: the provider's structural closed table: one read of a closed table of four metadata reads (the topic " +
+  "listing, the broker listing, one topic's partitions, one topic's earliest and end offsets), sent through an agent " +
+  "client that holds the Metadata request, with topic auto-creation off, and the ListOffsets request at the earliest " +
+  "and latest sentinels alone, so no fetch, produce, topic, config, ACL or group call, offset commit or timestamp " +
+  "lookup can be sent, and no internal topic is ever named. " +
+  "A record's key, value, headers and timestamp, a broker's host and port, configs, log directories and consumer " +
+  "groups are withheld: every answer is projected to names, counts and offsets (agent-metadata-read.ts), a request " +
+  "whose limit passes the row budget is refused before it is sent, and a result past the byte budget is refused, " +
+  "never truncated.";
+
+/**
+ * One Kafka metadata read the model wrote, on a `kafka` connection.
+ *
+ * R1 on a structural boundary: the agent's client holds the Metadata and ListOffsets reads alone. Its own id, and not
+ * a widened `sql.query.read`, so the SQL contract and its audit action stay exactly what they were.
+ */
+const kafkareadQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "kafkaread.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: kafkareadAgentReadInput,
+  verification: {
+    reviewedBy: "Kafka agent execution design review",
+    boundary: KAFKAREAD_READ_BOUNDARY,
+    verifiedOn: "2026-10-31",
+  },
+};
+
+const S3API_READ_BOUNDARY =
+  "S3: the provider's structural closed table, read with the console's own parser: one read of a closed table of six " +
+  "metadata reads (the bucket listing, one bucket's head, location and versioning, one whole bucket's object count " +
+  "and total size, and one object's head for the exact key the command names), sent through an agent client that " +
+  "holds those six reads alone over a byte transport that sends GET and HEAD only, so no object GET, ranged read, " +
+  "listing by prefix or delimiter, version listing, tagging, policy or ACL read, write, delete or presigned URL can be " +
+  "sent, and neither HEAD is followed by a GET. " +
+  "Object keys, bodies, user metadata, tags, ETags, version ids, owners, ACLs, policies and the endpoint are withheld: " +
+  "every answer is projected to names, counts and flags (agent-metadata-read.ts), a bucket is counted whole and never " +
+  "by prefix, a listing or count past the row budget is refused, and a result past the byte budget is refused, never " +
+  "truncated.";
+
+/**
+ * One S3 metadata read the model wrote, on an `s3` connection.
+ *
+ * R1 on a structural boundary: the agent's client holds six GET and HEAD reads alone. Its own id, and not a widened
+ * `sql.query.read`, so the SQL contract and its audit action stay exactly what they were.
+ */
+const s3apiQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "s3api.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: s3apiAgentReadInput,
+  verification: {
+    reviewedBy: "S3 agent execution design review",
+    boundary: S3API_READ_BOUNDARY,
+    verifiedOn: "2026-10-31",
+  },
+};
+
+const SNMPGET_READ_BOUNDARY =
+  "SNMP: the provider's structural closed table, read with the console's own parser and resolver: one of the " +
+  "console's four commands (get, next, walk and table), sent through an agent client that holds the Get, GetNext and " +
+  "GetBulk requests alone, RFC 3411's Read Class, over an exchange whose valve parses every outgoing datagram and " +
+  "refuses any other PDU, so no Set, notification or Response can be sent; a GetBulk's max-repetitions stays at the " +
+  "documented cap of 50 and a request carries at most 400 identifiers. " +
+  "SNMP-TARGET-MIB (1.3.6.1.6.3.12), SNMP-NOTIFICATION-MIB (1.3.6.1.6.3.13), SNMP-PROXY-MIB (1.3.6.1.6.3.14), " +
+  "SNMP-USER-BASED-SM-MIB (1.3.6.1.6.3.15), SNMP-VIEW-BASED-ACM-MIB (1.3.6.1.6.3.16) and SNMP-COMMUNITY-MIB " +
+  "(1.3.6.1.6.3.18), the transport security modules SNMP-SSH-TM-MIB (1.3.6.1.2.1.189), SNMP-TSM-MIB " +
+  "(1.3.6.1.2.1.190) and SNMP-TLS-TM-MIB (1.3.6.1.2.1.198), SNMP-USM-DH-OBJECTS-MIB (1.3.6.1.3.101) and Net-SNMP's " +
+  "NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9) are withheld by identifier prefix: an identifier inside one is never " +
+  "sent, an answer landing inside one is answered withheld without its value or instance, a walk or table covering " +
+  "one steps over it, so no request starts inside it, and a walk or table inside one is refused before anything is " +
+  "sent. Every other identifier under 1.3.6.1.6.3, the engine and MPD objects among them, is read. A v2c community cannot be proved " +
+  "read-only from the client, and the tables that would prove it are the withheld ones, so the table is the boundary. " +
+  "A walk or table past the row budget and a result past the byte budget are refused, never truncated.";
+
+/**
+ * One SNMP read the model wrote, on an `snmp` connection.
+ *
+ * R1 on a structural boundary: the agent's client holds Get, GetNext and GetBulk alone. Its own id, and not a widened
+ * `sql.query.read`, so the SQL contract and its audit action stay exactly what they were.
+ */
+const snmpgetQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "snmpget.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: snmpgetAgentReadInput,
+  verification: {
+    reviewedBy: "SNMP agent execution design review",
+    boundary: SNMPGET_READ_BOUNDARY,
+    verifiedOn: "2026-10-31",
+  },
+};
+
+const NETCONFRPC_READ_BOUNDARY =
+  "NETCONF: the provider's structural closed table, read with the console's own parser: one JSON request per read, " +
+  "the console's read request (a datastore and a path, read with get-config on running, candidate and startup and " +
+  "with get-data on operational and intended) or a schema request for one module's YANG text (get-schema), sent " +
+  "through an agent client whose requests are the reads of the one request builder, which holds get, get-config, " +
+  "get-data, get-schema and close-session and no write, over a session opened for that read alone. Before every read " +
+  "the client reads the device's YANG library and the text of every module it lists, and withholds what they mark: " +
+  "the ietf-keystore and ietf-netconf-acm modules whole, every node a module marks nacm:default-deny-all, every leaf " +
+  "typed crypt-hash, the private-key-type, key-type and password-type choices of ietf-crypto-types, every leafref " +
+  "that may point at a withheld node, every unresolved leafref, every leaf whose type names a typedef no module the " +
+  "device serves declares, and every entry of a list keyed by a withheld leaf; " +
+  "a read whose modules cannot be read, or that serve more than the check's total, is refused, a path naming a withheld node or " +
+  "filtering on a withheld key is refused before it is sent, and a withheld node in an answer is replaced by " +
+  "[withheld]. NACM's own access-denied on writes is measured, not relied on. A list past the row budget and a " +
+  "result past the byte budget are refused, never truncated.";
+
+/**
+ * One NETCONF read the model wrote, on a `netconf` connection.
+ *
+ * R1 on a structural boundary: the agent's client holds reads alone. Its own id, and not a widened `sql.query.read`, so
+ * the SQL contract and its audit action stay exactly what they were.
+ */
+const netconfrpcQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "netconfrpc.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: netconfrpcAgentReadInput,
+  verification: {
+    reviewedBy: "NETCONF agent execution design review",
+    boundary: NETCONFRPC_READ_BOUNDARY,
+    verifiedOn: "2026-10-31",
+  },
+};
+
+const MODBUSREAD_READ_BOUNDARY =
+  "Modbus: the provider's structural closed table, read with the console's own parser: one of the console's three " +
+  "JSON read requests (points the connection's register map names, one block of one table, or the device " +
+  "identification objects), built by the five request builders of pdu.ts, none of which takes a function code from " +
+  "its caller (Read Coils, Read Discrete Inputs, Read Holding Registers and Read Input Registers, chosen by the table, " +
+  "and Read Device Identification, 43/14), over a socket opened for that read alone whose valve re-reads every " +
+  "outbound frame before socket.write and refuses every other function code, so no write, diagnostic, file record " +
+  "or FIFO request can be sent. Modbus has no credential, so values are answered as the console renders them. Agent " +
+  "reads of one device never overlap across every run and connection of the server process, a fixed 1,000 ms gap " +
+  "follows each from its socket's close, and one run sends a bounded number of device requests; a read past the row, " +
+  "byte or time budget, or past the run's request bound, is refused, never truncated.";
+
+/**
+ * One Modbus read the model wrote, on a `modbus` connection.
+ *
+ * R1 on a structural boundary: the agent's reads reach the device only through the provider's read builders and the
+ * valve. Its own id, and not a widened `sql.query.read`, so the SQL contract and its audit action stay exactly what
+ * they were.
+ */
+const modbusreadQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "modbusread.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: modbusreadAgentReadInput,
+  verification: {
+    reviewedBy: "Modbus agent execution design review",
+    boundary: MODBUSREAD_READ_BOUNDARY,
+    verifiedOn: "2026-10-31",
+  },
+};
+
+const FSQUERY_READ_BOUNDARY =
+  "Firestore: the provider's structural closed table, read with the console's own parser: one read of a closed table " +
+  "of four metadata reads (the root collection ids, the subcollection ids of one document the statement names in full, " +
+  "one whole collection's or collection group's document count with nothing narrowing it, and one named document's " +
+  "existence and create and update times), sent through an agent client that holds three kinds of request alone " +
+  "(listCollectionIds, a count-only runAggregationQuery with upTo, and a batchGet whose mask names no field) over the " +
+  "closed request table, so no query of documents, document listing, field read, value aggregation, nearest-neighbour " +
+  "search, explain, transaction or write can be sent. " +
+  "Document ids and paths, field names and field values are withheld: every answer is projected to collection ids, " +
+  "counts, flags and times (agent-metadata-read.ts), a collection is counted whole and never through a filter, order, " +
+  "cursor, offset, limit or projection, a listing or count past the row budget is refused, a result past the byte " +
+  "budget is refused, never truncated, and every billed request is charged to the run's read allowance before it is " +
+  "sent.";
+
+/**
+ * One Firestore metadata read the model wrote, on a `firestore` connection.
+ *
+ * R1 on a structural boundary: the agent's client holds three kinds of metadata request alone. Its own id, and not a
+ * widened `sql.query.read`, so the SQL contract and its audit action stay exactly what they were.
+ */
+const fsqueryQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "fsquery.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: fsqueryAgentReadInput,
+  verification: {
+    reviewedBy: "Firestore agent execution design review",
+    boundary: FSQUERY_READ_BOUNDARY,
+    verifiedOn: "2026-10-31",
+  },
+};
+
+const RABBITREAD_READ_BOUNDARY =
+  "RabbitMQ: the provider's structural closed table, read with the editor's own read request parser: one read of one " +
+  "stream, its AMQP 0-9-1 client holding encoders for the handshake and channel open, basic.qos, basic.consume, " +
+  "basic.ack, basic.cancel-ok and the closes alone, so no take, publish, reject, nack, recover, purge, declare, " +
+  "transaction or confirm can be sent. " +
+  "Before any frame the management API's type check refuses anything but a stream, and the consume always carries " +
+  "x-stream-offset, which the broker refuses with 406 on a classic or quorum queue declared under the stream's name " +
+  "after the check. Read permission in RabbitMQ also grants a take and a purge, so no credential can be the boundary. " +
+  "A message's body, headers, properties and routing key are withheld: every answer is projected to each message's " +
+  "offset and body size (agent-metadata-read.ts), a request whose limit passes the row budget is refused before it is " +
+  "sent, and a result past the byte budget or a read that stops before its limit for any reason but the stream's end " +
+  "is refused, never truncated.";
+
+/**
+ * One RabbitMQ stream read the model wrote, on a `rabbitmq` connection.
+ *
+ * R1 on a structural boundary: the client can encode no take, publish, purge or declare, and a read reaches a stream
+ * only. Its own id, and not a widened `sql.query.read`, so the SQL contract and its audit action stay exactly what they
+ * were.
+ */
+const rabbitreadQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "rabbitread.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: rabbitreadAgentReadInput,
+  verification: {
+    reviewedBy: "RabbitMQ agent execution design review",
+    boundary: RABBITREAD_READ_BOUNDARY,
+    verifiedOn: "2026-10-31",
+  },
+};
+
+const REDISCLI_READ_BOUNDARY =
+  "Redis: the provider's closed table of metadata reads, each flagged readonly by the server's own COMMAND INFO and " +
+  "none flagged write, admin, pubsub, may_replicate or script_runner, in no write, admin, dangerous, scripting or " +
+  "pubsub category, and with only read-only key specs (redis-agent-statement.ts): DBSIZE, and for one key the command " +
+  "names TYPE, EXISTS, TTL, PTTL, STRLEN, LLEN, HLEN, SCARD, ZCARD, XLEN, OBJECT ENCODING and MEMORY USAGE, read " +
+  "from one line into the exact argv sent. Every command runs on a connection of its own in the connection's " +
+  "database, closed after it, and before it, on that connection, the server proves the ACL user reads only " +
+  "(redis-read-only-proof.ts): HELLO must answer the measured Redis or Valkey shape in standalone mode, and the " +
+  "user must be refused write, admin, dangerous, scripting and pubsub probes that change nothing even when " +
+  "admitted, each as a command it does not hold, so a connection naming no user, the default user and a user " +
+  "holding any probed command, even on its own key pattern only, are refused; a write the probes leave out is " +
+  "stopped by the table, which sends none. Key names and stored values " +
+  "are withheld: nothing lists keys or reads a value, field or member, every answer is projected to counts, types and " +
+  "sizes (redis-metadata-read.ts), a server error is worded by its code alone, and a result past the row or byte " +
+  "budget is refused, never truncated.";
+
+/**
+ * One Redis metadata read the model wrote, on a `redis` connection.
+ *
+ * R1 on a structural boundary: the table can name no write and no read of a key name or value, and the server proves
+ * the ACL user read-only before every command. Its own id, and not a widened `sql.query.read`, so the SQL contract and
+ * its audit action stay exactly what they were.
+ */
+const rediscliQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "rediscli.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: rediscliAgentReadInput,
+  verification: {
+    reviewedBy: "Redis agent execution design review",
+    boundary: REDISCLI_READ_BOUNDARY,
+    verifiedOn: "2026-10-30",
+  },
+};
+
 /** The selector of a scoped MongoDB catalog read: a kind, a database and a collection, any of them narrowed. */
 const mongoCatalogSelectorInput = z.strictObject({
   kind: z.enum(["columns", "indexes"]).default("columns"),
@@ -605,6 +1166,21 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   mongoPlanEstimateDescriptor,
   mongoTableProfileDescriptor,
   libredbkvQueryReadDescriptor,
+  influxqlQueryReadDescriptor,
+  weaviateapiQueryReadDescriptor,
+  qdrantapiQueryReadDescriptor,
+  cypherQueryReadDescriptor,
+  milvusrpcQueryReadDescriptor,
+  rediscliQueryReadDescriptor,
+  etcdctlQueryReadDescriptor,
+  oxiacliQueryReadDescriptor,
+  rabbitreadQueryReadDescriptor,
+  kafkareadQueryReadDescriptor,
+  s3apiQueryReadDescriptor,
+  fsqueryQueryReadDescriptor,
+  snmpgetQueryReadDescriptor,
+  netconfrpcQueryReadDescriptor,
+  modbusreadQueryReadDescriptor,
 ]);
 
 /**

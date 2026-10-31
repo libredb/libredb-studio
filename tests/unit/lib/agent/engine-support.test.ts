@@ -120,10 +120,16 @@ describe("AGENT_EXECUTION_ENGINES", () => {
     expect(measured.sort()).toEqual([...AGENT_EXECUTION_ENGINES].sort());
   });
 
-  test("firestore offers no read-only statement path, so agent mode does not execute on it (Firestore spec 7)", async () => {
+  test("firestore offers its metadata-only read path, so agent mode executes on it", async () => {
     expect(databaseTypes).toContain("firestore");
-    expect(await hasReadOnlyPath("firestore")).toBe(false);
-    expect(AGENT_EXECUTION_ENGINES).not.toContain("firestore");
+    expect(await hasReadOnlyPath("firestore")).toBe(true);
+    expect(AGENT_EXECUTION_ENGINES).toContain("firestore");
+  });
+
+  test("mqtt still offers no read-only statement path, so agent mode does not execute on it", async () => {
+    expect(databaseTypes).toContain("mqtt");
+    expect(await hasReadOnlyPath("mqtt")).toBe(false);
+    expect(AGENT_EXECUTION_ENGINES).not.toContain("mqtt");
   });
 });
 

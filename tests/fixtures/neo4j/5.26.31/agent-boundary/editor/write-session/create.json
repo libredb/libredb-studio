@@ -1,0 +1,21 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-enterprise",
+    "digest": "sha256:02d30e0a80f0aaed71cfdfaa85c8ea01cf44aacd55510d4a2b4a53f9f1a2e1ad",
+    "date": "2026-10-30T11:34:47.496Z",
+    "database": "neo4j"
+  },
+  "principal": "editor: role editor",
+  "statement": "CREATE (:LibredbProbe {at: 3}) RETURN 1 AS created",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 100
+  },
+  "session": "WRITE",
+  "outcome": "fail",
+  "error": {
+    "category": "query",
+    "code": "Neo.ClientError.Security.Forbidden",
+    "message": "Creating new node label on database 'neo4j' is not allowed for user 'editor' with roles [PUBLIC, editor]. See GRANT CREATE NEW NODE LABEL ON DATABASE `neo4j`..."
+  }
+}

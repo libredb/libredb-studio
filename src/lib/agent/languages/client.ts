@@ -13,6 +13,21 @@ import type { AgentStatementLanguageId } from "../agent-manifest";
 import { mergeDisjoint } from "../disjoint-merge";
 import type { AgentRunEvent } from "../types";
 import { KUBECTL_CLIENT_PACK } from "./kubectl/client";
+import { INFLUXQL_CLIENT_PACK } from "./influxql/client";
+import { WEAVIATEAPI_CLIENT_PACK } from "./weaviateapi/client";
+import { QDRANTAPI_CLIENT_PACK } from "./qdrantapi/client";
+import { CYPHER_CLIENT_PACK } from "./cypher/client";
+import { MILVUSRPC_CLIENT_PACK } from "./milvusrpc/client";
+import { REDISCLI_CLIENT_PACK } from "./rediscli/client";
+import { ETCDCTL_CLIENT_PACK } from "./etcdctl/client";
+import { OXIACLI_CLIENT_PACK } from "./oxiacli/client";
+import { RABBITREAD_CLIENT_PACK } from "./rabbitread/client";
+import { KAFKAREAD_CLIENT_PACK } from "./kafkaread/client";
+import { S3API_CLIENT_PACK } from "./s3api/client";
+import { FSQUERY_CLIENT_PACK } from "./fsquery/client";
+import { SNMPGET_CLIENT_PACK } from "./snmpget/client";
+import { NETCONFRPC_CLIENT_PACK } from "./netconfrpc/client";
+import { MODBUSREAD_CLIENT_PACK } from "./modbusread/client";
 import { LIBREDBKV_CLIENT_PACK } from "./libredbkv/client";
 import { MONGO_CLIENT_PACK } from "./mongo/client";
 import type {
@@ -47,6 +62,21 @@ const CLIENT_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageClien
   kubectl: KUBECTL_CLIENT_PACK,
   mongo: MONGO_CLIENT_PACK,
   libredbkv: LIBREDBKV_CLIENT_PACK,
+  influxql: INFLUXQL_CLIENT_PACK,
+  weaviateapi: WEAVIATEAPI_CLIENT_PACK,
+  qdrantapi: QDRANTAPI_CLIENT_PACK,
+  cypher: CYPHER_CLIENT_PACK,
+  milvusrpc: MILVUSRPC_CLIENT_PACK,
+  rediscli: REDISCLI_CLIENT_PACK,
+  etcdctl: ETCDCTL_CLIENT_PACK,
+  oxiacli: OXIACLI_CLIENT_PACK,
+  rabbitread: RABBITREAD_CLIENT_PACK,
+  kafkaread: KAFKAREAD_CLIENT_PACK,
+  s3api: S3API_CLIENT_PACK,
+  fsquery: FSQUERY_CLIENT_PACK,
+  snmpget: SNMPGET_CLIENT_PACK,
+  netconfrpc: NETCONFRPC_CLIENT_PACK,
+  modbusread: MODBUSREAD_CLIENT_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageClientPack>);
 
 /** The client facet for `language`. The record is total, so a typed id always has one. */
@@ -81,6 +111,21 @@ export const AGENT_EVIDENCE_EVENTS = mergeDisjoint(
     KUBECTL_CLIENT_PACK.evidenceEvents,
     MONGO_CLIENT_PACK.evidenceEvents,
     LIBREDBKV_CLIENT_PACK.evidenceEvents,
+    INFLUXQL_CLIENT_PACK.evidenceEvents,
+    WEAVIATEAPI_CLIENT_PACK.evidenceEvents,
+    QDRANTAPI_CLIENT_PACK.evidenceEvents,
+    CYPHER_CLIENT_PACK.evidenceEvents,
+    MILVUSRPC_CLIENT_PACK.evidenceEvents,
+    REDISCLI_CLIENT_PACK.evidenceEvents,
+    ETCDCTL_CLIENT_PACK.evidenceEvents,
+    OXIACLI_CLIENT_PACK.evidenceEvents,
+    RABBITREAD_CLIENT_PACK.evidenceEvents,
+    KAFKAREAD_CLIENT_PACK.evidenceEvents,
+    S3API_CLIENT_PACK.evidenceEvents,
+    FSQUERY_CLIENT_PACK.evidenceEvents,
+    SNMPGET_CLIENT_PACK.evidenceEvents,
+    NETCONFRPC_CLIENT_PACK.evidenceEvents,
+    MODBUSREAD_CLIENT_PACK.evidenceEvents,
   ],
   "AGENT_EVIDENCE_EVENTS",
 ) satisfies AgentEvidenceEventSpecs<AgentPackEvidenceEvent>;
@@ -96,6 +141,21 @@ export const AGENT_PACK_SHORTFALL_SENTENCES = mergeDisjoint(
     KUBECTL_CLIENT_PACK.shortfallSentences,
     MONGO_CLIENT_PACK.shortfallSentences,
     LIBREDBKV_CLIENT_PACK.shortfallSentences,
+    INFLUXQL_CLIENT_PACK.shortfallSentences,
+    WEAVIATEAPI_CLIENT_PACK.shortfallSentences,
+    QDRANTAPI_CLIENT_PACK.shortfallSentences,
+    CYPHER_CLIENT_PACK.shortfallSentences,
+    MILVUSRPC_CLIENT_PACK.shortfallSentences,
+    REDISCLI_CLIENT_PACK.shortfallSentences,
+    ETCDCTL_CLIENT_PACK.shortfallSentences,
+    OXIACLI_CLIENT_PACK.shortfallSentences,
+    RABBITREAD_CLIENT_PACK.shortfallSentences,
+    KAFKAREAD_CLIENT_PACK.shortfallSentences,
+    S3API_CLIENT_PACK.shortfallSentences,
+    FSQUERY_CLIENT_PACK.shortfallSentences,
+    SNMPGET_CLIENT_PACK.shortfallSentences,
+    NETCONFRPC_CLIENT_PACK.shortfallSentences,
+    MODBUSREAD_CLIENT_PACK.shortfallSentences,
   ],
   "AGENT_PACK_SHORTFALL_SENTENCES",
 ) satisfies Record<AgentPackShortfall, string>;
@@ -107,6 +167,21 @@ export const AGENT_PACK_READING_REFUSAL_HEADLINES = mergeDisjoint(
     KUBECTL_CLIENT_PACK.readingRefusalHeadlines,
     MONGO_CLIENT_PACK.readingRefusalHeadlines,
     LIBREDBKV_CLIENT_PACK.readingRefusalHeadlines,
+    INFLUXQL_CLIENT_PACK.readingRefusalHeadlines,
+    WEAVIATEAPI_CLIENT_PACK.readingRefusalHeadlines,
+    QDRANTAPI_CLIENT_PACK.readingRefusalHeadlines,
+    CYPHER_CLIENT_PACK.readingRefusalHeadlines,
+    MILVUSRPC_CLIENT_PACK.readingRefusalHeadlines,
+    REDISCLI_CLIENT_PACK.readingRefusalHeadlines,
+    ETCDCTL_CLIENT_PACK.readingRefusalHeadlines,
+    OXIACLI_CLIENT_PACK.readingRefusalHeadlines,
+    RABBITREAD_CLIENT_PACK.readingRefusalHeadlines,
+    KAFKAREAD_CLIENT_PACK.readingRefusalHeadlines,
+    S3API_CLIENT_PACK.readingRefusalHeadlines,
+    FSQUERY_CLIENT_PACK.readingRefusalHeadlines,
+    SNMPGET_CLIENT_PACK.readingRefusalHeadlines,
+    NETCONFRPC_CLIENT_PACK.readingRefusalHeadlines,
+    MODBUSREAD_CLIENT_PACK.readingRefusalHeadlines,
   ],
   "AGENT_PACK_READING_REFUSAL_HEADLINES",
 ) satisfies Record<AgentPackReadingDenyCode, string>;
@@ -121,6 +196,21 @@ export const AGENT_PACK_REQUIREMENTS = mergeDisjoint(
     KUBECTL_CLIENT_PACK.requirements,
     MONGO_CLIENT_PACK.requirements,
     LIBREDBKV_CLIENT_PACK.requirements,
+    INFLUXQL_CLIENT_PACK.requirements,
+    WEAVIATEAPI_CLIENT_PACK.requirements,
+    QDRANTAPI_CLIENT_PACK.requirements,
+    CYPHER_CLIENT_PACK.requirements,
+    MILVUSRPC_CLIENT_PACK.requirements,
+    REDISCLI_CLIENT_PACK.requirements,
+    ETCDCTL_CLIENT_PACK.requirements,
+    OXIACLI_CLIENT_PACK.requirements,
+    RABBITREAD_CLIENT_PACK.requirements,
+    KAFKAREAD_CLIENT_PACK.requirements,
+    S3API_CLIENT_PACK.requirements,
+    FSQUERY_CLIENT_PACK.requirements,
+    SNMPGET_CLIENT_PACK.requirements,
+    NETCONFRPC_CLIENT_PACK.requirements,
+    MODBUSREAD_CLIENT_PACK.requirements,
   ],
   "AGENT_PACK_REQUIREMENTS",
 ) satisfies Record<AgentPackVariantRequirement, AgentVariantRequirementSpec>;

@@ -1,0 +1,19 @@
+{
+  "$captured": {
+    "image": "valkey/valkey:9.1.2@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd",
+    "version": "9.1.2",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "principal": "agent_scoped_writer",
+    "rules": "on ~app:* &* +@read +info +@write"
+  },
+  "inPatternWrite": {
+    "argv": [
+      "DEL",
+      "app:in-pattern"
+    ],
+    "outcome": "ok",
+    "reply": "1"
+  },
+  "existsAfterWrite": "0"
+}

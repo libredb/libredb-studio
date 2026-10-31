@@ -1,0 +1,186 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-enterprise",
+    "digest": "sha256:02d30e0a80f0aaed71cfdfaa85c8ea01cf44aacd55510d4a2b4a53f9f1a2e1ad",
+    "date": "2026-10-30T11:34:54.765Z",
+    "database": "neo4j"
+  },
+  "principal": "widened: role agent_reader, then also csv_loader",
+  "statement": "SHOW PROCEDURES EXECUTABLE BY CURRENT USER YIELD name",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 1000
+  },
+  "outcome": "pass",
+  "result": {
+    "fields": [
+      "name"
+    ],
+    "rows": [
+      {
+        "name": "cdc.current"
+      },
+      {
+        "name": "cdc.earliest"
+      },
+      {
+        "name": "db.awaitIndex"
+      },
+      {
+        "name": "db.awaitIndexes"
+      },
+      {
+        "name": "db.cdc.current"
+      },
+      {
+        "name": "db.cdc.earliest"
+      },
+      {
+        "name": "db.checkpoint"
+      },
+      {
+        "name": "db.create.setNodeVectorProperty"
+      },
+      {
+        "name": "db.create.setRelationshipVectorProperty"
+      },
+      {
+        "name": "db.create.setVectorProperty"
+      },
+      {
+        "name": "db.createLabel"
+      },
+      {
+        "name": "db.createProperty"
+      },
+      {
+        "name": "db.createRelationshipType"
+      },
+      {
+        "name": "db.index.fulltext.awaitEventuallyConsistentIndexRefresh"
+      },
+      {
+        "name": "db.index.fulltext.listAvailableAnalyzers"
+      },
+      {
+        "name": "db.index.fulltext.queryNodes"
+      },
+      {
+        "name": "db.index.fulltext.queryRelationships"
+      },
+      {
+        "name": "db.index.vector.createNodeIndex"
+      },
+      {
+        "name": "db.index.vector.queryNodes"
+      },
+      {
+        "name": "db.index.vector.queryRelationships"
+      },
+      {
+        "name": "db.info"
+      },
+      {
+        "name": "db.labels"
+      },
+      {
+        "name": "db.ping"
+      },
+      {
+        "name": "db.propertyKeys"
+      },
+      {
+        "name": "db.relationshipTypes"
+      },
+      {
+        "name": "db.resampleIndex"
+      },
+      {
+        "name": "db.resampleOutdatedIndexes"
+      },
+      {
+        "name": "db.schema.nodeTypeProperties"
+      },
+      {
+        "name": "db.schema.relTypeProperties"
+      },
+      {
+        "name": "db.schema.visualization"
+      },
+      {
+        "name": "dbms.cluster.cordonServer"
+      },
+      {
+        "name": "dbms.cluster.deallocateDatabaseFromServer"
+      },
+      {
+        "name": "dbms.cluster.deallocateDatabaseFromServers"
+      },
+      {
+        "name": "dbms.cluster.deallocateNumberOfDatabases"
+      },
+      {
+        "name": "dbms.cluster.protocols"
+      },
+      {
+        "name": "dbms.cluster.reallocateDatabase"
+      },
+      {
+        "name": "dbms.cluster.reallocateNumberOfDatabases"
+      },
+      {
+        "name": "dbms.cluster.recreateDatabase"
+      },
+      {
+        "name": "dbms.cluster.routing.getRoutingTable"
+      },
+      {
+        "name": "dbms.cluster.setAutomaticallyEnableFreeServers"
+      },
+      {
+        "name": "dbms.cluster.uncordonServer"
+      },
+      {
+        "name": "dbms.components"
+      },
+      {
+        "name": "dbms.info"
+      },
+      {
+        "name": "dbms.killConnection"
+      },
+      {
+        "name": "dbms.killConnections"
+      },
+      {
+        "name": "dbms.listActiveLocks"
+      },
+      {
+        "name": "dbms.listCapabilities"
+      },
+      {
+        "name": "dbms.listConnections"
+      },
+      {
+        "name": "dbms.listPools"
+      },
+      {
+        "name": "dbms.queryJmx"
+      },
+      {
+        "name": "dbms.routing.getRoutingTable"
+      },
+      {
+        "name": "dbms.showCurrentUser"
+      },
+      {
+        "name": "tx.getMetaData"
+      },
+      {
+        "name": "tx.setMetaData"
+      }
+    ],
+    "truncated": false,
+    "queryType": "r"
+  }
+}

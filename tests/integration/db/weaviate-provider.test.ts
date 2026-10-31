@@ -23,6 +23,10 @@ import {
   type WeaviateOutcome,
 } from "../../helpers/weaviate-scenario";
 import { scenarioFile, WEAVIATE_SCENARIOS, WEAVIATE_SERVICES } from "../../live/weaviate-scenarios";
+import { ExecutionProfileError } from "@/lib/db/errors";
+import { readWeaviateViewerProof } from "@/lib/db/providers/vector/weaviate/metadata-read";
+import { answerFailure } from "@/lib/db/providers/vector/weaviate/errors";
+import { agentAnswer, agentCapture, agentCaptureNames } from "../../helpers/weaviate-agent";
 
 const FIXTURES = join(import.meta.dir, "..", "..", "fixtures", "weaviate");
 
@@ -152,5 +156,90 @@ describe("what the captures show", () => {
     expect(outcome("weaviate-tls/plain-to-tls.json", "connect")).toMatchObject({
       error: { name: "ConnectionError", message: expect.stringContaining("choose an SSL mode") },
     });
+  });
+});
+
+/**
+ * The agent read-only profile's boundary, from what 1.40.2 answered requests sent raw, past every Studio check
+ * (tests/fixtures/weaviate/1.40.2/agent-boundary/, recorded by its run.sh): the viewer's writes refused as RBAC
+ * refusals with the data unchanged, beside the root user's same write as the positive control; the viewer proof's
+ * answers; a COLD tenant woken by a viewer's data read and not by its own record; and the module calls a read makes.
+ * The provider's own refusals of each are held in tests/unit/db/weaviate/metadata-*.test.ts and agent-provider.test.ts.
+ */
+describe("the agent boundary, replayed from 1.40.2", () => {
+  const count = (name: string): number => (JSON.parse(agentCapture(name).body) as { count: number }).count;
+
+  test("a viewer's object write, tenant change and collection drop are RBAC refusals, and nothing changed", () => {
+    for (const [name, action] of [
+      ["write-object-viewer", "create_data"],
+      ["write-tenant-viewer", "update_tenants"],
+      ["write-schema-viewer", "delete_collections"],
+    ] as const) {
+      const refusal = answerFailure(agentAnswer(name));
+      expect(refusal?.category, name).toBe("forbidden");
+      expect(refusal?.detail, name).toContain(`insufficient permissions to ${action}`);
+    }
+    expect(count("write-count-before")).toBe(3);
+    expect(count("write-count-after-viewer")).toBe(3);
+    expect(JSON.parse(agentCapture("write-tenant-after-viewer").body)).toEqual({ activityStatus: "HOT", name: "hot" });
+    expect(agentCapture("write-schema-after-viewer").status).toBe(200);
+  });
+
+  test("the positive control: the root user's same write is answered, and the count moves", () => {
+    expect(agentCapture("write-object-root").status).toBe(200);
+    expect(count("write-count-after-root")).toBe(4);
+  });
+
+  test("the viewer proof: only the viewer's own record proves; every other principal's refuses", () => {
+    expect(() => readWeaviateViewerProof(agentAnswer("own-info-viewer"))).not.toThrow();
+    for (const name of [
+      "own-info-root",
+      "own-info-admin",
+      "own-info-widened",
+      "own-info-drift-after",
+      "own-info-keyonly",
+      "own-info-anonymous",
+      "own-info-anonymous-open",
+    ]) {
+      expect(() => readWeaviateViewerProof(agentAnswer(name)), name).toThrow(ExecutionProfileError);
+    }
+  });
+
+  test("a viewer's count, object list and shard read of a COLD tenant wake it; its own record does not", () => {
+    const status = (name: string) => (JSON.parse(agentCapture(name).body) as { activityStatus: string }).activityStatus;
+    expect(status("wake-record-before")).toBe("COLD");
+    expect(status("wake-record-again")).toBe("COLD");
+    expect(agentCapture("wake-aggregate").status).toBe(200);
+    expect(status("wake-record-after-aggregate")).toBe("HOT");
+    expect(status("wake-record-after-objects")).toBe("HOT");
+    expect(status("wake-record-after-shards")).toBe("HOT");
+    expect(answerFailure(agentAnswer("manual-aggregate"))?.category).toBe("tenant-not-active");
+    expect(status("manual-record-after")).toBe("COLD");
+  });
+
+  test("hybrid past alpha 0, near-text, a GraphQL nearText and a generate call the module; the agent's reads do not", () => {
+    const egress = (name: string) => agentCapture(name).egressRequests;
+    for (const name of [
+      "egress-hybrid-alpha-half",
+      "egress-near-text",
+      "egress-graphql-near-text",
+      "egress-graphql-generate",
+    ]) {
+      expect(egress(name), name).toBe(1);
+    }
+    for (const name of ["egress-hybrid-alpha-zero", "egress-bm25", "egress-near-object", "egress-aggregate"]) {
+      expect(egress(name), name).toBe(0);
+    }
+  });
+
+  test("no capture holds a key, and every one names its principal and the pinned image", () => {
+    for (const name of agentCaptureNames()) {
+      const capture = agentCapture(name);
+      expect(capture.principal, name).toMatch(/^[a-z-]+: /);
+      expect(JSON.stringify(capture), name).not.toMatch(/Bearer [A-Za-z0-9]/);
+      expect((capture as unknown as { image: string }).image).toBe(
+        "cr.weaviate.io/semitechnologies/weaviate:1.40.2@sha256:0083587dc01f33112e5406ce9b471df1abea480c71a0407af903929a389ae08a",
+      );
+    }
   });
 });

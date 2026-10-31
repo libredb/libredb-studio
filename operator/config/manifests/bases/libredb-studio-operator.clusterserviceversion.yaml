@@ -5,6 +5,7 @@ metadata:
     alm-examples: '[]'
     capabilities: Basic Install
     categories: Database, Developer Tools
+    console.openshift.io/plugins: '["libredb-studio"]'
     containerImage: ghcr.io/libredb/libredb-studio-operator:0.0.0
     description: Open-source web-based SQL IDE for forty-two engines - PostgreSQL,
       MySQL, Oracle, Db2 LUW, SQL Server, SQLite, DuckDB, MongoDB, Redis, Couchbase,
@@ -21,6 +22,7 @@ metadata:
     features.operators.openshift.io/token-auth-azure: "false"
     features.operators.openshift.io/token-auth-gcp: "false"
     olm.skipRange: '>=0.0.0 <0.0.0'
+    operatorframework.io/suggested-namespace: libredb-studio
     repository: https://github.com/libredb/libredb-studio
     support: LibreDB
   labels:
@@ -37,7 +39,8 @@ spec:
         the Helm chart values except extraObjects, which the operator refuses, and
         the bundled PostgreSQL (postgresql), which takes only the values Studio's
         storage needs and always runs in this resource's namespace; every field left
-        unset falls back to the chart defaults.
+        unset falls back to the chart defaults. Reconciled only in the namespace the
+        operator is installed in.
       displayName: LibreDB Studio
       kind: LibreDBStudio
       name: libredbstudios.studio.libredb.org
@@ -62,6 +65,30 @@ spec:
 
     Create a `LibreDBStudio` resource; every field left unset falls back to
     the chart defaults. See the sample on this page for a minimal start.
+
+    ### Namespace
+
+    The operator manages only its own namespace. Install it for a specific
+    namespace, the recommended `libredb-studio` (the install creates it when
+    it does not exist), and create one `LibreDBStudio` there, the cluster's
+    Studio. A `LibreDBStudio` in any other namespace is not reconciled; teams
+    install Studio with the Helm chart. An operator 1.1.0 install is not
+    upgraded in place: see
+    [Moving from operator 1.1.0](https://github.com/libredb/libredb-studio/blob/main/docs/OPENSHIFT.md#moving-from-operator-110).
+
+    ### Console plugin
+
+    The operator ships the OpenShift console plugin `libredb-studio`, a
+    Databases page and a database details item that open a database in
+    Studio. It needs OpenShift 4.19 or later. Its toggle in the install form
+    defaults to Disabled on a community catalog: a cluster admin turns it on
+    there, later on the console's Console plugins page (Administration >
+    Cluster Settings > Configuration > Console), or with `oc patch` on
+    `consoles.operator.openshift.io/cluster`. The plugin also needs
+    `openshift.consolePlugin.enabled` on the cluster's LibreDB Studio
+    resource, the one in the operator's namespace, with Kubernetes discovery
+    and the console link on; its server runs in the operator's namespace too.
+    The console link works without the plugin.
   displayName: LibreDB Studio
   icon:
   - base64data: PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgdmlld0JveD0iMCAwIDIwMCAyMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CiAgPGRlZnM+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9ImxvZ28tZ3JhZGllbnQiIHgxPSIwJSIgeTE9IjAlIiB4Mj0iMTAwJSIgeTI9IjEwMCUiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAlIiBzdG9wLWNvbG9yPSIjNEY0NkU1IiAvPgogICAgICA8c3RvcCBvZmZzZXQ9IjEwMCUiIHN0b3AtY29sb3I9IiM5MzMzRUEiIC8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogICAgPGxpbmVhckdyYWRpZW50IGlkPSJjb2RlLWdyYWRpZW50IiB4MT0iMCUiIHkxPSIwJSIgeDI9IjEwMCUiIHkyPSIxMDAlIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwJSIgc3RvcC1jb2xvcj0iIzEwQjk4MSIgLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxMDAlIiBzdG9wLWNvbG9yPSIjM0I4MkY2IiAvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICAgIDxmaWx0ZXIgaWQ9Imdsb3ciIHg9Ii0yMCUiIHk9Ii0yMCUiIHdpZHRoPSIxNDAlIiBoZWlnaHQ9IjE0MCUiPgogICAgICA8ZmVHYXVzc2lhbkJsdXIgc3RkRGV2aWF0aW9uPSIzIiByZXN1bHQ9ImJsdXIiIC8+CiAgICAgIDxmZUNvbXBvc2l0ZSBpbj0iU291cmNlR3JhcGhpYyIgaW4yPSJibHVyIiBvcGVyYXRvcj0ib3ZlciIgLz4KICAgIDwvZmlsdGVyPgogIDwvZGVmcz4KICAKICA8IS0tIEJhY2tncm91bmQgU2hhcGUgLS0+CiAgPHBhdGggZD0iTTEwMCAyMEwxNjkuMjgyIDYwVjE0MEwxMDAgMTgwTDMwLjcxOCAxNDBWNjBMMTAwIDIwWiIgZmlsbD0idXJsKCNsb2dvLWdyYWRpZW50KSIgZmlsbC1vcGFjaXR5PSIwLjA1IiBzdHJva2U9InVybCgjbG9nby1ncmFkaWVudCkiIHN0cm9rZS13aWR0aD0iMS41Ii8+CiAgCiAgPCEtLSBEYXRhYmFzZSBMYXllcnMgKERlLWVtcGhhc2l6ZWQpIC0tPgogIDxnIG9wYWNpdHk9IjAuMyI+CiAgICA8cmVjdCB4PSI3MCIgeT0iODAiIHdpZHRoPSI2MCIgaGVpZ2h0PSIxMCIgcng9IjIiIGZpbGw9InVybCgjbG9nby1ncmFkaWVudCkiIC8+CiAgICA8cmVjdCB4PSI3MCIgeT0iOTUiIHdpZHRoPSI2MCIgaGVpZ2h0PSIxMCIgcng9IjIiIGZpbGw9InVybCgjbG9nby1ncmFkaWVudCkiIC8+CiAgICA8cmVjdCB4PSI3MCIgeT0iMTEwIiB3aWR0aD0iNjAiIGhlaWdodD0iMTAiIHJ4PSIyIiBmaWxsPSJ1cmwoI2xvZ28tZ3JhZGllbnQpIiAvPgogIDwvZz4KICAKICA8IS0tIENvZGluZyBCcmFja2V0cyAoRW1waGFzaXplZCkgLS0+CiAgPGcgZmlsdGVyPSJ1cmwoI2dsb3cpIj4KICAgIDxwYXRoIGQ9Ik01NSA3MEwzNSAxMDBMNTUgMTMwIiBzdHJva2U9InVybCgjY29kZS1ncmFkaWVudCkiIHN0cm9rZS13aWR0aD0iNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiAvPgogICAgPHBhdGggZD0iTTE0NSA3MEwxNjUgMTAwTDE0NSAxMzAiIHN0cm9rZT0idXJsKCNjb2RlLWdyYWRpZW50KSIgc3Ryb2tlLXdpZHRoPSI2IiBzdHJva2UtbGluZWNhcD0icm91bmQiIHN0cm9rZS1saW5lam9pbj0icm91bmQiIC8+CiAgPC9nPgo8L3N2Zz4K
@@ -71,13 +98,13 @@ spec:
       deployments: null
     strategy: ""
   installModes:
-  - supported: false
+  - supported: true
     type: OwnNamespace
   - supported: false
     type: SingleNamespace
   - supported: false
     type: MultiNamespace
-  - supported: true
+  - supported: false
     type: AllNamespaces
   keywords:
   - sql

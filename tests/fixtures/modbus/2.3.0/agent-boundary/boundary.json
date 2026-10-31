@@ -1,0 +1,366 @@
+{
+  "fixture": {
+    "image": "oitc/modbus-server:2.3.0@sha256:32bfe144512e1f070cf7e7e2513cdcb774d74db142ee5dbad45b21d6d705ab97",
+    "singleClient": "libmodbus, one client at a time (single-client/server.c)"
+  },
+  "reads": [
+    {
+      "statement": "{\"unit\": 1, \"table\": \"holding_register\", \"address\": 0, \"count\": 3}",
+      "rows": [
+        {
+          "unit": 1,
+          "table": "holding_register",
+          "address": 0,
+          "raw": [
+            7000
+          ],
+          "value": 7000
+        },
+        {
+          "unit": 1,
+          "table": "holding_register",
+          "address": 1,
+          "raw": [
+            7011
+          ],
+          "value": 7011
+        },
+        {
+          "unit": 1,
+          "table": "holding_register",
+          "address": 2,
+          "raw": [
+            7022
+          ],
+          "value": 7022
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "statement": "{\"unit\": 1, \"table\": \"input_register\", \"address\": 0, \"count\": 2}",
+      "rows": [
+        {
+          "unit": 1,
+          "table": "input_register",
+          "address": 0,
+          "raw": [
+            8500
+          ],
+          "value": 8500
+        },
+        {
+          "unit": 1,
+          "table": "input_register",
+          "address": 1,
+          "raw": [
+            8493
+          ],
+          "value": 8493
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "statement": "{\"unit\": 1, \"table\": \"coil\", \"address\": 0, \"count\": 4}",
+      "rows": [
+        {
+          "unit": 1,
+          "table": "coil",
+          "address": 0,
+          "raw": true,
+          "value": true
+        },
+        {
+          "unit": 1,
+          "table": "coil",
+          "address": 1,
+          "raw": false,
+          "value": false
+        },
+        {
+          "unit": 1,
+          "table": "coil",
+          "address": 2,
+          "raw": false,
+          "value": false
+        },
+        {
+          "unit": 1,
+          "table": "coil",
+          "address": 3,
+          "raw": true,
+          "value": true
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "statement": "{\"unit\": 1, \"table\": \"discrete_input\", \"address\": 0, \"count\": 4}",
+      "rows": [
+        {
+          "unit": 1,
+          "table": "discrete_input",
+          "address": 0,
+          "raw": false,
+          "value": false
+        },
+        {
+          "unit": 1,
+          "table": "discrete_input",
+          "address": 1,
+          "raw": false,
+          "value": false
+        },
+        {
+          "unit": 1,
+          "table": "discrete_input",
+          "address": 2,
+          "raw": true,
+          "value": true
+        },
+        {
+          "unit": 1,
+          "table": "discrete_input",
+          "address": 3,
+          "raw": true,
+          "value": true
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "statement": "{\"unit\": 1, \"table\": \"holding_register\", \"address\": 0, \"count\": 2, \"type\": \"uint32\"}",
+      "rows": [
+        {
+          "unit": 1,
+          "table": "holding_register",
+          "address": 0,
+          "raw": [
+            7000,
+            7011
+          ],
+          "value": 458759011
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "statement": "{\"read\": [\"hr1\", \"ir0\", \"coil0\", \"hr0\"]}",
+      "rows": [
+        {
+          "point": "hr1",
+          "unit": 1,
+          "table": "holding_register",
+          "address": 1,
+          "type": "uint16",
+          "raw": [
+            7011
+          ],
+          "value": 7011,
+          "unit_of_measure": null
+        },
+        {
+          "point": "ir0",
+          "unit": 1,
+          "table": "input_register",
+          "address": 0,
+          "type": "uint16",
+          "raw": [
+            8500
+          ],
+          "value": 8500,
+          "unit_of_measure": null
+        },
+        {
+          "point": "coil0",
+          "unit": 1,
+          "table": "coil",
+          "address": 0,
+          "type": "bool",
+          "raw": true,
+          "value": true,
+          "unit_of_measure": null
+        },
+        {
+          "point": "hr0",
+          "unit": 1,
+          "table": "holding_register",
+          "address": 0,
+          "type": "uint16",
+          "raw": [
+            7000
+          ],
+          "value": 7000,
+          "unit_of_measure": null
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "statement": "{\"identify\": \"basic\"}",
+      "rows": [
+        {
+          "object_id": "0x00",
+          "name": "VendorName",
+          "value": "Pymodbus"
+        },
+        {
+          "object_id": "0x01",
+          "name": "ProductCode",
+          "value": "PM"
+        },
+        {
+          "object_id": "0x02",
+          "name": "MajorMinorRevision",
+          "value": "3.12.1"
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "statement": "{\"identify\": \"extended\"}",
+      "rows": [
+        {
+          "object_id": "0x00",
+          "name": "VendorName",
+          "value": "Pymodbus"
+        },
+        {
+          "object_id": "0x01",
+          "name": "ProductCode",
+          "value": "PM"
+        },
+        {
+          "object_id": "0x02",
+          "name": "MajorMinorRevision",
+          "value": "3.12.1"
+        },
+        {
+          "object_id": "0x03",
+          "name": "VendorUrl",
+          "value": "https://github.com/pymodbus-dev/pymodbus/"
+        },
+        {
+          "object_id": "0x04",
+          "name": "ProductName",
+          "value": "Pymodbus Server"
+        },
+        {
+          "object_id": "0x05",
+          "name": "ModelName",
+          "value": "Pymodbus Server"
+        }
+      ],
+      "warnings": []
+    }
+  ],
+  "refusedBeforeSend": [
+    {
+      "statement": "{\"unit\": 1, \"table\": \"holding_register\", \"address\": 0, \"count\": 1, \"function\": 6}",
+      "opening": "A range read carries no key \"function\"",
+      "connections": 0
+    },
+    {
+      "statement": "{\"unit\": 1, \"table\": \"holding_register\", \"address\": 0, \"count\": 1, \"value\": 1}",
+      "opening": "A range read carries no key \"value\"",
+      "connections": 0
+    },
+    {
+      "statement": "{\"unit\": 0, \"table\": \"coil\", \"address\": 0, \"count\": 1}",
+      "opening": "Unit id must be a whole number from 1 to 255",
+      "connections": 0
+    },
+    {
+      "statement": "{\"unit\": 1, \"table\": \"coil\", \"address\": 65536, \"count\": 1}",
+      "opening": "Address must be a whole number from 0 to 65535",
+      "connections": 0
+    },
+    {
+      "statement": "{\"unit\": 1, \"table\": \"holding_register\", \"address\": 0, \"count\": 126}",
+      "opening": "Quantity must be a whole number from 1 to 125 for registers",
+      "connections": 0
+    },
+    {
+      "statement": "{\"identify\": \"individual\"}",
+      "opening": "\"identify\" must be basic, regular, extended, and it is the text \"individual\"",
+      "connections": 0
+    },
+    {
+      "statement": "{\"read\": [\"not-in-the-map\"]}",
+      "opening": "The register map has no point named \"not-in-the-map\"",
+      "connections": 0
+    },
+    {
+      "statement": "write 40001 1",
+      "opening": "The read request is not valid JSON: JSON Parse error: Unexpected identifier \"write\"",
+      "connections": 0
+    }
+  ],
+  "pacing": {
+    "gapMs": 1000,
+    "concurrentReads": {
+      "maxOpen": 1,
+      "gapAfterCloseMs": 999
+    }
+  },
+  "lockout": {
+    "pymodbus": {
+      "holdMs": 1000,
+      "secondWhileFirstHeldMs": 0,
+      "secondAnsweredAfterCloseMs": 0,
+      "dialAndReadAfterCloseMs": [
+        1,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "singleClient": {
+      "holdMs": 2000,
+      "secondWhileFirstHeldMs": 2000,
+      "secondAnsweredAfterCloseMs": 0,
+      "dialAndReadAfterCloseMs": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "agentReadHoldMs": 1
+    }
+  },
+  "rawWrites": [
+    {
+      "functionCode": 5,
+      "answer": "answered function 5",
+      "changed": true
+    },
+    {
+      "functionCode": 6,
+      "answer": "answered function 6",
+      "changed": true
+    },
+    {
+      "functionCode": 15,
+      "answer": "answered function 15",
+      "changed": true
+    },
+    {
+      "functionCode": 16,
+      "answer": "answered function 16",
+      "changed": true
+    },
+    {
+      "functionCode": 22,
+      "answer": "answered function 22",
+      "changed": true
+    },
+    {
+      "functionCode": 23,
+      "answer": "answered function 23",
+      "changed": true
+    }
+  ]
+}

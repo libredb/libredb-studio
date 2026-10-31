@@ -76,3 +76,28 @@ describe("plan-mode grounding on Oxia", () => {
     expect(new Set(fake.calls.map((call) => call.rpc))).toEqual(new Set(["GetShardAssignments"]));
   });
 });
+
+describe("grounding on a handle opened for an agent-mode profile", () => {
+  test.each([
+    ["agent read-only", { readOnly: true, sendsStatements: true }],
+    ["agent operations", { readOnly: true, sendsStatements: false }],
+  ] as const)("%s: the shard rows alone, no key, value or address, and no key walk", async (_name, execution) => {
+    const fake = createFakeOxiaClient({
+      order: "hierarchical",
+      records: [{ key: SECRET_KEY, value: new TextEncoder().encode(SECRET_VALUE) }],
+    });
+    const provider = new OxiaProvider(CONNECTION, {}, execution, () => fake);
+    await provider.connect();
+
+    const capture = await captureContextSnapshot(agentContext(provider));
+
+    expect(capture.kind).toBe("captured");
+    if (capture.kind !== "captured") return;
+    expect(capture.snapshot.objects.map((object) => object.kind)).toEqual(["shard", "shard", "shard"]);
+    const text = JSON.stringify(capture);
+    for (const secret of [SECRET_KEY, "tenant-secret-marker", SECRET_VALUE, "localhost:6648"]) {
+      expect({ secret, leaked: text.includes(secret) }).toEqual({ secret, leaked: false });
+    }
+    expect(new Set(fake.calls.map((call) => call.rpc))).toEqual(new Set(["GetShardAssignments"]));
+  });
+});

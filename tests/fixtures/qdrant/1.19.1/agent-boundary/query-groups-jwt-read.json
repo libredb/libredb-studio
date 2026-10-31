@@ -1,0 +1,24 @@
+{
+  "version": "1.19.1",
+  "name": "agent-boundary/query-groups-jwt-read",
+  "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1@sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+  "capturedAt": "2026-10-30",
+  "principal": "jwt-read: a JWT whose access claim is \"r\"",
+  "request": {
+    "method": "POST",
+    "path": "/collections/plain/points/query/groups",
+    "auth": "api-key",
+    "body": {
+      "query": [
+        0.1,
+        0.2,
+        0.3,
+        0.4
+      ],
+      "group_by": "city"
+    }
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "body": "{\"result\":{\"groups\":[{\"hits\":[{\"id\":3,\"version\":1,\"score\":0.32000002}],\"id\":\"stored-city-3\"},{\"hits\":[{\"id\":2,\"version\":1,\"score\":0.31}],\"id\":\"stored-city-2\"},{\"hits\":[{\"id\":1,\"version\":1,\"score\":0.3}],\"id\":\"stored-city-1\"}]},\"status\":\"ok\",\"time\":0.000178084}"
+}

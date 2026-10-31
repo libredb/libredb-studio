@@ -20,7 +20,7 @@ describe("FIRESTORE_LABELS", () => {
   test("the statement language names the chain, its read-only reach and one example", () => {
     expect(FIRESTORE_LABELS.statementLanguage).toBe(FIRESTORE_STATEMENT_LANGUAGE);
     expect(FIRESTORE_STATEMENT_LANGUAGE).toBe(
-      'one Firestore Admin SDK read chain starting at db, written inline and never run as JavaScript, for example db.collection("users").where("age", ">=", 18).orderBy("age").limit(100); the chain may end in .get(), .count(), .aggregate({ total: AggregateField.sum("amount") }), .findNearest({ ... }) or .explain(), and db.doc("users/alice").get(), db.listCollections(), db.collection("users").listDocuments() and db.getAll(db.doc("users/alice"), ...) are also accepted; writes are refused',
+      'one Firestore Admin SDK read chain starting at db, written inline and never run as JavaScript, for example db.collection("users").where("age", ">=", 18).orderBy("age").limit(100); the chain may end in .get(), .count(), .aggregate({ total: AggregateField.sum("amount") }), .findNearest({ ... }) or .explain(), and db.doc("users/alice").get(), db.listCollections(), db.collection("users").listDocuments() and db.getAll(db.doc("users/alice"), ...) are also accepted; writes are refused; the inventory names collections only, each with __name__ as its one column, and never a document id, a field name or a value, so a field or a document path in a drafted chain is one the request itself names',
     );
   });
 

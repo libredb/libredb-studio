@@ -40,7 +40,7 @@ helm install libredb libredb/libredb-studio \
 
 ```bash
 helm install libredb oci://ghcr.io/libredb/charts/libredb-studio \
-  --version 0.1.116 \
+  --version 0.1.119 \
   --set secrets.jwtSecret=$(openssl rand -base64 32) \
   --set secrets.adminPassword=MyAdmin123
 ```
@@ -359,7 +359,7 @@ extraEnv:
 ```
 
 Without it the OIDC login fails with a TLS error such as `UNABLE_TO_VERIFY_LEAF_SIGNATURE`.
-From the first application release after 1.1.0, Studio refuses to boot when the file `NODE_EXTRA_CA_CERTS` names is missing, unreadable, empty, whitespace only or holds no PEM certificate, where Node itself would only warn and trust nothing extra.
+From application release 1.2.0, Studio refuses to boot when the file `NODE_EXTRA_CA_CERTS` names is missing, unreadable, empty, whitespace only or holds no PEM certificate, where Node itself would only warn and trust nothing extra.
 
 When the CA sits in a Secret that also holds a private key, such as a cert-manager or Elasticsearch certificate Secret, project only the CA key so the private key never reaches the pod:
 
@@ -907,7 +907,7 @@ helm uninstall libredb
 | `podDisruptionBudget.minAvailable` | Min available pods (set only one of minAvailable/maxUnavailable) | `1` |
 | `podDisruptionBudget.maxUnavailable` | Max unavailable pods (unset minAvailable with `null` to use) | unset |
 | `networkPolicy.enabled` | Render the NetworkPolicy: `true` always, `false` never, unset only in openshift sign-in mode with discovery on, where it confines database egress to the discovered namespaces. On OpenShift, and in openshift mode, it also allows egress on UDP and TCP 5353 (DNS) and TCP 6443 (API server) | unset |
-| `serviceAccount.create` | Create a ServiceAccount for the pod; `false` runs it as `serviceAccount.name`, or the namespace's `default` account when that is empty | `true` |
+| `serviceAccount.create` | Create a ServiceAccount for the pod; `false` runs it as `serviceAccount.name`, or the namespace's `default` account when that is empty, and fails the render under the OLM operator | `true` |
 | `serviceAccount.automountServiceAccountToken` | Mount an API token into the pod. Set on the pod spec as well as on the created ServiceAccount, so it also holds for an account the chart does not create; only `true` mounts one. Studio reads the token only for Vault Kubernetes auth (`VAULT_ROLE`) | `false` |
 | `postgresql.enabled` | Deploy PostgreSQL subchart | `false` |
 | `postgresql.tls.enabled` | Serve the subchart over TLS. Off, the chart adds `sslmode=disable` to the storage URL; on, it adds none and Studio connects with TLS | `false` |
@@ -937,9 +937,15 @@ helm uninstall libredb
 | `openshift.consoleLink.imageUrl` | The `ApplicationMenu` icon, an https URL or a `data:image/` URI; empty renders none | `""` |
 | `openshift.consoleLink.namespaces` | `NamespaceDashboard`: the namespaces whose dashboard shows the link | `[]` |
 | `openshift.consoleLink.namespaceSelector` | `NamespaceDashboard`: a label selector for those namespaces | `{}` |
+| `openshift.consolePlugin.enabled` | Render the console plugin's server and the ConsolePlugin `libredb-studio` ([The console plugin](#the-console-plugin)); needs `console.openshift.io/v1` or `apis=force`, discovery, the `ApplicationMenu` console link and a cluster admin | `false` |
+| `openshift.consolePlugin.namespace` | Where the plugin's server runs: a namespace a cluster admin made with `oc create namespace`, on a Helm install never the release's, a discovered one or a requested project; the operator sets its own, the cluster Studio namespace | `""` |
+| `openshift.consolePlugin.image` | The plugin image, a whole reference pinned by digest; the operator sets it from `RELATED_IMAGE_PLUGIN` | the 0.1.0 release |
+| `openshift.consolePlugin.imagePullPolicy` | `Always`, `IfNotPresent` or `Never` | `IfNotPresent` |
+| `openshift.consolePlugin.replicas` | Plugin server replicas, 1 to 5 | `2` |
+| `openshift.consolePlugin.resources` | `requests` and `limits`, `cpu` and `memory` only | requests `10m`, `50Mi` |
 | `discovery.kubernetes.clusterDomain` | `SEED_KUBERNETES_DISCOVERY_CLUSTER_DOMAIN`, the cluster's DNS domain every discovered host ends in; unset keeps `cluster.local` | unset |
 | `operator.managed` | Set by the OLM operator only: cross-namespace and cluster-scoped objects then render only for the release in `operator.clusterStudioNamespace` | `false` |
-| `operator.clusterStudioNamespace` | Set by the OLM operator only, from `LIBREDB_CLUSTER_STUDIO_NAMESPACE` in its Subscription; empty allows no cross-namespace or cluster-scoped object | `""` |
+| `operator.clusterStudioNamespace` | Set by the OLM operator only, to the namespace it is installed in, the only one it reconciles; empty allows no cross-namespace or cluster-scoped object | `""` |
 
 See [values.yaml](values.yaml) for the complete list of configurable parameters.
 
@@ -969,7 +975,7 @@ A typical OpenShift install, with the Route, the cluster's trusted CA bundle and
 
 ```bash
 helm install studio libredb/libredb-studio \
-  --version 0.1.116 \
+  --version 0.1.119 \
   --set openshiftRoute.enabled=true \
   --set openshift.trustedCABundle.enabled=true \
   --set openshift.topology.partOf=libredb \
@@ -991,13 +997,11 @@ An existing OpenShift install with the policy on gains these two egress ports on
 ### OpenShift sign-in
 
 `authProvider=openshift` signs people in with their OpenShift account through the cluster's OAuth server, with Studio's ServiceAccount as the OAuth client, and reviews every database and admin request with the signed-in user's own token.
-It needs an application image after 1.1.0: release 1.1.0 and earlier have no openshift sign-in, so the render fails while the effective `image.tag` (`appVersion` when unset) is a version at or below 1.1.0, and accepts a tag that is not a version, such as `latest` or a branch tag.
+It needs application image 1.2.0 or later: release 1.1.0 and earlier have no openshift sign-in, so the render fails while the effective `image.tag` (`appVersion` when unset, 1.2.0 by default) is a version at or below 1.1.0, and accepts a tag that is not a version, such as `latest` or a branch tag.
 A typical install, with discovery of two namespaces:
 
 ```yaml
 authProvider: openshift
-image:
-  tag: "1.2.0"                     # a release after 1.1.0; drop it once appVersion is past 1.1.0
 openshiftRoute:
   enabled: true
   host: studio-data.apps.example.com
@@ -1012,7 +1016,7 @@ openshift:
 ```
 
 ```bash
-helm install studio libredb/libredb-studio --version 0.1.116 --namespace data -f openshift-values.yaml
+helm install studio libredb/libredb-studio --version 0.1.119 --namespace data -f openshift-values.yaml
 ```
 
 The chart annotates the ServiceAccount with `serviceaccounts.openshift.io/oauth-redirectreference.first`, naming the Route, and `serviceaccounts.openshift.io/oauth-redirecturi.first`, the callback path under `config.basePath`, so the OAuth server accepts that one callback.
@@ -1045,9 +1049,55 @@ Every authenticated user can read ConsoleLinks, so the chart ships no reader rol
 `ApplicationMenu` lists it in the console's application launcher under `openshift.consoleLink.section`, with `openshift.consoleLink.imageUrl` as its icon.
 With discovery on, that link is named `libredb-studio` and labelled `app.kubernetes.io/name: libredb-studio`, which locates the cluster's Studio; any other link is named `<namespace>.<fullname>` and carries no such label.
 `NamespaceDashboard` shows the link on the dashboard of `openshift.consoleLink.namespaces` or of the namespaces `openshift.consoleLink.namespaceSelector` selects, and fails the render with neither, or with discovery on.
-The OpenShift console plugin is not part of this release.
+The console link works without the console plugin below.
 
-Under the OLM operator, a ConsoleLink, a discovered namespace other than the release's, the access review's ClusterRole and ClusterRoleBinding and a Rancher NavLink render only for the `LibreDBStudio` in `operator.clusterStudioNamespace`, which the operator sets from `LIBREDB_CLUSTER_STUDIO_NAMESPACE` in its Subscription; elsewhere the render fails naming the value.
+Under the OLM operator, a ConsoleLink, a ConsolePlugin, a discovered namespace other than the release's, the access review's ClusterRole and ClusterRoleBinding and a Rancher NavLink render only for the `LibreDBStudio` in `operator.clusterStudioNamespace`, which the operator sets to the namespace it is installed in, the only one it reconciles; elsewhere the render fails naming the value.
+Studio's pod shares that namespace with the operator, so under the operator the render also fails with `serviceAccount.create=false`: the pod always runs as the ServiceAccount its release creates.
+
+### The console plugin
+
+`openshift.consolePlugin.enabled` adds the OpenShift console plugin, on OpenShift 4.19 or later: a Databases page and an item on each database's details page that open the database in Studio in a new tab.
+The item shows on the generic details page that Search and the resource's own list open; the console renders no plugin details item on the operand details page that Installed Operators opens.
+The chart renders the plugin's nginx server (a ServiceAccount, Deployment, Service and NetworkPolicy, each named `libredb-studio-console-plugin`) in `openshift.consolePlugin.namespace`, and the cluster-scoped ConsolePlugin `libredb-studio`, so installing it needs a cluster admin and one release per cluster.
+The plugin finds Studio only through the console link named `libredb-studio`, so it needs `discovery.kubernetes.enabled` and `openshift.consoleLink.enabled` with `location: ApplicationMenu`, and `console.openshift.io/v1` (or `apis=force`).
+It lists the database resources the signed-in user may list, and never reads a Secret: Studio checks again with the user's own token when a database opens.
+
+The console runs the plugin in every console session and sends each console user's token to its server on every asset fetch, so whoever may change that server's Deployment runs code in every console session and receives every console user's token.
+The render therefore fails when `openshift.consolePlugin.namespace` is empty, is listed in `discovery.kubernetes.namespaces` or is a project someone requested (it carries `openshift.io/requester`, and its requester administers it), and, on a Helm install, is the release's own namespace.
+With the plugin on, the release's namespace falls under the [cluster Studio namespace](https://github.com/libredb/libredb-studio/blob/main/docs/OPENSHIFT.md#the-cluster-studio-namespace) rule: only cluster admins may hold RoleBindings there, so on a Helm install the render also fails when the release's namespace is a requested project.
+Under the OLM operator the server runs in the operator's own namespace, the cluster Studio namespace that only cluster admins write, which the operator sets; any other plugin namespace fails the render there.
+The render also fails when `nameOverride`, `fullnameOverride` or the release name gives Studio the server's name `libredb-studio-console-plugin`, whose selector labels would then match Studio's pods.
+The requested-project check looks the namespaces up in the cluster, so `helm template` and a client-side dry run skip it; `helm install`, `helm upgrade` and `--dry-run=server` run it.
+It also relies on the cluster's project request template setting `openshift.io/requester`, as the default template does; a custom template that drops it hides a requested project from the check.
+Create the namespace with `oc create namespace` right before the install, which fails if the name is taken, never with `oc new-project` or the console's Create Project.
+Then check who may change Deployments there: no RoleBinding may name a user or a group of users, while the `system:deployers`, `system:image-builders` and `system:image-pullers` bindings OpenShift adds to every namespace are expected, and `oc adm policy who-can update deployments.apps -n <namespace>` decides:
+
+```bash
+oc create namespace libredb-console-plugin
+oc adm policy who-can update deployments.apps -n libredb-console-plugin
+```
+
+```yaml
+openshift:
+  consoleLink:
+    enabled: true                  # the locator the plugin reads
+  consolePlugin:
+    enabled: true
+    namespace: libredb-console-plugin
+```
+
+The server runs the image in `openshift.consolePlugin.image`, a whole reference pinned by digest (a tag alone fails the schema), as its own ServiceAccount with no token, with a read-only root filesystem, and serves TLS on 9443 with a certificate the service CA issues into the Secret `libredb-studio-console-plugin-cert`.
+Its NetworkPolicy admits only the `openshift-console` namespace on TCP 9443 and allows no egress.
+NetworkPolicies add up, so while no other policy in that namespace and no AdminNetworkPolicy allow rule selects the server's pods, a compromised server cannot send what it receives anywhere.
+No value changes the server's command, environment or nginx configuration, which the image bakes in, and the ConsolePlugin declares no proxy and no content security policy.
+
+The chart renders no Job: a cluster admin turns the plugin on, on the console's Console plugins page (Administration > Cluster Settings > Configuration > Console), or with the patch the install notes print, which adds `libredb-studio` to `spec.plugins` of `consoles.operator.openshift.io/cluster` once and keeps the other plugins in their order.
+Turning it on restarts the console pods, which may sign people out once.
+On uninstall remove the entry again (docs/OPENSHIFT.md, "Uninstall"): a stale entry trusts the next ConsolePlugin named `libredb-studio` without asking.
+Remove the ConsolePlugin, with `helm uninstall` or `openshift.consolePlugin.enabled=false`, before deleting the plugin namespace or Studio's namespace.
+The cluster-scoped ConsolePlugin outlives both and still names the server's Service, which anyone who may then create a namespace of that name, through a project request too, could serve to every console session.
+
+An upgrade with `--reuse-values` from chart 0.1.117 or earlier keeps that release's values, which have no plugin image, so turning the plugin on fails naming `openshift.consolePlugin.image`: upgrade with `--reset-then-reuse-values`, or set the image.
 
 ### The cluster's trusted CA bundle
 
@@ -1056,7 +1106,7 @@ The chart mounts it read-only at `/etc/libredb-studio/trusted-ca` and sets `NODE
 Choose it when the private CA is already in the cluster's trusted bundle; otherwise use the recipe in [Trusting a private CA](#trusting-a-private-ca).
 The two do not combine: `NODE_EXTRA_CA_CERTS` takes one file, so the render fails when `extraEnv` also sets it.
 Studio refuses to boot while `NODE_EXTRA_CA_CERTS` names a file that is missing, unreadable, empty, whitespace only or holds no PEM certificate, so a first start that races the injection exits and the restart picks the bundle up.
-That boot check is application code that needs an application release after 1.1.0; with the default `appVersion` 1.1.0 the bundle is mounted, but a first start that races the injection runs without it, with no error, and nothing restarts the pod on its own: run `oc rollout restart` on the Deployment once the ConfigMap holds `ca-bundle.crt`.
+That boot check is application code that needs application release 1.2.0 or later, the default `appVersion`; with an `image.tag` of 1.1.0 or earlier the bundle is mounted, but a first start that races the injection runs without it, with no error, and nothing restarts the pod on its own: run `oc rollout restart` on the Deployment once the ConfigMap holds `ca-bundle.crt`.
 
 ### Topology
 

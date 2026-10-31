@@ -11,7 +11,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
-import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import { CREDENTIAL_WARNINGS, credentialWarningFor } from "@/lib/db/credential-warnings";
 import { MilvusError } from "@/lib/db/providers/vector/milvus/client";
 import {
@@ -222,10 +222,12 @@ describe("docs/providers/milvus.md quotes what the code says", () => {
 
   test("machine access is what the records say", () => {
     expect(MCP_EXPOSABLE.milvus).toBe(true);
-    expect(AGENT_EXECUTION_ENGINES).not.toContain("milvus");
+    expect(AGENT_EXECUTION_ENGINES).toContain("milvus");
+    expect(MCP_STATEMENT_READ.milvus).toBe(false);
     const machine = sectionOf(DOC, "### 3.5 Machine access");
     expect(machine).toContain("(`mcp: true`)");
-    expect(machine).toContain("agent execution and MCP `run_read_query` refuse Milvus");
+    expect(machine).toContain("Agent execution reads metadata only");
+    expect(machine).toContain("MCP `run_read_query` still refuses Milvus");
   });
 
   test("the object edit section states the abstention the census holds", () => {

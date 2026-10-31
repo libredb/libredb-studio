@@ -91,6 +91,9 @@ const CONNECTION: DatabaseConnection = {
 async function connected(): Promise<QdrantProvider> {
   const provider = new QdrantProvider(CONNECTION, {}, {}, () => ({
     send: async (request) => answer(request),
+    probe: async () => {
+      throw new Error("an editor handle sent the read-only proof's probe");
+    },
     close() {},
   }));
   await provider.connect();

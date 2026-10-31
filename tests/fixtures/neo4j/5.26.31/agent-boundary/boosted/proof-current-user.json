@@ -1,0 +1,33 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-enterprise",
+    "digest": "sha256:02d30e0a80f0aaed71cfdfaa85c8ea01cf44aacd55510d4a2b4a53f9f1a2e1ad",
+    "date": "2026-10-30T11:34:52.270Z",
+    "database": "neo4j"
+  },
+  "principal": "boosted: agent_reader and boosted (GRANT EXECUTE BOOSTED PROCEDURE *)",
+  "statement": "SHOW CURRENT USER YIELD user, roles",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 1000
+  },
+  "outcome": "pass",
+  "result": {
+    "fields": [
+      "user",
+      "roles"
+    ],
+    "rows": [
+      {
+        "user": "boosted",
+        "roles": [
+          "PUBLIC",
+          "boosted",
+          "agent_reader"
+        ]
+      }
+    ],
+    "truncated": false,
+    "queryType": "s"
+  }
+}

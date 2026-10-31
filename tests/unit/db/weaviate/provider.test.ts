@@ -24,6 +24,7 @@ import {
   WEAVIATE_ROUTE_TEMPLATES,
   WeaviateProvider,
 } from "@/lib/db/providers/vector/weaviate/index";
+import { WEAVIATE_METADATA_ONLY } from "@/lib/db/providers/vector/weaviate/metadata-read";
 import { WEAVIATE_LABELS } from "@/lib/db/providers/vector/weaviate/labels";
 import {
   readWeaviateHealth,
@@ -134,6 +135,7 @@ describe("declarations", () => {
       objectKinds: WEAVIATE_OBJECT_KINDS,
       enforcesReadOnly: true,
       agentCredential: "token",
+      metadataOnly: WEAVIATE_METADATA_ONLY,
       schemaRefreshPattern: "(?!)",
     });
   });
@@ -163,12 +165,12 @@ describe("declarations", () => {
   test("the limiter's bounds and the client's route table", () => {
     expect(WEAVIATE_LIMITER_OPTIONS).toEqual({ perProvider: 4, perEngine: 16, queueDepth: 64 });
     expect(WEAVIATE_ROUTE_TEMPLATES).toBe(WEAVIATE_CLIENT_ROUTES);
-    expect(Object.keys(WEAVIATE_ROUTE_TEMPLATES)).toHaveLength(19);
+    expect(Object.keys(WEAVIATE_ROUTE_TEMPLATES)).toHaveLength(20);
   });
 
-  test("there is no read-only query method and no transaction method", () => {
+  test("there is a read-only query method, the agent's, and no transaction method", () => {
     const provider = providerOf().provider as unknown as Record<string, unknown>;
-    expect(provider.queryReadOnly).toBeUndefined();
+    expect(typeof provider.queryReadOnly).toBe("function");
     expect(provider.beginTransaction).toBeUndefined();
   });
 });

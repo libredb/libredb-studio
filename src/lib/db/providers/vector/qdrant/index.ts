@@ -12,11 +12,21 @@
  *
  * One limiter covers every client call (spec 3.6): the two connect requests, the tree, the Source, monitoring and
  * the console. A surface takes one permit per read it has in flight; a console request takes its own in
- * `execute.ts`. No `queryReadOnly`, no transaction method and no maintenance operation: each is detected by
- * presence, and none exists for Qdrant in this version.
+ * `execute.ts`. No transaction method and no maintenance operation: each is detected by presence, and none exists
+ * for Qdrant in this version. `queryReadOnly` is the agent read-only profile's path: the rules of an agent request
+ * are in `metadata-request.ts`, the read-only proof, the metadata-only projection and the wording of a failure in
+ * `metadata-read.ts`.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import {
+  DatabaseConfigError,
+  ExecutionProfileError,
+  QueryError,
+  RefusedBeforeSendError,
+  TimeoutError,
+} from "@/lib/db/errors";
+import { TransportError } from "@/lib/db/http/node-transport";
+import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
 import type {
   ActiveSessionDetails,
   Container,
@@ -37,6 +47,8 @@ import type {
   ProviderLabels,
   ProviderOptions,
   QueryResult,
+  ReadOnlyStatementBudget,
+  ReadOnlyStatementMode,
   SlowQueryStats,
   StorageStats,
   TableStats,
@@ -49,8 +61,10 @@ import {
 } from "@/lib/db/utils/bounded-limiter";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import type {
+  QdrantAnswer,
   QdrantClient,
   QdrantOp,
+  QdrantProbe,
   QdrantRequest,
   QdrantRouteTemplate,
   QdrantRouteTemplates,
@@ -65,6 +79,15 @@ import {
 import { answerFailure, expectOk, type QdrantErrorContext, toProviderError } from "./errors";
 import { executeQdrant, type QdrantFailure, qdrantDeadlineMs } from "./execute";
 import { QDRANT_LABELS } from "./labels";
+import {
+  keylessAgentRefusal,
+  proveQdrantReadOnly,
+  QDRANT_METADATA_ONLY,
+  type QdrantProofWire,
+  qdrantAgentFailure,
+  shapeQdrantAgentAnswer,
+} from "./metadata-read";
+import { readQdrantAgentStatement } from "./metadata-request";
 import { readQdrantHealth, readQdrantIndexStats, readQdrantOverview, readQdrantTableStats } from "./monitoring-reads";
 import {
   countQdrantObjects,
@@ -109,6 +132,8 @@ export type QdrantClientFactory = (options: QdrantConnectionOptions, routes: Qdr
 
 const BOUND_PARAMS_MESSAGE = "Bound params are not supported: a Qdrant request has no placeholders";
 const NO_MAINTENANCE = "Qdrant has no maintenance operation in this version of Studio, so nothing was sent.";
+const PROFILE_REQUIRED = "Read-only execution requires a provider opened under the agent read-only profile";
+const NO_ESTIMATE = "Qdrant composes no estimating plan for the agent";
 
 /** A connection is one flat namespace of collections (spec 6.3), so every object is addressed at the root. */
 function requireRoot(container: readonly string[]): void {
@@ -147,6 +172,14 @@ export class QdrantProvider extends BaseDatabaseProvider {
   private readonly runs: RunRegistry = createRunRegistry();
 
   /**
+   * Whether this handle was opened for the agent read-only profile by an acquisition that sends statements
+   * (`sendsStatements`). Only then does `connect()` refuse a connection with no key and prove the key reads only, and
+   * only then does `queryReadOnly` answer. The operations profile's acquisitions send no statement, so they open
+   * unproved, as an editor connection does, and plan mode keeps grounding on any key.
+   */
+  private readonly readOnlyProfile: boolean;
+
+  /**
    * Validates nothing and opens nothing (spec 3.13): the connection's rules run in `connect()`, before the factory,
    * so a provider built only for its declarations touches no socket.
    */
@@ -157,6 +190,7 @@ export class QdrantProvider extends BaseDatabaseProvider {
     private readonly createClient: QdrantClientFactory = createRestQdrantClient,
   ) {
     super(config, options);
+    this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
   }
 
   // ==========================================================================
@@ -187,6 +221,8 @@ export class QdrantProvider extends BaseDatabaseProvider {
       // The secret alone signs in, so the agent's own key is `agentPassword` alone; a user is refused here as it is
       // on the connection.
       agentCredential: "token",
+      // Payloads and vectors are stored values: the agent's answers carry names, counts and flags.
+      metadataOnly: QDRANT_METADATA_ONLY,
       // A Qdrant request changes no collection, so no request refreshes the schema.
       schemaRefreshPattern: "(?!)",
     };
@@ -209,6 +245,10 @@ export class QdrantProvider extends BaseDatabaseProvider {
    * After connection-options.ts's checks, exactly two requests: `GET /` for the version the gates read, which
    * proves reachability only, then `GET /collections`, the authenticated read every credential may make. A 2xx
    * body of the second is dropped; nothing is retried, and a client that was built is closed on a failure.
+   *
+   * Opened for the agent read-only profile, a connection with no key is refused before any client is built, and after
+   * those two reads the server is asked to refuse an empty alias update and an empty point delete on every collection
+   * the key lists (`metadata-read.ts`).
    */
   public async connect(): Promise<void> {
     let client: QdrantClient | undefined;
@@ -217,11 +257,13 @@ export class QdrantProvider extends BaseDatabaseProvider {
         executionReadOnly: this.execution.readOnly === true,
         queryTimeout: this.queryTimeout,
       });
+      if (this.readOnlyProfile && !Object.hasOwn(options.headers, "api-key")) throw keylessAgentRefusal();
       client = this.createClient(options, QDRANT_ROUTE_TEMPLATES);
       const send = this.sendFor(client, options, "connect");
       const signal = this.surfaceSignal();
       const root = await send({ op: "root", params: {}, query: {} }, signal);
       await send({ op: "get_collections", params: {}, query: {} }, signal);
+      if (this.readOnlyProfile) await proveQdrantReadOnly(this.proofWire(client, options, "connect"), signal);
       this.session = { client, options, version: readQdrantVersion(root.text) };
     } catch (error) {
       client?.close();
@@ -277,6 +319,60 @@ export class QdrantProvider extends BaseDatabaseProvider {
     };
   }
 
+  /**
+   * One request under its own limiter permit, answered whatever its status. A request still waiting when its deadline
+   * fires is a TimeoutError, as a console request's is in `execute.ts`; any other failure is worded by errors.ts.
+   */
+  private answered(
+    options: QdrantConnectionOptions,
+    phase: QdrantErrorContext["phase"],
+    op: QdrantOp,
+    signal: AbortSignal,
+    sent: () => Promise<QdrantAnswer>,
+  ): Promise<QdrantAnswer> {
+    return (async () => {
+      try {
+        const ticket = await this.limiter.acquire(signal);
+        try {
+          return await sent();
+        } finally {
+          ticket.release();
+        }
+      } catch (error) {
+        const unreachable = error instanceof TransportError && error.kind === "unreachable";
+        if (signal.aborted && !unreachable) {
+          throw new TimeoutError("The read-only proof did not finish within its deadline.", this.type);
+        }
+        throw toProviderError(
+          error,
+          errorContext(options, phase, op, Math.min(QDRANT_SURFACE_TIMEOUT_MS, this.queryTimeout)),
+        );
+      }
+    })();
+  }
+
+  /**
+   * What the read-only proof reads and sends through `client`: the connection's key, whose JWT claims it reads, then its
+   * two probes and the collection list, each under a permit of its own. A probe's failure is worded as the alias
+   * route's, the console route nearest to what it writes.
+   */
+  private proofWire(
+    client: QdrantClient,
+    options: QdrantConnectionOptions,
+    phase: QdrantErrorContext["phase"],
+  ): QdrantProofWire {
+    return {
+      // Read only under the agent profile, whose open refused a connection with no key.
+      key: options.headers["api-key"] as string,
+      probe: (probe: QdrantProbe, signal: AbortSignal) =>
+        this.answered(options, phase, "get_collections_aliases", signal, () => client.probe(probe, signal)),
+      listCollections: (signal: AbortSignal) =>
+        this.answered(options, phase, "get_collections", signal, () =>
+          client.send({ op: "get_collections", params: {}, query: {} }, signal),
+        ),
+    };
+  }
+
   /** One surface call's reads, deadline and facts (spec 3.13). */
   private surface(): QdrantSurfaceContext<QdrantOp> {
     const session = this.requireSession();
@@ -314,6 +410,53 @@ export class QdrantProvider extends BaseDatabaseProvider {
         );
       },
       queryTimeoutMs: this.queryTimeout,
+    });
+  }
+
+  /**
+   * One agent request. Only on a handle opened under the agent read-only profile; the request is read by
+   * `readQdrantAgentStatement` and refused before anything is sent when it is not a metadata read. Then, under the
+   * request's own deadline, the server is asked again to refuse the proof's no-op writes, with no verdict kept from the
+   * open or the request before, and the request runs as the console runs it. Its answer is the metadata-only projection
+   * of its route, refused past the row or byte budget rather than cut, and a server refusal is worded without the
+   * server's words.
+   */
+  public async queryReadOnly(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    const session = this.requireSession();
+    if (!this.readOnlyProfile) throw new RefusedBeforeSendError(PROFILE_REQUIRED, this.type, statement);
+    assertReadOnlyBudget(budget, "qdrant");
+    if (mode !== "execute") throw new RefusedBeforeSendError(NO_ESTIMATE, this.type, statement);
+    const reading = readQdrantAgentStatement(statement);
+    if (!reading.ok) throw new RefusedBeforeSendError(reading.message, this.type, statement);
+    const { client, options } = session;
+    const signal = AbortSignal.timeout(budget.statementTimeoutMs);
+    return this.trackQuery(async () => {
+      try {
+        await proveQdrantReadOnly(this.proofWire(client, options, "request"), signal);
+        return await executeQdrant(statement, undefined, {
+          send: (request, read) => client.send(request, read),
+          limiter: this.limiter,
+          runs: this.runs,
+          version: session.version.reported,
+          factsOf: readQdrantConsoleFacts,
+          // Worded in qdrantAgentFailure below, never by the server's own text.
+          fail: (failure: QdrantFailure) =>
+            (failure.kind === "answer" ? answerFailure(failure.answer) : failure.error) as Error,
+          queryTimeoutMs: budget.statementTimeoutMs,
+          deadline: () => signal,
+          answered: (answer) => shapeQdrantAgentAnswer(answer, budget, statement),
+        });
+      } catch (error) {
+        if (error instanceof ExecutionProfileError) throw error;
+        throw (
+          qdrantAgentFailure(error, budget, statement) ??
+          toProviderError(error, errorContext(options, "request", reading.plan.route.op, budget.statementTimeoutMs))
+        );
+      }
     });
   }
 

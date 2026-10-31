@@ -519,8 +519,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   redis: true,
   prometheus: true,
   kafka: true,
-  // The first engine MCP is not offered for (#1089 E12): the provider implements no read-only query path, and a seed
-  // that sets `mcp: true` on an etcd connection is refused when the seed file loads.
+  // The first engine MCP is not offered for (#1089 E12): key names and values carry secrets, the provider's read-only
+  // query path is agent mode's alone and reads metadata only, and no MCP surface is decided for it yet (BACKLOG B136),
+  // so a seed that sets `mcp: true` on an etcd connection is refused when the seed file loads.
   etcd: false,
   // Offered for the two metadata tools, `list_connections` and `inspect_schema` (Neo4j spec 6.4).
   // `run_read_query` does not serve it, because the provider implements no `queryReadOnly`.
@@ -538,12 +539,13 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // neither provider implements `queryReadOnly`.
   influxdb: true,
   influxdb3: true,
-  // Outside this version, as etcd's: Oxia key paths name Pulsar tenants, namespaces and topics (SEC-05), so no MCP
-  // surface lists them until one is designed (BACKLOG B100).
+  // Outside this version, as etcd's: Oxia key paths name Pulsar tenants, namespaces and topics (SEC-05), the
+  // provider's read-only query path is agent mode's alone and reads metadata only, and no MCP surface is decided for
+  // it yet (BACKLOG B100).
   oxia: false,
   databend: true,
-  // Outside this version, as etcd's and Oxia's: the provider implements no queryReadOnly, and no MCP surface
-  // that lists buckets but never an object key is designed yet (BACKLOG B104).
+  // Closed, as etcd's and Oxia's: agent mode reads S3's metadata, and no MCP surface that lists buckets but never an
+  // object key is designed yet (BACKLOG B104).
   s3: false,
   // Offered with every answer machine-redacted: `run_kubectl_read` runs the agent's
   // `queryReadOnly`, whose output masks every Secret name, and `inspect_schema` lists relations alone, which no
@@ -552,11 +554,13 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // Outside this version, as for etcd, Oxia and S3: a read whose completeness cannot be proved is not a
   // read an agent should be handed without a reader looking at it.
   mqtt: false,
-  // Outside this version, as for etcd, Oxia, S3 and MQTT: the provider implements no read-only query path an MCP
-  // client could drive, and every read is billed to the user's project.
+  // Closed, as etcd's, Oxia's and S3's: agent mode reads Firestore's metadata within a run's read allowance, every read
+  // is billed to the user's project, and no MCP surface that lists collections but never a document id is designed yet
+  // (BACKLOG B107).
   firestore: false,
   // Offered for the two metadata tools, carrying stream names and the fixed read columns only; `run_read_query` does
-  // not serve it, because the provider implements no `queryReadOnly`.
+  // not serve it: the provider's read-only query path is agent mode's alone and reads metadata only, and
+  // MCP_STATEMENT_READ keeps MCP read closed on it (BACKLOG B108).
   rabbitmq: true,
   // Outside this version, as for etcd, Oxia, S3 and MQTT. NOT because there is no read to hand over:
   // the console reads one JSON request and is read-only by construction. Because a node's value
@@ -567,12 +571,17 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   mtconnect: true,
   // MCP is outside this provider's first version. A read also needs the register map kept with
   // the connection, because Modbus has no discovery and a name means only what that document
-  // says it means, so an MCP client has nothing to form a read from on its own.
+  // says it means, so an MCP client has nothing to form a read from on its own. Agent mode reads
+  // the device paced and counted per run, and no MCP surface that paces a device is designed yet
+  // (BACKLOG B160).
   modbus: false,
-  // MCP is outside this provider's first version, as for etcd, Oxia, S3 and MQTT. A statement tool offered later
-  // has to deal with configuration values: a read-only account still reads password hashes and keystore entries
-  // out of the configuration, which is why the catalog carries names only (docs/providers/netconf.md 6.3).
+  // Closed: agent mode reads NETCONF configuration and state with keys, password hashes, access rules and every node
+  // the device's own YANG marks nacm:default-deny-all withheld, and no MCP surface that withholds them is designed yet;
+  // a read-only account still reads password hashes and keystore entries, which is why the catalog carries names only
+  // (docs/providers/netconf.md 6.3, BACKLOG B159).
   netconf: false,
+  // Closed: agent mode reads SNMP values with the SNMP security modules withheld, and no MCP surface that
+  // withholds them is designed yet (BACKLOG B158).
   snmp: false,
   // Outside this version, for the reason MQTT's entry gives rather than for the absence of a read query path:
   // a read whose completeness cannot be proved is not a read an agent should be handed without a reader looking
@@ -626,28 +635,56 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   mongodb: true,
   // Agent mode executes statements on Couchbase, and MCP read stays closed on it until a change of its own opens it.
   couchbase: false,
+  // Agent mode executes metadata-only reads on Redis, and MCP read stays closed on it until a change of its own opens
+  // it.
   redis: false,
   prometheus: false,
+  // Agent mode executes metadata-only reads on Kafka, and MCP read stays closed on it until a change of its own opens
+  // it (BACKLOG B157).
   kafka: false,
+  // Agent mode executes metadata-only reads on etcd, and MCP read stays closed on it until a change of its own opens
+  // it.
   etcd: false,
+  // Agent mode executes statements on Neo4j, and MCP read stays closed on it until a change of its own opens it.
   neo4j: false,
+  // Agent mode executes metadata-only reads on Milvus, and MCP read stays closed on it until a change of its own
+  // opens it.
   milvus: false,
+  // Agent mode executes metadata-only reads on Qdrant, and MCP read stays closed on it until a change of its own
+  // opens it.
   qdrant: false,
+  // Agent mode executes metadata-only reads on Weaviate, and MCP read stays closed on it until a change of its own
+  // opens it.
   weaviate: false,
+  // Agent mode executes statements on InfluxDB, and MCP read stays closed on it until a change of its own opens it.
   influxdb: false,
   // Agent mode executes statements on InfluxDB 3, and MCP read stays closed on it until a change of its own opens it.
   influxdb3: false,
+  // Agent mode executes metadata-only reads on Oxia, and MCP read stays closed on it until a change of its own opens
+  // it.
   oxia: false,
   databend: false,
+  // Agent mode executes metadata-only reads on S3, and MCP read stays closed on it until a change of its own opens it
+  // (BACKLOG B104).
   s3: false,
   kubernetes: true,
   mqtt: false,
+  // Agent mode executes metadata-only reads on Firestore, and MCP read stays closed on it until a change of its own
+  // opens it (BACKLOG B107).
   firestore: false,
+  // Agent mode executes metadata-only stream reads on RabbitMQ, and MCP read stays closed on it until a change of its
+  // own opens it.
   rabbitmq: false,
   opcua: false,
   mtconnect: false,
+  // Agent mode executes paced reads on Modbus, and MCP read stays closed on it until a change of its own opens it
+  // (BACKLOG B160).
   modbus: false,
+  // Agent mode executes reads on NETCONF with the withheld nodes pruned, and MCP read stays closed on it until a
+  // change of its own opens it (BACKLOG B159).
   netconf: false,
+  // Agent mode executes reads on SNMP with the SNMP security modules withheld, and MCP read stays closed on it
+  // until a change of its own opens it (BACKLOG B158).
   snmp: false,
   sparkplug: false,
   // Agent mode executes statements on LibreDB, and MCP read stays closed on it until a change of its own opens it.

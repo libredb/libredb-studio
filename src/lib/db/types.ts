@@ -29,6 +29,7 @@ import type {
 } from "../types";
 import { declaresDialect, dialectSpec } from "./query-dialects";
 import type { RunReadAllowance } from "./read-allowance";
+import type { MetadataOnlyDeclaration } from "./redaction/metadata-only";
 
 // ============================================================================
 // Pool Configuration
@@ -1414,6 +1415,18 @@ export interface ProviderCapabilities {
    */
   readonly machineRedaction?: { readonly maskedNameKinds: readonly string[] };
   /**
+   * The metadata-only answer mode of `queryReadOnly`, the agent's read path, for a store whose answers carry stored
+   * values (objects, vectors, payloads, message bodies) that no machine surface may pass on: per metadata operation the
+   * provider permits, the typed output projection its answer is built from, column by column, each a name, a count
+   * or a flag. Every other operation is refused before anything is sent. Absent: the provider answers as it reads.
+   * The projection helpers are provider-neutral, in `src/lib/db/redaction/metadata-only.ts`, which derives this
+   * declaration from the provider's projections, so the two cannot differ. Separate from `machineRedaction`, which
+   * masks names and neither names nor withholds a value.
+   *
+   * Optional for the same published-interface reason as `enforcesReadOnly`.
+   */
+  readonly metadataOnly?: MetadataOnlyDeclaration;
+  /**
    * The curated cluster readings this provider answers for the agent, each one audited call and one statement charge
    * instead of composed statements: `"usage"` is `readClusterUsage` (`cluster.usage.read`), `"workloads"` is
    * `readWorkloadProfile` (`cluster.workloads.read`). Absent: it answers none.
@@ -2339,10 +2352,22 @@ export interface DatabaseProvider {
    * gap that cannot occur is a guard nothing executes.
    */
   listContainers(parent?: readonly string[]): Promise<Container[]>;
+  /**
+   * Why this connection's inventory cannot be listed at all without configuration it lacks, in the provider's own
+   * words, or `undefined` where it can be listed (U189).
+   *
+   * Optional, declared only by a provider whose engine has no request that lists what it holds, so its inventory is
+   * the configuration a connection keeps: Modbus, whose objects are the connection's register map. With none kept,
+   * such a provider lists no container, and a reader of that empty answer could not tell "holds nothing" from
+   * "was asked nothing". The agent's grounding reads this before it walks (`walkObjectInventory` in
+   * `src/lib/agent/tools.ts`), marks every kind unavailable with this sentence and says nothing was listed, instead of
+   * "reported no tables". The sentence completes "could be listed:", so it is written in lower case and with no stop.
+   */
+  inventoryNeedsConfiguration?(): Promise<string | undefined>;
   /** Per-kind counts for one container. A refused read is `{ unavailable }`, never 0. */
-  countObjects(container: readonly string[]): Promise<Record<string, KindCount>>;
+  countObjects(container: readonly string[], options?: ObjectReadOptions): Promise<Record<string, KindCount>>;
   /** Objects of one kind in one container. Names only: columns come from describeObject. */
-  listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]>;
+  listObjects(container: readonly string[], kind: string, options?: ObjectReadOptions): Promise<DatabaseObject[]>;
   /**
    * One page of a resumable walk of this engine's own KEY SPACE, for an engine that declares
    * `getCapabilities().keyScan`.
@@ -3445,8 +3470,21 @@ export interface ObjectDetail {
  * agent's inventory never asks, because it only reads. The caller's `limit` bounds the extra
  * reads as it bounds the objects, and a provider whose catalog already spells SQL ignores it.
  */
-export interface DescribeObjectsOptions {
+export interface DescribeObjectsOptions extends ObjectReadOptions {
   readonly defaultSql?: boolean;
+}
+
+/**
+ * What an object-surface read of an agent run carries: the run's billed-read allowance (`read-allowance.ts`).
+ *
+ * The grounding walk reads `countObjects`, `listObjects` and `describeObjects` with no statement budget, so on an
+ * engine that bills every read those reads would be the run's only spending that nothing charged. The walk hands each
+ * of them the allowance its drive carries, and an engine that bills charges it before every request the read sends and
+ * sends nothing when a read carries none; every other engine ignores it. Absent on every other caller, the editor's
+ * routes included.
+ */
+export interface ObjectReadOptions {
+  readonly readAllowance?: RunReadAllowance;
 }
 
 /**

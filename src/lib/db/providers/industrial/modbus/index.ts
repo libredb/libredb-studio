@@ -21,6 +21,13 @@
  * WHY THIS CLASS OPENS NOTHING IN ITS CONSTRUCTOR. `createDatabaseProvider` is called on every
  * shipped type by the factory tests, so a constructor that dialled would put those tests on the
  * network.
+ *
+ * `queryReadOnly` is the agent's: one request in the console's three shapes, read by `agent-statement.ts` and refused
+ * before anything is sent when it is not one of them, then run by `agent-read.ts` within the row, byte, time and run
+ * request bounds, on the device's lane (`agent-pacing.ts`): never two agent reads of one device at once, across every
+ * run and connection of this process, with a fixed gap after each. On a handle opened for any agent-mode profile the
+ * console is refused and every reading the agent does not report answers its reason (`agent-surface.ts`). MCP read
+ * stays closed on this engine.
  */
 import {
   assertContainerPathShape,
@@ -28,7 +35,7 @@ import {
   type ContainerPathShapeEngine,
 } from "@/lib/db/object-kinds";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import type { DatabaseConnection } from "@/lib/types";
 import type {
   ActiveSessionDetails,
@@ -44,8 +51,12 @@ import type {
   PerformanceMetrics,
   PreparedQuery,
   ProviderCapabilities,
+  ProviderExecutionContext,
+  ProviderLabels,
   ProviderOptions,
   QueryResult,
+  ReadOnlyStatementBudget,
+  ReadOnlyStatementMode,
   SlowQueryStats,
   QueryWarning,
   StorageStats,
@@ -60,6 +71,11 @@ import {
   UNIT_ID_MIN,
 } from "./constants";
 import { dialModbus, socketWire, type Endpoint } from "./client";
+import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
+import { deviceKey, MODBUS_AGENT_PACER, ModbusPacingTimeout } from "./agent-pacing";
+import { modbusAgentResult, runModbusAgentRead, type ModbusAgentReadSeams } from "./agent-read";
+import { readModbusAgentStatement } from "./agent-statement";
+import { MODBUS_AGENT_SURFACE_WAIT_MS, MODBUS_AGENT_WITHHELD } from "./agent-surface";
 import { modbusEndpoint } from "./connection-options";
 import { runRead } from "./read";
 import { parseReadRequest } from "./request";
@@ -188,6 +204,26 @@ function mapOf(config: DatabaseConnection): string | undefined {
   return config.registerMap;
 }
 
+/**
+ * Why a connection with no register map lists nothing of its device, completing "could be listed:" in the agent's
+ * grounding (`DatabaseProvider.inventoryNeedsConfiguration`).
+ */
+export const MODBUS_NO_MAP_INVENTORY_SENTENCE =
+  "this connection keeps no register map, and Modbus has no request that lists what a device holds, so none of its points can be listed";
+
+/** Studio's own refusals on the agent's statement path, made before anything is sent. */
+export const MODBUS_PROVIDER_SENTENCES = Object.freeze({
+  profileRequired: "Read-only execution requires a provider opened under the agent read-only profile",
+  noEstimate: "Modbus composes no estimating plan for the agent",
+});
+
+/**
+ * What a statement on this engine is written in, for plan mode: the console's JSON read request. Its name alone would
+ * send a model to a vendor tool's syntax, a register number in the 40001 style or a write, and none of them runs here.
+ */
+const MODBUS_STATEMENT_LANGUAGE =
+  'one Modbus read request this editor runs, a JSON object written as the console writes it: {"read": ["name", ...]} for points the connection\'s register map names, {"unit": 1, "table": "holding_register", "address": 0, "count": 10} for one block of one table (coil, discrete_input, holding_register or input_register, a zero-based PDU address, at most 125 registers or 2000 bits), optionally with "type", "wordOrder" and "byteOrder" to decode registers, or {"identify": "basic"} (basic, regular or extended) for the device identification objects; there is no write, no function code and no 40001-style register number, and the inventory names the register map\'s points, never a value the device holds';
+
 export class ModbusProvider extends BaseDatabaseProvider {
   /**
    * Opens nothing. `createDatabaseProvider` is called on every shipped type by the factory tests,
@@ -196,8 +232,63 @@ export class ModbusProvider extends BaseDatabaseProvider {
    * Declared public because the base class's own constructor is protected, which would otherwise
    * make this class unconstructable from a test.
    */
-  public constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
+  public constructor(
+    config: DatabaseConnection,
+    options: ProviderOptions = {},
+    private readonly execution: ProviderExecutionContext = {},
+    agentSeams: Partial<ModbusAgentReadSeams> = {},
+  ) {
     super(config, options);
+    this.agentSeams = { dial: agentSeams.dial ?? dialModbus, pacer: agentSeams.pacer ?? MODBUS_AGENT_PACER };
+  }
+
+  /** The agent path's dial and the process's pacer; a test hands its own of either. */
+  private readonly agentSeams: ModbusAgentReadSeams;
+
+  /**
+   * Whether this handle was opened for the agent read-only profile by an acquisition that sends statements
+   * (`sendsStatements`). Only then does `queryReadOnly` answer; the operations profile's acquisitions send no statement.
+   */
+  private get readOnlyProfile(): boolean {
+    return this.execution.readOnly === true && this.execution.sendsStatements === true;
+  }
+
+  /**
+   * Whether this handle was opened for any agent-mode profile: every execution profile opens `readOnly` and no editor
+   * handle does. On such a handle the console is refused, the device is reached only on its lane, and every reading the
+   * agent does not report answers its reason.
+   */
+  private get agentProfile(): boolean {
+    return this.execution.readOnly === true;
+  }
+
+  /** The refusal of a reading an agent-mode handle does not take. */
+  private agentWithheld(sentence: string): never {
+    throw new QueryError(sentence, "modbus");
+  }
+
+  /**
+   * The device part of `connect` and of a health reading. On an agent-mode handle it takes its turn on the device's
+   * lane, as an agent read does, so no agent-mode surface reaches a device while another agent read holds it; on an
+   * editor handle it runs as it always has.
+   */
+  private async onDevice(work: () => Promise<void>): Promise<void> {
+    if (!this.agentProfile) return await work();
+    const endpoint = this.endpoint();
+    try {
+      await this.agentSeams.pacer.run(
+        deviceKey(endpoint.host, endpoint.port),
+        performance.now() + MODBUS_AGENT_SURFACE_WAIT_MS,
+        work,
+      );
+    } catch (error) {
+      if (error instanceof ModbusPacingTimeout) this.agentWithheld(MODBUS_AGENT_WITHHELD.waited);
+      throw error;
+    }
+  }
+
+  public override getLabels(): ProviderLabels {
+    return { ...super.getLabels(), statementLanguage: MODBUS_STATEMENT_LANGUAGE };
   }
 
   // ==========================================================================
@@ -273,6 +364,7 @@ export class ModbusProvider extends BaseDatabaseProvider {
    */
   public async connect(): Promise<void> {
     readMap(this.config);
+    const endpoint = this.endpoint();
     // AND A BARE DIAL, because the map alone made this method answer for a device that is not
     // there. MEASURED: against a closed port it returned successfully in 0 ms, and
     // `testConnection` (`src/lib/api/test-connection.ts`) reports a health failure after a
@@ -286,7 +378,9 @@ export class ModbusProvider extends BaseDatabaseProvider {
     //
     // It is closed at once. What §4.7 measured as dangerous is HOLDING a connection - a second
     // client went 3003 ms unanswered while the first stayed open - not opening one twice.
-    (await dialModbus(this.endpoint())).destroy();
+    await this.onDevice(async () => {
+      (await this.agentSeams.dial(endpoint)).destroy();
+    });
   }
 
   /**
@@ -343,6 +437,16 @@ export class ModbusProvider extends BaseDatabaseProvider {
     } catch (error) {
       throw atBoundary(error);
     }
+  }
+
+  /**
+   * With no map, nothing of the device can be listed (U189): no Modbus request lists what a device holds, so this
+   * provider's inventory is the connection's register map, and with none kept `listContainers` answers no unit. That
+   * empty answer is no answer about the device, and this says so, so the agent's grounding does not read it as a
+   * device holding nothing. A malformed map rises as configuration, as on every other surface.
+   */
+  public async inventoryNeedsConfiguration(): Promise<string | undefined> {
+    return readMap(this.config).isEmpty ? MODBUS_NO_MAP_INVENTORY_SENTENCE : undefined;
   }
 
   public async listContainers(): Promise<Container[]> {
@@ -457,6 +561,8 @@ export class ModbusProvider extends BaseDatabaseProvider {
    * The request is settled BEFORE the socket: a refusal the caller can fix costs no connection.
    */
   public async query(statement: string, _params?: unknown[]): Promise<QueryResult> {
+    // On an agent-mode handle a read goes through `queryReadOnly`, paced and counted; the console is neither.
+    if (this.agentProfile) throw new RefusedBeforeSendError(MODBUS_AGENT_WITHHELD.query, "modbus", statement);
     const map = readMap(this.config);
     let request;
     try {
@@ -478,6 +584,41 @@ export class ModbusProvider extends BaseDatabaseProvider {
     } finally {
       socket.destroy();
     }
+  }
+
+  /**
+   * One agent statement. Only on a handle opened under the agent read-only profile; the request is read by
+   * `readModbusAgentStatement` against the connection's map and refused before anything is sent when it is not one of
+   * the console's three shapes, then run by `runModbusAgentRead` on the device's lane, over a socket opened for that
+   * read alone and destroyed when it ends, so nothing of one call reaches the next. Its time budget starts here and
+   * covers the wait for the device; its answer is refused past the row, byte, time or run request bound rather than
+   * cut, and a failure is worded by its category.
+   */
+  public async queryReadOnly(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    const startedAt = performance.now();
+    if (!this.readOnlyProfile)
+      throw new RefusedBeforeSendError(MODBUS_PROVIDER_SENTENCES.profileRequired, "modbus", statement);
+    assertReadOnlyBudget(budget, "modbus");
+    if (mode !== "execute") throw new RefusedBeforeSendError(MODBUS_PROVIDER_SENTENCES.noEstimate, "modbus", statement);
+    const map = readMap(this.config);
+    const reading = readModbusAgentStatement(statement, new Set(map.points.map((point) => point.name)));
+    if (!reading.ok) throw new RefusedBeforeSendError(reading.message, "modbus", statement);
+    const read = await runModbusAgentRead(
+      {
+        plan: reading.plan,
+        map,
+        endpoint: this.endpoint(),
+        unitId: this.unitIdOfConnection(map),
+        budget,
+        startedAt,
+      },
+      this.agentSeams,
+    );
+    return modbusAgentResult(read, budget);
   }
 
   /** The unit a shape that names none runs at: the map's first, which is the one the tree shows. */
@@ -502,20 +643,24 @@ export class ModbusProvider extends BaseDatabaseProvider {
     const point = parsed.points[0];
     const endpoint = this.endpoint();
     if (point !== undefined) {
-      const socket = await dialModbus(endpoint);
-      try {
-        const session = new ModbusSession(socketWire(socket, endpoint));
-        await runRead({ kind: "points", names: [point.name] }, parsed, session, point.unitId);
-      } finally {
-        socket.destroy();
-      }
+      await this.onDevice(async () => {
+        const socket = await this.agentSeams.dial(endpoint);
+        try {
+          const session = new ModbusSession(socketWire(socket, endpoint));
+          await runRead({ kind: "points", names: [point.name] }, parsed, session, point.unitId);
+        } finally {
+          socket.destroy();
+        }
+      });
     } else {
       // NO MAP: a plain dial, and deliberately NOT an identification read. 43/14 is not mandatory
       // in Modbus, so a device that refuses it is a device that does not know the function rather
       // than a device that is not there, and reporting that as a health failure would blame the
       // wrong side. A dial claims nothing except that the address answered a TCP connection;
       // nothing is read, because no point names an address to read.
-      (await dialModbus(endpoint)).destroy();
+      await this.onDevice(async () => {
+        (await this.agentSeams.dial(endpoint)).destroy();
+      });
     }
     return {
       databaseSize: parsed.isEmpty
@@ -535,6 +680,8 @@ export class ModbusProvider extends BaseDatabaseProvider {
   // ==========================================================================
 
   public async getOverview(): Promise<DatabaseOverview> {
+    // On an agent-mode handle these figures would read as the device's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(MODBUS_AGENT_WITHHELD.overview);
     const parsed = readMap(this.config);
     return {
       version: "Modbus TCP",
@@ -552,26 +699,38 @@ export class ModbusProvider extends BaseDatabaseProvider {
   }
 
   public async getPerformanceMetrics(): Promise<PerformanceMetrics> {
+    // On an agent-mode handle an empty answer would read as the device's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(MODBUS_AGENT_WITHHELD.performance);
     return {};
   }
 
   public async getSlowQueries(): Promise<SlowQueryStats[]> {
+    // On an agent-mode handle an empty answer would read as the device's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(MODBUS_AGENT_WITHHELD.slowQueries);
     return [];
   }
 
   public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
+    // On an agent-mode handle an empty answer would read as the device's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(MODBUS_AGENT_WITHHELD.sessions);
     return [];
   }
 
   public async getTableStats(): Promise<TableStats[]> {
+    // On an agent-mode handle an empty answer would read as the device's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(MODBUS_AGENT_WITHHELD.tableStats);
     return [];
   }
 
   public async getIndexStats(): Promise<IndexStats[]> {
+    // On an agent-mode handle an empty answer would read as the device's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(MODBUS_AGENT_WITHHELD.indexStats);
     return [];
   }
 
   public async getStorageStats(): Promise<StorageStats[]> {
+    // On an agent-mode handle an empty answer would read as the device's own; the reason is answered instead.
+    if (this.agentProfile) this.agentWithheld(MODBUS_AGENT_WITHHELD.storage);
     return [];
   }
 

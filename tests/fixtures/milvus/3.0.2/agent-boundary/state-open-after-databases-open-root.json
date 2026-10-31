@@ -1,0 +1,40 @@
+{
+  "$captured": {
+    "server": "authorization off",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-10-30",
+    "runtime": "bun 1.4.4",
+    "rpc": "ListDatabases",
+    "principal": "open-root",
+    "rights": "root",
+    "surface": "the databases",
+    "request": {}
+  },
+  "outcome": "pass",
+  "payload": {
+    "db_names": [
+      "default",
+      "agent_db_open_reader",
+      "agent_db_open_anonymous"
+    ],
+    "created_timestamp": [
+      "1793370102376418638",
+      "1793370239601636931",
+      "1793370253696652429"
+    ],
+    "db_ids": [
+      "1",
+      "470121212116932714",
+      "470121212117002850"
+    ],
+    "status": {
+      "extra_info": {},
+      "error_code": "Success",
+      "reason": "",
+      "code": 0,
+      "retriable": false,
+      "detail": ""
+    }
+  }
+}

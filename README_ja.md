@@ -29,6 +29,8 @@
   <a href="https://www.postgresql.org/download/products/1/#:~:text=LibreDB%20Studio">Software Catalogue</a>
   ·
   <a href="https://wiki.postgresql.org/wiki/Community_Guide_to_PostgreSQL_GUI_Tools#LibreDB_Studio">Community Guide to GUI Tools</a>
+  ·
+  <a href="https://wiki.postgresql.org/wiki/Design_Tools#LibreDB_Studio">Design Tools</a>
 </p>
 <p align="center">
   <a href="https://node-oracledb.readthedocs.io/en/latest/user_guide/appendix_b.html#libredb-studio">Oracle</a>、
@@ -52,11 +54,13 @@
   <a href="https://aiven.io/docs/products/mysql/howto/connect-libredb-studio">Aiven for MySQL</a>、
   <a href="https://docs.scylladb.com/stable/get-started/gui-clients/libredb-studio.html">ScyllaDB</a>、
   <a href="https://docs.couchbase.com/server/current/third-party/integrations.html#standalone-query-and-admin-tools">Couchbase</a>、
+  <a href="https://etcd.io/docs/v3.7/integrations/#:~:text=LibreDB%20Studio">etcd</a>、
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>、
   <a href="https://doris.apache.org/docs/4.x/connection-integration/data-integration/libredb-studio/">Apache Doris</a>、
   <a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem#:~:text=LibreDB%20Studio">Apache Kafka</a>、
   <a href="https://cassandra.apache.org/_/ecosystem.html">Apache Cassandra</a>、
-  <a href="https://druid.apache.org/libraries/#:~:text=LibreDB%20Studio">Apache Druid</a>
+  <a href="https://druid.apache.org/libraries/#:~:text=LibreDB%20Studio">Apache Druid</a>、
+  <a href="https://github.com/oxia-db/oxia/blob/main/ADOPTERS.md#adopters-list">Oxia</a>
   の公式ドキュメントにも掲載
 </p>
 
@@ -163,7 +167,7 @@ PostgreSQL · MySQL · Oracle · Db2 LUW · SQL Server · SQLite · libSQL · Du
 | **Prometheus** | ドライバなし、HTTPのみ（Prometheus HTTP API、9090） | テキストをそのままサーバーに送るPromQLエディタ、結果はグリッドとチャートタブに表示（`rate(x[5m])[1h:1m]` のようなステップ付きサブクエリはタイムスタンプを横軸とする線グラフになります。タブは最初の系列だけを表示し、Y-Axisメニューから系列を追加すると1系列につき1本の線が描かれ、同時に描かれるのは最大8本で、それを超えると「Showing first 8 of N series」と表示されます。ただし、チャートは欠けたサンプルと数値の中の `NaN`・`Inf` を0として描くため、スクレイプのタイミングがターゲットごとに異なる生の範囲クエリでは偽のゼロが描かれます）、ラベル名をカラム・メタデータをソースとするメトリクスブラウザ、ルールグループと記録ルール・アラートルール（発火中のアラートはツリーに表示）、スクレイププールとターゲット（ダウンしたターゲットはツリーに表示）、ヘルス・バージョン・稼働時間・TSDB統計。設計上読み取り専用です：管理APIもremote writeも呼ばず、EXPLAINもなく（パース用エンドポイントは実験的なため）、メンテナンス操作もありません。平文HTTP上の認証情報は拒否されずに送信されるため、管理下にないネットワークを越える場合はTLSを有効にしてください |
 | **Apache Kafka** | `@platformatic/kafka`（純粋なTypeScript、9092） | トピックをパーティション、オフセット、タイムスタンプ、最古のオフセット、または最新のメッセージから読むJSONの読み取りリクエスト。キー、値、ヘッダーはJSON、テキスト、base64としてデコードされ、Confluent形式の値はスキーマIDで表示されます。パーティションとデフォルト以外の設定を持つトピックブラウザ（オフラインまたはレプリカ不足のトピックはツリーに表示）、両プロトコルのコンシューマーグループとパーティションごとのラグ、brokerとその設定、ヘルス・トピック数・ディスク上のサイズ。構造上読み取り専用です：producer送信、オフセットのコミット、コンシューマーグループへの参加、トピックの作成は行いません。独自CAとクライアント証明書によるTLS、SASL PLAINとSCRAMはTLS上のみ。brokerには各brokerが広告するアドレスで接続するため、SSHトンネルは使えません |
 | **etcd** | `@grpc/grpc-js`（純粋なJavaScript、gRPC、2379） | エディタでetcdctlのサブセット（`get`、`put`、`del`、`txn`、リース、上限付きの`watch`、メンバー、アラーム、ユーザーとロール）。ツリーにはキープレフィックスのグループ、キーパネルにはすべてのキー。キーの値はリビジョンを条件とする1つのトランザクションで編集されます。管理者向けにコンパクション、デフラグ、アラーム解除があり、いずれも接続名の入力で確認します。Kubernetesのプレフィックスや`compact_rev_key`への書き込みはすべて拒否され、KubernetesのSecretとprotobufまたは暗号化された値は表示されません。独自CAによるTLS、クライアント証明書（Common Nameがetcdユーザー）、TLS上のみのパスワード認証。SSHトンネル。シードで宣言する読み取り専用モード |
-| **Neo4j** | `neo4j-driver-lite`（純粋なJavaScript、Bolt、7687） | Neo4j 5.26 LTSに対する読み取り専用のCypherエディタ（1回の実行で1ステートメント）。ツリーにはノードラベルとリレーションシップタイプ（プロパティを列として）、インデックスと制約。ノード、リレーションシップ、パスはタグ付きJSONセルとしてグリッドに表示され、64ビット整数と日時の値は正確に保たれます。Communityが提供する監視パネル。すべてのステートメントはトークン単位の読み取りポリシー、`EXPLAIN`によるサーバー自身の分類（許可されたSHOW形式はこれを省略）、READセッションを通るため、書き込みは3つの層をすべて破る必要があります。EXPLAIN・PROFILEビュー、メンテナンス、エージェント実行、MCPの`run_read_query`はありません。独自CAによるTLS、SSHトンネル。接続文字列なし |
+| **Neo4j** | `neo4j-driver-lite`（純粋なJavaScript、Bolt、7687） | Neo4j 5.26 LTSに対する読み取り専用のCypherエディタ（1回の実行で1ステートメント）。ツリーにはノードラベルとリレーションシップタイプ（プロパティを列として）、インデックスと制約。ノード、リレーションシップ、パスはタグ付きJSONセルとしてグリッドに表示され、64ビット整数と日時の値は正確に保たれます。Communityが提供する監視パネル。すべてのステートメントはトークン単位の読み取りポリシー、`EXPLAIN`によるサーバー自身の分類（許可されたSHOW形式はこれを省略）、READセッションを通るため、書き込みは3つの層をすべて破る必要があります。EXPLAIN・PROFILEビューとメンテナンスはありません。エージェント実行はEnterprise Editionで、サーバーが読み取り専用と証明したユーザーに対して動作し、MCPの`run_read_query`は引き続き閉じています。独自CAによるTLS、SSHトンネル。接続文字列なし |
 | **Milvus** | `@grpc/grpc-js`（純粋なJavaScript、gRPC、19530） | エディタでMilvus独自のREST v2リクエスト（1つのJSONボディを持つ`POST /v2/vectordb/<ルート>`）による読み取り、正確な件数、すべてのベクトル型でのベクトル検索（BM25とハイブリッド検索を含む）。ツリーにはデータベースとコレクション、そのフィールド、パーティション、インデックス、ロード状態。次元付きのベクトルセルと値全体のコピー。管理者向けのLoadとRelease（プレビューと確認付き）。Studioはデータを書き込まず、サーバーが別のサービスを呼び出すリクエストを拒否し、デフォルトの`root`パスワードを警告します。独自CAとクライアント証明書によるTLS。パスワードはTLS上、ループバック、またはSSHトンネル経由のみ。シードで宣言する読み取り専用モード |
 | **Qdrant** | なし、HTTP（QdrantのREST API、6333） | エディタでQdrant独自のRESTリクエスト（1つのJSONボディを持つ`メソッド /パス`）、17の読み取りルート：ポイントの取得、スクロール、正確な件数、ファセット、そして密・疎・マルチベクトルに対するクエリ、バッチ、グループ化クエリ（ローカルBM25モデルを含む）。ツリーにはコレクションとそのベクトル、payloadインデックス、payloadキーのサンプル表示。次元付きのベクトルセルと値全体のコピー。Studioは何も書き込まず、ローカルBM25以外の推論入力をすべて拒否し、有効期限のないJWTや管理権限を持つJWTを警告します。独自CAとクライアント証明書によるTLS。キーはTLS上、ループバック、またはSSHトンネル経由のみ。シードで宣言する読み取り専用モード |
 | **Weaviate** | なし、HTTP（WeaviateのREST API、1.39.7より前のサーバーでは検索にGraphQL、8080） | エディタでWeaviate独自のRESTリクエスト（1つのJSONボディを持つ`メソッド /v1/パス`）、17の読み取りルート：オブジェクトの一覧とid指定の読み取り、BM25、alpha 0のハイブリッド、near-vectorとnear-objectの検索、フィルタ、集計件数。検索はどのサーバーでもREST検索の形で書き、1.39.7より前のサーバーではGraphQLで実行。ツリーにはコレクションとそのプロパティ、ベクトル。テナントとエイリアスはコレクションのSourceに表示し、件数は正確。Studioは何も書き込まず、テキストをモデルに送るリクエストをすべて拒否し、コールドテナントを起こしません。独自CAによるTLS。APIキーやOIDCアクセストークンはTLS上、ループバック、またはSSHトンネル経由のみ。Weaviate 1.40.2、1.38.22、1.37.4でテスト済み |
@@ -214,9 +218,9 @@ StudioのAIの中心は、エディタの隣にあるエージェントレール
   書き込みとDDLはデータベースに届く前に拒否され、`EXPLAIN ANALYZE`は文を実際に実行してしまうため既定で
   不許可です。このパイプラインはエージェント専用です。あなたがエディタで自分で実行する文はプロバイダを直接
   呼び出しており（`src/app/api/db/query/route.ts:312`）、ここでのポリシー判定も監査も受けません。
-- **Agentモードが対応するのはPostgreSQL・SQLite・DuckDB・SQL Server・MySQL・Kubernetes・MongoDB・ClickHouse・libSQL・InfluxDB 3 (SQL)・Elasticsearch・OpenSearch・Oracle・Db2 LUW・Apache Cassandra・Couchbase・Apache Druid・LibreDBだけ**：読み取り専用プロファイルは、
+- **Agentモードが対応するのはPostgreSQL・SQLite・DuckDB・SQL Server・MySQL・Kubernetes・MongoDB・ClickHouse・libSQL・InfluxDB 3 (SQL)・Elasticsearch・OpenSearch・Oracle・Db2 LUW・Apache Cassandra・Couchbase・Apache Druid・LibreDB・InfluxDB (InfluxQL)・Weaviate・Qdrant・Neo4j・Milvus・Redis・etcd・Oxia・RabbitMQ・Apache Kafka・S3-compatible object storage・Firestore・SNMP・NETCONF・Modbusだけ**：読み取り専用プロファイルは、
   それを実装したプロバイダにしか存在しません。`postgres.ts`、`sqlite.ts`、`duckdb/index.ts`、
-  `mssql.ts`、`mysql.ts`、`kubernetes/index.ts`、`mongodb/index.ts`、`clickhouse/index.ts`、`libsql/index.ts`、`influxdb/sql-provider.ts`、`search/index.ts`、`oracle/index.ts`、`db2/index.ts`、`cassandra/index.ts`、`couchbase/index.ts`、`druid/index.ts`、`libredb.ts`の`queryReadOnly`のみで、他にはありません。
+  `mssql.ts`、`mysql.ts`、`kubernetes/index.ts`、`mongodb/index.ts`、`clickhouse/index.ts`、`libsql/index.ts`、`influxdb/sql-provider.ts`、`search/index.ts`、`oracle/index.ts`、`db2/index.ts`、`cassandra/index.ts`、`couchbase/index.ts`、`druid/index.ts`、`libredb.ts`、`influxdb/influxql-provider.ts`、`weaviate/index.ts`、`qdrant/index.ts`、`neo4j/index.ts`、`milvus/index.ts`、`redis.ts`、`etcd/index.ts`、`oxia/index.ts`、`rabbitmq/index.ts`、`kafka/index.ts`、`s3/index.ts`、`firestore/index.ts`、`snmp/index.ts`、`netconf/index.ts`、`modbus/index.ts`の`queryReadOnly`のみで、他にはありません。
   読み取り専用の境界はエンジンごとに異なり、各エンジンのドキュメントに記されています。それ以外のエンジンでは、文を送るワークフローのAgentモードは
   開始時点で拒否され、Runは作られません。プロバイダのファクトリまで到達したものは`engine-unsupported`で終わります。
   **Plan**モードはどの接続でも開けます。そこでのモデルはツールを使わず、あなたの文を1つも実行せず、何も書き込まず、

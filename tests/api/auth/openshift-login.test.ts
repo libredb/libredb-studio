@@ -186,3 +186,41 @@ describe("GET /api/auth/openshift/login", () => {
     }
   });
 });
+
+// Whenever the auth cookies are Secure the state cookie is __Host-openshift-state at Path=/, and the loop guard reads
+// __Host-access-review-retry alone.
+describe("GET /api/auth/openshift/login with host-prefixed names", () => {
+  test("sets __Host-openshift-state at Path=/ with Secure", async () => {
+    process.env.AUTH_COOKIE_SECURE = "true";
+    try {
+      await login();
+      expect(jar.written("openshift-state")).toEqual([]);
+      const [write] = jar.written("__Host-openshift-state");
+      expect(write.options).toEqual({ httpOnly: true, secure: true, sameSite: "lax", maxAge: 300, path: "/" });
+    } finally {
+      delete process.env.AUTH_COOKIE_SECURE;
+    }
+  });
+
+  test("the loop guard trips on __Host-access-review-retry and deletes it with Secure; a plain marker is ignored", async () => {
+    process.env.AUTH_COOKIE_SECURE = "true";
+    try {
+      jar.values.set("access-review-retry", "loop");
+      expect((await login()).headers.get("location")).toContain("/oauth/authorize");
+      expect(jar.written("access-review-retry")).toEqual([]);
+
+      jar.reset();
+      jar.values.set("__Host-access-review-retry", "loop");
+      expect((await login()).headers.get("location")).toBe(`${PUBLIC_LOGIN}openshift_session_lost`);
+      expect(jar.written("__Host-access-review-retry")).toEqual([
+        {
+          op: "delete",
+          name: "__Host-access-review-retry",
+          options: { name: "__Host-access-review-retry", path: "/", secure: true },
+        },
+      ]);
+    } finally {
+      delete process.env.AUTH_COOKIE_SECURE;
+    }
+  });
+});

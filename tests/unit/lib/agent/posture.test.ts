@@ -90,6 +90,30 @@ describe("agentPosture in plan mode", () => {
     expect(onMongo).toEqual(onPostgres);
   });
 
+  /**
+   * Modbus's grounding is the connection's register map, which sends the device nothing, but opening the connection
+   * dials it, so "nothing else reaches the database" was not true there. Its language pack names the dial for what it
+   * is, and the plan posture is otherwise the shared one.
+   */
+  test("on Modbus it names the dial that opening the connection makes, and says no request is sent", () => {
+    const onModbus = agentPosture({
+      mode: "planning",
+      engine: "modbus",
+      engineLabel: getDBConfig("modbus").label,
+      handover: true,
+    });
+
+    expect(onModbus.tone).toBe("safe");
+    expect(onModbus.headline).toBe("Executes nothing it drafts");
+    expect(onModbus.qualifier).toBe(
+      "the register map grounds it; opening the connection dials the device, and no request is sent to it",
+    );
+    expect(onModbus.title).toBe("Plan mode drafts, and never runs what it drafted");
+    expect(onModbus.body).toBe(
+      "Plan mode never sends the request it wrote. It is grounded on the connection's register map, which is read without a request to the device, and it is where the inventory in Run details came from. Opening the connection to read it dials the device's port and closes the connection again, and no Modbus request is sent to the device.",
+    );
+  });
+
   test("the hand-over tick cannot widen plan mode", () => {
     const ticked = agentPosture({
       mode: "planning",
@@ -330,6 +354,133 @@ describe("the posture on Kubernetes", () => {
     expect(autoExecuteTerms("data-analysis", "kubectl")).toBe(
       "A kubectl answer is never run in your editor: the hand-over is not offered on this engine, so the run produces its answer on its own read-only path only.",
     );
+  });
+});
+
+describe("the posture on Oxia", () => {
+  const posture = agentPosture({ mode: "agent", engine: "oxia", engineLabel: "Oxia", handover: false });
+  const rows = STATEMENT_BUDGETS.maxResultRows;
+
+  test("claims the count of every key in the namespace, never a count over a range a command names", () => {
+    // A count over a named range or prefix is refused before the network, so the rail may not offer it.
+    expect(posture.body).not.toMatch(/keys in a range a command names|a range holding more than/);
+    expect(posture.body).toContain("the count of every key in the namespace, never their names");
+    expect(posture.body).toContain(`a namespace holding more than ${rows} keys is refused rather than counted in part`);
+  });
+});
+
+describe("the posture on RabbitMQ", () => {
+  const posture = agentPosture({ mode: "agent", engine: "rabbitmq", engineLabel: "RabbitMQ", handover: false });
+
+  test("names exactly what the agent reads: each message's offset and body size, never a value", () => {
+    expect(posture.qualifier).toBe(
+      `metadata only, ${STATEMENT_BUDGETS.maxResultRows} rows and ${STATEMENT_BUDGETS.statementTimeoutMs / 1000} s per read, over a client that cannot take a message`,
+    );
+    expect(posture.body).toContain(
+      "answers each message's offset and body size, never its body, headers, properties or routing key",
+    );
+    expect(posture.body).toContain("refuses a classic or quorum queue before any frame");
+    expect(posture.body).not.toMatch(/payload|headers are shown|message cells/);
+  });
+});
+
+describe("the posture on Apache Kafka", () => {
+  const posture = agentPosture({ mode: "agent", engine: "kafka", engineLabel: "Apache Kafka", handover: false });
+
+  test("names exactly what the agent reads: names, counts and offsets, never a record or a broker address", () => {
+    expect(posture.qualifier).toBe(
+      `metadata only, ${STATEMENT_BUDGETS.maxResultRows} rows and ${STATEMENT_BUDGETS.statementTimeoutMs / 1000} s per read, over a client that holds only Metadata and ListOffsets`,
+    );
+    expect(posture.body).toContain(
+      "never a record's key, value, headers or timestamp, a broker's host and port, a config, a log directory or a consumer group",
+    );
+    expect(posture.body).toContain("An offset span is reported as a span, never as a message count.");
+    expect(posture.body).toContain("sent with topic auto-creation off");
+    expect(posture.body).not.toMatch(/message cells|values are shown|reads records/);
+  });
+});
+
+describe("the posture on S3-compatible object storage", () => {
+  const posture = agentPosture({
+    mode: "agent",
+    engine: "s3",
+    engineLabel: "S3-compatible object storage",
+    handover: false,
+  });
+
+  test("names exactly what the agent reads: bucket metadata, totals and named objects, never a key or a value", () => {
+    expect(posture.qualifier).toBe(
+      `metadata only, ${STATEMENT_BUDGETS.maxResultRows} rows and ${STATEMENT_BUDGETS.statementTimeoutMs / 1000} s per read, over a client that holds only GET and HEAD reads of bucket metadata`,
+    );
+    expect(posture.body).toContain(
+      "never an object key it was not given, a body, user metadata, a tag, an ETag, a version id, an owner, an ACL, a policy or the endpoint",
+    );
+    expect(posture.body).toContain("A bucket is counted whole and never by prefix");
+    expect(posture.body).not.toMatch(/lists keys|previews|object contents are shown/);
+  });
+
+  test("names what the client sends: no key listing by prefix, delimiter or start position, and a summary that reads whole-bucket key pages it never passes on", () => {
+    expect(posture.body).toContain(
+      "Studio's agent client holds only those six reads, each a GET or a HEAD, so it cannot read an object, list keys by prefix, delimiter or start position, write, delete or sign a URL; a bucket's summary reads its whole-bucket key pages, which Studio totals and never passes on.",
+    );
+    expect(posture.body).not.toContain("cannot read or list an object");
+  });
+});
+
+describe("the posture on Google Cloud Firestore", () => {
+  const posture = agentPosture({
+    mode: "agent",
+    engine: "firestore",
+    engineLabel: "Google Cloud Firestore",
+    handover: false,
+  });
+
+  test("names exactly what the agent reads: collection ids, whole counts and named documents' times, never a value", () => {
+    expect(posture.qualifier).toBe(
+      `metadata only, ${STATEMENT_BUDGETS.maxResultRows} rows and ${STATEMENT_BUDGETS.statementTimeoutMs / 1000} s per read, each read charged to the run's read allowance, over a client that holds only collection id listings, whole-collection counts and named-document times`,
+    );
+    expect(posture.body).toContain("never a document id or path it was not given, a field name or a field value");
+    expect(posture.body).toContain("A collection is counted whole, never through a filter");
+    expect(posture.body).not.toMatch(/previews|sampled fields|document contents are shown/);
+  });
+
+  test("names the billing: every read, the grounding's included, is charged to the run's allowance before it is sent", () => {
+    expect(posture.body).toContain(
+      "Firestore bills every read, so each one, the grounding's collection id listings included, is charged to the run's read allowance before it is sent and refused once the allowance is spent.",
+    );
+  });
+
+  test("names the client's three requests before it counts them, so the four reads are not taken for the three", () => {
+    expect(posture.body).toContain(
+      "Studio's agent client holds only three kinds of request, a collection id listing, a count that nothing narrows and a read of one named document's times, so it cannot",
+    );
+    expect(posture.body).not.toContain("those three kinds");
+  });
+});
+
+describe("the posture on SNMP", () => {
+  const posture = agentPosture({ mode: "agent", engine: "snmp", engineLabel: "SNMP", handover: false });
+
+  test("names exactly what the agent reads: the device's values through four named commands, never a write", () => {
+    expect(posture.qualifier).toBe(
+      `${STATEMENT_BUDGETS.maxResultRows} rows and ${STATEMENT_BUDGETS.statementTimeoutMs / 1000} s per read, over a client that sends only Get, GetNext and GetBulk, with the SNMP security modules withheld`,
+    );
+    expect(posture.body).toContain(
+      "each one of the console's four commands, get, next, walk and table, and answers the device's values as the console renders them",
+    );
+    expect(posture.body).toContain("Studio's agent client holds only the Get, GetNext and GetBulk requests");
+    expect(posture.body).not.toMatch(/metadata only|those three/);
+  });
+
+  test("names every withheld module, and why, and counts none of them", () => {
+    expect(posture.body).toContain(
+      "Withheld, because they hold community strings, user names, keys and access rules, are SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB, SNMP-COMMUNITY-MIB, SNMP-SSH-TM-MIB, SNMP-TSM-MIB, SNMP-TLS-TM-MIB, SNMP-USM-DH-OBJECTS-MIB and Net-SNMP's NET-SNMP-VACM-MIB;",
+    );
+    expect(posture.body).toContain(
+      "a walk that covers one steps over it and names it, and a walk inside one is refused",
+    );
+    expect(posture.body).not.toMatch(/\b(?:Six|six|Eleven|eleven) modules\b/);
+    expect(posture.body).toContain("The community never reaches an answer.");
   });
 });
 

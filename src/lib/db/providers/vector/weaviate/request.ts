@@ -628,7 +628,10 @@ function targetOf(plan: WeaviatePlan, facts: WeaviateCollectionFacts): string | 
  * Phase 1: the rules that read the collection's definition, described for this request. Throws a phase 1
  * `RequestRefusal`; makes no call. Answers the plan with the target vector's name filled in for the encoders.
  */
-/** The routes that read a whole multi-tenant collection's own record, and so name no tenant. */
+/**
+ * The routes that read a whole multi-tenant collection's own record, and so name no tenant. The shard read and the
+ * count stay out: on 1.40.2 a shard read naming no tenant wakes a COLD one.
+ */
 const COLLECTION_RECORD_OPS: ReadonlySet<WeaviateConsoleOp> = new Set(["collection", "tenants", "collection_nodes"]);
 
 export function weaviatePhase1(plan: WeaviatePlan, facts: WeaviateCollectionFacts): WeaviatePlan {

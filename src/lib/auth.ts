@@ -17,6 +17,10 @@ import { AuthConfigError } from "@/lib/auth-errors";
 import { storedAccountAllows } from "@/lib/local-accounts";
 import { authenticateBearer } from "@/lib/oidc-bearer";
 import { openShiftRecordCheck } from "@/lib/openshift-auth/session";
+import { type CookieScope, SESSION_COOKIE, cookieDeletion, cookieScope } from "@/lib/auth-cookies";
+import { studioCookie } from "@/lib/studio-cookie";
+
+export { isLoopbackHost, readCookieSecureOverride, resetCookieSecurityWarning } from "@/lib/auth-cookies";
 
 // getJwtSecret is called per sign/verify rather than at module load, so a
 // misconfigured JWT_SECRET surfaces as an AuthConfigError the login route can turn
@@ -132,7 +136,7 @@ export async function readSession(): Promise<SessionReading> {
   }
 
   const cookieStore = await cookies();
-  const token = cookieStore.get("auth-token")?.value;
+  const token = cookieStore.get((await sessionCookie()).name)?.value;
   if (!token) return { kind: "anonymous" };
   const session = await verifyJWT(token);
   if (!session) return { kind: "anonymous" };
@@ -163,7 +167,7 @@ async function sessionWithRecord(
   cookieStore: Awaited<ReturnType<typeof cookies>>,
   session: UserPayload & { iat?: number },
 ): Promise<UserPayload | null> {
-  const marker = cookieStore.get(ACCESS_REVIEW_RETRY_COOKIE)?.value;
+  const marker = cookieStore.get((await retryMarkerCookie()).name)?.value;
   if (authProvider() === "openshift") return openShiftSessionWithRole(cookieStore, session, marker);
   // A session openshift sign-in minted reads as signed out in every other mode: no marker, the cookie cleared.
   if (session.sessionHandle !== undefined) return null;
@@ -220,18 +224,18 @@ async function settleRecordCheck(
   check: GroupsRecordCheck,
   missMessage: string,
 ): Promise<boolean> {
-  const markerPath = getBasePath() || "/";
+  const marker = await retryMarkerCookie();
   if (check.kind === "kept") {
-    if (check.clearMarker) cookieStore.delete({ name: ACCESS_REVIEW_RETRY_COOKIE, path: markerPath });
+    if (check.clearMarker) cookieStore.delete(cookieDeletion(marker));
     return true;
   }
   if (check.marker !== null) {
-    cookieStore.set(ACCESS_REVIEW_RETRY_COOKIE, check.marker, {
+    cookieStore.set(marker.name, check.marker, {
       httpOnly: true,
-      secure: await shouldMarkCookieSecure(),
+      secure: marker.secure,
       sameSite: "lax",
       maxAge: ACCESS_REVIEW_RETRY_MAX_AGE_SECONDS,
-      path: markerPath,
+      path: marker.path,
     });
   }
   logger.info(missMessage, { route: "auth", loop: check.marker === "loop" });
@@ -244,7 +248,7 @@ async function settleRecordCheck(
  * that cookie stops working; it is never a route's session check, which is readSession.
  */
 export async function verifiedSessionCookie(): Promise<UserPayload | null> {
-  const token = (await cookies()).get("auth-token")?.value;
+  const token = (await cookies()).get((await sessionCookie()).name)?.value;
   return token === undefined ? null : verifyJWT(token);
 }
 
@@ -253,96 +257,23 @@ export async function getSession(): Promise<UserPayload | null> {
   return reading.kind === "authenticated" ? reading.session : null;
 }
 
-/** Hosts whose traffic never leaves the machine (port is stripped before the check). */
-const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
-
-const COOKIE_SECURE_OFF = new Set(["off", "false", "0"]);
-const COOKIE_SECURE_ON = new Set(["on", "true", "1"]);
-
-// Hoisted to module scope on one line: bun's line coverage under-counts the
-// continuation lines of a wrapped string, which then reads as uncovered code.
-const COOKIE_SECURE_DISABLED_MESSAGE =
-  "AUTH_COOKIE_SECURE=false: auth cookies drop the Secure flag and travel in cleartext; keep this to trusted networks";
-
-// Weakening the session cookie deserves a line in the log, but shouldMarkCookieSecure()
-// runs on every login, so the notice is latched to fire once per process.
-let cookieSecurityWarned = false;
-
-/** Test seam: clears the warn-once latch so each case observes a fresh process. */
-export function resetCookieSecurityWarning(): void {
-  cookieSecurityWarned = false;
-}
-
-function warnOnce(message: string): void {
-  if (cookieSecurityWarned) return;
-  cookieSecurityWarned = true;
-  logger.warn(message, { route: "auth" });
+function sessionCookie(): Promise<CookieScope> {
+  return studioCookie(SESSION_COOKIE, getBasePath() || "/");
 }
 
 /**
- * The operator's explicit AUTH_COOKIE_SECURE answer, or undefined to let the
- * environment decide. Spellings follow AUTH_BOOTSTRAP ("off"/"false"/"0" and
- * "on"/"true"/"1", trimmed, case-insensitive); anything else warns and falls
- * through to the default, so a typo never silently flips the security posture.
+ * In Secure mode, deletes the plain-named session cookie a browser upgraded from plain names may still hold. It is
+ * never read in that mode, but it is still a signed session: a rollback, or AUTH_COOKIE_SECURE=false, within its
+ * Max-Age would read it again, so sign-in and sign-out delete it. Plain mode has nothing to delete beside its own.
  */
-export function readCookieSecureOverride(): boolean | undefined {
-  const raw = process.env.AUTH_COOKIE_SECURE;
-  const normalized = raw?.trim().toLowerCase();
-  if (!normalized) return undefined;
-  if (COOKIE_SECURE_OFF.has(normalized)) return false;
-  if (COOKIE_SECURE_ON.has(normalized)) return true;
-  // Single-line message: bun's line coverage under-counts the continuation
-  // lines of a wrapped call, which then reads as uncovered new code.
-  warnOnce(`Unrecognized AUTH_COOKIE_SECURE value "${raw}"; keeping the default (use "false" for plain HTTP)`);
-  return undefined;
+function deletePlainSessionCookie(cookieStore: Awaited<ReturnType<typeof cookies>>, scope: CookieScope): void {
+  if (!scope.secure) return;
+  cookieStore.delete(cookieDeletion(cookieScope(SESSION_COOKIE, getBasePath() || "/", false)));
 }
 
-export function isLoopbackHost(host: string | null): boolean {
-  if (!host) return false;
-  // Strip the port, then the brackets of an IPv6 literal ("[::1]:3000" -> "::1").
-  const hostname = host
-    .replace(/:\d+$/, "")
-    .replace(/^\[|\]$/g, "")
-    .toLowerCase();
-  return LOOPBACK_HOSTNAMES.has(hostname);
-}
-
-/**
- * Whether an auth cookie should carry the Secure flag.
- *
- * AUTH_COOKIE_SECURE wins whenever it is set. It is needed when the browser's
- * own connection is plain http on a host that is not loopback - a LAN or
- * home-server deployment such as umbrelOS (getumbrel/umbrel-apps#5847), where
- * the browser rejects the Secure cookie and login silently loops. Only the
- * operator can state that: no request-scoped signal proves it, and
- * x-forwarded-proto is attacker-supplied, so trusting it to *drop* the flag
- * would be a downgrade vector. Note that TLS terminated at an ingress does not
- * need this - the browser still speaks https, so it accepts a Secure cookie.
- *
- * Otherwise: Secure in production, with one exception: a request that arrived on
- * a loopback host over plain http. Marking that cookie Secure protects nothing
- * (the traffic never leaves the machine) and actively breaks the desktop shell,
- * because libsoup - the cookie store behind WebKitGTK - discards a Secure cookie
- * delivered over http instead of ignoring the flag the way Chromium does on
- * localhost (issue #232). A proxy that terminated TLS and forwarded to loopback
- * still gets Secure, via x-forwarded-proto.
- */
-export async function shouldMarkCookieSecure(): Promise<boolean> {
-  const override = readCookieSecureOverride();
-  if (override === false && process.env.NODE_ENV === "production") {
-    warnOnce(COOKIE_SECURE_DISABLED_MESSAGE);
-  }
-  if (override !== undefined) return override;
-  if (process.env.NODE_ENV !== "production") return false;
-  try {
-    const headerStore = await headers();
-    if (!isLoopbackHost(headerStore.get("host"))) return true;
-    const forwardedProto = headerStore.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
-    return forwardedProto === "https";
-  } catch {
-    // No request scope (headers() throws): keep the stricter default.
-    return true;
-  }
+/** The access review's retry marker (src/lib/kubernetes-access/session-guard.ts), scoped like the session cookie. */
+function retryMarkerCookie(): Promise<CookieScope> {
+  return studioCookie(ACCESS_REVIEW_RETRY_COOKIE, getBasePath() || "/");
 }
 
 export async function login(
@@ -364,20 +295,24 @@ export async function login(
     lifetime,
   );
   const cookieStore = await cookies();
-  cookieStore.set("auth-token", token, {
+  const scope = await sessionCookie();
+  cookieStore.set(scope.name, token, {
     httpOnly: true,
-    secure: await shouldMarkCookieSecure(),
+    secure: scope.secure,
     // Must stay "lax" and must NOT be tightened to "strict": the OIDC callback depends on lax's
     // top-level-GET exception to return the oidc-state cookie. The cases lax does not cover -
     // notably a cross-site POST /api/auth/login, where there is no pre-existing cookie to withhold
     // - are covered by the Origin check in src/proxy.ts (src/lib/api/origin-check.ts).
     sameSite: "lax",
     maxAge: lifetime,
-    path: getBasePath() || "/",
+    path: scope.path,
   });
+  deletePlainSessionCookie(cookieStore, scope);
 }
 
 export async function logout() {
   const cookieStore = await cookies();
-  cookieStore.delete({ name: "auth-token", path: getBasePath() || "/" });
+  const scope = await sessionCookie();
+  cookieStore.delete(cookieDeletion(scope));
+  deletePlainSessionCookie(cookieStore, scope);
 }

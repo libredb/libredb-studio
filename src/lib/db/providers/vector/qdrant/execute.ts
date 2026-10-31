@@ -6,6 +6,7 @@ import type { QdrantAnswer, QdrantOp, QdrantSend } from "./client";
 import {
   parseQdrantRequest,
   type QdrantCollectionFacts,
+  type QdrantPhase0,
   qdrantPhase0,
   qdrantPhase1,
   qdrantVersionGates,
@@ -48,6 +49,20 @@ export interface QdrantExecution {
   readonly now?: () => number;
   /** The deadline's signal; only a test passes another. */
   readonly deadline?: (ms: number) => AbortSignal;
+  /**
+   * What the request's answer becomes: `qdrantResult` by default; the agent read-only profile passes the
+   * metadata-only projection of `metadata-read.ts`, so its answer is never shaped as a console result.
+   */
+  readonly answered?: (answered: QdrantAnswered) => QueryResult;
+}
+
+/** One request's successful answer, as the result is built from it. */
+export interface QdrantAnswered {
+  /** The request as phase 0 read it, with the defaults written in. */
+  readonly plan: QdrantPhase0;
+  /** The answer's text, as the server sent it. */
+  readonly text: string;
+  readonly executionTime: number;
 }
 
 const METADATA_OPS: ReadonlySet<QdrantOp> = new Set([
@@ -139,7 +154,10 @@ export async function executeQdrant(
         query,
         ...(wire.body === undefined ? {} : { body: wire.body }),
       });
-      return qdrantResult(answer.text, wire.shape, { executionTime: now() - startedAt });
+      const executionTime = now() - startedAt;
+      return run.answered === undefined
+        ? qdrantResult(answer.text, wire.shape, { executionTime })
+        : run.answered({ plan, text: answer.text, executionTime });
     } finally {
       ticket.release();
     }

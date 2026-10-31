@@ -50,8 +50,19 @@ export interface QdrantAnswer {
   readonly text: string;
 }
 
+/**
+ * One of the two no-op writes the agent read-only proof sends (`metadata-read.ts`), and nothing a console request can
+ * name: an alias update with no action, and a point delete of no point on one collection. The client writes the
+ * method, the path and the body of each; the caller chooses the probe and, for the delete, the collection alone.
+ */
+export type QdrantProbe =
+  | { readonly kind: "empty-alias-update" }
+  | { readonly kind: "empty-point-delete"; readonly collection: string };
+
 export interface QdrantClient {
   send(request: QdrantRequest, signal: AbortSignal): Promise<QdrantAnswer>;
+  /** Sends one of the read-only proof's no-op writes; the answer is handed back whatever its status. */
+  probe(probe: QdrantProbe, signal: AbortSignal): Promise<QdrantAnswer>;
   close(): void;
 }
 

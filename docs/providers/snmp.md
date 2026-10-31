@@ -16,8 +16,9 @@ reads `sysDescr.0` and `sysUpTime.0` from the device; one the agent does not ans
 
 `listObjects`, `describeObject` and `describeObjects` answer from the bundled MIB modules and send nothing (section 6).
 `getHealth` is a real read of the agent (section 6.3).
+`queryReadOnly` is agent mode's, with the SNMP security modules withheld (section 13).
 
-Four commands: `get`, `next`, `walk` and `table`. A walk stops when `read.ts` says it stops, and
+Four commands: `get`, `next`, `walk` and `table`, which reads a conceptual table by its entry (`table ifEntry`), since the sub-identifier after the named node is read as the column. A walk stops when `read.ts` says it stops, and
 nothing else decides: the end of a subtree, a budget, an OID that did not move forward, or
 silence. A second place that decides when a walk is over is a second place that can disagree.
 
@@ -264,6 +265,109 @@ known defect; they are the places where the evidence stops.
 - **Modules this build does not carry.** A descriptor resolves against the index generated from the bundled MIB modules, and the catalog lists only what they define.
   A name from any other module is refused with the reason `explainUnknown` gives, and a table the catalog lists may hold no rows on a given agent.
 - **IPv6 end to end.** Measured only against the library's own in-process agent.
+
+## 13. Agent mode
+
+Agent mode reads an SNMP agent through `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/network/snmp/index.ts).
+The statement reader is [`agent-statement.ts`](../../src/lib/db/providers/network/snmp/agent-statement.ts), the agent's client is [`agent-client.ts`](../../src/lib/db/providers/network/snmp/agent-client.ts), the reads and their answers are [`agent-read.ts`](../../src/lib/db/providers/network/snmp/agent-read.ts), and every other surface of an agent-mode handle is [`agent-surface.ts`](../../src/lib/db/providers/network/snmp/agent-surface.ts).
+Every claim below about an agent cites the capture [`tests/fixtures/snmp/5.9.4/agent-boundary/boundary.json`](../../tests/fixtures/snmp/5.9.4/agent-boundary/boundary.json), recorded by its `run.sh` against a fresh container of the `docker/snmp` image (Net-SNMP snmpd 5.9.4, one `rocommunity` over `view everything`) and written by [`tests/live/snmp-agent-boundary.ts`](../../tests/live/snmp-agent-boundary.ts).
+The capture records no credential value: a withheld subtree read raw is recorded by its instance count, its columns without their instance suffixes and whether anything carried the community, and the script refuses to write a capture holding the community or its spelling as an instance suffix.
+
+### 13.1 The boundary
+
+The boundary is a structural closed table: every agent read goes through `SnmpAgentClient`, which holds three requests and nothing more, the Get, the GetNext and the GetBulk, RFC 3411 section 2.8's Read Class, each sent through the provider's exchange, whose valve ([section 5.3](#53-it-never-writes)) parses every outgoing datagram and refuses any other PDU.
+So no Set, notification or Response can be sent on the agent path; a GetBulk carries non-repeaters 0 and the documented max-repetitions cap of 50, and a request at most the documented 400 identifiers ([section 7](#7-limits-and-both-sides-of-each)).
+[`agent-provider.test.ts`](../../tests/unit/db/snmp/agent-provider.test.ts) pins every request in full against an agent on a real UDP socket (PDU type, community, identifiers, non-repeaters and max-repetitions), and [`agent-boundary.test.ts`](../../tests/unit/db/snmp/agent-boundary.test.ts) holds the agent's modules to the three read PDUs and replays the capture.
+
+A v2c community cannot be proved read-only from the client.
+Measured raw (`rawSet`), a Set with the fixture's read-only community is refused by the agent with `noAccess`; the agent path's own reads leave the agent's `snmpInSetRequests` where it was (`agentPathSentNoSet`).
+That counter is no witness on its own: `run.sh` sends the refused raw Set before the capture reads it, and it still reads 0, so Net-SNMP does not count a Set it refuses `noAccess`, and the evidence that the agent path sends no Set is the closed table and the `snmpInPkts` count below.
+The rights of a community live in the view-based access control tables, which are among the withheld modules below, so neither a credential nor a proof read is the boundary: the table is.
+Every statement the reader refuses, and every `get` or `next` of a withheld identifier, reaches the agent not at all: its `snmpInPkts`, read raw before and after them, moved by the one read after them alone (`notSentReachedNothing`).
+
+### 13.2 What an agent statement may be
+
+One of the console's four commands, read by the console's own parser and resolver ([section 1](#1-what-it-does)), as the console writes it:
+
+| Statement | Sends |
+| --- | --- |
+| `get OID [OID ...]` | one GetRequest naming every identifier that is not withheld |
+| `next OID [OID ...]` | one GetNextRequest naming every identifier that is not withheld |
+| `walk SUBTREE` | GetBulkRequests from the subtree, max-repetitions 50, until the subtree ends |
+| `table ENTRY` | GetBulkRequests from the entry, shaped into one row per index as the console shapes them (`table ifEntry`) |
+
+An identifier is written numerically, with or without a leading dot, or by a name the bundled modules define ([section 6.1](#61-the-catalog-comes-from-the-bundled-modules)).
+The console's `walk SUBTREE limit N` is read as the console reads it, and agent mode does not offer it: `N` sets only the first GetBulk's max-repetitions and caps no rows, so the row budget is the read's.
+The reader reads every statement under the console's own walk budget whatever the run's row budget, so the admission, which has no run, and the provider refuse the same statements with the same sentence.
+Every other statement is refused before anything is sent, with the parser's sentence followed by agent mode's list of commands: `set`, `trap`, `inform`, `bulkwalk`, any other word, a malformed identifier, an arc above 2^32-1, more than 128 arcs, an identifier of one arc (`walk 1`, which BER cannot encode), a name the bundled modules do not define, a second argument a command does not take, and a `limit` above the console's walk budget of 5,000.
+The admission refuses a statement longer than 4,096 characters.
+Each read opens an exchange of its own, with the request's time budget as every request's deadline and as the read's, and closes it when it ends, so no socket, request id or pending answer of one call reaches the next, and the console's one-time notices ([section 10](#10-notices-are-shown-once)) are never touched.
+[`agent-exchange.test.ts`](../../tests/unit/db/snmp/agent-exchange.test.ts) holds that every exchange opened for a read is closed after an answer, an agent's refusal and the time budget, and that the agent's client refuses a GetBulk above the max-repetitions cap before anything is sent.
+
+A walk or table past the row budget is refused, never cut: a walk stops as soon as it holds one row more than the budget (`Read-only execution exceeded the row budget: 44 rows > 3 allowed` in `overBudget`), and a table stops as soon as it holds one index more than the budget.
+A table is bounded by its rows, not by its objects, so a table of 300 interfaces of 22 columns each, 6,600 objects, is answered under a budget of 500 rows.
+A walk the agent leaves unfinished (an empty answer, an answer that does not move forward) and a walk or table past the console's request or inbound-byte bounds are refused too, since a part of a subtree read as the whole is the failure [`read.ts`](../../src/lib/db/providers/network/snmp/read.ts) names.
+A failure is worded by its category and quotes nothing the agent sent: a read the agent never answered within the time budget is silence (`Read-only execution exceeded the time budget: no answer within ...ms`), which names the other things silence can mean over v2c; `tooBig`, an error-status by its number, a report, a refused credential and an unreachable agent each have their sentence.
+Studio's own refusals (the row, byte and time budgets, the closed table) are worded as Studio's, never as the agent's: a walk the agent was still answering when the time budget ran out is refused as `the agent was still answering the walk after ...ms, Studio's time budget for one read`, and a read stopped by the read's own deadline after the agent had answered is refused as `the read did not finish within ...ms, Studio's time budget for one read, while the agent was still answering`, neither of them as silence.
+
+### 13.3 Values, and what is withheld
+
+Values are the device's own management readings, so agent mode reads and answers them, rendered exactly as the console renders them ([`rows.ts`](../../src/lib/db/providers/network/snmp/rows.ts) and [`values.ts`](../../src/lib/db/providers/network/snmp/values.ts)): an octet string is text only when the bytes are showable text and hex otherwise, so no control byte reaches an answer, and every result reaches the model inside the untrusted-content fence.
+A `get` or `next` answers an exception (`noSuchObject`, `noSuchInstance`, `endOfMibView`) as the row's type with no value, since it is the agent's answer; a walk drops them, as the console does.
+
+Withheld, by the prefix of the parsed and resolved identifier and never by the text written, are the SNMP framework's security and target modules, the transport security modules, the USM Diffie-Hellman objects and Net-SNMP's access control extension:
+
+| Module | Root | Holds |
+| --- | --- | --- |
+| `SNMP-SSH-TM-MIB` (RFC 5592) | 1.3.6.1.2.1.189 | the SSH transport's session counters and the security names its sessions map to |
+| `SNMP-TSM-MIB` (RFC 5591) | 1.3.6.1.2.1.190 | the transport security model's settings for how a security name is formed |
+| `SNMP-TLS-TM-MIB` (RFC 6353) | 1.3.6.1.2.1.198 | the certificate fingerprints and the security names they map to, for the TLS and DTLS transports |
+| `SNMP-USM-DH-OBJECTS-MIB` (RFC 2786) | 1.3.6.1.3.101 | the Diffie-Hellman key-change objects of SNMPv3 users and their public values |
+| `NET-SNMP-VACM-MIB` (Net-SNMP) | 1.3.6.1.4.1.8072.1.9 | Net-SNMP's access control extension, indexed by the group names that may read or write each view |
+| `SNMP-TARGET-MIB` (RFC 3413) | 1.3.6.1.6.3.12 | the addresses notifications and proxied requests are sent to, and the security names that reach them |
+| `SNMP-NOTIFICATION-MIB` (RFC 3413) | 1.3.6.1.6.3.13 | the notification filters and the targets they name |
+| `SNMP-PROXY-MIB` (RFC 3413) | 1.3.6.1.6.3.14 | the proxy forwarding rules and the security names they map |
+| `SNMP-USER-BASED-SM-MIB` (RFC 3414) | 1.3.6.1.6.3.15 | the SNMPv3 user names and their key-change objects |
+| `SNMP-VIEW-BASED-ACM-MIB` (RFC 3415) | 1.3.6.1.6.3.16 | the access control tables, indexed by security names |
+| `SNMP-COMMUNITY-MIB` (RFC 3584) | 1.3.6.1.6.3.18 | the community strings and the security names they map to |
+
+Every other identifier under 1.3.6.1.6.3, the SNMP engine and MPD objects among them, is read: only the six framework roots above are withheld, never the subtree that holds them, and `walk 1.3.6.1.6.3` is admitted and steps over the six.
+The sentence agent mode repeats in its tool description, its investigation rule, its grounding and every refusal (`SNMP_WITHHELD_MODULES_TEXT` in [`agent-statement.ts`](../../src/lib/db/providers/network/snmp/agent-statement.ts)), and the plan-mode label, name each of the eleven modules by its own root, never as the modules under 1.3.6.1.6.3, since a model read that wording as the whole subtree withheld and refused the admitted walk.
+The bundled modules define none of the eleven, so no name resolves into them and only a numeric identifier reaches them; the roots are the module identities those RFCs assign, and `netSnmpVacmMIB` (`netSnmpObjects 9`) in the image's own `NET-SNMP-VACM-MIB.txt`.
+An instance suffix there can spell a name (the access control tables are indexed by security name, Net-SNMP's by group name), so a value is not the only thing withheld:
+
+- a `get` or `next` naming an identifier inside one does not send it, so not even a `noSuchInstance` tells whether a guessed community exists, and answers a row naming the module's root, typed `withheld`, with no value, and a warning naming the module and why;
+- a `next` whose answer lands inside one answers the same row, never the identifier the agent sent back or its value;
+- a `walk` or `table` whose subtree contains one of them (`walk 1.3.6.1.2.1`, `walk 1.3.6.1.4.1`, `walk 1.3.6.1.6.3`) steps over it: each answer is read only up to its first object inside one, the next GetBulk starts at the root with its last arc one higher (1.3.6.1.4.1.8072.1.10 after Net-SNMP's table, 1.3.6.1.6.3.17 after the five adjacent framework roots 12 to 16), so no request ever starts inside one, and the answer warns every withheld module the subtree contains, whether or not the agent holds it, so the warning tells the model nothing about the device;
+- a `walk` or `table` whose subtree lies inside one, or is its root, is refused before anything is sent;
+- a GetBulk that over-reads past an admitted subtree into one passes nothing of it on, as every over-read past a subtree is dropped.
+
+Measured raw on the fixture (`withheld`): the access control module answers 42 instances under `view everything`, Net-SNMP's access table 12, indexed by group name, the user-based module 7 (its statistics), the target module 3, and the community, notification, proxy, SSH, TSM, TLS and Diffie-Hellman modules none; on this fixture no value or instance suffix of any of them carries the community, which a device configured through `SNMP-COMMUNITY-MIB` would.
+Measured through the agent path (`steppedOver`): `walk 1.3.6.1.4.1` answers 1,701 rows and `walk 1.3.6.1.4.1.8072.1` 1,250, none of them inside a withheld subtree, each warning `NET-SNMP-VACM-MIB`; `walk 1.3.6.1.6.3` answers the framework's own engine and statistics objects and warns the six framework modules.
+The community, read from the connection's password field, never reaches an answer, an error, a warning or the grounding; SNMPv3 has no connection form yet ([section 2](#2-why-v2c-only-today)), so no v3 key or passphrase reaches the agent path today.
+
+Each agent-mode path reads this much:
+
+| Path | Handle | What it reads |
+| --- | --- | --- |
+| Investigation reads | agent read-only profile | one command of [section 13.2](#132-what-an-agent-statement-may-be), its values as the console renders them, the withheld modules above stepped over or answered withheld |
+| Investigation grounding, plan-mode grounding and the operations workflow | either agent profile | the bundled catalog's tables and scalar groups with their declared columns, which sends nothing and holds none of the withheld modules, even on a handle that never connected; the reason they are withheld reaches the run through `run_read_query`'s description, the investigation rule and the grounding advice in agent mode, and through the `statementLanguage` label in plan mode |
+| Health | either agent profile | the console's own Get of `sysDescr.0` and `sysUpTime.0` ([section 6.3](#63-health-is-a-real-read)) |
+| Console, overview, performance, storage, session, slow-query, table and index readings | either agent profile | nothing: each is refused with its reason, never answered with an empty reading or a zero |
+
+### 13.4 Agent language pack
+
+Statement-language family: `snmpget`.
+Overlay: [`src/lib/agent/languages/snmpget/engines/snmp.ts`](../../src/lib/agent/languages/snmpget/engines/snmp.ts), with its client row in [`src/lib/agent/languages/snmpget/engines/client.ts`](../../src/lib/agent/languages/snmpget/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`.
+Both overlays are empty, so the engine resolves to the `snmpget` family pack itself.
+The `snmpget` statement-language family has no dialect-bound member.
+This overlay overrides no Shared member, so every Shared member is the `snmpget` statement-language family's own.
+The family offers the investigation workflow, through `run_read_query` with one command, and the operations workflow; it offers no query optimization or database assessment, since an agent has no plan and no profile, and no data analysis, whose tools assume a store of records, and no workflow hands an answer to the editor.
+The workflow classifier offers the model only these two.
+The editor language id stays `snmp`, and the fence alias `snmpget` names this engine.
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+No MCP tool runs an SNMP statement: the family declares no MCP facet, `MCP_EXPOSABLE.snmp` and `MCP_STATEMENT_READ.snmp` are false ([B158](../BACKLOG.md#b158-snmps-agent-reads-withhold-the-security-and-target-modules-and-it-has-no-mcp-surface)), and `READ_ONLY_ENFORCED.snmp` is unchanged.
 
 ## Migration DDL
 

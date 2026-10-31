@@ -30,6 +30,12 @@ A corpus entry is a fixed part, a separator and the hidden statement `SHOW DATAB
 The five `r42-*` entries separate two statements with whitespace or a comment alone: 1.13.1 and 2.9.1 answer "found SHOW, expected ;", and 3.12.0 runs both (R42).
 `tests/unit/db/influxdb/influxql-differential.test.ts` reads each capture for the server's parse error or its statements and first statement, and holds `evaluateInfluxql` to refusing every entry the server read as more than one statement or as a first statement that is not a read.
 
+## The agent boundary captures
+
+`1.13.1/agent-boundary/` and `2.9.1/agent-boundary/` hold what each line answered the principals the agent read-only profile is proved against, every statement sent raw, past Studio's read policy: an admin read, the database listing, a no-op write on each database, `SELECT ... INTO` the bound database and a second one in every spelling with the databases read before and after, the SHOW forms, and every comment form and carriage return.
+Each directory's `run.sh` starts its own digest-pinned servers (containers named `libredb-agent-*` unless `INFLUX_PREFIX` says otherwise), seeds them with passwords and tokens generated for the run, and records one capture per request through `agent-boundary-probe.mjs`, which refuses to write a file that holds a credential; a capture names its principal and that principal's rights, never its credential.
+`docs/providers/influxdb.md`, section 15, reads each one.
+
 ## Re-recording
 
 Re-record when a pinned image or the plan changes, with every service healthy:

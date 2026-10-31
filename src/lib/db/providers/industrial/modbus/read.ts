@@ -48,10 +48,39 @@ const BIT_TABLES: ReadonlySet<string> = new Set(["coil", "discrete_input"]);
  */
 function refusal(code: number): QueryError {
   const sentence = EXCEPTION_SENTENCES[code];
-  return new QueryError(
+  return new ModbusExceptionError(
     sentence ??
       `The device refused the read with exception code ${code}, and this provider has no sentence for that code.`,
+    code,
   );
+}
+
+/** The device's own exception answer, with its code, so a reader that words failures by category can name it. */
+export class ModbusExceptionError extends QueryError {
+  constructor(
+    message: string,
+    public readonly exceptionCode: number,
+  ) {
+    super(message);
+    this.name = "ModbusExceptionError";
+    Object.setPrototypeOf(this, ModbusExceptionError.prototype);
+  }
+}
+
+/**
+ * An identification walk the device was still continuing when the round bound ran out, raised instead of the warning
+ * when the caller refuses a walk cut short (the agent, which never answers a part as the whole).
+ */
+export class ModbusWalkBoundError extends Error {
+  constructor() {
+    super(`The device was still sending identification objects after ${MAX_IDENTIFICATION_ROUNDS} requests.`);
+    this.name = "ModbusWalkBoundError";
+  }
+}
+
+/** How a caller wants a walk cut short by the round bound: answered in part with a warning, or refused. */
+export interface ReadOptions {
+  readonly refuseCutWalk?: boolean;
 }
 
 /** The data bytes of a read answer: the body is a byte count and then that many bytes. */
@@ -186,12 +215,14 @@ async function readIdentification(
   level: "basic" | "regular" | "extended",
   unitId: number,
   session: Exchanger,
+  options: ReadOptions,
 ): Promise<ReadRows> {
   const seen: IdentificationObject[] = [];
   const warnings: string[] = [];
   let next = 0x00;
   for (let round = 0; ; round += 1) {
     if (round >= MAX_IDENTIFICATION_ROUNDS) {
+      if (options.refuseCutWalk === true) throw new ModbusWalkBoundError();
       warnings.push(
         `The device was still sending identification objects after ${MAX_IDENTIFICATION_ROUNDS} requests, so the walk stopped there and this list is what it had.`,
       );
@@ -241,6 +272,7 @@ export async function runRead(
   map: ParsedMap,
   session: Exchanger,
   unitId: number,
+  options: ReadOptions = {},
 ): Promise<ReadRows> {
   switch (request.kind) {
     case "points":
@@ -248,6 +280,6 @@ export async function runRead(
     case "range":
       return await readRange(request, session);
     case "identify":
-      return await readIdentification(request.level, unitId, session);
+      return await readIdentification(request.level, unitId, session, options);
   }
 }

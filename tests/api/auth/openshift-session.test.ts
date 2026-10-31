@@ -195,3 +195,31 @@ describe("sessions across a mode switch", () => {
     }
   });
 });
+
+// Whenever the auth cookies are Secure, the marker openshift mode settles is __Host-access-review-retry.
+describe("the retry marker in openshift mode with host-prefixed names", () => {
+  beforeEach(() => {
+    process.env.AUTH_COOKIE_SECURE = "true";
+  });
+  afterEach(() => {
+    delete process.env.AUTH_COOKIE_SECURE;
+  });
+
+  test("a restart arms __Host-access-review-retry, and a live record clears it", async () => {
+    await signedIn("h1", T - 600_000);
+    jar["__Host-auth-token"] = jar["auth-token"];
+    delete jar["auth-token"];
+    resetOpenShiftSessions();
+    expect(await getSession()).toBeNull();
+    // The refused session is cleared, and with it the plain-named session cookie, which is never read.
+    expect(names("delete")).toEqual(["__Host-auth-token", "auth-token"]);
+    expect(names("set")).toEqual(["__Host-access-review-retry"]);
+
+    writes = [];
+    await signedIn("h2");
+    jar["__Host-auth-token"] = jar["auth-token"];
+    jar["__Host-access-review-retry"] = { value: String(T_SECONDS - 5) };
+    expect(await getSession()).toMatchObject(payload("h2"));
+    expect(names("delete")).toEqual(["__Host-access-review-retry"]);
+  });
+});

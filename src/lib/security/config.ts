@@ -22,8 +22,8 @@ const ON_VALUES = new Set(["on", "true", "1"]);
 const CSP_DEFAULT_REPORT_ONLY = false;
 
 // withSecurityHeaders runs on every proxied request, so an unrecognized value must warn at most
-// once per flag per process, not once per request (same reasoning as auth.ts's cookie-security
-// warnOnce, which is latched because shouldMarkCookieSecure() runs on every login).
+// once per flag per process, not once per request (same reasoning as auth-cookies.ts's cookie-security
+// warnOnce, which is latched because secureCookieDecision() runs on every login).
 const warnedFlags = new Set<string>();
 
 /** Test seam: clears the warn-once latches so each case observes a fresh process. */
@@ -45,7 +45,7 @@ function readFlag(envVarName: string, raw: string | undefined, hint: string): bo
   if (!warnedFlags.has(envVarName)) {
     warnedFlags.add(envVarName);
     // Single-line message: bun's line coverage under-counts the continuation lines of a wrapped
-    // call, which then reads as uncovered new code (same note as auth.ts's readCookieSecureOverride).
+    // call, which then reads as uncovered new code (same note as auth-cookies.ts's readCookieSecureOverride).
     logger.warn(`Unrecognized ${envVarName} value "${raw}"; keeping the default (${hint})`, { route: "security" });
   }
   return undefined;

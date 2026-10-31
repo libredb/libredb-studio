@@ -9,7 +9,8 @@ Tests: [`tests/unit/db/neo4j/`](../../tests/unit/db/neo4j/), [`tests/unit/db/gra
 Studio reads a Neo4j database through Cypher typed in the editor, shows its node labels, relationship types, indexes and constraints in the object tree, and reads the monitoring panels Community serves.
 It writes nothing: every statement passes a read policy before anything is sent, then the server's own classification (an allowlisted SHOW form skips it, and an allowlisted procedure call classified `s` runs, section 3.5), and then runs in a READ session, so a write has to defeat three layers (section 3.1).
 Nodes, relationships and paths reach the grid as tagged JSON cells, and the column header names the graph type (section 5.2); a Graph tab beside the grid draws them (section 5.6).
-Plan mode drafts Cypher and the MCP metadata tools list Neo4j connections and their shape, while agent execution and MCP `run_read_query` do not serve Neo4j (section 3.6).
+Plan mode drafts Cypher, and the MCP metadata tools list Neo4j connections and their shape.
+Agent execution runs Cypher on Enterprise Edition for a user the server proves read-only before every statement, while MCP `run_read_query` does not serve Neo4j (section 3.6).
 
 ### Concept mapping
 
@@ -168,8 +169,8 @@ The gate costs one round trip per statement, which the design accepted because t
 Plan mode drafts Cypher and runs nothing: `getLabels().statementLanguage` tells the model what the policy enforces, "Read-only Cypher for Neo4j 5: one statement per run, no writes, no LOAD CSV, no APOC or GDS. CALL is limited to db.labels, db.relationshipTypes, db.propertyKeys, db.schema.visualization, db.schema.nodeTypeProperties, db.schema.relTypeProperties, db.ping and dbms.components. SHOW is limited to indexes, constraints, databases, procedures and functions. Only built-in functions can be called; parameters are not supported. Quote labels, relationship types and property names that are not plain words with backticks.", and a drafted statement meets the policy when the user runs it.
 A plan run's fence tag is the type-id, `neo4j`, and a `cypher` block also names Neo4j, as `promql` names Prometheus, while Neo4j is the only engine here that runs Cypher; a second graph engine revisits that.
 `list_connections` and `inspect_schema` work through the object surface and run no user Cypher, so a Neo4j seed may set `mcp: true`.
-The provider implements no `queryReadOnly`, so agent execution and MCP `run_read_query` do not serve Neo4j: both need a non-SQL statement contract the agent and MCP guards do not have, and the boundary of section 3.4 has to be measured for that path on its own.
-That work is filed as B93.
+Agent mode executes Cypher on Enterprise Edition through `queryReadOnly`, for a user the server proves read-only before every statement, and refuses Community Edition by name (section 15).
+No MCP tool runs Cypher, so MCP `run_read_query` does not serve Neo4j, filed as B93.
 
 ### 3.7 Measurements
 
@@ -506,7 +507,8 @@ Each line is one run.
 - The graph layer is designed from one shipped engine and one probe, Memgraph 3.13.1, which showed that READ mode, cancellation and the catalog differ there; a second engine adds what it needs in its own PR, and the Memgraph provider is filed as D141.
 - The Graph tab draws only the result: it does not connect result nodes the statement left unlinked (U75) or expand a node's neighbours (U76), keeps no style a user sets (U77) and offers one layout (U78).
 - No APOC, GDS or custom procedure, and no `LOAD CSV`: a measured APOC subset is filed as D140.
-- No agent execution and no MCP `run_read_query`, filed as B93.
+- Agent execution only on Enterprise Edition, Community refused at open (section 15), and no MCP `run_read_query`, filed as B93.
+- The agent proof pins the built-in procedures and functions of 5.26.31 only, so any other server version is refused on the agent path until its built-ins are captured and pinned.
 - One database per connection, filed as D143.
 - No verified TLS through an SSH tunnel, filed as D142.
 - No client certificate, no routing `neo4j://` URI, no cluster routing and no Aura in this version.
@@ -527,3 +529,85 @@ The refusal reason it prints, verbatim:
 - The design, decided with the maintainer on 2026-10-03, and its research on the driver, Cypher, the editions and Memgraph.
 - Neo4j's [Cypher manual for Neo4j 5](https://neo4j.com/docs/cypher-manual/5/) and the `neo4j-driver-lite` 6.2.0 [JavaScript driver API](https://neo4j.com/docs/api/javascript-driver/6.2/), for 5.26 LTS.
 - [`docker/neo4j/README.md`](../../docker/neo4j/README.md) and [`tests/fixtures/neo4j/5.26.31/README.md`](../../tests/fixtures/neo4j/5.26.31/README.md).
+
+## 15. Agent mode: a user proved read-only before every statement, on Enterprise only
+
+Agent mode runs Cypher through `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/graph/neo4j/index.ts).
+A READ session refuses a write, but `LOAD CSV` is a read clause that fetches files and URLs, and a procedure or function an extension adds runs Java inside the server from a READ-mode call, so the boundary is the user: the profile opens only for one the server itself shows can do neither.
+Every claim below is a capture under `tests/fixtures/neo4j/5.26.31/agent-boundary/`, recorded by its `run.sh` on digest-pinned servers with Studio's read policy bypassed; its README lists the principals.
+
+### 15.1 The proof
+
+[`agent-boundary.ts`](../../src/lib/db/providers/graph/neo4j/agent-boundary.ts) proves the user at the open of a connection that sends statements, and again before every agent statement, on the connection's database, under that statement's deadline and with no verdict kept between them.
+Neo4j checks privileges per transaction against the system graph: a `DENY` added or lifted on a running driver took effect on its next transaction, measured on 5.26.31, so a privilege widened after the open is caught by the next statement's proof.
+The proof reads and the statement each run in a Bolt session of their own, one after the other, so a privilege granted in the moment between the last proof read and the statement's own transaction is caught by the next statement's proof, not by this one; the statement itself still passes Studio's reader first, which refuses `LOAD CSV`, `USE` and every procedure outside the schema reads before anything is sent.
+
+1. `CALL dbms.components()` must name Enterprise Edition at a version whose built-in procedures and functions are pinned in [`agent-builtins.ts`](../../src/lib/db/providers/graph/neo4j/agent-builtins.ts), 5.26.31 today.
+   Community Edition is refused by name (`community/proof-components`):
+   > The agent read-only profile needs Neo4j Enterprise Edition, and this server is Neo4j Community Edition, which has no roles and gives every user an administrator's privileges, so no user on it can be proved read-only, and LOAD CSV, a read clause, reaches files and URLs even on a read-only database there. Connect an Enterprise server as a user that only reads. Nothing else was sent.
+
+   A read-only Community database refuses a write (`community/write-session/create`) and still answers `LOAD CSV` (`community/load-csv-file`).
+   An edition field that is missing or not a string, an edition no one ships and a version with no pinned set each refuse the profile.
+2. `SHOW CURRENT USER` must name the user and a list of roles, and `SHOW USER PRIVILEGES` must answer.
+   Community answers no roles (`community/proof-current-user`) and refuses the listing as unsupported (`community/proof-privileges`), so a server that reports Enterprise but answers either way is refused as Community.
+3. Every granted privilege, across every role the user holds, PUBLIC included, must be a read: `access`, `traverse`, `read`, `match`, `show_index`, `show_constraint`, or `execute` on procedures or functions.
+   A write (`editor`), an administrator's action (`admin`) and `execute_boosted` (`boosted`) each refuse the user.
+4. No `LOAD`.
+   PUBLIC holds `LOAD ON ALL DATA` on a stock server, so the stock reader is answered `LOAD CSV` from `file:///` and fetches the server's own HTTP port (`reader_stock/load-csv-file`, `reader_stock/load-csv-http`), and is refused.
+   After `REVOKE GRANT LOAD ON ALL DATA FROM PUBLIC`, a second role granting `LOAD`, on all data (`loader`) or on a CIDR range (`cidr`), reopens it and is refused.
+   A role denied `LOAD ON ALL DATA` wins over any grant (`denied/load-csv-file` is refused), so that user is admitted.
+5. Every procedure and function `SHOW PROCEDURES EXECUTABLE BY CURRENT USER` and `SHOW FUNCTIONS EXECUTABLE BY CURRENT USER` list must be one of the pinned built-ins, the lists `SHOW PROCEDURES` and `SHOW FUNCTIONS` answered the administrator of a stock 5.26.31 Enterprise server (`admin/show-procedures-all`, `admin/show-functions-all`).
+   A reader on a server with the test extension can execute its READ-mode procedure and its function, and each wrote a file in the server (`ext_agent/call-extension-procedure`, `ext_agent/call-extension-function`, `state-after.json`), so that user is refused; APOC is refused the same way.
+   The same reader denied `EXECUTE` on the extension's names lists only the built-ins and is admitted (`ext_denied`).
+
+Any answer other than the measured shapes refuses the profile, and a proof read cut at its 1,000-row bound is not read.
+The operations profile sends no statement, so its acquisitions open unproved and plan mode keeps grounding on a user that can write.
+
+To set up an agent user: create a role as a copy of `reader`, grant it to a user, and either `REVOKE GRANT LOAD ON ALL DATA FROM PUBLIC` or `DENY LOAD ON ALL DATA` to that role; on a server with extensions, `DENY EXECUTE PROCEDURE` and `DENY EXECUTE USER DEFINED FUNCTION` on their names to that role.
+
+### 15.2 What the server refuses the proved user
+
+Sent past Studio's policy as `agent`, `LOAD CSV` is refused `Neo.ClientError.Security.Forbidden` in every spelling captured: upper and lower case, after `WITH` and inside `CALL { }` (`agent/load-csv-*`).
+`CREATE`, `MERGE`, `SET`, `DELETE`, `CALL { } IN TRANSACTIONS` and `db.createLabel` are refused in the READ session (`agent/create` and the rest, `AccessMode`), and the same writes in a WRITE session are refused `Forbidden` by the user's own privileges (`agent/write-session/`).
+`dbms.setConfigValue` is refused as an administrator's procedure (`agent/call-set-config`).
+The node counts of both databases read the same before and after the run (`state-before.json`, `state-after.json`).
+
+What the server answers and only Studio's reader stops, each refused before anything is sent:
+
+- `USE` of another database the user may read (`agent/use-other` is answered), so the database is pinned by the reader;
+- the built-ins a reader may run with a side effect: `db.checkpoint()` forces a checkpoint and `db.resampleOutdatedIndexes()` schedules index resampling (`agent/call-checkpoint`, `agent/call-resample-outdated-indexes`), and the reader allows only the eight schema and health procedures of section 3.2.
+
+### 15.3 The statement path
+
+[`agent-statement.ts`](../../src/lib/db/providers/graph/neo4j/agent-statement.ts) reads each statement before anything is sent: the read policy of section 3.2, then two refusals of its own.
+
+- No carriage return: 5.26.31 ends a `//` comment at a lone carriage return as well as at a line feed, so a reader that runs the comment on would read one column where the server reads two (`agent/fence-line-comment-lone-cr`).
+  > An agent statement has no carriage return: Neo4j ends a // comment at one, so the text could read as another statement than the one written. Write it on one line or with line feeds. Nothing was sent.
+- No comment, anywhere: a `//` comment runs on past U+2028 and U+0085 (`agent/fence-line-comment-u2028`, `agent/fence-line-comment-u0085`) and a block comment ends at its first star-slash, nested or not (`agent/fence-block-comment-nested`); with comments refused, no reading of either reaches the server.
+
+Then the statement takes the editor's road: the statement gate of section 3.5, then one run in a READ session on the connection's database, with the product's transaction metadata and nothing else the caller chose; each run is its own Bolt session, so nothing carries from one statement to the next.
+
+### 15.4 The budgets
+
+The run reads one row past the row budget, and a result that reaches it is refused with the shared sentence, never cut; a result past the byte budget is refused the same way.
+The time budget is the transaction's timeout and the call's own deadline: past it the session is closed, which ends the server's work (section 5.4).
+An estimating plan is refused, since the agent is shown no plan before a statement runs.
+
+### 15.5 The agent credential
+
+An agent credential takes the default form: `agentUser` and `agentPassword` together, a user set up as section 15.1 says.
+Neo4j has no connection string here, so there is no connection-string case.
+
+### 15.6 Agent language pack
+
+Statement-language family: `cypher`.
+Overlay: [`src/lib/agent/languages/cypher/engines/neo4j.ts`](../../src/lib/agent/languages/cypher/engines/neo4j.ts), with its client row in [`src/lib/agent/languages/cypher/engines/client.ts`](../../src/lib/agent/languages/cypher/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`.
+Both overlays are empty, so the engine resolves to the `cypher` family pack itself.
+The `cypher` statement-language family has no dialect-bound member.
+This overlay overrides no Shared member, so every Shared member is the `cypher` statement-language family's own.
+The family offers the investigation and the data-analysis workflows, each through `run_read_query` with one Cypher statement, and the operations workflow; it offers no query optimization and no database assessment, since the agent is shown no plan before a statement runs, and no workflow hands an answer to the editor.
+The workflow classifier offers the model only these three.
+Plan mode follows the provider's `statementLanguage` label of section 3.6, not the agent's reader.
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+No MCP tool runs Cypher: the family declares no MCP facet, and `MCP_STATEMENT_READ.neo4j` is false (B93).

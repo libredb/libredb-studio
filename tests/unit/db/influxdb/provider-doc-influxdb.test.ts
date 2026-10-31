@@ -10,6 +10,12 @@
  * sentence is checked by its fixed parts.
  */
 import { describe, expect, test } from "bun:test";
+import {
+  INFLUXQL_AGENT_ENVELOPE_ALLOWANCE_BYTES,
+  INFLUXQL_AGENT_PROBED_DATABASES,
+  INFLUXQL_AGENT_WIRE_EXPANSION,
+} from "@/lib/db/providers/timeseries/influxdb/influxql-agent-read";
+import { INFLUXQL_AGENT_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-statement";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -232,6 +238,7 @@ describe("docs/providers/influxdb.md quotes what the code says", () => {
     const remote = new InfluxDBProvider(
       { ...INFLUXDB, host: "influx.example.com", password: TEST_PASSWORD },
       {},
+      {},
       factory,
     );
     const sentence = await rejection(() => remote.connect());
@@ -263,7 +270,7 @@ describe("docs/providers/influxdb.md quotes what the code says", () => {
     const statements = [...(line ?? "").matchAll(/`([^`]+)`/g)].map((match) => match[1]);
     expect(statements.length).toBe(10);
     const { factory, requests } = scriptedClient();
-    const connected = new InfluxDBProvider({ ...INFLUXDB, database: "home" }, {}, factory);
+    const connected = new InfluxDBProvider({ ...INFLUXDB, database: "home" }, {}, {}, factory);
     await connected.connect();
     for (const statement of [...statements, "SHOW MEASUREMENTS"]) {
       const text = statement === "SHOW GRANTS FOR" ? 'SHOW GRANTS FOR "reader"' : statement;
@@ -310,7 +317,7 @@ describe("docs/providers/influxdb.md quotes what the code says", () => {
       "SHOW USERS": "SHOW USERS",
     };
     const { factory, requests } = scriptedClient();
-    const connected = new InfluxDBProvider({ ...INFLUXDB, database: "home" }, {}, factory);
+    const connected = new InfluxDBProvider({ ...INFLUXDB, database: "home" }, {}, {}, factory);
     await connected.connect();
     const withoutDatabase: string[] = [];
     for (const [form, text] of Object.entries(grammar)) {
@@ -542,5 +549,15 @@ describe("docs/providers/influxdb.md quotes what the code says", () => {
   test("the doc carries no em dash, no en dash and no factory.ts line citation", () => {
     expect(DOC).not.toMatch(/[\u2013\u2014]/);
     expect(DOC).not.toMatch(/factory\.ts:\d/);
+  });
+});
+
+describe("section 15, agent mode", () => {
+  test("states the agent reader's carriage return sentence and the proof's database cap as the code does", () => {
+    const agent = sectionOf(DOC, "## 15. Agent mode: a principal proved read-only before every statement");
+    expect(agent).toContain(`> ${INFLUXQL_AGENT_SENTENCES.carriageReturn}`);
+    expect(agent).toContain(`more than ${INFLUXQL_AGENT_PROBED_DATABASES} databases is refused`);
+    expect(agent).toContain(`six times the byte budget plus ${INFLUXQL_AGENT_ENVELOPE_ALLOWANCE_BYTES / 1024} KiB`);
+    expect(INFLUXQL_AGENT_WIRE_EXPANSION).toBe(6);
   });
 });

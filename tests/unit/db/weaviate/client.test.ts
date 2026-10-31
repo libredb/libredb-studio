@@ -14,14 +14,20 @@ import {
 import { WEAVIATE_CLIENT_ROUTES, WEAVIATE_ROUTES } from "@/lib/db/providers/vector/weaviate/routes";
 
 describe("the operations", () => {
-  test("are the console's 17 routes in table order, then ready and graphql", () => {
-    expect<readonly string[]>(WEAVIATE_OPS).toEqual([...WEAVIATE_ROUTES.map((route) => route.op), "ready", "graphql"]);
+  test("are the console's 17 routes in table order, then ready, graphql and own_info", () => {
+    expect<readonly string[]>(WEAVIATE_OPS).toEqual([
+      ...WEAVIATE_ROUTES.map((route) => route.op),
+      "ready",
+      "graphql",
+      "own_info",
+    ]);
   });
 
   test("each has one method, path and query key list in the client's table", () => {
     expect(Object.keys(WEAVIATE_CLIENT_ROUTES).sort()).toEqual([...WEAVIATE_OPS].sort());
     expect(WEAVIATE_CLIENT_ROUTES.ready).toEqual({ method: "GET", path: "/v1/.well-known/ready", query: [] });
     expect(WEAVIATE_CLIENT_ROUTES.graphql).toEqual({ method: "POST", path: "/v1/graphql", query: [] });
+    expect(WEAVIATE_CLIENT_ROUTES.own_info).toEqual({ method: "GET", path: "/v1/users/own-info", query: [] });
   });
 
   test("hold no write", () => {

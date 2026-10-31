@@ -1,7 +1,8 @@
 /**
  * A write never reaches Oxia, and the refusal names the read-only mode while it holds (O1, SB2-9.4, SB2-3.3): a
- * `put` through `query` with the mode off, on by the connection and on by an execution profile, each refused with
- * the server's sentence and nothing sent but the connect's snapshot read.
+ * `put` through `query` with the mode off and on by the connection, each refused with the server's sentence, and on a
+ * handle an execution profile opened, refused as every editor command is there; nothing is sent but the connect's
+ * snapshot read.
  *
  * The dialog says the same before a connection exists: its read-only hint (`DB_UI_CONFIG.oxia.readOnlyHint`, SB2-9.4).
  */
@@ -40,9 +41,12 @@ describe("a write through query", () => {
     expect(calls).toEqual(["GetShardAssignments"]);
   });
 
-  test("with an execution profile's mode on: refused, naming the mode", async () => {
-    const { error } = await refusalOf(false, true);
-    expect((error as QueryError).message).toBe(READ_ONLY_SENTENCE);
+  test("on a handle an execution profile opened: refused before the parser, since an agent-mode handle answers no editor command, a write included", async () => {
+    const { error, calls } = await refusalOf(false, true);
+    expect((error as QueryError).message).toBe(
+      "An Oxia handle opened for agent mode answers only the agent's metadata reads, through queryReadOnly, and lists no key or value: key names count as stored values.",
+    );
+    expect(calls).toEqual(["GetShardAssignments"]);
   });
 
   test.each(["delete a", "del a", "delete-range a b", "oxia client put a b"])(

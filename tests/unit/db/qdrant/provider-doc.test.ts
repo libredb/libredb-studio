@@ -13,7 +13,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
-import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import { CREDENTIAL_WARNINGS, credentialWarningFor } from "@/lib/db/credential-warnings";
 import { QDRANT_DEFAULT_PORT } from "@/lib/db/providers/vector/qdrant/connection-options";
 import { type QdrantClientFactory, QdrantProvider } from "@/lib/db/providers/vector/qdrant/index";
@@ -256,10 +256,12 @@ describe("docs/providers/qdrant.md quotes what the code says", () => {
   test("machine access and the read-only mode are what the records say", () => {
     expect(MCP_EXPOSABLE.qdrant).toBe(true);
     expect(READ_ONLY_ENFORCED.qdrant).toBe(true);
-    expect(AGENT_EXECUTION_ENGINES).not.toContain("qdrant");
+    expect(AGENT_EXECUTION_ENGINES).toContain("qdrant");
+    expect(MCP_STATEMENT_READ.qdrant).toBe(false);
     const machine = sectionOf(DOC, "### 3.5 Machine access");
     expect(machine).toContain("(`mcp: true`)");
-    expect(machine).toContain("agent execution and MCP `run_read_query` refuse Qdrant");
+    expect(machine).toContain("Agent execution reads metadata only (section 15)");
+    expect(machine).toContain("MCP `run_read_query` refuses Qdrant");
   });
 
   test("the doc keeps every sentence of the stated limits, the open-server clause included", () => {

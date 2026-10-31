@@ -10,6 +10,7 @@ import {
   type KindCount,
   type ObjectDetail,
   type DescribeObjectsOptions,
+  type ObjectReadOptions,
   type ObjectDetailBatch,
   type DatabaseType,
   type DatabaseConnection,
@@ -173,8 +174,15 @@ export abstract class BaseDatabaseProvider implements DatabaseProvider {
     `getSchemaList` and `getSchemaRelations`, which this class also declared abstract.
   */
   public abstract listContainers(parent?: readonly string[]): Promise<Container[]>;
-  public abstract countObjects(container: readonly string[]): Promise<Record<string, KindCount>>;
-  public abstract listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]>;
+  public abstract countObjects(
+    container: readonly string[],
+    options?: ObjectReadOptions,
+  ): Promise<Record<string, KindCount>>;
+  public abstract listObjects(
+    container: readonly string[],
+    kind: string,
+    options?: ObjectReadOptions,
+  ): Promise<DatabaseObject[]>;
   public abstract describeObject(path: readonly string[], kind: string): Promise<ObjectDetail>;
   public abstract describeObjects(
     container: readonly string[],

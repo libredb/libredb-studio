@@ -1,0 +1,168 @@
+{
+  "$captured": {
+    "image": "neo4j:5.26.31-community",
+    "digest": "sha256:d9cfe82983d27f5a75b3aaae8f316d04f9a698a3b7f6103a508f7caf8362f255",
+    "date": "2026-10-30T11:35:08.281Z",
+    "database": "neo4j"
+  },
+  "principal": "neo4j: the only user of Community Edition, every database read-only",
+  "statement": "SHOW PROCEDURES EXECUTABLE BY CURRENT USER YIELD name",
+  "options": {
+    "database": "neo4j",
+    "maxRows": 1000
+  },
+  "outcome": "pass",
+  "result": {
+    "fields": [
+      "name"
+    ],
+    "rows": [
+      {
+        "name": "db.awaitIndex"
+      },
+      {
+        "name": "db.awaitIndexes"
+      },
+      {
+        "name": "db.clearQueryCaches"
+      },
+      {
+        "name": "db.create.setNodeVectorProperty"
+      },
+      {
+        "name": "db.create.setRelationshipVectorProperty"
+      },
+      {
+        "name": "db.create.setVectorProperty"
+      },
+      {
+        "name": "db.createLabel"
+      },
+      {
+        "name": "db.createProperty"
+      },
+      {
+        "name": "db.createRelationshipType"
+      },
+      {
+        "name": "db.index.fulltext.awaitEventuallyConsistentIndexRefresh"
+      },
+      {
+        "name": "db.index.fulltext.listAvailableAnalyzers"
+      },
+      {
+        "name": "db.index.fulltext.queryNodes"
+      },
+      {
+        "name": "db.index.fulltext.queryRelationships"
+      },
+      {
+        "name": "db.index.vector.createNodeIndex"
+      },
+      {
+        "name": "db.index.vector.queryNodes"
+      },
+      {
+        "name": "db.index.vector.queryRelationships"
+      },
+      {
+        "name": "db.info"
+      },
+      {
+        "name": "db.labels"
+      },
+      {
+        "name": "db.ping"
+      },
+      {
+        "name": "db.prepareForReplanning"
+      },
+      {
+        "name": "db.propertyKeys"
+      },
+      {
+        "name": "db.relationshipTypes"
+      },
+      {
+        "name": "db.resampleIndex"
+      },
+      {
+        "name": "db.resampleOutdatedIndexes"
+      },
+      {
+        "name": "db.schema.nodeTypeProperties"
+      },
+      {
+        "name": "db.schema.relTypeProperties"
+      },
+      {
+        "name": "db.schema.visualization"
+      },
+      {
+        "name": "db.stats.clear"
+      },
+      {
+        "name": "db.stats.collect"
+      },
+      {
+        "name": "db.stats.retrieve"
+      },
+      {
+        "name": "db.stats.retrieveAllAnonymized"
+      },
+      {
+        "name": "db.stats.status"
+      },
+      {
+        "name": "db.stats.stop"
+      },
+      {
+        "name": "dbms.cluster.routing.getRoutingTable"
+      },
+      {
+        "name": "dbms.components"
+      },
+      {
+        "name": "dbms.info"
+      },
+      {
+        "name": "dbms.killConnection"
+      },
+      {
+        "name": "dbms.killConnections"
+      },
+      {
+        "name": "dbms.listCapabilities"
+      },
+      {
+        "name": "dbms.listConfig"
+      },
+      {
+        "name": "dbms.listConnections"
+      },
+      {
+        "name": "dbms.queryJmx"
+      },
+      {
+        "name": "dbms.routing.getRoutingTable"
+      },
+      {
+        "name": "dbms.showCurrentUser"
+      },
+      {
+        "name": "dbms.upgrade"
+      },
+      {
+        "name": "dbms.upgradeStatus"
+      },
+      {
+        "name": "tx.getMetaData"
+      },
+      {
+        "name": "tx.setMetaData"
+      }
+    ],
+    "truncated": false,
+    "queryType": "r"
+  }
+}

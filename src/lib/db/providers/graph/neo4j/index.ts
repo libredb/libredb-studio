@@ -11,12 +11,27 @@
  * A server outside 5.26 connects and is reported untested in the overview's version. A failed version read
  * does not fail the connection, so the overview then says the version is unknown, unless the server answers
  * that the connection's database does not exist.
+ *
+ * AGENT READ-ONLY PROFILE. A handle opened for it by an acquisition that sends statements proves at connect that its
+ * user reads only (`agent-boundary.ts`), and `queryReadOnly` answers only on such a handle: the statement is read by
+ * `readNeo4jAgentStatement` (`agent-statement.ts`) and refused before anything is sent when it is not an agent read,
+ * then the user is proved again under the statement's own deadline, with no verdict kept from the open or the call
+ * before, then the statement takes the editor's road (the statement gate, one READ run on the connection's database).
+ * A result past the row or byte budget is refused, never cut. Every other handle, the operations profile's included,
+ * opens unproved, so plan mode keeps grounding on a user that can write.
  */
 import { createBoltClient } from "@/lib/db/graph/bolt/bolt-client";
 import type { GraphClientFactory } from "@/lib/db/graph/bolt/client";
 import { GraphClientError } from "@/lib/db/graph/bolt/client";
+import { ExecutionProfileError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { boltEndpointOf } from "@/lib/db/graph/bolt/uri";
-import { type GraphEngineProfile, GraphBaseProvider } from "@/lib/db/graph/graph-base-provider";
+import { type GraphEngineProfile, GraphBaseProvider, toQueryResult } from "@/lib/db/graph/graph-base-provider";
+import {
+  assertReadOnlyBudget,
+  byteBudgetSentence,
+  measureResultBytes,
+  rowBudgetSentence,
+} from "@/lib/db/providers/sql/read-only-budget";
 import { GRAPH_CONTAINER_LEVELS, GRAPH_OBJECT_KINDS } from "@/lib/db/graph/objects";
 import type {
   ActiveSessionDetails,
@@ -26,12 +41,18 @@ import type {
   IndexStats,
   PerformanceMetrics,
   ProviderCapabilities,
+  ProviderExecutionContext,
   ProviderLabels,
   ProviderOptions,
+  QueryResult,
+  ReadOnlyStatementBudget,
+  ReadOnlyStatementMode,
   SlowQueryStats,
   StorageStats,
   TableStats,
 } from "@/lib/db/types";
+import { proveNeo4jAgentPrincipal } from "./agent-boundary";
+import { readNeo4jAgentStatement } from "./agent-statement";
 import { neo4jCatalog } from "./catalog";
 import { mapNeo4jError } from "./errors";
 import { neo4jLabels } from "./labels";
@@ -71,12 +92,29 @@ export class Neo4jProvider extends GraphBaseProvider {
   /** The kernel's version and edition, read at connect; undefined when that read failed. */
   private server: Neo4jServerVersion | undefined;
 
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}, createClient?: GraphClientFactory) {
+  /**
+   * Whether this handle was opened for the agent read-only profile by an acquisition that sends statements
+   * (`sendsStatements`). Only then does `connect()` prove the user reads only, and only then does `queryReadOnly`
+   * answer.
+   */
+  private readonly readOnlyProfile: boolean;
+
+  /**
+   * `createClient` is the test seam of the client the connect builds: the factory passes three arguments, so a real
+   * connection always builds a Bolt client.
+   */
+  constructor(
+    config: DatabaseConnection,
+    options: ProviderOptions = {},
+    execution: ProviderExecutionContext = {},
+    createClient?: GraphClientFactory,
+  ) {
     // The composition root chooses the transport: Bolt, with the client factory a test injects.
     super(config, options, NEO4J_ENGINE_PROFILE, {
       endpointOf: boltEndpointOf,
       createClient: createClient ?? createBoltClient,
     });
+    this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
   }
 
   // ==========================================================================
@@ -139,6 +177,76 @@ export class Neo4jProvider extends GraphBaseProvider {
       }
       this.logError("server version read", error);
     }
+    if (!this.readOnlyProfile) return;
+    try {
+      await proveNeo4jAgentPrincipal(this.client(), { database: this.database(), timeoutMs: this.queryTimeout });
+    } catch (error) {
+      await this.disconnect().catch((closeError: unknown) => this.logError("connect cleanup", closeError));
+      const refused = this.providerFailure(error);
+      this.setError(refused);
+      throw refused;
+    }
+  }
+
+  // ==========================================================================
+  // Agent read-only profile
+  // ==========================================================================
+
+  /** One agent statement (see the file comment). */
+  public async queryReadOnly(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    const client = this.client();
+    if (!this.readOnlyProfile) {
+      throw new RefusedBeforeSendError(
+        "Read-only execution requires a provider opened under the agent read-only profile",
+        this.type,
+        statement,
+      );
+    }
+    assertReadOnlyBudget(budget, this.type);
+    if (mode !== "execute") {
+      throw new RefusedBeforeSendError("Neo4j composes no estimating plan for the agent", this.type, statement);
+    }
+    const reading = readNeo4jAgentStatement(statement);
+    if (!reading.ok) throw new RefusedBeforeSendError(reading.message, this.type, statement);
+    const database = this.database();
+    const signal = AbortSignal.timeout(budget.statementTimeoutMs);
+    return this.trackQuery(async () => {
+      try {
+        await proveNeo4jAgentPrincipal(client, { database, timeoutMs: budget.statementTimeoutMs, signal });
+      } catch (error) {
+        throw this.providerFailure(error);
+      }
+      // One row past the budget is read, so a result the budget cannot hold is known to be one.
+      const { result, executionTime } = await this.runVerdict(reading.verdict, {
+        database,
+        timeoutMs: budget.statementTimeoutMs,
+        maxRows: budget.maxResultRows,
+        signal,
+      });
+      if (result.truncated) {
+        const atLeast = budget.maxResultRows + 1;
+        throw new QueryError(
+          `${rowBudgetSentence(atLeast, budget.maxResultRows)}; the read stops one row past the budget, so at least ${atLeast} rows match and the total is not known: narrow the statement`,
+          this.type,
+          statement,
+        );
+      }
+      const bytes = measureResultBytes([...result.rows]);
+      if (bytes > budget.maxResultBytes) {
+        throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, statement);
+      }
+      return toQueryResult(result, executionTime);
+    });
+  }
+
+  /** A refusal of the proof is itself; a transport failure goes through the error table. */
+  private providerFailure(error: unknown): Error {
+    if (error instanceof ExecutionProfileError) return error;
+    return error instanceof GraphClientError ? this.profile.mapError(error) : (error as Error);
   }
 
   // ==========================================================================

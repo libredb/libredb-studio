@@ -10,9 +10,24 @@
 import type { DatabaseType } from "@/lib/types";
 import type { AgentStatementLanguageId } from "../../agent-manifest";
 import { languageClientPack } from "../client";
+import { INFLUXDB_CLIENT_OVERLAY } from "../influxql/engines/client";
 import { KUBERNETES_CLIENT_OVERLAY } from "../kubectl/engines/client";
 import { LIBREDB_CLIENT_OVERLAY } from "../libredbkv/engines/client";
 import { MONGODB_CLIENT_OVERLAY } from "../mongo/engines/client";
+import { WEAVIATE_CLIENT_OVERLAY } from "../weaviateapi/engines/client";
+import { QDRANT_CLIENT_OVERLAY } from "../qdrantapi/engines/client";
+import { NEO4J_CLIENT_OVERLAY } from "../cypher/engines/client";
+import { MILVUS_CLIENT_OVERLAY } from "../milvusrpc/engines/client";
+import { REDIS_CLIENT_OVERLAY } from "../rediscli/engines/client";
+import { ETCD_CLIENT_OVERLAY } from "../etcdctl/engines/client";
+import { OXIA_CLIENT_OVERLAY } from "../oxiacli/engines/client";
+import { RABBITMQ_CLIENT_OVERLAY } from "../rabbitread/engines/client";
+import { KAFKA_CLIENT_OVERLAY } from "../kafkaread/engines/client";
+import { S3_CLIENT_OVERLAY } from "../s3api/engines/client";
+import { FIRESTORE_CLIENT_OVERLAY } from "../fsquery/engines/client";
+import { SNMP_CLIENT_OVERLAY } from "../snmpget/engines/client";
+import { NETCONF_CLIENT_OVERLAY } from "../netconfrpc/engines/client";
+import { MODBUS_CLIENT_OVERLAY } from "../modbusread/engines/client";
 import { defineOverlay, dialectOnly } from "../overlay";
 import type { AgentEngineClientDialect, AgentEngineClientOverlays, AgentEnginePack, AgentEngineType } from "../pack";
 import {
@@ -52,6 +67,21 @@ const CLIENT_OVERLAYS: AgentEngineClientOverlays = Object.freeze({
   mongodb: Object.freeze({ family: "mongo", overlay: dialectOnly(MONGODB_CLIENT_OVERLAY) }),
   kubernetes: Object.freeze({ family: "kubectl", overlay: dialectOnly(KUBERNETES_CLIENT_OVERLAY) }),
   libredb: Object.freeze({ family: "libredbkv", overlay: dialectOnly(LIBREDB_CLIENT_OVERLAY) }),
+  influxdb: Object.freeze({ family: "influxql", overlay: dialectOnly(INFLUXDB_CLIENT_OVERLAY) }),
+  weaviate: Object.freeze({ family: "weaviateapi", overlay: dialectOnly(WEAVIATE_CLIENT_OVERLAY) }),
+  qdrant: Object.freeze({ family: "qdrantapi", overlay: dialectOnly(QDRANT_CLIENT_OVERLAY) }),
+  neo4j: Object.freeze({ family: "cypher", overlay: dialectOnly(NEO4J_CLIENT_OVERLAY) }),
+  milvus: Object.freeze({ family: "milvusrpc", overlay: dialectOnly(MILVUS_CLIENT_OVERLAY) }),
+  redis: Object.freeze({ family: "rediscli", overlay: dialectOnly(REDIS_CLIENT_OVERLAY) }),
+  etcd: Object.freeze({ family: "etcdctl", overlay: dialectOnly(ETCD_CLIENT_OVERLAY) }),
+  oxia: Object.freeze({ family: "oxiacli", overlay: dialectOnly(OXIA_CLIENT_OVERLAY) }),
+  rabbitmq: Object.freeze({ family: "rabbitread", overlay: dialectOnly(RABBITMQ_CLIENT_OVERLAY) }),
+  kafka: Object.freeze({ family: "kafkaread", overlay: dialectOnly(KAFKA_CLIENT_OVERLAY) }),
+  s3: Object.freeze({ family: "s3api", overlay: dialectOnly(S3_CLIENT_OVERLAY) }),
+  firestore: Object.freeze({ family: "fsquery", overlay: dialectOnly(FIRESTORE_CLIENT_OVERLAY) }),
+  snmp: Object.freeze({ family: "snmpget", overlay: dialectOnly(SNMP_CLIENT_OVERLAY) }),
+  netconf: Object.freeze({ family: "netconfrpc", overlay: dialectOnly(NETCONF_CLIENT_OVERLAY) }),
+  modbus: Object.freeze({ family: "modbusread", overlay: dialectOnly(MODBUS_CLIENT_OVERLAY) }),
 } satisfies AgentEngineClientOverlays);
 
 /**

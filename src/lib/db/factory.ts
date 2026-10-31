@@ -378,16 +378,16 @@ export async function createDatabaseProvider(
     }
 
     case "firestore": {
-      // The explicit /index specifier keeps this dynamic import statically analysable. Read-only whatever the flag
-      // says, so no execution context rides along, as for Neo4j.
+      // The explicit /index specifier keeps this dynamic import statically analysable. The execution context decides
+      // whether the handle answers agent reads, and every surface of an agent-mode handle reads metadata only.
       const { FirestoreProvider } = await import("./providers/document/firestore/index");
-      return new FirestoreProvider(connection, options);
+      return new FirestoreProvider(connection, options, execution);
     }
 
     // Key-Value Stores - dynamically imported
     case "redis": {
       const { RedisProvider } = await import("./providers/keyvalue/redis");
-      return new RedisProvider(connection, options);
+      return new RedisProvider(connection, options, execution);
     }
 
     case "etcd": {
@@ -414,11 +414,12 @@ export async function createDatabaseProvider(
     }
 
     // Two type-ids served by one directory, one per query language (InfluxDB spec I2, I23). Both are read-only
-    // whatever the flag says, so no execution context rides along, as for Neo4j.
+    // whatever the flag says. The execution context decides whether the open proves the principal reads only, for
+    // the agent read-only profile.
     case "influxdb": {
       // The explicit /index specifier keeps this dynamic import statically analysable.
       const { InfluxDBProvider } = await import("./providers/timeseries/influxdb/index");
-      return new InfluxDBProvider(connection, options);
+      return new InfluxDBProvider(connection, options, execution);
     }
 
     case "influxdb3": {
@@ -433,7 +434,7 @@ export async function createDatabaseProvider(
       // analysable: a bare directory resolves only at runtime, which the bundler
       // cannot trace into a chunk.
       const { KafkaProvider } = await import("./providers/stream/kafka/index");
-      return new KafkaProvider(connection, options);
+      return new KafkaProvider(connection, options, execution);
     }
 
     // Graph databases - dynamically imported
@@ -442,7 +443,8 @@ export async function createDatabaseProvider(
       // analysable: a bare directory resolves only at runtime, which the bundler
       // cannot trace into a chunk.
       const { Neo4jProvider } = await import("./providers/graph/neo4j/index");
-      return new Neo4jProvider(connection, options);
+      // The execution context decides whether the open proves the user reads only, for the agent read-only profile.
+      return new Neo4jProvider(connection, options, execution);
     }
 
     // Vector databases - dynamically imported
@@ -483,16 +485,16 @@ export async function createDatabaseProvider(
       return new MqttProvider(connection, options);
     }
 
-    // RabbitMQ: the second member of the stream family, read-only whatever the flag says. No seam is passed: the
-    // provider runs on its production management transport, AMQP dial and clock.
+    // RabbitMQ: the second member of the stream family, read-only whatever the flag says. It reads the execution
+    // context for its agent read path; no seam is passed: it runs on its production transport, AMQP dial and clock.
     case "rabbitmq": {
       // The explicit /index specifier keeps this dynamic import statically analysable.
       const { RabbitMQProvider } = await import("./providers/stream/rabbitmq/index");
-      return new RabbitMQProvider(connection, options);
+      return new RabbitMQProvider(connection, options, execution);
     }
 
     // OPC UA: an industrial address space, browsed level by level. Read-only whatever the flag says,
-    // so no execution context rides along, as for Neo4j.
+    // so no execution context rides along.
     case "opcua": {
       // The explicit /index specifier keeps this dynamic import statically analysable.
       const { OpcuaProvider } = await import("./providers/industrial/opcua/index");
@@ -517,23 +519,23 @@ export async function createDatabaseProvider(
       const { MTConnectProvider } = await import("./providers/industrial/mtconnect/index");
       return new MTConnectProvider(connection, options);
     }
-    // SNMP: an agent on a device, read over UDP by this repository's own client through the
-    // shared egress rule. Read-only not by a flag but by construction: the outgoing valve parses
-    // every datagram and refuses any PDU that is not a Get, GetNext or GetBulk, so a Set never
-    // reaches the socket. No library, so the import is the provider module itself.
+    // SNMP: an agent on a device, read over UDP by this repository's own client through the shared egress rule.
+    // Read-only by construction: the outgoing valve parses every datagram and refuses any PDU that is not a Get,
+    // GetNext or GetBulk, so a Set never reaches the socket. No library, so the import is the provider module itself.
+    // The execution context decides whether the handle answers agent reads; an agent-mode handle refuses the console.
     case "snmp": {
       const { SnmpProvider } = await import("./providers/network/snmp/index");
-      return new SnmpProvider(connection, options);
+      return new SnmpProvider(connection, options, execution);
     }
 
-    // Modbus TCP: a device or a gateway, read over a raw socket by this repository's own client
-    // through the shared egress rule. Read-only whatever the flag says, as for the two above, so
-    // no execution context rides along. No library: the client is ours, so the import is the
-    // provider module and nothing else.
+    // Modbus TCP: a device or a gateway, read over a raw socket by this repository's own client through the shared
+    // egress rule. Read-only by construction: the valve refuses every function code but the four reads and 43/14. No
+    // library, so the import is the provider module. The execution context decides whether the handle answers agent
+    // reads; an agent-mode handle refuses the console and paces the device.
     case "modbus": {
       // The explicit /index specifier keeps this dynamic import statically analysable.
       const { ModbusProvider } = await import("./providers/industrial/modbus/index");
-      return new ModbusProvider(connection, options);
+      return new ModbusProvider(connection, options, execution);
     }
 
     // Platforms - dynamically imported
@@ -550,9 +552,9 @@ export async function createDatabaseProvider(
     // regexes in `tests/isolated/factory.test.ts` anchor on `libredb$`, so a case appended after
     // it breaks checks that have nothing to do with this engine.
     case "netconf": {
-      // The explicit /index specifier keeps this dynamic import statically analysable.
+      // The explicit /index specifier keeps this import statically analysable; the context gates agent reads.
       const { NetconfProvider } = await import("./providers/network/netconf/index");
-      return new NetconfProvider(connection, options);
+      return new NetconfProvider(connection, options, execution);
     }
 
     // Sparkplug B (#1720), the third member of the `industrial/` family. Its own bounded MQTT session
@@ -1371,7 +1373,7 @@ export type ExecutionProfile = "agent-read-only" | "agent-operations" | "agent-h
  * handle or transaction, a least-privilege principal the server's own answers prove, or a
  * Studio-enforced request allowlist plus the identity's own authorization), and only the
  * providers of AGENT_EXECUTION_ENGINES implement that: PostgreSQL, SQLite,
- * DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid and LibreDB (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
+ * DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF and Modbus (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
  * at all — it calls the curated reporting methods every provider implements — so
  * requiring a read-only STATEMENT path of it would refuse an engine over a capability
  * the profile never uses. `agent-handover` sends a statement too — the one a run

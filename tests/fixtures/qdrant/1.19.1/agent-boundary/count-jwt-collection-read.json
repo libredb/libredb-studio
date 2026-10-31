@@ -1,0 +1,18 @@
+{
+  "version": "1.19.1",
+  "name": "agent-boundary/count-jwt-collection-read",
+  "image": "ghcr.io/qdrant/qdrant/qdrant:v1.19.1@sha256:808d42530f48a2b88abe960165ffe81e9ec71f505d72e6404145444e0e085822",
+  "capturedAt": "2026-10-30",
+  "principal": "jwt-collection-read: a JWT whose access claim is [{\"collection\":\"plain\",\"access\":\"r\"}]",
+  "request": {
+    "method": "POST",
+    "path": "/collections/plain/points/count",
+    "auth": "api-key",
+    "body": {
+      "exact": true
+    }
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "body": "{\"result\":{\"count\":3},\"status\":\"ok\",\"time\":0.000017942}"
+}

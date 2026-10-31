@@ -147,7 +147,7 @@ function messageOf(error: unknown): string {
  * The shared result shape: `pagination` only when the row bound cut the result, `warnings` only when
  * the transport replaced a value, `columnTypes` only for columns that hold graph values (SR19).
  */
-function toQueryResult(result: GraphRunResult, executionTime: number): QueryResult {
+export function toQueryResult(result: GraphRunResult, executionTime: number): QueryResult {
   const fields = [...result.fields];
   const rows = [...result.rows];
   // Built as entries, so a column named `__proto__` is a key and never the object's prototype.
@@ -381,6 +381,21 @@ export abstract class GraphBaseProvider extends BaseDatabaseProvider {
     } finally {
       if (queryId !== undefined) this.untrack(queryId, controller);
     }
+  }
+
+  /**
+   * One statement a subclass's own path has already read: the engine's statement gate (unless it is an allowed `SHOW`
+   * form), then one READ run on the connected client, under `options` with the product's transaction metadata, a
+   * transport failure through the error table. What a read-only path adds before or after it is the subclass's.
+   */
+  protected async runVerdict(
+    verdict: Extract<CypherReadVerdict, { allowed: true }>,
+    options: GraphRunOptions,
+  ): Promise<{ result: GraphRunResult; executionTime: number }> {
+    const client = this.client();
+    const run: GraphRunOptions = { ...options, metadata: RUN_METADATA };
+    await this.passGate(client, verdict, run);
+    return this.measureExecution(() => this.mapped(() => client.run(verdict.statement.text, run)));
   }
 
   private track(queryId: string, controller: AbortController): void {

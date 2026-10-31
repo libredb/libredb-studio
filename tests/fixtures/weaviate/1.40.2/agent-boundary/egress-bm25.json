@@ -1,0 +1,20 @@
+{
+  "version": "1.40.2",
+  "name": "agent-boundary/egress-bm25",
+  "image": "cr.weaviate.io/semitechnologies/weaviate:1.40.2@sha256:0083587dc01f33112e5406ce9b471df1abea480c71a0407af903929a389ae08a",
+  "capturedAt": "2026-10-30",
+  "principal": "viewer: db user holding the built-in viewer role",
+  "request": {
+    "method": "POST",
+    "path": "/v1/search/Doc/bm25",
+    "body": {
+      "query": "doc",
+      "limit": 1
+    },
+    "auth": "bearer"
+  },
+  "status": 200,
+  "contentType": "application/json",
+  "body": "{\"results\":[{\"id\":\"00000000-0000-4000-8000-000000000011\",\"properties\":{\"body\":\"doc-11\"}}],\"tookMs\":0}\n",
+  "egressRequests": 0
+}

@@ -42,7 +42,7 @@ let comparisons = 0;
  * that way means replacing the comparison, so the test would no longer observe the constant-time
  * path it exists to pin, and a module mock has no undo, so it would outlive the one test that
  * wanted it. A monotonic counter read as a before/after delta is deterministic and leaks
- * nothing. This follows resetCookieSecurityWarning() in src/lib/auth.ts:73.
+ * nothing. This follows resetCookieSecurityWarning() in src/lib/auth-cookies.ts.
  */
 export function comparisonCount(): number {
   return comparisons;

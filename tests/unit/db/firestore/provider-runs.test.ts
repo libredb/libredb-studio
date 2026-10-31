@@ -41,7 +41,7 @@ async function connected(
   seams: FakeFirestoreSeams,
   overrides: Partial<DatabaseConnection> = {},
 ): Promise<FirestoreProvider> {
-  const firestore = new FirestoreProvider(firestoreConnection(overrides), { queryTimeout: 1000 }, seams);
+  const firestore = new FirestoreProvider(firestoreConnection(overrides), { queryTimeout: 1000 }, {}, seams);
   await firestore.connect();
   return firestore;
 }
@@ -109,7 +109,7 @@ describe("the transport's deadline", () => {
 
   test("a connect probe past the deadline fails, closes its transport and keeps no session", async () => {
     const seams = seamsOf(HANG);
-    const firestore = new FirestoreProvider(firestoreConnection(), { queryTimeout: 1000 }, seams);
+    const firestore = new FirestoreProvider(firestoreConnection(), { queryTimeout: 1000 }, {}, seams);
     const connecting = firestore.connect();
     await until(() => requestsOf(seams).length === 1);
     fireRequestDeadline(seams, DEADLINE_MS);

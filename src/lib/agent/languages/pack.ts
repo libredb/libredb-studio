@@ -79,6 +79,81 @@ type LibredbkvOperationId =
   /** One LibreDB read command the model wrote, on a `libredb` connection; see `libredbkvQueryReadDescriptor`. */
   "libredbkv.query.read";
 
+/** The InfluxQL language's operation: its one read. */
+type InfluxqlOperationId =
+  /** One InfluxQL read statement the model wrote, on an `influxdb` connection; see `influxqlQueryReadDescriptor`. */
+  "influxql.query.read";
+
+/** The Weaviate request language's operation: its one read. */
+type WeaviateapiOperationId =
+  /** One Weaviate metadata read the model wrote, on a `weaviate` connection; see `weaviateapiQueryReadDescriptor`. */
+  "weaviateapi.query.read";
+
+/** The Qdrant request language's operation: its one read. */
+type QdrantapiOperationId =
+  /** One Qdrant metadata read the model wrote, on a `qdrant` connection; see `qdrantapiQueryReadDescriptor`. */
+  "qdrantapi.query.read";
+
+/** The Cypher language's operation: its one read. */
+type CypherOperationId =
+  /** One Cypher read statement the model wrote, on a `neo4j` connection; see `cypherQueryReadDescriptor`. */
+  "cypher.query.read";
+
+/** The Milvus request language's operation: its one read. */
+type MilvusrpcOperationId =
+  /** One Milvus metadata read the model wrote, on a `milvus` connection; see `milvusrpcQueryReadDescriptor`. */
+  "milvusrpc.query.read";
+
+/** The Redis command language's operation: its one read. */
+type RediscliOperationId =
+  /** One Redis metadata read the model wrote, on a `redis` connection; see `rediscliQueryReadDescriptor`. */
+  "rediscli.query.read";
+
+/** The etcdctl command language's operation: its one read. */
+type EtcdctlOperationId =
+  /** One etcd metadata read the model wrote, on an `etcd` connection; see `etcdctlQueryReadDescriptor`. */
+  "etcdctl.query.read";
+
+/** The oxiacli command language's operation: its one read. */
+type OxiacliOperationId =
+  /** One Oxia metadata read the model wrote, on an `oxia` connection; see `oxiacliQueryReadDescriptor`. */
+  "oxiacli.query.read";
+
+/** The rabbitread request language's operation: its one read. */
+type RabbitreadOperationId =
+  /** One RabbitMQ stream read the model wrote, on a `rabbitmq` connection; see `rabbitreadQueryReadDescriptor`. */
+  "rabbitread.query.read";
+
+/** The kafkaread request language's operation: its one read. */
+type KafkareadOperationId =
+  /** One Kafka metadata read the model wrote, on a `kafka` connection; see `kafkareadQueryReadDescriptor`. */
+  "kafkaread.query.read";
+
+/** The fsquery statement language's operation: its one read. */
+type FsqueryOperation =
+  /** One Firestore metadata read the model wrote, on a `firestore` connection; see `fsqueryQueryReadDescriptor`. */
+  "fsquery.query.read";
+
+/** The snmpget command language's operation: its one read. */
+type SnmpgetOperation =
+  /** One SNMP read the model wrote, on an `snmp` connection; see `snmpgetQueryReadDescriptor`. */
+  "snmpget.query.read";
+
+/** The netconfrpc request language's operation: its one read. */
+type NetconfrpcOperation =
+  /** One NETCONF read the model wrote, on a `netconf` connection; see `netconfrpcQueryReadDescriptor`. */
+  "netconfrpc.query.read";
+
+/** The modbusread request language's operation: its one read. */
+type ModbusreadOperation =
+  /** One Modbus read the model wrote, on a `modbus` connection; see `modbusreadQueryReadDescriptor`. */
+  "modbusread.query.read";
+
+/** The s3api command language's operation: its one read. */
+type S3apiOperation =
+  /** One S3 metadata read the model wrote, on an `s3` connection; see `s3apiQueryReadDescriptor`. */
+  "s3api.query.read";
+
 /**
  * The canonical operations each family's tools drive, by family. `AgentOperationId` in `tools.ts` is the core's two
  * curated ids and every row here, so a family's ids are written once, beside the family's other types.
@@ -88,6 +163,21 @@ export interface AgentFamilyOperationIds {
   readonly kubectl: KubectlOperationId;
   readonly mongo: MongoOperationId;
   readonly libredbkv: LibredbkvOperationId;
+  readonly influxql: InfluxqlOperationId;
+  readonly weaviateapi: WeaviateapiOperationId;
+  readonly qdrantapi: QdrantapiOperationId;
+  readonly cypher: CypherOperationId;
+  readonly milvusrpc: MilvusrpcOperationId;
+  readonly rediscli: RediscliOperationId;
+  readonly etcdctl: EtcdctlOperationId;
+  readonly oxiacli: OxiacliOperationId;
+  readonly rabbitread: RabbitreadOperationId;
+  readonly kafkaread: KafkareadOperationId;
+  readonly s3api: S3apiOperation;
+  readonly fsquery: FsqueryOperation;
+  readonly snmpget: SnmpgetOperation;
+  readonly netconfrpc: NetconfrpcOperation;
+  readonly modbusread: ModbusreadOperation;
 }
 
 /** kubectl's goal verifiers. */
@@ -127,6 +217,36 @@ export interface AgentFamilyVerifierIds {
   readonly mongo: "agent-query-optimization-mongo.1";
   /** None: its workflows are judged by the core's own rules. */
   readonly libredbkv: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly influxql: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly weaviateapi: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly qdrantapi: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly cypher: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly milvusrpc: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly rediscli: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly etcdctl: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly oxiacli: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly rabbitread: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly kafkaread: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly s3api: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly fsquery: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly snmpget: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly netconfrpc: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly modbusread: never;
 }
 
 /** The operation a family's model-written reads are evaluated under: its row's `<family>.query.read`. */
@@ -382,6 +502,21 @@ export interface AgentFamilyEvidenceTools {
   readonly kubectl: KubectlEvidenceToolName;
   readonly mongo: never;
   readonly libredbkv: never;
+  readonly influxql: never;
+  readonly weaviateapi: never;
+  readonly qdrantapi: never;
+  readonly cypher: never;
+  readonly milvusrpc: never;
+  readonly rediscli: never;
+  readonly etcdctl: never;
+  readonly oxiacli: never;
+  readonly rabbitread: never;
+  readonly kafkaread: never;
+  readonly s3api: never;
+  readonly fsquery: never;
+  readonly snmpget: never;
+  readonly netconfrpc: never;
+  readonly modbusread: never;
 }
 
 /** Every pack's evidence tool: a member of the core's `AgentToolName`, declared by the pack that offers it. */
@@ -393,6 +528,21 @@ export interface AgentFamilyReadingDenyCodes {
   readonly kubectl: KubectlReadingDenyCode;
   readonly mongo: never;
   readonly libredbkv: never;
+  readonly influxql: never;
+  readonly weaviateapi: never;
+  readonly qdrantapi: never;
+  readonly cypher: never;
+  readonly milvusrpc: never;
+  readonly rediscli: never;
+  readonly etcdctl: never;
+  readonly oxiacli: never;
+  readonly rabbitread: never;
+  readonly kafkaread: never;
+  readonly s3api: never;
+  readonly fsquery: never;
+  readonly snmpget: never;
+  readonly netconfrpc: never;
+  readonly modbusread: never;
 }
 
 /** Every pack's reading refusal code: a member of the core's `AgentReadingDenyCode`, declared by its pack. */
@@ -404,6 +554,21 @@ export interface AgentFamilyShortfalls {
   readonly kubectl: KubectlShortfall;
   readonly mongo: never;
   readonly libredbkv: never;
+  readonly influxql: never;
+  readonly weaviateapi: never;
+  readonly qdrantapi: never;
+  readonly cypher: never;
+  readonly milvusrpc: never;
+  readonly rediscli: never;
+  readonly etcdctl: never;
+  readonly oxiacli: never;
+  readonly rabbitread: never;
+  readonly kafkaread: never;
+  readonly s3api: never;
+  readonly fsquery: never;
+  readonly snmpget: never;
+  readonly netconfrpc: never;
+  readonly modbusread: never;
 }
 
 /** Every pack's verdict shortfall: a member of the core's `AgentGoalShortfall`, declared by its pack. */
@@ -415,6 +580,21 @@ export interface AgentFamilyVariantRequirements {
   readonly kubectl: KubectlVariantRequirement;
   readonly mongo: never;
   readonly libredbkv: never;
+  readonly influxql: never;
+  readonly weaviateapi: never;
+  readonly qdrantapi: never;
+  readonly cypher: never;
+  readonly milvusrpc: never;
+  readonly rediscli: never;
+  readonly etcdctl: never;
+  readonly oxiacli: never;
+  readonly rabbitread: never;
+  readonly kafkaread: never;
+  readonly s3api: never;
+  readonly fsquery: never;
+  readonly snmpget: never;
+  readonly netconfrpc: never;
+  readonly modbusread: never;
 }
 
 /** Every pack's variant requirement: a member of the core's `AgentVariantRequirement`, declared by its pack. */
@@ -460,6 +640,21 @@ export interface AgentFamilyEvidenceEvents {
   readonly kubectl: KubectlEvidenceEvent;
   readonly mongo: never;
   readonly libredbkv: never;
+  readonly influxql: never;
+  readonly weaviateapi: never;
+  readonly qdrantapi: never;
+  readonly cypher: never;
+  readonly milvusrpc: never;
+  readonly rediscli: never;
+  readonly etcdctl: never;
+  readonly oxiacli: never;
+  readonly rabbitread: never;
+  readonly kafkaread: never;
+  readonly s3api: never;
+  readonly fsquery: never;
+  readonly snmpget: never;
+  readonly netconfrpc: never;
+  readonly modbusread: never;
 }
 
 /** Every pack's evidence event, as the ledger stores it less its timestamp. */
@@ -557,6 +752,12 @@ export interface AgentLanguageClientPack {
      * registered in the manifest does not compile until it says what its hand-over is.
      */
     readonly handoverTerms: (budgets: StatementBudgets) => string;
+    /**
+     * What plan mode says in this language, where the shared plan posture is not true of it. Absent on every language
+     * whose grounding is a schema read of the engine; Modbus's grounding is the register map, which sends the device
+     * nothing, while opening the connection dials it, so "nothing else reaches the database" would be false there.
+     */
+    readonly plan?: () => AgentPosture;
   };
 }
 
@@ -641,6 +842,21 @@ export interface AgentFamilyDialectRows {
   mongo: { client: Record<never, never>; server: Record<never, never> };
   kubectl: { client: Record<never, never>; server: Record<never, never> };
   libredbkv: { client: Record<never, never>; server: Record<never, never> };
+  influxql: { client: Record<never, never>; server: Record<never, never> };
+  weaviateapi: { client: Record<never, never>; server: Record<never, never> };
+  qdrantapi: { client: Record<never, never>; server: Record<never, never> };
+  cypher: { client: Record<never, never>; server: Record<never, never> };
+  milvusrpc: { client: Record<never, never>; server: Record<never, never> };
+  rediscli: { client: Record<never, never>; server: Record<never, never> };
+  etcdctl: { client: Record<never, never>; server: Record<never, never> };
+  oxiacli: { client: Record<never, never>; server: Record<never, never> };
+  rabbitread: { client: Record<never, never>; server: Record<never, never> };
+  kafkaread: { client: Record<never, never>; server: Record<never, never> };
+  s3api: { client: Record<never, never>; server: Record<never, never> };
+  fsquery: { client: Record<never, never>; server: Record<never, never> };
+  snmpget: { client: Record<never, never>; server: Record<never, never> };
+  netconfrpc: { client: Record<never, never>; server: Record<never, never> };
+  modbusread: { client: Record<never, never>; server: Record<never, never> };
 }
 
 /** The dialect-bound members of each family, client and server. */

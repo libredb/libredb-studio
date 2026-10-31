@@ -29,6 +29,8 @@
   <a href="https://www.postgresql.org/download/products/1/#:~:text=LibreDB%20Studio">Software Catalogue</a>
   ·
   <a href="https://wiki.postgresql.org/wiki/Community_Guide_to_PostgreSQL_GUI_Tools#LibreDB_Studio">Community Guide to GUI Tools</a>
+  ·
+  <a href="https://wiki.postgresql.org/wiki/Design_Tools#LibreDB_Studio">Design Tools</a>
 </p>
 <p align="center">
   同时列入
@@ -53,12 +55,14 @@
   <a href="https://aiven.io/docs/products/mysql/howto/connect-libredb-studio">Aiven for MySQL</a>、
   <a href="https://docs.scylladb.com/stable/get-started/gui-clients/libredb-studio.html">ScyllaDB</a>、
   <a href="https://docs.couchbase.com/server/current/third-party/integrations.html#standalone-query-and-admin-tools">Couchbase</a>、
+  <a href="https://etcd.io/docs/v3.7/integrations/#:~:text=LibreDB%20Studio">etcd</a>、
   <a href="https://cloudberry.apache.org/docs/ecosystem/sql-clients/libredb-studio/">Apache Cloudberry</a>、
   <a href="https://doris.apache.org/docs/4.x/connection-integration/data-integration/libredb-studio/">Apache Doris</a>、
   <a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem#:~:text=LibreDB%20Studio">Apache Kafka</a>、
-  <a href="https://cassandra.apache.org/_/ecosystem.html">Apache Cassandra</a>
-  和
+  <a href="https://cassandra.apache.org/_/ecosystem.html">Apache Cassandra</a>、
   <a href="https://druid.apache.org/libraries/#:~:text=LibreDB%20Studio">Apache Druid</a>
+  和
+  <a href="https://github.com/oxia-db/oxia/blob/main/ADOPTERS.md#adopters-list">Oxia</a>
   官方文档
 </p>
 
@@ -212,7 +216,7 @@ Oxia、InfluxDB (InfluxQL)、Milvus、Qdrant、Weaviate、Neo4j、etcd、Apache 
 Studio 最主要的 AI 界面是编辑器旁边的 **Agent 侧栏**，下面列出的模型辅助功能是其余部分。你说出一个目标：*“哪个部门人最多？”*、*“这条查询为什么慢？”*，然后按下 Start。这次运行会针对已连接的数据库起草 SQL、读取返回结果，最后写出一份报告，其中每一条结论都引用它所依据的那次读取。
 
 - **只读，由数据库本身来保证，而不是靠解析器。** Agent 执行的每条语句都走 Agent 自己的受审计管线，在碰到驱动之前先做策略判定、记录审计事件、核算预算（`executeAuditedOperation`，`src/lib/db/operations/execution.ts:129`），并使用只读执行配置：PostgreSQL 上是只读事务，SQLite 上每条语句都重新声明 `PRAGMA query_only`，DuckDB 上是 `READ_ONLY` 引擎句柄外加一层 SQL 守卫，因为仅靠该标志仍然放行 `COPY … TO`、`EXPORT DATABASE` 和读取本地文件的表函数；SQL Server 上没有任何形式的只读事务，因此改由四层保证：开启连接时先核验会话主体确实无法写入，再由优化器在不执行的前提下编译放行每条语句，并在服务端限定返回行数，最后把语句放进一个总是回滚的事务里。写入和 DDL 在到达数据库之前就被拒绝，`EXPLAIN ANALYZE` 因为会真正执行语句而默认禁止。这条管线只属于 Agent：你自己在编辑器里执行的语句是直接调用 provider 的（`src/app/api/db/query/route.ts:312`），不会经过这里的策略判定，也不会产生这类审计记录。
-- **Agent 模式只读取 PostgreSQL、SQLite、DuckDB、SQL Server、MySQL、Kubernetes、MongoDB、ClickHouse、libSQL、InfluxDB 3 (SQL)、Elasticsearch、OpenSearch、Oracle、Db2 LUW、Apache Cassandra、Couchbase、Apache Druid 和 LibreDB。** 只读配置只在实现了它的 provider 上存在，也就是 `postgres.ts`、`sqlite.ts`、`duckdb/index.ts`、`mssql.ts`、`mysql.ts`、`kubernetes/index.ts`、`mongodb/index.ts`、`clickhouse/index.ts`、`libsql/index.ts`、`influxdb/sql-provider.ts`、`search/index.ts`、`oracle/index.ts`、`db2/index.ts`、`cassandra/index.ts`、`couchbase/index.ts`、`druid/index.ts` 和 `libredb.ts` 上的 `queryReadOnly`，别无其他；每种引擎的只读边界各不相同，记录在各自的文档中。在其他引擎上，只要某个 Agent 模式工作流会发送语句，它就会在启动时被拒绝，此时运行尚未开启；万一有请求走到 provider 工厂，也会以 `engine-unsupported` 结束。**Plan** 模式对所有连接都可用，那里的模型不使用任何工具，不执行你的任何语句，不做任何写入，只为你起草一条由你自己去执行的语句。它的 GROUNDING 覆盖全部引擎：PostgreSQL 和 SQLite 上由服务端自己组装目录查询，其他连接则请该连接自己的 provider 描述其 schema，也就是侧边栏本来就在做的那次读取，这不需要只读语句通道。所以两条限制是分开的：Agent 模式是上面这些引擎，GROUNDING 是全部引擎，而读取失败的运行会直接说明，不会凭空编造表名。
+- **Agent 模式只读取 PostgreSQL、SQLite、DuckDB、SQL Server、MySQL、Kubernetes、MongoDB、ClickHouse、libSQL、InfluxDB 3 (SQL)、Elasticsearch、OpenSearch、Oracle、Db2 LUW、Apache Cassandra、Couchbase、Apache Druid、LibreDB、InfluxDB (InfluxQL)、Weaviate、Qdrant、Neo4j、Milvus、Redis、etcd、Oxia、RabbitMQ、Apache Kafka、S3-compatible object storage、Firestore、SNMP、NETCONF 和 Modbus。** 只读配置只在实现了它的 provider 上存在，也就是 `postgres.ts`、`sqlite.ts`、`duckdb/index.ts`、`mssql.ts`、`mysql.ts`、`kubernetes/index.ts`、`mongodb/index.ts`、`clickhouse/index.ts`、`libsql/index.ts`、`influxdb/sql-provider.ts`、`search/index.ts`、`oracle/index.ts`、`db2/index.ts`、`cassandra/index.ts`、`couchbase/index.ts`、`druid/index.ts`、`libredb.ts`、`influxdb/influxql-provider.ts`、`weaviate/index.ts`、`qdrant/index.ts`、`neo4j/index.ts`、`milvus/index.ts`、`redis.ts`、`etcd/index.ts`、`oxia/index.ts`、`rabbitmq/index.ts`、`kafka/index.ts`、`s3/index.ts`、`firestore/index.ts`、`snmp/index.ts`、`netconf/index.ts` 和 `modbus/index.ts` 上的 `queryReadOnly`，别无其他；每种引擎的只读边界各不相同，记录在各自的文档中。在其他引擎上，只要某个 Agent 模式工作流会发送语句，它就会在启动时被拒绝，此时运行尚未开启；万一有请求走到 provider 工厂，也会以 `engine-unsupported` 结束。**Plan** 模式对所有连接都可用，那里的模型不使用任何工具，不执行你的任何语句，不做任何写入，只为你起草一条由你自己去执行的语句。它的 GROUNDING 覆盖全部引擎：PostgreSQL 和 SQLite 上由服务端自己组装目录查询，其他连接则请该连接自己的 provider 描述其 schema，也就是侧边栏本来就在做的那次读取，这不需要只读语句通道。所以两条限制是分开的：Agent 模式是上面这些引擎，GROUNDING 是全部引擎，而读取失败的运行会直接说明，不会凭空编造表名。
 - **三种工作流**：**Investigate**（回答问题）、**Optimize**（比较预估执行计划，提出索引或改写）、**Assess**（做表画像，只有计数，永远不含具体值）。
 - **不会自行执行。** Agent 不会替你开始运行，不会写入编辑器，也不会执行它建议的语句。是否采用由你点击决定。
 - **有证据才有结论。** 没有引用的结论无法被写出，运行结束时会给出自己的判定，*“Run answered”* 或 *“Run did not answer”*，并与结束方式并列显示。
@@ -315,7 +319,7 @@ Studio 最主要的 AI 界面是编辑器旁边的 **Agent 侧栏**，下面列�
 | **Prometheus** | 无驱动，纯 HTTP（Prometheus HTTP API，9090 端口） | PromQL 编辑器，文本原样发送到服务器；结果进入表格和图表页（像 `rate(x[5m])[1h:1m]` 这样带步长的子查询以时间戳为横轴画成折线：图表页起初只画第一个序列，其余序列可在 Y-Axis 菜单中勾选添加，每个序列一条线，同时最多画八条，超出时显示“Showing first 8 of N series”；但图表会把缺失的样本以及数值中的 `NaN` 或 `Inf` 画成 0，所以在各目标抓取时间错开的原始范围查询上会画出虚假的零值）；指标浏览器以标签名为列、以元数据为源；规则组及其记录规则和告警规则，触发中的告警在树中标出；抓取池和抓取目标，宕机的目标在树中标出；以及健康、版本、运行时长和 TSDB 统计。按设计只读：不调用管理 API，不做 remote write，没有 EXPLAIN（解析端点仍是实验性的），也没有维护操作。凭据在明文 HTTP 上会照常发送而不会被拒绝，跨越你无法控制的网络时请启用 TLS |
 | **Apache Kafka** | `@platformatic/kafka`（纯 TypeScript，9092 端口） | JSON 读取请求，按分区、偏移量或时间戳读取主题，或从最早偏移量读取，或读取最新消息；键、值和消息头按 JSON、文本或 base64 解码，Confluent 格式的值标注其 schema id；主题浏览器显示分区和非默认配置（离线或副本不足的主题会被标出），两种协议的消费者组及每个分区的延迟，broker 及其配置，以及健康状态、主题数量和磁盘占用。按构造只读：不生产消息、不提交偏移量、不加入消费者组、不创建主题。支持自定义 CA 与客户端证书的 TLS，SASL PLAIN 或 SCRAM 只能走 TLS；不支持 SSH 隧道，因为 broker 通过它们通告的地址访问 |
 | **etcd** | `@grpc/grpc-js`（纯 JavaScript，gRPC，2379 端口） | 编辑器中的 etcdctl 子集（`get`、`put`、`del`、`txn`、租约、有界 `watch`、成员、告警、用户和角色）；树中按键前缀分组，键浏览器列出每个键；在一个以修订号为条件的事务中编辑键值；管理员可执行压缩、碎片整理和解除告警，每项都需输入连接名确认。拒绝任何写入 Kubernetes 前缀或 `compact_rev_key` 的操作，从不显示 Kubernetes Secret 以及 protobuf 或加密的值。支持自定义 CA 的 TLS、客户端证书（其 Common Name 作为 etcd 用户）以及只能走 TLS 的密码登录；支持 SSH 隧道；支持由种子配置声明的只读模式 |
-| **Neo4j** | `neo4j-driver-lite`（纯 JavaScript，Bolt，7687 端口） | 针对 Neo4j 5.26 LTS 的只读 Cypher 编辑器，每次运行一条语句；树中显示节点标签和关系类型（属性作为列）、索引和约束；节点、关系和路径在结果表格中显示为带标签的 JSON 单元格，64 位整数和时间值保持精确；Community 版提供的监控面板。每条语句先经过基于词法单元的读取策略，再经过服务器通过 `EXPLAIN` 做出的分类（允许的 SHOW 形式跳过此分类），并在 READ 会话中运行，因此一次写入必须同时突破这三层。没有 EXPLAIN 或 PROFILE 视图，没有维护操作，没有智能体执行，也没有 MCP `run_read_query`。支持自定义 CA 的 TLS 和 SSH 隧道；不支持连接字符串 |
+| **Neo4j** | `neo4j-driver-lite`（纯 JavaScript，Bolt，7687 端口） | 针对 Neo4j 5.26 LTS 的只读 Cypher 编辑器，每次运行一条语句；树中显示节点标签和关系类型（属性作为列）、索引和约束；节点、关系和路径在结果表格中显示为带标签的 JSON 单元格，64 位整数和时间值保持精确；Community 版提供的监控面板。每条语句先经过基于词法单元的读取策略，再经过服务器通过 `EXPLAIN` 做出的分类（允许的 SHOW 形式跳过此分类），并在 READ 会话中运行，因此一次写入必须同时突破这三层。没有 EXPLAIN 或 PROFILE 视图，也没有维护操作；智能体执行仅在 Enterprise Edition 上、对服务器证明为只读的用户开放，MCP `run_read_query` 仍然关闭。支持自定义 CA 的 TLS 和 SSH 隧道；不支持连接字符串 |
 | **Milvus** | `@grpc/grpc-js`（纯 JavaScript，gRPC，19530 端口） | 编辑器中使用 Milvus 自己的 REST v2 请求（带一个 JSON 请求体的 `POST /v2/vectordb/<路由>`）进行读取、精确计数，以及覆盖所有向量类型的向量搜索（包括 BM25 和混合搜索）；树中列出数据库和集合，以及字段、分区、索引和加载状态；向量单元格显示维度并可复制完整值；管理员可执行带预览和确认的 Load 与 Release。Studio 不写入数据，拒绝会让服务器调用其他服务的请求，并对默认的 `root` 密码发出警告。支持自定义 CA 和客户端证书的 TLS；密码只能走 TLS、回环地址或 SSH 隧道；支持由种子配置声明的只读模式 |
 | **Qdrant** | 无，HTTP（Qdrant 的 REST API，6333 端口） | 编辑器中使用 Qdrant 自己的 REST 请求（带一个 JSON 请求体的 `方法 /路径`），共十七条只读路由：读取点、滚动、精确计数、分面，以及对稠密、稀疏和多向量数据的查询、批量查询和分组查询（包括本地 BM25 模型）；树中列出集合及其向量、payload 索引和 payload 键的采样视图；向量单元格显示维度并可复制完整值。Studio 不写入任何内容，拒绝除本地 BM25 之外的所有推理输入，并对没有过期时间或带管理权限的 JWT 发出警告。支持自定义 CA 和客户端证书的 TLS；密钥只能走 TLS、回环地址或 SSH 隧道；支持由种子配置声明的只读模式 |
 | **Weaviate** | 无，HTTP（Weaviate 的 REST API，1.39.7 之前的服务器的搜索走 GraphQL，8080 端口） | 编辑器中使用 Weaviate 自己的 REST 请求（带一个 JSON 请求体的 `方法 /v1/路径`），共十七条只读路由：对象列表和按 id 读取、BM25、alpha 为 0 的混合搜索、near-vector 和 near-object 搜索、过滤和聚合计数；搜索在所有服务器上都按 REST 搜索的写法书写，在 1.39.7 之前的服务器上通过 GraphQL 执行；树中列出集合及其属性和向量，租户和别名在集合的 Source 中，计数为精确值。Studio 不写入任何内容，拒绝任何会把文本发给模型的请求，也从不唤醒冷租户。支持自定义 CA 的 TLS；API 密钥或 OIDC 访问令牌只能走 TLS、回环地址或 SSH 隧道；在 Weaviate 1.40.2、1.38.22 和 1.37.4 上测试 |
@@ -682,7 +686,7 @@ bun run test:coverage
 >
 > **CapRover：** 打开你的 CapRover 面板 → **Apps → One-Click Apps/Databases**，搜索 **LibreDB Studio**，然后部署。
 >
-> **Koyeb：** 部署前先设置一个强 `JWT_SECRET`（至少 32 个字符，用 `openssl rand -base64 32` 生成）和各项凭据（Koyeb 无法自动生成密钥）。预填的值是刻意不可用的：那个密钥比 32 字符下限还短，所以应用会在启动时停下并说明原因，而不是用一个印在本文件里的密钥运行。按钮用的是 `STORAGE_PROVIDER=local`，连接元数据留在浏览器里，这适合 Koyeb 的临时文件系统。要让连接在重新部署后仍然存在，改成 `STORAGE_PROVIDER=postgres`，并把 `STORAGE_POSTGRES_URL` 指向 Koyeb 托管 Postgres 或 Neon 数据库。按钮也会填好 `LLM_PROVIDER`/`LLM_MODEL`/`LLM_API_KEY`，但 Agent 模式需要一份服务端持有的连接，所以在 `STORAGE_PROVIDER` 为 `sqlite` 或 `postgres` 之前，它的 Start 按钮一直是禁用的（见 [docs/AGENT.md](docs/AGENT.md#turning-it-on)）。详见 [`deploy/koyeb/`](deploy/koyeb/)。
+> **Koyeb：** 部署前先设置一个强 `JWT_SECRET`（至少 32 个字符，用 `openssl rand -base64 32` 生成）和各项凭据（Koyeb 无法自动生成密钥）。预填的值是刻意不可用的：那个密钥比 32 字符下限还短，所以应用会在启动时停下并说明原因，而不是用一个印在本文件里的密钥运行。按钮用的是 `STORAGE_PROVIDER=local`，连接元数据留在浏览器里，这适合 Koyeb 的临时文件系统。要让连接在重新部署后仍然存在，改成 `STORAGE_PROVIDER=postgres`，并把 `STORAGE_POSTGRES_URL` 指向 Koyeb 托管 Postgres 或 Neon 数据库。按钮也会填好 `LLM_PROVIDER`/`LLM_MODEL`/`LLM_API_KEY`，但 Agent 运行只能在服务端自己列出的种子连接（seed connection）上启动，所以在界面中创建的连接上，无论 `STORAGE_PROVIDER` 是什么，Start 按钮都是禁用的（见 [docs/AGENT.md](docs/AGENT.md#turning-it-on)）。详见 [`deploy/koyeb/`](deploy/koyeb/)。
 >
 > **Fly.io：** 仓库里已经带了一份可用的 [`fly.toml`](fly.toml)，完整步骤（应用名、volume、secrets）见 [`docs/FLY.md`](docs/FLY.md)。
 >

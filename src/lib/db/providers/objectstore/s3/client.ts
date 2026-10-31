@@ -62,6 +62,41 @@ export interface S3Client {
   close(): void;
 }
 
+/**
+ * The agent's reads, and nothing else: the client a handle opened for an agent-mode profile reads through. Each member
+ * is one request, a GET or a HEAD, in one limiter permit. The two HEADs are sent alone, with no follow-up GET, and the
+ * listing is a whole bucket's page, with an empty prefix, no delimiter and only the continuation token Studio read from
+ * the page before. It holds no object GET, object or version listing by prefix, tagging read and no write, so no
+ * agent-mode surface can send one, whatever it is handed.
+ */
+export interface S3AgentClient {
+  listBuckets(call: S3CallOptions): Promise<BucketListing>;
+  headBucket(bucket: string, call: S3CallOptions): Promise<BucketHead>;
+  getBucketLocation(bucket: string, call: S3CallOptions): Promise<string>;
+  getBucketVersioning(bucket: string, call: S3CallOptions): Promise<VersioningState>;
+  listBucketPage(request: BucketPageRequest, call: S3CallOptions): Promise<ObjectListing>;
+  headObject(bucket: string, key: string, call: S3CallOptions): Promise<ObjectHead>;
+}
+
+/** The agent client's members, in the order it declares them; the boundary tests hold the client to this list. */
+export const S3_AGENT_CLIENT_MEMBERS: readonly (keyof S3AgentClient)[] = Object.freeze([
+  "listBuckets",
+  "headBucket",
+  "getBucketLocation",
+  "getBucketVersioning",
+  "listBucketPage",
+  "headObject",
+]);
+
+/** One page of a whole bucket: no prefix and no delimiter, so no request names a key or a part of one. */
+export interface BucketPageRequest {
+  readonly bucket: string;
+  /** 1 to S3_KEY_SCAN_MAX_COUNT. */
+  readonly maxKeys: number;
+  /** The server's own token from the page before, which Studio holds within one read and never returns. */
+  readonly continuationToken?: string;
+}
+
 export interface ListObjectsRequest {
   readonly bucket: string;
   readonly prefix: string;
@@ -710,4 +745,67 @@ export function limitedS3Client(client: S3Client, limiter: ProviderLimiter): S3C
       withPermit(limiter, { bucket, key, capBytes: small }, call, () => client.getObjectTagging(bucket, key, call)),
     close: () => client.close(),
   };
+}
+
+/** A HEAD sent alone: a failure is read from its status and the MinIO code header, never from a follow-up GET. */
+async function headAlone(transport: NodeByteTransport, sent: Sent, call: S3CallOptions): Promise<NodeByteResponse> {
+  const response = await send(transport, sent, call);
+  if (!isSuccess(response.status)) throw errorOf(sent, response, false);
+  return response;
+}
+
+/**
+ * The agent's client over one session's transport and limiter: the reads of `S3AgentClient` alone, each in one permit.
+ * The bucket listing, the location, the versioning and the page are the editor client's own requests; the two HEADs
+ * send no follow-up GET, so no agent read ever sends a GET on an object's path.
+ */
+export function createS3AgentClient(transport: NodeByteTransport, limiter: ProviderLimiter): S3AgentClient {
+  const base = createS3Client(transport);
+  const small = S3_SMALL_RESPONSE_BYTES;
+  return Object.freeze({
+    listBuckets: (call: S3CallOptions) =>
+      withPermit(limiter, { capBytes: S3_BUCKET_LIST_RESPONSE_BYTES }, call, () => base.listBuckets(call)),
+    headBucket: (bucket: string, call: S3CallOptions) =>
+      withPermit(limiter, { bucket, capBytes: S3_HEAD_RESPONSE_BYTES }, call, async () => {
+        const sent: Sent = {
+          operation: "HeadBucket",
+          method: "HEAD",
+          path: objectPath(bucket),
+          query: "",
+          capBytes: S3_HEAD_RESPONSE_BYTES,
+          bucket,
+        };
+        const region = firstHeader((await headAlone(transport, sent, call)).headers, "x-amz-bucket-region");
+        return { bucketRegion: region !== undefined && S3_REGION_PATTERN.test(region) ? region : null };
+      }),
+    getBucketLocation: (bucket: string, call: S3CallOptions) =>
+      withPermit(limiter, { bucket, capBytes: small }, call, () => base.getBucketLocation(bucket, call)),
+    getBucketVersioning: (bucket: string, call: S3CallOptions) =>
+      withPermit(limiter, { bucket, capBytes: small }, call, () => base.getBucketVersioning(bucket, call)),
+    listBucketPage: (request: BucketPageRequest, call: S3CallOptions) =>
+      withPermit(limiter, { bucket: request.bucket, capBytes: S3_LIST_RESPONSE_BYTES }, call, () =>
+        base.listObjectsV2(
+          {
+            bucket: request.bucket,
+            prefix: "",
+            maxKeys: request.maxKeys,
+            ...(request.continuationToken === undefined ? {} : { continuationToken: request.continuationToken }),
+          },
+          call,
+        ),
+      ),
+    headObject: (bucket: string, key: string, call: S3CallOptions) =>
+      withPermit(limiter, { bucket, key, capBytes: S3_HEAD_RESPONSE_BYTES }, call, async () => {
+        const sent: Sent = {
+          operation: "HeadObject",
+          method: "HEAD",
+          path: objectPath(bucket, key),
+          query: "",
+          capBytes: S3_HEAD_RESPONSE_BYTES,
+          bucket,
+          key,
+        };
+        return readObjectHead(await headAlone(transport, sent, call));
+      }),
+  } satisfies S3AgentClient);
 }
