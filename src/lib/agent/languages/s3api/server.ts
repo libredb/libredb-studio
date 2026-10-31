@@ -27,7 +27,7 @@ const S3API_WORKFLOW_TOOL_RULES: Readonly<Partial<Record<AgentRunWorkflowType, s
  */
 const S3API_GROUNDING: AgentLanguageGrounding = Object.freeze({
   omissionAdvice:
-    "Buckets are listed to agent mode by name only, and no object key is listed, since keys count as stored values. Read a bucket with run_read_query, for example aws s3 ls s3://sales --recursive --summarize for its object count and total size, and an object the question names with aws s3api head-object --bucket sales --key 2026/orders.csv.",
+    "Buckets are listed to agent mode by name and creation date only, and no object key is listed, since keys count as stored values. Read a bucket with run_read_query, for example aws s3 ls s3://sales --recursive --summarize for its object count and total size, and an object the question names with aws s3api head-object --bucket sales --key 2026/orders.csv.",
   relations: false,
   ungrounded: (detail: string, noun: AgentInventoryNoun) =>
     `${detail}\nSo nothing about this store has been established for you: not one ${noun.singular} name, and no object key will be, since keys are withheld from agent mode. Read what you need with run_read_query, starting with aws s3api list-buckets.`,
