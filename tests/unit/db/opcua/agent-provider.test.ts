@@ -410,6 +410,18 @@ describe("a history read", () => {
     ).rejects.toThrow(ROW_BUDGET_PREFIX);
   });
 
+  test("a stated limit equal to the row budget is the request's own: answered at it, and one more is refused", async () => {
+    const exact = await agentHandle(plant(), { history: holding(60) });
+    const answered = await exact.provider.queryReadOnly('{"history": "ns=3;s=HistorianInt32", "limit": 5}', BUDGET);
+    expect(answered.rowCount).toBe(5);
+    expect(answered.warnings?.[0]?.message).toContain("reached its cap of 5 values");
+    expect(exact.record.calls.find((call) => call.startsWith("historyRead"))).toContain('"valuesPerPage":5');
+    const over = await agentHandle(plant(), { history: holding(60) });
+    await expect(
+      over.provider.queryReadOnly('{"history": "ns=3;s=HistorianInt32", "limit": 6}', BUDGET),
+    ).rejects.toThrow(OPCUA_AGENT_FAILURE_SENTENCES.historyOverRows(6, 5));
+  });
+
   test("with no limit written, a window past the console's own cap is refused, never cut at that cap", async () => {
     // A budget as large as the console's cap of 10,000 values: the console stops the read at its cap first.
     const budget = { ...BUDGET, maxResultRows: 10_000, maxResultBytes: 100_000_000 };
