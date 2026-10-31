@@ -586,13 +586,21 @@ describe("databend", () => {
 
   test("a trailing `FORMAT <name>` follows the row bound", () => {
     // L3: `SELECT 1 FORMAT JSON LIMIT 5` is 1005 "unexpected `LIMIT`", and `SELECT 1 LIMIT 5 FORMAT JSON` succeeds.
-    expect(grammar.trailingLimitClauses).toHaveLength(1);
-    const [format] = grammar.trailingLimitClauses;
+    expect(grammar.trailingLimitClauses).toHaveLength(2);
+    const [format, ignoreResult] = grammar.trailingLimitClauses;
     expect(format.test("SELECT number FROM numbers(10) FORMAT TabSeparated")).toBe(true);
     expect(format.test("SELECT 1 format csv ")).toBe(true);
     expect(format.test("SELECT * FROM (SELECT 1 FORMAT JSON) t")).toBe(false);
     expect(format.test("SELECT note FROM t WHERE note = 'FORMAT CSV'")).toBe(false);
     expect(format.test("SELECT format FROM t")).toBe(false);
+    // IGNORE_RESULT follows LIMIT/OFFSET in Databend's SELECT syntax, so the bound goes before it
+    // (#2092). An `AS IGNORE_RESULT` alias with the statement ending there is the one accepted
+    // overlap, the trade-off the `ROWS?` clause already ships (see the grammar comment).
+    expect(ignoreResult.test("SELECT * FROM t IGNORE_RESULT")).toBe(true);
+    expect(ignoreResult.test("SELECT * FROM t ignore_result")).toBe(true);
+    expect(ignoreResult.test("SELECT * FROM (SELECT 1 IGNORE_RESULT) t")).toBe(false);
+    expect(ignoreResult.test("SELECT note FROM t WHERE note = 'IGNORE_RESULT'")).toBe(false);
+    expect(ignoreResult.test("SELECT a AS IGNORE_RESULT FROM t")).toBe(false);
   });
 });
 

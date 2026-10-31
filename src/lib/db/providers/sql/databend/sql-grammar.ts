@@ -35,7 +35,15 @@ const DATABEND_GRAMMAR: SqlGrammar = {
   script: DEFAULT_SQL_GRAMMAR.script,
   // Measured on the pinned image: `SELECT 1 FORMAT JSON LIMIT 5` is 1005 "unexpected `LIMIT`", and
   // `SELECT 1 LIMIT 5 FORMAT JSON` succeeds. The format is one bracket-free word, so a `)` after it ends the match.
-  trailingLimitClauses: [/\s+FORMAT\s+\w+\s*$/i],
+  // Databend's documented SELECT syntax places IGNORE_RESULT after LIMIT/OFFSET
+  // (https://docs.databend.com/sql/sql-commands/query-syntax/query-select), so the bound goes before it and an
+  // existing `... ORDER BY EventTime LIMIT 10 ignore_result` keeps its bound rather than taking a second one (#2092).
+  // The word is also a legal alias after `AS`, and a guard for that was measured and refused: a lookbehind over the
+  // whitespace run re-scans it from every position the strip retries, so a 100,000-space run took seconds where the
+  // plain word reads once - the same accepted trade-off the `ROWS?` clause already ships. The exposure is the one
+  // end-anchored alias shape `SELECT 1 AS IGNORE_RESULT` with nothing after it; any FROM, second column or bound
+  // behind the alias breaks the anchor and the word reads as code again.
+  trailingLimitClauses: [/\s+FORMAT\s+\w+\s*$/i, /\s+IGNORE_RESULT\s*$/i],
 };
 
 /** How Databend statement text is read: grammar, SQL text, redaction, update target and completion. */
