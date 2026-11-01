@@ -1004,6 +1004,17 @@ MCP's statement fence refuses a write-shaped statement before anything is acquir
 It runs a `SELECT` (a `WITH` is fine), or `EXPLAIN` without `ANALYZE`: a bare `VALUES` and `TABLE` are syntax errors (code `62`) on 26.7.1.1315, and it pages with `LIMIT n OFFSET m`.
 A result past 1000 rows or 1 MiB is refused, never cut, and one past `timeout_ms` is answered as the timeout.
 
+[`tests/live/clickhouse-mcp-boundary.ts`](../../tests/live/clickhouse-mcp-boundary.ts) replays the boundary check above through the tool's handler with its statement fence removed, against 26.7.1.1315, and passed on 2026-11-01.
+The least-privilege user read its table; the writable admin, a user holding `BACKUP` and a user holding it only through a non-default role were each refused at open through MCP.
+Every write, DDL, `SYSTEM`, grant, temporary table, function, source table function, `BACKUP` and `KILL` was refused by the server with `497`, a trailing `SETTINGS readonly = 0` with `164` and a second statement with `62`; `remote()`, `remoteSecure()` and `cluster()` were refused by the provider before they were sent, and by the server (`497`) when sent to it directly.
+The writable admin ran each statement on a control copy, and a hash of the tables, rows, users, roles, collections and functions read back the same before and after.
+A read past 1000 rows, one past 1 MiB and one past a one-second `timeout_ms` were each refused.
+
+```sh
+LIBREDB_LIVE_CLICKHOUSE_PORT=8123 LIBREDB_LIVE_CLICKHOUSE_USER=<admin> LIBREDB_LIVE_CLICKHOUSE_PASSWORD=<secret> \
+  bun tests/live/clickhouse-mcp-boundary.ts
+```
+
 #### Agent language pack
 
 Statement-language family: `sql`.
