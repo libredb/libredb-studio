@@ -635,6 +635,7 @@ Both rows open with the window's own columns: `window_ms` (how long the window r
 A topic not seen answers `seen: false` and null figures, never 0 or false.
 `retained`, `delivered_qos` and `payload_bytes` are the last message's, while `messages` counts the window, and every topic answer says so, because a broker delivers a retained message only as the subscription starts and every later message arrives with the retained flag clear, so `retained: false` does not say the broker holds no retained message on the topic.
 `last_seen_ms` is counted from the SUBSCRIBE, as `listened_ms` is.
+All three are timed on the monotonic clock the window's timer runs on, never the wall clock, so a wall clock that time sync steps or slews mid-read does not shorten them.
 `delivered_qos` is the QoS the broker delivered at, which the subscription's maximum of 0 ([section 3.5](#35-maximum-qos-0-as-a-requirement)) holds at 0 on a conforming broker whatever the publisher sent.
 Measured (`reads`): the window over the fixture's four retained topics and one live publisher counted 18 messages on 5 topics, 4 of them retained; the retained topic read answered `seen: true`, `retained: true`, and the live one 15 messages, `retained: false`; a topic nobody published to answered `seen: false`; and no answer carried a topic name, a payload or a credential.
 

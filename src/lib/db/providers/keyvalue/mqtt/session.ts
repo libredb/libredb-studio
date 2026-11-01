@@ -465,7 +465,13 @@ export async function readTopics(options: MqttSessionOptions): Promise<MqttReadO
   const parser = await newParser();
   const topics = new Map<string, MqttTopicRow>();
   const provenLoss: string[] = [];
-  const started = Date.now();
+  /**
+   * Every duration the read reports is on the monotonic clock its timers run on, never the wall clock: time sync steps
+   * and slews a wall clock, which would shorten a window the timer ran in full (measured: set back 200 ms mid-read,
+   * `Date.now()` reported a 3,000 ms window as 2,801 ms). Whole milliseconds, as the answer counts them.
+   */
+  const started = performance.now();
+  const sinceStart = (): number => Math.round(performance.now() - started);
 
   return new Promise<MqttReadOutcome>((resolve, reject) => {
     let settled = false;
@@ -588,7 +594,7 @@ export async function readTopics(options: MqttSessionOptions): Promise<MqttReadO
         messages,
         retainedMessages,
         payloadBytes,
-        elapsedMs: Date.now() - started,
+        elapsedMs: sinceStart(),
       });
     };
 
@@ -626,7 +632,7 @@ export async function readTopics(options: MqttSessionOptions): Promise<MqttReadO
           finish("handshake");
           return;
         }
-        subscribedAtMs = Date.now() - started;
+        subscribedAtMs = sinceStart();
         write(() => encodeSubscribe(1, [filter]));
         return;
       }
@@ -665,7 +671,7 @@ export async function readTopics(options: MqttSessionOptions): Promise<MqttReadO
           payloadBytes: size,
           qos: packet.qos ?? 0,
           messages: (topics.get(topic)?.messages ?? 0) + 1,
-          lastSeenMs: Date.now() - started,
+          lastSeenMs: sinceStart(),
           ...(options.keepPayloadFor === topic && bodyBytes !== undefined
             ? { payload: Uint8Array.from(bodyBytes) }
             : {}),
@@ -780,7 +786,7 @@ export async function readTopics(options: MqttSessionOptions): Promise<MqttReadO
       // timer's. The silence before the handshake is covered by `dial` below, and the silence after it by
       // `budget` plus `finish()`'s `!connected` arm.
       ping = setInterval(() => keepAlive(), options.pingEveryMs ?? MQTT_PING_INTERVAL_MS);
-      readyAtMs = Date.now() - started;
+      readyAtMs = sinceStart();
       budget = setTimeout(() => finish("budget-time"), MQTT_READ_BUDGET_MS);
     };
 

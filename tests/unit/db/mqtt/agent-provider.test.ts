@@ -255,8 +255,36 @@ describe("the window read", () => {
     const { provider } = await opened({ messages: PEOPLE, end: "wait" });
     const result = await provider.queryReadOnly('{"read": "window"}', BUDGET);
     expect(result.rows[0]).toMatchObject({ stop_reason: "budget-time", scope: "unknown" });
-    expect(result.rows[0]?.listened_ms as number).toBeGreaterThanOrEqual(MQTT_READ_BUDGET_MS - 50);
+    const row = result.rows[0] as Record<string, unknown>;
+    // The window ran its whole length; the subscription listened inside it, the handshake's share less.
+    expect(row.window_ms as number).toBeGreaterThanOrEqual(MQTT_READ_BUDGET_MS);
+    expect(row.listened_ms as number).toBeGreaterThan(0);
+    expect(row.listened_ms as number).toBeLessThanOrEqual(row.window_ms as number);
     expect(result.warnings?.[0]?.message).toContain("stopped because the window ended.");
+  }, 10_000);
+
+  test("the window and the time it listened are measured on the timer's own clock, so a wall clock set back mid-read shortens neither", async () => {
+    // A virtual machine's wall clock is stepped and slewed by time sync, while the window's timer runs on the monotonic
+    // clock. Here the wall clock loses 200 ms once the read is under way: the answer still reports the window it ran.
+    const { provider } = await opened({ messages: PEOPLE, end: "wait" });
+    const wallClock = Date.now;
+    const setBackAt = wallClock() + 500;
+    Date.now = () => {
+      const now = wallClock();
+      return now >= setBackAt ? now - 200 : now;
+    };
+    let result: QueryResult;
+    try {
+      result = await provider.queryReadOnly('{"read": "window"}', BUDGET);
+    } finally {
+      Date.now = wallClock;
+    }
+    const row = result.rows[0] as Record<string, unknown>;
+    expect(row.stop_reason).toBe("budget-time");
+    expect(row.window_ms as number).toBeGreaterThanOrEqual(MQTT_READ_BUDGET_MS);
+    expect(row.window_ms as number).toBeLessThan(MQTT_READ_BUDGET_MS + 100);
+    expect(row.listened_ms as number).toBeGreaterThan(MQTT_READ_BUDGET_MS - 100);
+    expect(row.listened_ms as number).toBeLessThanOrEqual(row.window_ms as number);
   }, 10_000);
 
   test("one message on one topic is counted in the singular", async () => {
