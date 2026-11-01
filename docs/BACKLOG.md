@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S10 · 7
-- [Drivers and connections](#drivers-and-connections) — D1-D417, U17 · 306
+- [Drivers and connections](#drivers-and-connections) — D1-D418, U17 · 307
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U193 · 178
@@ -4200,6 +4200,15 @@ The same label reaches the agent grounding, since an agent-mode capture lists th
 Seen 2026-11-01 on the pinned `mtconnect/agent:2.8.0.4` fixture in a browser pass: the editor tree under `LIBREDB-LATHE-1722` showed `/availability`, and the agent-mode capture labelled `d1722-avail` `/availability`; pre-existing (eab62f5138).
 
 **Done when:** a device-level named item is labelled by its name alone, through `displayName`, and a provider test pins the label of a device-level and a component-level item.
+
+### D418. Four HTTP transports each keep their own bounded body reader beside the shared one
+
+`src/lib/db/http/bounded-body.ts` (`readBoundedText`) reads a response body under a byte bound for any HTTP-speaking engine, and the Trino transport reads through it.
+The libSQL (`readCappedBody` and `readCapped` in `src/lib/db/providers/sql/libsql/hrana-transport.ts`), ClickHouse (`readCappedBody` in `clickhouse/http-transport.ts`), search (`readCappedText` in `search/http-transport.ts`) and Druid (`readCapped` in `druid/http-transport.ts`) transports each still hold a reader of their own for the same job.
+Five readers of one rule can drift: a fix to how a bound is counted, how a split character decodes or how the stream is released lands in one and not the others.
+Seen 2026-11-01 when the Trino transport's bounded read was added.
+
+**Done when:** the four transports read through `readBoundedText`, their own readers are removed, and each transport's existing cap tests pass unchanged.
 
 ## Value interpolation
 
