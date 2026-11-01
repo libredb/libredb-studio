@@ -20,3 +20,5 @@ The buffer at capture time: firstSequence 1, lastSequence 50, nextSequence 51.
 | `assets.xml` | `GET /assets` | 911 |
 | `asset-tool.xml` | `GET /asset/TOOL-1722` | 911 |
 | `current-condition.xml` | `GET /current?path=%2F%2FDataItem%5B%40category%3D%22CONDITION%22%5D` | 1002 |
+
+`2.8.0.4/agent-boundary/` holds the agent path's boundary capture, `boundary.json`, recorded by its `run.sh` with `tests/live/mtconnect-agent-boundary.ts` against this fixture's adapter and two agents of the same image, one with `AllowPut = false` and one with `AllowPut = true` (`docs/providers/mtconnect.md`, section 14).
