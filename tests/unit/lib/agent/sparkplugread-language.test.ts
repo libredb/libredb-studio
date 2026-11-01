@@ -88,6 +88,10 @@ describe("the prompt texts", () => {
   test("the list of reads names the window as the provider runs it, and withholds every id and metric", () => {
     expect(SPARKPLUG_AGENT_READS).toContain(`for a window of ${DEFAULT_WINDOW_SECONDS} seconds`);
     expect(SPARKPLUG_AGENT_READS).toContain("never an id");
+    // A connection whose Database field names a group listens to that group alone, and the list says so.
+    expect(SPARKPLUG_AGENT_READS).toContain(
+      `listens to the whole spBv1.0 namespace (or, when the connection names one group, that group alone) and answers totals only`,
+    );
     expect(SPARKPLUG_AGENT_READS).toContain("never a metric name or value");
   });
 
@@ -96,6 +100,7 @@ describe("the prompt texts", () => {
       languageServerPack("sparkplugread").toolOverrides.investigation?.run_read_query?.description ?? "";
     expect(description).toContain(SPARKPLUG_AGENT_READS);
     expect(description).toContain("its scope, which is never complete");
+    expect(description).toContain(`one window of ${DEFAULT_WINDOW_SECONDS} seconds, which starts before the dial`);
     expect(description).toContain("An exact read's last_seen_ms is its last message's");
     expect(description).toContain(SPARKPLUG_COMPLETENESS);
     expect(description).toContain(SPARKPLUG_IDS_WITHHELD_SENTENCE);
@@ -107,6 +112,9 @@ describe("the prompt texts", () => {
   test("the rule reads a named object directly, never guesses one, and never reports one absent or offline", () => {
     const rule = WORKFLOW_TOOL_RULES.sparkplugread.investigation as string;
     expect(rule).toContain("When the question names a group, an edge node or a device in full, read it directly");
+    expect(rule).toContain(
+      "for the totals of one window over the whole namespace (or, when the connection names one group, that group alone)",
+    );
     expect(rule).toContain("only for the plant's totals, never to look for an id");
     expect(rule).toContain("never derive one from another");
     expect(rule).toContain("report an object not seen as not seen in that window, never as absent or offline");
@@ -141,7 +149,9 @@ describe("the posture on Sparkplug", () => {
     expect(posture.qualifier).toBe(
       `metadata only, one row per read, each read one ${DEFAULT_WINDOW_SECONDS}-second window within ${BUDGETS.statementTimeoutMs / 1000} s, over an encoder that cannot write a publish, a command or a will`,
     );
-    expect(posture.body).toContain(`listens to the whole spBv1.0 namespace for ${DEFAULT_WINDOW_SECONDS} seconds`);
+    expect(posture.body).toContain(
+      `listens to the whole spBv1.0 namespace (or, when the connection names one group, that group alone) for ${DEFAULT_WINDOW_SECONDS} seconds`,
+    );
     expect(posture.body).toContain("that an edge node or device not seen in the window may still exist");
     expect(posture.body).toContain("no answer says a node is online or offline");
     expect(posture.body).toContain(

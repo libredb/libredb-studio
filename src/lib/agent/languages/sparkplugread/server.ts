@@ -21,7 +21,7 @@ const READ_WHAT_IS_NAMED =
 
 const SPARKPLUGREAD_WORKFLOW_TOOL_RULES: Readonly<Partial<Record<AgentRunWorkflowType, string>>> = Object.freeze({
   investigation: [
-    'Read the plant with run_read_query, one JSON request at a time: {"read": "window"} for the totals of one window over the whole namespace, and the group, edgeNode and device reads for one object named in full.',
+    'Read the plant with run_read_query, one JSON request at a time: {"read": "window"} for the totals of one window over the whole namespace (or, when the connection names one group, that group alone), and the group, edgeNode and device reads for one object named in full.',
     NOT_LISTED,
     READ_WHAT_IS_NAMED,
     "Never write an id the question does not name, and never derive one from another: a guessed id not seen tells you nothing.",

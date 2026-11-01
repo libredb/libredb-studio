@@ -6,7 +6,8 @@
  * own names for the three levels), each written once, and `read` names one of four reads, each of which maps to one
  * fixed plan (`SparkplugAgentPlan`), so no other field the request writes reaches the wire:
  *
- * - `{"read": "window"}`: one subscription to the whole namespace, `spBv1.0/#`, for one window, answered as totals;
+ * - `{"read": "window"}`: one subscription to the whole namespace, `spBv1.0/#`, or to the one group a connection names,
+ *   for one window, answered as totals;
  * - `{"read": "group", "group": "G"}`: one subscription to the one group the request names in full;
  * - `{"read": "edgeNode", "group": "G", "edgeNode": "E"}`: the edge node's own birth, death and data topics, written
  *   in full with no wildcard;
@@ -60,7 +61,7 @@ const KEYS: ReadonlySet<string> = new Set(["read", ...ID_KEYS]);
 const NOTHING_SENT = "Nothing was sent.";
 
 /** The list of reads every refusal ends with, and the tool description and the posture say the same. */
-export const SPARKPLUG_AGENT_READS = `Agent mode on Sparkplug reads metadata only, one JSON object per read, each listening for a window of ${DEFAULT_WINDOW_SECONDS} seconds: {"read": "window"} listens to the whole spBv1.0 namespace and answers totals only, the distinct groups, edge nodes and devices seen, the NBIRTH, NDEATH, NDATA, DBIRTH, DDEATH and DDATA messages, the metrics they carried and their payload bytes, never an id; {"read": "group", "group": "G"}, {"read": "edgeNode", "group": "G", "edgeNode": "E"} and {"read": "device", "group": "G", "edgeNode": "E", "device": "D"} listen to the one group, edge node or device the request names in full and answer whether it was seen in the window, its messages by type, the metrics they carried, whether a birth or a death was seen and when its last message arrived, never a metric name or value.`;
+export const SPARKPLUG_AGENT_READS = `Agent mode on Sparkplug reads metadata only, one JSON object per read, each listening for a window of ${DEFAULT_WINDOW_SECONDS} seconds: {"read": "window"} listens to the whole spBv1.0 namespace (or, when the connection names one group, that group alone) and answers totals only, the distinct groups, edge nodes and devices seen, the NBIRTH, NDEATH, NDATA, DBIRTH, DDEATH and DDATA messages, the metrics they carried and their payload bytes, never an id; {"read": "group", "group": "G"}, {"read": "edgeNode", "group": "G", "edgeNode": "E"} and {"read": "device", "group": "G", "edgeNode": "E", "device": "D"} listen to the one group, edge node or device the request names in full and answer whether it was seen in the window, its messages by type, the metrics they carried, whether a birth or a death was seen and when its last message arrived, never a metric name or value.`;
 
 export const SPARKPLUG_AGENT_SENTENCES = {
   empty: `The request holds no read. ${SPARKPLUG_AGENT_READS} ${NOTHING_SENT}`,
