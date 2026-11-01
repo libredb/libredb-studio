@@ -4674,7 +4674,7 @@ describe("MCP run_read_query on a ClickHouse connection", () => {
       content: [
         {
           type: "text",
-          text: 'run_read_query cannot run on this connection: ClickHouse user "agent_ro" holds BACKUP ON demo.*, a grant whose statements readonly does not refuse; the agent read-only profile takes a user holding only SELECT and SHOW on named databases or tables, so it is refused. It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse and libSQL.',
+          text: 'run_read_query cannot run on this connection: ClickHouse user "agent_ro" holds BACKUP ON demo.*, a grant whose statements readonly does not refuse; the agent read-only profile takes a user holding only SELECT and SHOW on named databases or tables, so it is refused. It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL and InfluxDB 3 (SQL).',
         },
       ],
       isError: true,

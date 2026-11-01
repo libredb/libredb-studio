@@ -28,12 +28,22 @@ describe("mcpStatementEngines", () => {
     );
   });
 
-  test("serves ClickHouse and libSQL beside the five SQL engines it served before MCP_STATEMENT_READ existed", () => {
-    expect(RUN_READ_QUERY_TYPES).toEqual(["postgres", "sqlite", "duckdb", "mssql", "mysql", "clickhouse", "libsql"]);
+  test("serves ClickHouse, libSQL and InfluxDB 3 beside the five SQL engines it served before MCP_STATEMENT_READ existed", () => {
+    expect(RUN_READ_QUERY_TYPES).toEqual([
+      "postgres",
+      "sqlite",
+      "duckdb",
+      "mssql",
+      "mysql",
+      "clickhouse",
+      "libsql",
+      "influxdb3",
+    ]);
   });
 
-  // Opening ClickHouse and libSQL moved no other engine: every other language still serves exactly what it did.
-  test("opening ClickHouse and libSQL leaves every other language's served set as it was", () => {
+  // Opening ClickHouse, libSQL and InfluxDB 3 moved no other engine: every other language still serves exactly what it
+  // did.
+  test("opening ClickHouse, libSQL and InfluxDB 3 leaves every other language's served set as it was", () => {
     const languages = [...new Set(Object.values(AGENT_STATEMENT_LANGUAGE))].filter(
       (language): language is NonNullable<typeof language> => language !== null && language !== "sql",
     );
@@ -68,7 +78,16 @@ describe("mcpStatementEngines", () => {
       "mysql",
       "clickhouse",
       "libsql",
+      "influxdb3",
     ]);
+  });
+
+  // InfluxDB 3's SQL shares a provider directory with InfluxDB's InfluxQL, and opening the first left the second shut.
+  test("opening InfluxDB 3 leaves InfluxDB over InfluxQL unserved by every statement tool", () => {
+    expect(MCP_STATEMENT_READ.influxdb).toBe(false);
+    expect(AGENT_STATEMENT_LANGUAGE.influxdb).toBe("influxql");
+    expect(mcpStatementEngines("influxql")).toEqual([]);
+    expect(RUN_READ_QUERY_TYPES).not.toContain("influxdb");
   });
 
   test("an engine MCP is not offered for is not served, whatever its MCP read row says", () => {

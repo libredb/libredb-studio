@@ -355,7 +355,8 @@ It shares the agent's profiled handle, so the proof runs at the open of that han
 A seed carries no separate agent token, so the seed's own token must be one the open admits: a writable token, a read-only token with any other claim, a user name and password (HTTP Basic), no token, and a server that runs the probes are each refused, in the tool's sentence, before any statement runs.
 MCP's statement fence refuses a write-shaped statement before anything is acquired, as defence in depth; it also refuses every `PRAGMA`, reads included, and `EXPLAIN` of a write.
 It runs a `SELECT` (a `WITH` is fine), `VALUES`, or `EXPLAIN`: `TABLE` and `EXPLAIN ANALYZE` are syntax errors on sqld 0.24.33, as on SQLite, and `EXPLAIN QUERY PLAN` runs; it pages with `LIMIT n OFFSET m`, and an offset on `VALUES`, `EXPLAIN` or a query with its own `LIMIT` is refused.
-A result past 1000 rows or 1 MiB is refused, never cut, and one past `timeout_ms` is answered as the timeout: the provider closes the request at the deadline, which stops the statement on sqld.
+A `SELECT` without its own `LIMIT` is paged at `max_rows` (100 by default, at most 500), and `pagination.hasMore` and `pagination.nextOffset` say where the next page starts; a query whose own `LIMIT` is past 1000 rows, or a result past 1 MiB, is refused, never cut.
+A read past `timeout_ms` is answered as the timeout: the provider closes the request at the deadline, which stops the statement on sqld.
 A client that closes its request stops the wait only: the statement runs on until the provider closes its request at the time left of `timeout_ms`.
 Measured on 2026-11-01 by watching the container: after a two-second `timeout_ms` the server was idle within a second, and after a cancel one second into a 15-second `timeout_ms` a recursive count held a core until that deadline.
 
@@ -363,7 +364,7 @@ Measured on 2026-11-01 by watching the container: after a two-second `timeout_ms
 The read-only token read its table; the writable token, the read-only token whose permission claim grants writes, a user name and password on the Basic server, and the server that checks no credential, with no token and with the read-only token, were each refused at open through MCP.
 The MCP fence refused every statement of the record before anything was acquired; with it removed, every write was refused by sqld with 403, `ATTACH`, `VACUUM`, `VACUUM INTO`, `ANALYZE`, `CREATE TEMP TABLE` and the pragmas sqld does not take with `unsupported statement`, `DETACH` with `no such database`, `load_extension` with `not authorized`, and a second statement with `more than one statement`.
 The writable token ran each write on a scratch table, and a hash of the tables, rows, indexes, views, triggers and `user_version` read back the same before and after.
-A read paged with `offset`; a read past 1000 rows, one past 1 MiB and one past a one-second `timeout_ms` were each refused, and the server answered the next call.
+A read paged with `offset`; a read with its own `LIMIT` past 1000 rows, one past 1 MiB and one past a one-second `timeout_ms` were each refused, and the server answered the next call.
 Turso Cloud was not re-run through MCP: its read-only refusal is the one the open already admits, measured on 2026-10-29.
 
 ```sh

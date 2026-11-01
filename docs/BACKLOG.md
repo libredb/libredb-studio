@@ -42,7 +42,7 @@ None of it is a GitHub issue.
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B166 · 86
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
-- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP7 · 7
+- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP8 · 8
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
 
 ---
@@ -1832,7 +1832,7 @@ Both reach the caller as a shorter list with no reason: `GET /api/connections/ma
 ### D128. A read-only statement cannot be cancelled, so a cancelled or timed-out MCP query keeps running
 
 `queryReadOnly` takes no signal (`DatabaseProvider.queryReadOnly` in `src/lib/db/types.ts`), and `cancelQuery` cannot find its statement.
-When an MCP client cancels by closing the request, or `timeout_ms` passes, `run_read_query` stops waiting but the statement runs on: on PostgreSQL until `statement_timeout`, on SQL Server until the provider's deadline, on DuckDB to completion, on SQLite while blocking the process (A1), on ClickHouse until its `max_execution_time`, set to the time left, and on libSQL until the provider closes its request at the time left; a `timeout_ms` on ClickHouse and libSQL does end the statement, since the provider closes the request at its deadline, and ClickHouse cancels a read-only query whose client goes away, as sqld stops one (measured on sqld 0.24.33 on 2026-11-01).
+When an MCP client cancels by closing the request, or `timeout_ms` passes, `run_read_query` stops waiting but the statement runs on: on PostgreSQL until `statement_timeout`, on SQL Server until the provider's deadline, on DuckDB to completion, on SQLite while blocking the process (A1), on ClickHouse until its `max_execution_time`, set to the time left, and on libSQL and InfluxDB 3 until the provider closes its request at the time left; a `timeout_ms` on ClickHouse, libSQL and InfluxDB 3 does end the statement, since the provider closes the request at its deadline, and ClickHouse cancels a read-only query whose client goes away, as sqld and InfluxDB 3 Core stop one (measured on sqld 0.24.33 and on InfluxDB 3 Core 3.12.0 on 2026-11-01).
 A 2025-era `notifications/cancelled` sent in its own `POST` does not even stop the wait: the stateless server answers it 202 without knowing the call, which runs to completion or `timeout_ms` (`tests/integration/mcp/http-route.test.ts`).
 This departs from the MCP rule that a server should stop work on a cancelled request as soon as practical.
 
@@ -8508,7 +8508,7 @@ Found 2026-10-03 while designing the Neo4j provider (spec 6.4).
 No MCP tool runs InfluxQL: the `influxql` language pack declares no MCP facet (`AGENT_LANGUAGE_MCP_FACETS.influxql` is null) and `MCP_STATEMENT_READ.influxdb` is false; plan mode and the MCP metadata tools work (`MCP_EXPOSABLE` in `src/lib/db/compatibility.ts`).
 The agent half closed on 2026-10-30: the `influxdb` provider implements `queryReadOnly` for a principal the server proves read-only before every statement, under the agent's InfluxQL statement reader (`docs/providers/influxdb.md`, section Agent mode).
 Its agent credential takes the default form, `agentUser` and `agentPassword` together, which is a 1.x user; a 2.x token beside the connection's own credential has no form, because one provider class serves both lines and declares its form before it knows the line, so a 2.x connection gives the agent a read-only token as its own credential.
-`influxdb3` left this entry on 2026-10-29: agent mode executes its DataFusion SQL under the 3.12 Core planner's write refusals, and its MCP statement read stays closed until a change of its own opens it.
+`influxdb3` left this entry on 2026-10-29: agent mode executes its DataFusion SQL under the 3.12 Core planner's write refusals, and on 2026-11-01 MCP's `run_read_query` opened on it under the same boundary (`docs/providers/influxdb3.md` section 3.5), with `MCP_STATEMENT_READ.influxdb` left false.
 
 Found 2026-10-04 while designing the InfluxDB provider (ruling R10).
 
@@ -9309,6 +9309,16 @@ Measured 2026-11-01 with a seed set to `roles: ["*"]` and an admin's token.
 Found 2026-11-01 while verifying `run_read_query` on ClickHouse.
 
 **Done when:** `list_connections` gives such a seed a `read_tool` that can run, or says why none can, `docs/MCP.md` states the SQLite seed requirement beside the PostgreSQL, SQL Server and ClickHouse ones, and a test pins both.
+
+### MCP8. An InfluxDB 3 refusal through `run_read_query` names `SHOW` and `DESCRIBE`, which the tool refuses
+
+`run_read_query`'s statement fence admits a `TABLE` statement on an InfluxDB 3 (SQL) connection, and the provider's read policy then refuses it with `notARead` of `INFLUX_SQL_POLICY_SENTENCES` in `src/lib/db/providers/timeseries/influxdb/sql-policy.ts`: "Only SELECT, WITH, VALUES, SHOW, EXPLAIN and DESCRIBE run on an InfluxDB 3 connection in Studio".
+The same fence refuses `SHOW` and `DESCRIBE` before anything is acquired, so through MCP that sentence names two forms the tool does not take.
+`docs/MCP.md` says a refused statement's answer names what else that engine takes, and the "MCP read" subsection of `docs/providers/influxdb3.md` lists what `run_read_query` runs there: a `SELECT`, `VALUES`, or `EXPLAIN` without `ANALYZE`.
+The sentence is the provider's own and predates MCP read on InfluxDB 3; the editor and agent mode, which take `SHOW` and `DESCRIBE`, read it correctly.
+Found 2026-11-01 while verifying `run_read_query` on InfluxDB 3.12.0 Core.
+
+**Done when:** a statement the read policy refuses through `run_read_query` is answered with the forms that tool runs on InfluxDB 3, the editor and agent mode keep the policy's sentence, and a test sends `TABLE` through the tool's handler and pins the answer.
 
 ---
 

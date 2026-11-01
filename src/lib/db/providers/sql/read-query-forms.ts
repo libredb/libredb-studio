@@ -11,7 +11,9 @@ import type { DatabaseType } from "@/lib/types";
  * 2022 refuses a bare `VALUES` and `TABLE` and has no `EXPLAIN`; MySQL runs `VALUES ROW(...)` and `TABLE`, and MariaDB
  * 11.8 a bare `VALUES` list but no `TABLE`. Measured on 2026-11-01: ClickHouse 26.7.1.1315 refuses a bare `VALUES` and
  * `TABLE` and runs `EXPLAIN`; libSQL (sqld 0.24.33, through a read-only token) runs a bare `VALUES`, `EXPLAIN` and
- * `EXPLAIN QUERY PLAN`, and answers `TABLE` and `EXPLAIN ANALYZE` with a syntax error, as SQLite does.
+ * `EXPLAIN QUERY PLAN`, and answers `TABLE` and `EXPLAIN ANALYZE` with a syntax error, as SQLite does; InfluxDB 3 Core
+ * 3.12.0, through the agent read-only path, runs a bare `VALUES` and `EXPLAIN` (`VERBOSE` too), answers `TABLE` with a
+ * parser error, and runs `EXPLAIN ANALYZE`, which the fence refuses.
  */
 export interface ReadQueryForms {
   /** The statements, as the refusal names them after "runs one read-only statement:". */
@@ -70,7 +72,8 @@ export const READ_QUERY_FORMS: Readonly<Record<DatabaseType, ReadQueryForms | nu
   qdrant: null,
   weaviate: null,
   influxdb: null,
-  influxdb3: null,
+  // DataFusion: TABLE is a parser error, and EXPLAIN ANALYZE runs the statement.
+  influxdb3: { statements: "a SELECT (a WITH is fine), VALUES, or EXPLAIN without ANALYZE", paging: LIMIT_OFFSET },
   oxia: null,
   databend: null,
   s3: null,

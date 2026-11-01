@@ -196,6 +196,38 @@ describe("docs/MCP.md", () => {
     );
   });
 
+  test("says what a cancel and a timeout do to an InfluxDB 3 statement, as measured on 3.12.0 Core", () => {
+    expect(MCP_DOC).toContain(
+      "| InfluxDB 3 (SQL) | Studio stops waiting; the statement runs on until the provider closes its request at the time left of `timeout_ms`, which stops it on InfluxDB 3 Core | Studio closes the request at `timeout_ms`, InfluxDB 3 Core stops the statement, and the client gets the timeout answer |",
+    );
+  });
+
+  test("says what InfluxDB 3 needs of a seed and that inspect_schema opens it on any 3.x server", () => {
+    expect(MCP_DOC).toContain(
+      "InfluxDB 3 (SQL) by the 3.12 Core planner, which refuses every write, DDL, `COPY`, `SET` and transaction statement whatever the token, on a server checked at open to be that line ([influxdb3.md](./providers/influxdb3.md))",
+    );
+    expect(MCP_DOC).toContain(
+      "On InfluxDB 3 (SQL) every Core token is an admin token, so no seed token is least-privilege and none is asked for: `run_read_query` refuses instead a server that is not InfluxDB 3 Core on the 3.12 line, whose planner's write refusals were captured, as the open does for agent mode ([influxdb3.md](./providers/influxdb3.md) section 3.5).",
+    );
+    expect(MCP_DOC).toContain(
+      "InfluxDB 3 checks its server's line only for a connection that sends statements, so `inspect_schema` opens an InfluxDB 3 connection on any 3.x server, as the editor does.",
+    );
+  });
+
+  // run_read_query pages a SELECT with no LIMIT of its own at max_rows; only a LIMIT of its own past the 1000-row
+  // provider budget reaches the refusal, so no provider doc may say every result past 1000 rows is refused.
+  test.each(["docs/providers/clickhouse.md", "docs/providers/libsql.md", "docs/providers/influxdb3.md"])(
+    "%s says run_read_query pages a SELECT without its own LIMIT and refuses only a LIMIT past 1000",
+    (doc) => {
+      const text = read(doc);
+      expect(text).toContain(
+        "A `SELECT` without its own `LIMIT` is paged at `max_rows` (100 by default, at most 500), and `pagination.hasMore` and `pagination.nextOffset` say where the next page starts; a query whose own `LIMIT` is past 1000 rows, or a result past 1 MiB, is refused, never cut.",
+      );
+      expect(text).not.toContain("A result past 1000 rows or 1 MiB is refused");
+      expect(text).toContain("read with its own `LIMIT` past 1000 rows");
+    },
+  );
+
   test("names how each engine run_read_query serves enforces read-only, from the one engine list", () => {
     const line = MCP_DOC.split("\n").find((text) => text.startsWith("- Read-only is the database's own enforcement"));
     for (const type of RUN_READ_QUERY_TYPES) expect(line).toContain(DB_UI_CONFIG[type].label);

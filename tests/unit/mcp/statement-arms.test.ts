@@ -405,6 +405,8 @@ describe("the tool each engine is read with", () => {
     for (const type of RUN_READ_QUERY_TYPES) expect(mcpStatementToolFor(type)).toBe("run_read_query");
     expect(mcpStatementToolFor("clickhouse")).toBe("run_read_query");
     expect(mcpStatementToolFor("libsql")).toBe("run_read_query");
+    expect(mcpStatementToolFor("influxdb3")).toBe("run_read_query");
+    expect(mcpStatementToolFor("influxdb")).toBeNull();
     expect(mcpStatementToolFor("redis")).toBeNull();
     expect(mcpStatementToolFor("snowflake")).toBeNull();
   });
