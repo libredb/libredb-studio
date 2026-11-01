@@ -133,7 +133,7 @@ const textOf = (result: ToolResult): string =>
 /** The server's own refusal in an MCP answer, or null when the answer is not one. */
 function engineRefusalOf(result: ToolResult): string | null {
   const last = result.content.map((part) => ("text" in part ? part.text : "")).at(-1) ?? "";
-  const match = /^The database refused or failed the call: (.*)$/s.exec(last);
+  const match = /^The database refused or failed the call: ([\s\S]*)$/.exec(last);
   return result.isError === true && match !== null ? (match[1] ?? null) : null;
 }
 

@@ -3784,9 +3784,12 @@ describe("MCP run_read_query on a libSQL connection", () => {
 
   const refusedAtOpen = (sentence: string) => ({
     content: [
-      { type: "text", text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${ENGINES}.` },
+      {
+        type: "text" as const,
+        text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${ENGINES}.`,
+      },
     ],
-    isError: true,
+    isError: true as const,
   });
 
   const CAN_WRITE =
