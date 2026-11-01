@@ -255,7 +255,8 @@ function openSocket(options: SessionOptions): { transport: Transport; readyEvent
  */
 export async function readOnce(options: SessionOptions): Promise<ReadOutcome> {
   const subscribes = options.handshakeOnly !== true;
-  if (subscribes && options.filters.length === 0) throw new QueryError("A Sparkplug read needs at least one topic filter.");
+  if (subscribes && options.filters.length === 0)
+    throw new QueryError("A Sparkplug read needs at least one topic filter.");
 
   const parser = await newParser();
   const { transport, readyEvent } = (options.openTransport ?? openSocket)(options);

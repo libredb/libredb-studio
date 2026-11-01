@@ -45,6 +45,7 @@ import { promqlAgentReadInput } from "./promql-admission";
 import { opcuareadAgentReadInput } from "./opcuaread-admission";
 import { mtconnectreadAgentReadInput } from "./mtconnectread-admission";
 import { mqttreadAgentReadInput } from "./mqttread-admission";
+import { sparkplugreadAgentReadInput } from "./sparkplugread-admission";
 import { weaviateapiAgentReadInput } from "./weaviateapi-admission";
 import { agentPlanExecutionSqlInput, agentQueryReadSqlInput, agentReadSqlInput } from "./statement-guard";
 import type { RegistrableOperationDescriptor } from "./types";
@@ -998,6 +999,42 @@ const mqttreadQueryReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+const SPARKPLUGREAD_READ_BOUNDARY =
+  "Sparkplug: the provider's structural closed table: one read of a closed table of four, the window read, one " +
+  "subscription to the whole spBv1.0 namespace for one window, and the group, edge node and device reads, one " +
+  "subscription to the one object the request names in full, each a fresh session written by an encoder of five " +
+  "packets (CONNECT, SUBSCRIBE, UNSUBSCRIBE, PINGREQ and DISCONNECT) with no function that writes a PUBLISH and a " +
+  "CONNECT with no Will parameter, so no PUBLISH, command, rebirth request, host state, Will, $sparkplug or STATE " +
+  "subscription, shared subscription or filter of the model's own can be sent. Group, edge node, device and host " +
+  "application ids, metric names, values, properties and stored certificates are withheld: every answer is projected " +
+  "to counts and flags (agent-read.ts), with the window it listened for, its stop reason and that an edge node or " +
+  "device not seen may still exist; a time budget that cannot hold a whole window is refused before anything is " +
+  "sent, and a result past the byte budget is refused, never truncated.";
+
+/**
+ * One Sparkplug read the model wrote, on a `sparkplug` connection.
+ *
+ * R1 on a structural boundary: the agent's reads reach the broker only as SUBSCRIBE through an encoder with no PUBLISH.
+ * Its own id, and not a widened `sql.query.read`, so the SQL contract and its audit action stay exactly what they
+ * were.
+ */
+const sparkplugreadQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "sparkplugread.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: sparkplugreadAgentReadInput,
+  verification: {
+    reviewedBy: "Sparkplug agent execution design review",
+    boundary: SPARKPLUGREAD_READ_BOUNDARY,
+    verifiedOn: "2026-11-01",
+  },
+};
+
 const FSQUERY_READ_BOUNDARY =
   "Firestore: the provider's structural closed table, read with the console's own parser: one read of a closed table " +
   "of four metadata reads (the root collection ids, the subcollection ids of one document the statement names in full, " +
@@ -1328,6 +1365,7 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   opcuareadQueryReadDescriptor,
   mtconnectreadQueryReadDescriptor,
   mqttreadQueryReadDescriptor,
+  sparkplugreadQueryReadDescriptor,
 ]);
 
 /**

@@ -21,10 +21,19 @@
  * without a provider class gives 27 TypeScript errors and three failing factory tests, because
  * `tests/isolated/factory.test.ts` loops over every shipped type-id and builds its provider. So
  * the registration and this class belong in one change, and that change is not this one.
+ *
+ * `queryReadOnly` is the agent's: one read of a closed table of four (`agent-statement.ts`), the window over the whole
+ * namespace answered as totals and a group, edge node or device the request names in full answered as its counts,
+ * each a fresh session over the same encoder, and each answer projected to counts and flags (`agent-read.ts`), never an
+ * id, a metric name or a value, and always with the window it listened for and the sentence that an edge node or
+ * device not seen may still exist. On a handle opened for any agent-mode profile, connecting is a handshake that
+ * subscribes to nothing, and every other surface answers its reason (`agent-surface.ts`). MCP read stays closed on
+ * this engine.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { ConnectionError, DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { ConnectionError, DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { isTlsFailureCode, type NodeTlsMaterial } from "@/lib/db/http/node-transport";
+import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
 import type {
   ActiveSessionDetails,
   Container,
@@ -44,12 +53,29 @@ import type {
   ProviderExecutionContext,
   ProviderLabels,
   ProviderOptions,
+  ReadOnlyStatementBudget,
+  ReadOnlyStatementMode,
   SlowQueryStats,
   StorageStats,
   TableStats,
 } from "@/lib/db/types";
 import type { DatabaseConnection, QueryResult, QueryWarning } from "@/lib/types";
-import { DEFAULT_WINDOW_SECONDS, MAX_BYTES_PER_READ, MAX_MESSAGES_PER_READ, SPARKPLUG_DEFAULT_PORT } from "./constants";
+import {
+  runSparkplugAgentRead,
+  SPARKPLUG_METADATA_ONLY,
+  sparkplugAgentFailure,
+  sparkplugAgentResult,
+  sparkplugAgentShortBudgetSentence,
+} from "./agent-read";
+import { readSparkplugAgentStatement } from "./agent-statement";
+import { SPARKPLUG_AGENT_WITHHELD } from "./agent-surface";
+import {
+  DEFAULT_WINDOW_SECONDS,
+  MAX_BYTES_PER_READ,
+  MAX_MESSAGES_PER_READ,
+  SPARKPLUG_AGENT_MIN_STATEMENT_MS,
+  SPARKPLUG_DEFAULT_PORT,
+} from "./constants";
 import { foldMessages, type UnresolvedValue } from "./fold";
 import { SPARKPLUG_LABELS } from "./labels";
 import {
@@ -71,6 +97,12 @@ import { type EdgeNodeState, ReadState } from "./state";
 import { groupIdIsFilterSafe, readFilters } from "./topics";
 
 export { SPARKPLUG_DEFAULT_PORT };
+
+const PROFILE_REQUIRED = "Read-only execution requires a provider opened under the agent read-only profile";
+const NO_ESTIMATE = "Sparkplug composes no estimating plan for the agent";
+/** Decided by the request and the connection's own setting alone, never by what the broker holds. */
+const OUTSIDE_GROUP =
+  "This connection names one group in its Database field, and an agent read stays inside it: name that group, or read the window, which listens to that group alone. Nothing was sent.";
 
 /** What one bounded read asks for. The transport decides how to satisfy it. */
 export interface SparkplugReadRequest {
@@ -212,6 +244,28 @@ export class SparkplugProvider extends BaseDatabaseProvider {
     super(config, options);
   }
 
+  /**
+   * Whether this handle was opened for the agent read-only profile by an acquisition that sends statements
+   * (`sendsStatements`). Only then does `queryReadOnly` answer; the operations profile's acquisitions send no statement.
+   */
+  private get readOnlyProfile(): boolean {
+    return this.execution.readOnly === true && this.execution.sendsStatements === true;
+  }
+
+  /**
+   * Whether this handle was opened for any agent-mode profile: every execution profile opens `readOnly` and no editor
+   * handle does. On such a handle no surface names an id or reads a metric; the editor's handles keep every read.
+   */
+  private get agentProfile(): boolean {
+    return this.execution.readOnly === true;
+  }
+
+  /** The refusal of a surface an agent-mode handle does not read, after the connection check every surface makes. */
+  private agentWithheld(sentence: string): never {
+    this.ensureConnected();
+    throw new QueryError(sentence, "sparkplug");
+  }
+
   // ==========================================================================
   // Declarations
   // ==========================================================================
@@ -249,6 +303,8 @@ export class SparkplugProvider extends BaseDatabaseProvider {
       statementTerminator: "none",
       containerLevels: SPARKPLUG_CONTAINER_LEVELS,
       objectKinds: SPARKPLUG_OBJECT_KINDS,
+      // Ids, metric names and values are stored values: an agent read answers counts and flags.
+      metadataOnly: SPARKPLUG_METADATA_ONLY,
       // Nothing a read runs changes the tree.
       schemaRefreshPattern: "(?!)",
     };
@@ -307,8 +363,13 @@ export class SparkplugProvider extends BaseDatabaseProvider {
     return this.read ?? ((request) => dialAndRead(request));
   }
 
+  /**
+   * One read, which is both the connection test and the tree the panels draw. On an agent-mode handle it is a handshake
+   * that subscribes to nothing: it proves the broker answers and accepts the connection, and holds no id, since every
+   * agent read is a fresh session of its own.
+   */
   public async connect(): Promise<void> {
-    const request = this.request();
+    const request = this.agentProfile ? { ...this.request(), filters: [], handshakeOnly: true } : this.request();
     const outcome = await this.reader()(request);
     // A DIAL THAT NEVER OPENED IS NOT AN EMPTY READ. The session reports it as an end reason like
     // any other, which is right for the session: it ran and it stopped. It is wrong here, because a
@@ -388,7 +449,8 @@ export class SparkplugProvider extends BaseDatabaseProvider {
         request.host,
         request.port,
       );
-    this.last = outcome;
+    if (this.agentProfile) this.setConnected(true);
+    else this.last = outcome;
   }
 
   /**
@@ -417,6 +479,7 @@ export class SparkplugProvider extends BaseDatabaseProvider {
   public async disconnect(): Promise<void> {
     // Nothing is held open: a read subscribes, takes what the budgets allow and disconnects.
     this.last = undefined;
+    this.setConnected(false);
   }
 
   private requireRead(): SparkplugReadOutcome {
@@ -436,6 +499,10 @@ export class SparkplugProvider extends BaseDatabaseProvider {
    * rows are, and neither of them can reach a broker.
    */
   public async query(sql: string): Promise<QueryResult> {
+    if (this.agentProfile) {
+      this.ensureConnected();
+      throw new RefusedBeforeSendError(SPARKPLUG_AGENT_WITHHELD.query, "sparkplug", sql);
+    }
     const started = Date.now();
     // Parsed BEFORE the read is touched, so a refused request costs nothing.
     const query = parseReadQuery(sql);
@@ -456,11 +523,51 @@ export class SparkplugProvider extends BaseDatabaseProvider {
     };
   }
 
+  /**
+   * One agent read request. Only on a handle opened under the agent read-only profile; the request is read by
+   * `readSparkplugAgentStatement` and refused before anything is sent when it is not one read of the closed table, when
+   * it names a group other than the one the connection names, or when the read's time budget cannot hold a whole
+   * window. Then the read is one fresh session over the encoder, and its answer is the metadata-only projection with
+   * its window and the completeness sentence, refused past the byte budget. A failure is worded by its kind, never by
+   * the broker's or the transport's words.
+   */
+  public async queryReadOnly(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    if (!this.readOnlyProfile) throw new RefusedBeforeSendError(PROFILE_REQUIRED, "sparkplug", statement);
+    this.ensureConnected();
+    assertReadOnlyBudget(budget, "sparkplug");
+    if (mode !== "execute") throw new RefusedBeforeSendError(NO_ESTIMATE, "sparkplug", statement);
+    const reading = readSparkplugAgentStatement(statement);
+    if (!reading.ok) throw new RefusedBeforeSendError(reading.message, "sparkplug", statement);
+    const base = this.request();
+    if (reading.plan.op !== "window" && base.groupId !== "" && reading.plan.group !== base.groupId) {
+      throw new RefusedBeforeSendError(OUTSIDE_GROUP, "sparkplug", statement);
+    }
+    if (budget.statementTimeoutMs < SPARKPLUG_AGENT_MIN_STATEMENT_MS) {
+      throw new RefusedBeforeSendError(
+        sparkplugAgentShortBudgetSentence(budget.statementTimeoutMs),
+        "sparkplug",
+        statement,
+      );
+    }
+    const started = Date.now();
+    try {
+      const answer = await runSparkplugAgentRead(base, reading.plan, budget, this.reader());
+      return sparkplugAgentResult(answer, budget, statement, Date.now() - started);
+    } catch (error) {
+      throw sparkplugAgentFailure(error, budget.statementTimeoutMs, statement) ?? error;
+    }
+  }
+
   // ==========================================================================
   // The tree
   // ==========================================================================
 
   public async listContainers(parent?: readonly string[]): Promise<Container[]> {
+    if (this.agentProfile) this.agentWithheld(SPARKPLUG_AGENT_WITHHELD.tree);
     const read = this.requireRead();
     if (parent === undefined || parent.length === 0) return listGroups(read.state);
     if (parent.length === 1) return listEdgeNodes(read.state, parent[0]);
@@ -468,14 +575,17 @@ export class SparkplugProvider extends BaseDatabaseProvider {
   }
 
   public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
+    if (this.agentProfile) this.agentWithheld(SPARKPLUG_AGENT_WITHHELD.tree);
     return countSparkplugObjects(this.requireRead().state, container);
   }
 
   public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+    if (this.agentProfile) this.agentWithheld(SPARKPLUG_AGENT_WITHHELD.tree);
     return listSparkplugObjects(this.requireRead().state, container, kind);
   }
 
   public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
+    if (this.agentProfile) this.agentWithheld(SPARKPLUG_AGENT_WITHHELD.tree);
     return {
       path,
       columns: objectColumns(this.requireRead().state, path, kind),
@@ -486,6 +596,7 @@ export class SparkplugProvider extends BaseDatabaseProvider {
   }
 
   public async describeObjects(container: readonly string[], kind: string): Promise<ObjectDetailBatch> {
+    if (this.agentProfile) this.agentWithheld(SPARKPLUG_AGENT_WITHHELD.tree);
     const state = this.requireRead().state;
     const details = listSparkplugObjects(state, container, kind).map((object) => ({
       path: object.path,
@@ -527,6 +638,7 @@ export class SparkplugProvider extends BaseDatabaseProvider {
    * copy they are looking at will read them as current.
    */
   public async readObjectSource(path: readonly string[], kind: string): Promise<ObjectSourceDocument> {
+    if (this.agentProfile) this.agentWithheld(SPARKPLUG_AGENT_WITHHELD.source);
     const state = this.requireRead().state;
     const node = state.all().find((one) => one.groupId === path[0] && one.edgeNodeId === path[1]);
     const birth = kind === SPARKPLUG_KINDS.device ? node?.devices.get(path[path.length - 1] ?? "") : node?.birth;
@@ -578,6 +690,7 @@ export class SparkplugProvider extends BaseDatabaseProvider {
   // ==========================================================================
 
   public async getHealth(): Promise<HealthInfo> {
+    if (this.agentProfile) this.agentWithheld(SPARKPLUG_AGENT_WITHHELD.health);
     const read = this.last;
     if (read === undefined)
       return { databaseSize: "unknown", cacheHitRatio: "unknown", slowQueries: [], activeSessions: [] };
@@ -592,6 +705,7 @@ export class SparkplugProvider extends BaseDatabaseProvider {
   }
 
   public async getOverview(): Promise<DatabaseOverview> {
+    if (this.agentProfile) this.agentWithheld(SPARKPLUG_AGENT_WITHHELD.overview);
     const read = this.requireRead();
     const summary = read.state.summary();
     return {
@@ -610,27 +724,35 @@ export class SparkplugProvider extends BaseDatabaseProvider {
     };
   }
 
+  // On an agent-mode handle each answer below would read as the broker's own; the reason is answered instead.
+
   public async getPerformanceMetrics(): Promise<PerformanceMetrics> {
+    if (this.agentProfile) this.agentWithheld(SPARKPLUG_AGENT_WITHHELD.performance);
     return {};
   }
 
   public async getSlowQueries(): Promise<SlowQueryStats[]> {
+    if (this.agentProfile) this.agentWithheld(SPARKPLUG_AGENT_WITHHELD.slowQueries);
     return [];
   }
 
   public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
+    if (this.agentProfile) this.agentWithheld(SPARKPLUG_AGENT_WITHHELD.sessions);
     return [];
   }
 
   public async getTableStats(): Promise<TableStats[]> {
+    if (this.agentProfile) this.agentWithheld(SPARKPLUG_AGENT_WITHHELD.tableStats);
     return [];
   }
 
   public async getIndexStats(): Promise<IndexStats[]> {
+    if (this.agentProfile) this.agentWithheld(SPARKPLUG_AGENT_WITHHELD.indexStats);
     return [];
   }
 
   public async getStorageStats(): Promise<StorageStats[]> {
+    if (this.agentProfile) this.agentWithheld(SPARKPLUG_AGENT_WITHHELD.storage);
     return [];
   }
 

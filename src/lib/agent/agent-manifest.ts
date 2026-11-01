@@ -50,7 +50,8 @@ export type AgentStatementLanguageId =
   | "promql"
   | "opcuaread"
   | "mtconnectread"
-  | "mqttread";
+  | "mqttread"
+  | "sparkplugread";
 
 /** Literal-typed, so `AgentEngineFamily` in `languages/pack.ts` reads each engine's language by type. */
 export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
@@ -95,7 +96,7 @@ export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
   modbus: "modbusread",
   netconf: "netconfrpc",
   snmp: "snmpget",
-  sparkplug: null,
+  sparkplug: "sparkplugread",
   libredb: "libredbkv",
 } as const satisfies Record<DatabaseType, AgentStatementLanguageId | null>);
 

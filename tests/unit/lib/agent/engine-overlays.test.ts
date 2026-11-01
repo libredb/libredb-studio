@@ -62,6 +62,9 @@ import { MTCONNECTREAD_PACK } from "@/lib/agent/languages/mtconnectread/index";
 import * as MQTTREAD_CLIENT_OVERLAYS from "@/lib/agent/languages/mqttread/engines/client";
 import * as MQTT from "@/lib/agent/languages/mqttread/engines/mqtt";
 import { MQTTREAD_PACK } from "@/lib/agent/languages/mqttread/index";
+import * as SPARKPLUGREAD_CLIENT_OVERLAYS from "@/lib/agent/languages/sparkplugread/engines/client";
+import * as SPARKPLUG from "@/lib/agent/languages/sparkplugread/engines/sparkplug";
+import { SPARKPLUGREAD_PACK } from "@/lib/agent/languages/sparkplugread/index";
 import * as KUBECTL_CLIENT_OVERLAYS from "@/lib/agent/languages/kubectl/engines/client";
 import * as KUBERNETES from "@/lib/agent/languages/kubectl/engines/kubernetes";
 import * as LIBREDBKV_CLIENT_OVERLAYS from "@/lib/agent/languages/libredbkv/engines/client";
@@ -183,6 +186,8 @@ const ENGINE_MODULES: Readonly<Record<string, Readonly<Record<string, unknown>>>
   "mtconnectread/engines/client": MTCONNECTREAD_CLIENT_OVERLAYS,
   "mqttread/engines/mqtt": MQTT,
   "mqttread/engines/client": MQTTREAD_CLIENT_OVERLAYS,
+  "sparkplugread/engines/sparkplug": SPARKPLUG,
+  "sparkplugread/engines/client": SPARKPLUGREAD_CLIENT_OVERLAYS,
 };
 
 /** Every overlay an engine module exports, named `<module>#<export>`. */
@@ -235,6 +240,7 @@ describe("the engine registry", () => {
       "modbus",
       "netconf",
       "snmp",
+      "sparkplug",
       "libredb",
     ]);
     expect(SQL_ENGINES).toEqual([
@@ -283,7 +289,7 @@ describe("the engine registry", () => {
 
   test("every engine module's server overlay holds a dialect and overridable members, its client one a dialect alone (ruling 2)", () => {
     const exported = exportedOverlays();
-    expect(exported).toHaveLength(74);
+    expect(exported).toHaveLength(76);
     // The one other export is the PostgreSQL retry's rewrite, which its tests call directly.
     expect(
       Object.entries(ENGINE_MODULES)
@@ -365,6 +371,7 @@ describe("the engine packs", () => {
     expect(agentEnginePack("opcua")).toBe(OPCUAREAD_PACK);
     expect(agentEnginePack("mtconnect")).toBe(MTCONNECTREAD_PACK);
     expect(agentEnginePack("mqtt")).toBe(MQTTREAD_PACK);
+    expect(agentEnginePack("sparkplug")).toBe(SPARKPLUGREAD_PACK);
   });
 
   test.each(SQL_ENGINES)("%s is the SQL pack member for member, with its own dialect on the server facet", (type) => {
@@ -430,6 +437,7 @@ describe("engineServerDialect", () => {
       "opcua",
       "mtconnect",
       "mqtt",
+      "sparkplug",
     ] as DatabaseType[]) {
       expect(Object.keys(engineServerOverlay(type))).toEqual([]);
     }
@@ -669,6 +677,7 @@ describe("the client dialect", () => {
       "opcua",
       "mtconnect",
       "mqtt",
+      "sparkplug",
     ] as const) {
       expect(engineClientPack(type).dialect).toBeUndefined();
     }

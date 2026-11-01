@@ -672,13 +672,13 @@ describe("POST /api/agent/runs", () => {
     connection. A blanket refusal would withhold a workflow over a claim that is not
     true of it (#411), which is exactly why the rail's amber card does not gate Start.
   */
-  const UNSUPPORTED_ENGINE = { id: "seed:plant", name: "Plant Sparkplug", type: "sparkplug" };
+  const UNSUPPORTED_ENGINE = { id: "seed:lake", name: "Lake Spark", type: "spark" };
 
   /** The sentence the rail's own pre-start card shows, read from the same module. */
   const unsupportedSentence = agentPosture({
     mode: "agent",
-    engine: "sparkplug",
-    engineLabel: getDBConfig("sparkplug").label,
+    engine: "spark",
+    engineLabel: getDBConfig("spark").label,
     handover: false,
   }).body;
 

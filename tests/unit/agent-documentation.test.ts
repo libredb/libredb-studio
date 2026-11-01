@@ -505,6 +505,7 @@ const READ_ONLY_PROVIDER_FILES: Readonly<Record<string, string>> = {
   opcua: "src/lib/db/providers/industrial/opcua/index.ts",
   mtconnect: "src/lib/db/providers/industrial/mtconnect/index.ts",
   mqtt: "src/lib/db/providers/keyvalue/mqtt/index.ts",
+  sparkplug: "src/lib/db/providers/industrial/sparkplug/index.ts",
 };
 
 /**
@@ -613,9 +614,9 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
   const list = namedList(AGENT_EXECUTION_ENGINES.map((type) => getDBConfig(type).label));
   const prose = (relative: string) => read(relative).replace(/\n[ \t]*(?:\*|\/\/|#)?[ \t]*/g, " ");
 
-  test("the derived list is today's thirty-seven engines", () => {
+  test("the derived list is today's thirty-eight engines", () => {
     expect(list).toBe(
-      "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect and MQTT",
+      "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT and Sparkplug B",
     );
   });
 
@@ -957,6 +958,7 @@ describe("docs/AGENT.md names every language-pack resolver in its Language packs
       "twenty-one",
       "twenty-two",
       "twenty-three",
+      "twenty-four",
     ];
     expect(ids.length).toBeLessThan(COUNT_WORDS.length);
     expect(section).toContain(

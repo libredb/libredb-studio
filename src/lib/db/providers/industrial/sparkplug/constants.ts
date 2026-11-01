@@ -184,3 +184,19 @@ export const MAX_HEX_BYTES_IN_CELL = 256;
  * anywhere in it and the gap check applies only between successive data messages.
  */
 export const SEQ_MODULUS = 256;
+
+/**
+ * The longest group, edge node or device id an agent read may name, in UTF-8 bytes.
+ *
+ * CHOSEN, no measurement behind it: the specification sets no length for an id (4.1.2), and real ids are short names.
+ * Three ids at this length, the namespace and the longest message type still make a topic far inside MQTT's 65,535-byte
+ * string, so a request the agent's reader admits is always one the encoder can write.
+ */
+export const SPARKPLUG_AGENT_MAX_ID_BYTES = 1_024;
+
+/**
+ * The least time budget an agent read is admitted with: the window plus a second for its answer to settle. Every agent
+ * read listens for `DEFAULT_WINDOW_SECONDS`, and the window's clock starts before the dial, so the read ends on it
+ * whatever the broker does; a budget shorter than this is refused rather than cut into a shorter window.
+ */
+export const SPARKPLUG_AGENT_MIN_STATEMENT_MS = DEFAULT_WINDOW_SECONDS * 1000 + 1_000;

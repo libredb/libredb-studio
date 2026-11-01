@@ -140,6 +140,7 @@ const LANGUAGE_IDS: Readonly<Record<AgentStatementLanguageId, true>> = {
   opcuaread: true,
   mtconnectread: true,
   mqttread: true,
+  sparkplugread: true,
 };
 
 describe("the server packs", () => {
@@ -288,6 +289,7 @@ describe("the language packs", () => {
       "opcuaread",
       "mtconnectread",
       "mqttread",
+      "sparkplugread",
     ]);
     expect(Object.isFrozen(LANGUAGE_TOOL_ARMS)).toBe(true);
   });
@@ -450,6 +452,7 @@ describe("the prompt tables the packs hold", () => {
       "opcuaread",
       "mtconnectread",
       "mqttread",
+      "sparkplugread",
     ]);
     expect(Object.isFrozen(WORKFLOW_TOOL_RULES)).toBe(true);
     for (const id of ids) {
@@ -565,6 +568,7 @@ describe("the client packs", () => {
         "opcuaread",
         "mtconnectread",
         "mqttread",
+        "sparkplugread",
       ]);
     }
   });
@@ -596,6 +600,7 @@ describe("the client packs", () => {
       opcuaread: null,
       mtconnectread: null,
       mqttread: null,
+      sparkplugread: null,
     });
   });
 

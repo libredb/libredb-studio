@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B164 · 86
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B165 · 86
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -8723,15 +8723,6 @@ Found 2026-10-27 while designing read-only agent and MCP execution for every pro
 
 **Done when:** either a way to prove each reachable catalog's connector credential read-only at open, or an engine switch that disables pass-through table functions, is found and measured, a boundary test with a writable positive control shows a pass-through write refused, and Trino then joins agent execution through `queryReadOnly` with its `MCP_STATEMENT_READ` row false until the owner opens MCP read for it; cited in `docs/AGENT.md`.
 
-### B134. Sparkplug has no agent execution and no MCP surface
-
-`MCP_EXPOSABLE.sparkplug` is false and the provider implements no `queryReadOnly`, so agent execution and every MCP tool refuse a Sparkplug connection.
-Sparkplug has no command that lists edge nodes, so a read reports what it saw during its window, and an edge node that published nothing in that window cannot be told from one that is gone (`MCP_EXPOSABLE` in `src/lib/db/compatibility.ts`).
-
-Found 2026-10-27 while designing read-only agent and MCP execution for every provider.
-
-**Done when:** completeness is ruled for Sparkplug as it was for MQTT's agent reads (B164), the provider implements `queryReadOnly` over the same packet table with answers that carry metric metadata and no payload, joins `AGENT_EXECUTION_ENGINES`, and MCP read is opened for it only on its own exposure ruling, with tests; cited in `docs/AGENT.md`.
-
 ### B136. etcd's agent reads are metadata only, and it has no MCP statement tool
 
 Agent mode executes etcd metadata reads under the `etcdctl` statement language, as a user the server shows, before every command, has authentication on, holds neither the root user's name nor the root role, and holds READ permissions only on every role, read with `UserGet` and `RoleGet` (`docs/providers/etcd.md`, section 15).
@@ -9092,6 +9083,22 @@ Kept so that MCP access, and any widening of what agent mode reads on a broker (
 Found 2026-11-01 when agent mode joined MQTT.
 
 **Done when:** a per-engine exposure ruling opens MCP for MQTT, an MCP surface that reads through the same closed table, window, completeness sentence and metadata-only projection is designed and `MCP_EXPOSABLE.mqtt` turns true for it, the pack declares its MCP facet (`src/lib/agent/languages/mqttread/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), and `MCP_STATEMENT_READ.mqtt` is true, with tests that an MCP read sends no PUBLISH and no Will, that no MCP answer names a topic or carries a payload, and that every answer carries its window and the completeness sentence; cited in `docs/AGENT.md`.
+
+### B165. Sparkplug's agent reads count what one window delivers, with ids withheld, and it has no MCP surface
+
+Agent mode executes Sparkplug reads under the `sparkplugread` request language, one JSON request per call: `{"read": "window"}`, one subscription to the whole `spBv1.0` namespace (or to the connection's own group) for one window, answered as totals only, and the `group`, `edgeNode` and `device` reads, one subscription to one object the request names in full with every level above it, answered as that object's counts (`docs/providers/sparkplug.md`, section 14).
+The boundary is the provider's structural closed table: each read is one fresh session, Clean Start with a zero Session Expiry Interval, written by the encoder, which holds CONNECT, SUBSCRIBE, UNSUBSCRIBE, PINGREQ and DISCONNECT and no function that writes a PUBLISH, with a CONNECT that takes no Will, so no PUBLISH, command, rebirth request, host state, Will and no subscription of a filter the model wrote can be sent on the agent path.
+Group, edge node, device and host application ids count as stored values, since they name the plants, machines and people behind them, and so do metric names, values, properties, datasets, templates, aliases and stored certificates: no agent answer names an id, an exact read does not echo the id it named, a payload is decoded only to count its metrics, and a group read answers no count of the edge nodes or devices in it.
+A filter the model writes would bisect ids one level at a time, so an id with `+`, `#` or `/`, a group named `STATE`, a group other than the connection's own, every key outside `read`, `group`, `edgeNode` and `device` and every read outside the four are refused before anything is sent, decided by the request's text and the connection's setting alone, so a withheld id and a missing one are refused alike; no request can reach `$sparkplug/` or a shared subscription.
+Sparkplug has no command that lists edge nodes or devices and a birth is published at QoS 0 and not retained, so no answer is complete: each states the window it listened for, what it counted, why it stopped and that an edge node or device not seen in the window may still exist, none says a node is online or offline, and its scope is never `complete`; a time budget that cannot hold a whole window is refused rather than shortened, a result past the byte budget is refused, and a failure is worded by its kind, never in the broker's or the transport's words.
+On a handle of either agent profile connecting is a handshake that subscribes to nothing, the tree, an object's listing, description and birth certificate and the console are refused, and the overview, health, performance, slow-query, session, table, index and storage readings answer their reason rather than an empty reading or Studio's own figure, so an agent run is ungrounded and is told why no id is listed and to read an object the question names directly.
+So the language offers the investigation and the operations workflow only, and a plan of the investigation is prose, since the editor's console request reads metric values.
+`MCP_EXPOSABLE.sparkplug` is false, and the language's MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) with `MCP_STATEMENT_READ.sparkplug` false, so every MCP tool refuses a Sparkplug connection; `READ_ONLY_ENFORCED.sparkplug` is unchanged.
+Kept so that MCP access, and any widening of what agent mode reads on a plant (an id, a metric name or value, a stored certificate, host state), are decisions of their own rather than side effects of agent mode joining.
+
+Found 2026-11-01 when agent mode joined Sparkplug.
+
+**Done when:** a per-engine exposure ruling opens MCP for Sparkplug, an MCP surface that reads through the same closed table, window, completeness sentence and metadata-only projection is designed and `MCP_EXPOSABLE.sparkplug` turns true for it, the pack declares its MCP facet (`src/lib/agent/languages/sparkplugread/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), and `MCP_STATEMENT_READ.sparkplug` is true, with tests that an MCP read sends no PUBLISH and no Will, that no MCP answer names an id or carries a metric, and that every answer carries its window and the completeness sentence; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

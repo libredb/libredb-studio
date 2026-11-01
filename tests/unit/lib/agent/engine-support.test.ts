@@ -132,10 +132,16 @@ describe("AGENT_EXECUTION_ENGINES", () => {
     expect(AGENT_EXECUTION_ENGINES).toContain("mqtt");
   });
 
-  test("sparkplug still offers no read-only statement path, so agent mode does not execute on it", async () => {
+  test("sparkplug now offers the read-only statement path, so agent mode executes on it", async () => {
     expect(databaseTypes).toContain("sparkplug");
-    expect(await hasReadOnlyPath("sparkplug")).toBe(false);
-    expect(AGENT_EXECUTION_ENGINES).not.toContain("sparkplug");
+    expect(await hasReadOnlyPath("sparkplug")).toBe(true);
+    expect(AGENT_EXECUTION_ENGINES).toContain("sparkplug");
+  });
+
+  test("spark still offers no read-only statement path, so agent mode does not execute on it", async () => {
+    expect(databaseTypes).toContain("spark");
+    expect(await hasReadOnlyPath("spark")).toBe(false);
+    expect(AGENT_EXECUTION_ENGINES).not.toContain("spark");
   });
 });
 

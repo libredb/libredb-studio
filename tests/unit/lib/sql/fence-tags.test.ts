@@ -96,6 +96,11 @@ describe("fenceTagEngine", () => {
     expect(fenceTagEngine("mtconnect")).toBe("mtconnect");
   });
 
+  test("sparkplugread names sparkplug, the agent's name for the Sparkplug read request language", () => {
+    expect(fenceTagEngine("sparkplugread")).toBe("sparkplug");
+    expect(isQueryFenceTag("sparkplugread")).toBe(true);
+  });
+
   test("mqttread names mqtt, the agent's name for the MQTT read request language", () => {
     expect(fenceTagEngine("mqttread")).toBe("mqtt");
     expect(isQueryFenceTag("mqttread")).toBe(true);
