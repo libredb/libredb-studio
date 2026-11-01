@@ -602,7 +602,7 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
     const result = await call({ sql: "SELECT * FROM system.influxdb_schema" });
 
     expect(result.isError).toBeUndefined();
-    expect((result.structuredContent?.rows as unknown[]).length).toBeGreaterThan(0);
+    expect(result.structuredContent?.row_count).toBeGreaterThan(0);
   });
 
   test("a write the MCP fence would refuse, the fence removed, is refused by the provider's read policy unsent", async () => {
