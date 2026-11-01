@@ -179,14 +179,21 @@ describe("what the page tells the reader about the read itself (#1635)", () => {
       "server-disconnect",
       "subscription-refused",
       "transport-closed",
+      "handshake",
     ];
-    expect(reasons).toHaveLength(6);
+    expect(reasons).toHaveLength(7);
     for (const reason of reasons) {
       const sentence = endReasonSentence(reason);
       expect(sentence.length).toBeGreaterThan(20);
       // The raw token is never shown: it is a name in our code, not a sentence for a reader.
       expect(sentence).not.toBe(reason);
     }
+  });
+
+  test("a handshake-only session says it subscribed to nothing, so it read nothing", () => {
+    expect(endReasonSentence("handshake")).toBe(
+      "the session only checked that the broker accepts this connection and subscribed to nothing, so it read no topic.",
+    );
   });
 
   test("a budget sentence offers the two things that actually see more", () => {

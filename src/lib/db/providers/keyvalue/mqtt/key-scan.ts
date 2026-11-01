@@ -132,6 +132,8 @@ export function endReasonSentence(reason: MqttEndReason, code?: number): string 
       return subackRefusalSentence(code);
     case "transport-closed":
       return "the connection closed before the budget ran out, so the list is short of what the filter matched.";
+    case "handshake":
+      return "the session only checked that the broker accepts this connection and subscribed to nothing, so it read no topic.";
   }
 }
 
