@@ -4180,7 +4180,7 @@ Not reached on the pinned OPC PLC 2.15.10 fixture, whose references carry neithe
 `listObjects(container, kind)` in `src/lib/db/providers/industrial/mtconnect/index.ts` splits a device's items only by `kind === "condition"`, so on an editor handle `listObjects([device], "asset")` returns every non-condition data item of the device, each labelled `kind: "asset"`, and `describeObjects([device], "asset")` describes them as such.
 The tree never shows it only because `countObjects` answers `asset: { count: 0 }`, so the kind is never expanded; any caller that lists a kind without counting it first, the objects route included, gets data items under the asset heading.
 Agent-mode handles are not affected: there `listObjects` refuses the kind with `MTCONNECT_AGENT_WITHHELD.assets`.
-Found 2026-11-01 while verifying the MTConnect agent read (PR 3.19); pre-existing.
+Found 2026-11-01 while verifying the MTConnect agent read; pre-existing.
 
 **Done when:** `listObjects` answers the asset kind on an editor handle either with the agent's assets (from `/assets`, under the same guard and caps as the console) or with an explicit refusal that says assets are read from the console, never with data items, and the count and the listing agree; a provider test pins `listObjects([device], "asset")` and `describeObjects([device], "asset")` on an editor handle.
 
