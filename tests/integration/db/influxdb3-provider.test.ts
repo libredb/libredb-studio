@@ -696,6 +696,20 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
     },
   );
 
+  test("a server that names no version and build is refused at open, in the tool's sentence, before the statement is sent", async () => {
+    ping = capture("ping-forbidden-synthetic");
+
+    const result = await call({ sql: "SELECT room FROM home" });
+
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(result).toEqual(
+      refusedAtOpen(
+        "The agent read-only profile is checked on InfluxDB 3 Core 3.12, and this server reports no version and build, so it is refused",
+      ),
+    );
+    expect(statementsSent()).toEqual([]);
+  });
+
   test("a result past the 1000-row provider budget is refused, never cut", async () => {
     answers = { "SELECT room FROM home LIMIT 2000": rooms(1_001) };
 
