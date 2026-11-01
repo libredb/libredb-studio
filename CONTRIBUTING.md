@@ -18,6 +18,18 @@ Each translated README also carries a translation-lag banner: a blockquote above
 
 ## How Can I Contribute?
 
+### Issues and pull requests come from real users
+
+LibreDB Studio is maintained by volunteers, and every issue and pull request is read by a person.
+We expect them to come from people who use LibreDB Studio: a bug you hit while working with it, a feature you need, a fix for a problem you ran into.
+
+We close, without review, issues and pull requests that are opened by a bot or an autonomous agent, or that come from scanning the source code for edge cases rather than from using the product.
+The same applies to batches of reports opened minutes apart from one template, whether or not each finding is technically correct.
+An account that keeps doing this after being told is blocked from the libredb organization.
+
+Using an AI tool to help you write a report or a patch is fine.
+What we ask is that you used the product, reproduced the problem yourself, and stand behind what you submit.
+
 ### Reporting Bugs
 
 Before creating bug reports, please check the existing issues to avoid duplicates. When you create a bug report, include as many details as possible:
