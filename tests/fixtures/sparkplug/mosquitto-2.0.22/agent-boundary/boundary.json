@@ -66,477 +66,12 @@
         {
           "read": "group-seen",
           "row": {
-            "window_ms": 3001,
-            "listened_ms": 3000,
-            "stop_reason": "time-budget",
-            "scope": "window",
-            "broker_reason_code": null,
-            "subscriptions_refused": 0,
-            "seen": true,
-            "messages": 12,
-            "nbirth": 4,
-            "ndeath": 0,
-            "ndata": 4,
-            "dbirth": 2,
-            "ddeath": 0,
-            "ddata": 2,
-            "birth_seen": true,
-            "death_seen": false,
-            "last_seen_ms": 2951,
-            "metrics": 46,
-            "payload_bytes": 1380,
-            "messages_not_decodable": 0,
-            "payloads_not_kept": 0
-          },
-          "warnings": 3,
-          "completenessLast": true,
-          "sent": [
-            {
-              "packet": "CONNECT",
-              "cleanStart": true,
-              "will": false,
-              "credentials": false
-            },
-            {
-              "packet": "SUBSCRIBE",
-              "filters": 1,
-              "wildcard": true,
-              "dollar": false,
-              "namespace": true
-            },
-            {
-              "packet": "UNSUBSCRIBE"
-            },
-            {
-              "packet": "DISCONNECT"
-            }
-          ]
-        },
-        {
-          "read": "group-not-seen",
-          "row": {
             "window_ms": 3002,
             "listened_ms": 3002,
             "stop_reason": "time-budget",
             "scope": "window",
             "broker_reason_code": null,
             "subscriptions_refused": 0,
-            "seen": false,
-            "messages": 0,
-            "nbirth": 0,
-            "ndeath": 0,
-            "ndata": 0,
-            "dbirth": 0,
-            "ddeath": 0,
-            "ddata": 0,
-            "birth_seen": false,
-            "death_seen": false,
-            "last_seen_ms": null,
-            "metrics": 0,
-            "payload_bytes": 0,
-            "messages_not_decodable": 0,
-            "payloads_not_kept": 0
-          },
-          "warnings": 3,
-          "completenessLast": true,
-          "sent": [
-            {
-              "packet": "CONNECT",
-              "cleanStart": true,
-              "will": false,
-              "credentials": false
-            },
-            {
-              "packet": "SUBSCRIBE",
-              "filters": 1,
-              "wildcard": true,
-              "dollar": false,
-              "namespace": true
-            },
-            {
-              "packet": "UNSUBSCRIBE"
-            },
-            {
-              "packet": "DISCONNECT"
-            }
-          ]
-        },
-        {
-          "read": "edge-node-seen",
-          "row": {
-            "window_ms": 3001,
-            "listened_ms": 3000,
-            "stop_reason": "time-budget",
-            "scope": "window",
-            "broker_reason_code": null,
-            "subscriptions_refused": 0,
-            "seen": true,
-            "messages": 4,
-            "nbirth": 2,
-            "ndeath": 0,
-            "ndata": 2,
-            "dbirth": null,
-            "ddeath": null,
-            "ddata": null,
-            "birth_seen": true,
-            "death_seen": false,
-            "last_seen_ms": 2947,
-            "metrics": 22,
-            "payload_bytes": 664,
-            "messages_not_decodable": 0,
-            "payloads_not_kept": 0
-          },
-          "warnings": 3,
-          "completenessLast": true,
-          "sent": [
-            {
-              "packet": "CONNECT",
-              "cleanStart": true,
-              "will": false,
-              "credentials": false
-            },
-            {
-              "packet": "SUBSCRIBE",
-              "filters": 3,
-              "wildcard": false,
-              "dollar": false,
-              "namespace": true
-            },
-            {
-              "packet": "UNSUBSCRIBE"
-            },
-            {
-              "packet": "DISCONNECT"
-            }
-          ]
-        },
-        {
-          "read": "edge-node-not-seen",
-          "row": {
-            "window_ms": 3001,
-            "listened_ms": 3001,
-            "stop_reason": "time-budget",
-            "scope": "window",
-            "broker_reason_code": null,
-            "subscriptions_refused": 0,
-            "seen": false,
-            "messages": 0,
-            "nbirth": 0,
-            "ndeath": 0,
-            "ndata": 0,
-            "dbirth": null,
-            "ddeath": null,
-            "ddata": null,
-            "birth_seen": false,
-            "death_seen": false,
-            "last_seen_ms": null,
-            "metrics": 0,
-            "payload_bytes": 0,
-            "messages_not_decodable": 0,
-            "payloads_not_kept": 0
-          },
-          "warnings": 3,
-          "completenessLast": true,
-          "sent": [
-            {
-              "packet": "CONNECT",
-              "cleanStart": true,
-              "will": false,
-              "credentials": false
-            },
-            {
-              "packet": "SUBSCRIBE",
-              "filters": 3,
-              "wildcard": false,
-              "dollar": false,
-              "namespace": true
-            },
-            {
-              "packet": "UNSUBSCRIBE"
-            },
-            {
-              "packet": "DISCONNECT"
-            }
-          ]
-        },
-        {
-          "read": "device-seen",
-          "row": {
-            "window_ms": 3001,
-            "listened_ms": 3001,
-            "stop_reason": "time-budget",
-            "scope": "window",
-            "broker_reason_code": null,
-            "subscriptions_refused": 0,
-            "seen": true,
-            "messages": 4,
-            "nbirth": null,
-            "ndeath": null,
-            "ndata": null,
-            "dbirth": 2,
-            "ddeath": 0,
-            "ddata": 2,
-            "birth_seen": true,
-            "death_seen": false,
-            "last_seen_ms": 2946,
-            "metrics": 16,
-            "payload_bytes": 452,
-            "messages_not_decodable": 0,
-            "payloads_not_kept": 0
-          },
-          "warnings": 3,
-          "completenessLast": true,
-          "sent": [
-            {
-              "packet": "CONNECT",
-              "cleanStart": true,
-              "will": false,
-              "credentials": false
-            },
-            {
-              "packet": "SUBSCRIBE",
-              "filters": 3,
-              "wildcard": false,
-              "dollar": false,
-              "namespace": true
-            },
-            {
-              "packet": "UNSUBSCRIBE"
-            },
-            {
-              "packet": "DISCONNECT"
-            }
-          ]
-        },
-        {
-          "read": "device-not-seen",
-          "row": {
-            "window_ms": 3001,
-            "listened_ms": 3001,
-            "stop_reason": "time-budget",
-            "scope": "window",
-            "broker_reason_code": null,
-            "subscriptions_refused": 0,
-            "seen": false,
-            "messages": 0,
-            "nbirth": null,
-            "ndeath": null,
-            "ndata": null,
-            "dbirth": 0,
-            "ddeath": 0,
-            "ddata": 0,
-            "birth_seen": false,
-            "death_seen": false,
-            "last_seen_ms": null,
-            "metrics": 0,
-            "payload_bytes": 0,
-            "messages_not_decodable": 0,
-            "payloads_not_kept": 0
-          },
-          "warnings": 3,
-          "completenessLast": true,
-          "sent": [
-            {
-              "packet": "CONNECT",
-              "cleanStart": true,
-              "will": false,
-              "credentials": false
-            },
-            {
-              "packet": "SUBSCRIBE",
-              "filters": 3,
-              "wildcard": false,
-              "dollar": false,
-              "namespace": true
-            },
-            {
-              "packet": "UNSUBSCRIBE"
-            },
-            {
-              "packet": "DISCONNECT"
-            }
-          ]
-        }
-      ],
-      "refusedBeforeSend": [
-        {
-          "request": "{\"read\": \"group\", \"group\": \"X#\"}",
-          "refusedBeforeSend": true,
-          "sessionsOpened": 0
-        },
-        {
-          "request": "{\"read\": \"group\", \"group\": \"+\"}",
-          "refusedBeforeSend": true,
-          "sessionsOpened": 0
-        },
-        {
-          "request": "{\"read\": \"edgeNode\", \"group\": \"X\", \"edgeNode\": \"Y/NDATA\"}",
-          "refusedBeforeSend": true,
-          "sessionsOpened": 0
-        },
-        {
-          "request": "{\"read\": \"group\", \"group\": \"STATE\"}",
-          "refusedBeforeSend": true,
-          "sessionsOpened": 0
-        },
-        {
-          "request": "{\"read\": \"window\", \"topic\": \"$sparkplug/certificates/#\"}",
-          "refusedBeforeSend": true,
-          "sessionsOpened": 0
-        },
-        {
-          "request": "{\"read\": \"window\", \"filter\": \"$share/g/spBv1.0/#\"}",
-          "refusedBeforeSend": true,
-          "sessionsOpened": 0
-        },
-        {
-          "request": "{\"read\": \"publish\"}",
-          "refusedBeforeSend": true,
-          "sessionsOpened": 0
-        },
-        {
-          "request": "{\"read\": \"NCMD\", \"group\": \"X\", \"edgeNode\": \"Y\"}",
-          "refusedBeforeSend": true,
-          "sessionsOpened": 0
-        },
-        {
-          "request": "{\"read\": \"window\", \"rebirth\": true}",
-          "refusedBeforeSend": true,
-          "sessionsOpened": 0
-        },
-        {
-          "request": "{\"read\": \"window\", \"hostId\": \"H\"}",
-          "refusedBeforeSend": true,
-          "sessionsOpened": 0
-        },
-        {
-          "request": "{\"read\": \"window\", \"will\": {}}",
-          "refusedBeforeSend": true,
-          "sessionsOpened": 0
-        },
-        {
-          "request": "{\"read\":\"group\",\"group\":\"xxxxxxxxxxxxxxx... (1052 characters)",
-          "refusedBeforeSend": true,
-          "sessionsOpened": 0
-        }
-      ],
-      "rawRefused": [
-        {
-          "filter": "wildcard-below-the-namespace",
-          "endReason": "time-budget",
-          "subscriptionsRefused": 0,
-          "messages": 3,
-          "distinctNodesNamed": 3
-        },
-        {
-          "filter": "stored-certificates",
-          "endReason": "time-budget",
-          "subscriptionsRefused": 0,
-          "messages": 1,
-          "distinctNodesNamed": 1
-        },
-        {
-          "filter": "host-state",
-          "endReason": "time-budget",
-          "subscriptionsRefused": 0,
-          "messages": 0,
-          "distinctNodesNamed": 0
-        },
-        {
-          "filter": "shared-subscription",
-          "endReason": "time-budget",
-          "subscriptionsRefused": 0,
-          "messages": 16,
-          "distinctNodesNamed": 5
-        }
-      ],
-      "rawCommand": {
-        "sentBy": "the capture script with the broker's own client and no credential, never Studio",
-        "takenByTheBroker": true
-      },
-      "retained": {
-        "before": {
-          "messages": 4,
-          "sha256": "b1d49b58a90758d5d0565e0ddd7b5bd88209c19c45d479dd4886c55e49a30983"
-        },
-        "after": {
-          "messages": 4,
-          "sha256": "b1d49b58a90758d5d0565e0ddd7b5bd88209c19c45d479dd4886c55e49a30983"
-        },
-        "unchanged": true
-      }
-    },
-    "emqx/emqx:5.8.9": {
-      "connect": [
-        {
-          "packet": "CONNECT",
-          "cleanStart": true,
-          "will": false,
-          "credentials": false
-        },
-        {
-          "packet": "DISCONNECT"
-        }
-      ],
-      "reads": [
-        {
-          "read": "window",
-          "row": {
-            "window_ms": 3001,
-            "listened_ms": 3001,
-            "stop_reason": "time-budget",
-            "scope": "window",
-            "broker_reason_code": null,
-            "subscriptions_refused": 0,
-            "groups_seen": 2,
-            "edge_nodes_seen": 4,
-            "devices_seen": 1,
-            "messages": 8,
-            "nbirth": 3,
-            "ndeath": 0,
-            "ndata": 3,
-            "dbirth": 1,
-            "ddeath": 0,
-            "ddata": 1,
-            "other_messages": 0,
-            "metrics": 26,
-            "payload_bytes": 772,
-            "messages_not_decodable": 0,
-            "payloads_not_kept": 0
-          },
-          "warnings": 2,
-          "completenessLast": true,
-          "sent": [
-            {
-              "packet": "CONNECT",
-              "cleanStart": true,
-              "will": false,
-              "credentials": false
-            },
-            {
-              "packet": "SUBSCRIBE",
-              "filters": 1,
-              "wildcard": true,
-              "dollar": false,
-              "namespace": true
-            },
-            {
-              "packet": "UNSUBSCRIBE"
-            },
-            {
-              "packet": "DISCONNECT"
-            }
-          ]
-        },
-        {
-          "read": "group-seen",
-          "row": {
-            "window_ms": 3000,
-            "listened_ms": 3000,
-            "stop_reason": "time-budget",
-            "scope": "window",
-            "broker_reason_code": null,
-            "subscriptions_refused": 0,
             "seen": true,
             "messages": 12,
             "nbirth": 4,
@@ -547,7 +82,7 @@
             "ddata": 2,
             "birth_seen": true,
             "death_seen": false,
-            "last_seen_ms": 2960,
+            "last_seen_ms": 2946,
             "metrics": 46,
             "payload_bytes": 1380,
             "messages_not_decodable": 0,
@@ -629,8 +164,8 @@
         {
           "read": "edge-node-seen",
           "row": {
-            "window_ms": 3000,
-            "listened_ms": 3000,
+            "window_ms": 3001,
+            "listened_ms": 3001,
             "stop_reason": "time-budget",
             "scope": "window",
             "broker_reason_code": null,
@@ -645,7 +180,7 @@
             "ddata": null,
             "birth_seen": true,
             "death_seen": false,
-            "last_seen_ms": 2959,
+            "last_seen_ms": 2943,
             "metrics": 22,
             "payload_bytes": 664,
             "messages_not_decodable": 0,
@@ -679,7 +214,7 @@
           "read": "edge-node-not-seen",
           "row": {
             "window_ms": 3001,
-            "listened_ms": 3001,
+            "listened_ms": 3000,
             "stop_reason": "time-budget",
             "scope": "window",
             "broker_reason_code": null,
@@ -743,7 +278,7 @@
             "ddata": 2,
             "birth_seen": true,
             "death_seen": false,
-            "last_seen_ms": 2958,
+            "last_seen_ms": 2941,
             "metrics": 16,
             "payload_bytes": 452,
             "messages_not_decodable": 0,
@@ -776,8 +311,8 @@
         {
           "read": "device-not-seen",
           "row": {
-            "window_ms": 3001,
-            "listened_ms": 3001,
+            "window_ms": 3002,
+            "listened_ms": 3000,
             "stop_reason": "time-budget",
             "scope": "window",
             "broker_reason_code": null,

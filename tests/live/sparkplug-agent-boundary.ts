@@ -1,7 +1,8 @@
 /**
  * The Sparkplug agent path's boundary, measured against the fixture's own broker and publisher and against a stock
- * EMQX with the same publisher, and written to `boundary.json` beside `run.sh`
- * (`tests/fixtures/sparkplug/mosquitto-2.0.22/agent-boundary/`), which starts both and removes them after.
+ * EMQX with the same publisher, and written to one `boundary.json` per broker, in
+ * `tests/fixtures/sparkplug/mosquitto-2.0.22/agent-boundary/` and `tests/fixtures/sparkplug/emqx-5.8.9/agent-boundary/`,
+ * by the `run.sh` in the first of them, which starts both and removes them after.
  *
  * What it records, per broker:
  * - `reads`: each admitted agent read through the provider's own `queryReadOnly`, its one projected row, how many
@@ -252,15 +253,23 @@ async function capture(port: number, container: string, image: string) {
 }
 
 const image = need("SPARKPLUG_CLIENT_IMAGE");
-const out = {
-  capturedAt: new Date().toISOString().slice(0, 10),
-  brokers: {
-    "eclipse-mosquitto:2.0.22": await capture(Number(need("SPARKPLUG_PORT")), need("SPARKPLUG_BROKER"), image),
-    "emqx/emqx:5.8.9": await capture(Number(need("SPARKPLUG_EMQX_PORT")), need("SPARKPLUG_EMQX"), image),
-  },
-};
-const text = `${JSON.stringify(out, null, 2)}\n`;
-const held = SEEDED.filter((name) => text.includes(name));
+const capturedAt = new Date().toISOString().slice(0, 10);
+/** Each broker's capture in its own `<broker>-<version>/agent-boundary/` directory under `SPARKPLUG_OUT`. */
+const captures: readonly (readonly [string, string, Awaited<ReturnType<typeof capture>>])[] = [
+  [
+    "mosquitto-2.0.22",
+    "eclipse-mosquitto:2.0.22",
+    await capture(Number(need("SPARKPLUG_PORT")), need("SPARKPLUG_BROKER"), image),
+  ],
+  ["emqx-5.8.9", "emqx/emqx:5.8.9", await capture(Number(need("SPARKPLUG_EMQX_PORT")), need("SPARKPLUG_EMQX"), image)],
+];
+const texts = captures.map(
+  ([directory, broker, captured]) =>
+    [directory, `${JSON.stringify({ capturedAt, brokers: { [broker]: captured } }, null, 2)}\n`] as const,
+);
+const held = SEEDED.filter((name) => texts.some(([, text]) => text.includes(name)));
 if (held.length > 0) throw new Error(`sparkplug-agent-boundary: the capture holds ${held.length} seeded names`);
-writeFileSync(path.join(need("SPARKPLUG_OUT"), "boundary.json"), text);
-process.stdout.write("sparkplug-agent-boundary: boundary.json written\n");
+for (const [directory, text] of texts) {
+  writeFileSync(path.join(need("SPARKPLUG_OUT"), directory, "agent-boundary", "boundary.json"), text);
+}
+process.stdout.write("sparkplug-agent-boundary: boundary.json written for each broker\n");

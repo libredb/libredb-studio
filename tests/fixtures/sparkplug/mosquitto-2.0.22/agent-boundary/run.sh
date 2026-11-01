@@ -1,8 +1,8 @@
 #!/bin/sh
-# Captures the Sparkplug agent path's boundary into boundary.json beside this script
-# (tests/live/sparkplug-agent-boundary.ts): the fixture's own Mosquitto 2.0.22 broker (docker/sparkplug/mosquitto.conf,
-# anonymous, as the fixture is) and a stock EMQX 5.8.9, each with the fixture's own publisher on it, each on its own
-# loopback port, all removed at the end.
+# Captures the Sparkplug agent path's boundary (tests/live/sparkplug-agent-boundary.ts) into one boundary.json per
+# broker: the fixture's own Mosquitto 2.0.22 broker (docker/sparkplug/mosquitto.conf, anonymous, as the fixture is)
+# into the one beside this script, and a stock EMQX 5.8.9 into ../../emqx-5.8.9/agent-boundary/, each with the
+# fixture's own publisher on it, each on its own loopback port, all removed at the end.
 #
 #   sh tests/fixtures/sparkplug/mosquitto-2.0.22/agent-boundary/run.sh
 #
@@ -53,4 +53,4 @@ sleep 3
 
 cd "$repo"
 SPARKPLUG_PORT="$PORT" SPARKPLUG_EMQX_PORT="$EMQX_PORT" SPARKPLUG_BROKER="$BROKER" SPARKPLUG_EMQX="$EMQX" \
-  SPARKPLUG_CLIENT_IMAGE="$MOSQUITTO_IMAGE" SPARKPLUG_OUT="$here" bun tests/live/sparkplug-agent-boundary.ts
+  SPARKPLUG_CLIENT_IMAGE="$MOSQUITTO_IMAGE" SPARKPLUG_OUT="$here/../.." bun tests/live/sparkplug-agent-boundary.ts

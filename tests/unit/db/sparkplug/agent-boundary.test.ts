@@ -1,5 +1,5 @@
 /**
- * The Sparkplug agent boundary capture, replayed: what `run.sh` recorded against the fixture's Mosquitto 2.0.22 and a
+ * The Sparkplug agent boundary captures, replayed: what one `run.sh` recorded, one file per broker, against the fixture's Mosquitto 2.0.22 and a
  * stock EMQX 5.8.9, each with the fixture's own publisher, held to what `docs/providers/sparkplug.md` section 14 says
  * of it.
  */
@@ -7,8 +7,11 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-const HERE = path.resolve(import.meta.dir, "../../../fixtures/sparkplug/mosquitto-2.0.22/agent-boundary");
-const TEXT = readFileSync(path.join(HERE, "boundary.json"), "utf8");
+const FIXTURES = path.resolve(import.meta.dir, "../../../fixtures/sparkplug");
+/** One capture per broker, each in its own `<broker>-<version>/agent-boundary/` directory, written by one `run.sh`. */
+const CAPTURES = ["mosquitto-2.0.22", "emqx-5.8.9"].map((directory) =>
+  readFileSync(path.join(FIXTURES, directory, "agent-boundary", "boundary.json"), "utf8"),
+);
 
 interface Packet {
   readonly packet: string;
@@ -39,8 +42,9 @@ interface Broker {
   readonly retained: { readonly unchanged: boolean };
 }
 
-const CAPTURE = JSON.parse(TEXT) as { readonly brokers: Readonly<Record<string, Broker>> };
-const BROKERS = Object.entries(CAPTURE.brokers);
+const BROKERS = CAPTURES.flatMap((text) =>
+  Object.entries((JSON.parse(text) as { readonly brokers: Readonly<Record<string, Broker>> }).brokers),
+);
 
 describe.each(BROKERS)("%s", (_name, broker) => {
   test("connecting wrote CONNECT with Clean Start, no Will and no credential, then DISCONNECT, and nothing else", () => {
@@ -102,7 +106,7 @@ describe.each(BROKERS)("%s", (_name, broker) => {
 
 test("the capture holds no id or metric name the publisher seeded", () => {
   for (const name of ["SekoyaPlant", "AnkaraPlant", "Line1", "Press01", "Mixer1", "Temperature", "PressForce"]) {
-    expect(TEXT).not.toContain(name);
+    for (const text of CAPTURES) expect(text).not.toContain(name);
   }
   expect(BROKERS.map(([name]) => name)).toEqual(["eclipse-mosquitto:2.0.22", "emqx/emqx:5.8.9"]);
 });
