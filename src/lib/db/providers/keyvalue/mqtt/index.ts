@@ -9,10 +9,18 @@
  * ONE READ FILLS THE PANEL. A session subscribes once, collects what the broker delivers until one of our own
  * budgets ends it, and leaves. The panel's tree is drawn from that read; a refresh replaces it with a new one,
  * and two reads are never merged into one tree.
+ *
+ * `queryReadOnly` is the agent's: one read of a closed table of two (`agent-statement.ts`), the window over `#`
+ * answered as totals and one topic the request names in full answered as its metadata, each a fresh session over the
+ * same encoder and valve, and each answer projected to counts and flags (`agent-read.ts`), never a topic name or a
+ * payload, and always with the window it listened for and the sentence that a topic not seen may still exist. On a
+ * handle opened for any agent-mode profile, connecting is a handshake that subscribes to nothing, and every other
+ * surface answers its reason (`agent-surface.ts`). MCP read stays closed on this engine.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { plaintextSecretRefusal } from "@/lib/db/http/endpoint";
+import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
 import type {
   Container,
   DatabaseObject,
@@ -29,8 +37,11 @@ import type {
   PerformanceMetrics,
   PreparedQuery,
   ProviderCapabilities,
+  ProviderExecutionContext,
   ProviderLabels,
   QueryResult,
+  ReadOnlyStatementBudget,
+  ReadOnlyStatementMode,
   SlowQueryStats,
   StorageStats,
   TableStats,
@@ -38,6 +49,16 @@ import type {
   ProviderOptions,
 } from "@/lib/db/types";
 import { TUNNEL_FAR_END, type DatabaseConnection, type WithTunnelFarEnd } from "@/lib/types";
+import {
+  MQTT_AGENT_MIN_STATEMENT_MS,
+  MQTT_METADATA_ONLY,
+  mqttAgentFailure,
+  mqttAgentResult,
+  mqttAgentShortBudgetSentence,
+  runMqttAgentRead,
+} from "./agent-read";
+import { readMqttAgentStatement } from "./agent-statement";
+import { MQTT_AGENT_WITHHELD } from "./agent-surface";
 import { MQTT_CONSENT_CLAUSE, MQTT_DEFAULT_PORT, MQTT_MAX_STRING_BYTES, MQTT_TYPE } from "./constants";
 import { MQTT_KEY_SCAN, mqttKeyScanPage, readMqttKeyScanOptions } from "./key-scan";
 import { MQTT_LABELS } from "./labels";
@@ -50,6 +71,9 @@ import {
   mqttSourceDocument,
 } from "./objects";
 import { readTopics, type MqttReadOutcome, type MqttSessionOptions, type MqttTransportFactory } from "./session";
+
+const PROFILE_REQUIRED = "Read-only execution requires a provider opened under the agent read-only profile";
+const NO_ESTIMATE = "MQTT composes no estimating plan for the agent";
 
 export class MqttProvider extends BaseDatabaseProvider {
   /** The last read. The panel's tree and its rows both come from it, and a refresh replaces it. */
@@ -68,15 +92,39 @@ export class MqttProvider extends BaseDatabaseProvider {
   /**
    * Opens nothing: a provider built only for its declarations touches no socket.
    *
+   * `execution` is the execution context the factory passes, which tells an agent-mode handle from an editor one.
    * `openTransport` is the test seam. The integration tests replay a broker's recorded bytes through this same
    * class, so the CONNECT, the framing, the inbound limit and the decoder are the product's and not a copy.
    */
   public constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
+    private readonly execution: ProviderExecutionContext = {},
     private readonly openTransport?: MqttTransportFactory,
   ) {
     super(config, options);
+  }
+
+  /**
+   * Whether this handle was opened for the agent read-only profile by an acquisition that sends statements
+   * (`sendsStatements`). Only then does `queryReadOnly` answer; the operations profile's acquisitions send no statement.
+   */
+  private get readOnlyProfile(): boolean {
+    return this.execution.readOnly === true && this.execution.sendsStatements === true;
+  }
+
+  /**
+   * Whether this handle was opened for any agent-mode profile: every execution profile opens `readOnly` and no editor
+   * handle does. On such a handle no surface names a topic or reads a payload; the editor's handles keep every read.
+   */
+  private get agentProfile(): boolean {
+    return this.execution.readOnly === true;
+  }
+
+  /** The refusal of a surface an agent-mode handle does not read, after the connection check every surface makes. */
+  private agentWithheld(sentence: string): never {
+    this.ensureConnected();
+    throw new QueryError(sentence, MQTT_TYPE);
   }
 
   // ==========================================================================
@@ -109,6 +157,8 @@ export class MqttProvider extends BaseDatabaseProvider {
       containerLevels: [],
       objectKinds: MQTT_OBJECT_KINDS,
       keyScan: MQTT_KEY_SCAN,
+      // Topic names and payloads are stored values: an agent read answers counts and flags.
+      metadataOnly: MQTT_METADATA_ONLY,
       // Nothing a read runs changes the tree.
       schemaRefreshPattern: "(?!)",
     };
@@ -201,9 +251,14 @@ export class MqttProvider extends BaseDatabaseProvider {
     };
   }
 
-  /** One read, which is both the connection test and the tree the panel draws. */
+  /**
+   * One read, which is both the connection test and the tree the panel draws. On an agent-mode handle it is a handshake
+   * that subscribes to nothing: it proves the broker answers and accepts the credentials, and holds no topic, since every
+   * agent read is a fresh session of its own.
+   */
   public async connect(): Promise<void> {
-    this.last = await readTopics(this.sessionOptions());
+    if (this.agentProfile) await readTopics({ ...this.sessionOptions(), handshakeOnly: true });
+    else this.last = await readTopics(this.sessionOptions());
     this.setConnected(true);
   }
 
@@ -244,12 +299,47 @@ export class MqttProvider extends BaseDatabaseProvider {
   // ==========================================================================
 
   /** The console read is not in this version: the Keys panel is the surface, and it needs no query text. */
-  public async query(): Promise<QueryResult> {
+  public async query(text = ""): Promise<QueryResult> {
+    if (this.agentProfile) {
+      this.ensureConnected();
+      throw new RefusedBeforeSendError(MQTT_AGENT_WITHHELD.query, MQTT_TYPE, text);
+    }
     throw new QueryError(
       "This version reads a broker through the Keys panel. There is no query text to send: MQTT has no query " +
         "language, and no command that lists topics.",
       MQTT_TYPE,
     );
+  }
+
+  /**
+   * One agent read request. Only on a handle opened under the agent read-only profile; the request is read by
+   * `readMqttAgentStatement` and refused before anything is sent when it is not one read of the closed table, or when
+   * the read's time budget cannot hold a whole window. Then the read is one fresh session, Clean Start and nothing kept,
+   * over the encoder and the valve, and its answer is the metadata-only projection with its window and the completeness
+   * sentence, refused past the byte budget. A failure is worded by its kind, never by the broker's or the transport's
+   * words.
+   */
+  public async queryReadOnly(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    if (!this.readOnlyProfile) throw new RefusedBeforeSendError(PROFILE_REQUIRED, MQTT_TYPE, statement);
+    this.ensureConnected();
+    assertReadOnlyBudget(budget, MQTT_TYPE);
+    if (mode !== "execute") throw new RefusedBeforeSendError(NO_ESTIMATE, MQTT_TYPE, statement);
+    const reading = readMqttAgentStatement(statement);
+    if (!reading.ok) throw new RefusedBeforeSendError(reading.message, MQTT_TYPE, statement);
+    if (budget.statementTimeoutMs < MQTT_AGENT_MIN_STATEMENT_MS) {
+      throw new RefusedBeforeSendError(mqttAgentShortBudgetSentence(budget.statementTimeoutMs), MQTT_TYPE, statement);
+    }
+    const started = Date.now();
+    try {
+      const answer = await runMqttAgentRead(this.sessionOptions(), reading.plan, budget);
+      return mqttAgentResult(answer, budget, statement, Date.now() - started);
+    } catch (error) {
+      throw mqttAgentFailure(error, budget.statementTimeoutMs, statement) ?? error;
+    }
   }
 
   /** A broker has one key space, so no container level is declared and none is listed. */
@@ -262,14 +352,17 @@ export class MqttProvider extends BaseDatabaseProvider {
   }
 
   public async listObjects(_container: readonly string[], kind: string): Promise<DatabaseObject[]> {
+    if (this.agentProfile) this.agentWithheld(MQTT_AGENT_WITHHELD.topics);
     return listMqttObjects(kind);
   }
 
   public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
+    if (this.agentProfile) this.agentWithheld(MQTT_AGENT_WITHHELD.topics);
     return describeMqttObject(path, kind);
   }
 
   public async describeObjects(_container: readonly string[], kind: string): Promise<ObjectDetailBatch> {
+    if (this.agentProfile) this.agentWithheld(MQTT_AGENT_WITHHELD.topics);
     return describeMqttObjects(kind);
   }
 
@@ -280,6 +373,7 @@ export class MqttProvider extends BaseDatabaseProvider {
    * the one thing that makes a reader slow enough for a broker to start dropping messages on its behalf.
    */
   public async readObjectSource(path: readonly string[], kind: string): Promise<ObjectSourceDocument> {
+    if (this.agentProfile) this.agentWithheld(MQTT_AGENT_WITHHELD.source);
     const topic = path[path.length - 1] ?? "";
     // MQTT 5.0 section 4.7.3: a topic name is at least one character, and an empty filter here would read `#`.
     if (topic === "") throw new DatabaseConfigError("A topic name is at least one character long.", MQTT_TYPE);
@@ -291,6 +385,7 @@ export class MqttProvider extends BaseDatabaseProvider {
   public async scanKeysPage(options: KeyScanOptions): Promise<KeyScanPage> {
     // Refused before the read is touched, so a refused page costs nothing.
     readMqttKeyScanOptions(options);
+    if (this.agentProfile) this.agentWithheld(MQTT_AGENT_WITHHELD.keys);
     const read = await this.readForPage(options);
     return mqttKeyScanPage(read.topics, options, {
       scope: read.scope,
@@ -305,6 +400,7 @@ export class MqttProvider extends BaseDatabaseProvider {
   // ==========================================================================
 
   public async getHealth(): Promise<HealthInfo> {
+    if (this.agentProfile) this.agentWithheld(MQTT_AGENT_WITHHELD.health);
     const read = this.last;
     return {
       databaseSize:
@@ -319,6 +415,7 @@ export class MqttProvider extends BaseDatabaseProvider {
   }
 
   public async getOverview(): Promise<DatabaseOverview> {
+    if (this.agentProfile) this.agentWithheld(MQTT_AGENT_WITHHELD.overview);
     const read = this.requireRead();
     return {
       version: "MQTT 5.0",
@@ -333,26 +430,34 @@ export class MqttProvider extends BaseDatabaseProvider {
   }
 
   public async getPerformanceMetrics(): Promise<PerformanceMetrics> {
+    if (this.agentProfile) this.agentWithheld(MQTT_AGENT_WITHHELD.performance);
     return {};
   }
 
+  // On an agent-mode handle each empty answer below would read as the broker's own; the reason is answered instead.
+
   public async getSlowQueries(): Promise<SlowQueryStats[]> {
+    if (this.agentProfile) this.agentWithheld(MQTT_AGENT_WITHHELD.slowQueries);
     return [];
   }
 
   public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
+    if (this.agentProfile) this.agentWithheld(MQTT_AGENT_WITHHELD.sessions);
     return [];
   }
 
   public async getTableStats(): Promise<TableStats[]> {
+    if (this.agentProfile) this.agentWithheld(MQTT_AGENT_WITHHELD.tableStats);
     return [];
   }
 
   public async getIndexStats(): Promise<IndexStats[]> {
+    if (this.agentProfile) this.agentWithheld(MQTT_AGENT_WITHHELD.indexStats);
     return [];
   }
 
   public async getStorageStats(): Promise<StorageStats[]> {
+    if (this.agentProfile) this.agentWithheld(MQTT_AGENT_WITHHELD.storage);
     return [];
   }
 

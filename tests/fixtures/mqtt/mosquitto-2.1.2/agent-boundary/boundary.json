@@ -1,0 +1,476 @@
+{
+  "brokers": {
+    "mosquitto": "eclipse-mosquitto:2.1.2-alpine@sha256:860aeb5d63ce509508f6dcfb2bc8a1c1dd2bc60555b562b45ce90e52d8dabb0f",
+    "emqx": "emqx/emqx:5.8.9@sha256:35b46f7aa7a0d51f3959e4344221ac5ec7f948b03e43099286b6c40a07bb393b"
+  },
+  "budget": {
+    "statementTimeoutMs": 10000,
+    "maxResultRows": 200,
+    "maxResultBytes": 1000000
+  },
+  "connect": [
+    [
+      {
+        "packet": "CONNECT",
+        "cleanStart": true,
+        "will": false,
+        "sessionExpiryZero": true
+      },
+      {
+        "packet": "DISCONNECT"
+      }
+    ]
+  ],
+  "reads": {
+    "window": {
+      "fields": [
+        "window_ms",
+        "listened_ms",
+        "stop_reason",
+        "scope",
+        "broker_reason_code",
+        "topics_seen",
+        "messages",
+        "retained_messages",
+        "payload_bytes",
+        "messages_lost"
+      ],
+      "rows": [
+        {
+          "window_ms": 3000,
+          "listened_ms": 2999,
+          "stop_reason": "budget-time",
+          "scope": "unknown",
+          "broker_reason_code": null,
+          "topics_seen": 5,
+          "messages": 18,
+          "retained_messages": 4,
+          "payload_bytes": 121,
+          "messages_lost": 0
+        }
+      ],
+      "warnings": [
+        "Studio listened to every topic (the filter #, which never matches a topic under a $ root) for 2,999 ms after subscribing, in a window that ran 3,000 ms from when the connection was ready (Studio's window is 3,000 ms), and stopped because the window ended. It counted 18 messages on 5 distinct topics, 4 retained.",
+        "A topic not seen in the window may still exist: MQTT has no command that lists topics, so a subscriber sees a topic only when a message on it arrives in the window or the broker holds a retained message on it, and no answer is a complete count of the broker's topics or proof that a topic does not exist."
+      ],
+      "carriesWithheld": false,
+      "carriesCredential": false,
+      "sent": [
+        [
+          {
+            "packet": "CONNECT",
+            "cleanStart": true,
+            "will": false,
+            "sessionExpiryZero": true
+          },
+          {
+            "packet": "SUBSCRIBE",
+            "filters": [
+              "#"
+            ],
+            "options": [
+              4
+            ]
+          },
+          {
+            "packet": "DISCONNECT"
+          }
+        ]
+      ]
+    },
+    "topicSeenRetained": {
+      "fields": [
+        "window_ms",
+        "listened_ms",
+        "stop_reason",
+        "scope",
+        "broker_reason_code",
+        "seen",
+        "messages",
+        "retained",
+        "delivered_qos",
+        "payload_bytes",
+        "last_seen_ms",
+        "messages_lost"
+      ],
+      "rows": [
+        {
+          "window_ms": 3001,
+          "listened_ms": 3000,
+          "stop_reason": "budget-time",
+          "scope": "unknown",
+          "broker_reason_code": null,
+          "seen": true,
+          "messages": 1,
+          "retained": true,
+          "delivered_qos": 0,
+          "payload_bytes": 17,
+          "last_seen_ms": 41,
+          "messages_lost": 0
+        }
+      ],
+      "warnings": [
+        "Studio listened to the one topic the request named for 3,000 ms after subscribing, in a window that ran 3,001 ms from when the connection was ready (Studio's window is 3,000 ms), and stopped because the window ended. It counted 1 message on that topic.",
+        "The topic's retained flag, delivered QoS and payload size are those of the last message seen on it, not totals over the window: a broker delivers a retained message only as the subscription starts, and every message published after that arrives with the retained flag clear, so retained false does not say the broker holds no retained message on the topic.",
+        "A topic not seen in the window may still exist: MQTT has no command that lists topics, so a subscriber sees a topic only when a message on it arrives in the window or the broker holds a retained message on it, and no answer is a complete count of the broker's topics or proof that a topic does not exist."
+      ],
+      "carriesWithheld": false,
+      "carriesCredential": false,
+      "sent": [
+        [
+          {
+            "packet": "CONNECT",
+            "cleanStart": true,
+            "will": false,
+            "sessionExpiryZero": true
+          },
+          {
+            "packet": "SUBSCRIBE",
+            "filters": [
+              "<the requested topic>"
+            ],
+            "options": [
+              4
+            ]
+          },
+          {
+            "packet": "DISCONNECT"
+          }
+        ]
+      ]
+    },
+    "topicSeenLive": {
+      "fields": [
+        "window_ms",
+        "listened_ms",
+        "stop_reason",
+        "scope",
+        "broker_reason_code",
+        "seen",
+        "messages",
+        "retained",
+        "delivered_qos",
+        "payload_bytes",
+        "last_seen_ms",
+        "messages_lost"
+      ],
+      "rows": [
+        {
+          "window_ms": 3000,
+          "listened_ms": 2999,
+          "stop_reason": "budget-time",
+          "scope": "unknown",
+          "broker_reason_code": null,
+          "seen": true,
+          "messages": 15,
+          "retained": false,
+          "delivered_qos": 0,
+          "payload_bytes": 4,
+          "last_seen_ms": 2908,
+          "messages_lost": 0
+        }
+      ],
+      "warnings": [
+        "Studio listened to the one topic the request named for 2,999 ms after subscribing, in a window that ran 3,000 ms from when the connection was ready (Studio's window is 3,000 ms), and stopped because the window ended. It counted 15 messages on that topic.",
+        "The topic's retained flag, delivered QoS and payload size are those of the last message seen on it, not totals over the window: a broker delivers a retained message only as the subscription starts, and every message published after that arrives with the retained flag clear, so retained false does not say the broker holds no retained message on the topic.",
+        "A topic not seen in the window may still exist: MQTT has no command that lists topics, so a subscriber sees a topic only when a message on it arrives in the window or the broker holds a retained message on it, and no answer is a complete count of the broker's topics or proof that a topic does not exist."
+      ],
+      "carriesWithheld": false,
+      "carriesCredential": false,
+      "sent": [
+        [
+          {
+            "packet": "CONNECT",
+            "cleanStart": true,
+            "will": false,
+            "sessionExpiryZero": true
+          },
+          {
+            "packet": "SUBSCRIBE",
+            "filters": [
+              "<the requested topic>"
+            ],
+            "options": [
+              4
+            ]
+          },
+          {
+            "packet": "DISCONNECT"
+          }
+        ]
+      ]
+    },
+    "topicNotSeen": {
+      "fields": [
+        "window_ms",
+        "listened_ms",
+        "stop_reason",
+        "scope",
+        "broker_reason_code",
+        "seen",
+        "messages",
+        "retained",
+        "delivered_qos",
+        "payload_bytes",
+        "last_seen_ms",
+        "messages_lost"
+      ],
+      "rows": [
+        {
+          "window_ms": 3000,
+          "listened_ms": 2999,
+          "stop_reason": "budget-time",
+          "scope": "unknown",
+          "broker_reason_code": null,
+          "seen": false,
+          "messages": 0,
+          "retained": null,
+          "delivered_qos": null,
+          "payload_bytes": null,
+          "last_seen_ms": null,
+          "messages_lost": 0
+        }
+      ],
+      "warnings": [
+        "Studio listened to the one topic the request named for 2,999 ms after subscribing, in a window that ran 3,000 ms from when the connection was ready (Studio's window is 3,000 ms), and stopped because the window ended. It counted 0 messages on that topic.",
+        "The topic's retained flag, delivered QoS and payload size are those of the last message seen on it, not totals over the window: a broker delivers a retained message only as the subscription starts, and every message published after that arrives with the retained flag clear, so retained false does not say the broker holds no retained message on the topic.",
+        "A topic not seen in the window may still exist: MQTT has no command that lists topics, so a subscriber sees a topic only when a message on it arrives in the window or the broker holds a retained message on it, and no answer is a complete count of the broker's topics or proof that a topic does not exist."
+      ],
+      "carriesWithheld": false,
+      "carriesCredential": false,
+      "sent": [
+        [
+          {
+            "packet": "CONNECT",
+            "cleanStart": true,
+            "will": false,
+            "sessionExpiryZero": true
+          },
+          {
+            "packet": "SUBSCRIBE",
+            "filters": [
+              "<the requested topic>"
+            ],
+            "options": [
+              4
+            ]
+          },
+          {
+            "packet": "DISCONNECT"
+          }
+        ]
+      ]
+    }
+  },
+  "refusedBeforeSend": [
+    {
+      "request": "a publish",
+      "refusal": "That is not one of agent mode's reads: agent mode never publishes, never registers a will, writes no topic filter of its own and reads no payload, so only the two reads below are sent.",
+      "carriesWithheld": false,
+      "sessionsOpened": 0
+    },
+    {
+      "request": "a will",
+      "refusal": "The request holds a key agent mode does not read: its keys are read and topic, so no topic filter, QoS, subscription option, payload, will or property can be written.",
+      "carriesWithheld": false,
+      "sessionsOpened": 0
+    },
+    {
+      "request": "a wildcard below the root",
+      "refusal": "\"topic\" names one topic in full, with no + and no #: a wildcard filter would let a read find topic names one level at a time, and topic names are withheld from agent mode.",
+      "carriesWithheld": false,
+      "sessionsOpened": 0
+    },
+    {
+      "request": "a multi-level wildcard below the root",
+      "refusal": "\"topic\" names one topic in full, with no + and no #: a wildcard filter would let a read find topic names one level at a time, and topic names are withheld from agent mode.",
+      "carriesWithheld": false,
+      "sessionsOpened": 0
+    },
+    {
+      "request": "a shared subscription",
+      "refusal": "A topic beginning with $ is never read in agent mode: $SYS is the broker's own tree, whose topic names carry each client's id on some brokers, and $share/, $queue/ and $exclusive/ take messages away from the devices subscribed beside Studio.",
+      "carriesWithheld": false,
+      "sessionsOpened": 0
+    },
+    {
+      "request": "a $SYS topic",
+      "refusal": "A topic beginning with $ is never read in agent mode: $SYS is the broker's own tree, whose topic names carry each client's id on some brokers, and $share/, $queue/ and $exclusive/ take messages away from the devices subscribed beside Studio.",
+      "carriesWithheld": false,
+      "sessionsOpened": 0
+    },
+    {
+      "request": "a filter of its own",
+      "refusal": "The request holds a key agent mode does not read: its keys are read and topic, so no topic filter, QoS, subscription option, payload, will or property can be written.",
+      "carriesWithheld": false,
+      "sessionsOpened": 0
+    },
+    {
+      "request": "a subscription option",
+      "refusal": "The request holds a key agent mode does not read: its keys are read and topic, so no topic filter, QoS, subscription option, payload, will or property can be written.",
+      "carriesWithheld": false,
+      "sessionsOpened": 0
+    }
+  ],
+  "rawRefused": {
+    "wildcardBelowRoot": {
+      "topicsSeen": 1,
+      "namesASeededTopic": true
+    },
+    "sharedSubscription": {
+      "messagesTakenIn2s": 9
+    }
+  },
+  "rawPublish": {
+    "asAgent": {
+      "exitCode": 0,
+      "retainedChanged": false
+    },
+    "asWriter": {
+      "exitCode": 0,
+      "retainedChanged": true
+    }
+  },
+  "sys": {
+    "mosquitto": {
+      "messages": 216,
+      "distinctTopics": 56,
+      "topicNamesCarryClientId": false,
+      "payloadsCarryClientId": false,
+      "carryUserName": false,
+      "carryAnAddress": false
+    },
+    "emqx": {
+      "messages": 1,
+      "distinctTopics": 1,
+      "topicNamesCarryClientId": true,
+      "payloadsCarryClientId": true,
+      "carryUserName": true,
+      "carryAnAddress": true
+    }
+  },
+  "state": {
+    "retainedBefore": 4,
+    "retainedAfter": 4,
+    "retainedUnchanged": true
+  },
+  "emqx": {
+    "window": {
+      "fields": [
+        "window_ms",
+        "listened_ms",
+        "stop_reason",
+        "scope",
+        "broker_reason_code",
+        "topics_seen",
+        "messages",
+        "retained_messages",
+        "payload_bytes",
+        "messages_lost"
+      ],
+      "rows": [
+        {
+          "window_ms": 0,
+          "listened_ms": 0,
+          "stop_reason": "subscription-refused",
+          "scope": "incomplete",
+          "broker_reason_code": 135,
+          "topics_seen": 0,
+          "messages": 0,
+          "retained_messages": 0,
+          "payload_bytes": 0,
+          "messages_lost": 0
+        }
+      ],
+      "warnings": [
+        "Studio listened to every topic (the filter #, which never matches a topic under a $ root) for 0 ms after subscribing, in a window that ran 0 ms from when the connection was ready (Studio's window is 3,000 ms), and stopped because the broker refused the subscription with reason code 135 (0x87), so nothing was read. It counted 0 messages on 0 distinct topics, 0 retained.",
+        "A topic not seen in the window may still exist: MQTT has no command that lists topics, so a subscriber sees a topic only when a message on it arrives in the window or the broker holds a retained message on it, and no answer is a complete count of the broker's topics or proof that a topic does not exist."
+      ],
+      "carriesWithheld": false,
+      "carriesCredential": false,
+      "sent": [
+        [
+          {
+            "packet": "CONNECT",
+            "cleanStart": true,
+            "will": false,
+            "sessionExpiryZero": true
+          },
+          {
+            "packet": "SUBSCRIBE",
+            "filters": [
+              "#"
+            ],
+            "options": [
+              4
+            ]
+          },
+          {
+            "packet": "DISCONNECT"
+          }
+        ]
+      ]
+    },
+    "topicSeenRetained": {
+      "fields": [
+        "window_ms",
+        "listened_ms",
+        "stop_reason",
+        "scope",
+        "broker_reason_code",
+        "seen",
+        "messages",
+        "retained",
+        "delivered_qos",
+        "payload_bytes",
+        "last_seen_ms",
+        "messages_lost"
+      ],
+      "rows": [
+        {
+          "window_ms": 3001,
+          "listened_ms": 3001,
+          "stop_reason": "budget-time",
+          "scope": "unknown",
+          "broker_reason_code": null,
+          "seen": true,
+          "messages": 1,
+          "retained": true,
+          "delivered_qos": 0,
+          "payload_bytes": 15,
+          "last_seen_ms": 0,
+          "messages_lost": 0
+        }
+      ],
+      "warnings": [
+        "Studio listened to the one topic the request named for 3,001 ms after subscribing, in a window that ran 3,001 ms from when the connection was ready (Studio's window is 3,000 ms), and stopped because the window ended. It counted 1 message on that topic.",
+        "The topic's retained flag, delivered QoS and payload size are those of the last message seen on it, not totals over the window: a broker delivers a retained message only as the subscription starts, and every message published after that arrives with the retained flag clear, so retained false does not say the broker holds no retained message on the topic.",
+        "A topic not seen in the window may still exist: MQTT has no command that lists topics, so a subscriber sees a topic only when a message on it arrives in the window or the broker holds a retained message on it, and no answer is a complete count of the broker's topics or proof that a topic does not exist."
+      ],
+      "carriesWithheld": false,
+      "carriesCredential": false,
+      "sent": [
+        [
+          {
+            "packet": "CONNECT",
+            "cleanStart": true,
+            "will": false,
+            "sessionExpiryZero": true
+          },
+          {
+            "packet": "SUBSCRIBE",
+            "filters": [
+              "<the requested topic>"
+            ],
+            "options": [
+              4
+            ]
+          },
+          {
+            "packet": "DISCONNECT"
+          }
+        ]
+      ]
+    }
+  }
+}

@@ -477,12 +477,12 @@ export async function createDatabaseProvider(
       return new S3Provider(connection, options, execution);
     }
 
-    // MQTT: a key-value provider, placed here beside the platforms because its Keys panel is the whole
-    // surface and it has no query console of its own.
+    // MQTT: a key-value provider beside the platforms, its Keys panel the whole surface and no query console
+    // of its own. The execution context decides whether the handle answers agent reads.
     case "mqtt": {
       // The explicit /index specifier keeps this dynamic import statically analysable.
       const { MqttProvider } = await import("./providers/keyvalue/mqtt/index");
-      return new MqttProvider(connection, options);
+      return new MqttProvider(connection, options, execution);
     }
 
     // RabbitMQ: the second member of the stream family, read-only whatever the flag says. It reads the execution
@@ -1373,7 +1373,7 @@ export type ExecutionProfile = "agent-read-only" | "agent-operations" | "agent-h
  * handle or transaction, a least-privilege principal the server's own answers prove, or a
  * Studio-enforced request allowlist plus the identity's own authorization), and only the
  * providers of AGENT_EXECUTION_ENGINES implement that: PostgreSQL, SQLite,
- * DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA and MTConnect (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
+ * DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect and MQTT (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
  * at all — it calls the curated reporting methods every provider implements — so
  * requiring a read-only STATEMENT path of it would refuse an engine over a capability
  * the profile never uses. `agent-handover` sends a statement too — the one a run

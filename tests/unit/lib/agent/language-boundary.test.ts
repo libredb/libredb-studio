@@ -195,6 +195,7 @@ const ALLOWLIST: Readonly<Record<string, number>> = Object.freeze({
   [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "promql"`]: 1,
   [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "opcuaread"`]: 1,
   [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "mtconnectread"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R1a "mqttread"`]: 1,
   [`${AGENT}/agent-manifest.ts#AgentStatementLanguageId: R5a "sql"`]: 1,
   [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "mongo"`]: 1,
   [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "kubectl"`]: 1,
@@ -217,6 +218,7 @@ const ALLOWLIST: Readonly<Record<string, number>> = Object.freeze({
   [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "promql"`]: 1,
   [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "opcuaread"`]: 1,
   [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "mtconnectread"`]: 1,
+  [`${AGENT}/agent-manifest.ts#AGENT_STATEMENT_LANGUAGE: R1a "mqttread"`]: 1,
   // The provider capability `queryLanguage`, whose value "influxql" names the editor's language and is spelled as the
   // pack id; the inventory reads it to write an InfluxQL measurement as "db".."m", the spelling the server reads.
   [`${AGENT}/context-snapshot.ts#qualifiedName: R1a "influxql"`]: 1,
@@ -282,6 +284,7 @@ const ALLOWLIST: Readonly<Record<string, number>> = Object.freeze({
   [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "prometheus"`]: 1,
   [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "opcua"`]: 1,
   [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "mtconnect"`]: 1,
+  [`${AGENT}/engine-support.ts#AGENT_EXECUTION_ENGINES: R8a "mqtt"`]: 1,
   [`${AGENT}/config.ts#AgentDurableBackend: R8a "postgres"`]: 1,
   [`${AGENT}/config.ts#SANCTIONED_WORLD_TARGETS: R8a "postgres"`]: 1,
   [`${AGENT}/config.ts#resolveAgentAvailability: R8a "postgres"`]: 1,
@@ -989,6 +992,7 @@ describe("the agent core names no language a pack owns", () => {
       "promql",
       "opcuaread",
       "mtconnectread",
+      "mqttread",
     ]);
   });
 
@@ -1038,7 +1042,7 @@ describe("every engine overlay is declared satisfies its overlay type", () => {
     const exported = sourcesUnder(LANGUAGES)
       .filter((file) => new RegExp(`^${LANGUAGES}/[^/]+/engines/`).test(file))
       .flatMap((file) => Array.from(read(file).matchAll(/^export const (\w+_(SERVER|CLIENT)_OVERLAY)\b/gm)));
-    expect(exported).toHaveLength(72);
+    expect(exported).toHaveLength(74);
   });
 
   test("an overlay that drops its satisfies fails R6", () => {

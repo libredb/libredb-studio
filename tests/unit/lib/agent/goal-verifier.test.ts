@@ -288,6 +288,16 @@ describe("a planning run is judged by what planning mode can produce", () => {
     expect(verdict).toEqual({ outcome: "answered", verifier: "agent-planning.1", unmet: [] });
   });
 
+  test("a plan whose variant's deliverable is prose keeps the prose rule, whatever its workflow", () => {
+    // MQTT's investigation plan is prose (`planDeliverable` in `languages/mqttread/client.ts`): an MQTT
+    // connection has no query console to run a drafted request in, so its plan-mode prompt asks for
+    // prose, and the verdict must not then fail it for drafting no statement.
+    const prose = { ...run("planning", "succeeded", [lecture]), statementLanguage: "mqttread" as const };
+
+    expect(verifyRunGoal(prose)).toEqual({ outcome: "answered", verifier: "agent-planning.1", unmet: [] });
+    expect(verifyRunGoal({ ...prose, events: [] }).unmet).toEqual(["no-plan"]);
+  });
+
   test("a cancelled plan run that got as far as prose still reports the cancellation", () => {
     // A user's stop is not a defect of the run, so it is substituted for the missing
     // statement rather than reported as one.

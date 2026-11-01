@@ -92,7 +92,7 @@ function connection(over: Partial<Record<string, unknown>> = {}): DatabaseConnec
 const SCRIPT = [CONNACK, SUBACK, publish("plant/line1/state", "RUN"), publish("plant/line2/state", "IDLE", true, 300)];
 
 function openProvider(over: Partial<Record<string, unknown>> = {}, chunks: readonly Buffer[] = SCRIPT): MqttProvider {
-  return new MqttProvider(connection(over), {}, scripted(chunks));
+  return new MqttProvider(connection(over), {}, {}, scripted(chunks));
 }
 
 describe("the declarations, every member written out", () => {
@@ -182,11 +182,11 @@ describe("the connection's own fields, refused before a socket is opened", () =>
     };
     const long = "u".repeat(65_536);
     for (const over of [{ user: long }, { user: "sensor", password: long }]) {
-      const attempt = new MqttProvider(connection({ ...over, ssl: { mode: "require" } }), {}, record).connect();
+      const attempt = new MqttProvider(connection({ ...over, ssl: { mode: "require" } }), {}, {}, record).connect();
       await expect(attempt).rejects.toThrow(DatabaseConfigError);
     }
     await expect(
-      new MqttProvider(connection({ password: long, ssl: { mode: "require" } }), {}, record).connect(),
+      new MqttProvider(connection({ password: long, ssl: { mode: "require" } }), {}, {}, record).connect(),
     ).rejects.toThrow(/An MQTT password holds at most 65,535 bytes, and this one is 65,536/);
     expect(dialled).toBe(false);
   });
@@ -216,14 +216,14 @@ describe("the connection's own fields, refused before a socket is opened", () =>
     const modes: SSLMode[] = ["disable", "require", "verify-system", "verify-ca", "verify-full"];
     for (const mode of modes) {
       dialled.length = 0;
-      await expect(new MqttProvider(connection({ ssl: { mode } }), {}, record).connect()).rejects.toThrow();
+      await expect(new MqttProvider(connection({ ssl: { mode } }), {}, {}, record).connect()).rejects.toThrow();
       expect(dialled).toHaveLength(1);
       expect({ mode, tls: dialled[0]?.tls }).toEqual({ mode, tls: mode !== "disable" });
     }
 
     // And an absent SSL block is plain, which is what a connection typed with no SSL panel means.
     dialled.length = 0;
-    await expect(new MqttProvider(connection({}), {}, record).connect()).rejects.toThrow();
+    await expect(new MqttProvider(connection({}), {}, {}, record).connect()).rejects.toThrow();
     expect(dialled[0]?.tls).toBe(false);
   });
 
@@ -244,7 +244,7 @@ describe("the connection's own fields, refused before a socket is opened", () =>
 
     for (const over of [{}, { rejectUnauthorized: true }, { rejectUnauthorized: false }]) {
       await expect(
-        new MqttProvider(connection({ ssl: { mode: "require", ...over } }), {}, record).connect(),
+        new MqttProvider(connection({ ssl: { mode: "require", ...over } }), {}, {}, record).connect(),
       ).rejects.toThrow();
     }
     // `require` with nothing said resolves to FALSE, which is the house rule in `src/lib/types.ts`: require
@@ -255,7 +255,7 @@ describe("the connection's own fields, refused before a socket is opened", () =>
     // And every verifying mode resolves to TRUE with nothing said, which is the other half of the rule.
     for (const mode of ["verify-system", "verify-ca", "verify-full"] as const) {
       seen.length = 0;
-      await expect(new MqttProvider(connection({ ssl: { mode } }), {}, record).connect()).rejects.toThrow();
+      await expect(new MqttProvider(connection({ ssl: { mode } }), {}, {}, record).connect()).rejects.toThrow();
       expect({ mode, verify: seen[0] }).toEqual({ mode, verify: true });
     }
 
@@ -571,7 +571,7 @@ describe("a password without TLS", () => {
     throw new QueryError("the dial is refused once it has been reached", "mqtt");
   };
   const open = (over: Record<string, unknown>): MqttProvider =>
-    new MqttProvider(connection({ host: "broker.example.net", user: "sensor", ...over }), {}, refuse);
+    new MqttProvider(connection({ host: "broker.example.net", user: "sensor", ...over }), {}, {}, refuse);
 
   test("to a remote broker is refused, and the refusal names the box that allows it", async () => {
     const attempt = open({ password: "s3cret", ssl: { mode: "disable" } }).connect();
@@ -598,6 +598,7 @@ describe("a password without TLS", () => {
     const provider = new MqttProvider(
       connection({ host: "broker.example.net", user: "sensor", password: "s3cret", ssl: { mode: "disable" } }),
       {},
+      {},
       counting,
     );
     await expect(provider.connect()).rejects.toThrow(DatabaseConfigError);
@@ -617,6 +618,7 @@ describe("a password without TLS", () => {
     await expect(
       new MqttProvider(
         connection({ host: "127.0.0.1", user: "sensor", password: "s3cret", ssl: { mode: "disable" } }),
+        {},
         {},
         refuse,
       ).connect(),
@@ -656,6 +658,7 @@ describe("the TLS panel's certificate boxes", () => {
             clientKey: "-----BEGIN PRIVATE KEY-----key-----END PRIVATE KEY-----",
           },
         }),
+        {},
         {},
         record,
       ).connect(),
@@ -697,6 +700,7 @@ describe("the TLS panel's certificate boxes", () => {
     await expect(
       new MqttProvider(
         connection({ ssl: { mode: "require", caCert: "", clientCert: "", clientKey: "" } }),
+        {},
         {},
         record,
       ).connect(),
@@ -770,7 +774,7 @@ describe("a refreshed page", () => {
     const after = [...before, publish("fabrika/hat2/durum")];
     const { factory, dials } = changing([before, after]);
 
-    const provider = new MqttProvider(connection({}), {}, factory);
+    const provider = new MqttProvider(connection({}), {}, {}, factory);
     await provider.connect();
 
     // The first page is the connect read, so opening a connection still costs one read and not two.
@@ -790,7 +794,7 @@ describe("a refreshed page", () => {
     const after = [CONNACK, SUBACK, publish("kalir/konu")];
     const { factory } = changing([before, after]);
 
-    const provider = new MqttProvider(connection({}), {}, factory);
+    const provider = new MqttProvider(connection({}), {}, {}, factory);
     await provider.connect();
     await provider.scanKeysPage!({ cursor: "0", count: 100 });
 
@@ -808,7 +812,7 @@ describe("a refreshed page", () => {
     const refused = [CONNACK, Buffer.from([0x90, 0x04, 0x00, 0x01, 0x00, 0x87])];
     const { factory } = changing([full, refused]);
 
-    const provider = new MqttProvider(connection({}), {}, factory);
+    const provider = new MqttProvider(connection({}), {}, {}, factory);
     await provider.connect();
     const first = await provider.scanKeysPage!({ cursor: "0", count: 100 });
     expect(first.readOutcome?.endReason).not.toMatch(/refused the subscription/);
@@ -825,7 +829,7 @@ describe("a refreshed page", () => {
     const after = [...before, publish("iki/konu")];
     const { factory } = changing([before, after]);
 
-    const provider = new MqttProvider(connection({}), {}, factory);
+    const provider = new MqttProvider(connection({}), {}, {}, factory);
     await provider.connect();
     await provider.scanKeysPage!({ cursor: "0", count: 100 });
     expect((await provider.getHealth()).databaseSize).toBe("1 topic");
@@ -842,7 +846,7 @@ describe("a refreshed page", () => {
     const after = [...before, publish("fabrika/hat2/durum")];
     const { factory, dials } = changing([before, after]);
 
-    const provider = new MqttProvider(connection({}), {}, factory);
+    const provider = new MqttProvider(connection({}), {}, {}, factory);
     await provider.connect();
     await provider.scanKeysPage!({ cursor: "0", count: 100 });
     for (const pattern of ["f", "fa", "fab", "fabrika/"]) {
@@ -862,7 +866,7 @@ describe("a refreshed page", () => {
     const script = [CONNACK, SUBACK, publish("bir/konu")];
     const { factory, dials } = changing([script]);
 
-    const provider = new MqttProvider(connection({}), {}, factory);
+    const provider = new MqttProvider(connection({}), {}, {}, factory);
     await provider.connect();
     await provider.scanKeysPage!({ cursor: "0", count: 100 });
     await provider.disconnect();
@@ -876,7 +880,7 @@ describe("a refreshed page", () => {
     const refused = [CONNACK, Buffer.from([0x90, 0x04, 0x00, 0x01, 0x00, 0x87])];
     const { factory } = changing([refused]);
 
-    const provider = new MqttProvider(connection({}), {}, factory);
+    const provider = new MqttProvider(connection({}), {}, {}, factory);
     await provider.connect();
     const page = await provider.scanKeysPage!({ cursor: "0", count: 100 });
     expect(page.readOutcome?.endReason).toMatch(/0x87/);
@@ -914,7 +918,7 @@ describe("a refreshed page", () => {
       return { transport, readyEvent: "ready" };
     };
 
-    const provider = new MqttProvider(connection({}), {}, factory);
+    const provider = new MqttProvider(connection({}), {}, {}, factory);
     await provider.connect();
     const source = await provider.readObjectSource!([" padded "], "topic");
     expect(subscribed.at(-1)).toBe(" padded ");
@@ -949,7 +953,7 @@ describe("a refreshed page", () => {
       };
       return { transport, readyEvent: "ready" };
     };
-    const provider = new MqttProvider(connection({ database: "  sensors/#  " }), {}, factory);
+    const provider = new MqttProvider(connection({ database: "  sensors/#  " }), {}, {}, factory);
     await provider.connect();
     expect(subscribed).toEqual(["sensors/#"]);
   });

@@ -148,7 +148,7 @@ describe("the mqtt provider over each broker's recorded wire", () => {
        */
       test("the read yields the topics the capture carries, each with a type and a reason", async () => {
         const written: Buffer[] = [];
-        const provider = new MqttProvider(connection(capture), {}, replay(capture, written));
+        const provider = new MqttProvider(connection(capture), {}, {}, replay(capture, written));
         await provider.connect();
         expect(provider.isConnected()).toBe(true);
 
@@ -174,7 +174,7 @@ describe("the mqtt provider over each broker's recorded wire", () => {
        */
       test("every packet written is one of the five, and none is a PUBLISH", async () => {
         const written: Buffer[] = [];
-        const provider = new MqttProvider(connection(capture), {}, replay(capture, written));
+        const provider = new MqttProvider(connection(capture), {}, {}, replay(capture, written));
         await provider.connect();
         await provider.disconnect();
 
@@ -190,7 +190,7 @@ describe("the mqtt provider over each broker's recorded wire", () => {
 
       test("the CONNECT carries no Will", async () => {
         const written: Buffer[] = [];
-        const provider = new MqttProvider(connection(capture), {}, replay(capture, written));
+        const provider = new MqttProvider(connection(capture), {}, {}, replay(capture, written));
         await provider.connect();
         await provider.disconnect();
 

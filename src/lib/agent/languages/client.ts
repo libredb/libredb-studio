@@ -31,6 +31,7 @@ import { MODBUSREAD_CLIENT_PACK } from "./modbusread/client";
 import { PROMQL_CLIENT_PACK } from "./promql/client";
 import { OPCUAREAD_CLIENT_PACK } from "./opcuaread/client";
 import { MTCONNECTREAD_CLIENT_PACK } from "./mtconnectread/client";
+import { MQTTREAD_CLIENT_PACK } from "./mqttread/client";
 import { LIBREDBKV_CLIENT_PACK } from "./libredbkv/client";
 import { MONGO_CLIENT_PACK } from "./mongo/client";
 import type {
@@ -83,6 +84,7 @@ const CLIENT_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageClien
   promql: PROMQL_CLIENT_PACK,
   opcuaread: OPCUAREAD_CLIENT_PACK,
   mtconnectread: MTCONNECTREAD_CLIENT_PACK,
+  mqttread: MQTTREAD_CLIENT_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageClientPack>);
 
 /** The client facet for `language`. The record is total, so a typed id always has one. */
@@ -135,6 +137,7 @@ export const AGENT_EVIDENCE_EVENTS = mergeDisjoint(
     PROMQL_CLIENT_PACK.evidenceEvents,
     OPCUAREAD_CLIENT_PACK.evidenceEvents,
     MTCONNECTREAD_CLIENT_PACK.evidenceEvents,
+    MQTTREAD_CLIENT_PACK.evidenceEvents,
   ],
   "AGENT_EVIDENCE_EVENTS",
 ) satisfies AgentEvidenceEventSpecs<AgentPackEvidenceEvent>;
@@ -168,6 +171,7 @@ export const AGENT_PACK_SHORTFALL_SENTENCES = mergeDisjoint(
     PROMQL_CLIENT_PACK.shortfallSentences,
     OPCUAREAD_CLIENT_PACK.shortfallSentences,
     MTCONNECTREAD_CLIENT_PACK.shortfallSentences,
+    MQTTREAD_CLIENT_PACK.shortfallSentences,
   ],
   "AGENT_PACK_SHORTFALL_SENTENCES",
 ) satisfies Record<AgentPackShortfall, string>;
@@ -197,6 +201,7 @@ export const AGENT_PACK_READING_REFUSAL_HEADLINES = mergeDisjoint(
     PROMQL_CLIENT_PACK.readingRefusalHeadlines,
     OPCUAREAD_CLIENT_PACK.readingRefusalHeadlines,
     MTCONNECTREAD_CLIENT_PACK.readingRefusalHeadlines,
+    MQTTREAD_CLIENT_PACK.readingRefusalHeadlines,
   ],
   "AGENT_PACK_READING_REFUSAL_HEADLINES",
 ) satisfies Record<AgentPackReadingDenyCode, string>;
@@ -229,6 +234,7 @@ export const AGENT_PACK_REQUIREMENTS = mergeDisjoint(
     PROMQL_CLIENT_PACK.requirements,
     OPCUAREAD_CLIENT_PACK.requirements,
     MTCONNECTREAD_CLIENT_PACK.requirements,
+    MQTTREAD_CLIENT_PACK.requirements,
   ],
   "AGENT_PACK_REQUIREMENTS",
 ) satisfies Record<AgentPackVariantRequirement, AgentVariantRequirementSpec>;

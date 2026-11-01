@@ -139,6 +139,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "prometheus",
   "opcua",
   "mtconnect",
+  "mqtt",
 ];
 
 /**
