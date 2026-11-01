@@ -2,7 +2,11 @@
 # Re-records every capture in this directory on a digest-pinned trinodb/trino:476 coordinator with a PostgreSQL
 # catalog whose credential can write, once per access control:
 #
-#   tests/fixtures/trino/476/agent-boundary/run.sh
+#   tests/fixtures/trino/476/agent-boundary/run.sh          re-record every capture, then remove everything
+#   tests/fixtures/trino/476/agent-boundary/run.sh up       start the four coordinators and leave them running,
+#                                                           printing each one's access control and URL, for
+#                                                           tests/live/trino-agent-boundary.ts
+#   tests/fixtures/trino/476/agent-boundary/run.sh down     remove what `up` started
 #
 # The four access controls, each a fresh coordinator with catalog.management=dynamic:
 #
@@ -19,6 +23,7 @@
 # written only into the catalog files of a temporary directory removed at exit, and never printed; Trino runs with no
 # authentication, so the captures carry no credential at all. Containers and the network carry the TRINO_PROJECT
 # prefix, default libredb-trino-agent, and are removed when the run ends. 03 runs on allow-all and read-only only.
+# `up` keeps the catalog files in TRINO_WORK, default ${TMPDIR:-/tmp}/<prefix>-work, until `down` removes it.
 set -euo pipefail
 dir="$(cd "$(dirname "$0")" && pwd)"
 project="${TRINO_PROJECT:-libredb-trino-agent}"
@@ -26,17 +31,27 @@ network="$project-net"
 postgres="$project-pg"
 trino_image='trinodb/trino:476@sha256:00125e40d063bc4816d165482f6044872b18b56026fb959d3b28ce1f96ffbbee'
 postgres_image='postgres:17@sha256:b8faeff7712663c2773a190181e1246e37e364b887611c04658c28b44e2408fe'
-work="$(mktemp -d)"
+mode="${1:-capture}"
+work="${TRINO_WORK:-${TMPDIR:-/tmp}/$project-work}"
 password="$(openssl rand -hex 16)"
 coordinator=""
+accesses=(allow-all read-only file-nofn file-fn-query)
 
 cleanup() {
   [ -n "$coordinator" ] && docker rm -f "$coordinator" >/dev/null 2>&1 || true
+  for access in "${accesses[@]}"; do docker rm -f "$project-$access" >/dev/null 2>&1 || true; done
   docker rm -f "$postgres" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
   rm -rf "$work"
 }
-trap cleanup EXIT
+case "$mode" in
+  down) cleanup; exit 0 ;;
+  up) ;;
+  capture) trap cleanup EXIT ;;
+  *) echo "usage: $0 [up|down]" >&2; exit 2 ;;
+esac
+rm -rf "$work"
+mkdir -p "$work"
 
 psql() { docker exec "$postgres" psql -qtA -U postgres -c "$1"; }
 
@@ -82,7 +97,17 @@ stop() {
   coordinator=""
 }
 
-for access in allow-all read-only file-nofn file-fn-query; do
+if [ "$mode" = up ]; then
+  psql "INSERT INTO public.rp_t VALUES (1);" >/dev/null
+  for access in "${accesses[@]}"; do
+    start "$access"
+    echo "$access $url"
+    coordinator=""
+  done
+  exit 0
+fi
+
+for access in "${accesses[@]}"; do
   psql "TRUNCATE public.rp_t; INSERT INTO public.rp_t VALUES (1); ALTER SEQUENCE public.rp_seq RESTART;" >/dev/null
   start "$access"
   for plan in 00-catalogs-and-functions 01-proof-probes 02-writes; do

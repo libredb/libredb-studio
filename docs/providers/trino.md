@@ -2088,3 +2088,13 @@ The index and statistics kinds are refused with `SELECTOR_UNSUPPORTED_BY_DIALECT
 So investigation, database assessment and data analysis open here and send their statements through `queryReadOnly`, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`; database assessment cannot pass with no table profile ([B146](../BACKLOG.md)), and the `sql-composers` requirement holds query optimization out, since the agent path sends no `EXPLAIN` ([B166](../BACKLOG.md)); plan mode drafts here as on every engine.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
 MCP's statement read stays closed on Trino (`MCP_STATEMENT_READ.trino` is false) until a change of its own opens it, and the MCP metadata tools serve it as before (`MCP_EXPOSABLE.trino` is true).
+
+### 15.6 Boundary record
+
+`bun tests/live/trino-agent-boundary.ts`, run on 2026-11-01 against the four coordinators `run.sh up` starts, passes 60 checks through the production path (`createDatabaseProvider` with the profile's execution context, `connect`, `queryReadOnly`) and, for the raw sends, with no admission of Studio's in front.
+The open admits the read-only access control and file rules granting no function, and refuses the default access control and file rules granting the `query` function with the two operator settings named and the check having run nothing; the operations profile opens on the default, so plan mode grounds there; an editor handle's `queryReadOnly` is refused.
+`CALL`, `INSERT`, `CREATE TABLE AS`, catalog creation and removal, `COMMIT`, `ROLLBACK`, `START TRANSACTION`, `SET SESSION`, `USE`, `EXECUTE`, `PREPARE` and a second statement are each refused before anything is sent.
+Behind the fence, under both admitted controls, the pass-through dblink write through `queryReadOnly` is refused by the server (`Access Denied: Cannot execute function pg.system.query`), and sent raw, the same write in a read-only transaction and in autocommit, `INSERT`, `CREATE TABLE AS`, `CALL` in a transaction (`NOT_SUPPORTED`) and in autocommit (`PERMISSION_DENIED`), and catalog creation and removal are each refused by permission or by the read-only transaction; the PostgreSQL table holds what it held before.
+A `SELECT` answers its rows, the composed column read lists the table's columns, and no transaction is left open on the coordinator after a read and a refusal.
+The row and byte budgets refuse, and a statement past the time budget is refused and found `FAILED` with `USER_CANCELED` in `system.runtime.queries`, cancelled on the cluster.
+
