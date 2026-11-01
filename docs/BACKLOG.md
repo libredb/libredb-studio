@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S10 · 7
-- [Drivers and connections](#drivers-and-connections) — D1-D414, U17 · 303
+- [Drivers and connections](#drivers-and-connections) — D1-D416, U17 · 305
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U192 · 177
@@ -4174,6 +4174,25 @@ So a reference a server answers that way is listed in the Keys panel under an id
 Not reached on the pinned OPC PLC 2.15.10 fixture, whose references carry neither; found 2026-11-01 while verifying the OPC UA agent read.
 
 **Done when:** `shapeBrowse` writes such an id in the Part 6 spelling (`nsu=` for a URI, `svr=` for a non-zero server index), the comment says what it does, a reference on another server is shown as not readable rather than offered as a key, and a library-bridge test pins both spellings.
+
+### D415. The MTConnect editor lists a device's data items as its assets
+
+`listObjects(container, kind)` in `src/lib/db/providers/industrial/mtconnect/index.ts` splits a device's items only by `kind === "condition"`, so on an editor handle `listObjects([device], "asset")` returns every non-condition data item of the device, each labelled `kind: "asset"`, and `describeObjects([device], "asset")` describes them as such.
+The tree never shows it only because `countObjects` answers `asset: { count: 0 }`, so the kind is never expanded; any caller that lists a kind without counting it first, the objects route included, gets data items under the asset heading.
+Agent-mode handles are not affected: there `listObjects` refuses the kind with `MTCONNECT_AGENT_WITHHELD.assets`.
+Found 2026-11-01 while verifying the MTConnect agent read (PR 3.19); pre-existing.
+
+**Done when:** `listObjects` answers the asset kind on an editor handle either with the agent's assets (from `/assets`, under the same guard and caps as the console) or with an explicit refusal that says assets are read from the console, never with data items, and the count and the listing agree; a provider test pins `listObjects([device], "asset")` and `describeObjects([device], "asset")` on an editor handle.
+
+### D416. MTConnect's "one permit per agent" is one permit per provider instance
+
+`docs/providers/mtconnect.md` section 3.3 says "The limiter holds one permit per agent", and the `MTC_LIMITS` docblock in `src/lib/db/providers/industrial/mtconnect/index.ts` says "One permit per agent" and "One request at a time per agent".
+`perProvider: 1` is a slot per provider instance: `limiterFor()` is called once per instance (`engineLimiter` in `src/lib/db/utils/bounded-limiter.ts`), so two connections to one agent, or an editor handle and an agent-mode handle on the same connection, read the same agent concurrently, up to the engine-wide four.
+Section 14 of the same doc already says each provider instance holds its own permit, so the doc contradicts itself.
+The 1.4 ms to 74.1 ms measurement that motivates the bound is about load on one agent, which the instance key does not hold.
+Found 2026-11-01 while verifying the MTConnect agent read (PR 3.19).
+
+**Done when:** either the limiter is keyed by the agent's base URL so one agent serves one Studio request at a time whichever handle sends it, with a test that two providers on one URL queue behind one permit, or section 3.3 and the `MTC_LIMITS` comments say one permit per provider instance and name the concurrency two handles on one agent can reach.
 
 ## Value interpolation
 
