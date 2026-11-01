@@ -64,7 +64,6 @@ describe("agentIndexReference: the statements it admits, and the index expressio
     ["SELECT 'it''s' AS s FROM probe_orders", "probe_orders"],
     ["SELECT EXTRACT(YEAR FROM `@timestamp`) AS y FROM `probe-ds`", "probe-ds"],
     ["SELECT ABS(EXTRACT(DAY FROM (created))) AS d FROM probe_orders", "probe_orders"],
-    ["SELECT a@b FROM probe_orders", "probe_orders"],
     // A word that ends in a digit is no number: the point after it qualifies a name.
     ["SELECT t1.customer, x2._y FROM probe_orders t1", "probe_orders"],
     ["SELECT customer\r\n\tFROM\nprobe_orders", "probe_orders"],
@@ -107,6 +106,12 @@ describe("agentIndexReference: what it refuses before anything is sent", () => {
     "SELECT a:b FROM t",
     "SELECT id FROM @opensearch.probe_orders",
     "SELECT 1 AS x FROM cluster:t",
+    // The plugin ends a bare name at an `@`, which starts a name of its own: `pa@b` is the table `pa` aliased `@b`.
+    "SELECT a@b FROM probe_orders",
+    "SELECT v FROM pa@b",
+    "SELECT v FROM pa@b LIMIT 1001 OFFSET 0",
+    "SELECT v FROM probe_hid@x",
+    "SELECT 1@x AS x",
   ])("refuses %p: a character outside the set", (sql) => {
     refusedWith(sql, CHARACTER_REFUSAL);
   });
@@ -117,7 +122,6 @@ describe("agentIndexReference: what it refuses before anything is sent", () => {
     "SELECT .5e2 AS x",
     "SELECT 2x AS x",
     "SELECT 1_000 AS x",
-    "SELECT 1@x AS x",
     "SELECT 1._x AS x",
   ])("refuses %p: a number written otherwise than in plain digits", (sql) => {
     refusedWith(sql, NUMBER_REFUSAL);
@@ -238,10 +242,10 @@ describe("agentIndexReference: what it refuses before anything is sent", () => {
       "The agent sends OpenSearch no statement that holds a comment, --, /* or #, outside its quotes: an agent statement needs none, so write it without one",
     );
     expect(CHARACTER_REFUSAL).toBe(
-      "The agent writes an OpenSearch statement, outside its quotes, in ASCII letters, digits, _, @, spaces, tabs and line breaks, and the operators ( ) , . * + - / % = < > !, with names quoted in backticks and strings in single quotes, and no backslash, ; or control character anywhere: this statement holds a character outside that set",
+      "The agent writes an OpenSearch statement, outside its quotes, in ASCII letters, digits, _, spaces, tabs and line breaks, and the operators ( ) , . * + - / % = < > !, with names quoted in backticks and strings in single quotes, and no backslash, ; or control character anywhere: this statement holds a character outside that set",
     );
     expect(NUMBER_REFUSAL).toBe(
-      "The agent writes each number in an OpenSearch statement in plain digits, with at most a point between them, no exponent, and no letter, _ or @ right after it: this statement holds a number written otherwise",
+      "The agent writes each number in an OpenSearch statement in plain digits, with at most a point between them, no exponent, and no letter or _ right after it: this statement holds a number written otherwise",
     );
     expect(UNREADABLE_REFUSAL).toBe(
       "The agent sends OpenSearch no statement whose quote never closes or whose backtick-quoted name holds a backtick, since where its names end cannot be read",

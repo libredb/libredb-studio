@@ -27,8 +27,9 @@
  *  - the hidden targets: a dot-led index, a hidden index, a visible alias over it and a data stream, made by the
  *    script; sent raw each answers its rows (the backing index by its own name), and through `queryReadOnly` the
  *    statement check refuses each before it is sent, with `*`, the security index and every spelling the reader cannot
- *    read with certainty, while the data stream read by its own name is served; with security on, as a role reading
- *    every index;
+ *    read with certainty, among them a bare name with an `@` in it, which 3.8.0 ends at the `@` (so beside a visible
+ *    index named `<hidden>@y` it answers the hidden index's rows raw), while the data stream read by its own name is
+ *    served; with security on, as a role reading every index;
  *  - with security on, the login probes: the admin, a role writing every index and a role managing every index are
  *    each refused at open, and the probes leave no index behind;
  *  - the catalog read: the `DESCRIBE TABLES` command the agent's OpenSearch overlay composes, for one table answered
@@ -489,10 +490,12 @@ async function checkHiddenTargets(agent: DatabaseProvider): Promise<void> {
   const alias = `${SCRATCH}_alias`;
   const stream = `${SCRATCH}-ds`;
   const wide = `${SCRATCH}_wide`;
+  const at = `${hid}@y`;
   let reader = agent;
   try {
     const made = [
       await send("PUT", `/${dot}/_doc/1?refresh=true`, { probe: "dot" }),
+      await send("PUT", `/${at}/_doc/1?refresh=true`, { probe: "at" }),
       await send("PUT", `/${hid}`, { settings: { "index.hidden": true } }),
       await send("PUT", `/${hid}/_doc/1?refresh=true`, { probe: "hidden" }),
       await send("POST", "/_aliases", { actions: [{ add: { index: hid, alias } }] }),
@@ -505,7 +508,7 @@ async function checkHiddenTargets(agent: DatabaseProvider): Promise<void> {
     ];
     check(
       made.every((answer) => answer.status === 200 || answer.status === 201),
-      `hidden: the script makes a dot-led index, a hidden index, an alias over it and a data stream -> ${made.map((answer) => answer.status).join(",")}`,
+      `hidden: the script makes a dot-led index, a visible index named for the hidden one with @y, a hidden index, an alias over it and a data stream -> ${made.map((answer) => answer.status).join(",")}`,
     );
     const backing = (
       JSON.parse(await read(`/_data_stream/${stream}`)) as {
@@ -528,6 +531,8 @@ async function checkHiddenTargets(agent: DatabaseProvider): Promise<void> {
       [`SELECT COUNT(*) AS n FROM ${hid} # note`, COMMENT_REFUSAL],
       [`SELECT COUNT(*) AS n FROM probe_orders WHERE customer = 'a\\' OR 1 = 1`, CHARACTER_REFUSAL],
       [`SELECT COUNT(*) AS n FROM "${hid}"`, CHARACTER_REFUSAL],
+      [`SELECT COUNT(*) AS n FROM ${at}`, CHARACTER_REFUSAL],
+      [`SELECT COUNT(*) AS n FROM ${at} LIMIT 1001 OFFSET 0`, CHARACTER_REFUSAL],
       [`SELECT COUNT(*) AS n FROM \`@opensearch\`.${hid}`, FROM_REFUSAL],
       [`SELECT COUNT(*) AS n FROM probe_orders, ${hid}`, FROM_REFUSAL],
       [`SELECT COUNT(*) AS n FROM probe_orders WHERE id IN (SELECT id FROM ${hid})`, SUBQUERY_REFUSAL],
@@ -555,6 +560,16 @@ async function checkHiddenTargets(agent: DatabaseProvider): Promise<void> {
       const rows = raw.status === 200 ? (JSON.parse(raw.text) as { datarows: unknown[] }).datarows : [];
       check(rows.length > 0, `hidden: ${sql} sent raw answers rows -> ${raw.status} ${JSON.stringify(rows)}`);
     }
+    // A bare name ends at an `@` to 3.8.0: raw, `<hidden>@y` reads the hidden index, and only quoted the visible one.
+    const bare = await send("POST", "/_plugins/_sql", { query: `SELECT probe FROM ${at}` });
+    const quoted = await send("POST", "/_plugins/_sql", { query: `SELECT probe FROM \`${at}\`` });
+    check(
+      bare.status === 200 &&
+        JSON.stringify((JSON.parse(bare.text) as { datarows: unknown[] }).datarows) === '[["hidden"]]' &&
+        quoted.status === 200 &&
+        JSON.stringify((JSON.parse(quoted.text) as { datarows: unknown[] }).datarows) === '[["at"]]',
+      `hidden: raw, SELECT probe FROM ${at} answers the hidden index's rows and the quoted name the visible one's -> ${bare.status} ${quoted.status}`,
+    );
     const served = await reader.queryReadOnly!(`SELECT probe FROM \`${stream}\``, BUDGET);
     check(
       JSON.stringify(served.rows) === '[{"probe":"stream"}]',
@@ -566,6 +581,7 @@ async function checkHiddenTargets(agent: DatabaseProvider): Promise<void> {
     await send("DELETE", `/_data_stream/${stream}`);
     await send("DELETE", `/_index_template/${stream}_t`);
     await send("DELETE", `/${hid}`);
+    await send("DELETE", `/${encodeURIComponent(at)}`);
     await send("DELETE", `/${dot}`);
   }
 }

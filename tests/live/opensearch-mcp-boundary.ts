@@ -23,8 +23,9 @@
  *    probe mappings, the aliases and the templates read back the same before and after, on both nodes;
  *  - the hidden targets, with security off: a dot-led index, a hidden index, a visible alias over it, a data stream's
  *    backing index named directly, `*` and a wildcard reaching the hidden index each answer raw, and each is refused
- *    through MCP before it is sent, as are a comment, `#` and a double-quoted name; the data stream read by its own
- *    name is served;
+ *    through MCP before it is sent, as are a comment, `#` and a double-quoted name; a bare name with an `@` in it,
+ *    which 3.8.0 ends at the `@` (so beside a visible index named `<hidden>@y` it answers the hidden index's rows), is
+ *    refused through the fenced tool and unfenced alike; the data stream read by its own name is served;
  *  - the security index with security on: signed in as a role reading every index, which the open admits,
  *    `.opendistro_security`, quoted or bare, and `*` are refused by the statement check before they are sent, while
  *    `admin` sending the first raw is answered its columns;
@@ -403,9 +404,11 @@ async function checkHiddenTargets(agent: ManagedConnection): Promise<void> {
   const hid = `${SCRATCH}_hid`;
   const alias = `${SCRATCH}_alias`;
   const stream = `${SCRATCH}-ds`;
+  const at = `${hid}@y`;
   try {
     const made = [
       await send(ORIGIN, "PUT", `/${dot}/_doc/1?refresh=true`, { probe: "dot" }),
+      await send(ORIGIN, "PUT", `/${at}/_doc/1?refresh=true`, { probe: "at" }),
       await send(ORIGIN, "PUT", `/${hid}`, { settings: { "index.hidden": true } }),
       await send(ORIGIN, "PUT", `/${hid}/_doc/1?refresh=true`, { probe: "hidden" }),
       await send(ORIGIN, "POST", "/_aliases", { actions: [{ add: { index: hid, alias } }] }),
@@ -418,7 +421,7 @@ async function checkHiddenTargets(agent: ManagedConnection): Promise<void> {
     ];
     check(
       made.every((answer) => answer.status === 200 || answer.status === 201),
-      `hidden: the script makes a dot-led index, a hidden index, an alias over it and a data stream -> ${made.map((answer) => answer.status).join(",")}`,
+      `hidden: the script makes a dot-led index, a visible index named for the hidden one with @y, a hidden index, an alias over it and a data stream -> ${made.map((answer) => answer.status).join(",")}`,
     );
     const backing = (
       JSON.parse(await read(ORIGIN, `/_data_stream/${stream}`)) as {
@@ -446,6 +449,21 @@ async function checkHiddenTargets(agent: ManagedConnection): Promise<void> {
         `hidden: ${sql} ${sql.includes('"') ? "is refused raw too" : "answers raw"}, and MCP refuses it before it is sent -> ${textOf(result).slice(0, 110)}`,
       );
     }
+    // A bare name ends at an `@` to 3.8.0: raw, `<hidden>@y` reads the hidden index, and only quoted the visible one.
+    const bare = `SELECT probe FROM ${at}`;
+    const bareRows = await rawRows(ORIGIN, bare);
+    const quotedRows = await rawRows(ORIGIN, `SELECT probe FROM \`${at}\``);
+    check(
+      JSON.stringify(bareRows) === '[["hidden"]]' && JSON.stringify(quotedRows) === '[["at"]]',
+      `hidden: raw, ${bare} answers the hidden index's rows and the quoted name the visible one's -> ${JSON.stringify(bareRows)} ${JSON.stringify(quotedRows)}`,
+    );
+    for (const arm of [RUN_READ_QUERY, UNFENCED]) {
+      const { result, acquired } = await mcp(agent, { sql: bare }, arm);
+      check(
+        textOf(result) === unsent(CHARACTER_REFUSAL) && acquired.join() === "agent-read-only",
+        `hidden: ${bare} is refused before it is sent, ${arm === UNFENCED ? "unfenced" : "through the fenced tool"} -> ${textOf(result).slice(0, 110)}`,
+      );
+    }
     const served = await mcp(agent, { sql: `SELECT probe FROM \`${stream}\`` }, RUN_READ_QUERY);
     check(
       JSON.stringify(rowsOf(served.result)) === '[{"probe":"s"}]',
@@ -455,6 +473,7 @@ async function checkHiddenTargets(agent: ManagedConnection): Promise<void> {
     await send(ORIGIN, "DELETE", `/_data_stream/${stream}`);
     await send(ORIGIN, "DELETE", `/_index_template/${stream}_t`);
     await send(ORIGIN, "DELETE", `/${hid}`);
+    await send(ORIGIN, "DELETE", `/${encodeURIComponent(at)}`);
     await send(ORIGIN, "DELETE", `/${dot}`);
   }
 }

@@ -17,11 +17,13 @@
  *  - a backslash anywhere, which the new engine reads as an escape inside a string (`'a\'b'` answers `a'b`);
  *  - a quote that never closes, and a backtick-quoted name that holds a backtick, which 3.8.0 keeps in the name as
  *    written rather than reading as an escape. A string is `'…'`, closing at a quote that is not doubled;
- *  - outside quotes, any character but ASCII letters, digits, `_`, `@`, a space, a tab, a line feed or a carriage
- *    return, and the operators `( ) , . * + - / % = < > !`; so no `"` (a string to the new engine and part of an index
- *    name after a FROM), no `[…]` name, no `;` and no `:`; and anywhere, a control character or a surrogate with no
- *    partner. The engine upper-cases the keywords it reads, and some letters outside ASCII upper-case into ASCII ones;
- *  - a number that runs into a letter, `_` or `@`, or carries an exponent;
+ *  - outside quotes, any character but ASCII letters, digits, `_`, a space, a tab, a line feed or a carriage return,
+ *    and the operators `( ) , . * + - / % = < > !`; so no `"` (a string to the new engine and part of an index name
+ *    after a FROM), no `[…]` name, no `;`, no `:` and no `@`, which the plugin reads as the start of a name of its own
+ *    even inside a bare word (`pa@b` is the table `pa` aliased `@b` to 3.8.0); and anywhere, a control character or a
+ *    surrogate with no partner. The engine upper-cases the keywords it reads, and some letters outside ASCII
+ *    upper-case into ASCII ones;
+ *  - a number that runs into a letter or `_`, or carries an exponent;
  *  - any statement but one `SELECT` or the agent's own column catalog read, `DESCRIBE TABLES LIKE %` for every table
  *    or `DESCRIBE TABLES LIKE '<table>'` for one;
  *  - a second `SELECT`, or a `WITH`, anywhere, so no subquery reads an index;
@@ -66,10 +68,10 @@ export const COMMENT_REFUSAL =
   "The agent sends OpenSearch no statement that holds a comment, --, /* or #, outside its quotes: an agent statement needs none, so write it without one";
 
 export const CHARACTER_REFUSAL =
-  "The agent writes an OpenSearch statement, outside its quotes, in ASCII letters, digits, _, @, spaces, tabs and line breaks, and the operators ( ) , . * + - / % = < > !, with names quoted in backticks and strings in single quotes, and no backslash, ; or control character anywhere: this statement holds a character outside that set";
+  "The agent writes an OpenSearch statement, outside its quotes, in ASCII letters, digits, _, spaces, tabs and line breaks, and the operators ( ) , . * + - / % = < > !, with names quoted in backticks and strings in single quotes, and no backslash, ; or control character anywhere: this statement holds a character outside that set";
 
 export const NUMBER_REFUSAL =
-  "The agent writes each number in an OpenSearch statement in plain digits, with at most a point between them, no exponent, and no letter, _ or @ right after it: this statement holds a number written otherwise";
+  "The agent writes each number in an OpenSearch statement in plain digits, with at most a point between them, no exponent, and no letter or _ right after it: this statement holds a number written otherwise";
 
 export const UNREADABLE_REFUSAL =
   "The agent sends OpenSearch no statement whose quote never closes or whose backtick-quoted name holds a backtick, since where its names end cannot be read";
@@ -125,11 +127,11 @@ type Token =
 const WHITE_SPACE = new Set([" ", "\t", "\n", "\r"]);
 /** The operators an agent statement may write outside quotes. */
 const OPERATORS = new Set(["(", ")", ",", ".", "*", "+", "-", "/", "%", "=", "<", ">", "!"]);
-/** A word: a letter or `_`, then letters, digits, `_` and `@`. */
-const WORD_AT = /[A-Za-z_][A-Za-z0-9_@]*/y;
+/** A word: a letter or `_`, then letters, digits and `_`; the plugin ends a bare word at an `@`, so none is in one. */
+const WORD_AT = /[A-Za-z_][A-Za-z0-9_]*/y;
 const DIGITS_AT = /[0-9]+/y;
 /** What may not stand right after a number's digits: the engine would read it into the number, or a word from it. */
-const WORD_CHARACTER = /[A-Za-z_@]/;
+const WORD_CHARACTER = /[A-Za-z_]/;
 // oxlint-disable-next-line no-control-regex -- control characters are exactly what an agent statement may not hold
 const CONTROL_CHARACTER = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/;
 /** The words that may follow a top-level FROM's table identifier and its alias. */
