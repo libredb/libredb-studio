@@ -217,9 +217,26 @@ describe("the exact reads", () => {
       "spBv1.0/Plant-North/DDEATH/Line-7/Press-3",
       "spBv1.0/Plant-North/DDATA/Line-7/Press-3",
     ]);
-    expect(result.rows[0]).toMatchObject({ seen: true, messages: 2, nbirth: null, dbirth: 1, ddata: 1, metrics: 3 });
+    expect(result.rows[0]).toMatchObject({
+      seen: true,
+      messages: 2,
+      nbirth: null,
+      dbirth: 1,
+      ddata: 1,
+      metrics: 3,
+      birth_seen: true,
+    });
     expect(result.warnings?.[0]?.message).toContain("the one device the request named");
     holdsNoId(result);
+  });
+
+  test("an edge node read counts the node's own messages, never its devices', even when they arrive", async () => {
+    const { provider } = await opened([PLANT]);
+    const result = await provider.queryReadOnly(
+      '{"read": "edgeNode", "group": "Plant-North", "edgeNode": "Line-7"}',
+      BUDGET,
+    );
+    expect(result.rows[0]).toMatchObject({ messages: 2, nbirth: 1, ndata: 1, dbirth: null, ddata: null, metrics: 3 });
   });
 
   test("an id not seen answers the same columns with seen false and no last message, never that it does not exist", async () => {
@@ -369,6 +386,20 @@ describe("a failure is worded by its kind, never in the broker's or the transpor
     expect(warnings).toContain(
       "0 payloads could not be read as Sparkplug B and 1 payload came past Studio's byte budget, so their metrics are not counted; their messages are.",
     );
+  });
+
+  test("last_seen_ms is the last message's arrival, counted from the subscription", async () => {
+    const provider = await answering({
+      startedAt: 1_000,
+      subscribedAtMs: 100,
+      elapsedMs: 3_000,
+      messages: [
+        { topic: "spBv1.0/G/NDATA/E", payloadBytes: 0, receivedAt: 1_300 },
+        { topic: "spBv1.0/G/NDATA/E", payloadBytes: 0, receivedAt: 1_500 },
+      ],
+    });
+    const result = await provider.queryReadOnly('{"read": "edgeNode", "group": "G", "edgeNode": "E"}', BUDGET);
+    expect(result.rows[0]).toMatchObject({ last_seen_ms: 400, messages: 2 });
   });
 
   test("a read past the deadline is the time budget, and its late answer is dropped", async () => {
