@@ -16,10 +16,11 @@
  *    a backslash as the engine does, an ordinary character in both quotes, so no quote's end is a guess;
  *  - an empty quoted name, which the engine reads as every open index, and which before a `.` would start the name
  *    after it with a dot;
- *  - a name that starts with a dot, read as the engine builds it: the quoted and bare names of one reference joined by
- *    their `.`, and a `.` written as `%2E` or `\u002E` in a quoted name read as a dot; and a `.` inside a quoted name
- *    after any character but a letter, a digit or `_`, which starts one index of a comma list, an exclusion, an
- *    inclusion, date math or a remote cluster's index;
+ *  - a name that starts with a dot, read with a `.` written as `%2E` or `\u002E` in a quoted name read as a dot: a
+ *    quoted name that starts with one, a reference whose quoted and bare names, joined by their `.` as the engine
+ *    joins them, start with one or hold `..` (a part after a qualifier that starts with a dot), and a `.` inside a
+ *    quoted name after any character but a letter, a digit or `_`, which starts one index of a comma list, an
+ *    exclusion, an inclusion, date math or a remote cluster's index;
  *  - a `.` in code that follows any character but a letter, a digit, `_` or a closing quote, unless a digit follows it
  *    (`.5` is a number);
  *  - every `SHOW`, `DESCRIBE`, `SYS` and `DEBUG` command, and a leading `DESC`, but the column catalog read the agent
@@ -147,8 +148,12 @@ export function assertAgentIndexNames(sql: string): void {
   if (read.some((token) => token.kind === "quoted" && DOT_AFTER_NON_NAME.test(token.text))) {
     throw refuse(DOT_INDEX_REFUSAL, sql);
   }
-  // First, so an empty name before a `.` (`"".security`) is answered as the dot-led name the engine builds of it.
-  if (references(read).some((name) => name.startsWith("."))) throw refuse(DOT_INDEX_REFUSAL, sql);
+  if (read.some((token) => token.kind === "quoted" && token.text.startsWith("."))) throw refuse(DOT_INDEX_REFUSAL, sql);
+  // Before the empty-name check, so an empty name before a `.` (`"".security`) is answered as the dot-led name the
+  // engine builds of it; a `..` is a part after a qualifier that starts with a dot, or an empty part between two.
+  if (references(read).some((name) => name.startsWith(".") || name.includes(".."))) {
+    throw refuse(DOT_INDEX_REFUSAL, sql);
+  }
   if (read.some((token) => token.kind === "quoted" && token.text === "")) throw refuse(EMPTY_NAME_REFUSAL, sql);
   const first = read[0];
   const command =

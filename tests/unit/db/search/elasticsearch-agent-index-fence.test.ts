@@ -81,6 +81,16 @@ describe("assertAgentIndexNames", () => {
     // The engine builds the name of an empty quoted name, a `.` and a bare one as a name that starts with a dot.
     'SELECT COUNT(*) AS n FROM "".security',
     'SELECT COUNT(*) AS n FROM "" . /* c */ security',
+    // A dot-led part after a qualifier: the joined name holds `..`, and the quoted part itself starts with a dot.
+    'SELECT COUNT(*) AS n FROM "x".".security"',
+    'SELECT COUNT(*) AS n FROM probe_orders.".security"',
+    "SELECT COUNT(*) AS n FROM probe_orders..security",
+    "SELECT COUNT(*) AS n FROM `x`.`.security`",
+    "SELECT COUNT(*) AS n FROM probe_orders.`.security`",
+    'SELECT COUNT(*) AS n FROM "x"."%2Esecurity"',
+    'SELECT COUNT(*) AS n FROM "docker-cluster".".security"',
+    // An empty part between two qualifiers joins to `..`.
+    'SELECT COUNT(*) AS n FROM "x"."".security',
     "SELECT COUNT(*) AS n FROM ``.security",
     // A backslash closes nothing early here: the string ends at its second quote, and the dot-led name is code.
     "SELECT 'a\\' AS x FROM \".security\"",

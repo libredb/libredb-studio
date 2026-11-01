@@ -350,13 +350,19 @@ const HIDDEN: readonly [string, string][] = [
 
 /**
  * Spellings the fence refuses although 9.1.4 answers none of them with rows sent raw: an empty name before a `.`, a
- * mixed-case or URL-escaped name, and a quote that never closes. Each is refused unsent, and the raw answer is the engine's refusal.
+ * mixed-case or URL-escaped name, a quote that never closes, and a dot-led part after a qualifier. Each is refused unsent, and the raw answer is the engine's refusal.
  */
 const REFUSED_UNREAD: readonly [string, string][] = [
   ['SELECT COUNT(*) AS n FROM "".security', DOT_REFUSAL],
   ['SELECT COUNT(*) AS n FROM ".SECURITY"', DOT_REFUSAL],
   ['SELECT COUNT(*) AS n FROM "%2Esecurity"', DOT_REFUSAL],
   ['SELECT COUNT(*) AS n FROM ".security', `${NOT_SENT}${UNREADABLE_REFUSAL}.`],
+  ['SELECT COUNT(*) AS n FROM "x".".security"', DOT_REFUSAL],
+  ['SELECT COUNT(*) AS n FROM probe_orders.".security"', DOT_REFUSAL],
+  ["SELECT COUNT(*) AS n FROM probe_orders.`.security`", DOT_REFUSAL],
+  ['SELECT COUNT(*) AS n FROM "x"."%2Esecurity"', DOT_REFUSAL],
+  ['SELECT COUNT(*) AS n FROM "docker-cluster".".security"', DOT_REFUSAL],
+  ['SELECT COUNT(*) AS n FROM "x"."".security', DOT_REFUSAL],
 ];
 
 async function checkHidden(admin: ManagedConnection): Promise<void> {
