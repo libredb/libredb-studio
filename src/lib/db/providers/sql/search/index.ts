@@ -75,7 +75,7 @@
  */
 
 import { SQLBaseProvider } from "../sql-base";
-import { assertAgentIndexNames } from "./agent-index-fence";
+import { assertAgentIndexNames } from "./elasticsearch-agent-index-fence";
 import {
   assertReadOnlyBudget,
   byteBudgetSentence,
@@ -360,7 +360,7 @@ interface SearchProduct {
 
   /**
    * Whether an agent statement is read for the hidden and system indices it names before it is sent, and refused when
-   * it names one (`agent-index-fence.ts`). The open checks no login, so a login that may read those indices reads them
+   * it names one (`elasticsearch-agent-index-fence.ts`). The open checks no login, so a login that may read those indices reads them
    * through SQL, and only their names stand between an agent statement and them.
    *
    * Elasticsearch: true. Measured on 9.1.4 signed in as the superuser: every hidden and system index, the security

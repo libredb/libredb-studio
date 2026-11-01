@@ -59,7 +59,10 @@ import {
 import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
 import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
-import { CATALOG_COMMAND_REFUSAL, DOT_INDEX_REFUSAL } from "@/lib/db/providers/sql/search/agent-index-fence";
+import {
+  CATALOG_COMMAND_REFUSAL,
+  DOT_INDEX_REFUSAL,
+} from "@/lib/db/providers/sql/search/elasticsearch-agent-index-fence";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";

@@ -53,7 +53,7 @@ import { engineServerDialect } from "@/lib/agent/languages/engines/server";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import type { AgentToolContext } from "@/lib/agent/tools";
 import { createDatabaseProvider, executionContextFor } from "@/lib/db/factory";
-import { CATALOG_COMMAND_REFUSAL } from "@/lib/db/providers/sql/search/agent-index-fence";
+import { CATALOG_COMMAND_REFUSAL } from "@/lib/db/providers/sql/search/elasticsearch-agent-index-fence";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";

@@ -9180,7 +9180,7 @@ Found 2026-11-01 with agent execution on Trino.
 ### B167. OpenSearch's agent path names any index its login may read, hidden and system indices included
 
 The Elasticsearch and OpenSearch providers share `src/lib/db/providers/sql/search/`, and neither open checks the login, since the boundary is each SQL endpoint's refusal of every write.
-Measured on Elasticsearch 9.1.4 on 2026-11-01, signed in as the superuser, every hidden and system index, the security index among them, answered its rows through SQL to a statement that names it with a leading dot, so Elasticsearch's agent path refuses such a name, and every catalog command but its own column catalog read, before it is sent (`agent-index-fence.ts`, `SearchProduct.fencesHiddenIndices`; `docs/providers/elasticsearch.md` section 5.9).
+Measured on Elasticsearch 9.1.4 on 2026-11-01, signed in as the superuser, every hidden and system index, the security index among them, answered its rows through SQL to a statement that names it with a leading dot, so Elasticsearch's agent path refuses such a name, and every catalog command but its own column catalog read, before it is sent (`elasticsearch-agent-index-fence.ts`, `SearchProduct.fencesHiddenIndices`; `docs/providers/elasticsearch.md` section 5.9).
 That fence reads Elasticsearch's grammar and is off on OpenSearch, whose identifier quoting differs and whose own hidden and system indices were not read through its SQL plugin with a broad login, so an OpenSearch agent statement names any index the login may read, and a least-privilege login is what keeps those indices from it.
 `MCP_STATEMENT_READ.opensearch` is false, so no MCP client reaches them.
 Found 2026-11-01 while opening MCP's `run_read_query` on Elasticsearch.

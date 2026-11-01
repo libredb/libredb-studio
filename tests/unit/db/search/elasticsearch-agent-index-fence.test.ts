@@ -10,7 +10,7 @@ import {
   assertAgentIndexNames,
   CATALOG_COMMAND_REFUSAL,
   DOT_INDEX_REFUSAL,
-} from "@/lib/db/providers/sql/search/agent-index-fence";
+} from "@/lib/db/providers/sql/search/elasticsearch-agent-index-fence";
 
 function thrown(run: () => void): QueryError {
   try {

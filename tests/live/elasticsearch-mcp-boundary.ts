@@ -49,7 +49,10 @@ import { randomBytes } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
-import { CATALOG_COMMAND_REFUSAL, DOT_INDEX_REFUSAL } from "@/lib/db/providers/sql/search/agent-index-fence";
+import {
+  CATALOG_COMMAND_REFUSAL,
+  DOT_INDEX_REFUSAL,
+} from "@/lib/db/providers/sql/search/elasticsearch-agent-index-fence";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import type { ToolResult } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
