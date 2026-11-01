@@ -183,7 +183,10 @@ describe("the access control check", () => {
 
   test("refuses a server whose access control is not the read-only one, before it asks for anything else", async () => {
     // A server that lists no table function and refuses or does not resolve every name the check asks for still
-    // refuses the profile: a function it does not list, or one another identity may call, is not proved refused.
+    // refuses the profile: a function it does not list, or one another identity may call, is not proved refused. Under
+    // file rules that grant the query function to another user alone, that user's SECURITY DEFINER view ran a
+    // pass-through write for this user inside the read-only transaction (capture 06, file-owner-fn), and the same
+    // view is refused under the read-only access control, alone and beside those rules (capture 06).
     const answers = readOnlyServer();
     answers.set(TRINO_ACCESS_CONTROL_PROBE, PROCEDURE_NOT_REGISTERED);
     answers.set(trinoFunctionListStatement("pg"), result(FUNCTION_COLUMNS, []));
@@ -202,7 +205,7 @@ describe("the access control check", () => {
     expect(caught).toBeInstanceOf(ExecutionProfileError);
     expect((caught as ExecutionProfileError).reasonCode).toBe("PROFILE_SERVER_UNENFORCED");
     expect((caught as Error).message).toBe(
-      `${NEEDS}. This server looked up a table procedure no connector registers, answering PROCEDURE_NOT_FOUND ("Table procedure not registered: LIBREDB_NO_SUCH_PROCEDURE"), where the read-only access control refuses the call first, so the read-only access control is not in force: a table function the server does not list, which a lookup finds before any permission check, could run. The connection is refused. The check ran nothing.`,
+      `${NEEDS}. This server looked up a table procedure no connector registers, answering PROCEDURE_NOT_FOUND ("Table procedure not registered: LIBREDB_NO_SUCH_PROCEDURE"), where the read-only access control refuses the call first, so the read-only access control is not in force: a table function the server does not list, which a lookup finds before any permission check, could run, and so could one any other identity may call, through a view of that identity's, which runs as its owner (SECURITY DEFINER). The connection is refused. The check ran nothing.`,
     );
     expect(recorded.sent).toEqual([TRINO_ACCESS_CONTROL_PROBE]);
   });

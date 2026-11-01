@@ -16,7 +16,8 @@
  *  - the fence: CALL, INSERT, CREATE TABLE AS, catalog creation and removal, COMMIT, ROLLBACK, START TRANSACTION, SET
  *    SESSION, USE, EXECUTE, PREPARE and a second statement are each refused through `queryReadOnly` before anything
  *    is sent;
- *  - the boundary behind the fence: the pass-through dblink write through `queryReadOnly` is refused by the server, and
+ *  - the boundary behind the fence: the pass-through dblink write through `queryReadOnly` is refused by the server, as
+ *    is reading the SECURITY DEFINER view over a pass-through write that `run.sh up` stores as another user, and
  *    the same write, INSERT, CREATE TABLE AS, CALL in a transaction and in autocommit, and catalog creation and removal,
  *    sent raw, are each refused as an authorization, read-only or transaction refusal, never a syntax error; the
  *    PostgreSQL table reads the same before and after;
@@ -206,6 +207,13 @@ async function fenceAndBoundary(): Promise<void> {
       const error = await readOnly(provider, sql);
       check(error instanceof RefusedBeforeSendError, `${access}: refused before anything is sent: ${sql}`);
     }
+    const definer = await readOnly(provider, 'SELECT * FROM "lake"."views"."pass_through"');
+    check(
+      definer instanceof QueryError &&
+        !(definer instanceof RefusedBeforeSendError) &&
+        definer.message.endsWith("Access Denied: Cannot execute function pg.system.query"),
+      `${access}: another user's SECURITY DEFINER view over a pass-through write is refused by the server (${definer instanceof Error ? definer.message : "answered"})`,
+    );
     const passThrough = await readOnly(provider, dblinkWrite("pg", 203));
     check(
       passThrough instanceof QueryError &&
