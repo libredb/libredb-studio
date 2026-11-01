@@ -46,6 +46,12 @@ export interface MtcDataItem {
   readonly componentType?: string;
   /** How deep the holding component sits. 0 at the device root. */
   readonly componentDepth: number;
+  /**
+   * Whether the item sits inside an `Adapters` or `Adapter` component, which the agent synthesises for each adapter it
+   * reads from: such a component's name, its id and its items' ids and `ADAPTER_URI` values carry the adapter's host
+   * and port. Agent-mode handles withhold these items (`agent-withheld.ts`).
+   */
+  readonly withinAdapter: boolean;
 }
 
 export interface MtcModel {
@@ -59,6 +65,9 @@ export interface MtcModel {
 }
 
 const CATEGORIES = new Set(["SAMPLE", "EVENT", "CONDITION"]);
+
+/** The components the agent writes for the adapters it reads from, under its own Agent device. */
+export const MTC_ADAPTER_COMPONENTS: ReadonlySet<string> = new Set(["Adapters", "Adapter"]);
 
 /** `Linear:X`, or `Linear` where the component has no name. */
 function segment(element: MtcElement): string {
@@ -99,7 +108,12 @@ export function indexMtconnectModel(root: MtcElement): MtcModel | undefined {
     const deviceName = device.attributes.name ?? deviceUuid;
     let itemCount = 0;
 
-    const walk = (element: MtcElement, path: readonly string[], holder: MtcElement | undefined): void => {
+    const walk = (
+      element: MtcElement,
+      path: readonly string[],
+      holder: MtcElement | undefined,
+      withinAdapter: boolean,
+    ): void => {
       const dataItems = child(element, "DataItems");
       if (dataItems !== undefined) {
         for (const item of dataItems.children) {
@@ -127,16 +141,20 @@ export function indexMtconnectModel(root: MtcElement): MtcModel | undefined {
             componentId: holder?.attributes.id,
             componentType: holder === undefined ? undefined : holder.name,
             componentDepth: path.length,
+            withinAdapter,
           });
           itemCount++;
         }
       }
       const components = child(element, "Components");
       if (components === undefined) return;
-      for (const component of components.children) walk(component, [...path, segment(component)], component);
+      for (const component of components.children) {
+        const adapter = withinAdapter || MTC_ADAPTER_COMPONENTS.has(component.name);
+        walk(component, [...path, segment(component)], component, adapter);
+      }
     };
 
-    walk(device, [], undefined);
+    walk(device, [], undefined, false);
     devices.push({ name: deviceName, uuid: deviceUuid, itemCount });
   }
 
