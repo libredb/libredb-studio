@@ -11,12 +11,15 @@
  *  - the open: the agent profile reads the node's version and opens it, the operations profile opens it too, and an
  *    editor handle's `queryReadOnly` refuses with nothing sent; with security off no login exists to check, and a
  *    dot-led hidden index, a hidden index without a dot, an alias over it, a hidden data stream, the built-in
- *    `ilm-history-7`, `"*"` while that alias exists, and statements holding a comment, a number run into a word or an
- *    `EXPLAIN` of a catalog command each answer raw and are refused by the statement check before they are sent;
- *  - the login check, with security on: the agent profile's open asks the server what the login may do, and refuses
- *    the superuser, a role reading the security indices with `allow_restricted_indices` and a role granted one
- *    restricted family by its pattern alone before any statement, while the operations profile still opens as the
- *    superuser, since it sends no statement;
+ *    `ilm-history-7`, `"*"` while that alias exists, expressions that exclude that alias after a wildcard that reaches
+ *    it, and statements holding a comment, a number run into a word or an `EXPLAIN` of a catalog command each answer
+ *    raw and are refused by the statement check before they are sent, and with the reader not asked, the server's two
+ *    resolutions alone refuse each expression that excludes the alias;
+ *  - the login check, with security on: the agent profile's open asks the server what the login may do and lists its
+ *    privileges, and refuses the superuser, a role reading the security indices with `allow_restricted_indices`, a
+ *    role granted one restricted family by its pattern alone and a role granted two Kibana indices of other releases
+ *    by name before any statement, while the operations profile still opens as the superuser, since it sends no
+ *    statement;
  *  - the boundary: each write and DDL statement sent through `queryReadOnly` is refused by the statement check before
  *    it is sent, but the one SELECT-shaped write, which reads one visible index and is refused by the grammar in the
  *    engine's own words (a `line 1:N: mismatched input` or `extraneous input` refusal, never a budget or a credential
@@ -61,13 +64,17 @@ import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import type { AgentToolContext } from "@/lib/agent/tools";
 import { createDatabaseProvider, executionContextFor } from "@/lib/db/factory";
 import {
+  assertReferenceVisible,
   CHARACTER_REFUSAL,
   COMMENT_REFUSAL,
   DOT_INDEX_REFUSAL,
+  disagreementRefusal,
+  EXCLUSION_REFUSAL,
   hiddenTargetRefusal,
   NUMBER_REFUSAL,
   STATEMENT_REFUSAL,
 } from "@/lib/db/providers/sql/search/elasticsearch-agent-index-fence";
+import { SearchHttpTransport } from "@/lib/db/providers/sql/search/http-transport";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
@@ -323,7 +330,9 @@ async function builtInStream(name: string): Promise<boolean> {
 /**
  * With security off there is no login to check, so the statement check is what keeps hidden targets from the agent.
  * Each statement below answers raw on 9.1.4, and `queryReadOnly` refuses each before it is sent: a hidden target by
- * the server's answer about the statement's index, and a statement the reader cannot read with certainty by the reader.
+ * the server's answer about the statement's index, and a statement the reader cannot read with certainty, or whose
+ * expression holds an exclusion, by the reader. With the reader not asked, an expression with an exclusion is refused
+ * by the server's two resolutions alone, which do not resolve it alike.
  */
 async function checkHiddenTargets(): Promise<void> {
   const dot = `.${SCRATCH}`;
@@ -361,6 +370,9 @@ async function checkHiddenTargets(): Promise<void> {
       [`SELECT COUNT(*) AS n FROM ${hid} -- note\r`, COMMENT_REFUSAL],
       [`SELECT 1.5AS n FROM ${hid}`, NUMBER_REFUSAL],
       [`EXPLAIN DESC LIKE '${hid}'`, STATEMENT_REFUSAL],
+      [`SELECT COUNT(*) AS n FROM "probe_orders,${SCRATCH}_al*,-${alias}"`, EXCLUSION_REFUSAL],
+      [`SELECT COUNT(*) AS n FROM "*,-${alias}"`, EXCLUSION_REFUSAL],
+      [`SYS COLUMNS "probe_orders,${SCRATCH}_al*,-${alias}"`, EXCLUSION_REFUSAL],
     ];
     for (const [sql, sentence] of cases) {
       const raw = await send("POST", "/_sql?format=json", { query: sql });
@@ -373,6 +385,20 @@ async function checkHiddenTargets(): Promise<void> {
         `security off: ${JSON.stringify(sql)} answers raw, and the statement check refuses it unsent -> ${refused?.message.slice(0, 90)}`,
       );
     }
+    // The server's two resolutions alone, with no reader in front of them.
+    const transport = new SearchHttpTransport("elasticsearch", connection());
+    for (const reference of [`probe_orders,${SCRATCH}_al*,-${alias}`, `*,-${alias}`]) {
+      const sql = `SELECT COUNT(*) AS n FROM "${reference}"`;
+      const raw = await send("POST", "/_sql?format=json", { query: sql });
+      const refused = await refusalOf(() => assertReferenceVisible(sql, reference, transport));
+      check(
+        raw.status === 200 &&
+          raw.text.includes('"rows":[[') &&
+          refused?.name === "RefusedBeforeSendError" &&
+          refused.message === disagreementRefusal(reference),
+        `security off: the server's two resolutions alone refuse ${JSON.stringify(reference)}, which answers raw -> ${refused?.message.slice(0, 90)}`,
+      );
+    }
   } finally {
     await send("DELETE", `/_data_stream/${stream}`);
     await send("DELETE", `/_index_template/${stream}_t`);
@@ -383,14 +409,15 @@ async function checkHiddenTargets(): Promise<void> {
 }
 
 const TOO_BROAD =
-  "The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all and reads no restricted system index; the user ";
+  "The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; the user ";
 const GRANT_INSTEAD =
   ", so the connection is refused. Give the agent a user whose role holds the cluster action cluster:monitor/main and read and view_index_metadata on the indices it reads, without allow_restricted_indices, such as the libredb_agent_read role";
 
 /**
- * The open's login check. With security on, the superuser, a role reading the security indices and a role granted one
- * restricted family by its pattern are refused before any statement; with it off there is no login, and the statement
- * check keeps hidden targets from the agent.
+ * The open's login check. With security on, the superuser, a role reading the security indices, a role granted one
+ * restricted family by its pattern, and a role granted two Kibana indices of other releases by their names, which every
+ * ask of the check answers false and the listing of its privileges names, are refused before any statement; with it
+ * off there is no login, and the statement check keeps hidden targets from the agent.
  */
 async function checkLogins(): Promise<void> {
   if (!SECURED) {
@@ -419,6 +446,11 @@ async function checkLogins(): Promise<void> {
       "a role granted the machine learning configuration family by its pattern alone",
       [".ml-config*"],
       "read on the restricted system index names and patterns .ml-config*, .ml-config",
+    ],
+    [
+      "a role granted two Kibana indices of other releases by their names",
+      [".kibana_8.18.0_001", ".kibana_9.1.0_001"],
+      "an index privilege granted with allow_restricted_indices on .kibana_8.18.0_001, .kibana_9.1.0_001",
     ],
   ];
   for (const [name, patterns, holds] of roles) {

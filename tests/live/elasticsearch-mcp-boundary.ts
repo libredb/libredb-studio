@@ -11,8 +11,9 @@
  * fence removed, against real nodes:
  *
  *  - the open, through MCP: the 9.1.4 node is served under `agent-read-only` with security off, where no login exists
- *    to check; with it on, the open asks the server what the seed's login may do, so a seed signed in as the superuser,
- *    and one whose role reads the security indices with `allow_restricted_indices`, are refused before any statement
+ *    to check; with it on, the open asks the server what the seed's login may do and lists its privileges, so a seed
+ *    signed in as the superuser, one whose role reads the security indices with `allow_restricted_indices`, and one
+ *    whose role is granted two Kibana indices of other releases by name with it, are refused before any statement
  *    runs, in the MCP refusal sentence, while the documented seed role and a role reading every unrestricted index are
  *    served; a user whose role cannot read the version is refused the same way, and an OpenSearch node behind an
  *    Elasticsearch connection fails the open's connect probe, so nothing runs there either;
@@ -24,10 +25,10 @@
  *    its document counts, every mapping, the aliases, the templates and the pipelines read back the same before and
  *    after;
  *  - the hidden targets, with security off: a dot-led hidden index, a hidden index without a dot, an alias over it, a
- *    hidden data stream, the built-in `ilm-history-7`, `"*"` while that alias exists, and statements holding a comment,
- *    a number run into a word or an `EXPLAIN` of a catalog command, each created by the script where it is not built in,
- *    each answer raw, and each is refused through MCP before it is sent; an alias and a data stream that are not
- *    hidden are served;
+ *    hidden data stream, the built-in `ilm-history-7`, `"*"` while that alias exists, an expression that excludes the
+ *    alias a wildcard of it reaches, and statements holding a comment, a number run into a word or an `EXPLAIN` of a
+ *    catalog command, each created by the script where it is not built in, each answer raw, and each is refused through
+ *    MCP before it is sent; an alias and a data stream that are not hidden are served;
  *  - the security index with security on: signed in as a role reading every unrestricted index, each spelling of it
  *    that 9.1.4 answers the superuser raw is refused by the provider's statement check before it is sent, `"*"` counts
  *    the open indices alone, and the least-privilege role is refused the security index by the server and served the
@@ -64,6 +65,7 @@ import {
   CHARACTER_REFUSAL,
   COMMENT_REFUSAL,
   DOT_INDEX_REFUSAL,
+  EXCLUSION_REFUSAL,
   expressionRefusal,
   FROM_REFUSAL,
   hiddenTargetRefusal,
@@ -278,7 +280,7 @@ async function checkOpen(agent: ManagedConnection, admin: ManagedConnection): Pr
   const superuser = await mcp(admin, { sql: "SELECT COUNT(*) AS n FROM probe_buckets" }, RUN_READ_QUERY);
   check(
     textOf(superuser.result) ===
-      `run_read_query cannot run on this connection: The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all and reads no restricted system index; the user ${ADMIN_USER} holds the cluster privilege all and read on every index, the restricted system indices included, so the connection is refused. ${GRANT_INSTEAD}. It runs on ${ENGINES}.` &&
+      `run_read_query cannot run on this connection: The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; the user ${ADMIN_USER} holds the cluster privilege all and read on every index, the restricted system indices included, so the connection is refused. ${GRANT_INSTEAD}. It runs on ${ENGINES}.` &&
       superuser.acquired.join() === "agent-read-only",
     `open: with security on, a seed signed in as the superuser is refused at open -> ${textOf(superuser.result).slice(0, 220)}`,
   );
@@ -321,11 +323,13 @@ async function userWithRole(kind: string, role: Record<string, unknown>): Promis
   return seed(name, SECURED, { user: name, password: USER_PASSWORD });
 }
 
-const LOGIN_KINDS = ["restricted", "seed", "wide"] as const;
+const LOGIN_KINDS = ["restricted", "kibana", "seed", "wide"] as const;
 
 /**
- * The open's login check, with security on: a role reading the security indices with `allow_restricted_indices` is
- * refused before any statement, and the documented seed role and a role reading every unrestricted index are served.
+ * The open's login check, with security on: a role reading the security indices with `allow_restricted_indices`, and a
+ * role granted two Kibana indices of other releases by name with it, which every ask of the check answers false and the
+ * listing of its privileges names, are refused before any statement, and the documented seed role and a role reading
+ * every unrestricted index are served.
  */
 async function checkLogins(): Promise<{ seedRole: ManagedConnection; wide: ManagedConnection }> {
   const restricted = await userWithRole("restricted", {
@@ -338,8 +342,21 @@ async function checkLogins(): Promise<{ seedRole: ManagedConnection; wide: Manag
   const refused = await mcp(restricted, { sql: "SELECT COUNT(*) AS n FROM probe_buckets" }, RUN_READ_QUERY);
   check(
     textOf(refused.result) ===
-      `run_read_query cannot run on this connection: The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all and reads no restricted system index; the user ${SCRATCH}_restricted holds read on the restricted system index names and patterns .security*, .security-7, .security-tokens-7, .security-profile-8, so the connection is refused. ${GRANT_INSTEAD}. It runs on ${ENGINES}.`,
+      `run_read_query cannot run on this connection: The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; the user ${SCRATCH}_restricted holds read on the restricted system index names and patterns .security*, .security-7, .security-tokens-7, .security-profile-8, so the connection is refused. ${GRANT_INSTEAD}. It runs on ${ENGINES}.`,
     `login: a role reading .security* with allow_restricted_indices is refused at open -> ${textOf(refused.result).slice(0, 220)}`,
+  );
+  const kibana = await userWithRole("kibana", {
+    cluster: ["cluster:monitor/main"],
+    indices: [
+      { names: ["probe_*"], privileges: ["read", "view_index_metadata"] },
+      { names: [".kibana_8.18.0_001", ".kibana_9.1.0_001"], privileges: ["read"], allow_restricted_indices: true },
+    ],
+  });
+  const kibanaRefused = await mcp(kibana, { sql: "SELECT COUNT(*) AS n FROM probe_buckets" }, RUN_READ_QUERY);
+  check(
+    textOf(kibanaRefused.result) ===
+      `run_read_query cannot run on this connection: ${"The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; "}the user ${SCRATCH}_kibana holds an index privilege granted with allow_restricted_indices on .kibana_8.18.0_001, .kibana_9.1.0_001, so the connection is refused. ${GRANT_INSTEAD}. It runs on ${ENGINES}.`,
+    `login: a role granted two Kibana indices of other releases by name with allow_restricted_indices is refused at open -> ${textOf(kibanaRefused.result).slice(0, 220)}`,
   );
   const seedRole = await userWithRole("seed", {
     cluster: ["cluster:monitor/main", "monitor", "read_pipeline"],
@@ -408,6 +425,8 @@ async function checkHiddenTargets(agent: ManagedConnection): Promise<void> {
       [`SELECT COUNT(*) AS n FROM ${hid} -- note\r`, unsent(COMMENT_REFUSAL)],
       [`SELECT 1.5AS n FROM ${hid}`, unsent(NUMBER_REFUSAL)],
       [`EXPLAIN DESC LIKE '${hid}'`, COMMAND_REFUSAL],
+      [`SELECT COUNT(*) AS n FROM "probe_orders,${SCRATCH}_al*,-${alias}"`, unsent(EXCLUSION_REFUSAL)],
+      [`SELECT COUNT(*) AS n FROM "*,-${alias}"`, unsent(EXCLUSION_REFUSAL)],
     ];
     for (const [sql, refusal] of cases) {
       const raw = await send(ORIGIN, "POST", "/_sql?format=json", { query: sql });
