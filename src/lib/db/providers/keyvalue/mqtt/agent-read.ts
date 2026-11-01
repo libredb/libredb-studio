@@ -50,7 +50,7 @@ import {
  * The least of the read's time budget the dial is given. An agent read listens for `MQTT_READ_BUDGET_MS`, so a budget
  * shorter than that plus this is refused before anything is sent, rather than cut into a shorter window.
  */
-export const MQTT_AGENT_MIN_DIAL_MS = 1_000;
+const MQTT_AGENT_MIN_DIAL_MS = 1_000;
 
 /** The least time budget an agent read is admitted with: the window plus the shortest dial. */
 export const MQTT_AGENT_MIN_STATEMENT_MS = MQTT_READ_BUDGET_MS + MQTT_AGENT_MIN_DIAL_MS;
@@ -59,7 +59,7 @@ export const MQTT_AGENT_MIN_STATEMENT_MS = MQTT_READ_BUDGET_MS + MQTT_AGENT_MIN_
  * What the dial leaves of the time budget for the session to leave and answer, so a window that ends on its own clock
  * is answered before the read's deadline rather than racing it.
  */
-export const MQTT_AGENT_SETTLE_MS = 250;
+const MQTT_AGENT_SETTLE_MS = 250;
 
 /** One read's answer, before projection: the session's outcome, and for the topic read the row of its topic. */
 export type MqttAgentAnswer =
