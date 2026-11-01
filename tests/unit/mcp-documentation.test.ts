@@ -196,6 +196,18 @@ describe("docs/MCP.md", () => {
     );
   });
 
+  test("says what InfluxDB 3 needs of a seed and that inspect_schema opens it on any 3.x server", () => {
+    expect(MCP_DOC).toContain(
+      "InfluxDB 3 (SQL) by the 3.12 Core planner, which refuses every write, DDL, `COPY`, `SET` and transaction statement whatever the token, on a server checked at open to be that line ([influxdb3.md](./providers/influxdb3.md))",
+    );
+    expect(MCP_DOC).toContain(
+      "On InfluxDB 3 (SQL) every Core token is an admin token, so no seed token is least-privilege and none is asked for: `run_read_query` refuses instead a server that is not InfluxDB 3 Core on the 3.12 line, whose planner's write refusals were captured, as the open does for agent mode ([influxdb3.md](./providers/influxdb3.md) section 3.5).",
+    );
+    expect(MCP_DOC).toContain(
+      "InfluxDB 3 checks its server's line only for a connection that sends statements, so `inspect_schema` opens an InfluxDB 3 connection on any 3.x server, as the editor does.",
+    );
+  });
+
   test("names how each engine run_read_query serves enforces read-only, from the one engine list", () => {
     const line = MCP_DOC.split("\n").find((text) => text.startsWith("- Read-only is the database's own enforcement"));
     for (const type of RUN_READ_QUERY_TYPES) expect(line).toContain(DB_UI_CONFIG[type].label);

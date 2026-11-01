@@ -255,7 +255,9 @@ async function main(): Promise<void> {
     check(
       result.isError === true &&
         text.startsWith("run_read_query cannot run on this connection: ClickHouse user ") &&
-        text.endsWith("It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse and libSQL.") &&
+        text.endsWith(
+          "It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL and InfluxDB 3 (SQL).",
+        ) &&
         text.includes(says),
       `open: ${connection.name === ADMIN.user ? "the writable admin" : connection.name} is refused through MCP -> ${text}`,
     );

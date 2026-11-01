@@ -8508,7 +8508,7 @@ Found 2026-10-03 while designing the Neo4j provider (spec 6.4).
 No MCP tool runs InfluxQL: the `influxql` language pack declares no MCP facet (`AGENT_LANGUAGE_MCP_FACETS.influxql` is null) and `MCP_STATEMENT_READ.influxdb` is false; plan mode and the MCP metadata tools work (`MCP_EXPOSABLE` in `src/lib/db/compatibility.ts`).
 The agent half closed on 2026-10-30: the `influxdb` provider implements `queryReadOnly` for a principal the server proves read-only before every statement, under the agent's InfluxQL statement reader (`docs/providers/influxdb.md`, section Agent mode).
 Its agent credential takes the default form, `agentUser` and `agentPassword` together, which is a 1.x user; a 2.x token beside the connection's own credential has no form, because one provider class serves both lines and declares its form before it knows the line, so a 2.x connection gives the agent a read-only token as its own credential.
-`influxdb3` left this entry on 2026-10-29: agent mode executes its DataFusion SQL under the 3.12 Core planner's write refusals, and its MCP statement read stays closed until a change of its own opens it.
+`influxdb3` left this entry on 2026-10-29: agent mode executes its DataFusion SQL under the 3.12 Core planner's write refusals, and on 2026-11-01 MCP's `run_read_query` opened on it under the same boundary (`docs/providers/influxdb3.md` section 3.5), with `MCP_STATEMENT_READ.influxdb` left false.
 
 Found 2026-10-04 while designing the InfluxDB provider (ruling R10).
 

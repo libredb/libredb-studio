@@ -714,9 +714,10 @@ describe("MCP_STATEMENT_READ", () => {
     expect(open.filter((type) => !AGENT_EXECUTION_ENGINES.includes(type))).toEqual([]);
   });
 
-  test("opens the five SQL engines run_read_query served before the record existed, ClickHouse, libSQL, MongoDB, Kubernetes, and no other", () => {
-    // ClickHouse and libSQL each opened to run_read_query on their own, MongoDB with run_mongo_command, Kubernetes with
-    // run_kubectl_read.
+  test("opens the five SQL engines run_read_query served before the record existed, ClickHouse, libSQL, InfluxDB 3, MongoDB, Kubernetes, and no other", () => {
+    // ClickHouse, libSQL and InfluxDB 3 each opened to run_read_query on their own, MongoDB with run_mongo_command,
+    // Kubernetes with run_kubectl_read. InfluxDB over InfluxQL, InfluxDB 3's sibling in one provider directory, stays
+    // closed.
     expect(SHIPPED_DATABASE_TYPES.filter((type) => MCP_STATEMENT_READ[type])).toEqual([
       "postgres",
       "mysql",
@@ -726,6 +727,7 @@ describe("MCP_STATEMENT_READ", () => {
       "mssql",
       "clickhouse",
       "mongodb",
+      "influxdb3",
       "kubernetes",
     ]);
   });

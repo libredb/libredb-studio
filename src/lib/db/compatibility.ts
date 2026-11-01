@@ -535,8 +535,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // As Milvus and Qdrant (#1566 spec 3.5): offered for the two metadata tools; tenant names are a collection's detail,
   // listed in its Source up to 1,024 as Milvus lists partitions, and `run_read_query` does not serve it.
   weaviate: true,
-  // Both offered for the two metadata tools (InfluxDB spec I13); `run_read_query` does not serve either, because
-  // neither provider implements `queryReadOnly`.
+  // Both offered for the two metadata tools (InfluxDB spec I13). Both providers implement `queryReadOnly` for agent
+  // mode; `run_read_query` serves InfluxDB 3's SQL, opened by MCP_STATEMENT_READ, and no MCP statement tool reads
+  // InfluxQL, so `influxdb` stays closed there (BACKLOG B94).
   influxdb: true,
   influxdb3: true,
   // Outside this version, as etcd's: Oxia key paths name Pulsar tenants, namespaces and topics (SEC-05), the
@@ -601,7 +602,7 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
  * joins agent mode does not open to MCP as a side effect: its row stays false until a change of its own opens it.
  *
  * True for the five SQL engines `run_read_query` served before this record existed, so nothing moved when it landed,
- * for ClickHouse and libSQL, each opened to `run_read_query` by a change of its own, for MongoDB, whose command `run_mongo_command` reads, and for Kubernetes, whose kubectl line `run_kubectl_read` reads
+ * for ClickHouse, libSQL and InfluxDB 3, each opened to `run_read_query` by a change of its own, for MongoDB, whose command `run_mongo_command` reads, and for Kubernetes, whose kubectl line `run_kubectl_read` reads
  * under the agent's machine redaction. An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records
  * above it, and held false wherever `MCP_EXPOSABLE` is false and true only for an engine agent mode executes on by
  * `tests/unit/db/compatibility.test.ts`.
@@ -663,8 +664,10 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   weaviate: false,
   // Agent mode executes statements on InfluxDB, and MCP read stays closed on it until a change of its own opens it.
   influxdb: false,
-  // Agent mode executes statements on InfluxDB 3, and MCP read stays closed on it until a change of its own opens it.
-  influxdb3: false,
+  // Opened on its own: run_read_query runs under the boundary agent mode uses, the 3.12 Core planner's write refusals
+  // on a server checked at open to be that line, behind the read policy and the system schema fence
+  // (docs/providers/influxdb3.md section 3.5).
+  influxdb3: true,
   // Agent mode executes metadata-only reads on Oxia, and MCP read stays closed on it until a change of its own opens
   // it.
   oxia: false,

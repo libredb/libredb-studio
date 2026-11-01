@@ -82,7 +82,7 @@ Reading `query_sql` as jsonl keeps every integer exact and every request inside 
 ### 3.4 Machine access
 
 MCP is offered (`MCP_EXPOSABLE`): `list_connections` and `inspect_schema` see the session database's tables and columns, as the tree does, and never `_internal` or a `system.*` table.
-Agent mode executes statements on this type under the agent read-only profile (section 3.5); MCP `run_read_query` runs none, because MCP's statement read stays closed on `influxdb3` (`MCP_STATEMENT_READ.influxdb3` is false) until a change of its own opens it.
+Agent mode executes statements on this type under the agent read-only profile (section 3.5), and MCP's `run_read_query` runs them under the same profile (`MCP_STATEMENT_READ.influxdb3` is true), described in "MCP read" in section 3.5.
 Plan mode drafts statements in the language section 5.1 names.
 
 ### 3.5 The agent read-only profile rests on the planner
@@ -137,6 +137,17 @@ A statement past its deadline is refused as over the time budget; the server's q
 - a read, an `EXPLAIN` and the catalog read answer their rows;
 - on the file-limit server, a read over more files than the limit is refused in the server's words.
 
+#### MCP read
+
+MCP's `run_read_query` serves InfluxDB 3 (SQL) through the agent's own path: it takes the connection under the agent read-only profile, so the open checks the server is InfluxDB 3 Core on the 3.12 line, and sends the statement through `queryReadOnly`, after the read policy and the `system` schema fence, alone in one `query_sql` request.
+It shares the agent's profiled handle, so the server check runs at the open of that handle, as in agent mode, not before each statement.
+A seed carries no separate agent token, and on Core every token is an admin token, so the seed's own token is the one sent; the boundary is the planner's, never the token's, and an Enterprise server, a Core server outside the 3.12 line and a server that names no version are each refused at open, in the tool's sentence, before any statement runs.
+MCP's statement fence refuses a write-shaped statement before anything is acquired, as defence in depth; it also refuses `SHOW`, `DESCRIBE` and `EXPLAIN ANALYZE`, which the read policy admits.
+A read of a `system` table other than `system.influxdb_schema` passes that fence and is refused by the provider's `system` fence before anything is sent.
+Values are not withheld: rows reach the MCP client as they reach the agent.
+It runs a `SELECT` (a `WITH` is fine), `VALUES`, or `EXPLAIN` without `ANALYZE`: `TABLE` is a parser error on 3.12.0 Core and the read policy refuses it, and `EXPLAIN ANALYZE` runs the statement; it pages with `LIMIT n OFFSET m`, and an offset on `VALUES`, `EXPLAIN` or a query with its own `LIMIT` is refused.
+A result past 1000 rows or 1 MiB is refused, never cut, and one past `timeout_ms` is answered as the timeout: the provider closes the request at the deadline, and the server frees the statement's work (section 5.10).
+
 #### Agent language pack
 
 Statement-language family: `sql`.
@@ -156,7 +167,7 @@ Every statement it composes is DataFusion's, run on 3.12.0 Core through the agen
 The engine keeps no foreign key, no index and no row estimate outside the `system` schema, so those three catalog kinds answer no rows.
 `profile_table` is offered and answers `UNSUPPORTED_DIALECT`, and `compare_plans` reads every plan as `unknown`, because the provider declares no explain strategy with an agent reading ([B143](../BACKLOG.md)).
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-MCP's statement read stays closed on InfluxDB 3 (`MCP_STATEMENT_READ.influxdb3` is false) until a change of its own opens it.
+MCP's `run_read_query` runs a statement on InfluxDB 3 (`MCP_STATEMENT_READ.influxdb3` is true) under the same boundary, described in "MCP read" above.
 
 ## 4. Connection
 
@@ -631,7 +642,7 @@ The token goes in `password`, there is no `user`, and `allowInsecureAuth: true` 
 - Count and Profile read the whole table and meet Core's file limit on a large one.
 - An admin token reads plugin secrets and other users' query text from `system.*` tables by name in the editor; the agent's `system` fence refuses every one but `system.influxdb_schema` (section 3.5).
 - InfluxDB 3 Enterprise is not tested, and Cloud Serverless and Dedicated cannot be reached by this type ([D201](../BACKLOG.md), [D202](../BACKLOG.md)).
-- No MCP `run_read_query`: MCP's statement read stays closed on this type (section 3.4).
+- MCP's `run_read_query` admits only the 3.12 Core line, as agent mode does, and its seed's token is an admin token like every Core token (section 3.5).
 - Agent mode offers `profile_table` and `compare_plans` with nothing to read them by ([B143](../BACKLOG.md)), and admits only the 3.12 Core line its write refusals were captured on.
 
 ## Migration DDL

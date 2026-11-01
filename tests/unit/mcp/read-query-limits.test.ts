@@ -58,6 +58,7 @@ describe("the texts", () => {
     expect(inSqlPaging("postgres")).toBe("Page it in SQL: LIMIT n OFFSET m.");
     expect(inSqlPaging("clickhouse")).toBe("Page it in SQL: LIMIT n OFFSET m.");
     expect(inSqlPaging("libsql")).toBe("Page it in SQL: LIMIT n OFFSET m.");
+    expect(inSqlPaging("influxdb3")).toBe("Page it in SQL: LIMIT n OFFSET m.");
     expect(inSqlPaging("mssql")).toBe("Page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.");
     expect(moreRowsThanPageableHint("sqlite")).toBe(
       "More rows exist than this result holds, and this query cannot be paged with offset. Page it in SQL: LIMIT n OFFSET m.",
@@ -87,11 +88,11 @@ describe("the texts", () => {
     expect(
       profileRefusalText(
         "The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution.",
-        "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse and libSQL",
+        "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL and InfluxDB 3 (SQL)",
         "run_read_query",
       ),
     ).toBe(
-      "run_read_query cannot run on this connection: The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution. It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse and libSQL.",
+      "run_read_query cannot run on this connection: The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution. It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL and InfluxDB 3 (SQL).",
     );
   });
 });
@@ -102,7 +103,9 @@ describe("the texts", () => {
  * refuses `TABLE` where MySQL runs it, so a refusal names only what the connection's engine runs. ClickHouse
  * 26.7.1.1315, measured on 2026-11-01, answers a bare `VALUES` and `TABLE` with a syntax error (code 62) and runs
  * `EXPLAIN`. libSQL (sqld 0.24.33), measured on 2026-11-01 with a read-only token, runs a bare `VALUES` and `EXPLAIN`
- * (`EXPLAIN QUERY PLAN` too) and answers `TABLE` and `EXPLAIN ANALYZE` with a syntax error, as SQLite does.
+ * (`EXPLAIN QUERY PLAN` too) and answers `TABLE` and `EXPLAIN ANALYZE` with a syntax error, as SQLite does. InfluxDB 3
+ * Core 3.12.0, measured on 2026-11-01 through the agent read-only path, runs a bare `VALUES` and `EXPLAIN` (`VERBOSE`
+ * too), answers `TABLE` with a parser error, and runs `EXPLAIN ANALYZE`, which the fence refuses.
  */
 describe("the accepted forms each engine's refusal names", () => {
   test.each([
@@ -113,6 +116,7 @@ describe("the accepted forms each engine's refusal names", () => {
     ["mysql", "a SELECT (a WITH is fine), VALUES, TABLE (MySQL, not MariaDB), or EXPLAIN without ANALYZE"],
     ["clickhouse", "a SELECT (a WITH is fine), or EXPLAIN without ANALYZE"],
     ["libsql", "a SELECT (a WITH is fine), VALUES, or EXPLAIN"],
+    ["influxdb3", "a SELECT (a WITH is fine), VALUES, or EXPLAIN without ANALYZE"],
   ] as const)("%s: %s", (type, statements) => {
     expect(fenceRefusalText("NON_READ_STATEMENT", type)).toBe(
       `The statement was refused before it reached the database (NON_READ_STATEMENT). On this engine run_read_query runs one read-only statement: ${statements}.`,
@@ -155,6 +159,14 @@ describe("the offset rule", () => {
     [
       "EXPLAIN QUERY PLAN SELECT id FROM numbers",
       "libsql",
+      "This statement's result cannot be paged. Call again without offset.",
+    ],
+    ["SELECT room FROM home ORDER BY time LIMIT 2 OFFSET 1", "influxdb3", OWN_LIMIT],
+    ["SELECT room FROM home", "influxdb3", "This query cannot be paged with offset. Page it in SQL: LIMIT n OFFSET m."],
+    ["VALUES (1), (2), (3)", "influxdb3", "This statement's result cannot be paged. Call again without offset."],
+    [
+      "EXPLAIN SELECT count(*) FROM home",
+      "influxdb3",
       "This statement's result cannot be paged. Call again without offset.",
     ],
     ["VALUES (1), (2), (3)", "sqlite", "This statement's result cannot be paged. Call again without offset."],
@@ -275,6 +287,7 @@ describe("the prefixes the mapper matches still start a message in each provider
         "src/lib/db/providers/sql/sqlite.ts",
         "src/lib/db/providers/sql/duckdb/index.ts",
         "src/lib/db/providers/sql/libsql/index.ts",
+        "src/lib/db/providers/timeseries/influxdb/sql-agent-read.ts",
       ],
     },
     MSSQL_TIME_BUDGET_PREFIX: { prefix: MSSQL_TIME_BUDGET_PREFIX, files: ["src/lib/db/providers/sql/mssql.ts"] },
@@ -288,6 +301,7 @@ describe("the prefixes the mapper matches still start a message in each provider
     duckdb: ["src/lib/db/providers/sql/duckdb/index.ts"],
     clickhouse: ["src/lib/db/providers/sql/clickhouse/agent-read.ts", "src/lib/db/providers/sql/clickhouse/index.ts"],
     libsql: ["src/lib/db/providers/sql/libsql/agent-read.ts", "src/lib/db/providers/sql/libsql/index.ts"],
+    influxdb3: ["src/lib/db/providers/timeseries/influxdb/sql-agent-read.ts"],
     mongodb: ["src/lib/db/providers/document/mongodb/agent-read.ts"],
     kubernetes: [
       "src/lib/db/providers/platform/kubernetes/machine-read.ts",

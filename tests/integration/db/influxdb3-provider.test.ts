@@ -17,8 +17,14 @@
  * the ones `table_schema = 'iox'` keeps, are what the provider's listing answers), and the column listings of the
  * tables other than `home` and the hostile one, answered with `home`'s.
  */
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
+import { TransportError } from "@/lib/db/http/node-transport";
+import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
 import { createInfluxClient, type InfluxClientFactory } from "@/lib/db/providers/timeseries/influxdb/client";
 import { buildInfluxConnectionOptions } from "@/lib/db/providers/timeseries/influxdb/connection-options";
 import { SQL_ROUTES } from "@/lib/db/providers/timeseries/influxdb/routes";
@@ -26,7 +32,12 @@ import { INFLUX_ERROR_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/e
 import { evaluateInfluxSql } from "@/lib/db/providers/timeseries/influxdb/sql-policy";
 import { InfluxDB3Provider } from "@/lib/db/providers/timeseries/influxdb/sql-provider";
 import type { DatabaseConnection, ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
+import type { McpConnectionContext } from "@/lib/mcp/context";
+import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
+import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import { generateTableQuery } from "@/lib/query-generators";
+import type { ManagedConnection } from "@/lib/seed";
 import {
   type InfluxCapture,
   loadInfluxCapture,
@@ -35,6 +46,7 @@ import {
 } from "../../helpers/influxdb-fixtures";
 import { type RecordedInfluxRequest, recordingInfluxTransport } from "../../helpers/influxdb-transport";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
+import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 
 const S = INFLUX_ERROR_SENTENCES as unknown as Record<string, string & ((...parts: string[]) => string)>;
 
@@ -67,11 +79,20 @@ function ioxListing(): InfluxCapture {
 
 const IOX_TABLES = ["edge", "edge cases,m", "home", "numbers", "sparse", 'we"ird name;x'];
 
-/** The seeded server: each request answered by the capture of what it asks. */
-function recordedServer(extra: Readonly<Record<string, InfluxCapture>> = {}, execution: ProviderExecutionContext = {}) {
+/**
+ * The seeded server: each request answered by the capture of what it asks, `/ping` by `ping`. A statement `hold`
+ * matches is never answered: its request waits until its signal fires, then fails as the shared transport fails a
+ * request past its deadline, and `onClose` hears it.
+ */
+function recordedServer(
+  extra: Readonly<Record<string, InfluxCapture>> = {},
+  execution: ProviderExecutionContext = {},
+  ping: InfluxCapture = capture("ping-auth"),
+  hold: { readonly matches: (q: string) => boolean; readonly onClose: () => void } | null = null,
+) {
   const answer = (request: RecordedInfluxRequest): InfluxCapture => {
     const path = new URL(request.url).pathname;
-    if (path === "/ping") return capture("ping-auth");
+    if (path === "/ping") return ping;
     if (path === "/api/v3/configure/database") return capture("sql-databases");
     const { q } = JSON.parse(request.body as string) as { q: string };
     if (Object.hasOwn(extra, q)) return extra[q];
@@ -81,7 +102,26 @@ function recordedServer(extra: Readonly<Record<string, InfluxCapture>> = {}, exe
     throw new Error(`no capture answers ${q}`);
   };
   const wire = recordingInfluxTransport(Array.from({ length: 200 }, () => answer));
-  const factory: InfluxClientFactory = (options, routes) => createInfluxClient(options, routes, wire.factory);
+  const held: typeof wire.factory = (options) => {
+    const inner = wire.factory(options);
+    return {
+      request: (request) =>
+        hold !== null && request.body !== undefined && hold.matches((JSON.parse(request.body) as { q: string }).q)
+          ? new Promise((_resolve, reject) =>
+              request.signal.addEventListener(
+                "abort",
+                () => {
+                  hold.onClose();
+                  reject(new TransportError("timeout", "The request did not finish within its time limit"));
+                },
+                { once: true },
+              ),
+            )
+          : inner.request(request),
+      close: () => inner.close(),
+    };
+  };
+  const factory: InfluxClientFactory = (options, routes) => createInfluxClient(options, routes, held);
   return { provider: new InfluxDB3Provider(CONNECTION, {}, execution, factory), wire };
 }
 
@@ -366,5 +406,323 @@ describe("InfluxDB 3.12.0 Core's write refusals, replayed", () => {
     const overflow = await rejection(cells.provider.queryReadOnly(q, { ...BUDGET, maxResultBytes: 50_000_000 }));
     expect(overflow.message).toBe("Read-only execution exceeded the row budget: 2 rows > 1 allowed");
     await cells.provider.disconnect();
+  });
+});
+
+// ============================================================================
+// MCP run_read_query on InfluxDB 3
+// ============================================================================
+
+/**
+ * MCP's `run_read_query` serves InfluxDB 3 (SQL) through the acquisition and `queryReadOnly` agent mode uses: the
+ * connection is taken under `agent-read-only`, whose open checks the server is the 3.12 Core line whose planner's
+ * write refusals were captured, and every statement runs through the read policy and the `system` schema fence before
+ * it is sent. The MCP fence refuses a write-shaped statement before anything is acquired; a read of a `system` table
+ * passes that fence and is refused by the provider's own, after the open and before anything is sent.
+ */
+describe("MCP run_read_query on an InfluxDB 3 connection", () => {
+  const SEED = {
+    id: "seed:metrics",
+    name: "metrics",
+    type: "influxdb3",
+    seedId: "metrics",
+    managed: true,
+    mcp: true,
+    roles: ["*"],
+    host: "127.0.0.1",
+    port: 8181,
+    password: "not-a-real-token",
+    database: "home",
+    createdAt: new Date(0),
+  } as ManagedConnection;
+
+  let acquired: ExecutionProfile[] = [];
+  let requests: RecordedInfluxRequest[][] = [];
+  let answers: Record<string, InfluxCapture> = {};
+  let ping: InfluxCapture = capture("ping-auth");
+  let hold: Parameters<typeof recordedServer>[3] = null;
+
+  /** A context over the one seed, opening each acquisition by its profile, as the factory does. */
+  const context = {
+    caller: { username: "alice", role: "admin" },
+    visibleConnections: async () => [SEED],
+    resolve: async () => SEED,
+    acquire: async (_connection: ManagedConnection, profile: ExecutionProfile) => {
+      acquired.push(profile);
+      const { provider, wire } = recordedServer(answers, executionContextFor(profile), ping, hold);
+      requests.push(wire.requests);
+      await provider.connect();
+      return provider;
+    },
+  } as unknown as McpConnectionContext;
+
+  /** Every statement sent to `query_sql`, the open's included. */
+  const statementsSent = (): string[] =>
+    requests
+      .flat()
+      .filter((request) => new URL(request.url).pathname === "/api/v3/query_sql")
+      .map((request) => body(request).q);
+
+  function call(args: Record<string, unknown>) {
+    const parsed = RunReadQueryInputSchema.parse({ connection_id: SEED.id, ...args }) as McpStatementInput;
+    return runReadQuery(parsed, { context, signal: new AbortController().signal });
+  }
+
+  /** The same tool with its statement fence removed, so a statement reaches the boundary under test. */
+  const UNFENCED: McpStatementArm = { ...mcpStatementArm("run_read_query"), fence: () => null };
+
+  function unfenced(args: Record<string, unknown>) {
+    const parsed = UNFENCED.inputSchema.parse({ connection_id: SEED.id, ...args }) as McpStatementInput;
+    return runStatement(UNFENCED, parsed, { context, signal: new AbortController().signal });
+  }
+
+  /** A jsonl answer of `rows`, as `query_sql` gives one. */
+  const jsonl = (rows: readonly Record<string, unknown>[]): InfluxCapture => ({
+    ...capture("sql-keyword-select"),
+    name: "built",
+    body: rows.map((row) => `${JSON.stringify(row)}\n`).join(""),
+  });
+
+  const rooms = (count: number) => jsonl(Array.from({ length: count }, (_, index) => ({ room: `r${index + 1}` })));
+
+  beforeEach(() => {
+    acquired = [];
+    answers = {};
+    ping = capture("ping-auth");
+    hold = null;
+    requests = [];
+  });
+
+  test("the provider doc says MCP read is open here and names the statements it runs, from their records", () => {
+    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/influxdb3.md"), "utf8");
+
+    expect(MCP_STATEMENT_READ.influxdb3).toBe(true);
+    expect(MCP_STATEMENT_READ.influxdb).toBe(false);
+    expect(doc).toContain("`MCP_STATEMENT_READ.influxdb3` is true");
+    expect(doc).not.toContain("MCP's statement read stays closed");
+    expect(doc).not.toContain("No MCP `run_read_query`");
+    expect(doc.replaceAll("`", "")).toContain(`It runs ${readQueryFormsOf("influxdb3").statements}:`);
+  });
+
+  test("reads rows under the agent profile after the open's server check, paged one row past max_rows", async () => {
+    answers = { "SELECT room FROM home ORDER BY time LIMIT 3": rooms(3) };
+
+    const result = await call({ sql: "SELECT room FROM home ORDER BY time", max_rows: 2 });
+
+    expect(result.isError).toBeUndefined();
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(statementsSent().at(-1)).toBe("SELECT room FROM home ORDER BY time LIMIT 3");
+    expect(result.structuredContent).toMatchObject({
+      connection_id: SEED.id,
+      columns: [{ name: "room" }],
+      rows: [{ room: "r1" }, { room: "r2" }],
+      row_count: 2,
+      truncated: true,
+      truncated_by: "max_rows",
+      pagination: { offset: 0, limit: 2, hasMore: true, nextOffset: 2, wasLimited: true },
+      hint: "Call again with offset 2 for the next page.",
+    });
+    expect((result.content as { text: string }[])[0]?.text).toBe(MCP_UNTRUSTED_NOTICE);
+  });
+
+  test("pages with DataFusion's own LIMIT n OFFSET m", async () => {
+    answers = { "SELECT room FROM home ORDER BY time LIMIT 3 OFFSET 2": rooms(1) };
+
+    const result = await call({ sql: "SELECT room FROM home ORDER BY time", max_rows: 2, offset: 2 });
+
+    expect(statementsSent().at(-1)).toBe("SELECT room FROM home ORDER BY time LIMIT 3 OFFSET 2");
+    expect(result.structuredContent).toMatchObject({
+      rows: [{ room: "r1" }],
+      pagination: { offset: 2, limit: 2, hasMore: false, nextOffset: null, wasLimited: true },
+    });
+  });
+
+  test.each([
+    ["VALUES (1), (2), (3)", "This statement's result cannot be paged. Call again without offset."],
+    ["EXPLAIN SELECT count(*) FROM home", "This statement's result cannot be paged. Call again without offset."],
+    [
+      "SELECT room FROM home LIMIT 5",
+      "This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: LIMIT n OFFSET m.",
+    ],
+  ])("an offset on %p is refused before the statement is sent", async (sql, text) => {
+    const result = await call({ sql, offset: 1 });
+
+    expect(result).toEqual({ content: [{ type: "text", text }], isError: true });
+    expect(statementsSent()).toEqual([]);
+  });
+
+  const fenced = (code: string) =>
+    `The statement was refused before it reached the database (${code}). On this engine run_read_query runs one read-only statement: a SELECT (a WITH is fine), VALUES, or EXPLAIN without ANALYZE.`;
+
+  test.each([
+    ["INSERT INTO home (room, temp, time) VALUES ('Probe', 1.0, now())", "NON_READ_STATEMENT"],
+    ["INSERT INTO system.queries SELECT * FROM system.queries", "NON_READ_STATEMENT"],
+    ["DELETE FROM home WHERE room = 'Kitchen'", "NON_READ_STATEMENT"],
+    ["UPDATE home SET temp = 0", "NON_READ_STATEMENT"],
+    ["DROP TABLE home", "NON_READ_STATEMENT"],
+    ["CREATE TABLE libredb_t AS SELECT 1 AS a", "NON_READ_STATEMENT"],
+    ["CREATE EXTERNAL TABLE libredb_x STORED AS CSV LOCATION '/tmp/not-a-real-file.csv'", "NON_READ_STATEMENT"],
+    ["COPY home TO '/tmp/not-a-real-copy.csv'", "NON_READ_STATEMENT"],
+    ["TRUNCATE TABLE home", "NON_READ_STATEMENT"],
+    ["SET datafusion.execution.batch_size = 1", "NON_READ_STATEMENT"],
+    ["PREPARE libredb_p AS SELECT 1", "NON_READ_STATEMENT"],
+    ["BEGIN", "NON_READ_STATEMENT"],
+    ["SHOW TABLES", "NON_READ_STATEMENT"],
+    ["SELECT 1; DROP TABLE home", "MULTIPLE_STATEMENTS"],
+    ["WITH x AS (SELECT 1) INSERT INTO home SELECT * FROM home", "NON_READ_STATEMENT"],
+    ["EXPLAIN ANALYZE SELECT count(*) FROM home", "SIDE_EFFECT_KEYWORD"],
+    ["EXPLAIN INSERT INTO home (room, temp, time) VALUES ('Probe', 1.0, now())", "SIDE_EFFECT_KEYWORD"],
+  ])("%p is refused at admission, before anything is acquired or sent", async (sql, code) => {
+    const result = await call({ sql });
+
+    expect(result).toEqual({ content: [{ type: "text", text: fenced(code) }], isError: true });
+    expect(acquired).toEqual([]);
+  });
+
+  const SYSTEM_REFUSAL =
+    "The statement was refused before it reached the database: The agent reads no table of InfluxDB 3's system schema but system.influxdb_schema: the others hold other queries' text, files and engine logs.";
+
+  test.each([
+    "SELECT * FROM system.queries",
+    "SELECT * FROM system.parquet_files",
+    "SELECT * FROM system.processing_engine_logs",
+    'SELECT query_text FROM "SYSTEM"."queries"',
+    "SELECT * FROM public.system.queries",
+  ])("%p passes the MCP fence and is refused by the provider's system fence before it is sent", async (sql) => {
+    const result = await call({ sql });
+
+    expect(result).toEqual({ content: [{ type: "text", text: SYSTEM_REFUSAL }], isError: true });
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(statementsSent().filter((q) => q.includes("system"))).toEqual([]);
+  });
+
+  test("system.influxdb_schema, the one system table the agent reads, is read", async () => {
+    answers = { "SELECT * FROM system.influxdb_schema LIMIT 101": capture("sql-schema-home") };
+
+    const result = await call({ sql: "SELECT * FROM system.influxdb_schema" });
+
+    expect(result.isError).toBeUndefined();
+    expect((result.structuredContent?.rows as unknown[]).length).toBeGreaterThan(0);
+  });
+
+  test("a write the MCP fence would refuse, the fence removed, is refused by the provider's read policy unsent", async () => {
+    const result = await unfenced({ sql: "DELETE FROM home WHERE room = 'Kitchen'" });
+
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: `The statement was refused before it reached the database: ${(evaluateInfluxSql("DELETE FROM home WHERE room = 'Kitchen'") as { message: string }).message}`,
+        },
+      ],
+      isError: true,
+    });
+    expect(statementsSent()).toEqual([]);
+  });
+
+  test("a planner refusal that reaches the server is answered as the database's own refusal", async () => {
+    const refusal = capture("write-refusal/insert-values");
+    answers = { "SELECT 1 LIMIT 101": refusal };
+
+    const result = await call({ sql: "SELECT 1" });
+
+    expect(result.isError).toBe(true);
+    const text = (result.content as { text: string }[]).map((part) => part.text);
+    expect(text[0]).toBe(MCP_UNTRUSTED_NOTICE);
+    expect(text[1]).toStartWith(MCP_ENGINE_ERROR_PREFIX);
+    expect(text[1]).toContain("DML not supported: Insert Into");
+  });
+
+  const refusedAtOpen = (sentence: string) => ({
+    content: [
+      {
+        type: "text" as const,
+        text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${RUN_READ_QUERY_ENGINES}.`,
+      },
+    ],
+    isError: true as const,
+  });
+
+  test.each([
+    [
+      "an Enterprise server",
+      "InfluxDB 3 Enterprise",
+      "3.12.0",
+      "The agent read-only profile is checked on InfluxDB 3 Core 3.12, and this server is InfluxDB 3 Enterprise 3.12.0: its write refusals have not been captured, so it is refused",
+    ],
+    [
+      "a Core server outside the checked line",
+      "InfluxDB 3 Core",
+      "3.13.0",
+      "The agent read-only profile is checked on InfluxDB 3 Core 3.12, and this server is InfluxDB 3 Core 3.13.0: its write refusals have not been captured, so it is refused",
+    ],
+  ])(
+    "%s is refused at open, in the tool's sentence, before the statement is sent",
+    async (_label, product, version, sentence) => {
+      const base = capture("ping-auth");
+      ping = {
+        ...base,
+        name: "built",
+        body: JSON.stringify({ ...JSON.parse(base.body), product_name: product, version }),
+      };
+
+      const result = await call({ sql: "SELECT room FROM home" });
+
+      expect(acquired).toEqual(["agent-read-only"]);
+      expect(result).toEqual(refusedAtOpen(sentence));
+      expect(statementsSent()).toEqual([]);
+    },
+  );
+
+  test("a result past the 1000-row provider budget is refused, never cut", async () => {
+    answers = { "SELECT room FROM home LIMIT 2000": rooms(1_001) };
+
+    const result = await call({ sql: "SELECT room FROM home LIMIT 2000" });
+
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: "The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, or remove your own LIMIT and page with offset.",
+        },
+      ],
+      isError: true,
+    });
+  });
+
+  test("a result past the 1 MiB provider budget is refused, never cut", async () => {
+    answers = { "SELECT room FROM home LIMIT 101": jsonl([{ room: "x".repeat(1_048_577) }]) };
+
+    const result = await call({ sql: "SELECT room FROM home" });
+
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add a smaller LIMIT.",
+        },
+      ],
+      isError: true,
+    });
+  });
+
+  test("a statement past timeout_ms is answered as the timeout, and its request is closed at the deadline", async () => {
+    let closed = false;
+    hold = { matches: (q) => q.startsWith("SELECT count(*)"), onClose: () => (closed = true) };
+
+    const result = await call({ sql: "SELECT count(*) FROM generate_series(1, 2000000000)", timeout_ms: 500 });
+
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: "The statement did not finish within timeout_ms (500 ms). Narrow it, or raise timeout_ms up to 30000.",
+        },
+      ],
+      isError: true,
+    });
+    await Bun.sleep(50);
+    expect(closed).toBe(true);
   });
 });
