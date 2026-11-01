@@ -557,13 +557,13 @@ export async function createDatabaseProvider(
       return new NetconfProvider(connection, options, execution);
     }
 
-    // Sparkplug B (#1720), the third member of the `industrial/` family. Its own bounded MQTT session
-    // rather than the shipped MQTT read, because that read returns one row per topic and a Sparkplug
-    // read depends on the order of successive messages on one topic.
+    // Sparkplug B (#1720), the third member of the `industrial/` family. Its own bounded MQTT session rather than the
+    // shipped MQTT read, which returns one row per topic, since a Sparkplug read depends on the order of successive
+    // messages on one topic. The execution context decides whether the handle answers agent reads.
     case "sparkplug": {
       // The explicit /index specifier keeps this dynamic import statically analysable.
       const { SparkplugProvider } = await import("./providers/industrial/sparkplug/index");
-      return new SparkplugProvider(connection, options);
+      return new SparkplugProvider(connection, options, execution);
     }
 
     // Embedded databases - dynamically imported
@@ -1373,7 +1373,7 @@ export type ExecutionProfile = "agent-read-only" | "agent-operations" | "agent-h
  * handle or transaction, a least-privilege principal the server's own answers prove, or a
  * Studio-enforced request allowlist plus the identity's own authorization), and only the
  * providers of AGENT_EXECUTION_ENGINES implement that: PostgreSQL, SQLite,
- * DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect and MQTT (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
+ * DuckDB, SQL Server, MySQL, Kubernetes, MongoDB, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra, Couchbase, Apache Druid, LibreDB, InfluxDB (InfluxQL), Weaviate, Qdrant, Neo4j, Milvus, Redis, etcd, Oxia, RabbitMQ, Apache Kafka, S3-compatible object storage, Firestore, SNMP, NETCONF, Modbus, Prometheus, OPC UA, MTConnect, MQTT and Sparkplug B (`src/lib/agent/engine-support.ts`). `agent-operations` sends no statement
  * at all — it calls the curated reporting methods every provider implements — so
  * requiring a read-only STATEMENT path of it would refuse an engine over a capability
  * the profile never uses. `agent-handover` sends a statement too — the one a run

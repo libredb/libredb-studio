@@ -269,9 +269,9 @@ describe("POST /api/agent/classify", () => {
   });
 
   test("a connection with no statement language is classified in SQL's terms", async () => {
-    mockResolveConnection.mockResolvedValueOnce({ id: "seed:plant", name: "Plant", type: "sparkplug" });
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:lake", name: "Lake", type: "spark" });
 
-    const res = await POST(classifyRequest({ objective: "what is connected", connectionId: "seed:plant" }));
+    const res = await POST(classifyRequest({ objective: "what is connected", connectionId: "seed:lake" }));
 
     expect(res.status).toBe(200);
     expect(mockClassify).toHaveBeenCalledWith("what is connected", { statementLanguage: undefined });

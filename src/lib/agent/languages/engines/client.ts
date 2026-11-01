@@ -32,6 +32,7 @@ import { PROMETHEUS_CLIENT_OVERLAY } from "../promql/engines/client";
 import { OPCUA_CLIENT_OVERLAY } from "../opcuaread/engines/client";
 import { MTCONNECT_CLIENT_OVERLAY } from "../mtconnectread/engines/client";
 import { MQTT_CLIENT_OVERLAY } from "../mqttread/engines/client";
+import { SPARKPLUG_CLIENT_OVERLAY } from "../sparkplugread/engines/client";
 import { defineOverlay, dialectOnly } from "../overlay";
 import type { AgentEngineClientDialect, AgentEngineClientOverlays, AgentEnginePack, AgentEngineType } from "../pack";
 import {
@@ -90,6 +91,7 @@ const CLIENT_OVERLAYS: AgentEngineClientOverlays = Object.freeze({
   opcua: Object.freeze({ family: "opcuaread", overlay: dialectOnly(OPCUA_CLIENT_OVERLAY) }),
   mtconnect: Object.freeze({ family: "mtconnectread", overlay: dialectOnly(MTCONNECT_CLIENT_OVERLAY) }),
   mqtt: Object.freeze({ family: "mqttread", overlay: dialectOnly(MQTT_CLIENT_OVERLAY) }),
+  sparkplug: Object.freeze({ family: "sparkplugread", overlay: dialectOnly(SPARKPLUG_CLIENT_OVERLAY) }),
 } satisfies AgentEngineClientOverlays);
 
 /**

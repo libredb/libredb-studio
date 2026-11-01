@@ -193,6 +193,7 @@ export const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "opcuaread",
   "mtconnectread",
   "mqttread",
+  "sparkplugread",
 ]);
 
 /**
@@ -272,6 +273,8 @@ export const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.free
   mtconnectread: "mtconnect",
   // The agent's name for the MQTT read request language, and `mqtt` is the only type-id that runs it.
   mqttread: "mqtt",
+  // The agent's name for the Sparkplug read request language, and `sparkplug` is the only type-id that runs it.
+  sparkplugread: "sparkplug",
 });
 
 /**

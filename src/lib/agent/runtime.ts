@@ -27,7 +27,7 @@
  */
 
 import { createDatabaseProvider } from "@/lib/db";
-import { acquireExecutionProfileProvider } from "@/lib/db/factory";
+import { acquireExecutionProfileProvider, executionContextFor } from "@/lib/db/factory";
 import { catalogSessionConnection } from "@/lib/db/catalog-scope";
 import { editorExecutionContext } from "@/lib/api/execution-context";
 import { type ExecutionArtifact, ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
@@ -175,7 +175,12 @@ export async function driveAgentRun(runId: string): Promise<AgentInvestigationRe
     // So no `withOneShotTunnel` wrapper here (#457): this provider is never connected.
     // The one that runs statements comes from `acquireExecutionProfileProvider`, which
     // opens the connection's pooled tunnel itself.
-    const provider = await createDatabaseProvider(connection);
+    //
+    // Built under the agent-mode context and never as an editor handle: every profile a run acquires opens read-only,
+    // and a provider may declare less on such a handle (Sparkplug declares no tree, since every level of it is a
+    // withheld id), so the grounding walk lists only what the handle it acquires will answer. The operations context
+    // sends no statement, so no provider proves a statement boundary for a provider that is never connected.
+    const provider = await createDatabaseProvider(connection, {}, executionContextFor("agent-operations"));
     const capabilities = provider.getCapabilities();
     const labels = provider.getLabels();
 

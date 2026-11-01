@@ -37,6 +37,7 @@ import { PROMQL_SERVER_PACK } from "./promql/server";
 import { OPCUAREAD_SERVER_PACK } from "./opcuaread/server";
 import { MTCONNECTREAD_SERVER_PACK } from "./mtconnectread/server";
 import { MQTTREAD_SERVER_PACK } from "./mqttread/server";
+import { SPARKPLUGREAD_SERVER_PACK } from "./sparkplugread/server";
 import type { AgentLanguageServerAdapter, AgentLanguageServerPack, EvidenceToolName } from "./pack";
 import { SQL_STATEMENT_DEFINITIONS } from "./sql/definitions";
 import { SQL_RECOMMEND_CHANGE } from "./sql/recommendation";
@@ -72,6 +73,7 @@ const SERVER_PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguageServe
   opcuaread: OPCUAREAD_SERVER_PACK,
   mtconnectread: MTCONNECTREAD_SERVER_PACK,
   mqttread: MQTTREAD_SERVER_PACK,
+  sparkplugread: SPARKPLUGREAD_SERVER_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageServerPack>);
 
 /** The server pack for `language`, or a named error when the id is not a language this server knows. */
@@ -129,6 +131,7 @@ export const LANGUAGE_BASE_DEFINITIONS = mergeDisjoint(
     OPCUAREAD_SERVER_PACK.baseDefinitions,
     MTCONNECTREAD_SERVER_PACK.baseDefinitions,
     MQTTREAD_SERVER_PACK.baseDefinitions,
+    SPARKPLUGREAD_SERVER_PACK.baseDefinitions,
   ],
   "LANGUAGE_BASE_DEFINITIONS",
 );
@@ -168,6 +171,7 @@ export const WORKFLOW_TOOL_RULES: Readonly<
   opcuaread: OPCUAREAD_SERVER_PACK.workflowToolRules,
   mtconnectread: MTCONNECTREAD_SERVER_PACK.workflowToolRules,
   mqttread: MQTTREAD_SERVER_PACK.workflowToolRules,
+  sparkplugread: SPARKPLUGREAD_SERVER_PACK.workflowToolRules,
 } satisfies Record<AgentStatementLanguageId, Partial<Record<AgentRunWorkflowType, string>>>);
 
 /**
@@ -199,6 +203,7 @@ export const LANGUAGE_SHORTFALL_NOTICES = mergeDisjoint(
     OPCUAREAD_SERVER_PACK.shortfallNotices,
     MTCONNECTREAD_SERVER_PACK.shortfallNotices,
     MQTTREAD_SERVER_PACK.shortfallNotices,
+    SPARKPLUGREAD_SERVER_PACK.shortfallNotices,
   ],
   "LANGUAGE_SHORTFALL_NOTICES",
 );

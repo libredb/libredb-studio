@@ -140,6 +140,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "opcua",
   "mtconnect",
   "mqtt",
+  "sparkplug",
 ];
 
 /**

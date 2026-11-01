@@ -85,7 +85,12 @@ export type EndReason =
    * "narrow your filter", which is what a refused SUBACK usually means; there is no narrower filter.
    * Reported at CONNACK rather than waiting for the SUBACK to say the same thing later.
    */
-  | "wildcards-unavailable";
+  | "wildcards-unavailable"
+  /**
+   * A handshake-only read ended where it was meant to: the broker accepted the CONNECT, and nothing was subscribed to.
+   * Only a read that asked for `handshakeOnly` ends this way.
+   */
+  | "handshake";
 
 /** One message, in the order it arrived. A topic can appear many times. */
 export interface ReceivedMessage {
@@ -124,6 +129,11 @@ export interface SessionOptions {
   readonly password?: string;
   /** The test seam. Given, no socket is opened and no address is resolved. */
   readonly openTransport?: TransportFactory;
+  /**
+   * Connect and leave without subscribing: the read proves the broker answers MQTT and accepts this client, and holds
+   * nothing it carries. `filters` is not read, and no SUBSCRIBE or UNSUBSCRIBE is written.
+   */
+  readonly handshakeOnly?: boolean;
 }
 
 /** What the session needs of a socket, which is less than a socket. */
@@ -175,6 +185,19 @@ export interface ReadOutcome {
    * the panel called it a successful connection after the whole window had passed.
    */
   readonly handshook: boolean;
+  /**
+   * When the SUBSCRIBE was written, in milliseconds from the start of the read, on the clock `elapsedMs` reads; absent
+   * when nothing was subscribed. A window counts from the start of the read, dial included, so this is what tells the
+   * time the subscription listened from the time the window ran.
+   */
+  readonly subscribedAtMs?: number;
+  /** When the read started, on the clock each message's `receivedAt` reads, so the two can be told apart. */
+  readonly startedAt: number;
+  /**
+   * How many of the filters the broker's SUBACK refused. A read whose every filter was refused ends as
+   * `subscription-refused`; one that was refused some of them goes on, thinner, and this says by how many.
+   */
+  readonly subscriptionsRefused: number;
 }
 
 /** A client identifier that cannot collide with an edge node's, which would steal its session. */
@@ -231,7 +254,9 @@ function openSocket(options: SessionOptions): { transport: Transport; readyEvent
  * busier than one read can cover, the second says it is quiet.
  */
 export async function readOnce(options: SessionOptions): Promise<ReadOutcome> {
-  if (options.filters.length === 0) throw new QueryError("A Sparkplug read needs at least one topic filter.");
+  const subscribes = options.handshakeOnly !== true;
+  if (subscribes && options.filters.length === 0)
+    throw new QueryError("A Sparkplug read needs at least one topic filter.");
 
   const parser = await newParser();
   const { transport, readyEvent } = (options.openTransport ?? openSocket)(options);
@@ -244,6 +269,8 @@ export async function readOnce(options: SessionOptions): Promise<ReadOutcome> {
   let ended: EndReason | undefined;
   let transportErrorCode: string | undefined;
   let refusalCode: number | undefined;
+  let subscribedAtMs: number | undefined;
+  let subscriptionsRefused = 0;
   let finish: (() => void) | undefined;
 
   const stop = (reason: EndReason) => {
@@ -281,6 +308,10 @@ export async function readOnce(options: SessionOptions): Promise<ReadOutcome> {
       const properties = packet.properties as Record<string, unknown> | undefined;
       // Set AFTER the refusal check above, so a CONNACK that refuses is not read as a handshake.
       handshook = true;
+      if (!subscribes) {
+        stop("handshake");
+        return;
+      }
       if (properties?.wildcardSubscriptionAvailable === false) stop("wildcards-unavailable");
       return;
     }
@@ -289,6 +320,7 @@ export async function readOnce(options: SessionOptions): Promise<ReadOutcome> {
       // 0x80 or more is a refusal; below it the number is the QoS the broker granted.
       const codes = Array.isArray(packet.granted) ? packet.granted.map((one) => Number(one)) : [];
       const refused = codes.filter((code) => code >= 0x80);
+      subscriptionsRefused = refused.length;
       // ALL of them, not any: a Sparkplug read sends two or three filters and the stored-certificate
       // one is commonly refused on a broker that has no `$sparkplug` tree at all. One refusal means
       // a thinner read, and the read still happens; every filter refused means there is no read.
@@ -359,7 +391,9 @@ export async function readOnce(options: SessionOptions): Promise<ReadOutcome> {
           ...(options.password === undefined ? {} : { password: options.password }),
         }),
       );
+      if (!subscribes) return;
       transport.write(encodeSubscribe(1, options.filters));
+      subscribedAtMs = Date.now() - started;
     });
   });
 
@@ -370,7 +404,8 @@ export async function readOnce(options: SessionOptions): Promise<ReadOutcome> {
   // Both writes are attempted even when the read ended badly, and a failure to send them does not
   // change what was read: a write on a socket the broker already closed does not throw (measured on
   // Node 26.12.1, Bun 1.4.2 and Bun 1.4.4, over plain TCP and TLS), it is dropped.
-  transport.write(encodeUnsubscribe(2, options.filters));
+  // A handshake-only read subscribed to nothing, so it has nothing to withdraw.
+  if (subscribedAtMs !== undefined) transport.write(encodeUnsubscribe(2, options.filters));
   transport.write(encodeDisconnect());
   transport.destroy();
 
@@ -383,5 +418,8 @@ export async function readOnce(options: SessionOptions): Promise<ReadOutcome> {
     payloadsDropped,
     handshook,
     elapsedMs: Date.now() - started,
+    ...(subscribedAtMs === undefined ? {} : { subscribedAtMs }),
+    startedAt: started,
+    subscriptionsRefused,
   };
 }

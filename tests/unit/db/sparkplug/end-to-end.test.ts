@@ -280,3 +280,32 @@ describe("one read, end to end, with no socket", () => {
     expect(outcome.messagesSeen).toBe(0);
   });
 });
+
+describe("what a read hands an agent read beside the state", () => {
+  test("the messages as they arrived, when it subscribed, and how many filters the broker refused", async () => {
+    const SUBACK_MIXED = [0x90, 0x05, 0x00, 0x01, 0x00, 0x00, 0x87];
+    const { factory } = scripted(
+      [...CONNACK, ...SUBACK_MIXED, ...publish("spBv1.0/G1/NDATA/E1", [0x18, ...varint(1)])],
+      4096,
+    );
+    const outcome = await dialAndRead(
+      { host: "broker.example", port: 1883, groupId: "", filters: ["a", "b"], windowSeconds: 1 },
+      factory,
+    );
+    expect(outcome.messages?.map((one) => one.topic)).toEqual(["spBv1.0/G1/NDATA/E1"]);
+    expect(outcome.subscribedAtMs).toBeGreaterThanOrEqual(0);
+    expect(outcome.subscriptionsRefused).toBe(1);
+    expect(outcome.messages?.[0]?.receivedAt).toBeGreaterThanOrEqual(outcome.startedAt ?? Number.POSITIVE_INFINITY);
+  });
+
+  test("a handshake-only request connects, subscribes to nothing and keeps nothing", async () => {
+    const { factory, written } = scripted(CONNACK, 4096);
+    const outcome = await dialAndRead(
+      { host: "broker.example", port: 1883, groupId: "", filters: [], windowSeconds: 1, handshakeOnly: true },
+      factory,
+    );
+    expect(outcome.endReason).toBe("handshake");
+    expect(outcome.subscribedAtMs).toBeUndefined();
+    expect(written.map((packet) => packet[0])).toEqual([0x10, 0xe0]);
+  });
+});

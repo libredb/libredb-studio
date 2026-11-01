@@ -195,8 +195,8 @@ const DEFAULT_PROPS = {
  */
 const ENGINE_POSTURE_BODY = agentPosture({
   mode: "agent",
-  engine: "sparkplug",
-  engineLabel: getDBConfig("sparkplug").label,
+  engine: "spark",
+  engineLabel: getDBConfig("spark").label,
   handover: false,
 }).body;
 
@@ -6309,7 +6309,7 @@ describe("AgentRail", () => {
 
       async function refusedStart(startBody: unknown): Promise<RenderResult> {
         globalThis.fetch = mock(async () => jsonResponse(startBody, 400)) as unknown as typeof fetch;
-        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="sparkplug" />);
+        const view = render(<AgentRail {...DEFAULT_PROPS} connectionType="spark" />);
         fireEvent.click(view.getByTestId("agent-mode-agent"));
         fireEvent.change(view.getByTestId("agent-objective"), { target: { value: "why is checkout slow" } });
         await act(async () => {

@@ -33,6 +33,7 @@ import { PROMQL_PACK } from "./promql/index";
 import { OPCUAREAD_PACK } from "./opcuaread/index";
 import { MTCONNECTREAD_PACK } from "./mtconnectread/index";
 import { MQTTREAD_PACK } from "./mqttread/index";
+import { SPARKPLUGREAD_PACK } from "./sparkplugread/index";
 import type { AgentEvidenceTool, AgentLanguagePack, EvidenceToolName, LanguageToolArms } from "./pack";
 import { SQL_PACK } from "./sql/index";
 
@@ -60,6 +61,7 @@ const PACKS: Readonly<Record<AgentStatementLanguageId, AgentLanguagePack>> = Obj
   opcuaread: OPCUAREAD_PACK,
   mtconnectread: MTCONNECTREAD_PACK,
   mqttread: MQTTREAD_PACK,
+  sparkplugread: SPARKPLUGREAD_PACK,
 } satisfies Record<AgentStatementLanguageId, AgentLanguagePack>);
 
 /** The pack for `language`, or a named error when the id is not a language this server knows. */
@@ -94,6 +96,7 @@ export const LANGUAGE_TOOL_ARMS: Readonly<Record<AgentStatementLanguageId, Langu
   opcuaread: OPCUAREAD_PACK.execution.arms,
   mtconnectread: MTCONNECTREAD_PACK.execution.arms,
   mqttread: MQTTREAD_PACK.execution.arms,
+  sparkplugread: SPARKPLUGREAD_PACK.execution.arms,
 } satisfies Record<AgentStatementLanguageId, LanguageToolArms>);
 
 /**
@@ -125,6 +128,7 @@ export const AGENT_EVIDENCE_TOOLS: Readonly<Record<EvidenceToolName, AgentEviden
     OPCUAREAD_PACK.execution.evidenceTools,
     MTCONNECTREAD_PACK.execution.evidenceTools,
     MQTTREAD_PACK.execution.evidenceTools,
+    SPARKPLUGREAD_PACK.execution.evidenceTools,
   ],
   "AGENT_EVIDENCE_TOOLS",
 );

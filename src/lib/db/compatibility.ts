@@ -586,12 +586,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // Closed: agent mode reads SNMP values with the SNMP security modules withheld, and no MCP surface that
   // withholds them is designed yet (BACKLOG B158).
   snmp: false,
-  // Outside this version, for the reason MQTT's entry gives rather than for the absence of a read query path:
-  // a read whose completeness cannot be proved is not a read an agent should be handed without a reader looking
-  // at it. Sparkplug has no command that lists edge nodes, so a read reports what it saw during its window and
-  // an edge node that published nothing in that window is indistinguishable from one that is gone. The
-  // criterion is provable completeness and not the query path: an engine whose own answer enumerates the
-  // whole model can answer true here without a `queryReadOnly` of its own.
+  // Agent mode reads Sparkplug through a window whose every answer says an edge node or device not seen may still
+  // exist, with ids, metric names and values withheld; no MCP surface that reads through the same window,
+  // completeness sentence and projection is designed yet (BACKLOG B165).
   sparkplug: false,
   libredb: true,
 });
@@ -697,6 +694,8 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // Agent mode executes reads on SNMP with the SNMP security modules withheld, and MCP read stays closed on it
   // until a change of its own opens it (BACKLOG B158).
   snmp: false,
+  // Agent mode executes window reads on Sparkplug, metadata only, and MCP read stays closed on it until a change of
+  // its own opens it (BACKLOG B165).
   sparkplug: false,
   // Agent mode executes statements on LibreDB, and MCP read stays closed on it until a change of its own opens it.
   libredb: false,

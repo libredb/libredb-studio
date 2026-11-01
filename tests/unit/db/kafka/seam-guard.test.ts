@@ -2558,6 +2558,7 @@ const AGENT_IMPORTS: Readonly<Record<string, readonly string[] | "any">> = {
   "@/lib/db/providers/sql/read-only-budget": "any",
   "@/lib/db/redaction/metadata-only": "any",
   "@/lib/db/types": "any",
+  "@/lib/db/utils/json-repeated-key": ["repeatsAKey"],
   "./agent-statement": "any",
   "./client": [
     "KafkaAgentReadClient",

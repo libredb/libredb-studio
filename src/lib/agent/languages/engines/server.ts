@@ -33,6 +33,7 @@ import { PROMETHEUS_SERVER_OVERLAY } from "../promql/engines/prometheus";
 import { OPCUA_SERVER_OVERLAY } from "../opcuaread/engines/opcua";
 import { MTCONNECT_SERVER_OVERLAY } from "../mtconnectread/engines/mtconnect";
 import { MQTT_SERVER_OVERLAY } from "../mqttread/engines/mqtt";
+import { SPARKPLUG_SERVER_OVERLAY } from "../sparkplugread/engines/sparkplug";
 import type { AgentStatementLanguageId } from "../../agent-manifest";
 import { statementFamilyOf } from "../client";
 import { defineOverlay } from "../overlay";
@@ -100,6 +101,7 @@ const SERVER_OVERLAYS: AgentEngineServerOverlays = Object.freeze({
   opcua: Object.freeze({ ...OPCUA_SERVER_OVERLAY }),
   mtconnect: Object.freeze({ ...MTCONNECT_SERVER_OVERLAY }),
   mqtt: Object.freeze({ ...MQTT_SERVER_OVERLAY }),
+  sparkplug: Object.freeze({ ...SPARKPLUG_SERVER_OVERLAY }),
 } satisfies AgentEngineServerOverlays);
 
 /** What an engine with no dialect answers: every member unsupported. */

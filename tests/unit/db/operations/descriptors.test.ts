@@ -77,6 +77,7 @@ describe("canonical operation registry", () => {
       "rediscli.query.read",
       "s3api.query.read",
       "snmpget.query.read",
+      "sparkplugread.query.read",
       "sql.explain.analyze",
       "sql.explain.estimate",
       "sql.query.read",
@@ -222,6 +223,7 @@ describe("the statement-read operations", () => {
       "rediscli.query.read",
       "s3api.query.read",
       "snmpget.query.read",
+      "sparkplugread.query.read",
       "sql.query.read",
       "weaviateapi.query.read",
     ]);

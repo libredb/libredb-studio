@@ -110,6 +110,8 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   mtconnectread: null,
   // No MCP statement tool yet: MCP read stays closed on MQTT until a change of its own declares one and opens it.
   mqttread: null,
+  // No MCP statement tool yet: MCP read stays closed on Sparkplug until a change of its own declares one and opens it.
+  sparkplugread: null,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageMcpFacet | null>);
 
 /** A facet some language declares, with its tool's name as a literal. */

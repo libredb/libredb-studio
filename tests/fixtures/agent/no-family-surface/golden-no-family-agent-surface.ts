@@ -44,12 +44,13 @@ import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
 import { answersProse, modelOver, scriptedModel } from "../../../isolated/fixtures/agent-scripted-model";
 
 /**
- * Two engines with no statement family on the base commit, a non-SQL engine and a SQL engine whose dialect has no
- * agent language, frozen here rather than read from `AGENT_STATEMENT_LANGUAGE`, which gains families. The non-SQL
- * engine is Sparkplug, the one whose statement language is scheduled last; Redis held the place until it joined. The
- * SQL engine is Spark, which has no read-only boundary to join a family on; Oracle held the place until it joined.
+ * The engine with no statement family on the base commit, frozen here rather than read from `AGENT_STATEMENT_LANGUAGE`,
+ * which gains families. It is Spark, a SQL engine whose dialect has no agent language, because it has no read-only
+ * boundary to join a family on; Oracle held the place until it joined. No non-SQL engine is left without a family:
+ * Sparkplug held the non-SQL place until it joined the last of them, and Redis before it, so the golden holds Spark
+ * alone.
  */
-const ENGINES: readonly DatabaseType[] = ["sparkplug", "spark"];
+const ENGINES: readonly DatabaseType[] = ["spark"];
 
 /** The (mode, workflow) pairs recorded per engine: every agent-mode run such an engine opens, and two plans. */
 const CASES: readonly { readonly mode: AgentRunMode; readonly workflowType: AgentRunWorkflowType }[] = [

@@ -101,6 +101,8 @@ describe("MCP_STATEMENT_ARMS", () => {
     expect(mcpStatementToolFor("mtconnect")).toBeNull();
     expect(MCP_STATEMENT_ARMS.mqttread).toBeNull();
     expect(mcpStatementToolFor("mqtt")).toBeNull();
+    expect(MCP_STATEMENT_ARMS.sparkplugread).toBeNull();
+    expect(mcpStatementToolFor("sparkplug")).toBeNull();
   });
 
   test("is built from the languages' MCP facets, one arm per declared facet, in the registry's order", () => {
@@ -440,6 +442,7 @@ describe("the tool each engine is read with", () => {
       opcuaread: null,
       mtconnectread: null,
       mqttread: null,
+      sparkplugread: null,
     };
     expect(servingStatementArms(arms)).toEqual([RUN_READ_QUERY_ARM]);
     const registerTool = mock((_name: string) => undefined);

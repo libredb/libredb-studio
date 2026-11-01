@@ -17,6 +17,8 @@ import {
   MAX_WINDOW_SECONDS,
   MEASURED_PROTOBUFJS_LEVEL_CEILING,
   SEQ_MODULUS,
+  SPARKPLUG_AGENT_MAX_ID_BYTES,
+  SPARKPLUG_AGENT_MIN_STATEMENT_MS,
   SPARKPLUG_DEFAULT_PORT,
 } from "@/lib/db/providers/industrial/sparkplug/constants";
 import { DEFAULT_LIMITS } from "@/lib/db/providers/industrial/sparkplug/decode";
@@ -50,6 +52,8 @@ describe("every constant's VALUE is pinned, not just its relationships", () => {
     ["MAX_HEX_BYTES_IN_CELL", MAX_HEX_BYTES_IN_CELL, 256, "CHOSEN"],
     ["SEQ_MODULUS", SEQ_MODULUS, 256, "STANDARD, 5.4 and 6.4.5 put seq in 0 to 255"],
     ["SPARKPLUG_DEFAULT_PORT", SPARKPLUG_DEFAULT_PORT, 1883, "STANDARD, MQTT's own default port"],
+    ["SPARKPLUG_AGENT_MAX_ID_BYTES", SPARKPLUG_AGENT_MAX_ID_BYTES, 1_024, "CHOSEN, no measurement behind it"],
+    ["SPARKPLUG_AGENT_MIN_STATEMENT_MS", SPARKPLUG_AGENT_MIN_STATEMENT_MS, 4_000, "CHOSEN, the window and a second"],
   ])("%s is %i (%s)", (_name, actual, expected) => {
     expect(actual).toBe(expected);
   });
