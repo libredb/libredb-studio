@@ -984,6 +984,26 @@ describe("readSqlSpan: a dialect that says what a backslash means inside double 
   });
 });
 
+describe("readSqlSpan: a dialect that says what a backslash means inside single quotes", () => {
+  test("false: the string closes at its second quote, even where a backslash escapes inside names", () => {
+    const grammar: SqlGrammar = {
+      ...DEFAULT_SQL_GRAMMAR,
+      backslashAlwaysEscapes: true,
+      singleQuoteBackslashEscapes: false,
+    };
+
+    expect(readSqlSpan("'a\\' x", 0, grammar)).toEqual({ kind: "string", end: 4, terminated: true });
+    expect(readSqlSpan('"a\\"b" x', 0, grammar)).toEqual({ kind: "quoted-identifier", end: 6, terminated: true });
+  });
+
+  test("true: the backslash escapes the quote, even where names leave it undeterminable", () => {
+    const grammar: SqlGrammar = { ...DEFAULT_SQL_GRAMMAR, singleQuoteBackslashEscapes: true };
+
+    expect(readSqlSpan("'it\\'s' x", 0, grammar)).toEqual({ kind: "string", end: 7, terminated: true });
+    expect(readSqlSpan('"a\\" , x', 0, grammar)?.terminated).toBe(false);
+  });
+});
+
 describe("hasUnterminatedSpan: a dialect where a backslash always escapes", () => {
   test("an escaped apostrophe is resolvable only where the dialect declares the fact", () => {
     const sql = "SELECT * FROM t WHERE name = 'O\\'Brien'";
