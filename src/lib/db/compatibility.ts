@@ -625,6 +625,7 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   clickhouse: false,
   // Agent mode executes statements on Druid, and MCP read stays closed on it until a change of its own opens it.
   druid: false,
+  // Agent mode executes statements on Trino, and MCP read stays closed on it until a change of its own opens it.
   trino: false,
   // Agent mode executes statements on Cassandra, and MCP read stays closed on it until a change of its own opens it.
   cassandra: false,

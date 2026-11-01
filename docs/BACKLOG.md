@@ -28,10 +28,10 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S10 · 7
-- [Drivers and connections](#drivers-and-connections) — D1-D417, U17 · 306
+- [Drivers and connections](#drivers-and-connections) — D1-D418, U17 · 307
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U193 · 178
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U194 · 179
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B165 · 86
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B166 · 86
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -1469,6 +1469,7 @@ The same placeholder text would serve every provider listed here only one provid
 Found 2026-09-23 while mapping the Prometheus storage row (#1085, section 6.2); the table half was found by the #1085 review the same day, through `inspectOperationsTool` over the real provider against the compose Prometheus, where all 50 rows reached the model as `"totalSizeBytes":0`.
 Not fixed in #1085: making either field optional changes a type every provider writes, and the agent's two readings have to learn to carry an absence; neither is that PR's to change.
 The table half has a remedy that needs no type change: the `table-stats` reading can forward `null` for `totalSizeBytes` wherever `tableSizeBytes` is absent, the gate the two tabs already apply, because every writer of a measured `totalSizeBytes` also sets `tableSizeBytes` today and every writer above leaves it out.
+Seen again 2026-11-01 on Trino 476 (`trinodb/trino:476` by digest, the coordinators of `tests/fixtures/trino/476/agent-boundary/run.sh up`) in a browser pass, now that agent mode joined Trino: an Operate run's `storage` reading handed the model five catalogs, each with `size` "N/A" and `sizeBytes` 0, and the model wrote that these fields "do not provide usable measured storage totals" (run `arun_6c40df981f50417182fb0e21614db69e`).
 
 **Done when:** no provider writes 0 for a storage or table size it did not measure, `sizeBytes` can be absent, and the agent's `storage` and `table-stats` readings forward an absence as an absence, with a test on each reading beside "an index the engine published no size for reaches the model as null, not as zero" in `tests/unit/lib/agent/tools.test.ts`, and on each provider that stops writing 0.
 
@@ -4201,6 +4202,15 @@ Seen 2026-11-01 on the pinned `mtconnect/agent:2.8.0.4` fixture in a browser pas
 
 **Done when:** a device-level named item is labelled by its name alone, through `displayName`, and a provider test pins the label of a device-level and a component-level item.
 
+### D418. Four HTTP transports each keep their own bounded body reader beside the shared one
+
+`src/lib/db/http/bounded-body.ts` (`readBoundedText`) reads a response body under a byte bound for any HTTP-speaking engine, and the Trino transport reads through it.
+The libSQL (`readCappedBody` and `readCapped` in `src/lib/db/providers/sql/libsql/hrana-transport.ts`), ClickHouse (`readCappedBody` in `clickhouse/http-transport.ts`), search (`readCappedText` in `search/http-transport.ts`) and Druid (`readCapped` in `druid/http-transport.ts`) transports each still hold a reader of their own for the same job.
+Five readers of one rule can drift: a fix to how a bound is counted, how a split character decodes or how the stream is released lands in one and not the others.
+Seen 2026-11-01 when the Trino transport's bounded read was added.
+
+**Done when:** the four transports read through `readBoundedText`, their own readers are removed, and each transport's existing cap tests pass unchanged.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -6154,6 +6164,7 @@ An agent statement the provider refuses before it is sent, such as Oracle's `SEL
 Seen 2026-10-29 on Oracle 26ai Free in a browser pass.
 Seen again 2026-10-30 on Couchbase enterprise-8.0.2 in a browser pass: a forced `DELETE`, `UPDATE`, `UPDATE STATISTICS` and `BEGIN WORK` each showed "Refused by policy" over the bare code, though the statement fence (`couchbaseAgentStatementRefusal`) refuses with a sentence of its own.
 Seen again 2026-10-30 on Apache Druid 37.0.0 in a browser pass: a forced `INSERT`, `REPLACE ... OVERWRITE ALL` and `SET engine = 'msq-task'; SELECT ...` each showed "Refused by policy" over the bare code; the shared statement guard (`inspectAgentStatement` in `src/lib/db/operations/statement-guard.ts`) refused them at the policy stage, before the Druid fence was reached.
+Seen again 2026-11-01 on Trino 476 (`trinodb/trino:476` by digest, the coordinators of `tests/fixtures/trino/476/agent-boundary/run.sh up`) in a browser pass: on the `read-only` coordinator a forced `INSERT`, `CALL pg.system.execute(...)`, `SET SESSION`, `COMMIT`, `START TRANSACTION`, `SELECT 1 AS a; DELETE ...`, `CREATE TABLE ... AS` and `SHOW TABLES` each showed "Refused by policy" over the bare code; the shared statement guard refused them at the policy stage, before the Trino fence (`trinoAgentStatementRefusal` in `src/lib/db/providers/sql/trino/agent-boundary.ts`) was reached (runs `arun_d444a49eace54b5a9458465176e9652a`, `arun_9833c42db41f4d02b2c4833f73e28699`).
 
 **Done when:** the rail shows the refusal's sentence with the code beside it, and a component test pins it.
 
@@ -6174,6 +6185,7 @@ And Studio does read the statement first: a forced `UPDATE` on Db2 and a `SELECT
 Seen 2026-10-29 in browser passes on Db2 12.1 and Oracle 26ai.
 Seen again 2026-10-30 on Couchbase enterprise-8.0.2, where the copy is shown unchanged: the boundary there is a user holding only `query_select` on named scopes, checked before every statement, and the statement fence refused four forced statements before they were sent; the consent panel's "same database-enforced read-only session either way" is false there too, since an editor run on that connection has no read-only session.
 Seen again 2026-10-30 on Apache Druid 37.0.0, copy unchanged: there is no read-only session either, the boundary is the native engine checked before every statement (`docs/providers/druid.md` section 15), the shared statement guard refused three forced writes before they were sent, and the header's "200 rows ... enforced by the engine" is not so on Druid, where no row bound is sent and the rows are counted by Studio after a byte-capped read (section 15.3).
+Seen again 2026-11-01 on Trino 476 (`trinodb/trino:476` by digest, the coordinators of `tests/fixtures/trino/476/agent-boundary/run.sh up`) in a browser pass, copy unchanged: the boundary is the server's read-only access control (`access-control.name=read-only`), proved before every statement, and each statement runs in a read-only transaction Studio opens and rolls back (`docs/providers/trino.md` section 15); the shared statement guard refused seven forced statements and the Trino fence three more before they were sent, so the statement is read first; and the consent panel's "same database-enforced read-only session either way" is false there, since an editor run opens no read-only transaction (an editor `CREATE TABLE ... AS` on the `read-only` coordinator was refused by the access control, and on the `allow-all` one it ran).
 
 **Done when:** the copy states the boundary each engine actually has, from a per-engine row rather than a type-id branch, says that Studio's own admission refuses a statement first and the engine refuses what passes it, and a component test pins the text for a session-enforced engine and a credential-enforced one.
 
@@ -6211,6 +6223,7 @@ Seen again 2026-11-01 on OPC UA (OPC PLC 2.15.10 by digest) in a browser pass: a
 Seen again 2026-11-01 on MTConnect (`mtconnect/agent:2.8.0.4` by digest) in a browser pass, three times: runs asked to pass an exact `PUT`, `POST`, `/cancel/id=1`, `interval`, `heartbeat` and `frequency` request, a two-line request, `/swagger`, `/sample?count=201` and a path value the model does not answer had each refused before the request was sent and finished `answered` with claims about other reads or the schema inventory and no word of the refusals (runs `arun_51bce412585843c5b5f8394de95f07da`, `arun_195cd0b4872848baa125367eefaebade`, `arun_716cebcbbcf44d539bfb45480384f15e`); the agent's program value and asset count read the same raw before and after.
 Seen again 2026-11-01 on MQTT (Mosquitto 2.1.2 and EMQX 5.8.9 by digest) in a browser pass: a run on EMQX asked to subscribe to `homes/+/door`, read `$SYS/brokers`, read through `$share/g/#`, find the topics under a prefix, publish and set a will had each refused before anything was sent (`STATEMENT_NOT_ADMITTED`); its first report was declined (`UNVERIFIABLE_EVIDENCE`), so it read `plant/line1/temperature` to have something to cite and finished `answered` with that one claim and no word of the six refusals (run `arun_dfdb9d11fd2d4479b4b811a5366ab070`); the same request on Mosquitto did report them (run `arun_35503089c1eb4c60a34154c993159f59`).
 Seen again 2026-11-01 on Sparkplug B (Mosquitto 2.0.22 and EMQX 5.8.9 by digest, the fixture's publisher) in a browser pass: a run asked to send fifteen exact requests, including a group list, a metric value, a wildcard, `$share`, `STATE`, `$sparkplug`, a rebirth, `NCMD`, `DCMD`, a publish and a will, drafted none of them and answered with four reads of its own and no word of the fifteen (run `arun_e8798c30829a429cbbaa2aab173dafd1`); two later runs sent eight and six such requests, each refused before anything was sent, and both answered with the window's totals and no word of the refusals (runs `arun_bf3ac88953e6487ba14cc3bc8477d254`, `arun_f386eab72fcd4ae9999f3dfec31c9ed3`).
+Seen again 2026-11-01 on Trino 476 (`trinodb/trino:476` by digest, the coordinators of `tests/fixtures/trino/476/agent-boundary/run.sh up`) in a browser pass, three times: on the `read-only` coordinator a run asked to pass `INSERT`, `CALL`, `SET SESSION`, `COMMIT`, `START TRANSACTION`, a two-statement form and `CREATE TABLE ... AS` had each refused before anything was sent (`INPUT_VALIDATION_FAILED`), and a run asked for `VALUES`, `SHOW TABLES`, `TABLE`, `EXPLAIN` and a parenthesized `SELECT` had four refused before anything was sent and the fifth refused for an exhausted repair budget; on the `read-only-file` coordinator a run asked for a pass-through dblink write had it refused by the server (`Access Denied: Cannot execute function pg.system.query`); each finished `answered` with one claim about the schema inventory and no word of the refusals (runs `arun_d444a49eace54b5a9458465176e9652a`, `arun_9833c42db41f4d02b2c4833f73e28699`, `arun_721939f2fa664f528fae6eed2230baf0`); every PostgreSQL table hashed the same before and after.
 
 **Done when:** a run whose only drafted statement was refused either reports that refusal in its answer, held by the run's verifier, or ends in a state other than `answered`, with an agent test that forces the refusal.
 
@@ -6316,6 +6329,7 @@ Seen again 2026-10-30 on Qdrant 1.19.1 in a browser pass: a connection with no k
 Seen again 2026-10-30 on Milvus 3.0.2 in a browser pass: a user on a server with `authorizationEnabled: false` was refused at open with the same sentence naming MongoDB's `security.authorization`, where the setting is Milvus's `common.security.authorizationEnabled`; the provider's own sentence, "Milvus answered this user the list of users, which it refuses every read-only user while authorization is on ... Turn authorization on, then give the agent a read-only user", reached only the server log (run `arun_608f660dbe654134b0a4e087cc7912e7`).
 Seen again 2026-10-30 on Redis 8.10.2 and Valkey 9.1.2 in a browser pass: a connection naming no user was refused before any socket, yet the rail named MongoDB's setting and the ledger's detail said "The server accepted a write it should have refused", though nothing was sent; the provider's sentence, which asks for an ACL user of the agent's own with `~*` and `+@read`, reached only the server log (runs `arun_6454fe4c64114120aefc7bb5f776d46d`, `arun_0ce4e95c4ef14eea8a63467d5be16240`).
 Seen again 2026-10-30 on etcd v3.7.2 in a browser pass: a connection naming no user to a server with authentication off was refused before any socket, yet the rail named MongoDB's setting, where the setting is etcd's `auth enable`; the provider's sentence, which asks for an etcd user of the agent's own whose roles grant READ permissions only, reached only the server log (run `arun_ac5d4d444a02498d85d010087bed37d6`).
+Seen again 2026-11-01 on Trino 476 (`trinodb/trino:476` by digest, the coordinators of `tests/fixtures/trino/476/agent-boundary/run.sh up`) in a browser pass: on the `allow-all` coordinator (no access control configured) and the `file-nofn` one (`access-control.name=file` granting no function), an agent run was refused when its first statement opened the read-only handle, with the same sentence naming MongoDB's `security.authorization`, where the setting is Trino's `access-control.name=read-only`; the provider's sentence, which names that setting, quotes the server's `PROCEDURE_NOT_FOUND` answer to the table procedure probe and says the check ran nothing, reached only the server log (runs `arun_acaedd6313ac46cd9daaced88a424f6a`, `arun_e80a223546274d76bf52027765a9b3e7`); plan mode grounded on both.
 
 **Done when:** a refusal at open shows the provider's own sentence, or a per-engine remedy read from a contract row rather than a type-id branch, the rail no longer tells a keyless connection that its server does not enforce authorization, and a timeline test pins both Weaviate cases.
 
@@ -6350,6 +6364,7 @@ Seen again 2026-11-01 on MTConnect (`mtconnect/agent:2.8.0.4` by digest) in a br
 Measured again 2026-11-01 on MQTT (Mosquitto 2.1.2 by digest) through the provider outside the browser: an agent read given 1,000 or 3,999 ms is refused by Studio with a `RefusedBeforeSendError` ("... needs at least 4,000 ms with the dial ... A window is never shortened, so nothing was sent.") and opens no session, while 4,000 ms reads; the `ownRefusal` branch in `src/lib/agent/tools.ts` records that error `class: "database-error"` with `sent: false` and charges a repair attempt, as for Modbus.
 A run never reached the short budget in the browser pass, since the model stopped before the run's deadline.
 Seen again 2026-11-01 on Sparkplug B (Mosquitto 2.0.22 and EMQX 5.8.9 by digest, the fixture's publisher) in a browser pass: an exact read naming a group other than the one the connection's Database field names is refused by Studio before anything is sent (`OUTSIDE_GROUP` in `src/lib/db/providers/industrial/sparkplug/index.ts`, a `RefusedBeforeSendError`), and the rail headed it "Refused before the database", yet the ledger recorded it `class: "database-error"`, which spends a repair attempt (run `arun_f386eab72fcd4ae9999f3dfec31c9ed3`); measured through the provider outside the browser, an agent read given 1,000 or 3,999 ms is refused the same way ("... needs at least 4,000 ms ... A window is never shortened, so nothing was sent.") and 4,000 ms reads.
+Seen again 2026-11-01 on Trino 476 (`trinodb/trino:476` by digest, the coordinators of `tests/fixtures/trino/476/agent-boundary/run.sh up`) in a browser pass: `VALUES (1)`, `TABLE pg.public.rp_t` and `EXPLAIN SELECT 1`, each refused by the Trino fence before anything was sent (`trinoAgentStatementRefusal`, a `RefusedBeforeSendError`), were headed "Refused before the database" yet recorded `class: "database-error"`, so the three spent the run's repair attempts and the next statement was refused with "This run has used all of its repair attempts" (run `arun_9833c42db41f4d02b2c4833f73e28699`); and a result past the row budget (5000 rows > 200) and one past the byte budget (451243 bytes > 262144), each refused by Studio and cancelled on the cluster, never cut, were headed "The database refused the statement" over Studio's own sentence and recorded `class: "database-error"` (run `arun_9fc772e2c99549519cd41fb5ec787b20`).
 
 **Done when:** a tenant refusal Studio makes is recorded and headed as refused before the read it guards, with the provider's sentence as the detail, it does not count as a repair attempt, and an agent test pins both.
 
@@ -6492,6 +6507,7 @@ Two Operate runs answered "At the time of this reading, the engine reported zero
 Seen 2026-10-31 on RabbitMQ 4.3.6 in a browser pass (runs `arun_509c4fc718744d4ba56ffc48abfd3052`, `arun_56ed2b0f38f7417287484281f6b1a775`); not checked on other providers whose panels answer empty by design.
 D39 is the same gap for a slow-query source that could not be read.
 Apache Kafka's agent-mode handle does not have this shape: its overview, storage, session, slow-query, table and index readings answer their reason, which the model reads as a refusal rather than an empty reading (`docs/providers/kafka.md` section 15.3).
+Seen again 2026-11-01 on Trino 476 (`trinodb/trino:476` by digest, the coordinators of `tests/fixtures/trino/476/agent-boundary/run.sh up`) in a browser pass: the index reading answers empty with no statement sent (`getIndexStats` in `src/lib/db/providers/sql/trino/introspect.ts`, since `information_schema` publishes no index view), yet `inspect_operations` stored it as a 0-row artifact in 0 ms under the same caption, and the Operate run answered "The index-statistics reading was empty (zero rows), so it reported no index usage or sizes in this reading." (run `arun_6c40df981f50417182fb0e21614db69e`).
 
 **Done when:** a reading the provider answers without asking the engine reaches the model and the rail marked as not read, with the provider's reason, decided from a provider capability rather than a type-id branch, and an operations test pins what the model's tool result says for such a reading.
 
@@ -6610,6 +6626,14 @@ In the pass the models repeated the window in most claims but never the complete
 Seen 2026-11-01 on Sparkplug B (Mosquitto 2.0.22 and EMQX 5.8.9 by digest, the fixture's publisher) in a browser pass; MQTT's agent reads carry their window and last-message sentences the same way (`docs/providers/mqtt.md` section 14), not checked in the rail there.
 
 **Done when:** a read's warnings reach the rail beside its stored result, or the report verifier holds a claim cited to an artifact whose warnings carry a completeness sentence to that sentence, decided from the artifact and not a type-id branch, with a timeline test on a Sparkplug read's warnings.
+
+### U194. An `inspect_plan` call on an engine that composes no estimating plan shows the bare code `UNSUPPORTED_DIALECT` in the agent rail
+
+When the engine's overlay declares `planEstimate` `"unsupported"`, `inspect_plan` is refused before the database and the ledger records `class: "not-sent"` with `detail: "UNSUPPORTED_DIALECT"`.
+`describeRefusal` in `src/components/agent/timeline.ts` shows that detail under "Refused before the database" as the tool's own sentence, so the rail shows the code alone and never says that the engine composes no estimating plan for the agent.
+Seen 2026-11-01 on Trino 476 (`trinodb/trino:476` by digest, the agent-boundary fixture's `read-only` coordinator) in a browser pass, twice: asked to send one heavy `SELECT`, the model called `inspect_plan` first, the rail showed "Refused before the database" over `UNSUPPORTED_DIALECT`, and in both runs the model then never sent the statement (runs `arun_9fc772e2c99549519cd41fb5ec787b20`, `arun_1452c8479f8c48dba0d2cb38ac525801`); every engine whose overlay declares `planEstimate` `"unsupported"` takes the same path, not checked in a browser.
+
+**Done when:** a not-sent refusal whose detail is a bare code shows a sentence saying what was refused and why, with the code beside it, read from the refusal rather than a type-id branch, and a timeline test pins it for `inspect_plan` on a dialect with no estimating plan.
 
 ## Dependencies
 
@@ -8733,16 +8757,6 @@ Re-measured 2026-11-01 on Spark 4.3.0, the first release with `spark.sql.restric
 
 **Done when:** an upstream Spark release offers an authorization feature or a read-only session that Studio can prove at open, a boundary test against it with a writable positive control shows `ADD JAR`, a code-loading function and a write refused, and Spark then joins agent execution through `queryReadOnly` with its `MCP_STATEMENT_READ` row false until the owner opens MCP read for it; cited in `docs/AGENT.md`.
 
-### B130. Trino has no agent execution and no MCP `run_read_query`
-
-The Trino provider implements no `queryReadOnly`, so agent execution refuses it and MCP `run_read_query` answers that the engine is not served; the MCP metadata tools work (`MCP_EXPOSABLE.trino` is true, `MCP_STATEMENT_READ.trino` is false).
-`START TRANSACTION READ ONLY` holds for Trino's own connectors, but a pass-through table function, `TABLE(<catalog>.system.query(...))`, sends its text to the remote source, where it runs under the catalog's own credential and outside the read-only transaction, and pinning reads to one catalog still admits it on that catalog.
-Studio cannot prove a catalog's connector credential read-only, so only a lexer fence could stop that path, and a lexer is defence in depth, never the boundary.
-
-Found 2026-10-27 while designing read-only agent and MCP execution for every provider.
-
-**Done when:** either a way to prove each reachable catalog's connector credential read-only at open, or an engine switch that disables pass-through table functions, is found and measured, a boundary test with a writable positive control shows a pass-through write refused, and Trino then joins agent execution through `queryReadOnly` with its `MCP_STATEMENT_READ` row false until the owner opens MCP read for it; cited in `docs/AGENT.md`.
-
 ### B136. etcd's agent reads are metadata only, and it has no MCP statement tool
 
 Agent mode executes etcd metadata reads under the `etcdctl` statement language, as a user the server shows, before every command, has authentication on, holds neither the root user's name nor the root role, and holds READ permissions only on every role, read with `UserGet` and `RoleGet` (`docs/providers/etcd.md`, section 15).
@@ -9119,6 +9133,20 @@ Kept so that MCP access, and any widening of what agent mode reads on a plant (a
 Found 2026-11-01 when agent mode joined Sparkplug.
 
 **Done when:** a per-engine exposure ruling opens MCP for Sparkplug, an MCP surface that reads through the same closed table, window, completeness sentence and metadata-only projection is designed and `MCP_EXPOSABLE.sparkplug` turns true for it, the pack declares its MCP facet (`src/lib/agent/languages/sparkplugread/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), and `MCP_STATEMENT_READ.sparkplug` is true, with tests that an MCP read sends no PUBLISH and no Will, that no MCP answer names an id or carries a metric, and that every answer carries its window and the completeness sentence; cited in `docs/AGENT.md`.
+
+### B166. Trino composes no estimating plan, profile, statistics reading or grounding capture, and has no MCP statement read
+
+Agent mode executes statements on Trino on a server whose access control refuses every identity every catalog's functions but the builtin ones, and catalog management (Trino's read-only access control, alone or beside other access controls; file rules alone are refused, since a view runs as its owner and another identity's grant reaches this user through that identity's view), proved before every statement with calls that run nothing, every statement inside a read-only transaction Studio rolls back (`docs/providers/trino.md`, section 15).
+Trino's engine overlay (`src/lib/agent/languages/sql/engines/trino.ts`) supplies the catalog read alone: the column kind reads `information_schema.columns` of the pinned catalog, which the server filters to the tables the user may see, and the relation kind answers the projection the other engines answer with no rows, since Trino declares no key; the index and statistics kinds are refused, since there is no index object and the row counts come from `SHOW STATS`, which is not a `SELECT`.
+The other four dialect members are `"unsupported"`: the estimating plan, the profile composition, the statistics reading and the grounding capture.
+Trino has `EXPLAIN`, and the editor reads its plan, but the provider sends only one statement whose first keyword is `SELECT` or `WITH` on the agent path, since a statement that ends or nests the read-only transaction, changes the session or calls a procedure must never reach the server; an estimating plan would need that fence to admit `EXPLAIN` by the server's own reading, never measured for the fence, and a table profile would be an aggregate over a whole table, never measured.
+So investigation, database assessment and data analysis open on Trino, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`, and database assessment, which needs a table profile, opens but cannot pass (B146); the `sql-composers` requirement holds query optimization out; plan mode drafts there and grounds under the operations profile, whose open runs no check.
+`MCP_STATEMENT_READ.trino` is false, so MCP `run_read_query` answers that the engine is not served, while the MCP metadata tools serve Trino as before (`MCP_EXPOSABLE.trino` is true).
+Kept so that the engine joined on the members measured on it, nothing composed from another engine's rule, and so that MCP statement reads on Trino are a decision of their own rather than a side effect of agent mode joining.
+
+Found 2026-11-01 with agent execution on Trino.
+
+**Done when:** the Trino overlay gains an estimating plan whose `EXPLAIN` the agent path's fence admits, measured on 476, and a profile composition, or a recorded decision that it keeps none, with tests for each, and a per-engine exposure ruling opens MCP statement reads on Trino through the same check and read-only transaction with `MCP_STATEMENT_READ.trino` true; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

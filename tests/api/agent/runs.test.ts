@@ -754,15 +754,15 @@ describe("POST /api/agent/runs", () => {
     expect(mockStart).toHaveBeenCalledTimes(1);
   });
 
-  test("a Trino investigation is refused with the posture's own paragraph", async () => {
-    mockResolveConnection.mockResolvedValueOnce({ id: "seed:docs", name: "Docs", type: "trino" });
+  test("an Apache Spark investigation is refused with the posture's own paragraph", async () => {
+    mockResolveConnection.mockResolvedValueOnce({ id: "seed:docs", name: "Docs", type: "spark" });
 
     const res = await POST(startRequest({ ...VALID_BODY, workflowType: "investigation" }));
     const body = await parseResponseJSON<{ error: string; refused?: string }>(res);
 
     expect(res.status).toBe(400);
     expect(body.error).toBe(
-      agentPosture({ mode: "agent", engine: "trino", engineLabel: getDBConfig("trino").label, handover: false }).body,
+      agentPosture({ mode: "agent", engine: "spark", engineLabel: getDBConfig("spark").label, handover: false }).body,
     );
     // The listed engines include a cluster, which no database bounds, so the refusal
     // promises a declared boundary rather than a database-native one.

@@ -1,0 +1,55 @@
+[
+ {
+  "note": "a failed statement aborts the transaction; a ROLLBACK then ends it"
+ },
+ {
+  "session": [
+   "SELECT 1 AS a",
+   "SELECT * FROM TABLE(\"pg\".\"system\".\"query\"(libredb_no_such_argument => 1))",
+   "SELECT 1 AS a"
+  ]
+ },
+ {
+  "note": "statements that end or nest a transaction, written inside one"
+ },
+ {
+  "session": [
+   "COMMIT",
+   "SELECT 1 AS a"
+  ]
+ },
+ {
+  "session": [
+   "ROLLBACK",
+   "SELECT 1 AS a"
+  ]
+ },
+ {
+  "session": [
+   "START TRANSACTION",
+   "SELECT 1 AS a"
+  ]
+ },
+ {
+  "session": [
+   "START TRANSACTION READ WRITE",
+   "SELECT 1 AS a"
+  ]
+ },
+ {
+  "note": "a catalog created from another session while a transaction is open is listed and read inside it"
+ },
+ {
+  "session": [
+   "SHOW CATALOGS",
+   {
+    "aside": "CREATE CATALOG libredb_agent_late USING memory"
+   },
+   "SHOW CATALOGS",
+   "SELECT count(*) AS schemas FROM libredb_agent_late.information_schema.schemata",
+   {
+    "aside": "DROP CATALOG IF EXISTS libredb_agent_late"
+   }
+  ]
+ }
+]

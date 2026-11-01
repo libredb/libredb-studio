@@ -20,6 +20,7 @@ import type { OPENSEARCH_SERVER_OVERLAY } from "./opensearch";
 import type { ORACLE_SERVER_OVERLAY } from "./oracle";
 import type { POSTGRES_SERVER_OVERLAY } from "./postgres";
 import type { SQLITE_SERVER_OVERLAY } from "./sqlite";
+import type { TRINO_SERVER_OVERLAY } from "./trino";
 
 export const POSTGRES_CLIENT_OVERLAY = {
   dialect: Object.freeze({
@@ -126,3 +127,10 @@ export const DRUID_CLIENT_OVERLAY = {
     catalogCapture: "unsupported",
   } satisfies ClientDialectOf<(typeof DRUID_SERVER_OVERLAY)["dialect"]>),
 } as const satisfies { dialect: ClientDialectOf<(typeof DRUID_SERVER_OVERLAY)["dialect"]> };
+export const TRINO_CLIENT_OVERLAY = {
+  dialect: Object.freeze({
+    catalogRead: "supported",
+    planEstimate: "unsupported",
+    catalogCapture: "unsupported",
+  } satisfies ClientDialectOf<(typeof TRINO_SERVER_OVERLAY)["dialect"]>),
+} as const satisfies { dialect: ClientDialectOf<(typeof TRINO_SERVER_OVERLAY)["dialect"]> };

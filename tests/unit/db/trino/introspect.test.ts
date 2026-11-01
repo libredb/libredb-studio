@@ -369,6 +369,7 @@ function fakeRunner(options: FakeOptions = {}): Fake {
             processedBytes: 0,
             peakMemoryBytes: 132,
           },
+          endedTransaction: false,
         });
       },
     },

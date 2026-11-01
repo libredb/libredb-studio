@@ -142,6 +142,7 @@ const NAMED_CITATIONS = [
       "connectWarnings",
       "disconnect",
       "query",
+      "queryReadOnly",
       "cancelQuery",
       "listContainers",
       "countObjects",

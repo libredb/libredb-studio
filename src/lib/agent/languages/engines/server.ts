@@ -61,6 +61,7 @@ import { OPENSEARCH_SERVER_OVERLAY } from "../sql/engines/opensearch";
 import { ORACLE_SERVER_OVERLAY } from "../sql/engines/oracle";
 import { POSTGRES_SERVER_OVERLAY } from "../sql/engines/postgres";
 import { SQLITE_SERVER_OVERLAY } from "../sql/engines/sqlite";
+import { TRINO_SERVER_OVERLAY } from "../sql/engines/trino";
 import { engineFamily } from "./client";
 
 const SERVER_OVERLAYS: AgentEngineServerOverlays = Object.freeze({
@@ -79,6 +80,7 @@ const SERVER_OVERLAYS: AgentEngineServerOverlays = Object.freeze({
   cassandra: Object.freeze({ ...CASSANDRA_SERVER_OVERLAY }),
   couchbase: Object.freeze({ ...COUCHBASE_SERVER_OVERLAY }),
   druid: Object.freeze({ ...DRUID_SERVER_OVERLAY }),
+  trino: Object.freeze({ ...TRINO_SERVER_OVERLAY }),
   mongodb: Object.freeze({ ...MONGODB_SERVER_OVERLAY }),
   kubernetes: Object.freeze({ ...KUBERNETES_SERVER_OVERLAY }),
   libredb: Object.freeze({ ...LIBREDB_SERVER_OVERLAY }),

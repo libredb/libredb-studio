@@ -10,6 +10,7 @@ import { engineServerDialect } from "@/lib/agent/languages/engines/server";
 import { withoutExtensionOwnershipTest } from "@/lib/agent/languages/sql/engines/postgres";
 import { agentReadSqlInput, inspectAgentStatement } from "@/lib/db/operations/statement-guard";
 import { druidAgentStatementRefusal } from "@/lib/db/providers/sql/druid/agent-boundary";
+import { trinoAgentStatementRefusal } from "@/lib/db/providers/sql/trino/agent-boundary";
 import {
   AGENT_REQUIREMENT_ENGINES,
   AGENT_STATEMENT_LANGUAGE,
@@ -1947,5 +1948,50 @@ describe("composeCatalogRead: Druid", () => {
 
   test("it composes no estimating plan, since the agent path sends only a SELECT", () => {
     expect(() => composeEstimatingExplain("druid", "SELECT 1")).toThrow(AgentComposedSqlError);
+  });
+});
+
+/**
+ * Trino reads its catalog with a SELECT on `information_schema.columns` of the connection's pinned catalog, which the
+ * server filters to the tables the access control lets the user see, and every statement here is one the agent fence
+ * admits.
+ */
+describe("composeCatalogRead: Trino", () => {
+  const COLUMNS =
+    "SELECT table_schema, table_name, column_name, data_type, is_nullable, ordinal_position " +
+    "FROM information_schema.columns WHERE table_schema <> 'information_schema'";
+
+  test("the column kind is exactly the statement below, narrowed by schema and table", () => {
+    expect(composeCatalogRead("trino", { kind: "columns" })).toBe(
+      `${COLUMNS} ORDER BY table_schema, table_name, ordinal_position`,
+    );
+    expect(composeCatalogRead("trino", { kind: "columns", schema: "public", table: "o'brien" })).toBe(
+      `${COLUMNS} AND table_schema = 'public' AND table_name = 'o''brien' ORDER BY table_schema, table_name, ordinal_position`,
+    );
+    expect(guardAccepts(composeCatalogRead("trino", { kind: "columns", table: "a" }))).toBe(true);
+    expect(trinoAgentStatementRefusal(composeCatalogRead("trino", { kind: "columns", table: "a;b" }))).toBeNull();
+  });
+
+  test("the relation kind is the projection the other engines answer, with no rows, since Trino declares no key", () => {
+    const sql = composeCatalogRead("trino", { kind: "relations", schema: "public" });
+    expect(sql).toBe(
+      "SELECT table_schema, table_name, column_name, " +
+        "'' AS referenced_schema, '' AS referenced_table, '' AS referenced_column " +
+        "FROM information_schema.columns WHERE 1 = 0 AND table_schema = 'public'",
+    );
+    expect(trinoAgentStatementRefusal(sql)).toBeNull();
+  });
+
+  test("the index and statistics kinds are refused, each naming why", () => {
+    expect(() => composeCatalogRead("trino", { kind: "indexes", schema: "public" })).toThrow(
+      "Trino keeps no index object on any connector, so there is no such inventory to read",
+    );
+    expect(() => composeCatalogRead("trino", { kind: "statistics", schema: "public" })).toThrow(
+      "Trino keeps no row count a SELECT can read, only the SHOW STATS answer, which is not read here, so there is no such inventory to read",
+    );
+  });
+
+  test("it composes no estimating plan, since the agent path sends only a SELECT", () => {
+    expect(() => composeEstimatingExplain("trino", "SELECT 1")).toThrow(AgentComposedSqlError);
   });
 });
