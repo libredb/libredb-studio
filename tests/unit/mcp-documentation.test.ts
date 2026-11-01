@@ -190,6 +190,35 @@ describe("docs/MCP.md", () => {
     );
   });
 
+  test("says what a cancel and a timeout do to a libSQL statement, as measured on sqld 0.24.33", () => {
+    expect(MCP_DOC).toContain(
+      "| libSQL | Studio stops waiting; the statement runs on until the provider closes its request at the time left of `timeout_ms`, which stops it on sqld | Studio closes the request at `timeout_ms`, sqld stops the statement, and the client gets the timeout answer |",
+    );
+  });
+
+  test("names how each engine run_read_query serves enforces read-only, from the one engine list", () => {
+    const line = MCP_DOC.split("\n").find((text) => text.startsWith("- Read-only is the database's own enforcement"));
+    for (const type of RUN_READ_QUERY_TYPES) expect(line).toContain(DB_UI_CONFIG[type].label);
+  });
+
+  test("docs/FEATURES.md names run_read_query's engines from the one engine list", () => {
+    expect(read("docs/FEATURES.md")).toContain(
+      `\`run_read_query\` on ${RUN_READ_QUERY_ENGINES}, \`run_kubectl_read\` on Kubernetes`,
+    );
+  });
+
+  test("says which libSQL token a seed needs and that inspect_schema opens libSQL unproven", () => {
+    expect(MCP_DOC).toContain(
+      "`run_read_query` refuses a PostgreSQL, SQL Server, ClickHouse or libSQL connection whose own login could do more than read",
+    );
+    expect(MCP_DOC).toContain(
+      "libSQL by a token proven at open to be read-only, which the server refuses every write ([libsql.md](./providers/libsql.md))",
+    );
+    expect(MCP_DOC).toContain(
+      "libSQL proves its token only for a connection that sends statements, so `inspect_schema` opens a libSQL connection unproven, as the editor does, with a writable token or HTTP Basic too.",
+    );
+  });
+
   test("says an MCP call on a LibreDB file keeps the Studio editor out until its handle is idle for 30 minutes", () => {
     expect(MCP_DOC).toContain(
       "- An MCP call on a LibreDB connection that no Studio session holds open opens the file itself and keeps its exclusive lock until that handle has been idle for 30 minutes.",

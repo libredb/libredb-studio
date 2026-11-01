@@ -704,7 +704,7 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
     expect(engineClaimsIn(productList)).toEqual([]);
     expect(
       engineClaimsIn(
-        "- `run_read_query` runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL and ClickHouse in agent mode.",
+        "- `run_read_query` runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse and libSQL in agent mode.",
       ),
     ).toEqual([]);
   });

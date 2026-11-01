@@ -28,12 +28,12 @@ describe("mcpStatementEngines", () => {
     );
   });
 
-  test("serves ClickHouse beside the five SQL engines it served before MCP_STATEMENT_READ existed", () => {
-    expect(RUN_READ_QUERY_TYPES).toEqual(["postgres", "sqlite", "duckdb", "mssql", "mysql", "clickhouse"]);
+  test("serves ClickHouse and libSQL beside the five SQL engines it served before MCP_STATEMENT_READ existed", () => {
+    expect(RUN_READ_QUERY_TYPES).toEqual(["postgres", "sqlite", "duckdb", "mssql", "mysql", "clickhouse", "libsql"]);
   });
 
-  // Opening ClickHouse moved no other engine: every other language still serves exactly what it did.
-  test("opening ClickHouse leaves every other language's served set as it was", () => {
+  // Opening ClickHouse and libSQL moved no other engine: every other language still serves exactly what it did.
+  test("opening ClickHouse and libSQL leaves every other language's served set as it was", () => {
     const languages = [...new Set(Object.values(AGENT_STATEMENT_LANGUAGE))].filter(
       (language): language is NonNullable<typeof language> => language !== null && language !== "sql",
     );
@@ -67,6 +67,7 @@ describe("mcpStatementEngines", () => {
       "mssql",
       "mysql",
       "clickhouse",
+      "libsql",
     ]);
   });
 
