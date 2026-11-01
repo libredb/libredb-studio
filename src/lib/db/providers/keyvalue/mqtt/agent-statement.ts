@@ -23,6 +23,7 @@
  * PUBLISH, CONNECT takes no Will, and the valve re-checks every outbound byte (`encoder.ts`, `valve.ts`). This is what
  * lets the model read why it was refused, before anything is sent.
  */
+import { repeatsAKey } from "@/lib/db/utils/json-repeated-key";
 import { MQTT_MAX_STRING_BYTES, MQTT_READ_BUDGET_MS } from "./constants";
 
 export type MqttAgentRefusalCode = "request" | "metadata-only";
@@ -62,36 +63,6 @@ export const MQTT_AGENT_SENTENCES = {
 
 function refuse(code: MqttAgentRefusalCode, message: string): MqttAgentReading {
   return { ok: false, code, message };
-}
-
-/**
- * Whether a key is written twice in the one object `text` holds, which JSON.parse has already accepted as one object
- * of scalars and nested values: the scan tells keys from values by the object they sit in, and decodes each key's
- * spelling as JSON does, so `"topic"` is `topic`.
- */
-function repeatsAKey(text: string): boolean {
-  const open: { readonly keys: Set<string> | null; expectsKey: boolean }[] = [];
-  for (let at = 0; at < text.length; at++) {
-    const char = text[at];
-    if (char === "{" || char === "[") open.push({ keys: char === "{" ? new Set() : null, expectsKey: char === "{" });
-    else if (char === "}" || char === "]") open.pop();
-    else if (char === ",") {
-      const top = open.at(-1) as { readonly keys: Set<string> | null; expectsKey: boolean };
-      top.expectsKey = top.keys !== null;
-    } else if (char === '"') {
-      let end = at + 1;
-      while (text[end] !== '"') end += text[end] === "\\" ? 2 : 1;
-      const top = open.at(-1);
-      if (top?.keys && top.expectsKey) {
-        const key = JSON.parse(text.slice(at, end + 1)) as string;
-        if (top.keys.has(key)) return true;
-        top.keys.add(key);
-        top.expectsKey = false;
-      }
-      at = end;
-    }
-  }
-  return false;
 }
 
 /**

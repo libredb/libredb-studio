@@ -27,6 +27,7 @@
  * PUBLISH, and CONNECT takes no Will (`encoder.ts`). This is what lets the model read why it was refused, before
  * anything is sent.
  */
+import { repeatsAKey } from "@/lib/db/utils/json-repeated-key";
 import { DEFAULT_WINDOW_SECONDS, SPARKPLUG_AGENT_MAX_ID_BYTES } from "./constants";
 
 export type SparkplugAgentRefusalCode = "request" | "metadata-only";
@@ -79,39 +80,6 @@ export const SPARKPLUG_AGENT_SENTENCES = {
 
 function refuse(code: SparkplugAgentRefusalCode, message: string): SparkplugAgentReading {
   return { ok: false, code, message };
-}
-
-/**
- * Whether a key is written twice in the one object `text` holds, which JSON.parse has already accepted as one object
- * of scalars and nested values: the scan tells keys from values by the object they sit in, and decodes each key's
- * spelling as JSON does, so `"group"` is `group`.
- *
- * A provider-local copy of the MQTT reader's scan: the rule that keeps an engine's code in its own directory leaves no
- * shared module both may import, and the scan is small enough that two copies cost less than a shared core.
- */
-function repeatsAKey(text: string): boolean {
-  const open: { readonly keys: Set<string> | null; expectsKey: boolean }[] = [];
-  for (let at = 0; at < text.length; at++) {
-    const char = text[at];
-    if (char === "{" || char === "[") open.push({ keys: char === "{" ? new Set() : null, expectsKey: char === "{" });
-    else if (char === "}" || char === "]") open.pop();
-    else if (char === ",") {
-      const top = open.at(-1) as { readonly keys: Set<string> | null; expectsKey: boolean };
-      top.expectsKey = top.keys !== null;
-    } else if (char === '"') {
-      let end = at + 1;
-      while (text[end] !== '"') end += text[end] === "\\" ? 2 : 1;
-      const top = open.at(-1);
-      if (top?.keys && top.expectsKey) {
-        const key = JSON.parse(text.slice(at, end + 1)) as string;
-        if (top.keys.has(key)) return true;
-        top.keys.add(key);
-        top.expectsKey = false;
-      }
-      at = end;
-    }
-  }
-  return false;
 }
 
 /**
