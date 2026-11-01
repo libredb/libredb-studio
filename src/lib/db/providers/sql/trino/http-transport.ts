@@ -735,6 +735,12 @@ interface BodyBudget {
   accepted: number;
 }
 
+/**
+ * The bound for the answers to Studio's own control requests (`START TRANSACTION`, `ROLLBACK` and the cancel), which
+ * carry no rows: each is read under the page envelope allowance alone, so no such answer is ever held whole either.
+ */
+const CONTROL_BODY_BUDGET: BodyBudget = { cap: 0, accepted: 0 };
+
 /** A completed exchange, with the transaction it started, if any. */
 interface Exchange {
   result: TrinoQueryResult;
@@ -796,7 +802,11 @@ export class TrinoHttpTransport implements TrinoTransport {
   }
 
   public async beginReadOnlyTransaction(signal?: AbortSignal): Promise<string> {
-    const { startedTransactionId } = await this.exchange(BEGIN_READ_ONLY_SQL, { signal }, NO_TRANSACTION);
+    const { startedTransactionId } = await this.exchange(
+      BEGIN_READ_ONLY_SQL,
+      { signal, maxRowBytes: 0 },
+      NO_TRANSACTION,
+    );
     if (startedTransactionId === null) {
       throw new TrinoTransportError(
         "engine",
@@ -807,7 +817,7 @@ export class TrinoHttpTransport implements TrinoTransport {
   }
 
   public async rollback(transactionId: string, signal?: AbortSignal): Promise<void> {
-    const { result } = await this.exchange(ROLLBACK_SQL, { signal }, transactionId);
+    const { result } = await this.exchange(ROLLBACK_SQL, { signal, maxRowBytes: 0 }, transactionId);
     if (!result.endedTransaction) {
       throw new TrinoTransportError(
         "engine",
@@ -848,6 +858,7 @@ export class TrinoHttpTransport implements TrinoTransport {
       endpointUrl(this.origin, `${QUERY_PATH}/${encodeURIComponent(queryId)}`),
       { method: "DELETE", headers: this.sessionHeaders() },
       signal,
+      CONTROL_BODY_BUDGET,
     );
   }
 

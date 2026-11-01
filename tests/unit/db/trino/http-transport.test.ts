@@ -1844,6 +1844,21 @@ describe("TrinoHttpTransport answer caps", () => {
     expect(calls).toHaveLength(1);
   });
 
+  test.each([
+    ["START TRANSACTION", (transport: ReturnType<typeof makeTransport>) => transport.beginReadOnlyTransaction()],
+    ["ROLLBACK", (transport: ReturnType<typeof makeTransport>) => transport.rollback("txn-1")],
+    ["the cancel", (transport: ReturnType<typeof makeTransport>) => transport.cancel(QUERY_ID)],
+  ])("bounds the body %s is answered with to the envelope allowance", async (_name, run) => {
+    const { body, seen } = endlessBody();
+    handler = () => new Response(body, { headers: { "content-type": "application/json" } });
+
+    const error = await tooLarge(() => run(makeTransport()));
+
+    expect(error.limit).toBe("bytes");
+    expect(seen.pulls).toBe(Math.ceil((TRINO_PAGE_ENVELOPE_BYTES + 1) / (64 * 1024)));
+    expect(seen.cancelled).toBe(true);
+  });
+
   test("reads a page whose envelope is larger than what the cap leaves, within the allowance", async () => {
     sequence(SINGLE_PAGE);
 
