@@ -383,6 +383,18 @@ describe("what is refused before anything is sent, in agent mode's words with th
     expect(recorded).toEqual([]);
   });
 
+  test("an encoded slash or dot stays inside its segment: a device it spells is unknown, an asset id is sent as written", async () => {
+    const provider = await opened(AGENT, { ...DEFAULT_ANSWERS, "/asset/%252e%252e": capture("assets") });
+    recorded = [];
+    for (const statement of ["/a%2Fb/current", "/%2e%2e/probe", "/current\r/sample"]) {
+      await expect(provider.queryReadOnly(statement, BUDGET)).rejects.toThrow("This agent serves no device named");
+    }
+    expect(lines()).toEqual(["GET /probe", "GET /probe", "GET /probe"]);
+    recorded = [];
+    await provider.queryReadOnly("/asset/%2e%2e", BUDGET);
+    expect(lines()).toEqual(["GET /probe", "GET /asset/%252e%252e"]);
+  });
+
   test("a device the agent's model does not hold is refused after the model read, before the request", async () => {
     const provider = await opened();
     recorded = [];

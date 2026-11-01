@@ -304,6 +304,23 @@ describe("a sample read", () => {
     expect(seen).toHaveLength(200);
   });
 
+  test("a caller that answers false stops the walk there, and the read is not reported as the row cap's", async () => {
+    const { transport } = standIn(fixture("sample-count-200.xml"));
+    const seen: string[] = [];
+    const result = await readObservations(
+      options(transport, { count: 0 }),
+      guardRequestLine("/sample?count=200", GUARD),
+      10_000,
+      (observation) => {
+        seen.push(observation.attributes.dataItemId);
+        return seen.length < 3;
+      },
+    );
+    expect(seen).toHaveLength(3);
+    expect(result.read).toBe(3);
+    expect(result.capped).toBe(false);
+  });
+
   test("a Streams answer the walker cannot read is refused with the reader's reason and the status", async () => {
     // Cut before its root end tag, as a connection dropped mid-answer leaves it.
     const { transport } = standIn("<MTConnectStreams><Streams>");
