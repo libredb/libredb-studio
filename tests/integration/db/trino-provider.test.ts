@@ -5186,6 +5186,13 @@ describe("queryReadOnly", () => {
   function readOnlyCoordinator(catalogs: string[] = ["pg", "system"]): Map<string | RegExp, Reply> {
     const replies = new Map<string | RegExp, Reply>([
       ["SELECT 1", answer(["_col0"], [[1]])],
+      [
+        'ALTER TABLE "system"."runtime"."nodes" EXECUTE libredb_no_such_procedure',
+        refused(
+          "PERMISSION_DENIED",
+          "Access Denied: Cannot execute table procedure LIBREDB_NO_SUCH_PROCEDURE on system.runtime.nodes",
+        ),
+      ],
       [TRINO_CATALOG_LIST_SQL, answer(["catalogName", "connectorName"], [["pg", "postgresql"]])],
       [
         "SHOW CATALOGS",
@@ -5266,6 +5273,7 @@ describe("queryReadOnly", () => {
   /** The proof the read-only coordinator above answers, transaction by transaction. */
   const PROOF = (from: number) => {
     const statements = [
+      'ALTER TABLE "system"."runtime"."nodes" EXECUTE libredb_no_such_procedure',
       "SHOW CATALOGS",
       'SHOW FUNCTIONS FROM "pg"."system"',
       'SELECT * FROM TABLE("pg"."system"."query"(libredb_no_such_argument => 1))',
@@ -5311,7 +5319,9 @@ describe("queryReadOnly", () => {
 
     expect(error).toBeInstanceOf(ExecutionProfileError);
     expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_SERVER_UNENFORCED");
-    expect((error as Error).message).toContain("set access-control.name=read-only, or file-based access control");
+    expect((error as Error).message).toContain(
+      "set access-control.name=read-only, alone or beside other access controls",
+    );
     expect((error as Error).message).toEndWith("The check ran nothing.");
     expect(provider.isConnected()).toBe(false);
     expect(recorded.open.size).toBe(0);
@@ -5345,26 +5355,26 @@ describe("queryReadOnly", () => {
     expect(first.fields).toEqual(["a"]);
     expect(first.executionTime).toBe(7);
     expect(shown(recorded.log.slice(opening, afterFirst))).toEqual([
-      ...PROOF(9),
-      "t17: START TRANSACTION READ ONLY",
-      "t17: SHOW CATALOGS",
-      "t17: SELECT a FROM pg.public.t",
-      "t17: ROLLBACK",
+      ...PROOF(10),
+      "t19: START TRANSACTION READ ONLY",
+      "t19: SHOW CATALOGS",
+      "t19: SELECT a FROM pg.public.t",
+      "t19: ROLLBACK",
     ]);
     expect(shown(recorded.log.slice(afterFirst))).toEqual([
-      ...PROOF(18),
-      "t26: START TRANSACTION READ ONLY",
-      "t26: SHOW CATALOGS",
-      "t26: SELECT a FROM pg.public.t",
-      "t26: ROLLBACK",
+      ...PROOF(20),
+      "t29: START TRANSACTION READ ONLY",
+      "t29: SHOW CATALOGS",
+      "t29: SELECT a FROM pg.public.t",
+      "t29: ROLLBACK",
     ]);
     expect(recorded.open.size).toBe(0);
     // The statement goes out under its transaction, the budget's row cap and its byte cap, and one deadline covers the
     // check and the statement.
     const statement = recorded.options.filter((call) => call.sql === "SELECT a FROM pg.public.t")[0];
-    expect(statement?.options).toMatchObject({ transactionId: "tx-17", maxRows: 3, maxRowBytes: 1000 });
+    expect(statement?.options).toMatchObject({ transactionId: "tx-19", maxRows: 3, maxRowBytes: 1000 });
     const probe = recorded.options.find(
-      (call) => call.sql === 'SHOW FUNCTIONS FROM "pg"."system"' && call.options.transactionId === "tx-10",
+      (call) => call.sql === 'SHOW FUNCTIONS FROM "pg"."system"' && call.options.transactionId === "tx-12",
     );
     expect(probe?.options.signal).toBe(statement?.options.signal);
     // Every probe of catalog management names a fresh catalog.
@@ -5403,14 +5413,14 @@ describe("queryReadOnly", () => {
 
     expect(result.rows).toEqual([{ a: 1 }, { a: 2 }]);
     const lines = shown(recorded.log);
-    const changed = lines.indexOf("t17: SHOW CATALOGS");
-    expect(lines.slice(changed, changed + 2)).toEqual(["t17: SHOW CATALOGS", "t17: ROLLBACK"]);
-    expect(lines.slice(changed + 2, changed + 2 + PROOF(18).length)).toEqual(PROOF(18));
+    const changed = lines.indexOf("t19: SHOW CATALOGS");
+    expect(lines.slice(changed, changed + 2)).toEqual(["t19: SHOW CATALOGS", "t19: ROLLBACK"]);
+    expect(lines.slice(changed + 2, changed + 2 + PROOF(20).length)).toEqual(PROOF(20));
     expect(lines.slice(-4)).toEqual([
-      "t26: START TRANSACTION READ ONLY",
-      "t26: SHOW CATALOGS",
-      "t26: SELECT a FROM pg.public.t",
-      "t26: ROLLBACK",
+      "t29: START TRANSACTION READ ONLY",
+      "t29: SHOW CATALOGS",
+      "t29: SELECT a FROM pg.public.t",
+      "t29: ROLLBACK",
     ]);
   });
 
@@ -5625,8 +5635,8 @@ describe("queryReadOnly", () => {
     let rollbacks = 0;
     recorded.transport.rollback = async (id, signal) => {
       rollbacks += 1;
-      // The proof's eight transactions roll back; the statement's does not.
-      if (rollbacks === 9)
+      // The proof's nine transactions roll back; the statement's does not.
+      if (rollbacks === 10)
         throw new TrinoTransportError("engine", "Trino answered ROLLBACK without ending the transaction");
       return rollback(id, signal);
     };

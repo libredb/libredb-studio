@@ -3,26 +3,32 @@
 # catalog whose credential can write, once per access control:
 #
 #   tests/fixtures/trino/476/agent-boundary/run.sh          re-record every capture, then remove everything
-#   tests/fixtures/trino/476/agent-boundary/run.sh up       start the four coordinators and leave them running,
+#   tests/fixtures/trino/476/agent-boundary/run.sh up       start the six coordinators and leave them running,
 #                                                           printing each one's access control and URL, for
 #                                                           tests/live/trino-agent-boundary.ts
 #   tests/fixtures/trino/476/agent-boundary/run.sh down     remove what `up` started
 #
-# The four access controls, each a fresh coordinator with catalog.management=dynamic:
+# The six access controls, each a fresh coordinator with catalog.management=dynamic:
 #
+#   file-owner-fn    file-based rules granting every catalog, and EXECUTE and GRANT_EXECUTE on the pg query table
+#                    function to the user "owner" alone, so the connection's user "studio" holds no function
 #   allow-all        no access control configured, Trino's default
 #   read-only        access-control.name=read-only
+#   read-only-file   the read-only access control and the file-owner-fn rules together (access-control.config-files)
 #   file-nofn        file-based rules granting every catalog and no function
 #   file-fn-query    file-based rules granting every catalog, EXECUTE on the query table function and the execute
 #                    procedure, the operator setting the agent profile refuses
 #
-# Each coordinator has three catalogs over the same PostgreSQL database, pg and pg2 (the postgresql connector, whose
-# credential owns the database) and memory, plus Trino's own system catalog. PostgreSQL has dblink installed, so a
-# pass-through query can write through it. Before every coordinator the table public.rp_t is reset to the one row 1,
-# so each capture's last read shows which of its writes landed. The PostgreSQL password is generated here for the run,
-# written only into the catalog files of a temporary directory removed at exit, and never printed; Trino runs with no
-# authentication, so the captures carry no credential at all. Containers and the network carry the TRINO_PROJECT
-# prefix, default libredb-trino-agent, and are removed when the run ends. 03 runs on allow-all and read-only only.
+# Each coordinator has four catalogs, pg and pg2 (the postgresql connector, whose credential owns the database),
+# memory, and lake (the hive connector on a file metastore in a directory every coordinator mounts, so a view one
+# coordinator stores is read by the others), plus Trino's own system catalog. PostgreSQL has dblink installed, so a
+# pass-through query can write through it. On file-owner-fn, which runs first, the user "owner" stores in lake a
+# SECURITY DEFINER view over a pass-through dblink write (06-definer-view-setup); every coordinator then reads it as
+# "studio" (06). Before every coordinator the table public.rp_t is reset to the one row 1, so each capture's last read
+# shows which of its writes landed. The PostgreSQL password is generated here for the run, written only into the
+# catalog files of a temporary directory removed at exit, and never printed; Trino runs with no authentication, so the
+# captures carry no credential at all. Containers and the network carry the TRINO_PROJECT prefix, default
+# libredb-trino-agent, and are removed when the run ends. 03 runs on allow-all and read-only only.
 # `up` keeps the catalog files in TRINO_WORK, default ${TMPDIR:-/tmp}/<prefix>-work, until `down` removes it.
 set -euo pipefail
 dir="$(cd "$(dirname "$0")" && pwd)"
@@ -35,7 +41,7 @@ mode="${1:-capture}"
 work="${TRINO_WORK:-${TMPDIR:-/tmp}/$project-work}"
 password="$(openssl rand -hex 16)"
 coordinator=""
-accesses=(allow-all read-only file-nofn file-fn-query)
+accesses=(file-owner-fn allow-all read-only read-only-file file-nofn file-fn-query)
 
 cleanup() {
   [ -n "$coordinator" ] && docker rm -f "$coordinator" >/dev/null 2>&1 || true
@@ -51,7 +57,9 @@ case "$mode" in
   *) echo "usage: $0 [up|down]" >&2; exit 2 ;;
 esac
 rm -rf "$work"
-mkdir -p "$work"
+mkdir -p "$work/lake"
+# The image runs as uid 1000, and the hive connector writes its metastore and schema directories here.
+chmod a+rwX "$work/lake"
 
 psql() { docker exec "$postgres" psql -qtA -U postgres -c "$1"; }
 
@@ -69,10 +77,25 @@ start() {
       "$postgres" "$password" >"$etc/catalog/$catalog.properties"
   done
   printf 'connector.name=memory\n' >"$etc/catalog/memory.properties"
-  local mounts=(-e CATALOG_MANAGEMENT=dynamic -v "$etc/catalog:/etc/trino/catalog")
+  printf 'connector.name=hive\nhive.metastore=file\nhive.metastore.catalog.dir=local:///metastore\nfs.native-local.enabled=true\nlocal.location=/lake\n' \
+    >"$etc/catalog/lake.properties"
+  local mounts=(-e CATALOG_MANAGEMENT=dynamic -v "$etc/catalog:/etc/trino/catalog" -v "$work/lake:/lake")
+  local owner_rules='{"catalogs":[{"allow":"all"}],"functions":[{"user":"owner","catalog":"pg","schema":"system","function":"query","privileges":["EXECUTE","GRANT_EXECUTE"]}]}'
   case "$access" in
     allow-all) ;;
     read-only) printf 'access-control.name=read-only\n' >"$etc/access-control.properties" ;;
+    file-owner-fn)
+      printf 'access-control.name=file\nsecurity.config-file=/etc/trino/rules.json\n' >"$etc/access-control.properties"
+      echo "$owner_rules" >"$etc/rules.json" ;;
+    read-only-file)
+      # The image's config.properties, as 476 ships it, with the two access controls added.
+      printf 'coordinator=true\nnode-scheduler.include-coordinator=true\nhttp-server.http.port=8080\ndiscovery.uri=http://localhost:8080\ncatalog.management=${ENV:CATALOG_MANAGEMENT}\naccess-control.config-files=/etc/trino/read-only.properties,/etc/trino/file.properties\n' \
+        >"$etc/config.properties"
+      printf 'access-control.name=read-only\n' >"$etc/read-only.properties"
+      printf 'access-control.name=file\nsecurity.config-file=/etc/trino/rules.json\n' >"$etc/file.properties"
+      echo "$owner_rules" >"$etc/rules.json"
+      mounts+=(-v "$etc/config.properties:/etc/trino/config.properties:ro" -v "$etc/read-only.properties:/etc/trino/read-only.properties:ro"
+        -v "$etc/file.properties:/etc/trino/file.properties:ro") ;;
     file-nofn)
       printf 'access-control.name=file\nsecurity.config-file=/etc/trino/rules.json\n' >"$etc/access-control.properties"
       echo '{"catalogs":[{"allow":"all"}]}' >"$etc/rules.json" ;;
@@ -101,6 +124,7 @@ if [ "$mode" = up ]; then
   psql "INSERT INTO public.rp_t VALUES (1);" >/dev/null
   for access in "${accesses[@]}"; do
     start "$access"
+    [ "$access" = file-owner-fn ] && node "$dir/probe.mjs" "$url" "$dir/06-definer-view-setup.json" >/dev/null
     echo "$access $url"
     coordinator=""
   done
@@ -110,7 +134,10 @@ fi
 for access in "${accesses[@]}"; do
   psql "TRUNCATE public.rp_t; INSERT INTO public.rp_t VALUES (1); ALTER SEQUENCE public.rp_seq RESTART;" >/dev/null
   start "$access"
-  for plan in 00-catalogs-and-functions 01-proof-probes 02-writes; do
+  [ "$access" = file-owner-fn ] &&
+    node "$dir/probe.mjs" "$url" "$dir/06-definer-view-setup.json" >"$dir/06-definer-view-setup-$access.txt"
+  for plan in 00-catalogs-and-functions 01-proof-probes 02-writes 04-unlisted-functions 05-access-control-probe \
+    06-definer-view; do
     node "$dir/probe.mjs" "$url" "$dir/$plan.json" >"$dir/$plan-$access.txt"
   done
   case "$access" in

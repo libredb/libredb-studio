@@ -11,6 +11,10 @@
   FUNCTION_NOT_FOUND: line 1:21: Table function 'pg2.system.raw_query' not registered
 > [read-only transaction] SELECT * FROM TABLE("pg2"."system"."query"())
   PERMISSION_DENIED: Access Denied: Cannot execute function pg2.system.query
+> [read-only transaction] SELECT * FROM TABLE("lake"."system"."query"(libredb_no_such_argument => 1))
+  FUNCTION_NOT_FOUND: line 1:21: Table function 'lake.system.query' not registered
+> [read-only transaction] SELECT * FROM TABLE("lake"."system"."raw_query"(libredb_no_such_argument => 1))
+  FUNCTION_NOT_FOUND: line 1:21: Table function 'lake.system.raw_query' not registered
 > [read-only transaction] SELECT * FROM TABLE("memory"."system"."query"(libredb_no_such_argument => 1))
   FUNCTION_NOT_FOUND: line 1:21: Table function 'memory.system.query' not registered
 > [read-only transaction] SELECT * FROM TABLE("memory"."system"."raw_query"(libredb_no_such_argument => 1))

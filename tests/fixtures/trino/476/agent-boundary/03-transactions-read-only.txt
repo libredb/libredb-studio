@@ -40,11 +40,11 @@
 # a catalog created from another session while a transaction is open is listed and read inside it
 (START TRANSACTION READ ONLY)
 > SHOW CATALOGS
-  OK ["Catalog"] [["memory"],["pg"],["pg2"],["system"]]
+  OK ["Catalog"] [["lake"],["memory"],["pg"],["pg2"],["system"]]
 > [autocommit, meanwhile] CREATE CATALOG libredb_agent_late USING memory
   PERMISSION_DENIED: Access Denied: Cannot create catalog libredb_agent_late
 > SHOW CATALOGS
-  OK ["Catalog"] [["memory"],["pg"],["pg2"],["system"]]
+  OK ["Catalog"] [["lake"],["memory"],["pg"],["pg2"],["system"]]
 > SELECT count(*) AS schemas FROM libredb_agent_late.information_schema.schemata
   CATALOG_NOT_FOUND: line 1:33: Catalog 'libredb_agent_late' not found
 > [autocommit, meanwhile] DROP CATALOG IF EXISTS libredb_agent_late

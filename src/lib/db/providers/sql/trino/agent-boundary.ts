@@ -1,29 +1,38 @@
 /**
- * The agent read-only execution profile's boundary on Trino: the proof that the operator's access control refuses this
- * connection's user every catalog's table functions and catalog management, sent at the open of a connection that will
- * send statements and again before every agent statement, and the fence every agent statement passes before it is sent.
+ * The agent read-only execution profile's boundary on Trino: the proof that the read-only access control is in force,
+ * refusing every identity every catalog's table functions and catalog management, sent at the open of a connection
+ * that will send statements and again before every agent statement, and the fence every agent statement passes before
+ * it is sent.
  *
  * The boundary is the operator's access control, proved by the server's own answers. Measured on Trino 476
  * (`tests/fixtures/trino/476/agent-boundary/`), `START TRANSACTION READ ONLY` refuses Trino's own writes, but a
  * pass-through table function, `TABLE(<catalog>.system.query(query => ...))`, sends its text to the catalog's source,
  * where it runs under the catalog's own credential: through PostgreSQL's dblink it wrote a row inside the read-only
  * transaction, on both PostgreSQL catalogs, under the default access control and under file rules granting the
- * function (capture 02). Under `access-control.name=read-only`, and under file rules that grant no function, every
- * such call is refused with PERMISSION_DENIED on every catalog, as are `CALL system.execute` and catalog creation and
- * removal, and the PostgreSQL table is unchanged (capture 02). The read-only access control lets only the builtin
- * functions run, so it covers a catalog added later; no catalog or server switch disables table functions.
+ * function (capture 02). Under `access-control.name=read-only` every such call is refused with PERMISSION_DENIED on
+ * every catalog, as are `CALL system.execute` and catalog creation and removal, and the PostgreSQL table is unchanged
+ * (capture 02). The read-only access control lets only the builtin functions run, for every identity and whether a
+ * catalog lists the function or not, so it covers a catalog added later; no catalog or server switch disables table
+ * functions.
  *
- * The proof (`proveTrinoAgentBoundary`) asks the server, as this connection's user, for its catalogs (`SHOW CATALOGS`)
- * and each catalog's functions (`SHOW FUNCTIONS FROM <catalog>.system`, whose table functions carry the function type
- * `table`), then calls every table function each catalog lists, and the known pass-through names (`query`,
- * `raw_query`) on every catalog, with an argument name no function declares. The permission check comes before the
- * argument check, so the call runs nothing either way: a function the user may not call answers PERMISSION_DENIED, one
- * it may call answers an argument error (capture 01). Each must answer PERMISSION_DENIED; FUNCTION_NOT_FOUND is accepted
- * only for a known pass-through name the catalog does not list. Then it removes a catalog whose name carries a fresh
- * random suffix, which no one holds, and catalog management must be refused: PERMISSION_DENIED, where a server that
- * lets the user manage catalogs looks the name up and answers CATALOG_NOT_FOUND (capture 01). Catalog creation is not
- * probed, since where it is allowed the probe would create one; both controls the profile names refuse it (capture 02).
- * Any other answer refuses the profile, and a failure to reach the server leaves as it came.
+ * The proof (`proveTrinoAgentBoundary`) first asks for a table procedure no connector registers on
+ * `system.runtime.nodes`. The read-only access control refuses every table procedure to every identity before the
+ * lookup, with PERMISSION_DENIED; the default and file-based access control never refuse one, so the lookup answers
+ * PROCEDURE_NOT_FOUND (capture 05). Only the read-only refusal, word for word, is admitted, alone or beside other access
+ * controls. This is what proves a table function the server does not list refused too: a call is looked up before its
+ * permission is checked, so a name that does not resolve answers FUNCTION_NOT_FOUND under every access control (capture
+ * 04), and no call can prove the listing whole. Then it asks, as this connection's user, for its catalogs (`SHOW
+ * CATALOGS`) and each catalog's functions (`SHOW FUNCTIONS FROM <catalog>.system`, whose table functions carry the
+ * function type `table`), and calls every table function each catalog lists, and the known pass-through names
+ * (`query`, `raw_query`) on every catalog, with an argument name no function declares. The permission check comes
+ * before the argument check, so the call runs nothing either way: a function the user may not call answers
+ * PERMISSION_DENIED, one it may call answers an argument error (capture 01). Each must answer PERMISSION_DENIED;
+ * FUNCTION_NOT_FOUND is accepted only for a known pass-through name the catalog does not list. Then it removes a
+ * catalog whose name carries a fresh random suffix, which no one holds, and catalog management must be refused:
+ * PERMISSION_DENIED, where a server that lets the user manage catalogs looks the name up and answers CATALOG_NOT_FOUND
+ * (capture 01). Catalog creation is not probed, since where it is allowed the probe would create one; the read-only
+ * access control refuses it (capture 02). Any other answer refuses the profile, and a failure to reach the server
+ * leaves as it came.
  *
  * Every statement of the proof runs inside a read-only transaction of its own, which the caller rolls back: a refused
  * statement aborts the transaction it ran in (capture 03), so the probes cannot share one.
@@ -35,6 +44,18 @@ import { type TrinoQueryResult, TrinoTransportError } from "./transport";
 
 /** Runs one statement inside a read-only transaction of its own and answers its result, or throws its refusal. */
 export type TrinoProofRun = (sql: string) => Promise<TrinoQueryResult>;
+
+/**
+ * The probe of the access control in force: a table procedure no connector registers, on a table every server has.
+ * The read-only access control refuses every identity every table procedure before the procedure is looked up; the
+ * default and file-based access control never refuse one, so the lookup answers PROCEDURE_NOT_FOUND (capture 05).
+ * Either way nothing runs.
+ */
+export const TRINO_ACCESS_CONTROL_PROBE = 'ALTER TABLE "system"."runtime"."nodes" EXECUTE libredb_no_such_procedure';
+
+/** The read-only access control's answer to the probe, word for word (capture 05, read-only and read-only-file). */
+const READ_ONLY_REFUSAL =
+  "Access Denied: Cannot execute table procedure LIBREDB_NO_SUCH_PROCEDURE on system.runtime.nodes";
 
 /** The catalogs this user can see. */
 export const TRINO_CATALOG_LIST_STATEMENT = "SHOW CATALOGS";
@@ -60,13 +81,14 @@ const NO_SUCH_ARGUMENT = "libredb_no_such_argument";
 
 const PERMISSION_DENIED = "PERMISSION_DENIED";
 const FUNCTION_NOT_FOUND = "FUNCTION_NOT_FOUND";
+const PROCEDURE_NOT_FOUND = "PROCEDURE_NOT_FOUND";
 
 /** The answers a table function the user may call gives the probe: its arguments, not its permission, were refused. */
 const ARGUMENT_REFUSALS: ReadonlySet<string> = new Set(["INVALID_FUNCTION_ARGUMENT", "MISSING_ARGUMENT"]);
 
 /** What every refusal of the check starts with, naming the operator settings that pass it. */
 const NEEDS =
-  "The agent read-only execution profile needs a Trino server whose access control refuses this connection's user every catalog's table functions, and catalog management must be refused: set access-control.name=read-only, or file-based access control that grants no function";
+  "The agent read-only execution profile needs a Trino server whose access control refuses every identity the functions of every catalog and catalog management: set access-control.name=read-only, alone or beside other access controls";
 
 /** What every refusal of the check ends with: the probes run nothing, whatever the server answered. */
 const RAN_NOTHING = "The check ran nothing.";
@@ -166,6 +188,32 @@ async function proveFunction(run: TrinoProofRun, catalog: string, name: string, 
   );
 }
 
+/** The check of the access control in force: the table procedure probe must meet the read-only access control's refusal. */
+async function proveReadOnlyAccessControl(run: TrinoProofRun): Promise<void> {
+  const what = "ALTER TABLE ... EXECUTE of a table procedure no connector registers";
+  try {
+    await run(TRINO_ACCESS_CONTROL_PROBE);
+  } catch (error) {
+    const answer = serverAnswer(error);
+    if (answer === null) throw error;
+    if (answer.code === PERMISSION_DENIED && answer.message === READ_ONLY_REFUSAL) return;
+    if (answer.code === PROCEDURE_NOT_FOUND) {
+      refuse(
+        `This server looked up a table procedure no connector registers, answering ${quotedAnswer(answer)}, where the read-only access control refuses the call first, so the read-only access control is not in force: a table function the server does not list, which a lookup finds before any permission check, could run. The connection is refused.`,
+        "PROFILE_SERVER_UNENFORCED",
+      );
+    }
+    refuse(
+      `This server answered ${what} with ${quotedAnswer(answer)}, which is not the read-only access control's refusal, so the access control in force is unmeasured and the connection is refused.`,
+      "PROFILE_UNSUPPORTED_TARGET",
+    );
+  }
+  refuse(
+    `This server ran ${what}, so the access control in force is unmeasured and the connection is refused.`,
+    "PROFILE_UNSUPPORTED_TARGET",
+  );
+}
+
 /** The check of catalog management: removing a catalog no one holds must be refused by permission. */
 async function proveCatalogManagement(run: TrinoProofRun, nonce: string): Promise<void> {
   const what = "DROP CATALOG of a catalog that does not exist";
@@ -187,11 +235,12 @@ async function proveCatalogManagement(run: TrinoProofRun, nonce: string): Promis
 }
 
 /**
- * The proof that the server's access control refuses this user every catalog's table functions and catalog
+ * The proof that the read-only access control is in force and refuses every catalog's table functions and catalog
  * management. `run` sends each statement inside a read-only transaction of its own. Resolves with the catalogs it
  * proved, in the server's order; refuses the profile on any other answer.
  */
 export async function proveTrinoAgentBoundary(run: TrinoProofRun, nonce: string): Promise<string[]> {
+  await proveReadOnlyAccessControl(run);
   const listed = await ask(run, TRINO_CATALOG_LIST_STATEMENT, (answer) =>
     refuse(
       `This server refused ${TRINO_CATALOG_LIST_STATEMENT} with ${quotedAnswer(answer)}, so its catalogs cannot be checked and the connection is refused.`,

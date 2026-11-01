@@ -2007,8 +2007,8 @@ Every refusal reason it can print, verbatim:
 ## 15. Agent mode: the operator's access control, proven before every statement
 
 Agent mode executes statements on Trino through `queryReadOnly()` in [`index.ts`](../../src/lib/db/providers/sql/trino/index.ts), with the access control check and the statement fence in [`agent-boundary.ts`](../../src/lib/db/providers/sql/trino/agent-boundary.ts) and the read-only transaction in [`http-transport.ts`](../../src/lib/db/providers/sql/trino/http-transport.ts).
-Every fact below was measured on `trinodb/trino:476`, digest-pinned, with catalog management dynamic and three catalogs: `pg` and `pg2`, the postgresql connector over one PostgreSQL 17 database whose credential owns it and has dblink installed, and `memory`.
-It is recorded in [`tests/fixtures/trino/476/agent-boundary/`](../../tests/fixtures/trino/476/agent-boundary/), whose `run.sh` starts a coordinator under each of four access controls and re-records every capture.
+Every fact below was measured on `trinodb/trino:476`, digest-pinned, with catalog management dynamic and four catalogs: `pg` and `pg2`, the postgresql connector over one PostgreSQL 17 database whose credential owns it and has dblink installed, `memory`, and `lake`, the hive connector on a file metastore every coordinator shares.
+It is recorded in [`tests/fixtures/trino/476/agent-boundary/`](../../tests/fixtures/trino/476/agent-boundary/), whose `run.sh` starts a coordinator under each of six access controls and re-records every capture.
 
 ### 15.1 The boundary is the operator's access control
 
@@ -2017,31 +2017,36 @@ It does not reach a catalog's source.
 A pass-through table function, `TABLE(<catalog>.system.query(query => '...'))`, sends its text to the source, where it runs under the catalog's own credential: PostgreSQL runs it read-only, so an `INSERT` in it is refused, but `dblink_exec` opens a second session, and under Trino's default access control and under file rules that grant the function, one inside the read-only transaction wrote a row to PostgreSQL through either catalog (capture 02).
 No catalog or server setting turns table functions off.
 
-What stops it is the operator's access control, and the agent read-only profile requires one of two that refuse every table function of every catalog to the connection's user (capture 02):
-
-- `access-control.name=read-only`, Trino's read-only system access control, which lets only the builtin functions run and so covers a catalog added later; or
-- file-based access control (`access-control.name=file`) whose rules grant no function.
-
-Under either, every pass-through call is refused with `PERMISSION_DENIED`, on every catalog and in autocommit as well, `CALL system.execute` is refused, catalog management is refused, and the PostgreSQL table is unchanged.
-Under the default and under a rule granting `EXECUTE` on `query`, the same calls write (capture 02, `allow-all` and `file-fn-query`); the profile refuses both at open.
+What stops it is the operator's access control, and the agent read-only profile requires Trino's read-only system access control, `access-control.name=read-only`, alone or beside other access controls (`access-control.config-files`).
+It lets only the builtin functions run, for every identity and whether a catalog lists the function or not, and refuses catalog management, so it covers a catalog added later (captures 02 and 05).
+Under it, every pass-through call is refused with `PERMISSION_DENIED`, on every catalog and in autocommit as well, `CALL system.execute` is refused, catalog management is refused, and the PostgreSQL table is unchanged.
+Under the default and under a rule granting `EXECUTE` on `query`, the same calls write (capture 02, `allow-all` and `file-fn-query`).
+File-based access control (`access-control.name=file`) alone is refused as well, even with rules that grant this user no function, though those refuse every call the user makes: the check cannot read a function the server does not list (§15.2).
+The profile refuses each of these at open.
 An agent credential beside a connection string is refused before the provider is built, as on every engine.
 
 ### 15.2 The check, before every statement
 
 `proveTrinoAgentBoundary` runs at the open of a handle under the agent read-only profile and again before every agent statement, keeping no verdict between calls.
-As the connection's user, it reads `SHOW CATALOGS`, then for each catalog `SHOW FUNCTIONS FROM "<catalog>"."system"`, whose table functions carry the function type `table` (capture 00).
+
+It first asks which access control is in force, with a table procedure no connector registers on a table every server has: `ALTER TABLE "system"."runtime"."nodes" EXECUTE libredb_no_such_procedure`.
+The read-only access control refuses every table procedure to every identity before the procedure is looked up, answering `PERMISSION_DENIED` (`Access Denied: Cannot execute table procedure LIBREDB_NO_SUCH_PROCEDURE on system.runtime.nodes`), alone and beside file rules; the default and file-based access control never refuse a table procedure, so the lookup answers `PROCEDURE_NOT_FOUND` (capture 05).
+Nothing runs either way, and only the read-only refusal, word for word, passes.
+That is what proves a table function the server does not list refused: Trino looks a table function up before it checks the permission, so a name that does not resolve answers `FUNCTION_NOT_FOUND` under every access control, the read-only one included, and an unknown catalog `CATALOG_NOT_FOUND` (capture 04); no call can prove that a listing is whole.
+
+Then, as the connection's user, it reads `SHOW CATALOGS`, then for each catalog `SHOW FUNCTIONS FROM "<catalog>"."system"`, whose table functions carry the function type `table` (capture 00).
 It calls every table function a catalog lists, under whatever name, and the two known pass-through names, `query` and `raw_query`, on every catalog, as `SELECT * FROM TABLE("<catalog>"."system"."<name>"(libredb_no_such_argument => 1))`.
 Trino checks the permission before the arguments, so the call runs nothing either way: a function the user may not call answers `PERMISSION_DENIED`, one it may call answers `INVALID_FUNCTION_ARGUMENT`, and a name the catalog does not have answers `FUNCTION_NOT_FOUND` under every control (capture 01).
 A zero-argument call measures the same (`MISSING_ARGUMENT` where allowed), but a table function whose arguments all have defaults would run; an argument no function declares never does, so the check uses that.
 Each call must answer `PERMISSION_DENIED`; `FUNCTION_NOT_FOUND` is accepted only for `query` or `raw_query` on a catalog that does not list it.
-Then catalog management must be refused: the check sends `DROP CATALOG "libredb_agent_probe_<24 hex>"`, a name no one holds, which answers `PERMISSION_DENIED` under both controls and `CATALOG_NOT_FOUND` where the user may manage catalogs (capture 01).
-Catalog creation is not probed, since where it is allowed the probe would create a catalog; both controls refuse it (capture 02).
+Then catalog management must be refused: the check sends `DROP CATALOG "libredb_agent_probe_<24 hex>"`, a name no one holds, which answers `PERMISSION_DENIED` under the read-only access control and `CATALOG_NOT_FOUND` where the user may manage catalogs (capture 01).
+Catalog creation is not probed, since where it is allowed the probe would create a catalog; the read-only access control refuses it (capture 02).
 
-An answer that shows the function callable, or catalog management not refused, refuses the profile as one the server does not enforce (`PROFILE_SERVER_UNENFORCED`); any other answer, a catalog or function list that cannot be read included, as unmeasured (`PROFILE_UNSUPPORTED_TARGET`).
-The refusal names the two settings above and says the check ran nothing; a failure to reach the server leaves as it came.
+A table procedure lookup, an answer that shows the function callable, or catalog management not refused refuses the profile as one the server does not enforce (`PROFILE_SERVER_UNENFORCED`); any other answer, a catalog or function list that cannot be read included, as unmeasured (`PROFILE_UNSUPPORTED_TARGET`).
+The refusal names the setting above and says the check ran nothing; a failure to reach the server leaves as it came.
 Each statement of the check runs inside a read-only transaction of its own, rolled back after it, because a refused statement aborts the transaction it ran in (capture 03).
 The operations profile sends no statement, so it opens without the check and plan mode grounds on any connection.
-The check costs, per catalog, a list of its functions and at least two calls, each in its own transaction, and it runs inside the statement's time budget.
+The check costs the table procedure probe, the catalog list and catalog management probe, and per catalog a list of its functions and at least two calls, each in its own transaction, and it runs inside the statement's time budget.
 A deadline met during the check, or during the catalog list in the statement's own transaction, is refused on the time budget with a sentence saying the statement was not sent.
 
 ### 15.3 The statement path
@@ -2063,9 +2068,9 @@ A statement the server refuses, a table the access control hides included, is an
 
 ### 15.4 What remains
 
-- **An access control that hides a function from `SHOW FUNCTIONS` and still lets the user call it.** The check calls every table function a catalog lists, plus `query` and `raw_query`, so a custom access-control plugin that filters a pass-through function out of the listing under another name, while allowing its execution, would pass. Neither control the profile names behaves that way.
-- **A table function registered in a schema other than `system`.** The check lists each catalog's `system` schema, where Trino's connectors register their table functions; the read-only control lets only the builtin functions run wherever another is registered, and file rules let a function run only by a rule that grants it.
-- **A catalog added between the check and the statement.** The statement's transaction lists the catalogs again just before the statement, but a catalog created in the moment between that list and the statement is not checked. Under both controls the profile names, its functions are refused all the same, and catalog creation is refused to the agent's user.
+- **An access control other than the read-only one that answers the table procedure probe as it does.** The probe tells the read-only access control from the default and from file-based access control, neither of which ever refuses a table procedure. Another access-control plugin that refuses this user the table procedure with the same words passes it, and could still let run a function the server does not list or one granted to another identity; only the listed-function calls and the catalog management check would stand in its way. The profile names only the read-only access control, and no other was measured.
+- **A table function registered in a schema other than `system`.** The check lists each catalog's `system` schema, where Trino's connectors register their table functions; the read-only control lets only the builtin functions run wherever another is registered.
+- **A catalog added between the check and the statement.** The statement's transaction lists the catalogs again just before the statement, but a catalog created in the moment between that list and the statement is not checked. Under the read-only control its functions are refused all the same, and catalog creation is refused to every identity.
 - **Whether a pass-through function on a connector other than PostgreSQL runs read-only on the remote side** is unmeasured; only PostgreSQL was measured, and the check refuses the function on every connector whatever the remote side does.
 
 ### 15.5 Agent language pack

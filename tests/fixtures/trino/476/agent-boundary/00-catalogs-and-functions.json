@@ -11,6 +11,10 @@
   "txn": "read-only"
  },
  {
+  "sql": "SHOW FUNCTIONS FROM \"lake\".\"system\"",
+  "txn": "read-only"
+ },
+ {
   "sql": "SHOW FUNCTIONS FROM \"memory\".\"system\"",
   "txn": "read-only"
  },

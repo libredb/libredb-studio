@@ -2,17 +2,17 @@
  * Live check of the Trino agent read-only execution profile, against coordinators of the operator's choosing.
  *
  * WHY THIS EXISTS, AND WHY IT CANNOT BE A UNIT TEST. The profile's boundary is the operator's access control: it must
- * refuse the connection's user every catalog's table functions and catalog management, proven at the open and before
- * every statement (`agent-boundary.ts`), and every statement runs in a read-only transaction Studio rolls back. The
- * provider suite replays answers its author captured; whether Trino refuses a pass-through write, a CALL or a catalog
- * removal under a given access control is the server's to say. So this script asks four, through the production path
- * (`createDatabaseProvider` with the agent profile's execution context, then `connect` and `queryReadOnly`), and sends
- * the same writes raw with no admission of Studio's in front:
+ * be the read-only access control, which refuses every identity every catalog's table functions and catalog
+ * management, proven at the open and before every statement (`agent-boundary.ts`), and every statement runs in a
+ * read-only transaction Studio rolls back. The provider suite replays answers its author captured; whether Trino
+ * refuses a pass-through write, a CALL or a catalog removal under a given access control is the server's to say. So
+ * this script asks six, through the production path (`createDatabaseProvider` with the agent profile's execution
+ * context, then `connect` and `queryReadOnly`), and sends the same writes raw with no admission of Studio's in front:
  *
- *  - the open: the read-only access control and file rules granting no function are admitted; the default access
- *    control and file rules granting the query function are refused with the operator settings named, and nothing is
- *    written; the operations profile opens on the default, so plan mode grounds on any connection; an editor handle's
- *    queryReadOnly is refused;
+ *  - the open: the read-only access control, alone and beside file rules, is admitted; the default access control and
+ *    file rules, granting no function, granting the query function to everyone, or granting it to another user, are
+ *    refused with the operator setting named, and nothing is written; the operations profile opens on the default, so
+ *    plan mode grounds on any connection; an editor handle's queryReadOnly is refused;
  *  - the fence: CALL, INSERT, CREATE TABLE AS, catalog creation and removal, COMMIT, ROLLBACK, START TRANSACTION, SET
  *    SESSION, USE, EXECUTE, PREPARE and a second statement are each refused through `queryReadOnly` before anything
  *    is sent;
@@ -28,7 +28,8 @@
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name. Start the coordinators with
  * `tests/fixtures/trino/476/agent-boundary/run.sh up`, which prints each one's access control and URL, then:
  *
- *   LIBREDB_LIVE_TRINO_READONLY_URL=<read-only> LIBREDB_LIVE_TRINO_FILE_URL=<file-nofn> \
+ *   LIBREDB_LIVE_TRINO_READONLY_URL=<read-only> LIBREDB_LIVE_TRINO_READONLY_FILE_URL=<read-only-file> \
+ *   LIBREDB_LIVE_TRINO_FILE_URL=<file-nofn> LIBREDB_LIVE_TRINO_FILE_OWNER_URL=<file-owner-fn> \
  *   LIBREDB_LIVE_TRINO_DEFAULT_URL=<allow-all> LIBREDB_LIVE_TRINO_GRANT_URL=<file-fn-query> \
  *     bun tests/live/trino-agent-boundary.ts
  *
@@ -56,12 +57,14 @@ function env(name: string): URL {
 
 const SERVERS = {
   "read-only": env("LIBREDB_LIVE_TRINO_READONLY_URL"),
+  "read-only-file": env("LIBREDB_LIVE_TRINO_READONLY_FILE_URL"),
   "file-nofn": env("LIBREDB_LIVE_TRINO_FILE_URL"),
+  "file-owner-fn": env("LIBREDB_LIVE_TRINO_FILE_OWNER_URL"),
   "allow-all": env("LIBREDB_LIVE_TRINO_DEFAULT_URL"),
   "file-fn-query": env("LIBREDB_LIVE_TRINO_GRANT_URL"),
 } as const;
 type Access = keyof typeof SERVERS;
-const ENFORCING: readonly Access[] = ["read-only", "file-nofn"];
+const ENFORCING: readonly Access[] = ["read-only", "read-only-file"];
 
 let failures = 0;
 function check(ok: boolean, line: string): void {
@@ -148,7 +151,7 @@ async function opens(): Promise<void> {
     check(!(provider instanceof Error), `${access}: the agent read-only profile opens`);
     if (!(provider instanceof Error)) await provider.disconnect();
   }
-  for (const access of ["allow-all", "file-fn-query"] as const) {
+  for (const access of ["allow-all", "file-fn-query", "file-nofn", "file-owner-fn"] as const) {
     const error = await agentHandle(access).then(
       () => null,
       (caught: unknown) => caught,
@@ -156,11 +159,10 @@ async function opens(): Promise<void> {
     check(
       error instanceof ExecutionProfileError &&
         error.reasonCode === "PROFILE_SERVER_UNENFORCED" &&
-        error.message.includes(
-          "set access-control.name=read-only, or file-based access control that grants no function",
-        ) &&
+        error.message.includes("set access-control.name=read-only, alone or beside other access controls") &&
+        error.message.includes("PROCEDURE_NOT_FOUND") &&
         error.message.endsWith("The check ran nothing."),
-      `${access}: the open is refused with the operator settings named (${error instanceof Error ? error.message.slice(-160) : "opened"})`,
+      `${access}: the open is refused with the operator setting named (${error instanceof Error ? error.message.slice(-160) : "opened"})`,
     );
   }
   const operations = await createDatabaseProvider(connection("allow-all"), {}, executionContextFor("agent-operations"));

@@ -1,15 +1,17 @@
 /**
- * The Trino agent boundary: the proof that the operator's access control refuses every catalog's table functions and
- * catalog management, and the fence in front of every agent statement. Every refusal replayed below is the server's own
- * answer, word for word, from `tests/fixtures/trino/476/agent-boundary/` (captures 00 to 02): the read-only access
- * control's and the file rules' PERMISSION_DENIED, the default's argument errors and CATALOG_NOT_FOUND, and every
- * control's FUNCTION_NOT_FOUND for a name a catalog does not have.
+ * The Trino agent boundary: the proof that the read-only access control is in force and refuses every catalog's table
+ * functions and catalog management, and the fence in front of every agent statement. Every refusal replayed below is
+ * the server's own answer, word for word, from `tests/fixtures/trino/476/agent-boundary/` (captures 00 to 05): the
+ * read-only access control's and the file rules' PERMISSION_DENIED, the default's argument errors and
+ * CATALOG_NOT_FOUND, every control's FUNCTION_NOT_FOUND for a name a catalog does not have, and the table procedure
+ * probe's PERMISSION_DENIED under the read-only access control and PROCEDURE_NOT_FOUND under every other.
  */
 import { describe, expect, test } from "bun:test";
 import { ExecutionProfileError } from "@/lib/db/errors";
 import {
   proveTrinoAgentBoundary,
   readTrinoCatalogs,
+  TRINO_ACCESS_CONTROL_PROBE,
   TRINO_CATALOG_LIST_STATEMENT,
   trinoAgentStatementRefusal,
   trinoCatalogManagementProbe,
@@ -56,19 +58,33 @@ const denied = (catalog: string, fn: string) =>
 const notRegistered = (catalog: string, fn: string) =>
   answered("FUNCTION_NOT_FOUND", `line 1:21: Table function '${catalog}.system.${fn}' not registered`);
 const DROP_DENIED = answered("PERMISSION_DENIED", `Access Denied: Cannot drop catalog libredb_agent_probe_${NONCE}`);
+/** The table procedure probe under the read-only access control, alone or beside file rules (capture 05). */
+const PROCEDURE_DENIED = answered(
+  "PERMISSION_DENIED",
+  "Access Denied: Cannot execute table procedure LIBREDB_NO_SUCH_PROCEDURE on system.runtime.nodes",
+);
+/** The same probe under the default access control and under every file rule set (capture 05). */
+const PROCEDURE_NOT_REGISTERED = answered(
+  "PROCEDURE_NOT_FOUND",
+  "Table procedure not registered: LIBREDB_NO_SUCH_PROCEDURE",
+);
 
 type Answer = TrinoQueryResult | Error;
 
-/** The read-only access control's answers on the capture's four catalogs (captures 00 and 01, read-only). */
+/** The read-only access control's answers on the capture's five catalogs (captures 00, 01 and 05, read-only). */
 function readOnlyServer(): Map<string, Answer> {
   const functions = result(FUNCTION_COLUMNS, [["query", "unknown", "varchar", "table", false, ""]]);
   const none = result(FUNCTION_COLUMNS, []);
   return new Map<string, Answer>([
-    [TRINO_CATALOG_LIST_STATEMENT, result(["Catalog"], [["memory"], ["pg"], ["pg2"], ["system"]])],
+    [TRINO_ACCESS_CONTROL_PROBE, PROCEDURE_DENIED],
+    [TRINO_CATALOG_LIST_STATEMENT, result(["Catalog"], [["lake"], ["memory"], ["pg"], ["pg2"], ["system"]])],
+    [trinoFunctionListStatement("lake"), none],
     [trinoFunctionListStatement("memory"), none],
     [trinoFunctionListStatement("pg"), functions],
     [trinoFunctionListStatement("pg2"), functions],
     [trinoFunctionListStatement("system"), none],
+    [trinoTableFunctionProbe("lake", "query"), notRegistered("lake", "query")],
+    [trinoTableFunctionProbe("lake", "raw_query"), notRegistered("lake", "raw_query")],
     [trinoTableFunctionProbe("memory", "query"), notRegistered("memory", "query")],
     [trinoTableFunctionProbe("memory", "raw_query"), notRegistered("memory", "raw_query")],
     [trinoTableFunctionProbe("pg", "query"), denied("pg", "query")],
@@ -106,7 +122,7 @@ async function refusal(answers: Map<string, Answer>): Promise<ExecutionProfileEr
 }
 
 const NEEDS =
-  "The agent read-only execution profile needs a Trino server whose access control refuses this connection's user every catalog's table functions, and catalog management must be refused: set access-control.name=read-only, or file-based access control that grants no function";
+  "The agent read-only execution profile needs a Trino server whose access control refuses every identity the functions of every catalog and catalog management: set access-control.name=read-only, alone or beside other access controls";
 
 describe("the statements the check sends", () => {
   test("lists catalogs, then each catalog's functions in its system schema", () => {
@@ -127,6 +143,10 @@ describe("the statements the check sends", () => {
     );
   });
 
+  test("asks for a table procedure no connector registers, on a table every server has, which runs nothing", () => {
+    expect(TRINO_ACCESS_CONTROL_PROBE).toBe('ALTER TABLE "system"."runtime"."nodes" EXECUTE libredb_no_such_procedure');
+  });
+
   test("removes a catalog whose name carries a fresh suffix, which no one holds", () => {
     expect(trinoCatalogManagementProbe(NONCE)).toBe('DROP CATALOG "libredb_agent_probe_0123456789abcdef01234567"');
   });
@@ -138,9 +158,13 @@ describe("the access control check", () => {
 
     const catalogs = await proveTrinoAgentBoundary(recorded.run, NONCE);
 
-    expect(catalogs).toEqual(["memory", "pg", "pg2", "system"]);
+    expect(catalogs).toEqual(["lake", "memory", "pg", "pg2", "system"]);
     expect(recorded.sent).toEqual([
+      'ALTER TABLE "system"."runtime"."nodes" EXECUTE libredb_no_such_procedure',
       "SHOW CATALOGS",
+      'SHOW FUNCTIONS FROM "lake"."system"',
+      'SELECT * FROM TABLE("lake"."system"."query"(libredb_no_such_argument => 1))',
+      'SELECT * FROM TABLE("lake"."system"."raw_query"(libredb_no_such_argument => 1))',
       'SHOW FUNCTIONS FROM "memory"."system"',
       'SELECT * FROM TABLE("memory"."system"."query"(libredb_no_such_argument => 1))',
       'SELECT * FROM TABLE("memory"."system"."raw_query"(libredb_no_such_argument => 1))',
@@ -155,6 +179,78 @@ describe("the access control check", () => {
       'SELECT * FROM TABLE("system"."system"."raw_query"(libredb_no_such_argument => 1))',
       'DROP CATALOG "libredb_agent_probe_0123456789abcdef01234567"',
     ]);
+  });
+
+  test("refuses a server whose access control is not the read-only one, before it asks for anything else", async () => {
+    // A server that lists no table function and refuses or does not resolve every name the check asks for still
+    // refuses the profile: a function it does not list, or one another identity may call, is not proved refused.
+    const answers = readOnlyServer();
+    answers.set(TRINO_ACCESS_CONTROL_PROBE, PROCEDURE_NOT_REGISTERED);
+    answers.set(trinoFunctionListStatement("pg"), result(FUNCTION_COLUMNS, []));
+    answers.set(trinoFunctionListStatement("pg2"), result(FUNCTION_COLUMNS, []));
+    answers.set(trinoTableFunctionProbe("pg", "query"), notRegistered("pg", "query"));
+    answers.set(trinoTableFunctionProbe("pg2", "query"), notRegistered("pg2", "query"));
+    const recorded = server(answers);
+
+    let caught: unknown;
+    try {
+      await proveTrinoAgentBoundary(recorded.run, NONCE);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(ExecutionProfileError);
+    expect((caught as ExecutionProfileError).reasonCode).toBe("PROFILE_SERVER_UNENFORCED");
+    expect((caught as Error).message).toBe(
+      `${NEEDS}. This server looked up a table procedure no connector registers, answering PROCEDURE_NOT_FOUND ("Table procedure not registered: LIBREDB_NO_SUCH_PROCEDURE"), where the read-only access control refuses the call first, so the read-only access control is not in force: a table function the server does not list, which a lookup finds before any permission check, could run. The connection is refused. The check ran nothing.`,
+    );
+    expect(recorded.sent).toEqual([TRINO_ACCESS_CONTROL_PROBE]);
+  });
+
+  test.each([
+    [
+      "a permission refusal of something else",
+      answered("PERMISSION_DENIED", "Access Denied: Cannot access catalog system"),
+    ],
+    ["a missing table", answered("TABLE_NOT_FOUND", "line 1:1: Table 'system.runtime.nodes' does not exist")],
+    ["an engine error", answered("GENERIC_INTERNAL_ERROR", "ConnectorMetadata getTableHandle() is not implemented")],
+  ])("refuses %s to the table procedure probe as unmeasured", async (_name, answer) => {
+    const answers = readOnlyServer();
+    answers.set(TRINO_ACCESS_CONTROL_PROBE, answer);
+
+    const error = await refusal(answers);
+
+    expect(error.reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
+    expect(error.message).toBe(
+      `${NEEDS}. This server answered ALTER TABLE ... EXECUTE of a table procedure no connector registers with ${answer.code} (${JSON.stringify(answer.message)}), which is not the read-only access control's refusal, so the access control in force is unmeasured and the connection is refused. The check ran nothing.`,
+    );
+  });
+
+  test("refuses a server that ran the table procedure probe", async () => {
+    const answers = readOnlyServer();
+    answers.set(TRINO_ACCESS_CONTROL_PROBE, result([], []));
+
+    const error = await refusal(answers);
+
+    expect(error.reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
+    expect(error.message).toContain(
+      "This server ran ALTER TABLE ... EXECUTE of a table procedure no connector registers, so the access control in force is unmeasured",
+    );
+  });
+
+  test("lets a failure of the table procedure probe that is no answer of the server's leave as it came", async () => {
+    const failure = new TrinoTransportError("unreachable", "Trino could not be reached: refused");
+    const answers = readOnlyServer();
+    answers.set(TRINO_ACCESS_CONTROL_PROBE, failure);
+
+    let caught: unknown;
+    try {
+      await proveTrinoAgentBoundary(server(answers).run, NONCE);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBe(failure);
   });
 
   test("calls every table function a catalog lists, under any name, once, and skips its other functions", async () => {

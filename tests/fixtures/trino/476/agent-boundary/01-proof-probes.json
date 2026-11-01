@@ -27,6 +27,14 @@
   "txn": "read-only"
  },
  {
+  "sql": "SELECT * FROM TABLE(\"lake\".\"system\".\"query\"(libredb_no_such_argument => 1))",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SELECT * FROM TABLE(\"lake\".\"system\".\"raw_query\"(libredb_no_such_argument => 1))",
+  "txn": "read-only"
+ },
+ {
   "sql": "SELECT * FROM TABLE(\"memory\".\"system\".\"query\"(libredb_no_such_argument => 1))",
   "txn": "read-only"
  },

@@ -6,16 +6,17 @@
 //   { "sql": "...", "txn": "read-only" }                 the statement inside a fresh START TRANSACTION READ ONLY,
 //                                                        rolled back after it, the way the agent path sends it
 //   { "sql": "...", "txn": "none" }                      the statement in autocommit, a transaction header of NONE
+//   either of the two with "user": "..."                  the same, sent as that user instead of "studio"
 //   { "session": ["...", ...] }                          the statements one after another inside ONE read-only
 //                                                        transaction, rolled back after the last, so what a failed
 //                                                        statement does to the transaction is recorded; an item
 //                                                        { "aside": "..." } runs in autocommit meanwhile, as another
 //                                                        session would
-// Every request carries the user header "studio" and nothing else of the session: no catalog, no schema, no session
-// property. Trino here runs with no authentication, so no credential is sent and none is printed. An answer is its
-// column names and rows, or its error name and message; whether it started or cleared a transaction is printed as a
-// word, and a transaction id in a message as a label, and query ids and timings are not printed, so two runs differ
-// only where the server did.
+// Every request carries the user header "studio", unless its step names another user, and nothing else of the session:
+// no catalog, no schema, no session property. Trino here runs with no authentication, so no credential is sent and
+// none is printed. An answer is its column names and rows, or its error name and message; whether it started or
+// cleared a transaction is printed as a word, and a transaction id in a message as a label, and query ids and timings
+// are not printed, so two runs differ only where the server did.
 // oxlint-disable no-await-in-loop -- each step runs after the one before, on purpose: the captures record what the server holds then.
 import { readFileSync } from "node:fs";
 
@@ -27,8 +28,8 @@ const shown = (text) =>
   cut(text.replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<transaction id>"));
 
 /** One statement through the client protocol, following every page, with the transaction headers it answered. */
-async function run(sql, transaction) {
-  const headers = { "X-Trino-User": "studio", "X-Trino-Transaction-Id": transaction };
+async function run(sql, transaction, user = "studio") {
+  const headers = { "X-Trino-User": user, "X-Trino-Transaction-Id": transaction };
   let response = await fetch(`${coordinator}/v1/statement`, { method: "POST", headers, body: sql });
   let started = null;
   let cleared = false;
@@ -45,7 +46,7 @@ async function run(sql, transaction) {
     }
     if (page.nextUri === undefined)
       return { started, cleared, answer: `OK ${JSON.stringify(columns ?? [])} ${JSON.stringify(rows)}` };
-    response = await fetch(page.nextUri, { headers: { "X-Trino-User": "studio" } });
+    response = await fetch(page.nextUri, { headers: { "X-Trino-User": user } });
   }
 }
 
@@ -61,8 +62,8 @@ function line(sql, outcome) {
 }
 
 /** A fresh read-only transaction, its id, and the line saying it opened. */
-async function begin() {
-  const opened = await run("START TRANSACTION READ ONLY", "NONE");
+async function begin(user) {
+  const opened = await run("START TRANSACTION READ ONLY", "NONE", user);
   if (opened.started === null) throw new Error(`START TRANSACTION READ ONLY started nothing: ${opened.answer}`);
   return opened.started;
 }
@@ -82,12 +83,13 @@ for (const step of JSON.parse(readFileSync(file, "utf8"))) {
     line("ROLLBACK", await run("ROLLBACK", transaction));
     continue;
   }
+  const as = step.user === undefined ? "" : `${step.user}, `;
   if (step.txn === "none") {
-    line(`[autocommit] ${step.sql}`, await run(step.sql, "NONE"));
+    line(`[${as}autocommit] ${step.sql}`, await run(step.sql, "NONE", step.user));
     continue;
   }
-  const transaction = await begin();
-  line(`[read-only transaction] ${step.sql}`, await run(step.sql, transaction));
-  const rolledBack = await run("ROLLBACK", transaction);
+  const transaction = await begin(step.user);
+  line(`[${as}read-only transaction] ${step.sql}`, await run(step.sql, transaction, step.user));
+  const rolledBack = await run("ROLLBACK", transaction, step.user);
   if (!rolledBack.cleared) console.log(`  (ROLLBACK did not end the transaction: ${rolledBack.answer})`);
 }
