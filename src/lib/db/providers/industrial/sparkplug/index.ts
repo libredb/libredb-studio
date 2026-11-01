@@ -301,8 +301,11 @@ export class SparkplugProvider extends BaseDatabaseProvider {
       supportsConnectionString: false,
       defaultPort: SPARKPLUG_DEFAULT_PORT,
       statementTerminator: "none",
-      containerLevels: SPARKPLUG_CONTAINER_LEVELS,
-      objectKinds: SPARKPLUG_OBJECT_KINDS,
+      // On an agent-mode handle the tree is withheld, since every level of it is an id, so the handle declares no level
+      // and no kind for the grounding walk to list: a run is told why nothing is listed rather than that the broker
+      // could not be reached. The editor's handles keep the tree.
+      containerLevels: this.agentProfile ? [] : SPARKPLUG_CONTAINER_LEVELS,
+      objectKinds: this.agentProfile ? [] : SPARKPLUG_OBJECT_KINDS,
       // Ids, metric names and values are stored values: an agent read answers counts and flags.
       metadataOnly: SPARKPLUG_METADATA_ONLY,
       // Nothing a read runs changes the tree.

@@ -33,8 +33,8 @@ const SPARKPLUGREAD_WORKFLOW_TOOL_RULES: Readonly<Partial<Record<AgentRunWorkflo
 });
 
 /**
- * No `inspect_schema` is offered, and on an agent-mode handle the provider's tree answers its reason, so a run is
- * always ungrounded and the note says why and how the plant is read. `relations` is false: a broker declares no
+ * No `inspect_schema` is offered, and an agent-mode handle declares no container level and no kind for the grounding
+ * walk, so a run is always ungrounded and the note says why and how the plant is read. `relations` is false: a broker declares no
  * relation the inventory draws. No `planningRules`: they reach plan mode alone, whose statement form is the provider's
  * `statementLanguage` label, so the rules of the agent's reader are never told to it; a plan on this engine is prose
  * (`client.ts`).

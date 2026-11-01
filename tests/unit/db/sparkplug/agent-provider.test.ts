@@ -444,6 +444,18 @@ describe("a failure is worded by its kind, never in the broker's or the transpor
 });
 
 describe("every other surface of an agent-mode handle answers its reason", () => {
+  test("an agent-mode handle declares no level and no kind for the grounding walk, and the editor's keeps the tree", () => {
+    for (const execution of [AGENT_PROFILE, { readOnly: true }]) {
+      const declared = new SparkplugProvider(connection(), {}, execution).getCapabilities();
+      expect(declared.containerLevels).toEqual([]);
+      expect(declared.objectKinds).toEqual([]);
+      expect(declared.metadataOnly).toBe(SPARKPLUG_METADATA_ONLY);
+    }
+    const editor = new SparkplugProvider(connection()).getCapabilities();
+    expect(editor.containerLevels?.length).toBe(2);
+    expect(editor.objectKinds?.map((kind) => kind.id)).toEqual(["node", "device"]);
+  });
+
   test.each([
     ["listContainers", (p: SparkplugProvider) => p.listContainers([]), SPARKPLUG_AGENT_WITHHELD.tree],
     ["countObjects", (p: SparkplugProvider) => p.countObjects([]), SPARKPLUG_AGENT_WITHHELD.tree],
