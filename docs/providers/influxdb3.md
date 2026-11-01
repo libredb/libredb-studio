@@ -147,6 +147,8 @@ A read of a `system` table other than `system.influxdb_schema` passes that fence
 Values are not withheld: rows reach the MCP client as they reach the agent.
 It runs a `SELECT` (a `WITH` is fine), `VALUES`, or `EXPLAIN` without `ANALYZE`: `TABLE` is a parser error on 3.12.0 Core and the read policy refuses it, and `EXPLAIN ANALYZE` runs the statement; it pages with `LIMIT n OFFSET m`, and an offset on `VALUES`, `EXPLAIN` or a query with its own `LIMIT` is refused.
 A result past 1000 rows or 1 MiB is refused, never cut, and one past `timeout_ms` is answered as the timeout: the provider closes the request at the deadline, and the server frees the statement's work (section 5.10).
+A client that closes its request stops the wait only: the statement runs on until the provider closes its request at the time left of `timeout_ms`.
+Measured on 2026-11-01 by watching the container: after a two-second `timeout_ms` the server was idle within two seconds, and after a cancel one second into a 15-second `timeout_ms` a `generate_series` count held more than one core until that deadline.
 
 [`tests/live/influxdb3-mcp-boundary.ts`](../../tests/live/influxdb3-mcp-boundary.ts) replays the boundary record above through the tool's handler with its statement fence removed, against the `influxdb3` and `influxdb3-filelimit` services of section 12 and an `influxdb:3.11.0-core` server started the same way, and passed on 2026-11-01 (147 checks).
 The 3.12.0 Core server was served under `agent-read-only`, and the 3.11.0 Core server was refused at open through MCP.
