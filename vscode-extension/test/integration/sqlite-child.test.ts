@@ -14,6 +14,7 @@ import {
   METHODS,
   type OpenResult,
   type QueryPage,
+  type RunTargetResult,
   type TestConnectionResult,
   type WireConnection,
 } from "../../src/protocol";
@@ -87,6 +88,22 @@ describe("SQLite in the backend child", () => {
     );
     assert.ok(existsSync(join(dir, "app.db")));
     assert.doesNotMatch(session.stderr(), /SQLite worker exited/);
+  });
+
+  it("flags a write on query/target and leaves a read unflagged, as the bundled gate reads them", async () => {
+    await session.connection.sendRequest<OpenResult>(
+      METHODS.openConnection,
+      params(sqlite("flag", join(dir, "flag.db"))),
+    );
+    const target = (text: string) =>
+      session.connection.sendRequest<RunTargetResult>(METHODS.runTarget, {
+        connectionId: "flag",
+        text,
+        selection: { start: 0, end: 0 },
+        cursor: 0,
+      });
+    assert.equal((await target("DELETE FROM t")).dangerous, true);
+    assert.equal((await target("SELECT 1")).dangerous, undefined);
   });
 
   it("refuses a relative path before the provider builds, and leaves no file in the extension's folder", async () => {

@@ -960,6 +960,47 @@ describe("query/target", () => {
     assert.deepEqual(await target(handlers, text, 12), { statement: text });
   });
 
+  it("flags a target the web editor would ask about, and only that one", async () => {
+    const { handlers } = await on();
+    const text = "select 1;\ndelete from t;";
+    assert.deepEqual(await target(handlers, text, 3), { statement: "select 1", range: { start: 0, end: 8 } });
+    assert.deepEqual(await target(handlers, text, 12), {
+      statement: "delete from t",
+      range: { start: 10, end: 23 },
+      dangerous: true,
+    });
+  });
+
+  it("flags a selection that holds a write behind a read, which the gate splits as the runner does", async () => {
+    const { handlers } = await on();
+    assert.deepEqual(await target(handlers, "select 1; drop table t", 0, { start: 0, end: 22 }), {
+      statement: "select 1; drop table t",
+      range: { start: 0, end: 22 },
+      dangerous: true,
+    });
+  });
+
+  it("reads the target under the connection's type", async () => {
+    // A `#` starts a comment in MySQL and is code in PostgreSQL, so only there does the DELETE after it run.
+    const text = "select 1 # ; delete from t";
+    const whole = { start: 0, end: text.length };
+    const postgres = await on();
+    const mysql = await openedOn(fakeProvider({ getCapabilities: () => SQL_CAPS }), { ...WIRE, type: "mysql" });
+    assert.equal((await target(postgres.handlers, text, 0, whole)).dangerous, true);
+    assert.equal((await target(mysql.handlers, text, 0, whole)).dangerous, undefined);
+  });
+
+  it("flags a non-SQL target by its engine's own vocabulary", async () => {
+    const mongo = await openedOn(
+      fakeProvider({ getCapabilities: () => ({ ...SQL_CAPS, queryLanguage: "json" }) as ProviderCapabilities }),
+      { ...WIRE, type: "mongodb" },
+    );
+    const drop = '{ "collection": "orders", "operation": "deleteMany", "filter": {} }';
+    assert.deepEqual(await target(mongo.handlers, drop, 0), { statement: drop, dangerous: true });
+    const find = '{ "collection": "orders", "operation": "find" }';
+    assert.deepEqual(await target(mongo.handlers, find, 0), { statement: find });
+  });
+
   it("answers runTarget's RangeError as InvalidParams with its sentence", async () => {
     const { handlers } = await on();
     const offsets = [
