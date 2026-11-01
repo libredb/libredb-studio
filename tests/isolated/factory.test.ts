@@ -847,8 +847,8 @@ describe("createDatabaseProvider", () => {
     const profiled = await createDatabaseProvider(conn, {}, { readOnly: true, sendsStatements: true });
     const editor = await createDatabaseProvider(conn);
     if (profiled.queryReadOnly === undefined || editor.queryReadOnly === undefined) throw new Error("no queryReadOnly");
-    // A transport whose access control refuses every function and catalog management, on a server with one catalog
-    // that lists none, so only the context tells the two apart.
+    // A transport under the read-only access control, which refuses every function, table procedure and catalog
+    // management, on a server with one catalog that lists none, so only the context tells the two apart.
     const sent: string[] = [];
     const answer = (fieldNames: string[], rows: unknown[][]) => ({
       rows: rows.map((row) => Object.fromEntries(fieldNames.map((name, at) => [name, row[at]]))),
@@ -885,6 +885,13 @@ describe("createDatabaseProvider", () => {
         }
         if (statement.startsWith("DROP CATALOG")) {
           throw new TrinoTransportError("auth", "Access Denied: Cannot drop catalog", "PERMISSION_DENIED");
+        }
+        if (statement.startsWith("ALTER TABLE")) {
+          throw new TrinoTransportError(
+            "auth",
+            "Access Denied: Cannot execute table procedure LIBREDB_NO_SUCH_PROCEDURE on system.runtime.nodes",
+            "PERMISSION_DENIED",
+          );
         }
         return answer(["x"], [[1]]);
       },
