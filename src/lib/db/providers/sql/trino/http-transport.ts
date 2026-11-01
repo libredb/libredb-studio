@@ -1065,10 +1065,9 @@ export class TrinoHttpTransport implements TrinoTransport {
       try {
         // A followed redirect would carry the credential to wherever it points.
         response = await httpTransportFetch(url, { ...init, redirect: "manual", ...(signal ? { signal } : {}) });
-        text =
-          budget === undefined
-            ? await response.text()
-            : await readBoundedText(response, budget.cap - budget.accepted + TRINO_PAGE_ENVELOPE_BYTES);
+        text = await (budget === undefined
+          ? response.text()
+          : readBoundedText(response, budget.cap - budget.accepted + TRINO_PAGE_ENVELOPE_BYTES));
       } catch (error) {
         if (error instanceof DatabaseConfigError) throw error;
         if (error instanceof BodyLimitExceededError && budget !== undefined) {
