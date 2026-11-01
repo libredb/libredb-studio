@@ -168,6 +168,10 @@ describe("the posture on MQTT", () => {
       "no topic is listed for it; opening the connection is a handshake that subscribes to nothing",
     );
     expect(plan.body).not.toContain("schema read");
+    // Why the plan is prose: the panel says it, since a plan that drafts nothing reads as one that fell short.
+    expect(plan.body).toContain(
+      "It drafts no read request, because an MQTT connection has no query console that runs one: agent mode alone sends the window and topic reads.",
+    );
   });
 
   test("the hand-over is never offered", () => {

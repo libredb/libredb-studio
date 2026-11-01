@@ -35,7 +35,7 @@ function mqttreadPlanPosture(): AgentPosture {
     headline: "Executes nothing it drafts",
     qualifier: "no topic is listed for it; opening the connection is a handshake that subscribes to nothing",
     title: "Plan mode plans, and never runs what it planned",
-    body: "Plan mode writes its plan in prose and never subscribes to the broker. MQTT has no command that lists topics, and topic names are withheld from agent mode, so no inventory grounds the plan: the topics it names are the ones the question names. Opening the connection is a handshake, a connect and a disconnect, which subscribes to nothing, so no topic, payload or $SYS reading is read.",
+    body: "Plan mode writes its plan in prose and never subscribes to the broker. It drafts no read request, because an MQTT connection has no query console that runs one: agent mode alone sends the window and topic reads. MQTT has no command that lists topics, and topic names are withheld from agent mode, so no inventory grounds the plan: the topics it names are the ones the question names. Opening the connection is a handshake, a connect and a disconnect, which subscribes to nothing, so no topic, payload or $SYS reading is read.",
   };
 }
 
