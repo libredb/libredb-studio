@@ -9,10 +9,21 @@
  * profile's execution context, then `connect` and `queryReadOnly`), with no admission of Studio's in front:
  *
  *  - the open: the agent profile reads the node's version and opens it, the operations profile opens it too, and an
- *    editor handle's `queryReadOnly` refuses with nothing sent;
- *  - the boundary: each write and DDL statement sent through `queryReadOnly` is refused by the grammar in the engine's
- *    own words (a `line 1:N: mismatched input` or `extraneous input` refusal, never a budget or a credential refusal),
- *    and the same text sent raw answers 400 `parsing_exception`; the index listing with its document counts, every
+ *    editor handle's `queryReadOnly` refuses with nothing sent; with security off no login exists to check, and a
+ *    dot-led hidden index, a hidden index without a dot, an alias over it, a hidden data stream, the built-in
+ *    `ilm-history-7`, `"*"` while that alias exists, expressions that exclude that alias after a wildcard that reaches
+ *    it, and statements holding a comment, a number run into a word or an `EXPLAIN` of a catalog command each answer
+ *    raw and are refused by the statement check before they are sent, and with the reader not asked, the server's two
+ *    resolutions alone refuse each expression that excludes the alias;
+ *  - the login check, with security on: the agent profile's open asks the server what the login may do and lists its
+ *    privileges, and refuses the superuser, a role reading the security indices with `allow_restricted_indices`, a
+ *    role granted one restricted family by its pattern alone, a role granted two Kibana indices of other releases by
+ *    name and a role granted the security indices of every remote cluster with that flag before any statement, while
+ *    the operations profile still opens as the superuser, since it sends no statement;
+ *  - the boundary: each write and DDL statement sent through `queryReadOnly` is refused by the statement check before
+ *    it is sent, but the one SELECT-shaped write, which reads one visible index and is refused by the grammar in the
+ *    engine's own words (a `line 1:N: mismatched input` or `extraneous input` refusal, never a budget or a credential
+ *    refusal), and the same text sent raw answers 400 `parsing_exception`; the index listing with its document counts, every
  *    mapping, the aliases, the templates and the pipelines read back the same before and after; the positive control
  *    is a document written through the document API, a route the provider does not send to, into a scratch index the
  *    agent then reads and the script deletes;
@@ -52,6 +63,18 @@ import { engineServerDialect } from "@/lib/agent/languages/engines/server";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import type { AgentToolContext } from "@/lib/agent/tools";
 import { createDatabaseProvider, executionContextFor } from "@/lib/db/factory";
+import {
+  assertReferenceVisible,
+  CHARACTER_REFUSAL,
+  COMMENT_REFUSAL,
+  DOT_INDEX_REFUSAL,
+  disagreementRefusal,
+  EXCLUSION_REFUSAL,
+  hiddenTargetRefusal,
+  NUMBER_REFUSAL,
+  STATEMENT_REFUSAL,
+} from "@/lib/db/providers/sql/search/elasticsearch-agent-index-fence";
+import { SearchHttpTransport } from "@/lib/db/providers/sql/search/http-transport";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
@@ -156,21 +179,24 @@ async function openContexts(): Promise<number> {
   return Object.values(stats.nodes).reduce((sum, node) => sum + node.indices.search.open_contexts, 0);
 }
 
-function connection(): DatabaseConnection {
+function connection(login?: { user: string; password: string }): DatabaseConnection {
   return {
     id: "elasticsearch-live",
     name: "Elasticsearch live",
     type: "elasticsearch",
     host: ORIGIN.hostname,
     port: Number(ORIGIN.port),
-    ...(AGENT_USER === undefined ? {} : { user: AGENT_USER, password: AGENT_PASSWORD }),
+    ...(login ?? (AGENT_USER === undefined ? {} : { user: AGENT_USER, password: AGENT_PASSWORD })),
     createdAt: new Date(0),
   } as DatabaseConnection;
 }
 
-async function open(profile?: "agent-read-only" | "agent-operations"): Promise<DatabaseProvider> {
+async function open(
+  profile?: "agent-read-only" | "agent-operations",
+  login?: { user: string; password: string },
+): Promise<DatabaseProvider> {
   const provider = await createDatabaseProvider(
-    connection(),
+    connection(login),
     {},
     profile === undefined ? {} : executionContextFor(profile),
   );
@@ -291,8 +317,171 @@ async function checkPlanGrounding(): Promise<void> {
   await setAgentRole(agentCluster, agentIndices);
 }
 
+/** Polls until the built-in data stream exists: ILM creates it shortly after a node starts. */
+async function builtInStream(name: string): Promise<boolean> {
+  const until = Date.now() + 60_000;
+  while (Date.now() < until) {
+    if ((await send("GET", `/_data_stream/${name}`)).status === 200) return true;
+    await Bun.sleep(500);
+  }
+  return false;
+}
+
+/**
+ * With security off there is no login to check, so the statement check is what keeps hidden targets from the agent.
+ * Each statement below answers raw on 9.1.4, and `queryReadOnly` refuses each before it is sent: a hidden target by
+ * the server's answer about the statement's index, and a statement the reader cannot read with certainty, or whose
+ * expression holds an exclusion, by the reader. With the reader not asked, an expression with an exclusion is refused
+ * by the server's two resolutions alone, which do not resolve it alike.
+ */
+async function checkHiddenTargets(): Promise<void> {
+  const dot = `.${SCRATCH}`;
+  const hid = `${SCRATCH}_hid`;
+  const alias = `${SCRATCH}_alias`;
+  const stream = `${SCRATCH}_hds`;
+  const agent = await open("agent-read-only");
+  try {
+    const made = [
+      await send("PUT", `/${dot}`, { settings: { "index.hidden": true } }),
+      await send("PUT", `/${dot}/_doc/1?refresh=true`, { probe: "hidden" }),
+      await send("PUT", `/${hid}`, { settings: { "index.hidden": true } }),
+      await send("PUT", `/${hid}/_doc/1?refresh=true`, { probe: "hidden" }),
+      await send("POST", "/_aliases", { actions: [{ add: { index: hid, alias } }] }),
+      await send("PUT", `/_index_template/${stream}_t`, {
+        index_patterns: [`${stream}*`],
+        data_stream: { hidden: true },
+        priority: 500,
+        template: { settings: { "index.hidden": true } },
+      }),
+      await send("POST", `/${stream}/_doc?refresh=true`, { "@timestamp": "2026-11-01T00:00:00Z" }),
+    ];
+    check(
+      made.every((answer) => answer.status === 200 || answer.status === 201) && (await builtInStream("ilm-history-7")),
+      `security off: no login is checked and the agent profile opens; the script creates its hidden targets, and ilm-history-7 exists -> ${made.map((answer) => answer.status).join(",")}`,
+    );
+    const cases: readonly [string, string][] = [
+      [`SELECT COUNT(*) AS n FROM "${dot}"`, DOT_INDEX_REFUSAL],
+      [`SELECT COUNT(*) AS n FROM ${hid}`, hiddenTargetRefusal(hid)],
+      [`SELECT COUNT(*) AS n FROM ${alias}`, hiddenTargetRefusal(alias)],
+      ['SELECT COUNT(*) AS n FROM "*"', hiddenTargetRefusal("*")],
+      [`SELECT COUNT(*) AS n FROM ${stream}`, hiddenTargetRefusal(stream)],
+      ['SELECT COUNT(*) AS n FROM "ilm-history-7"', hiddenTargetRefusal("ilm-history-7")],
+      [`SELECT COUNT(*) AS n FROM ${hid} /* /* */ */`, COMMENT_REFUSAL],
+      [`SELECT COUNT(*) AS n FROM ${hid} -- note\r`, COMMENT_REFUSAL],
+      [`SELECT 1.5AS n FROM ${hid}`, NUMBER_REFUSAL],
+      [`EXPLAIN DESC LIKE '${hid}'`, STATEMENT_REFUSAL],
+      [`SELECT COUNT(*) AS n FROM "probe_orders,${SCRATCH}_al*,-${alias}"`, EXCLUSION_REFUSAL],
+      [`SELECT COUNT(*) AS n FROM "*,-${alias}"`, EXCLUSION_REFUSAL],
+      [`SYS COLUMNS "probe_orders,${SCRATCH}_al*,-${alias}"`, EXCLUSION_REFUSAL],
+    ];
+    for (const [sql, sentence] of cases) {
+      const raw = await send("POST", "/_sql?format=json", { query: sql });
+      const refused = await refusalOf(() => agent.queryReadOnly!(sql, BUDGET));
+      check(
+        raw.status === 200 &&
+          raw.text.includes('"rows":[[') &&
+          refused?.name === "RefusedBeforeSendError" &&
+          refused.message === sentence,
+        `security off: ${JSON.stringify(sql)} answers raw, and the statement check refuses it unsent -> ${refused?.message.slice(0, 90)}`,
+      );
+    }
+    // The server's two resolutions alone, with no reader in front of them.
+    const transport = new SearchHttpTransport("elasticsearch", connection());
+    for (const reference of [`probe_orders,${SCRATCH}_al*,-${alias}`, `*,-${alias}`]) {
+      const sql = `SELECT COUNT(*) AS n FROM "${reference}"`;
+      const raw = await send("POST", "/_sql?format=json", { query: sql });
+      const refused = await refusalOf(() => assertReferenceVisible(sql, reference, transport));
+      check(
+        raw.status === 200 &&
+          raw.text.includes('"rows":[[') &&
+          refused?.name === "RefusedBeforeSendError" &&
+          refused.message === disagreementRefusal(reference),
+        `security off: the server's two resolutions alone refuse ${JSON.stringify(reference)}, which answers raw -> ${refused?.message.slice(0, 90)}`,
+      );
+    }
+  } finally {
+    await send("DELETE", `/_data_stream/${stream}`);
+    await send("DELETE", `/_index_template/${stream}_t`);
+    await send("DELETE", `/${hid}`);
+    await send("DELETE", `/${dot}`);
+    await agent.disconnect();
+  }
+}
+
+const TOO_BROAD =
+  "The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; the user ";
+const GRANT_INSTEAD =
+  ", so the connection is refused. Give the agent a user whose role holds the cluster action cluster:monitor/main and read and view_index_metadata on the indices it reads, without allow_restricted_indices, such as the libredb_agent_read role";
+
+/** `read` with `allow_restricted_indices` on `names`, as a role grants it locally or, with its clusters, remotely. */
+const restrictedRead = (names: readonly string[]) => ({ names, privileges: ["read"], allow_restricted_indices: true });
+
+/**
+ * The open's login check. With security on, the superuser, a role reading the security indices, a role granted one
+ * restricted family by its pattern, a role granted two Kibana indices of other releases by their names, and a role
+ * granted the security indices of every remote cluster, the last two of which every ask of the check answers false and
+ * the listing of its privileges names, are refused before any statement; with it off there is no login, and the
+ * statement check keeps hidden targets from the agent.
+ */
+async function checkLogins(): Promise<void> {
+  if (!SECURED) {
+    await checkHiddenTargets();
+    return;
+  }
+  const admin = { user: ADMIN_USER ?? "", password: ADMIN_PASSWORD };
+  const superuser = await refusalOf(() => open("agent-read-only", admin));
+  check(
+    superuser?.name === "ExecutionProfileError" &&
+      (superuser as Error & { reasonCode?: string }).reasonCode === "PROFILE_PRIVILEGES_TOO_BROAD" &&
+      superuser.message ===
+        `${TOO_BROAD}${ADMIN_USER} holds the cluster privilege all and read on every index, the restricted system indices included${GRANT_INSTEAD}`,
+    `login: the superuser is refused at the agent profile's open -> ${superuser?.message.slice(0, 200)}`,
+  );
+  const operations = await open("agent-operations", admin);
+  check(operations.isConnected(), "login: the operations profile, which sends no statement, opens as the superuser");
+  await operations.disconnect();
+  const roles: readonly [string, Record<string, unknown>, string][] = [
+    [
+      "a role reading .security* with allow_restricted_indices",
+      { indices: [...AGENT_INDICES, restrictedRead([".security*"])] },
+      "read on the restricted system index names and patterns .security*, .security-7, .security-tokens-7, .security-profile-8",
+    ],
+    [
+      "a role granted the machine learning configuration family by its pattern alone",
+      { indices: [...AGENT_INDICES, restrictedRead([".ml-config*"])] },
+      "read on the restricted system index names and patterns .ml-config*, .ml-config",
+    ],
+    [
+      "a role granted two Kibana indices of other releases by their names",
+      { indices: [...AGENT_INDICES, restrictedRead([".kibana_8.18.0_001", ".kibana_9.1.0_001"])] },
+      "an index privilege granted with allow_restricted_indices on .kibana_8.18.0_001, .kibana_9.1.0_001",
+    ],
+    [
+      "a role granted the security indices of every remote cluster with allow_restricted_indices",
+      { indices: AGENT_INDICES, remote_indices: [{ clusters: ["*"], ...restrictedRead([".security*"]) }] },
+      "a remote index privilege granted with allow_restricted_indices on *:.security*",
+    ],
+  ];
+  for (const [name, grants, holds] of roles) {
+    const restricted = `${SCRATCH}_restricted`;
+    try {
+      await send("PUT", `/_security/role/${restricted}`, { cluster: ["cluster:monitor/main"], ...grants });
+      await send("PUT", `/_security/user/${restricted}`, { password: AGENT_PASSWORD, roles: [restricted] });
+      const refused = await refusalOf(() => open("agent-read-only", { user: restricted, password: AGENT_PASSWORD }));
+      check(
+        refused?.message === `${TOO_BROAD}${restricted} holds ${holds}${GRANT_INSTEAD}`,
+        `login: ${name} is refused at open -> ${refused?.message.slice(0, 200)}`,
+      );
+    } finally {
+      await send("DELETE", `/_security/user/${restricted}`);
+      await send("DELETE", `/_security/role/${restricted}`);
+    }
+  }
+}
+
 async function main(): Promise<void> {
   await createAgentUser();
+  await checkLogins();
   await checkPlanGrounding();
   const agent = await open("agent-read-only");
   check(agent.isConnected(), "open: the agent profile opens the node");
@@ -310,9 +499,17 @@ async function main(): Promise<void> {
   const before = await clusterState();
   for (const sql of WRITES) {
     const viaProvider = await refusalOf(() => agent.queryReadOnly!(sql, BUDGET));
+    // The statement check refuses every write before it is sent but the SELECT-shaped one, which reads one visible
+    // index: no SELECT is a statement it refuses, and the second statement holds a `;`.
+    const refusedUnsent = sql.startsWith("SELECT * INTO")
+      ? null
+      : sql.includes(";")
+        ? CHARACTER_REFUSAL
+        : STATEMENT_REFUSAL;
     check(
-      viaProvider !== null && GRAMMAR_REFUSAL.test(viaProvider.message),
-      `boundary: queryReadOnly sends ${sql} and the grammar refuses it (${viaProvider?.message.slice(0, 70)})`,
+      viaProvider !== null &&
+        (refusedUnsent === null ? GRAMMAR_REFUSAL.test(viaProvider.message) : viaProvider.message === refusedUnsent),
+      `boundary: queryReadOnly ${refusedUnsent === null ? "sends" : "refuses"} ${sql} and ${refusedUnsent === null ? "the grammar" : "the statement check"} refuses it (${viaProvider?.message.slice(0, 70)})`,
     );
     const answer = await send("POST", "/_sql?format=json", { query: sql });
     check(

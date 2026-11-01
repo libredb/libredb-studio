@@ -104,8 +104,9 @@ describe("docs/MCP.md", () => {
 
   test("claims only SELECT for every engine, and names the record that opens MCP read", () => {
     expect(MCP_DOC).toContain(
-      "A `SELECT` (a `WITH` is fine) runs on every engine it serves; a refused statement's answer names what else that engine takes.",
+      "A `SELECT` runs on every engine it serves; a refused statement's answer names what else that engine takes.",
     );
+    expect(MCP_DOC).not.toContain("A `SELECT` (a `WITH` is fine) runs on every engine it serves");
     expect(MCP_DOC).toContain("`MCP_STATEMENT_READ`");
   });
 
@@ -113,7 +114,7 @@ describe("docs/MCP.md", () => {
     // One line per engine, in the row's own words; backticks are the doc's markup, not part of the claim.
     const lines = MCP_DOC.split("\n")
       .map((line) => line.replaceAll("`", ""))
-      .filter((line) => /^ {4}- .+: a SELECT \(a WITH is fine\)/.test(line));
+      .filter((line) => /^ {4}- .+: a SELECT\b/.test(line));
     const expected = RUN_READ_QUERY_TYPES.map(
       (type) => `    - ${DB_UI_CONFIG[type].label}: ${readQueryFormsOf(type).statements}.`,
     );
@@ -211,6 +212,34 @@ describe("docs/MCP.md", () => {
     );
     expect(MCP_DOC).toContain(
       "InfluxDB 3 checks its server's line only for a connection that sends statements, so `inspect_schema` opens an InfluxDB 3 connection on any 3.x server, as the editor does.",
+    );
+  });
+
+  test("says what a cancel and a timeout do to an Elasticsearch statement, as measured on 9.1.4", () => {
+    expect(MCP_DOC).toContain(
+      "| Elasticsearch | Studio stops waiting, and the provider closes its request at the time left of `timeout_ms`; the cluster runs the statement to its end, and holds no search context for it once it ends | Studio closes the request at `timeout_ms`, the cluster runs the statement to its end and then holds no search context for it, and the client gets the timeout answer |",
+    );
+  });
+
+  // The login check narrows the login and cannot refuse every login that may read a restricted index, so the doc names
+  // the statement check as the boundary for hidden and system indices, and claims no more of the login check.
+  test("says what Elasticsearch needs of a seed, that a broad login is refused at open, what the boundary is, and how it pages without OFFSET", () => {
+    expect(MCP_DOC).toContain(
+      "Elasticsearch by the grammar of its SQL endpoint, which holds no write, DDL or transaction statement, on a server checked at open to be the 9.1 release line whose refusals were captured, with a login narrowed at open, when security is on, to hold no cluster privilege `all` and no broad reach over the restricted system indices, while hidden and system indices are kept from each statement by the provider's statement check ([elasticsearch.md](./providers/elasticsearch.md))",
+    );
+    expect(MCP_DOC).toContain(
+      "On Elasticsearch with security on, the open asks the server what the seed's login may do and lists its privileges, and refuses, before any statement runs, a login that holds the cluster privilege `all`, reads the restricted system indices it asks about, or is listed with an index privilege granted with `allow_restricted_indices`, on this cluster or a remote one, so a seed signed in as a superuser is refused; that check cannot name every restricted index, and the server lists no privileges for an API key with role descriptors of its own, so it does not refuse every login that may read one.\n" +
+        "The provider sends no run-as header, so every request runs as the seed's own login, and a `run_as` privilege in its role does not widen what `run_read_query` reads.\n" +
+        "With security on or off, the boundary is the provider's statement check: it reads each statement before sending it, refusing one it cannot read with certainty and one whose index expression holds an exclusion or a name that starts with a dot, and asks the server what its index resolves to, in the server's own index resolution and in the one the SQL endpoint makes, refusing a statement whose index resolves to a hidden or system index, alias or data stream, or which the two resolutions do not resolve alike.\n" +
+        "`run_read_query` needs the cluster action `cluster:monitor/main` and `read` and `view_index_metadata` on the indices to read, and `inspect_schema` also the cluster privileges `monitor` and `read_pipeline` and the index privilege `monitor`, which is the `libredb_seed_read` role of [elasticsearch.md](./providers/elasticsearch.md) section 5.9, so opt in a seed signed in with that role.",
+    );
+    expect(MCP_DOC).not.toContain("reads no restricted system index");
+    expect(MCP_DOC).not.toContain("read no restricted system index");
+    expect(MCP_DOC).toContain(
+      "Elasticsearch checks its server's release and its login only for a connection that sends statements, so `inspect_schema` opens an Elasticsearch connection on any release, as the editor does.",
+    );
+    expect(MCP_DOC).toContain(
+      "Elasticsearch SQL has no `OFFSET`, so there `pagination.nextOffset` is always `null`, an `offset` is refused before anything is sent, and the answer says to page by key instead: `ORDER BY` a unique field, and for the next page add `WHERE` that field `>` the last value read.",
     );
   });
 

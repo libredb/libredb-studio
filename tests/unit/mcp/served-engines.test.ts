@@ -28,7 +28,7 @@ describe("mcpStatementEngines", () => {
     );
   });
 
-  test("serves ClickHouse, libSQL and InfluxDB 3 beside the five SQL engines it served before MCP_STATEMENT_READ existed", () => {
+  test("serves ClickHouse, libSQL, InfluxDB 3 and Elasticsearch beside the five SQL engines it served before MCP_STATEMENT_READ existed", () => {
     expect(RUN_READ_QUERY_TYPES).toEqual([
       "postgres",
       "sqlite",
@@ -38,12 +38,13 @@ describe("mcpStatementEngines", () => {
       "clickhouse",
       "libsql",
       "influxdb3",
+      "elasticsearch",
     ]);
   });
 
-  // Opening ClickHouse, libSQL and InfluxDB 3 moved no other engine: every other language still serves exactly what it
-  // did.
-  test("opening ClickHouse, libSQL and InfluxDB 3 leaves every other language's served set as it was", () => {
+  // Opening ClickHouse, libSQL, InfluxDB 3 and Elasticsearch moved no other engine: every other language still serves
+  // exactly what it did.
+  test("opening ClickHouse, libSQL, InfluxDB 3 and Elasticsearch leaves every other language's served set as it was", () => {
     const languages = [...new Set(Object.values(AGENT_STATEMENT_LANGUAGE))].filter(
       (language): language is NonNullable<typeof language> => language !== null && language !== "sql",
     );
@@ -79,6 +80,7 @@ describe("mcpStatementEngines", () => {
       "clickhouse",
       "libsql",
       "influxdb3",
+      "elasticsearch",
     ]);
   });
 
@@ -88,6 +90,15 @@ describe("mcpStatementEngines", () => {
     expect(AGENT_STATEMENT_LANGUAGE.influxdb).toBe("influxql");
     expect(mcpStatementEngines("influxql")).toEqual([]);
     expect(RUN_READ_QUERY_TYPES).not.toContain("influxdb");
+  });
+
+  // One provider directory serves Elasticsearch and OpenSearch, and opening the first left the second shut.
+  test("opening Elasticsearch leaves OpenSearch unserved by every statement tool", () => {
+    expect(MCP_STATEMENT_READ.opensearch).toBe(false);
+    expect(MCP_EXPOSABLE.opensearch).toBe(true);
+    expect(AGENT_EXECUTION_ENGINES).toContain("opensearch");
+    expect(AGENT_STATEMENT_LANGUAGE.opensearch).toBe("sql");
+    expect(RUN_READ_QUERY_TYPES).not.toContain("opensearch");
   });
 
   test("an engine MCP is not offered for is not served, whatever its MCP read row says", () => {

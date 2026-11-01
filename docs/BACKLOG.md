@@ -40,9 +40,9 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B166 · 86
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B167 · 87
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
-- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP8 · 8
+- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP9 · 9
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
 
 ---
@@ -1832,7 +1832,7 @@ Both reach the caller as a shorter list with no reason: `GET /api/connections/ma
 ### D128. A read-only statement cannot be cancelled, so a cancelled or timed-out MCP query keeps running
 
 `queryReadOnly` takes no signal (`DatabaseProvider.queryReadOnly` in `src/lib/db/types.ts`), and `cancelQuery` cannot find its statement.
-When an MCP client cancels by closing the request, or `timeout_ms` passes, `run_read_query` stops waiting but the statement runs on: on PostgreSQL until `statement_timeout`, on SQL Server until the provider's deadline, on DuckDB to completion, on SQLite while blocking the process (A1), on ClickHouse until its `max_execution_time`, set to the time left, and on libSQL and InfluxDB 3 until the provider closes its request at the time left; a `timeout_ms` on ClickHouse, libSQL and InfluxDB 3 does end the statement, since the provider closes the request at its deadline, and ClickHouse cancels a read-only query whose client goes away, as sqld and InfluxDB 3 Core stop one (measured on sqld 0.24.33 and on InfluxDB 3 Core 3.12.0 on 2026-11-01).
+When an MCP client cancels by closing the request, or `timeout_ms` passes, `run_read_query` stops waiting but the statement runs on: on PostgreSQL until `statement_timeout`, on SQL Server until the provider's deadline, on DuckDB to completion, on SQLite while blocking the process (A1), on ClickHouse until its `max_execution_time`, set to the time left, on libSQL and InfluxDB 3 until the provider closes its request at the time left, and on Elasticsearch to its end; a `timeout_ms` on ClickHouse, libSQL and InfluxDB 3 does end the statement, since the provider closes the request at its deadline, and ClickHouse cancels a read-only query whose client goes away, as sqld and InfluxDB 3 Core stop one (measured on sqld 0.24.33 and on InfluxDB 3 Core 3.12.0 on 2026-11-01), while Elasticsearch runs the statement to its end whether the request is closed at `timeout_ms` or by a cancel, and then holds no search context for it (measured on 9.1.4 on 2026-11-01).
 A 2025-era `notifications/cancelled` sent in its own `POST` does not even stop the wait: the stateless server answers it 202 without knowing the call, which runs to completion or `timeout_ms` (`tests/integration/mcp/http-route.test.ts`).
 This departs from the MCP rule that a server should stop work on a cancelled request as soon as practical.
 
@@ -9177,6 +9177,16 @@ Found 2026-11-01 with agent execution on Trino.
 
 **Done when:** the Trino overlay gains an estimating plan whose `EXPLAIN` the agent path's fence admits, measured on 476, and a profile composition, or a recorded decision that it keeps none, with tests for each, and a per-engine exposure ruling opens MCP statement reads on Trino through the same check and read-only transaction with `MCP_STATEMENT_READ.trino` true; cited in `docs/AGENT.md`.
 
+### B167. OpenSearch's agent path names any index its login may read, hidden and system indices included
+
+The Elasticsearch and OpenSearch providers share `src/lib/db/providers/sql/search/`, and the boundary of each is its SQL endpoint's refusal of every write; Elasticsearch's open also checks the login when security is on, and OpenSearch's checks none.
+Measured on Elasticsearch 9.1.4 on 2026-11-01, a hidden or system index, a hidden data stream and an alias over a hidden index each answered its rows through SQL to a statement that names it, so Elasticsearch's agent path reads each statement before it is sent and asks the server what its one index expression resolves to, in its own index resolution and in the one its SQL endpoint makes, refusing a hidden or system target (`elasticsearch-agent-index-fence.ts`, `SearchProduct.fencesHiddenIndices`; `docs/providers/elasticsearch.md` section 5.9).
+That check reads Elasticsearch's grammar and asks Elasticsearch's two index resolutions, and is off on OpenSearch, whose identifier quoting differs and whose own hidden and system indices were not read through its SQL plugin with a broad login, so an OpenSearch agent statement names any index the login may read, and a least-privilege login is what keeps those indices from it.
+`MCP_STATEMENT_READ.opensearch` is false, so no MCP client reaches them.
+Found 2026-11-01 while opening MCP's `run_read_query` on Elasticsearch.
+
+**Done when:** a broad login's SQL reads of OpenSearch 3.8's hidden and system indices are measured, and either a statement check runs on OpenSearch with its own grammar and index resolution, pinned by tests and replayed live, or a recorded measurement shows none is reachable; cited in `docs/AGENT.md`.
+
 ## Passkey deferrals (#785)
 
 Each was decided when passkey sign-in was designed, not overlooked.
@@ -9329,6 +9339,17 @@ The sentence is the provider's own and predates MCP read on InfluxDB 3; the edit
 Found 2026-11-01 while verifying `run_read_query` on InfluxDB 3.12.0 Core.
 
 **Done when:** a statement the read policy refuses through `run_read_query` is answered with the forms that tool runs on InfluxDB 3, the editor and agent mode keep the policy's sentence, and a test sends `TABLE` through the tool's handler and pins the answer.
+
+### MCP9. On Elasticsearch, `inspect_schema` and agent grounding list hidden indices and aliases with their columns
+
+`inspect_schema` and agent grounding read Elasticsearch's object surface under the operations profile, and that surface tells a system object by its name alone.
+`toIndexInfo` in `src/lib/db/providers/sql/search/http-transport.ts` marks only a name that starts with a dot as a system index, `GET /_cat/indices` is sent without `expand_wildcards`, so it lists hidden indices too, and `readKind` in `src/lib/db/providers/sql/search/index.ts` drops only what is marked system.
+So a hidden index whose name has no leading dot, a hidden alias, and an alias over a hidden index are listed, each with its columns.
+Measured 2026-11-02 on Elasticsearch 9.1.4 with security off: `inspect_schema` listed an index created with `index.hidden`, a hidden alias over `probe_orders` and an alias over that hidden index, each with the columns of the index behind it.
+Their rows are not exposed: the provider's statement check refuses a statement naming any of them before it is sent.
+Found 2026-11-02 while reviewing `run_read_query` on Elasticsearch.
+
+**Done when:** under the agent-facing profiles the object listings drop the names `GET /_resolve/index` marks hidden or system, and the aliases that are hidden or sit over a hidden index, with a live test against a 9.1.4 node that pins all three cases.
 
 ---
 

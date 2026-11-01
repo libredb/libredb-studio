@@ -831,3 +831,612 @@ describe("SearchHttpTransport (opensearch) refusal inside a 200", () => {
     expect((await transport().query("SELECT k FROM t")).rows).toEqual([]);
   });
 });
+
+/**
+ * The login check: the server's own `_has_privileges` answer for the login making the request, asked by the open of a
+ * handle that sends agent statements, and the server's listing of that login's privileges. Only Elasticsearch declares
+ * the restricted system indices it asks about: family patterns, names, and names that carry the release, built from the
+ * version the open read.
+ */
+describe("SearchHttpTransport login check", () => {
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  /** The privilege listing of the least-privilege role, as 9.1.4 lists it (measured 2026-11-01). */
+  const AGENT_LISTING = {
+    cluster: ["cluster:monitor/main"],
+    global: [],
+    indices: [{ names: ["probe_*"], privileges: ["read", "view_index_metadata"], allow_restricted_indices: false }],
+    applications: [],
+    run_as: [],
+  };
+  /** An answer to the asks that reads no restricted index for every name asked. */
+  const narrowAnswer = () => {
+    const sent = JSON.parse(String(calls.at(-1)?.init?.body)) as { index: { names: string[] }[] };
+    return json({
+      username: "u",
+      has_all_requested: false,
+      cluster: { all: false },
+      index: Object.fromEntries((sent.index[0]?.names ?? []).map((name) => [name, { read: false }])),
+      application: {},
+    });
+  };
+  const elasticsearch = () => new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch"));
+
+  test("Elasticsearch asks one POST naming the cluster privilege all and read on every index, each restricted pattern and name, the release's names included, then lists the login's privileges", async () => {
+    // Every asked name is answered, and the one that carries the release reads true.
+    handler = (url) => {
+      if (new URL(url).pathname === "/_security/user/_privileges") return json(AGENT_LISTING);
+      const sent = JSON.parse(String(calls.at(-1)?.init?.body)) as { index: { names: string[] }[] };
+      const names = sent.index[0]?.names ?? [];
+      return json({
+        username: "u",
+        has_all_requested: false,
+        cluster: { all: false },
+        index: Object.fromEntries(names.map((name) => [name, { read: name === ".kibana_9.1.10_001" }])),
+        application: {},
+      });
+    };
+
+    const reach = await elasticsearch().loginReach("9.1.10");
+
+    expect(calls).toHaveLength(2);
+    expect(new URL(calls[0]?.url ?? "").pathname).toBe("/_security/user/_has_privileges");
+    expect(calls[0]?.init?.method).toBe("POST");
+    expect(new URL(calls[1]?.url ?? "").pathname).toBe("/_security/user/_privileges");
+    expect(calls[1]?.init?.method).toBe("GET");
+    const body = JSON.parse(String(calls[0]?.init?.body)) as {
+      cluster: string[];
+      index: { names: string[]; privileges: string[]; allow_restricted_indices: boolean }[];
+    };
+    expect(body.cluster).toEqual(["all"]);
+    expect(body.index).toHaveLength(1);
+    expect(body.index[0]?.privileges).toEqual(["read"]);
+    expect(body.index[0]?.allow_restricted_indices).toBe(true);
+    expect(body.index[0]?.names.slice(0, 4)).toEqual(["*", ".security*", ".kibana*", ".fleet-*"]);
+    for (const name of [".ds-*", ".fs-*", ".migrated-*", ".search-app*", ".security-7", ".kibana_security_session_1"]) {
+      expect(body.index[0]?.names).toContain(name);
+    }
+    // The names that carry the release are built from the version the open read.
+    expect(body.index[0]?.names.slice(-7)).toEqual([
+      ".kibana_9.1.10_001",
+      ".kibana_task_manager_9.1.10_001",
+      ".kibana_analytics_9.1.10_001",
+      ".kibana_ingest_9.1.10_001",
+      ".kibana_security_solution_9.1.10_001",
+      ".kibana_alerting_cases_9.1.10_001",
+      ".kibana_usage_counters_9.1.10_001",
+    ]);
+    expect(body.index[0]?.names.some((name) => name.includes("{version}"))).toBe(false);
+    expect(reach).toEqual({
+      user: "u",
+      clusterAll: false,
+      everyIndex: false,
+      restrictedIndices: [".kibana_9.1.10_001"],
+      restrictedGrants: { local: [], remote: [] },
+    });
+  });
+
+  test("Elasticsearch names each index the listing grants with allow_restricted_indices, once, in the order listed", async () => {
+    // Measured on 9.1.4: a role granting read with allow_restricted_indices on two Kibana indices of other releases.
+    handler = (url) =>
+      new URL(url).pathname === "/_security/user/_privileges"
+        ? json({
+            ...AGENT_LISTING,
+            indices: [
+              ...AGENT_LISTING.indices,
+              {
+                names: [".kibana_8.18.0_001", ".kibana_9.1.0_001"],
+                privileges: ["read"],
+                allow_restricted_indices: true,
+              },
+              { names: [".kibana_9.1.0_001"], privileges: ["view_index_metadata"], allow_restricted_indices: true },
+            ],
+          })
+        : narrowAnswer();
+
+    const reach = await elasticsearch().loginReach("9.1.4");
+
+    expect(reach?.restrictedIndices).toEqual([]);
+    expect(reach?.restrictedGrants).toEqual({ local: [".kibana_8.18.0_001", ".kibana_9.1.0_001"], remote: [] });
+  });
+
+  test("Elasticsearch names each remote index the listing grants with allow_restricted_indices as <cluster>:<name>, once, in the order listed", async () => {
+    // Measured on 9.1.4 (2026-11-02): a role whose remote_indices grant read on `logs-*` of `east` and `west*`, and
+    // read and view_index_metadata with allow_restricted_indices on `.kibana*` and `.security-7` of `east`. The listing
+    // carries `remote_indices` beside `indices`, each entry naming its clusters, and lists the flagged entry first.
+    handler = (url) =>
+      new URL(url).pathname === "/_security/user/_privileges"
+        ? json({
+            ...AGENT_LISTING,
+            remote_indices: [
+              {
+                names: [".kibana*", ".security-7"],
+                privileges: ["read", "view_index_metadata"],
+                allow_restricted_indices: true,
+                clusters: ["east"],
+              },
+              { names: ["logs-*"], privileges: ["read"], allow_restricted_indices: false, clusters: ["east", "west*"] },
+              { names: [".security-7"], privileges: ["read"], allow_restricted_indices: true, clusters: ["east", "*"] },
+            ],
+          })
+        : narrowAnswer();
+
+    const reach = await elasticsearch().loginReach("9.1.4");
+
+    expect(reach?.restrictedIndices).toEqual([]);
+    expect(reach?.restrictedGrants).toEqual({
+      local: [],
+      remote: ["east:.kibana*", "east:.security-7", "*:.security-7"],
+    });
+  });
+
+  test("Elasticsearch reads the superuser's listing, measured on 9.1.4, as granting every local and every remote index with allow_restricted_indices", async () => {
+    handler = (url) =>
+      new URL(url).pathname === "/_security/user/_privileges"
+        ? json({
+            cluster: ["all"],
+            global: [],
+            indices: [
+              { names: ["*"], privileges: ["all"], allow_restricted_indices: false },
+              {
+                names: ["*"],
+                privileges: ["monitor", "read", "read_cross_cluster", "view_index_metadata"],
+                allow_restricted_indices: true,
+              },
+            ],
+            applications: [{ application: "*", privileges: ["*"], resources: ["*"] }],
+            run_as: ["*"],
+            remote_indices: [
+              { names: ["*"], privileges: ["all"], allow_restricted_indices: false, clusters: ["*"] },
+              {
+                names: ["*"],
+                privileges: ["monitor", "read", "read_cross_cluster", "view_index_metadata"],
+                allow_restricted_indices: true,
+                clusters: ["*"],
+              },
+            ],
+            remote_cluster: [{ privileges: ["monitor_enrich", "monitor_stats"], clusters: ["*"] }],
+          })
+        : narrowAnswer();
+
+    const reach = await elasticsearch().loginReach("9.1.4");
+
+    expect(reach?.restrictedGrants).toEqual({ local: ["*"], remote: ["*:*"] });
+  });
+
+  // A run_as grant lets a login act as another user only through the es-security-runas-user header, so the docs' claim
+  // that run_as does not widen the agent path rests on this header block.
+  test("Elasticsearch asks and lists as the login itself: no request carries a header but content-type and authorization, so no run-as header", async () => {
+    handler = (url) => (new URL(url).pathname === "/_security/user/_privileges" ? json(AGENT_LISTING) : narrowAnswer());
+
+    await new SearchHttpTransport(
+      "elasticsearch",
+      makeConnection("elasticsearch", { user: "libredb_agent", password: "not-a-real-password" }),
+    ).loginReach("9.1.4");
+
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(Object.keys(call.init?.headers ?? {}).sort()).toEqual(["authorization", "content-type"]);
+    }
+  });
+
+  test("Elasticsearch reads the listing's refusal for an API key with role descriptors of its own as no listing", async () => {
+    const reason =
+      "Cannot retrieve privileges for API keys with assigned role descriptors. Please use the Get API key information API https://ela.st/es-api-get-api-key";
+    handler = (url) =>
+      new URL(url).pathname === "/_security/user/_privileges"
+        ? json(
+            {
+              error: {
+                root_cause: [{ type: "illegal_argument_exception", reason }],
+                type: "illegal_argument_exception",
+                reason,
+                caused_by: {
+                  type: "unsupported_operation_exception",
+                  reason: "cannot retrieve cluster permission on limited role",
+                },
+              },
+              status: 400,
+            },
+            400,
+          )
+        : narrowAnswer();
+
+    const reach = await elasticsearch().loginReach("9.1.4");
+
+    expect(reach?.restrictedGrants).toBeNull();
+    expect(calls).toHaveLength(2);
+  });
+
+  test.each([
+    [
+      "another 400",
+      json(
+        { error: { type: "illegal_argument_exception", reason: "Cannot retrieve privileges for users" }, status: 400 },
+        400,
+      ),
+      "Cannot retrieve privileges for users",
+    ],
+    [
+      "the same reason under another fault",
+      json(
+        {
+          error: {
+            type: "security_exception",
+            reason:
+              "Cannot retrieve privileges for API keys with assigned role descriptors. Please use the Get API key information API https://ela.st/es-api-get-api-key",
+          },
+          status: 400,
+        },
+        400,
+      ),
+      "Cannot retrieve privileges for API keys with assigned role descriptors. Please use the Get API key information API https://ela.st/es-api-get-api-key",
+    ],
+    [
+      "no indices list",
+      json({ ...AGENT_LISTING, indices: {} }),
+      "Elasticsearch answered a privilege listing the client could not read",
+    ],
+    [
+      "an entry with no flag",
+      json({ ...AGENT_LISTING, indices: [{ names: ["probe_*"], privileges: ["read"] }] }),
+      "Elasticsearch answered a privilege listing the client could not read",
+    ],
+    [
+      "an entry whose names are not text",
+      json({ ...AGENT_LISTING, indices: [{ names: [1], privileges: ["read"], allow_restricted_indices: true }] }),
+      "Elasticsearch answered a privilege listing the client could not read",
+    ],
+    [
+      "an entry that is not an object",
+      json({ ...AGENT_LISTING, indices: ["probe_*"] }),
+      "Elasticsearch answered a privilege listing the client could not read",
+    ],
+    [
+      "a remote list that is not a list",
+      json({ ...AGENT_LISTING, remote_indices: {} }),
+      "Elasticsearch answered a privilege listing the client could not read",
+    ],
+    [
+      "a remote list that is null",
+      json({ ...AGENT_LISTING, remote_indices: null }),
+      "Elasticsearch answered a privilege listing the client could not read",
+    ],
+    [
+      "a remote entry with no clusters",
+      json({
+        ...AGENT_LISTING,
+        remote_indices: [{ names: [".security*"], privileges: ["read"], allow_restricted_indices: true }],
+      }),
+      "Elasticsearch answered a privilege listing the client could not read",
+    ],
+    [
+      "a remote entry whose clusters are not text",
+      json({
+        ...AGENT_LISTING,
+        remote_indices: [{ names: ["logs-*"], privileges: ["read"], allow_restricted_indices: false, clusters: [1] }],
+      }),
+      "Elasticsearch answered a privilege listing the client could not read",
+    ],
+    [
+      "a remote entry with no flag",
+      json({ ...AGENT_LISTING, remote_indices: [{ names: ["logs-*"], privileges: ["read"], clusters: ["east"] }] }),
+      "Elasticsearch answered a privilege listing the client could not read",
+    ],
+    [
+      "a remote entry that is not an object",
+      json({ ...AGENT_LISTING, remote_indices: ["east:logs-*"] }),
+      "Elasticsearch answered a privilege listing the client could not read",
+    ],
+    [
+      "a body that is not JSON",
+      new Response("nope", { status: 200 }),
+      "Elasticsearch answered a privilege listing the client could not read",
+    ],
+  ])("Elasticsearch fails a listing with %s", async (_name, reply, message) => {
+    handler = (url) => (new URL(url).pathname === "/_security/user/_privileges" ? reply : narrowAnswer());
+
+    const caught = await elasticsearch()
+      .loginReach("9.1.4")
+      .catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as Error).message).toBe(message);
+  });
+
+  test("Elasticsearch with security off answers no login, after the one question it had no endpoint for", async () => {
+    handler = () =>
+      json({ error: "no handler found for uri [/_security/user/_has_privileges] and method [POST]" }, 400);
+
+    expect(await elasticsearch().loginReach("9.1.4")).toBeNull();
+    expect(calls).toHaveLength(1);
+  });
+
+  test("Elasticsearch reads an answer that leaves an asked name out as unreadable", async () => {
+    handler = (url) =>
+      new URL(url).pathname === "/_security/user/_privileges"
+        ? json(AGENT_LISTING)
+        : json({
+            username: "u",
+            has_all_requested: false,
+            cluster: { all: false },
+            index: { "*": { read: false }, ".security-7": { read: true } },
+            application: {},
+          });
+
+    const caught = await new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch"))
+      .loginReach("9.1.4")
+      .catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as Error).message).toBe("Elasticsearch answered a privilege check the client could not read");
+  });
+
+  test("OpenSearch declares no restricted indices, and refuses before any request", async () => {
+    const caught = await new SearchHttpTransport("opensearch", makeConnection("opensearch"))
+      .loginReach("3.8.0")
+      .catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as Error).message).toBe("OpenSearch declares no restricted system indices to check a login against");
+    expect(calls).toHaveLength(0);
+  });
+});
+
+/**
+ * The statement check's three questions, each answered in the shape 9.1.4 answers it (measured 2026-11-01): what an
+ * index expression resolves to, which aliases are hidden, and the marks of each data stream. A shape that is not the
+ * measured one is unreadable, and an asked alias or data stream left out of an answer is too.
+ */
+describe("SearchHttpTransport index resolution", () => {
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  const transport = () => new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch"));
+  const failure = (run: () => Promise<unknown>) => run().catch((error: unknown) => error);
+
+  test("resolves one expression as a whole, its commas encoded, with the SQL endpoint's wildcard expansion", async () => {
+    handler = () =>
+      json({
+        indices: [
+          { name: "probe_orders", aliases: ["porders"], attributes: ["open"] },
+          { name: "hidden_logs", attributes: ["hidden", "open"] },
+          { name: ".security-7", attributes: ["hidden", "open", "system"] },
+        ],
+        aliases: [{ name: "logs_view", indices: ["hidden_logs"] }],
+        data_streams: [
+          { name: "probe_stream", backing_indices: [".ds-probe_stream-1"], timestamp_field: "@timestamp" },
+        ],
+      });
+
+    const targets = await transport().resolveTargets(["probe_*,-probe_shapes"]);
+
+    expect(calls).toHaveLength(1);
+    const url = new URL(calls[0]?.url ?? "");
+    expect(url.pathname).toBe("/_resolve/index/probe_*%2C-probe_shapes");
+    expect(url.search).toBe("?expand_wildcards=open");
+    expect(calls[0]?.init?.method).toBe("GET");
+    expect(targets).toEqual({
+      indices: [
+        { name: "probe_orders", hidden: false, system: false },
+        { name: "hidden_logs", hidden: true, system: false },
+        { name: ".security-7", hidden: true, system: true },
+      ],
+      aliases: [{ name: "logs_view", indices: ["hidden_logs"] }],
+      dataStreams: [{ name: "probe_stream", backingIndices: [".ds-probe_stream-1"] }],
+    });
+  });
+
+  test("resolves many names in request lines joined by a comma, and merges the answers", async () => {
+    const names = Array.from({ length: 300 }, (_, i) => `logs-${String(i).padStart(20, "0")}`);
+    handler = (url) => {
+      const asked = decodeURIComponent(new URL(url).pathname.slice("/_resolve/index/".length)).split(",");
+      return json({ indices: asked.map((name) => ({ name, attributes: ["open"] })), aliases: [], data_streams: [] });
+    };
+
+    const targets = await transport().resolveTargets(names);
+
+    expect(calls.length).toBeGreaterThan(1);
+    expect(calls.every((call) => call.url.length < 3700)).toBe(true);
+    expect(targets.indices.map((index) => index.name)).toEqual(names);
+  });
+
+  test.each([
+    ["not an object", []],
+    ["no indices list", { aliases: [], data_streams: [] }],
+    ["no aliases list", { indices: [], data_streams: [] }],
+    ["no data streams list", { indices: [], aliases: [] }],
+    ["an index with no name", { indices: [{ attributes: ["open"] }], aliases: [], data_streams: [] }],
+    ["an index that is not an object", { indices: ["x"], aliases: [], data_streams: [] }],
+    ["an index with no attributes", { indices: [{ name: "x" }], aliases: [], data_streams: [] }],
+    ["an attribute that is not text", { indices: [{ name: "x", attributes: [true] }], aliases: [], data_streams: [] }],
+    ["an alias with no name", { indices: [], aliases: [{ indices: ["x"] }], data_streams: [] }],
+    ["an alias that is not an object", { indices: [], aliases: [7], data_streams: [] }],
+    ["an alias with no indices", { indices: [], aliases: [{ name: "a" }], data_streams: [] }],
+    ["a data stream with no name", { indices: [], aliases: [], data_streams: [{ backing_indices: [] }] }],
+    ["a data stream that is not an object", { indices: [], aliases: [], data_streams: [null] }],
+    ["a data stream with no backing indices", { indices: [], aliases: [], data_streams: [{ name: "s" }] }],
+    [
+      "a backing index that is not text",
+      { indices: [], aliases: [], data_streams: [{ name: "s", backing_indices: [1] }] },
+    ],
+  ])("reads a resolution with %s as unreadable", async (_name, body) => {
+    handler = () => json(body);
+
+    const caught = await failure(() => transport().resolveTargets(["x"]));
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as Error).message).toBe("Elasticsearch answered an index resolution the client could not read");
+  });
+
+  test("a name the server does not know fails the resolution in the server's words", async () => {
+    handler = () =>
+      json(
+        {
+          error: { type: "index_not_found_exception", reason: "no such index [missing]" },
+          status: 404,
+        },
+        404,
+      );
+
+    const caught = await failure(() => transport().resolveTargets(["missing"]));
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as Error).message).toBe("no such index [missing]");
+  });
+
+  test("names each hidden alias from the alias listing of the aliases asked about", async () => {
+    handler = () =>
+      json({
+        hidden_logs: { aliases: { logs_view: {} } },
+        probe_orders: { aliases: { hidden_view: { is_hidden: true }, porders: { is_hidden: false } } },
+      });
+
+    const hidden = await transport().hiddenAliases(["logs_view", "hidden_view", "porders"]);
+
+    expect(new URL(calls[0]?.url ?? "").pathname).toBe("/_alias/logs_view,hidden_view,porders");
+    expect(hidden).toEqual(["hidden_view"]);
+  });
+
+  test.each([
+    ["an asked alias left out", ["logs_view", "hidden_view"], { hidden_logs: { aliases: { logs_view: {} } } }],
+    ["a mark that is not a boolean", ["logs_view"], { hidden_logs: { aliases: { logs_view: { is_hidden: "true" } } } }],
+    ["a listing that is not an object", ["logs_view"], []],
+    ["an entry with no aliases", ["logs_view"], { hidden_logs: {} }],
+  ])("reads an alias listing with %s as unreadable", async (_name, asked, body) => {
+    handler = () => json(body);
+
+    const caught = await failure(() => transport().hiddenAliases(asked));
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as Error).message).toBe("Elasticsearch answered an alias listing the client could not read");
+  });
+
+  test("reads each asked data stream's marks from the data stream listing", async () => {
+    handler = () =>
+      json({
+        data_streams: [
+          { name: "probe_stream", hidden: false, system: false, generation: 1 },
+          { name: "hidden_stream", hidden: true, system: false },
+        ],
+      });
+
+    const marks = await transport().dataStreamMarks(["probe_stream", "hidden_stream"]);
+
+    expect(new URL(calls[0]?.url ?? "").pathname).toBe("/_data_stream/probe_stream,hidden_stream");
+    expect(marks).toEqual([
+      { name: "probe_stream", hidden: false, system: false },
+      { name: "hidden_stream", hidden: true, system: false },
+    ]);
+  });
+
+  test.each([
+    ["an asked data stream left out", { data_streams: [{ name: "probe_stream", hidden: false, system: false }] }],
+    ["a mark that is not a boolean", { data_streams: [{ name: "hidden_stream", hidden: "true", system: false }] }],
+    ["no system mark", { data_streams: [{ name: "hidden_stream", hidden: false }] }],
+    ["an entry with no name", { data_streams: [{ hidden: false, system: false }] }],
+    ["an entry that is not an object", { data_streams: ["hidden_stream"] }],
+    ["no data stream list", {}],
+  ])("reads a data stream listing with %s as unreadable", async (_name, body) => {
+    handler = () => json(body);
+
+    const caught = await failure(() => transport().dataStreamMarks(["hidden_stream"]));
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as Error).message).toBe("Elasticsearch answered a data stream listing the client could not read");
+  });
+});
+
+/**
+ * The indices the SQL endpoint reads for a table, asked the way the endpoint resolves one: a field capabilities request
+ * with the index options its resolver sends (measured on 9.1.4, 2026-11-01). Only Elasticsearch declares that request.
+ */
+describe("SearchHttpTransport SQL table resolution", () => {
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  const transport = () => new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch"));
+  const failure = (run: () => Promise<unknown>) => run().catch((error: unknown) => error);
+
+  test("asks the field capabilities of the expression as a whole, with the SQL resolver's index options", async () => {
+    handler = () =>
+      json({
+        indices: [".ds-probe_stream-1", "hidden_logs", "probe_orders"],
+        fields: { _index: { _index: { type: "_index", metadata_field: true, searchable: true, aggregatable: true } } },
+      });
+
+    const indices = await transport().sqlTableIndices("probe_*,logs_view");
+
+    expect(calls).toHaveLength(1);
+    const url = new URL(calls[0]?.url ?? "");
+    expect(url.pathname).toBe("/probe_*%2Clogs_view/_field_caps");
+    expect(url.search).toBe("?fields=_index&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open");
+    expect(calls[0]?.init?.method).toBe("GET");
+    expect(indices).toEqual([".ds-probe_stream-1", "hidden_logs", "probe_orders"]);
+  });
+
+  test("answers no index for an expression that resolves to none", async () => {
+    handler = () => json({ indices: [], fields: {} });
+
+    expect(await transport().sqlTableIndices("nomatch*")).toEqual([]);
+  });
+
+  test("fails an answer that holds a failure for any index: the indices read are then not all known", async () => {
+    handler = () =>
+      json({
+        indices: ["probe_orders"],
+        fields: {},
+        failed_indices: 1,
+        failures: [{ indices: ["red_logs"], failure: { error: { type: "no_shard_available_action_exception" } } }],
+      });
+
+    const caught = await failure(() => transport().sqlTableIndices("probe_orders,red_logs"));
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as Error).message).toBe(
+      "Elasticsearch could not answer the field capabilities of every index the expression resolves to, so the indices its SQL endpoint reads are not all known",
+    );
+  });
+
+  test.each([
+    ["not an object", []],
+    ["no indices list", { fields: {} }],
+    ["an index that is not text", { indices: [7], fields: {} }],
+    ["failures that are not a list", { indices: [], fields: {}, failures: {} }],
+  ])("reads an answer with %s as unreadable", async (_name, body) => {
+    handler = () => json(body);
+
+    const caught = await failure(() => transport().sqlTableIndices("x"));
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as Error).message).toBe(
+      "Elasticsearch answered a field capabilities request the client could not read",
+    );
+  });
+
+  test("a refusal fails the call in the server's words", async () => {
+    handler = () =>
+      json(
+        {
+          error: { type: "security_exception", reason: "action [indices:data/read/field_caps] is unauthorized" },
+          status: 403,
+        },
+        403,
+      );
+
+    const caught = await failure(() => transport().sqlTableIndices("x"));
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as Error).message).toBe("Elasticsearch refused the credentials (HTTP 403)");
+  });
+
+  test("OpenSearch declares no SQL table resolution, and refuses before any request", async () => {
+    const caught = await failure(() =>
+      new SearchHttpTransport("opensearch", makeConnection("opensearch")).sqlTableIndices("x"),
+    );
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as Error).message).toBe(
+      "OpenSearch declares no measured resolution of a SQL table to check an agent statement against",
+    );
+    expect(calls).toHaveLength(0);
+  });
+});

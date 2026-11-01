@@ -340,7 +340,7 @@ describe("the result cap", () => {
     const result = await direct({ connection_id: "seed:fake", command: JSON.parse(find) }, fakeContext(provider));
     expect(result).toEqual({
       isError: true,
-      content: [{ type: "text", text: RUN_MONGO_COMMAND_ARM.tooLarge(find).bytes as string }],
+      content: [{ type: "text", text: RUN_MONGO_COMMAND_ARM.tooLarge(find, "mongodb").bytes as string }],
     });
   });
 

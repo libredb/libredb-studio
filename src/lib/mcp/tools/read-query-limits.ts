@@ -65,6 +65,22 @@ export function classifyReadQueryFailure(
   return { kind: "too-large", text: texts[refusal.kind] ?? own };
 }
 
+/** Whether `prepareQuery` can page `type`'s SQL with an offset; where it cannot, no offset is ever named or taken. */
+export function pagesWithOffset(type: DatabaseType): boolean {
+  return readQueryFormsOf(type).pagesWithOffset;
+}
+
+/**
+ * The budget refusals in `type`'s words where they differ from the shared ones: an engine with no offset is never told
+ * to page with one.
+ */
+export function tooLargeTextsOf(type: DatabaseType): Partial<Record<"rows", string>> {
+  if (pagesWithOffset(type)) return {};
+  return {
+    rows: `The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, and page it in SQL: ${readQueryFormsOf(type).paging}.`,
+  };
+}
+
 export function inSqlPaging(type: DatabaseType): string {
   return `Page it in SQL: ${readQueryFormsOf(type).paging}.`;
 }
@@ -82,6 +98,9 @@ const NOT_PAGEABLE_TEXT = "This statement's result cannot be paged. Call again w
 export function offsetRefusalText(sql: string, type: DatabaseType): string {
   const info = analyzeQuery(sql, type);
   if (info.type !== "SELECT") return NOT_PAGEABLE_TEXT;
+  if (!pagesWithOffset(type)) {
+    return `This engine's SQL has no OFFSET, so this query cannot be paged with offset. ${inSqlPaging(type)}`;
+  }
   if (!info.hasLimit) return `This query cannot be paged with offset. ${inSqlPaging(type)}`;
   return `This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ${readQueryFormsOf(type).paging}.`;
 }

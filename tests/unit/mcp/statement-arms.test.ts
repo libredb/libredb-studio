@@ -187,7 +187,11 @@ describe("the SQL arm", () => {
     expect(RUN_READ_QUERY_ARM.fence("DROP TABLE users", "sqlite")).toStartWith(
       "The statement was refused before it reached the database (",
     );
-    expect(RUN_READ_QUERY_ARM.tooLarge("SELECT 1")).toEqual({});
+    expect(RUN_READ_QUERY_ARM.tooLarge("SELECT 1", "sqlite")).toEqual({});
+    // Elasticsearch SQL has no OFFSET, so its row refusal does not tell the client to page with offset.
+    expect(RUN_READ_QUERY_ARM.tooLarge("SELECT k FROM probe_buckets LIMIT 2000", "elasticsearch")).toEqual({
+      rows: "The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, and page it in SQL: ORDER BY a unique field, and for the next page add WHERE that field > the last value read.",
+    });
   });
 
   test("takes a database, drops an unknown key rather than refusing it, and refuses an empty statement in its own words", () => {
@@ -264,7 +268,7 @@ describe("the MongoDB arm", () => {
       new Error("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
       1,
       2,
-      RUN_MONGO_COMMAND_ARM.tooLarge(find),
+      RUN_MONGO_COMMAND_ARM.tooLarge(find, "mongodb"),
     );
     expect(rows).toEqual({
       kind: "too-large",
@@ -274,10 +278,10 @@ describe("the MongoDB arm", () => {
       new Error("Read-only execution exceeded the byte budget: 2 > 1"),
       1,
       2,
-      RUN_MONGO_COMMAND_ARM.tooLarge(find),
+      RUN_MONGO_COMMAND_ARM.tooLarge(find, "mongodb"),
     );
-    expect(bytes).toEqual({ kind: "too-large", text: RUN_MONGO_COMMAND_ARM.tooLarge(find).bytes as string });
-    expect(RUN_MONGO_COMMAND_ARM.tooLarge(find).bytes).not.toContain("LIMIT");
+    expect(bytes).toEqual({ kind: "too-large", text: RUN_MONGO_COMMAND_ARM.tooLarge(find, "mongodb").bytes as string });
+    expect(RUN_MONGO_COMMAND_ARM.tooLarge(find, "mongodb").bytes).not.toContain("LIMIT");
   });
 
   test("names no SQL clause where more rows exist, says the tool takes no offset, and pages with skip", () => {
@@ -346,7 +350,7 @@ describe("the kubectl arm", () => {
       new Error("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
       1,
       2,
-      RUN_KUBECTL_READ_ARM.tooLarge("get pods -A"),
+      RUN_KUBECTL_READ_ARM.tooLarge("get pods -A", "kubernetes"),
     );
     expect(rows).toEqual({
       kind: "too-large",
@@ -407,6 +411,8 @@ describe("the tool each engine is read with", () => {
     expect(mcpStatementToolFor("libsql")).toBe("run_read_query");
     expect(mcpStatementToolFor("influxdb3")).toBe("run_read_query");
     expect(mcpStatementToolFor("influxdb")).toBeNull();
+    expect(mcpStatementToolFor("elasticsearch")).toBe("run_read_query");
+    expect(mcpStatementToolFor("opensearch")).toBeNull();
     expect(mcpStatementToolFor("redis")).toBeNull();
     expect(mcpStatementToolFor("snowflake")).toBeNull();
   });

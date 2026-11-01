@@ -612,7 +612,16 @@ export function readSqlSpan(sql: string, index: number, grammar: SqlGrammar = DE
   if (grammar.tripleQuotedStrings && (ch === "'" || ch === '"') && sql.startsWith(ch.repeat(3), index)) {
     return readTripleQuoted(sql, index, ch, ch === "'" ? "string" : "quoted-identifier");
   }
-  if (ch === "'") return readQuoted(sql, index, "'", "string", literalBackslash);
+  // `singleQuoteBackslashEscapes` overrides the backslash reading of `'…'` alone, as its double-quote twin does below.
+  if (ch === "'") {
+    const stringBackslash =
+      grammar.singleQuoteBackslashEscapes === undefined
+        ? literalBackslash
+        : grammar.singleQuoteBackslashEscapes
+          ? "escapes"
+          : "never";
+    return readQuoted(sql, index, "'", "string", stringBackslash);
+  }
   // `"` is a quoted identifier in every dialect this project supports except
   // MySQL with its default settings, where it is a string - and therefore takes
   // backslash escapes. Either way it is an opaque literal and the doubling rule is

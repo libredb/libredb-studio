@@ -56,6 +56,31 @@ import {
   RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
+import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
+import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import {
+  CHARACTER_REFUSAL,
+  COMMENT_REFUSAL,
+  DOT_INDEX_REFUSAL,
+  disagreementRefusal,
+  EXCLUSION_REFUSAL,
+  expressionRefusal,
+  FROM_REFUSAL,
+  hiddenTargetRefusal,
+  NUMBER_REFUSAL,
+  resolveFailedRefusal,
+  STATEMENT_REFUSAL,
+  SUBQUERY_REFUSAL,
+  UNREADABLE_REFUSAL,
+  unresolvedRefusal,
+} from "@/lib/db/providers/sql/search/elasticsearch-agent-index-fence";
+import type { McpConnectionContext } from "@/lib/mcp/context";
+import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
+import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
+import type { ManagedConnection } from "@/lib/seed";
+import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 
 // ============================================================================
 // Connection
@@ -556,6 +581,166 @@ const NO_SUCH_HANDLER = '{"error":"no handler found for uri [/_plugins/_sql] and
  */
 const NO_BODY = "";
 
+/** The server's own check of what the login may do, asked by the open of a handle that sends agent statements. */
+const HAS_PRIVILEGES_PATH = "/_security/user/_has_privileges";
+
+/** The server's listing of the login's privileges, asked by the same open after the check. */
+const LIST_PRIVILEGES_PATH = "/_security/user/_privileges";
+
+/** The listing of a role that grants nothing with `allow_restricted_indices`, as 9.1.4 lists one (measured). */
+const NARROW_LISTING = JSON.stringify({
+  cluster: ["cluster:monitor/main", "monitor", "read_pipeline"],
+  global: [],
+  indices: [
+    { names: ["probe_*"], privileges: ["read", "view_index_metadata", "monitor"], allow_restricted_indices: false },
+  ],
+  applications: [],
+  run_as: [],
+});
+
+/** The listing of a role granting read with `allow_restricted_indices` on the given names, beside the narrow grant. */
+const restrictedListing = (names: readonly string[]): string =>
+  JSON.stringify({
+    ...JSON.parse(NARROW_LISTING),
+    indices: [
+      ...(JSON.parse(NARROW_LISTING) as { indices: unknown[] }).indices,
+      { names, privileges: ["read"], allow_restricted_indices: true },
+    ],
+  });
+
+/**
+ * A listing with remote index privileges, in the shape 9.1.4 lists them (measured 2026-11-02): a `remote_indices` list
+ * beside `indices`, which the server leaves out for a login that holds none, each entry naming its clusters too.
+ */
+const remoteListing = (
+  remote: readonly { names: readonly string[]; clusters: readonly string[]; restricted: boolean }[],
+  local: string = NARROW_LISTING,
+): string =>
+  JSON.stringify({
+    ...JSON.parse(local),
+    remote_indices: remote.map(({ names, clusters, restricted }) => ({
+      names,
+      privileges: ["read"],
+      allow_restricted_indices: restricted,
+      clusters,
+    })),
+  });
+
+/**
+ * The restricted system index patterns the check asks about. Each was answered false on 9.1.4 to a role reading `*`
+ * without `allow_restricted_indices`, so each holds restricted indices, and together they hold all of them (measured
+ * 2026-11-01).
+ */
+const RESTRICTED_PATTERNS = [
+  ".security*",
+  ".kibana*",
+  ".fleet-*",
+  ".ml-config*",
+  ".ml-meta*",
+  ".ml-inference-*",
+  ".transform-internal-*",
+  ".tasks*",
+  ".async-search*",
+  ".watches*",
+  ".triggered_watches*",
+  ".snapshot-blob-cache*",
+  ".geoip_databases*",
+  ".apm-agent-configuration*",
+  ".apm-custom-link*",
+  ".synonyms*",
+  ".search-app*",
+  ".logstash*",
+  ".inference*",
+  ".secrets-inference*",
+  ".connector-secrets*",
+  ".query-rules*",
+  ".enrich-*",
+  ".reporting-*",
+  ".ds-*",
+  ".fs-*",
+  ".migrated-*",
+];
+
+/** The restricted system index names the check asks about, each answered restricted by 9.1.4 (measured 2026-11-01). */
+const RESTRICTED_NAMES = [
+  ".security-7",
+  ".security-tokens-7",
+  ".security-profile-8",
+  ".async-search",
+  ".tasks",
+  ".fleet-secrets",
+  ".fleet-agents-7",
+  ".fleet-policies-7",
+  ".fleet-actions-7",
+  ".fleet-enrollment-api-keys-7",
+  ".fleet-artifacts-7",
+  ".fleet-servers-7",
+  ".fleet-policies-leader-7",
+  ".connector-secrets",
+  ".secrets-inference",
+  ".inference",
+  ".ml-config",
+  ".ml-meta",
+  ".ml-inference-000005",
+  ".transform-internal-007",
+  ".watches",
+  ".triggered_watches",
+  ".geoip_databases",
+  ".logstash",
+  ".synonyms-2",
+  ".snapshot-blob-cache",
+  ".apm-agent-configuration",
+  ".apm-custom-link",
+  ".query-rules",
+  ".search-app",
+  ".kibana_security_session_1",
+];
+
+/** The restricted names that carry the release, as the check builds them from the version the open read. */
+function releaseNames(version: string): string[] {
+  return [
+    `.kibana_${version}_001`,
+    `.kibana_task_manager_${version}_001`,
+    `.kibana_analytics_${version}_001`,
+    `.kibana_ingest_${version}_001`,
+    `.kibana_security_solution_${version}_001`,
+    `.kibana_alerting_cases_${version}_001`,
+    `.kibana_usage_counters_${version}_001`,
+  ];
+}
+
+/** Everything the check asks about on the 9.1.4 node this file fakes, patterns first, in the order it asks. */
+const RESTRICTED_INDICES = [...RESTRICTED_PATTERNS, ...RESTRICTED_NAMES, ...releaseNames("9.1.4")];
+
+/** The request the open sends: the cluster privilege `all`, and `read` on every index and on each restricted one. */
+const HAS_PRIVILEGES_REQUEST = {
+  cluster: ["all"],
+  index: [{ names: ["*", ...RESTRICTED_INDICES], privileges: ["read"], allow_restricted_indices: true }],
+};
+
+/**
+ * The check's answer, in the shape 9.1.4 answers it (measured 2026-11-01 for the superuser, `libredb_agent_read`,
+ * `libredb_seed_read`, a role reading `*` without `allow_restricted_indices`, and a role reading `.security*` with it):
+ * the user, `has_all_requested`, the cluster privilege, each name's `read`, and an empty `application`.
+ */
+function privilegeAnswer(
+  username: string,
+  clusterAll: boolean,
+  readable: readonly string[],
+  names: readonly string[] = ["*", ...RESTRICTED_INDICES],
+): string {
+  return JSON.stringify({
+    username,
+    has_all_requested: clusterAll && names.every((name) => readable.includes(name)),
+    cluster: { all: clusterAll },
+    index: Object.fromEntries(names.map((name) => [name, { read: readable.includes(name) }])),
+    application: {},
+  });
+}
+
+/** What a node started with security off answers the check, measured on 9.1.4: no security endpoint is registered. */
+const NO_SECURITY_BODY = `{"error":"no handler found for uri [${HAS_PRIVILEGES_PATH}] and method [POST]"}`;
+
 // ============================================================================
 // Object-surface payloads (#789)
 // ============================================================================
@@ -872,9 +1057,123 @@ const PATH_BODIES: Record<string, string> = {
   "/probe_buckets,probe_orders/_mapping": bulkMappingBody("probe_buckets", "probe_orders"),
 };
 
+// ============================================================================
+// The statement check's questions: index resolution, alias marks and data stream marks
+// ============================================================================
+
+/** One index of a resolution, in the shape 9.1.4 answers `_resolve/index` (measured 2026-11-01). */
+const resolvedIndex = (name: string, ...attributes: string[]) => ({ name, attributes: ["open", ...attributes] });
+
+/**
+ * What the fake cluster resolves each index expression to, as 9.1.4 answers `GET /_resolve/index/<expression>
+ * ?expand_wildcards=open` (measured 2026-11-01): three probe indices, the alias `probe_orders_alias` over
+ * `probe_orders`, and the data stream `probe_stream`; `*` names the indices, the alias and the data stream, none of
+ * them hidden. A name the cluster does not hold answers 404, and a comma list of names answers each one's resolution.
+ */
+const RESOLUTIONS: Readonly<Record<string, { indices: unknown[]; aliases: unknown[]; data_streams: unknown[] }>> = {
+  probe_orders: { indices: [resolvedIndex("probe_orders")], aliases: [], data_streams: [] },
+  probe_buckets: { indices: [resolvedIndex("probe_buckets")], aliases: [], data_streams: [] },
+  probe_shapes: { indices: [resolvedIndex("probe_shapes")], aliases: [], data_streams: [] },
+  probe_orders_alias: {
+    indices: [],
+    aliases: [{ name: "probe_orders_alias", indices: ["probe_orders"] }],
+    data_streams: [],
+  },
+  probe_stream: {
+    indices: [],
+    aliases: [],
+    data_streams: [
+      { name: "probe_stream", backing_indices: [".ds-probe_stream-2026.11.01-000001"], timestamp_field: "@timestamp" },
+    ],
+  },
+  "*": {
+    indices: [resolvedIndex("probe_buckets"), resolvedIndex("probe_orders"), resolvedIndex("probe_shapes")],
+    aliases: [{ name: "probe_orders_alias", indices: ["probe_orders"] }],
+    data_streams: [
+      { name: "probe_stream", backing_indices: [".ds-probe_stream-2026.11.01-000001"], timestamp_field: "@timestamp" },
+    ],
+  },
+};
+
+/** The path the statement check resolves an expression at, as the transport builds it. */
+const resolvePath = (expression: string) => `/_resolve/index/${encodeURIComponent(expression)}?expand_wildcards=open`;
+
+/** The index options of the SQL endpoint's own table resolution, as the transport sends them (measured on 9.1.4). */
+const SQL_RESOLVE_QUERY = "fields=_index&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open";
+
+/** The path the statement check asks which indices the SQL endpoint reads for an expression at. */
+const readPath = (expression: string) => `/${encodeURIComponent(expression)}/_field_caps?${SQL_RESOLVE_QUERY}`;
+
+/**
+ * The concrete indices the fake cluster's SQL endpoint reads for each name, as 9.1.4 answers the field capabilities
+ * request its resolver sends (measured 2026-11-01): an index for itself, the alias for the index behind it, the data
+ * stream for its backing index, and `*` for every one of them. A name the cluster does not hold reads no index, since
+ * the request skips it, and a comma list reads each part's indices.
+ */
+const SQL_READS: Readonly<Record<string, readonly string[]>> = {
+  probe_orders: ["probe_orders"],
+  probe_buckets: ["probe_buckets"],
+  probe_shapes: ["probe_shapes"],
+  probe_orders_alias: ["probe_orders"],
+  probe_stream: [".ds-probe_stream-2026.11.01-000001"],
+  "*": [".ds-probe_stream-2026.11.01-000001", "probe_buckets", "probe_orders", "probe_shapes"],
+};
+
+/** A field capabilities answer in 9.1.4's shape, holding the given indices. */
+const fieldCaps = (indices: readonly string[]): Reply =>
+  ok(
+    JSON.stringify({
+      indices,
+      fields: { _index: { _index: { type: "_index", metadata_field: true, searchable: true, aggregatable: true } } },
+    }),
+  );
+
+/** A field capabilities reply, or null when the request is not one. */
+function sqlReadReply(path: string): Reply | null {
+  const asked = new RegExp(`^/([^/?]+)/_field_caps\\?${SQL_RESOLVE_QUERY}$`).exec(path)?.[1];
+  if (asked === undefined) return null;
+  const expression = decodeURIComponent(asked);
+  return fieldCaps([...new Set(expression.split(",").flatMap((name) => SQL_READS[name] ?? []))]);
+}
+
+/** A resolution's reply, or null when the request is not one. */
+function resolutionReply(path: string): Reply | null {
+  const asked = /^\/_resolve\/index\/([^?]+)\?expand_wildcards=open$/.exec(path)?.[1];
+  if (asked === undefined) return null;
+  const expression = decodeURIComponent(asked);
+  const whole = RESOLUTIONS[expression];
+  if (whole !== undefined) return ok(JSON.stringify(whole));
+  const parts = expression.split(",").map((name) => ({ name, answer: RESOLUTIONS[name] }));
+  const missing = parts.find((part) => part.answer === undefined);
+  if (missing !== undefined) {
+    return fail(404, engineFault(404, "index_not_found_exception", `no such index [${missing.name}]`));
+  }
+  return ok(
+    JSON.stringify({
+      indices: parts.flatMap((part) => part.answer?.indices ?? []),
+      aliases: parts.flatMap((part) => part.answer?.aliases ?? []),
+      data_streams: parts.flatMap((part) => part.answer?.data_streams ?? []),
+    }),
+  );
+}
+
+/** The alias listing of `probe_orders_alias`, as 9.1.4 answers `GET /_alias/<alias>`: keyed by index, not hidden. */
+const ALIAS_MARKS_BODY = JSON.stringify({ probe_orders: { aliases: { probe_orders_alias: {} } } });
+
+/** The data stream listing of `probe_stream`, as 9.1.4 answers `GET /_data_stream/<name>`, trimmed to what is read. */
+const STREAM_MARKS_BODY = JSON.stringify({
+  data_streams: [{ name: "probe_stream", hidden: false, system: false, generation: 1, status: "GREEN" }],
+});
+
 function defaultReply(request: SentRequest): Reply {
   const canned = PATH_BODIES[request.path];
   if (canned !== undefined) return ok(canned);
+  const resolution = resolutionReply(request.path);
+  if (resolution !== null) return resolution;
+  const sqlRead = sqlReadReply(request.path);
+  if (sqlRead !== null) return sqlRead;
+  if (request.path === "/_alias/probe_orders_alias") return ok(ALIAS_MARKS_BODY);
+  if (request.path === "/_data_stream/probe_stream") return ok(STREAM_MARKS_BODY);
 
   // A NAMED object on either source endpoint that the canned set above does not hold,
   // answered the way the cluster answers it (#789): the pipeline endpoint spells absence
@@ -884,6 +1183,12 @@ function defaultReply(request: SentRequest): Reply {
   if (request.path.startsWith("/_ingest/pipeline/")) return fail(404, "{}");
   if (request.path.startsWith("/_index_template/")) return fail(404, TEMPLATE_ABSENT_BODY);
 
+  // The least-privilege role's answer: no cluster `all`, and no restricted index read, for every name the open asked.
+  if (request.path === HAS_PRIVILEGES_PATH) {
+    const index = (request.body?.index as { names: string[] }[] | undefined)?.[0];
+    return ok(privilegeAnswer("libredb_seed", false, [], index?.names));
+  }
+  if (request.path === LIST_PRIVILEGES_PATH) return ok(NARROW_LISTING);
   if (request.path === `${SQL_PATH.split("?")[0]}/close`) return ok(CURSOR_CLOSED_BODY);
   if (cursorOf(request) !== null) return ok(AGGREGATION_PAGE_TWO);
 
@@ -3811,6 +4116,15 @@ interface WriteRefusalCapture {
 
 const WRITE_REFUSAL_DIR = join(import.meta.dir, "../../fixtures/elasticsearch/9.1.4/write-refusal");
 
+/**
+ * How the agent path answers each capture that is not refused as no SELECT: the second statement holds a `;`, outside
+ * the statement's character set, and the SELECT-shaped write reads one visible index, so it is sent.
+ */
+const AGENT_WRITE_REFUSALS: Readonly<Record<string, string>> = {
+  "write-refusal/second-statement": CHARACTER_REFUSAL,
+  "write-refusal/select-into": "sent",
+};
+
 const WRITE_REFUSALS: readonly WriteRefusalCapture[] = readdirSync(WRITE_REFUSAL_DIR)
   .filter((file) => file.endsWith(".json"))
   .sort()
@@ -3865,17 +4179,26 @@ describe("Elasticsearch 9.1.4's write refusals, replayed", () => {
       expect(request?.body).toEqual({ ...entry.request.body, ...SQL_QUERY_OPTIONS });
       await provider.disconnect();
 
-      // And an agent read the grammar answers this way is refused in the engine's own words, never as rows.
+      // And the agent path refuses each before it is sent, as no SELECT or as a character outside its set, but the one
+      // SELECT-shaped write, which reads one visible index: that one is sent, and refused in the engine's own words.
       const agent = new ElasticsearchProvider(makeConnection(), {}, AGENT_PROFILE);
       replyFor = defaultReply;
       await agent.connect();
       overrideSql(fail(entry.status, entry.body));
+      const before = sqlRequests().length;
       const refused = await agent
         .queryReadOnly(entry.request.body.query, AGENT_BUDGET)
         .catch((caught: unknown) => caught);
       expect(refused).toBeInstanceOf(QueryError);
-      expect((refused as Error).message).toContain(reason);
-      expect(sqlRequests().at(-1)?.body).toMatchObject(entry.request.body);
+      const unsent = AGENT_WRITE_REFUSALS[entry.name] ?? STATEMENT_REFUSAL;
+      if (unsent === "sent") {
+        expect((refused as Error).message).toContain(reason);
+        expect(sqlRequests().at(-1)?.body).toMatchObject(entry.request.body);
+      } else {
+        expect(refused).toBeInstanceOf(RefusedBeforeSendError);
+        expect((refused as Error).message).toBe(unsent);
+        expect(sqlRequests().length).toBe(before);
+      }
       await agent.disconnect();
     },
   );
@@ -3917,8 +4240,12 @@ describe("Elasticsearch 9.1.4's catalog-read answers, replayed through queryRead
     }
   });
 
-  test.each(CATALOG_READS.map((entry) => [entry.name, entry] as const))(
-    "%s: the provider sends the composed command unchanged and answers the engine's rows",
+  test.each(
+    CATALOG_READS.filter((entry) => entry.name !== "catalog-read/columns-missing").map(
+      (entry) => [entry.name, entry] as const,
+    ),
+  )(
+    "%s: the provider sends the composed command unchanged, once its table resolves, and answers the engine's rows",
     async (_name, entry) => {
       const agent = new ElasticsearchProvider(makeConnection(), {}, AGENT_PROFILE);
       await agent.connect();
@@ -3938,6 +4265,25 @@ describe("Elasticsearch 9.1.4's catalog-read answers, replayed through queryRead
       await agent.disconnect();
     },
   );
+
+  // The engine answered the composed read of a table no index holds with no rows; the server's resolution of that
+  // table answers 404, so the read is refused before it is sent.
+  test("catalog-read/columns-missing: a table the server does not resolve is refused before the command is sent", async () => {
+    const agent = new ElasticsearchProvider(makeConnection(), {}, AGENT_PROFILE);
+    await agent.connect();
+    const before = sqlRequests().length;
+
+    const refused = await agent
+      .queryReadOnly('SYS COLUMNS "zq_no_such_index"', AGENT_BUDGET)
+      .catch((caught: unknown) => caught);
+
+    expect(refused).toBeInstanceOf(RefusedBeforeSendError);
+    expect((refused as Error).message).toBe(
+      resolveFailedRefusal("zq_no_such_index", new Error("no such index [zq_no_such_index]")),
+    );
+    expect(sqlRequests().length).toBe(before);
+    expect(sent.at(-1)?.path).toBe(resolvePath("zq_no_such_index"));
+  });
 });
 
 // ============================================================================
@@ -3987,7 +4333,12 @@ describe("ElasticsearchProvider.queryReadOnly", () => {
 
     await provider.queryReadOnly("SELECT id, customer FROM probe_orders", AGENT_BUDGET);
 
-    expect(sent.slice(before).map((request) => request.path)).toEqual([SQL_PATH]);
+    // The statement check's two resolutions of its index, then the statement: no settings read between them.
+    expect(sent.slice(before).map((request) => request.path)).toEqual([
+      resolvePath("probe_orders"),
+      readPath("probe_orders"),
+      SQL_PATH,
+    ]);
   });
 
   test("refuses an answer past the row budget, after closing the cursor that answer left open", async () => {
@@ -4023,12 +4374,13 @@ describe("ElasticsearchProvider.queryReadOnly", () => {
 
   test("an engine refusal keeps the engine's words", async () => {
     const provider = await agentProvider();
-    overrideSql(fail(400, MISSING_INDEX));
+    overrideSql(fail(400, UNKNOWN_COLUMN));
 
-    const error = await refusal(provider.queryReadOnly("SELECT * FROM nope_missing", AGENT_BUDGET));
+    const error = await refusal(provider.queryReadOnly("SELECT nosuchfield FROM probe_orders", AGENT_BUDGET));
 
     expect(error).toBeInstanceOf(QueryError);
-    expect(error.message).toContain("Unknown index [nope_missing]");
+    expect(error).not.toBeInstanceOf(RefusedBeforeSendError);
+    expect(error.message).toContain("Unknown column [nosuchfield]");
   });
 
   test("a deadline that expires is the budget's, refused in the shared time-budget sentence", async () => {
@@ -4077,6 +4429,40 @@ describe("ElasticsearchProvider.queryReadOnly", () => {
     expect(sent.length).toBe(before);
   });
 
+  // The reader: a statement it cannot read with certainty, or whose reference it does not admit, is refused in the
+  // reader's sentence with no request at all.
+  test.each([
+    ["a block comment", "SELECT customer FROM probe_orders /* x */", COMMENT_REFUSAL],
+    ["a comment opened inside another", "SELECT customer AS c /* /* */ */ FROM probe_orders", COMMENT_REFUSAL],
+    ["a line comment", "SELECT customer FROM probe_orders -- x", COMMENT_REFUSAL],
+    ["a line comment a carriage return ends", "SELECT customer -- x\rFROM probe_orders", COMMENT_REFUSAL],
+    ["a semicolon", "SELECT customer FROM probe_orders;", CHARACTER_REFUSAL],
+    ["a letter outside ASCII", "\u017fELECT 1", CHARACTER_REFUSAL],
+    ["a number run into a word", "SELECT 1.5AS n FROM probe_orders", NUMBER_REFUSAL],
+    ["a quote that never closes", 'SELECT customer FROM "probe_orders', UNREADABLE_REFUSAL],
+    ["a catalog command", "SHOW TABLES", STATEMENT_REFUSAL],
+    ["an EXPLAIN of a catalog command", "EXPLAIN DESC LIKE '%'", STATEMENT_REFUSAL],
+    ["a WITH", "WITH x AS (SELECT 1) SELECT * FROM x", STATEMENT_REFUSAL],
+    ["a subquery", "SELECT * FROM (SELECT customer FROM probe_orders) s", SUBQUERY_REFUSAL],
+    ["a JOIN", "SELECT * FROM probe_orders JOIN probe_buckets", FROM_REFUSAL],
+    ["a selector", "SELECT * FROM probe_orders::data", FROM_REFUSAL],
+    ["a dot-led name", 'SELECT COUNT(*) AS n FROM ".security"', DOT_INDEX_REFUSAL],
+    ["a dot-led name in a list", 'SELECT COUNT(*) AS n FROM "probe_orders,.security-7"', DOT_INDEX_REFUSAL],
+    ["a dot-led table of the catalog read", 'SYS COLUMNS ".security"', DOT_INDEX_REFUSAL],
+    ["date math", 'SELECT COUNT(*) AS n FROM "<logs-{now/d}>"', expressionRefusal("<logs-{now/d}>")],
+    ["an exclusion", 'SELECT COUNT(*) AS n FROM "probe_orders,probe_*,-probe_orders_alias"', EXCLUSION_REFUSAL],
+    ["an exclusion of the catalog read", 'SYS COLUMNS "probe_*,-probe_shapes"', EXCLUSION_REFUSAL],
+  ])("refuses %s before anything is sent: %p", async (_name, sql, sentence) => {
+    const provider = await agentProvider();
+    const before = sent.length;
+
+    const error = await refusal(provider.queryReadOnly(sql, AGENT_BUDGET));
+
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect(error.message).toBe(sentence);
+    expect(sent.length).toBe(before);
+  });
+
   test("refuses the estimate-plan mode, with nothing sent: no plan is composed here", async () => {
     const provider = await agentProvider();
     const before = sent.length;
@@ -4095,6 +4481,342 @@ describe("ElasticsearchProvider.queryReadOnly", () => {
 
     expect(error.message).toContain("not connected");
     expect(sent).toHaveLength(0);
+  });
+});
+
+// ============================================================================
+// queryReadOnly: the server's answer about the statement's index expression
+// ============================================================================
+
+/** A resolution answer in 9.1.4's shape: indices with their attributes, aliases with the indices behind them, streams. */
+function resolution(
+  indices: readonly { name: string; attributes: string[] }[],
+  aliases: readonly { name: string; indices: string[] }[] = [],
+  dataStreams: readonly string[] = [],
+): Reply {
+  return ok(
+    JSON.stringify({
+      indices,
+      aliases,
+      data_streams: dataStreams.map((name) => ({
+        name,
+        backing_indices: [`.ds-${name}-1`],
+        timestamp_field: "@timestamp",
+      })),
+    }),
+  );
+}
+
+/** A data stream listing in 9.1.4's shape, with each stream's marks. */
+const streamMarks = (name: string, hidden: boolean, system: boolean): Reply =>
+  ok(JSON.stringify({ data_streams: [{ name, hidden, system, generation: 1 }] }));
+
+/** An alias listing in 9.1.4's shape: the index the alias points at, the alias, and its mark when it has one. */
+const aliasMarks = (index: string, alias: string, hidden?: boolean): Reply =>
+  ok(JSON.stringify({ [index]: { aliases: { [alias]: hidden === undefined ? {} : { is_hidden: hidden } } } }));
+
+/** Answer these paths as given, and every other request as the canned cluster does. */
+function serve(replies: Readonly<Record<string, Reply>>): void {
+  replyFor = (request) => replies[request.path] ?? defaultReply(request);
+}
+
+/**
+ * The index expression a statement reads is resolved by the server for the login before the statement is sent, with
+ * the SQL endpoint's wildcard expansion; the statement is refused when the answer names an index, alias or data stream
+ * the server marks hidden or system, an alias over such an index, nothing at all, or cannot be read. Each answer below
+ * is in the shape 9.1.4 gives it (measured 2026-11-01).
+ */
+describe("ElasticsearchProvider.queryReadOnly: the server's answer about the index", () => {
+  async function agentProvider(connection: Partial<DatabaseConnection> = {}): Promise<ElasticsearchProvider> {
+    const provider = new ElasticsearchProvider(makeConnection(connection), {}, AGENT_PROFILE);
+    await provider.connect();
+    return provider;
+  }
+
+  /** Each path the statement sent after the open, and the outcome. */
+  async function run(sql: string): Promise<{ outcome: unknown; paths: string[] }> {
+    const provider = await agentProvider();
+    const before = sent.length;
+    const outcome = await provider.queryReadOnly(sql, AGENT_BUDGET).catch((error: unknown) => error);
+    return { outcome, paths: sent.slice(before).map((request) => request.path) };
+  }
+
+  function expectRefused(outcome: unknown, sentence: string): void {
+    expect(outcome).toBeInstanceOf(RefusedBeforeSendError);
+    expect((outcome as Error).message).toBe(sentence);
+  }
+
+  test.each([
+    ["an index", "SELECT customer FROM probe_orders", [resolvePath("probe_orders"), readPath("probe_orders")]],
+    [
+      "an alias, its own mark, and the index behind it the SQL endpoint reads",
+      "SELECT customer FROM probe_orders_alias",
+      [
+        resolvePath("probe_orders_alias"),
+        "/_alias/probe_orders_alias",
+        readPath("probe_orders_alias"),
+        resolvePath("probe_orders"),
+      ],
+    ],
+    [
+      "a data stream and its marks, and the backing index the SQL endpoint reads",
+      "SELECT * FROM probe_stream",
+      [resolvePath("probe_stream"), "/_data_stream/probe_stream", readPath("probe_stream")],
+    ],
+    [
+      "every table, for the agent's catalog read",
+      "SYS COLUMNS",
+      [resolvePath("*"), "/_alias/probe_orders_alias", "/_data_stream/probe_stream", readPath("*")],
+    ],
+    [
+      "one quoted table, for the agent's catalog read",
+      'SYS COLUMNS "probe_shapes"',
+      [resolvePath("probe_shapes"), readPath("probe_shapes")],
+    ],
+    [
+      "the index an EXPLAIN reads",
+      "EXPLAIN SELECT customer FROM probe_orders",
+      [resolvePath("probe_orders"), readPath("probe_orders")],
+    ],
+  ])("asks about %s, then sends the statement", async (_name, sql, questions) => {
+    const { outcome, paths } = await run(sql);
+
+    expect(outcome).not.toBeInstanceOf(Error);
+    expect(paths).toEqual([...questions, SQL_PATH]);
+    expect(statementsSent().at(-1)).toBe(sql);
+  });
+
+  test("asks nothing about a statement that reads no index", async () => {
+    const { paths } = await run("SELECT 1 AS n");
+
+    expect(paths).toEqual([SQL_PATH]);
+  });
+
+  test("asks as the login, with the provider's own deadline", async () => {
+    const provider = await agentProvider({ user: "libredb_agent", password: "not-a-real-password" });
+    const before = sent.length;
+    armedDeadlines = [];
+
+    await provider.queryReadOnly("SELECT customer FROM probe_orders", AGENT_BUDGET);
+
+    const [resolve, read, statement] = sent.slice(before);
+    expect([resolve?.method, read?.method]).toEqual(["GET", "GET"]);
+    expect(resolve?.auth).toStartWith("Basic ");
+    expect(resolve?.auth).toBe(statement?.auth ?? null);
+    expect(read?.auth).toBe(statement?.auth ?? null);
+    // The provider's query timeout (60 s by default), one deadline for the questions together, then the budget's for
+    // the statement.
+    expect(armedDeadlines).toEqual([60_000, AGENT_BUDGET.statementTimeoutMs]);
+  });
+
+  test.each([
+    [
+      "a hidden index without a dot",
+      "hidden_logs",
+      { [resolvePath("hidden_logs")]: resolution([resolvedIndex("hidden_logs", "hidden")]) },
+      1,
+    ],
+    [
+      "a system index",
+      "system_logs",
+      { [resolvePath("system_logs")]: resolution([resolvedIndex("system_logs", "system")]) },
+      1,
+    ],
+    [
+      "a hidden data stream",
+      "hidden_stream",
+      {
+        [resolvePath("hidden_stream")]: resolution([], [], ["hidden_stream"]),
+        "/_data_stream/hidden_stream": streamMarks("hidden_stream", true, false),
+      },
+      2,
+    ],
+    [
+      "a system data stream",
+      "system_stream",
+      {
+        [resolvePath("system_stream")]: resolution([], [], ["system_stream"]),
+        "/_data_stream/system_stream": streamMarks("system_stream", false, true),
+      },
+      2,
+    ],
+    [
+      "an alias over a hidden index",
+      "logs_view",
+      {
+        [resolvePath("logs_view")]: resolution([], [{ name: "logs_view", indices: ["hidden_logs"] }]),
+        "/_alias/logs_view": aliasMarks("hidden_logs", "logs_view"),
+        [readPath("logs_view")]: fieldCaps(["hidden_logs"]),
+        [resolvePath("hidden_logs")]: resolution([resolvedIndex("hidden_logs", "hidden")]),
+      },
+      4,
+    ],
+    [
+      "an alias the server marks hidden, over an index it does not",
+      "hidden_view",
+      {
+        [resolvePath("hidden_view")]: resolution([], [{ name: "hidden_view", indices: ["probe_orders"] }]),
+        "/_alias/hidden_view": aliasMarks("probe_orders", "hidden_view", true),
+      },
+      2,
+    ],
+    [
+      "an alias over a data stream, whose backing index the server marks hidden",
+      "stream_view",
+      {
+        [resolvePath("stream_view")]: resolution([], [{ name: "stream_view", indices: [".ds-probe_stream-1"] }]),
+        "/_alias/stream_view": aliasMarks(".ds-probe_stream-1", "stream_view"),
+        [readPath("stream_view")]: fieldCaps([".ds-probe_stream-1"]),
+        [resolvePath(".ds-probe_stream-1")]: resolution([resolvedIndex(".ds-probe_stream-1", "hidden")]),
+      },
+      4,
+    ],
+    [
+      "a wildcard that reaches an alias over a hidden index",
+      "*",
+      {
+        [resolvePath("*")]: resolution(
+          [resolvedIndex("probe_orders")],
+          [{ name: "logs_view", indices: ["hidden_logs"] }],
+          ["probe_stream"],
+        ),
+        "/_alias/logs_view": aliasMarks("hidden_logs", "logs_view"),
+        [readPath("*")]: fieldCaps([".ds-probe_stream-1", "hidden_logs", "probe_orders"]),
+        [resolvePath("hidden_logs")]: resolution([resolvedIndex("hidden_logs", "hidden")]),
+      },
+      5,
+    ],
+  ])(
+    "refuses a reference the server resolves to %s, after %#: its questions",
+    async (_name, reference, replies, asked) => {
+      serve(replies);
+
+      const { outcome, paths } = await run(`SELECT COUNT(*) AS n FROM "${reference}"`);
+
+      expectRefused(outcome, hiddenTargetRefusal(reference));
+      expect(paths).toHaveLength(asked);
+      expect(paths).not.toContain(SQL_PATH);
+    },
+  );
+
+  test("refuses a reference the server resolves to nothing", async () => {
+    serve({ [resolvePath("nomatch*")]: resolution([]) });
+
+    const { outcome, paths } = await run('SELECT COUNT(*) AS n FROM "nomatch*"');
+
+    expectRefused(outcome, unresolvedRefusal("nomatch*"));
+    expect(paths).toEqual([resolvePath("nomatch*")]);
+  });
+
+  // 9.1.4 answers 403 (index closed) to a statement on a closed index, and the SQL endpoint's resolution reads none.
+  test("refuses a reference the SQL endpoint reads no index for, a closed one", async () => {
+    serve({
+      [resolvePath("closed_logs")]: resolution([{ name: "closed_logs", attributes: ["closed"] }]),
+      [readPath("closed_logs")]: fieldCaps([]),
+    });
+
+    const { outcome, paths } = await run("SELECT COUNT(*) AS n FROM closed_logs");
+
+    expectRefused(outcome, unresolvedRefusal("closed_logs"));
+    expect(paths).toEqual([resolvePath("closed_logs"), readPath("closed_logs")]);
+  });
+
+  test.each([
+    ["a hidden index", ["probe_orders", "hidden_logs"]],
+    ["an index the server marks neither hidden nor system", ["probe_orders", "probe_buckets"]],
+  ])(
+    "refuses a reference the SQL endpoint reads %s for that the server's resolution does not name",
+    async (_name, indices) => {
+      serve({ [readPath("probe_orders")]: fieldCaps(indices) });
+
+      const { outcome, paths } = await run("SELECT COUNT(*) AS n FROM probe_orders");
+
+      expectRefused(outcome, disagreementRefusal("probe_orders"));
+      expect(paths).toEqual([resolvePath("probe_orders"), readPath("probe_orders")]);
+    },
+  );
+
+  test.each([
+    ["a name the server does not hold", "nope_missing", {}, "no such index [nope_missing]"],
+    [
+      "a name the login may not see",
+      "hidden_logs",
+      {
+        [resolvePath("hidden_logs")]: fail(
+          403,
+          engineFault(403, "security_exception", "action [indices:admin/resolve/index] is unauthorized"),
+        ),
+      },
+      "Elasticsearch refused the credentials (HTTP 403)",
+    ],
+    [
+      "an answer that is not JSON",
+      "probe_orders",
+      { [resolvePath("probe_orders")]: ok("not json") },
+      "Elasticsearch answered an index resolution the client could not read",
+    ],
+    [
+      "an answer with no data stream list",
+      "probe_orders",
+      { [resolvePath("probe_orders")]: ok(JSON.stringify({ indices: [], aliases: [] })) },
+      "Elasticsearch answered an index resolution the client could not read",
+    ],
+    [
+      "an alias listing that is not the measured shape",
+      "probe_orders_alias",
+      { "/_alias/probe_orders_alias": ok("[]") },
+      "Elasticsearch answered an alias listing the client could not read",
+    ],
+    [
+      "a data stream listing that leaves the stream out",
+      "probe_stream",
+      { "/_data_stream/probe_stream": ok(JSON.stringify({ data_streams: [] })) },
+      "Elasticsearch answered a data stream listing the client could not read",
+    ],
+    [
+      "an alias whose index the server will not resolve",
+      "probe_orders_alias",
+      {
+        [resolvePath("probe_orders")]: fail(
+          404,
+          engineFault(404, "index_not_found_exception", "no such index [probe_orders]"),
+        ),
+      },
+      "no such index [probe_orders]",
+    ],
+    [
+      "the indices the SQL endpoint reads, one of them red",
+      "probe_orders",
+      {
+        [readPath("probe_orders")]: ok(
+          JSON.stringify({
+            indices: ["probe_orders"],
+            fields: {},
+            failed_indices: 1,
+            failures: [{ indices: ["red_logs"], failure: { error: { type: "no_shard_available_action_exception" } } }],
+          }),
+        ),
+      },
+      "Elasticsearch could not answer the field capabilities of every index the expression resolves to, so the indices its SQL endpoint reads are not all known",
+    ],
+    [
+      "the indices the SQL endpoint reads, refused",
+      "probe_orders",
+      {
+        [readPath("probe_orders")]: fail(
+          403,
+          engineFault(403, "security_exception", "action [indices:data/read/field_caps] is unauthorized"),
+        ),
+      },
+      "Elasticsearch refused the credentials (HTTP 403)",
+    ],
+  ])("refuses when the answer about %s cannot be read", async (_name, reference, replies, reason) => {
+    serve(replies);
+
+    const { outcome, paths } = await run(`SELECT COUNT(*) AS n FROM "${reference}"`);
+
+    expectRefused(outcome, resolveFailedRefusal(reference, new Error(reason)));
+    expect(paths).not.toContain(SQL_PATH);
   });
 });
 
@@ -4121,17 +4843,23 @@ describe("ElasticsearchProvider agent profile open", () => {
     );
   }
 
-  test("reads the version after the probe and admits the measured release line", async () => {
+  test("reads the version after the probe, then what the login may do, and admits the measured release line", async () => {
     const opened = await openFailure();
 
     expect(opened).toBeInstanceOf(ElasticsearchProvider);
-    expect(sent.map((request) => request.path)).toEqual([SQL_PATH, "/"]);
+    expect(sent.map((request) => request.path)).toEqual([SQL_PATH, "/", HAS_PRIVILEGES_PATH, LIST_PRIVILEGES_PATH]);
+    expect(sent[2]?.method).toBe("POST");
+    expect(sent[3]?.method).toBe("GET");
+    expect(sent[2]?.body).toEqual(HAS_PRIVILEGES_REQUEST);
   });
 
-  test("a patch release of the measured line is admitted", async () => {
+  test("a patch release of the measured line is admitted, its login asked about that release's own names", async () => {
     overridePath("/", rootWith({ number: "9.1.10", build_flavor: "default" }));
 
     expect(await openFailure()).toBeInstanceOf(ElasticsearchProvider);
+    const asked = (sent[2]?.body?.index as { names: string[] }[] | undefined)?.[0]?.names;
+    expect(asked).toEqual(["*", ...RESTRICTED_PATTERNS, ...RESTRICTED_NAMES, ...releaseNames("9.1.10")]);
+    expect(asked).not.toContain(".kibana_9.1.4_001");
   });
 
   test.each(["9.2.0", "8.19.4", "10.0.0", "9.10.1", ""])(
@@ -4180,5 +4908,701 @@ describe("ElasticsearchProvider agent profile open", () => {
 
     expect(await openFailure(execution)).toBeInstanceOf(ElasticsearchProvider);
     expect(sent.map((request) => request.path)).toEqual([SQL_PATH]);
+  });
+});
+
+/**
+ * The open of a handle that sends agent statements asks the server what its login may do, after the version read, and
+ * refuses a login that holds the cluster privilege `all` or reads a restricted system index, before any statement.
+ * With security off the server has no login to check, and the open admits it with the statement check alone.
+ */
+describe("ElasticsearchProvider agent profile login check", () => {
+  async function opened(): Promise<unknown> {
+    const provider = new ElasticsearchProvider(makeConnection(), {}, AGENT_PROFILE);
+    return provider.connect().then(
+      () => provider,
+      (error: unknown) => error,
+    );
+  }
+
+  const TOO_BROAD_TAIL =
+    ", so the connection is refused. Give the agent a user whose role holds the cluster action cluster:monitor/main and read and view_index_metadata on the indices it reads, without allow_restricted_indices, such as the libredb_agent_read role";
+
+  test.each([
+    [
+      "the superuser",
+      privilegeAnswer("elastic", true, ["*", ...RESTRICTED_INDICES]),
+      `The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; the user elastic holds the cluster privilege all and read on every index, the restricted system indices included${TOO_BROAD_TAIL}`,
+    ],
+    [
+      "a role reading .security* with allow_restricted_indices",
+      privilegeAnswer("reader", false, [".security*", ".security-7", ".security-tokens-7", ".security-profile-8"]),
+      `The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; the user reader holds read on the restricted system index names and patterns .security*, .security-7, .security-tokens-7, .security-profile-8${TOO_BROAD_TAIL}`,
+    ],
+    [
+      "a role reading one restricted index",
+      privilegeAnswer("reader", false, [".tasks"]),
+      `The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; the user reader holds read on the restricted system index name or pattern .tasks${TOO_BROAD_TAIL}`,
+    ],
+    [
+      "a role granting a restricted family by a pattern no name it is asked about matches",
+      privilegeAnswer("reader", false, [".ml-config*"]),
+      `The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; the user reader holds read on the restricted system index name or pattern .ml-config*${TOO_BROAD_TAIL}`,
+    ],
+    [
+      "a role reading the Kibana index of the release the server reported",
+      privilegeAnswer("reader", false, [".kibana_9.1.4_001"]),
+      `The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; the user reader holds read on the restricted system index name or pattern .kibana_9.1.4_001${TOO_BROAD_TAIL}`,
+    ],
+    [
+      "a role holding the cluster privilege all alone",
+      privilegeAnswer("operator", true, []),
+      `The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; the user operator holds the cluster privilege all${TOO_BROAD_TAIL}`,
+    ],
+  ])("refuses %s before any statement", async (_name, body, sentence) => {
+    overridePath(HAS_PRIVILEGES_PATH, ok(body));
+
+    const error = await opened();
+
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect((error as Error).message).toBe(sentence);
+    expect(sent.map((request) => request.path)).toEqual([SQL_PATH, "/", HAS_PRIVILEGES_PATH, LIST_PRIVILEGES_PATH]);
+  });
+
+  test.each([
+    [
+      "a role granting two Kibana indices of other releases by name with allow_restricted_indices",
+      restrictedListing([".kibana_8.18.0_001", ".kibana_9.1.0_001"]),
+      `${"The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; "}the user libredb_seed holds an index privilege granted with allow_restricted_indices on .kibana_8.18.0_001, .kibana_9.1.0_001${TOO_BROAD_TAIL}`,
+    ],
+    [
+      "a role granting one index with allow_restricted_indices",
+      restrictedListing(["probe_*"]),
+      `${"The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; "}the user libredb_seed holds an index privilege granted with allow_restricted_indices on probe_*${TOO_BROAD_TAIL}`,
+    ],
+    [
+      "a role granting the security indices of every remote cluster with allow_restricted_indices",
+      remoteListing([{ names: [".security*"], clusters: ["*"], restricted: true }]),
+      `${"The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; "}the user libredb_seed holds a remote index privilege granted with allow_restricted_indices on *:.security*${TOO_BROAD_TAIL}`,
+    ],
+    [
+      "a role granting a local and a remote index with allow_restricted_indices",
+      remoteListing(
+        [
+          { names: ["logs-*"], clusters: ["east", "west*"], restricted: false },
+          { names: [".kibana*", ".security-7"], clusters: ["east"], restricted: true },
+        ],
+        restrictedListing([".kibana_9.1.0_001"]),
+      ),
+      `${"The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; "}the user libredb_seed holds an index privilege granted with allow_restricted_indices on .kibana_9.1.0_001 and a remote index privilege granted with allow_restricted_indices on east:.kibana*, east:.security-7${TOO_BROAD_TAIL}`,
+    ],
+  ])("refuses %s, which the asks answer false, from the listing", async (_name, listing, sentence) => {
+    overridePath(LIST_PRIVILEGES_PATH, ok(listing));
+
+    const error = await opened();
+
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect((error as Error).message).toBe(sentence);
+    expect(sent.map((request) => request.path)).toEqual([SQL_PATH, "/", HAS_PRIVILEGES_PATH, LIST_PRIVILEGES_PATH]);
+  });
+
+  // The superuser is listed with allow_restricted_indices on every local and every remote index (measured on 9.1.4),
+  // and the asks already name its reach, so the listing adds nothing to its sentence.
+  test("names the listing's grants only where the asks name no restricted index, so the superuser's sentence is the asks' alone", async () => {
+    const asks = ok(privilegeAnswer("elastic", true, ["*", ...RESTRICTED_INDICES]));
+    const listing = ok(remoteListing([{ names: ["*"], clusters: ["*"], restricted: true }], restrictedListing(["*"])));
+    replyFor = (request) =>
+      request.path === HAS_PRIVILEGES_PATH
+        ? asks
+        : request.path === LIST_PRIVILEGES_PATH
+          ? listing
+          : defaultReply(request);
+
+    const error = await opened();
+
+    expect((error as Error).message).toBe(
+      `The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; the user elastic holds the cluster privilege all and read on every index, the restricted system indices included${TOO_BROAD_TAIL}`,
+    );
+  });
+
+  test("admits a role whose remote index privileges carry no allow_restricted_indices", async () => {
+    overridePath(
+      LIST_PRIVILEGES_PATH,
+      ok(remoteListing([{ names: ["logs-*", "probe_*"], clusters: ["east", "west*"], restricted: false }])),
+    );
+
+    expect(await opened()).toBeInstanceOf(ElasticsearchProvider);
+  });
+
+  // Measured on 9.1.4: an API key with role descriptors of its own is not listed, so the asks alone decide for it.
+  test("admits an API key whose role descriptors the server does not list, on the asks alone", async () => {
+    const reason =
+      "Cannot retrieve privileges for API keys with assigned role descriptors. Please use the Get API key information API https://ela.st/es-api-get-api-key";
+    overridePath(
+      LIST_PRIVILEGES_PATH,
+      fail(400, JSON.stringify({ error: { type: "illegal_argument_exception", reason }, status: 400 })),
+    );
+
+    expect(await opened()).toBeInstanceOf(ElasticsearchProvider);
+  });
+
+  test.each([
+    ["libredb_agent_read", privilegeAnswer("libredb_agent", false, [])],
+    ["libredb_seed_read", privilegeAnswer("libredb_seed", false, [])],
+    // `read` on `*` without allow_restricted_indices reaches no restricted index, and the server says so.
+    ["a role reading * without allow_restricted_indices", privilegeAnswer("wide", false, [])],
+  ])("admits %s", async (_name, body) => {
+    overridePath(HAS_PRIVILEGES_PATH, ok(body));
+
+    expect(await opened()).toBeInstanceOf(ElasticsearchProvider);
+  });
+
+  test("admits a server with security off, which has no login to check, with the statement check alone", async () => {
+    overridePath(HAS_PRIVILEGES_PATH, fail(400, NO_SECURITY_BODY));
+
+    const provider = await opened();
+
+    expect(provider).toBeInstanceOf(ElasticsearchProvider);
+    const error = await (provider as ElasticsearchProvider)
+      .queryReadOnly('SELECT * FROM ".security"', AGENT_BUDGET)
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect(statementsSent()).toEqual([CONNECT_PROBE]);
+  });
+
+  test.each([
+    ["another handler missing", fail(400, '{"error":"no handler found for uri [/_security/user] and method [POST]"}')],
+    ["a refused credential", fail(401, NO_BODY)],
+    ["an engine fault", fail(500, engineFault(500, "exception", "boom"))],
+    ["a body that is not JSON", ok("not json")],
+    ["a body that is not an object", ok("[]")],
+    ["no username", ok(JSON.stringify({ ...JSON.parse(privilegeAnswer("x", false, [])), username: 1 }))],
+    ["no cluster answer", ok(JSON.stringify({ ...JSON.parse(privilegeAnswer("x", false, [])), cluster: {} }))],
+    [
+      "a name left unanswered",
+      ok(
+        JSON.stringify({
+          ...JSON.parse(privilegeAnswer("x", false, [])),
+          index: { "*": { read: false } },
+        }),
+      ),
+    ],
+    [
+      "a read that is not a boolean",
+      ok(
+        JSON.stringify({
+          ...JSON.parse(privilegeAnswer("x", false, [])),
+          index: Object.fromEntries(["*", ...RESTRICTED_INDICES].map((name) => [name, { read: "no" }])),
+        }),
+      ),
+    ],
+  ])("refuses when the check cannot be read: %s", async (_name, reply) => {
+    overridePath(HAS_PRIVILEGES_PATH, reply);
+
+    const error = await opened();
+
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect((error as Error).message).toStartWith(
+      "The agent read-only profile needs Elasticsearch's own answer to what this login may do, and the check failed, so the connection is refused: ",
+    );
+    expect(statementsSent()).toEqual([CONNECT_PROBE]);
+  });
+
+  test.each([
+    ["a refused credential", fail(403, engineFault(403, "security_exception", "action is unauthorized"))],
+    ["a listing that is not the measured shape", ok(JSON.stringify({ indices: {} }))],
+    [
+      "a remote entry that names no clusters",
+      ok(
+        JSON.stringify({
+          ...JSON.parse(NARROW_LISTING),
+          remote_indices: [{ names: [".security*"], privileges: ["read"], allow_restricted_indices: true }],
+        }),
+      ),
+    ],
+    ["a body that is not JSON", ok("not json")],
+  ])("refuses when the listing cannot be read: %s", async (_name, reply) => {
+    overridePath(LIST_PRIVILEGES_PATH, reply);
+
+    const error = await opened();
+
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect((error as Error).message).toStartWith(
+      "The agent read-only profile needs Elasticsearch's own answer to what this login may do, and the check failed, so the connection is refused: ",
+    );
+    expect(statementsSent()).toEqual([CONNECT_PROBE]);
+  });
+});
+
+// ============================================================================
+// MCP's run_read_query, through the agent's own path
+// ============================================================================
+
+/**
+ * MCP's `run_read_query` serves Elasticsearch under the boundary agent mode uses: the connection is acquired under the
+ * agent read-only profile, whose open admits only the measured release line, and every statement goes through
+ * `queryReadOnly` on the SQL endpoint, whose grammar refuses every write. The engine's SQL has no OFFSET, so the tool
+ * names no next offset, refuses one before anything is sent, and says how to page by key instead.
+ */
+describe("MCP run_read_query on an Elasticsearch connection", () => {
+  const SEED = {
+    id: "seed:search",
+    name: "search",
+    type: "elasticsearch",
+    seedId: "search",
+    managed: true,
+    mcp: true,
+    roles: ["*"],
+    host: "127.0.0.1",
+    port: 9200,
+    user: "libredb_seed",
+    password: "not-a-real-password",
+    createdAt: new Date(0),
+  } as ManagedConnection;
+
+  let acquired: ExecutionProfile[] = [];
+
+  /** A context over the one seed, opening each acquisition by its profile, as the factory does. */
+  const context = {
+    caller: { username: "alice", role: "admin" },
+    visibleConnections: async () => [SEED],
+    resolve: async () => SEED,
+    acquire: async (_connection: ManagedConnection, profile: ExecutionProfile) => {
+      acquired.push(profile);
+      const provider = new ElasticsearchProvider(makeConnection(), {}, executionContextFor(profile));
+      await provider.connect();
+      return provider;
+    },
+  } as unknown as McpConnectionContext;
+
+  function call(args: Record<string, unknown>, signal = new AbortController().signal) {
+    const parsed = RunReadQueryInputSchema.parse({ connection_id: SEED.id, ...args }) as McpStatementInput;
+    return runReadQuery(parsed, { context, signal });
+  }
+
+  /** The same tool with its statement fence removed, so a statement reaches the boundary under test. */
+  const UNFENCED: McpStatementArm = { ...mcpStatementArm("run_read_query"), fence: () => null };
+
+  function unfenced(args: Record<string, unknown>) {
+    const parsed = UNFENCED.inputSchema.parse({ connection_id: SEED.id, ...args }) as McpStatementInput;
+    return runStatement(UNFENCED, parsed, { context, signal: new AbortController().signal });
+  }
+
+  /** The statements sent to the SQL endpoint, the open's probe left out. */
+  const statementsAfterOpen = (): string[] => statementsSent().filter((sql) => sql !== CONNECT_PROBE);
+
+  /** Answer `statement` with `reply`, and every other request as the canned cluster does. */
+  function answer(statement: string, reply: Reply): void {
+    replyFor = (request) => (statementOf(request) === statement ? reply : defaultReply(request));
+  }
+
+  const keys = (count: number) =>
+    ok(
+      `{"columns":[{"name":"k","type":"text"}],"rows":[${Array.from({ length: count }, (_, i) => `["k${i + 1}"]`).join(",")}]}`,
+    );
+
+  const KEYSET =
+    "Page it in SQL: ORDER BY a unique field, and for the next page add WHERE that field > the last value read.";
+
+  beforeEach(() => {
+    acquired = [];
+  });
+
+  test("the provider doc says MCP read is open here and names the statements it runs, from their records", () => {
+    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/elasticsearch.md"), "utf8");
+
+    expect(MCP_STATEMENT_READ.elasticsearch).toBe(true);
+    expect(MCP_STATEMENT_READ.opensearch).toBe(false);
+    expect(doc).toContain("`MCP_STATEMENT_READ.elasticsearch` is true");
+    expect(doc).not.toContain("MCP's statement read stays closed");
+    expect(doc.replaceAll("`", "")).toContain(`It runs ${readQueryFormsOf("elasticsearch").statements}:`);
+    expect(doc).toContain(KEYSET.replace("Page it in SQL: ", ""));
+  });
+
+  test("reads rows under the agent profile after the open's version read, and names no next offset", async () => {
+    answer("SELECT k FROM probe_buckets ORDER BY k LIMIT 3", keys(3));
+
+    const result = await call({ sql: "SELECT k FROM probe_buckets ORDER BY k", max_rows: 2 });
+
+    expect(result.isError).toBeUndefined();
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(pathsSent()).toContain("/");
+    expect(sqlRequests().at(-1)?.body).toEqual({
+      query: "SELECT k FROM probe_buckets ORDER BY k LIMIT 3",
+      fetch_size: 1001,
+      ...SQL_QUERY_OPTIONS,
+    });
+    expect(result.structuredContent).toMatchObject({
+      connection_id: SEED.id,
+      columns: [{ name: "k", type: "text" }],
+      rows: [{ k: "k1" }, { k: "k2" }],
+      row_count: 2,
+      truncated: true,
+      truncated_by: "max_rows",
+      pagination: { offset: 0, limit: 2, hasMore: true, nextOffset: null, wasLimited: true },
+      hint: `More rows exist than this result holds, and this query cannot be paged with offset. ${KEYSET}`,
+    });
+    expect((result.content as { text: string }[])[0]?.text).toBe(MCP_UNTRUSTED_NOTICE);
+  });
+
+  test("a whole answer names no hint", async () => {
+    answer("SELECT k FROM probe_buckets ORDER BY k LIMIT 101", keys(2));
+
+    const result = await call({ sql: "SELECT k FROM probe_buckets ORDER BY k" });
+
+    expect(result.structuredContent).toMatchObject({
+      row_count: 2,
+      truncated: false,
+      pagination: { offset: 0, limit: 100, hasMore: false, nextOffset: null, wasLimited: true },
+      hint: null,
+    });
+  });
+
+  const NO_OFFSET = `This engine's SQL has no OFFSET, so this query cannot be paged with offset. ${KEYSET}`;
+
+  test.each([
+    ["SELECT k FROM probe_buckets ORDER BY k", NO_OFFSET],
+    ["SELECT k FROM probe_buckets ORDER BY k LIMIT 5", NO_OFFSET],
+    ["EXPLAIN SELECT k FROM probe_buckets", "This statement's result cannot be paged. Call again without offset."],
+  ])("an offset on %p is refused before the statement is sent", async (sql, text) => {
+    const result = await call({ sql, offset: 2 });
+
+    expect(result).toEqual({ content: [{ type: "text", text }], isError: true });
+    expect(statementsAfterOpen()).toEqual([]);
+  });
+
+  const fenced = (code: string) =>
+    `The statement was refused before it reached the database (${code}). On this engine run_read_query runs one read-only statement: a SELECT that reads at most one index expression, with no comment, subquery, WITH or JOIN, or an EXPLAIN of such a SELECT.`;
+
+  /** The tool's answer when the provider refused the statement before it was sent. */
+  const refusedUnsent = (sentence: string) => ({
+    content: [
+      { type: "text" as const, text: `The statement was refused before it reached the database: ${sentence}.` },
+    ],
+    isError: true as const,
+  });
+
+  test.each([
+    ["INSERT INTO probe_orders (id, customer) VALUES (2, 'probe')", "NON_READ_STATEMENT"],
+    ["UPDATE probe_orders SET customer = 'x' WHERE id = 1", "NON_READ_STATEMENT"],
+    ["DELETE FROM probe_orders", "NON_READ_STATEMENT"],
+    ["CREATE TABLE libredb_t (id BIGINT)", "NON_READ_STATEMENT"],
+    ["DROP TABLE probe_orders", "NON_READ_STATEMENT"],
+    ["ALTER TABLE probe_orders ADD COLUMN libredb INT", "NON_READ_STATEMENT"],
+    ["TRUNCATE TABLE probe_orders", "NON_READ_STATEMENT"],
+    ["MERGE INTO probe_orders USING probe_orders AS s ON true WHEN MATCHED THEN DELETE", "NON_READ_STATEMENT"],
+    ["SELECT * INTO libredb_into FROM probe_orders", "SIDE_EFFECT_KEYWORD"],
+    ["EXPLAIN INSERT INTO probe_orders (id) VALUES (2)", "SIDE_EFFECT_KEYWORD"],
+    ["EXPLAIN ANALYZE SELECT k FROM probe_buckets", "SIDE_EFFECT_KEYWORD"],
+    ["DEBUG DELETE FROM probe_orders", "NON_READ_STATEMENT"],
+    ["WITH x AS (SELECT 1) INSERT INTO probe_orders SELECT * FROM probe_orders", "NON_READ_STATEMENT"],
+    ["SELECT 1; DELETE FROM probe_orders", "MULTIPLE_STATEMENTS"],
+    ["SHOW TABLES", "NON_READ_STATEMENT"],
+    ["DESCRIBE probe_orders", "NON_READ_STATEMENT"],
+    ["SYS COLUMNS", "NON_READ_STATEMENT"],
+  ])("%p is refused at admission, before anything is acquired or sent", async (sql, code) => {
+    const result = await call({ sql });
+
+    expect(result).toEqual({ content: [{ type: "text", text: fenced(code) }], isError: true });
+    expect(acquired).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
+  // The fence removed, each captured write goes through queryReadOnly: the agent path's statement check refuses each
+  // before it is sent, as no SELECT or as a character outside its set, but the SELECT-shaped one, which reads one
+  // visible index; that one is sent with the page's LIMIT the tool adds, and its refusal reaches the client as the
+  // database's own, in its words, never as rows.
+  test.each(WRITE_REFUSALS.map((entry) => [entry.name, entry] as const))(
+    "%s: with the fence removed, the statement check or the grammar refuses it",
+    async (_name, entry) => {
+      const sql = entry.request.body.query;
+      const paged = `${sql} LIMIT 101`;
+      answer(paged, fail(entry.status, entry.body));
+
+      const result = await unfenced({ sql });
+
+      expect(acquired).toEqual(["agent-read-only"]);
+      const unsent = AGENT_WRITE_REFUSALS[entry.name] ?? STATEMENT_REFUSAL;
+      if (unsent !== "sent") {
+        expect(result).toEqual(refusedUnsent(unsent));
+        expect(statementsAfterOpen()).toEqual([]);
+        return;
+      }
+      expect(statementsAfterOpen()).toEqual([paged]);
+      const reason = (JSON.parse(entry.body) as { error: { reason: string } }).error.reason;
+      const text = (result.content as { text: string }[]).map((part) => part.text);
+      expect(result.isError).toBe(true);
+      expect(text[0]).toBe(MCP_UNTRUSTED_NOTICE);
+      expect(text[1]).toStartWith(MCP_ENGINE_ERROR_PREFIX);
+      expect(text[1]).toContain(reason);
+    },
+  );
+
+  // Each passes the MCP fence and is refused by the provider's statement check before it is sent.
+  test.each([
+    ['SELECT COUNT(*) AS n FROM ".security"', DOT_INDEX_REFUSAL],
+    ["SELECT COUNT(*) AS n FROM probe_orders /* x */", COMMENT_REFUSAL],
+    ["SELECT COUNT(*) AS n FROM (SELECT customer FROM probe_orders) s", SUBQUERY_REFUSAL],
+  ])("%p passes the MCP fence and is refused by the provider before it is sent", async (sql, sentence) => {
+    const result = await call({ sql });
+
+    expect(result).toEqual(refusedUnsent(sentence));
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(statementsAfterOpen()).toEqual([]);
+  });
+
+  // The MCP fence removed, each is refused by the provider's reader before anything is sent past the open.
+  test.each([
+    ["SELECT COUNT(*) AS n FROM probe_orders /* /* */ */", COMMENT_REFUSAL],
+    ["SELECT COUNT(*) AS n FROM probe_orders -- x", COMMENT_REFUSAL],
+    ["SELECT COUNT(*) AS n -- x\rFROM probe_orders", COMMENT_REFUSAL],
+    ["SELECT COUNT(*) AS n FROM probe_orders;", CHARACTER_REFUSAL],
+    ["SELECT 1.5AS n FROM probe_orders", NUMBER_REFUSAL],
+    ['SELECT COUNT(*) AS n FROM ".security', UNREADABLE_REFUSAL],
+    ["SHOW TABLES LIKE '%'", STATEMENT_REFUSAL],
+    ["EXPLAIN DESC LIKE '%'", STATEMENT_REFUSAL],
+    ["WITH x AS (SELECT 1) SELECT * FROM x", STATEMENT_REFUSAL],
+    ["SELECT COUNT(*) AS n FROM probe_orders JOIN probe_buckets", FROM_REFUSAL],
+    ['SELECT COUNT(*) AS n FROM "docker-cluster":".security"', CHARACTER_REFUSAL],
+    ['SELECT COUNT(*) AS n FROM "*,.security*"', DOT_INDEX_REFUSAL],
+    ['SELECT COUNT(*) AS n FROM ""', expressionRefusal("")],
+    ['SELECT COUNT(*) AS n FROM "<logs-{now/d}>"', expressionRefusal("<logs-{now/d}>")],
+    ['SELECT COUNT(*) AS n FROM "probe_orders,probe_*,-probe_orders_alias"', EXCLUSION_REFUSAL],
+  ])("%p is refused by the provider's reader before it is sent, through run_read_query", async (sql, sentence) => {
+    const before = sent.length;
+
+    const result = await unfenced({ sql });
+
+    expect(result).toEqual(refusedUnsent(sentence));
+    expect(statementsAfterOpen()).toEqual([]);
+    // Nothing past the open: no question to the server, no statement.
+    expect(sent.slice(before).map((request) => request.path)).toEqual([
+      SQL_PATH,
+      "/",
+      HAS_PRIVILEGES_PATH,
+      LIST_PRIVILEGES_PATH,
+    ]);
+  });
+
+  // The MCP fence removed, the server's answer about the index refuses each before the statement is sent.
+  test.each([
+    [
+      "a hidden index without a dot",
+      "SELECT COUNT(*) AS n FROM hidden_logs",
+      { [resolvePath("hidden_logs")]: resolution([resolvedIndex("hidden_logs", "hidden")]) },
+      hiddenTargetRefusal("hidden_logs"),
+    ],
+    [
+      "a hidden data stream",
+      "SELECT COUNT(*) AS n FROM hidden_stream",
+      {
+        [resolvePath("hidden_stream")]: resolution([], [], ["hidden_stream"]),
+        "/_data_stream/hidden_stream": streamMarks("hidden_stream", true, false),
+      },
+      hiddenTargetRefusal("hidden_stream"),
+    ],
+    [
+      "an alias over a hidden index",
+      "SELECT COUNT(*) AS n FROM logs_view",
+      {
+        [resolvePath("logs_view")]: resolution([], [{ name: "logs_view", indices: ["hidden_logs"] }]),
+        "/_alias/logs_view": aliasMarks("hidden_logs", "logs_view"),
+        [readPath("logs_view")]: fieldCaps(["hidden_logs"]),
+        [resolvePath("hidden_logs")]: resolution([resolvedIndex("hidden_logs", "hidden")]),
+      },
+      hiddenTargetRefusal("logs_view"),
+    ],
+    [
+      "a wildcard that reaches an alias over a hidden index",
+      'SELECT COUNT(*) AS n FROM "*"',
+      {
+        [resolvePath("*")]: resolution(
+          [resolvedIndex("probe_orders")],
+          [{ name: "logs_view", indices: ["hidden_logs"] }],
+        ),
+        "/_alias/logs_view": aliasMarks("hidden_logs", "logs_view"),
+        [readPath("*")]: fieldCaps(["hidden_logs", "probe_orders"]),
+        [resolvePath("hidden_logs")]: resolution([resolvedIndex("hidden_logs", "hidden")]),
+      },
+      hiddenTargetRefusal("*"),
+    ],
+    [
+      "an index the server's resolution does not name",
+      "SELECT COUNT(*) AS n FROM probe_orders",
+      { [readPath("probe_orders")]: fieldCaps(["probe_orders", "hidden_logs"]) },
+      disagreementRefusal("probe_orders"),
+    ],
+    [
+      "nothing",
+      'SELECT COUNT(*) AS n FROM "nomatch*"',
+      { [resolvePath("nomatch*")]: resolution([]) },
+      unresolvedRefusal("nomatch*"),
+    ],
+    [
+      "a name the server does not hold",
+      "SELECT COUNT(*) AS n FROM nope_missing",
+      {},
+      resolveFailedRefusal("nope_missing", new Error("no such index [nope_missing]")),
+    ],
+    [
+      "an answer that cannot be read",
+      "SELECT COUNT(*) AS n FROM probe_orders",
+      { [resolvePath("probe_orders")]: ok("not json") },
+      resolveFailedRefusal(
+        "probe_orders",
+        new Error("Elasticsearch answered an index resolution the client could not read"),
+      ),
+    ],
+  ])(
+    "a statement whose index resolves to %s is refused before it is sent, through run_read_query",
+    async (_name, sql, replies, sentence) => {
+      serve(replies);
+
+      const result = await unfenced({ sql });
+
+      expect(result).toEqual(refusedUnsent(sentence));
+      expect(statementsAfterOpen()).toEqual([]);
+    },
+  );
+
+  const refusedAtOpen = (sentence: string) => ({
+    content: [
+      {
+        type: "text" as const,
+        text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${RUN_READ_QUERY_ENGINES}.`,
+      },
+    ],
+    isError: true as const,
+  });
+
+  const rootWith = (version: Record<string, unknown>): Reply =>
+    ok(JSON.stringify({ name: "n", cluster_name: "c", version, tagline: "You Know, for Search" }));
+
+  test.each([
+    [
+      "a release outside the measured line",
+      { number: "9.2.0", build_flavor: "default" },
+      "The agent read-only profile is checked on Elasticsearch 9.1, and this server reports Elasticsearch 9.2.0: its write refusals have not been captured, so it is refused",
+    ],
+    [
+      "an OpenSearch server behind an Elasticsearch connection",
+      { number: "3.8.0", distribution: "opensearch" },
+      "The agent read-only profile is checked on Elasticsearch 9.1, and this server reports opensearch 3.8.0: its write refusals have not been captured, so it is refused",
+    ],
+  ])(
+    "%s is refused at open, in the tool's sentence, before the statement is sent",
+    async (_label, version, sentence) => {
+      overridePath("/", rootWith(version));
+
+      const result = await call({ sql: "SELECT k FROM probe_buckets" });
+
+      expect(acquired).toEqual(["agent-read-only"]);
+      expect(result).toEqual(refusedAtOpen(sentence));
+      expect(statementsAfterOpen()).toEqual([]);
+    },
+  );
+
+  test("a seed signed in as the superuser is refused at open, in the tool's sentence, with nothing sent past the probes", async () => {
+    overridePath(HAS_PRIVILEGES_PATH, ok(privilegeAnswer("elastic", true, ["*", ...RESTRICTED_INDICES])));
+
+    const result = await call({ sql: 'SELECT COUNT(*) AS n FROM "*"' });
+
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(result).toEqual(
+      refusedAtOpen(
+        "The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; the user elastic holds the cluster privilege all and read on every index, the restricted system indices included, so the connection is refused. Give the agent a user whose role holds the cluster action cluster:monitor/main and read and view_index_metadata on the indices it reads, without allow_restricted_indices, such as the libredb_agent_read role",
+      ),
+    );
+    expect(pathsSent()).toEqual([SQL_PATH, "/", HAS_PRIVILEGES_PATH, LIST_PRIVILEGES_PATH]);
+    expect(statementsAfterOpen()).toEqual([]);
+  });
+
+  test("a login that cannot read the version is refused at open, naming the cluster action it needs", async () => {
+    overridePath("/", fail(403, NO_BODY));
+
+    const result = await call({ sql: "SELECT k FROM probe_buckets" });
+
+    const text = (result.content as { text: string }[])[0]?.text ?? "";
+    expect(result.isError).toBe(true);
+    expect(text).toStartWith(
+      "run_read_query cannot run on this connection: The agent read-only profile is checked on Elasticsearch 9.1, and this server's version could not be read, so it is refused (a user needs the cluster privilege cluster:monitor/main to read it): ",
+    );
+    expect(text).toEndWith(`. It runs on ${RUN_READ_QUERY_ENGINES}.`);
+    expect(text).not.toContain(SEED.password as string);
+    expect(statementsAfterOpen()).toEqual([]);
+  });
+
+  test("a result past the 1000-row provider budget is refused, never cut, after its cursor is closed", async () => {
+    answer(
+      "SELECT k FROM probe_buckets LIMIT 2000",
+      ok(`{${AGGREGATION_COLUMNS},"rows":[${bucketRows(0, 1001)}],"cursor":"${AGGREGATION_CURSOR}"}`),
+    );
+
+    const result = await call({ sql: "SELECT k FROM probe_buckets LIMIT 2000" });
+
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: `The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, and page it in SQL: ORDER BY a unique field, and for the next page add WHERE that field > the last value read.`,
+        },
+      ],
+      isError: true,
+    });
+    expect(sent.at(-1)?.path).toBe("/_sql/close");
+    expect(sent.at(-1)?.body).toEqual({ cursor: AGGREGATION_CURSOR });
+  });
+
+  test("a result past the 1 MiB provider budget is refused, never cut", async () => {
+    answer(
+      "SELECT note FROM probe_orders LIMIT 101",
+      ok(`{"columns":[{"name":"note","type":"text"}],"rows":[["${"x".repeat(1_048_577)}"]]}`),
+    );
+
+    const result = await call({ sql: "SELECT note FROM probe_orders" });
+
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add a smaller LIMIT.",
+        },
+      ],
+      isError: true,
+    });
+  });
+
+  test("a statement past timeout_ms is answered as the timeout, and its request is closed at the deadline", async () => {
+    const held = "SELECT COUNT(*) AS n FROM probe_buckets LIMIT 101";
+    let closed = false;
+    const serve = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const body = init?.body === undefined ? null : (JSON.parse(String(init.body)) as Record<string, unknown>);
+      if (body?.query !== held) return serve(input, init);
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          closed = true;
+          reject(init.signal?.reason);
+        });
+      });
+    }) as typeof fetch;
+
+    const result = await call({ sql: "SELECT COUNT(*) AS n FROM probe_buckets", timeout_ms: 500 });
+
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: "The statement did not finish within timeout_ms (500 ms). Narrow it, or raise timeout_ms up to 30000.",
+        },
+      ],
+      isError: true,
+    });
+    await Bun.sleep(50);
+    expect(closed).toBe(true);
   });
 });

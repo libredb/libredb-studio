@@ -116,9 +116,10 @@ describe("the answer", () => {
   });
 
   test("names the tool that runs a statement on each connection, and null where inspect_schema is the read", async () => {
-    // From the one served-engine resolver: ClickHouse's, libSQL's and InfluxDB 3's SQL is read by run_read_query,
-    // MongoDB's command by run_mongo_command, a Kubernetes line by run_kubectl_read, and an engine no statement tool
-    // serves, such as Redis, or Snowflake and InfluxDB over InfluxQL, whose agent reads stay closed to MCP, has none.
+    // From the one served-engine resolver: ClickHouse's, libSQL's, InfluxDB 3's and Elasticsearch's SQL is read by
+    // run_read_query, MongoDB's command by run_mongo_command, a Kubernetes line by run_kubectl_read, and an engine no
+    // statement tool serves, such as Redis, or Snowflake, InfluxDB over InfluxQL and OpenSearch, whose agent reads stay
+    // closed to MCP, has none.
     const CLUSTER = {
       id: "cluster",
       type: "kubernetes",
@@ -142,6 +143,8 @@ describe("the answer", () => {
       { id: "edge", type: "libsql", host: "127.0.0.1", port: 8080 },
       { id: "metrics", type: "influxdb3", host: "127.0.0.1", port: 8181, database: "home" },
       { id: "legacy-metrics", type: "influxdb", host: "127.0.0.1", port: 8086, database: "home" },
+      { id: "search", type: "elasticsearch", host: "127.0.0.1", port: 9200 },
+      { id: "fork-search", type: "opensearch", host: "127.0.0.1", port: 9201 },
       { id: "mongo", type: "mongodb", host: "127.0.0.1", port: 27017, database: "app" },
       CLUSTER,
       { id: "cache", type: "redis", host: "127.0.0.1", port: 6379 },
@@ -156,6 +159,8 @@ describe("the answer", () => {
       ["seed:edge", "run_read_query"],
       ["seed:metrics", "run_read_query"],
       ["seed:legacy-metrics", null],
+      ["seed:search", "run_read_query"],
+      ["seed:fork-search", null],
       ["seed:mongo", "run_mongo_command"],
       ["seed:cluster", "run_kubectl_read"],
       ["seed:cache", null],

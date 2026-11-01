@@ -81,6 +81,10 @@ const WIRE_TOKENS = [
   "/_ingest/pipeline",
   "/_index_template",
   "/_data_stream",
+  // The agent statement check's questions about an index expression: what the server resolves it to, and which
+  // indices the SQL endpoint reads for it.
+  "/_resolve/index",
+  "/_field_caps",
   // The two query strings. Without `format=json` Elasticsearch answers its own
   // tabular text with no types in it, and without `bytes=b` the listing reports
   // "5.6kb" (both measured, `http-transport.ts:101-118`).
