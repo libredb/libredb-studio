@@ -68,7 +68,7 @@ export const AGENT_STATEMENT_LANGUAGE = Object.freeze({
   mssql: "sql",
   clickhouse: "sql",
   druid: "sql",
-  trino: null,
+  trino: "sql",
   cassandra: "sql",
   elasticsearch: "sql",
   opensearch: "sql",

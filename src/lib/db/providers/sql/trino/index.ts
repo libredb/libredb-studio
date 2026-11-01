@@ -43,16 +43,24 @@
  * - `CALL system.runtime.kill_query` REALLY KILLS, live-verified end to end: the
  *   target's exchange then fails with `ADMINISTRATIVELY_KILLED` and carries the
  *   message. That is the one maintenance operation this engine has.
+ *
+ * Agent statements (`queryReadOnly`) run only on a handle opened under the agent
+ * read-only profile, on a server whose access control refuses this user every
+ * catalog's table functions and catalog management, proven at the open and again
+ * before every statement, and each runs inside a read-only transaction Studio
+ * rolls back; only one SELECT is sent (`agent-boundary.ts`).
  */
 
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { SQLBaseProvider } from "../sql-base";
 import {
   AuthenticationError,
   ConnectionError,
   DatabaseConfigError,
+  ExecutionProfileError,
   QueryCancelledError,
   QueryError,
+  RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
 import {
@@ -90,15 +98,31 @@ import {
   type PerformanceMetrics,
   type PreparedQuery,
   type ProviderCapabilities,
+  type ProviderExecutionContext,
   type ProviderLabels,
   type ProviderOptions,
   type QueryPrepareOptions,
   type QueryResult,
   type QueryWarning,
+  type ReadOnlyStatementBudget,
+  type ReadOnlyStatementMode,
   type SlowQueryStats,
   type StorageStats,
   type TableStats,
 } from "@/lib/db/types";
+import {
+  assertReadOnlyBudget,
+  byteBudgetSentence,
+  measureResultBytes,
+  rowBudgetSentence,
+  TIME_BUDGET_PREFIX,
+} from "../read-only-budget";
+import {
+  proveTrinoAgentBoundary,
+  readTrinoCatalogs,
+  TRINO_CATALOG_LIST_STATEMENT,
+  trinoAgentStatementRefusal,
+} from "./agent-boundary";
 import { TrinoHttpTransport } from "./http-transport";
 import { TRINO_CREATE_TABLE } from "./create-table";
 import {
@@ -155,6 +179,7 @@ import {
 import { comparePaths } from "@/lib/db/object-path";
 import {
   TRINO_DIALECTS,
+  TrinoAnswerTooLargeError,
   type TrinoDialect,
   type TrinoDialectId,
   type TrinoQueryResult,
@@ -178,6 +203,21 @@ import {
  * than a reason to refuse the connection.
  */
 const CONNECT_PROBE_SQL = "SELECT 1";
+
+/** The deadline of the access control check at the open of a handle that sends statements. */
+const AGENT_CHECK_TIMEOUT_MS = 30000;
+
+/** The most bytes of rows one answer of the check may hold: a catalog list or one catalog's system functions. */
+const AGENT_CHECK_MAX_ROW_BYTES = 1048576;
+
+/**
+ * How long a rollback may take, on a deadline of its own: the call's deadline may be the reason it is being sent.
+ * Measured on 476, a rollback ends an open transaction and one a refused statement aborted alike (capture 03).
+ */
+const AGENT_ROLLBACK_TIMEOUT_MS = 5000;
+
+/** How many times one agent call proves the access control before it gives up on a catalog list that keeps changing. */
+const AGENT_PROOF_ATTEMPTS = 2;
 
 /**
  * A transport failure CATEGORY -> the apply outcome it is (#789 Phase 3).
@@ -302,6 +342,11 @@ function engineWarnings(result: TrinoQueryResult): QueryWarning[] {
   return warnings;
 }
 
+/** Whether the catalog list a statement's transaction read is the one the check proved, in the server's order. */
+function sameCatalogs(listed: readonly string[] | null, proven: readonly string[]): boolean {
+  return listed !== null && listed.length === proven.length && listed.every((name, at) => name === proven[at]);
+}
+
 // ============================================================================
 // Trino Provider
 // ============================================================================
@@ -328,8 +373,29 @@ export class TrinoProvider extends SQLBaseProvider {
    */
   private readonly runningQueryIds = new Map<string, string>();
 
-  constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
+  /**
+   * Whether this provider was opened to send an agent's statements: under an execution profile (`readOnly`) whose
+   * acquisition calls `queryReadOnly` (`sendsStatements`). Only then does the open prove the server's access control
+   * (`proveTrinoAgentBoundary` in `agent-boundary.ts`) and does `queryReadOnly` answer. The operations profile sends no
+   * statement, so plan mode keeps grounding on any server with no check sent.
+   */
+  private readonly readOnlyProfile: boolean;
+
+  /**
+   * `createTransport` is the test seam of the transport the open builds: the factory passes three arguments, so a real
+   * connection always builds the HTTP one.
+   */
+  constructor(
+    config: DatabaseConnection,
+    options: ProviderOptions = {},
+    execution: ProviderExecutionContext = {},
+    private readonly createTransport: (dialect: TrinoDialect, config: DatabaseConnection) => TrinoTransport = (
+      dialect,
+      connection,
+    ) => new TrinoHttpTransport(dialect, connection),
+  ) {
     super(config, options);
+    this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
     this.validate();
   }
 
@@ -625,13 +691,17 @@ export class TrinoProvider extends SQLBaseProvider {
       // Constructed inside the guard because the constructor itself refuses one
       // configuration: a password over plain HTTP, which the coordinator rejects
       // with HTTP 401 even when authentication is switched off.
-      transport = new TrinoHttpTransport(this.dialect, this.config);
+      transport = this.createTransport(this.dialect, this.config);
       await transport.query(CONNECT_PROBE_SQL);
       // AFTER the probe, never instead of it: the probe is what proves the
       // coordinator answers, and this check only says more when it did.
       caution = await this.probePinnedCatalog(transport);
+      // A handle that will send an agent's statements proves the access control at the open, so a server that lets
+      // this user call a pass-through function or manage catalogs is refused before any statement; every call proves
+      // it again.
+      if (this.readOnlyProfile) await this.proveAgentBoundary(transport, AbortSignal.timeout(AGENT_CHECK_TIMEOUT_MS));
     } catch (error) {
-      const failure = this.describeConnectFailure(error);
+      const failure = error instanceof ExecutionProfileError ? error : this.describeConnectFailure(error);
       this.setError(failure);
       throw failure;
     }
@@ -780,6 +850,185 @@ export class TrinoProvider extends SQLBaseProvider {
         if (queryId !== undefined) this.runningQueryIds.delete(queryId);
       }
     });
+  }
+
+  /**
+   * One agent statement under the read-only profile.
+   *
+   * The boundary is the operator's access control: it must refuse this user every catalog's table functions, since a
+   * pass-through function runs its text in the catalog's source under the catalog's own credential, outside Trino's
+   * read-only transaction, and it must refuse catalog management. The check proves that before every statement, keeping
+   * no verdict between calls (`agent-boundary.ts`), and the statement then runs inside a read-only transaction that
+   * first lists the catalogs again: a list that differs from the one the check proved is checked again, once, and a
+   * list that keeps changing refuses the statement unsent. The transaction is always rolled back. Only one statement
+   * whose first keyword is SELECT or WITH is sent (`trinoAgentStatementRefusal`), anything else refused before anything
+   * is sent, because a COMMIT, ROLLBACK or START TRANSACTION would end or nest the transaction and SET SESSION, USE,
+   * CALL, EXECUTE and PREPARE are not reads.
+   *
+   * One deadline, the budget's, bounds the check and the statement together; past it the transport stops waiting and
+   * cancels the statement on the cluster, which on Trino stops the work. Budgets refuse rather than truncate: the
+   * transport stops reading an answer past the row budget or past the byte budget as its rows arrive, and cancels it,
+   * and the result is measured against the byte budget again once its rows are keyed by name. Refused outside the
+   * profile and for an estimating plan, which the agent does not compose here.
+   */
+  public async queryReadOnly(
+    sql: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    const transport = this.requireTransport();
+    if (!this.readOnlyProfile) {
+      throw new RefusedBeforeSendError(
+        "Read-only execution requires a provider opened under the agent read-only profile",
+        this.type,
+        sql,
+      );
+    }
+    assertReadOnlyBudget(budget, this.type);
+    if (mode !== "execute") {
+      throw new RefusedBeforeSendError("Trino composes no estimating plan for the agent", this.type, sql);
+    }
+    const fenced = trinoAgentStatementRefusal(sql);
+    if (fenced !== null) throw new RefusedBeforeSendError(fenced, this.type, sql);
+
+    return this.trackQuery(async () => {
+      const signal = AbortSignal.timeout(budget.statementTimeoutMs);
+      const { result, executionTime } = await this.measureExecution(async () => {
+        try {
+          return await this.runAgentStatement(transport, sql, budget, signal);
+        } catch (error) {
+          throw this.agentFailure(error, budget, sql, signal);
+        }
+      });
+      return this.readAgentAnswer(result, executionTime, budget, sql);
+    });
+  }
+
+  /** The check, then the statement in a read-only transaction after the catalog list, checked again if the list moved. */
+  private async runAgentStatement(
+    transport: TrinoTransport,
+    sql: string,
+    budget: ReadOnlyStatementBudget,
+    signal: AbortSignal,
+  ): Promise<TrinoQueryResult> {
+    for (let attempt = 1; ; attempt += 1) {
+      const proven = await this.proveAgentBoundary(transport, signal).catch((error: unknown) => {
+        if (error instanceof ExecutionProfileError || signal.aborted) throw error;
+        // The environment's failure, not the statement's: the agent must not offer it to the model as one to repair.
+        throw new ConnectionError(
+          `The agent read-only execution profile's check of the Trino access control could not be read: ${this.mapTrinoError(error).message}`,
+          this.type,
+          this.config.host,
+          this.config.port,
+        );
+      });
+      const answered = await this.inReadOnlyTransaction(transport, signal, async (transactionId) => {
+        const listed = await transport.query(TRINO_CATALOG_LIST_STATEMENT, { transactionId, signal });
+        if (!sameCatalogs(readTrinoCatalogs(listed), proven)) return null;
+        const result = await transport.query(sql, {
+          transactionId,
+          signal,
+          maxRows: budget.maxResultRows,
+          maxRowBytes: budget.maxResultBytes,
+        });
+        if (result.endedTransaction) {
+          throw new QueryError(
+            "The server's answer ended the read-only transaction the statement ran in, so the answer is not served",
+            this.type,
+            sql,
+          );
+        }
+        return result;
+      });
+      if (answered !== null) return answered;
+      if (attempt === AGENT_PROOF_ATTEMPTS) {
+        throw new QueryError(
+          "The catalogs this user can see changed between the agent read-only execution profile's check of the access control and the statement, twice in a row, so the statement was not sent. Run it again.",
+          this.type,
+          sql,
+        );
+      }
+    }
+  }
+
+  /**
+   * The proof of the access control, each of its statements in a read-only transaction of its own under `signal`,
+   * since a refused statement aborts the transaction it ran in (capture 03). Answers the catalogs it proved.
+   */
+  private proveAgentBoundary(transport: TrinoTransport, signal: AbortSignal): Promise<string[]> {
+    return proveTrinoAgentBoundary(
+      (statement) =>
+        this.inReadOnlyTransaction(transport, signal, (transactionId) =>
+          transport.query(statement, { transactionId, signal, maxRowBytes: AGENT_CHECK_MAX_ROW_BYTES }),
+        ),
+      // The probe's catalog carries a fresh suffix each time, so no catalog anyone made can be the one it names.
+      randomBytes(12).toString("hex"),
+    );
+  }
+
+  /**
+   * `work` inside a read-only transaction opened for it, rolled back after it whatever it answered. A rollback that
+   * fails after `work` failed leaves `work`'s failure to be reported, since that is what the caller asked about and the
+   * server ends an abandoned transaction itself; one that fails after `work` answered is reported.
+   */
+  private async inReadOnlyTransaction<T>(
+    transport: TrinoTransport,
+    signal: AbortSignal,
+    work: (transactionId: string) => Promise<T>,
+  ): Promise<T> {
+    const transactionId = await transport.beginReadOnlyTransaction(signal);
+    let answer: T;
+    try {
+      answer = await work(transactionId);
+    } catch (error) {
+      await transport.rollback(transactionId, AbortSignal.timeout(AGENT_ROLLBACK_TIMEOUT_MS)).catch(() => undefined);
+      throw error;
+    }
+    await transport.rollback(transactionId, AbortSignal.timeout(AGENT_ROLLBACK_TIMEOUT_MS));
+    return answer;
+  }
+
+  /** An agent call's failure in the provider's vocabulary, on its budget where it passed one. */
+  private agentFailure(error: unknown, budget: ReadOnlyStatementBudget, sql: string, signal: AbortSignal): Error {
+    if (error instanceof ExecutionProfileError || error instanceof QueryError || error instanceof ConnectionError) {
+      return error;
+    }
+    if (error instanceof TrinoAnswerTooLargeError) {
+      const sentence =
+        error.limit === "rows" ? rowBudgetSentence(error.seen, error.cap) : byteBudgetSentence(error.seen, error.cap);
+      return new QueryError(
+        `${sentence}; the answer was not read further and was cancelled on the cluster`,
+        this.type,
+        sql,
+      );
+    }
+    if (signal.aborted) {
+      return new QueryError(
+        `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms; the statement Studio had sent was cancelled on the cluster`,
+        this.type,
+        sql,
+      );
+    }
+    // The server's own refusal of the statement, a table the user may not read included, is the statement's to
+    // repair, never a failed sign-in.
+    if (error instanceof TrinoTransportError && error.code !== null)
+      return new QueryError(error.message, this.type, sql);
+    return this.mapTrinoError(error, sql);
+  }
+
+  /** The agent's result, or the shared refusal: held to the byte budget once its rows are keyed by name, never cut. */
+  private readAgentAnswer(
+    result: TrinoQueryResult,
+    executionTime: number,
+    budget: ReadOnlyStatementBudget,
+    sql: string,
+  ): QueryResult {
+    const answer = toQueryResult(result, executionTime);
+    const bytes = measureResultBytes(answer.rows);
+    if (bytes > budget.maxResultBytes) {
+      throw new QueryError(byteBudgetSentence(bytes, budget.maxResultBytes), this.type, sql);
+    }
+    return answer;
   }
 
   /**

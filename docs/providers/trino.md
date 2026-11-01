@@ -1957,8 +1957,9 @@ See [`docs/API_DOCS.md`](../API_DOCS.md) for the full request/response contract.
   sampling it ([§7.1](#71-a-scope-too-large-for-one-pass-is-refused-not-sampled)). Ask for one schema
   that is itself inside the bound — a larger schema is refused too, and the refusal says how many of
   the catalog's schemas qualify. `SHOW STATS FOR <table>` in the editor answers for any scope.
-- **Agent auto/operate mode is out of scope.** `queryReadOnly()` is not implemented, so
-  `acquireExecutionProfileProvider` fails closed for this type-id — explicitly deferred by #424.
+- **Agent mode runs only on a server whose access control refuses table functions and catalog
+  management.** Under Trino's default access control the agent read-only profile is refused at open,
+  with the operator settings named ([§15](#15-agent-mode-the-operators-access-control-proven-before-every-statement)).
 - **The spooled result protocol is refused, not read.** This client never advertises an encoding, and
   a server that sends segments anyway gets an honest refusal rather than rows silently read out of a
   segment index.
@@ -2000,3 +2001,90 @@ Every refusal reason it can print, verbatim:
 - The `system` connector, `system.runtime` and `kill_query`: <https://trino.io/docs/current/connector/system.html>
 - The `jmx` connector: <https://trino.io/docs/current/connector/jmx.html>
 - Sibling provider docs: [PostgreSQL](./postgres.md) · [MySQL](./mysql.md) · [Oracle](./oracle.md) · [SQL Server](./mssql.md) · [SQLite](./sqlite.md) · [MongoDB](./mongodb.md) · [Couchbase](./couchbase.md) · [ClickHouse](./clickhouse.md) · [Apache Druid](./druid.md) · [Elasticsearch](./elasticsearch.md) · [OpenSearch](./opensearch.md) · [Redis](./redis.md) · [LibreDB](./libredb.md)
+
+---
+
+## 15. Agent mode: the operator's access control, proven before every statement
+
+Agent mode executes statements on Trino through `queryReadOnly()` in [`index.ts`](../../src/lib/db/providers/sql/trino/index.ts), with the access control check and the statement fence in [`agent-boundary.ts`](../../src/lib/db/providers/sql/trino/agent-boundary.ts) and the read-only transaction in [`http-transport.ts`](../../src/lib/db/providers/sql/trino/http-transport.ts).
+Every fact below was measured on `trinodb/trino:476`, digest-pinned, with catalog management dynamic and three catalogs: `pg` and `pg2`, the postgresql connector over one PostgreSQL 17 database whose credential owns it and has dblink installed, and `memory`.
+It is recorded in [`tests/fixtures/trino/476/agent-boundary/`](../../tests/fixtures/trino/476/agent-boundary/), whose `run.sh` starts a coordinator under each of four access controls and re-records every capture.
+
+### 15.1 The boundary is the operator's access control
+
+`START TRANSACTION READ ONLY` refuses Trino's own writes: `INSERT` and `CREATE TABLE AS` answer `READ_ONLY_VIOLATION` inside it, and `CALL` answers that procedures cannot be called within a transaction (capture 02).
+It does not reach a catalog's source.
+A pass-through table function, `TABLE(<catalog>.system.query(query => '...'))`, sends its text to the source, where it runs under the catalog's own credential: PostgreSQL runs it read-only, so an `INSERT` in it is refused, but `dblink_exec` opens a second session, and under Trino's default access control and under file rules that grant the function, one inside the read-only transaction wrote a row to PostgreSQL through either catalog (capture 02).
+No catalog or server setting turns table functions off.
+
+What stops it is the operator's access control, and the agent read-only profile requires one of two that refuse every table function of every catalog to the connection's user (capture 02):
+
+- `access-control.name=read-only`, Trino's read-only system access control, which lets only the builtin functions run and so covers a catalog added later; or
+- file-based access control (`access-control.name=file`) whose rules grant no function.
+
+Under either, every pass-through call is refused with `PERMISSION_DENIED`, on every catalog and in autocommit as well, `CALL system.execute` is refused, catalog management is refused, and the PostgreSQL table is unchanged.
+Under the default and under a rule granting `EXECUTE` on `query`, the same calls write (capture 02, `allow-all` and `file-fn-query`); the profile refuses both at open.
+An agent credential beside a connection string is refused before the provider is built, as on every engine.
+
+### 15.2 The check, before every statement
+
+`proveTrinoAgentBoundary` runs at the open of a handle under the agent read-only profile and again before every agent statement, keeping no verdict between calls.
+As the connection's user, it reads `SHOW CATALOGS`, then for each catalog `SHOW FUNCTIONS FROM "<catalog>"."system"`, whose table functions carry the function type `table` (capture 00).
+It calls every table function a catalog lists, under whatever name, and the two known pass-through names, `query` and `raw_query`, on every catalog, as `SELECT * FROM TABLE("<catalog>"."system"."<name>"(libredb_no_such_argument => 1))`.
+Trino checks the permission before the arguments, so the call runs nothing either way: a function the user may not call answers `PERMISSION_DENIED`, one it may call answers `INVALID_FUNCTION_ARGUMENT`, and a name the catalog does not have answers `FUNCTION_NOT_FOUND` under every control (capture 01).
+A zero-argument call measures the same (`MISSING_ARGUMENT` where allowed), but a table function whose arguments all have defaults would run; an argument no function declares never does, so the check uses that.
+Each call must answer `PERMISSION_DENIED`; `FUNCTION_NOT_FOUND` is accepted only for `query` or `raw_query` on a catalog that does not list it.
+Then catalog management must be refused: the check sends `DROP CATALOG "libredb_agent_probe_<24 hex>"`, a name no one holds, which answers `PERMISSION_DENIED` under both controls and `CATALOG_NOT_FOUND` where the user may manage catalogs (capture 01).
+Catalog creation is not probed, since where it is allowed the probe would create a catalog; both controls refuse it (capture 02).
+
+An answer that shows the function callable, or catalog management not refused, refuses the profile as one the server does not enforce (`PROFILE_SERVER_UNENFORCED`); any other answer, a catalog or function list that cannot be read included, as unmeasured (`PROFILE_UNSUPPORTED_TARGET`).
+The refusal names the two settings above and says the check ran nothing; a failure to reach the server leaves as it came.
+Each statement of the check runs inside a read-only transaction of its own, rolled back after it, because a refused statement aborts the transaction it ran in (capture 03).
+The operations profile sends no statement, so it opens without the check and plan mode grounds on any connection.
+The check costs, per catalog, a list of its functions and at least two calls, each in its own transaction, and it runs inside the statement's time budget.
+
+### 15.3 The statement path
+
+Only one statement whose first keyword is `SELECT` or `WITH` is sent, refused before anything is sent otherwise (`trinoAgentStatementRefusal`).
+Inside a transaction, a `COMMIT` or `ROLLBACK` ends it and a nested `START TRANSACTION` is refused and aborts it (capture 03); `SET SESSION`, `USE`, `CALL`, `EXECUTE` and `PREPARE` are not reads; so none of them is sent, and neither is a second statement, `EXPLAIN`, `SHOW` or `VALUES`.
+The text is read with Trino's registered grammar row ([`sql-grammar.ts`](../../src/lib/db/providers/sql/trino/sql-grammar.ts)): `--` and block comments and whitespace skipped, string literals and double-quoted names opaque, `#` and `//` read as code, and a code semicolon ending the statement with only comments and whitespace after it.
+A carriage return inside a `--` comment with more text after it and a `$$` run are refused, since a reader can differ from the server on either; text ending inside a comment, a string or a name is refused.
+
+The statement then runs inside a read-only transaction of its own (`TrinoTransport.beginReadOnlyTransaction`), which first lists the catalogs again.
+A catalog list that differs from the one the check proved sends the check again; a list that changes twice in a row refuses the statement unsent.
+A catalog created from another session while a transaction is open is listed and read inside it (capture 03), so the list is compared inside the statement's own transaction, as close to the statement as the protocol allows.
+The statement carries the transaction's id and nothing else of a session: no session property, no prepared statement.
+An answer that ended the transaction is refused, and the transaction is always rolled back.
+
+One deadline, the budget's, bounds the check and the statement together; past it the transport stops waiting and cancels the statement on the cluster, which on Trino stops the work ([§3.7](#37-abandoning-a-request-does-not-stop-the-work)).
+The transport stops reading an answer the moment its rows pass the row budget, or their bytes pass the byte budget as they arrive, and cancels the statement; the result is measured against the byte budget again once its rows are keyed by name; a result past either budget is refused, never cut.
+A statement the server refuses, a table the access control hides included, is answered as the statement's failure, so the agent can repair it; a check that cannot be read is the environment's.
+
+### 15.4 What remains
+
+- **An access control that hides a function from `SHOW FUNCTIONS` and still lets the user call it.** The check calls every table function a catalog lists, plus `query` and `raw_query`, so a custom access-control plugin that filters a pass-through function out of the listing under another name, while allowing its execution, would pass. Neither control the profile names behaves that way.
+- **A table function registered in a schema other than `system`.** The check lists each catalog's `system` schema, where Trino's connectors register their table functions; the read-only control lets only the builtin functions run wherever another is registered, and file rules let a function run only by a rule that grants it.
+- **A catalog added between the check and the statement.** The statement's transaction lists the catalogs again just before the statement, but a catalog created in the moment between that list and the statement is not checked. Under both controls the profile names, its functions are refused all the same, and catalog creation is refused to the agent's user.
+- **Whether a pass-through function on a connector other than PostgreSQL runs read-only on the remote side** is unmeasured; only PostgreSQL was measured, and the check refuses the function on every connector whatever the remote side does.
+
+### 15.5 Agent language pack
+
+Statement-language family: `sql`.
+Overlay: [`src/lib/agent/languages/sql/engines/trino.ts`](../../src/lib/agent/languages/sql/engines/trino.ts), with its client row in [`src/lib/agent/languages/sql/engines/client.ts`](../../src/lib/agent/languages/sql/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`, and the dialect through `engineServerDialect`.
+
+| Member | Kind | Value |
+| --- | --- | --- |
+| `catalogRead` | Dialect-bound | Supplied |
+| `planEstimate` | Dialect-bound | `"unsupported"` |
+| `profileComposition` | Dialect-bound | `"unsupported"` |
+| `statistics` | Dialect-bound | `"unsupported"` |
+| `catalogCapture` | Dialect-bound | `"unsupported"` |
+
+The overlay overrides no Shared member, so the engine resolves to the `sql` family pack itself for those.
+The column kind reads `information_schema.columns` of the connection's pinned catalog, which the server filters to the tables the access control lets the user see, leaving `information_schema` itself out, and answers `table_schema`, `table_name`, `column_name`, `data_type`, `is_nullable` and `ordinal_position`; a connection that pins no catalog is answered the server's own refusal.
+The relation kind answers the same projection the other engines answer with no rows, since Trino declares no key on any connector ([§3.8](#38-no-keys-no-indexes--and-why-that-is-a-fact-about-the-engine)).
+The index and statistics kinds are refused with `SELECTOR_UNSUPPORTED_BY_DIALECT`: there is no index object, and the row counts Trino has come from `SHOW STATS`, which is not a `SELECT`.
+So investigation, database assessment and data analysis open here and send their statements through `queryReadOnly`, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`; database assessment cannot pass with no table profile ([B146](../BACKLOG.md)), and the `sql-composers` requirement holds query optimization out, since the agent path sends no `EXPLAIN` ([B166](../BACKLOG.md)); plan mode drafts here as on every engine.
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+MCP's statement read stays closed on Trino (`MCP_STATEMENT_READ.trino` is false) until a change of its own opens it, and the MCP metadata tools serve it as before (`MCP_EXPOSABLE.trino` is true).

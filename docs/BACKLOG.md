@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B165 · 86
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B166 · 86
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -8733,16 +8733,6 @@ Re-measured 2026-11-01 on Spark 4.3.0, the first release with `spark.sql.restric
 
 **Done when:** an upstream Spark release offers an authorization feature or a read-only session that Studio can prove at open, a boundary test against it with a writable positive control shows `ADD JAR`, a code-loading function and a write refused, and Spark then joins agent execution through `queryReadOnly` with its `MCP_STATEMENT_READ` row false until the owner opens MCP read for it; cited in `docs/AGENT.md`.
 
-### B130. Trino has no agent execution and no MCP `run_read_query`
-
-The Trino provider implements no `queryReadOnly`, so agent execution refuses it and MCP `run_read_query` answers that the engine is not served; the MCP metadata tools work (`MCP_EXPOSABLE.trino` is true, `MCP_STATEMENT_READ.trino` is false).
-`START TRANSACTION READ ONLY` holds for Trino's own connectors, but a pass-through table function, `TABLE(<catalog>.system.query(...))`, sends its text to the remote source, where it runs under the catalog's own credential and outside the read-only transaction, and pinning reads to one catalog still admits it on that catalog.
-Studio cannot prove a catalog's connector credential read-only, so only a lexer fence could stop that path, and a lexer is defence in depth, never the boundary.
-
-Found 2026-10-27 while designing read-only agent and MCP execution for every provider.
-
-**Done when:** either a way to prove each reachable catalog's connector credential read-only at open, or an engine switch that disables pass-through table functions, is found and measured, a boundary test with a writable positive control shows a pass-through write refused, and Trino then joins agent execution through `queryReadOnly` with its `MCP_STATEMENT_READ` row false until the owner opens MCP read for it; cited in `docs/AGENT.md`.
-
 ### B136. etcd's agent reads are metadata only, and it has no MCP statement tool
 
 Agent mode executes etcd metadata reads under the `etcdctl` statement language, as a user the server shows, before every command, has authentication on, holds neither the root user's name nor the root role, and holds READ permissions only on every role, read with `UserGet` and `RoleGet` (`docs/providers/etcd.md`, section 15).
@@ -9119,6 +9109,20 @@ Kept so that MCP access, and any widening of what agent mode reads on a plant (a
 Found 2026-11-01 when agent mode joined Sparkplug.
 
 **Done when:** a per-engine exposure ruling opens MCP for Sparkplug, an MCP surface that reads through the same closed table, window, completeness sentence and metadata-only projection is designed and `MCP_EXPOSABLE.sparkplug` turns true for it, the pack declares its MCP facet (`src/lib/agent/languages/sparkplugread/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), and `MCP_STATEMENT_READ.sparkplug` is true, with tests that an MCP read sends no PUBLISH and no Will, that no MCP answer names an id or carries a metric, and that every answer carries its window and the completeness sentence; cited in `docs/AGENT.md`.
+
+### B166. Trino composes no estimating plan, profile, statistics reading or grounding capture, and has no MCP statement read
+
+Agent mode executes statements on Trino on a server whose access control refuses the connection's user every catalog's table functions, and catalog management must be refused (Trino's read-only access control, or file rules that grant no function), proved before every statement with calls that run nothing, every statement inside a read-only transaction Studio rolls back (`docs/providers/trino.md`, section 15).
+Trino's engine overlay (`src/lib/agent/languages/sql/engines/trino.ts`) supplies the catalog read alone: the column kind reads `information_schema.columns` of the pinned catalog, which the server filters to the tables the user may see, and the relation kind answers the projection the other engines answer with no rows, since Trino declares no key; the index and statistics kinds are refused, since there is no index object and the row counts come from `SHOW STATS`, which is not a `SELECT`.
+The other four dialect members are `"unsupported"`: the estimating plan, the profile composition, the statistics reading and the grounding capture.
+Trino has `EXPLAIN`, and the editor reads its plan, but the provider sends only one statement whose first keyword is `SELECT` or `WITH` on the agent path, since a statement that ends or nests the read-only transaction, changes the session or calls a procedure must never reach the server; an estimating plan would need that fence to admit `EXPLAIN` by the server's own reading, never measured for the fence, and a table profile would be an aggregate over a whole table, never measured.
+So investigation, database assessment and data analysis open on Trino, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`, and database assessment, which needs a table profile, opens but cannot pass (B146); the `sql-composers` requirement holds query optimization out; plan mode drafts there and grounds under the operations profile, whose open runs no check.
+`MCP_STATEMENT_READ.trino` is false, so MCP `run_read_query` answers that the engine is not served, while the MCP metadata tools serve Trino as before (`MCP_EXPOSABLE.trino` is true).
+Kept so that the engine joined on the members measured on it, nothing composed from another engine's rule, and so that MCP statement reads on Trino are a decision of their own rather than a side effect of agent mode joining.
+
+Found 2026-11-01 with agent execution on Trino.
+
+**Done when:** the Trino overlay gains an estimating plan whose `EXPLAIN` the agent path's fence admits, measured on 476, and a profile composition, or a recorded decision that it keeps none, with tests for each, and a per-engine exposure ruling opens MCP statement reads on Trino through the same check and read-only transaction with `MCP_STATEMENT_READ.trino` true; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

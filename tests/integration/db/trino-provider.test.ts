@@ -38,8 +38,10 @@ import {
   AuthenticationError,
   ConnectionError,
   DatabaseConfigError,
+  ExecutionProfileError,
   QueryCancelledError,
   QueryError,
+  RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
 import {
@@ -77,6 +79,14 @@ import {
   trinoSourceStatementFor,
 } from "@/lib/db/providers/sql/trino/objects";
 import { TrinoProvider } from "@/lib/db/providers/sql/trino/index";
+import {
+  TRINO_DIALECT,
+  TrinoAnswerTooLargeError,
+  type TrinoQueryOptions,
+  type TrinoQueryResult,
+  type TrinoTransport,
+  TrinoTransportError,
+} from "@/lib/db/providers/sql/trino/transport";
 import { TRINO_CREATE_TABLE } from "@/lib/db/providers/sql/trino/create-table";
 import type {
   DatabaseProvider,
@@ -84,6 +94,7 @@ import type {
   ObjectEditOutcome,
   ObjectEditPlan,
   ProviderCapabilities,
+  ProviderExecutionContext,
 } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
@@ -5126,5 +5137,489 @@ describe("endOpenQueryTransaction()", () => {
     for (const headers of sentHeaders) {
       expect([...headers.keys()].some((name) => name.includes("transaction"))).toBe(false);
     }
+  });
+});
+
+// ============================================================================
+// queryReadOnly: the agent read-only profile
+// ============================================================================
+
+/**
+ * A scripted coordinator behind the transport seam, the provider's fourth constructor argument. It keeps the
+ * transactions the way Trino 476 does (`tests/fixtures/trino/476/agent-boundary/`, capture 03): a refused statement
+ * aborts the transaction it ran in, a ROLLBACK ends an open or aborted one, and a statement under an unknown id is
+ * refused. Every refusal it replays for the proof is the read-only access control's own answer (captures 00 and 01).
+ */
+describe("queryReadOnly", () => {
+  const AGENT_BUDGET = { statementTimeoutMs: 30000, maxResultRows: 3, maxResultBytes: 1000 };
+  const AGENT = { readOnly: true, sendsStatements: true };
+  const PROBE_CATALOG = /^DROP CATALOG "libredb_agent_probe_[0-9a-f]{24}"$/;
+  /** The editor's own probes at every open: the coordinator answers, and the pinned catalog is listed. */
+  const EDITOR_OPEN = ["autocommit: SELECT 1", `autocommit: ${TRINO_CATALOG_LIST_SQL}`];
+  const FUNCTIONS = ["Function", "Return Type", "Argument Types", "Function Type", "Deterministic", "Description"];
+
+  const answer = (fieldNames: string[], rows: unknown[][]): TrinoQueryResult => ({
+    rows: rows.map((row) => Object.fromEntries(fieldNames.map((name, at) => [name, row[at]]))),
+    fieldNames,
+    columnTypes: Object.fromEntries(fieldNames.map((name) => [name, "varchar"])),
+    queryId: "20261101_000000_00001_libre",
+    operation: null,
+    affectedRows: null,
+    warnings: [],
+    stats: {
+      state: "FINISHED",
+      elapsedMs: 7,
+      cpuMs: null,
+      queuedMs: null,
+      processedRows: null,
+      processedBytes: null,
+      peakMemoryBytes: null,
+    },
+    endedTransaction: false,
+  });
+  const refused = (code: string, message: string) =>
+    new TrinoTransportError(code === "PERMISSION_DENIED" ? "auth" : "engine", message, code);
+
+  type Reply = TrinoQueryResult | Error | ((options: TrinoQueryOptions) => Promise<TrinoQueryResult>);
+
+  /** The read-only access control on two catalogs: pg, which lists `query`, and system, which lists nothing. */
+  function readOnlyCoordinator(catalogs: string[] = ["pg", "system"]): Map<string | RegExp, Reply> {
+    const replies = new Map<string | RegExp, Reply>([
+      ["SELECT 1", answer(["_col0"], [[1]])],
+      [TRINO_CATALOG_LIST_SQL, answer(["catalogName", "connectorName"], [["pg", "postgresql"]])],
+      [
+        "SHOW CATALOGS",
+        answer(
+          ["Catalog"],
+          catalogs.map((name) => [name]),
+        ),
+      ],
+      ['SHOW FUNCTIONS FROM "pg"."system"', answer(FUNCTIONS, [["query", "unknown", "varchar", "table", false, ""]])],
+      ['SHOW FUNCTIONS FROM "system"."system"', answer(FUNCTIONS, [])],
+      [PROBE_CATALOG, refused("PERMISSION_DENIED", "Access Denied: Cannot drop catalog libredb_agent_probe")],
+    ]);
+    for (const catalog of catalogs) {
+      for (const name of ["query", "raw_query"]) {
+        const listed = catalog === "pg" && name === "query";
+        replies.set(
+          `SELECT * FROM TABLE("${catalog}"."system"."${name}"(libredb_no_such_argument => 1))`,
+          listed
+            ? refused("PERMISSION_DENIED", `Access Denied: Cannot execute function ${catalog}.system.${name}`)
+            : refused("FUNCTION_NOT_FOUND", `line 1:21: Table function '${catalog}.system.${name}' not registered`),
+        );
+      }
+    }
+    replies.set("SELECT a FROM pg.public.t", answer(["a"], [[1], [2]]));
+    return replies;
+  }
+
+  function coordinator(replies: Map<string | RegExp, Reply> = readOnlyCoordinator()) {
+    /** Every statement as `<transaction>: <sql>`, a transaction named by the order it was opened in. */
+    const log: string[] = [];
+    const options: { sql: string; options: TrinoQueryOptions }[] = [];
+    const open = new Map<string, "open" | "aborted">();
+    let opened = 0;
+    const label = (id: string | undefined) => (id === undefined ? "autocommit" : `t${id.slice(3)}`);
+    const transport: TrinoTransport = {
+      dialect: TRINO_DIALECT,
+      query: async (sql, queryOptions = {}) => {
+        log.push(`${label(queryOptions.transactionId)}: ${sql}`);
+        options.push({ sql, options: queryOptions });
+        const id = queryOptions.transactionId;
+        if (id !== undefined && open.get(id) !== "open") {
+          throw refused("TRANSACTION_ALREADY_ABORTED", "Current transaction is aborted");
+        }
+        const reply = [...replies].find(([key]) => (typeof key === "string" ? key === sql : key.test(sql)))?.[1];
+        if (reply === undefined) throw new Error(`the coordinator has no answer for ${sql}`);
+        try {
+          if (reply instanceof Error) throw reply;
+          return typeof reply === "function" ? await reply(queryOptions) : reply;
+        } catch (error) {
+          if (id !== undefined) open.set(id, "aborted");
+          throw error;
+        }
+      },
+      cancel: async () => undefined,
+      close: async () => undefined,
+      beginReadOnlyTransaction: async () => {
+        opened += 1;
+        const id = `tx-${opened}`;
+        open.set(id, "open");
+        log.push(`${label(id)}: START TRANSACTION READ ONLY`);
+        return id;
+      },
+      rollback: async (id) => {
+        log.push(`${label(id)}: ROLLBACK`);
+        if (!open.has(id)) throw refused("UNKNOWN_TRANSACTION", `Unknown transaction ID: ${id}`);
+        open.delete(id);
+      },
+    };
+    return { transport, log, options, open };
+  }
+
+  async function opened(recorded = coordinator(), execution: ProviderExecutionContext = AGENT) {
+    const provider = new TrinoProvider(makeConnection(), {}, execution, () => recorded.transport);
+    await provider.connect();
+    return provider;
+  }
+
+  /** The proof the read-only coordinator above answers, transaction by transaction. */
+  const PROOF = (from: number) => {
+    const statements = [
+      "SHOW CATALOGS",
+      'SHOW FUNCTIONS FROM "pg"."system"',
+      'SELECT * FROM TABLE("pg"."system"."query"(libredb_no_such_argument => 1))',
+      'SELECT * FROM TABLE("pg"."system"."raw_query"(libredb_no_such_argument => 1))',
+      'SHOW FUNCTIONS FROM "system"."system"',
+      'SELECT * FROM TABLE("system"."system"."query"(libredb_no_such_argument => 1))',
+      'SELECT * FROM TABLE("system"."system"."raw_query"(libredb_no_such_argument => 1))',
+      "DROP CATALOG",
+    ];
+    return statements.flatMap((sql, at) => {
+      const tx = `t${from + at}`;
+      return [`${tx}: START TRANSACTION READ ONLY`, `${tx}: ${sql}`, `${tx}: ROLLBACK`];
+    });
+  };
+  const shown = (log: string[]) => log.map((line) => line.replace(/"libredb_agent_probe_[0-9a-f]{24}"$/, "").trimEnd());
+
+  test("an open under the profile proves the access control after the editor's probes, each statement in a read-only transaction of its own", async () => {
+    const recorded = coordinator();
+    await opened(recorded);
+
+    expect(shown(recorded.log)).toEqual([...EDITOR_OPEN, ...PROOF(1)]);
+    expect(recorded.open.size).toBe(0);
+  });
+
+  test("an editor open and an open that sends no statement prove nothing", async () => {
+    for (const execution of [{}, { readOnly: true }, { readOnly: true, sendsStatements: false }]) {
+      const recorded = coordinator();
+      await opened(recorded, execution);
+      expect(recorded.log).toEqual(EDITOR_OPEN);
+    }
+  });
+
+  test("an open on a server that lets the user call a pass-through function is refused with the profile's own sentence", async () => {
+    const replies = readOnlyCoordinator();
+    replies.set(
+      'SELECT * FROM TABLE("pg"."system"."query"(libredb_no_such_argument => 1))',
+      refused("INVALID_FUNCTION_ARGUMENT", "line 1:43: Unexpected argument name: LIBREDB_NO_SUCH_ARGUMENT"),
+    );
+    const recorded = coordinator(replies);
+    const provider = new TrinoProvider(makeConnection(), {}, AGENT, () => recorded.transport);
+
+    const error = await provider.connect().catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_SERVER_UNENFORCED");
+    expect((error as Error).message).toContain("set access-control.name=read-only, or file-based access control");
+    expect((error as Error).message).toEndWith("The check ran nothing.");
+    expect(provider.isConnected()).toBe(false);
+    expect(recorded.open.size).toBe(0);
+  });
+
+  test("refuses on a handle not opened under the profile, sending nothing", async () => {
+    const recorded = coordinator();
+    const provider = await opened(recorded, {});
+
+    const error = await provider
+      .queryReadOnly("SELECT a FROM pg.public.t", AGENT_BUDGET)
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect((error as Error).message).toBe(
+      "Read-only execution requires a provider opened under the agent read-only profile",
+    );
+    expect(recorded.log).toEqual(EDITOR_OPEN);
+  });
+
+  test("proves the access control again before every statement, then runs it in a read-only transaction after the catalog list, and rolls it back", async () => {
+    const recorded = coordinator();
+    const provider = await opened(recorded);
+    const opening = recorded.log.length;
+
+    const first = await provider.queryReadOnly("SELECT a FROM pg.public.t", AGENT_BUDGET);
+    const afterFirst = recorded.log.length;
+    await provider.queryReadOnly("SELECT a FROM pg.public.t", AGENT_BUDGET);
+
+    expect(first.rows).toEqual([{ a: 1 }, { a: 2 }]);
+    expect(first.fields).toEqual(["a"]);
+    expect(first.executionTime).toBe(7);
+    expect(shown(recorded.log.slice(opening, afterFirst))).toEqual([
+      ...PROOF(9),
+      "t17: START TRANSACTION READ ONLY",
+      "t17: SHOW CATALOGS",
+      "t17: SELECT a FROM pg.public.t",
+      "t17: ROLLBACK",
+    ]);
+    expect(shown(recorded.log.slice(afterFirst))).toEqual([
+      ...PROOF(18),
+      "t26: START TRANSACTION READ ONLY",
+      "t26: SHOW CATALOGS",
+      "t26: SELECT a FROM pg.public.t",
+      "t26: ROLLBACK",
+    ]);
+    expect(recorded.open.size).toBe(0);
+    // The statement goes out under its transaction, the budget's row cap and its byte cap, and one deadline covers the
+    // check and the statement.
+    const statement = recorded.options.filter((call) => call.sql === "SELECT a FROM pg.public.t")[0];
+    expect(statement?.options).toMatchObject({ transactionId: "tx-17", maxRows: 3, maxRowBytes: 1000 });
+    const probe = recorded.options.find(
+      (call) => call.sql === 'SHOW FUNCTIONS FROM "pg"."system"' && call.options.transactionId === "tx-10",
+    );
+    expect(probe?.options.signal).toBe(statement?.options.signal);
+    // Every probe of catalog management names a fresh catalog.
+    const removals = recorded.log.filter((line) => line.includes("DROP CATALOG"));
+    expect(new Set(removals).size).toBe(removals.length);
+  });
+
+  test("a server whose access control changed refuses the next statement, which is never sent", async () => {
+    const replies = readOnlyCoordinator();
+    const recorded = coordinator(replies);
+    const provider = await opened(recorded);
+    replies.set(PROBE_CATALOG, refused("CATALOG_NOT_FOUND", "Catalog 'libredb_agent_probe' not found"));
+
+    const error = await provider
+      .queryReadOnly("SELECT a FROM pg.public.t", AGENT_BUDGET)
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect(recorded.log.some((line) => line.endsWith("SELECT a FROM pg.public.t"))).toBe(false);
+  });
+
+  test("a catalog added between the check and the statement re-proves, and the statement runs after the check that covers it", async () => {
+    const replies = readOnlyCoordinator();
+    const recorded = coordinator(replies);
+    const provider = await opened(recorded);
+    let lists = 0;
+    // The proof lists two catalogs; the statement's own transaction then lists three, once.
+    replies.set("SHOW CATALOGS", async () => {
+      lists += 1;
+      return lists === 2
+        ? answer(["Catalog"], [["late"], ["pg"], ["system"]])
+        : answer(["Catalog"], [["pg"], ["system"]]);
+    });
+
+    const result = await provider.queryReadOnly("SELECT a FROM pg.public.t", AGENT_BUDGET);
+
+    expect(result.rows).toEqual([{ a: 1 }, { a: 2 }]);
+    const lines = shown(recorded.log);
+    const changed = lines.indexOf("t17: SHOW CATALOGS");
+    expect(lines.slice(changed, changed + 2)).toEqual(["t17: SHOW CATALOGS", "t17: ROLLBACK"]);
+    expect(lines.slice(changed + 2, changed + 2 + PROOF(18).length)).toEqual(PROOF(18));
+    expect(lines.slice(-4)).toEqual([
+      "t26: START TRANSACTION READ ONLY",
+      "t26: SHOW CATALOGS",
+      "t26: SELECT a FROM pg.public.t",
+      "t26: ROLLBACK",
+    ]);
+  });
+
+  test("a catalog list that keeps changing refuses the statement, which is never sent", async () => {
+    const replies = readOnlyCoordinator();
+    const recorded = coordinator(replies);
+    const provider = await opened(recorded);
+    let lists = 0;
+    replies.set("SHOW CATALOGS", async () => {
+      lists += 1;
+      return answer(["Catalog"], lists % 2 === 0 ? [["late"], ["pg"], ["system"]] : [["pg"], ["system"]]);
+    });
+
+    const error = await provider
+      .queryReadOnly("SELECT a FROM pg.public.t", AGENT_BUDGET)
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toBe(
+      "The catalogs this user can see changed between the agent read-only execution profile's check of the access control and the statement, twice in a row, so the statement was not sent. Run it again.",
+    );
+    expect(recorded.log.some((line) => line.endsWith("SELECT a FROM pg.public.t"))).toBe(false);
+    expect(recorded.open.size).toBe(0);
+  });
+
+  test.each([
+    ["COMMIT"],
+    ["ROLLBACK"],
+    ["START TRANSACTION"],
+    ["SET SESSION query_max_run_time = '1s'"],
+    ["CALL pg.system.execute(query => 'DELETE FROM t')"],
+    ["EXECUTE p"],
+    ["PREPARE p FROM SELECT 1"],
+    ["USE pg.public"],
+    ["SELECT 1; COMMIT"],
+    ["EXPLAIN ANALYZE SELECT 1"],
+  ])("refuses %j before anything is sent", async (sql) => {
+    const recorded = coordinator();
+    const provider = await opened(recorded);
+    const opening = recorded.log.length;
+
+    const error = await provider.queryReadOnly(sql, AGENT_BUDGET).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect((error as Error).message).toStartWith(
+      "The agent read-only execution profile sends one Trino statement, a SELECT (a WITH before it is fine), and nothing else;",
+    );
+    expect(recorded.log.length).toBe(opening);
+  });
+
+  test("refuses an estimating plan and a budget out of range before anything is sent", async () => {
+    const recorded = coordinator();
+    const provider = await opened(recorded);
+    const opening = recorded.log.length;
+
+    await expect(provider.queryReadOnly("SELECT 1", AGENT_BUDGET, "estimate-plan")).rejects.toThrow(
+      "Trino composes no estimating plan for the agent",
+    );
+    await expect(provider.queryReadOnly("SELECT 1", { ...AGENT_BUDGET, maxResultRows: 0 })).rejects.toThrow(
+      "Read-only execution budget field maxResultRows must be a positive integer",
+    );
+    expect(recorded.log.length).toBe(opening);
+  });
+
+  test("refuses a statement whose answer ended the read-only transaction, and still rolls back", async () => {
+    const replies = readOnlyCoordinator();
+    replies.set("SELECT a FROM pg.public.t", { ...answer(["a"], [[1]]), endedTransaction: true });
+    const recorded = coordinator(replies);
+    const provider = await opened(recorded);
+
+    const error = await provider
+      .queryReadOnly("SELECT a FROM pg.public.t", AGENT_BUDGET)
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toBe(
+      "The server's answer ended the read-only transaction the statement ran in, so the answer is not served",
+    );
+    expect(recorded.log.at(-1)).toEndWith(": ROLLBACK");
+  });
+
+  test("refuses a result past the row or byte budget with the shared sentences, never cut", async () => {
+    const replies = readOnlyCoordinator();
+    replies.set("SELECT a FROM pg.public.t", async (options) => {
+      throw new TrinoAnswerTooLargeError("rows", 4, options.maxRows ?? 0);
+    });
+    replies.set("SELECT b FROM pg.public.t", async (options) => {
+      throw new TrinoAnswerTooLargeError("bytes", 1200, options.maxRowBytes ?? 0);
+    });
+    replies.set("SELECT c FROM pg.public.t", answer(["c"], [["x".repeat(993)]]));
+    const recorded = coordinator(replies);
+    const provider = await opened(recorded);
+
+    await expect(provider.queryReadOnly("SELECT a FROM pg.public.t", AGENT_BUDGET)).rejects.toThrow(
+      "Read-only execution exceeded the row budget: 4 rows > 3 allowed",
+    );
+    await expect(provider.queryReadOnly("SELECT b FROM pg.public.t", AGENT_BUDGET)).rejects.toThrow(
+      "Read-only execution exceeded the byte budget: 1200 bytes > 1000 allowed",
+    );
+    // 999 bytes as the row arrived, under the cap; 1003 once it is keyed by its column's name.
+    await expect(provider.queryReadOnly("SELECT c FROM pg.public.t", AGENT_BUDGET)).rejects.toThrow(
+      "Read-only execution exceeded the byte budget: 1003 bytes > 1000 allowed",
+    );
+    expect(recorded.open.size).toBe(0);
+  });
+
+  test("refuses a statement past the time budget, cancelled by the transport, and still rolls back", async () => {
+    const replies = readOnlyCoordinator();
+    replies.set("SELECT a FROM pg.public.t", async (options) => {
+      await new Promise((resolve) => options.signal?.addEventListener("abort", resolve, { once: true }));
+      throw new TrinoTransportError("timeout", "Trino did not answer before the deadline");
+    });
+    const recorded = coordinator(replies);
+    const provider = await opened(recorded);
+
+    const pending = provider.queryReadOnly("SELECT a FROM pg.public.t", { ...AGENT_BUDGET, statementTimeoutMs: 50 });
+    const error = await pending.catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toBe(
+      "Read-only execution exceeded the time budget: no answer within 50ms; the statement Studio had sent was cancelled on the cluster",
+    );
+    expect(recorded.log.at(-1)).toEndWith(": ROLLBACK");
+    expect(recorded.open.size).toBe(0);
+  });
+
+  test("answers the server's refusal of the statement as the statement's to repair, never a failed sign-in", async () => {
+    const replies = readOnlyCoordinator();
+    replies.set(
+      "SELECT a FROM pg.public.t",
+      refused("PERMISSION_DENIED", "Access Denied: Cannot select from columns [a] in table pg.public.t"),
+    );
+    const recorded = coordinator(replies);
+    const provider = await opened(recorded);
+
+    const error = await provider
+      .queryReadOnly("SELECT a FROM pg.public.t", AGENT_BUDGET)
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error).not.toBeInstanceOf(AuthenticationError);
+    expect((error as Error).message).toBe("Access Denied: Cannot select from columns [a] in table pg.public.t");
+    expect(recorded.log.at(-1)).toEndWith(": ROLLBACK");
+    expect(recorded.open.size).toBe(0);
+  });
+
+  test("a check that cannot be read is the environment's failure, not the statement's", async () => {
+    const replies = readOnlyCoordinator();
+    const recorded = coordinator(replies);
+    const provider = await opened(recorded);
+    replies.set("SHOW CATALOGS", new TrinoTransportError("unreachable", "Trino could not be reached: refused"));
+
+    const error = await provider
+      .queryReadOnly("SELECT a FROM pg.public.t", AGENT_BUDGET)
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect((error as Error).message).toBe(
+      "The agent read-only execution profile's check of the Trino access control could not be read: Trino could not be reached: refused",
+    );
+  });
+
+  test("a check past the time budget is refused on the time budget", async () => {
+    const replies = readOnlyCoordinator();
+    const recorded = coordinator(replies);
+    const provider = await opened(recorded);
+    replies.set("SHOW CATALOGS", async (options) => {
+      await new Promise((resolve) => options.signal?.addEventListener("abort", resolve, { once: true }));
+      throw new TrinoTransportError("timeout", "Trino did not answer before the deadline");
+    });
+
+    const pending = provider.queryReadOnly("SELECT a FROM pg.public.t", { ...AGENT_BUDGET, statementTimeoutMs: 50 });
+    const error = await pending.catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toStartWith("Read-only execution exceeded the time budget: no answer within 50ms");
+  });
+
+  test("a rollback the server refuses after an answered statement is reported, not hidden", async () => {
+    const recorded = coordinator();
+    const provider = await opened(recorded);
+    const rollback = recorded.transport.rollback;
+    let rollbacks = 0;
+    recorded.transport.rollback = async (id, signal) => {
+      rollbacks += 1;
+      // The proof's eight transactions roll back; the statement's does not.
+      if (rollbacks === 9)
+        throw new TrinoTransportError("engine", "Trino answered ROLLBACK without ending the transaction");
+      return rollback(id, signal);
+    };
+
+    const error = await provider
+      .queryReadOnly("SELECT a FROM pg.public.t", AGENT_BUDGET)
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toBe("Trino answered ROLLBACK without ending the transaction");
+  });
+
+  test("the factory's three arguments build the HTTP transport, which opens a real transaction for the proof", async () => {
+    // Through the replaced fetch: no scripted transport, so the proof's first request is the transaction's opening.
+    const provider = new TrinoProvider(makeConnection(), {}, AGENT);
+    const error = await provider.connect().catch((caught: unknown) => caught);
+
+    // The fetch harness answers START TRANSACTION READ ONLY without a started transaction header, which the transport
+    // refuses, so nothing of the proof is sent outside a transaction.
+    expect(error).toBeInstanceOf(ConnectionError);
+    expect(sentSql).toEqual(["SELECT 1", TRINO_CATALOG_LIST_SQL, "START TRANSACTION READ ONLY"]);
+    const posts = sentMethods.flatMap((sent, at) => (sent.method === "POST" ? [at] : []));
+    expect(sentHeaders[posts[2] as number]?.get("X-Trino-Transaction-Id")).toBe("NONE");
   });
 });

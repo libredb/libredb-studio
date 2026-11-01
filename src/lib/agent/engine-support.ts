@@ -58,7 +58,12 @@ import type { DatabaseType } from "@/lib/types";
  * still run UPDATE STATISTICS and EXECUTE. Druid's is the engine's: under the native engine its SQL endpoint refuses
  * every INSERT, REPLACE, UPDATE, DELETE, MERGE and DDL statement and every read of EXTERN, whoever asks, which the open
  * and every statement prove with an INSERT the server must refuse, and the request context naming the engine is
- * written by Studio, with only one SELECT sent, since a SET before a statement would select another engine. LibreDB's is
+ * written by Studio, with only one SELECT sent, since a SET before a statement would select another engine. Trino's is
+ * the operator's access control: it must refuse the connection's user every catalog's table functions, since a
+ * pass-through function runs its text in the catalog's source under the catalog's own credential, outside Trino's
+ * read-only transaction, and catalog management must be refused, which the open and every statement prove with calls
+ * that run nothing and the server must refuse by permission (Trino's read-only access control, or file rules granting
+ * no function, pass), with every statement in a read-only transaction rolled back and only one SELECT sent. LibreDB's is
  * the handle's: an embedded file with no principal, which each statement opens on a handle of its own through Studio's
  * read-only file adapter, with no writer lock, so it opens beside the editor's writer, and with no call that can write
  * the file, the engine's one write path refusing before any write; Studio's reader admits get, prefix and range only.
@@ -141,6 +146,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "mtconnect",
   "mqtt",
   "sparkplug",
+  "trino",
 ];
 
 /**

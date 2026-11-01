@@ -51,6 +51,7 @@ import {
   ORACLE_CLIENT_OVERLAY,
   POSTGRES_CLIENT_OVERLAY,
   SQLITE_CLIENT_OVERLAY,
+  TRINO_CLIENT_OVERLAY,
 } from "../sql/engines/client";
 
 const CLIENT_OVERLAYS: AgentEngineClientOverlays = Object.freeze({
@@ -69,6 +70,7 @@ const CLIENT_OVERLAYS: AgentEngineClientOverlays = Object.freeze({
   cassandra: Object.freeze({ family: "sql", overlay: dialectOnly(CASSANDRA_CLIENT_OVERLAY) }),
   couchbase: Object.freeze({ family: "sql", overlay: dialectOnly(COUCHBASE_CLIENT_OVERLAY) }),
   druid: Object.freeze({ family: "sql", overlay: dialectOnly(DRUID_CLIENT_OVERLAY) }),
+  trino: Object.freeze({ family: "sql", overlay: dialectOnly(TRINO_CLIENT_OVERLAY) }),
   mongodb: Object.freeze({ family: "mongo", overlay: dialectOnly(MONGODB_CLIENT_OVERLAY) }),
   kubernetes: Object.freeze({ family: "kubectl", overlay: dialectOnly(KUBERNETES_CLIENT_OVERLAY) }),
   libredb: Object.freeze({ family: "libredbkv", overlay: dialectOnly(LIBREDB_CLIENT_OVERLAY) }),

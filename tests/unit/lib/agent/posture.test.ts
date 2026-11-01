@@ -76,8 +76,8 @@ describe("agentPosture in plan mode", () => {
   test("an engine agent mode cannot execute on gets the identical plan posture", () => {
     const onMongo = agentPosture({
       mode: "planning",
-      engine: "trino",
-      engineLabel: getDBConfig("trino").label,
+      engine: "spark",
+      engineLabel: getDBConfig("spark").label,
       handover: false,
     });
     const onPostgres = agentPosture({
@@ -252,17 +252,17 @@ describe("agentPosture in agent mode, where it cannot execute", () => {
   test("an unsupported engine is blocked, and the copy names what still runs", () => {
     const posture = agentPosture({
       mode: "agent",
-      engine: "trino",
-      engineLabel: getDBConfig("trino").label,
+      engine: "spark",
+      engineLabel: getDBConfig("spark").label,
       handover: false,
     });
 
     expect(posture.tone).toBe("blocked");
-    expect(posture.headline).toBe("Cannot execute on Trino");
+    expect(posture.headline).toBe("Cannot execute on Apache Spark");
     expect(posture.qualifier).toBe("plan mode drafts here, and the operations workflow still runs");
-    expect(posture.title).toBe("Agent mode has no read-only statement path on Trino");
+    expect(posture.title).toBe("Agent mode has no read-only statement path on Apache Spark");
     expect(posture.body).toBe(
-      `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${EXECUTION_ENGINE_NAMES}. On Trino a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.`,
+      `Agent mode executes only where the provider implements a read-only statement path under a boundary it declares: ${EXECUTION_ENGINE_NAMES}. On Apache Spark a run whose workflow sends a statement is refused when it is started, before a run is opened. The operations workflow still runs here, because it sends no statement at all: it calls the curated reporting methods every provider implements. Plan mode drafts on every engine.`,
     );
   });
 
@@ -341,7 +341,7 @@ describe("the posture on Kubernetes", () => {
   });
 
   test("the engine-less arms no longer call every listed engine database-native", () => {
-    const unsupported = agentPosture({ mode: "agent", engine: "trino", engineLabel: "Trino", handover: false });
+    const unsupported = agentPosture({ mode: "agent", engine: "spark", engineLabel: "Apache Spark", handover: false });
     expect(unsupported.body).not.toContain("database-native");
     expect(unsupported.body).toContain("Kubernetes");
     const unresolved = agentPosture({ mode: "agent", engine: null, engineLabel: "", handover: false });
@@ -551,8 +551,8 @@ describe("the engine names follow the enforcing list", () => {
       const { agentPosture: withThree } = await import("@/lib/agent/posture");
       const blocked = withThree({
         mode: "agent",
-        engine: "trino",
-        engineLabel: getDBConfig("trino").label,
+        engine: "spark",
+        engineLabel: getDBConfig("spark").label,
         handover: false,
       });
 
@@ -589,9 +589,9 @@ describe("the engine names follow the enforcing list", () => {
   });
 
   test("the list is read per call, so nothing in the copy is frozen at module load", () => {
-    expect(agentPosture({ mode: "agent", engine: "trino", engineLabel: "Trino", handover: false }).body).toContain(
-      `boundary it declares: ${EXECUTION_ENGINE_NAMES}.`,
-    );
+    expect(
+      agentPosture({ mode: "agent", engine: "spark", engineLabel: "Apache Spark", handover: false }).body,
+    ).toContain(`boundary it declares: ${EXECUTION_ENGINE_NAMES}.`);
   });
 });
 
@@ -621,11 +621,11 @@ describe("a connection whose last run was refused for the connection itself", ()
     expect(
       agentPosture({
         mode: "agent",
-        engine: "trino",
-        engineLabel: "Trino",
+        engine: "spark",
+        engineLabel: "Apache Spark",
         handover: false,
         refusedHere: refusal,
       }).headline,
-    ).toContain("Trino");
+    ).toContain("Apache Spark");
   });
 });
