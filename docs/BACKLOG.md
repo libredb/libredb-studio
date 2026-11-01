@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S10 · 7
-- [Drivers and connections](#drivers-and-connections) — D1-D420, U17 · 309
+- [Drivers and connections](#drivers-and-connections) — D1-D421, U17 · 310
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U194 · 179
@@ -4229,6 +4229,16 @@ So any `QueryError` or `LibSQLTransportError` that is not a 403 passes, a connec
 Found 2026-11-01 while verifying MCP's `run_read_query` on libSQL.
 
 **Done when:** each `refusedForEvery` entry of the agent check carries the server's own wording for its statement, the syntax error of `CREATE FUNCTION ... LANGUAGE wasm` included, both the read-only and the writable leg match on it, and a run against the three servers of section 3.6 passes.
+
+
+### D421. The Sparkplug read measures its durations with the wall clock
+
+`readOnce` in `src/lib/db/providers/industrial/sparkplug/session.ts` takes the window's start, its subscription time and its elapsed time from `Date.now()`, while the window itself is a `setTimeout` on the monotonic clock.
+A wall clock that is stepped or slewed during the window, as on a Windows runner, makes `window_ms` and `listened_ms` report a span other than the one the read listened for.
+The MQTT read had the same pattern and now takes every duration from `performance.now()`; Sparkplug's `receivedAt` and `startedAt` also feed `lastHeardAt` in `state.ts`, a wall-clock timestamp, so its change touches more than the durations.
+Found 2026-11-01 while fixing the MQTT read's window durations.
+
+**Done when:** every Sparkplug duration comes from the monotonic clock while `lastHeardAt` stays a wall-clock time, and a test that steps the wall clock back mid-read shows `window_ms` and `listened_ms` unchanged.
 
 ## Value interpolation
 
