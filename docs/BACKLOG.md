@@ -8729,6 +8729,8 @@ No read-only boundary exists to build one on: Spark has no engine-side read-only
 
 Found 2026-10-27 while designing read-only agent and MCP execution for every provider.
 
+Re-measured 2026-11-01 on Spark 4.3.0, the first release with `spark.sql.restrictedMode.enabled` (SPARK-59319): with it set, `reflect`, `java_method` and `TRANSFORM ... USING` are refused, and a session can read that the setting is on and cannot change it, but `ADD JAR`, `CREATE TEMPORARY FUNCTION ... USING JAR` (whose class ran its own code on the driver when called), writes and `SET spark.sql.catalog.*` all still run, and no setting refuses them, so the trigger below is not met.
+
 **Done when:** an upstream Spark release offers an authorization feature or a read-only session that Studio can prove at open, a boundary test against it with a writable positive control shows `ADD JAR`, a code-loading function and a write refused, and Spark then joins agent execution through `queryReadOnly` with its `MCP_STATEMENT_READ` row false until the owner opens MCP read for it; cited in `docs/AGENT.md`.
 
 ### B130. Trino has no agent execution and no MCP `run_read_query`
