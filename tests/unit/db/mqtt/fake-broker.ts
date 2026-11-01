@@ -29,6 +29,8 @@ export interface FakeBrokerScript {
   readonly transportError?: string;
   /** Accept the connection and never answer the CONNECT. */
   readonly silent?: boolean;
+  /** Never open: the transport's ready event never fires, as a dropped SYN looks. */
+  readonly neverReady?: boolean;
 }
 
 export interface FakeBroker {
@@ -114,7 +116,7 @@ export function fakeBroker(script: FakeBrokerScript = {}): FakeBroker {
         handlers.set(event, [...(handlers.get(event) ?? []), handler]);
       },
       once(event: string, handler: () => void): void {
-        if (event !== "ready") return;
+        if (event !== "ready" || script.neverReady === true) return;
         later(() => {
           if (script.transportError !== undefined) {
             emit("error", new Error(script.transportError));

@@ -484,6 +484,24 @@ describe("failures by kind, never in the broker's or the transport's words", () 
     expect(error.message).not.toContain("127.0.0.1");
   });
 
+  test("the dial is given what the window leaves of the time budget, so a broker that never answers is unreachable in time", async () => {
+    let calls = 0;
+    const provider = new MqttProvider(connection(), {}, PROFILE, (options) => {
+      calls += 1;
+      return fakeBroker(calls === 1 ? { end: "disconnect" } : { neverReady: true }).factory(options);
+    });
+    await provider.connect();
+    const started = Date.now();
+    const error = (await provider
+      .queryReadOnly('{"read": "window"}', { ...BUDGET, statementTimeoutMs: MQTT_AGENT_MIN_STATEMENT_MS })
+      .catch((e: unknown) => e)) as Error;
+    // The least budget leaves the dial 750 ms: the dial's own refusal, long before the read's deadline.
+    expect(Date.now() - started).toBeLessThan(MQTT_AGENT_MIN_STATEMENT_MS - 1_000);
+    expect(error.message).toBe(
+      "The broker could not be reached for the read. The transport's and the broker's own words are not passed on to agent mode, since they can name an address.",
+    );
+  });
+
   test("a session that outlives the read's time budget is answered as the time budget", async () => {
     const never = () => new Promise<MqttReadOutcome>(() => undefined);
     const options = { host: "127.0.0.1", port: 1883, tls: false };
