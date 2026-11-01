@@ -75,7 +75,11 @@
  */
 
 import { SQLBaseProvider } from "../sql-base";
-import { agentIndexReference, assertReferenceVisible } from "./elasticsearch-agent-index-fence";
+import {
+  agentIndexReference as elasticsearchIndexReference,
+  assertReferenceVisible as assertElasticsearchReferenceVisible,
+} from "./elasticsearch-agent-index-fence";
+import { checkOpenSearchAgentStatement } from "./opensearch-agent-index-fence";
 import {
   assertReadOnlyBudget,
   byteBudgetSentence,
@@ -144,6 +148,7 @@ import {
   type SearchErrorCategory,
   type SearchIndexInfo,
   type SearchLoginReach,
+  type SearchLoginWrites,
   type SearchObjectDefinition,
   type SearchObjectInfo,
   type SearchQueryResult,
@@ -360,19 +365,26 @@ interface SearchProduct {
   readonly checkedSqlReleases: readonly string[];
 
   /**
-   * Whether an agent statement is read before it is sent, and refused unless its text admits one index expression a
-   * reader names with certainty, with no exclusion and no name that starts with a dot, which the server then resolves
-   * for the login, in its own index resolution and in the one the SQL endpoint makes, to no hidden or system index,
-   * alias or data stream (`elasticsearch-agent-index-fence.ts`). A login that may read those reads them through SQL, so
-   * this is the boundary that keeps them from an agent statement, and with security off, where no login exists to
-   * check, the only one.
+   * The check an agent statement passes before it is sent: a reader admits only a statement whose one index
+   * expression it names with certainty, with no exclusion and no name that starts with a dot, and the server then
+   * resolves that expression for the login, in its own index resolution and in the one the SQL endpoint makes, and the
+   * statement is refused where either names a target the product keeps from the agent. A login that may read those
+   * reads them through SQL, so this is the boundary that keeps them from an agent statement, and with security off,
+   * where no login exists to check, the only one. Each product's reader and marks are its own, since the grammars and
+   * the server's marks differ.
    *
-   * Elasticsearch: true. Measured on 9.1.4 with security off: a hidden index answers its rows to a statement that
-   * names it, with or without a leading dot, and so does a hidden data stream, and an alias that is not hidden over a
-   * hidden index answers that index's rows to a statement naming the alias or `"*"`. OpenSearch: false, not measured on
-   * its grammar, whose identifier quoting differs; its agent path names any index the login may read (BACKLOG B167).
+   * Elasticsearch (`elasticsearch-agent-index-fence.ts`): measured on 9.1.4 with security off, a hidden index answers
+   * its rows to a statement that names it, with or without a leading dot, and so does a hidden data stream, and an
+   * alias that is not hidden over a hidden index answers that index's rows to a statement naming the alias or `"*"`;
+   * the check refuses an index, alias or data stream the server marks hidden or system.
+   *
+   * OpenSearch (`opensearch-agent-index-fence.ts`): measured on 3.8.0, with security off and as `admin` with it on, a
+   * hidden index, an alias over one, a backing index named directly and an index whose name starts with a dot each
+   * answer to a statement that names them, and the security index answers its columns; OpenSearch marks no index a
+   * system index and names its system indices with a leading dot, so the check refuses an index the server marks
+   * hidden and an index or data stream whose name starts with a dot.
    */
-  readonly fencesHiddenIndices: boolean;
+  readonly agentStatementCheck: (sql: string, transport: SearchTransport, signal: AbortSignal) => Promise<void>;
 
   /**
    * Whether the open of a connection that sends agent statements asks the server what its login may do, after the
@@ -388,10 +400,34 @@ interface SearchProduct {
    * Elasticsearch: true, through `_has_privileges` and `_privileges`, which every user may call about itself (measured
    * on 9.1.4: the superuser answers cluster `all`, `read` on every index with the restricted ones included, and a
    * listed grant with `allow_restricted_indices` on `*`; `libredb_agent_read` and `libredb_seed_read` answer none of
-   * them). OpenSearch: false; the check is Elasticsearch's endpoint, never measured on OpenSearch's security plugin, and
-   * its open is unchanged.
+   * them). OpenSearch: false; the check is Elasticsearch's endpoint, never measured on OpenSearch's security plugin;
+   * its open probes the login instead ({@link SearchProduct.checksLoginWrites}).
    */
   readonly checksLoginReach: boolean;
+
+  /**
+   * Whether the open of a connection that sends agent statements probes, after the version read and before any agent
+   * statement is sent, what its login may do, and refuses a login the security plugin lets administer it, or whose
+   * document delete by query or index close on a fresh index name passes the plugin's permission check. It narrows the
+   * login and stands beside the statement check, which is the boundary: a role granting writes on a pattern the fresh
+   * name does not match passes the probes, and the SQL endpoint refuses its writes anyway. A server with its security
+   * plugin off has no login and is admitted with the statement check alone.
+   *
+   * Elasticsearch: false; its login check reads its privilege endpoints. OpenSearch: true (measured on 3.8.0: `admin`
+   * fails all three, a role granting `write` on `*` the delete by query, one granting `manage` on `*` the close, and
+   * `libredb_agent_read` and `libredb_seed_read` none).
+   */
+  readonly checksLoginWrites: boolean;
+}
+
+/** The statement check `queryReadOnly` runs on Elasticsearch: its reader, then the server's answer about the index. */
+async function checkElasticsearchAgentStatement(
+  sql: string,
+  transport: SearchTransport,
+  signal: AbortSignal,
+): Promise<void> {
+  const reference = elasticsearchIndexReference(sql);
+  if (reference !== null) await assertElasticsearchReferenceVisible(sql, reference, transport, signal);
 }
 
 export const ELASTICSEARCH_PRODUCT: SearchProduct = Object.freeze({
@@ -405,8 +441,9 @@ export const ELASTICSEARCH_PRODUCT: SearchProduct = Object.freeze({
   sqlDeleteSwitch: false,
   cutsAtResultLimit: false,
   checkedSqlReleases: Object.freeze(["9.1"]),
-  fencesHiddenIndices: true,
+  agentStatementCheck: checkElasticsearchAgentStatement,
   checksLoginReach: true,
+  checksLoginWrites: false,
 });
 
 export const OPENSEARCH_PRODUCT: SearchProduct = Object.freeze({
@@ -420,8 +457,9 @@ export const OPENSEARCH_PRODUCT: SearchProduct = Object.freeze({
   sqlDeleteSwitch: true,
   cutsAtResultLimit: true,
   checkedSqlReleases: Object.freeze(["3.8"]),
-  fencesHiddenIndices: false,
+  agentStatementCheck: checkOpenSearchAgentStatement,
   checksLoginReach: false,
+  checksLoginWrites: true,
 });
 
 // ============================================================================
@@ -1029,6 +1067,7 @@ abstract class SearchProvider extends SQLBaseProvider {
       if (this.product.cutsAtResultLimit) await this.readResultLimit(transport);
       const version = await this.assertCheckedServer(transport);
       if (this.product.checksLoginReach) await this.assertNarrowLogin(transport, version);
+      if (this.product.checksLoginWrites) await this.assertLoginWritesNothing(transport);
     }
 
     this.transport = transport;
@@ -1194,6 +1233,35 @@ abstract class SearchProvider extends SQLBaseProvider {
   }
 
   /**
+   * Refuses a login the security plugin lets administer it, or whose document delete by query or index close on a
+   * fresh index name passes the plugin's permission check, read after the version read and before any agent statement
+   * is sent ({@link SearchProduct.checksLoginWrites}). A server with its security plugin off has no login to check and
+   * is admitted with the statement check alone; a probe that fails or cannot be read refuses the profile, since what
+   * the login may do is then unproven.
+   */
+  private async assertLoginWritesNothing(transport: SearchHttpTransport): Promise<void> {
+    let writes: SearchLoginWrites | null;
+    try {
+      writes = await transport.loginWrites(this.deadline());
+    } catch (error) {
+      throw new ExecutionProfileError(
+        `The agent read-only profile needs ${this.product.label}'s own answer to what this login may do, and the check failed, so the connection is refused: ${error instanceof Error ? error.message : String(error)}`,
+        "PROFILE_PRIVILEGES_TOO_BROAD",
+      );
+    }
+    if (writes === null) return;
+    const findings: string[] = [];
+    if (writes.administersSecurity) findings.push("may administer the security plugin");
+    if (writes.deletesDocuments) findings.push("may delete documents in an index of any name");
+    if (writes.managesIndices) findings.push("may close an index of any name");
+    if (findings.length === 0) return;
+    throw new ExecutionProfileError(
+      `The agent read-only profile needs an ${this.product.label} login that may not write, manage indices or administer the security plugin; the user ${writes.user} ${findings.join(", and ")}, so the connection is refused. Give the agent a user whose role holds the cluster actions cluster:monitor/main and cluster:monitor/state and only reads on the indices it reads, such as the libredb_agent_read role`,
+      "PROFILE_PRIVILEGES_TOO_BROAD",
+    );
+  }
+
+  /**
    * Nothing to close.
    *
    * Every request is one `fetch` with no pool, no session and no cursor behind it -
@@ -1303,11 +1371,11 @@ abstract class SearchProvider extends SQLBaseProvider {
    * deadline is the budget's and the client's alone, refused in the shared time-budget sentence; the cluster keeps
    * working on a statement whose wait ended.
    *
-   * Refused outside the profile: a provider opened for the editor has no business running agent semantics. Where the
-   * product fences hidden indices, a statement the reader cannot read with certainty is refused next, and the one index
-   * expression it reads is resolved by the server for the login, in its own resolution and the SQL endpoint's, and
-   * refused when either names a hidden or system target, when they disagree, or when either cannot be read
-   * ({@link SearchProduct.fencesHiddenIndices}). Each refusal raised before the request, the
+   * Refused outside the profile: a provider opened for the editor has no business running agent semantics. A statement
+   * the product's reader cannot read with certainty is refused next, and the one index expression it reads is resolved
+   * by the server for the login, in its own resolution and the SQL endpoint's, and refused when either names a target
+   * the product keeps from the agent, when they disagree, or when either cannot be read
+   * ({@link SearchProduct.agentStatementCheck}). Each refusal raised before the request, the
    * profile's, the estimate-plan mode's and the statement check's, is a `RefusedBeforeSendError`, so the agent and MCP
    * say nothing reached the SQL endpoint.
    */
@@ -1332,10 +1400,7 @@ abstract class SearchProvider extends SQLBaseProvider {
         sql,
       );
     }
-    if (this.product.fencesHiddenIndices) {
-      const reference = agentIndexReference(sql);
-      if (reference !== null) await assertReferenceVisible(sql, reference, transport, this.deadline());
-    }
+    await this.product.agentStatementCheck(sql, transport, this.deadline());
 
     // Where the engine cuts an answer at its result limit, an answer that reaches the limit cannot be told from a cut
     // one, so the row bound stops one row short of it and the refusal names the limit. The limit is read before every

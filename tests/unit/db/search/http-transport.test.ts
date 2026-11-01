@@ -1428,15 +1428,137 @@ describe("SearchHttpTransport SQL table resolution", () => {
     expect((caught as Error).message).toBe("Elasticsearch refused the credentials (HTTP 403)");
   });
 
-  test("OpenSearch declares no SQL table resolution, and refuses before any request", async () => {
+  test("OpenSearch asks the same field capabilities request, which names the indices its SQL plugin reads", async () => {
+    handler = () => json({ indices: ["probe_hidden", "probe_orders"], fields: {} });
+
+    const indices = await new SearchHttpTransport("opensearch", makeConnection("opensearch")).sqlTableIndices(
+      "probe_*,probe_over_hidden",
+    );
+
+    expect(calls).toHaveLength(1);
+    const url = new URL(calls[0]?.url ?? "");
+    expect(url.pathname).toBe("/probe_*%2Cprobe_over_hidden/_field_caps");
+    expect(url.search).toBe("?fields=_index&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open");
+    expect(indices).toEqual(["probe_hidden", "probe_orders"]);
+  });
+});
+
+describe("SearchHttpTransport (opensearch) login probes", () => {
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  const transport = () => new SearchHttpTransport("opensearch", makeConnection("opensearch"));
+  const failure = (run: () => Promise<unknown>) => run().catch((error: unknown) => error);
+  const missing = (name: string) =>
+    json(
+      {
+        error: { root_cause: [], type: "index_not_found_exception", reason: `no such index [${name}]` },
+        status: 404,
+      },
+      404,
+    );
+  const forbidden = (action: string) =>
+    json(
+      {
+        error: {
+          root_cause: [],
+          type: "security_exception",
+          reason: `no permissions for [${action}] and User [name=libredb_agent, backend_roles=[], requestedTenant=null]`,
+        },
+        status: 403,
+      },
+      403,
+    );
+  const probeName = (url: string) => new URL(url).pathname.split("/")[1] ?? "";
+  /** Answers the permissions read with `info` and each probe with `passes` for its suffix: 404 when it passes, else 403. */
+  const answering = (info: Response, passes: { byQuery: boolean; close: boolean }) => (url: string) => {
+    const { pathname } = new URL(url);
+    if (pathname === "/_plugins/_security/api/permissionsinfo") return info;
+    if (pathname.endsWith("/_delete_by_query")) {
+      return passes.byQuery ? missing(probeName(url)) : forbidden("indices:data/write/delete/byquery");
+    }
+    return passes.close ? missing(probeName(url)) : forbidden("indices:admin/close");
+  };
+  const info = (hasApiAccess: unknown, user: unknown = "libredb_agent") =>
+    json({ user: "User [name=x]", user_name: user, has_api_access: hasApiAccess, disabled_endpoints: {} });
+
+  test("reads the security plugin's answer, then probes a document delete by query and an index close on one fresh name", async () => {
+    handler = answering(info(false), { byQuery: false, close: false });
+
+    const writes = await transport().loginWrites();
+
+    expect(writes).toEqual({
+      user: "libredb_agent",
+      administersSecurity: false,
+      deletesDocuments: false,
+      managesIndices: false,
+    });
+    expect(
+      calls.map((call) => [call.init?.method, new URL(call.url).pathname.replace(/[0-9a-f]{32}/, "<hex>")]),
+    ).toEqual([
+      ["GET", "/_plugins/_security/api/permissionsinfo"],
+      ["POST", "/libredb_write_probe_<hex>/_delete_by_query"],
+      ["POST", "/libredb_write_probe_<hex>/_close"],
+    ]);
+    expect(probeName(calls[1]?.url ?? "")).toBe(probeName(calls[2]?.url ?? ""));
+    expect(calls[1]?.init?.body).toBe('{"query":{"match_none":{}}}');
+    expect(calls[2]?.init?.body).toBe("{}");
+  });
+
+  test("names each probe that reached the missing index, and the plugin's own administration answer", async () => {
+    handler = answering(info(true, "admin"), { byQuery: true, close: true });
+
+    expect(await transport().loginWrites()).toEqual({
+      user: "admin",
+      administersSecurity: true,
+      deletesDocuments: true,
+      managesIndices: true,
+    });
+  });
+
+  test("a node with the security plugin off answers no login, after the one question it had no endpoint for", async () => {
+    handler = () =>
+      json({ error: "no handler found for uri [/_plugins/_security/api/permissionsinfo] and method [GET]" }, 400);
+
+    expect(await transport().loginWrites()).toBeNull();
+    expect(calls).toHaveLength(1);
+  });
+
+  test.each([
+    ["no user name", info(false, 7)],
+    ["no administration answer", info("no")],
+    ["a body that is not an object", json([])],
+  ])("fails a permissions answer with %s", async (_name, reply) => {
+    handler = answering(reply, { byQuery: false, close: false });
+
+    const caught = await failure(() => transport().loginWrites());
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as Error).message).toBe("OpenSearch answered a permissions answer the client could not read");
+  });
+
+  test.each([
+    ["a 2xx, which a probe on a name no index holds never answers", json({ acknowledged: true })],
+    ["a 401", json({ error: "unauthorized" }, 401)],
+    [
+      "a 404 that is not a missing index",
+      json({ error: { type: "resource_not_found_exception", reason: "x" }, status: 404 }, 404),
+    ],
+  ])("fails a probe answered with %s", async (_name, reply) => {
+    handler = (url) => (new URL(url).pathname === "/_plugins/_security/api/permissionsinfo" ? info(false) : reply);
+
+    const caught = await failure(() => transport().loginWrites());
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect(calls).toHaveLength(2);
+  });
+
+  test("Elasticsearch declares no probes, and refuses before any request", async () => {
     const caught = await failure(() =>
-      new SearchHttpTransport("opensearch", makeConnection("opensearch")).sqlTableIndices("x"),
+      new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch")).loginWrites(),
     );
 
     expect(caught).toBeInstanceOf(SearchTransportError);
-    expect((caught as Error).message).toBe(
-      "OpenSearch declares no measured resolution of a SQL table to check an agent statement against",
-    );
+    expect((caught as Error).message).toBe("Elasticsearch declares no probes to check a login with");
     expect(calls).toHaveLength(0);
   });
 });

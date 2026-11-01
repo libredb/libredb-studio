@@ -56,6 +56,15 @@ import type { DatabaseProvider, ProviderExecutionContext, ReadOnlyStatementBudge
 import type { DatabaseConnection, DatabaseType } from "@/lib/types";
 import { ElasticsearchProvider, OpenSearchProvider } from "@/lib/db/providers/sql/search";
 import { SearchHttpTransport } from "@/lib/db/providers/sql/search/http-transport";
+import {
+  CHARACTER_REFUSAL,
+  COMMENT_REFUSAL,
+  DOT_INDEX_REFUSAL,
+  EXCLUSION_REFUSAL,
+  hiddenTargetRefusal,
+  STATEMENT_REFUSAL,
+  unresolvedRefusal,
+} from "@/lib/db/providers/sql/search/opensearch-agent-index-fence";
 import { type SearchErrorCategory, SearchTransportError } from "@/lib/db/providers/sql/search/transport";
 import type { ProviderCapabilities } from "@/lib/db/types";
 import {
@@ -163,7 +172,7 @@ const CONTAINERS_BODY = JSON.stringify({
 // ----------------------------------------------------------------------------
 // Paging, measured by walking a cursor to its end
 // ----------------------------------------------------------------------------
-// `{"query":"SELECT id FROM top_queries-2026.08.18-74305","fetch_size":30}` over
+// `{"query":"SELECT id FROM `top_queries-2026.08.18-74305`","fetch_size":30}` over
 // 67 documents answered THREE pages: 30 rows + cursor + total, then 30 rows +
 // cursor and NOTHING else, then 7 rows and no cursor. So a later page carries no
 // `schema`, no `total` and no `size` - exactly the shape Elasticsearch's later
@@ -650,6 +659,16 @@ function defaultReply(path: string, body: Record<string, unknown> | null): Reply
   }
 
   if (path === "/") return ok(ROOT_BODY);
+  // The agent open's login check: the default node runs with its security plugin off, which registers no such endpoint.
+  if (path === "/_plugins/_security/api/permissionsinfo") {
+    return {
+      status: 400,
+      body: '{"error":"no handler found for uri [/_plugins/_security/api/permissionsinfo] and method [GET]"}',
+    };
+  }
+  // The agent statement check's two questions about a statement's index expression.
+  if (path.startsWith("/_resolve/index/")) return resolveReply(path);
+  if (path.includes("/_field_caps?")) return fieldCapsReply(path);
   // 3.8.0 does not recognize the DELETE setting, so the filtered read answers nothing, and its result limit is the
   // default (both measured).
   if (path.startsWith("/_cluster/settings") && path.endsWith("plugins.query.size_limit")) {
@@ -696,6 +715,52 @@ function defaultReply(path: string, body: Record<string, unknown> | null): Reply
   if (path.endsWith("/_mapping")) return { status: 404, body: MAPPING_NOT_FOUND_BODY };
 
   throw new Error(`the fake cluster was asked for an unrouted path: ${path}`);
+}
+
+/**
+ * What a stock 3.8.0 node seeded per docs/providers/opensearch.md section 11.4 resolves `*` to with the SQL endpoint's
+ * expansion (measured 2026-11-02): visible indices whose names start with a dot among them, and its field
+ * capabilities read the same concrete indices.
+ */
+const STOCK_RESOLVE_BODY = JSON.stringify({
+  indices: [
+    { name: ".plugins-ml-config", attributes: ["open"] },
+    { name: "probe_orders", aliases: ["probe_orders_alias"], attributes: ["open"] },
+    { name: "top_queries-2026.08.18-74305", attributes: ["open"] },
+  ],
+  aliases: [{ name: "probe_orders_alias", indices: ["probe_orders"] }],
+  data_streams: [],
+});
+
+/** The index expression a resolution or a field capabilities path names, decoded. */
+function expressionOf(path: string, prefix: string, suffix: string): string {
+  const raw = path.slice(prefix.length, path.indexOf(suffix, prefix.length));
+  return decodeURIComponent(raw);
+}
+
+/**
+ * The server's own resolution: `*` as a stock node answers it, a name with `no_such` in it as nothing (measured: 200
+ * with three empty lists), the alias over `probe_orders` as that alias, and any other name as one visible index.
+ */
+function resolveReply(path: string): Reply {
+  const expression = expressionOf(path, "/_resolve/index/", "?");
+  if (expression === "*") return ok(STOCK_RESOLVE_BODY);
+  if (expression.includes("no_such")) return ok('{"indices":[],"aliases":[],"data_streams":[]}');
+  if (expression === "probe_orders_alias") {
+    return ok('{"indices":[],"aliases":[{"name":"probe_orders_alias","indices":["probe_orders"]}],"data_streams":[]}');
+  }
+  return ok(JSON.stringify({ indices: [{ name: expression, attributes: ["open"] }], aliases: [], data_streams: [] }));
+}
+
+/** The indices the SQL endpoint reads for an expression, consistent with {@link resolveReply}. */
+function fieldCapsReply(path: string): Reply {
+  const expression = expressionOf(path, "/", "/_field_caps");
+  if (expression === "*") {
+    return ok('{"indices":[".plugins-ml-config","probe_orders","top_queries-2026.08.18-74305"],"fields":{}}');
+  }
+  if (expression.includes("no_such")) return ok('{"indices":[],"fields":{}}');
+  const read = expression === "probe_orders_alias" ? "probe_orders" : expression;
+  return ok(JSON.stringify({ indices: [read], fields: {} }));
 }
 
 /** Route a statement onto the measured answer for it. */
@@ -850,7 +915,7 @@ describe("OpenSearch envelope", () => {
     // then 7 rows and no cursor. Later pages have no column declaration on them, so
     // the names have to come from page one - and here they are rebuilt against the
     // OTHER rows key, which is the part that is specific to this product.
-    const result = await transport().query("SELECT id FROM top_queries-2026.08.18-74305");
+    const result = await transport().query("SELECT id FROM `top_queries-2026.08.18-74305`");
 
     expect(result.fieldNames).toEqual(["id"]);
     expect(result.rows).toHaveLength(5);
@@ -1249,7 +1314,7 @@ describe("OpenSearchProvider query", () => {
     // statements - which is why `toQueryResult` drops it knowingly.
     const provider = await connectProvider();
 
-    const result = await provider.query("SELECT id FROM top_queries-2026.08.18-74305");
+    const result = await provider.query("SELECT id FROM `top_queries-2026.08.18-74305`");
 
     expect(result.rowCount).toBe(5);
     expect(result.fields).toEqual(["id"]);
@@ -2537,6 +2602,7 @@ describe("OpenSearchProvider agent profile open", () => {
       "/_plugins/_sql DELETE FROM libredb_delete_probe_<nonce>",
       "/_cluster/settings?include_defaults=true&filter_path=*.plugins.query.size_limit",
       "/",
+      "/_plugins/_security/api/permissionsinfo",
     ]);
   });
 
@@ -2676,6 +2742,92 @@ describe("OpenSearchProvider agent profile open", () => {
 // queryReadOnly: the agent read-only profile's statement path
 // ============================================================================
 
+/**
+ * The open's login probes, measured on 3.8.0 with security on: the security plugin's own answer to whether the login
+ * administers it, and a document delete by query and an index close on one fresh name, each refused with 403 by the
+ * plugin's permission check for a login that may not, and answered 404 (no such index) for one that may.
+ */
+describe("OpenSearchProvider agent profile open: the login probes", () => {
+  const securityOn = (user: string, apiAccess: boolean, passes: { byQuery: boolean; close: boolean }) => {
+    const missing = (path: string) => ({
+      status: 404,
+      body: JSON.stringify({
+        error: { type: "index_not_found_exception", reason: `no such index [${path.split("/")[1]}]` },
+        status: 404,
+      }),
+    });
+    const forbidden = {
+      status: 403,
+      body: '{"error":{"type":"security_exception","reason":"no permissions"},"status":403}',
+    };
+    replyFor = (path, body) => {
+      if (path === "/_plugins/_security/api/permissionsinfo") {
+        return ok(JSON.stringify({ user_name: user, has_api_access: apiAccess, disabled_endpoints: {} }));
+      }
+      if (path.endsWith("/_delete_by_query")) return passes.byQuery ? missing(path) : forbidden;
+      if (path.endsWith("/_close")) return passes.close ? missing(path) : forbidden;
+      return defaultReply(path, body);
+    };
+  };
+
+  test("admits a login the plugin refuses both probes and no administration, after the version read", async () => {
+    securityOn("libredb_agent", false, { byQuery: false, close: false });
+
+    expect(await openAgent()).toBeInstanceOf(OpenSearchProvider);
+    expect(
+      sentRequests()
+        .slice(-4)
+        .map((request) => request.replace(/[0-9a-f]{32}/, "<hex>")),
+    ).toEqual([
+      "/",
+      "/_plugins/_security/api/permissionsinfo",
+      "/libredb_write_probe_<hex>/_delete_by_query",
+      "/libredb_write_probe_<hex>/_close",
+    ]);
+  });
+
+  test.each([
+    [
+      "admin",
+      true,
+      { byQuery: true, close: true },
+      "may administer the security plugin, and may delete documents in an index of any name, and may close an index of any name",
+    ],
+    ["libredb_wr", false, { byQuery: true, close: false }, "may delete documents in an index of any name"],
+    ["libredb_mg", false, { byQuery: false, close: true }, "may close an index of any name"],
+    ["libredb_sec", true, { byQuery: false, close: false }, "may administer the security plugin"],
+  ] as const)("refuses %s, naming what it may do", async (user, apiAccess, passes, findings) => {
+    securityOn(user, apiAccess, passes);
+
+    const error = await openAgent();
+
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect((error as Error).message).toBe(
+      `The agent read-only profile needs an OpenSearch login that may not write, manage indices or administer the security plugin; the user ${user} ${findings}, so the connection is refused. Give the agent a user whose role holds the cluster actions cluster:monitor/main and cluster:monitor/state and only reads on the indices it reads, such as the libredb_agent_read role`,
+    );
+  });
+
+  test("refuses the profile when the check fails, in the server's words", async () => {
+    overridePath("/_plugins/_security/api/permissionsinfo", ok("[]"));
+
+    const error = await openAgent();
+
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect((error as Error).message).toBe(
+      "The agent read-only profile needs OpenSearch's own answer to what this login may do, and the check failed, so the connection is refused: OpenSearch answered a permissions answer the client could not read",
+    );
+  });
+
+  test("the operations profile probes nothing", async () => {
+    securityOn("admin", true, { byQuery: true, close: true });
+
+    expect(await openAgent({ readOnly: true, sendsStatements: false })).toBeInstanceOf(OpenSearchProvider);
+    expect(sentPaths).toEqual(["/_plugins/_sql"]);
+  });
+});
+
 describe("OpenSearchProvider.queryReadOnly", () => {
   async function agentProvider(execution: ProviderExecutionContext = AGENT_PROFILE): Promise<OpenSearchProvider> {
     const provider = new OpenSearchProvider(makeConnection(), {}, execution);
@@ -2704,30 +2856,62 @@ describe("OpenSearchProvider.queryReadOnly", () => {
     expect(sentBodies.at(-1)).toEqual({ query: "SELECT id, customer, total FROM probe_orders" });
   });
 
-  // The statement check is Elasticsearch's alone, measured on its grammar and its two index resolutions; OpenSearch's
-  // agent path sends a statement as written, a comment, an exclusion and a name that starts with a dot included, and
-  // asks the server nothing about its index first, and B167 records that its hidden indices are not measured.
-  test("sends a statement as written and asks nothing about its index: the statement check is Elasticsearch's alone", async () => {
+  // The statement check runs on OpenSearch too: its reader, then the server's own resolution of the one index
+  // expression and the SQL endpoint's, each asked as the login before the statement is sent.
+  test("asks the server about the statement's index expression, in its two resolutions, before sending it", async () => {
     const provider = await agentProvider();
     const before = sentPaths.length;
 
-    await provider.queryReadOnly("SELECT id FROM `.opendistro-job-scheduler-lock` /* note */", AGENT_BUDGET);
-    await provider.queryReadOnly('SELECT id FROM "probe_*,-probe_shapes"', AGENT_BUDGET);
+    await provider.queryReadOnly("SELECT id FROM probe_orders_alias", AGENT_BUDGET);
 
-    expect(sentBodies.filter((body) => body !== null).slice(-2)).toEqual([
-      { query: "SELECT id FROM `.opendistro-job-scheduler-lock` /* note */" },
-      { query: 'SELECT id FROM "probe_*,-probe_shapes"' },
+    expect(sentPaths.slice(before)).toEqual([
+      "/_resolve/index/probe_orders_alias?expand_wildcards=open",
+      "/probe_orders_alias/_field_caps?fields=_index&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open",
+      "/_resolve/index/probe_orders?expand_wildcards=open",
+      "/_cluster/settings?include_defaults=true&filter_path=*.plugins.query.size_limit",
+      "/_plugins/_sql",
     ]);
-    expect(sentPaths.slice(before).filter((path) => path.includes("_resolve") || path.includes("_field_caps"))).toEqual(
-      [],
-    );
+    expect(sentBodies.at(-1)).toEqual({ query: "SELECT id FROM probe_orders_alias" });
+  });
+
+  test.each([
+    ["SELECT id FROM `.opendistro_security`", DOT_INDEX_REFUSAL],
+    ["SELECT id FROM probe_orders /* note */", COMMENT_REFUSAL],
+    ["SELECT id FROM `probe_*,-probe_shapes`", EXCLUSION_REFUSAL],
+    ['SELECT id FROM "probe_orders"', CHARACTER_REFUSAL],
+    ["SHOW TABLES LIKE %", STATEMENT_REFUSAL],
+  ])("refuses %p before anything is sent", async (sql, sentence) => {
+    const provider = await agentProvider();
+    const before = sentPaths.length;
+
+    const error = await refusal(provider.queryReadOnly(sql, AGENT_BUDGET));
+
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect(error.message).toBe(sentence);
+    expect(sentPaths.length).toBe(before);
+  });
+
+  test.each([
+    ["SELECT COUNT(*) AS n FROM `*`", hiddenTargetRefusal("*")],
+    ["SELECT id FROM zq_no_such_index", unresolvedRefusal("zq_no_such_index")],
+  ])("refuses %p after the server's resolution, with no statement sent", async (sql, sentence) => {
+    const provider = await agentProvider();
+    const before = sentPaths.length;
+
+    const error = await refusal(provider.queryReadOnly(sql, AGENT_BUDGET));
+
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect(error.message).toBe(sentence);
+    expect(
+      sentPaths.slice(before).every((path) => path.startsWith("/_resolve/index/") || path.includes("/_field_caps")),
+    ).toBe(true);
   });
 
   test("refuses an answer past the row budget, after closing the cursor that answer left open", async () => {
     const provider = await agentProvider();
 
     const error = await refusal(
-      provider.queryReadOnly("SELECT id FROM top_queries-2026.08.18-74305", { ...AGENT_BUDGET, maxResultRows: 1 }),
+      provider.queryReadOnly("SELECT id FROM `top_queries-2026.08.18-74305`", { ...AGENT_BUDGET, maxResultRows: 1 }),
     );
 
     expect(error).toBeInstanceOf(QueryError);
@@ -2739,7 +2923,7 @@ describe("OpenSearchProvider.queryReadOnly", () => {
   test("follows the cursor while the answer stays inside the budget", async () => {
     const provider = await agentProvider();
 
-    const result = await provider.queryReadOnly("SELECT id FROM top_queries-2026.08.18-74305", AGENT_BUDGET);
+    const result = await provider.queryReadOnly("SELECT id FROM `top_queries-2026.08.18-74305`", AGENT_BUDGET);
 
     expect(result.rowCount).toBe(5);
   });
@@ -2797,9 +2981,15 @@ describe("OpenSearchProvider.queryReadOnly", () => {
     expect(error.message).toBe(
       "Read-only execution exceeded the row budget: OpenSearch answers at most 50 rows (plugins.query.size_limit) and cuts the rest without saying so, so an answer that reaches it is refused",
     );
+    const check = (name: string) => [
+      `/_resolve/index/${name}?expand_wildcards=open`,
+      `/${name}/_field_caps?fields=_index&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open`,
+    ];
     expect(sentRequests().slice(before)).toEqual([
+      ...check("probe_fifty"),
       "/_cluster/settings?include_defaults=true&filter_path=*.plugins.query.size_limit",
       "/_plugins/_sql SELECT id FROM probe_fifty",
+      ...check("probe_fifty"),
       "/_cluster/settings?include_defaults=true&filter_path=*.plugins.query.size_limit",
       "/_plugins/_sql SELECT id FROM probe_fifty",
     ]);
@@ -2821,6 +3011,8 @@ describe("OpenSearchProvider.queryReadOnly", () => {
     );
     expect(error.message).toEndWith("(HTTP 403)");
     expect(sentRequests().slice(before)).toEqual([
+      "/_resolve/index/probe_orders?expand_wildcards=open",
+      "/probe_orders/_field_caps?fields=_index&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open",
       "/_cluster/settings?include_defaults=true&filter_path=*.plugins.query.size_limit",
     ]);
   });
@@ -2830,7 +3022,7 @@ describe("OpenSearchProvider.queryReadOnly", () => {
     const provider = await agentProvider();
 
     const error = await refusal(
-      provider.queryReadOnly("SELECT id FROM top_queries-2026.08.18-74305", { ...AGENT_BUDGET, maxResultRows: 1 }),
+      provider.queryReadOnly("SELECT id FROM `top_queries-2026.08.18-74305`", { ...AGENT_BUDGET, maxResultRows: 1 }),
     );
 
     expect(error.message).toBe("Read-only execution exceeded the row budget: 2 rows > 1 allowed");
@@ -2847,6 +3039,7 @@ describe("OpenSearchProvider.queryReadOnly", () => {
     expect(error.message).toMatch(/^Read-only execution exceeded the byte budget: \d+ bytes > 10 allowed$/);
   });
 
+  // The index is resolved before the statement is sent and can be removed between the two, a residual the check names.
   test("an engine refusal keeps the engine's words", async () => {
     const provider = await agentProvider();
 
@@ -2883,14 +3076,28 @@ describe("OpenSearchProvider.queryReadOnly", () => {
 
   test.each(
     WRITE_REFUSALS_3_8.filter((entry) => !READ_ANSWERS.has(entry.name)).map((entry) => [entry.name, entry] as const),
-  )("%s: refused by the engine in its own words, never as rows", async (_name, entry) => {
+  )("%s: refused by the statement check before it is sent", async (_name, entry) => {
     const provider = await agentProvider();
     overridePath("/_plugins/_sql", { status: entry.status, body: entry.body });
+    const before = sentPaths.length;
 
     const error = await refusal(provider.queryReadOnly(entry.request.body.query, AGENT_BUDGET));
 
-    expect(error).toBeInstanceOf(QueryError);
-    expect(error.message).toContain(captureError(entry).details);
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    // A second statement holds a `;`, outside the statement's character set; every other write is no SELECT.
+    expect(error.message).toBe(entry.request.body.query.includes(";") ? CHARACTER_REFUSAL : STATEMENT_REFUSAL);
+    expect(sentPaths.length).toBe(before);
+  });
+
+  test("the one SELECT-shaped capture reads one visible index, so it is sent, and the plugin answers it as a read", async () => {
+    const entry = WRITE_REFUSALS_3_8.find((capture) => capture.name === "write-refusal/select-into");
+    if (entry === undefined) throw new Error("no capture");
+    const provider = await agentProvider();
+    overridePath("/_plugins/_sql", { status: entry.status, body: entry.body });
+
+    const result = await provider.queryReadOnly(entry.request.body.query, AGENT_BUDGET);
+
+    expect(result.rowCount).toBe((JSON.parse(entry.body) as { datarows: unknown[] }).datarows.length);
     expect(sentBodies.at(-1)).toEqual(entry.request.body);
   });
 });
@@ -2926,25 +3133,43 @@ describe("OpenSearch 3.8.0's catalog-read answers, replayed through queryReadOnl
     for (const entry of CATALOG_READS) expect(entry.request.body.query).toStartWith("DESCRIBE TABLES LIKE ");
   });
 
-  test.each(CATALOG_READS.filter((entry) => entry.status === 200).map((entry) => [entry.name, entry] as const))(
-    "%s: the provider sends the composed command unchanged and answers the engine's rows",
-    async (_name, entry) => {
-      const agent = new OpenSearchProvider(makeConnection(), {}, AGENT_PROFILE);
-      await agent.connect();
-      overridePath("/_plugins/_sql", ok(entry.body));
+  test.each(
+    CATALOG_READS.filter((entry) => entry.status === 200 && entry.name !== "catalog-read/columns").map(
+      (entry) => [entry.name, entry] as const,
+    ),
+  )("%s: the provider sends the composed command unchanged and answers the engine's rows", async (_name, entry) => {
+    const agent = new OpenSearchProvider(makeConnection(), {}, AGENT_PROFILE);
+    await agent.connect();
+    overridePath("/_plugins/_sql", ok(entry.body));
 
-      const result = await agent.queryReadOnly(entry.request.body.query, { ...AGENT_BUDGET, maxResultRows: 1_000 });
+    const result = await agent.queryReadOnly(entry.request.body.query, { ...AGENT_BUDGET, maxResultRows: 1_000 });
 
-      const answer = JSON.parse(entry.body) as { schema: { name: string }[]; datarows: unknown[][] };
-      expect(result.fields).toEqual(answer.schema.map((column) => column.name));
-      expect(result.rowCount).toBe(answer.datarows.length);
-      expect(result.rows.map((row) => row.TABLE_NAME)).toEqual(answer.datarows.map((row) => row[2]));
-      expect(sentBodies.at(-1)).toEqual({ query: entry.request.body.query });
-      await agent.disconnect();
-    },
-  );
+    const answer = JSON.parse(entry.body) as { schema: { name: string }[]; datarows: unknown[][] };
+    expect(result.fields).toEqual(answer.schema.map((column) => column.name));
+    expect(result.rowCount).toBe(answer.datarows.length);
+    expect(result.rows.map((row) => row.TABLE_NAME)).toEqual(answer.datarows.map((row) => row[2]));
+    expect(sentBodies.at(-1)).toEqual({ query: entry.request.body.query });
+    await agent.disconnect();
+  });
 
-  test("a name the node does not hold is the engine's refusal, in its words", async () => {
+  // Every table is `*`, which reaches the indices whose names start with a dot on a stock node, so the statement check
+  // refuses it and the agent names a table instead.
+  test("the every-table read is refused by the statement check, since `*` reaches a dot-led index", async () => {
+    const entry = CATALOG_READS.find((capture) => capture.name === "catalog-read/columns");
+    if (entry === undefined) throw new Error("no capture");
+    const agent = new OpenSearchProvider(makeConnection(), {}, AGENT_PROFILE);
+    await agent.connect();
+    overridePath("/_plugins/_sql", ok(entry.body));
+    const before = sentBodies.length;
+
+    const error = await agent.queryReadOnly(entry.request.body.query, AGENT_BUDGET).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect((error as Error).message).toBe(hiddenTargetRefusal("*"));
+    expect(sentBodies.slice(before).some((body) => body !== null)).toBe(false);
+  });
+
+  test("a name the node does not hold is refused as resolving to none, before the command is sent", async () => {
     const entry = CATALOG_READS.find((capture) => capture.name === "catalog-read/columns-missing");
     if (entry === undefined) throw new Error("no capture");
     const agent = new OpenSearchProvider(makeConnection(), {}, AGENT_PROFILE);
@@ -2953,7 +3178,7 @@ describe("OpenSearch 3.8.0's catalog-read answers, replayed through queryReadOnl
 
     const error = await agent.queryReadOnly(entry.request.body.query, AGENT_BUDGET).catch((caught: unknown) => caught);
 
-    expect(error).toBeInstanceOf(QueryError);
-    expect((error as Error).message).toContain("no such index [zq_no_such_index]");
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect((error as Error).message).toBe(unresolvedRefusal("zq_no_such_index"));
   });
 });

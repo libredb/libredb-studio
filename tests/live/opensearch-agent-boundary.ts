@@ -13,8 +13,8 @@
  *
  *  - the open: the agent profile reads the DELETE setting, sends its DELETE probe, reads the version and opens the
  *    node; the operations profile opens it too, and an editor handle's `queryReadOnly` refuses with nothing sent;
- *  - the boundary: each write and DDL statement sent through `queryReadOnly` is refused by the plugin in its own words
- *    (never a budget or a credential refusal), and the same text sent raw answers 400; the index listing with its
+ *  - the boundary: each write and DDL statement sent through `queryReadOnly` is refused by the statement check before
+ *    it is sent, and the same text sent raw is refused by the plugin with 400 in its own words; the index listing with its
  *    document counts, the probe mappings, the aliases and the templates read back the same before and after; the
  *    positive control is a document written through the document API, a route the provider does not send to, into a
  *    scratch index the agent then reads and the script deletes;
@@ -24,13 +24,21 @@
  *    node's open search contexts go back to where they were), and past a larger one it is refused as cut at the limit,
  *    and so is an aggregation the engine cuts there; the agent handle opened before the limit was lowered refuses the
  *    same cut read, since the limit is read before every statement, never kept from the open;
- *  - the catalog read: the `DESCRIBE TABLES` command the agent's OpenSearch overlay composes, for every table and for
- *    one, sent through `queryReadOnly` and mapped into column rows, with the cluster unchanged afterwards;
+ *  - the hidden targets: a dot-led index, a hidden index, a visible alias over it and a data stream, made by the
+ *    script; sent raw each answers its rows (the backing index by its own name), and through `queryReadOnly` the
+ *    statement check refuses each before it is sent, with `*`, the security index and every spelling the reader cannot
+ *    read with certainty, while the data stream read by its own name is served; with security on, as a role reading
+ *    every index;
+ *  - with security on, the login probes: the admin, a role writing every index and a role managing every index are
+ *    each refused at open, and the probes leave no index behind;
+ *  - the catalog read: the `DESCRIBE TABLES` command the agent's OpenSearch overlay composes, for one table answered
+ *    through `queryReadOnly` and mapped into column rows, and for every table refused by the statement check (`*`
+ *    reaches dot-led indices), with the cluster unchanged afterwards;
  *  - with security on (LIBREDB_OS_AGENT_USER set): the agent user's role holds the cluster actions
  *    `cluster:monitor/main` and `cluster:monitor/state` and, on `probe_*`, `read`, `indices:admin/mappings/get` and
  *    `indices:monitor/settings/get`; without either cluster action the agent profile is refused at open; the user reads
- *    no cluster health, its document write is refused 403, an index outside its role is refused, and the every-table
- *    catalog read is refused while the one-table read answers;
+ *    no cluster health, its document write is refused 403, and an index outside its role is refused before it is sent
+ *    while the one-table read answers;
  *  - with security on, plan-mode grounding: the plan run's schema read (`captureContextSnapshot` in planning mode,
  *    under the operations profile, signed in as the same user) is refused on the agent's role alone, captures once the
  *    role adds the privileges in PLAN_CLUSTER and PLAN_INDICES (the index ones on every index), and is refused again
@@ -66,6 +74,18 @@ import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
 import { createTargetScope } from "@/lib/db/operations/policy";
+import {
+  CHARACTER_REFUSAL,
+  COMMENT_REFUSAL,
+  DOT_INDEX_REFUSAL,
+  EXCLUSION_REFUSAL,
+  FROM_REFUSAL,
+  hiddenTargetRefusal,
+  resolveFailedRefusal,
+  STATEMENT_REFUSAL,
+  SUBQUERY_REFUSAL,
+  UNREADABLE_REFUSAL,
+} from "@/lib/db/providers/sql/search/opensearch-agent-index-fence";
 import type { DatabaseProvider, QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 
@@ -385,16 +405,186 @@ async function checkRefusedNode(): Promise<void> {
   await operations.disconnect();
 }
 
+/** A user of its own role, created by the admin; the role names the index permissions it holds. */
+async function userWithRole(
+  name: string,
+  indexPermissions: readonly { index_patterns: string[]; allowed_actions: string[] }[],
+): Promise<void> {
+  const role = await send("PUT", `/_plugins/_security/api/roles/${name}`, {
+    cluster_permissions: AGENT_CLUSTER,
+    index_permissions: indexPermissions,
+  });
+  const user = await send("PUT", `/_plugins/_security/api/internalusers/${name}`, {
+    password: AGENT_PASSWORD,
+    opendistro_security_roles: [name],
+  });
+  if (![200, 201].includes(role.status) || ![200, 201].includes(user.status)) {
+    throw new Error(`user ${name}: ${role.status} ${user.status}`);
+  }
+}
+
+async function dropUser(name: string): Promise<void> {
+  await send("DELETE", `/_plugins/_security/api/internalusers/${name}`);
+  await send("DELETE", `/_plugins/_security/api/roles/${name}`);
+}
+
+async function openAs(user: string, password: string): Promise<DatabaseProvider> {
+  const provider = await createDatabaseProvider(
+    { ...connection(), user, password } as DatabaseConnection,
+    {},
+    executionContextFor("agent-read-only"),
+  );
+  await provider.connect();
+  return provider;
+}
+
+const TOO_BROAD =
+  "The agent read-only profile needs an OpenSearch login that may not write, manage indices or administer the security plugin; the user ";
+const GRANT_INSTEAD =
+  ", so the connection is refused. Give the agent a user whose role holds the cluster actions cluster:monitor/main and cluster:monitor/state and only reads on the indices it reads, such as the libredb_agent_read role";
+
+/**
+ * With security on, the open probes what the login may do: the admin, a role that writes every index and a role that
+ * manages every index are each refused before any statement, in the sentence naming what the probes found.
+ */
+async function checkLoginProbes(): Promise<void> {
+  if (!SECURED || ADMIN_USER === undefined) return;
+  const admin = await refusalOf(() => openAs(ADMIN_USER, ADMIN_PASSWORD));
+  check(
+    admin?.message ===
+      `${TOO_BROAD}${ADMIN_USER} may administer the security plugin, and may delete documents in an index of any name, and may close an index of any name${GRANT_INSTEAD}`,
+    `login: the admin is refused at open -> ${admin?.message.slice(0, 160)}`,
+  );
+  const kinds = [
+    [`${SCRATCH}_wr`, ["read", "write"], "may delete documents in an index of any name"],
+    [`${SCRATCH}_mg`, ["read", "manage"], "may close an index of any name"],
+  ] as const;
+  for (const [name, actions, finding] of kinds) {
+    await userWithRole(name, [{ index_patterns: ["*"], allowed_actions: [...actions] }]);
+    try {
+      const refused = await refusalOf(() => openAs(name, AGENT_PASSWORD));
+      check(
+        refused?.name === "ExecutionProfileError" &&
+          refused.message === `${TOO_BROAD}${name} ${finding}${GRANT_INSTEAD}`,
+        `login: a role granting ${actions.join(" and ")} on * is refused at open -> ${refused?.message.slice(0, 160)}`,
+      );
+    } finally {
+      await dropUser(name);
+    }
+  }
+  const index = await send("GET", "/_cat/indices/libredb_write_probe_*?format=json");
+  check(index.text === "[]", `login: the probes created no index -> ${index.text}`);
+}
+
+/**
+ * Hidden targets: a hidden index, one whose name starts with a dot, an alias over the hidden one, a data stream and its
+ * backing index, each made by the script. Each answers rows sent raw, and the statement check refuses each through
+ * `queryReadOnly` before it is sent, as it does the security index and `*`; the data stream read by its own name is
+ * served. With security on the reads run as a role reading every index, which the open admits, since the role on
+ * probe_* alone cannot name these at all.
+ */
+async function checkHiddenTargets(agent: DatabaseProvider): Promise<void> {
+  const dot = `.${SCRATCH}`;
+  const hid = `${SCRATCH}_hid`;
+  const alias = `${SCRATCH}_alias`;
+  const stream = `${SCRATCH}-ds`;
+  const wide = `${SCRATCH}_wide`;
+  let reader = agent;
+  try {
+    const made = [
+      await send("PUT", `/${dot}/_doc/1?refresh=true`, { probe: "dot" }),
+      await send("PUT", `/${hid}`, { settings: { "index.hidden": true } }),
+      await send("PUT", `/${hid}/_doc/1?refresh=true`, { probe: "hidden" }),
+      await send("POST", "/_aliases", { actions: [{ add: { index: hid, alias } }] }),
+      await send("PUT", `/_index_template/${stream}_t`, {
+        index_patterns: [`${stream}*`],
+        data_stream: {},
+        priority: 500,
+      }),
+      await send("POST", `/${stream}/_doc?refresh=true`, { "@timestamp": "2026-11-02T00:00:00Z", probe: "stream" }),
+    ];
+    check(
+      made.every((answer) => answer.status === 200 || answer.status === 201),
+      `hidden: the script makes a dot-led index, a hidden index, an alias over it and a data stream -> ${made.map((answer) => answer.status).join(",")}`,
+    );
+    const backing = (
+      JSON.parse(await read(`/_data_stream/${stream}`)) as {
+        data_streams: { indices: { index_name: string }[] }[];
+      }
+    ).data_streams[0].indices[0].index_name;
+    if (SECURED) {
+      await userWithRole(wide, [{ index_patterns: ["*"], allowed_actions: [...AGENT_INDICES] }]);
+      reader = await openAs(wide, AGENT_PASSWORD);
+      check(reader.isConnected(), "hidden: with security on, a role reading every index opens the agent profile");
+    }
+    const cases: readonly [string, string][] = [
+      [`SELECT COUNT(*) AS n FROM \`${dot}\``, DOT_INDEX_REFUSAL],
+      [`SELECT COUNT(*) AS n FROM ${hid}`, hiddenTargetRefusal(hid)],
+      [`SELECT COUNT(*) AS n FROM ${alias}`, hiddenTargetRefusal(alias)],
+      [`SELECT COUNT(*) AS n FROM \`${backing}\``, DOT_INDEX_REFUSAL],
+      ["SELECT COUNT(*) AS n FROM `*`", hiddenTargetRefusal("*")],
+      [`SELECT COUNT(*) AS n FROM \`${SCRATCH}*\``, hiddenTargetRefusal(`${SCRATCH}*`)],
+      [`SELECT COUNT(*) AS n FROM ${hid} /* note */`, COMMENT_REFUSAL],
+      [`SELECT COUNT(*) AS n FROM ${hid} # note`, COMMENT_REFUSAL],
+      [`SELECT COUNT(*) AS n FROM probe_orders WHERE customer = 'a\\' OR 1 = 1`, CHARACTER_REFUSAL],
+      [`SELECT COUNT(*) AS n FROM "${hid}"`, CHARACTER_REFUSAL],
+      [`SELECT COUNT(*) AS n FROM \`@opensearch\`.${hid}`, FROM_REFUSAL],
+      [`SELECT COUNT(*) AS n FROM probe_orders, ${hid}`, FROM_REFUSAL],
+      [`SELECT COUNT(*) AS n FROM probe_orders WHERE id IN (SELECT id FROM ${hid})`, SUBQUERY_REFUSAL],
+      [`SELECT COUNT(*) AS n FROM \`probe_*,-${SCRATCH}*\``, EXCLUSION_REFUSAL],
+      [`SELECT COUNT(*) AS n FROM \`${hid}\`\`x\``, UNREADABLE_REFUSAL],
+      [`SHOW TABLES LIKE ${SCRATCH}%`, STATEMENT_REFUSAL],
+      [`DESCRIBE TABLES LIKE '${dot}'`, DOT_INDEX_REFUSAL],
+      ["SELECT COUNT(*) AS n FROM `.opendistro_security`", DOT_INDEX_REFUSAL],
+    ];
+    for (const [sql, sentence] of cases) {
+      const refused = await refusalOf(() => reader.queryReadOnly!(sql, BUDGET));
+      check(
+        refused?.name === "RefusedBeforeSendError" && refused.message === sentence,
+        `hidden: ${sql} is refused before it is sent -> ${refused?.message.slice(0, 100)}`,
+      );
+    }
+    // Sent raw, each hidden target answers its rows: the check is what keeps them from the agent.
+    for (const sql of [
+      `SELECT probe FROM \`${dot}\``,
+      `SELECT probe FROM ${hid}`,
+      `SELECT probe FROM ${alias}`,
+      `SELECT probe FROM \`${backing}\``,
+    ]) {
+      const raw = await send("POST", "/_plugins/_sql", { query: sql });
+      const rows = raw.status === 200 ? (JSON.parse(raw.text) as { datarows: unknown[] }).datarows : [];
+      check(rows.length > 0, `hidden: ${sql} sent raw answers rows -> ${raw.status} ${JSON.stringify(rows)}`);
+    }
+    const served = await reader.queryReadOnly!(`SELECT probe FROM \`${stream}\``, BUDGET);
+    check(
+      JSON.stringify(served.rows) === '[{"probe":"stream"}]',
+      `hidden: the data stream read by its own name is served -> ${JSON.stringify(served.rows)}`,
+    );
+  } finally {
+    if (reader !== agent) await reader.disconnect();
+    if (SECURED) await dropUser(wide);
+    await send("DELETE", `/_data_stream/${stream}`);
+    await send("DELETE", `/_index_template/${stream}_t`);
+    await send("DELETE", `/${hid}`);
+    await send("DELETE", `/${dot}`);
+  }
+}
+
 async function checkBoundary(agent: DatabaseProvider): Promise<string> {
   const before = await clusterState();
   for (const sql of WRITES) {
+    // The statement check refuses each before it is sent: no SELECT, or a `;` outside the character set.
     const viaProvider = await refusalOf(() => agent.queryReadOnly!(sql, BUDGET));
+    const unsent = sql.includes(";") ? CHARACTER_REFUSAL : STATEMENT_REFUSAL;
     check(
-      viaProvider !== null && PLUGIN_REFUSAL.test(viaProvider.message),
-      `boundary: queryReadOnly sends ${sql} and the plugin refuses it (${viaProvider?.message.slice(0, 60)})`,
+      viaProvider?.name === "RefusedBeforeSendError" && viaProvider.message === unsent,
+      `boundary: queryReadOnly refuses ${sql} before it is sent (${viaProvider?.message.slice(0, 60)})`,
     );
     const answer = await send("POST", "/_plugins/_sql", { query: sql });
-    check(answer.status === 400, `boundary: ${sql} sent raw -> ${answer.status}`);
+    check(
+      answer.status === 400 && PLUGIN_REFUSAL.test(answer.text),
+      `boundary: ${sql} sent raw is refused by the plugin -> ${answer.status}`,
+    );
   }
   check(
     (await clusterState()) === before,
@@ -536,20 +726,21 @@ async function checkCatalog(agent: DatabaseProvider, before: string): Promise<vo
   const catalogRead = engineServerDialect("opensearch").catalogRead;
   if (catalogRead === "unsupported" || catalogRead.mapRows === undefined) throw new Error("no catalog read to check");
   const everyTable = composeCatalogRead("opensearch", { kind: "columns" });
-  if (SECURED) {
-    const refused = await refusalOf(() => agent.queryReadOnly!(everyTable, BUDGET));
-    check(
-      refused?.message === "OpenSearch refused the credentials (HTTP 403)",
-      `catalog: ${everyTable} names every index, so a role on probe_* alone is refused it -> ${refused?.message.slice(0, 90)}`,
-    );
-  } else {
-    const inventory = catalogRead.mapRows("columns", (await agent.queryReadOnly!(everyTable, BUDGET)).rows);
-    const tables = [...new Set(inventory.rows.map((row) => String(row.table_name)))].sort();
-    check(
-      inventory.rows.some((row) => row.table_name === "probe_orders" && row.column_name === "customer"),
-      `catalog: ${everyTable} answers the column inventory -> ${inventory.rows.length} columns of ${tables.join(", ")}`,
-    );
-  }
+  // Every table is `*`, which reaches the indices whose names start with a dot on a stock node, so the statement check
+  // refuses it before it is sent; a role on probe_* alone cannot resolve `*` at all.
+  const refused = await refusalOf(() => agent.queryReadOnly!(everyTable, BUDGET));
+  const expected = SECURED
+    ? resolveFailedRefusal("*", "OpenSearch refused the credentials (HTTP 403)")
+    : hiddenTargetRefusal("*");
+  check(
+    refused?.name === "RefusedBeforeSendError" && refused.message === expected,
+    `catalog: ${everyTable} names every index, dot-led ones among them, so the statement check refuses it unsent -> ${refused?.message.slice(0, 90)}`,
+  );
+  const raw = await send("POST", "/_plugins/_sql", { query: everyTable });
+  check(
+    raw.status === 200 && /"\.[a-z_-]+"/.test(raw.text),
+    `catalog: sent raw${SECURED ? " as the admin" : ""}, it lists every index's columns -> ${raw.status}`,
+  );
   const oneTable = composeCatalogRead("opensearch", { kind: "columns", table: "probe_orders" });
   const columns = catalogRead.mapRows("columns", (await agent.queryReadOnly!(oneTable, BUDGET)).rows);
   check(
@@ -580,6 +771,8 @@ async function main(): Promise<void> {
   );
   await editor.disconnect();
 
+  await checkLoginProbes();
+  await checkHiddenTargets(agent);
   const before = await checkBoundary(agent);
   await checkBudgets(agent);
   await checkCatalog(agent, before);
