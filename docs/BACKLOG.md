@@ -42,7 +42,7 @@ None of it is a GitHub issue.
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B167 · 87
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
-- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP8 · 8
+- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP9 · 9
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
 
 ---
@@ -9339,6 +9339,17 @@ The sentence is the provider's own and predates MCP read on InfluxDB 3; the edit
 Found 2026-11-01 while verifying `run_read_query` on InfluxDB 3.12.0 Core.
 
 **Done when:** a statement the read policy refuses through `run_read_query` is answered with the forms that tool runs on InfluxDB 3, the editor and agent mode keep the policy's sentence, and a test sends `TABLE` through the tool's handler and pins the answer.
+
+### MCP9. On Elasticsearch, `inspect_schema` and agent grounding list hidden indices and aliases with their columns
+
+`inspect_schema` and agent grounding read Elasticsearch's object surface under the operations profile, and that surface tells a system object by its name alone.
+`toIndexInfo` in `src/lib/db/providers/sql/search/http-transport.ts` marks only a name that starts with a dot as a system index, `GET /_cat/indices` is sent without `expand_wildcards`, so it lists hidden indices too, and `readKind` in `src/lib/db/providers/sql/search/index.ts` drops only what is marked system.
+So a hidden index whose name has no leading dot, a hidden alias, and an alias over a hidden index are listed, each with its columns.
+Measured 2026-11-02 on Elasticsearch 9.1.4 with security off: `inspect_schema` listed an index created with `index.hidden`, a hidden alias over `probe_orders` and an alias over that hidden index, each with the columns of the index behind it.
+Their rows are not exposed: the provider's statement check refuses a statement naming any of them before it is sent.
+Found 2026-11-02 while reviewing `run_read_query` on Elasticsearch.
+
+**Done when:** under the agent-facing profiles the object listings drop the names `GET /_resolve/index` marks hidden or system, and the aliases that are hidden or sit over a hidden index, with a live test against a 9.1.4 node that pins all three cases.
 
 ---
 
