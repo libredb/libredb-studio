@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B163 · 86
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B164 · 86
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -8715,24 +8715,14 @@ Found 2026-10-27 while designing read-only agent and MCP execution for every pro
 
 **Done when:** either a way to prove each reachable catalog's connector credential read-only at open, or an engine switch that disables pass-through table functions, is found and measured, a boundary test with a writable positive control shows a pass-through write refused, and Trino then joins agent execution through `queryReadOnly` with its `MCP_STATEMENT_READ` row false until the owner opens MCP read for it; cited in `docs/AGENT.md`.
 
-### B133. MQTT has no agent execution and no MCP surface
-
-`MCP_EXPOSABLE.mqtt` is false and the provider implements no `queryReadOnly`, so agent execution and every MCP tool refuse an MQTT connection.
-A read reports what the broker delivered during its window, and an agent asked whether a sensor is reporting would take a topic's absence as proof it does not exist, the inference the provider doc says cannot be drawn (`docs/providers/mqtt.md` section 9.1).
-The closed five-packet encoder and the outbound check in `valve.ts`, which send no PUBLISH and no will, would serve as a structural closed table; the open question is completeness, not the boundary.
-
-Found 2026-10-27 while designing read-only agent and MCP execution for every provider.
-
-**Done when:** the owner overturns section 9.1 of the provider doc, the provider implements `queryReadOnly` whose answers carry topic metadata and no payload, joins `AGENT_EXECUTION_ENGINES`, and MCP read is opened for it only on its own exposure ruling, with tests; cited in `docs/AGENT.md`.
-
 ### B134. Sparkplug has no agent execution and no MCP surface
 
-`MCP_EXPOSABLE.sparkplug` is false and the provider implements no `queryReadOnly`, so agent execution and every MCP tool refuse a Sparkplug connection, for MQTT's reason (B133).
+`MCP_EXPOSABLE.sparkplug` is false and the provider implements no `queryReadOnly`, so agent execution and every MCP tool refuse a Sparkplug connection.
 Sparkplug has no command that lists edge nodes, so a read reports what it saw during its window, and an edge node that published nothing in that window cannot be told from one that is gone (`MCP_EXPOSABLE` in `src/lib/db/compatibility.ts`).
 
 Found 2026-10-27 while designing read-only agent and MCP execution for every provider.
 
-**Done when:** the owner rules on completeness for Sparkplug as for MQTT (B133), the provider implements `queryReadOnly` over the same packet table with answers that carry metric metadata and no payload, joins `AGENT_EXECUTION_ENGINES`, and MCP read is opened for it only on its own exposure ruling, with tests; cited in `docs/AGENT.md`.
+**Done when:** completeness is ruled for Sparkplug as it was for MQTT's agent reads (B164), the provider implements `queryReadOnly` over the same packet table with answers that carry metric metadata and no payload, joins `AGENT_EXECUTION_ENGINES`, and MCP read is opened for it only on its own exposure ruling, with tests; cited in `docs/AGENT.md`.
 
 ### B136. etcd's agent reads are metadata only, and it has no MCP statement tool
 
@@ -9078,6 +9068,22 @@ Kept so that MCP statement reads, and any widening of what agent mode reads on a
 Found 2026-11-01 when agent mode joined MTConnect.
 
 **Done when:** a change of its own opens MCP statement reads on MTConnect: MCP serves it through its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), here `mtconnectread/mcp.ts`, under the same route table, budgets and withheld adapter connections, and `MCP_STATEMENT_READ.mtconnect` is true, with tests that an MCP read sends only GET of the nine routes and that no MCP answer carries an adapter's address; cited in `docs/AGENT.md`.
+
+### B164. MQTT's agent reads count what one window delivers, with topic names withheld, and it has no MCP surface
+
+Agent mode executes MQTT reads under the `mqttread` request language, one JSON request per call: `{"read": "window"}`, one subscription to the whole filter `#` for one window, answered as totals only, and `{"read": "topic", "topic": "<topic>"}`, one subscription to one topic the request names in full, answered as that topic's metadata (`docs/providers/mqtt.md`, section 14).
+The boundary is the provider's structural closed table: each read is one fresh session, Clean Start with a zero Session Expiry Interval, written by the encoder, which holds CONNECT, SUBSCRIBE, UNSUBSCRIBE, PINGREQ and DISCONNECT and no function that writes a PUBLISH, with a CONNECT that takes no Will, and every outbound byte is checked again by the valve, so no PUBLISH, no Will and no subscription of a filter the model wrote can be sent on the agent path.
+Topic names count as stored values, since a topic path names the people and devices behind it, and so do payloads, user properties, correlation data, response topics and content types: no agent answer names a topic, the topic read does not echo the topic it named, and no payload or property is read into a row; a loss the read proves is counted and never named.
+A filter the model writes would bisect topic names one level at a time, so every other filter, `+` and `#` below the root, a topic under a `$` root (`$SYS`, whose topic names carry each client's id on some brokers, and `$share/`, `$queue/` and `$exclusive/`, which take messages away from the devices subscribed beside Studio), a publish, a will and every key outside `read` and `topic` are refused before anything is sent, decided by the request's text alone, so a withheld topic and a missing one are refused alike.
+MQTT has no command that lists topics, so no answer is complete: each states the window it listened for, what it counted, why it stopped and that a topic not seen in the window may still exist, and its scope is never `complete`; a time budget that cannot hold a whole window plus a dial is refused rather than shortened, a result past the byte budget is refused, and a failure is worded by its kind, never in the broker's or the transport's words, with no credential in any answer.
+On a handle of either agent profile connecting is a handshake that subscribes to nothing, the Keys panel, a topic's listing, description and Source tab and the console are refused, and the overview, health, performance, slow-query, session, table, index and storage readings answer their reason rather than an empty reading or Studio's own figure; the provider declares no kind the grounding walk lists, so an agent run is ungrounded and is told why no topic is listed and to read a topic the question names directly.
+So the language offers the investigation and the operations workflow only, and a plan of the investigation is prose, since the editor runs no request on an MQTT connection.
+`MCP_EXPOSABLE.mqtt` is false, and the language's MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) with `MCP_STATEMENT_READ.mqtt` false, so every MCP tool refuses an MQTT connection; `READ_ONLY_ENFORCED.mqtt` is unchanged.
+Kept so that MCP access, and any widening of what agent mode reads on a broker (a topic name, a payload, `$SYS`), are decisions of their own rather than side effects of agent mode joining.
+
+Found 2026-11-01 when agent mode joined MQTT.
+
+**Done when:** a per-engine exposure ruling opens MCP for MQTT, an MCP surface that reads through the same closed table, window, completeness sentence and metadata-only projection is designed and `MCP_EXPOSABLE.mqtt` turns true for it, the pack declares its MCP facet (`src/lib/agent/languages/mqttread/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), and `MCP_STATEMENT_READ.mqtt` is true, with tests that an MCP read sends no PUBLISH and no Will, that no MCP answer names a topic or carries a payload, and that every answer carries its window and the completeness sentence; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

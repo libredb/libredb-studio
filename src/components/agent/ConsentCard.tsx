@@ -131,6 +131,7 @@ const HANDOVER_CHIPS: Readonly<Record<AgentStatementLanguageId, readonly Handove
   promql: [],
   opcuaread: [],
   mtconnectread: [],
+  mqttread: [],
 };
 
 export function ConsentCard({

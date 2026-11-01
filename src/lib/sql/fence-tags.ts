@@ -192,6 +192,7 @@ export const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "modbusread",
   "opcuaread",
   "mtconnectread",
+  "mqttread",
 ]);
 
 /**
@@ -269,6 +270,8 @@ export const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.free
   opcuaread: "opcua",
   // The agent's name for the MTConnect read request language, and `mtconnect` is the only type-id that runs it.
   mtconnectread: "mtconnect",
+  // The agent's name for the MQTT read request language, and `mqtt` is the only type-id that runs it.
+  mqttread: "mqtt",
 });
 
 /**

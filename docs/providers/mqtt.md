@@ -24,6 +24,9 @@ That is a property of the protocol, not a gap in this provider. The consequence 
   read ran 214 ms to 4,013 ms and before a lossy one 5,954 ms to 19,894 ms: the two sets do not separate, and
   the ordering is inverted. A silence threshold would have been wrong in both directions.
 
+Agent mode reads a broker under the same rule: every agent answer states the window it listened for and that a
+topic not seen in it may still exist (section 14).
+
 ## 1. Overview
 
 A connection subscribes once to a discovery filter, collects what the broker delivers until one of Studio's own
@@ -63,6 +66,9 @@ query console in this version.
 | `key-scan.ts` | The Keys panel's capability and its page |
 | `objects.ts` | The `topic` object kind and the Source tab |
 | `labels.ts` | The provider's labels |
+| `agent-statement.ts` | Agent mode's reader of one read request, and its closed table of two reads |
+| `agent-read.ts` | One agent read as one fresh session, its metadata-only answer and its failure wording |
+| `agent-surface.ts` | What every other surface of an agent-mode handle answers instead |
 | `index.ts` | The provider class |
 
 ### 2.3 Registration & lifecycle
@@ -415,10 +421,19 @@ and Vacuum says maintenance would be a write and this provider has no code that 
 
 ### 9.1 Machine access
 
-`MCP_EXPOSABLE.mqtt` is `false`, as for etcd, Oxia and S3. A read whose completeness cannot be proved is not a
-read an agent should be handed without a reader looking at it: an agent asked "is the sensor reporting?" would
-receive the absence of a topic as evidence it does not exist, which is exactly the inference "Before you
-connect" says cannot be drawn.
+A read's completeness cannot be proved, so a read handed to an agent carries that with it, or it is not handed
+over: an agent asked "is the sensor reporting?" must not receive the absence of a topic as evidence it does not
+exist, which is exactly the inference "Before you connect" says cannot be drawn.
+
+Agent mode reads a broker on that condition (section 14). Every agent answer states the window it listened for,
+what it counted in that window and why it stopped, its scope is never `complete`, and it says that a topic not
+seen in the window may still exist; the tool description, the grounding note and the posture say the same, and
+none of them claims that a topic does not exist. Agent mode is metadata only: no topic name, payload or property
+reaches it.
+
+`MCP_EXPOSABLE.mqtt` is `false`, as for etcd, Oxia and S3, and `MCP_STATEMENT_READ.mqtt` is `false`, so every
+MCP tool refuses an MQTT connection; no MCP surface that carries the same window and sentence is designed yet
+([B164](../BACKLOG.md#b164-mqtts-agent-reads-count-what-one-window-delivers-with-topic-names-withheld-and-it-has-no-mcp-surface)).
 
 ### 9.2 SQL writing
 
@@ -480,6 +495,7 @@ it as the tail of a longer sentence, which is why each begins in lower case.
 | `server-disconnect` | the broker closed the connection before the budget ran out, so the list is short of what the filter matched. |
 | `subscription-refused` | The sentence for the broker's own reason code, in the table below. |
 | `transport-closed` | the connection closed before the budget ran out, so the list is short of what the filter matched. |
+| `handshake` | the session only checked that the broker accepts this connection and subscribed to nothing, so it read no topic. |
 
 `subscription-refused` names the remedy that fits the broker's reason code, because the remedies differ: a
 stock EMQX refuses `#` and grants `sensors/#` in the same breath, while a broker with no wildcard support
@@ -534,6 +550,10 @@ bun tests/run-tests.ts tests/unit/db/mqtt/ tests/integration/db/mqtt-provider.te
 | `tests/unit/db/mqtt/key-scan.test.ts` | The page, its truncation report and every end-reason sentence |
 | `tests/unit/db/mqtt/provider.test.ts` | The declarations, the refusals, and the dial against a loopback server |
 | `tests/unit/db/mqtt/egress.test.ts` | Where the dial may connect: link-local and metadata addresses, the flag, and a tunnel |
+| `tests/unit/db/mqtt/session-stats.test.ts` | What a read counts besides the tree, the handshake-only session, and each failure's kind |
+| `tests/unit/db/mqtt/agent-statement.test.ts` | Agent mode's closed table of two reads, and every request refused before the network |
+| `tests/unit/db/mqtt/agent-provider.test.ts` | The agent path through the provider: full packets, answers, budgets, failures and every surface |
+| `tests/unit/db/mqtt/agent-seam.test.ts` | That the agent path can send no PUBLISH and no Will |
 | `tests/integration/db/mqtt-provider.test.ts` | The four captures, replayed |
 | `tests/unit/key-browser-line-contrast.test.ts` | The panel's text colours, as contrast ratios |
 | `e2e/mqtt-provider.spec.ts` | The connection dialog in a browser |
@@ -554,7 +574,8 @@ Each replay asserts the topics by name and the type of each, so a decoder that r
 ## 12. Known limitations
 
 - No query console. MQTT has no query language, and the Keys panel needs no query text.
-- No agent mode, for the reason in 9.1.
+- Agent mode is metadata only: it counts a window's messages and reads one named topic's metadata, and never names
+  a topic or reads a payload or `$SYS` (section 14).
 - No WebSocket transport. A broker reached over `ws://` or `wss://` cannot be connected to in this version;
   plain TCP and TLS are the two transports.
 - No vendor list APIs. EMQX exposes a real retained count over its management HTTP API; using it would need an
@@ -584,3 +605,77 @@ The refusal reason it prints, verbatim:
   `snprintf(cfg->id, ..., "%s%d", cfg->id_prefix, getpid())`. Cited in 4.2 by the code it contains rather
   than by a line number, which moves between releases.
 - The design: issue [#1635](https://github.com/libredb/libredb-studio/issues/1635), "Read-only MQTT provider".
+
+## 14. Agent mode
+
+Agent mode reads a broker through `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/keyvalue/mqtt/index.ts).
+The request reader is [`agent-statement.ts`](../../src/lib/db/providers/keyvalue/mqtt/agent-statement.ts), the read, its bounds and its answers are [`agent-read.ts`](../../src/lib/db/providers/keyvalue/mqtt/agent-read.ts), and every other surface of an agent-mode handle is [`agent-surface.ts`](../../src/lib/db/providers/keyvalue/mqtt/agent-surface.ts).
+Every claim below about a broker cites the capture [`tests/fixtures/mqtt/mosquitto-2.1.2/agent-boundary/boundary.json`](../../tests/fixtures/mqtt/mosquitto-2.1.2/agent-boundary/boundary.json), recorded by its `run.sh` against Mosquitto 2.1.2 with authentication on (a user that may only read and one that may read and write) and a stock EMQX 5.8.9, both pinned by digest, and written by [`tests/live/mqtt-agent-boundary.ts`](../../tests/live/mqtt-agent-boundary.ts).
+The credentials are made for the run; the capture holds none, not even a user name, and no topic name or payload the fixture seeded, and the script checks all three before it writes.
+
+### 14.1 The boundary
+
+The boundary is the structural closed table of [section 3.1](#31-read-only-is-structural-not-a-mode) and [section 3.2](#32-the-one-way-valve): the encoder holds CONNECT, SUBSCRIBE, UNSUBSCRIBE, PINGREQ and DISCONNECT and no function that writes a PUBLISH, CONNECT takes no Will, and the valve checks every outbound byte again before it reaches the socket.
+An agent read reaches the wire only through the session's `readTopics`, which writes through that valve; the agent's modules write nothing themselves and import neither the encoder nor the valve, which [`agent-seam.test.ts`](../../tests/unit/db/mqtt/agent-seam.test.ts) pins, together with every packet each admitted and refused request writes: CONNECT with Clean Start and no Will bits, one SUBSCRIBE, DISCONNECT, and nothing else.
+
+No credential can be the boundary.
+Measured raw (`rawPublish`, sent by the capture script with the broker's own client and never by Studio): a retained PUBLISH with the agent's credentials, which the broker's ACL lets read only, changed nothing, and the same PUBLISH with the writer's credentials changed the retained set, so a broker with a writable credential, or with no ACL, takes whatever its client sends.
+Every session the agent opened wrote Clean Start with a zero Session Expiry Interval and no Will (`connect`, `reads[].sent`), and the broker's retained set read the same before and after the agent reads (`state`).
+
+### 14.2 What an agent request may be
+
+One JSON object, with the keys `read` and, for the topic read, `topic`, each written once:
+
+| Request | What it sends | What it answers |
+| --- | --- | --- |
+| `{"read": "window"}` | one SUBSCRIBE to `#`, for one window | one row of totals: `topics_seen`, `messages`, `retained_messages`, `payload_bytes`, `messages_lost` |
+| `{"read": "topic", "topic": "plant/line1/temp"}` | one SUBSCRIBE to that topic, for one window | one row for that topic: `seen`, `messages`, `retained`, `delivered_qos`, `payload_bytes`, `last_seen_ms` |
+
+Both rows open with the window's own columns: `window_ms` (3,000), `listened_ms`, `stop_reason` (an end reason of [section 10.2](#102-why-a-read-ended)), `scope` (`unknown` or `incomplete`, never `complete`) and `broker_reason_code` where the broker refused the subscription.
+A topic not seen answers `seen: false` and null figures, never 0 or false.
+`delivered_qos` is the QoS the broker delivered at, which the subscription's maximum of 0 ([section 3.5](#35-maximum-qos-0-as-a-requirement)) holds at 0 on a conforming broker whatever the publisher sent.
+Measured (`reads`): the window over the fixture's four retained topics and one live publisher counted 19 messages on 5 topics, 4 of them retained; the retained topic read answered `seen: true`, `retained: true`, and the live one 15 messages, `retained: false`; a topic nobody published to answered `seen: false`; and no answer carried a topic name, a payload or a credential.
+
+Everything else is refused before anything is sent, in agent mode's words with the list of reads and "Nothing was sent.", decided by the request's text alone (`refusedBeforeSend`, each opening no session): a publish, a will, a key other than `read` and `topic` (a filter, a QoS, `noLocal`, `retainHandling`, a topic alias, a payload, a property), a topic with `+` or `#` anywhere, a topic under a `$` root, a topic that is not one MQTT string (empty, with a null character, not well-formed text, or over 65,535 bytes), and a request longer than 4,096 characters.
+A filter the model writes would let it find topic names one level at a time, which is why the only filters agent mode sends are `#` itself and the exact topic the request names: measured raw (`rawRefused`), the agent's own credentials subscribed to `homes/+/door` named a seeded topic, and a `$share/` subscription took ten messages in two seconds that the devices subscribed beside it would not get.
+The exact-topic read answers whether that one topic was seen and nothing about any other: a hit and a miss differ only in that topic's own figures, which `agent-provider.test.ts` pins.
+The answer does not echo the topic the request named, as S3's and Firestore's agent answers do not.
+A time budget too short for a whole window and the shortest dial (4,000 ms) is refused rather than shortened; the dial gets the rest of the budget, up to 10 seconds.
+A window ended by Studio's message or byte budget ([section 5](#5-the-read)) is answered as the window it was, with that stop reason: a total over a window is not a cut figure, it is the window.
+A result past the byte budget is refused.
+A failure is worded by its kind (a refused handshake by Studio's own sentence for the CONNACK code, a handshake that never finished, a broker that could not be reached, an answer that is not MQTT 5.0, the time budget), never in the broker's or the transport's words, and never with a credential.
+
+### 14.3 What is withheld, and why
+
+Topic names are stored values: a topic path names the people and devices behind it, as an S3 key or an Oxia key does.
+So are payloads, user properties, correlation data, response topics and content types.
+None of them reaches agent mode through a row, a column name, a warning, an error, the grounding or Operate; a loss the read proves ([section 3.3](#33-the-inbound-size-limit-is-ours-and-is-not-declared-to-the-broker)) is counted in `messages_lost` and never named, since the editor's sentence for it names the topic.
+
+`$SYS` is withheld too, and the capture is why (`sys`): Mosquitto's `$SYS` tree carried no client's id, user name or address, but EMQX's carried the connecting client's id in its topic names and its id, user name and address in the payload, so a `$` topic is refused by name on every broker rather than answered on one and leaking on another.
+
+Every answer carries three warnings, the window's own account (how long it listened to what, why it stopped and what it counted), a count of proven losses where there were any, and the completeness sentence: "A topic not seen in the window may still exist: MQTT has no command that lists topics, so a subscriber sees a topic only when a message on it arrives in the window or the broker holds a retained message on it, and no answer is a complete count of the broker's topics or proof that a topic does not exist."
+
+| Path | Handle | What it reads |
+| --- | --- | --- |
+| Investigation reads | agent read-only profile | one fresh session per read of [section 14.2](#142-what-an-agent-request-may-be) |
+| Connect | either agent profile | a handshake that subscribes to nothing: CONNECT and DISCONNECT (`connect`) |
+| Investigation grounding and plan-mode grounding | either agent profile | nothing: the provider declares no kind the walk lists, so the run is told why no topic is listed and how to read one the question names |
+| Keys panel, a topic's listing, description and Source tab, the console | either agent profile | nothing: each is refused with its reason |
+| Overview, health, performance, slow-query, session, table, index and storage readings | either agent profile | nothing: each answers its reason, never Studio's own figure or an empty reading |
+
+On a stock EMQX the window read meets the broker's own refusal of `#` and answers `subscription-refused` with reason code 135 and nothing read, while a topic read is granted (`emqx`); the answer says which.
+
+### 14.4 Agent language pack
+
+Statement-language family: `mqttread`.
+Overlay: [`src/lib/agent/languages/mqttread/engines/mqtt.ts`](../../src/lib/agent/languages/mqttread/engines/mqtt.ts), with its client row in [`src/lib/agent/languages/mqttread/engines/client.ts`](../../src/lib/agent/languages/mqttread/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`.
+Both overlays are empty, so the engine resolves to the `mqttread` family pack itself.
+The `mqttread` statement-language family has no dialect-bound member.
+This overlay overrides no Shared member, so every Shared member is the `mqttread` statement-language family's own.
+The family offers the investigation workflow, through `run_read_query` with one read request, and the operations workflow; it offers no query optimization or database assessment, since a broker has no plan and no profile, and no data analysis, whose tools need stored values, and no workflow hands an answer to the editor.
+The investigation rule tells the model to read a topic the question names directly, to read the window only for the broker's totals, never to guess a topic, and to report a topic not seen as not seen in that window, never as absent.
+A plan of the investigation is prose: an MQTT connection has no query console, so there is no statement for the editor to run, and plan mode is ungrounded on it, as agent mode is.
+The editor language id stays `mqtt`, and the fence alias `mqttread` names this engine.
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+No MCP tool reads an MQTT broker: the family declares no MCP facet, `MCP_EXPOSABLE.mqtt` and `MCP_STATEMENT_READ.mqtt` are false ([B164](../BACKLOG.md#b164-mqtts-agent-reads-count-what-one-window-delivers-with-topic-names-withheld-and-it-has-no-mcp-surface)), and `READ_ONLY_ENFORCED.mqtt` is unchanged.

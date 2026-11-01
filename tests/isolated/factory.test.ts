@@ -646,6 +646,21 @@ describe("createDatabaseProvider", () => {
     expect(sent).toEqual(["SELECT 1"]);
   });
 
+  test("the execution context rides along to mqtt: queryReadOnly answers only under the agent profile", async () => {
+    const conn = makeConnection("mqtt", { host: "127.0.0.1", port: 1883 });
+    const profiled = await createDatabaseProvider(conn, {}, { readOnly: true, sendsStatements: true });
+    const editor = await createDatabaseProvider(conn);
+    if (profiled.queryReadOnly === undefined || editor.queryReadOnly === undefined) throw new Error("no queryReadOnly");
+    // Neither is connected, so only the context tells the two apart: the editor's refusal comes before the connection
+    // check, and the profiled handle meets the connection check.
+    await expect(editor.queryReadOnly('{"read": "window"}', AGENT_BUDGET)).rejects.toThrow(
+      "Read-only execution requires a provider opened under the agent read-only profile",
+    );
+    await expect(profiled.queryReadOnly('{"read": "window"}', AGENT_BUDGET)).rejects.toThrow(
+      "Provider is not connected",
+    );
+  });
+
   test("the execution context rides along to mtconnect: queryReadOnly answers only under the agent profile", async () => {
     const conn = makeConnection("mtconnect", { host: "127.0.0.1", port: 5000 });
     const profiled = await createDatabaseProvider(conn, {}, { readOnly: true, sendsStatements: true });
@@ -3140,7 +3155,7 @@ describe("acquireExecutionProfileProvider", () => {
 
   test("refuses a provider type without a read-only statement path", async () => {
     const error: unknown = await acquireExecutionProfileProvider(
-      makeConnection("mqtt", { id: "mqtt-profile" }),
+      makeConnection("sparkplug", { id: "sparkplug-profile" }),
       "agent-read-only",
     ).catch((e: unknown) => e);
 
@@ -3149,7 +3164,7 @@ describe("acquireExecutionProfileProvider", () => {
     // The rule is the method, not the kind of boundary behind it: Kubernetes and MongoDB are granted the profile with
     // no database read-only session.
     expect((error as Error).message).toBe(
-      'Provider type "mqtt" implements no read-only statement path (queryReadOnly)',
+      'Provider type "sparkplug" implements no read-only statement path (queryReadOnly)',
     );
     expect(getExecutionProfileCacheStats().size).toBe(0);
   });
@@ -3204,7 +3219,7 @@ describe("acquireExecutionProfileProvider", () => {
     // entries, so a later change to one path's lifecycle cannot reach the other, and
     // neither is ever the editor's writable pool.
     const refused: unknown = await acquireExecutionProfileProvider(
-      makeConnection("mqtt", { id: "mqtt-handover" }),
+      makeConnection("sparkplug", { id: "sparkplug-handover" }),
       "agent-handover",
     ).catch((e: unknown) => e);
     expect(refused).toBeInstanceOf(ExecutionProfileError);

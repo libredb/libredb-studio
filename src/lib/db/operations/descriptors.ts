@@ -44,6 +44,7 @@ import { modbusreadAgentReadInput } from "./modbusread-admission";
 import { promqlAgentReadInput } from "./promql-admission";
 import { opcuareadAgentReadInput } from "./opcuaread-admission";
 import { mtconnectreadAgentReadInput } from "./mtconnectread-admission";
+import { mqttreadAgentReadInput } from "./mqttread-admission";
 import { weaviateapiAgentReadInput } from "./weaviateapi-admission";
 import { agentPlanExecutionSqlInput, agentQueryReadSqlInput, agentReadSqlInput } from "./statement-guard";
 import type { RegistrableOperationDescriptor } from "./types";
@@ -962,6 +963,41 @@ const mtconnectreadQueryReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+const MQTTREAD_READ_BOUNDARY =
+  "MQTT: the provider's structural closed table: one read of a closed table of two, the window read, one subscription " +
+  "to the whole filter # for one window, and the topic read, one subscription to the one topic the request names in " +
+  "full, each a fresh session written by an encoder of five packets (CONNECT, SUBSCRIBE, UNSUBSCRIBE, PINGREQ and " +
+  "DISCONNECT) with no function that writes a PUBLISH and a CONNECT with no Will parameter, every outbound byte " +
+  "re-checked by the valve, so no PUBLISH, Will, shared or exclusive subscription, wildcard below the root or filter " +
+  "of the model's own can be sent. Topic names, payloads, user properties, correlation data, response topics and " +
+  "content types are withheld: every answer is projected to counts and flags (agent-read.ts), with the window it " +
+  "listened for, its stop reason and that a topic not seen may still exist; a time budget that cannot hold a whole " +
+  "window is refused before anything is sent, and a result past the byte budget is refused, never truncated.";
+
+/**
+ * One MQTT read the model wrote, on an `mqtt` connection.
+ *
+ * R1 on a structural boundary: the agent's reads reach the broker only as SUBSCRIBE through an encoder with no PUBLISH
+ * and a valve. Its own id, and not a widened `sql.query.read`, so the SQL contract and its audit action stay exactly
+ * what they were.
+ */
+const mqttreadQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "mqttread.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: mqttreadAgentReadInput,
+  verification: {
+    reviewedBy: "MQTT agent execution design review",
+    boundary: MQTTREAD_READ_BOUNDARY,
+    verifiedOn: "2026-11-01",
+  },
+};
+
 const FSQUERY_READ_BOUNDARY =
   "Firestore: the provider's structural closed table, read with the console's own parser: one read of a closed table " +
   "of four metadata reads (the root collection ids, the subcollection ids of one document the statement names in full, " +
@@ -1291,6 +1327,7 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   promqlQueryReadDescriptor,
   opcuareadQueryReadDescriptor,
   mtconnectreadQueryReadDescriptor,
+  mqttreadQueryReadDescriptor,
 ]);
 
 /**

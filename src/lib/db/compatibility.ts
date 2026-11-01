@@ -551,8 +551,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // `queryReadOnly`, whose output masks every Secret name, and `inspect_schema` lists relations alone, which no
   // Kubernetes kind is, so no object name, a Secret's included, reaches it.
   kubernetes: true,
-  // Outside this version, as for etcd, Oxia and S3: a read whose completeness cannot be proved is not a
-  // read an agent should be handed without a reader looking at it.
+  // Agent mode reads MQTT through a window whose every answer says a topic not seen may still exist, with topic
+  // names and payloads withheld; no MCP surface that reads through the same window, completeness sentence and
+  // projection is designed yet (BACKLOG B164).
   mqtt: false,
   // Closed, as etcd's, Oxia's and S3's: agent mode reads Firestore's metadata within a run's read allowance, every read
   // is billed to the user's project, and no MCP surface that lists collections but never a document id is designed yet
@@ -672,6 +673,8 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // (BACKLOG B104).
   s3: false,
   kubernetes: true,
+  // Agent mode executes window reads on MQTT, metadata only, and MCP read stays closed on it until a change of its own
+  // opens it (BACKLOG B164).
   mqtt: false,
   // Agent mode executes metadata-only reads on Firestore, and MCP read stays closed on it until a change of its own
   // opens it (BACKLOG B107).

@@ -164,6 +164,11 @@ type MtconnectreadOperation =
   /** One MTConnect read the model wrote, on an `mtconnect` connection; see `mtconnectreadQueryReadDescriptor`. */
   "mtconnectread.query.read";
 
+/** The mqttread request language's operation: its one read. */
+type MqttreadOperation =
+  /** One MQTT read the model wrote, on an `mqtt` connection; see `mqttreadQueryReadDescriptor`. */
+  "mqttread.query.read";
+
 /** The s3api command language's operation: its one read. */
 type S3apiOperation =
   /** One S3 metadata read the model wrote, on an `s3` connection; see `s3apiQueryReadDescriptor`. */
@@ -196,6 +201,7 @@ export interface AgentFamilyOperationIds {
   readonly promql: PromqlOperation;
   readonly opcuaread: OpcuareadOperation;
   readonly mtconnectread: MtconnectreadOperation;
+  readonly mqttread: MqttreadOperation;
 }
 
 /** kubectl's goal verifiers. */
@@ -271,6 +277,8 @@ export interface AgentFamilyVerifierIds {
   readonly opcuaread: never;
   /** None: its workflows are judged by the core's own rules. */
   readonly mtconnectread: never;
+  /** None: its workflows are judged by the core's own rules. */
+  readonly mqttread: never;
 }
 
 /** The operation a family's model-written reads are evaluated under: its row's `<family>.query.read`. */
@@ -550,6 +558,7 @@ export interface AgentFamilyEvidenceTools {
   readonly promql: never;
   readonly opcuaread: never;
   readonly mtconnectread: never;
+  readonly mqttread: never;
 }
 
 /** Every pack's evidence tool: a member of the core's `AgentToolName`, declared by the pack that offers it. */
@@ -579,6 +588,7 @@ export interface AgentFamilyReadingDenyCodes {
   readonly promql: never;
   readonly opcuaread: never;
   readonly mtconnectread: never;
+  readonly mqttread: never;
 }
 
 /** Every pack's reading refusal code: a member of the core's `AgentReadingDenyCode`, declared by its pack. */
@@ -608,6 +618,7 @@ export interface AgentFamilyShortfalls {
   readonly promql: never;
   readonly opcuaread: never;
   readonly mtconnectread: never;
+  readonly mqttread: never;
 }
 
 /** Every pack's verdict shortfall: a member of the core's `AgentGoalShortfall`, declared by its pack. */
@@ -637,6 +648,7 @@ export interface AgentFamilyVariantRequirements {
   readonly promql: never;
   readonly opcuaread: never;
   readonly mtconnectread: never;
+  readonly mqttread: never;
 }
 
 /** Every pack's variant requirement: a member of the core's `AgentVariantRequirement`, declared by its pack. */
@@ -700,6 +712,7 @@ export interface AgentFamilyEvidenceEvents {
   readonly promql: never;
   readonly opcuaread: never;
   readonly mtconnectread: never;
+  readonly mqttread: never;
 }
 
 /** Every pack's evidence event, as the ledger stores it less its timestamp. */
@@ -905,6 +918,7 @@ export interface AgentFamilyDialectRows {
   promql: { client: Record<never, never>; server: Record<never, never> };
   opcuaread: { client: Record<never, never>; server: Record<never, never> };
   mtconnectread: { client: Record<never, never>; server: Record<never, never> };
+  mqttread: { client: Record<never, never>; server: Record<never, never> };
 }
 
 /** The dialect-bound members of each family, client and server. */
