@@ -56,6 +56,15 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { comparePaths } from "@/lib/db/object-path";
+import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
+import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import type { McpConnectionContext } from "@/lib/mcp/context";
+import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
+import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
+import type { ManagedConnection } from "@/lib/seed";
+import { RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 
 // ============================================================================
 // Harness
@@ -3543,5 +3552,385 @@ describe("LibSQLProvider agent read-only profile", () => {
 
     expect(await refusal(() => provider.queryReadOnly("SELECT 1", BUDGET))).toBeInstanceOf(ConnectionError);
     await provider.disconnect();
+  });
+});
+
+// ============================================================================
+// MCP run_read_query on libSQL
+// ============================================================================
+
+/**
+ * MCP's `run_read_query` serves libSQL through the factory's own `agent-read-only` acquisition and the provider's
+ * `queryReadOnly`, the path agent mode uses: the open proves the token read-only (its claims, then three writes the
+ * server must refuse), and every statement then goes alone in one request under that token. The MCP fence refuses a
+ * write-shaped statement before anything is acquired; a write that reaches the server, its fence removed, is the
+ * server's 403. The seed's own token is the credential, since a seed carries no separate agent token.
+ */
+describe("MCP run_read_query on a libSQL connection", () => {
+  const fakeToken = (claims: unknown): string => {
+    const part = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+    return `${part({ alg: "EdDSA", typ: "JWT" })}.${part(claims)}.not-a-real-signature`;
+  };
+  const READ_ONLY_TOKEN = fakeToken({ a: "ro" });
+  const NAME = '"libredb_agent_probe_[0-9a-f]{32}"';
+  const PROBES = [
+    new RegExp(`^DROP TABLE IF EXISTS ${NAME}$`),
+    new RegExp(`^DELETE FROM ${NAME} WHERE 0$`),
+    new RegExp(`^INSERT INTO ${NAME} SELECT 1 WHERE 0$`),
+  ];
+  const FORBIDDEN = "Authorization forbidden: Current session doesn't not have Write permission to namespace default";
+  const ENGINES = "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse and libSQL";
+
+  function seed(overrides: Partial<ManagedConnection> = {}): ManagedConnection {
+    return {
+      id: "seed:edge",
+      name: "edge",
+      type: "libsql",
+      seedId: "edge",
+      managed: true,
+      mcp: true,
+      roles: ["*"],
+      host: "127.0.0.1",
+      port: 18081,
+      password: READ_ONLY_TOKEN,
+      createdAt: new Date("2026-11-01T00:00:00.000Z"),
+      ...overrides,
+    } as ManagedConnection;
+  }
+
+  let acquired: ExecutionProfile[] = [];
+
+  /** A context over one seed, acquiring through the factory as the MCP route does. */
+  function contextFor(target: ManagedConnection): McpConnectionContext {
+    return {
+      caller: { username: "alice", role: "admin" },
+      visibleConnections: async () => [target],
+      resolve: async () => target,
+      acquire: (connection: ManagedConnection, profile: ExecutionProfile) => {
+        acquired.push(profile);
+        return acquireExecutionProfileProvider(connection, profile);
+      },
+    } as unknown as McpConnectionContext;
+  }
+
+  function call(args: Record<string, unknown>, target: ManagedConnection = seed()) {
+    const parsed = RunReadQueryInputSchema.parse({ connection_id: target.id, ...args }) as McpStatementInput;
+    return runReadQuery(parsed, { context: contextFor(target), signal: new AbortController().signal });
+  }
+
+  /** The same tool with its statement fence removed, so a write reaches the boundary under test. */
+  const UNFENCED: McpStatementArm = { ...mcpStatementArm("run_read_query"), fence: () => null };
+
+  function unfenced(args: Record<string, unknown>, target: ManagedConnection = seed()) {
+    const parsed = UNFENCED.inputSchema.parse({ connection_id: target.id, ...args }) as McpStatementInput;
+    return runStatement(UNFENCED, parsed, { context: contextFor(target), signal: new AbortController().signal });
+  }
+
+  /** A server that refuses a request carrying a write with 403 as a whole, as sqld does for a read-only token. */
+  function readOnlyServer(answer: Server = answerFor): void {
+    server = answer;
+    const answering = globalThis.fetch;
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const body = init?.body === undefined ? "" : String(init.body);
+      const requests = (JSON.parse(body || "{}") as { requests?: { stmt?: { sql?: string } }[] }).requests ?? [];
+      if (requests.some((request) => /^\s*(DROP|INSERT|DELETE|UPDATE|CREATE)\b/i.test(String(request.stmt?.sql)))) {
+        calls.push({ url: String(input), body });
+        return Promise.resolve(new Response(JSON.stringify({ error: FORBIDDEN }), { status: 403 }));
+      }
+      return answering(input, init);
+    }) as unknown as typeof fetch;
+  }
+
+  const ids = (count: number) =>
+    result(
+      [["id", "INTEGER"]],
+      Array.from({ length: count }, (_, index) => [int(index + 1)]),
+    );
+
+  beforeEach(() => {
+    acquired = [];
+  });
+
+  afterEach(async () => {
+    await clearProviderCache();
+  });
+
+  test("the provider doc says MCP read is open here and names the statements it runs, from their records", () => {
+    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/libsql.md"), "utf8");
+
+    expect(MCP_STATEMENT_READ.libsql).toBe(true);
+    expect(doc).toContain("`MCP_STATEMENT_READ.libsql` is true");
+    expect(doc).not.toContain("MCP's statement read stays closed on libSQL");
+    expect(doc).not.toContain("| No MCP statement read |");
+    expect(doc.replaceAll("`", "")).toContain(`It runs ${readQueryFormsOf("libsql").statements}:`);
+  });
+
+  test("reads rows under the agent profile after the open's proof, paged one row past max_rows", async () => {
+    readOnlyServer((sql) => (sql === "SELECT 1" ? answerFor(sql) : ids(3)));
+
+    const result = await call({ sql: "SELECT id FROM probe_orders ORDER BY id", max_rows: 2 });
+
+    expect(result.isError).toBeUndefined();
+    expect(acquired).toEqual(["agent-read-only"]);
+    const sent = sentStatements();
+    expect(sent).toHaveLength(5);
+    expect(sent[0]).toBe("SELECT 1");
+    PROBES.forEach((probe, index) => expect(sent[index + 1]).toMatch(probe));
+    expect(sent[4]).toBe("SELECT id FROM probe_orders ORDER BY id LIMIT 3");
+    expect(result.structuredContent).toMatchObject({
+      connection_id: "seed:edge",
+      columns: [{ name: "id", type: "INTEGER" }],
+      rows: [{ id: 1 }, { id: 2 }],
+      row_count: 2,
+      truncated: true,
+      truncated_by: "max_rows",
+      pagination: { offset: 0, limit: 2, hasMore: true, nextOffset: 2, wasLimited: true },
+      hint: "Call again with offset 2 for the next page.",
+    });
+    expect((result.content as { text: string }[])[0]?.text).toBe(MCP_UNTRUSTED_NOTICE);
+  });
+
+  test("the proof runs at the open of the shared agent handle, not before each statement", async () => {
+    readOnlyServer((sql) => (sql === "SELECT 1" ? answerFor(sql) : ids(1)));
+
+    await call({ sql: "SELECT id FROM probe_orders" });
+    calls = [];
+    const second = await call({ sql: "SELECT id FROM probe_orders" });
+
+    expect(second.isError).toBeUndefined();
+    expect(sentStatements()).toEqual(["SELECT id FROM probe_orders LIMIT 101"]);
+  });
+
+  test("pages with libSQL's own LIMIT n OFFSET m", async () => {
+    readOnlyServer((sql) => (sql === "SELECT 1" ? answerFor(sql) : ids(1)));
+
+    const result = await call({ sql: "SELECT id FROM probe_orders ORDER BY id", max_rows: 2, offset: 2 });
+
+    expect(sentStatements().at(-1)).toBe("SELECT id FROM probe_orders ORDER BY id LIMIT 3 OFFSET 2");
+    expect(result.structuredContent).toMatchObject({
+      rows: [{ id: 1 }],
+      pagination: { offset: 2, limit: 2, hasMore: false, nextOffset: null, wasLimited: true },
+    });
+  });
+
+  test("refuses an offset on a statement it cannot page, before anything is acquired", async () => {
+    readOnlyServer();
+
+    for (const [sql, text] of [
+      ["VALUES (1), (2), (3)", "This statement's result cannot be paged. Call again without offset."],
+      [
+        "SELECT id FROM probe_orders LIMIT 5",
+        "This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: LIMIT n OFFSET m.",
+      ],
+    ] as const) {
+      const result = await call({ sql, offset: 1 });
+
+      expect(result).toEqual({ content: [{ type: "text", text }], isError: true });
+      expect(sentStatements().filter((sent) => sent.includes("probe_orders") || sent.startsWith("VALUES"))).toEqual([]);
+    }
+  });
+
+  const fenced = (code: string) =>
+    `The statement was refused before it reached the database (${code}). On this engine run_read_query runs one read-only statement: a SELECT (a WITH is fine), VALUES, or EXPLAIN.`;
+
+  test.each([
+    ["INSERT INTO probe_orders (id) VALUES (9)", "NON_READ_STATEMENT"],
+    ["INSERT INTO probe_orders (id) VALUES (9) RETURNING id", "NON_READ_STATEMENT"],
+    ["REPLACE INTO probe_orders (id) VALUES (1)", "NON_READ_STATEMENT"],
+    ["UPDATE probe_orders SET id = 0", "NON_READ_STATEMENT"],
+    ["DELETE FROM probe_orders", "NON_READ_STATEMENT"],
+    ["DROP TABLE probe_orders", "NON_READ_STATEMENT"],
+    ["CREATE TABLE probe_copy AS SELECT * FROM probe_orders", "NON_READ_STATEMENT"],
+    ["ATTACH DATABASE ':memory:' AS other", "NON_READ_STATEMENT"],
+    ["DETACH DATABASE other", "NON_READ_STATEMENT"],
+    ["VACUUM INTO '/tmp/not-a-real-copy.db'", "NON_READ_STATEMENT"],
+    ["REINDEX", "NON_READ_STATEMENT"],
+    ["PRAGMA user_version = 5", "NON_READ_STATEMENT"],
+    ["PRAGMA writable_schema = ON", "NON_READ_STATEMENT"],
+    ["PRAGMA table_info(probe_orders)", "NON_READ_STATEMENT"],
+    ["BEGIN IMMEDIATE", "NON_READ_STATEMENT"],
+    ["COMMIT", "NON_READ_STATEMENT"],
+    ["SELECT 1; DELETE FROM probe_orders", "MULTIPLE_STATEMENTS"],
+    [
+      "WITH doomed AS (SELECT 1 AS id) DELETE FROM probe_orders WHERE id IN (SELECT id FROM doomed)",
+      "NON_READ_STATEMENT",
+    ],
+    ["SELECT load_extension('/tmp/not-a-real-extension')", "SIDE_EFFECT_KEYWORD"],
+    ["EXPLAIN DELETE FROM probe_orders", "SIDE_EFFECT_KEYWORD"],
+  ])("%p is refused at admission, before anything is acquired or sent", async (sql, code) => {
+    readOnlyServer();
+
+    const result = await call({ sql });
+
+    expect(result).toEqual({ content: [{ type: "text", text: fenced(code) }], isError: true });
+    expect(acquired).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  test("a write that reaches the server, its fence removed, is answered as the server's own refusal", async () => {
+    readOnlyServer();
+
+    const result = await unfenced({ sql: "DELETE FROM probe_orders" });
+
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(result).toEqual({
+      content: [
+        { type: "text", text: MCP_UNTRUSTED_NOTICE },
+        { type: "text", text: `${MCP_ENGINE_ERROR_PREFIX}libSQL request failed: ${FORBIDDEN}` },
+      ],
+      isError: true,
+    });
+  });
+
+  const refusedAtOpen = (sentence: string) => ({
+    content: [
+      { type: "text", text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${ENGINES}.` },
+    ],
+    isError: true,
+  });
+
+  const CAN_WRITE =
+    'The libSQL token is not a read-only token (a JWT whose claims carry "a": "ro"), so it can write, and the agent read-only profile is refused: use a read-only token';
+
+  test.each([
+    ["a writable token", { password: fakeToken({ a: "rw" }) }, CAN_WRITE],
+    [
+      "a read-only token whose permission claim widens it",
+      { password: fakeToken({ a: "ro", p: { rw: { ns: ["default"] } } }) },
+      'The libSQL token carries claims beyond the read-only marker and the standard ones ("p"), which the server may read to grant writes, so it can write, and the agent read-only profile is refused: use a read-only token that carries no other claim',
+    ],
+    [
+      "a user name and password (HTTP Basic)",
+      { user: "admin", password: "not-a-real-password" },
+      "A libSQL connection that signs in with a user name and password (HTTP Basic) has no read-only form, so the agent read-only profile is refused: use a read-only token instead",
+    ],
+    [
+      "no token",
+      { password: undefined },
+      "A libSQL connection with no token reaches only a server that checks no credential, so the agent read-only profile is refused: use a read-only token",
+    ],
+    [
+      "a connection string carrying a writable token",
+      {
+        host: undefined,
+        port: undefined,
+        password: undefined,
+        connectionString: `libsql://db.example.invalid?authToken=${fakeToken({ a: "rw" })}`,
+      },
+      CAN_WRITE,
+    ],
+  ] as const)(
+    "%s is refused at open, in the tool's sentence, before anything is sent",
+    async (_label, overrides, sentence) => {
+      readOnlyServer();
+
+      const result = await call({ sql: "SELECT id FROM probe_orders" }, seed(overrides as Partial<ManagedConnection>));
+
+      expect(acquired).toEqual(["agent-read-only"]);
+      expect(result).toEqual(refusedAtOpen(sentence));
+      expect(calls).toEqual([]);
+    },
+  );
+
+  test("a server that runs the open's probes, one that checks no token, is refused before the statement", async () => {
+    // No 403 anywhere: the fixture runs every statement, as a server with no credential check does.
+    const result = await call({ sql: "SELECT id FROM probe_orders" });
+
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(sentStatements().some((sent) => sent.startsWith("SELECT id FROM probe_orders"))).toBe(false);
+    const text = (result.content as { text: string }[])[0]?.text ?? "";
+    expect(result.isError).toBe(true);
+    expect(text).toMatch(
+      new RegExp(
+        `^run_read_query cannot run on this connection: libSQL ran the write probe DROP TABLE IF EXISTS ${NAME} sent with a token whose claims declare read-only access, so the server does not hold the token to them \\(it checks no token, or admits one it did not sign\\), and the agent read-only profile is refused\\. It runs on ${ENGINES}\\.$`,
+      ),
+    );
+    expect(text).not.toContain(READ_ONLY_TOKEN);
+  });
+
+  test("an agent credential beside a connection string is refused before the provider is built", async () => {
+    const target = seed({
+      host: undefined,
+      port: undefined,
+      password: undefined,
+      connectionString: `libsql://db.example.invalid?authToken=${READ_ONLY_TOKEN}`,
+      agentPassword: READ_ONLY_TOKEN,
+    } as Partial<ManagedConnection>);
+
+    const result = await call({ sql: "SELECT 1" }, target);
+
+    expect(result).toEqual(
+      refusedAtOpen(
+        'Connection "seed:edge" configures an agent credential alongside a connection string; the credential cannot be applied, so acquisition is refused',
+      ),
+    );
+    expect(calls).toEqual([]);
+  });
+
+  test("a result past the 1000-row provider budget is refused, never cut", async () => {
+    readOnlyServer((sql) => (sql === "SELECT 1" ? answerFor(sql) : ids(1_001)));
+
+    const result = await call({ sql: "SELECT id FROM probe_orders LIMIT 2000" });
+
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: "The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, or remove your own LIMIT and page with offset.",
+        },
+      ],
+      isError: true,
+    });
+  });
+
+  test("a result past the 1 MiB provider budget is refused, never cut", async () => {
+    readOnlyServer((sql) =>
+      sql === "SELECT 1" ? answerFor(sql) : result([["s", "TEXT"]], [[text("x".repeat(1_048_577))]]),
+    );
+
+    const answer = await call({ sql: "SELECT s FROM probe_wide" });
+
+    expect(answer).toEqual({
+      content: [
+        {
+          type: "text",
+          text: "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add a smaller LIMIT.",
+        },
+      ],
+      isError: true,
+    });
+  });
+
+  test("a statement past timeout_ms is answered as the timeout, and its request is closed at the deadline", async () => {
+    readOnlyServer();
+    const answering = globalThis.fetch;
+    let closed = false;
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      if (!String(init?.body).includes("recursive_count")) return answering(input, init);
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => {
+            closed = true;
+            reject(new Error("aborted"));
+          },
+          { once: true },
+        );
+      });
+    }) as unknown as typeof fetch;
+
+    const answer = await call({ sql: "SELECT count(*) AS recursive_count FROM probe_orders", timeout_ms: 500 });
+
+    expect(answer).toEqual({
+      content: [
+        {
+          type: "text",
+          text: "The statement did not finish within timeout_ms (500 ms). Narrow it, or raise timeout_ms up to 30000.",
+        },
+      ],
+      isError: true,
+    });
+    await Bun.sleep(50);
+    expect(closed).toBe(true);
   });
 });

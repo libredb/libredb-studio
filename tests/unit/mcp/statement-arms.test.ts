@@ -404,6 +404,7 @@ describe("the tool each engine is read with", () => {
     expect(mcpStatementToolFor("kubernetes")).toBe("run_kubectl_read");
     for (const type of RUN_READ_QUERY_TYPES) expect(mcpStatementToolFor(type)).toBe("run_read_query");
     expect(mcpStatementToolFor("clickhouse")).toBe("run_read_query");
+    expect(mcpStatementToolFor("libsql")).toBe("run_read_query");
     expect(mcpStatementToolFor("redis")).toBeNull();
     expect(mcpStatementToolFor("snowflake")).toBeNull();
   });

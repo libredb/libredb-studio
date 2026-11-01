@@ -57,6 +57,7 @@ describe("the texts", () => {
   test("are the design's words", () => {
     expect(inSqlPaging("postgres")).toBe("Page it in SQL: LIMIT n OFFSET m.");
     expect(inSqlPaging("clickhouse")).toBe("Page it in SQL: LIMIT n OFFSET m.");
+    expect(inSqlPaging("libsql")).toBe("Page it in SQL: LIMIT n OFFSET m.");
     expect(inSqlPaging("mssql")).toBe("Page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.");
     expect(moreRowsThanPageableHint("sqlite")).toBe(
       "More rows exist than this result holds, and this query cannot be paged with offset. Page it in SQL: LIMIT n OFFSET m.",
@@ -86,11 +87,11 @@ describe("the texts", () => {
     expect(
       profileRefusalText(
         "The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution.",
-        "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL and ClickHouse",
+        "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse and libSQL",
         "run_read_query",
       ),
     ).toBe(
-      "run_read_query cannot run on this connection: The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution. It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL and ClickHouse.",
+      "run_read_query cannot run on this connection: The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution. It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse and libSQL.",
     );
   });
 });
@@ -100,7 +101,8 @@ describe("the texts", () => {
  * SQL Server 2022 refuse `TABLE`, SQL Server also refuses a bare `VALUES` and has no `EXPLAIN`, and MariaDB 11.8
  * refuses `TABLE` where MySQL runs it, so a refusal names only what the connection's engine runs. ClickHouse
  * 26.7.1.1315, measured on 2026-11-01, answers a bare `VALUES` and `TABLE` with a syntax error (code 62) and runs
- * `EXPLAIN`.
+ * `EXPLAIN`. libSQL (sqld 0.24.33), measured on 2026-11-01 with a read-only token, runs a bare `VALUES` and `EXPLAIN`
+ * (`EXPLAIN QUERY PLAN` too) and answers `TABLE` and `EXPLAIN ANALYZE` with a syntax error, as SQLite does.
  */
 describe("the accepted forms each engine's refusal names", () => {
   test.each([
@@ -110,6 +112,7 @@ describe("the accepted forms each engine's refusal names", () => {
     ["mssql", "a SELECT (a WITH is fine)"],
     ["mysql", "a SELECT (a WITH is fine), VALUES, TABLE (MySQL, not MariaDB), or EXPLAIN without ANALYZE"],
     ["clickhouse", "a SELECT (a WITH is fine), or EXPLAIN without ANALYZE"],
+    ["libsql", "a SELECT (a WITH is fine), VALUES, or EXPLAIN"],
   ] as const)("%s: %s", (type, statements) => {
     expect(fenceRefusalText("NON_READ_STATEMENT", type)).toBe(
       `The statement was refused before it reached the database (NON_READ_STATEMENT). On this engine run_read_query runs one read-only statement: ${statements}.`,
@@ -145,6 +148,14 @@ describe("the offset rule", () => {
       "SELECT id FROM numbers SETTINGS max_threads = 1",
       "clickhouse",
       "This query cannot be paged with offset. Page it in SQL: LIMIT n OFFSET m.",
+    ],
+    ["SELECT id FROM numbers ORDER BY id LIMIT 2 OFFSET 1", "libsql", OWN_LIMIT],
+    ["SELECT id FROM numbers", "libsql", "This query cannot be paged with offset. Page it in SQL: LIMIT n OFFSET m."],
+    ["VALUES (1), (2), (3)", "libsql", "This statement's result cannot be paged. Call again without offset."],
+    [
+      "EXPLAIN QUERY PLAN SELECT id FROM numbers",
+      "libsql",
+      "This statement's result cannot be paged. Call again without offset.",
     ],
     ["VALUES (1), (2), (3)", "sqlite", "This statement's result cannot be paged. Call again without offset."],
     ["TABLE numbers", "postgres", "This statement's result cannot be paged. Call again without offset."],
@@ -260,7 +271,11 @@ describe("the prefixes the mapper matches still start a message in each provider
     MSSQL_SERIALISED_PREFIX: { prefix: MSSQL_SERIALISED_PREFIX, files: ["src/lib/db/providers/sql/mssql.ts"] },
     TIME_BUDGET_PREFIX: {
       prefix: TIME_BUDGET_PREFIX,
-      files: ["src/lib/db/providers/sql/sqlite.ts", "src/lib/db/providers/sql/duckdb/index.ts"],
+      files: [
+        "src/lib/db/providers/sql/sqlite.ts",
+        "src/lib/db/providers/sql/duckdb/index.ts",
+        "src/lib/db/providers/sql/libsql/index.ts",
+      ],
     },
     MSSQL_TIME_BUDGET_PREFIX: { prefix: MSSQL_TIME_BUDGET_PREFIX, files: ["src/lib/db/providers/sql/mssql.ts"] },
   };
@@ -272,6 +287,7 @@ describe("the prefixes the mapper matches still start a message in each provider
     sqlite: ["src/lib/db/providers/sql/sqlite.ts"],
     duckdb: ["src/lib/db/providers/sql/duckdb/index.ts"],
     clickhouse: ["src/lib/db/providers/sql/clickhouse/agent-read.ts", "src/lib/db/providers/sql/clickhouse/index.ts"],
+    libsql: ["src/lib/db/providers/sql/libsql/agent-read.ts", "src/lib/db/providers/sql/libsql/index.ts"],
     mongodb: ["src/lib/db/providers/document/mongodb/agent-read.ts"],
     kubernetes: [
       "src/lib/db/providers/platform/kubernetes/machine-read.ts",

@@ -10,7 +10,8 @@ import type { DatabaseType } from "@/lib/types";
  * Measured on 2026-10-27 by running each form: SQLite 3.53.4 refuses `TABLE`; DuckDB 1.5.5 runs all four; SQL Server
  * 2022 refuses a bare `VALUES` and `TABLE` and has no `EXPLAIN`; MySQL runs `VALUES ROW(...)` and `TABLE`, and MariaDB
  * 11.8 a bare `VALUES` list but no `TABLE`. Measured on 2026-11-01: ClickHouse 26.7.1.1315 refuses a bare `VALUES` and
- * `TABLE` and runs `EXPLAIN`.
+ * `TABLE` and runs `EXPLAIN`; libSQL (sqld 0.24.33, through a read-only token) runs a bare `VALUES`, `EXPLAIN` and
+ * `EXPLAIN QUERY PLAN`, and answers `TABLE` and `EXPLAIN ANALYZE` with a syntax error, as SQLite does.
  */
 export interface ReadQueryForms {
   /** The statements, as the refusal names them after "runs one read-only statement:". */
@@ -41,7 +42,8 @@ export const READ_QUERY_FORMS: Readonly<Record<DatabaseType, ReadQueryForms | nu
   },
   // No TABLE statement, and EXPLAIN takes no ANALYZE.
   sqlite: { statements: "a SELECT (a WITH is fine), VALUES, or EXPLAIN", paging: LIMIT_OFFSET },
-  libsql: null,
+  // SQLite's grammar over Hrana: no TABLE statement, and EXPLAIN takes no ANALYZE.
+  libsql: { statements: "a SELECT (a WITH is fine), VALUES, or EXPLAIN", paging: LIMIT_OFFSET },
   duckdb: {
     statements: "a SELECT (a WITH is fine), VALUES, TABLE, or EXPLAIN without ANALYZE",
     paging: LIMIT_OFFSET,
