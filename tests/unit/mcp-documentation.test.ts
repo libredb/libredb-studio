@@ -214,6 +214,20 @@ describe("docs/MCP.md", () => {
     );
   });
 
+  // run_read_query pages a SELECT with no LIMIT of its own at max_rows; only a LIMIT of its own past the 1000-row
+  // provider budget reaches the refusal, so no provider doc may say every result past 1000 rows is refused.
+  test.each(["docs/providers/clickhouse.md", "docs/providers/libsql.md", "docs/providers/influxdb3.md"])(
+    "%s says run_read_query pages a SELECT without its own LIMIT and refuses only a LIMIT past 1000",
+    (doc) => {
+      const text = read(doc);
+      expect(text).toContain(
+        "A `SELECT` without its own `LIMIT` is paged at `max_rows` (100 by default, at most 500), and `pagination.hasMore` and `pagination.nextOffset` say where the next page starts; a query whose own `LIMIT` is past 1000 rows, or a result past 1 MiB, is refused, never cut.",
+      );
+      expect(text).not.toContain("A result past 1000 rows or 1 MiB is refused");
+      expect(text).toContain("read with its own `LIMIT` past 1000 rows");
+    },
+  );
+
   test("names how each engine run_read_query serves enforces read-only, from the one engine list", () => {
     const line = MCP_DOC.split("\n").find((text) => text.startsWith("- Read-only is the database's own enforcement"));
     for (const type of RUN_READ_QUERY_TYPES) expect(line).toContain(DB_UI_CONFIG[type].label);

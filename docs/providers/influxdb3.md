@@ -147,7 +147,8 @@ MCP's statement fence refuses a write-shaped statement before anything is acquir
 A read of a `system` table other than `system.influxdb_schema`, also with its schema written as a string, passes that fence and is refused by the provider's `system` fence before anything is sent.
 Values are not withheld: rows reach the MCP client as they reach the agent.
 It runs a `SELECT` (a `WITH` is fine), `VALUES`, or `EXPLAIN` without `ANALYZE`: `TABLE` is a parser error on 3.12.0 Core and the read policy refuses it, and `EXPLAIN ANALYZE` runs the statement; it pages with `LIMIT n OFFSET m`, and an offset on `VALUES`, `EXPLAIN` or a query with its own `LIMIT` is refused.
-A result past 1000 rows or 1 MiB is refused, never cut, and one past `timeout_ms` is answered as the timeout: the provider closes the request at the deadline, and the server frees the statement's work (section 5.10).
+A `SELECT` without its own `LIMIT` is paged at `max_rows` (100 by default, at most 500), and `pagination.hasMore` and `pagination.nextOffset` say where the next page starts; a query whose own `LIMIT` is past 1000 rows, or a result past 1 MiB, is refused, never cut.
+A read past `timeout_ms` is answered as the timeout: the provider closes the request at the deadline, and the server frees the statement's work (section 5.10).
 A client that closes its request stops the wait only: the statement runs on until the provider closes its request at the time left of `timeout_ms`.
 Measured on 2026-11-01 by watching the container: after a two-second `timeout_ms` the server was idle within two seconds, and after a cancel one second into a 15-second `timeout_ms` a `generate_series` count held more than one core until that deadline.
 
@@ -156,7 +157,7 @@ The 3.12.0 Core server was served under `agent-read-only`, and the 3.11.0 Core s
 The MCP fence refused all 43 captured statements of section 3.5 before anything was acquired; with it removed, the read policy refused each before it was sent, and each sent raw with the same token was refused by the planner with the status and the words its capture records.
 `system.queries`, `system.parquet_files`, `"system"."queries"` and five forms that write the schema as a string (`'system'.queries`, `'system'.'queries'`, `public.'system'.queries`, `'public'.'system'.'queries'` and `'system'."queries"`) passed the MCP fence and were refused by the `system` fence, while the server answered each sent raw; `system.influxdb_schema` was read.
 The token wrote a point through `/api/v3/write_lp` into a scratch database that MCP read back and the script deleted, and a hash of the databases, tables, columns, row counts and tokens read back the same before and after.
-`VALUES` and `EXPLAIN` answered, `TABLE` was refused by the read policy, a read paged with `offset`, a read past 1000 rows, one past 1 MiB and one past a one-second `timeout_ms` were each refused, the server answered the next call, and on the file-limit server a read over the limit was answered as the database's refusal.
+`VALUES` and `EXPLAIN` answered, `TABLE` was refused by the read policy, a read paged with `offset` answered its page; a read with its own `LIMIT` past 1000 rows, one past 1 MiB and one past a one-second `timeout_ms` were each refused, the server answered the next call, and on the file-limit server a read over the limit was answered as the database's refusal.
 
 ```sh
 LIBREDB_LIVE_INFLUXDB3_UNCHECKED_PORT=8183 bun tests/live/influxdb3-mcp-boundary.ts
