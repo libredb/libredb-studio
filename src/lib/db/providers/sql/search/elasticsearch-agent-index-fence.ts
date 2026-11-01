@@ -26,9 +26,10 @@
  *  - a top-level `FROM` that is not followed by one table identifier, an optional alias, and then `WHERE`, `GROUP`,
  *    `HAVING`, `ORDER`, `LIMIT` or the end, so no `JOIN`, second relation, `FROZEN`, `PIVOT`, catalog, `::` selector or
  *    subquery;
- *  - a reference with a name that starts with a dot, a hidden or system name, and a reference with an exclusion, a part
- *    that starts with `-`, both refused here without a request: an agent statement names the indices it reads, so it
- *    needs no exclusion, and 9.1.4's index resolutions do not apply one alike (measured 2026-11-01);
+ *  - a reference with a name that starts with a dot, as every system index's name does, whether or not the index it
+ *    names is hidden, and a reference with an exclusion, a part that starts with `-`, both refused here without a
+ *    request: an agent statement names the indices it reads, so it needs no exclusion, and 9.1.4's index resolutions do
+ *    not apply one alike (measured 2026-11-01);
  *  - a reference that is not then a comma list of names and wildcards written in letters, digits, `_`, `-`, `.`, `*` and
  *    `@`, none of them empty and none starting with `_`.
  *
@@ -44,11 +45,12 @@
  *    SQL endpoint uses, names the indices, aliases and data streams it reaches with their marks: the statement is
  *    refused when it names nothing, or an index the server marks hidden or system, an alias it marks hidden, or a data
  *    stream it marks hidden or system;
- *  - the SQL endpoint's own resolution of the reference (`SearchTransport.sqlTableIndices`), the request its resolver
- *    sends for the table, names the concrete indices the statement reads: the statement is refused when that names
- *    none, or an index the first resolution does not account for, as one it names, a backing index of a data stream it
- *    names, or an index behind an alias it names; and an index read only through an alias is resolved by its own name,
- *    and refuses the statement when the server marks it hidden or system.
+ *  - the SQL endpoint's own resolution of the reference (`SearchTransport.sqlTableIndices`), a request naming the same
+ *    indices as the one its resolver sends for the table, names the concrete indices the statement reads: the
+ *    statement is refused when that names none, or an index the first resolution does not account for, as one it
+ *    names, a backing index of a data stream it names, or an index behind an alias it names; and an index read only
+ *    through an alias is resolved by its own name, and refuses the statement when the server marks it hidden or
+ *    system.
  *
  * So an alias over a data stream, which points at the stream's backing indices, which the server marks hidden, is
  * refused; a data stream is read by its own name. The check and the statement are separate requests, so a change made
@@ -86,7 +88,7 @@ export const EXCLUSION_REFUSAL =
   "The agent writes no exclusion, a part that starts with -, in an Elasticsearch index expression: name the indices to read, or a wildcard that reaches only them";
 
 export const DOT_INDEX_REFUSAL =
-  "The agent names no Elasticsearch index that starts with a dot: those are the hidden and system indices, the security index among them, which a login that may read them reads through SQL; read a data stream by its own name rather than its backing index";
+  "The agent writes no name that starts with a dot in an Elasticsearch index expression: the security index and the other system indices are named that way, and a login that may read one reads it through SQL; read a data stream by its own name rather than its backing index";
 
 /** The refusal of a reference that is not an index expression the reader admits. */
 export function expressionRefusal(reference: string): string {

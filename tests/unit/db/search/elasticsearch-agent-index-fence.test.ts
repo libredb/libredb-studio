@@ -288,7 +288,7 @@ describe("agentIndexReference: what it refuses before anything is sent", () => {
       "The agent writes no exclusion, a part that starts with -, in an Elasticsearch index expression: name the indices to read, or a wildcard that reaches only them",
     );
     expect(DOT_INDEX_REFUSAL).toBe(
-      "The agent names no Elasticsearch index that starts with a dot: those are the hidden and system indices, the security index among them, which a login that may read them reads through SQL; read a data stream by its own name rather than its backing index",
+      "The agent writes no name that starts with a dot in an Elasticsearch index expression: the security index and the other system indices are named that way, and a login that may read one reads it through SQL; read a data stream by its own name rather than its backing index",
     );
   });
 
