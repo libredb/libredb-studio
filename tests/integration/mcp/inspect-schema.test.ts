@@ -510,6 +510,32 @@ describe("the container", () => {
     expect((await inspect({ connection_id: "seed:warehouse", schema: "MAIN" })).structuredContent?.schema).toBe("main");
   });
 
+  test("prefers an exact match when two containers differ only by case, and falls back to case-insensitive", async () => {
+    const { DuckDBProvider } = await import("@/lib/db/providers/sql/duckdb");
+    const original = DuckDBProvider.prototype.listContainers;
+    DuckDBProvider.prototype.listContainers = async function (this: InstanceType<typeof DuckDBProvider>, parent) {
+      if (parent !== undefined) {
+        return [
+          { name: "Billing", path: ["warehouse", "Billing"], level: 1 },
+          { name: "billing", path: ["warehouse", "billing"], level: 1 },
+        ];
+      }
+      return original.call(this, parent);
+    };
+    try {
+      const exact = await inspect({ connection_id: "seed:warehouse", schema: "billing" });
+      expect(exact.structuredContent?.schema).toBe("billing");
+
+      const exactUpper = await inspect({ connection_id: "seed:warehouse", schema: "Billing" });
+      expect(exactUpper.structuredContent?.schema).toBe("Billing");
+
+      const fallback = await inspect({ connection_id: "seed:warehouse", schema: "BILLING" });
+      expect(fallback.structuredContent?.schema).toBe("Billing");
+    } finally {
+      DuckDBProvider.prototype.listContainers = original;
+    }
+  });
+
   test("named but absent answers the not-found error, with no default container's tables", async () => {
     const result = await inspect({ connection_id: "seed:warehouse", schema: "nope" });
     expect(result.isError).toBe(true);

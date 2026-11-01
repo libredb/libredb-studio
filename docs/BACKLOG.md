@@ -42,7 +42,7 @@ None of it is a GitHub issue.
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B166 · 86
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
-- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
+- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 3
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
 
 ---
@@ -9247,14 +9247,6 @@ A unit test of the RabbitMQ provider pins today's answer at 501 streams, so the 
 Found 2026-10-12 while designing the RabbitMQ provider.
 
 **Done when:** `inspect_schema` reports a sampled count as a floor with `has_more` true and says how to reach an object outside the sample, for every provider, in a shared change.
-
-### MCP3. `inspect_schema` matches a named container case-insensitively
-
-`chooseContainer` compares names lower-cased, so on a RabbitMQ broker with virtual hosts `Billing` and `billing` a call naming `billing` reads whichever is listed first; Kubernetes namespaces are lower case, so it never mattered before.
-
-Found 2026-10-12 while designing the RabbitMQ provider.
-
-**Done when:** the chooser prefers an exact match and falls back to the case-insensitive one only when no exact match exists, for every provider, with a test on two names that differ by case.
 
 ### MCP4. The shared MCP read-query module still writes SQL's words
 
