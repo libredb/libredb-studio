@@ -260,6 +260,15 @@ export interface TrinoQueryResult {
 
   /** What the server reported about executing this statement. */
   stats: TrinoExecutionStats;
+  /**
+   * Whether the server said this statement ended the transaction it ran in.
+   *
+   * Only a statement sent inside a transaction can end one: measured on 476, a `COMMIT` or `ROLLBACK` sent there
+   * answers success and ends it, and every later statement under its id is refused as an unknown transaction
+   * (`tests/fixtures/trino/476/agent-boundary/`, capture 03). The agent path refuses such text before it is sent and
+   * reads this as well, so a statement that ended its read-only transaction is never answered as a read inside it.
+   */
+  endedTransaction: boolean;
 }
 
 /** Per-statement options. */
@@ -304,6 +313,27 @@ export interface TrinoQueryOptions {
    * is the only moment that exists.
    */
   onQueryStarted?: (queryId: string) => void;
+
+  /**
+   * Run inside the transaction this id names, one {@link TrinoTransport.beginReadOnlyTransaction} answered.
+   *
+   * Absent, the statement runs in autocommit and carries no transaction at all, which is how the editor sends every
+   * statement.
+   */
+  transactionId?: string;
+
+  /**
+   * The most rows the answer may hold. Past it the exchange is not read further, the statement is cancelled on the
+   * cluster, and {@link TrinoAnswerTooLargeError} is thrown, so an answer is refused rather than cut.
+   */
+  maxRows?: number;
+
+  /**
+   * The most bytes the answer's rows may hold, each page's rows measured as the JSON they arrived as, positional, so
+   * never more than the same rows keyed by name. Past it, as past `maxRows`. The pages' own envelope is not counted:
+   * a slow statement is polled through many pages that carry only its progress.
+   */
+  maxRowBytes?: number;
 }
 
 /**
@@ -380,15 +410,34 @@ export class TrinoTransportError extends Error {
 }
 
 /**
+ * An answer past a cap the caller set (`maxRows` or `maxRowBytes`): the exchange was not read further and the
+ * statement was cancelled on the cluster. `seen` is what had arrived when reading stopped, so it is at least one past
+ * the cap and never the answer's whole size.
+ */
+export class TrinoAnswerTooLargeError extends Error {
+  constructor(
+    readonly limit: "rows" | "bytes",
+    readonly seen: number,
+    readonly cap: number,
+  ) {
+    super(`The answer passed ${cap} ${limit === "rows" ? "rows" : "bytes"} and was not read further`);
+    this.name = "TrinoAnswerTooLargeError";
+    Object.setPrototypeOf(this, TrinoAnswerTooLargeError.prototype);
+  }
+}
+
+/**
  * The seam itself.
  *
- * Three methods, and `cancel` is one of them for a reason the other HTTP
+ * `cancel` is one of its methods for a reason the other HTTP
  * providers in this repo did not face: on Trino, abandoning a request does NOT
  * stop the work. A closed tab, an aborted fetch or an expired deadline leaves the
  * statement running on the cluster until it finishes, so terminating it is an
  * explicit act the seam has to be able to perform - both internally, on every
  * exit path of a statement it started, and on demand for a statement whose id a
- * caller learned through {@link TrinoQueryOptions.onQueryStarted}.
+ * caller learned through {@link TrinoQueryOptions.onQueryStarted}. The transaction
+ * pair exists for the agent path alone, which runs every statement inside a
+ * read-only transaction it rolls back.
  */
 export interface TrinoTransport {
   /** Which product this transport speaks to. */
@@ -408,6 +457,21 @@ export interface TrinoTransport {
    * was.
    */
   cancel(queryId: string, signal?: AbortSignal): Promise<void>;
+
+  /**
+   * Open a read-only transaction and answer its id, for {@link TrinoQueryOptions.transactionId}.
+   *
+   * Throws when the server's answer started none, so no statement meant for a transaction runs in autocommit.
+   */
+  beginReadOnlyTransaction(signal?: AbortSignal): Promise<string>;
+
+  /**
+   * Roll back the transaction this id names. Throws when the server's answer did not end it.
+   *
+   * Measured on 476, a `ROLLBACK` ends a transaction a failed statement aborted as well as an open one, so it is the
+   * one way out of either (capture 03).
+   */
+  rollback(transactionId: string, signal?: AbortSignal): Promise<void>;
 
   close(): Promise<void>;
 }

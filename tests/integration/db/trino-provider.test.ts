@@ -5116,14 +5116,15 @@ describe("endOpenQueryTransaction()", () => {
     expect(ABSENCES.filter((absence) => doc.includes(absence))).toEqual(["nobody has measured it yet"]);
   });
 
-  test("the transport neither sends nor reads a transaction header, which is what leaves the question open", () => {
-    // The code half of the doc's claim, pinned here so a future transport that DOES
-    // carry the header cannot leave the doc saying nobody measured it.
-    const transport = readFileSync(
-      join(import.meta.dir, "../../../src/lib/db/providers/sql/trino/http-transport.ts"),
-      "utf8",
-    );
+  test("an editor statement carries no transaction header, which is what leaves the question open", async () => {
+    // The code half of the doc's claim. The transport carries the header only for the agent path's own read-only
+    // transaction, which it always rolls back; an editor statement never joins or starts one.
+    const provider = await connectProvider();
+    await provider.query("START TRANSACTION");
+    await provider.query("SELECT 1");
 
-    expect(transport).not.toContain("Transaction-Id");
+    for (const headers of sentHeaders) {
+      expect([...headers.keys()].some((name) => name.includes("transaction"))).toBe(false);
+    }
   });
 });

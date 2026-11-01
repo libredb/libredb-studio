@@ -495,7 +495,8 @@ This provider does not, and unlike the other absences in this repository the rea
 
 What the code says is clear enough.
 Trino does have `START TRANSACTION`, and the protocol carries a transaction on a header, not on a socket: the coordinator answers a started transaction with `X-Trino-Started-Transaction-Id` and a client joins it by sending `X-Trino-Transaction-Id` on the next statement.
-[`http-transport.ts`](../../src/lib/db/providers/sql/trino/http-transport.ts) writes neither and reads neither - its header set is User, Source, Catalog, Schema and Time-Zone - so a statement after a `START TRANSACTION` does not join it, and this provider carries nothing between statements that an `endOpenQueryTransaction()` could name or end.
+On an editor statement [`http-transport.ts`](../../src/lib/db/providers/sql/trino/http-transport.ts) writes neither and reads neither - the headers it sends are User, Source, Catalog, Schema and Time-Zone - so a statement after a `START TRANSACTION` does not join it, and this provider carries nothing between statements that an `endOpenQueryTransaction()` could name or end.
+The transport carries the transaction headers only for the agent path's own read-only transaction, which it opens and rolls back inside one agent call (section 15).
 That is the same fact `supportsTransactions: false` reports ([§9](#9-capabilities--labels)).
 
 What nobody here has measured is the other end: what a live coordinator does with a transaction that was started and whose id was then dropped, how long it stays before the idle timeout takes it, and whether it holds anything a later user of the same cluster would notice.
