@@ -379,11 +379,11 @@ interface SearchProduct {
    * version read and before any statement is sent, and refuses a login that holds the cluster privilege `all`, reads
    * every index with the restricted ones included, or reads a restricted system index family by its pattern or a
    * restricted index by a name the check asks (the names that carry the release built from the version read among
-   * them), and one whose listed privileges grant any index privilege with `allow_restricted_indices`. It narrows the
-   * login and stands beside the statement check, which is the boundary: no list names every restricted index, and the
-   * server lists no privileges for an API key with role descriptors of its own, so a login granted a restricted index
-   * by a name the check does not ask can still open. A server with security off has no login and answers the check
-   * with no security endpoint at all; it is admitted with the statement check alone.
+   * them), and one whose listed privileges grant any index privilege with `allow_restricted_indices`, on this cluster
+   * or a remote one. It narrows the login and stands beside the statement check, which is the boundary: no list names
+   * every restricted index, and the server lists no privileges for an API key with role descriptors of its own, so a
+   * login granted a restricted index by a name the check does not ask can still open. A server with security off has
+   * no login and answers the check with no security endpoint at all; it is admitted with the statement check alone.
    *
    * Elasticsearch: true, through `_has_privileges` and `_privileges`, which every user may call about itself (measured
    * on 9.1.4: the superuser answers cluster `all`, `read` on every index with the restricted ones included, and a
@@ -1150,11 +1150,12 @@ abstract class SearchProvider extends SQLBaseProvider {
 
   /**
    * Refuses a login that holds the cluster privilege `all`, reads a restricted system index the check asks about, or
-   * is granted an index privilege with `allow_restricted_indices` in its listed privileges, read from the server's own
-   * privilege check and listing after the version read and before any agent statement is sent
-   * ({@link SearchProduct.checksLoginReach}). A server with security off has no login to check and is admitted with
-   * the statement check alone; a check that fails or cannot be read refuses the profile, since the login's reach is
-   * then unproven.
+   * is granted an index privilege with `allow_restricted_indices` in its listed privileges, on this cluster or a remote
+   * one, read from the server's own privilege check and listing after the version read and before any agent statement
+   * is sent ({@link SearchProduct.checksLoginReach}). The listing's grants are named where the check finds no
+   * restricted index the login reads, so a login that reads one is told what the check found. A server with security
+   * off has no login to check and is admitted with the statement check alone; a check that fails or cannot be read
+   * refuses the profile, since the login's reach is then unproven.
    */
   private async assertNarrowLogin(transport: SearchHttpTransport, version: string): Promise<void> {
     let reach: SearchLoginReach | null;
@@ -1176,8 +1177,14 @@ abstract class SearchProvider extends SQLBaseProvider {
           ? "the restricted system index name or pattern"
           : "the restricted system index names and patterns";
       findings.push(`read on ${named} ${reach.restrictedIndices.join(", ")}`);
-    } else if (reach.restrictedGrants !== null && reach.restrictedGrants.length > 0) {
-      findings.push(`an index privilege granted with allow_restricted_indices on ${reach.restrictedGrants.join(", ")}`);
+    } else if (reach.restrictedGrants !== null) {
+      const { local, remote } = reach.restrictedGrants;
+      if (local.length > 0) {
+        findings.push(`an index privilege granted with allow_restricted_indices on ${local.join(", ")}`);
+      }
+      if (remote.length > 0) {
+        findings.push(`a remote index privilege granted with allow_restricted_indices on ${remote.join(", ")}`);
+      }
     }
     if (findings.length === 0) return;
     throw new ExecutionProfileError(

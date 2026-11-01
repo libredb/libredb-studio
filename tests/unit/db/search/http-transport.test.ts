@@ -912,7 +912,7 @@ describe("SearchHttpTransport login check", () => {
       clusterAll: false,
       everyIndex: false,
       restrictedIndices: [".kibana_9.1.10_001"],
-      restrictedGrants: [],
+      restrictedGrants: { local: [], remote: [] },
     });
   });
 
@@ -937,7 +937,87 @@ describe("SearchHttpTransport login check", () => {
     const reach = await elasticsearch().loginReach("9.1.4");
 
     expect(reach?.restrictedIndices).toEqual([]);
-    expect(reach?.restrictedGrants).toEqual([".kibana_8.18.0_001", ".kibana_9.1.0_001"]);
+    expect(reach?.restrictedGrants).toEqual({ local: [".kibana_8.18.0_001", ".kibana_9.1.0_001"], remote: [] });
+  });
+
+  test("Elasticsearch names each remote index the listing grants with allow_restricted_indices as <cluster>:<name>, once, in the order listed", async () => {
+    // Measured on 9.1.4 (2026-11-02): a role whose remote_indices grant read on `logs-*` of `east` and `west*`, and
+    // read and view_index_metadata with allow_restricted_indices on `.kibana*` and `.security-7` of `east`. The listing
+    // carries `remote_indices` beside `indices`, each entry naming its clusters, and lists the flagged entry first.
+    handler = (url) =>
+      new URL(url).pathname === "/_security/user/_privileges"
+        ? json({
+            ...AGENT_LISTING,
+            remote_indices: [
+              {
+                names: [".kibana*", ".security-7"],
+                privileges: ["read", "view_index_metadata"],
+                allow_restricted_indices: true,
+                clusters: ["east"],
+              },
+              { names: ["logs-*"], privileges: ["read"], allow_restricted_indices: false, clusters: ["east", "west*"] },
+              { names: [".security-7"], privileges: ["read"], allow_restricted_indices: true, clusters: ["east", "*"] },
+            ],
+          })
+        : narrowAnswer();
+
+    const reach = await elasticsearch().loginReach("9.1.4");
+
+    expect(reach?.restrictedIndices).toEqual([]);
+    expect(reach?.restrictedGrants).toEqual({
+      local: [],
+      remote: ["east:.kibana*", "east:.security-7", "*:.security-7"],
+    });
+  });
+
+  test("Elasticsearch reads the superuser's listing, measured on 9.1.4, as granting every local and every remote index with allow_restricted_indices", async () => {
+    handler = (url) =>
+      new URL(url).pathname === "/_security/user/_privileges"
+        ? json({
+            cluster: ["all"],
+            global: [],
+            indices: [
+              { names: ["*"], privileges: ["all"], allow_restricted_indices: false },
+              {
+                names: ["*"],
+                privileges: ["monitor", "read", "read_cross_cluster", "view_index_metadata"],
+                allow_restricted_indices: true,
+              },
+            ],
+            applications: [{ application: "*", privileges: ["*"], resources: ["*"] }],
+            run_as: ["*"],
+            remote_indices: [
+              { names: ["*"], privileges: ["all"], allow_restricted_indices: false, clusters: ["*"] },
+              {
+                names: ["*"],
+                privileges: ["monitor", "read", "read_cross_cluster", "view_index_metadata"],
+                allow_restricted_indices: true,
+                clusters: ["*"],
+              },
+            ],
+            remote_cluster: [{ privileges: ["monitor_enrich", "monitor_stats"], clusters: ["*"] }],
+          })
+        : narrowAnswer();
+
+    const reach = await elasticsearch().loginReach("9.1.4");
+
+    expect(reach?.restrictedGrants).toEqual({ local: ["*"], remote: ["*:*"] });
+  });
+
+  // A run_as grant lets a login act as another user only through the es-security-runas-user header, so the docs' claim
+  // that run_as does not widen the agent path rests on this header block.
+  test("Elasticsearch asks and lists as the login itself: no request carries a header but content-type and authorization, so no run-as header", async () => {
+    handler = (url) => (new URL(url).pathname === "/_security/user/_privileges" ? json(AGENT_LISTING) : narrowAnswer());
+
+    await new SearchHttpTransport(
+      "elasticsearch",
+      makeConnection("elasticsearch", { user: "libredb_agent", password: "not-a-real-password" }),
+    ).loginReach("9.1.4");
+
+    expect(calls).toHaveLength(2);
+    for (const call of calls) {
+      expect(Object.keys(call.init?.headers ?? {}).sort()).toEqual(["authorization", "content-type"]);
+    }
   });
 
   test("Elasticsearch reads the listing's refusal for an API key with role descriptors of its own as no listing", async () => {
@@ -1010,6 +1090,42 @@ describe("SearchHttpTransport login check", () => {
     [
       "an entry that is not an object",
       json({ ...AGENT_LISTING, indices: ["probe_*"] }),
+      "Elasticsearch answered a privilege listing the client could not read",
+    ],
+    [
+      "a remote list that is not a list",
+      json({ ...AGENT_LISTING, remote_indices: {} }),
+      "Elasticsearch answered a privilege listing the client could not read",
+    ],
+    [
+      "a remote list that is null",
+      json({ ...AGENT_LISTING, remote_indices: null }),
+      "Elasticsearch answered a privilege listing the client could not read",
+    ],
+    [
+      "a remote entry with no clusters",
+      json({
+        ...AGENT_LISTING,
+        remote_indices: [{ names: [".security*"], privileges: ["read"], allow_restricted_indices: true }],
+      }),
+      "Elasticsearch answered a privilege listing the client could not read",
+    ],
+    [
+      "a remote entry whose clusters are not text",
+      json({
+        ...AGENT_LISTING,
+        remote_indices: [{ names: ["logs-*"], privileges: ["read"], allow_restricted_indices: false, clusters: [1] }],
+      }),
+      "Elasticsearch answered a privilege listing the client could not read",
+    ],
+    [
+      "a remote entry with no flag",
+      json({ ...AGENT_LISTING, remote_indices: [{ names: ["logs-*"], privileges: ["read"], clusters: ["east"] }] }),
+      "Elasticsearch answered a privilege listing the client could not read",
+    ],
+    [
+      "a remote entry that is not an object",
+      json({ ...AGENT_LISTING, remote_indices: ["east:logs-*"] }),
       "Elasticsearch answered a privilege listing the client could not read",
     ],
     [

@@ -95,6 +95,7 @@ import {
   type SearchResolvedDataStream,
   type SearchResolvedIndex,
   type SearchResolvedTargets,
+  type SearchRestrictedGrants,
   type SearchRow,
   type SearchTransport,
   SearchTransportError,
@@ -148,15 +149,23 @@ const NO_SECURITY_ABSENCE: AbsenceRule = {
 
 /**
  * The server's listing of the privileges of the login making the request, as its roles grant them: each index
- * privilege with the `names` it is granted on and whether it is granted with `allow_restricted_indices`. Every user may
- * list its own (measured on 9.1.4: a user whose role holds no privilege at all is answered 200, with empty lists).
+ * privilege with the `names` it is granted on and whether it is granted with `allow_restricted_indices`, and each
+ * remote index privilege the same way with the `clusters` it is granted in. Every user may list its own (measured on
+ * 9.1.4: a user whose role holds no privilege at all is answered 200, with empty lists).
  */
 const LIST_PRIVILEGES_PATH = "/_security/user/_privileges";
 
-/** The listing's members the login check reads: the index privileges, and each one's names and restricted flag. */
+/**
+ * The listing's members the login check reads: the index privileges and the remote index privileges, and each one's
+ * names, remote clusters and restricted flag. Measured on 9.1.4 (2026-11-02): `remote_indices` is left out of the
+ * listing of a login that holds no remote index privilege, and each of its entries carries `clusters` beside the
+ * members an index privilege carries, the flag always among them.
+ */
 const LISTING_FIELDS = Object.freeze({
   INDICES: "indices",
+  REMOTE_INDICES: "remote_indices",
   NAMES: "names",
+  CLUSTERS: "clusters",
   RESTRICTED: "allow_restricted_indices",
 } as const);
 
@@ -1411,21 +1420,49 @@ function isAbsence(absence: AbsenceRule, text: string): boolean {
 }
 
 /**
- * The names a privilege listing grants with `allow_restricted_indices`, each once in the order listed, or null when the
- * listing is not the measured shape: an `indices` list of objects, each with its `names` as text and its flag a boolean.
+ * What a privilege listing grants with `allow_restricted_indices`, on this cluster from its `indices` and on remote
+ * clusters from its `remote_indices`, or null when the listing is not the measured shape. A listing without
+ * `remote_indices` grants no remote index, as 9.1.4 lists a login that holds none.
  */
-function restrictedGrantsOf(listing: Record<string, unknown> | null): string[] | null {
-  const entries = listing?.[LISTING_FIELDS.INDICES];
-  if (!Array.isArray(entries)) return null;
+function restrictedGrantsOf(listing: Record<string, unknown> | null): SearchRestrictedGrants | null {
+  const local = restrictedNamesOf(listing?.[LISTING_FIELDS.INDICES], (_privilege, names) => names);
+  const remote =
+    listing !== null && Object.hasOwn(listing, LISTING_FIELDS.REMOTE_INDICES)
+      ? restrictedNamesOf(listing[LISTING_FIELDS.REMOTE_INDICES], remoteNames)
+      : [];
+  return local === null || remote === null ? null : { local, remote };
+}
+
+/**
+ * The names one list of a privilege listing grants with `allow_restricted_indices`, each once in the order listed, as
+ * `written` writes an entry's names, or null when the list is not the measured shape: a list of objects, each with its
+ * `names` as text and its flag a boolean, and each one `written` can read.
+ */
+function restrictedNamesOf(
+  list: unknown,
+  written: (privilege: Record<string, unknown>, names: readonly string[]) => readonly string[] | null,
+): string[] | null {
+  if (!Array.isArray(list)) return null;
   const granted = new Set<string>();
-  for (const entry of entries as unknown[]) {
+  for (const entry of list as unknown[]) {
     const privilege = asRecord(entry);
     const names = privilege?.[LISTING_FIELDS.NAMES];
     const restricted = privilege?.[LISTING_FIELDS.RESTRICTED];
-    if (!isTextList(names) || typeof restricted !== "boolean") return null;
-    if (restricted) for (const name of names) granted.add(name);
+    if (privilege === null || !isTextList(names) || typeof restricted !== "boolean") return null;
+    const named = written(privilege, names);
+    if (named === null) return null;
+    if (restricted) for (const name of named) granted.add(name);
   }
   return [...granted];
+}
+
+/**
+ * A remote index privilege's names, each written `<cluster>:<name>`, the way an index expression names a remote
+ * cluster's index, for each cluster the privilege is granted in; null when its clusters are not a list of text.
+ */
+function remoteNames(privilege: Record<string, unknown>, names: readonly string[]): string[] | null {
+  const clusters = privilege[LISTING_FIELDS.CLUSTERS];
+  return isTextList(clusters) ? clusters.flatMap((cluster) => names.map((name) => `${cluster}:${name}`)) : null;
 }
 
 /** Whether a member is a list of strings, as an index's attributes and an alias's indices are. */
@@ -1909,7 +1946,7 @@ export class SearchHttpTransport implements SearchTransport {
       if (parsed === null) throw unreadableBody(this.spec, "a privilege listing");
       return parsed;
     });
-    let restrictedGrants: string[] | null = null;
+    let restrictedGrants: SearchRestrictedGrants | null = null;
     if (listing !== null) {
       restrictedGrants = restrictedGrantsOf(asRecord(listing));
       if (restrictedGrants === null) throw unreadableBody(this.spec, "a privilege listing");

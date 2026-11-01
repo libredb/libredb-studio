@@ -326,11 +326,18 @@ export interface SearchLoginReach {
   /** The restricted system index names and patterns the login reads, in the order they were asked about. */
   readonly restrictedIndices: readonly string[];
   /**
-   * The index names and patterns the server's listing of the login's privileges grants an index privilege on with
-   * `allow_restricted_indices`, each once, in the order listed; null when the server lists no privileges for this login,
-   * as for an API key with role descriptors of its own.
+   * What the server's listing of the login's privileges grants an index privilege on with `allow_restricted_indices`:
+   * the index names and patterns of this cluster, and those of remote clusters, each written `<cluster>:<name>` for
+   * each cluster its grant names, each once, in the order listed; null when the server lists no privileges for this
+   * login, as for an API key with role descriptors of its own.
    */
-  readonly restrictedGrants: readonly string[] | null;
+  readonly restrictedGrants: SearchRestrictedGrants | null;
+}
+
+/** The index privileges a login's listing grants with `allow_restricted_indices`, on this cluster and on remote ones. */
+export interface SearchRestrictedGrants {
+  readonly local: readonly string[];
+  readonly remote: readonly string[];
 }
 
 /** One index an index expression resolves to, with the marks the server gives it. */
@@ -417,9 +424,9 @@ export interface SearchTransport {
    * answers it for that login: whether it holds the cluster privilege `all`, whether it reads every index with the
    * restricted system indices included, and which of the product's restricted system index names and patterns it
    * reads, the names that carry the server's release built from `version`, the version the server reported; and, from
-   * the server's listing of the login's privileges, what it is granted with `allow_restricted_indices`. Null when the
-   * server runs without security, so no login exists to check. Only a product that names its restricted system indices
-   * answers; another refuses before any request.
+   * the server's listing of the login's privileges, what it is granted with `allow_restricted_indices`, on this
+   * cluster and on remote ones. Null when the server runs without security, so no login exists to check. Only a
+   * product that names its restricted system indices answers; another refuses before any request.
    */
   loginReach(version: string, signal?: AbortSignal): Promise<SearchLoginReach | null>;
 

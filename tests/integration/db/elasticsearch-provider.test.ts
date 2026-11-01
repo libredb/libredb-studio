@@ -609,6 +609,24 @@ const restrictedListing = (names: readonly string[]): string =>
   });
 
 /**
+ * A listing with remote index privileges, in the shape 9.1.4 lists them (measured 2026-11-02): a `remote_indices` list
+ * beside `indices`, which the server leaves out for a login that holds none, each entry naming its clusters too.
+ */
+const remoteListing = (
+  remote: readonly { names: readonly string[]; clusters: readonly string[]; restricted: boolean }[],
+  local: string = NARROW_LISTING,
+): string =>
+  JSON.stringify({
+    ...JSON.parse(local),
+    remote_indices: remote.map(({ names, clusters, restricted }) => ({
+      names,
+      privileges: ["read"],
+      allow_restricted_indices: restricted,
+      clusters,
+    })),
+  });
+
+/**
  * The restricted system index patterns the check asks about. Each was answered false on 9.1.4 to a role reading `*`
  * without `allow_restricted_indices`, so each holds restricted indices, and together they hold all of them (measured
  * 2026-11-01).
@@ -4963,6 +4981,22 @@ describe("ElasticsearchProvider agent profile login check", () => {
       restrictedListing(["probe_*"]),
       `${"The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; "}the user libredb_seed holds an index privilege granted with allow_restricted_indices on probe_*${TOO_BROAD_TAIL}`,
     ],
+    [
+      "a role granting the security indices of every remote cluster with allow_restricted_indices",
+      remoteListing([{ names: [".security*"], clusters: ["*"], restricted: true }]),
+      `${"The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; "}the user libredb_seed holds a remote index privilege granted with allow_restricted_indices on *:.security*${TOO_BROAD_TAIL}`,
+    ],
+    [
+      "a role granting a local and a remote index with allow_restricted_indices",
+      remoteListing(
+        [
+          { names: ["logs-*"], clusters: ["east", "west*"], restricted: false },
+          { names: [".kibana*", ".security-7"], clusters: ["east"], restricted: true },
+        ],
+        restrictedListing([".kibana_9.1.0_001"]),
+      ),
+      `${"The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; "}the user libredb_seed holds an index privilege granted with allow_restricted_indices on .kibana_9.1.0_001 and a remote index privilege granted with allow_restricted_indices on east:.kibana*, east:.security-7${TOO_BROAD_TAIL}`,
+    ],
   ])("refuses %s, which the asks answer false, from the listing", async (_name, listing, sentence) => {
     overridePath(LIST_PRIVILEGES_PATH, ok(listing));
 
@@ -4972,6 +5006,34 @@ describe("ElasticsearchProvider agent profile login check", () => {
     expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
     expect((error as Error).message).toBe(sentence);
     expect(sent.map((request) => request.path)).toEqual([SQL_PATH, "/", HAS_PRIVILEGES_PATH, LIST_PRIVILEGES_PATH]);
+  });
+
+  // The superuser is listed with allow_restricted_indices on every local and every remote index (measured on 9.1.4),
+  // and the asks already name its reach, so the listing adds nothing to its sentence.
+  test("names the listing's grants only where the asks name no restricted index, so the superuser's sentence is the asks' alone", async () => {
+    const asks = ok(privilegeAnswer("elastic", true, ["*", ...RESTRICTED_INDICES]));
+    const listing = ok(remoteListing([{ names: ["*"], clusters: ["*"], restricted: true }], restrictedListing(["*"])));
+    replyFor = (request) =>
+      request.path === HAS_PRIVILEGES_PATH
+        ? asks
+        : request.path === LIST_PRIVILEGES_PATH
+          ? listing
+          : defaultReply(request);
+
+    const error = await opened();
+
+    expect((error as Error).message).toBe(
+      `The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; the user elastic holds the cluster privilege all and read on every index, the restricted system indices included${TOO_BROAD_TAIL}`,
+    );
+  });
+
+  test("admits a role whose remote index privileges carry no allow_restricted_indices", async () => {
+    overridePath(
+      LIST_PRIVILEGES_PATH,
+      ok(remoteListing([{ names: ["logs-*", "probe_*"], clusters: ["east", "west*"], restricted: false }])),
+    );
+
+    expect(await opened()).toBeInstanceOf(ElasticsearchProvider);
   });
 
   // Measured on 9.1.4: an API key with role descriptors of its own is not listed, so the asks alone decide for it.
@@ -5052,6 +5114,15 @@ describe("ElasticsearchProvider agent profile login check", () => {
   test.each([
     ["a refused credential", fail(403, engineFault(403, "security_exception", "action is unauthorized"))],
     ["a listing that is not the measured shape", ok(JSON.stringify({ indices: {} }))],
+    [
+      "a remote entry that names no clusters",
+      ok(
+        JSON.stringify({
+          ...JSON.parse(NARROW_LISTING),
+          remote_indices: [{ names: [".security*"], privileges: ["read"], allow_restricted_indices: true }],
+        }),
+      ),
+    ],
     ["a body that is not JSON", ok("not json")],
   ])("refuses when the listing cannot be read: %s", async (_name, reply) => {
     overridePath(LIST_PRIVILEGES_PATH, reply);

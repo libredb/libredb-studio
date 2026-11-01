@@ -12,11 +12,12 @@
  *
  *  - the open, through MCP: the 9.1.4 node is served under `agent-read-only` with security off, where no login exists
  *    to check; with it on, the open asks the server what the seed's login may do and lists its privileges, so a seed
- *    signed in as the superuser, one whose role reads the security indices with `allow_restricted_indices`, and one
- *    whose role is granted two Kibana indices of other releases by name with it, are refused before any statement
- *    runs, in the MCP refusal sentence, while the documented seed role and a role reading every unrestricted index are
- *    served; a user whose role cannot read the version is refused the same way, and an OpenSearch node behind an
- *    Elasticsearch connection fails the open's connect probe, so nothing runs there either;
+ *    signed in as the superuser, one whose role reads the security indices with `allow_restricted_indices`, one whose
+ *    role is granted two Kibana indices of other releases by name with it, and one whose role is granted the security
+ *    indices of every remote cluster with it, are refused before any statement runs, in the MCP refusal sentence,
+ *    while the documented seed role and a role reading every unrestricted index are served; a user whose role cannot
+ *    read the version is refused the same way, and an OpenSearch node behind an Elasticsearch connection fails the
+ *    open's connect probe, so nothing runs there either;
  *  - the boundary, with the MCP fence bypassed: each captured write and DDL statement is sent through the MCP handler;
  *    the fenced tool refuses every one before anything is acquired, unfenced the provider's statement check refuses
  *    each before it is sent but the one SELECT-shaped write, which the grammar refuses in its own words, as the
@@ -323,13 +324,14 @@ async function userWithRole(kind: string, role: Record<string, unknown>): Promis
   return seed(name, SECURED, { user: name, password: USER_PASSWORD });
 }
 
-const LOGIN_KINDS = ["restricted", "kibana", "seed", "wide"] as const;
+const LOGIN_KINDS = ["restricted", "kibana", "remote", "seed", "wide"] as const;
 
 /**
- * The open's login check, with security on: a role reading the security indices with `allow_restricted_indices`, and a
- * role granted two Kibana indices of other releases by name with it, which every ask of the check answers false and the
- * listing of its privileges names, are refused before any statement, and the documented seed role and a role reading
- * every unrestricted index are served.
+ * The open's login check, with security on: a role reading the security indices with `allow_restricted_indices`, a
+ * role granted two Kibana indices of other releases by name with it, and a role granted the security indices of every
+ * remote cluster with it, the last two of which every ask of the check answers false and the listing of its privileges
+ * names, are refused before any statement, and the documented seed role and a role reading every unrestricted index
+ * are served.
  */
 async function checkLogins(): Promise<{ seedRole: ManagedConnection; wide: ManagedConnection }> {
   const restricted = await userWithRole("restricted", {
@@ -357,6 +359,17 @@ async function checkLogins(): Promise<{ seedRole: ManagedConnection; wide: Manag
     textOf(kibanaRefused.result) ===
       `run_read_query cannot run on this connection: ${"The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; "}the user ${SCRATCH}_kibana holds an index privilege granted with allow_restricted_indices on .kibana_8.18.0_001, .kibana_9.1.0_001, so the connection is refused. ${GRANT_INSTEAD}. It runs on ${ENGINES}.`,
     `login: a role granted two Kibana indices of other releases by name with allow_restricted_indices is refused at open -> ${textOf(kibanaRefused.result).slice(0, 220)}`,
+  );
+  const remote = await userWithRole("remote", {
+    cluster: ["cluster:monitor/main"],
+    indices: [{ names: ["probe_*"], privileges: ["read", "view_index_metadata"] }],
+    remote_indices: [{ clusters: ["*"], names: [".security*"], privileges: ["read"], allow_restricted_indices: true }],
+  });
+  const remoteRefused = await mcp(remote, { sql: "SELECT COUNT(*) AS n FROM probe_buckets" }, RUN_READ_QUERY);
+  check(
+    textOf(remoteRefused.result) ===
+      `run_read_query cannot run on this connection: ${"The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; "}the user ${SCRATCH}_remote holds a remote index privilege granted with allow_restricted_indices on *:.security*, so the connection is refused. ${GRANT_INSTEAD}. It runs on ${ENGINES}.`,
+    `login: a role granted the security indices of every remote cluster with allow_restricted_indices is refused at open -> ${textOf(remoteRefused.result).slice(0, 220)}`,
   );
   const seedRole = await userWithRole("seed", {
     cluster: ["cluster:monitor/main", "monitor", "read_pipeline"],

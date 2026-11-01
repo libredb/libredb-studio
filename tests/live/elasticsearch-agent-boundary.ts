@@ -17,9 +17,9 @@
  *    resolutions alone refuse each expression that excludes the alias;
  *  - the login check, with security on: the agent profile's open asks the server what the login may do and lists its
  *    privileges, and refuses the superuser, a role reading the security indices with `allow_restricted_indices`, a
- *    role granted one restricted family by its pattern alone and a role granted two Kibana indices of other releases
- *    by name before any statement, while the operations profile still opens as the superuser, since it sends no
- *    statement;
+ *    role granted one restricted family by its pattern alone, a role granted two Kibana indices of other releases by
+ *    name and a role granted the security indices of every remote cluster with that flag before any statement, while
+ *    the operations profile still opens as the superuser, since it sends no statement;
  *  - the boundary: each write and DDL statement sent through `queryReadOnly` is refused by the statement check before
  *    it is sent, but the one SELECT-shaped write, which reads one visible index and is refused by the grammar in the
  *    engine's own words (a `line 1:N: mismatched input` or `extraneous input` refusal, never a budget or a credential
@@ -413,11 +413,15 @@ const TOO_BROAD =
 const GRANT_INSTEAD =
   ", so the connection is refused. Give the agent a user whose role holds the cluster action cluster:monitor/main and read and view_index_metadata on the indices it reads, without allow_restricted_indices, such as the libredb_agent_read role";
 
+/** `read` with `allow_restricted_indices` on `names`, as a role grants it locally or, with its clusters, remotely. */
+const restrictedRead = (names: readonly string[]) => ({ names, privileges: ["read"], allow_restricted_indices: true });
+
 /**
  * The open's login check. With security on, the superuser, a role reading the security indices, a role granted one
- * restricted family by its pattern, and a role granted two Kibana indices of other releases by their names, which every
- * ask of the check answers false and the listing of its privileges names, are refused before any statement; with it
- * off there is no login, and the statement check keeps hidden targets from the agent.
+ * restricted family by its pattern, a role granted two Kibana indices of other releases by their names, and a role
+ * granted the security indices of every remote cluster, the last two of which every ask of the check answers false and
+ * the listing of its privileges names, are refused before any statement; with it off there is no login, and the
+ * statement check keeps hidden targets from the agent.
  */
 async function checkLogins(): Promise<void> {
   if (!SECURED) {
@@ -436,30 +440,32 @@ async function checkLogins(): Promise<void> {
   const operations = await open("agent-operations", admin);
   check(operations.isConnected(), "login: the operations profile, which sends no statement, opens as the superuser");
   await operations.disconnect();
-  const roles: readonly [string, readonly string[], string][] = [
+  const roles: readonly [string, Record<string, unknown>, string][] = [
     [
       "a role reading .security* with allow_restricted_indices",
-      [".security*"],
+      { indices: [...AGENT_INDICES, restrictedRead([".security*"])] },
       "read on the restricted system index names and patterns .security*, .security-7, .security-tokens-7, .security-profile-8",
     ],
     [
       "a role granted the machine learning configuration family by its pattern alone",
-      [".ml-config*"],
+      { indices: [...AGENT_INDICES, restrictedRead([".ml-config*"])] },
       "read on the restricted system index names and patterns .ml-config*, .ml-config",
     ],
     [
       "a role granted two Kibana indices of other releases by their names",
-      [".kibana_8.18.0_001", ".kibana_9.1.0_001"],
+      { indices: [...AGENT_INDICES, restrictedRead([".kibana_8.18.0_001", ".kibana_9.1.0_001"])] },
       "an index privilege granted with allow_restricted_indices on .kibana_8.18.0_001, .kibana_9.1.0_001",
     ],
+    [
+      "a role granted the security indices of every remote cluster with allow_restricted_indices",
+      { indices: AGENT_INDICES, remote_indices: [{ clusters: ["*"], ...restrictedRead([".security*"]) }] },
+      "a remote index privilege granted with allow_restricted_indices on *:.security*",
+    ],
   ];
-  for (const [name, patterns, holds] of roles) {
+  for (const [name, grants, holds] of roles) {
     const restricted = `${SCRATCH}_restricted`;
     try {
-      await send("PUT", `/_security/role/${restricted}`, {
-        cluster: ["cluster:monitor/main"],
-        indices: [...AGENT_INDICES, { names: patterns, privileges: ["read"], allow_restricted_indices: true }],
-      });
+      await send("PUT", `/_security/role/${restricted}`, { cluster: ["cluster:monitor/main"], ...grants });
       await send("PUT", `/_security/user/${restricted}`, { password: AGENT_PASSWORD, roles: [restricted] });
       const refused = await refusalOf(() => open("agent-read-only", { user: restricted, password: AGENT_PASSWORD }));
       check(
