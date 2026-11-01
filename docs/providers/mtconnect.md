@@ -111,12 +111,14 @@ of routes already in the table, one is `/cancel/id={string}`, the one published 
 rather than reads, and one is a second spelling of the asset route. `/swagger` is a seventh entry
 there and is not one of the fifteen.
 
-### 3.3 One request at a time per agent
+### 3.3 One request at a time per connection handle
 
 MEASURED on the pinned agent: while a 300 alternative `path` ran in a loop, the median of
 `sample?count=1` on the same agent rose from 1.4 ms to 74.1 ms, a factor of 51, with a worst case
 of 169.9 ms. The agent serves the shop floor's own clients, so a careless read from Studio degrades
-the plant's monitoring. The limiter holds one permit per agent.
+the plant's monitoring.
+The limiter holds one permit per provider instance, so one handle sends one request at a time.
+Two handles on the same agent, such as the editor and agent mode, or two connections to one agent, each hold their own permit and can read it at the same time.
 
 ### 3.4 Caps are in bytes, not in rows
 

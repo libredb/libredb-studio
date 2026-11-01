@@ -4184,15 +4184,14 @@ Found 2026-11-01 while verifying the MTConnect agent read (PR 3.19); pre-existin
 
 **Done when:** `listObjects` answers the asset kind on an editor handle either with the agent's assets (from `/assets`, under the same guard and caps as the console) or with an explicit refusal that says assets are read from the console, never with data items, and the count and the listing agree; a provider test pins `listObjects([device], "asset")` and `describeObjects([device], "asset")` on an editor handle.
 
-### D416. MTConnect's "one permit per agent" is one permit per provider instance
+### D416. MTConnect's request limit is one permit per provider instance, not per agent
 
-`docs/providers/mtconnect.md` section 3.3 says "The limiter holds one permit per agent", and the `MTC_LIMITS` docblock in `src/lib/db/providers/industrial/mtconnect/index.ts` says "One permit per agent" and "One request at a time per agent".
-`perProvider: 1` is a slot per provider instance: `limiterFor()` is called once per instance (`engineLimiter` in `src/lib/db/utils/bounded-limiter.ts`), so two connections to one agent, or an editor handle and an agent-mode handle on the same connection, read the same agent concurrently, up to the engine-wide four.
-Section 14 of the same doc already says each provider instance holds its own permit, so the doc contradicts itself.
-The 1.4 ms to 74.1 ms measurement that motivates the bound is about load on one agent, which the instance key does not hold.
-Found 2026-11-01 while verifying the MTConnect agent read (PR 3.19).
+The bound that keeps Studio from degrading an agent's own clients (`MTC_LIMITS.perProvider` in `src/lib/db/providers/industrial/mtconnect/index.ts`, measured in `docs/providers/mtconnect.md` section 3.3) is one permit per provider instance: `limiterFor()` is called once per instance (`engineLimiter` in `src/lib/db/utils/bounded-limiter.ts`).
+So two handles on one agent, the editor and agent mode, or two connections to the same agent, read it at the same time, although the measurement that motivates the bound is about load on one agent.
+Section 3.3 and the `MTC_LIMITS` comments now say so.
+Found 2026-11-01 while verifying the MTConnect agent read.
 
-**Done when:** either the limiter is keyed by the agent's base URL so one agent serves one Studio request at a time whichever handle sends it, with a test that two providers on one URL queue behind one permit, or section 3.3 and the `MTC_LIMITS` comments say one permit per provider instance and name the concurrency two handles on one agent can reach.
+**Done when:** the limiter is keyed by the agent's base URL, so one agent serves one Studio request at a time whichever handle sends it, with a test that two providers on one URL queue behind one permit, and section 3.3 says so.
 
 ### D417. The MTConnect tree labels a device's own named data item with a leading slash
 

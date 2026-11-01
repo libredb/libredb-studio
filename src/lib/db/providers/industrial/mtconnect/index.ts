@@ -123,7 +123,7 @@ const MTC_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
 export const ROW_CAP = 10_000;
 
 /**
- * One permit per agent, measured rather than chosen.
+ * One permit per provider instance, measured rather than chosen.
  *
  * MEASURED on the pinned agent: while a 300 alternative `path` ran in a loop, the median of
  * `sample?count=1` on the same agent rose from 1.4 ms to 74.1 ms. The agent serves the machine's own
@@ -131,7 +131,7 @@ export const ROW_CAP = 10_000;
  * our own latency.
  */
 export const MTC_LIMITS = Object.freeze({
-  /** MEASURED: the 1.4 ms to 74.1 ms figure above. One request at a time per agent. */
+  /** MEASURED: the 1.4 ms to 74.1 ms figure above. One request at a time per handle; two handles on one agent each hold their own. */
   perProvider: 1,
   /** CHOSEN: four agents read at once from one Studio, which is a load on this process rather than on any agent. */
   perEngine: 4,
