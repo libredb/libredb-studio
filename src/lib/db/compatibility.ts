@@ -602,7 +602,7 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
  * joins agent mode does not open to MCP as a side effect: its row stays false until a change of its own opens it.
  *
  * True for the five SQL engines `run_read_query` served before this record existed, so nothing moved when it landed,
- * for ClickHouse, libSQL, InfluxDB 3 and Elasticsearch, each opened to `run_read_query` by a change of its own, for MongoDB, whose command `run_mongo_command` reads, and for Kubernetes, whose kubectl line `run_kubectl_read` reads
+ * for ClickHouse, libSQL, InfluxDB 3, Elasticsearch and OpenSearch, each opened to `run_read_query` by a change of its own, for MongoDB, whose command `run_mongo_command` reads, and for Kubernetes, whose kubectl line `run_kubectl_read` reads
  * under the agent's machine redaction. An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records
  * above it, and held false wherever `MCP_EXPOSABLE` is false and true only for an engine agent mode executes on by
  * `tests/unit/db/compatibility.test.ts`.
@@ -634,10 +634,12 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   cassandra: false,
   // Opened on its own: run_read_query runs under the boundary agent mode uses, the SQL endpoint's grammar, which holds
   // no write, on a server checked at open to be the release line whose write refusals were captured
-  // (docs/providers/elasticsearch.md section 5.9). OpenSearch, served by the same provider directory, stays closed.
+  // (docs/providers/elasticsearch.md section 5.9). OpenSearch, served by the same provider directory, has a row of its own.
   elasticsearch: true,
-  // Agent mode executes statements on OpenSearch, and MCP read stays closed on it until a change of its own opens it.
-  opensearch: false,
+  // Opened on its own: run_read_query runs under the boundary agent mode uses, the SQL plugin's refusal of every write,
+  // on a server whose DELETE is proved off and whose release line was checked at open, with a statement check that
+  // keeps hidden and dot-led indices from each statement (docs/providers/opensearch.md section 5.9).
+  opensearch: true,
   mongodb: true,
   // Agent mode executes statements on Couchbase, and MCP read stays closed on it until a change of its own opens it.
   couchbase: false,

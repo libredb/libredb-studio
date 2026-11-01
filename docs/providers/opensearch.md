@@ -902,7 +902,25 @@ The statement check admits the composed command by its shape, and the plugin ans
 The check is OpenSearch's own (`SearchProduct.agentStatementCheck`), with its own reader and marks, beside Elasticsearch's ([elasticsearch.md §5.9](./elasticsearch.md#59-the-agent-read-only-profile-rests-on-the-grammar)).
 Elasticsearch's privilege-endpoint login check is off here (`SearchProduct.checksLoginReach` is false); this open probes the login instead (`SearchProduct.checksLoginWrites`, [The open and the profile](#the-open-and-the-profile)).
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-MCP's statement read stays closed on OpenSearch (`MCP_STATEMENT_READ.opensearch` is false) until a change of its own opens it.
+`MCP_STATEMENT_READ.opensearch` is true, so MCP's `run_read_query` runs on OpenSearch under the same boundary ([MCP read](#mcp-read)).
+
+#### MCP read
+
+`run_read_query` serves OpenSearch through the agent read-only profile and `queryReadOnly`, the path above, so every boundary of this section holds for it: the open proves the `DELETE` off, checks the 3.8 release line and, with security on, probes the login, at the open of each acquisition the tool makes, and the statement check runs before each statement.
+It runs a SELECT that reads at most one index expression, with no comment, subquery, WITH, JOIN or double quote (quote a name in backticks): the plugin refuses `WITH`, `VALUES`, `TABLE` and `EXPLAIN`, each a statement that must start with SELECT, DELETE, SHOW or DESCRIBE, and the statement check refuses each before it is sent.
+It pages with `LIMIT n OFFSET m`, which the provider's `prepareQuery` appends ([§5.5](#55-offset-works-here-which-is-why-paging-does)).
+A `SELECT` without its own `LIMIT` is paged at `max_rows` (100 by default, at most 500), and `pagination.hasMore` and `pagination.nextOffset` say where the next page starts; a query whose own `LIMIT` is past 1000 rows, or a result past 1 MiB, is refused, never cut.
+A seed carries one login, so the seed's login is the agent's: with security on, opt in a seed signed in with the `libredb_seed_read` role above; `admin`, or any login the probes find may write, manage indices or administer the security plugin, is refused at open, in the tool's refusal sentence.
+`inspect_schema` opens an OpenSearch connection under the operations profile, which proves nothing, as the editor does.
+A cancel and a `timeout_ms` end Studio's wait and close the request; the cluster runs the search to its end, and then holds no search context for it.
+
+`bun tests/live/opensearch-mcp-boundary.ts`, run on 2026-11-02 against a 3.8.0 node with security off and one with security on, seeded per [§11.4](#114-optional-reproducing-the-live-pass), passes 179 checks through the MCP handler (`runStatement`) with the tool's statement fence removed:
+
+- the open: the security-off node is served under `agent-read-only`; with security on, a seed signed in as `admin`, a role writing every index and a role managing every index are refused at open in the tool's sentence, a user that cannot read the version is refused, and the `libredb_seed_read` role and a role reading every index are served, with no probe index left behind;
+- the boundary: each of the 22 captured write and DDL texts is refused by the fenced tool before anything is acquired and by the statement check before it is sent with the fence removed (the `SELECT * INTO` capture is answered as a read of `probe_orders` and writes nothing), and sent raw each write is refused by the plugin (the two second-statement captures behind `DESCRIBE` and `SHOW` it answers as reads), on both nodes, the second signed in with the seed role; the cluster reads back the same after each pass, and a document written through the document API is read back through MCP;
+- the hidden targets, with security off: a dot-led index, a hidden index, an alias over it, a data stream's backing index named directly, `*` and a wildcard reaching the hidden index each answer raw and are refused through MCP before they are sent, as are a comment, `#` and a double-quoted name, while the data stream read by its own name is served; with security on, `admin` sending `.opendistro_security` raw is answered its columns, and a role reading every index is refused it, quoted or bare, and `*`, before they are sent;
+- the forms and paging: a `SELECT` answers; `WITH`, `VALUES`, `TABLE` and `EXPLAIN` are refused by the statement check, and by the plugin sent raw; a read past `max_rows` names offset 3 and the next page answers the next rows by offset; an offset on a query with its own `LIMIT` is refused;
+- the limits: a read with its own `LIMIT` past 1000 rows, an aggregation with one, and a read past 1 MiB are refused, never cut, with no search context left; a read past `timeout_ms` and one whose client closes the call are answered as the timeout and the cancel, the search runs on in the cluster, and once it ends no search task and no search context is left.
 
 #### Boundary record
 
@@ -1809,7 +1827,7 @@ curl -s -XPOST -H 'content-type: application/json' 'http://localhost:9201/_alias
   -d '{"actions":[{"add":{"index":"probe_orders","alias":"probe_orders_alias"}}]}'
 ```
 
-Three scripts under `tests/live/` run against the seeded node, and none is part of `bun run test`; each reads
+Four scripts under `tests/live/` run against the seeded node, and none is part of `bun run test`; the first three read
 `LIBREDB_OS_ORIGIN` (default `http://127.0.0.1:9201`) and `LIBREDB_OS_CONTAINER`.
 `bun tests/live/opensearch-write-refusals.ts` rewrites the write-refusal and delete-setting captures of
 [§5.6](#56-this-grammar-has-delete-and-it-is-off) for the node's version, and stops without writing any when a write
@@ -1822,6 +1840,7 @@ is not refused or the cluster reads back changed.
 against a node started without `DISABLE_SECURITY_PLUGIN` (and with `OPENSEARCH_INITIAL_ADMIN_PASSWORD`), and its
 older-node pass with `LIBREDB_OS_EXPECT_REFUSED=1` against `opensearchproject/opensearch:2.19.4`.
 The security-on pass writes one document into an index of its own outside `probe_*` for the plan-mode checks and removes it after: the agent's role already reads the mappings of `probe_*`, so with no other index the plan read would still capture once `indices:admin/mappings/get` is taken from every index.
+`bun tests/live/opensearch-mcp-boundary.ts` replays that boundary through MCP's `run_read_query` ([MCP read](#mcp-read)); it needs both a security-off node (`LIBREDB_OS_ORIGIN`) and a security-on one (`LIBREDB_OS_SECURED_ORIGIN`, with `LIBREDB_OS_ADMIN_USER` and `LIBREDB_OS_ADMIN_PASSWORD`), and it writes a 300,000-document scratch index for its slow statement and removes it after.
 
 ---
 

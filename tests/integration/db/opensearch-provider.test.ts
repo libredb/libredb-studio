@@ -63,6 +63,7 @@ import {
   EXCLUSION_REFUSAL,
   hiddenTargetRefusal,
   STATEMENT_REFUSAL,
+  SUBQUERY_REFUSAL,
   unresolvedRefusal,
 } from "@/lib/db/providers/sql/search/opensearch-agent-index-fence";
 import { type SearchErrorCategory, SearchTransportError } from "@/lib/db/providers/sql/search/transport";
@@ -78,6 +79,15 @@ import {
   TimeoutError,
 } from "@/lib/db/errors";
 import { isSourcePartUnavailable } from "@/lib/db/object-kinds";
+import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
+import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import type { McpConnectionContext } from "@/lib/mcp/context";
+import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
+import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
+import type { ManagedConnection } from "@/lib/seed";
+import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 
 // ============================================================================
@@ -3180,5 +3190,242 @@ describe("OpenSearch 3.8.0's catalog-read answers, replayed through queryReadOnl
 
     expect(error).toBeInstanceOf(RefusedBeforeSendError);
     expect((error as Error).message).toBe(unresolvedRefusal("zq_no_such_index"));
+  });
+});
+
+// ============================================================================
+// MCP run_read_query on an OpenSearch connection
+// ============================================================================
+
+/**
+ * `run_read_query` serves OpenSearch under the boundary agent mode uses: the connection is acquired under the agent
+ * read-only profile, whose open proves the DELETE off, checks the release line and, with security on, probes the
+ * login, and every statement goes through `queryReadOnly`, whose statement check runs before the plugin, which refuses
+ * every write. The MCP fence in front is defence in depth; the tool is driven here through its own handler against the
+ * canned cluster.
+ */
+describe("MCP run_read_query on an OpenSearch connection", () => {
+  const SEED = {
+    id: "seed:fork-search",
+    name: "fork-search",
+    type: "opensearch",
+    seedId: "fork-search",
+    managed: true,
+    mcp: true,
+    roles: ["*"],
+    host: "127.0.0.1",
+    port: 9200,
+    user: "libredb_seed",
+    password: "not-a-real-password",
+    createdAt: new Date(0),
+  } as ManagedConnection;
+
+  let acquired: ExecutionProfile[] = [];
+
+  /** A context over the one seed, opening each acquisition by its profile, as the factory does. */
+  const context = {
+    caller: { username: "alice", role: "admin" },
+    visibleConnections: async () => [SEED],
+    resolve: async () => SEED,
+    acquire: async (_connection: ManagedConnection, profile: ExecutionProfile) => {
+      acquired.push(profile);
+      const provider = new OpenSearchProvider(makeConnection(), {}, executionContextFor(profile));
+      await provider.connect();
+      return provider;
+    },
+  } as unknown as McpConnectionContext;
+
+  function call(args: Record<string, unknown>) {
+    const parsed = RunReadQueryInputSchema.parse({ connection_id: SEED.id, ...args }) as McpStatementInput;
+    return runReadQuery(parsed, { context, signal: new AbortController().signal });
+  }
+
+  /** The same tool with its statement fence removed, so a statement reaches the boundary under test. */
+  const UNFENCED: McpStatementArm = { ...mcpStatementArm("run_read_query"), fence: () => null };
+
+  function unfenced(args: Record<string, unknown>) {
+    const parsed = UNFENCED.inputSchema.parse({ connection_id: SEED.id, ...args }) as McpStatementInput;
+    return runStatement(UNFENCED, parsed, { context, signal: new AbortController().signal });
+  }
+
+  /** The statements sent to the SQL endpoint, the open's probes left out. */
+  const statements = (): string[] =>
+    sentBodies
+      .map((body) => body?.query)
+      .filter((query): query is string => typeof query === "string")
+      .filter((query) => query !== "SELECT 1" && !query.startsWith("DELETE FROM libredb_delete_probe_"));
+
+  const keys = (count: number, from = 1) =>
+    ok(
+      JSON.stringify({
+        schema: [{ name: "k", type: "keyword" }],
+        datarows: Array.from({ length: count }, (_, i) => [`k${i + from}`]),
+        total: count,
+        size: count,
+        status: 200,
+      }),
+    );
+
+  /** Answer `statement` with `reply`, and every other request as the canned cluster does. */
+  function answer(statement: string, reply: Reply): void {
+    replyFor = (path, body) => (body?.query === statement ? reply : defaultReply(path, body));
+  }
+
+  const STATEMENTS = readQueryFormsOf("opensearch").statements;
+  const fenced = (code: string) =>
+    `The statement was refused before it reached the database (${code}). On this engine run_read_query runs one read-only statement: ${STATEMENTS}.`;
+  const refusedUnsent = (sentence: string) => ({
+    content: [
+      { type: "text" as const, text: `The statement was refused before it reached the database: ${sentence}.` },
+    ],
+    isError: true as const,
+  });
+
+  beforeEach(() => {
+    acquired = [];
+  });
+
+  test("the provider doc says MCP read is open here and names the statements it runs, from their records", () => {
+    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/opensearch.md"), "utf8");
+
+    expect(MCP_STATEMENT_READ.opensearch).toBe(true);
+    expect(MCP_STATEMENT_READ.elasticsearch).toBe(true);
+    expect(RUN_READ_QUERY_ENGINES).toContain("OpenSearch");
+    expect(doc).toContain("`MCP_STATEMENT_READ.opensearch` is true");
+    expect(doc).not.toContain("MCP's statement read stays closed");
+    expect(doc.replaceAll("`", "")).toContain(`It runs ${STATEMENTS}`);
+  });
+
+  test("reads rows under the agent profile after the statement check, and names the next offset", async () => {
+    answer("SELECT k FROM probe_buckets ORDER BY k LIMIT 3", keys(3));
+
+    const result = await call({ sql: "SELECT k FROM probe_buckets ORDER BY k", max_rows: 2 });
+
+    expect(result.isError).toBeUndefined();
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(sentPaths).toContain("/_resolve/index/probe_buckets?expand_wildcards=open");
+    expect(statements()).toEqual(["SELECT k FROM probe_buckets ORDER BY k LIMIT 3"]);
+    expect(result.structuredContent).toMatchObject({
+      connection_id: SEED.id,
+      rows: [{ k: "k1" }, { k: "k2" }],
+      row_count: 2,
+      truncated: true,
+      truncated_by: "max_rows",
+      pagination: { offset: 0, limit: 2, hasMore: true, nextOffset: 2, wasLimited: true },
+      hint: "Call again with offset 2 for the next page.",
+    });
+    expect((result.content as { text: string }[])[0]?.text).toBe(MCP_UNTRUSTED_NOTICE);
+  });
+
+  test("pages with OFFSET, which the statement check admits after the FROM", async () => {
+    answer("SELECT k FROM probe_buckets ORDER BY k LIMIT 3 OFFSET 2", keys(3, 3));
+
+    const result = await call({ sql: "SELECT k FROM probe_buckets ORDER BY k", max_rows: 2, offset: 2 });
+
+    expect(statements()).toEqual(["SELECT k FROM probe_buckets ORDER BY k LIMIT 3 OFFSET 2"]);
+    expect(result.structuredContent).toMatchObject({
+      rows: [{ k: "k3" }, { k: "k4" }],
+      pagination: { offset: 2, limit: 2, hasMore: true, nextOffset: 4, wasLimited: true },
+    });
+  });
+
+  test("an offset on a query with its own LIMIT is refused before the statement is sent", async () => {
+    const result = await call({ sql: "SELECT k FROM probe_buckets ORDER BY k LIMIT 5", offset: 2 });
+
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: "This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: LIMIT n OFFSET m.",
+        },
+      ],
+      isError: true,
+    });
+    expect(statements()).toEqual([]);
+  });
+
+  test.each([
+    ["INSERT INTO probe_orders (id, customer) VALUES (2, 'probe')", "NON_READ_STATEMENT"],
+    ["UPDATE probe_orders SET customer = 'x' WHERE id = 1", "NON_READ_STATEMENT"],
+    ["DELETE FROM probe_orders", "NON_READ_STATEMENT"],
+    ["CREATE TABLE libredb_t (id BIGINT)", "NON_READ_STATEMENT"],
+    ["DROP TABLE probe_orders", "NON_READ_STATEMENT"],
+    ["ALTER TABLE probe_orders ADD COLUMN libredb INT", "NON_READ_STATEMENT"],
+    ["TRUNCATE TABLE probe_orders", "NON_READ_STATEMENT"],
+    ["MERGE INTO probe_orders USING probe_orders AS s ON true WHEN MATCHED THEN DELETE", "NON_READ_STATEMENT"],
+    ["SELECT * INTO libredb_into FROM probe_orders", "SIDE_EFFECT_KEYWORD"],
+    ["EXPLAIN DELETE FROM probe_orders", "SIDE_EFFECT_KEYWORD"],
+    ["WITH x AS (SELECT 1) DELETE FROM probe_orders", "NON_READ_STATEMENT"],
+    ["SELECT 1; DELETE FROM probe_orders", "MULTIPLE_STATEMENTS"],
+    ["SHOW TABLES LIKE %", "NON_READ_STATEMENT"],
+    ["DESCRIBE TABLES LIKE %", "NON_READ_STATEMENT"],
+  ])("%p is refused at admission, before anything is acquired or sent", async (sql, code) => {
+    const result = await call({ sql });
+
+    expect(result).toEqual({ content: [{ type: "text", text: fenced(code) }], isError: true });
+    expect(acquired).toEqual([]);
+    expect(sentPaths).toEqual([]);
+  });
+
+  // The fence removed, each captured write goes through queryReadOnly: the statement check refuses each before it is
+  // sent, as no SELECT or as a `;` outside its character set, but the SELECT-shaped one, which reads one visible index
+  // and is answered by the plugin as a read.
+  test.each(
+    WRITE_REFUSALS_3_8.filter((entry) => entry.name !== "write-refusal/select-into").map(
+      (entry) => [entry.name, entry] as const,
+    ),
+  )("%s: with the fence removed, the statement check refuses it unsent", async (_name, entry) => {
+    const sql = entry.request.body.query;
+
+    const result = await unfenced({ sql });
+
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(result).toEqual(refusedUnsent(sql.includes(";") ? CHARACTER_REFUSAL : STATEMENT_REFUSAL));
+    expect(statements()).toEqual([]);
+  });
+
+  // Each passes the MCP fence and is refused by the provider's statement check before it is sent.
+  test.each([
+    ["SELECT COUNT(*) AS n FROM `.opendistro_security`", DOT_INDEX_REFUSAL],
+    ["SELECT COUNT(*) AS n FROM probe_orders /* x */", COMMENT_REFUSAL],
+    ["SELECT COUNT(*) AS n FROM probe_orders WHERE id IN (SELECT id FROM probe_hidden)", SUBQUERY_REFUSAL],
+    ['SELECT COUNT(*) AS n FROM "probe_orders"', CHARACTER_REFUSAL],
+    ["SELECT COUNT(*) AS n FROM `probe_*,-probe_shapes`", EXCLUSION_REFUSAL],
+    ["SELECT COUNT(*) AS n FROM `*`", hiddenTargetRefusal("*")],
+  ])("%p passes the MCP fence and is refused by the provider before it is sent", async (sql, sentence) => {
+    const result = await call({ sql });
+
+    expect(result).toEqual(refusedUnsent(sentence));
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(statements()).toEqual([]);
+  });
+
+  test("a seed login the open's probes find too broad is refused at open, in the tool's sentence", async () => {
+    replyFor = (path, body) => {
+      if (path === "/_plugins/_security/api/permissionsinfo") {
+        return ok('{"user_name":"admin","has_api_access":true,"disabled_endpoints":{}}');
+      }
+      if (path.endsWith("/_delete_by_query") || path.endsWith("/_close")) {
+        return {
+          status: 404,
+          body: '{"error":{"type":"index_not_found_exception","reason":"no such index [libredb_write_probe_x]"},"status":404}',
+        };
+      }
+      return defaultReply(path, body);
+    };
+
+    const result = await call({ sql: "SELECT COUNT(*) AS n FROM probe_buckets" });
+
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: `run_read_query cannot run on this connection: The agent read-only profile needs an OpenSearch login that may not write, manage indices or administer the security plugin; the user admin may administer the security plugin, and may delete documents in an index of any name, and may close an index of any name, so the connection is refused. Give the agent a user whose role holds the cluster actions cluster:monitor/main and cluster:monitor/state and only reads on the indices it reads, such as the libredb_agent_read role. It runs on ${RUN_READ_QUERY_ENGINES}.`,
+        },
+      ],
+      isError: true,
+    });
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(statements()).toEqual([]);
   });
 });

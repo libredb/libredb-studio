@@ -412,7 +412,7 @@ describe("the tool each engine is read with", () => {
     expect(mcpStatementToolFor("influxdb3")).toBe("run_read_query");
     expect(mcpStatementToolFor("influxdb")).toBeNull();
     expect(mcpStatementToolFor("elasticsearch")).toBe("run_read_query");
-    expect(mcpStatementToolFor("opensearch")).toBeNull();
+    expect(mcpStatementToolFor("opensearch")).toBe("run_read_query");
     expect(mcpStatementToolFor("redis")).toBeNull();
     expect(mcpStatementToolFor("snowflake")).toBeNull();
   });

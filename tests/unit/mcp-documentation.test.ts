@@ -243,19 +243,42 @@ describe("docs/MCP.md", () => {
     );
   });
 
+  test("says what a cancel and a timeout do to an OpenSearch statement, as measured on 3.8.0", () => {
+    expect(MCP_DOC).toContain(
+      "| OpenSearch | Studio stops waiting, and the provider closes its request at the time left of `timeout_ms`; the cluster runs the search to its end, and holds no search context for it once it ends | Studio closes the request at `timeout_ms`, the cluster runs the search to its end and then holds no search context for it, and the client gets the timeout answer |",
+    );
+  });
+
+  // The login probes narrow the login; the statement check is what keeps hidden and dot-led indices from a statement.
+  test("says what OpenSearch needs of a seed, that a broad login is refused at open, and what the boundary is", () => {
+    expect(MCP_DOC).toContain(
+      "OpenSearch by its SQL plugin, which refuses every write and DDL statement, on a server whose `DELETE` setting is proved off and whose 3.8 release line is checked at open, with a login probed at open, when security is on, to neither write, manage indices nor administer the security plugin, while hidden and dot-led indices are kept from each statement by the provider's statement check ([opensearch.md](./providers/opensearch.md))",
+    );
+    expect(MCP_DOC).toContain(
+      "On OpenSearch with security on, the open asks the security plugin whether the seed's login administers it and probes a document delete by query and an index close on a fresh index name, and refuses, before any statement runs, a login the plugin lets do any of the three, so a seed signed in as `admin` is refused; the probes name a fresh index, so a role granting writes only on a pattern that name does not match passes them, and the plugin still refuses every write it sends through SQL.\n" +
+        "With security on or off, hidden and dot-led indices are kept from each statement by the provider's statement check, which reads the statement before sending it and asks the server what its one index expression resolves to, in its own index resolution and in the field capabilities request that names the indices the SQL plugin reads.\n" +
+        "`run_read_query` needs the cluster actions `cluster:monitor/main` and `cluster:monitor/state` and, on the indices to read, `read`, `indices:admin/mappings/get` and `indices:monitor/settings/get`, and `inspect_schema` also the cluster actions `cluster:monitor/health`, `cluster:admin/ingest/pipeline/get` and `indices:admin/index_template/get` and five index actions on every index, which is the `libredb_seed_read` role of [opensearch.md](./providers/opensearch.md) section 5.9, so opt in a seed signed in with that role.",
+    );
+    expect(MCP_DOC).toContain(
+      "OpenSearch proves its `DELETE` off, checks its server's release and probes its login only for a connection that sends statements, so `inspect_schema` opens an OpenSearch connection on any release and with any login, as the editor does.",
+    );
+  });
+
   // run_read_query pages a SELECT with no LIMIT of its own at max_rows; only a LIMIT of its own past the 1000-row
   // provider budget reaches the refusal, so no provider doc may say every result past 1000 rows is refused.
-  test.each(["docs/providers/clickhouse.md", "docs/providers/libsql.md", "docs/providers/influxdb3.md"])(
-    "%s says run_read_query pages a SELECT without its own LIMIT and refuses only a LIMIT past 1000",
-    (doc) => {
-      const text = read(doc);
-      expect(text).toContain(
-        "A `SELECT` without its own `LIMIT` is paged at `max_rows` (100 by default, at most 500), and `pagination.hasMore` and `pagination.nextOffset` say where the next page starts; a query whose own `LIMIT` is past 1000 rows, or a result past 1 MiB, is refused, never cut.",
-      );
-      expect(text).not.toContain("A result past 1000 rows or 1 MiB is refused");
-      expect(text).toContain("read with its own `LIMIT` past 1000 rows");
-    },
-  );
+  test.each([
+    "docs/providers/clickhouse.md",
+    "docs/providers/libsql.md",
+    "docs/providers/influxdb3.md",
+    "docs/providers/opensearch.md",
+  ])("%s says run_read_query pages a SELECT without its own LIMIT and refuses only a LIMIT past 1000", (doc) => {
+    const text = read(doc);
+    expect(text).toContain(
+      "A `SELECT` without its own `LIMIT` is paged at `max_rows` (100 by default, at most 500), and `pagination.hasMore` and `pagination.nextOffset` say where the next page starts; a query whose own `LIMIT` is past 1000 rows, or a result past 1 MiB, is refused, never cut.",
+    );
+    expect(text).not.toContain("A result past 1000 rows or 1 MiB is refused");
+    expect(text).toContain("read with its own `LIMIT` past 1000 rows");
+  });
 
   test("names how each engine run_read_query serves enforces read-only, from the one engine list", () => {
     const line = MCP_DOC.split("\n").find((text) => text.startsWith("- Read-only is the database's own enforcement"));

@@ -5216,7 +5216,7 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
     const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/elasticsearch.md"), "utf8");
 
     expect(MCP_STATEMENT_READ.elasticsearch).toBe(true);
-    expect(MCP_STATEMENT_READ.opensearch).toBe(false);
+    expect(MCP_STATEMENT_READ.opensearch).toBe(true);
     expect(doc).toContain("`MCP_STATEMENT_READ.elasticsearch` is true");
     expect(doc).not.toContain("MCP's statement read stays closed");
     expect(doc.replaceAll("`", "")).toContain(`It runs ${readQueryFormsOf("elasticsearch").statements}:`);
