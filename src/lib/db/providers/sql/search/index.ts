@@ -361,9 +361,11 @@ interface SearchProduct {
 
   /**
    * Whether an agent statement is read before it is sent, and refused unless its text admits one index expression a
-   * reader names with certainty, which the server then resolves for the login to no hidden or system index, alias or
-   * data stream (`elasticsearch-agent-index-fence.ts`). A login that may read those reads them through SQL, so with
-   * security off, where no login exists to check, this is what stands between an agent statement and them.
+   * reader names with certainty, with no exclusion and no name that starts with a dot, which the server then resolves
+   * for the login, in its own index resolution and in the one the SQL endpoint makes, to no hidden or system index,
+   * alias or data stream (`elasticsearch-agent-index-fence.ts`). A login that may read those reads them through SQL, so
+   * this is the boundary that keeps them from an agent statement, and with security off, where no login exists to
+   * check, the only one.
    *
    * Elasticsearch: true. Measured on 9.1.4 with security off: a hidden index answers its rows to a statement that
    * names it, with or without a leading dot, and so does a hidden data stream, and an alias that is not hidden over a
@@ -374,16 +376,20 @@ interface SearchProduct {
 
   /**
    * Whether the open of a connection that sends agent statements asks the server what its login may do, after the
-   * version read, and refuses a login that holds the cluster privilege `all` or reads a restricted system index, asked
-   * by family pattern and by name with the names that carry the release built from the version read, before any
-   * statement is sent. It stands beside the statement check, which reads each statement: this one reads the login. A
-   * server with security off has no login and answers the check with no security endpoint at all; it is admitted with
-   * the statement check alone.
+   * version read and before any statement is sent, and refuses a login that holds the cluster privilege `all`, reads
+   * every index with the restricted ones included, or reads a restricted system index family by its pattern or a
+   * restricted index by a name the check asks (the names that carry the release built from the version read among
+   * them), and one whose listed privileges grant any index privilege with `allow_restricted_indices`. It narrows the
+   * login and stands beside the statement check, which is the boundary: no list names every restricted index, and the
+   * server lists no privileges for an API key with role descriptors of its own, so a login granted a restricted index
+   * by a name the check does not ask can still open. A server with security off has no login and answers the check
+   * with no security endpoint at all; it is admitted with the statement check alone.
    *
-   * Elasticsearch: true, through `_has_privileges`, which every user may call about itself (measured on 9.1.4: the
-   * superuser answers cluster `all` and `read` on every index with the restricted ones included, and
-   * `libredb_agent_read` and `libredb_seed_read` answer neither). OpenSearch: false; the check is Elasticsearch's endpoint,
-   * never measured on OpenSearch's security plugin, and its open is unchanged.
+   * Elasticsearch: true, through `_has_privileges` and `_privileges`, which every user may call about itself (measured
+   * on 9.1.4: the superuser answers cluster `all`, `read` on every index with the restricted ones included, and a
+   * listed grant with `allow_restricted_indices` on `*`; `libredb_agent_read` and `libredb_seed_read` answer none of
+   * them). OpenSearch: false; the check is Elasticsearch's endpoint, never measured on OpenSearch's security plugin, and
+   * its open is unchanged.
    */
   readonly checksLoginReach: boolean;
 }
@@ -1143,8 +1149,9 @@ abstract class SearchProvider extends SQLBaseProvider {
   }
 
   /**
-   * Refuses a login that holds the cluster privilege `all` or reads a restricted system index, read from the server's
-   * own privilege check after the version read and before any agent statement is sent
+   * Refuses a login that holds the cluster privilege `all`, reads a restricted system index the check asks about, or
+   * is granted an index privilege with `allow_restricted_indices` in its listed privileges, read from the server's own
+   * privilege check and listing after the version read and before any agent statement is sent
    * ({@link SearchProduct.checksLoginReach}). A server with security off has no login to check and is admitted with
    * the statement check alone; a check that fails or cannot be read refuses the profile, since the login's reach is
    * then unproven.
@@ -1169,10 +1176,12 @@ abstract class SearchProvider extends SQLBaseProvider {
           ? "the restricted system index name or pattern"
           : "the restricted system index names and patterns";
       findings.push(`read on ${named} ${reach.restrictedIndices.join(", ")}`);
+    } else if (reach.restrictedGrants !== null && reach.restrictedGrants.length > 0) {
+      findings.push(`an index privilege granted with allow_restricted_indices on ${reach.restrictedGrants.join(", ")}`);
     }
     if (findings.length === 0) return;
     throw new ExecutionProfileError(
-      `The agent read-only profile needs an ${this.product.label} login that holds no cluster privilege all and reads no restricted system index; the user ${reach.user} holds ${findings.join(" and ")}, so the connection is refused. Give the agent a user whose role holds the cluster action cluster:monitor/main and read and view_index_metadata on the indices it reads, without allow_restricted_indices, such as the libredb_agent_read role`,
+      `The agent read-only profile needs an ${this.product.label} login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; the user ${reach.user} holds ${findings.join(" and ")}, so the connection is refused. Give the agent a user whose role holds the cluster action cluster:monitor/main and read and view_index_metadata on the indices it reads, without allow_restricted_indices, such as the libredb_agent_read role`,
       "PROFILE_PRIVILEGES_TOO_BROAD",
     );
   }
@@ -1289,8 +1298,9 @@ abstract class SearchProvider extends SQLBaseProvider {
    *
    * Refused outside the profile: a provider opened for the editor has no business running agent semantics. Where the
    * product fences hidden indices, a statement the reader cannot read with certainty is refused next, and the one index
-   * expression it reads is resolved by the server for the login, and refused when that names a hidden or system target
-   * or cannot be read ({@link SearchProduct.fencesHiddenIndices}). Each refusal raised before the request, the
+   * expression it reads is resolved by the server for the login, in its own resolution and the SQL endpoint's, and
+   * refused when either names a hidden or system target, when they disagree, or when either cannot be read
+   * ({@link SearchProduct.fencesHiddenIndices}). Each refusal raised before the request, the
    * profile's, the estimate-plan mode's and the statement check's, is a `RefusedBeforeSendError`, so the agent and MCP
    * say nothing reached the SQL endpoint.
    */

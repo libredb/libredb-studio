@@ -4,7 +4,7 @@
  *
  * Two layers, and neither is a list of index names to keep away. The reader admits only statements whose index
  * reference it can name with certainty, refusing what an agent statement does not need; the server then says what that
- * reference resolves to, and a hidden or system target refuses the statement.
+ * reference resolves to, the way the SQL endpoint resolves it, and a hidden or system target refuses the statement.
  *
  * The reader. A reference is named with certainty only where the reader and the engine split the text into the same
  * tokens, so the reader refuses, before anything is sent:
@@ -26,9 +26,11 @@
  *  - a top-level `FROM` that is not followed by one table identifier, an optional alias, and then `WHERE`, `GROUP`,
  *    `HAVING`, `ORDER`, `LIMIT` or the end, so no `JOIN`, second relation, `FROZEN`, `PIVOT`, catalog, `::` selector or
  *    subquery;
- *  - a reference that is not a comma list of names, wildcards and exclusions written in letters, digits, `_`, `-`, `.`,
- *    `*` and `@`, none of them empty, and a reference with a name that starts with a dot, a hidden or system name, which
- *    is refused here without a request.
+ *  - a reference with a name that starts with a dot, a hidden or system name, and a reference with an exclusion, a part
+ *    that starts with `-`, both refused here without a request: an agent statement names the indices it reads, so it
+ *    needs no exclusion, and 9.1.4's index resolutions do not apply one alike (measured 2026-11-01);
+ *  - a reference that is not then a comma list of names and wildcards written in letters, digits, `_`, `-`, `.`, `*` and
+ *    `@`, none of them empty and none starting with `_`.
  *
  * What the reference rests on: in the 9.1.4 grammar an index is named only by a table identifier, which a query writes
  * after a `FROM` or a `JOIN` and a catalog command after its keywords; the grammar holds no script, no function the
@@ -36,12 +38,21 @@
  * written with a catalog or a `:`, which the reader refuses. So once the reader admits a statement, the one reference
  * it returns names every index the statement reads.
  *
- * The server's answer. The reference is resolved as the login, with the wildcard expansion the SQL endpoint resolves a
- * table with (`SearchTransport.resolveTargets`), and the statement is refused when the answer cannot be read or names
- * nothing, or holds an index the server marks hidden or system, an alias it marks hidden or whose indices it marks so,
- * or a data stream it marks hidden or system. An alias over a data stream points at the stream's backing indices,
- * which the server marks hidden, so it is refused; a data stream is read by its own name. The check and the statement
- * are two requests, so a change made to the cluster between them is not seen.
+ * The server's answer, asked as the login in two resolutions, and the statement is refused when either cannot be read:
+ *
+ *  - the server's own resolution of the reference (`SearchTransport.resolveTargets`), with the wildcard expansion the
+ *    SQL endpoint uses, names the indices, aliases and data streams it reaches with their marks: the statement is
+ *    refused when it names nothing, or an index the server marks hidden or system, an alias it marks hidden, or a data
+ *    stream it marks hidden or system;
+ *  - the SQL endpoint's own resolution of the reference (`SearchTransport.sqlTableIndices`), the request its resolver
+ *    sends for the table, names the concrete indices the statement reads: the statement is refused when that names
+ *    none, or an index the first resolution does not account for, as one it names, a backing index of a data stream it
+ *    names, or an index behind an alias it names; and an index read only through an alias is resolved by its own name,
+ *    and refuses the statement when the server marks it hidden or system.
+ *
+ * So an alias over a data stream, which points at the stream's backing indices, which the server marks hidden, is
+ * refused; a data stream is read by its own name. The check and the statement are separate requests, so a change made
+ * to the cluster between them is not seen.
  *
  * Every refusal is a `RefusedBeforeSendError`: nothing reached the SQL endpoint.
  */
@@ -71,17 +82,25 @@ export const SUBQUERY_REFUSAL =
 export const FROM_REFUSAL =
   "The agent's Elasticsearch FROM names one index expression, quoted or bare, with an optional alias, and then WHERE, GROUP BY, HAVING, ORDER BY, LIMIT or the end: no JOIN, second relation, subquery, FROZEN, PIVOT, catalog or :: selector, and no other FROM but one inside EXTRACT";
 
+export const EXCLUSION_REFUSAL =
+  "The agent writes no exclusion, a part that starts with -, in an Elasticsearch index expression: name the indices to read, or a wildcard that reaches only them";
+
 export const DOT_INDEX_REFUSAL =
   "The agent names no Elasticsearch index that starts with a dot: those are the hidden and system indices, the security index among them, which a login that may read them reads through SQL; read a data stream by its own name rather than its backing index";
 
 /** The refusal of a reference that is not an index expression the reader admits. */
 export function expressionRefusal(reference: string): string {
-  return `The agent writes an Elasticsearch index expression as comma-separated names, wildcards and exclusions of letters, digits, _, -, ., * and @, with no empty name, space, date math, catalog or :: selector, and "${reference}" is not one`;
+  return `The agent writes an Elasticsearch index expression as comma-separated names and wildcards of letters, digits, _, -, ., * and @, with no empty name, space, date math, catalog or :: selector, and "${reference}" is not one`;
 }
 
 /** The refusal of a reference the server resolves to a hidden or system target. */
 export function hiddenTargetRefusal(reference: string): string {
   return `The agent reads no Elasticsearch index, alias or data stream the server marks hidden or system, and the server resolves "${reference}" to one`;
+}
+
+/** The refusal of a reference the SQL endpoint resolves to an index the server's own resolution does not account for. */
+export function disagreementRefusal(reference: string): string {
+  return `The agent reads only the Elasticsearch indices the server's own resolution of an expression names for its login, and the SQL endpoint resolves "${reference}" to an index that resolution does not name`;
 }
 
 /** The refusal of a reference the server resolves to nothing. */
@@ -130,8 +149,8 @@ const EXPLAIN_OPTIONS = new Set([
 ]);
 /** The words that may follow a top-level FROM's table identifier and its alias. */
 const AFTER_FROM = new Set(["WHERE", "GROUP", "HAVING", "ORDER", "LIMIT"]);
-/** One name of an index expression: an optional exclusion, then a name or wildcard that starts with neither `.` nor `_`. */
-const EXPRESSION_PART = /^-?[A-Za-z0-9*@][A-Za-z0-9_.*@-]*$/;
+/** One name of an index expression: a name or wildcard that starts with none of `.`, `_` and `-`. */
+const EXPRESSION_PART = /^[A-Za-z0-9*@][A-Za-z0-9_.*@-]*$/;
 
 const refuse = (sentence: string, sql: string) => new RefusedBeforeSendError(sentence, "elasticsearch", sql);
 
@@ -246,12 +265,13 @@ function selectReference(sql: string, body: readonly Token[]): string | null {
   return reference;
 }
 
-/** Refuses a reference that is not an index expression the reader admits, a dot-led name first. */
+/** Refuses a reference that is not an index expression the reader admits: a dot-led name first, then an exclusion. */
 function assertExpression(sql: string, reference: string): void {
   const parts = reference.split(",");
   if (parts.some((part) => (part.startsWith("-") ? part.slice(1) : part).startsWith("."))) {
     throw refuse(DOT_INDEX_REFUSAL, sql);
   }
+  if (parts.some((part) => part.startsWith("-"))) throw refuse(EXCLUSION_REFUSAL, sql);
   if (!parts.every((part) => EXPRESSION_PART.test(part))) throw refuse(expressionRefusal(reference), sql);
 }
 
@@ -289,9 +309,10 @@ export function agentIndexReference(sql: string): string | null {
 }
 
 /**
- * Asks the server what `reference` resolves to for the login, and refuses the statement when the answer cannot be read
- * or names nothing, or names an index, alias or data stream the server marks hidden or system, or an alias whose
- * indices it marks so. Each request goes out on `signal`.
+ * Asks the server what `reference` resolves to for the login, in its own index resolution and in the SQL endpoint's,
+ * and refuses the statement when either answer cannot be read or names nothing, when the first names an index, alias
+ * or data stream the server marks hidden or system, or when the second names an index the first does not account for
+ * or one behind an alias the server marks hidden or system. Each request goes out on `signal`.
  */
 export async function assertReferenceVisible(
   sql: string,
@@ -312,13 +333,6 @@ export async function assertReferenceVisible(
   }
   if (isMarked(targets.indices)) throw refuse(hiddenTargetRefusal(reference), sql);
   if (targets.aliases.length > 0) {
-    // An alias reads the indices behind it, so each is asked about by its own name, and the alias for its own mark.
-    const members = [...new Set(targets.aliases.flatMap((alias) => alias.indices))];
-    const behind = (await ask(() => transport.resolveTargets(members, signal))).indices;
-    if (!members.every((member) => behind.some((index) => index.name === member))) {
-      throw refuse(resolveFailedRefusal(reference, "the indices behind an alias were not each answered"), sql);
-    }
-    if (isMarked(behind)) throw refuse(hiddenTargetRefusal(reference), sql);
     const hidden = await ask(() =>
       transport.hiddenAliases(
         targets.aliases.map((alias) => alias.name),
@@ -328,7 +342,30 @@ export async function assertReferenceVisible(
     if (hidden.length > 0) throw refuse(hiddenTargetRefusal(reference), sql);
   }
   if (targets.dataStreams.length > 0) {
-    const streams = await ask(() => transport.dataStreamMarks(targets.dataStreams, signal));
+    const streams = await ask(() =>
+      transport.dataStreamMarks(
+        targets.dataStreams.map((stream) => stream.name),
+        signal,
+      ),
+    );
     if (isMarked(streams)) throw refuse(hiddenTargetRefusal(reference), sql);
   }
+  const read = await ask(() => transport.sqlTableIndices(reference, signal));
+  if (read.length === 0) throw refuse(unresolvedRefusal(reference), sql);
+  // An index the first resolution names was answered with its marks above, and a backing index of a data stream it
+  // names is read through that stream, whose marks were; an index behind an alias it names was not, so it is asked
+  // about by its own name; and an index it does not account for at all is one the two resolutions disagree about.
+  const answered = new Set([
+    ...targets.indices.map((index) => index.name),
+    ...targets.dataStreams.flatMap((stream) => stream.backingIndices),
+  ]);
+  const behindAliases = new Set(targets.aliases.flatMap((alias) => alias.indices));
+  const throughAliases = read.filter((name) => !answered.has(name));
+  if (!throughAliases.every((name) => behindAliases.has(name))) throw refuse(disagreementRefusal(reference), sql);
+  if (throughAliases.length === 0) return;
+  const behind = (await ask(() => transport.resolveTargets(throughAliases, signal))).indices;
+  if (!throughAliases.every((name) => behind.some((index) => index.name === name))) {
+    throw refuse(resolveFailedRefusal(reference, "the indices behind an alias were not each answered"), sql);
+  }
+  if (isMarked(behind)) throw refuse(hiddenTargetRefusal(reference), sql);
 }

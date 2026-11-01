@@ -92,6 +92,7 @@ import {
   type SearchQueryBounds,
   type SearchQueryResult,
   type SearchResolvedAlias,
+  type SearchResolvedDataStream,
   type SearchResolvedIndex,
   type SearchResolvedTargets,
   type SearchRow,
@@ -145,6 +146,35 @@ const NO_SECURITY_ABSENCE: AbsenceRule = {
   stringError: `no handler found for uri [${HAS_PRIVILEGES_PATH}] and method [POST]`,
 };
 
+/**
+ * The server's listing of the privileges of the login making the request, as its roles grant them: each index
+ * privilege with the `names` it is granted on and whether it is granted with `allow_restricted_indices`. Every user may
+ * list its own (measured on 9.1.4: a user whose role holds no privilege at all is answered 200, with empty lists).
+ */
+const LIST_PRIVILEGES_PATH = "/_security/user/_privileges";
+
+/** The listing's members the login check reads: the index privileges, and each one's names and restricted flag. */
+const LISTING_FIELDS = Object.freeze({
+  INDICES: "indices",
+  NAMES: "names",
+  RESTRICTED: "allow_restricted_indices",
+} as const);
+
+/**
+ * How the listing answers an API key that carries role descriptors of its own, measured on 9.1.4: HTTP 400, an
+ * `illegal_argument_exception` whose reason starts with this sentence. Such a key's privileges are not listed, so it is
+ * read as no listing; an API key without role descriptors of its own is listed with its owner's privileges, as a user
+ * is, and any other refusal fails the check.
+ */
+const API_KEY_UNLISTED: AbsenceRule = {
+  status: 400,
+  whateverTheBodyCarries: false,
+  objectError: {
+    type: "illegal_argument_exception",
+    reasonStart: "Cannot retrieve privileges for API keys with assigned role descriptors.",
+  },
+};
+
 /** The index pattern every index matches; with `allow_restricted_indices` it takes in the restricted ones too. */
 const EVERY_INDEX = "*";
 
@@ -171,7 +201,8 @@ const RESOLVE_QUERY = "expand_wildcards=open";
 /**
  * The resolution's members, measured on 9.1.4: `indices`, each with `name` and `attributes` (`open` or `closed`, and
  * `hidden` and `system` when the server marks it so); `aliases`, each with `name` and the `indices` behind it; and
- * `data_streams`, each with `name`. Neither an alias nor a data stream carries its own marks there.
+ * `data_streams`, each with `name` and its `backing_indices`. Neither an alias nor a data stream carries its own marks
+ * there.
  */
 const RESOLVE_FIELDS = Object.freeze({
   INDICES: "indices",
@@ -180,7 +211,22 @@ const RESOLVE_FIELDS = Object.freeze({
   NAME: "name",
   ATTRIBUTES: "attributes",
   BEHIND: "indices",
+  BACKING: "backing_indices",
 } as const);
+
+/**
+ * The field capabilities of an index expression, which is how the SQL endpoint resolves a table: 9.1.4's resolver
+ * sends this request for the table of a `SELECT` and of `SYS COLUMNS`, every table included, and reads the indices it
+ * answers.
+ */
+const FIELD_CAPS_SUFFIX = "/_field_caps";
+
+/**
+ * The field capabilities answer's members the SQL table resolution reads, measured on 9.1.4: `indices`, the concrete
+ * indices the expression resolves to, and `failures`, present only when an index could not be answered (a red one,
+ * measured), each naming the `indices` it failed for.
+ */
+const FIELD_CAPS_FIELDS = Object.freeze({ INDICES: "indices", FAILURES: "failures" } as const);
 
 /** The attributes the resolution marks an index with when it is hidden, or a system index. */
 const HIDDEN_ATTRIBUTE = "hidden";
@@ -396,6 +442,11 @@ interface AbsenceRule {
   readonly whateverTheBodyCarries: boolean;
   /** When set, the status means absence only when the body's `error` is exactly this string. */
   readonly stringError?: string;
+  /**
+   * When set, the status means absence only when the body's `error` is an object of this `type` whose `reason` starts
+   * with `reasonStart`.
+   */
+  readonly objectError?: { readonly type: string; readonly reasonStart: string };
 }
 
 /** A listing's 404, which means "there are none" only while the body is a payload. */
@@ -654,16 +705,39 @@ interface SearchDialectSpec {
    * login is checked. Asked about `read` with `allow_restricted_indices`, a pattern or name answers true only when the
    * login's roles reach every index it matches, whatever grants them: `*` answers true only for a login that reads
    * every index, a pattern for one that reads all of that family, and a name for one that reads that index. So the
-   * check asks the families' patterns, which a role granting a family by any wider pattern answers, and the indices'
-   * own names, which a role granting one index by any pattern answers.
+   * check asks the families' patterns, which a role granting a family by any wider pattern answers, and the names
+   * below, which a role granting one of those indices by any pattern answers. A restricted index this list does not
+   * name is not asked about, and no list names them all: Kibana's indices carry Kibana's release, not the server's, so
+   * a role granting `.kibana_9.1.0_001` by its name answers false to every ask (measured on 9.1.4). The listing of the
+   * login's privileges is what reads such a grant, for every login it lists.
    *
    * Elasticsearch: each pattern and name below was answered false to a user whose role reads `*` without
    * `allow_restricted_indices` and true to the superuser (measured on 9.1.4, 2026-11-01), so each is restricted, or
    * holds restricted indices, on the release line the agent profile admits. A role reading `*` with these patterns
-   * granted with `allow_restricted_indices` answered true on `.*`, so together they hold every restricted index of
-   * 9.1.4. OpenSearch: null; the check is Elasticsearch's endpoint, never measured on OpenSearch's security plugin.
+   * granted with `allow_restricted_indices` answered true on `.*`, so together the patterns match every restricted
+   * index of 9.1.4. OpenSearch: null; the check is Elasticsearch's endpoint, never measured on OpenSearch's security
+   * plugin.
    */
   readonly restrictedIndices: RestrictedIndices | null;
+  /**
+   * The query string of the field capabilities request that resolves a SQL table the way the product's SQL endpoint
+   * does, or null where that resolution was never measured and no agent statement's index is checked through it.
+   *
+   * Elasticsearch: 9.1.4's SQL resolver (`IndexResolver.FIELD_CAPS_INDICES_OPTIONS`) skips a name it cannot find
+   * (`ignore_unavailable`), allows an expression that matches nothing (`allow_no_indices`) and expands wildcards to open
+   * indices that are not hidden (`expand_wildcards=open`), resolving an alias to the indices behind it and a data stream
+   * to its backing indices. Measured on 2026-11-01 over 25 expressions (names, wildcards, comma lists, exclusions,
+   * aliases over hidden, visible, mixed and closed indices, hidden aliases, data streams, hidden data streams and an
+   * alias over a data stream), with security off and as a role reading one index family with it on: the indices this
+   * request answers are the indices whose columns `SYS COLUMNS` lists and whose rows `SELECT COUNT(*)` counts, wherever
+   * the statement answered. `fields=_index` answers the same indices as the resolver's own `fields=*` (measured on each
+   * expression), and every index maps `_index`, so the answer stays one name per index. Two of the resolver's options
+   * are not sent: it admits a closed index, which this answer leaves out and no statement reads (each answered 403,
+   * index closed, measured), and it leaves out a throttled index, which this answer keeps, since the parameter for it
+   * is deprecated on 9.1.4 (measured) and keeping one only adds an index to what the check asks about. OpenSearch:
+   * null.
+   */
+  readonly sqlTableResolution: string | null;
 }
 
 /** The restricted system indices a login check asks about: family patterns, names, and names that carry the release. */
@@ -808,6 +882,7 @@ const DIALECTS: Readonly<Record<SearchDialectId, SearchDialectSpec>> = Object.fr
         `.kibana_usage_counters_${VERSION_SLOT}_001`,
       ]),
     }),
+    sqlTableResolution: "fields=_index&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open",
   },
   opensearch: {
     label: "OpenSearch",
@@ -874,6 +949,7 @@ const DIALECTS: Readonly<Record<SearchDialectId, SearchDialectSpec>> = Object.fr
      */
     sqlResultLimit: "plugins.query.size_limit",
     restrictedIndices: null,
+    sqlTableResolution: null,
     sqlDelete: {
       setting: "plugins.sql.delete.enabled",
       refusals: [
@@ -1320,10 +1396,36 @@ function carriesFailureEnvelope(text: string): boolean {
 
 /** Whether a body that came with an absence rule's status means "there is nothing here" under that rule. */
 function isAbsence(absence: AbsenceRule, text: string): boolean {
-  if (absence.stringError !== undefined) {
-    return asRecord(parseJson(text))?.[ERROR_FIELDS.ENVELOPE] === absence.stringError;
+  const envelope = asRecord(parseJson(text))?.[ERROR_FIELDS.ENVELOPE];
+  if (absence.stringError !== undefined) return envelope === absence.stringError;
+  if (absence.objectError !== undefined) {
+    const error = asRecord(envelope);
+    const reason = error === null ? null : textField(error, ERROR_FIELDS.REASON);
+    return (
+      error?.[ERROR_FIELDS.TYPE] === absence.objectError.type &&
+      reason !== null &&
+      reason.startsWith(absence.objectError.reasonStart)
+    );
   }
   return absence.whateverTheBodyCarries || !carriesFailureEnvelope(text);
+}
+
+/**
+ * The names a privilege listing grants with `allow_restricted_indices`, each once in the order listed, or null when the
+ * listing is not the measured shape: an `indices` list of objects, each with its `names` as text and its flag a boolean.
+ */
+function restrictedGrantsOf(listing: Record<string, unknown> | null): string[] | null {
+  const entries = listing?.[LISTING_FIELDS.INDICES];
+  if (!Array.isArray(entries)) return null;
+  const granted = new Set<string>();
+  for (const entry of entries as unknown[]) {
+    const privilege = asRecord(entry);
+    const names = privilege?.[LISTING_FIELDS.NAMES];
+    const restricted = privilege?.[LISTING_FIELDS.RESTRICTED];
+    if (!isTextList(names) || typeof restricted !== "boolean") return null;
+    if (restricted) for (const name of names) granted.add(name);
+  }
+  return [...granted];
 }
 
 /** Whether a member is a list of strings, as an index's attributes and an alias's indices are. */
@@ -1343,7 +1445,7 @@ function resolvedTargets(answer: Record<string, unknown> | null): SearchResolved
   const read = {
     indices: [] as SearchResolvedIndex[],
     aliases: [] as SearchResolvedAlias[],
-    dataStreams: [] as string[],
+    dataStreams: [] as SearchResolvedDataStream[],
   };
   for (const entry of indices as unknown[]) {
     const index = asRecord(entry);
@@ -1366,8 +1468,9 @@ function resolvedTargets(answer: Record<string, unknown> | null): SearchResolved
   for (const entry of dataStreams as unknown[]) {
     const stream = asRecord(entry);
     const name = stream === null ? null : textField(stream, RESOLVE_FIELDS.NAME);
-    if (name === null) return null;
-    read.dataStreams.push(name);
+    const backing = stream?.[RESOLVE_FIELDS.BACKING];
+    if (name === null || !isTextList(backing)) return null;
+    read.dataStreams.push({ name, backingIndices: backing });
   }
   return read;
 }
@@ -1801,11 +1904,22 @@ export class SearchHttpTransport implements SearchTransport {
     if (user === null || typeof clusterAll !== "boolean" || !reads.every((read) => typeof read === "boolean")) {
       throw unreadableBody(this.spec, "a privilege check");
     }
+    const listing = await this.request(this.url(LIST_PRIVILEGES_PATH), signal, undefined, API_KEY_UNLISTED, (text) => {
+      const parsed = parseJson(text);
+      if (parsed === null) throw unreadableBody(this.spec, "a privilege listing");
+      return parsed;
+    });
+    let restrictedGrants: string[] | null = null;
+    if (listing !== null) {
+      restrictedGrants = restrictedGrantsOf(asRecord(listing));
+      if (restrictedGrants === null) throw unreadableBody(this.spec, "a privilege listing");
+    }
     return {
       user,
       clusterAll,
       everyIndex: reads[0] === true,
       restrictedIndices: asked.filter((_name, i) => reads[i + 1] === true),
+      restrictedGrants,
     };
   }
 
@@ -1818,7 +1932,7 @@ export class SearchHttpTransport implements SearchTransport {
   public async resolveTargets(expressions: readonly string[], signal?: AbortSignal): Promise<SearchResolvedTargets> {
     const indices: SearchResolvedIndex[] = [];
     const aliases: SearchResolvedAlias[] = [];
-    const dataStreams: string[] = [];
+    const dataStreams: SearchResolvedDataStream[] = [];
     for (const chunk of mappingChunks(expressions)) {
       // oxlint-disable-next-line no-await-in-loop -- one request line at a time, each read before the next is sent.
       const answer = asRecord(await this.request(this.url(`${RESOLVE_INDEX_PATH}/${chunk}`, RESOLVE_QUERY), signal));
@@ -1829,6 +1943,35 @@ export class SearchHttpTransport implements SearchTransport {
       dataStreams.push(...read.dataStreams);
     }
     return { indices, aliases, dataStreams };
+  }
+
+  /**
+   * The expression goes out percent-encoded whole, as {@link resolveTargets} sends one, so its commas and wildcards are
+   * the server's to read.
+   */
+  public async sqlTableIndices(expression: string, signal?: AbortSignal): Promise<string[]> {
+    const query = this.spec.sqlTableResolution;
+    if (query === null) {
+      throw new SearchTransportError(
+        "unsupported",
+        `${this.spec.label} declares no measured resolution of a SQL table to check an agent statement against`,
+      );
+    }
+    const answer = asRecord(
+      await this.request(this.url(`/${encodeURIComponent(expression)}${FIELD_CAPS_SUFFIX}`, query), signal),
+    );
+    const indices = answer?.[FIELD_CAPS_FIELDS.INDICES];
+    const failures = answer?.[FIELD_CAPS_FIELDS.FAILURES];
+    if (!isTextList(indices) || (failures !== undefined && !Array.isArray(failures))) {
+      throw unreadableBody(this.spec, "a field capabilities request");
+    }
+    if (failures !== undefined && failures.length > 0) {
+      throw new SearchTransportError(
+        "engine",
+        `${this.spec.label} could not answer the field capabilities of every index the expression resolves to, so the indices its SQL endpoint reads are not all known`,
+      );
+    }
+    return indices;
   }
 
   /** The alias listing of the named aliases: keyed by index, each alias's own entry carrying its mark. */

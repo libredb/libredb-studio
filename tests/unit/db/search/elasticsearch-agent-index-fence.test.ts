@@ -2,7 +2,9 @@
  * The Elasticsearch agent read-only path's statement check. The reader admits one SELECT, an EXPLAIN of one, or the
  * agent's own SYS COLUMNS read, written so that a reader and the 9.1.4 lexer split it into the same tokens, and names
  * the one index expression it reads; the server's answer about that expression then refuses a hidden or system target.
- * Every refusal is pinned in its full sentence, and every request the check sends in its order.
+ * Every refusal is pinned in its full sentence, and every request the check sends in its order: the server's own
+ * resolution of the expression, the marks of the aliases and data streams it names, the indices the SQL endpoint reads
+ * for it, and the resolution of each index read only through an alias.
  */
 import { describe, expect, test } from "bun:test";
 import { QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
@@ -11,7 +13,9 @@ import {
   assertReferenceVisible,
   CHARACTER_REFUSAL,
   COMMENT_REFUSAL,
+  disagreementRefusal,
   DOT_INDEX_REFUSAL,
+  EXCLUSION_REFUSAL,
   expressionRefusal,
   FROM_REFUSAL,
   hiddenTargetRefusal,
@@ -49,7 +53,7 @@ describe("agentIndexReference: the statements it admits, and the index expressio
     ["SELECT customer FROM probe_orders", "probe_orders"],
     ['SELECT customer FROM "probe_orders"', "probe_orders"],
     ['SELECT COUNT(*) AS n FROM "*"', "*"],
-    ['SELECT COUNT(*) AS n FROM "probe_*,-probe_shapes"', "probe_*,-probe_shapes"],
+    ['SELECT COUNT(*) AS n FROM "probe_*,probe-orders,x-*"', "probe_*,probe-orders,x-*"],
     ['SELECT COUNT(*) AS n FROM "logs-2026.11.01"', "logs-2026.11.01"],
     ["select customer from probe_orders p where p.customer is not null", "probe_orders"],
     ['SELECT "p".customer FROM probe_orders AS "p" ORDER BY 1 DESC LIMIT 5', "probe_orders"],
@@ -229,7 +233,7 @@ describe("agentIndexReference: what it refuses before anything is sent", () => {
 
   test("names the reference in the expression refusal", () => {
     expect(expressionRefusal("a b")).toBe(
-      'The agent writes an Elasticsearch index expression as comma-separated names, wildcards and exclusions of letters, digits, _, -, ., * and @, with no empty name, space, date math, catalog or :: selector, and "a b" is not one',
+      'The agent writes an Elasticsearch index expression as comma-separated names and wildcards of letters, digits, _, -, ., * and @, with no empty name, space, date math, catalog or :: selector, and "a b" is not one',
     );
   });
 
@@ -243,6 +247,19 @@ describe("agentIndexReference: what it refuses before anything is sent", () => {
     'EXPLAIN SELECT a FROM ".x"',
   ])("refuses %p: a name that starts with a dot, without a request", (sql) => {
     refusedWith(sql, DOT_INDEX_REFUSAL);
+  });
+
+  test.each([
+    'SELECT a FROM "probe_*,-probe_shapes"',
+    'SELECT a FROM "-probe_orders"',
+    'SELECT a FROM "orders,logs*,-logs_view"',
+    'SELECT a FROM "*,-x"',
+    'SELECT a FROM "-*"',
+    'SELECT a FROM "a,-"',
+    'SYS COLUMNS "a,-b"',
+    'EXPLAIN SELECT a FROM "a*,-a1"',
+  ])("refuses %p: an exclusion, without a request", (sql) => {
+    refusedWith(sql, EXCLUSION_REFUSAL);
   });
 
   test("pins each refusal's full sentence", () => {
@@ -267,6 +284,9 @@ describe("agentIndexReference: what it refuses before anything is sent", () => {
     expect(FROM_REFUSAL).toBe(
       "The agent's Elasticsearch FROM names one index expression, quoted or bare, with an optional alias, and then WHERE, GROUP BY, HAVING, ORDER BY, LIMIT or the end: no JOIN, second relation, subquery, FROZEN, PIVOT, catalog or :: selector, and no other FROM but one inside EXTRACT",
     );
+    expect(EXCLUSION_REFUSAL).toBe(
+      "The agent writes no exclusion, a part that starts with -, in an Elasticsearch index expression: name the indices to read, or a wildcard that reaches only them",
+    );
     expect(DOT_INDEX_REFUSAL).toBe(
       "The agent names no Elasticsearch index that starts with a dot: those are the hidden and system indices, the security index among them, which a login that may read them reads through SQL; read a data stream by its own name rather than its backing index",
     );
@@ -278,23 +298,39 @@ describe("agentIndexReference: what it refuses before anything is sent", () => {
   });
 });
 
-/** A transport that answers the check's three questions from fixed answers and records each question it was asked. */
+/**
+ * A transport that answers the check's questions from fixed answers and records each question it was asked: `resolve`
+ * for the server's index resolution, `aliases` and `streams` for the marks, and `read` for the indices the SQL endpoint
+ * reads for the expression.
+ */
 function fakeTransport(answers: {
   readonly targets?: Readonly<Record<string, SearchResolvedTargets>>;
+  readonly read?: Readonly<Record<string, readonly string[]>>;
   readonly hiddenAliases?: readonly string[];
   readonly streams?: readonly SearchDataStreamMarks[];
-  readonly fail?: "resolve" | "behind" | "aliases" | "streams";
+  readonly fail?: "resolve" | "behind" | "aliases" | "streams" | "read";
 }) {
   const asked: string[] = [];
   const signals: (AbortSignal | undefined)[] = [];
   const empty: SearchResolvedTargets = { indices: [], aliases: [], dataStreams: [] };
+  let resolutions = 0;
   const transport = {
     resolveTargets: async (expressions: readonly string[], signal?: AbortSignal) => {
       asked.push(`resolve ${expressions.join(" ")}`);
       signals.push(signal);
-      const behind = asked.length > 1;
-      if (answers.fail === (behind ? "behind" : "resolve")) throw new Error("no such index [x]");
+      resolutions++;
+      if (answers.fail === (resolutions > 1 ? "behind" : "resolve")) throw new Error("no such index [x]");
       return answers.targets?.[expressions.join(" ")] ?? empty;
+    },
+    sqlTableIndices: async (expression: string, signal?: AbortSignal) => {
+      asked.push(`read ${expression}`);
+      signals.push(signal);
+      if (answers.fail === "read") {
+        throw new Error(
+          "Elasticsearch could not answer the field capabilities of every index the expression resolves to, so the indices its SQL endpoint reads are not all known",
+        );
+      }
+      return [...(answers.read?.[expression] ?? [])];
     },
     hiddenAliases: async (names: readonly string[], signal?: AbortSignal) => {
       asked.push(`aliases ${names.join(" ")}`);
@@ -314,6 +350,7 @@ function fakeTransport(answers: {
 }
 
 const open = (name: string) => ({ name, hidden: false, system: false });
+const stream = (name: string) => ({ name, backingIndices: [`.ds-${name}-1`] });
 
 async function checked(reference: string, transport: SearchTransport, signal?: AbortSignal): Promise<unknown> {
   return assertReferenceVisible(`SELECT * FROM "${reference}"`, reference, transport, signal).then(
@@ -328,15 +365,16 @@ function expectRefused(outcome: unknown, sentence: string): void {
 }
 
 describe("assertReferenceVisible: the server's answer about the reference", () => {
-  test("admits a reference the server resolves to indices it marks neither hidden nor system, in one request", async () => {
+  test("admits a reference the server resolves to indices it marks neither hidden nor system, which the SQL endpoint reads", async () => {
     const { transport, asked, signals } = fakeTransport({
       targets: { "probe_*": { indices: [open("probe_orders"), open("probe_buckets")], aliases: [], dataStreams: [] } },
+      read: { "probe_*": ["probe_buckets", "probe_orders"] },
     });
     const signal = new AbortController().signal;
 
     expect(await checked("probe_*", transport, signal)).toBe("admitted");
-    expect(asked).toEqual(["resolve probe_*"]);
-    expect(signals).toEqual([signal]);
+    expect(asked).toEqual(["resolve probe_*", "read probe_*"]);
+    expect(signals).toEqual([signal, signal]);
   });
 
   test("refuses a reference the server resolves to nothing", async () => {
@@ -347,6 +385,16 @@ describe("assertReferenceVisible: the server's answer about the reference", () =
       'The agent reads only an Elasticsearch index, alias or data stream the server resolves for its login, and the server resolves "nomatch*" to none',
     );
     expect(asked).toEqual(["resolve nomatch*"]);
+  });
+
+  test("refuses a reference the SQL endpoint reads no index for", async () => {
+    const { transport, asked } = fakeTransport({
+      targets: { closed_logs: { indices: [open("closed_logs")], aliases: [], dataStreams: [] } },
+      read: { closed_logs: [] },
+    });
+
+    expectRefused(await checked("closed_logs", transport), unresolvedRefusal("closed_logs"));
+    expect(asked).toEqual(["resolve closed_logs", "read closed_logs"]);
   });
 
   test.each([
@@ -364,39 +412,58 @@ describe("assertReferenceVisible: the server's answer about the reference", () =
     expect(asked).toEqual(["resolve x"]);
   });
 
+  test.each([
+    ["a hidden index", ["probe_orders", "hidden_logs"]],
+    ["an index it marks neither hidden nor system", ["probe_buckets"]],
+  ])(
+    "refuses a reference the SQL endpoint reads an index for that the server's resolution does not name: %s",
+    async (_name, read) => {
+      const { transport, asked } = fakeTransport({
+        targets: { x: { indices: [open("probe_orders")], aliases: [], dataStreams: [] } },
+        read: { x: read },
+      });
+
+      expectRefused(await checked("x", transport), disagreementRefusal("x"));
+      expect(disagreementRefusal("x")).toBe(
+        'The agent reads only the Elasticsearch indices the server\'s own resolution of an expression names for its login, and the SQL endpoint resolves "x" to an index that resolution does not name',
+      );
+      expect(asked).toEqual(["resolve x", "read x"]);
+    },
+  );
+
   test("refuses an alias over a hidden index, read from the index's own resolution", async () => {
     const { transport, asked } = fakeTransport({
       targets: {
         logs_view: { indices: [], aliases: [{ name: "logs_view", indices: ["hidden_logs"] }], dataStreams: [] },
         hidden_logs: { indices: [{ name: "hidden_logs", hidden: true, system: false }], aliases: [], dataStreams: [] },
       },
+      read: { logs_view: ["hidden_logs"] },
     });
 
     expectRefused(await checked("logs_view", transport), hiddenTargetRefusal("logs_view"));
-    expect(asked).toEqual(["resolve logs_view", "resolve hidden_logs"]);
+    expect(asked).toEqual(["resolve logs_view", "aliases logs_view", "read logs_view", "resolve hidden_logs"]);
   });
 
-  test("refuses an alias the server marks hidden, over indices it does not", async () => {
+  test("refuses an alias the server marks hidden, over indices it does not, before the SQL endpoint is asked", async () => {
     const { transport, asked } = fakeTransport({
       targets: {
         hidden_view: { indices: [], aliases: [{ name: "hidden_view", indices: ["probe_orders"] }], dataStreams: [] },
-        probe_orders: { indices: [open("probe_orders")], aliases: [], dataStreams: [] },
       },
       hiddenAliases: ["hidden_view"],
     });
 
     expectRefused(await checked("hidden_view", transport), hiddenTargetRefusal("hidden_view"));
-    expect(asked).toEqual(["resolve hidden_view", "resolve probe_orders", "aliases hidden_view"]);
+    expect(asked).toEqual(["resolve hidden_view", "aliases hidden_view"]);
   });
 
-  test("admits aliases over visible indices, asking about each index behind them once", async () => {
+  test("admits aliases over visible indices, asking about each index read only through them once", async () => {
     const { transport, asked } = fakeTransport({
       targets: {
         "p*": {
-          indices: [],
+          indices: [open("probe_shapes")],
           aliases: [
             { name: "porders", indices: ["probe_orders"] },
-            { name: "pall", indices: ["probe_orders", "probe_buckets"] },
+            { name: "pall", indices: ["probe_orders", "probe_buckets", "probe_shapes"] },
           ],
           dataStreams: [],
         },
@@ -406,10 +473,11 @@ describe("assertReferenceVisible: the server's answer about the reference", () =
           dataStreams: [],
         },
       },
+      read: { "p*": ["probe_orders", "probe_buckets", "probe_shapes"] },
     });
 
     expect(await checked("p*", transport)).toBe("admitted");
-    expect(asked).toEqual(["resolve p*", "resolve probe_orders probe_buckets", "aliases porders pall"]);
+    expect(asked).toEqual(["resolve p*", "aliases porders pall", "read p*", "resolve probe_orders probe_buckets"]);
   });
 
   test("refuses an alias whose indices are not each answered", async () => {
@@ -418,6 +486,7 @@ describe("assertReferenceVisible: the server's answer about the reference", () =
         pall: { indices: [], aliases: [{ name: "pall", indices: ["probe_orders", "probe_buckets"] }], dataStreams: [] },
         "probe_orders probe_buckets": { indices: [open("probe_orders")], aliases: [], dataStreams: [] },
       },
+      read: { pall: ["probe_orders", "probe_buckets"] },
     });
 
     expectRefused(
@@ -431,7 +500,7 @@ describe("assertReferenceVisible: the server's answer about the reference", () =
     ["system", { name: "zsys", hidden: false, system: true }],
   ])("refuses a data stream the server marks %s", async (_name, marks) => {
     const { transport, asked } = fakeTransport({
-      targets: { s: { indices: [], aliases: [], dataStreams: [marks.name] } },
+      targets: { s: { indices: [], aliases: [], dataStreams: [stream(marks.name)] } },
       streams: [marks],
     });
 
@@ -439,32 +508,86 @@ describe("assertReferenceVisible: the server's answer about the reference", () =
     expect(asked).toEqual([`resolve s`, `streams ${marks.name}`]);
   });
 
-  test("admits a data stream the server marks neither hidden nor system", async () => {
+  test("admits a data stream the server marks neither hidden nor system, whose backing index the SQL endpoint reads", async () => {
     const { transport, asked } = fakeTransport({
-      targets: { probe_stream: { indices: [], aliases: [], dataStreams: ["probe_stream"] } },
+      targets: { probe_stream: { indices: [], aliases: [], dataStreams: [stream("probe_stream")] } },
       streams: [open("probe_stream")],
+      read: { probe_stream: [".ds-probe_stream-1"] },
     });
 
     expect(await checked("probe_stream", transport)).toBe("admitted");
-    expect(asked).toEqual(["resolve probe_stream", "streams probe_stream"]);
+    expect(asked).toEqual(["resolve probe_stream", "streams probe_stream", "read probe_stream"]);
+  });
+
+  test("admits a wildcard that names a data stream and an alias over it, the backing index read through the stream", async () => {
+    const { transport, asked } = fakeTransport({
+      targets: {
+        "probe_s*": {
+          indices: [],
+          aliases: [{ name: "stream_view", indices: [".ds-probe_stream-1"] }],
+          dataStreams: [stream("probe_stream")],
+        },
+      },
+      streams: [open("probe_stream")],
+      read: { "probe_s*": [".ds-probe_stream-1"] },
+    });
+
+    expect(await checked("probe_s*", transport)).toBe("admitted");
+    expect(asked).toEqual(["resolve probe_s*", "aliases stream_view", "streams probe_stream", "read probe_s*"]);
+  });
+
+  test("refuses an alias over a data stream it does not name: the backing index behind it is hidden", async () => {
+    const { transport, asked } = fakeTransport({
+      targets: {
+        stream_view: {
+          indices: [],
+          aliases: [{ name: "stream_view", indices: [".ds-probe_stream-1"] }],
+          dataStreams: [],
+        },
+        ".ds-probe_stream-1": {
+          indices: [{ name: ".ds-probe_stream-1", hidden: true, system: false }],
+          aliases: [],
+          dataStreams: [],
+        },
+      },
+      read: { stream_view: [".ds-probe_stream-1"] },
+    });
+
+    expectRefused(await checked("stream_view", transport), hiddenTargetRefusal("stream_view"));
+    expect(asked).toEqual([
+      "resolve stream_view",
+      "aliases stream_view",
+      "read stream_view",
+      "resolve .ds-probe_stream-1",
+    ]);
   });
 
   const aliasAndStream: Readonly<Record<string, SearchResolvedTargets>> = {
-    x: { indices: [], aliases: [{ name: "a", indices: ["i"] }], dataStreams: ["s"] },
+    x: { indices: [], aliases: [{ name: "a", indices: ["i"] }], dataStreams: [stream("s")] },
     i: { indices: [open("i")], aliases: [], dataStreams: [] },
   };
 
   test.each([
     ["resolve", "no such index [x]", ["resolve x"]],
-    ["behind", "no such index [x]", ["resolve x", "resolve i"]],
-    ["aliases", "Elasticsearch refused the credentials (HTTP 403)", ["resolve x", "resolve i", "aliases a"]],
+    ["aliases", "Elasticsearch refused the credentials (HTTP 403)", ["resolve x", "aliases a"]],
     [
       "streams",
       "Elasticsearch answered a data stream listing the client could not read",
-      ["resolve x", "resolve i", "aliases a", "streams s"],
+      ["resolve x", "aliases a", "streams s"],
     ],
+    [
+      "read",
+      "Elasticsearch could not answer the field capabilities of every index the expression resolves to, so the indices its SQL endpoint reads are not all known",
+      ["resolve x", "aliases a", "streams s", "read x"],
+    ],
+    ["behind", "no such index [x]", ["resolve x", "aliases a", "streams s", "read x", "resolve i"]],
   ] as const)("refuses when the %s question fails, in the server's words", async (fail, reason, questions) => {
-    const { transport, asked } = fakeTransport({ targets: aliasAndStream, fail, streams: [open("s")] });
+    const { transport, asked } = fakeTransport({
+      targets: aliasAndStream,
+      read: { x: ["i", ".ds-s-1"] },
+      fail,
+      streams: [open("s")],
+    });
 
     expectRefused(await checked("x", transport), resolveFailedRefusal("x", new Error(reason)));
     expect(asked).toEqual([...questions]);

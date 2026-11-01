@@ -325,6 +325,12 @@ export interface SearchLoginReach {
   readonly everyIndex: boolean;
   /** The restricted system index names and patterns the login reads, in the order they were asked about. */
   readonly restrictedIndices: readonly string[];
+  /**
+   * The index names and patterns the server's listing of the login's privileges grants an index privilege on with
+   * `allow_restricted_indices`, each once, in the order listed; null when the server lists no privileges for this login,
+   * as for an API key with role descriptors of its own.
+   */
+  readonly restrictedGrants: readonly string[] | null;
 }
 
 /** One index an index expression resolves to, with the marks the server gives it. */
@@ -342,15 +348,21 @@ export interface SearchResolvedAlias {
   readonly indices: readonly string[];
 }
 
+/** One data stream an index expression resolves to, with its backing indices. */
+export interface SearchResolvedDataStream {
+  readonly name: string;
+  readonly backingIndices: readonly string[];
+}
+
 /**
  * What the server resolves index expressions to for the login making the request, as {@link SearchTransport.resolveTargets}
  * reads it: the indices, with their hidden and system marks, the aliases, with the indices behind each, and the data
- * streams, by name.
+ * streams, with the backing indices of each.
  */
 export interface SearchResolvedTargets {
   readonly indices: readonly SearchResolvedIndex[];
   readonly aliases: readonly SearchResolvedAlias[];
-  readonly dataStreams: readonly string[];
+  readonly dataStreams: readonly SearchResolvedDataStream[];
 }
 
 /** One data stream's hidden and system marks, as the server gives them. */
@@ -404,9 +416,10 @@ export interface SearchTransport {
    * What the login making the request may do that a read-only agent must not, as the server's own privilege check
    * answers it for that login: whether it holds the cluster privilege `all`, whether it reads every index with the
    * restricted system indices included, and which of the product's restricted system index names and patterns it
-   * reads, the names that carry the server's release built from `version`, the version the server reported. Null when
-   * the server runs without security, so no login exists to check. Only a product that names its restricted system
-   * indices answers; another refuses before any request.
+   * reads, the names that carry the server's release built from `version`, the version the server reported; and, from
+   * the server's listing of the login's privileges, what it is granted with `allow_restricted_indices`. Null when the
+   * server runs without security, so no login exists to check. Only a product that names its restricted system indices
+   * answers; another refuses before any request.
    */
   loginReach(version: string, signal?: AbortSignal): Promise<SearchLoginReach | null>;
 
@@ -417,6 +430,14 @@ export interface SearchTransport {
    * not see among them, fails the call.
    */
   resolveTargets(expressions: readonly string[], signal?: AbortSignal): Promise<SearchResolvedTargets>;
+
+  /**
+   * The concrete indices the SQL endpoint reads for a table written as `expression`, resolved for the login making the
+   * request the way the endpoint resolves one: a field capabilities request with the index options its resolver sends.
+   * Only a product whose SQL resolution was measured answers; another refuses before any request. An answer that holds
+   * a failure for any index fails the call, since the indices the endpoint reads are then not all known.
+   */
+  sqlTableIndices(expression: string, signal?: AbortSignal): Promise<string[]>;
 
   /** The names among the given aliases that the server marks hidden. Every alias must be answered, or the call fails. */
   hiddenAliases(names: readonly string[], signal?: AbortSignal): Promise<string[]>;

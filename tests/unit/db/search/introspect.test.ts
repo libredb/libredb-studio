@@ -166,6 +166,9 @@ function createTransport(options: FakeOptions = {}) {
     resolveTargets: (): Promise<SearchResolvedTargets> => {
       throw new Error("introspection resolved an agent statement's index expression");
     },
+    sqlTableIndices: (): Promise<string[]> => {
+      throw new Error("introspection resolved an agent statement's table the way the SQL endpoint does");
+    },
     hiddenAliases: (): Promise<string[]> => {
       throw new Error("introspection read an alias's mark");
     },
