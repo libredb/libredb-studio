@@ -56,6 +56,7 @@ const OWN_LIMIT_MSSQL =
 describe("the texts", () => {
   test("are the design's words", () => {
     expect(inSqlPaging("postgres")).toBe("Page it in SQL: LIMIT n OFFSET m.");
+    expect(inSqlPaging("clickhouse")).toBe("Page it in SQL: LIMIT n OFFSET m.");
     expect(inSqlPaging("mssql")).toBe("Page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.");
     expect(moreRowsThanPageableHint("sqlite")).toBe(
       "More rows exist than this result holds, and this query cannot be paged with offset. Page it in SQL: LIMIT n OFFSET m.",
@@ -138,6 +139,12 @@ describe("the offset rule", () => {
       "SELECT id FROM numbers",
       "mssql",
       "This query cannot be paged with offset. Page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.",
+    ],
+    ["SELECT id FROM numbers LIMIT 5", "clickhouse", OWN_LIMIT],
+    [
+      "SELECT id FROM numbers SETTINGS max_threads = 1",
+      "clickhouse",
+      "This query cannot be paged with offset. Page it in SQL: LIMIT n OFFSET m.",
     ],
     ["VALUES (1), (2), (3)", "sqlite", "This statement's result cannot be paged. Call again without offset."],
     ["TABLE numbers", "postgres", "This statement's result cannot be paged. Call again without offset."],
