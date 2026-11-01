@@ -477,12 +477,12 @@ export async function createDatabaseProvider(
       return new S3Provider(connection, options, execution);
     }
 
-    // MQTT: a key-value provider, placed here beside the platforms because its Keys panel is the whole
-    // surface and it has no query console of its own.
+    // MQTT: a key-value provider beside the platforms, its Keys panel the whole surface and no query console
+    // of its own. The execution context decides whether the handle answers agent reads.
     case "mqtt": {
       // The explicit /index specifier keeps this dynamic import statically analysable.
       const { MqttProvider } = await import("./providers/keyvalue/mqtt/index");
-      return new MqttProvider(connection, options);
+      return new MqttProvider(connection, options, execution);
     }
 
     // RabbitMQ: the second member of the stream family, read-only whatever the flag says. It reads the execution

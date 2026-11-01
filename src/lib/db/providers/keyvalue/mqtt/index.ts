@@ -29,6 +29,7 @@ import type {
   PerformanceMetrics,
   PreparedQuery,
   ProviderCapabilities,
+  ProviderExecutionContext,
   ProviderLabels,
   QueryResult,
   SlowQueryStats,
@@ -68,12 +69,14 @@ export class MqttProvider extends BaseDatabaseProvider {
   /**
    * Opens nothing: a provider built only for its declarations touches no socket.
    *
+   * `execution` is the execution context the factory passes, which tells an agent-mode handle from an editor one.
    * `openTransport` is the test seam. The integration tests replay a broker's recorded bytes through this same
    * class, so the CONNECT, the framing, the inbound limit and the decoder are the product's and not a copy.
    */
   public constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
+    private readonly execution: ProviderExecutionContext = {},
     private readonly openTransport?: MqttTransportFactory,
   ) {
     super(config, options);
