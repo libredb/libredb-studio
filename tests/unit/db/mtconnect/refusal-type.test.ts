@@ -253,6 +253,8 @@ describe("a result says when this provider's row cap cut it", () => {
 
   function providerWith(capped: boolean): { query(sql: string): Promise<QueryResult> } {
     const provider = Object.create(MTConnectProvider.prototype) as Record<string, unknown>;
+    // An editor handle: the provider reads its execution context before it reads anything else.
+    provider.execution = {};
     provider.require = () => ({ window: undefined });
     provider.model = async () => MODEL;
     provider.guard = () => REQUEST;
@@ -282,6 +284,8 @@ describe("a result says when this provider's row cap cut it", () => {
       { timestamp: "2026-10-13T10:00:03Z", sequence: "11" },
     ];
     const provider = Object.create(MTConnectProvider.prototype) as Record<string, unknown>;
+    // An editor handle: the provider reads its execution context before it reads anything else.
+    provider.execution = {};
     provider.require = () => ({ window: undefined });
     provider.model = async () => ({ instanceId: "1", items: new Map(), devices: [] }) satisfies MtcModel;
     provider.guard = () =>
@@ -335,6 +339,8 @@ describe("a result is ordered by the plant's clock, not by the document's layout
 
   test("observations delivered out of order come back sorted", async () => {
     const provider = Object.create(MTConnectProvider.prototype) as Record<string, unknown>;
+    // An editor handle: the provider reads its execution context before it reads anything else.
+    provider.execution = {};
     provider.require = () => ({ window: undefined });
     provider.model = async () => ({ instanceId: "1", items: new Map(), devices: [] }) satisfies MtcModel;
     provider.guard = () =>
@@ -380,6 +386,8 @@ describe("an agent's refusal reaches the reader as the agent's own sentence", ()
     const read = readMtconnectXml(new Uint8Array(new TextEncoder().encode(errorDocument)));
     expect(read.ok).toBe(true);
     const provider = Object.create(MTConnectProvider.prototype) as Record<string, unknown>;
+    // An editor handle: the provider reads its execution context before it reads anything else.
+    provider.execution = {};
     provider.require = () => ({ window: undefined });
     provider.model = async () => ({ instanceId: "1", items: new Map(), devices: [] }) satisfies MtcModel;
     provider.guard = () => ({ op: "assets", route: { op: "assets" }, params: {}, query: {} }) as unknown as MtcRequest;
@@ -412,6 +420,8 @@ describe("an agent's refusal reaches the reader as the agent's own sentence", ()
     const read = readMtconnectXml(new Uint8Array(new TextEncoder().encode(bare)));
     expect(read.ok).toBe(true);
     const provider = Object.create(MTConnectProvider.prototype) as Record<string, unknown>;
+    // An editor handle: the provider reads its execution context before it reads anything else.
+    provider.execution = {};
     provider.require = () => ({ window: undefined });
     provider.model = async () => ({ instanceId: "1", items: new Map(), devices: [] }) satisfies MtcModel;
     provider.guard = () => ({ op: "assets", route: { op: "assets" }, params: {}, query: {} }) as unknown as MtcRequest;

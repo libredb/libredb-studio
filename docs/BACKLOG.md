@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B162 · 86
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B163 · 86
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -8684,15 +8684,6 @@ Found 2026-10-27 while designing read-only agent and MCP execution for every pro
 
 **Done when:** either a way to prove each reachable catalog's connector credential read-only at open, or an engine switch that disables pass-through table functions, is found and measured, a boundary test with a writable positive control shows a pass-through write refused, and Trino then joins agent execution through `queryReadOnly` with its `MCP_STATEMENT_READ` row false until the owner opens MCP read for it; cited in `docs/AGENT.md`.
 
-### B132. MTConnect has no agent execution and no MCP statement read
-
-The MTConnect provider implements no `queryReadOnly`, so agent execution refuses it and no MCP tool runs a request line; the MCP metadata tools work (`MCP_EXPOSABLE.mtconnect` is true, `MCP_STATEMENT_READ.mtconnect` is false).
-Its console text is one request line in the agent's own URL grammar, not a query language, and #424 gives such a provider no read-only statement path (`docs/providers/mtconnect.md` section 3.1); the nine GET routes the provider pins, with any non-GET and any second request refused, would serve as a structural closed table once that rule is lifted.
-
-Found 2026-10-27 while designing read-only agent and MCP execution for every provider.
-
-**Done when:** the owner lifts the #424 request-line rule for MTConnect, the provider implements `queryReadOnly` over the pinned route table, refuses a handle not opened under the agent profile, joins `AGENT_EXECUTION_ENGINES` under a statement language of its own, and MCP serves it through its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) once the owner opens its MCP read, with tests; `docs/providers/mtconnect.md` section 3.1 says what changed; cited in `docs/AGENT.md`.
-
 ### B133. MQTT has no agent execution and no MCP surface
 
 `MCP_EXPOSABLE.mqtt` is false and the provider implements no `queryReadOnly`, so agent execution and every MCP tool refuse an MQTT connection.
@@ -9037,6 +9028,24 @@ Kept so that MCP access, and any widening of what agent mode reads on an OPC UA 
 Found 2026-11-01 when agent mode joined OPC UA.
 
 **Done when:** a per-engine exposure ruling opens MCP for OPC UA, an MCP surface that reads through the same seam, withheld set, units lookup and request bound is designed and `MCP_EXPOSABLE.opcua` turns true for it, the pack declares its MCP facet (`src/lib/agent/languages/opcuaread/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), and `MCP_STATEMENT_READ.opcua` is true, with tests that no MCP read reaches a withheld node or answers a value without its units; cited in `docs/AGENT.md`.
+
+### B163. MTConnect's agent reads withhold the adapter connections, and it has no MCP statement read
+
+Agent mode executes MTConnect reads under the `mtconnectread` request language, one request line per call, the statement, written as the console writes it with GET implied (`docs/providers/mtconnect.md`, section 14).
+The boundary is the provider's structural closed route table: the request line is read by the console's own guard against nine routes, `/probe`, `/current`, `/sample` and `/assets`, each for every device or for one, and `/asset/{assetIds}`, every one a GET, and sent by a client with no method argument and no body parameter, so no PUT, POST, `/cancel`, streaming parameter or second request can be sent on the agent path.
+No agent setting can be the boundary: measured on the pinned agent, `AllowPut` set to true opens a PUT that sets an observation and a POST that injects one, which `/current` then serves.
+Each read reads the agent's device model with `GET /probe` first, on the agent's one permit, so the device a request names, the rows' join and the withheld items are decided from the model the agent serves at that read; nothing of one read is kept for the next.
+Observations and asset documents are the machine's own data, so they are answered as the console renders them, one row per observation, data item or asset, an asset's document as XML text rendered from the parsed tree.
+Withheld on every agent-mode path, the grounding and the MCP metadata tools included, are the agent's own adapter connections: the agent writes an `Adapter` component per adapter it reads from under its Agent device, and that component's name, its data item ids and its `ADAPTER_URI` value carry the adapter's network address, so none of its observations or data items is answered or listed, and an answer counts what it withheld.
+A `count` past the row budget is refused before anything is sent, an answer past the row or byte budget or a read past its time budget is refused, never cut, and a failure is worded by its category and the agent's standard error code, never in the agent's text.
+On a handle of either agent profile the console is refused, the connection reads only the device model, assets are not listed as objects, and the overview, health, performance, slow-query, session, table, index and storage readings answer their reason rather than an empty reading or Studio's own figure.
+So the language offers the investigation and the operations workflow only.
+`MCP_EXPOSABLE.mtconnect` stays true for the metadata tools, which acquire an agent-mode handle and so read the device model with the adapter connections withheld; the language's MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) and `MCP_STATEMENT_READ.mtconnect` is false, so MCP `run_read_query` refuses an MTConnect connection; `READ_ONLY_ENFORCED.mtconnect` is unchanged.
+Kept so that MCP statement reads, and any widening of what agent mode reads on an MTConnect agent, are decisions of their own rather than side effects of agent mode joining.
+
+Found 2026-11-01 when agent mode joined MTConnect.
+
+**Done when:** a change of its own opens MCP statement reads on MTConnect: MCP serves it through its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), here `mtconnectread/mcp.ts`, under the same route table, budgets and withheld adapter connections, and `MCP_STATEMENT_READ.mtconnect` is true, with tests that an MCP read sends only GET of the nine routes and that no MCP answer carries an adapter's address; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

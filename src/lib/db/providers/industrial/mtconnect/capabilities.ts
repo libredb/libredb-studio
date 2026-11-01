@@ -115,6 +115,9 @@ export const MTCONNECT_OBJECT_KINDS: readonly ObjectKindSpec[] = Object.freeze([
     hasColumns: true,
     hasSource: true,
     sourceLanguage: "xml",
+    // The count and the listing are one decision: an agent-mode handle answers both with the same reason (assets are
+    // read with a request, not listed from the model), so the grounding walk carries that reason and lists nothing.
+    countIsListing: true,
   }),
 ]);
 

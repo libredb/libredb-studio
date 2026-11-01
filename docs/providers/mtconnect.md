@@ -58,6 +58,10 @@ grammar (`src/lib/db/console/`).
 | `connection-options.ts` | The address as dialled: the scheme and TLS material from the SSL / TLS panel, and the Path prefix |
 | `capabilities.ts` | What the provider declares about itself |
 | `index.ts` | The provider class and the refusal boundary |
+| `agent-statement.ts` | Agent mode's reader of one request line, the console's guard with the list of routes in its refusals |
+| `agent-read.ts` | One agent read: the device model read fresh, the request, the budgets and the failure categories |
+| `agent-withheld.ts` | The agent's adapter connections, withheld on every agent-mode handle, and why |
+| `agent-surface.ts` | What an agent-mode handle answers outside `queryReadOnly` |
 
 ### 2.3 Why the provider carries its own XML reader
 
@@ -83,8 +87,11 @@ is read again only when the Header's `instanceId` changes.
 ### 3.1 A request line, not a query language
 
 The editor text is one request line in the agent's own URL grammar with GET implied. It is not a
-query language, so the provider declares `queryDialect: "mtconnect"` and no `queryReadOnly`, which
-is the rule issue #424 sets for a provider whose text is not a query language.
+query language, so the provider declares `queryDialect: "mtconnect"`.
+
+Issue #424 gave a provider whose text is not a query language no read-only statement path.
+That rule is lifted for MTConnect's agent mode, on the precedent of kubectl and S3, whose command lines are their statements: the request line is the statement.
+`queryReadOnly` reads one request line with the console's own guard and route table and sends it on an agent-mode handle only, so the editor's text and the agent's statement are one grammar, and the boundary is the closed route table of section 3.2 ([section 14](#14-agent-mode)).
 
 `queryLanguage` reads `"json"` beside it. That field is a closed union of five languages and a
 request line is none of them; the type says a dialect is declared "only beside
@@ -367,26 +374,30 @@ classes are left as they are rather than re-parented: the shared base ends its c
 `Object.setPrototypeOf`, so a subclass of it answers `false` to `instanceof` its own name unless
 every constructor puts the prototype back.
 
-### 10.2 MCP, and the one thing that cannot be withheld
+### 10.2 MCP, and the adapter addresses
 
 `MCP_EXPOSABLE` answers true. The Agent device carries the agent's own adapter addresses: MEASURED
 on the demo probe, three devices (Agent, OKUMA, Mazak), of which the Agent device holds 20 items,
 four of them `ADAPTER_*`, and `current` answered two `ADAPTER_URI` values that are real internal
 addresses.
 
-Both ways of withholding them were measured and NEITHER works. `machineNames: "withheld"` is
-refused on a `relation` kind. `agentWalkScope` is an allow list: it keeps the one container marked
-`isSessionDefault` plus the paths `alsoWalk` names, and it cannot say "every device except this
-one"; its `whenNoDefault` arm cannot run here at all, because the parent default is only assigned
-for a level below the deepest and this provider declares one level. Declaring a scope would not
-hide that device; it would leave the grounding walk reading none of the three.
+Neither shared declaration withholds them. `machineNames: "withheld"` is refused on a `relation`
+kind. `agentWalkScope` is an allow list: it keeps the one container marked `isSessionDefault` plus
+the paths `alsoWalk` names, and it cannot say "every device except this one"; its `whenNoDefault`
+arm cannot run here at all, because the parent default is only assigned for a level below the
+deepest and this provider declares one level.
 
-So the exposure is an acceptance, named here, and not a mitigation.
+So the provider withholds them itself, on every handle opened for an agent-mode profile, which is
+the handle the MCP metadata tools acquire as well as agent mode's own: every data item inside an
+`Adapter` component is left out of the tree, the device model and every observation answer, and
+an answer counts what it left out ([section 14.3](#143-what-is-withheld-and-why)). The editor's
+handles show them, as they always have. MCP's `run_read_query` does not serve this engine
+(`MCP_STATEMENT_READ.mtconnect` is false).
 
 ## 11. Testing
 
-193 tests in eight files under `tests/unit/db/mtconnect/`, over the thirteen captured documents
-rather than over fixtures written to suit the code. Each file addresses the real module: no
+The unit files under `tests/unit/db/mtconnect/` read the thirteen captured documents
+rather than fixtures written to suit the code. Each file addresses the real module: no
 stand-in, and no local copy of a rule the shared modules own.
 
 | File | What it holds |
@@ -399,6 +410,8 @@ stand-in, and no local copy of a rule the shared modules own.
 | `capabilities.test.ts` | Every flag by name, the exact key set, and the tab type |
 | `kinds.test.ts` | The three kinds against the shared rules |
 | `refusal-type.test.ts` | What type a refusal is when it leaves the provider |
+| `agent-provider.test.ts` | The agent path over a recording transport: every request pinned whole and held to the nine GET routes, every refusal before the network, the budgets and their edges, the failure categories and the agent-mode handle's other surfaces |
+| `agent-withheld.test.ts` | The adapter connections decided from the agent's own model and stream, and an asset document rendered as text |
 
 ## 12. Known limitations
 
@@ -407,7 +420,8 @@ stand-in, and no local copy of a rule the shared modules own.
 - No credential field (4.2).
 - The `path` subset is narrower than XPath, and each exclusion is a measurement rather than a
   preference (5.2).
-- The Agent device's adapter addresses are visible to an MCP client (10.2).
+- The Agent device's adapter addresses are shown on an editor handle; every agent-mode handle, the
+  MCP metadata tools' included, withholds them (10.2).
 - A composition's own name is carried where the observation has one; MEASURED on 6 of 478.
 
 ## Migration DDL
@@ -426,3 +440,78 @@ The refusal reason it prints, verbatim:
 - The agent's own Swagger document, which is the authoritative route list
 - `https://demo.mtconnect.org`, the public demo agent, for every live measurement
 - `tests/fixtures/mtconnect/2.8.0.3/README.md`, the provenance of the captured answers
+
+## 14. Agent mode
+
+Agent mode reads an MTConnect agent through `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/industrial/mtconnect/index.ts).
+The request reader is [`agent-statement.ts`](../../src/lib/db/providers/industrial/mtconnect/agent-statement.ts), the read, its bounds and its answers are [`agent-read.ts`](../../src/lib/db/providers/industrial/mtconnect/agent-read.ts), the withheld adapter connections are [`agent-withheld.ts`](../../src/lib/db/providers/industrial/mtconnect/agent-withheld.ts), and every other surface of an agent-mode handle is [`agent-surface.ts`](../../src/lib/db/providers/industrial/mtconnect/agent-surface.ts).
+Every claim below about an agent cites the capture [`tests/fixtures/mtconnect/2.8.0.4/agent-boundary/boundary.json`](../../tests/fixtures/mtconnect/2.8.0.4/agent-boundary/boundary.json), recorded by its `run.sh` against the compose fixture's adapter and two agents of the pinned image, one with the fixture's own `AllowPut = false` and one with `AllowPut = true`, and written by [`tests/live/mtconnect-agent-boundary.ts`](../../tests/live/mtconnect-agent-boundary.ts).
+The fixture has no credential, and the capture holds none and no host name; the script checks both before it writes.
+
+### 14.1 The boundary
+
+The boundary is the structural closed route table of [section 3.2](#32-nine-routes-read-rather-than-completed): the request line is read by the console's own guard against nine routes, every one a GET, and sent by `readOnce` or `readObservations` in `client.ts`, which take no method argument and no body parameter.
+So no PUT, POST or DELETE, no `/cancel`, no `/swagger`, no alias of a route and no streaming request can be sent on the agent path.
+[`agent-provider.test.ts`](../../tests/unit/db/mtconnect/agent-provider.test.ts) records every request the agent path sends through the provider's transport seam and holds each one, whatever the case, to a GET of a route of the table with no body, no form and the one `accept` header.
+
+No agent setting can be the boundary.
+Measured raw (`raw`, sent by the capture script with `fetch` and never by Studio): with `AllowPut = false` the agent's Swagger lists 15 GET operations, and a PUT and a POST of an observation answered 400 with `INTERNAL_ERROR` and changed nothing; with `AllowPut = true` it lists 15 GET, 9 PUT, 9 POST and 6 DELETE operations, and the same PUT and POST answered 200 and changed the observation they named.
+A GET of `/cancel/id=1` answered 404 `INVALID_URI` on both.
+The agent's buffer did not move across every agent read (`state`: the next sequence read 36 before and after, with no observation in between).
+
+### 14.2 What an agent request may be
+
+One request line, the statement, written as the console writes it with GET implied ([section 5.1](#51-the-request-line)), read by the console's own guard (`guardRequestLine`):
+
+| Route | Answers |
+| --- | --- |
+| `/probe`, `/{device}/probe` | the device model, one row per data item |
+| `/current`, `/{device}/current` | the current observations, one row per observation |
+| `/sample`, `/{device}/sample` | a page of the buffer, one row per observation |
+| `/assets`, `/{device}/assets` | the assets, one row per asset with its document |
+| `/asset/{assetIds}` | assets by id, one row per asset with its document |
+
+Everything [section 5.2](#52-what-phase-0-refuses-before-a-socket-opens) refuses is refused here too, before anything is sent, in agent mode's words: the guard's sentence followed by the list of the nine routes and their keys, and "Nothing was sent." (`refusedBeforeSend`: a PUT, a POST, a DELETE, `/cancel/id=1`, `/assets/{id}`, `/swagger`, `interval`, `heartbeat`, `frequency`, a second request line and a `path` function outside the subset each sent no request).
+One rule is agent mode's own: a path parameter written `.` or `..` is refused as a dot segment, since a URL resolves it to another path.
+A `count` past the row budget is refused before anything is sent, and the admission also refuses a request longer than 4,096 characters.
+
+Each read reads the device model first, with `GET /probe` on the agent's one permit, and then sends the request (`reads[].sent`), so the device a request names, the rows' join and the withheld items are decided from the model the agent serves at that read, and nothing of one read is kept for the next.
+A device the model does not hold is refused after the model read and before the request.
+
+A read is counted one row per observation, data item or asset.
+An observation walk stops at the first row past the row budget and the read is refused, never answered in part; a device model or an asset answer past it is refused with its count; a result past the byte budget, an answer past the route's byte cap ([section 3.4](#34-caps-are-in-bytes-not-in-rows)) and a read past its time budget, which covers the model read, the wait for the permit and the request, are refused in Studio's words.
+`count`, `from`, `to` and `at` select observations the buffer already serves to any client, and nothing withheld depends on them, so they are no oracle.
+A failure is worded by its category: the agent's own error document by its error code when the code is one the standard names, never by its text; a transport failure by its kind with the time budget; a document that is not MTConnect, an unreadable answer and an answer Studio's reader refuses by its own rule ([section 3.7](#37-a-non-mtconnect-answer-gets-our-own-sentence)) each by its category, never in the agent's words.
+
+### 14.3 What is withheld, and why
+
+Observations and asset documents are the machine's own data, so agent mode answers them as the console renders them ([section 5.5](#55-result-shape)), inside the untrusted-content fence.
+An asset's attributes are its row's columns as on the console, and its document is a `document` column of XML text rendered from the parsed tree: attributes and text escaped, a CDATA section as text and an entity as the character it stood for, so nothing the agent wrote is handed on as markup; a DOCTYPE, an entity declaration, a comment or a processing instruction refuses the read by Studio's own rule.
+
+Withheld on every agent-mode handle are the agent's own adapter connections.
+The agent writes an `Adapters` component under its Agent device and one `Adapter` component per adapter it reads from, and that component's name (`shdr://` and the adapter's host and port), its id, every one of its data item ids and the `ADAPTER_URI` value carry the network address of another system, measured on the fixture and on the demo ([section 10.2](#102-mcp-and-the-adapter-addresses)).
+No column of such an observation can be shown without the address, so every data item the model places inside an `Adapters` or `Adapter` component, and every observation whose component stream is one, is left out, and the answer warns how many it left out with the reason (`reads`: `/current` answered 16 rows and withheld 6, `/current?path=//Adapter` answered none and withheld 6, and no answer carried the adapter's address).
+The agent's other items (its availability, the devices it added, changed or removed, its asset counts) are answered, and so is every other device.
+
+| Path | Handle | What it reads |
+| --- | --- | --- |
+| Investigation reads | agent read-only profile | `GET /probe`, then one request of [section 14.2](#142-what-an-agent-request-may-be) |
+| Investigation grounding and plan-mode grounding | either agent profile | the device model the handle read when it opened: devices, data items and conditions by name, the adapter connections left out, no value and no asset; the asset count answers its reason and no asset is listed |
+| Connect | either agent profile | one `GET /probe`, and nothing else (`connect.sent`) |
+| MCP metadata tools | either agent profile | the same device model, through the same withheld set |
+| Console, overview, health, performance, slow-query, session, table, index and storage readings | either agent profile | nothing: each is refused with its reason, never answered with Studio's own figures or an empty reading |
+
+### 14.4 Agent language pack
+
+Statement-language family: `mtconnectread`.
+Overlay: [`src/lib/agent/languages/mtconnectread/engines/mtconnect.ts`](../../src/lib/agent/languages/mtconnectread/engines/mtconnect.ts), with its client row in [`src/lib/agent/languages/mtconnectread/engines/client.ts`](../../src/lib/agent/languages/mtconnectread/engines/client.ts).
+The agent reads it through `runServerPack` and `agentEnginePack`.
+Both overlays are empty, so the engine resolves to the `mtconnectread` family pack itself.
+The `mtconnectread` statement-language family has no dialect-bound member.
+This overlay overrides no Shared member, so every Shared member is the `mtconnectread` statement-language family's own.
+The family offers the investigation workflow, through `run_read_query` with one request line, and the operations workflow; it offers no query optimization or database assessment, since an agent has no plan and no profile, and no data analysis, whose tools assume a store of records, and no workflow hands an answer to the editor.
+The investigation rule tells the model to read what the question names directly, a device's or a data item's current values or a window of its history, and to read `/probe` only for a data item neither the question nor the inventory names.
+Plan mode's safety strip is the shared one, which is true here: an agent-mode handle reads only the device model when it opens, and that one read grounds the plan; plan mode follows the provider's `statementLanguage` label, which names the console's request line, its routes and what is never drafted.
+The editor language id stays `mtconnect`, and the fence alias `mtconnectread` names this engine.
+A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
+No MCP tool runs an MTConnect request: the family declares no MCP facet and `MCP_STATEMENT_READ.mtconnect` is false ([B163](../BACKLOG.md#b163-mtconnects-agent-reads-withhold-the-adapter-connections-and-it-has-no-mcp-statement-read)), `MCP_EXPOSABLE.mtconnect` stays true for the metadata tools, and `READ_ONLY_ENFORCED.mtconnect` is unchanged.
