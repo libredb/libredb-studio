@@ -184,6 +184,12 @@ describe("docs/MCP.md", () => {
     expect(MCP_DOC).toContain("| Engine | The client closes the request | `timeout_ms` passes |");
   });
 
+  test("says what a cancel and a timeout do to a ClickHouse statement, as measured on 26.7", () => {
+    expect(MCP_DOC).toContain(
+      "| ClickHouse | Studio stops waiting; the statement runs on until its server-side `max_execution_time`, which is set to the time left rounded up to whole seconds, ends it | Studio closes the request at `timeout_ms`, ClickHouse cancels the statement, and the client gets the timeout answer |",
+    );
+  });
+
   test("says an MCP call on a LibreDB file keeps the Studio editor out until its handle is idle for 30 minutes", () => {
     expect(MCP_DOC).toContain(
       "- An MCP call on a LibreDB connection that no Studio session holds open opens the file itself and keeps its exclusive lock until that handle has been idle for 30 minutes.",

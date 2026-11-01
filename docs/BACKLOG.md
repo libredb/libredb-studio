@@ -1832,11 +1832,11 @@ Both reach the caller as a shorter list with no reason: `GET /api/connections/ma
 ### D128. A read-only statement cannot be cancelled, so a cancelled or timed-out MCP query keeps running
 
 `queryReadOnly` takes no signal (`DatabaseProvider.queryReadOnly` in `src/lib/db/types.ts`), and `cancelQuery` cannot find its statement.
-When an MCP client cancels by closing the request, or `timeout_ms` passes, `run_read_query` stops waiting but the statement runs on: on PostgreSQL until `statement_timeout`, on SQL Server until the provider's deadline, on DuckDB to completion, and on SQLite while blocking the process (A1).
+When an MCP client cancels by closing the request, or `timeout_ms` passes, `run_read_query` stops waiting but the statement runs on: on PostgreSQL until `statement_timeout`, on SQL Server until the provider's deadline, on DuckDB to completion, on SQLite while blocking the process (A1), and on ClickHouse until its `max_execution_time`, set to the time left; a `timeout_ms` there does end the statement, since the provider closes the request at its deadline and ClickHouse cancels a read-only query whose client goes away.
 A 2025-era `notifications/cancelled` sent in its own `POST` does not even stop the wait: the stateless server answers it 202 without knowing the call, which runs to completion or `timeout_ms` (`tests/integration/mcp/http-route.test.ts`).
 This departs from the MCP rule that a server should stop work on a cancelled request as soon as practical.
 
-**Done when:** `queryReadOnly` accepts an `AbortSignal`, each of the four providers stops the statement on abort, their provider docs say so, and `/api/mcp` passes the tool call's signal.
+**Done when:** `queryReadOnly` accepts an `AbortSignal`, each provider named above stops the statement on abort, their provider docs say so, and `/api/mcp` passes the tool call's signal.
 
 ### D129. `attachedSegment`, the object-path policy, is still a constant in each provider file rather than part of the declaration
 
