@@ -31,8 +31,9 @@
  *     LIBREDB_LIVE_LIBSQL_BASIC_PORT=18182 LIBREDB_LIVE_LIBSQL_BASIC_USER=... LIBREDB_LIVE_LIBSQL_BASIC_PASSWORD=... \
  *     LIBREDB_LIVE_LIBSQL_OPEN_PORT=18183 bun tests/live/libsql-mcp-boundary.ts
  *
- * Every table it creates carries the `libredb_lm_` prefix and is dropped on exit. Each check prints one line, and a line
- * that would carry a credential the run was given fails instead of printing it; any failure ends the run non-zero.
+ * Every table it creates carries the `libredb_lm_` prefix and is dropped on exit, and the `user_version` it read before its
+ * first write is put back after its positive control and on exit. Each check prints one line, and a line that would
+ * carry a credential the run was given fails instead of printing it; any failure ends the run non-zero.
  */
 // oxlint-disable no-await-in-loop -- the checks run one at a time on purpose: each reads what the server holds after the one before.
 import { createHash } from "node:crypto";
@@ -93,6 +94,13 @@ const writable = new LibSQLHranaTransport(seed("rw", JWT_PORT, { password: RW })
 
 async function write(sql: string): Promise<void> {
   await writable.execute(sql, { timeoutMs: 30_000 });
+}
+
+/** The database's `user_version` as the writable token reads it, so a run puts back what it found instead of 0. */
+async function readUserVersion(): Promise<number> {
+  const value = Number((await writable.execute("PRAGMA user_version", { timeoutMs: 30_000 })).rows[0]?.user_version);
+  if (!Number.isSafeInteger(value)) throw new Error("PRAGMA user_version did not answer an integer");
+  return value;
 }
 
 let failures = 0;
@@ -212,7 +220,7 @@ async function cleanup(): Promise<void> {
     { timeoutMs: 30_000 },
   );
   for (const row of left.rows) await write(`DROP ${String(row.type).toUpperCase()} IF EXISTS "${String(row.name)}"`);
-  await write("PRAGMA user_version = 0");
+  await write(`PRAGMA user_version = ${USER_VERSION}`);
 }
 
 /** The MCP refusal sentence a connection refused at open is answered with, around the profile's own message. */
@@ -302,7 +310,7 @@ async function main(): Promise<void> {
         : answer.startsWith("refused: ") && answer.includes(statement.refusedForEvery);
     check(expected, `control: the writable token on ${sql} -> ${answer}`);
   }
-  await write("PRAGMA user_version = 0");
+  await write(`PRAGMA user_version = ${USER_VERSION}`);
 
   // A transaction statement is not a write: it answers, and closes with its own request.
   const begun = await mcp(agent, { sql: "BEGIN IMMEDIATE" });
@@ -357,6 +365,7 @@ async function main(): Promise<void> {
   );
 }
 
+const USER_VERSION = await readUserVersion();
 try {
   await main();
 } finally {

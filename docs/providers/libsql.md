@@ -336,7 +336,7 @@ The budgets: 51 rows under a budget of 50, 100,000 bytes of hex under 65,536, an
 A token whose permission claims the server cannot read is refused 401 at connect, before the proof.
 A token carrying `"a": "ro"` and `"p": {"rw": {"ns": ["default"]}}` ran `INSERT`, `DELETE ... WHERE 0` and `DROP TABLE IF EXISTS` on the server, and the open refused it on its claims (`PROFILE_PRIVILEGES_TOO_BROAD`) before a probe was sent.
 
-Run it against servers you may write to; it creates tables with the `libredb_lb_` prefix and drops them on exit:
+Run it against servers you may write to; it creates tables with the `libredb_lb_` prefix and drops them on exit, and sets `user_version` in its positive control, then puts back the value it read before its first write:
 
 ```sh
 docker run -d -e SQLD_NODE=primary -e SQLD_AUTH_JWT_KEY=<public key> -p 18181:8080 ghcr.io/tursodatabase/libsql-server:v0.24.33

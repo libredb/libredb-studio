@@ -44,8 +44,9 @@
  * Basic (`SQLD_HTTP_AUTH`); the third checks nothing.
  * `docs/providers/libsql.md` section 3.6 shows how to start the three and mint the tokens.
  *
- * Every table it creates carries the `libredb_lb_` prefix and is dropped on exit. Each check prints one line, and a
- * run with a failing check ends non-zero.
+ * Every table it creates carries the `libredb_lb_` prefix and is dropped on exit, and the `user_version` it read before
+ * its first write is put back after its positive control and on exit. Each check prints one line, and a run with a
+ * failing check ends non-zero.
  */
 // oxlint-disable no-await-in-loop -- the checks run one at a time on purpose: each reads what the server holds after the one before.
 import { ExecutionProfileError, QueryError } from "@/lib/db/errors";
@@ -105,6 +106,13 @@ const writable = new LibSQLHranaTransport(connection(JWT_PORT, { password: RW })
 
 async function write(sql: string): Promise<void> {
   await writable.execute(sql, { timeoutMs: 30_000 });
+}
+
+/** The database's `user_version` as the writable token reads it, so a run puts back what it found instead of 0. */
+async function readUserVersion(): Promise<number> {
+  const value = Number((await writable.execute("PRAGMA user_version", { timeoutMs: 30_000 })).rows[0]?.user_version);
+  if (!Number.isSafeInteger(value)) throw new Error("PRAGMA user_version did not answer an integer");
+  return value;
 }
 
 let failures = 0;
@@ -223,6 +231,7 @@ async function cleanup(): Promise<void> {
     { timeoutMs: 30_000 },
   );
   for (const row of left.rows) await write(`DROP ${String(row.type).toUpperCase()} IF EXISTS "${String(row.name)}"`);
+  await write(`PRAGMA user_version = ${USER_VERSION}`);
 }
 
 async function main(): Promise<void> {
@@ -424,7 +433,7 @@ async function main(): Promise<void> {
     const expected = statement.refusedForEvery === true ? answer.startsWith("refused: ") : answer === "ran";
     check(expected, `writable token: ${statement.sql(SCRATCH)} -> ${answer}`);
   }
-  await write("PRAGMA user_version = 0");
+  await write(`PRAGMA user_version = ${USER_VERSION}`);
 
   // A transaction statement is not a write: it answers, and the stream it opened closes with its own request, so the
   // write lock BEGIN IMMEDIATE takes is gone before the next request.
@@ -480,6 +489,7 @@ async function main(): Promise<void> {
   await agent.disconnect();
 }
 
+const USER_VERSION = await readUserVersion();
 try {
   await main();
 } finally {
