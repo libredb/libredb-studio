@@ -5586,7 +5586,36 @@ describe("queryReadOnly", () => {
     const error = await pending.catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(QueryError);
-    expect((error as Error).message).toStartWith("Read-only execution exceeded the time budget: no answer within 50ms");
+    expect((error as Error).message).toBe(
+      "Read-only execution exceeded the time budget: no answer within 50ms while the access control was checked; the statement was not sent",
+    );
+    expect((error as Error).message).not.toContain("Studio had sent");
+    expect(recorded.log.some((line) => line.endsWith(": SELECT a FROM pg.public.t"))).toBe(false);
+  });
+
+  test("a catalog list past the time budget in the statement's own transaction says the statement was not sent", async () => {
+    const replies = readOnlyCoordinator();
+    const recorded = coordinator(replies);
+    const provider = await opened(recorded);
+    let lists = 0;
+    replies.set("SHOW CATALOGS", async (options) => {
+      lists += 1;
+      // The check lists the catalogs once; the statement's own transaction lists them again.
+      if (lists === 1) return answer(["Catalog"], [["pg"], ["system"]]);
+      await new Promise((resolve) => options.signal?.addEventListener("abort", resolve, { once: true }));
+      throw new TrinoTransportError("timeout", "Trino did not answer before the deadline");
+    });
+
+    const pending = provider.queryReadOnly("SELECT a FROM pg.public.t", { ...AGENT_BUDGET, statementTimeoutMs: 50 });
+    const error = await pending.catch((caught: unknown) => caught);
+
+    expect(lists).toBe(2);
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toBe(
+      "Read-only execution exceeded the time budget: no answer within 50ms while the access control was checked; the statement was not sent",
+    );
+    expect(recorded.log.some((line) => line.endsWith(": SELECT a FROM pg.public.t"))).toBe(false);
+    expect(recorded.open.size).toBe(0);
   });
 
   test("a rollback the server refuses after an answered statement is reported, not hidden", async () => {

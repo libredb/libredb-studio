@@ -893,23 +893,28 @@ export class TrinoProvider extends SQLBaseProvider {
 
     return this.trackQuery(async () => {
       const signal = AbortSignal.timeout(budget.statementTimeoutMs);
+      const progress = { sent: false };
       const { result, executionTime } = await this.measureExecution(async () => {
         try {
-          return await this.runAgentStatement(transport, sql, budget, signal);
+          return await this.runAgentStatement(transport, sql, budget, signal, progress);
         } catch (error) {
-          throw this.agentFailure(error, budget, sql, signal);
+          throw this.agentFailure(error, budget, sql, signal, progress.sent);
         }
       });
       return this.readAgentAnswer(result, executionTime, budget, sql);
     });
   }
 
-  /** The check, then the statement in a read-only transaction after the catalog list, checked again if the list moved. */
+  /**
+   * The check, then the statement in a read-only transaction after the catalog list, checked again if the list moved.
+   * `progress.sent` turns true as the statement itself goes out, so a deadline met before then is not told as its own.
+   */
   private async runAgentStatement(
     transport: TrinoTransport,
     sql: string,
     budget: ReadOnlyStatementBudget,
     signal: AbortSignal,
+    progress: { sent: boolean },
   ): Promise<TrinoQueryResult> {
     for (let attempt = 1; ; attempt += 1) {
       const proven = await this.proveAgentBoundary(transport, signal).catch((error: unknown) => {
@@ -925,6 +930,7 @@ export class TrinoProvider extends SQLBaseProvider {
       const answered = await this.inReadOnlyTransaction(transport, signal, async (transactionId) => {
         const listed = await transport.query(TRINO_CATALOG_LIST_STATEMENT, { transactionId, signal });
         if (!sameCatalogs(readTrinoCatalogs(listed), proven)) return null;
+        progress.sent = true;
         const result = await transport.query(sql, {
           transactionId,
           signal,
@@ -989,7 +995,13 @@ export class TrinoProvider extends SQLBaseProvider {
   }
 
   /** An agent call's failure in the provider's vocabulary, on its budget where it passed one. */
-  private agentFailure(error: unknown, budget: ReadOnlyStatementBudget, sql: string, signal: AbortSignal): Error {
+  private agentFailure(
+    error: unknown,
+    budget: ReadOnlyStatementBudget,
+    sql: string,
+    signal: AbortSignal,
+    sent: boolean,
+  ): Error {
     if (error instanceof ExecutionProfileError || error instanceof QueryError || error instanceof ConnectionError) {
       return error;
     }
@@ -1003,8 +1015,12 @@ export class TrinoProvider extends SQLBaseProvider {
       );
     }
     if (signal.aborted) {
+      // The check and the catalog list spend the same budget; a deadline met there never reached the statement.
+      const outcome = sent
+        ? "; the statement Studio had sent was cancelled on the cluster"
+        : " while the access control was checked; the statement was not sent";
       return new QueryError(
-        `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms; the statement Studio had sent was cancelled on the cluster`,
+        `${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms${outcome}`,
         this.type,
         sql,
       );

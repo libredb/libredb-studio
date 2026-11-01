@@ -2042,6 +2042,7 @@ The refusal names the two settings above and says the check ran nothing; a failu
 Each statement of the check runs inside a read-only transaction of its own, rolled back after it, because a refused statement aborts the transaction it ran in (capture 03).
 The operations profile sends no statement, so it opens without the check and plan mode grounds on any connection.
 The check costs, per catalog, a list of its functions and at least two calls, each in its own transaction, and it runs inside the statement's time budget.
+A deadline met during the check, or during the catalog list in the statement's own transaction, is refused on the time budget with a sentence saying the statement was not sent.
 
 ### 15.3 The statement path
 
