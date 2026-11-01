@@ -1807,17 +1807,26 @@ describe("TrinoHttpTransport answer caps", () => {
 
   test("bounds a later page by what the pages before it left of the cap, and cancels the statement", async () => {
     const { body, seen } = endlessBody();
+    // A first page whose rows are 1 MiB of JSON, all within its own read, so what it accepted is what the next read
+    // may not have.
+    const value = "x".repeat(1024 * 1024 - 6);
+    const accepted = Buffer.byteLength(JSON.stringify([[value]]));
     let served = 0;
     handler = () => {
       served += 1;
-      return served === 1 ? respond(ROWS_PAGE) : new Response(body);
+      return served === 1
+        ? respond(
+            `{"id":"${QUERY_ID}","nextUri":"${RUNNING_LINK}","columns":${VERSION_COLUMNS},"data":[["${value}"]],"stats":${RUNNING_STATS},"warnings":[]}`,
+          )
+        : new Response(body);
     };
 
-    // The first page's rows, [["a"],["b"],["c"]], are 19 bytes of a cap of 20, so one byte and the envelope remain.
-    const error = await tooLarge(() => makeTransport().query("SELECT v FROM t", { maxRowBytes: 20 }));
+    // One byte of the cap and the envelope allowance remain for the second page.
+    const error = await tooLarge(() => makeTransport().query("SELECT v FROM t", { maxRowBytes: accepted + 1 }));
 
     const pulls = Math.ceil((1 + TRINO_PAGE_ENVELOPE_BYTES + 1) / (64 * 1024));
-    expect(error.seen).toBe(19 + pulls * 64 * 1024);
+    expect(accepted).toBe(1024 * 1024);
+    expect(error.seen).toBe(accepted + pulls * 64 * 1024);
     expect(seen.pulls).toBe(pulls);
     expect(seen.cancelled).toBe(true);
     expect(calls.map((call) => call.method)).toEqual(["POST", "GET", "DELETE"]);
