@@ -631,8 +631,9 @@ One JSON object, with the keys `read` and, for the topic read, `topic`, each wri
 | `{"read": "window"}` | one SUBSCRIBE to `#`, for one window | one row of totals: `topics_seen`, `messages`, `retained_messages`, `payload_bytes`, `messages_lost` |
 | `{"read": "topic", "topic": "plant/line1/temp"}` | one SUBSCRIBE to that topic, for one window | one row for that topic: `seen`, `messages`, `retained`, `delivered_qos`, `payload_bytes`, `last_seen_ms` |
 
-Both rows open with the window's own columns: `window_ms` (3,000), `listened_ms`, `stop_reason` (an end reason of [section 10.2](#102-why-a-read-ended)), `scope` (`unknown` or `incomplete`, never `complete`) and `broker_reason_code` where the broker refused the subscription.
+Both rows open with the window's own columns: `window_ms` (how long the window ran, from when the connection was ready to the end of the read: 3,000 ms unless a budget or the broker ended it sooner), `listened_ms` (how long the subscription listened, from the SUBSCRIBE to the end of the read; the handshake takes its share of the window, so `listened_ms` is never more than `window_ms`), `stop_reason` (an end reason of [section 10.2](#102-why-a-read-ended)), `scope` (`unknown` or `incomplete`, never `complete`) and `broker_reason_code` where the broker refused the subscription.
 A topic not seen answers `seen: false` and null figures, never 0 or false.
+`last_seen_ms` is counted from the SUBSCRIBE, as `listened_ms` is.
 `delivered_qos` is the QoS the broker delivered at, which the subscription's maximum of 0 ([section 3.5](#35-maximum-qos-0-as-a-requirement)) holds at 0 on a conforming broker whatever the publisher sent.
 Measured (`reads`): the window over the fixture's four retained topics and one live publisher counted 18 messages on 5 topics, 4 of them retained; the retained topic read answered `seen: true`, `retained: true`, and the live one 15 messages, `retained: false`; a topic nobody published to answered `seen: false`; and no answer carried a topic name, a payload or a credential.
 
@@ -640,7 +641,7 @@ Everything else is refused before anything is sent, in agent mode's words with t
 A filter the model writes would let it find topic names one level at a time, which is why the only filters agent mode sends are `#` itself and the exact topic the request names: measured raw (`rawRefused`), the agent's own credentials subscribed to `homes/+/door` named a seeded topic, and a `$share/` subscription took ten messages in two seconds that the devices subscribed beside it would not get.
 The exact-topic read answers whether that one topic was seen and nothing about any other: a hit and a miss differ only in that topic's own figures, which `agent-provider.test.ts` pins.
 The answer does not echo the topic the request named, as S3's and Firestore's agent answers do not.
-A time budget too short for a whole window and the shortest dial (4,000 ms) is refused rather than shortened; the dial gets the rest of the budget, up to 10 seconds.
+A time budget too short for a whole window and the shortest dial (4,000 ms) is refused rather than shortened; the dial gets the budget less the window and a 250 ms margin to answer in, up to 10 seconds, so 750 ms at the 4,000 ms minimum.
 A window ended by Studio's message or byte budget ([section 5](#5-the-read)) is answered as the window it was, with that stop reason: a total over a window is not a cut figure, it is the window.
 A result past the byte budget is refused.
 A failure is worded by its kind (a refused handshake by Studio's own sentence for the CONNACK code, a handshake that never finished, a broker that could not be reached, an answer that is not MQTT 5.0, the time budget), never in the broker's or the transport's words, and never with a credential.

@@ -40,6 +40,30 @@ describe("what a read counts", () => {
   });
 });
 
+describe("the read's clocks", () => {
+  test("the window starts when the connection is ready and the subscription after the handshake, on one clock", async () => {
+    const broker = fakeBroker({
+      messages: [{ topic: "plant/a", payload: "1" }],
+      end: "disconnect",
+      connackDelayMs: 50,
+    });
+    const read = await readTopics({ ...OPTIONS, openTransport: broker.factory });
+    const ready = read.readyAtMs as number;
+    const subscribed = read.subscribedAtMs as number;
+    expect(ready).toBeGreaterThanOrEqual(0);
+    expect(subscribed - ready).toBeGreaterThanOrEqual(45);
+    expect(read.elapsedMs).toBeGreaterThanOrEqual(subscribed);
+    expect(read.topics.get("plant/a")?.lastSeenMs).toBeGreaterThanOrEqual(subscribed);
+  });
+
+  test("a handshake-only session subscribes to nothing, so it carries no subscription time", async () => {
+    const broker = fakeBroker({ end: "disconnect" });
+    const read = await readTopics({ ...OPTIONS, openTransport: broker.factory, handshakeOnly: true });
+    expect(read.subscribedAtMs).toBeUndefined();
+    expect(typeof read.readyAtMs).toBe("number");
+  });
+});
+
 describe("the handshake-only session", () => {
   test("writes a CONNECT and a DISCONNECT and nothing else, and reads no topic", async () => {
     const broker = fakeBroker({ messages: [{ topic: "plant/a", payload: "1" }], end: "disconnect" });

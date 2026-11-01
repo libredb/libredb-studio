@@ -31,6 +31,14 @@ export interface FakeBrokerScript {
   readonly silent?: boolean;
   /** Never open: the transport's ready event never fires, as a dropped SYN looks. */
   readonly neverReady?: boolean;
+  /** How long the transport takes to be ready, as a slow dial or TLS handshake does. */
+  readonly readyDelayMs?: number;
+  /** How long the broker waits before it answers the CONNECT, so the handshake takes its share of the window. */
+  readonly connackDelayMs?: number;
+  /** Bytes sent right after the CONNACK, as they are: what a broker that stops speaking MQTT sends. */
+  readonly afterConnack?: Buffer;
+  /** Chunks sent after the SUBACK and the scripted messages, each as its own write, for the read's budgets. */
+  readonly bulk?: readonly Buffer[];
 }
 
 export interface FakeBroker {
@@ -94,7 +102,10 @@ export function fakeBroker(script: FakeBrokerScript = {}): FakeBroker {
         written.push(Buffer.from(bytes));
         const type = ((bytes[0] as number) >> 4) & 0x0f;
         if (type === 1 && script.silent !== true) {
-          later(() => emit("data", Buffer.from([0x20, 0x03, 0x00, script.connackCode ?? 0, 0x00])));
+          setTimeout(() => {
+            emit("data", Buffer.from([0x20, 0x03, 0x00, script.connackCode ?? 0, 0x00]));
+            if (script.afterConnack !== undefined) emit("data", script.afterConnack);
+          }, script.connackDelayMs ?? 0);
         }
         if (type === 8) {
           const filters = subscribeFilters(bytes);
@@ -107,6 +118,7 @@ export function fakeBroker(script: FakeBrokerScript = {}): FakeBroker {
             for (const message of script.messages ?? []) {
               if (filters.some((filter) => matches(filter, message.topic))) emit("data", publishPacket(message));
             }
+            for (const chunk of script.bulk ?? []) emit("data", chunk);
             if (script.end === "disconnect") emit("data", packet(14, 0, Buffer.from([0x00])));
             if (script.end === "close") emit("close");
           });
@@ -117,13 +129,13 @@ export function fakeBroker(script: FakeBrokerScript = {}): FakeBroker {
       },
       once(event: string, handler: () => void): void {
         if (event !== "ready" || script.neverReady === true) return;
-        later(() => {
+        setTimeout(() => {
           if (script.transportError !== undefined) {
             emit("error", new Error(script.transportError));
             return;
           }
           handler();
-        });
+        }, script.readyDelayMs ?? 0);
       },
       destroy(): void {
         closed = true;

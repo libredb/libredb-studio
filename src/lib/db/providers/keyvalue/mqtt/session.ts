@@ -120,8 +120,19 @@ export interface MqttReadOutcome {
   readonly retainedMessages: number;
   /** The payload bytes of `messages`, summed: what the messages carried, not what the wire carried. */
   readonly payloadBytes: number;
-  /** How long the read ran, in milliseconds. Reported, never interpreted. */
+  /** How long the read ran, in milliseconds, dial and handshake included. Reported, never interpreted. */
   readonly elapsedMs: number;
+  /**
+   * When the read sent its SUBSCRIBE, in milliseconds from the same start as `elapsedMs` and `lastSeenMs`, or
+   * undefined when it sent none. The window opens when the connection is ready, before the CONNACK, so the time the
+   * subscription listened is `elapsedMs` less this, and the handshake's share of the window is not in it.
+   */
+  readonly subscribedAtMs?: number;
+  /**
+   * When the connection was ready and the window's clock started, from the same start, or undefined when it never was.
+   * The window ran for `elapsedMs` less this, and it holds the subscription whole, since the SUBSCRIBE follows it.
+   */
+  readonly readyAtMs?: number;
 }
 
 /**
@@ -477,6 +488,8 @@ export async function readTopics(options: MqttSessionOptions): Promise<MqttReadO
     /** Bytes of an oversized packet still to be thrown away, across however many chunks they arrive in. */
     let skipping = 0;
     let scope: "incomplete" | "unknown" = "unknown";
+    let subscribedAtMs: number | undefined;
+    let readyAtMs: number | undefined;
     /** The first refusal code the broker sent, kept for the sentence the panel shows. */
     let endCode: number | undefined;
     let ping: ReturnType<typeof setInterval> | undefined;
@@ -569,6 +582,8 @@ export async function readTopics(options: MqttSessionOptions): Promise<MqttReadO
         scope,
         endReason,
         ...(endCode === undefined ? {} : { endCode }),
+        ...(subscribedAtMs === undefined ? {} : { subscribedAtMs }),
+        ...(readyAtMs === undefined ? {} : { readyAtMs }),
         provenLoss,
         messages,
         retainedMessages,
@@ -611,6 +626,7 @@ export async function readTopics(options: MqttSessionOptions): Promise<MqttReadO
           finish("handshake");
           return;
         }
+        subscribedAtMs = Date.now() - started;
         write(() => encodeSubscribe(1, [filter]));
         return;
       }
@@ -764,6 +780,7 @@ export async function readTopics(options: MqttSessionOptions): Promise<MqttReadO
       // timer's. The silence before the handshake is covered by `dial` below, and the silence after it by
       // `budget` plus `finish()`'s `!connected` arm.
       ping = setInterval(() => keepAlive(), options.pingEveryMs ?? MQTT_PING_INTERVAL_MS);
+      readyAtMs = Date.now() - started;
       budget = setTimeout(() => finish("budget-time"), MQTT_READ_BUDGET_MS);
     };
 

@@ -5,7 +5,7 @@
  * answering its reason. A scripted broker sits behind the transport seam, so no socket is opened.
  */
 import { describe, expect, test } from "bun:test";
-import { RefusedBeforeSendError } from "@/lib/db/errors";
+import { QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import {
   MQTT_AGENT_MIN_STATEMENT_MS,
   MQTT_COMPLETENESS,
@@ -16,13 +16,18 @@ import {
 import { measureResultBytes } from "@/lib/db/providers/sql/read-only-budget";
 import { MQTT_AGENT_SENTENCES } from "@/lib/db/providers/keyvalue/mqtt/agent-statement";
 import { MQTT_AGENT_WITHHELD } from "@/lib/db/providers/keyvalue/mqtt/agent-surface";
-import { MQTT_READ_BUDGET_MS } from "@/lib/db/providers/keyvalue/mqtt/constants";
+import {
+  MQTT_READ_BUDGET_BYTES,
+  MQTT_READ_BUDGET_MESSAGES,
+  MQTT_READ_BUDGET_MS,
+} from "@/lib/db/providers/keyvalue/mqtt/constants";
 import { MqttProvider } from "@/lib/db/providers/keyvalue/mqtt/index";
 import { encodeString, encodeVariableByteInteger } from "@/lib/db/providers/keyvalue/mqtt/encoder";
 import type { MqttReadOutcome } from "@/lib/db/providers/keyvalue/mqtt/session";
+import { MetadataProjectionError } from "@/lib/db/redaction/metadata-only";
 import type { ProviderExecutionContext, QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
-import { type FakeBrokerScript, fakeBroker, packet, subscribeFilters } from "./fake-broker";
+import { type FakeBrokerScript, fakeBroker, packet, publishPacket, subscribeFilters } from "./fake-broker";
 
 const BUDGET: ReadOnlyStatementBudget = { statementTimeoutMs: 10_000, maxResultRows: 100, maxResultBytes: 100_000 };
 const PROFILE: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
@@ -215,8 +220,10 @@ describe("the window read", () => {
       "messages_lost",
     ]);
     const [row] = result.rows;
+    // The broker ended the window long before Studio's own clock did.
+    expect(row?.window_ms as number).toBeLessThan(MQTT_READ_BUDGET_MS);
+    expect(row?.listened_ms as number).toBeLessThanOrEqual(row?.window_ms as number);
     expect(row).toMatchObject({
-      window_ms: MQTT_READ_BUDGET_MS,
       stop_reason: "server-disconnect",
       scope: "incomplete",
       broker_reason_code: null,
@@ -234,7 +241,7 @@ describe("the window read", () => {
       MQTT_COMPLETENESS,
     ]);
     expect(result.warnings?.[0]?.message).toContain(
-      "stopped because the broker closed the connection before the window ended. It counted 3 messages on 3 distinct topics, 2 of them retained.",
+      "stopped because the broker closed the connection before the window ended. It counted 3 messages on 3 distinct topics, 2 retained.",
     );
     expectNoWithheld(answerText(result));
   });
@@ -245,6 +252,28 @@ describe("the window read", () => {
     expect(result.rows[0]).toMatchObject({ stop_reason: "budget-time", scope: "unknown" });
     expect(result.rows[0]?.listened_ms as number).toBeGreaterThanOrEqual(MQTT_READ_BUDGET_MS - 50);
     expect(result.warnings?.[0]?.message).toContain("stopped because the window ended.");
+  }, 10_000);
+
+  test("one message on one topic is counted in the singular", async () => {
+    const { provider } = await opened({ messages: [PEOPLE[0]], end: "disconnect" });
+    const result = await provider.queryReadOnly('{"read": "window"}', BUDGET);
+    expect(result.warnings?.[0]?.message).toContain("It counted 1 message on 1 distinct topic, 1 retained.");
+  });
+
+  test("the time it listened is its subscription's own, never more than the window, however long the handshake took", async () => {
+    // The window opens when the connection is ready, so a slow dial is not in it and a slow CONNACK takes its share.
+    const { provider } = await opened({ messages: PEOPLE, end: "wait", readyDelayMs: 500, connackDelayMs: 700 });
+    const result = await provider.queryReadOnly('{"read": "window"}', BUDGET);
+    const row = result.rows[0] as Record<string, unknown>;
+    const listened = row.listened_ms as number;
+    expect(row.stop_reason).toBe("budget-time");
+    expect(row.window_ms as number).toBeGreaterThanOrEqual(MQTT_READ_BUDGET_MS);
+    expect(row.window_ms as number).toBeLessThan(MQTT_READ_BUDGET_MS + 100);
+    expect(listened).toBeLessThanOrEqual((row.window_ms as number) - 600);
+    expect(listened).toBeGreaterThan(MQTT_READ_BUDGET_MS - 1_000);
+    expect(result.warnings?.[0]?.message).toBe(
+      `Studio listened to every topic (the filter #, which never matches a topic under a $ root) for ${listened.toLocaleString("en-US")} ms after subscribing, in a window that ran ${(row.window_ms as number).toLocaleString("en-US")} ms from when the connection was ready (Studio's window is 3,000 ms), and stopped because the window ended. It counted 3 messages on 3 distinct topics, 2 retained.`,
+    );
   }, 10_000);
 
   test("a refused subscription answers its code and that nothing was read", async () => {
@@ -353,10 +382,20 @@ describe("the topic read", () => {
     });
     expect(typeof result.rows[0]?.last_seen_ms).toBe("number");
     expect(result.warnings?.[0]?.message).toContain("Studio listened to the one topic the request named for ");
-    expect(result.warnings?.[0]?.message).toContain("It counted 1 messages on that topic.");
+    expect(result.warnings?.[0]?.message).toContain("It counted 1 message on that topic.");
     expect(result.warnings?.at(-1)?.message).toBe(MQTT_COMPLETENESS);
     expectNoWithheld(answerText(result));
   });
+
+  test("when a topic was last seen is counted from the subscription, as the time it listened is", async () => {
+    const { provider } = await opened({ messages: PEOPLE, end: "wait", connackDelayMs: 700 });
+    const result = await provider.queryReadOnly(ask("homes/ayse-yilmaz/door"), BUDGET);
+    const row = result.rows[0] as Record<string, number>;
+    // The retained message arrives right after the SUBACK, so it was seen at the start of the subscription.
+    expect(row.last_seen_ms).toBeLessThan(100);
+    expect(row.last_seen_ms).toBeLessThanOrEqual(row.listened_ms as number);
+    expect(row.listened_ms).toBeLessThanOrEqual(MQTT_READ_BUDGET_MS - 600);
+  }, 10_000);
 
   test("a topic not seen answers null figures, never 0 or false, and the may-still-exist sentence", async () => {
     const { provider } = await opened();
@@ -374,7 +413,9 @@ describe("the topic read", () => {
 
   test("a hit and a miss differ only in the topic's own figures, so neither says anything of another topic", async () => {
     const { provider } = await opened();
+    // The two clocks are the read's own timing, which differs by a millisecond between any two reads.
     const own = new Set([
+      "window_ms",
       "listened_ms",
       "seen",
       "messages",
@@ -415,6 +456,7 @@ describe("the budgets", () => {
     retainedMessages: 1,
     payloadBytes: 2,
     elapsedMs: 3001,
+    subscribedAtMs: 2,
   };
 
   test("an answer of exactly the byte budget is returned, and one byte past it is refused", () => {
@@ -425,6 +467,55 @@ describe("the budgets", () => {
     expect(() => mqttAgentResult(answer, { ...BUDGET, maxResultBytes: exact - 1 }, "s", 1)).toThrow(
       `Read-only execution exceeded the byte budget: ${exact} bytes > ${exact - 1} allowed`,
     );
+  });
+
+  test("a window Studio's message budget ended is answered as that window, with its own counts", async () => {
+    const one = Buffer.concat(
+      Array.from({ length: MQTT_READ_BUDGET_MESSAGES }, (_, i) =>
+        publishPacket({ topic: PEOPLE[i % 3]?.topic as string, payload: "x", retain: false }),
+      ),
+    );
+    const { provider } = await opened({ bulk: [one], end: "wait" });
+    const result = await provider.queryReadOnly('{"read": "window"}', BUDGET);
+    const row = result.rows[0] as Record<string, unknown>;
+    expect(row).toMatchObject({
+      stop_reason: "budget-messages",
+      scope: "unknown",
+      topics_seen: 3,
+      messages: MQTT_READ_BUDGET_MESSAGES,
+      retained_messages: 0,
+      payload_bytes: MQTT_READ_BUDGET_MESSAGES,
+      messages_lost: 0,
+    });
+    expect(result.warnings?.map((w) => w.message)).toEqual([
+      `Studio listened to every topic (the filter #, which never matches a topic under a $ root) for ${(row.listened_ms as number).toLocaleString("en-US")} ms after subscribing, in a window that ran ${(row.window_ms as number).toLocaleString("en-US")} ms from when the connection was ready (Studio's window is 3,000 ms), and stopped because Studio's message budget of 50,000 messages was reached before the window ended. It counted 50,000 messages on 3 distinct topics, 0 retained.`,
+      MQTT_COMPLETENESS,
+    ]);
+    expectNoWithheld(answerText(result));
+  });
+
+  test("a window Studio's byte budget ended is answered as that window, with its own counts", async () => {
+    // Five messages of 7 MiB, each under the inbound limit, cross the 32 MiB byte budget on the fifth.
+    const size = 7 * 1024 * 1024;
+    const big = publishPacket({ topic: "people/alice/heart-rate", payload: "y".repeat(size), retain: false });
+    const { provider } = await opened({ bulk: [big, big, big, big, big], end: "wait" });
+    const result = await provider.queryReadOnly('{"read": "window"}', BUDGET);
+    const row = result.rows[0] as Record<string, unknown>;
+    expect(5 * big.length).toBeGreaterThanOrEqual(MQTT_READ_BUDGET_BYTES);
+    expect(4 * big.length).toBeLessThan(MQTT_READ_BUDGET_BYTES);
+    expect(row).toMatchObject({
+      stop_reason: "budget-bytes",
+      scope: "unknown",
+      topics_seen: 1,
+      messages: 5,
+      payload_bytes: 5 * size,
+      messages_lost: 0,
+    });
+    expect(result.warnings?.map((w) => w.message)).toEqual([
+      `Studio listened to every topic (the filter #, which never matches a topic under a $ root) for ${(row.listened_ms as number).toLocaleString("en-US")} ms after subscribing, in a window that ran ${(row.window_ms as number).toLocaleString("en-US")} ms from when the connection was ready (Studio's window is 3,000 ms), and stopped because Studio's byte budget of 33,554,432 bytes was reached before the window ended. It counted 5 messages on 1 distinct topic, 0 retained.`,
+      MQTT_COMPLETENESS,
+    ]);
+    expectNoWithheld(answerText(result));
   });
 
   test("a row budget of one holds every answer, which is always one row", async () => {
@@ -466,7 +557,7 @@ describe("failures by kind, never in the broker's or the transport's words", () 
     expect(error.message).not.toContain("agent-reader");
   });
 
-  test("a broker that never finishes the handshake, and one that sends what is not MQTT", async () => {
+  test("a broker that never finishes the handshake", async () => {
     let calls = 0;
     const scripts: FakeBrokerScript[] = [{ end: "disconnect" }, { silent: true }];
     const provider = new MqttProvider(connection(), {}, PROFILE, (options) => {
@@ -482,6 +573,34 @@ describe("failures by kind, never in the broker's or the transport's words", () 
       "The broker did not complete the MQTT 5.0 handshake, so nothing was read. The transport's and the broker's own words are not passed on to agent mode, since they can name an address.",
     );
     expect(error.message).not.toContain("127.0.0.1");
+  });
+
+  test.each([
+    // A length that is not a Variable Byte Integer: the inbound framing refuses it.
+    ["a length that is not a Variable Byte Integer", Buffer.from([0x30, 0xff, 0xff, 0xff, 0xff, 0x7f])],
+    // A SUBACK with header flags MQTT 5.0 reserves: the decoder refuses it.
+    ["a packet with reserved header flags", Buffer.from([0x9f, 0x03, 0x00, 0x01, 0x00])],
+  ])("a broker that sends what is not MQTT after its CONNACK: %s", async (_name, bytes) => {
+    let calls = 0;
+    const provider = new MqttProvider(connection(), {}, PROFILE, (options) => {
+      calls += 1;
+      return fakeBroker(calls === 1 ? { end: "disconnect" } : { afterConnack: bytes, end: "wait" }).factory(options);
+    });
+    await provider.connect();
+    const error = (await provider.queryReadOnly('{"read": "window"}', BUDGET).catch((e: unknown) => e)) as Error;
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error.message).toBe(
+      "The broker's answer could not be read as MQTT 5.0, so the read was abandoned and nothing of it is answered. The transport's and the broker's own words are not passed on to agent mode, since they can name an address.",
+    );
+    expect(error.message).not.toContain("cannot read");
+    expect(error.message).not.toContain("no longer MQTT");
+  });
+
+  test("an answer that is not metadata is refused in the projection's own words", () => {
+    const projection = new MetadataProjectionError("messages", "count");
+    const error = mqttAgentFailure(projection, 10_000, "s");
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error?.message).toBe(projection.message);
   });
 
   test("the dial is given what the window leaves of the time budget, so a broker that never answers is unreachable in time", async () => {

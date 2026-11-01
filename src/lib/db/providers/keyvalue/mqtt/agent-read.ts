@@ -47,8 +47,9 @@ import {
 } from "./session";
 
 /**
- * The least of the read's time budget the dial is given. An agent read listens for `MQTT_READ_BUDGET_MS`, so a budget
- * shorter than that plus this is refused before anything is sent, rather than cut into a shorter window.
+ * With the window, the least time budget an agent read is admitted with: a budget shorter than `MQTT_READ_BUDGET_MS`
+ * plus this is refused before anything is sent, rather than cut into a shorter window. The dial is given the budget
+ * less the window and `MQTT_AGENT_SETTLE_MS`, so at the least budget it gets 750 ms.
  */
 const MQTT_AGENT_MIN_DIAL_MS = 1_000;
 
@@ -71,9 +72,26 @@ interface WindowFacts {
   readonly outcome: MqttReadOutcome;
 }
 
+/**
+ * How long the window ran: from the connection's ready, where its clock starts, to the end of the read. Studio's window
+ * is `MQTT_READ_BUDGET_MS`; a budget or the broker can end it sooner, and a timer can fire a millisecond late, so the
+ * answer reports the time the window really ran rather than the constant.
+ */
+function windowMs(outcome: MqttReadOutcome): number {
+  return outcome.elapsedMs - (outcome.readyAtMs ?? 0);
+}
+
+/**
+ * How long the subscription listened: from the SUBSCRIBE to the end of the read. The SUBSCRIBE follows the handshake
+ * inside the window, so this is never more than `windowMs`. A read that subscribed to nothing listened for no time.
+ */
+function listenedMs(outcome: MqttReadOutcome): number {
+  return outcome.subscribedAtMs === undefined ? 0 : outcome.elapsedMs - outcome.subscribedAtMs;
+}
+
 const WINDOW_COLUMNS: MetadataProjection<WindowFacts> = [
-  { column: "window_ms", kind: "count", read: () => MQTT_READ_BUDGET_MS },
-  { column: "listened_ms", kind: "count", read: (w) => w.outcome.elapsedMs },
+  { column: "window_ms", kind: "count", read: (w) => windowMs(w.outcome) },
+  { column: "listened_ms", kind: "count", read: (w) => listenedMs(w.outcome) },
   { column: "stop_reason", kind: "name", read: (w) => w.outcome.endReason },
   // Never "complete": MQTT gives no way to establish it.
   { column: "scope", kind: "name", read: (w) => w.outcome.scope },
@@ -101,7 +119,16 @@ const TOPIC: MetadataProjection<TopicFacts> = [
   { column: "retained", kind: "flag", optional: true, read: (t) => t.row?.retained },
   { column: "delivered_qos", kind: "count", optional: true, read: (t) => t.row?.qos },
   { column: "payload_bytes", kind: "count", optional: true, read: (t) => t.row?.payloadBytes },
-  { column: "last_seen_ms", kind: "count", optional: true, read: (t) => t.row?.lastSeenMs },
+  // Counted from the subscription, as `listened_ms` is, so the two read on one clock.
+  {
+    column: "last_seen_ms",
+    kind: "count",
+    optional: true,
+    read: (t) => {
+      const seen = t.row?.lastSeenMs;
+      return seen === undefined ? undefined : seen - (t.outcome.subscribedAtMs ?? 0);
+    },
+  },
   { column: "messages_lost", kind: "count", read: (t) => t.outcome.provenLoss.length },
 ];
 
@@ -133,6 +160,11 @@ function stopWords(outcome: MqttReadOutcome): string {
   return reasons[outcome.endReason];
 }
 
+/** A count and its noun, singular for one. */
+function countOf(count: number, noun: string): string {
+  return `${count.toLocaleString("en-US")} ${count === 1 ? noun : `${noun}s`}`;
+}
+
 /** The answer's own account of its window, which every answer's warnings open with. */
 function windowSentence(answer: MqttAgentAnswer): string {
   const { outcome } = answer;
@@ -142,9 +174,9 @@ function windowSentence(answer: MqttAgentAnswer): string {
       : "the one topic the request named";
   const counted =
     answer.op === "window"
-      ? `It counted ${outcome.messages.toLocaleString("en-US")} messages on ${outcome.topics.size.toLocaleString("en-US")} distinct topics, ${outcome.retainedMessages.toLocaleString("en-US")} of them retained`
-      : `It counted ${(answer.row?.messages ?? 0).toLocaleString("en-US")} messages on that topic`;
-  return `Studio listened to ${listened} for ${outcome.elapsedMs.toLocaleString("en-US")} ms of a ${MQTT_READ_BUDGET_MS.toLocaleString("en-US")} ms window and stopped because ${stopWords(outcome)}. ${counted}.`;
+      ? `It counted ${countOf(outcome.messages, "message")} on ${outcome.topics.size.toLocaleString("en-US")} distinct ${outcome.topics.size === 1 ? "topic" : "topics"}, ${outcome.retainedMessages.toLocaleString("en-US")} retained`
+      : `It counted ${countOf(answer.row?.messages ?? 0, "message")} on that topic`;
+  return `Studio listened to ${listened} for ${listenedMs(outcome).toLocaleString("en-US")} ms after subscribing, in a window that ran ${windowMs(outcome).toLocaleString("en-US")} ms from when the connection was ready (Studio's window is ${MQTT_READ_BUDGET_MS.toLocaleString("en-US")} ms), and stopped because ${stopWords(outcome)}. ${counted}.`;
 }
 
 /** What the read proved it lost, counted and never named: the editor's sentence for a loss names its topic. */

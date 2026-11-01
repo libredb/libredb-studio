@@ -37,7 +37,7 @@
       ],
       "rows": [
         {
-          "window_ms": 3000,
+          "window_ms": 3001,
           "listened_ms": 3000,
           "stop_reason": "budget-time",
           "scope": "unknown",
@@ -50,7 +50,7 @@
         }
       ],
       "warnings": [
-        "Studio listened to every topic (the filter #, which never matches a topic under a $ root) for 3,000 ms of a 3,000 ms window and stopped because the window ended. It counted 18 messages on 5 distinct topics, 4 of them retained.",
+        "Studio listened to every topic (the filter #, which never matches a topic under a $ root) for 3,000 ms after subscribing, in a window that ran 3,001 ms from when the connection was ready (Studio's window is 3,000 ms), and stopped because the window ended. It counted 18 messages on 5 distinct topics, 4 retained.",
         "A topic not seen in the window may still exist: MQTT has no command that lists topics, so a subscriber sees a topic only when a message on it arrives in the window or the broker holds a retained message on it, and no answer is a complete count of the broker's topics or proof that a topic does not exist."
       ],
       "carriesWithheld": false,
@@ -95,8 +95,8 @@
       ],
       "rows": [
         {
-          "window_ms": 3000,
-          "listened_ms": 3001,
+          "window_ms": 3001,
+          "listened_ms": 3000,
           "stop_reason": "budget-time",
           "scope": "unknown",
           "broker_reason_code": null,
@@ -105,12 +105,12 @@
           "retained": true,
           "delivered_qos": 0,
           "payload_bytes": 17,
-          "last_seen_ms": 43,
+          "last_seen_ms": 41,
           "messages_lost": 0
         }
       ],
       "warnings": [
-        "Studio listened to the one topic the request named for 3,001 ms of a 3,000 ms window and stopped because the window ended. It counted 1 messages on that topic.",
+        "Studio listened to the one topic the request named for 3,000 ms after subscribing, in a window that ran 3,001 ms from when the connection was ready (Studio's window is 3,000 ms), and stopped because the window ended. It counted 1 message on that topic.",
         "A topic not seen in the window may still exist: MQTT has no command that lists topics, so a subscriber sees a topic only when a message on it arrives in the window or the broker holds a retained message on it, and no answer is a complete count of the broker's topics or proof that a topic does not exist."
       ],
       "carriesWithheld": false,
@@ -155,8 +155,8 @@
       ],
       "rows": [
         {
-          "window_ms": 3000,
-          "listened_ms": 3001,
+          "window_ms": 3001,
+          "listened_ms": 3000,
           "stop_reason": "budget-time",
           "scope": "unknown",
           "broker_reason_code": null,
@@ -165,12 +165,12 @@
           "retained": false,
           "delivered_qos": 0,
           "payload_bytes": 4,
-          "last_seen_ms": 2917,
+          "last_seen_ms": 2915,
           "messages_lost": 0
         }
       ],
       "warnings": [
-        "Studio listened to the one topic the request named for 3,001 ms of a 3,000 ms window and stopped because the window ended. It counted 15 messages on that topic.",
+        "Studio listened to the one topic the request named for 3,000 ms after subscribing, in a window that ran 3,001 ms from when the connection was ready (Studio's window is 3,000 ms), and stopped because the window ended. It counted 15 messages on that topic.",
         "A topic not seen in the window may still exist: MQTT has no command that lists topics, so a subscriber sees a topic only when a message on it arrives in the window or the broker holds a retained message on it, and no answer is a complete count of the broker's topics or proof that a topic does not exist."
       ],
       "carriesWithheld": false,
@@ -216,7 +216,7 @@
       "rows": [
         {
           "window_ms": 3000,
-          "listened_ms": 3001,
+          "listened_ms": 2999,
           "stop_reason": "budget-time",
           "scope": "unknown",
           "broker_reason_code": null,
@@ -230,7 +230,7 @@
         }
       ],
       "warnings": [
-        "Studio listened to the one topic the request named for 3,001 ms of a 3,000 ms window and stopped because the window ended. It counted 0 messages on that topic.",
+        "Studio listened to the one topic the request named for 2,999 ms after subscribing, in a window that ran 3,000 ms from when the connection was ready (Studio's window is 3,000 ms), and stopped because the window ended. It counted 0 messages on that topic.",
         "A topic not seen in the window may still exist: MQTT has no command that lists topics, so a subscriber sees a topic only when a message on it arrives in the window or the broker holds a retained message on it, and no answer is a complete count of the broker's topics or proof that a topic does not exist."
       ],
       "carriesWithheld": false,
@@ -367,8 +367,8 @@
       ],
       "rows": [
         {
-          "window_ms": 3000,
-          "listened_ms": 1,
+          "window_ms": 1,
+          "listened_ms": 0,
           "stop_reason": "subscription-refused",
           "scope": "incomplete",
           "broker_reason_code": 135,
@@ -380,7 +380,7 @@
         }
       ],
       "warnings": [
-        "Studio listened to every topic (the filter #, which never matches a topic under a $ root) for 1 ms of a 3,000 ms window and stopped because the broker refused the subscription with reason code 135 (0x87), so nothing was read. It counted 0 messages on 0 distinct topics, 0 of them retained.",
+        "Studio listened to every topic (the filter #, which never matches a topic under a $ root) for 0 ms after subscribing, in a window that ran 1 ms from when the connection was ready (Studio's window is 3,000 ms), and stopped because the broker refused the subscription with reason code 135 (0x87), so nothing was read. It counted 0 messages on 0 distinct topics, 0 retained.",
         "A topic not seen in the window may still exist: MQTT has no command that lists topics, so a subscriber sees a topic only when a message on it arrives in the window or the broker holds a retained message on it, and no answer is a complete count of the broker's topics or proof that a topic does not exist."
       ],
       "carriesWithheld": false,
@@ -425,8 +425,8 @@
       ],
       "rows": [
         {
-          "window_ms": 3000,
-          "listened_ms": 3002,
+          "window_ms": 3001,
+          "listened_ms": 3001,
           "stop_reason": "budget-time",
           "scope": "unknown",
           "broker_reason_code": null,
@@ -440,7 +440,7 @@
         }
       ],
       "warnings": [
-        "Studio listened to the one topic the request named for 3,002 ms of a 3,000 ms window and stopped because the window ended. It counted 1 messages on that topic.",
+        "Studio listened to the one topic the request named for 3,001 ms after subscribing, in a window that ran 3,001 ms from when the connection was ready (Studio's window is 3,000 ms), and stopped because the window ended. It counted 1 message on that topic.",
         "A topic not seen in the window may still exist: MQTT has no command that lists topics, so a subscriber sees a topic only when a message on it arrives in the window or the broker holds a retained message on it, and no answer is a complete count of the broker's topics or proof that a topic does not exist."
       ],
       "carriesWithheld": false,

@@ -76,6 +76,18 @@ describe("what the agent sent", () => {
 });
 
 describe("what the agent answered", () => {
+  test("every answer's subscription listened inside the window it reports, and says so in its own sentence", () => {
+    for (const read of reads) {
+      const [row] = read.rows;
+      const listened = row?.listened_ms as number;
+      const window = row?.window_ms as number;
+      expect(listened).toBeLessThanOrEqual(window);
+      expect(read.warnings[0]).toContain(
+        `for ${listened.toLocaleString("en-US")} ms after subscribing, in a window that ran ${window.toLocaleString("en-US")} ms from when the connection was ready`,
+      );
+    }
+  });
+
   test("no answer carried a topic name, a payload or a credential, and every one ends with the completeness sentence", () => {
     for (const read of reads) {
       expect(read.carriesWithheld).toBe(false);
