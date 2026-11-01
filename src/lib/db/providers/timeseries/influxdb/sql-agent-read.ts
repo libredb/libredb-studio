@@ -69,10 +69,10 @@ type Token = { readonly kind: "name"; readonly name: string } | { readonly kind:
 const WORD_AT = /[A-Za-z0-9_]+/y;
 
 /**
- * The statement's code as tokens, read with the DataFusion grammar row: whitespace and comments dropped, a string one
- * opaque token of its own kind, a quoted name its text with `""` undone. A `[` is stepped over one character at a time, as the read
- * policy steps into a subscript, so the code inside it is read too. The policy has already refused text that never
- * closes, a `$` and a character outside ASCII outside quotes.
+ * The statement's code as tokens, read with the DataFusion grammar row: whitespace and comments dropped, a string
+ * (dollar-quoted too) one opaque token of its own kind, a quoted name its text with `""` undone. A `[` is stepped over
+ * one character at a time, as the read policy steps into a subscript, so the code inside it is read too. The policy
+ * has already refused text that never closes, a `$` and a character outside ASCII outside quotes.
  */
 function tokens(sql: string): Token[] {
   const grammar = resolveSqlGrammar("influxdb3");
@@ -84,10 +84,9 @@ function tokens(sql: string): Token[] {
     if (span !== null) {
       if (span.kind === "quoted-identifier") {
         found.push({ kind: "name", name: sql.slice(index + 1, span.end - 1).replaceAll('""', '"') });
-      } else if (span.kind === "string") {
-        found.push({ kind: "string" });
       } else if (span.kind !== "whitespace" && span.kind !== "line-comment" && span.kind !== "block-comment") {
-        found.push({ kind: "other" });
+        // A literal: a string or a dollar-quoted string, since a `[` is never read as a span here.
+        found.push({ kind: "string" });
       }
       index = span.end;
       continue;

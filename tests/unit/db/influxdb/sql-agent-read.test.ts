@@ -107,6 +107,7 @@ describe("assertNoSystemTable", () => {
     "SELECT * FROM E'\\x73ystem'.queries",
     "SELECT * FROM 'public'.home",
     "SELECT * FROM 'system'.influxdb_schema",
+    "SELECT * FROM $$system$$.queries",
   ])("refuses %s, a string before a `.`", (sql) => {
     const error = thrown(() => assertNoSystemTable(sql));
     expect(error).toBeInstanceOf(QueryError);
