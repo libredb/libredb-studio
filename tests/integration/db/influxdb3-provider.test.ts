@@ -596,6 +596,27 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
     expect(statementsSent().filter((q) => q.includes("system"))).toEqual([]);
   });
 
+  const STRING_QUALIFIER_REFUSAL =
+    "The statement was refused before it reached the database: The agent reads no name written as a string before a `.`, since InfluxDB 3 reads it as a schema or table name and the system schema fence reads only names: write the name bare or in double quotes.";
+
+  // The server answers each of these with rows of system.queries, so the provider's fence is what keeps them out.
+  test.each([
+    "SELECT query_text FROM 'system'.queries",
+    "SELECT query_text FROM 'system'.'queries'",
+    "SELECT query_text FROM public.'system'.queries",
+    "SELECT query_text FROM 'public'.'system'.'queries'",
+    `SELECT query_text FROM 'system'."queries"`,
+  ])(
+    "%p, a string before a `.`, passes the MCP fence and is refused by the provider before it is sent",
+    async (sql) => {
+      const result = await call({ sql });
+
+      expect(result).toEqual({ content: [{ type: "text", text: STRING_QUALIFIER_REFUSAL }], isError: true });
+      expect(acquired).toEqual(["agent-read-only"]);
+      expect(statementsSent().filter((q) => q.includes("system"))).toEqual([]);
+    },
+  );
+
   test("system.influxdb_schema, the one system table the agent reads, is read", async () => {
     answers = { "SELECT * FROM system.influxdb_schema LIMIT 101": capture("sql-schema-home") };
 

@@ -60,14 +60,17 @@ const READABLE_SYSTEM_TABLE = "influxdb_schema";
 const SYSTEM_TABLE_REFUSAL =
   "The agent reads no table of InfluxDB 3's system schema but system.influxdb_schema: the others hold other queries' text, files and engine logs";
 
-/** One token of a statement's code: a name (bare, folded, or quoted, unquoted), a `.`, or anything else. */
-type Token = { readonly kind: "name"; readonly name: string } | { readonly kind: "dot" | "other" };
+const STRING_QUALIFIER_REFUSAL =
+  "The agent reads no name written as a string before a `.`, since InfluxDB 3 reads it as a schema or table name and the system schema fence reads only names: write the name bare or in double quotes";
+
+/** One token of a statement's code: a name (bare, folded, or quoted, unquoted), a string, a `.`, or anything else. */
+type Token = { readonly kind: "name"; readonly name: string } | { readonly kind: "string" | "dot" | "other" };
 
 const WORD_AT = /[A-Za-z0-9_]+/y;
 
 /**
  * The statement's code as tokens, read with the DataFusion grammar row: whitespace and comments dropped, a string one
- * opaque token, a quoted name its text with `""` undone. A `[` is stepped over one character at a time, as the read
+ * opaque token of its own kind, a quoted name its text with `""` undone. A `[` is stepped over one character at a time, as the read
  * policy steps into a subscript, so the code inside it is read too. The policy has already refused text that never
  * closes, a `$` and a character outside ASCII outside quotes.
  */
@@ -81,6 +84,8 @@ function tokens(sql: string): Token[] {
     if (span !== null) {
       if (span.kind === "quoted-identifier") {
         found.push({ kind: "name", name: sql.slice(index + 1, span.end - 1).replaceAll('""', '"') });
+      } else if (span.kind === "string") {
+        found.push({ kind: "string" });
       } else if (span.kind !== "whitespace" && span.kind !== "line-comment" && span.kind !== "block-comment") {
         found.push({ kind: "other" });
       }
@@ -108,12 +113,16 @@ const isNamed = (token: Token | undefined, name: string): boolean =>
  * holds the text of every query the server ran, `system.parquet_files` the store's file paths and
  * `system.processing_engine_logs` the plugins' output. A name `system` followed by a `.` is the schema, whatever its
  * case or quoting and whatever stands before it (`public.system.queries`), and only `influxdb_schema` may follow it.
- * Parser-only defence: the engine itself serves these tables to any Core token. Raised as `RefusedBeforeSendError`,
+ * DataFusion also reads a string before a `.` as a name (`'system'.queries` is answered with the rows of
+ * `system.queries`), and its content can be escaped past any reading of it, so a string before a `.` is refused
+ * whatever it holds: no read needs one. Parser-only defence: the engine itself serves these tables to any Core token. Raised as `RefusedBeforeSendError`,
  * since the statement is never sent.
  */
 export function assertNoSystemTable(sql: string): void {
   const read = tokens(sql);
   for (let index = 0; index < read.length; index++) {
+    if (read[index].kind === "string" && read[index + 1]?.kind === "dot")
+      throw new RefusedBeforeSendError(STRING_QUALIFIER_REFUSAL, "influxdb3", sql);
     if (!isNamed(read[index], SYSTEM_SCHEMA) || read[index + 1]?.kind !== "dot") continue;
     if (!isNamed(read[index + 2], READABLE_SYSTEM_TABLE))
       throw new RefusedBeforeSendError(SYSTEM_TABLE_REFUSAL, "influxdb3", sql);

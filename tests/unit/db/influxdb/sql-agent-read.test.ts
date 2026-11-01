@@ -89,8 +89,30 @@ describe("assertNoSystemTable", () => {
     "SELECT table_name FROM information_schema.tables WHERE table_schema = 'system'",
     "SELECT 1.5 AS system",
     "SELECT * FROM my_system.queries",
+    "SELECT 'a' AS x, 'b.c' AS y FROM home WHERE room = 'Kitchen'",
+    "SELECT 'system' AS s",
   ])("admits %s", (sql) => {
     expect(() => assertNoSystemTable(sql)).not.toThrow();
+  });
+
+  // DataFusion reads a string before a `.` as a name: `'system'.queries` is answered with the rows of system.queries.
+  test.each([
+    "SELECT query_text FROM 'system'.queries",
+    "SELECT query_text FROM 'system'.'queries'",
+    "SELECT query_text FROM public.'system'.queries",
+    "SELECT query_text FROM 'public'.'system'.'queries'",
+    "SELECT query_text FROM 'system'.\"queries\"",
+    "SELECT * FROM 'SYSTEM' /* c */ . parquet_files",
+    "SELECT * FROM 'sys''tem'.queries",
+    "SELECT * FROM E'\\x73ystem'.queries",
+    "SELECT * FROM 'public'.home",
+    "SELECT * FROM 'system'.influxdb_schema",
+  ])("refuses %s, a string before a `.`", (sql) => {
+    const error = thrown(() => assertNoSystemTable(sql));
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error.message).toBe(
+      "The agent reads no name written as a string before a `.`, since InfluxDB 3 reads it as a schema or table name and the system schema fence reads only names: write the name bare or in double quotes",
+    );
   });
 });
 

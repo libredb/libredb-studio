@@ -16,8 +16,8 @@
  *    is sent through the MCP handler; the fenced tool refuses every one before anything is acquired, and unfenced the
  *    provider's read policy refuses it before it is sent, in its own sentence; sent raw through the route-table client
  *    with the same token, the planner refuses each with the status and the words the capture recorded; a `system`
- *    table passes the MCP fence and is refused by the provider's `system` fence, while the same text sent raw is
- *    answered, so that fence is what keeps it out; the positive control is the same token writing a point through the
+ *    table, also with its schema written as a string, passes the MCP fence and is refused by the provider's `system`
+ *    fence, while the same text sent raw is answered, so that fence is what keeps it out; the positive control is the same token writing a point through the
  *    write route into a scratch database, which MCP then reads and the script deletes; the databases, tables, columns,
  *    row counts and tokens hash the same before and after;
  *  - the forms and limits: a `VALUES` and an `EXPLAIN` answer, `TABLE` is refused by the read policy and is a parser
@@ -87,6 +87,16 @@ const SYSTEM_TABLES: readonly string[] = [
 ];
 const SYSTEM_REFUSAL =
   "The statement was refused before it reached the database: The agent reads no table of InfluxDB 3's system schema but system.influxdb_schema: the others hold other queries' text, files and engine logs.";
+/** The schema named by a string before a `.`, which the server reads as a name and answers with system.queries' rows. */
+const STRING_QUALIFIED_SYSTEM_TABLES: readonly string[] = [
+  "SELECT query_text FROM 'system'.queries",
+  "SELECT query_text FROM 'system'.'queries'",
+  "SELECT query_text FROM public.'system'.queries",
+  "SELECT query_text FROM 'public'.'system'.'queries'",
+  `SELECT query_text FROM 'system'."queries"`,
+];
+const STRING_QUALIFIER_REFUSAL =
+  "The statement was refused before it reached the database: The agent reads no name written as a string before a `.`, since InfluxDB 3 reads it as a schema or table name and the system schema fence reads only names: write the name bare or in double quotes.";
 
 function seed(name: string, port: number, database = "home"): ManagedConnection {
   return {
@@ -252,6 +262,17 @@ async function main(): Promise<void> {
     check(
       textOf(result) === SYSTEM_REFUSAL && acquired.join() === "agent-read-only" && answer.status === 200,
       `system: ${sql} passes the MCP fence and is refused by the provider's system fence; sent raw the server answers it -> ${answer.status}`,
+    );
+  }
+  for (const sql of STRING_QUALIFIED_SYSTEM_TABLES) {
+    const { result, acquired } = await mcp(agent, { sql }, RUN_READ_QUERY);
+    const answer = await raw(sql);
+    check(
+      textOf(result) === STRING_QUALIFIER_REFUSAL &&
+        acquired.join() === "agent-read-only" &&
+        answer.status === 200 &&
+        answer.text.includes('"query_text"'),
+      `system: ${sql} passes the MCP fence and is refused by the provider's fence; sent raw the server answers it with rows -> ${answer.status}`,
     );
   }
   const schema = await mcp(agent, { sql: "SELECT * FROM system.influxdb_schema" }, RUN_READ_QUERY);
