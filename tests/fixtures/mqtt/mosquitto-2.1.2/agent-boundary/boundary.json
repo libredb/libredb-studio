@@ -37,8 +37,8 @@
       ],
       "rows": [
         {
-          "window_ms": 3001,
-          "listened_ms": 3000,
+          "window_ms": 3000,
+          "listened_ms": 2999,
           "stop_reason": "budget-time",
           "scope": "unknown",
           "broker_reason_code": null,
@@ -50,7 +50,7 @@
         }
       ],
       "warnings": [
-        "Studio listened to every topic (the filter #, which never matches a topic under a $ root) for 3,000 ms after subscribing, in a window that ran 3,001 ms from when the connection was ready (Studio's window is 3,000 ms), and stopped because the window ended. It counted 18 messages on 5 distinct topics, 4 retained.",
+        "Studio listened to every topic (the filter #, which never matches a topic under a $ root) for 2,999 ms after subscribing, in a window that ran 3,000 ms from when the connection was ready (Studio's window is 3,000 ms), and stopped because the window ended. It counted 18 messages on 5 distinct topics, 4 retained.",
         "A topic not seen in the window may still exist: MQTT has no command that lists topics, so a subscriber sees a topic only when a message on it arrives in the window or the broker holds a retained message on it, and no answer is a complete count of the broker's topics or proof that a topic does not exist."
       ],
       "carriesWithheld": false,
@@ -111,6 +111,7 @@
       ],
       "warnings": [
         "Studio listened to the one topic the request named for 3,000 ms after subscribing, in a window that ran 3,001 ms from when the connection was ready (Studio's window is 3,000 ms), and stopped because the window ended. It counted 1 message on that topic.",
+        "The topic's retained flag, delivered QoS and payload size are those of the last message seen on it, not totals over the window: a broker delivers a retained message only as the subscription starts, and every message published after that arrives with the retained flag clear, so retained false does not say the broker holds no retained message on the topic.",
         "A topic not seen in the window may still exist: MQTT has no command that lists topics, so a subscriber sees a topic only when a message on it arrives in the window or the broker holds a retained message on it, and no answer is a complete count of the broker's topics or proof that a topic does not exist."
       ],
       "carriesWithheld": false,
@@ -155,8 +156,8 @@
       ],
       "rows": [
         {
-          "window_ms": 3001,
-          "listened_ms": 3000,
+          "window_ms": 3000,
+          "listened_ms": 2999,
           "stop_reason": "budget-time",
           "scope": "unknown",
           "broker_reason_code": null,
@@ -165,12 +166,13 @@
           "retained": false,
           "delivered_qos": 0,
           "payload_bytes": 4,
-          "last_seen_ms": 2915,
+          "last_seen_ms": 2908,
           "messages_lost": 0
         }
       ],
       "warnings": [
-        "Studio listened to the one topic the request named for 3,000 ms after subscribing, in a window that ran 3,001 ms from when the connection was ready (Studio's window is 3,000 ms), and stopped because the window ended. It counted 15 messages on that topic.",
+        "Studio listened to the one topic the request named for 2,999 ms after subscribing, in a window that ran 3,000 ms from when the connection was ready (Studio's window is 3,000 ms), and stopped because the window ended. It counted 15 messages on that topic.",
+        "The topic's retained flag, delivered QoS and payload size are those of the last message seen on it, not totals over the window: a broker delivers a retained message only as the subscription starts, and every message published after that arrives with the retained flag clear, so retained false does not say the broker holds no retained message on the topic.",
         "A topic not seen in the window may still exist: MQTT has no command that lists topics, so a subscriber sees a topic only when a message on it arrives in the window or the broker holds a retained message on it, and no answer is a complete count of the broker's topics or proof that a topic does not exist."
       ],
       "carriesWithheld": false,
@@ -231,6 +233,7 @@
       ],
       "warnings": [
         "Studio listened to the one topic the request named for 2,999 ms after subscribing, in a window that ran 3,000 ms from when the connection was ready (Studio's window is 3,000 ms), and stopped because the window ended. It counted 0 messages on that topic.",
+        "The topic's retained flag, delivered QoS and payload size are those of the last message seen on it, not totals over the window: a broker delivers a retained message only as the subscription starts, and every message published after that arrives with the retained flag clear, so retained false does not say the broker holds no retained message on the topic.",
         "A topic not seen in the window may still exist: MQTT has no command that lists topics, so a subscriber sees a topic only when a message on it arrives in the window or the broker holds a retained message on it, and no answer is a complete count of the broker's topics or proof that a topic does not exist."
       ],
       "carriesWithheld": false,
@@ -315,7 +318,7 @@
       "namesASeededTopic": true
     },
     "sharedSubscription": {
-      "messagesTakenIn2s": 10
+      "messagesTakenIn2s": 9
     }
   },
   "rawPublish": {
@@ -367,7 +370,7 @@
       ],
       "rows": [
         {
-          "window_ms": 1,
+          "window_ms": 0,
           "listened_ms": 0,
           "stop_reason": "subscription-refused",
           "scope": "incomplete",
@@ -380,7 +383,7 @@
         }
       ],
       "warnings": [
-        "Studio listened to every topic (the filter #, which never matches a topic under a $ root) for 0 ms after subscribing, in a window that ran 1 ms from when the connection was ready (Studio's window is 3,000 ms), and stopped because the broker refused the subscription with reason code 135 (0x87), so nothing was read. It counted 0 messages on 0 distinct topics, 0 retained.",
+        "Studio listened to every topic (the filter #, which never matches a topic under a $ root) for 0 ms after subscribing, in a window that ran 0 ms from when the connection was ready (Studio's window is 3,000 ms), and stopped because the broker refused the subscription with reason code 135 (0x87), so nothing was read. It counted 0 messages on 0 distinct topics, 0 retained.",
         "A topic not seen in the window may still exist: MQTT has no command that lists topics, so a subscriber sees a topic only when a message on it arrives in the window or the broker holds a retained message on it, and no answer is a complete count of the broker's topics or proof that a topic does not exist."
       ],
       "carriesWithheld": false,
@@ -435,12 +438,13 @@
           "retained": true,
           "delivered_qos": 0,
           "payload_bytes": 15,
-          "last_seen_ms": 1,
+          "last_seen_ms": 0,
           "messages_lost": 0
         }
       ],
       "warnings": [
         "Studio listened to the one topic the request named for 3,001 ms after subscribing, in a window that ran 3,001 ms from when the connection was ready (Studio's window is 3,000 ms), and stopped because the window ended. It counted 1 message on that topic.",
+        "The topic's retained flag, delivered QoS and payload size are those of the last message seen on it, not totals over the window: a broker delivers a retained message only as the subscription starts, and every message published after that arrives with the retained flag clear, so retained false does not say the broker holds no retained message on the topic.",
         "A topic not seen in the window may still exist: MQTT has no command that lists topics, so a subscriber sees a topic only when a message on it arrives in the window or the broker holds a retained message on it, and no answer is a complete count of the broker's topics or proof that a topic does not exist."
       ],
       "carriesWithheld": false,
