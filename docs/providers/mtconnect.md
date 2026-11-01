@@ -482,6 +482,7 @@ A `count` past the row budget is refused before anything is sent, and the admiss
 
 Each read reads the device model first, with `GET /probe` on the handle's one permit (each provider instance holds its own, with four MTConnect requests at once across Studio), and then sends the request (`reads[].sent`), so the device a request names, the rows' join and the withheld items are decided from the model the agent serves at that read, and nothing of one read is kept for the next.
 A device the model does not hold is refused after the model read and before the request.
+A refusal made after the model read, of a path value or of a device, ends "Only the device model was read, with GET /probe; the request itself was not sent." rather than "Nothing was sent.".
 
 A read is counted one row per observation, data item or asset.
 An observation walk stops at the first row past the row budget and the read is refused, never answered in part; a device model or an asset answer past it is refused with its count; a result past the byte budget, an answer past the route's byte cap ([section 3.4](#34-caps-are-in-bytes-not-in-rows)) and a read past its time budget, which covers the model read, the wait for the permit and the request, are refused in Studio's words.

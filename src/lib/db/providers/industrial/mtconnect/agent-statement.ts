@@ -30,6 +30,8 @@ import { guardRequestLine, MtcRefusal, type MtcGuardOptions, type MtcRequest } f
 import { MTC_REFUSED_KEYS, MTC_ROUTES } from "./routes";
 
 const NOTHING_SENT = "Nothing was sent.";
+/** A refusal decided from the device model is made after the model read, so it cannot say nothing was sent. */
+const MODEL_READ_ONLY = "Only the device model was read, with GET /probe; the request itself was not sent.";
 
 /** The attributes an agent-mode path may test, each a field of a data item in the device model. */
 export const MTCONNECT_AGENT_PATH_ATTRIBUTES = Object.freeze(["id", "name", "type", "subType", "category"] as const);
@@ -57,8 +59,8 @@ export const MTCONNECT_AGENT_READS = `Agent mode on MTConnect reads with one req
 
 const MTCONNECT_AGENT_SENTENCES = {
   reads: MTCONNECT_AGENT_READS,
-  /** `message` is the console guard's refusal; the list of reads follows it. */
-  request: (message: string): string => `${message.replace(/\.$/, "")}. ${MTCONNECT_AGENT_READS} ${NOTHING_SENT}`,
+  /** `message` is the console guard's refusal; the list of reads and what was sent follow it. */
+  request: (message: string, sent: string): string => `${message.replace(/\.$/, "")}. ${MTCONNECT_AGENT_READS} ${sent}`,
   dotSegment: (name: string): string =>
     `${name} is a dot segment, which a URL resolves to another path, so what would be sent is not the route that was written`,
   path: `The path is outside what agent mode sends. ${MTCONNECT_AGENT_PATH_RULE}`,
@@ -131,6 +133,8 @@ const ADMISSION_ROW_CAP = 10_000;
 export interface MtconnectAgentStatementOptions extends MtcGuardOptions {
   /** Whether a data item agent mode reads holds this value in this attribute; absent, a path's shape alone is read. */
   readonly readable?: (test: MtconnectAgentPathTest) => boolean;
+  /** True when the reader is called after the device model read, so a refusal says that read was sent. */
+  readonly afterModelRead?: boolean;
 }
 
 /**
@@ -142,20 +146,21 @@ export function readMtconnectAgentStatement(
   text: string,
   options: MtconnectAgentStatementOptions = { rowCap: ADMISSION_ROW_CAP },
 ): MtconnectAgentReading {
+  const sent = options.afterModelRead === true ? MODEL_READ_ONLY : NOTHING_SENT;
   let request: MtcRequest;
   try {
     request = guardRequestLine(text, options);
   } catch (error) {
     // The guard refuses with an MtcRefusal only; anything else is a defect.
     if (!(error instanceof MtcRefusal)) throw error;
-    return { ok: false, code: "request", message: MTCONNECT_AGENT_SENTENCES.request(error.message) };
+    return { ok: false, code: "request", message: MTCONNECT_AGENT_SENTENCES.request(error.message, sent) };
   }
   for (const [name, value] of Object.entries(request.params)) {
     if (value === "." || value === "..") {
       return {
         ok: false,
         code: "request",
-        message: MTCONNECT_AGENT_SENTENCES.request(MTCONNECT_AGENT_SENTENCES.dotSegment(name)),
+        message: MTCONNECT_AGENT_SENTENCES.request(MTCONNECT_AGENT_SENTENCES.dotSegment(name), sent),
       };
     }
   }
@@ -163,7 +168,11 @@ export function readMtconnectAgentStatement(
   if (path !== undefined) {
     const tests = readMtconnectAgentPath(path);
     if (tests === undefined) {
-      return { ok: false, code: "request", message: MTCONNECT_AGENT_SENTENCES.request(MTCONNECT_AGENT_SENTENCES.path) };
+      return {
+        ok: false,
+        code: "request",
+        message: MTCONNECT_AGENT_SENTENCES.request(MTCONNECT_AGENT_SENTENCES.path, sent),
+      };
     }
     const readable = options.readable;
     const unread = readable === undefined ? undefined : tests.find((test) => !readable(test));
@@ -171,7 +180,7 @@ export function readMtconnectAgentStatement(
       return {
         ok: false,
         code: "request",
-        message: MTCONNECT_AGENT_SENTENCES.request(MTCONNECT_AGENT_SENTENCES.unreadValue(unread)),
+        message: MTCONNECT_AGENT_SENTENCES.request(MTCONNECT_AGENT_SENTENCES.unreadValue(unread), sent),
       };
     }
   }

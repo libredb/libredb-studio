@@ -318,6 +318,7 @@ export async function runMtconnectAgentRead(
     rowCap: budget.maxResultRows,
     knownDevices: new Set(model.devices.flatMap((device) => [device.name, device.uuid])),
     readable: readablePathValues(model),
+    afterModelRead: true,
   });
   if (!reading.ok) throw new MtconnectAgentError(reading.message);
   const request = reading.request;

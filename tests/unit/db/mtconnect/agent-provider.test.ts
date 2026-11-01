@@ -37,6 +37,8 @@ const errorCapture = (name: string): string => readFileSync(path.join(FIXTURES, 
 const ORIGIN = "http://127.0.0.1:17322";
 const LATHE = "LIBREDB-LATHE-1722";
 const ADAPTER = "mtconnect-adapter";
+/** How a refusal decided from the device model ends: the model read was sent, the request was not. */
+const MODEL_READ_ONLY = "Only the device model was read, with GET /probe; the request itself was not sent.";
 const BUDGET: ReadOnlyStatementBudget = { statementTimeoutMs: 5_000, maxResultRows: 200, maxResultBytes: 1_000_000 };
 const AGENT: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
 const OPERATIONS: ProviderExecutionContext = { readOnly: true };
@@ -390,7 +392,10 @@ describe("what is refused before anything is sent, in agent mode's words with th
     const provider = await opened(AGENT, { ...DEFAULT_ANSWERS, "/asset/%252e%252e": capture("assets") });
     recorded = [];
     for (const statement of ["/a%2Fb/current", "/%2e%2e/probe", "/current\r/sample"]) {
-      await expect(provider.queryReadOnly(statement, BUDGET)).rejects.toThrow("This agent serves no device named");
+      const refused = provider.queryReadOnly(statement, BUDGET);
+      const error = (await refused.catch((caught: unknown) => caught)) as Error;
+      expect(error.message).toContain("This agent serves no device named");
+      expect(error.message).toEndWith(`${MTCONNECT_AGENT_READS} ${MODEL_READ_ONLY}`);
     }
     expect(lines()).toEqual(["GET /probe", "GET /probe", "GET /probe"]);
     recorded = [];
@@ -456,7 +461,9 @@ describe("what is refused before anything is sent, in agent mode's words with th
     expect(new Set(messages.slice(0, 2)).size).toBe(1);
     expect(new Set(messages.slice(2)).size).toBe(1);
     expect(messages[0]).toContain("names a value no data item agent mode reads holds");
-    expect(messages[0]).toEndWith(`${MTCONNECT_AGENT_READS} Nothing was sent.`);
+    // The device model was read to decide it, so the refusal never says nothing was sent.
+    expect(messages[0]).toEndWith(`${MTCONNECT_AGENT_READS} ${MODEL_READ_ONLY}`);
+    expect(messages[0]).not.toContain("Nothing was sent.");
   });
 
   test("equality tests on the values of read items are sent whole, joined by and, or and |", async () => {
