@@ -14,9 +14,10 @@ import type { DatabaseType } from "@/lib/types";
  * `EXPLAIN QUERY PLAN`, and answers `TABLE` and `EXPLAIN ANALYZE` with a syntax error, as SQLite does; InfluxDB 3 Core
  * 3.12.0, through the agent read-only path, runs a bare `VALUES` and `EXPLAIN` (`VERBOSE` too), answers `TABLE` with a
  * parser error, and runs `EXPLAIN ANALYZE`, which the fence refuses; Elasticsearch 9.1.4, through the agent read-only
- * path, runs a `SELECT` and `EXPLAIN`, parses a `WITH` but reads a name it defines as an index ("Unknown index"),
- * refuses `VALUES`, `TABLE` and `EXPLAIN ANALYZE` in its grammar, and has no `OFFSET` at all, so it pages by key: a
- * `WHERE` on a sort key past the last value read answers the next rows.
+ * path, runs a `SELECT` that reads at most one index expression and an `EXPLAIN` of one, while the path's statement
+ * check refuses a comment, a subquery, a `WITH` and a `JOIN` before they are sent, the grammar refuses `VALUES`,
+ * `TABLE` and `EXPLAIN ANALYZE`, and there is no `OFFSET` at all, so it pages by key: a `WHERE` on a sort key past the
+ * last value read answers the next rows.
  */
 export interface ReadQueryForms {
   /** The statements, as the refusal names them after "runs one read-only statement:". */
@@ -78,10 +79,12 @@ export const READ_QUERY_FORMS: Readonly<Record<DatabaseType, ReadQueryForms | nu
   druid: null,
   trino: null,
   cassandra: null,
-  // A WITH parses, but a name it defines is read as an index; VALUES, TABLE and EXPLAIN ANALYZE are grammar refusals;
-  // and there is no OFFSET (a parsing_exception), so the next page is asked for by key.
+  // The agent path's statement check refuses a comment, a subquery, a WITH and a JOIN before they are sent; VALUES,
+  // TABLE and EXPLAIN ANALYZE are grammar refusals; and there is no OFFSET (a parsing_exception), so the next page is
+  // asked for by key.
   elasticsearch: {
-    statements: "a SELECT (a name a WITH defines is read as an index, so a WITH fails), or EXPLAIN",
+    statements:
+      "a SELECT that reads at most one index expression, with no comment, subquery, WITH or JOIN, or an EXPLAIN of such a SELECT",
     paging: "ORDER BY a unique field, and for the next page add WHERE that field > the last value read",
     pagesWithOffset: false,
   },

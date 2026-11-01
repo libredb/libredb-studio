@@ -30,12 +30,14 @@ import { isSystemIndex, SEARCH_CONTAINER_TYPES, toColumns } from "@/lib/db/provi
 import { ELASTICSEARCH_PRODUCT, OPENSEARCH_PRODUCT } from "@/lib/db/providers/sql/search/index";
 import type {
   SearchClusterHealth,
+  SearchDataStreamMarks,
   SearchIndexInfo,
   SearchLoginReach,
   SearchMappingField,
   SearchObjectDefinition,
   SearchObjectInfo,
   SearchQueryResult,
+  SearchResolvedTargets,
   SearchTransport,
 } from "@/lib/db/providers/sql/search/transport";
 import { SearchTransportError } from "@/lib/db/providers/sql/search/transport";
@@ -160,6 +162,15 @@ function createTransport(options: FakeOptions = {}) {
     },
     loginReach: (): Promise<SearchLoginReach | null> => {
       throw new Error("introspection checked the login");
+    },
+    resolveTargets: (): Promise<SearchResolvedTargets> => {
+      throw new Error("introspection resolved an agent statement's index expression");
+    },
+    hiddenAliases: (): Promise<string[]> => {
+      throw new Error("introspection read an alias's mark");
+    },
+    dataStreamMarks: (): Promise<SearchDataStreamMarks[]> => {
+      throw new Error("introspection read a data stream's marks");
     },
     unrefusedSqlDelete: (): Promise<string | null> => {
       throw new Error("introspection sent a DELETE probe");

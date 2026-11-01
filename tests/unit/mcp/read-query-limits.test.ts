@@ -130,7 +130,10 @@ describe("the accepted forms each engine's refusal names", () => {
     ["clickhouse", "a SELECT (a WITH is fine), or EXPLAIN without ANALYZE"],
     ["libsql", "a SELECT (a WITH is fine), VALUES, or EXPLAIN"],
     ["influxdb3", "a SELECT (a WITH is fine), VALUES, or EXPLAIN without ANALYZE"],
-    ["elasticsearch", "a SELECT (a name a WITH defines is read as an index, so a WITH fails), or EXPLAIN"],
+    [
+      "elasticsearch",
+      "a SELECT that reads at most one index expression, with no comment, subquery, WITH or JOIN, or an EXPLAIN of such a SELECT",
+    ],
   ] as const)("%s: %s", (type, statements) => {
     expect(fenceRefusalText("NON_READ_STATEMENT", type)).toBe(
       `The statement was refused before it reached the database (NON_READ_STATEMENT). On this engine run_read_query runs one read-only statement: ${statements}.`,

@@ -27,8 +27,14 @@ const ELASTICSEARCH_GRAMMAR: SqlGrammar = {
   // reading can only cost a bound on a statement the engine refuses anyway, which is
   // the same fail-safe argument the `mysql` and `oracle` rows make.
   bracket: DEFAULT_SQL_GRAMMAR.bracket,
-  // FLAT: `SELECT /* a /* b */ 1 AS a` answers 200 with the column, so the first
-  // `*/` closed the run. A nesting reader would have seen an unterminated comment.
+  // NEITHER reading is the engine's; the row keeps the flat one. Measured on 9.1.4 (2026-11-01): a comment holding no
+  // second `/*` ends at its first `*/` (`SELECT 1 AS n /* a */ , 2 AS m /* b */` answers both columns), and so does one
+  // holding a second `/*` when no later `*/` follows (`SELECT /* a /* b */ 1 AS a` answers its column); but when a
+  // later `*/` does follow, the comment runs on past the first one (`SELECT 1 AS n /* /* */ */` answers n, and
+  // `SELECT 1 AS n /* /* */ , 2 AS m /* b */` answers n alone), so where it ends depends on the text after it, which
+  // neither value states. Flat stays for the editor, unchanged: the endpoint's grammar holds no write, so a comment end
+  // misread there costs a bound or a split the engine refuses. The agent read-only path reads no comment at all: it
+  // refuses every statement that holds one before it is sent (`elasticsearch-agent-index-fence.ts`).
   blockComment: "flat",
   // `SELECT q'{it's}'` is a `parsing_exception` - the form does not exist here.
   alternateQuoting: false,

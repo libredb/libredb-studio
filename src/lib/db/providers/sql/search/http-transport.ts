@@ -81,6 +81,7 @@ import { measureRowBytes } from "../read-only-budget";
 import {
   SearchBoundsError,
   type SearchClusterHealth,
+  type SearchDataStreamMarks,
   type SearchDialectId,
   type SearchErrorCategory,
   type SearchIndexInfo,
@@ -90,6 +91,9 @@ import {
   type SearchObjectInfo,
   type SearchQueryBounds,
   type SearchQueryResult,
+  type SearchResolvedAlias,
+  type SearchResolvedIndex,
+  type SearchResolvedTargets,
   type SearchRow,
   type SearchTransport,
   SearchTransportError,
@@ -143,6 +147,50 @@ const NO_SECURITY_ABSENCE: AbsenceRule = {
 
 /** The index pattern every index matches; with `allow_restricted_indices` it takes in the restricted ones too. */
 const EVERY_INDEX = "*";
+
+/** Where a restricted index name carries the server's release: replaced by the version the open read. */
+const VERSION_SLOT = "{version}";
+
+/**
+ * The server's own resolution of an index expression for the login making the request: the indices, aliases and data
+ * streams it names. Granted by the index privileges `read`, `view_index_metadata`, `manage` or `all` on what it names
+ * (measured on 9.1.4: `libredb_agent_read` and `libredb_seed_read` call it, and a name the login may not see answers
+ * 403 whether or not it exists).
+ */
+const RESOLVE_INDEX_PATH = "/_resolve/index";
+
+/**
+ * The wildcard expansion the SQL endpoint resolves a table with: open indices, no closed one, and a hidden one only
+ * where the server's own rules let the expression reach it (by its name, or a dot-led wildcard over a dot-led name).
+ * Measured on 9.1.4: `"*"` answers the aliases and data streams that are not hidden, and an alias over a hidden index
+ * among them, exactly as `SELECT COUNT(*) FROM "*"` reads them; a name that does not exist answers 404, and a wildcard
+ * that matches nothing answers three empty lists.
+ */
+const RESOLVE_QUERY = "expand_wildcards=open";
+
+/**
+ * The resolution's members, measured on 9.1.4: `indices`, each with `name` and `attributes` (`open` or `closed`, and
+ * `hidden` and `system` when the server marks it so); `aliases`, each with `name` and the `indices` behind it; and
+ * `data_streams`, each with `name`. Neither an alias nor a data stream carries its own marks there.
+ */
+const RESOLVE_FIELDS = Object.freeze({
+  INDICES: "indices",
+  ALIASES: "aliases",
+  DATA_STREAMS: "data_streams",
+  NAME: "name",
+  ATTRIBUTES: "attributes",
+  BEHIND: "indices",
+} as const);
+
+/** The attributes the resolution marks an index with when it is hidden, or a system index. */
+const HIDDEN_ATTRIBUTE = "hidden";
+const SYSTEM_ATTRIBUTE = "system";
+
+/** An alias's own mark in the alias listing, present and true only on a hidden alias (measured on 9.1.4). */
+const ALIAS_HIDDEN_FIELD = "is_hidden";
+
+/** A data stream's own marks in the data stream listing, both booleans on every entry (measured on 9.1.4). */
+const DATA_STREAM_MARK_FIELDS = Object.freeze({ HIDDEN: "hidden", SYSTEM: "system" } as const);
 
 /** The levels a setting is answered at, the one that wins first. */
 const SETTING_LEVELS = Object.freeze(["transient", "persistent", "defaults"]);
@@ -271,10 +319,12 @@ const TEMPLATE_FIELDS = Object.freeze({
  * The data-stream listing, the same array-under-one-key shape.
  *
  * Elasticsearch entries also carry `system` and `hidden` booleans and OpenSearch's
- * carry neither (measured), and NEITHER is read: every data stream the engine owns
- * that could be measured is dot-prefixed, so the convention already catches it, and a
+ * carry neither (measured), and the listing reads NEITHER: every data stream the engine
+ * owns that could be measured is dot-prefixed, so the convention already catches it, and a
  * second rule that no fixture can distinguish from the first is a line nothing proves.
  * If a non-dotted system data stream is ever measured, `isEngineOwned` is where it goes.
+ * The agent statement check reads both, for the streams it names, through
+ * {@link SearchHttpTransport.dataStreamMarks}.
  */
 const DATA_STREAM_FIELDS = Object.freeze({
   LIST: "data_streams",
@@ -600,17 +650,28 @@ interface SearchDialectSpec {
    */
   readonly sqlResultLimit: string | null;
   /**
-   * The restricted system indices the login check names one by one, or null where none are named and no login is
-   * checked. Asked about `read` with `allow_restricted_indices`, a name answers true when the login's roles reach that
-   * index, whatever pattern grants it; `*` alone answers true only when they reach every index, so a role reaching one
-   * restricted index answers false there, which is why each is named.
+   * The restricted system index patterns and names the login check asks about, or null where none are asked and no
+   * login is checked. Asked about `read` with `allow_restricted_indices`, a pattern or name answers true only when the
+   * login's roles reach every index it matches, whatever grants them: `*` answers true only for a login that reads
+   * every index, a pattern for one that reads all of that family, and a name for one that reads that index. So the
+   * check asks the families' patterns, which a role granting a family by any wider pattern answers, and the indices'
+   * own names, which a role granting one index by any pattern answers.
    *
-   * Elasticsearch: each name below was answered false to a user whose role reads `*` without
-   * `allow_restricted_indices` and true to the superuser (measured on 9.1.4, 2026-11-01), so each is restricted on the
-   * release line the agent profile admits. OpenSearch: null; the check is Elasticsearch's endpoint,
-   * never measured on OpenSearch's security plugin.
+   * Elasticsearch: each pattern and name below was answered false to a user whose role reads `*` without
+   * `allow_restricted_indices` and true to the superuser (measured on 9.1.4, 2026-11-01), so each is restricted, or
+   * holds restricted indices, on the release line the agent profile admits. A role reading `*` with these patterns
+   * granted with `allow_restricted_indices` answered true on `.*`, so together they hold every restricted index of
+   * 9.1.4. OpenSearch: null; the check is Elasticsearch's endpoint, never measured on OpenSearch's security plugin.
    */
-  readonly restrictedIndices: readonly string[] | null;
+  readonly restrictedIndices: RestrictedIndices | null;
+}
+
+/** The restricted system indices a login check asks about: family patterns, names, and names that carry the release. */
+interface RestrictedIndices {
+  readonly patterns: readonly string[];
+  readonly names: readonly string[];
+  /** Names that carry the server's release, written with {@link VERSION_SLOT} where the version the open read goes. */
+  readonly versionedNames: readonly string[];
 }
 
 /**
@@ -674,35 +735,79 @@ const DIALECTS: Readonly<Record<SearchDialectId, SearchDialectSpec>> = Object.fr
     // The grammar has no DELETE at all: every one sent raw is a `parsing_exception` (9.1.4).
     sqlDelete: null,
     sqlResultLimit: null,
-    restrictedIndices: Object.freeze([
-      ".security-7",
-      ".security-tokens-7",
-      ".security-profile-8",
-      ".async-search",
-      ".tasks",
-      ".fleet-secrets",
-      ".fleet-agents-7",
-      ".fleet-policies-7",
-      ".fleet-actions-7",
-      ".fleet-enrollment-api-keys-7",
-      ".connector-secrets",
-      ".secrets-inference",
-      ".inference",
-      ".ml-config",
-      ".ml-meta",
-      ".ml-inference-000005",
-      ".transform-internal-007",
-      ".watches",
-      ".triggered_watches",
-      ".geoip_databases",
-      ".logstash",
-      ".synonyms-2",
-      ".snapshot-blob-cache",
-      ".apm-agent-configuration",
-      ".kibana_9.1.4_001",
-      ".kibana_task_manager_9.1.4_001",
-      ".kibana_security_session_1",
-    ]),
+    restrictedIndices: Object.freeze({
+      patterns: Object.freeze([
+        ".security*",
+        ".kibana*",
+        ".fleet-*",
+        ".ml-config*",
+        ".ml-meta*",
+        ".ml-inference-*",
+        ".transform-internal-*",
+        ".tasks*",
+        ".async-search*",
+        ".watches*",
+        ".triggered_watches*",
+        ".snapshot-blob-cache*",
+        ".geoip_databases*",
+        ".apm-agent-configuration*",
+        ".apm-custom-link*",
+        ".synonyms*",
+        ".search-app*",
+        ".logstash*",
+        ".inference*",
+        ".secrets-inference*",
+        ".connector-secrets*",
+        ".query-rules*",
+        ".enrich-*",
+        ".reporting-*",
+        ".ds-*",
+        ".fs-*",
+        ".migrated-*",
+      ]),
+      names: Object.freeze([
+        ".security-7",
+        ".security-tokens-7",
+        ".security-profile-8",
+        ".async-search",
+        ".tasks",
+        ".fleet-secrets",
+        ".fleet-agents-7",
+        ".fleet-policies-7",
+        ".fleet-actions-7",
+        ".fleet-enrollment-api-keys-7",
+        ".fleet-artifacts-7",
+        ".fleet-servers-7",
+        ".fleet-policies-leader-7",
+        ".connector-secrets",
+        ".secrets-inference",
+        ".inference",
+        ".ml-config",
+        ".ml-meta",
+        ".ml-inference-000005",
+        ".transform-internal-007",
+        ".watches",
+        ".triggered_watches",
+        ".geoip_databases",
+        ".logstash",
+        ".synonyms-2",
+        ".snapshot-blob-cache",
+        ".apm-agent-configuration",
+        ".apm-custom-link",
+        ".query-rules",
+        ".search-app",
+        ".kibana_security_session_1",
+      ]),
+      versionedNames: Object.freeze([
+        `.kibana_${VERSION_SLOT}_001`,
+        `.kibana_task_manager_${VERSION_SLOT}_001`,
+        `.kibana_analytics_${VERSION_SLOT}_001`,
+        `.kibana_ingest_${VERSION_SLOT}_001`,
+        `.kibana_security_solution_${VERSION_SLOT}_001`,
+        `.kibana_alerting_cases_${VERSION_SLOT}_001`,
+        `.kibana_usage_counters_${VERSION_SLOT}_001`,
+      ]),
+    }),
   },
   opensearch: {
     label: "OpenSearch",
@@ -1221,6 +1326,52 @@ function isAbsence(absence: AbsenceRule, text: string): boolean {
   return absence.whateverTheBodyCarries || !carriesFailureEnvelope(text);
 }
 
+/** Whether a member is a list of strings, as an index's attributes and an alias's indices are. */
+function isTextList(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+/**
+ * An index resolution as the seam's targets, or null when it is not the measured shape: three lists, every entry an
+ * object with a name, an index's attributes and an alias's indices lists of text.
+ */
+function resolvedTargets(answer: Record<string, unknown> | null): SearchResolvedTargets | null {
+  const indices = answer?.[RESOLVE_FIELDS.INDICES];
+  const aliases = answer?.[RESOLVE_FIELDS.ALIASES];
+  const dataStreams = answer?.[RESOLVE_FIELDS.DATA_STREAMS];
+  if (!Array.isArray(indices) || !Array.isArray(aliases) || !Array.isArray(dataStreams)) return null;
+  const read = {
+    indices: [] as SearchResolvedIndex[],
+    aliases: [] as SearchResolvedAlias[],
+    dataStreams: [] as string[],
+  };
+  for (const entry of indices as unknown[]) {
+    const index = asRecord(entry);
+    const name = index === null ? null : textField(index, RESOLVE_FIELDS.NAME);
+    const attributes = index?.[RESOLVE_FIELDS.ATTRIBUTES];
+    if (name === null || !isTextList(attributes)) return null;
+    read.indices.push({
+      name,
+      hidden: attributes.includes(HIDDEN_ATTRIBUTE),
+      system: attributes.includes(SYSTEM_ATTRIBUTE),
+    });
+  }
+  for (const entry of aliases as unknown[]) {
+    const alias = asRecord(entry);
+    const name = alias === null ? null : textField(alias, RESOLVE_FIELDS.NAME);
+    const behind = alias?.[RESOLVE_FIELDS.BEHIND];
+    if (name === null || !isTextList(behind)) return null;
+    read.aliases.push({ name, indices: behind });
+  }
+  for (const entry of dataStreams as unknown[]) {
+    const stream = asRecord(entry);
+    const name = stream === null ? null : textField(stream, RESOLVE_FIELDS.NAME);
+    if (name === null) return null;
+    read.dataStreams.push(name);
+  }
+  return read;
+}
+
 /** A body the server announced as JSON that is not the object this file parses. */
 function unreadableBody(spec: SearchDialectSpec, what: string): SearchTransportError {
   return new SearchTransportError("engine", `${spec.label} answered ${what} the client could not read`);
@@ -1613,7 +1764,7 @@ export class SearchHttpTransport implements SearchTransport {
     };
   }
 
-  public async loginReach(signal?: AbortSignal): Promise<SearchLoginReach | null> {
+  public async loginReach(version: string, signal?: AbortSignal): Promise<SearchLoginReach | null> {
     const restricted = this.spec.restrictedIndices;
     if (restricted === null) {
       throw new SearchTransportError(
@@ -1621,7 +1772,12 @@ export class SearchHttpTransport implements SearchTransport {
         `${this.spec.label} declares no restricted system indices to check a login against`,
       );
     }
-    const names = [EVERY_INDEX, ...restricted];
+    const asked = [
+      ...restricted.patterns,
+      ...restricted.names,
+      ...restricted.versionedNames.map((name) => name.split(VERSION_SLOT).join(version)),
+    ];
+    const names = [EVERY_INDEX, ...asked];
     const answered = await this.request(
       this.url(HAS_PRIVILEGES_PATH),
       signal,
@@ -1649,8 +1805,73 @@ export class SearchHttpTransport implements SearchTransport {
       user,
       clusterAll,
       everyIndex: reads[0] === true,
-      restrictedIndices: restricted.filter((_name, i) => reads[i + 1] === true),
+      restrictedIndices: asked.filter((_name, i) => reads[i + 1] === true),
     };
+  }
+
+  /**
+   * Each expression goes out percent-encoded whole, so its own commas, exclusions and wildcards are the server's to
+   * read, and several are joined by a literal comma into request lines no longer than the bulk mapping read's
+   * ({@link mappingChunks}): measured on 9.1.4, the server decodes `%2C` before it splits a list, so either comma
+   * splits it.
+   */
+  public async resolveTargets(expressions: readonly string[], signal?: AbortSignal): Promise<SearchResolvedTargets> {
+    const indices: SearchResolvedIndex[] = [];
+    const aliases: SearchResolvedAlias[] = [];
+    const dataStreams: string[] = [];
+    for (const chunk of mappingChunks(expressions)) {
+      // oxlint-disable-next-line no-await-in-loop -- one request line at a time, each read before the next is sent.
+      const answer = asRecord(await this.request(this.url(`${RESOLVE_INDEX_PATH}/${chunk}`, RESOLVE_QUERY), signal));
+      const read = resolvedTargets(answer);
+      if (read === null) throw unreadableBody(this.spec, "an index resolution");
+      indices.push(...read.indices);
+      aliases.push(...read.aliases);
+      dataStreams.push(...read.dataStreams);
+    }
+    return { indices, aliases, dataStreams };
+  }
+
+  /** The alias listing of the named aliases: keyed by index, each alias's own entry carrying its mark. */
+  public async hiddenAliases(names: readonly string[], signal?: AbortSignal): Promise<string[]> {
+    const answered = new Set<string>();
+    const hidden = new Set<string>();
+    for (const chunk of mappingChunks(names)) {
+      // oxlint-disable-next-line no-await-in-loop -- one request line at a time, each read before the next is sent.
+      const listing = asRecord(await this.request(this.url(`${ALIAS_PATH}/${chunk}`), signal));
+      for (const entry of Object.values(listing ?? {})) {
+        for (const [alias, definition] of Object.entries(asRecord(asRecord(entry)?.[ALIAS_FIELDS.ALIASES]) ?? {})) {
+          const mark = asRecord(definition)?.[ALIAS_HIDDEN_FIELD];
+          if (mark !== undefined && typeof mark !== "boolean") throw unreadableBody(this.spec, "an alias listing");
+          answered.add(alias);
+          if (mark === true) hidden.add(alias);
+        }
+      }
+    }
+    if (!names.every((name) => answered.has(name))) throw unreadableBody(this.spec, "an alias listing");
+    return names.filter((name) => hidden.has(name));
+  }
+
+  public async dataStreamMarks(names: readonly string[], signal?: AbortSignal): Promise<SearchDataStreamMarks[]> {
+    const marks: SearchDataStreamMarks[] = [];
+    for (const chunk of mappingChunks(names)) {
+      // oxlint-disable-next-line no-await-in-loop -- one request line at a time, each read before the next is sent.
+      const listing = asRecord(await this.request(this.url(`${DATA_STREAM_PATH}/${chunk}`), signal));
+      const entries = listing?.[DATA_STREAM_FIELDS.LIST];
+      for (const entry of Array.isArray(entries) ? (entries as unknown[]) : []) {
+        const stream = asRecord(entry);
+        const name = stream === null ? null : textField(stream, DATA_STREAM_FIELDS.NAME);
+        const hidden = stream?.[DATA_STREAM_MARK_FIELDS.HIDDEN];
+        const system = stream?.[DATA_STREAM_MARK_FIELDS.SYSTEM];
+        if (name === null || typeof hidden !== "boolean" || typeof system !== "boolean") {
+          throw unreadableBody(this.spec, "a data stream listing");
+        }
+        marks.push({ name, hidden, system });
+      }
+    }
+    if (!names.every((name) => marks.some((mark) => mark.name === name))) {
+      throw unreadableBody(this.spec, "a data stream listing");
+    }
+    return marks;
   }
 
   public async sqlDeleteSetting(signal?: AbortSignal): Promise<{ setting: string; enabled: boolean | null }> {

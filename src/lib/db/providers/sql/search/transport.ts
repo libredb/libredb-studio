@@ -323,8 +323,41 @@ export interface SearchLoginReach {
   readonly clusterAll: boolean;
   /** Whether the login reads every index, the restricted system indices included. */
   readonly everyIndex: boolean;
-  /** The named restricted system indices the login reads, in the order they were asked about. */
+  /** The restricted system index names and patterns the login reads, in the order they were asked about. */
   readonly restrictedIndices: readonly string[];
+}
+
+/** One index an index expression resolves to, with the marks the server gives it. */
+export interface SearchResolvedIndex {
+  readonly name: string;
+  /** Whether the server marks the index hidden. */
+  readonly hidden: boolean;
+  /** Whether the server marks the index a system index. */
+  readonly system: boolean;
+}
+
+/** One alias an index expression resolves to, with the indices it points at. */
+export interface SearchResolvedAlias {
+  readonly name: string;
+  readonly indices: readonly string[];
+}
+
+/**
+ * What the server resolves index expressions to for the login making the request, as {@link SearchTransport.resolveTargets}
+ * reads it: the indices, with their hidden and system marks, the aliases, with the indices behind each, and the data
+ * streams, by name.
+ */
+export interface SearchResolvedTargets {
+  readonly indices: readonly SearchResolvedIndex[];
+  readonly aliases: readonly SearchResolvedAlias[];
+  readonly dataStreams: readonly string[];
+}
+
+/** One data stream's hidden and system marks, as the server gives them. */
+export interface SearchDataStreamMarks {
+  readonly name: string;
+  readonly hidden: boolean;
+  readonly system: boolean;
 }
 
 /**
@@ -370,11 +403,26 @@ export interface SearchTransport {
   /**
    * What the login making the request may do that a read-only agent must not, as the server's own privilege check
    * answers it for that login: whether it holds the cluster privilege `all`, whether it reads every index with the
-   * restricted system indices included, and which of the product's named restricted system indices it reads. Null
-   * when the server runs without security, so no login exists to check. Only a product that names its restricted
-   * system indices answers; another refuses before any request.
+   * restricted system indices included, and which of the product's restricted system index names and patterns it
+   * reads, the names that carry the server's release built from `version`, the version the server reported. Null when
+   * the server runs without security, so no login exists to check. Only a product that names its restricted system
+   * indices answers; another refuses before any request.
    */
-  loginReach(signal?: AbortSignal): Promise<SearchLoginReach | null>;
+  loginReach(version: string, signal?: AbortSignal): Promise<SearchLoginReach | null>;
+
+  /**
+   * What the server resolves each index expression to for the login making the request, with the wildcard expansion
+   * the SQL endpoint resolves a table with, merged into one answer. Each expression is resolved as a whole, its comma
+   * list, exclusions and wildcards included; one the server cannot resolve, a name that does not exist or the login may
+   * not see among them, fails the call.
+   */
+  resolveTargets(expressions: readonly string[], signal?: AbortSignal): Promise<SearchResolvedTargets>;
+
+  /** The names among the given aliases that the server marks hidden. Every alias must be answered, or the call fails. */
+  hiddenAliases(names: readonly string[], signal?: AbortSignal): Promise<string[]>;
+
+  /** The hidden and system marks of each named data stream. Every one must be answered, or the call fails. */
+  dataStreamMarks(names: readonly string[], signal?: AbortSignal): Promise<SearchDataStreamMarks[]>;
 
   /**
    * The cluster setting that turns the SQL plugin's DELETE on, by name, and its value: true or false, or null when

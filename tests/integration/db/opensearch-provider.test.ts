@@ -2704,14 +2704,17 @@ describe("OpenSearchProvider.queryReadOnly", () => {
     expect(sentBodies.at(-1)).toEqual({ query: "SELECT id, customer, total FROM probe_orders" });
   });
 
-  // The hidden-index fence is Elasticsearch's alone, measured on its grammar; OpenSearch's agent path sends a name
-  // that starts with a dot as written, and B167 records that its hidden indices are not measured.
-  test("sends a statement naming a hidden index as written: the hidden-index fence is Elasticsearch's alone", async () => {
+  // The statement check is Elasticsearch's alone, measured on its grammar and its index resolution; OpenSearch's agent
+  // path sends a statement as written, a comment and a name that starts with a dot included, and asks the server
+  // nothing about its index first, and B167 records that its hidden indices are not measured.
+  test("sends a statement as written and asks nothing about its index: the statement check is Elasticsearch's alone", async () => {
     const provider = await agentProvider();
+    const before = sentPaths.length;
 
-    await provider.queryReadOnly("SELECT id FROM `.opendistro-job-scheduler-lock`", AGENT_BUDGET);
+    await provider.queryReadOnly("SELECT id FROM `.opendistro-job-scheduler-lock` /* note */", AGENT_BUDGET);
 
-    expect(sentBodies.at(-1)).toEqual({ query: "SELECT id FROM `.opendistro-job-scheduler-lock`" });
+    expect(sentBodies.at(-1)).toEqual({ query: "SELECT id FROM `.opendistro-job-scheduler-lock` /* note */" });
+    expect(sentPaths.slice(before).filter((path) => path.includes("_resolve"))).toEqual([]);
   });
 
   test("refuses an answer past the row budget, after closing the cursor that answer left open", async () => {

@@ -834,28 +834,29 @@ describe("SearchHttpTransport (opensearch) refusal inside a 200", () => {
 
 /**
  * The login check: the server's own `_has_privileges` answer for the login making the request, asked by the open of a
- * handle that sends agent statements. Only Elasticsearch declares the restricted system indices it names.
+ * handle that sends agent statements. Only Elasticsearch declares the restricted system indices it asks about: family
+ * patterns, names, and names that carry the release, built from the version the open read.
  */
 describe("SearchHttpTransport login check", () => {
-  test("Elasticsearch asks one POST naming the cluster privilege all and read on every index and each restricted one", async () => {
-    handler = () =>
-      new Response(
-        JSON.stringify({
-          username: "u",
-          has_all_requested: false,
-          cluster: { all: false },
-          index: { "*": { read: false }, ".security-7": { read: true } },
-          application: {},
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      );
+  const json = (body: unknown) =>
+    new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
 
-    const caught = await new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch"))
-      .loginReach()
-      .catch((error: unknown) => error);
+  test("Elasticsearch asks one POST naming the cluster privilege all and read on every index, each restricted pattern and name, the release's names included", async () => {
+    // Every asked name is answered, and the one that carries the release reads true.
+    handler = () => {
+      const sent = JSON.parse(String(calls.at(-1)?.init?.body)) as { index: { names: string[] }[] };
+      const names = sent.index[0]?.names ?? [];
+      return json({
+        username: "u",
+        has_all_requested: false,
+        cluster: { all: false },
+        index: Object.fromEntries(names.map((name) => [name, { read: name === ".kibana_9.1.10_001" }])),
+        application: {},
+      });
+    };
 
-    // Every restricted name must be answered, so an answer naming two of them is unreadable.
-    expect(caught).toBeInstanceOf(SearchTransportError);
+    const reach = await new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch")).loginReach("9.1.10");
+
     expect(calls).toHaveLength(1);
     expect(new URL(calls[0]?.url ?? "").pathname).toBe("/_security/user/_has_privileges");
     expect(calls[0]?.init?.method).toBe("POST");
@@ -865,19 +866,214 @@ describe("SearchHttpTransport login check", () => {
     };
     expect(body.cluster).toEqual(["all"]);
     expect(body.index).toHaveLength(1);
-    expect(body.index[0]?.names[0]).toBe("*");
-    expect(body.index[0]?.names).toContain(".security-7");
     expect(body.index[0]?.privileges).toEqual(["read"]);
     expect(body.index[0]?.allow_restricted_indices).toBe(true);
+    expect(body.index[0]?.names.slice(0, 4)).toEqual(["*", ".security*", ".kibana*", ".fleet-*"]);
+    for (const name of [".ds-*", ".fs-*", ".migrated-*", ".search-app*", ".security-7", ".kibana_security_session_1"]) {
+      expect(body.index[0]?.names).toContain(name);
+    }
+    // The names that carry the release are built from the version the open read.
+    expect(body.index[0]?.names.slice(-7)).toEqual([
+      ".kibana_9.1.10_001",
+      ".kibana_task_manager_9.1.10_001",
+      ".kibana_analytics_9.1.10_001",
+      ".kibana_ingest_9.1.10_001",
+      ".kibana_security_solution_9.1.10_001",
+      ".kibana_alerting_cases_9.1.10_001",
+      ".kibana_usage_counters_9.1.10_001",
+    ]);
+    expect(body.index[0]?.names.some((name) => name.includes("{version}"))).toBe(false);
+    expect(reach).toEqual({
+      user: "u",
+      clusterAll: false,
+      everyIndex: false,
+      restrictedIndices: [".kibana_9.1.10_001"],
+    });
+  });
+
+  test("Elasticsearch reads an answer that leaves an asked name out as unreadable", async () => {
+    handler = () =>
+      json({
+        username: "u",
+        has_all_requested: false,
+        cluster: { all: false },
+        index: { "*": { read: false }, ".security-7": { read: true } },
+        application: {},
+      });
+
+    const caught = await new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch"))
+      .loginReach("9.1.4")
+      .catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as Error).message).toBe("Elasticsearch answered a privilege check the client could not read");
   });
 
   test("OpenSearch declares no restricted indices, and refuses before any request", async () => {
     const caught = await new SearchHttpTransport("opensearch", makeConnection("opensearch"))
-      .loginReach()
+      .loginReach("3.8.0")
       .catch((error: unknown) => error);
 
     expect(caught).toBeInstanceOf(SearchTransportError);
     expect((caught as Error).message).toBe("OpenSearch declares no restricted system indices to check a login against");
     expect(calls).toHaveLength(0);
+  });
+});
+
+/**
+ * The statement check's three questions, each answered in the shape 9.1.4 answers it (measured 2026-11-01): what an
+ * index expression resolves to, which aliases are hidden, and the marks of each data stream. A shape that is not the
+ * measured one is unreadable, and an asked alias or data stream left out of an answer is too.
+ */
+describe("SearchHttpTransport index resolution", () => {
+  const json = (body: unknown, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  const transport = () => new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch"));
+  const failure = (run: () => Promise<unknown>) => run().catch((error: unknown) => error);
+
+  test("resolves one expression as a whole, its commas encoded, with the SQL endpoint's wildcard expansion", async () => {
+    handler = () =>
+      json({
+        indices: [
+          { name: "probe_orders", aliases: ["porders"], attributes: ["open"] },
+          { name: "hidden_logs", attributes: ["hidden", "open"] },
+          { name: ".security-7", attributes: ["hidden", "open", "system"] },
+        ],
+        aliases: [{ name: "logs_view", indices: ["hidden_logs"] }],
+        data_streams: [
+          { name: "probe_stream", backing_indices: [".ds-probe_stream-1"], timestamp_field: "@timestamp" },
+        ],
+      });
+
+    const targets = await transport().resolveTargets(["probe_*,-probe_shapes"]);
+
+    expect(calls).toHaveLength(1);
+    const url = new URL(calls[0]?.url ?? "");
+    expect(url.pathname).toBe("/_resolve/index/probe_*%2C-probe_shapes");
+    expect(url.search).toBe("?expand_wildcards=open");
+    expect(calls[0]?.init?.method).toBe("GET");
+    expect(targets).toEqual({
+      indices: [
+        { name: "probe_orders", hidden: false, system: false },
+        { name: "hidden_logs", hidden: true, system: false },
+        { name: ".security-7", hidden: true, system: true },
+      ],
+      aliases: [{ name: "logs_view", indices: ["hidden_logs"] }],
+      dataStreams: ["probe_stream"],
+    });
+  });
+
+  test("resolves many names in request lines joined by a comma, and merges the answers", async () => {
+    const names = Array.from({ length: 300 }, (_, i) => `logs-${String(i).padStart(20, "0")}`);
+    handler = (url) => {
+      const asked = decodeURIComponent(new URL(url).pathname.slice("/_resolve/index/".length)).split(",");
+      return json({ indices: asked.map((name) => ({ name, attributes: ["open"] })), aliases: [], data_streams: [] });
+    };
+
+    const targets = await transport().resolveTargets(names);
+
+    expect(calls.length).toBeGreaterThan(1);
+    expect(calls.every((call) => call.url.length < 3700)).toBe(true);
+    expect(targets.indices.map((index) => index.name)).toEqual(names);
+  });
+
+  test.each([
+    ["not an object", []],
+    ["no indices list", { aliases: [], data_streams: [] }],
+    ["no aliases list", { indices: [], data_streams: [] }],
+    ["no data streams list", { indices: [], aliases: [] }],
+    ["an index with no name", { indices: [{ attributes: ["open"] }], aliases: [], data_streams: [] }],
+    ["an index that is not an object", { indices: ["x"], aliases: [], data_streams: [] }],
+    ["an index with no attributes", { indices: [{ name: "x" }], aliases: [], data_streams: [] }],
+    ["an attribute that is not text", { indices: [{ name: "x", attributes: [true] }], aliases: [], data_streams: [] }],
+    ["an alias with no name", { indices: [], aliases: [{ indices: ["x"] }], data_streams: [] }],
+    ["an alias that is not an object", { indices: [], aliases: [7], data_streams: [] }],
+    ["an alias with no indices", { indices: [], aliases: [{ name: "a" }], data_streams: [] }],
+    ["a data stream with no name", { indices: [], aliases: [], data_streams: [{}] }],
+    ["a data stream that is not an object", { indices: [], aliases: [], data_streams: [null] }],
+  ])("reads a resolution with %s as unreadable", async (_name, body) => {
+    handler = () => json(body);
+
+    const caught = await failure(() => transport().resolveTargets(["x"]));
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as Error).message).toBe("Elasticsearch answered an index resolution the client could not read");
+  });
+
+  test("a name the server does not know fails the resolution in the server's words", async () => {
+    handler = () =>
+      json(
+        {
+          error: { type: "index_not_found_exception", reason: "no such index [missing]" },
+          status: 404,
+        },
+        404,
+      );
+
+    const caught = await failure(() => transport().resolveTargets(["missing"]));
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as Error).message).toBe("no such index [missing]");
+  });
+
+  test("names each hidden alias from the alias listing of the aliases asked about", async () => {
+    handler = () =>
+      json({
+        hidden_logs: { aliases: { logs_view: {} } },
+        probe_orders: { aliases: { hidden_view: { is_hidden: true }, porders: { is_hidden: false } } },
+      });
+
+    const hidden = await transport().hiddenAliases(["logs_view", "hidden_view", "porders"]);
+
+    expect(new URL(calls[0]?.url ?? "").pathname).toBe("/_alias/logs_view,hidden_view,porders");
+    expect(hidden).toEqual(["hidden_view"]);
+  });
+
+  test.each([
+    ["an asked alias left out", ["logs_view", "hidden_view"], { hidden_logs: { aliases: { logs_view: {} } } }],
+    ["a mark that is not a boolean", ["logs_view"], { hidden_logs: { aliases: { logs_view: { is_hidden: "true" } } } }],
+    ["a listing that is not an object", ["logs_view"], []],
+    ["an entry with no aliases", ["logs_view"], { hidden_logs: {} }],
+  ])("reads an alias listing with %s as unreadable", async (_name, asked, body) => {
+    handler = () => json(body);
+
+    const caught = await failure(() => transport().hiddenAliases(asked));
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as Error).message).toBe("Elasticsearch answered an alias listing the client could not read");
+  });
+
+  test("reads each asked data stream's marks from the data stream listing", async () => {
+    handler = () =>
+      json({
+        data_streams: [
+          { name: "probe_stream", hidden: false, system: false, generation: 1 },
+          { name: "hidden_stream", hidden: true, system: false },
+        ],
+      });
+
+    const marks = await transport().dataStreamMarks(["probe_stream", "hidden_stream"]);
+
+    expect(new URL(calls[0]?.url ?? "").pathname).toBe("/_data_stream/probe_stream,hidden_stream");
+    expect(marks).toEqual([
+      { name: "probe_stream", hidden: false, system: false },
+      { name: "hidden_stream", hidden: true, system: false },
+    ]);
+  });
+
+  test.each([
+    ["an asked data stream left out", { data_streams: [{ name: "probe_stream", hidden: false, system: false }] }],
+    ["a mark that is not a boolean", { data_streams: [{ name: "hidden_stream", hidden: "true", system: false }] }],
+    ["no system mark", { data_streams: [{ name: "hidden_stream", hidden: false }] }],
+    ["an entry with no name", { data_streams: [{ hidden: false, system: false }] }],
+    ["an entry that is not an object", { data_streams: ["hidden_stream"] }],
+    ["no data stream list", {}],
+  ])("reads a data stream listing with %s as unreadable", async (_name, body) => {
+    handler = () => json(body);
+
+    const caught = await failure(() => transport().dataStreamMarks(["hidden_stream"]));
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as Error).message).toBe("Elasticsearch answered a data stream listing the client could not read");
   });
 });
