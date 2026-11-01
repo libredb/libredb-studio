@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S10 · 7
-- [Drivers and connections](#drivers-and-connections) — D1-D414, U17 · 303
+- [Drivers and connections](#drivers-and-connections) — D1-D417, U17 · 306
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U192 · 177
@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B162 · 86
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B163 · 86
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -4175,6 +4175,32 @@ Not reached on the pinned OPC PLC 2.15.10 fixture, whose references carry neithe
 
 **Done when:** `shapeBrowse` writes such an id in the Part 6 spelling (`nsu=` for a URI, `svr=` for a non-zero server index), the comment says what it does, a reference on another server is shown as not readable rather than offered as a key, and a library-bridge test pins both spellings.
 
+### D415. The MTConnect editor lists a device's data items as its assets
+
+`listObjects(container, kind)` in `src/lib/db/providers/industrial/mtconnect/index.ts` splits a device's items only by `kind === "condition"`, so on an editor handle `listObjects([device], "asset")` returns every non-condition data item of the device, each labelled `kind: "asset"`, and `describeObjects([device], "asset")` describes them as such.
+The tree never shows it only because `countObjects` answers `asset: { count: 0 }`, so the kind is never expanded; any caller that lists a kind without counting it first, the objects route included, gets data items under the asset heading.
+Agent-mode handles are not affected: there `listObjects` refuses the kind with `MTCONNECT_AGENT_WITHHELD.assets`.
+Found 2026-11-01 while verifying the MTConnect agent read; pre-existing.
+
+**Done when:** `listObjects` answers the asset kind on an editor handle either with the agent's assets (from `/assets`, under the same guard and caps as the console) or with an explicit refusal that says assets are read from the console, never with data items, and the count and the listing agree; a provider test pins `listObjects([device], "asset")` and `describeObjects([device], "asset")` on an editor handle.
+
+### D416. MTConnect's request limit is one permit per provider instance, not per agent
+
+The bound that keeps Studio from degrading an agent's own clients (`MTC_LIMITS.perProvider` in `src/lib/db/providers/industrial/mtconnect/index.ts`, measured in `docs/providers/mtconnect.md` section 3.3) is one permit per provider instance: `limiterFor()` is called once per instance (`engineLimiter` in `src/lib/db/utils/bounded-limiter.ts`).
+So two handles on one agent, the editor and agent mode, or two connections to the same agent, read it at the same time, although the measurement that motivates the bound is about load on one agent.
+Section 3.3 and the `MTC_LIMITS` comments now say so.
+Found 2026-11-01 while verifying the MTConnect agent read.
+
+**Done when:** the limiter is keyed by the agent's base URL, so one agent serves one Studio request at a time whichever handle sends it, with a test that two providers on one URL queue behind one permit, and section 3.3 says so.
+
+### D417. The MTConnect tree labels a device's own named data item with a leading slash
+
+`listObjects` in `src/lib/db/providers/industrial/mtconnect/index.ts` names an item `${item.componentPath}/${item.name}` whenever it has a name, so an item that sits directly under the device, whose `componentPath` is empty, is labelled `/availability`; `displayName` in `model.ts` already leaves out an empty path.
+The same label reaches the agent grounding, since an agent-mode capture lists the same objects.
+Seen 2026-11-01 on the pinned `mtconnect/agent:2.8.0.4` fixture in a browser pass: the editor tree under `LIBREDB-LATHE-1722` showed `/availability`, and the agent-mode capture labelled `d1722-avail` `/availability`; pre-existing (eab62f5138).
+
+**Done when:** a device-level named item is labelled by its name alone, through `displayName`, and a provider test pins the label of a device-level and a component-level item.
+
 ## Value interpolation
 
 ### V1. Query history records the placeholders, not the values that were bound
@@ -6181,6 +6207,7 @@ Seen again 2026-10-31 on Firestore (emulator `cloud-firestore-emulator` 1.22.0) 
 
 Seen again 2026-10-31 on Modbus (pymodbus 3.12.1, the pinned `docker/modbus` image) in a browser pass, twice: runs asked to pass a write value, function codes 6, 16, 5, 15, 22, 23, 8, 20 and 21, a broadcast to unit 0, an address past 65535, 126 registers, 2001 coils, a block past the end of the table, a point the map does not name and a request of two shapes to `run_read_query` had each refused before anything was sent (`STATEMENT_NOT_ADMITTED`) and finished `answered` with one claim about the schema inventory and no word of the refusals; the second run's `compose_report` was declined once with `UNVERIFIABLE_EVIDENCE` (runs `arun_42ec8a779aeb46aebc1b6a09d01f94d2`, `arun_4b8655e77e344804995cb0e1b236e1f3`); the device's registers and coils hashed the same before and after.
 Seen again 2026-11-01 on OPC UA (OPC PLC 2.15.10 by digest) in a browser pass: a run asked to pass an exact `write`, `call` and `subscribe` request to `run_read_query` had each refused before anything was sent, then read the two values it was asked to change and finished `answered` with those two values and no word of the three refusals (run `arun_f89f4e62db3444b6a8b8560edbc68235`); the values read the same raw before and after.
+Seen again 2026-11-01 on MTConnect (`mtconnect/agent:2.8.0.4` by digest) in a browser pass, three times: runs asked to pass an exact `PUT`, `POST`, `/cancel/id=1`, `interval`, `heartbeat` and `frequency` request, a two-line request, `/swagger`, `/sample?count=201` and a path value the model does not answer had each refused before the request was sent and finished `answered` with claims about other reads or the schema inventory and no word of the refusals (runs `arun_51bce412585843c5b5f8394de95f07da`, `arun_195cd0b4872848baa125367eefaebade`, `arun_716cebcbbcf44d539bfb45480384f15e`); the agent's program value and asset count read the same raw before and after.
 
 **Done when:** a run whose only drafted statement was refused either reports that refusal in its answer, held by the run's verifier, or ends in a state other than `answered`, with an agent test that forces the refusal.
 
@@ -6208,6 +6235,7 @@ Seen again 2026-10-31 on NETCONF (Netopeer2 2.8.7, the `docker/netconf` image) i
 Seen again 2026-10-31 on Modbus (pymodbus 3.12.1, the pinned `docker/modbus` image) in a browser pass: on an agent-mode handle the provider answers the overview, performance, session, slow-query, table, index and storage readings with its own reason before anything is sent (`MODBUS_AGENT_WITHHELD` in `src/lib/db/providers/industrial/modbus/agent-surface.ts`, thrown as a `QueryError`); an Operate run took the session, slow-query and storage readings, each was recorded `class: "database-error"` and headed "The database refused the statement", and the three spent the run's repair attempts, so the next two readings were refused with `REPAIR_BUDGET_EXHAUSTED` (run `arun_d3b3e98e21bd4ebbaba7ebe000b8cba0`).
 Seen again 2026-10-31 on Prometheus 3.13.3 (prom/prometheus by digest) in a browser pass: on an agent-mode handle the provider answers the session, slow-query and index readings with its own reason before anything is sent (`PROMETHEUS_AGENT_WITHHELD` in `src/lib/db/providers/timeseries/prometheus/agent-surface.ts`, thrown as a `QueryError`); an Operate run took all three after the health, storage and table readings, and each was recorded `class: "database-error"` and headed "The database refused the statement" over Studio's sentence (run `arun_dbdca7a2f72f46148887e45dfef89557`).
 Seen again 2026-11-01 on OPC UA (OPC PLC 2.15.10 by digest) in a browser pass: an Operate run's sessions, health and slow-query panels were each declined by the provider on its agent-mode handle with its own reason (`OPCUA_AGENT_WITHHELD` in `src/lib/db/providers/industrial/opcua/agent-surface.ts`), never a connection failure, yet each was headed "The database refused the statement", the three spent the run's repair attempts, the next three calls were refused with "This run has used all of its repair attempts", and the run ended without a report (run `arun_50b04d75776a4ff0a5f1cf61646745fc`); each reason also opens by naming `run_read_query`, which the operations workflow does not hold.
+Seen again 2026-11-01 on MTConnect (`mtconnect/agent:2.8.0.4` by digest) in a browser pass: an Operate run's health, sessions and slow-query readings were each declined by the provider on its agent-mode handle with its own reason (`MTCONNECT_AGENT_WITHHELD` in `src/lib/db/providers/industrial/mtconnect/agent-surface.ts`), never a connection failure, yet each was recorded `class: "database-error"` and headed "The database refused the statement", the three spent the run's repair attempts, the next three calls were refused with `REPAIR_BUDGET_EXHAUSTED`, and the run ended `unanswered` with `no-reading` (run `arun_543d203761a54c549a6c99e8ec4eeeff`); each reason also opens by naming `run_read_query`.
 
 **Done when:** a panel the provider declines without sending a statement is recorded as not sent and headed "Refused before the database" with the provider's sentence as the detail, it does not count as a repair attempt, and a timeline test and an agent test pin both.
 
@@ -6310,6 +6338,7 @@ Seen again 2026-10-31 on NETCONF (Netopeer2 2.8.7, the `docker/netconf` image) i
 Seen again 2026-10-31 on Modbus (the single-client libmodbus device built from `tests/fixtures/modbus/2.3.0/agent-boundary/single-client/`) in a browser pass: a points read that would pass the run's 64 device requests is refused by Studio before anything is sent (`MODBUS_AGENT_FAILURE_SENTENCES.requestBound` in `src/lib/db/providers/industrial/modbus/agent-read.ts`, a `RefusedBeforeSendError`), and the rail headed it "Refused before the database" over Studio's sentence, yet the ledger recorded it `class: "database-error"`, which spends a repair attempt (run `arun_40f9c0fbd47b4345b4362e2de3103189`).
 Seen again 2026-10-31 on Prometheus 3.13.3 (prom/prometheus by digest) in a browser pass: `prometheus_http_requests_total[1m]`, a matrix of 1536 samples past the 200-row budget, is refused by Studio and never cut (`docs/providers/prometheus.md` section 14.2), yet the ledger recorded it `class: "database-error"` and the rail headed it "The database refused the statement" over Studio's own sentence ("Read-only execution exceeded the row budget: 1536 rows > 200 allowed") (run `arun_d41617c1ac0446f8a248d6a2d8343e81`).
 Seen again 2026-11-01 on OPC UA (OPC PLC 2.15.10 by digest) in a browser pass: `{"history": "ns=3;s=HistorianInt32"}` with no limit and with a limit of 5000, past the 200-row budget, is refused by Studio after 201 values and never cut, and a value read naming an `nsu=` URI the server's NamespaceArray does not hold is refused by Studio after the one Read of that table (`docs/providers/opcua.md` section 14.2), yet the rail headed each "The database refused the statement" (runs `arun_efdfdd1cb5ed4c5d934925da68ba72e0`, `arun_ac9540aa7a004b3497b708bba1b4541b`).
+Seen again 2026-11-01 on MTConnect (`mtconnect/agent:2.8.0.4` by digest) in a browser pass: a path whose `@type` or `@id` value no answered data item holds is refused by Studio after the one `GET /probe` and before the request (`docs/providers/mtconnect.md` section 14.2), yet the ledger recorded it `class: "database-error"` and the rail headed it "The database refused the statement" over Studio's sentence (run `arun_27bf19382b8c4dbf88bed90ff1375e47`); and `/sample?count=201`, past the 200-row budget, passes the run's admission (whose row cap is 10,000) and is refused by the provider's guard before anything is sent, so the rail headed it "Refused before the database" while the ledger recorded `class: "database-error"`, which spends a repair attempt (run `arun_195cd0b4872848baa125367eefaebade`).
 
 **Done when:** a tenant refusal Studio makes is recorded and headed as refused before the read it guards, with the provider's sentence as the detail, it does not count as a repair attempt, and an agent test pins both.
 
@@ -6527,6 +6556,7 @@ The grounding a run reads opens "Schema inventory for this run ... 9 table(s) re
 A model repeated it: "The schema inventory names unit 1 holding-register entries including 1.hr0 ... and reports no columns derivable from their stored definitions."
 Seen 2026-10-31 on Modbus (pymodbus 3.12.1, the pinned `docker/modbus` image, and the single-client libmodbus device) in a browser pass (runs `arun_9ca0a6b938724f46a52986272efdf724`, `arun_86493ebf47b74dc09f93084b9b6bf21b`, `arun_94b8f6972b6145a5a9886483953cdd53`).
 `entityName` also labels the editor's object panel, so declaring it is a decision about both surfaces.
+Seen again 2026-11-01 on MTConnect (`mtconnect/agent:2.8.0.4` by digest) in a browser pass: the provider declares no `entityName` either, so the sixteen data items and conditions of an agent-mode capture read "Schema snapshot ctx_a3e4 · 16 tables" in the rail and "16 tables read" in a plan answer, and an Operate answer said the inventory "describes 16 tables and lists table names and indexes only" (runs `arun_543d203761a54c549a6c99e8ec4eeeff`, `arun_786fcaed52cd4e0fadb50a49fe57c417`).
 
 **Done when:** a Modbus run's grounding and rail count register map points as points, the column line is not said of a point, the noun comes from the provider's own declaration rather than a type-id branch, and a context-snapshot test pins the grounding of a Modbus capture.
 
@@ -6551,6 +6581,7 @@ Seen 2026-11-01 on OPC UA (OPC PLC 2.15.10 by digest) in a browser pass: every a
 `GuardLine` in `src/components/agent/AnswerCard.tsx` always appends `EXECUTION_CAVEAT`, "The run executed nothing. What was checked is what this run read of the schema, which records what exists rather than what your role is permitted to read.", including beside `NAMES_UNREAD_NOTE` and `NO_INVENTORY_NOTE`, which say that nothing checked the names.
 So the same popover says the names were not checked and that a check was made against a schema the run read; on an engine with no inventory, the run read no schema at all.
 Seen 2026-11-01 on OPC UA (OPC PLC 2.15.10 by digest) in a browser pass: a plan draft of `{"read": [...]}` showed "not checked", "The names in this statement were not checked" and the caveat together (run `arun_95edee7dbf9c461cb477b624c9a72525`).
+Seen again 2026-11-01 on MTConnect (`mtconnect/agent:2.8.0.4` by digest) in a browser pass: a plan draft of `/LIBREDB-LATHE-1722/sample?count=-20&path=//DataItem[@id="x1722-pos"]` showed the same three together (run `arun_786fcaed52cd4e0fadb50a49fe57c417`).
 
 **Done when:** the caveat's second sentence is said only where the names were checked against an inventory, and a component test pins the popover for a checked, an unread and a no-inventory draft.
 
@@ -8684,15 +8715,6 @@ Found 2026-10-27 while designing read-only agent and MCP execution for every pro
 
 **Done when:** either a way to prove each reachable catalog's connector credential read-only at open, or an engine switch that disables pass-through table functions, is found and measured, a boundary test with a writable positive control shows a pass-through write refused, and Trino then joins agent execution through `queryReadOnly` with its `MCP_STATEMENT_READ` row false until the owner opens MCP read for it; cited in `docs/AGENT.md`.
 
-### B132. MTConnect has no agent execution and no MCP statement read
-
-The MTConnect provider implements no `queryReadOnly`, so agent execution refuses it and no MCP tool runs a request line; the MCP metadata tools work (`MCP_EXPOSABLE.mtconnect` is true, `MCP_STATEMENT_READ.mtconnect` is false).
-Its console text is one request line in the agent's own URL grammar, not a query language, and #424 gives such a provider no read-only statement path (`docs/providers/mtconnect.md` section 3.1); the nine GET routes the provider pins, with any non-GET and any second request refused, would serve as a structural closed table once that rule is lifted.
-
-Found 2026-10-27 while designing read-only agent and MCP execution for every provider.
-
-**Done when:** the owner lifts the #424 request-line rule for MTConnect, the provider implements `queryReadOnly` over the pinned route table, refuses a handle not opened under the agent profile, joins `AGENT_EXECUTION_ENGINES` under a statement language of its own, and MCP serves it through its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) once the owner opens its MCP read, with tests; `docs/providers/mtconnect.md` section 3.1 says what changed; cited in `docs/AGENT.md`.
-
 ### B133. MQTT has no agent execution and no MCP surface
 
 `MCP_EXPOSABLE.mqtt` is false and the provider implements no `queryReadOnly`, so agent execution and every MCP tool refuse an MQTT connection.
@@ -9037,6 +9059,25 @@ Kept so that MCP access, and any widening of what agent mode reads on an OPC UA 
 Found 2026-11-01 when agent mode joined OPC UA.
 
 **Done when:** a per-engine exposure ruling opens MCP for OPC UA, an MCP surface that reads through the same seam, withheld set, units lookup and request bound is designed and `MCP_EXPOSABLE.opcua` turns true for it, the pack declares its MCP facet (`src/lib/agent/languages/opcuaread/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), and `MCP_STATEMENT_READ.opcua` is true, with tests that no MCP read reaches a withheld node or answers a value without its units; cited in `docs/AGENT.md`.
+
+### B163. MTConnect's agent reads withhold the adapter connections, and it has no MCP statement read
+
+Agent mode executes MTConnect reads under the `mtconnectread` request language, one request line per call, the statement, written as the console writes it with GET implied (`docs/providers/mtconnect.md`, section 14).
+The boundary is the provider's structural closed route table: the request line is read by the console's own guard against nine routes, `/probe`, `/current`, `/sample` and `/assets`, each for every device or for one, and `/asset/{assetIds}`, every one a GET, and sent by a client with no method argument and no body parameter, so no PUT, POST, `/cancel`, streaming parameter or second request can be sent on the agent path.
+No agent setting can be the boundary: measured on the pinned agent, `AllowPut` set to true opens a PUT that sets an observation and a POST that injects one, which `/current` then serves.
+Each read reads the agent's device model with `GET /probe` first, on the handle's one permit, so the device a request names, the rows' join and the withheld items are decided from the model the agent serves at that read; nothing of one read is kept for the next.
+Observations and asset documents are the machine's own data, so they are answered as the console renders them, one row per observation, data item or asset, an asset's document as XML text rendered from the parsed tree.
+Withheld on every agent-mode path, the grounding and the MCP metadata tools included, are the agent's own adapter connections: the agent writes an `Adapter` component per adapter it reads from under its Agent device, and that component's name, its data item ids and its `ADAPTER_URI` value carry the adapter's network address, so none of its observations or data items is answered or listed, and an answer counts what it withheld.
+A `path` is agent mode's own subset, `//DataItem` alternatives of equality tests on `@id`, `@name`, `@type`, `@subType` or `@category` whose every value an answered data item holds, since the agent answers a path that matches a withheld item differently from one that matches nothing, so `contains()`, `starts-with()` or an exact test of a withheld id would read the adapter's address back; a hit and its miss are refused alike.
+A `count` past the row budget is refused before anything is sent, an answer past the row or byte budget or a read past its time budget is refused, never cut, and a failure is worded by its category and the agent's standard error code, never in the agent's text.
+On a handle of either agent profile the console is refused, the connection reads only the device model, assets are not listed as objects, and the overview, health, performance, slow-query, session, table, index and storage readings answer their reason rather than an empty reading or Studio's own figure.
+So the language offers the investigation and the operations workflow only.
+`MCP_EXPOSABLE.mtconnect` stays true for the metadata tools, which acquire an agent-mode handle and so read the device model with the adapter connections withheld; the language's MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) and `MCP_STATEMENT_READ.mtconnect` is false, so MCP `run_read_query` refuses an MTConnect connection; `READ_ONLY_ENFORCED.mtconnect` is unchanged.
+Kept so that MCP statement reads, and any widening of what agent mode reads on an MTConnect agent, are decisions of their own rather than side effects of agent mode joining.
+
+Found 2026-11-01 when agent mode joined MTConnect.
+
+**Done when:** a change of its own opens MCP statement reads on MTConnect: MCP serves it through its own MCP facet in its language pack (`src/lib/agent/languages/<statement-language>/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), here `mtconnectread/mcp.ts`, under the same route table, budgets and withheld adapter connections, and `MCP_STATEMENT_READ.mtconnect` is true, with tests that an MCP read sends only GET of the nine routes and that no MCP answer carries an adapter's address; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

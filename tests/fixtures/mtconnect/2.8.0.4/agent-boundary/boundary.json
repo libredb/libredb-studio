@@ -1,0 +1,590 @@
+{
+  "fixture": {
+    "image": "mtconnect/agent:2.8.0.4@sha256:c42f90850ab70d65ae5e73b14392b3041ed51065bd7bf287658db6f7260df641",
+    "adapter": "docker/mtconnect-init/adapter.py, one position every 10 s",
+    "agents": {
+      "17393": "AllowPut = false (docker/mtconnect-init/agent.cfg)",
+      "17394": "AllowPut = true"
+    },
+    "capturedAt": "2026-11-01"
+  },
+  "connect": {
+    "sent": [
+      "GET /probe"
+    ]
+  },
+  "reads": [
+    {
+      "statement": "/probe",
+      "sent": [
+        "GET /probe",
+        "GET /probe"
+      ],
+      "rowCount": 16,
+      "fields": [
+        "device",
+        "deviceUuid",
+        "component",
+        "componentId",
+        "dataItemId",
+        "name",
+        "category",
+        "type",
+        "subType",
+        "units",
+        "nativeUnits",
+        "representation",
+        "statistic"
+      ],
+      "withheld": [
+        "6 data items of the agent's adapter connections were withheld from this answer."
+      ],
+      "carriesAdapterAddress": false
+    },
+    {
+      "statement": "/LIBREDB-LATHE-1722/probe",
+      "sent": [
+        "GET /probe",
+        "GET /LIBREDB-LATHE-1722/probe"
+      ],
+      "rowCount": 9,
+      "fields": [
+        "device",
+        "deviceUuid",
+        "component",
+        "componentId",
+        "dataItemId",
+        "name",
+        "category",
+        "type",
+        "subType",
+        "units",
+        "nativeUnits",
+        "representation",
+        "statistic"
+      ],
+      "withheld": [],
+      "carriesAdapterAddress": false
+    },
+    {
+      "statement": "/current",
+      "sent": [
+        "GET /probe",
+        "GET /current"
+      ],
+      "rowCount": 16,
+      "fields": [
+        "device",
+        "component",
+        "componentId",
+        "compositionId",
+        "dataItemId",
+        "name",
+        "category",
+        "type",
+        "subType",
+        "state",
+        "value",
+        "units",
+        "timestamp",
+        "sequence",
+        "nativeCode",
+        "nativeSeverity",
+        "qualifier",
+        "conditionId",
+        "sampleCount",
+        "sampleRate",
+        "entryCount",
+        "quality",
+        "unknownToModel"
+      ],
+      "withheld": [
+        "6 observations of the agent's adapter connections were withheld from this answer."
+      ],
+      "carriesAdapterAddress": false
+    },
+    {
+      "statement": "/LIBREDB-LATHE-1722/current",
+      "sent": [
+        "GET /probe",
+        "GET /LIBREDB-LATHE-1722/current"
+      ],
+      "rowCount": 9,
+      "fields": [
+        "device",
+        "component",
+        "componentId",
+        "compositionId",
+        "dataItemId",
+        "name",
+        "category",
+        "type",
+        "subType",
+        "state",
+        "value",
+        "units",
+        "timestamp",
+        "sequence",
+        "nativeCode",
+        "nativeSeverity",
+        "qualifier",
+        "conditionId",
+        "sampleCount",
+        "sampleRate",
+        "entryCount",
+        "quality",
+        "unknownToModel"
+      ],
+      "withheld": [],
+      "carriesAdapterAddress": false
+    },
+    {
+      "statement": "/current?path=//DataItem[@id=\"x1722-pos\"]",
+      "sent": [
+        "GET /probe",
+        "GET /current?path=%2F%2FDataItem%5B%40id%3D%22x1722-pos%22%5D"
+      ],
+      "rowCount": 1,
+      "fields": [
+        "device",
+        "component",
+        "componentId",
+        "compositionId",
+        "dataItemId",
+        "name",
+        "category",
+        "type",
+        "subType",
+        "state",
+        "value",
+        "units",
+        "timestamp",
+        "sequence",
+        "nativeCode",
+        "nativeSeverity",
+        "qualifier",
+        "conditionId",
+        "sampleCount",
+        "sampleRate",
+        "entryCount",
+        "quality",
+        "unknownToModel"
+      ],
+      "withheld": [],
+      "carriesAdapterAddress": false
+    },
+    {
+      "statement": "/current?path=//DataItem[@category=\"EVENT\"]",
+      "sent": [
+        "GET /probe",
+        "GET /current?path=%2F%2FDataItem%5B%40category%3D%22EVENT%22%5D"
+      ],
+      "rowCount": 13,
+      "fields": [
+        "device",
+        "component",
+        "componentId",
+        "compositionId",
+        "dataItemId",
+        "name",
+        "category",
+        "type",
+        "subType",
+        "state",
+        "value",
+        "units",
+        "timestamp",
+        "sequence",
+        "nativeCode",
+        "nativeSeverity",
+        "qualifier",
+        "conditionId",
+        "sampleCount",
+        "sampleRate",
+        "entryCount",
+        "quality",
+        "unknownToModel"
+      ],
+      "withheld": [
+        "4 observations of the agent's adapter connections were withheld from this answer."
+      ],
+      "carriesAdapterAddress": false
+    },
+    {
+      "statement": "/sample?count=-5",
+      "sent": [
+        "GET /probe",
+        "GET /sample?count=-5"
+      ],
+      "rowCount": 5,
+      "fields": [
+        "device",
+        "component",
+        "componentId",
+        "compositionId",
+        "dataItemId",
+        "name",
+        "category",
+        "type",
+        "subType",
+        "state",
+        "value",
+        "units",
+        "timestamp",
+        "sequence",
+        "nativeCode",
+        "nativeSeverity",
+        "qualifier",
+        "conditionId",
+        "sampleCount",
+        "sampleRate",
+        "entryCount",
+        "quality",
+        "unknownToModel"
+      ],
+      "withheld": [],
+      "carriesAdapterAddress": false
+    },
+    {
+      "statement": "/LIBREDB-LATHE-1722/sample?path=//DataItem[@type=\"POSITION\"]&count=-3",
+      "sent": [
+        "GET /probe",
+        "GET /LIBREDB-LATHE-1722/sample?path=%2F%2FDataItem%5B%40type%3D%22POSITION%22%5D&count=-3"
+      ],
+      "rowCount": 2,
+      "fields": [
+        "device",
+        "component",
+        "componentId",
+        "compositionId",
+        "dataItemId",
+        "name",
+        "category",
+        "type",
+        "subType",
+        "state",
+        "value",
+        "units",
+        "timestamp",
+        "sequence",
+        "nativeCode",
+        "nativeSeverity",
+        "qualifier",
+        "conditionId",
+        "sampleCount",
+        "sampleRate",
+        "entryCount",
+        "quality",
+        "unknownToModel"
+      ],
+      "withheld": [],
+      "carriesAdapterAddress": false
+    },
+    {
+      "statement": "/assets",
+      "sent": [
+        "GET /probe",
+        "GET /assets"
+      ],
+      "rowCount": 1,
+      "fields": [
+        "assetId",
+        "type",
+        "deviceUuid",
+        "timestamp",
+        "removed",
+        "hash",
+        "manufacturers",
+        "serialNumber",
+        "toolId",
+        "document"
+      ],
+      "withheld": [],
+      "carriesAdapterAddress": false
+    },
+    {
+      "statement": "/LIBREDB-LATHE-1722/assets",
+      "sent": [
+        "GET /probe",
+        "GET /LIBREDB-LATHE-1722/assets"
+      ],
+      "rowCount": 1,
+      "fields": [
+        "assetId",
+        "type",
+        "deviceUuid",
+        "timestamp",
+        "removed",
+        "hash",
+        "manufacturers",
+        "serialNumber",
+        "toolId",
+        "document"
+      ],
+      "withheld": [],
+      "carriesAdapterAddress": false
+    },
+    {
+      "statement": "/asset/TOOL-1722",
+      "sent": [
+        "GET /probe",
+        "GET /asset/TOOL-1722"
+      ],
+      "rowCount": 1,
+      "fields": [
+        "assetId",
+        "type",
+        "deviceUuid",
+        "timestamp",
+        "removed",
+        "hash",
+        "manufacturers",
+        "serialNumber",
+        "toolId",
+        "document"
+      ],
+      "withheld": [],
+      "carriesAdapterAddress": false
+    }
+  ],
+  "refusedBeforeSend": [
+    {
+      "statement": "PUT /probe",
+      "refused": "PUT is not a method this provider sends.",
+      "sent": []
+    },
+    {
+      "statement": "POST /LIBREDB-LATHE-1722?x1722-pos=9999",
+      "refused": "POST is not a method this provider sends.",
+      "sent": []
+    },
+    {
+      "statement": "DELETE /asset/TOOL-1722",
+      "refused": "DELETE is not a method this provider sends.",
+      "sent": []
+    },
+    {
+      "statement": "/cancel/id=1",
+      "refused": "GET /cancel/id=1 is not a route this provider runs.",
+      "sent": []
+    },
+    {
+      "statement": "/assets/TOOL-1722",
+      "refused": "GET /assets/TOOL-1722 is not a route this provider runs.",
+      "sent": []
+    },
+    {
+      "statement": "/swagger",
+      "refused": "GET /swagger is not a route this provider runs.",
+      "sent": []
+    },
+    {
+      "statement": "/sample?interval=1000",
+      "refused": "interval is not sent by this provider: streaming is out of scope for v1: an answer never ends, and the shared transport cannot carry it.",
+      "sent": []
+    },
+    {
+      "statement": "/current?heartbeat=1000",
+      "refused": "heartbeat is not sent by this provider: streaming is out of scope for v1.",
+      "sent": []
+    },
+    {
+      "statement": "/sample?frequency=1000",
+      "refused": "frequency is not sent by this provider: the deprecated spelling of interval.",
+      "sent": []
+    },
+    {
+      "statement": "/current\n/sample",
+      "refused": "A run sends one request.",
+      "sent": []
+    },
+    {
+      "statement": "/../probe",
+      "refused": "device is a dot segment, which a URL resolves to another path, so what would be sent is not the route that was written.",
+      "sent": []
+    },
+    {
+      "statement": "/asset/..",
+      "refused": "assetIds is a dot segment, which a URL resolves to another path, so what would be sent is not the route that was written.",
+      "sent": []
+    },
+    {
+      "statement": "/current?path=count(//DataItem)",
+      "refused": "count() is not a function this provider sends.",
+      "sent": []
+    },
+    {
+      "statement": "/current?path=//Adapter",
+      "refused": "The path is outside what agent mode sends.",
+      "sent": []
+    },
+    {
+      "statement": "/current?path=//DataItem[starts-with(@id,\"_\")]",
+      "refused": "The path is outside what agent mode sends.",
+      "sent": []
+    },
+    {
+      "statement": "/sample?count=201",
+      "refused": "count may not be larger than this read's row cap of 200.",
+      "sent": []
+    }
+  ],
+  "pathOracle": [
+    {
+      "path": "//DataItem[contains(@id,'{}')]",
+      "agentAnswers": {
+        "hit": {
+          "status": 200,
+          "errorCode": null,
+          "observations": 6
+        },
+        "miss": {
+          "status": 400,
+          "errorCode": "INVALID_XPATH",
+          "observations": 0
+        }
+      },
+      "agentModeRefusesBothAlike": true,
+      "agentModeRefusal": "The path is outside what agent mode sends.",
+      "sent": {
+        "hit": [],
+        "miss": []
+      }
+    },
+    {
+      "path": "//DataItem[starts-with(@id,'{}')]",
+      "agentAnswers": {
+        "hit": {
+          "status": 200,
+          "errorCode": null,
+          "observations": 6
+        },
+        "miss": {
+          "status": 400,
+          "errorCode": "INVALID_XPATH",
+          "observations": 0
+        }
+      },
+      "agentModeRefusesBothAlike": true,
+      "agentModeRefusal": "The path is outside what agent mode sends.",
+      "sent": {
+        "hit": [],
+        "miss": []
+      }
+    },
+    {
+      "path": "//DataItem[@id='{}']",
+      "agentAnswers": {
+        "hit": {
+          "status": 200,
+          "errorCode": null,
+          "observations": 1
+        },
+        "miss": {
+          "status": 400,
+          "errorCode": "INVALID_XPATH",
+          "observations": 0
+        }
+      },
+      "agentModeRefusesBothAlike": true,
+      "agentModeRefusal": "The path's test @id=\"{}\" names a value no data item agent mode reads holds, so it is not sent: a value is the id of a data item of this agent's device model other than its withheld adapter connections.",
+      "sent": {
+        "hit": [
+          "GET /probe"
+        ],
+        "miss": [
+          "GET /probe"
+        ]
+      }
+    }
+  ],
+  "surfaces": {
+    "devices": [
+      "Agent",
+      "LIBREDB-LATHE-1722"
+    ],
+    "agentDeviceCounts": {
+      "dataitem": {
+        "count": 7
+      },
+      "condition": {
+        "count": 0
+      },
+      "asset": {
+        "unavailable": "Agent mode on MTConnect reads the agent through run_read_query alone, one request line per read, and the device tree from the agent's device model, read with GET /probe when the connection opens. An agent's device model does not hold its assets, so they are not listed as objects and no count of them is taken; this is not a count of none. Read them with run_read_query: /assets, /{device}/assets or /asset/{assetIds}."
+      }
+    },
+    "agentDeviceItems": [
+      "agent_avail",
+      "device_added",
+      "device_removed",
+      "device_changed",
+      "agent_b14d2468_asset_chg",
+      "agent_b14d2468_asset_rem",
+      "agent_b14d2468_asset_count"
+    ],
+    "getHealth": "Agent mode on MTConnect reads the agent through run_read_query alone, one request line per read, and the device tree from the agent's device model, read with GET /probe when the connection opens. An MTConnect agent reports no database size, cache ratio, query log or session list, so no health reading is taken; this is not a reading of none.",
+    "getOverview": "Agent mode on MTConnect reads the agent through run_read_query alone, one request line per read, and the device tree from the agent's device model, read with GET /probe when the connection opens. An MTConnect agent reports no uptime, connection limit or size, and the overview's figures would be Studio's own, so no overview is taken; this is not a reading of none. Its devices and data items are the object tree, and /probe reads its model.",
+    "getActiveSessions": "Agent mode on MTConnect reads the agent through run_read_query alone, one request line per read, and the device tree from the agent's device model, read with GET /probe when the connection opens. An MTConnect agent publishes no client list, so no session reading is taken; this is not a reading of none.",
+    "sent": [],
+    "editorAgentDeviceItemCount": 13
+  },
+  "raw": {
+    "allowPutFalse": {
+      "swagger": {
+        "get": 15
+      },
+      "requests": [
+        {
+          "request": "PUT /LIBREDB-LATHE-1722?x1722-pos=9999",
+          "status": 400,
+          "errorCode": "INTERNAL_ERROR",
+          "valueChanged": false
+        },
+        {
+          "request": "POST /LIBREDB-LATHE-1722?p1722-prog=CAPTURE.NC",
+          "status": 400,
+          "errorCode": "INTERNAL_ERROR",
+          "valueChanged": false
+        },
+        {
+          "request": "GET /cancel/id=1",
+          "status": 404,
+          "errorCode": "INVALID_URI"
+        }
+      ]
+    },
+    "allowPutTrue": {
+      "swagger": {
+        "get": 15,
+        "put": 9,
+        "post": 9,
+        "delete": 6
+      },
+      "requests": [
+        {
+          "request": "PUT /LIBREDB-LATHE-1722?x1722-pos=9999",
+          "status": 200,
+          "errorCode": null,
+          "valueChanged": true
+        },
+        {
+          "request": "POST /LIBREDB-LATHE-1722?p1722-prog=CAPTURE.NC",
+          "status": 200,
+          "errorCode": null,
+          "valueChanged": true
+        },
+        {
+          "request": "GET /cancel/id=1",
+          "status": 404,
+          "errorCode": "INVALID_URI"
+        }
+      ]
+    }
+  },
+  "state": {
+    "nextSequenceBefore": 36,
+    "nextSequenceAfter": 36,
+    "observationsBetween": []
+  }
+}

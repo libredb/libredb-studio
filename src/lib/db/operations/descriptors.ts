@@ -43,6 +43,7 @@ import { netconfrpcAgentReadInput } from "./netconfrpc-admission";
 import { modbusreadAgentReadInput } from "./modbusread-admission";
 import { promqlAgentReadInput } from "./promql-admission";
 import { opcuareadAgentReadInput } from "./opcuaread-admission";
+import { mtconnectreadAgentReadInput } from "./mtconnectread-admission";
 import { weaviateapiAgentReadInput } from "./weaviateapi-admission";
 import { agentPlanExecutionSqlInput, agentQueryReadSqlInput, agentReadSqlInput } from "./statement-guard";
 import type { RegistrableOperationDescriptor } from "./types";
@@ -927,6 +928,40 @@ const opcuareadQueryReadDescriptor: RegistrableOperationDescriptor = {
   },
 };
 
+const MTCONNECTREAD_READ_BOUNDARY =
+  "MTConnect: the provider's structural closed route table: one request line, written as the console writes it and " +
+  "read before it is sent with the console's own guard, matched against nine routes (probe, current, sample and " +
+  "assets, each for every device or one, and asset by id), every one a GET, and sent by a client with no method " +
+  "argument and no body parameter, so no PUT, POST, /cancel, streaming parameter or second request can be sent; the " +
+  "agent's own AllowPut setting widens what it accepts, which is why the table is the boundary. Each read reads the " +
+  "agent's device model with GET /probe first, on the same one permit per agent. Observations and asset documents " +
+  "are answered as the console renders them, an asset's document as XML text. Withheld on every agent-mode handle: " +
+  "the agent's own adapter connections, whose names, ids and ADAPTER_URI values carry the adapter's network address. " +
+  "A read past the row, byte or time budget is refused, never truncated.";
+
+/**
+ * One MTConnect read the model wrote, on an `mtconnect` connection.
+ *
+ * R1 on a structural boundary: the agent's reads reach the agent only as GET of a route from the closed table. Its own
+ * id, and not a widened `sql.query.read`, so the SQL contract and its audit action stay exactly what they were.
+ */
+const mtconnectreadQueryReadDescriptor: RegistrableOperationDescriptor = {
+  id: "mtconnectread.query.read",
+  riskClass: 1,
+  accessLevel: "data-read",
+  requiredCapabilities: [],
+  resourceCost: "heavy",
+  supportsDryRun: false,
+  requiresApproval: false,
+  modelStatement: true,
+  inputSchema: mtconnectreadAgentReadInput,
+  verification: {
+    reviewedBy: "MTConnect agent execution design review",
+    boundary: MTCONNECTREAD_READ_BOUNDARY,
+    verifiedOn: "2026-11-01",
+  },
+};
+
 const FSQUERY_READ_BOUNDARY =
   "Firestore: the provider's structural closed table, read with the console's own parser: one read of a closed table " +
   "of four metadata reads (the root collection ids, the subcollection ids of one document the statement names in full, " +
@@ -1255,6 +1290,7 @@ const CANONICAL_DESCRIPTORS: readonly RegistrableOperationDescriptor[] = Object.
   modbusreadQueryReadDescriptor,
   promqlQueryReadDescriptor,
   opcuareadQueryReadDescriptor,
+  mtconnectreadQueryReadDescriptor,
 ]);
 
 /**

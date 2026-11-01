@@ -271,7 +271,8 @@ export async function readOnce(options: MtcClientOptions, request: MtcRequest): 
 }
 
 /**
- * A `sample` read, walked observation by observation and stopped at the row cap.
+ * A `sample` read, walked observation by observation and stopped at the row cap, or where `onObservation` answers
+ * `false`.
  *
  * The walk is streaming because the row cap has to be met while reading rather than afterwards
  * (MT-S4). What this does NOT claim is that streaming always costs less memory: MEASURED over fifty
@@ -284,7 +285,8 @@ export async function readObservations(
   options: MtcClientOptions,
   request: MtcRequest,
   rowCap: number,
-  onObservation: (observation: MtcObservation) => void,
+  /** Answering exactly `false` stops the walk; any other answer, the console's `push` count included, goes on. */
+  onObservation: (observation: MtcObservation) => unknown,
 ): Promise<{ readonly read: number; readonly capped: boolean; readonly agentError?: MtcElement }> {
   const url = buildTarget(options.origin, options.pathPrefix, request);
   const response = await options.withPermit(() =>
@@ -308,8 +310,8 @@ export async function readObservations(
       return false;
     }
     read++;
-    onObservation(observation);
-    return true;
+    // A caller's own stop (the agent's row budget) ends the walk where the caller decided, never as the row cap.
+    return onObservation(observation) !== false;
   });
   if (!walk.ok) {
     // The same split as a tree read: a bound of ours is not the agent's defect.

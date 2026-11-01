@@ -13,13 +13,18 @@
  * with `AllowPut = true` the agent's own Swagger grows from 15 operations to 39, among them a PUT
  * that sets an observation.
  *
- * No `queryReadOnly`: the console text is a request line rather than a query language, so there is
- * no agent statement execution and no MCP read query.
+ * AGENT MODE. `queryReadOnly` is the agent's: one request line, the statement, read by `agent-statement.ts` with the
+ * console's own guard and route table and refused before anything is sent when it is not one of the nine GET routes,
+ * then run by `agent-read.ts` against the agent's device model read fresh for that read, with the agent's adapter
+ * connections withheld (`agent-withheld.ts`). On a handle opened for any agent-mode profile the console is refused,
+ * the connection reads only the device model, and every reading the agent does not report answers its reason
+ * (`agent-surface.ts`). MCP read stays closed on this engine.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
-import { DatabaseConfigError, QueryError } from "@/lib/db/errors";
+import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import type { HttpOrigin } from "@/lib/db/http/endpoint";
 import { createNodeTransport, type NodeTransport } from "@/lib/db/http/node-transport";
+import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
 import { engineLimiter } from "@/lib/db/utils/bounded-limiter";
 import type {
   ActiveSessionDetails,
@@ -32,9 +37,14 @@ import type {
   ObjectDetail,
   ObjectSourceDocument,
   ProviderOptions,
+  KindCount,
   ObjectDetailBatch,
   PerformanceMetrics,
   ProviderCapabilities,
+  ProviderExecutionContext,
+  ProviderLabels,
+  ReadOnlyStatementBudget,
+  ReadOnlyStatementMode,
   SlowQueryStats,
   StorageStats,
   TableStats,
@@ -50,6 +60,10 @@ import {
   MTCONNECT_OBJECT_KINDS,
   MTCONNECT_QUERY_DIALECT,
 } from "./capabilities";
+import { agentFailure, mtconnectAgentResult, runMtconnectAgentRead, type MtconnectAgentReader } from "./agent-read";
+import { readMtconnectAgentStatement } from "./agent-statement";
+import { MTCONNECT_AGENT_WITHHELD } from "./agent-surface";
+import { itemWithheld } from "./agent-withheld";
 import { headerOf, MtcClientError, readObservations, readOnce, type MtcAnswer, type MtcClientOptions } from "./client";
 import { mtconnectEndpoint } from "./connection-options";
 import { guardRequestLine, MtcRefusal, type MtcGuardOptions, type MtcRequest, type MtcWindow } from "./guard";
@@ -68,6 +82,23 @@ interface MtcSession {
 }
 
 const NOT_CONNECTED = "Provider is not connected. Call connect() first.";
+
+/** Studio's own refusals on the agent's statement path, made before anything is sent. */
+const MTCONNECT_PROVIDER_SENTENCES = {
+  profileRequired: "Read-only execution requires a provider opened under the agent read-only profile",
+  noEstimate: "MTConnect composes no estimating plan for the agent",
+} as const;
+
+/**
+ * What a statement is on this engine, in the words plan mode drafts by: one request line of the console's. A model
+ * asked for "a statement" on a connection whose query language reads JSON would write JSON; this names the request
+ * line, the nine routes and what is never drafted.
+ */
+export const MTCONNECT_STATEMENT_LANGUAGE =
+  'one MTConnect request line this editor runs, GET implied, written as the console writes it: /probe for the device model, /current for the current observations, /sample?from=<sequence>&count=<n> for a page of the buffer (a negative count reads the newest), /assets for the assets and /asset/{assetIds} for assets by id, every route but the last for every device or for one (/{device}/current), and narrowed with path=//DataItem[@id="..."]; there is no PUT, no POST, no /cancel and no streaming parameter (interval, heartbeat, frequency), and the agent\'s own adapter connections are never drafted, since agent mode withholds them';
+
+/** How the provider builds its transport, which production fills with the shared one and a test with its own. */
+export type MtcTransportFactory = typeof createNodeTransport;
 
 /** How a refusal spells the container path: by the level's label, which reads "[Device]". */
 const MTC_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
@@ -92,7 +123,7 @@ const MTC_CONTAINER_PATH_ENGINE: ContainerPathShapeEngine = {
 export const ROW_CAP = 10_000;
 
 /**
- * One permit per agent, measured rather than chosen.
+ * One permit per provider instance, measured rather than chosen.
  *
  * MEASURED on the pinned agent: while a 300 alternative `path` ran in a loop, the median of
  * `sample?count=1` on the same agent rose from 1.4 ms to 74.1 ms. The agent serves the machine's own
@@ -100,7 +131,7 @@ export const ROW_CAP = 10_000;
  * our own latency.
  */
 export const MTC_LIMITS = Object.freeze({
-  /** MEASURED: the 1.4 ms to 74.1 ms figure above. One request at a time per agent. */
+  /** MEASURED: the 1.4 ms to 74.1 ms figure above. One request at a time per handle; two handles on one agent each hold their own. */
   perProvider: 1,
   /** CHOSEN: four agents read at once from one Studio, which is a load on this process rather than on any agent. */
   perEngine: 4,
@@ -143,8 +174,40 @@ export class MTConnectProvider extends BaseDatabaseProvider {
    * a constructor that ignored `options` would quietly replace a reader's configured timeout with the
    * default, on every read, with nothing failing. Every sibling takes it; this one does too.
    */
-  public constructor(config: DatabaseConnection, options: ProviderOptions = {}) {
+  public constructor(
+    config: DatabaseConnection,
+    options: ProviderOptions = {},
+    private readonly execution: ProviderExecutionContext = {},
+    private readonly createTransport: MtcTransportFactory = createNodeTransport,
+  ) {
     super(config, options);
+  }
+
+  /**
+   * Whether this handle was opened for the agent read-only profile by an acquisition that sends statements
+   * (`sendsStatements`). Only then does `queryReadOnly` answer; the operations profile's acquisitions send no statement.
+   */
+  private get readOnlyProfile(): boolean {
+    return this.execution.readOnly === true && this.execution.sendsStatements === true;
+  }
+
+  /**
+   * Whether this handle was opened for any agent-mode profile: every execution profile opens `readOnly` and no editor
+   * handle does. Such a handle reads only the device model when it opens, refuses the console, withholds the agent's
+   * adapter connections and answers every reading the agent does not report with its reason.
+   */
+  private get agentProfile(): boolean {
+    return this.execution.readOnly === true;
+  }
+
+  /** The refusal of a reading an agent-mode handle does not take, after the connection check every reading makes. */
+  private agentWithheld(sentence: string): never {
+    this.require();
+    throw new QueryError(sentence, this.type);
+  }
+
+  public override getLabels(): ProviderLabels {
+    return { ...super.getLabels(), statementLanguage: MTCONNECT_STATEMENT_LANGUAGE };
   }
 
   public override getCapabilities(): ProviderCapabilities {
@@ -195,7 +258,7 @@ export class MTConnectProvider extends BaseDatabaseProvider {
 
   public async connect(): Promise<void> {
     const { origin, tls, pathPrefix } = mtconnectEndpoint(this.config);
-    const transport = createNodeTransport({
+    const transport = this.createTransport({
       origin,
       tls,
       maxSockets: 1,
@@ -219,7 +282,10 @@ export class MTConnectProvider extends BaseDatabaseProvider {
     // wherever the request narrows it; `MTCONNECT_WINDOW_REQUEST` carries that measurement. Its root
     // element is `MTConnectStreams` in every schema version from 1.3 to 2.8, so it proves an agent
     // is answering as the health read did (MEASURED at 1.3, 1.7 and 2.0 against the same buffer).
-    await this.readWindow();
+    // An agent-mode handle reads the device model instead, and nothing else: no observation is read on it except by an
+    // agent read, so the plan mode that grounds on it reads the model alone.
+    if (this.agentProfile) await this.model();
+    else await this.readWindow();
     this.state = { ...this.state, connected: true };
   }
 
@@ -382,16 +448,27 @@ export class MTConnectProvider extends BaseDatabaseProvider {
    */
   private async model(): Promise<MtcModel> {
     const session = this.require();
+    // An agent-mode handle holds the model it read when it opened and reads no window: its tree is that model, and
+    // every agent read reads the model again for itself.
+    if (this.agentProfile) {
+      session.model ??= await this.probeModel(session);
+      return session.model;
+    }
     const window = session.window ?? (await this.readWindow());
     if (session.model !== undefined && modelIsCurrent(session.model, { instanceId: window.instanceId })) {
       return session.model;
     }
+    session.model = await this.probeModel(session);
+    return session.model;
+  }
+
+  /** One read of `/probe`, indexed. */
+  private async probeModel(session: MtcSession): Promise<MtcModel> {
     const answer = await this.read(session, this.guard("/probe", { rowCap: ROW_CAP }));
     const model = indexMtconnectModel(answer.root);
     if (model === undefined) {
       throw new QueryError("This address answered a document that is not an MTConnect device model.");
     }
-    session.model = model;
     return model;
   }
 
@@ -406,6 +483,7 @@ export class MTConnectProvider extends BaseDatabaseProvider {
    * language, which is why the provider declares a dialect of its own and no `queryReadOnly`.
    */
   public async query(sql: string): Promise<QueryResult> {
+    if (this.agentProfile) throw new RefusedBeforeSendError(MTCONNECT_AGENT_WITHHELD.query, this.type, sql);
     const session = this.require();
     const model = await this.model();
     const started = Date.now();
@@ -434,6 +512,62 @@ export class MTConnectProvider extends BaseDatabaseProvider {
         executionTime: Date.now() - started,
       };
     }
+  }
+
+  /**
+   * One agent read. Only on a handle opened under the agent read-only profile; the request line is read by
+   * `readMtconnectAgentStatement` and refused before anything is sent when it is not one of the nine GET routes, or
+   * when its `count` passes the row budget. The read then reads the device model and sends the request, both on this
+   * handle's one permit and within the time budget, and its answer is refused past the row, byte or time budget rather
+   * than cut. A failure is worded by its category, never in the agent's text.
+   */
+  public async queryReadOnly(
+    statement: string,
+    budget: ReadOnlyStatementBudget,
+    mode: ReadOnlyStatementMode = "execute",
+  ): Promise<QueryResult> {
+    if (!this.readOnlyProfile) {
+      throw new RefusedBeforeSendError(MTCONNECT_PROVIDER_SENTENCES.profileRequired, this.type, statement);
+    }
+    const session = this.require();
+    assertReadOnlyBudget(budget, this.type);
+    if (mode !== "execute") {
+      throw new RefusedBeforeSendError(MTCONNECT_PROVIDER_SENTENCES.noEstimate, this.type, statement);
+    }
+    const reading = readMtconnectAgentStatement(statement, { rowCap: budget.maxResultRows });
+    if (!reading.ok) throw new RefusedBeforeSendError(reading.message, this.type, statement);
+    const ms = budget.statementTimeoutMs;
+    const signal = AbortSignal.timeout(ms);
+    const options = this.agentClientOptions(session, signal);
+    const reader: MtconnectAgentReader = {
+      read: (request) => readOnce(options, request),
+      stream: (request, onObservation) => readObservations(options, request, Number.MAX_SAFE_INTEGER, onObservation),
+    };
+    const started = Date.now();
+    try {
+      const answer = await runMtconnectAgentRead(reader, statement, budget);
+      return mtconnectAgentResult(answer, budget, Date.now() - started);
+    } catch (error) {
+      throw agentFailure(error, signal.aborted, ms);
+    }
+  }
+
+  /** The client options of one agent read: the permit wait and every request end with the read's own time budget. */
+  private agentClientOptions(session: MtcSession, signal: AbortSignal): MtcClientOptions {
+    return {
+      origin: session.origin,
+      pathPrefix: session.pathPrefix,
+      transport: session.transport,
+      withPermit: async (run) => {
+        const ticket = await this.limiter.acquire(signal);
+        try {
+          return await run();
+        } finally {
+          ticket.release();
+        }
+      },
+      signal,
+    };
   }
 
   /**
@@ -554,21 +688,34 @@ export class MTConnectProvider extends BaseDatabaseProvider {
     return container[0];
   }
 
-  public async countObjects(container: readonly string[]): Promise<Record<string, { count: number }>> {
+  /**
+   * The data items of one device the tree lists. On an agent-mode handle the agent's adapter connections are left out
+   * (`agent-withheld.ts`), since their ids carry the adapter's network address.
+   */
+  private deviceItems(model: MtcModel, device: string) {
+    return [...model.items.values()].filter(
+      (item) => item.deviceName === device && !(this.agentProfile && itemWithheld(item)),
+    );
+  }
+
+  public async countObjects(container: readonly string[]): Promise<Record<string, KindCount>> {
     const model = await this.model();
     const device = this.deviceOf(container);
-    const items = [...model.items.values()].filter((item) => item.deviceName === device);
+    const items = this.deviceItems(model, device);
     return {
       dataitem: { count: items.filter((item) => item.category !== "CONDITION").length },
       condition: { count: items.filter((item) => item.category === "CONDITION").length },
-      asset: { count: 0 },
+      // The editor's tree draws no asset under a device; on an agent-mode handle that none is Studio's figure, not
+      // the agent's, so the count answers its reason.
+      asset: this.agentProfile ? { unavailable: MTCONNECT_AGENT_WITHHELD.assets } : { count: 0 },
     };
   }
 
   public async listObjects(container: readonly string[], kind: string): Promise<DatabaseObject[]> {
     const model = await this.model();
     const device = this.deviceOf(container);
-    const items = [...model.items.values()].filter((item) => item.deviceName === device);
+    if (this.agentProfile && kind === "asset") throw new QueryError(MTCONNECT_AGENT_WITHHELD.assets, this.type);
+    const items = this.deviceItems(model, device);
     const wanted = items.filter((item) =>
       kind === "condition" ? item.category === "CONDITION" : item.category !== "CONDITION",
     );
@@ -632,6 +779,7 @@ export class MTConnectProvider extends BaseDatabaseProvider {
     const model = await this.model();
     const item = model.items.get(path[path.length - 1]);
     if (item === undefined) throw new QueryError(`This agent's model holds no data item ${path[path.length - 1]}.`);
+    if (this.agentProfile && itemWithheld(item)) throw new QueryError(MTCONNECT_AGENT_WITHHELD.withheldItem, this.type);
     return {
       path,
       columns: [
@@ -667,6 +815,7 @@ export class MTConnectProvider extends BaseDatabaseProvider {
    * about connections, uptime or storage.
    */
   public async getHealth(): Promise<HealthInfo> {
+    if (this.agentProfile) this.agentWithheld(MTCONNECT_AGENT_WITHHELD.health);
     const window = await this.readWindow();
     // Only the fields `HealthInfo` declares. An earlier draft added a `bufferedObservations` field
     // of its own behind a cast, which is a field no reader of `HealthInfo` would ever look at.
@@ -681,6 +830,7 @@ export class MTConnectProvider extends BaseDatabaseProvider {
   }
 
   public async getOverview(): Promise<DatabaseOverview> {
+    if (this.agentProfile) this.agentWithheld(MTCONNECT_AGENT_WITHHELD.overview);
     const model = await this.model();
     const window = await this.readWindow();
     return {
@@ -695,12 +845,14 @@ export class MTConnectProvider extends BaseDatabaseProvider {
 
   /** Empty: every metric is optional and an agent publishes none of them. No request. */
   public async getPerformanceMetrics(): Promise<PerformanceMetrics> {
+    if (this.agentProfile) this.agentWithheld(MTCONNECT_AGENT_WITHHELD.performance);
     this.require();
     return {};
   }
 
   /** Empty: an agent keeps no query log. It has no queries. No request. */
   public async getSlowQueries(): Promise<SlowQueryStats[]> {
+    if (this.agentProfile) this.agentWithheld(MTCONNECT_AGENT_WITHHELD.slowQueries);
     this.require();
     return [];
   }
@@ -713,24 +865,28 @@ export class MTConnectProvider extends BaseDatabaseProvider {
    * carried into a surface like this one (MT-S10).
    */
   public async getActiveSessions(): Promise<ActiveSessionDetails[]> {
+    if (this.agentProfile) this.agentWithheld(MTCONNECT_AGENT_WITHHELD.sessions);
     this.require();
     return [];
   }
 
   /** Empty: a data item has no row count, and the tree's counts are read from the model. No request. */
   public async getTableStats(): Promise<TableStats[]> {
+    if (this.agentProfile) this.agentWithheld(MTCONNECT_AGENT_WITHHELD.tableStats);
     this.require();
     return [];
   }
 
   /** Empty: an agent has no index. No request. */
   public async getIndexStats(): Promise<IndexStats[]> {
+    if (this.agentProfile) this.agentWithheld(MTCONNECT_AGENT_WITHHELD.indexStats);
     this.require();
     return [];
   }
 
   /** Empty: an agent reports no storage. Its buffer size is a count of observations, not bytes. */
   public async getStorageStats(): Promise<StorageStats[]> {
+    if (this.agentProfile) this.agentWithheld(MTCONNECT_AGENT_WITHHELD.storage);
     this.require();
     return [];
   }

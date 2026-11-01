@@ -191,6 +191,7 @@ export const QUERY_FENCE_ALIASES: ReadonlySet<string> = new Set([
   "netconfrpc",
   "modbusread",
   "opcuaread",
+  "mtconnectread",
 ]);
 
 /**
@@ -266,6 +267,8 @@ export const ALIAS_ENGINES: Readonly<Record<string, DatabaseType>> = Object.free
   modbusread: "modbus",
   // The agent's name for the OPC UA read request language, and `opcua` is the only type-id that runs it.
   opcuaread: "opcua",
+  // The agent's name for the MTConnect read request language, and `mtconnect` is the only type-id that runs it.
+  mtconnectread: "mtconnect",
 });
 
 /**

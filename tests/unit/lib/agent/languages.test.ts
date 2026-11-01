@@ -138,6 +138,7 @@ const LANGUAGE_IDS: Readonly<Record<AgentStatementLanguageId, true>> = {
   modbusread: true,
   promql: true,
   opcuaread: true,
+  mtconnectread: true,
 };
 
 describe("the server packs", () => {
@@ -284,6 +285,7 @@ describe("the language packs", () => {
       "modbusread",
       "promql",
       "opcuaread",
+      "mtconnectread",
     ]);
     expect(Object.isFrozen(LANGUAGE_TOOL_ARMS)).toBe(true);
   });
@@ -444,6 +446,7 @@ describe("the prompt tables the packs hold", () => {
       "modbusread",
       "promql",
       "opcuaread",
+      "mtconnectread",
     ]);
     expect(Object.isFrozen(WORKFLOW_TOOL_RULES)).toBe(true);
     for (const id of ids) {
@@ -557,6 +560,7 @@ describe("the client packs", () => {
         "modbusread",
         "promql",
         "opcuaread",
+        "mtconnectread",
       ]);
     }
   });
@@ -586,6 +590,7 @@ describe("the client packs", () => {
       modbusread: null,
       promql: null,
       opcuaread: null,
+      mtconnectread: null,
     });
   });
 

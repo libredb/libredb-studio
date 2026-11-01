@@ -31,6 +31,7 @@ import { NETCONF_SERVER_OVERLAY } from "../netconfrpc/engines/netconf";
 import { MODBUS_SERVER_OVERLAY } from "../modbusread/engines/modbus";
 import { PROMETHEUS_SERVER_OVERLAY } from "../promql/engines/prometheus";
 import { OPCUA_SERVER_OVERLAY } from "../opcuaread/engines/opcua";
+import { MTCONNECT_SERVER_OVERLAY } from "../mtconnectread/engines/mtconnect";
 import type { AgentStatementLanguageId } from "../../agent-manifest";
 import { statementFamilyOf } from "../client";
 import { defineOverlay } from "../overlay";
@@ -96,6 +97,7 @@ const SERVER_OVERLAYS: AgentEngineServerOverlays = Object.freeze({
   modbus: Object.freeze({ ...MODBUS_SERVER_OVERLAY }),
   prometheus: Object.freeze({ ...PROMETHEUS_SERVER_OVERLAY }),
   opcua: Object.freeze({ ...OPCUA_SERVER_OVERLAY }),
+  mtconnect: Object.freeze({ ...MTCONNECT_SERVER_OVERLAY }),
 } satisfies AgentEngineServerOverlays);
 
 /** What an engine with no dialect answers: every member unsupported. */

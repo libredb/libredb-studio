@@ -170,6 +170,7 @@ describe("the plan-estimate operation of each language", () => {
       modbusread: null,
       promql: null,
       opcuaread: null,
+      mtconnectread: null,
     });
     expect(Object.isFrozen(AGENT_PLAN_ESTIMATE_OPERATION)).toBe(true);
   });
@@ -433,7 +434,7 @@ describe("workflowAvailability", () => {
     }
   });
 
-  test.each(["mtconnect"] as const)(
+  test.each(["mqtt"] as const)(
     "%s opens operations and planning, and refuses a statement workflow in agent mode",
     (type) => {
       expect(workflowAvailability("agent", "operations", type).open).toBe(true);

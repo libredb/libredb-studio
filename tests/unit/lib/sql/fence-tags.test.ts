@@ -90,6 +90,12 @@ describe("fenceTagEngine", () => {
     expect(fenceTagEngine("opcua")).toBe("opcua");
   });
 
+  test("mtconnectread names mtconnect, the agent's name for the MTConnect read request language", () => {
+    expect(fenceTagEngine("mtconnectread")).toBe("mtconnect");
+    expect(isQueryFenceTag("mtconnectread")).toBe(true);
+    expect(fenceTagEngine("mtconnect")).toBe("mtconnect");
+  });
+
   test("promql names prometheus, the agent's name for the PromQL language Prometheus runs", () => {
     expect(fenceTagEngine("promql")).toBe("prometheus");
     expect(isQueryFenceTag("promql")).toBe(true);

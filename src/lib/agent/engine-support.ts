@@ -138,6 +138,7 @@ export const AGENT_EXECUTION_ENGINES: readonly DatabaseType[] = [
   "modbus",
   "prometheus",
   "opcua",
+  "mtconnect",
 ];
 
 /**
