@@ -106,11 +106,6 @@ const UNPOSTURED_ALLOWLIST: Record<string, { calls: number; reason: string }> = 
     reason:
       "a capability-only read for the key-walk database field: it builds the provider to read its keyScan declaration and containerDepth before any socket, and never connects, so no handle opens",
   },
-  "lib/agent/runtime.ts": {
-    calls: 1,
-    reason:
-      "a capability-only read: it builds the provider to read its capabilities for the run plan and never connects, so no handle opens",
-  },
   "app/api/agent/runs/route.ts": {
     calls: 1,
     reason:

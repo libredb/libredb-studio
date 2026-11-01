@@ -30,6 +30,8 @@ import type { ProviderCapabilities } from "@/lib/db/types";
 import type { AgentRunFailureReason, AgentRunWorkflowType } from "@/lib/agent/types";
 import type { DatabaseConnection } from "@/lib/types";
 
+const { executionContextFor } = realFactory;
+
 const dataDirs: string[] = [];
 
 function freshDataDir(): string {
@@ -62,9 +64,12 @@ const mockRunInvestigation = mock(async (runId: string, options: { resources: Ag
 
 mock.module("@/lib/agent/run-store", () => ({ ...realRunStore, resolveAgentLedgerWorld: async () => world }));
 mock.module("@/lib/seed/resolve-connection", () => ({ resolveConnection: mockResolveConnection }));
-mock.module("@/lib/db", () => ({
-  createDatabaseProvider: async () => ({ getCapabilities: mockGetCapabilities, getLabels: mockGetLabels }),
-}));
+// What the run's declaration provider was built with, so the context its declarations come from can be read back.
+const mockCreateDatabaseProvider = mock(async (...args: unknown[]) => {
+  void args;
+  return { getCapabilities: mockGetCapabilities, getLabels: mockGetLabels };
+});
+mock.module("@/lib/db", () => ({ createDatabaseProvider: mockCreateDatabaseProvider }));
 // The profiled seam itself, so what the run's acquirer hands it can be read back.
 const mockAcquireExecutionProfileProvider = mock(async (...args: unknown[]) => {
   void args;
@@ -216,6 +221,20 @@ describe("driveAgentRun", () => {
       {},
       { allowExternalFileAccess: false },
     );
+  });
+
+  test("reads the run's declarations from a provider built as an agent-mode handle, never as an editor one", async () => {
+    await openRun("arun_declared");
+    mockCreateDatabaseProvider.mockClear();
+
+    await driveAgentRun("arun_declared");
+
+    // A provider that declares less on an agent-mode handle than on an editor one (a tree whose every level is a
+    // withheld value) is grounded on what the handle the run acquires declares, so the walk never lists a level the
+    // handle refuses. Every agent profile opens readOnly; the operations context sends no statement.
+    expect(mockCreateDatabaseProvider).toHaveBeenCalledTimes(1);
+    expect(mockCreateDatabaseProvider.mock.calls[0]).toEqual([CONNECTION, {}, executionContextFor("agent-operations")]);
+    expect(executionContextFor("agent-operations")).toMatchObject({ readOnly: true, sendsStatements: false });
   });
 
   test("gives the run a canonical registry, a deadline and an empty repair ledger", async () => {

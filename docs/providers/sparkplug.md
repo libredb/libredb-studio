@@ -396,7 +396,7 @@ Every answer carries the window's own account (how long it listened to what, why
 | --- | --- | --- |
 | Investigation reads | agent read-only profile | one fresh session per read of [section 14.2](#142-what-an-agent-request-may-be) |
 | Connect | either agent profile | a handshake that subscribes to nothing: CONNECT and DISCONNECT |
-| Investigation grounding and plan-mode grounding | either agent profile | nothing: the handle declares no container level and no kind for the walk to list, so the run is told why no id is listed and how to read one the question names, never that the broker could not be reached |
+| Investigation grounding and plan-mode grounding | either agent profile | nothing: an agent-mode handle declares no container level and no kind, and a run reads its declarations from a provider built as one, so the walk sends no schema read and the run is told why no id is listed and how to read one the question names, never that the broker could not be reached |
 | The tree, an object's listing and description, its birth certificate, the console | either agent profile | nothing: each is refused with its reason |
 | Overview, health, performance, slow-query, session, table, index and storage readings | either agent profile | nothing: each answers its reason, never Studio's own figure or an empty reading |
 
