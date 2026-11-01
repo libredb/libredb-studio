@@ -11,6 +11,6 @@
  * check named eighteen of those lines as reaching nobody (#789); a barrel that re-exports
  * everything cannot be read as a statement about what the outside uses.
  */
-export { ObjectTree } from "./ObjectTree";
+export { ObjectTree, type ObjectTreeHandle } from "./ObjectTree";
 export type { ObjectSource } from "./use-tree-nodes";
 export { type TreeRowActionHandlers } from "./row-actions";

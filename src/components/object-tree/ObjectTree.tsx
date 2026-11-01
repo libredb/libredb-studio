@@ -21,7 +21,16 @@
  * (never from mounted rows), drawn by `StickyStrip`, and its arithmetic is `sticky-rows.ts`.
  */
 
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type Ref,
+} from "react";
 import { CircleAlert, Database, LoaderCircle, SearchX } from "lucide-react";
 import type { DatabaseObject, ProviderCapabilities, ProviderLabels } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
@@ -113,6 +122,19 @@ export interface ObjectTreeProps {
    * costs, and why nothing is derived from the statement, is in `useTreeNodes`' `refresh`.
    */
   readonly refreshToken?: number;
+  /**
+   * The tree's own re-read, for a control the READER presses (#1986).
+   *
+   * A handle rather than a second token, because the shell's counter carries a different
+   * message: it marks every open Source tab stale, and a reader asking the tree to read again
+   * has learnt nothing about any definition.
+   */
+  readonly ref?: Ref<ObjectTreeHandle>;
+}
+
+/** What `ObjectTree` hands its `ref`: the same `refresh` the shell's token drives. */
+export interface ObjectTreeHandle {
+  refresh(): void;
 }
 
 /** What the deferred panel says under a connection held for billed compute; `docs/providers/databend.md` 4.4 quotes it. */
@@ -175,6 +197,7 @@ export function ObjectTree({
   source,
   readsColumns,
   refreshToken = 0,
+  ref,
 }: ObjectTreeProps) {
   const columnsReadable = source === undefined || readsColumns === true;
   // Held per connection, so a switch starts unfiltered without an effect to reset it (D7).
@@ -221,6 +244,7 @@ export function ObjectTree({
     actedOn.current = refreshToken;
     refresh();
   }, [refresh, refreshToken]);
+  useImperativeHandle(ref, () => ({ refresh }), [refresh]);
 
   const rows = tree.rows;
   // Exactly one row is tabbable. Until the reader picks one it is the first, and a row that

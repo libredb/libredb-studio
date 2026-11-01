@@ -5,9 +5,14 @@ import { DatabaseConnection } from "@/lib/types";
 import { keyScanShape, offersSchemaDiagram, type DatabaseObject } from "@/lib/db/types";
 import type { ProviderMetadata } from "@/hooks/use-provider-metadata";
 import { connectionPulseTitle, type ConnectionPulse } from "@/hooks/use-connection-pulse";
-import { Plus, Zap, Layers, LoaderCircle, CircleAlert } from "lucide-react";
+import { Plus, Zap, Layers, LoaderCircle, CircleAlert, RefreshCw } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { ObjectTree, type ObjectSource, type TreeRowActionHandlers } from "@/components/object-tree";
+import {
+  ObjectTree,
+  type ObjectSource,
+  type ObjectTreeHandle,
+  type TreeRowActionHandlers,
+} from "@/components/object-tree";
 import { KeyBrowser, type KeyPatternRequest } from "@/components/key-browser";
 import { prefixPattern } from "@/components/key-browser/tree";
 import { containerDepth, enumerableKinds } from "@/lib/db/object-kinds";
@@ -375,6 +380,13 @@ export const Sidebar = React.memo(function Sidebar({
     },
     [connectionId, keyShape, metadata],
   );
+  /**
+   * The mounted tree, so the refresh control can ask it to read again (#1986).
+   *
+   * The tree's own `refresh` rather than the shell's `objectRefreshToken`: that counter also marks
+   * every open Source tab stale, and pressing this says nothing about any definition.
+   */
+  const treeRef = React.useRef<ObjectTreeHandle>(null);
   const actions = React.useMemo<TreeRowActionHandlers>(
     // The panel's own item is offered only where the panel exists: the row menu's gate asks the
     // DECLARATION whether a row may be walked, and this asks whether this shell can show the walk.
@@ -394,6 +406,25 @@ export const Sidebar = React.memo(function Sidebar({
           </span>
         </div>
         <div className="flex items-center gap-1">
+          {/*
+            A table made by another client reaches the tree only through this (#1986): the shell
+            re-reads for statements IT ran. In the header because a control pressed this rarely must
+            not cost the panel a row. Drawn only while the tree is the reading on screen, and
+            disabled while it is deferred, so it never starts a read the reader opted out of;
+            `Load objects` is the way in there.
+          */}
+          {activeConnection && metadata && !showingKeys && (
+            <button
+              type="button"
+              className="p-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
+              aria-label="Read the objects again"
+              title="Read the objects again"
+              disabled={objectScanDeferred}
+              onClick={() => treeRef.current?.refresh()}
+            >
+              <RefreshCw strokeWidth={1.5} aria-hidden="true" className="w-3.5 h-3.5" />
+            </button>
+          )}
           {/* Not on a Cypher connection: its relationship types are no tables (SR20). */}
           {activeConnection && offersSchemaDiagram(metadata?.capabilities) && (
             <button
@@ -518,6 +549,7 @@ export const Sidebar = React.memo(function Sidebar({
               {!showingKeys && (
                 <div className="flex-1 min-h-0">
                   <ObjectTree
+                    ref={treeRef}
                     connection={activeConnection}
                     capabilities={metadata.capabilities}
                     labels={metadata.labels}
