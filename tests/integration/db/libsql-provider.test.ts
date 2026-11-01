@@ -3845,7 +3845,7 @@ describe("MCP run_read_query on a libSQL connection", () => {
     expect(result.isError).toBe(true);
     expect(text).toMatch(
       new RegExp(
-        `^run_read_query cannot run on this connection: libSQL ran the write probe DROP TABLE IF EXISTS ${NAME} sent with a token whose claims declare read-only access, so the server does not hold the token to them \\(it checks no token, or admits one it did not sign\\), and the agent read-only profile is refused\\. It runs on ${ENGINES}\\.$`,
+        `^run_read_query cannot run on this connection: libSQL ran the write probe DROP TABLE IF EXISTS ${NAME} sent with a token whose claims declare read-only access, so the server does not hold the token to them \\(it checks no token, or admits one it did not sign\\), and the agent read-only profile is refused\\. It runs on ${ENGINES.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.$`,
       ),
     );
     expect(text).not.toContain(READ_ONLY_TOKEN);
