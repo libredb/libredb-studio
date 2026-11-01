@@ -41,7 +41,7 @@
  * claims RESTED on, which is a fact about the run.
  */
 
-import { type AgentStatementLanguageId, requiredVariant } from "./agent-manifest";
+import { type AgentStatementLanguageId, planDeliverableOf, requiredVariant } from "./agent-manifest";
 import { mergeDisjoint } from "./disjoint-merge";
 import { composedClaims, planArtifacts, recommendsIndex, verifyInvestigationGoal } from "./goal-claims";
 import type { AgentFamilyVerifierIds, AgentGoalRule, AgentPackShortfall } from "./languages/pack";
@@ -263,7 +263,8 @@ export type VerifiableAgentRun = Pick<
  *
  * **Two bars in one rule, because plan mode has two deliverables.** Every workflow but
  * `operations` is asked for a statement (each variant's `planDeliverable` in `agent-manifest.ts`),
- * and `operations` is asked for prose — it composes no SQL, so holding it to a
+ * except a variant whose own deliverable is prose, such as MQTT's investigation, and
+ * `operations` is asked for prose: it composes no SQL, so holding it to a
  * statement would fail every run that did exactly what the workflow is for. (It reads a
  * schema since #411, and since the Operate-statement fix its rules welcome a fenced
  * reading where the engine expresses one as a statement — but WELCOME is not REQUIRED,
@@ -298,7 +299,9 @@ function verifyPlanningGoal(run: VerifiableAgentRun): readonly AgentGoalShortfal
     event.kind === "closing-statement" && event.text.length > 0 ? [event.text] : [],
   );
   if (closing.length === 0) return run.status === "cancelled" ? ["cancelled"] : ["no-plan"];
-  if (run.workflowType === "operations") return [];
+  // The deliverable the plan-mode prompt asked for (`planDeliverableOf`, the same reading `systemPrompt` makes), so a
+  // variant whose plan is prose is never failed for drafting no statement.
+  if (planDeliverableOf(run.statementLanguage, run.workflowType).kind === "prose") return [];
   if (run.events.some((event) => event.kind === "plan-statement-drafted")) return [];
   if (closing.some((text) => readPlanStatement(text).kind === "refusal")) return [];
   return run.status === "cancelled" ? ["cancelled"] : ["no-statement"];
