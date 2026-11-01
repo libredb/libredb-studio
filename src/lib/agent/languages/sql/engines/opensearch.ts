@@ -47,8 +47,10 @@ function quotedTable(table: string): string {
 }
 
 /**
- * The column inventory: `DESCRIBE TABLES LIKE %`, every table's columns, or one table's with its name. A table is an
- * index or an alias, each in the engine's own listing order.
+ * The column inventory: `DESCRIBE TABLES LIKE %` with no table named, or one table's columns with its name. A table is
+ * an index or an alias, each in the engine's own listing order. The no-table form names every index, `*`, and the
+ * provider's statement check refuses it before it is sent on the agent read-only path, since `*` reaches the indices
+ * whose names start with a dot on every 3.8.0 node, so the agent names a table there instead.
  */
 function composeOpenSearchColumns(selector: AgentCatalogSelector): string {
   if (selector.schema !== undefined) {
