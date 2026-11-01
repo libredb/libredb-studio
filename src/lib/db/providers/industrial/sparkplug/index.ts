@@ -66,7 +66,7 @@ import {
 import { sparkplugTlsMaterial } from "./connection-options";
 import { describeScope, parseReadQuery } from "./request";
 import { buildRows, describeResult, RESULT_FIELDS } from "./results";
-import { readOnce, type TransportFactory } from "./session";
+import { readOnce, type ReceivedMessage, type TransportFactory } from "./session";
 import { type EdgeNodeState, ReadState } from "./state";
 import { groupIdIsFilterSafe, readFilters } from "./topics";
 
@@ -103,6 +103,8 @@ export interface SparkplugReadRequest {
    * the thing that reads, so the answer cannot silently be 3.
    */
   readonly windowSeconds: number;
+  /** Connect and leave without subscribing, so the read holds nothing the broker carries; `filters` is not read. */
+  readonly handshakeOnly?: boolean;
 }
 
 /**
@@ -131,6 +133,17 @@ export interface SparkplugReadOutcome {
   readonly handshook?: boolean;
   /** How long the read waited, which is the number a silent plant's sentence needs. */
   readonly elapsedMs?: number;
+  /**
+   * The messages as they arrived, before the fold, for a reader that counts them by message type rather than drawing
+   * a tree. Optional for the reason `handshook` is: a seam that answers without dialling holds no message.
+   */
+  readonly messages?: readonly ReceivedMessage[];
+  /** When the SUBSCRIBE was written, from the start of the read; absent when nothing was subscribed. */
+  readonly subscribedAtMs?: number;
+  /** When the read started, on the clock each message's `receivedAt` reads. */
+  readonly startedAt?: number;
+  /** How many of the read's filters the broker refused, when it refused some and granted others. */
+  readonly subscriptionsRefused?: number;
 }
 
 /** The seam a test fills to answer without a broker. Left empty, the provider dials for itself. */
@@ -158,6 +171,7 @@ export async function dialAndRead(
     maxMessages: MAX_MESSAGES_PER_READ,
     maxBytes: MAX_BYTES_PER_READ,
     ...(openTransport === undefined ? {} : { openTransport }),
+    ...(request.handshakeOnly === true ? { handshakeOnly: true } : {}),
   });
   const folded = foldMessages(outcome.messages);
   return {
@@ -170,6 +184,10 @@ export async function dialAndRead(
     bytesSeen: outcome.bytesSeen,
     handshook: outcome.handshook,
     elapsedMs: outcome.elapsedMs,
+    messages: outcome.messages,
+    ...(outcome.subscribedAtMs === undefined ? {} : { subscribedAtMs: outcome.subscribedAtMs }),
+    startedAt: outcome.startedAt,
+    subscriptionsRefused: outcome.subscriptionsRefused,
   };
 }
 

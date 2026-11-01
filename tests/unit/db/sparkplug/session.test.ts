@@ -351,3 +351,41 @@ describe("the client identifier cannot take an edge node's session", () => {
     expect(newClientId()).not.toBe(newClientId());
   });
 });
+
+describe("what an agent read needs of the session", () => {
+  test("a read records when it subscribed, on its own clock, and a handshake-only read records none", async () => {
+    const { outcome } = await read(bytes(CONNACK), { windowMs: 30 });
+    expect(outcome.subscribedAtMs).toBeGreaterThanOrEqual(0);
+    expect(outcome.subscribedAtMs).toBeLessThanOrEqual(outcome.elapsedMs);
+    expect(outcome.startedAt).toBeLessThanOrEqual(Date.now() - outcome.elapsedMs);
+
+    const { outcome: handshake } = await read(bytes(CONNACK), { filters: [], handshakeOnly: true });
+    expect(handshake.subscribedAtMs).toBeUndefined();
+  });
+
+  test("a handshake-only read writes CONNECT and DISCONNECT and nothing else, and ends on the handshake", async () => {
+    const { outcome, written } = await read(bytes(CONNACK), { filters: [], handshakeOnly: true, windowMs: 5_000 });
+    expect(written.map((packet) => packet[0])).toEqual([0x10, 0xe0]);
+    expect(outcome.endReason).toBe("handshake");
+    expect(outcome.handshook).toBe(true);
+    // It ended on the CONNACK, not on the window.
+    expect(outcome.elapsedMs).toBeLessThan(5_000);
+  });
+
+  test("a handshake-only read the broker refuses is a refused connection, not a handshake", async () => {
+    const refused = Uint8Array.of(0x20, 0x03, 0x00, 0x87, 0x00);
+    const { outcome } = await read(refused, { filters: [], handshakeOnly: true });
+    expect(outcome.endReason).toBe("connect-refused");
+    expect(outcome.handshook).toBe(false);
+  });
+
+  test("a SUBACK that refuses some filters and grants others is counted, and the read goes on", async () => {
+    // Packet id 1, no properties, three reason codes: granted QoS 0, not authorized, granted QoS 0.
+    const suback = Uint8Array.of(0x90, 0x06, 0x00, 0x01, 0x00, 0x00, 0x87, 0x00);
+    const { outcome } = await read(bytes(CONNACK, suback), { filters: ["a", "b", "c"], windowMs: 20 });
+    expect(outcome.subscriptionsRefused).toBe(1);
+    expect(outcome.endReason).toBe("time-budget");
+    const { outcome: granted } = await read(bytes(CONNACK), { windowMs: 20 });
+    expect(granted.subscriptionsRefused).toBe(0);
+  });
+});
