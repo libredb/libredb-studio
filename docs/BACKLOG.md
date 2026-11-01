@@ -42,7 +42,7 @@ None of it is a GitHub issue.
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B166 · 86
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
-- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP7 · 7
+- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP8 · 8
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
 
 ---
@@ -9309,6 +9309,16 @@ Measured 2026-11-01 with a seed set to `roles: ["*"]` and an admin's token.
 Found 2026-11-01 while verifying `run_read_query` on ClickHouse.
 
 **Done when:** `list_connections` gives such a seed a `read_tool` that can run, or says why none can, `docs/MCP.md` states the SQLite seed requirement beside the PostgreSQL, SQL Server and ClickHouse ones, and a test pins both.
+
+### MCP8. An InfluxDB 3 refusal through `run_read_query` names `SHOW` and `DESCRIBE`, which the tool refuses
+
+`run_read_query`'s statement fence admits a `TABLE` statement on an InfluxDB 3 (SQL) connection, and the provider's read policy then refuses it with `notARead` of `INFLUX_SQL_POLICY_SENTENCES` in `src/lib/db/providers/timeseries/influxdb/sql-policy.ts`: "Only SELECT, WITH, VALUES, SHOW, EXPLAIN and DESCRIBE run on an InfluxDB 3 connection in Studio".
+The same fence refuses `SHOW` and `DESCRIBE` before anything is acquired, so through MCP that sentence names two forms the tool does not take.
+`docs/MCP.md` says a refused statement's answer names what else that engine takes, and the "MCP read" subsection of `docs/providers/influxdb3.md` lists what `run_read_query` runs there: a `SELECT`, `VALUES`, or `EXPLAIN` without `ANALYZE`.
+The sentence is the provider's own and predates MCP read on InfluxDB 3; the editor and agent mode, which take `SHOW` and `DESCRIBE`, read it correctly.
+Found 2026-11-01 while verifying `run_read_query` on InfluxDB 3.12.0 Core.
+
+**Done when:** a statement the read policy refuses through `run_read_query` is answered with the forms that tool runs on InfluxDB 3, the editor and agent mode keep the policy's sentence, and a test sends `TABLE` through the tool's handler and pins the answer.
 
 ---
 
