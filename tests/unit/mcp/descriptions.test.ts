@@ -52,7 +52,7 @@ describe("the tool descriptions", () => {
   test("run_read_query names the engines it serves, from the one list its handler gates on", () => {
     expect(RUN_READ_QUERY_ENGINES).toBe(namedList(RUN_READ_QUERY_TYPES.map((type) => getDBConfig(type).label)));
     expect(RUN_READ_QUERY_ENGINES).toBe(
-      "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL and InfluxDB 3 (SQL)",
+      "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL) and Elasticsearch",
     );
     expect(RUN_READ_QUERY_DESCRIPTION).toContain(
       `Runs on ${RUN_READ_QUERY_ENGINES}; other engines refuse it, and list_connections' read_tool names the tool that reads each connection.`,
@@ -103,8 +103,10 @@ describe("the tool descriptions", () => {
     expect(RUN_READ_QUERY_DESCRIPTION).not.toContain("VALUES");
     expect(RUN_READ_QUERY_DESCRIPTION).not.toContain("TABLE");
     expect(RUN_READ_QUERY_DESCRIPTION).toContain(
-      "A SELECT (a WITH is fine) runs on every engine it serves; a refused statement's answer names what else that engine takes.",
+      "A SELECT runs on every engine it serves; a refused statement's answer names what else that engine takes.",
     );
+    // Elasticsearch parses a WITH and reads a name it defines as an index, so no WITH is promised for every engine.
+    expect(RUN_READ_QUERY_DESCRIPTION).not.toContain("WITH");
   });
 
   test("list_connections says it works on every engine, and inspect_schema on every engine that holds tables", () => {

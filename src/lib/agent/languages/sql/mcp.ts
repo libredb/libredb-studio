@@ -18,5 +18,5 @@ export const SQL_MCP_FACET = Object.freeze({
   holdsNoTables: false,
   /** Names no statement form beyond SELECT, because the others differ by engine; the refusal names the engine's own. */
   describe: ({ engines, limits }) =>
-    `Run one read-only SQL statement on a connection. A SELECT (a WITH is fine) runs on every engine it serves; a refused statement's answer names what else that engine takes. Runs on ${engines}; other engines refuse it, and list_connections' read_tool names the tool that reads each connection. ${limits}, and pagination.nextOffset is the offset of the next page when the query can be paged.`,
+    `Run one read-only SQL statement on a connection. A SELECT runs on every engine it serves; a refused statement's answer names what else that engine takes. Runs on ${engines}; other engines refuse it, and list_connections' read_tool names the tool that reads each connection. ${limits}, and pagination.nextOffset is the offset of the next page when the query can be paged.`,
 } as const satisfies AgentLanguageMcpFacet);

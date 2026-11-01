@@ -760,7 +760,8 @@ user's own bound is what runs. The trait is declared per product (`acceptsOffset
 [index.ts](../../src/lib/db/providers/sql/search/index.ts)) rather than branched on the type-id,
 so a third product declares its own answer instead of being added to a condition someone has to find.
 
-The refusal is an `OffsetUnsupportedError`, a `QueryError` of its own class (`src/lib/db/errors.ts`), so MCP `run_read_query` answers exactly this refusal as an offset refusal in this sentence, and any other failure of `prepareQuery` as the engine's.
+The refusal is an `OffsetUnsupportedError`, a `QueryError` of its own class (`src/lib/db/errors.ts`).
+MCP's `run_read_query` never asks for that page: this engine's row in `src/lib/db/providers/sql/read-query-forms.ts` says its SQL has no `OFFSET`, so the tool refuses an `offset` before `prepareQuery` runs and names no next offset ([MCP read](#mcp-read)).
 
 ### 5.6 This grammar does not write
 
@@ -895,6 +896,41 @@ A later page that fails, past its byte cap, refused by the engine, unreadable, o
 A page whose body is past three times the byte budget plus 64 KiB is abandoned unread and refused as over the byte budget; on the first page no cursor was read yet, so that one context waits for the engine's keep-alive.
 The deadline is the budget's and the client's alone, refused in the shared time-budget sentence: a cancel ends the wait, not the work, as [§3.8](#38-the-deadline-is-the-clients-and-only-the-clients) records for the editor.
 
+#### MCP read
+
+MCP's `run_read_query` serves Elasticsearch through the agent's own path: it takes the connection under the agent read-only profile, so the open reads the server's version and admits only the 9.1 release line, and sends the statement through `queryReadOnly` on the SQL endpoint, never through `query()`.
+It shares the agent's profiled handle, so the version check runs at the open of that handle, as in agent mode, not before each statement.
+A seed carries no separate agent user, and the boundary is the grammar, so the seed's own login is the one sent and no login is refused for being broad: a superuser is served, and every index it may read, restricted system indices included, reaches the MCP client.
+So opt in a seed signed in with `libredb_seed_read` above: measured on 9.1.4 on 2026-11-01, `run_read_query` needs only `cluster:monitor/main` and `read` and `view_index_metadata` on the indices, and `inspect_schema`, which lists through the object surface, answers 403 without the plan-mode privileges.
+A login that cannot read the version is refused at open, in the tool's sentence, before any statement runs, and an OpenSearch node behind an Elasticsearch connection fails the open's connect probe, so nothing runs there either.
+MCP's statement fence refuses a write-shaped statement before anything is acquired, as defence in depth; it also refuses `SHOW`, `DESCRIBE`, `SYS` and `DEBUG`, which the endpoint answers, so the agent's composed catalog read is not an MCP statement.
+This path has no name fence of its own: which indices a statement reads is the login's privileges to decide, so no spelling of an index name, quoted or as a string, is matched anywhere on it.
+Values are not withheld: rows reach the MCP client as they reach the agent.
+It runs a `SELECT` (a name a `WITH` defines is read as an index, so a `WITH` fails), or `EXPLAIN`: on 9.1.4 `VALUES`, `TABLE` and `EXPLAIN ANALYZE` are grammar refusals, and a `WITH` parses but answers "Unknown index" for the name it defines.
+The grammar has no `OFFSET` ([§5.5](#55-the-preparequery-override-there-is-no-second-page)), so `pagination.nextOffset` is always `null` and an `offset` is refused before anything is sent.
+A `SELECT` without its own `LIMIT` is cut at `max_rows` (100 by default, at most 500) with `pagination.hasMore`, and the answer says how to page by key: ORDER BY a unique field, and for the next page add WHERE that field > the last value read.
+A query whose own `LIMIT` is past 1000 rows, or a result past 1 MiB, is refused, never cut, and the cursor the answer left open is closed first.
+A read past `timeout_ms` is answered as the timeout, and a client that closes its request stops the wait; either way the provider closes its request at the time left of `timeout_ms`, and the cluster runs the statement to its end, since closing the request does not cancel it.
+Measured on 2026-11-01 by watching the node's SQL tasks: after a one-second `timeout_ms`, and after a cancel one second into a 20-second one, a statement that takes the node about twelve seconds ran on as an SQL task until it ended, and then the node held no search context.
+
+[`tests/live/elasticsearch-mcp-boundary.ts`](../../tests/live/elasticsearch-mcp-boundary.ts) replays the boundary record above through the tool's handler with its statement fence removed, against single 9.1.4 nodes with security off and on, seeded per [§11.4](#114-optional-reproducing-the-live-pass), and an OpenSearch 3.8.0 node, and passed on 2026-11-01 (153 checks):
+
+- the node was served under `agent-read-only`, with security off and signed in as the superuser with it on; a user whose role holds no cluster action was refused at open through MCP, and the OpenSearch node behind an Elasticsearch connection failed the open;
+- the MCP fence refused all 20 captured write and DDL statements of [§5.6](#56-this-grammar-does-not-write) before anything was acquired; with it removed, the grammar refused each in its own words through the tool, the superuser's included, and each sent raw answered 400 `parsing_exception`;
+- the index listing with its document counts, every mapping, the aliases, the templates and the pipelines read back the same afterwards, on both nodes;
+- the positive control: a document written through the document API into a scratch index, which MCP read back and the script deleted;
+- a `SELECT` and an `EXPLAIN` answered; a `WITH` naming its own table, `VALUES` and `TABLE` passed the MCP fence and were refused by the engine;
+- a read past `max_rows` named no next offset and said how to page by key, an `offset` was refused before anything was sent, and the next page asked for by key answered it;
+- a plain read and an aggregation with their own `LIMIT` past 1000 rows, a read past 1 MiB and a single row past it were each refused, and after each the node held no open search context;
+- a read past a one-second `timeout_ms` and a read whose client closed the call were answered as the timeout and the cancel, the statement ran on as an SQL task until it ended, no task and no search context were left after it, and the node answered the next call;
+- [`tests/live/elasticsearch-agent-boundary.ts`](../../tests/live/elasticsearch-agent-boundary.ts) passed again on the same nodes, 51 checks with security off and 64 with it on.
+
+```sh
+LIBREDB_ES_ORIGIN=http://127.0.0.1:9200 LIBREDB_ES_SECURED_ORIGIN=http://127.0.0.1:9210 \
+LIBREDB_ES_ADMIN_USER=elastic LIBREDB_ES_ADMIN_PASSWORD=<secret> \
+LIBREDB_LIVE_OPENSEARCH_ORIGIN=http://127.0.0.1:9201 bun tests/live/elasticsearch-mcp-boundary.ts
+```
+
 #### Agent language pack
 
 Statement-language family: `sql`.
@@ -918,7 +954,7 @@ The other members are unsupported, each for a measured reason: its `EXPLAIN` ans
 So investigation, database assessment and data analysis open here and send their statements through `queryReadOnly`, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`; the `sql-composers` requirement holds query optimization out; plan mode drafts here as on every engine ([B144](../BACKLOG.md)).
 The provider path has no statement fence of its own, and the query-only endpoint answers the composed command as it answers a SELECT; the least-privilege role above reads it, and its answer holds only the tables the role reads (a data stream's backing index included).
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-MCP's statement read stays closed on Elasticsearch (`MCP_STATEMENT_READ.elasticsearch` is false) until a change of its own opens it.
+MCP's `run_read_query` runs a statement on Elasticsearch (`MCP_STATEMENT_READ.elasticsearch` is true) under the same boundary, described in [MCP read](#mcp-read) above; OpenSearch, served by the same provider directory, stays closed to it.
 
 #### Boundary record
 
@@ -1781,9 +1817,9 @@ for i in $(seq 1 1500); do printf '{"index":{}}\n{"k":"k%s"}\n' "$i"; done \
 `probe_buckets` is the one that matters most: any smaller cardinality keeps the whole `GROUP BY` on
 one page and makes the paging defect invisible.
 
-Two scripts under `tests/live/` run against the seeded node, and neither is part of `bun run test`.
+Three scripts under `tests/live/` run against the seeded node, and none is part of `bun run test`.
 `bun tests/live/elasticsearch-write-refusals.ts` rewrites the write-refusal captures of [§5.6](#56-this-grammar-does-not-write), and stops without writing any when a statement is not refused or the cluster reads back changed.
-`bun tests/live/elasticsearch-agent-boundary.ts` is the live boundary check of [§5.9](#59-the-agent-read-only-profile-rests-on-the-grammar).
+`bun tests/live/elasticsearch-agent-boundary.ts` is the live boundary check of [§5.9](#59-the-agent-read-only-profile-rests-on-the-grammar), and `bun tests/live/elasticsearch-mcp-boundary.ts` replays it through MCP's `run_read_query` ([MCP read](#mcp-read)) against a security-off and a security-on node and an OpenSearch node, with its own variables named in the script's header.
 Both read `LIBREDB_ES_ORIGIN` (default `http://127.0.0.1:9200`); the boundary check runs its security-on pass when `LIBREDB_ES_ADMIN_USER`, `LIBREDB_ES_ADMIN_PASSWORD`, `LIBREDB_ES_AGENT_USER` and `LIBREDB_ES_AGENT_PASSWORD` are set, against a node started with `xpack.security.enabled=true`.
 
 ---
@@ -1871,6 +1907,7 @@ because the provider exposes no `cancelQuery` ([§3.8](#38-the-deadline-is-the-c
   The column stays listed in the schema tree so the view reflects the index mapping faithfully.
   Measured: Elasticsearch SQL refuses `flattened` with "Cannot use field [blob] with unsupported type [flattened]", so introspection marks it as unprojectable.
   Generate Query omits it from the SELECT list so the starter statement runs (#1459).
+- **MCP's `run_read_query` checks no seed login.** Its boundary is the grammar, as agent mode's is, so a broad seed login is served and reads every index it may read; a seed should sign in with `libredb_seed_read`, and paging is by key, since there is no `OFFSET` ([MCP read](#mcp-read)).
 - **Agent mode opens no query optimization here.** The engine's overlay composes its column catalog
   alone and no estimating plan, so query optimization is held out and `inspect_plan` and `profile_table`
   refuse in the workflows that open ([§5.9](#59-the-agent-read-only-profile-rests-on-the-grammar), B144).

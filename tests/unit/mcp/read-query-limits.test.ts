@@ -30,6 +30,7 @@ import {
   moreRowsThanPageableHint,
   nextPageHint,
   offsetRefusalText,
+  pagesWithOffset,
   profileRefusalText,
   raceDeadline,
   READ_ONLY_REFUSALS,
@@ -50,6 +51,9 @@ const SERIALISED =
   "SQL Server returns a FOR JSON or FOR XML result as one serialised value, which this server cannot bound. Select the rows themselves, without the FOR JSON or FOR XML clause.";
 const OWN_LIMIT =
   "This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: LIMIT n OFFSET m.";
+/** Elasticsearch SQL has no OFFSET, so the next page is asked for by key, as measured on 9.1.4. */
+const KEYSET = "ORDER BY a unique field, and for the next page add WHERE that field > the last value read";
+const NO_OFFSET = `This engine's SQL has no OFFSET, so this query cannot be paged with offset. Page it in SQL: ${KEYSET}.`;
 const OWN_LIMIT_MSSQL =
   "This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.";
 
@@ -59,9 +63,15 @@ describe("the texts", () => {
     expect(inSqlPaging("clickhouse")).toBe("Page it in SQL: LIMIT n OFFSET m.");
     expect(inSqlPaging("libsql")).toBe("Page it in SQL: LIMIT n OFFSET m.");
     expect(inSqlPaging("influxdb3")).toBe("Page it in SQL: LIMIT n OFFSET m.");
+    expect(inSqlPaging("elasticsearch")).toBe(
+      "Page it in SQL: ORDER BY a unique field, and for the next page add WHERE that field > the last value read.",
+    );
     expect(inSqlPaging("mssql")).toBe("Page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.");
     expect(moreRowsThanPageableHint("sqlite")).toBe(
       "More rows exist than this result holds, and this query cannot be paged with offset. Page it in SQL: LIMIT n OFFSET m.",
+    );
+    expect(moreRowsThanPageableHint("elasticsearch")).toBe(
+      "More rows exist than this result holds, and this query cannot be paged with offset. Page it in SQL: ORDER BY a unique field, and for the next page add WHERE that field > the last value read.",
     );
     expect(nextPageHint(100)).toBe("Call again with offset 100 for the next page.");
     expect(timeoutText(500)).toBe(
@@ -88,11 +98,11 @@ describe("the texts", () => {
     expect(
       profileRefusalText(
         "The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution.",
-        "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL and InfluxDB 3 (SQL)",
+        "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL) and Elasticsearch",
         "run_read_query",
       ),
     ).toBe(
-      "run_read_query cannot run on this connection: The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution. It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL and InfluxDB 3 (SQL).",
+      "run_read_query cannot run on this connection: The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution. It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL) and Elasticsearch.",
     );
   });
 });
@@ -105,7 +115,10 @@ describe("the texts", () => {
  * `EXPLAIN`. libSQL (sqld 0.24.33), measured on 2026-11-01 with a read-only token, runs a bare `VALUES` and `EXPLAIN`
  * (`EXPLAIN QUERY PLAN` too) and answers `TABLE` and `EXPLAIN ANALYZE` with a syntax error, as SQLite does. InfluxDB 3
  * Core 3.12.0, measured on 2026-11-01 through the agent read-only path, runs a bare `VALUES` and `EXPLAIN` (`VERBOSE`
- * too), answers `TABLE` with a parser error, and runs `EXPLAIN ANALYZE`, which the fence refuses.
+ * too), answers `TABLE` with a parser error, and runs `EXPLAIN ANALYZE`, which the fence refuses. Elasticsearch
+ * 9.1.4, measured on 2026-11-01 through the agent read-only path, runs a `SELECT` and `EXPLAIN`, parses a `WITH` but
+ * reads a name it defines as an index ("Unknown index"), and refuses `VALUES`, `TABLE` and `EXPLAIN ANALYZE` in its
+ * grammar.
  */
 describe("the accepted forms each engine's refusal names", () => {
   test.each([
@@ -117,6 +130,7 @@ describe("the accepted forms each engine's refusal names", () => {
     ["clickhouse", "a SELECT (a WITH is fine), or EXPLAIN without ANALYZE"],
     ["libsql", "a SELECT (a WITH is fine), VALUES, or EXPLAIN"],
     ["influxdb3", "a SELECT (a WITH is fine), VALUES, or EXPLAIN without ANALYZE"],
+    ["elasticsearch", "a SELECT (a name a WITH defines is read as an index, so a WITH fails), or EXPLAIN"],
   ] as const)("%s: %s", (type, statements) => {
     expect(fenceRefusalText("NON_READ_STATEMENT", type)).toBe(
       `The statement was refused before it reached the database (NON_READ_STATEMENT). On this engine run_read_query runs one read-only statement: ${statements}.`,
@@ -129,6 +143,11 @@ describe("the accepted forms each engine's refusal names", () => {
 
   test("every engine run_read_query serves has a row", () => {
     for (const type of RUN_READ_QUERY_TYPES) expect(READ_QUERY_FORMS[type]).not.toBeNull();
+  });
+
+  test("every engine pages with OFFSET but Elasticsearch, whose SQL has none", () => {
+    expect(RUN_READ_QUERY_TYPES.filter((type) => !pagesWithOffset(type))).toEqual(["elasticsearch"]);
+    expect(READ_QUERY_FORMS.elasticsearch?.paging).toBe(KEYSET);
   });
 
   test("an engine with no row is refused by name, never answered with another engine's forms", () => {
@@ -167,6 +186,13 @@ describe("the offset rule", () => {
     [
       "EXPLAIN SELECT count(*) FROM home",
       "influxdb3",
+      "This statement's result cannot be paged. Call again without offset.",
+    ],
+    ["SELECT k FROM probe_buckets", "elasticsearch", NO_OFFSET],
+    ["SELECT k FROM probe_buckets ORDER BY k LIMIT 5", "elasticsearch", NO_OFFSET],
+    [
+      "EXPLAIN SELECT k FROM probe_buckets",
+      "elasticsearch",
       "This statement's result cannot be paged. Call again without offset.",
     ],
     ["VALUES (1), (2), (3)", "sqlite", "This statement's result cannot be paged. Call again without offset."],
@@ -288,6 +314,7 @@ describe("the prefixes the mapper matches still start a message in each provider
         "src/lib/db/providers/sql/duckdb/index.ts",
         "src/lib/db/providers/sql/libsql/index.ts",
         "src/lib/db/providers/timeseries/influxdb/sql-agent-read.ts",
+        "src/lib/db/providers/sql/search/index.ts",
       ],
     },
     MSSQL_TIME_BUDGET_PREFIX: { prefix: MSSQL_TIME_BUDGET_PREFIX, files: ["src/lib/db/providers/sql/mssql.ts"] },
@@ -302,6 +329,7 @@ describe("the prefixes the mapper matches still start a message in each provider
     clickhouse: ["src/lib/db/providers/sql/clickhouse/agent-read.ts", "src/lib/db/providers/sql/clickhouse/index.ts"],
     libsql: ["src/lib/db/providers/sql/libsql/agent-read.ts", "src/lib/db/providers/sql/libsql/index.ts"],
     influxdb3: ["src/lib/db/providers/timeseries/influxdb/sql-agent-read.ts"],
+    elasticsearch: ["src/lib/db/providers/sql/search/index.ts"],
     mongodb: ["src/lib/db/providers/document/mongodb/agent-read.ts"],
     kubernetes: [
       "src/lib/db/providers/platform/kubernetes/machine-read.ts",

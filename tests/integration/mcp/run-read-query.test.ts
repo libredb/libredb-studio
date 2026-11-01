@@ -157,7 +157,7 @@ function fakeContext(provider: Partial<DatabaseProvider>, type: DatabaseType = "
 
 /** The answer to a call on an engine the tool does not serve, naming the tool that does serve it. */
 const notServed = (label: string, elsewhere = "inspect_schema") =>
-  `run_read_query cannot run on this connection: this tool does not serve ${label}; use ${elsewhere} there. It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL and InfluxDB 3 (SQL).`;
+  `run_read_query cannot run on this connection: this tool does not serve ${label}; use ${elsewhere} there. It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL) and Elasticsearch.`;
 
 const mcpEvents = () =>
   getServerAuditBuffer()
@@ -963,7 +963,7 @@ describe("the registration", () => {
         expect(tool?.outputSchema?.type).toBe("object");
         expect(tool?.description).toBe(RUN_READ_QUERY_DESCRIPTION);
         expect(RUN_READ_QUERY_ENGINES).toBe(
-          "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL and InfluxDB 3 (SQL)",
+          "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL) and Elasticsearch",
         );
         expect(tool?.description).toContain(`Runs on ${RUN_READ_QUERY_ENGINES};`);
       } finally {

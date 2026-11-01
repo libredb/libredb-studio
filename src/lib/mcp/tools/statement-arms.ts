@@ -23,6 +23,7 @@ import {
   fenceRefusalText,
   moreRowsThanPageableHint,
   ROW_OVER_CAP_TEXT,
+  tooLargeTextsOf,
   type ReadOnlyRefusalKind,
 } from "./read-query-limits";
 import { mcpStatementEngines } from "./served-engines";
@@ -73,8 +74,8 @@ export interface McpStatementArm {
   canonicalize(raw: unknown): string | null;
   /** The defence-in-depth fence's refusal of `statement` on `type`, in this server's words, or null when admitted. */
   fence(statement: string, type: DatabaseType): string | null;
-  /** The budget refusals in this language's words; a refusal left out answers with the shared SQL text. */
-  tooLarge(statement: string): TooLargeTexts;
+  /** The budget refusals in this language's and `type`'s words; a refusal left out answers with the shared SQL text. */
+  tooLarge(statement: string, type: DatabaseType): TooLargeTexts;
   /** The answer when even the first row does not fit the result cap. */
   readonly rowOverCap: string;
   /** The hint when more rows exist than the result holds and no next offset can be named. */
@@ -121,7 +122,7 @@ const READ_ONLY_STATEMENT_READER = {
     const violation = checkReadOnlyStatement(statement);
     return violation === null ? null : fenceRefusalText(violation, type);
   },
-  tooLarge: () => ({}),
+  tooLarge: (_statement: string, type: DatabaseType) => tooLargeTextsOf(type),
   rowOverCap: ROW_OVER_CAP_TEXT,
   moreRows: (_statement: string, type: DatabaseType) => moreRowsThanPageableHint(type),
 } satisfies Pick<McpStatementArm, "canonicalize" | "fence" | "tooLarge" | "rowOverCap" | "moreRows">;

@@ -56,6 +56,15 @@ import {
   RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
+import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
+import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import type { McpConnectionContext } from "@/lib/mcp/context";
+import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
+import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
+import type { ManagedConnection } from "@/lib/seed";
+import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 
 // ============================================================================
 // Connection
@@ -4180,5 +4189,317 @@ describe("ElasticsearchProvider agent profile open", () => {
 
     expect(await openFailure(execution)).toBeInstanceOf(ElasticsearchProvider);
     expect(sent.map((request) => request.path)).toEqual([SQL_PATH]);
+  });
+});
+
+// ============================================================================
+// MCP's run_read_query, through the agent's own path
+// ============================================================================
+
+/**
+ * MCP's `run_read_query` serves Elasticsearch under the boundary agent mode uses: the connection is acquired under the
+ * agent read-only profile, whose open admits only the measured release line, and every statement goes through
+ * `queryReadOnly` on the SQL endpoint, whose grammar refuses every write. The engine's SQL has no OFFSET, so the tool
+ * names no next offset, refuses one before anything is sent, and says how to page by key instead.
+ */
+describe("MCP run_read_query on an Elasticsearch connection", () => {
+  const SEED = {
+    id: "seed:search",
+    name: "search",
+    type: "elasticsearch",
+    seedId: "search",
+    managed: true,
+    mcp: true,
+    roles: ["*"],
+    host: "127.0.0.1",
+    port: 9200,
+    user: "libredb_seed",
+    password: "not-a-real-password",
+    createdAt: new Date(0),
+  } as ManagedConnection;
+
+  let acquired: ExecutionProfile[] = [];
+
+  /** A context over the one seed, opening each acquisition by its profile, as the factory does. */
+  const context = {
+    caller: { username: "alice", role: "admin" },
+    visibleConnections: async () => [SEED],
+    resolve: async () => SEED,
+    acquire: async (_connection: ManagedConnection, profile: ExecutionProfile) => {
+      acquired.push(profile);
+      const provider = new ElasticsearchProvider(makeConnection(), {}, executionContextFor(profile));
+      await provider.connect();
+      return provider;
+    },
+  } as unknown as McpConnectionContext;
+
+  function call(args: Record<string, unknown>, signal = new AbortController().signal) {
+    const parsed = RunReadQueryInputSchema.parse({ connection_id: SEED.id, ...args }) as McpStatementInput;
+    return runReadQuery(parsed, { context, signal });
+  }
+
+  /** The same tool with its statement fence removed, so a statement reaches the boundary under test. */
+  const UNFENCED: McpStatementArm = { ...mcpStatementArm("run_read_query"), fence: () => null };
+
+  function unfenced(args: Record<string, unknown>) {
+    const parsed = UNFENCED.inputSchema.parse({ connection_id: SEED.id, ...args }) as McpStatementInput;
+    return runStatement(UNFENCED, parsed, { context, signal: new AbortController().signal });
+  }
+
+  /** The statements sent to the SQL endpoint, the open's probe left out. */
+  const statementsAfterOpen = (): string[] => statementsSent().filter((sql) => sql !== CONNECT_PROBE);
+
+  /** Answer `statement` with `reply`, and every other request as the canned cluster does. */
+  function answer(statement: string, reply: Reply): void {
+    replyFor = (request) => (statementOf(request) === statement ? reply : defaultReply(request));
+  }
+
+  const keys = (count: number) =>
+    ok(
+      `{"columns":[{"name":"k","type":"text"}],"rows":[${Array.from({ length: count }, (_, i) => `["k${i + 1}"]`).join(",")}]}`,
+    );
+
+  const KEYSET =
+    "Page it in SQL: ORDER BY a unique field, and for the next page add WHERE that field > the last value read.";
+
+  beforeEach(() => {
+    acquired = [];
+  });
+
+  test("the provider doc says MCP read is open here and names the statements it runs, from their records", () => {
+    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/elasticsearch.md"), "utf8");
+
+    expect(MCP_STATEMENT_READ.elasticsearch).toBe(true);
+    expect(MCP_STATEMENT_READ.opensearch).toBe(false);
+    expect(doc).toContain("`MCP_STATEMENT_READ.elasticsearch` is true");
+    expect(doc).not.toContain("MCP's statement read stays closed");
+    expect(doc.replaceAll("`", "")).toContain(`It runs ${readQueryFormsOf("elasticsearch").statements}:`);
+    expect(doc).toContain(KEYSET.replace("Page it in SQL: ", ""));
+  });
+
+  test("reads rows under the agent profile after the open's version read, and names no next offset", async () => {
+    answer("SELECT k FROM probe_buckets ORDER BY k LIMIT 3", keys(3));
+
+    const result = await call({ sql: "SELECT k FROM probe_buckets ORDER BY k", max_rows: 2 });
+
+    expect(result.isError).toBeUndefined();
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(pathsSent()).toContain("/");
+    expect(sqlRequests().at(-1)?.body).toEqual({
+      query: "SELECT k FROM probe_buckets ORDER BY k LIMIT 3",
+      fetch_size: 1001,
+      ...SQL_QUERY_OPTIONS,
+    });
+    expect(result.structuredContent).toMatchObject({
+      connection_id: SEED.id,
+      columns: [{ name: "k", type: "text" }],
+      rows: [{ k: "k1" }, { k: "k2" }],
+      row_count: 2,
+      truncated: true,
+      truncated_by: "max_rows",
+      pagination: { offset: 0, limit: 2, hasMore: true, nextOffset: null, wasLimited: true },
+      hint: `More rows exist than this result holds, and this query cannot be paged with offset. ${KEYSET}`,
+    });
+    expect((result.content as { text: string }[])[0]?.text).toBe(MCP_UNTRUSTED_NOTICE);
+  });
+
+  test("a whole answer names no hint", async () => {
+    answer("SELECT k FROM probe_buckets ORDER BY k LIMIT 101", keys(2));
+
+    const result = await call({ sql: "SELECT k FROM probe_buckets ORDER BY k" });
+
+    expect(result.structuredContent).toMatchObject({
+      row_count: 2,
+      truncated: false,
+      pagination: { offset: 0, limit: 100, hasMore: false, nextOffset: null, wasLimited: true },
+      hint: null,
+    });
+  });
+
+  const NO_OFFSET = `This engine's SQL has no OFFSET, so this query cannot be paged with offset. ${KEYSET}`;
+
+  test.each([
+    ["SELECT k FROM probe_buckets ORDER BY k", NO_OFFSET],
+    ["SELECT k FROM probe_buckets ORDER BY k LIMIT 5", NO_OFFSET],
+    ["EXPLAIN SELECT k FROM probe_buckets", "This statement's result cannot be paged. Call again without offset."],
+  ])("an offset on %p is refused before the statement is sent", async (sql, text) => {
+    const result = await call({ sql, offset: 2 });
+
+    expect(result).toEqual({ content: [{ type: "text", text }], isError: true });
+    expect(statementsAfterOpen()).toEqual([]);
+  });
+
+  const fenced = (code: string) =>
+    `The statement was refused before it reached the database (${code}). On this engine run_read_query runs one read-only statement: a SELECT (a name a WITH defines is read as an index, so a WITH fails), or EXPLAIN.`;
+
+  test.each([
+    ["INSERT INTO probe_orders (id, customer) VALUES (2, 'probe')", "NON_READ_STATEMENT"],
+    ["UPDATE probe_orders SET customer = 'x' WHERE id = 1", "NON_READ_STATEMENT"],
+    ["DELETE FROM probe_orders", "NON_READ_STATEMENT"],
+    ["CREATE TABLE libredb_t (id BIGINT)", "NON_READ_STATEMENT"],
+    ["DROP TABLE probe_orders", "NON_READ_STATEMENT"],
+    ["ALTER TABLE probe_orders ADD COLUMN libredb INT", "NON_READ_STATEMENT"],
+    ["TRUNCATE TABLE probe_orders", "NON_READ_STATEMENT"],
+    ["MERGE INTO probe_orders USING probe_orders AS s ON true WHEN MATCHED THEN DELETE", "NON_READ_STATEMENT"],
+    ["SELECT * INTO libredb_into FROM probe_orders", "SIDE_EFFECT_KEYWORD"],
+    ["EXPLAIN INSERT INTO probe_orders (id) VALUES (2)", "SIDE_EFFECT_KEYWORD"],
+    ["EXPLAIN ANALYZE SELECT k FROM probe_buckets", "SIDE_EFFECT_KEYWORD"],
+    ["DEBUG DELETE FROM probe_orders", "NON_READ_STATEMENT"],
+    ["WITH x AS (SELECT 1) INSERT INTO probe_orders SELECT * FROM probe_orders", "NON_READ_STATEMENT"],
+    ["SELECT 1; DELETE FROM probe_orders", "MULTIPLE_STATEMENTS"],
+    ["SHOW TABLES", "NON_READ_STATEMENT"],
+    ["DESCRIBE probe_orders", "NON_READ_STATEMENT"],
+    ["SYS COLUMNS", "NON_READ_STATEMENT"],
+  ])("%p is refused at admission, before anything is acquired or sent", async (sql, code) => {
+    const result = await call({ sql });
+
+    expect(result).toEqual({ content: [{ type: "text", text: fenced(code) }], isError: true });
+    expect(acquired).toEqual([]);
+    expect(sent).toEqual([]);
+  });
+
+  // The fence removed, each write the grammar refused raw is sent through queryReadOnly, and the refusal reaches the
+  // client as the database's own, in its words, never as rows. A SELECT-shaped one is sent with the page's LIMIT the
+  // tool adds, as the live replay sends it.
+  test.each(WRITE_REFUSALS.map((entry) => [entry.name, entry] as const))(
+    "%s: with the fence removed, the grammar's refusal is answered as the database's own",
+    async (_name, entry) => {
+      const sql = entry.request.body.query;
+      const paged = sql.startsWith("SELECT") ? `${sql} LIMIT 101` : sql;
+      answer(paged, fail(entry.status, entry.body));
+
+      const result = await unfenced({ sql });
+
+      expect(acquired).toEqual(["agent-read-only"]);
+      expect(statementsAfterOpen()).toEqual([paged]);
+      const reason = (JSON.parse(entry.body) as { error: { reason: string } }).error.reason;
+      const text = (result.content as { text: string }[]).map((part) => part.text);
+      expect(result.isError).toBe(true);
+      expect(text[0]).toBe(MCP_UNTRUSTED_NOTICE);
+      expect(text[1]).toStartWith(MCP_ENGINE_ERROR_PREFIX);
+      expect(text[1]).toContain(reason);
+    },
+  );
+
+  const refusedAtOpen = (sentence: string) => ({
+    content: [
+      {
+        type: "text" as const,
+        text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${RUN_READ_QUERY_ENGINES}.`,
+      },
+    ],
+    isError: true as const,
+  });
+
+  const rootWith = (version: Record<string, unknown>): Reply =>
+    ok(JSON.stringify({ name: "n", cluster_name: "c", version, tagline: "You Know, for Search" }));
+
+  test.each([
+    [
+      "a release outside the measured line",
+      { number: "9.2.0", build_flavor: "default" },
+      "The agent read-only profile is checked on Elasticsearch 9.1, and this server reports Elasticsearch 9.2.0: its write refusals have not been captured, so it is refused",
+    ],
+    [
+      "an OpenSearch server behind an Elasticsearch connection",
+      { number: "3.8.0", distribution: "opensearch" },
+      "The agent read-only profile is checked on Elasticsearch 9.1, and this server reports opensearch 3.8.0: its write refusals have not been captured, so it is refused",
+    ],
+  ])(
+    "%s is refused at open, in the tool's sentence, before the statement is sent",
+    async (_label, version, sentence) => {
+      overridePath("/", rootWith(version));
+
+      const result = await call({ sql: "SELECT k FROM probe_buckets" });
+
+      expect(acquired).toEqual(["agent-read-only"]);
+      expect(result).toEqual(refusedAtOpen(sentence));
+      expect(statementsAfterOpen()).toEqual([]);
+    },
+  );
+
+  test("a login that cannot read the version is refused at open, naming the cluster action it needs", async () => {
+    overridePath("/", fail(403, NO_BODY));
+
+    const result = await call({ sql: "SELECT k FROM probe_buckets" });
+
+    const text = (result.content as { text: string }[])[0]?.text ?? "";
+    expect(result.isError).toBe(true);
+    expect(text).toStartWith(
+      "run_read_query cannot run on this connection: The agent read-only profile is checked on Elasticsearch 9.1, and this server's version could not be read, so it is refused (a user needs the cluster privilege cluster:monitor/main to read it): ",
+    );
+    expect(text).toEndWith(`. It runs on ${RUN_READ_QUERY_ENGINES}.`);
+    expect(text).not.toContain(SEED.password as string);
+    expect(statementsAfterOpen()).toEqual([]);
+  });
+
+  test("a result past the 1000-row provider budget is refused, never cut, after its cursor is closed", async () => {
+    answer(
+      "SELECT k FROM probe_buckets LIMIT 2000",
+      ok(`{${AGGREGATION_COLUMNS},"rows":[${bucketRows(0, 1001)}],"cursor":"${AGGREGATION_CURSOR}"}`),
+    );
+
+    const result = await call({ sql: "SELECT k FROM probe_buckets LIMIT 2000" });
+
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: `The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, and page it in SQL: ORDER BY a unique field, and for the next page add WHERE that field > the last value read.`,
+        },
+      ],
+      isError: true,
+    });
+    expect(sent.at(-1)?.path).toBe("/_sql/close");
+    expect(sent.at(-1)?.body).toEqual({ cursor: AGGREGATION_CURSOR });
+  });
+
+  test("a result past the 1 MiB provider budget is refused, never cut", async () => {
+    answer(
+      "SELECT note FROM probe_orders LIMIT 101",
+      ok(`{"columns":[{"name":"note","type":"text"}],"rows":[["${"x".repeat(1_048_577)}"]]}`),
+    );
+
+    const result = await call({ sql: "SELECT note FROM probe_orders" });
+
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add a smaller LIMIT.",
+        },
+      ],
+      isError: true,
+    });
+  });
+
+  test("a statement past timeout_ms is answered as the timeout, and its request is closed at the deadline", async () => {
+    const held = "SELECT COUNT(*) AS n FROM probe_buckets LIMIT 101";
+    let closed = false;
+    const serve = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const body = init?.body === undefined ? null : (JSON.parse(String(init.body)) as Record<string, unknown>);
+      if (body?.query !== held) return serve(input, init);
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          closed = true;
+          reject(init.signal?.reason);
+        });
+      });
+    }) as typeof fetch;
+
+    const result = await call({ sql: "SELECT COUNT(*) AS n FROM probe_buckets", timeout_ms: 500 });
+
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: "The statement did not finish within timeout_ms (500 ms). Narrow it, or raise timeout_ms up to 30000.",
+        },
+      ],
+      isError: true,
+    });
+    await Bun.sleep(50);
+    expect(closed).toBe(true);
   });
 });

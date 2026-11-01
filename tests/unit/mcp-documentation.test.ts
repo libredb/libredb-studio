@@ -104,8 +104,9 @@ describe("docs/MCP.md", () => {
 
   test("claims only SELECT for every engine, and names the record that opens MCP read", () => {
     expect(MCP_DOC).toContain(
-      "A `SELECT` (a `WITH` is fine) runs on every engine it serves; a refused statement's answer names what else that engine takes.",
+      "A `SELECT` runs on every engine it serves; a refused statement's answer names what else that engine takes.",
     );
+    expect(MCP_DOC).not.toContain("A `SELECT` (a `WITH` is fine) runs on every engine it serves");
     expect(MCP_DOC).toContain("`MCP_STATEMENT_READ`");
   });
 
@@ -113,7 +114,7 @@ describe("docs/MCP.md", () => {
     // One line per engine, in the row's own words; backticks are the doc's markup, not part of the claim.
     const lines = MCP_DOC.split("\n")
       .map((line) => line.replaceAll("`", ""))
-      .filter((line) => /^ {4}- .+: a SELECT \(a WITH is fine\)/.test(line));
+      .filter((line) => /^ {4}- .+: a SELECT\b/.test(line));
     const expected = RUN_READ_QUERY_TYPES.map(
       (type) => `    - ${DB_UI_CONFIG[type].label}: ${readQueryFormsOf(type).statements}.`,
     );
@@ -211,6 +212,27 @@ describe("docs/MCP.md", () => {
     );
     expect(MCP_DOC).toContain(
       "InfluxDB 3 checks its server's line only for a connection that sends statements, so `inspect_schema` opens an InfluxDB 3 connection on any 3.x server, as the editor does.",
+    );
+  });
+
+  test("says what a cancel and a timeout do to an Elasticsearch statement, as measured on 9.1.4", () => {
+    expect(MCP_DOC).toContain(
+      "| Elasticsearch | Studio stops waiting, and the provider closes its request at the time left of `timeout_ms`; the cluster runs the statement to its end, and holds no search context for it once it ends | Studio closes the request at `timeout_ms`, the cluster runs the statement to its end and then holds no search context for it, and the client gets the timeout answer |",
+    );
+  });
+
+  test("says what Elasticsearch needs of a seed, that no broad login is refused, and how it pages without OFFSET", () => {
+    expect(MCP_DOC).toContain(
+      "Elasticsearch by the grammar of its SQL endpoint, which holds no write, DDL or transaction statement, on a server checked at open to be the 9.1 release line whose refusals were captured ([elasticsearch.md](./providers/elasticsearch.md))",
+    );
+    expect(MCP_DOC).toContain(
+      "On Elasticsearch the boundary is the grammar, so no login is checked or refused for being broad: `run_read_query` needs the cluster action `cluster:monitor/main` and `read` and `view_index_metadata` on the indices to read, and `inspect_schema` also the cluster privileges `monitor` and `read_pipeline` and the index privilege `monitor`, which is the `libredb_seed_read` role of [elasticsearch.md](./providers/elasticsearch.md) section 5.9; a broader login, a superuser included, is served, and every index it may read, restricted system indices included, reaches the client, so opt in a seed signed in with that role.",
+    );
+    expect(MCP_DOC).toContain(
+      "Elasticsearch checks its server's release only for a connection that sends statements, so `inspect_schema` opens an Elasticsearch connection on any release, as the editor does.",
+    );
+    expect(MCP_DOC).toContain(
+      "Elasticsearch SQL has no `OFFSET`, so there `pagination.nextOffset` is always `null`, an `offset` is refused before anything is sent, and the answer says to page by key instead: `ORDER BY` a unique field, and for the next page add `WHERE` that field `>` the last value read.",
     );
   });
 

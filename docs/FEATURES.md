@@ -259,7 +259,7 @@ Two components are described below and a claim true of one can be false of the o
 
 ### 19. MCP Server for your own AI client (off by default)
 *   **Your own client:** Claude Code, Codex, Cursor, VS Code or Gemini CLI connect to `/api/mcp` with a token each user mints on the settings screen.
-*   **Five read-only tools:** `list_connections` and `inspect_schema` on every engine, `run_read_query` on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL and InfluxDB 3 (SQL), `run_kubectl_read` on Kubernetes, and `run_mongo_command` on MongoDB.
+*   **Five read-only tools:** `list_connections` and `inspect_schema` on every engine, `run_read_query` on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL) and Elasticsearch, `run_kubectl_read` on Kubernetes, and `run_mongo_command` on MongoDB.
 *   **Opted-in connections only:** only the seed connections an operator opts in with `mcp: true`, filtered by the token's role; the database credentials stay on the server.
 *   **Bounded and audited:** every result is bounded to 32 KiB and marked as untrusted data, and every call is audited.
 *   **Setup:** client configuration and limits are in [`docs/MCP.md`](MCP.md).

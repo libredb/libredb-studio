@@ -13,13 +13,21 @@ import type { DatabaseType } from "@/lib/types";
  * `TABLE` and runs `EXPLAIN`; libSQL (sqld 0.24.33, through a read-only token) runs a bare `VALUES`, `EXPLAIN` and
  * `EXPLAIN QUERY PLAN`, and answers `TABLE` and `EXPLAIN ANALYZE` with a syntax error, as SQLite does; InfluxDB 3 Core
  * 3.12.0, through the agent read-only path, runs a bare `VALUES` and `EXPLAIN` (`VERBOSE` too), answers `TABLE` with a
- * parser error, and runs `EXPLAIN ANALYZE`, which the fence refuses.
+ * parser error, and runs `EXPLAIN ANALYZE`, which the fence refuses; Elasticsearch 9.1.4, through the agent read-only
+ * path, runs a `SELECT` and `EXPLAIN`, parses a `WITH` but reads a name it defines as an index ("Unknown index"),
+ * refuses `VALUES`, `TABLE` and `EXPLAIN ANALYZE` in its grammar, and has no `OFFSET` at all, so it pages by key: a
+ * `WHERE` on a sort key past the last value read answers the next rows.
  */
 export interface ReadQueryForms {
   /** The statements, as the refusal names them after "runs one read-only statement:". */
   readonly statements: string;
   /** The engine's own paging clause, as the answer names it after "Page it in SQL:". */
   readonly paging: string;
+  /**
+   * Whether the engine's SQL has an `OFFSET` for `prepareQuery` to page with. Where it has none, `run_read_query` names
+   * no next offset and refuses one before anything is sent, and `paging` says how to page without it.
+   */
+  readonly pagesWithOffset: boolean;
 }
 
 const LIMIT_OFFSET = "LIMIT n OFFSET m";
@@ -33,6 +41,7 @@ export const READ_QUERY_FORMS: Readonly<Record<DatabaseType, ReadQueryForms | nu
   postgres: {
     statements: "a SELECT (a WITH is fine), VALUES, TABLE, or EXPLAIN without ANALYZE",
     paging: LIMIT_OFFSET,
+    pagesWithOffset: true,
   },
   bigquery: null,
   snowflake: null,
@@ -41,25 +50,41 @@ export const READ_QUERY_FORMS: Readonly<Record<DatabaseType, ReadQueryForms | nu
   mysql: {
     statements: "a SELECT (a WITH is fine), VALUES, TABLE (MySQL, not MariaDB), or EXPLAIN without ANALYZE",
     paging: LIMIT_OFFSET,
+    pagesWithOffset: true,
   },
   // No TABLE statement, and EXPLAIN takes no ANALYZE.
-  sqlite: { statements: "a SELECT (a WITH is fine), VALUES, or EXPLAIN", paging: LIMIT_OFFSET },
+  sqlite: { statements: "a SELECT (a WITH is fine), VALUES, or EXPLAIN", paging: LIMIT_OFFSET, pagesWithOffset: true },
   // SQLite's grammar over Hrana: no TABLE statement, and EXPLAIN takes no ANALYZE.
-  libsql: { statements: "a SELECT (a WITH is fine), VALUES, or EXPLAIN", paging: LIMIT_OFFSET },
+  libsql: { statements: "a SELECT (a WITH is fine), VALUES, or EXPLAIN", paging: LIMIT_OFFSET, pagesWithOffset: true },
   duckdb: {
     statements: "a SELECT (a WITH is fine), VALUES, TABLE, or EXPLAIN without ANALYZE",
     paging: LIMIT_OFFSET,
+    pagesWithOffset: true,
   },
   oracle: null,
   db2: null,
   // No bare VALUES, no TABLE statement and no EXPLAIN.
-  mssql: { statements: "a SELECT (a WITH is fine)", paging: "ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY" },
+  mssql: {
+    statements: "a SELECT (a WITH is fine)",
+    paging: "ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY",
+    pagesWithOffset: true,
+  },
   // A bare VALUES and TABLE are syntax errors (code 62); EXPLAIN runs.
-  clickhouse: { statements: "a SELECT (a WITH is fine), or EXPLAIN without ANALYZE", paging: LIMIT_OFFSET },
+  clickhouse: {
+    statements: "a SELECT (a WITH is fine), or EXPLAIN without ANALYZE",
+    paging: LIMIT_OFFSET,
+    pagesWithOffset: true,
+  },
   druid: null,
   trino: null,
   cassandra: null,
-  elasticsearch: null,
+  // A WITH parses, but a name it defines is read as an index; VALUES, TABLE and EXPLAIN ANALYZE are grammar refusals;
+  // and there is no OFFSET (a parsing_exception), so the next page is asked for by key.
+  elasticsearch: {
+    statements: "a SELECT (a name a WITH defines is read as an index, so a WITH fails), or EXPLAIN",
+    paging: "ORDER BY a unique field, and for the next page add WHERE that field > the last value read",
+    pagesWithOffset: false,
+  },
   opensearch: null,
   mongodb: null,
   couchbase: null,
@@ -73,7 +98,11 @@ export const READ_QUERY_FORMS: Readonly<Record<DatabaseType, ReadQueryForms | nu
   weaviate: null,
   influxdb: null,
   // DataFusion: TABLE is a parser error, and EXPLAIN ANALYZE runs the statement.
-  influxdb3: { statements: "a SELECT (a WITH is fine), VALUES, or EXPLAIN without ANALYZE", paging: LIMIT_OFFSET },
+  influxdb3: {
+    statements: "a SELECT (a WITH is fine), VALUES, or EXPLAIN without ANALYZE",
+    paging: LIMIT_OFFSET,
+    pagesWithOffset: true,
+  },
   oxia: null,
   databend: null,
   s3: null,
