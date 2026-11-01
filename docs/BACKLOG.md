@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S10 · 7
-- [Drivers and connections](#drivers-and-connections) — D1-D418, U17 · 307
+- [Drivers and connections](#drivers-and-connections) — D1-D419, U17 · 308
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U194 · 179
@@ -42,7 +42,7 @@ None of it is a GitHub issue.
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B166 · 86
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
-- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP4 · 4
+- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP7 · 7
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
 
 ---
@@ -4210,6 +4210,16 @@ Five readers of one rule can drift: a fix to how a bound is counted, how a split
 Seen 2026-11-01 when the Trino transport's bounded read was added.
 
 **Done when:** the four transports read through `readBoundedText`, their own readers are removed, and each transport's existing cap tests pass unchanged.
+
+### D419. ClickHouse's read-only path answers a `FORMAT Null` statement as an empty result
+
+`readAgentAnswer` in `src/lib/db/providers/sql/clickhouse/agent-read.ts` refuses an answer in a format the statement chose only when the transport hands back raw text, so `FORMAT TSV` is refused but `FORMAT Null`, whose answer is an empty body, passes as a success with no columns and no rows.
+Measured 2026-11-01 on 26.7.1.1315 through MCP's `run_read_query` as a least-privilege user: `SELECT count() FROM bv41.orders FORMAT Null` answered `row_count` 0 with no error, after the server had run the whole statement (`system.query_log` shows it finished), so a client reads "no rows" where the table holds 5000.
+The `FORMAT TSV` refusal, a `QueryError` thrown after the server answered, reaches an MCP client as "The database refused or failed the call:" followed by Studio's own sentence.
+The agent path reads the same function.
+Found 2026-11-01 while verifying `run_read_query` on ClickHouse; pre-existing.
+
+**Done when:** `queryReadOnly` refuses any statement-chosen `FORMAT` clause, `Null` included, in Studio's words and before the request is sent where the grammar can tell, a provider test pins `FORMAT Null` and `FORMAT TSV`, and section 5.6 of `docs/providers/clickhouse.md` says so.
 
 ## Value interpolation
 
@@ -9264,6 +9274,32 @@ Shared MCP code is meant to read the registries and name no statement language, 
 Found 2026-10-28 while moving the SQL MCP surface into its language pack; left in place then to keep `tools/list` byte-identical.
 
 **Done when:** the three texts are the SQL facet's words and the shared module takes them from the facet, with `tools/list` and every SQL refusal unchanged byte for byte and a test that pins them through the facet.
+
+### MCP5. The MCP statement fence refuses ClickHouse's `merge()` table function as a side effect
+
+`SIDE_EFFECT_WORDS` in `src/lib/db/operations/statement-guard.ts` holds `MERGE` for a data-modifying CTE, and the guard reads the word anywhere in the statement, so `SELECT * FROM merge('bv41', '.*') LIMIT 1`, a read of local tables, is refused before the connection is acquired with `SIDE_EFFECT_KEYWORD`.
+The answer then says that on this engine `run_read_query` runs "a SELECT (a WITH is fine), or EXPLAIN without ANALYZE", which the refused statement is, so a client cannot tell what to change.
+Found 2026-11-01 while verifying `run_read_query` on ClickHouse.
+
+**Done when:** a word that is a table function or a scalar function in the engine's own grammar is not read as a side-effect keyword where it is followed by an argument list, or the refusal names the word it matched, with a test on ClickHouse's `merge()` and on PostgreSQL's `MERGE INTO` inside a CTE.
+
+### MCP6. A row about half the 32 KiB result limit is refused as larger than it
+
+`build` in `src/lib/mcp/tools/run-statement.ts` measures the whole tool result with `resultBytes` in `src/lib/mcp/output.ts`, and that result carries the rows twice, once in the text block and once in `structuredContent`.
+So one row of about 16 KiB is answered with `ROW_OVER_CAP_TEXT`, "One row of this result is larger than the 32 KiB result limit": measured 2026-11-01 on ClickHouse, a row of `repeat('x', 15000)` was served and one of `repeat('x', 16000)` refused.
+`docs/MCP.md` says a call answers at most 32 KiB, which holds; the refusal's sentence does not.
+Found 2026-11-01 while verifying `run_read_query` on ClickHouse; pre-existing and engine-agnostic.
+
+**Done when:** the refusal states the limit the row actually exceeds, or the cap is measured on one copy of the rows, with a test on a row between 16 and 32 KiB, and `docs/MCP.md` says which bytes the 32 KiB counts.
+
+### MCP7. `list_connections` names `run_read_query` for a SQLite seed every MCP call refuses
+
+A SQLite seed whose `roles` admit a non-admin role is opened with external file access denied, so every `run_read_query` on it answers "SQLite connections require an administrator because this driver cannot confine statement-level file access" (`connect()` in `src/lib/db/providers/sql/sqlite.ts`), whoever holds the token; `docs/providers/sqlite.md` says so, and `docs/MCP.md` does not.
+`list_connections` still gives that connection `read_tool: "run_read_query"`.
+Measured 2026-11-01 with a seed set to `roles: ["*"]` and an admin's token.
+Found 2026-11-01 while verifying `run_read_query` on ClickHouse.
+
+**Done when:** `list_connections` gives such a seed a `read_tool` that can run, or says why none can, `docs/MCP.md` states the SQLite seed requirement beside the PostgreSQL, SQL Server and ClickHouse ones, and a test pins both.
 
 ---
 
