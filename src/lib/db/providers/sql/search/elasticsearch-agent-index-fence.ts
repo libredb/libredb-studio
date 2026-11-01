@@ -14,6 +14,8 @@
  *
  *  - a statement whose quote or comment never closes, since where its names end cannot be read; the grammar row reads
  *    a backslash as the engine does, an ordinary character in both quotes, so no quote's end is a guess;
+ *  - a carriage return inside a `--` comment with more text after it: 9.1.4 ends the comment at a lone carriage return
+ *    and reads what follows as code, which a reader running the comment on to the line feed would skip;
  *  - an empty quoted name, which the engine reads as every open index, and which before a `.` would start the name
  *    after it with a dot;
  *  - a name that starts with a dot, read with a `.` written as `%2E` or `\u002E` in a quoted name read as a dot: a
@@ -34,7 +36,7 @@
  */
 import { RefusedBeforeSendError } from "@/lib/db/errors";
 import { resolveSqlGrammar } from "@/lib/sql/grammar";
-import { readSqlSpan } from "@/lib/sql/spans";
+import { hasLoneCarriageReturnInLineComment, readSqlSpan } from "@/lib/sql/spans";
 
 export const DOT_INDEX_REFUSAL =
   "The agent names no Elasticsearch index that starts with a dot: those are the hidden and system indices, the security index among them, which a login that may read them reads through SQL; read a data stream by its own name rather than its backing index";
@@ -44,6 +46,9 @@ export const EMPTY_NAME_REFUSAL =
 
 export const UNREADABLE_REFUSAL =
   "The agent sends Elasticsearch no statement whose quote or comment never closes, since where its names end cannot be read";
+
+export const CARRIAGE_RETURN_REFUSAL =
+  "The agent sends Elasticsearch no statement with a carriage return inside a -- comment and more text after it: the engine ends the comment there, so the text after it is code; end a comment with a line feed";
 
 export const CATALOG_COMMAND_REFUSAL =
   "The agent sends Elasticsearch no SHOW, DESCRIBE, SYS or DEBUG command but its own column catalog read, SYS COLUMNS for every table or for one: the others take an index pattern as a string, which the agent does not read as an index name";
@@ -140,10 +145,13 @@ function isColumnCatalogRead(read: readonly Token[]): boolean {
 }
 
 /**
- * Refuses a statement whose text cannot be read to its end, that writes an empty quoted name, names a hidden or system
- * index, or sends a catalog command but the agent's own.
+ * Refuses a statement whose text cannot be read to its end or holds a carriage return inside a `--` comment, that
+ * writes an empty quoted name, names a hidden or system index, or sends a catalog command but the agent's own.
  */
 export function assertAgentIndexNames(sql: string): void {
+  if (hasLoneCarriageReturnInLineComment(sql, resolveSqlGrammar("elasticsearch"))) {
+    throw refuse(CARRIAGE_RETURN_REFUSAL, sql);
+  }
   const read = tokens(sql);
   if (read.some((token) => token.kind === "quoted" && DOT_AFTER_NON_NAME.test(token.text))) {
     throw refuse(DOT_INDEX_REFUSAL, sql);

@@ -60,6 +60,7 @@ import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
 import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
 import {
+  CARRIAGE_RETURN_REFUSAL,
   CATALOG_COMMAND_REFUSAL,
   DOT_INDEX_REFUSAL,
   EMPTY_NAME_REFUSAL,
@@ -4452,6 +4453,7 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
     ['SELECT COUNT(*) AS n FROM ""', EMPTY_NAME_REFUSAL],
     ["SELECT 'a\\' AS x FROM \".security\"", DOT_INDEX_REFUSAL],
     ['SELECT COUNT(*) AS n FROM ".security', UNREADABLE_REFUSAL],
+    ['SELECT COUNT(*) AS n FROM -- x\r".security"', CARRIAGE_RETURN_REFUSAL],
   ])("%p is refused by the provider before it is sent, through run_read_query", async (sql, sentence) => {
     const result = await unfenced({ sql });
 

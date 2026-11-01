@@ -50,6 +50,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
 import {
+  CARRIAGE_RETURN_REFUSAL,
   CATALOG_COMMAND_REFUSAL,
   DOT_INDEX_REFUSAL,
   EMPTY_NAME_REFUSAL,
@@ -343,6 +344,8 @@ const HIDDEN: readonly [string, string][] = [
   ['SELECT COUNT(*) AS n FROM ""', `${NOT_SENT}${EMPTY_NAME_REFUSAL}.`],
   // The engine reads the backslash as an ordinary character, so the string ends there and the security index is read.
   ["SELECT 'a\\' AS x FROM \".security\"", DOT_REFUSAL],
+  // The engine ends a `--` comment at a lone carriage return, so the quoted name after it is code it reads.
+  ['SELECT COUNT(*) AS n FROM -- x\r".security"', `${NOT_SENT}${CARRIAGE_RETURN_REFUSAL}.`],
   ["SHOW TABLES LIKE '.sec%'", COMMAND_REFUSAL],
   ['SHOW COLUMNS IN ".security"', DOT_REFUSAL],
   ['DESCRIBE ".security"', DOT_REFUSAL],

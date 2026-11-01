@@ -8,6 +8,7 @@ import { describe, expect, test } from "bun:test";
 import { QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import {
   assertAgentIndexNames,
+  CARRIAGE_RETURN_REFUSAL,
   CATALOG_COMMAND_REFUSAL,
   DOT_INDEX_REFUSAL,
   EMPTY_NAME_REFUSAL,
@@ -151,6 +152,27 @@ describe("assertAgentIndexNames", () => {
     );
     expect(error.message).toBe(UNREADABLE_REFUSAL);
   });
+
+  // 9.1.4 ends a `--` comment at a lone carriage return, so the text after it is code the engine reads.
+  test.each([
+    'SELECT * FROM -- x\r".security-7"',
+    "SELECT 1 AS a -- x\r, 2 AS b",
+    'SELECT * FROM probe_orders -- x\r\t".security"',
+  ])("refuses %p, a carriage return inside a -- comment with more text after it", (sql) => {
+    const error = thrown(() => assertAgentIndexNames(sql));
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect(error.message).toBe(
+      "The agent sends Elasticsearch no statement with a carriage return inside a -- comment and more text after it: the engine ends the comment there, so the text after it is code; end a comment with a line feed",
+    );
+    expect(error.message).toBe(CARRIAGE_RETURN_REFUSAL);
+  });
+
+  test.each(["-- x\r\nSELECT 1", "SELECT 1 -- x\r", "SELECT 1 /* x\r */ AS a", "SELECT 'x\r' AS a"])(
+    "admits %p, whose carriage return ends no comment early",
+    (sql) => {
+      expect(() => assertAgentIndexNames(sql)).not.toThrow();
+    },
+  );
 
   test("names the engine and the statement on the refusal", () => {
     const error = thrown(() => assertAgentIndexNames('SELECT 1 FROM ".security"')) as RefusedBeforeSendError;
