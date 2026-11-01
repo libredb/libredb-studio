@@ -350,6 +350,7 @@ For the first few seconds after that service starts, `opencode mcp list` can say
 | DuckDB | Studio stops waiting; the statement runs to completion and its result is discarded | The client gets the timeout answer near `timeout_ms`, and the statement runs on |
 | SQLite | An on-disk statement runs in a killable child process, so the client is answered at `timeout_ms` | The statement is killed at `timeout_ms`; an in-memory statement still runs to completion |
 | ClickHouse | Studio stops waiting; the statement runs on until its server-side `max_execution_time`, which is set to the time left rounded up to whole seconds, ends it | Studio closes the request at `timeout_ms`, ClickHouse cancels the statement, and the client gets the timeout answer |
+| libSQL | Studio stops waiting; the statement runs on until the provider closes its request at the time left of `timeout_ms`, which stops it on sqld | Studio closes the request at `timeout_ms`, sqld stops the statement, and the client gets the timeout answer |
 
 - One MCP query against a large SQLite table no longer stops the Studio process: the read runs in a
   child process and is killed at `timeout_ms`; only an in-memory SQLite read still blocks it.
