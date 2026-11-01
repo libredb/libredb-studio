@@ -231,6 +231,15 @@ export interface SqlGrammar {
    */
   readonly doubleQuoteBackslashEscapes?: boolean;
   /**
+   * Whether a backslash escapes the next character inside `'…'`; absent means the reading `backslashAlwaysEscapes`
+   * gives both quotes. False: a backslash there is an ordinary character, so `'a\'` is a terminated string. True: it
+   * escapes there.
+   *
+   * It is a fact the text cannot settle: `'a\' FROM ".x" --'` is a string and code naming `.x` where the backslash is
+   * ordinary, and one string to the trailing quote where it escapes.
+   */
+  readonly singleQuoteBackslashEscapes?: boolean;
+  /**
    * Whether `r'...'`, `R'...'`, `r"..."` and `R"..."` are string literals that take no escapes and end at the first
    * quote of their own kind, line feeds included; absent means false. Only where the `r` does not continue a word:
    * the engine's lexer takes the longest token, so `abr'x'` is a name followed by a string.

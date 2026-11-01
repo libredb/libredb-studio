@@ -669,11 +669,25 @@ describe("dollarTags and doubleQuoteBackslashEscapes", () => {
     expect(resolveSqlGrammar(type).doubleQuoteBackslashEscapes).toBe(false);
   });
 
+  // Elasticsearch's lexer reads a backslash as an ordinary character in both quotes (measured on 9.1.4).
+  test("elasticsearch declares a backslash ordinary in both quotes, and keeps tagged runs", () => {
+    expect(resolveSqlGrammar("elasticsearch").dollarTags).toBeUndefined();
+    expect(resolveSqlGrammar("elasticsearch").doubleQuoteBackslashEscapes).toBe(false);
+    expect(resolveSqlGrammar("elasticsearch").singleQuoteBackslashEscapes).toBe(false);
+  });
+
   test.each(
-    (Object.keys(GRAMMAR_COVERAGE) as DatabaseType[]).filter((type) => type !== "snowflake" && type !== "druid"),
+    (Object.keys(GRAMMAR_COVERAGE) as DatabaseType[]).filter(
+      (type) => type !== "snowflake" && type !== "druid" && type !== "elasticsearch",
+    ),
   )("%s declares neither", (type) => {
     expect(resolveSqlGrammar(type).dollarTags).toBeUndefined();
     expect(resolveSqlGrammar(type).doubleQuoteBackslashEscapes).toBeUndefined();
+    expect(resolveSqlGrammar(type).singleQuoteBackslashEscapes).toBeUndefined();
+  });
+
+  test("the compatibility default declares no single-quote reading", () => {
+    expect(DEFAULT_SQL_GRAMMAR.singleQuoteBackslashEscapes).toBeUndefined();
   });
 });
 

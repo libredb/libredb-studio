@@ -39,6 +39,11 @@ const ELASTICSEARCH_GRAMMAR: SqlGrammar = {
   // over-splits exactly as `cassandra`'s did.
   doubleSlashComment: DEFAULT_SQL_GRAMMAR.doubleSlashComment,
   backslashAlwaysEscapes: false,
+  // A backslash is an ordinary character in both quotes (measured 2026-11-01 on 9.1.4): `SELECT 'a\' AS x` answers
+  // `a\`, `SELECT 'a\'b' AS x` is a `parsing_exception` at the stray quote, and `"\u002esecurity"` names an index of
+  // those twelve characters. So neither quote's end is undeterminable here.
+  singleQuoteBackslashEscapes: false,
+  doubleQuoteBackslashEscapes: false,
   script: DEFAULT_SQL_GRAMMAR.script,
   trailingLimitClauses: DEFAULT_SQL_GRAMMAR.trailingLimitClauses,
 };
