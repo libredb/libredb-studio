@@ -31,6 +31,7 @@ import { ELASTICSEARCH_PRODUCT, OPENSEARCH_PRODUCT } from "@/lib/db/providers/sq
 import type {
   SearchClusterHealth,
   SearchIndexInfo,
+  SearchLoginReach,
   SearchMappingField,
   SearchObjectDefinition,
   SearchObjectInfo,
@@ -156,6 +157,9 @@ function createTransport(options: FakeOptions = {}) {
     },
     sqlDeleteSetting: (): Promise<{ setting: string; enabled: boolean | null }> => {
       throw new Error("introspection read a cluster setting");
+    },
+    loginReach: (): Promise<SearchLoginReach | null> => {
+      throw new Error("introspection checked the login");
     },
     unrefusedSqlDelete: (): Promise<string | null> => {
       throw new Error("introspection sent a DELETE probe");

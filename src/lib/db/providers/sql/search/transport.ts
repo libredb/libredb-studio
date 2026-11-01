@@ -315,6 +315,18 @@ export interface SearchObjectInfo {
  */
 export type SearchObjectDefinition = Readonly<Record<string, unknown>>;
 
+/** A login's reach past what a read-only agent may hold, as {@link SearchTransport.loginReach} reads it. */
+export interface SearchLoginReach {
+  /** The user the server says the request was made as. */
+  readonly user: string;
+  /** Whether the login holds the cluster privilege `all`. */
+  readonly clusterAll: boolean;
+  /** Whether the login reads every index, the restricted system indices included. */
+  readonly everyIndex: boolean;
+  /** The named restricted system indices the login reads, in the order they were asked about. */
+  readonly restrictedIndices: readonly string[];
+}
+
 /**
  * Everything the provider needs from a search cluster.
  *
@@ -354,6 +366,15 @@ export interface SearchTransport {
 
   /** The server's own version string, and the product it reports itself as. */
   version(signal?: AbortSignal): Promise<{ version: string; product: string }>;
+
+  /**
+   * What the login making the request may do that a read-only agent must not, as the server's own privilege check
+   * answers it for that login: whether it holds the cluster privilege `all`, whether it reads every index with the
+   * restricted system indices included, and which of the product's named restricted system indices it reads. Null
+   * when the server runs without security, so no login exists to check. Only a product that names its restricted
+   * system indices answers; another refuses before any request.
+   */
+  loginReach(signal?: AbortSignal): Promise<SearchLoginReach | null>;
 
   /**
    * The cluster setting that turns the SQL plugin's DELETE on, by name, and its value: true or false, or null when

@@ -572,6 +572,65 @@ const NO_SUCH_HANDLER = '{"error":"no handler found for uri [/_plugins/_sql] and
  */
 const NO_BODY = "";
 
+/** The server's own check of what the login may do, asked by the open of a handle that sends agent statements. */
+const HAS_PRIVILEGES_PATH = "/_security/user/_has_privileges";
+
+/** The restricted system indices the check names one by one, each answered restricted by 9.1.4 (measured 2026-11-01). */
+const RESTRICTED_INDICES = [
+  ".security-7",
+  ".security-tokens-7",
+  ".security-profile-8",
+  ".async-search",
+  ".tasks",
+  ".fleet-secrets",
+  ".fleet-agents-7",
+  ".fleet-policies-7",
+  ".fleet-actions-7",
+  ".fleet-enrollment-api-keys-7",
+  ".connector-secrets",
+  ".secrets-inference",
+  ".inference",
+  ".ml-config",
+  ".ml-meta",
+  ".ml-inference-000005",
+  ".transform-internal-007",
+  ".watches",
+  ".triggered_watches",
+  ".geoip_databases",
+  ".logstash",
+  ".synonyms-2",
+  ".snapshot-blob-cache",
+  ".apm-agent-configuration",
+  ".kibana_9.1.4_001",
+  ".kibana_task_manager_9.1.4_001",
+  ".kibana_security_session_1",
+];
+
+/** The request the open sends: the cluster privilege `all`, and `read` on every index and on each restricted one. */
+const HAS_PRIVILEGES_REQUEST = {
+  cluster: ["all"],
+  index: [{ names: ["*", ...RESTRICTED_INDICES], privileges: ["read"], allow_restricted_indices: true }],
+};
+
+/**
+ * The check's answer, in the shape 9.1.4 answers it (measured 2026-11-01 for the superuser, `libredb_agent_read`,
+ * `libredb_seed_read`, a role reading `*` without `allow_restricted_indices`, and a role reading `.security*` with it):
+ * the user, `has_all_requested`, the cluster privilege, each name's `read`, and an empty `application`.
+ */
+function privilegeAnswer(username: string, clusterAll: boolean, readable: readonly string[]): string {
+  const names = ["*", ...RESTRICTED_INDICES];
+  return JSON.stringify({
+    username,
+    has_all_requested: clusterAll && names.every((name) => readable.includes(name)),
+    cluster: { all: clusterAll },
+    index: Object.fromEntries(names.map((name) => [name, { read: readable.includes(name) }])),
+    application: {},
+  });
+}
+
+/** What a node started with security off answers the check, measured on 9.1.4: no security endpoint is registered. */
+const NO_SECURITY_BODY = `{"error":"no handler found for uri [${HAS_PRIVILEGES_PATH}] and method [POST]"}`;
+
 // ============================================================================
 // Object-surface payloads (#789)
 // ============================================================================
@@ -900,6 +959,8 @@ function defaultReply(request: SentRequest): Reply {
   if (request.path.startsWith("/_ingest/pipeline/")) return fail(404, "{}");
   if (request.path.startsWith("/_index_template/")) return fail(404, TEMPLATE_ABSENT_BODY);
 
+  // The least-privilege role's answer: no cluster `all`, and no restricted index read.
+  if (request.path === HAS_PRIVILEGES_PATH) return ok(privilegeAnswer("libredb_seed", false, []));
   if (request.path === `${SQL_PATH.split("?")[0]}/close`) return ok(CURSOR_CLOSED_BODY);
   if (cursorOf(request) !== null) return ok(AGGREGATION_PAGE_TWO);
 
@@ -4165,11 +4226,13 @@ describe("ElasticsearchProvider agent profile open", () => {
     );
   }
 
-  test("reads the version after the probe and admits the measured release line", async () => {
+  test("reads the version after the probe, then what the login may do, and admits the measured release line", async () => {
     const opened = await openFailure();
 
     expect(opened).toBeInstanceOf(ElasticsearchProvider);
-    expect(sent.map((request) => request.path)).toEqual([SQL_PATH, "/"]);
+    expect(sent.map((request) => request.path)).toEqual([SQL_PATH, "/", HAS_PRIVILEGES_PATH]);
+    expect(sent[2]?.method).toBe("POST");
+    expect(sent[2]?.body).toEqual(HAS_PRIVILEGES_REQUEST);
   });
 
   test("a patch release of the measured line is admitted", async () => {
@@ -4224,6 +4287,119 @@ describe("ElasticsearchProvider agent profile open", () => {
 
     expect(await openFailure(execution)).toBeInstanceOf(ElasticsearchProvider);
     expect(sent.map((request) => request.path)).toEqual([SQL_PATH]);
+  });
+});
+
+/**
+ * The open of a handle that sends agent statements asks the server what its login may do, after the version read, and
+ * refuses a login that holds the cluster privilege `all` or reads a restricted system index, before any statement.
+ * With security off the server has no login to check, and the open admits it with the hidden-index fence alone.
+ */
+describe("ElasticsearchProvider agent profile login check", () => {
+  async function opened(): Promise<unknown> {
+    const provider = new ElasticsearchProvider(makeConnection(), {}, AGENT_PROFILE);
+    return provider.connect().then(
+      () => provider,
+      (error: unknown) => error,
+    );
+  }
+
+  const TOO_BROAD_TAIL =
+    ", so the connection is refused. Give the agent a user whose role holds the cluster action cluster:monitor/main and read and view_index_metadata on the indices it reads, without allow_restricted_indices, such as the libredb_agent_read role";
+
+  test.each([
+    [
+      "the superuser",
+      privilegeAnswer("elastic", true, ["*", ...RESTRICTED_INDICES]),
+      `The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all and reads no restricted system index; the user elastic holds the cluster privilege all and read on every index, the restricted system indices included${TOO_BROAD_TAIL}`,
+    ],
+    [
+      "a role reading .security* with allow_restricted_indices",
+      privilegeAnswer("reader", false, [".security-7", ".security-tokens-7", ".security-profile-8"]),
+      `The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all and reads no restricted system index; the user reader holds read on the restricted system indices .security-7, .security-tokens-7, .security-profile-8${TOO_BROAD_TAIL}`,
+    ],
+    [
+      "a role reading one restricted index",
+      privilegeAnswer("reader", false, [".tasks"]),
+      `The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all and reads no restricted system index; the user reader holds read on the restricted system index .tasks${TOO_BROAD_TAIL}`,
+    ],
+    [
+      "a role holding the cluster privilege all alone",
+      privilegeAnswer("operator", true, []),
+      `The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all and reads no restricted system index; the user operator holds the cluster privilege all${TOO_BROAD_TAIL}`,
+    ],
+  ])("refuses %s before any statement", async (_name, body, sentence) => {
+    overridePath(HAS_PRIVILEGES_PATH, ok(body));
+
+    const error = await opened();
+
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect((error as Error).message).toBe(sentence);
+    expect(sent.map((request) => request.path)).toEqual([SQL_PATH, "/", HAS_PRIVILEGES_PATH]);
+  });
+
+  test.each([
+    ["libredb_agent_read", privilegeAnswer("libredb_agent", false, [])],
+    ["libredb_seed_read", privilegeAnswer("libredb_seed", false, [])],
+    // `read` on `*` without allow_restricted_indices reaches no restricted index, and the server says so.
+    ["a role reading * without allow_restricted_indices", privilegeAnswer("wide", false, [])],
+  ])("admits %s", async (_name, body) => {
+    overridePath(HAS_PRIVILEGES_PATH, ok(body));
+
+    expect(await opened()).toBeInstanceOf(ElasticsearchProvider);
+  });
+
+  test("admits a server with security off, which has no login to check, with the hidden-index fence alone", async () => {
+    overridePath(HAS_PRIVILEGES_PATH, fail(400, NO_SECURITY_BODY));
+
+    const provider = await opened();
+
+    expect(provider).toBeInstanceOf(ElasticsearchProvider);
+    const error = await (provider as ElasticsearchProvider)
+      .queryReadOnly('SELECT * FROM ".security"', AGENT_BUDGET)
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect(statementsSent()).toEqual([CONNECT_PROBE]);
+  });
+
+  test.each([
+    ["another handler missing", fail(400, '{"error":"no handler found for uri [/_security/user] and method [POST]"}')],
+    ["a refused credential", fail(401, NO_BODY)],
+    ["an engine fault", fail(500, engineFault(500, "exception", "boom"))],
+    ["a body that is not JSON", ok("not json")],
+    ["a body that is not an object", ok("[]")],
+    ["no username", ok(JSON.stringify({ ...JSON.parse(privilegeAnswer("x", false, [])), username: 1 }))],
+    ["no cluster answer", ok(JSON.stringify({ ...JSON.parse(privilegeAnswer("x", false, [])), cluster: {} }))],
+    [
+      "a name left unanswered",
+      ok(
+        JSON.stringify({
+          ...JSON.parse(privilegeAnswer("x", false, [])),
+          index: { "*": { read: false } },
+        }),
+      ),
+    ],
+    [
+      "a read that is not a boolean",
+      ok(
+        JSON.stringify({
+          ...JSON.parse(privilegeAnswer("x", false, [])),
+          index: Object.fromEntries(["*", ...RESTRICTED_INDICES].map((name) => [name, { read: "no" }])),
+        }),
+      ),
+    ],
+  ])("refuses when the check cannot be read: %s", async (_name, reply) => {
+    overridePath(HAS_PRIVILEGES_PATH, reply);
+
+    const error = await opened();
+
+    expect(error).toBeInstanceOf(ExecutionProfileError);
+    expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect((error as Error).message).toStartWith(
+      "The agent read-only profile needs Elasticsearch's own answer to what this login may do, and the check failed, so the connection is refused: ",
+    );
+    expect(statementsSent()).toEqual([CONNECT_PROBE]);
   });
 });
 
@@ -4515,6 +4691,21 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
       expect(statementsAfterOpen()).toEqual([]);
     },
   );
+
+  test("a seed signed in as the superuser is refused at open, in the tool's sentence, with nothing sent past the probes", async () => {
+    overridePath(HAS_PRIVILEGES_PATH, ok(privilegeAnswer("elastic", true, ["*", ...RESTRICTED_INDICES])));
+
+    const result = await call({ sql: 'SELECT COUNT(*) AS n FROM "*"' });
+
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(result).toEqual(
+      refusedAtOpen(
+        "The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all and reads no restricted system index; the user elastic holds the cluster privilege all and read on every index, the restricted system indices included, so the connection is refused. Give the agent a user whose role holds the cluster action cluster:monitor/main and read and view_index_metadata on the indices it reads, without allow_restricted_indices, such as the libredb_agent_read role",
+      ),
+    );
+    expect(pathsSent()).toEqual([SQL_PATH, "/", HAS_PRIVILEGES_PATH]);
+    expect(statementsAfterOpen()).toEqual([]);
+  });
 
   test("a login that cannot read the version is refused at open, naming the cluster action it needs", async () => {
     overridePath("/", fail(403, NO_BODY));

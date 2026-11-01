@@ -221,15 +221,15 @@ describe("docs/MCP.md", () => {
     );
   });
 
-  test("says what Elasticsearch needs of a seed, that no broad login is refused, and how it pages without OFFSET", () => {
+  test("says what Elasticsearch needs of a seed, that a broad login is refused at open, and how it pages without OFFSET", () => {
     expect(MCP_DOC).toContain(
-      "Elasticsearch by the grammar of its SQL endpoint, which holds no write, DDL or transaction statement, on a server checked at open to be the 9.1 release line whose refusals were captured ([elasticsearch.md](./providers/elasticsearch.md))",
+      "Elasticsearch by the grammar of its SQL endpoint, which holds no write, DDL or transaction statement, on a server checked at open to be the 9.1 release line whose refusals were captured, with a login checked at open, when security is on, to hold no cluster privilege `all` and read no restricted system index ([elasticsearch.md](./providers/elasticsearch.md))",
     );
     expect(MCP_DOC).toContain(
-      "On Elasticsearch the boundary is the grammar, so no login is checked or refused for being broad: `run_read_query` needs the cluster action `cluster:monitor/main` and `read` and `view_index_metadata` on the indices to read, and `inspect_schema` also the cluster privileges `monitor` and `read_pipeline` and the index privilege `monitor`, which is the `libredb_seed_read` role of [elasticsearch.md](./providers/elasticsearch.md) section 5.9; a broader login, a superuser included, is served, and every index it may read reaches the client but the hidden and system ones, whose names start with a dot and which the provider refuses before sending, so opt in a seed signed in with that role.",
+      "On Elasticsearch with security on, the open asks the server what the seed's login may do and refuses, before any statement runs, a login that holds the cluster privilege `all` or reads a restricted system index, so a seed signed in as a superuser is refused; with security off no login exists to check, and the provider refuses a statement naming a hidden or system index, whose name starts with a dot, before sending it, which it also does with security on. `run_read_query` needs the cluster action `cluster:monitor/main` and `read` and `view_index_metadata` on the indices to read, and `inspect_schema` also the cluster privileges `monitor` and `read_pipeline` and the index privilege `monitor`, which is the `libredb_seed_read` role of [elasticsearch.md](./providers/elasticsearch.md) section 5.9, so opt in a seed signed in with that role.",
     );
     expect(MCP_DOC).toContain(
-      "Elasticsearch checks its server's release only for a connection that sends statements, so `inspect_schema` opens an Elasticsearch connection on any release, as the editor does.",
+      "Elasticsearch checks its server's release and its login only for a connection that sends statements, so `inspect_schema` opens an Elasticsearch connection on any release, as the editor does.",
     );
     expect(MCP_DOC).toContain(
       "Elasticsearch SQL has no `OFFSET`, so there `pagination.nextOffset` is always `null`, an `offset` is refused before anything is sent, and the answer says to page by key instead: `ORDER BY` a unique field, and for the next page add `WHERE` that field `>` the last value read.",

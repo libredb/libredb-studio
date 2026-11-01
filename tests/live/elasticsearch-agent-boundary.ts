@@ -9,7 +9,11 @@
  * profile's execution context, then `connect` and `queryReadOnly`), with no admission of Studio's in front:
  *
  *  - the open: the agent profile reads the node's version and opens it, the operations profile opens it too, and an
- *    editor handle's `queryReadOnly` refuses with nothing sent;
+ *    editor handle's `queryReadOnly` refuses with nothing sent; with security off no login exists to check, and a
+ *    hidden index the script creates answers raw and is refused by the hidden-index fence unsent;
+ *  - the login check, with security on: the agent profile's open asks the server what the login may do, and refuses
+ *    the superuser and a role reading the security indices with `allow_restricted_indices` before any statement, while
+ *    the operations profile still opens as the superuser, since it sends no statement;
  *  - the boundary: each write and DDL statement sent through `queryReadOnly` is refused by the grammar in the engine's
  *    own words (a `line 1:N: mismatched input` or `extraneous input` refusal, never a budget or a credential refusal),
  *    a `DEBUG` command by the provider's catalog-command fence before it is sent,
@@ -158,21 +162,24 @@ async function openContexts(): Promise<number> {
   return Object.values(stats.nodes).reduce((sum, node) => sum + node.indices.search.open_contexts, 0);
 }
 
-function connection(): DatabaseConnection {
+function connection(login?: { user: string; password: string }): DatabaseConnection {
   return {
     id: "elasticsearch-live",
     name: "Elasticsearch live",
     type: "elasticsearch",
     host: ORIGIN.hostname,
     port: Number(ORIGIN.port),
-    ...(AGENT_USER === undefined ? {} : { user: AGENT_USER, password: AGENT_PASSWORD }),
+    ...(login ?? (AGENT_USER === undefined ? {} : { user: AGENT_USER, password: AGENT_PASSWORD })),
     createdAt: new Date(0),
   } as DatabaseConnection;
 }
 
-async function open(profile?: "agent-read-only" | "agent-operations"): Promise<DatabaseProvider> {
+async function open(
+  profile?: "agent-read-only" | "agent-operations",
+  login?: { user: string; password: string },
+): Promise<DatabaseProvider> {
   const provider = await createDatabaseProvider(
-    connection(),
+    connection(login),
     {},
     profile === undefined ? {} : executionContextFor(profile),
   );
@@ -293,8 +300,69 @@ async function checkPlanGrounding(): Promise<void> {
   await setAgentRole(agentCluster, agentIndices);
 }
 
+const TOO_BROAD =
+  "The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all and reads no restricted system index; the user ";
+const GRANT_INSTEAD =
+  ", so the connection is refused. Give the agent a user whose role holds the cluster action cluster:monitor/main and read and view_index_metadata on the indices it reads, without allow_restricted_indices, such as the libredb_agent_read role";
+
+/**
+ * The open's login check. With security on, the superuser and a role reading the security indices are refused before
+ * any statement; with it off there is no login, and a hidden index is refused by name alone.
+ */
+async function checkLogins(): Promise<void> {
+  if (!SECURED) {
+    const hidden = `.${SCRATCH}`;
+    const agent = await open("agent-read-only");
+    try {
+      const written = await send("PUT", `/${hidden}/_doc/1?refresh=true`, { probe: "hidden" });
+      check(written.status === 201, `security off: a dot-led index is written for the check -> ${written.status}`);
+      const sql = `SELECT COUNT(*) AS n FROM "${hidden}"`;
+      const raw = await send("POST", "/_sql?format=json", { query: sql });
+      const refused = await refusalOf(() => agent.queryReadOnly!(sql, BUDGET));
+      check(
+        raw.status === 200 && raw.text.includes('"rows":[[1]]') && refused?.name === "RefusedBeforeSendError",
+        `security off: no login is checked and the agent profile opens; ${sql} answers raw and the fence refuses it unsent -> ${refused?.message.slice(0, 80)}`,
+      );
+    } finally {
+      await send("DELETE", `/${hidden}`);
+      await agent.disconnect();
+    }
+    return;
+  }
+  const admin = { user: ADMIN_USER ?? "", password: ADMIN_PASSWORD };
+  const superuser = await refusalOf(() => open("agent-read-only", admin));
+  check(
+    superuser?.name === "ExecutionProfileError" &&
+      (superuser as Error & { reasonCode?: string }).reasonCode === "PROFILE_PRIVILEGES_TOO_BROAD" &&
+      superuser.message ===
+        `${TOO_BROAD}${ADMIN_USER} holds the cluster privilege all and read on every index, the restricted system indices included${GRANT_INSTEAD}`,
+    `login: the superuser is refused at the agent profile's open -> ${superuser?.message.slice(0, 200)}`,
+  );
+  const operations = await open("agent-operations", admin);
+  check(operations.isConnected(), "login: the operations profile, which sends no statement, opens as the superuser");
+  await operations.disconnect();
+  const restricted = `${SCRATCH}_restricted`;
+  try {
+    await send("PUT", `/_security/role/${restricted}`, {
+      cluster: ["cluster:monitor/main"],
+      indices: [...AGENT_INDICES, { names: [".security*"], privileges: ["read"], allow_restricted_indices: true }],
+    });
+    await send("PUT", `/_security/user/${restricted}`, { password: AGENT_PASSWORD, roles: [restricted] });
+    const refused = await refusalOf(() => open("agent-read-only", { user: restricted, password: AGENT_PASSWORD }));
+    check(
+      refused?.message ===
+        `${TOO_BROAD}${restricted} holds read on the restricted system indices .security-7, .security-tokens-7, .security-profile-8${GRANT_INSTEAD}`,
+      `login: a role reading .security* with allow_restricted_indices is refused at open -> ${refused?.message.slice(0, 200)}`,
+    );
+  } finally {
+    await send("DELETE", `/_security/user/${restricted}`);
+    await send("DELETE", `/_security/role/${restricted}`);
+  }
+}
+
 async function main(): Promise<void> {
   await createAgentUser();
+  await checkLogins();
   await checkPlanGrounding();
   const agent = await open("agent-read-only");
   check(agent.isConnected(), "open: the agent profile opens the node");

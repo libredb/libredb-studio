@@ -84,6 +84,7 @@ import {
   type SearchDialectId,
   type SearchErrorCategory,
   type SearchIndexInfo,
+  type SearchLoginReach,
   type SearchMappingField,
   type SearchObjectDefinition,
   type SearchObjectInfo,
@@ -122,6 +123,26 @@ const ROOT_PATH = "/";
  * action `cluster:monitor/state` (measured on OpenSearch 3.8.0 with security on: 403 without it).
  */
 const CLUSTER_SETTINGS_PATH = "/_cluster/settings";
+
+/**
+ * The server's own check of what the login making the request may do. Every user may ask it about itself: measured on
+ * Elasticsearch 9.1.4, a user whose role holds no privilege at all is answered 200, and so is an API key.
+ */
+const HAS_PRIVILEGES_PATH = "/_security/user/_has_privileges";
+
+/**
+ * What a node started with security off answers the check: it registers no security endpoint, so the request is
+ * refused before any handler (measured on 9.1.4, HTTP 400 with this string as `error`). It means no login exists to
+ * check, and nothing else answers it, so an exact match is read as that and any other refusal as a failed check.
+ */
+const NO_SECURITY_ABSENCE: AbsenceRule = {
+  status: 400,
+  whateverTheBodyCarries: false,
+  stringError: `no handler found for uri [${HAS_PRIVILEGES_PATH}] and method [POST]`,
+};
+
+/** The index pattern every index matches; with `allow_restricted_indices` it takes in the restricted ones too. */
+const EVERY_INDEX = "*";
 
 /** The levels a setting is answered at, the one that wins first. */
 const SETTING_LEVELS = Object.freeze(["transient", "persistent", "defaults"]);
@@ -323,6 +344,8 @@ const HTTP_NOT_FOUND = 404;
 interface AbsenceRule {
   readonly status: number;
   readonly whateverTheBodyCarries: boolean;
+  /** When set, the status means absence only when the body's `error` is exactly this string. */
+  readonly stringError?: string;
 }
 
 /** A listing's 404, which means "there are none" only while the body is a payload. */
@@ -576,6 +599,18 @@ interface SearchDialectSpec {
    * `GROUP BY` answers 1,000 rows and no cursor, so the cut carries no sign at all.
    */
   readonly sqlResultLimit: string | null;
+  /**
+   * The restricted system indices the login check names one by one, or null where none are named and no login is
+   * checked. Asked about `read` with `allow_restricted_indices`, a name answers true when the login's roles reach that
+   * index, whatever pattern grants it; `*` alone answers true only when they reach every index, so a role reaching one
+   * restricted index answers false there, which is why each is named.
+   *
+   * Elasticsearch: each name below was answered false to a user whose role reads `*` without
+   * `allow_restricted_indices` and true to the superuser (measured on 9.1.4, 2026-11-01), so each is restricted on the
+   * release line the agent profile admits. OpenSearch: null; the check is Elasticsearch's endpoint,
+   * never measured on OpenSearch's security plugin.
+   */
+  readonly restrictedIndices: readonly string[] | null;
 }
 
 /**
@@ -639,6 +674,35 @@ const DIALECTS: Readonly<Record<SearchDialectId, SearchDialectSpec>> = Object.fr
     // The grammar has no DELETE at all: every one sent raw is a `parsing_exception` (9.1.4).
     sqlDelete: null,
     sqlResultLimit: null,
+    restrictedIndices: Object.freeze([
+      ".security-7",
+      ".security-tokens-7",
+      ".security-profile-8",
+      ".async-search",
+      ".tasks",
+      ".fleet-secrets",
+      ".fleet-agents-7",
+      ".fleet-policies-7",
+      ".fleet-actions-7",
+      ".fleet-enrollment-api-keys-7",
+      ".connector-secrets",
+      ".secrets-inference",
+      ".inference",
+      ".ml-config",
+      ".ml-meta",
+      ".ml-inference-000005",
+      ".transform-internal-007",
+      ".watches",
+      ".triggered_watches",
+      ".geoip_databases",
+      ".logstash",
+      ".synonyms-2",
+      ".snapshot-blob-cache",
+      ".apm-agent-configuration",
+      ".kibana_9.1.4_001",
+      ".kibana_task_manager_9.1.4_001",
+      ".kibana_security_session_1",
+    ]),
   },
   opensearch: {
     label: "OpenSearch",
@@ -704,6 +768,7 @@ const DIALECTS: Readonly<Record<SearchDialectId, SearchDialectSpec>> = Object.fr
      *   same DELETE answers HTTP 200 with an `IndexNotFoundException` body, and a DELETE on a real index deletes.
      */
     sqlResultLimit: "plugins.query.size_limit",
+    restrictedIndices: null,
     sqlDelete: {
       setting: "plugins.sql.delete.enabled",
       refusals: [
@@ -1148,6 +1213,14 @@ function carriesFailureEnvelope(text: string): boolean {
   return body !== null && Object.hasOwn(body, ERROR_FIELDS.ENVELOPE);
 }
 
+/** Whether a body that came with an absence rule's status means "there is nothing here" under that rule. */
+function isAbsence(absence: AbsenceRule, text: string): boolean {
+  if (absence.stringError !== undefined) {
+    return asRecord(parseJson(text))?.[ERROR_FIELDS.ENVELOPE] === absence.stringError;
+  }
+  return absence.whateverTheBodyCarries || !carriesFailureEnvelope(text);
+}
+
 /** A body the server announced as JSON that is not the object this file parses. */
 function unreadableBody(spec: SearchDialectSpec, what: string): SearchTransportError {
   return new SearchTransportError("engine", `${spec.label} answered ${what} the client could not read`);
@@ -1540,6 +1613,46 @@ export class SearchHttpTransport implements SearchTransport {
     };
   }
 
+  public async loginReach(signal?: AbortSignal): Promise<SearchLoginReach | null> {
+    const restricted = this.spec.restrictedIndices;
+    if (restricted === null) {
+      throw new SearchTransportError(
+        "unsupported",
+        `${this.spec.label} declares no restricted system indices to check a login against`,
+      );
+    }
+    const names = [EVERY_INDEX, ...restricted];
+    const answered = await this.request(
+      this.url(HAS_PRIVILEGES_PATH),
+      signal,
+      JSON.stringify({
+        cluster: ["all"],
+        index: [{ names, privileges: ["read"], allow_restricted_indices: true }],
+      }),
+      NO_SECURITY_ABSENCE,
+      (text) => {
+        const parsed = parseJson(text);
+        if (parsed === null) throw unreadableBody(this.spec, "a privilege check");
+        return parsed;
+      },
+    );
+    if (answered === null) return null;
+    const answer = asRecord(answered);
+    const user = answer === null ? null : textField(answer, "username");
+    const clusterAll = asRecord(answer?.cluster)?.all;
+    const index = asRecord(answer?.index);
+    const reads = names.map((name) => asRecord(index?.[name])?.read);
+    if (user === null || typeof clusterAll !== "boolean" || !reads.every((read) => typeof read === "boolean")) {
+      throw unreadableBody(this.spec, "a privilege check");
+    }
+    return {
+      user,
+      clusterAll,
+      everyIndex: reads[0] === true,
+      restrictedIndices: restricted.filter((_name, i) => reads[i + 1] === true),
+    };
+  }
+
   public async sqlDeleteSetting(signal?: AbortSignal): Promise<{ setting: string; enabled: boolean | null }> {
     const { setting } = this.sqlDeleteSwitch();
     const value = await this.clusterSetting(setting, signal);
@@ -1904,9 +2017,7 @@ export class SearchHttpTransport implements SearchTransport {
     // arrive with the same code (see {@link HTTP_NOT_FOUND}). A folder badged 0 where
     // the truth is "the engine would not answer" is the exact confusion `KindCount`
     // has two states to prevent.
-    if (response.status === absence?.status && (absence.whateverTheBodyCarries || !carriesFailureEnvelope(text))) {
-      return null;
-    }
+    if (response.status === absence?.status && isAbsence(absence, text)) return null;
     if (!response.ok) throw responseFailure(this.spec, response.status, text);
 
     // A 2xx can still carry a refusal: OpenSearch's SQL plugin answers some with HTTP 200, its error envelope and the

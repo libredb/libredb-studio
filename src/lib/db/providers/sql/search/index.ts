@@ -143,6 +143,7 @@ import {
   type SearchDialectId,
   type SearchErrorCategory,
   type SearchIndexInfo,
+  type SearchLoginReach,
   type SearchObjectDefinition,
   type SearchObjectInfo,
   type SearchQueryResult,
@@ -360,8 +361,8 @@ interface SearchProduct {
 
   /**
    * Whether an agent statement is read for the hidden and system indices it names before it is sent, and refused when
-   * it names one (`elasticsearch-agent-index-fence.ts`). The open checks no login, so a login that may read those indices reads them
-   * through SQL, and only their names stand between an agent statement and them.
+   * it names one (`elasticsearch-agent-index-fence.ts`). A login that may read those indices reads them through SQL,
+   * so with security off, where no login exists to check, only their names stand between an agent statement and them.
    *
    * Elasticsearch: true. Measured on 9.1.4 signed in as the superuser: every hidden and system index, the security
    * index among them, answers its rows to a statement that names it with a leading dot, and nothing else reaches one.
@@ -369,6 +370,20 @@ interface SearchProduct {
    * the login may read (BACKLOG B167).
    */
   readonly fencesHiddenIndices: boolean;
+
+  /**
+   * Whether the open of a connection that sends agent statements asks the server what its login may do, after the
+   * version read, and refuses a login that holds the cluster privilege `all` or reads a restricted system index, before
+   * any statement is sent. It stands beside the hidden-index fence, which reads statement text: this one reads the
+   * login. A server with security off has no login and answers the check with no security endpoint at all; it is
+   * admitted with the fence alone.
+   *
+   * Elasticsearch: true, through `_has_privileges`, which every user may call about itself (measured on 9.1.4: the
+   * superuser answers cluster `all` and `read` on every index with the restricted ones included, and
+   * `libredb_agent_read` and `libredb_seed_read` answer neither). OpenSearch: false; the check is Elasticsearch's endpoint,
+   * never measured on OpenSearch's security plugin, and its open is unchanged.
+   */
+  readonly checksLoginReach: boolean;
 }
 
 export const ELASTICSEARCH_PRODUCT: SearchProduct = Object.freeze({
@@ -383,6 +398,7 @@ export const ELASTICSEARCH_PRODUCT: SearchProduct = Object.freeze({
   cutsAtResultLimit: false,
   checkedSqlReleases: Object.freeze(["9.1"]),
   fencesHiddenIndices: true,
+  checksLoginReach: true,
 });
 
 export const OPENSEARCH_PRODUCT: SearchProduct = Object.freeze({
@@ -397,6 +413,7 @@ export const OPENSEARCH_PRODUCT: SearchProduct = Object.freeze({
   cutsAtResultLimit: true,
   checkedSqlReleases: Object.freeze(["3.8"]),
   fencesHiddenIndices: false,
+  checksLoginReach: false,
 });
 
 // ============================================================================
@@ -1003,6 +1020,7 @@ abstract class SearchProvider extends SQLBaseProvider {
       if (this.product.sqlDeleteSwitch) await this.assertSqlDeleteOff(transport);
       if (this.product.cutsAtResultLimit) await this.readResultLimit(transport);
       await this.assertCheckedServer(transport);
+      if (this.product.checksLoginReach) await this.assertNarrowLogin(transport);
     }
 
     this.transport = transport;
@@ -1118,6 +1136,39 @@ abstract class SearchProvider extends SQLBaseProvider {
     throw new ExecutionProfileError(
       `The agent read-only profile is checked on ${checked}, and this server reports ${product} ${server.version || "with no version"}: its write refusals have not been captured, so it is refused`,
       "PROFILE_UNSUPPORTED_TARGET",
+    );
+  }
+
+  /**
+   * Refuses a login that holds the cluster privilege `all` or reads a restricted system index, read from the server's
+   * own privilege check after the version read and before any agent statement is sent
+   * ({@link SearchProduct.checksLoginReach}). A server with security off has no login to check and is admitted with
+   * the hidden-index fence alone; a check that fails or cannot be read refuses the profile, since the login's reach is
+   * then unproven.
+   */
+  private async assertNarrowLogin(transport: SearchHttpTransport): Promise<void> {
+    let reach: SearchLoginReach | null;
+    try {
+      reach = await transport.loginReach(this.deadline());
+    } catch (error) {
+      throw new ExecutionProfileError(
+        `The agent read-only profile needs ${this.product.label}'s own answer to what this login may do, and the check failed, so the connection is refused: ${error instanceof Error ? error.message : String(error)}`,
+        "PROFILE_PRIVILEGES_TOO_BROAD",
+      );
+    }
+    if (reach === null) return;
+    const findings: string[] = [];
+    if (reach.clusterAll) findings.push("the cluster privilege all");
+    if (reach.everyIndex) findings.push("read on every index, the restricted system indices included");
+    else if (reach.restrictedIndices.length > 0) {
+      const named =
+        reach.restrictedIndices.length === 1 ? "the restricted system index" : "the restricted system indices";
+      findings.push(`read on ${named} ${reach.restrictedIndices.join(", ")}`);
+    }
+    if (findings.length === 0) return;
+    throw new ExecutionProfileError(
+      `The agent read-only profile needs an ${this.product.label} login that holds no cluster privilege all and reads no restricted system index; the user ${reach.user} holds ${findings.join(" and ")}, so the connection is refused. Give the agent a user whose role holds the cluster action cluster:monitor/main and read and view_index_metadata on the indices it reads, without allow_restricted_indices, such as the libredb_agent_read role`,
+      "PROFILE_PRIVILEGES_TOO_BROAD",
     );
   }
 

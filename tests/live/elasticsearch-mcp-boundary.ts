@@ -10,9 +10,11 @@
  * `tests/fixtures/elasticsearch/9.1.4/write-refusal/`) through the MCP tool's own handler (`runStatement`) with that
  * fence removed, against real nodes:
  *
- *  - the open, through MCP: the 9.1.4 node is served under `agent-read-only`, with security off and signed in as the
- *    superuser with it on (a seed's login is not the boundary here, the grammar is); a user whose role cannot read the
- *    version is refused before any statement runs, in the MCP refusal sentence, and an OpenSearch node behind an
+ *  - the open, through MCP: the 9.1.4 node is served under `agent-read-only` with security off, where no login exists
+ *    to check; with it on, the open asks the server what the seed's login may do, so a seed signed in as the superuser,
+ *    and one whose role reads the security indices with `allow_restricted_indices`, are refused before any statement
+ *    runs, in the MCP refusal sentence, while the documented seed role and a role reading every unrestricted index are
+ *    served; a user whose role cannot read the version is refused the same way, and an OpenSearch node behind an
  *    Elasticsearch connection fails the open's connect probe, so nothing runs there either;
  *  - the boundary, with the MCP fence bypassed: each captured write and DDL statement is sent through the MCP handler;
  *    the fenced tool refuses every one before anything is acquired, unfenced the grammar refuses each in its own
@@ -20,10 +22,11 @@
  *    document written through the document API into a scratch index, which MCP then reads and the script deletes; the
  *    index listing with its document counts, every mapping, the aliases, the templates and the pipelines read back
  *    the same before and after;
- *  - the hidden indices: signed in as the superuser, each spelling of the security index that 9.1.4 answers raw (a
- *    leading dot, a dot pattern, a comma list, an exclusion, date math, a subquery, a catalog command's pattern) is
- *    refused by the provider's hidden-index fence before it is sent, `"*"` reaches no hidden index, and the
- *    least-privilege role is refused the security index by the server and served the probe indices through MCP;
+ *  - the hidden indices: signed in as a role reading every unrestricted index, each spelling of the security index that
+ *    9.1.4 answers the superuser raw (a leading dot, a dot pattern, a comma list, an exclusion, date math, a subquery, a
+ *    catalog command's pattern) is refused by the provider's hidden-index fence before it is sent, `"*"` reaches no
+ *    hidden index, and the least-privilege role is refused the security index by the server and served the probe
+ *    indices through MCP; with security off, a hidden index the script creates answers raw and is refused unsent;
  *  - the forms and paging: a `SELECT` and an `EXPLAIN` answer; a `WITH` naming its own table, `VALUES` and `TABLE`
  *    pass the MCP fence and are refused by the engine; a read past `max_rows` names no next offset and says how to
  *    page by key, an offset is refused before anything is sent, and the next page asked for by key answers it;
@@ -40,8 +43,8 @@
  *   LIBREDB_ES_ADMIN_USER=elastic LIBREDB_ES_ADMIN_PASSWORD=<secret> \
  *   LIBREDB_LIVE_OPENSEARCH_ORIGIN=http://127.0.0.1:9201 bun tests/live/elasticsearch-mcp-boundary.ts
  *
- * The scratch index is named `libredb_lm_<random>`, and the user and role the script creates `libredb_lm_<random>`;
- * all are deleted before exit. Each check prints one line, and a line that would carry the admin password fails
+ * The scratch index is named `libredb_lm_<random>`, the hidden one `.libredb_lm_<random>`, and the users and roles the
+ * script creates `libredb_lm_<random>` and `libredb_lm_<random>_<kind>`; all are deleted before exit. Each check prints one line, and a line that would carry the admin password fails
  * instead of printing it; any failure ends the run non-zero.
  */
 // oxlint-disable no-await-in-loop -- the checks run one at a time on purpose: each reads what the node holds after the one before.
@@ -104,6 +107,9 @@ const ENGINE_PREFIX = "The database refused or failed the call: ";
 const NOT_SENT = "The statement was refused before it reached the database: ";
 const DOT_REFUSAL = `${NOT_SENT}${DOT_INDEX_REFUSAL}.`;
 const COMMAND_REFUSAL = `${NOT_SENT}${CATALOG_COMMAND_REFUSAL}.`;
+/** The open's advice when it refuses a login for its reach. */
+const GRANT_INSTEAD =
+  "Give the agent a user whose role holds the cluster action cluster:monitor/main and read and view_index_metadata on the indices it reads, without allow_restricted_indices, such as the libredb_agent_read role";
 const KEYSET =
   "Page it in SQL: ORDER BY a unique field, and for the next page add WHERE that field > the last value read.";
 
@@ -256,8 +262,10 @@ async function checkOpen(agent: ManagedConnection, admin: ManagedConnection): Pr
   );
   const superuser = await mcp(admin, { sql: "SELECT COUNT(*) AS n FROM probe_buckets" }, RUN_READ_QUERY);
   check(
-    superuser.result.isError === undefined && JSON.stringify(rowsOf(superuser.result)) === '[{"n":1500}]',
-    `open: with security on, a seed signed in as the superuser is served too: the boundary is the grammar -> ${JSON.stringify(rowsOf(superuser.result))}`,
+    textOf(superuser.result) ===
+      `run_read_query cannot run on this connection: The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all and reads no restricted system index; the user ${ADMIN_USER} holds the cluster privilege all and read on every index, the restricted system indices included, so the connection is refused. ${GRANT_INSTEAD}. It runs on ${ENGINES}.` &&
+      superuser.acquired.join() === "agent-read-only",
+    `open: with security on, a seed signed in as the superuser is refused at open -> ${textOf(superuser.result).slice(0, 220)}`,
   );
   // OpenSearch has no SQL endpoint at Elasticsearch's path, so the open's connect probe is refused before the version
   // read, and the call fails at open with nothing sent.
@@ -287,6 +295,77 @@ async function checkUnreadVersion(): Promise<void> {
     ) && text.endsWith(`It runs on ${ENGINES}.`),
     `open: that user is refused at open through MCP -> ${text.slice(0, 200)}`,
   );
+}
+
+/** A user of its own role on the secured node, named for its kind, as the superuser creates it. */
+async function userWithRole(kind: string, role: Record<string, unknown>): Promise<ManagedConnection> {
+  const name = `${SCRATCH}_${kind}`;
+  const created = await send(SECURED, "PUT", `/_security/role/${name}`, role);
+  const user = await send(SECURED, "PUT", `/_security/user/${name}`, { password: USER_PASSWORD, roles: [name] });
+  if (created.status !== 200 || user.status !== 200) throw new Error(`user ${kind}: ${created.status} ${user.status}`);
+  return seed(name, SECURED, { user: name, password: USER_PASSWORD });
+}
+
+const LOGIN_KINDS = ["restricted", "seed", "wide"] as const;
+
+/**
+ * The open's login check, with security on: a role reading the security indices with `allow_restricted_indices` is
+ * refused before any statement, and the documented seed role and a role reading every unrestricted index are served.
+ */
+async function checkLogins(): Promise<{ seedRole: ManagedConnection; wide: ManagedConnection }> {
+  const restricted = await userWithRole("restricted", {
+    cluster: ["cluster:monitor/main"],
+    indices: [
+      { names: ["probe_*"], privileges: ["read", "view_index_metadata"] },
+      { names: [".security*"], privileges: ["read"], allow_restricted_indices: true },
+    ],
+  });
+  const refused = await mcp(restricted, { sql: "SELECT COUNT(*) AS n FROM probe_buckets" }, RUN_READ_QUERY);
+  check(
+    textOf(refused.result) ===
+      `run_read_query cannot run on this connection: The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all and reads no restricted system index; the user ${SCRATCH}_restricted holds read on the restricted system indices .security-7, .security-tokens-7, .security-profile-8, so the connection is refused. ${GRANT_INSTEAD}. It runs on ${ENGINES}.`,
+    `login: a role reading .security* with allow_restricted_indices is refused at open -> ${textOf(refused.result).slice(0, 220)}`,
+  );
+  const seedRole = await userWithRole("seed", {
+    cluster: ["cluster:monitor/main", "monitor", "read_pipeline"],
+    indices: [{ names: ["probe_*"], privileges: ["read", "view_index_metadata", "monitor"] }],
+  });
+  const seedServed = await mcp(seedRole, { sql: "SELECT COUNT(*) AS n FROM probe_buckets" }, RUN_READ_QUERY);
+  check(
+    JSON.stringify(rowsOf(seedServed.result)) === '[{"n":1500}]',
+    `login: the documented seed role (libredb_seed_read) is served -> ${JSON.stringify(rowsOf(seedServed.result))}`,
+  );
+  const wide = await userWithRole("wide", {
+    cluster: ["cluster:monitor/main"],
+    indices: [{ names: ["*"], privileges: ["read", "view_index_metadata"] }],
+  });
+  const wideServed = await mcp(wide, { sql: "SELECT COUNT(*) AS n FROM probe_buckets" }, RUN_READ_QUERY);
+  check(
+    JSON.stringify(rowsOf(wideServed.result)) === '[{"n":1500}]',
+    `login: a role reading * without allow_restricted_indices is served -> ${JSON.stringify(rowsOf(wideServed.result))}`,
+  );
+  return { seedRole, wide };
+}
+
+/** With security off there is no login to check: the node is served, and a hidden index is refused by name alone. */
+async function checkSecurityOff(agent: ManagedConnection): Promise<void> {
+  const hidden = `.${SCRATCH}`;
+  try {
+    const written = await send(ORIGIN, "PUT", `/${hidden}/_doc/1?refresh=true`, { probe: "hidden" });
+    check(written.status === 201, `security off: a dot-led index is written for the check -> ${written.status}`);
+    const sql = `SELECT COUNT(*) AS n FROM "${hidden}"`;
+    const raw = await send(ORIGIN, "POST", "/_sql?format=json", { query: sql });
+    const { result, acquired } = await mcp(agent, { sql });
+    check(
+      raw.status === 200 &&
+        raw.text.includes('"rows":[[1]]') &&
+        textOf(result) === DOT_REFUSAL &&
+        acquired.join() === "agent-read-only",
+      `security off: no login is checked, the node is served, and ${sql} (rows raw) is refused by the fence unsent -> ${textOf(result).slice(0, 90)}`,
+    );
+  } finally {
+    await send(ORIGIN, "DELETE", `/${hidden}`);
+  }
 }
 
 async function checkBoundary(origin: URL, connection: ManagedConnection, label: string): Promise<void> {
@@ -327,7 +406,7 @@ async function checkBoundary(origin: URL, connection: ManagedConnection, label: 
 
 /**
  * Each statement read the security index's rows, or its name, when the superuser sent it raw on 9.1.4: through MCP,
- * signed in as that superuser, the provider's hidden-index fence refuses each before it is sent.
+ * whatever login the open admits, the provider's hidden-index fence refuses each before it is sent.
  */
 const HIDDEN: readonly [string, string][] = [
   ['SELECT COUNT(*) AS n FROM ".security"', DOT_REFUSAL],
@@ -368,17 +447,17 @@ const REFUSED_UNREAD: readonly [string, string][] = [
   ['SELECT COUNT(*) AS n FROM "x"."".security', DOT_REFUSAL],
 ];
 
-async function checkHidden(admin: ManagedConnection): Promise<void> {
+async function checkHidden(wide: ManagedConnection): Promise<void> {
   for (const [sql, refusal] of REFUSED_UNREAD) {
-    const { result } = await mcp(admin, { sql });
+    const { result } = await mcp(wide, { sql });
     const raw = await send(SECURED, "POST", "/_sql?format=json", { query: sql });
     check(
       textOf(result) === refusal && raw.status === 400 && !raw.text.includes('"rows"'),
-      `hidden: as the superuser, ${sql} is refused by the provider unsent; sent raw the engine refuses it -> ${raw.status}`,
+      `hidden: as a role reading every unrestricted index, ${sql} is refused by the provider unsent; sent raw as the superuser the engine refuses it -> ${raw.status}`,
     );
   }
   for (const [sql, refusal] of HIDDEN) {
-    const { result, acquired } = await mcp(admin, { sql });
+    const { result, acquired } = await mcp(wide, { sql });
     const raw = await send(SECURED, "POST", "/_sql?format=json", { query: sql });
     check(
       textOf(result) === refusal &&
@@ -386,12 +465,12 @@ async function checkHidden(admin: ManagedConnection): Promise<void> {
         raw.status === 200 &&
         raw.text.includes('"rows":[[') &&
         (sql.startsWith("SELECT") || raw.text.includes(".security") || raw.text.includes("access_token")),
-      `hidden: as the superuser, ${sql} is refused by the provider unsent; sent raw it answers -> ${raw.status}`,
+      `hidden: as a role reading every unrestricted index, ${sql} is refused by the provider unsent; sent raw as the superuser it answers -> ${raw.status}`,
     );
   }
   // A wildcard that does not start with a dot reaches no hidden index: its count is the open indices' own.
   const counted = JSON.parse(await read(SECURED, "/*/_count")) as { count: number };
-  const all = await mcp(admin, { sql: 'SELECT COUNT(*) AS n FROM "*"' }, RUN_READ_QUERY);
+  const all = await mcp(wide, { sql: 'SELECT COUNT(*) AS n FROM "*"' }, RUN_READ_QUERY);
   check(
     JSON.stringify(rowsOf(all.result)) === JSON.stringify([{ n: counted.count }]),
     `hidden: "*" reaches no hidden index -> ${JSON.stringify(rowsOf(all.result))}, the open indices hold ${counted.count}`,
@@ -579,9 +658,11 @@ async function main(): Promise<void> {
   const admin = seed("es-9-1-secured", SECURED, { user: ADMIN_USER, password: ADMIN_PASSWORD });
   await checkOpen(agent, admin);
   await checkUnreadVersion();
+  const { seedRole, wide } = await checkLogins();
+  await checkSecurityOff(agent);
   await checkBoundary(ORIGIN, agent, "boundary");
-  await checkBoundary(SECURED, admin, "boundary as the superuser");
-  await checkHidden(admin);
+  await checkBoundary(SECURED, seedRole, "boundary as the seed role");
+  await checkHidden(wide);
   await checkControl();
   await checkForms(agent);
   await checkPaging(agent);
@@ -595,6 +676,10 @@ try {
   await send(ORIGIN, "DELETE", `/${SCRATCH}`);
   await send(SECURED, "DELETE", `/_security/user/${SCRATCH}`);
   await send(SECURED, "DELETE", `/_security/role/${SCRATCH}`);
+  for (const kind of LOGIN_KINDS) {
+    await send(SECURED, "DELETE", `/_security/user/${SCRATCH}_${kind}`);
+    await send(SECURED, "DELETE", `/_security/role/${SCRATCH}_${kind}`);
+  }
   await clearProviderCache();
 }
 console.log(failures === 0 ? "ALL PASS" : `${failures} FAILED`);

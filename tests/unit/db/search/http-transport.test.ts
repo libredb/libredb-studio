@@ -831,3 +831,53 @@ describe("SearchHttpTransport (opensearch) refusal inside a 200", () => {
     expect((await transport().query("SELECT k FROM t")).rows).toEqual([]);
   });
 });
+
+/**
+ * The login check: the server's own `_has_privileges` answer for the login making the request, asked by the open of a
+ * handle that sends agent statements. Only Elasticsearch declares the restricted system indices it names.
+ */
+describe("SearchHttpTransport login check", () => {
+  test("Elasticsearch asks one POST naming the cluster privilege all and read on every index and each restricted one", async () => {
+    handler = () =>
+      new Response(
+        JSON.stringify({
+          username: "u",
+          has_all_requested: false,
+          cluster: { all: false },
+          index: { "*": { read: false }, ".security-7": { read: true } },
+          application: {},
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+
+    const caught = await new SearchHttpTransport("elasticsearch", makeConnection("elasticsearch"))
+      .loginReach()
+      .catch((error: unknown) => error);
+
+    // Every restricted name must be answered, so an answer naming two of them is unreadable.
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect(calls).toHaveLength(1);
+    expect(new URL(calls[0]?.url ?? "").pathname).toBe("/_security/user/_has_privileges");
+    expect(calls[0]?.init?.method).toBe("POST");
+    const body = JSON.parse(String(calls[0]?.init?.body)) as {
+      cluster: string[];
+      index: { names: string[]; privileges: string[]; allow_restricted_indices: boolean }[];
+    };
+    expect(body.cluster).toEqual(["all"]);
+    expect(body.index).toHaveLength(1);
+    expect(body.index[0]?.names[0]).toBe("*");
+    expect(body.index[0]?.names).toContain(".security-7");
+    expect(body.index[0]?.privileges).toEqual(["read"]);
+    expect(body.index[0]?.allow_restricted_indices).toBe(true);
+  });
+
+  test("OpenSearch declares no restricted indices, and refuses before any request", async () => {
+    const caught = await new SearchHttpTransport("opensearch", makeConnection("opensearch"))
+      .loginReach()
+      .catch((error: unknown) => error);
+
+    expect(caught).toBeInstanceOf(SearchTransportError);
+    expect((caught as Error).message).toBe("OpenSearch declares no restricted system indices to check a login against");
+    expect(calls).toHaveLength(0);
+  });
+});
