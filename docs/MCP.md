@@ -27,7 +27,7 @@ It is off by default.
     On Apache Spark it lists the tables and views of one namespace, read with SHOW and DESCRIBE statements that start no Spark job on Studio's own session; a namespace is named in Spark's spelling, its parts joined by dots.
   - `run_read_query` runs one read-only SQL statement.
     A `SELECT` (a `WITH` is fine) runs on every engine it serves; a refused statement's answer names what else that engine takes.
-    Runs on PostgreSQL, SQLite, DuckDB, SQL Server and MySQL; other engines refuse it, and list_connections' read_tool names the tool that reads each connection.
+    Runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL and ClickHouse; other engines refuse it, and list_connections' read_tool names the tool that reads each connection.
     It serves an engine only where agent mode executes statements on it, the engine is offered to MCP, and `MCP_STATEMENT_READ` in `src/lib/db/compatibility.ts` opens statement reads on it, so an engine that joins agent mode stays closed here until a change of its own opens it.
     It refuses every engine outside that list as soon as the connection resolves, before anything is acquired, answering "this tool does not serve <engine>; use <tool> there", where the tool is the one the connection's `read_tool` names, or `inspect_schema` where it is `null`.
     MongoDB is one of them, because its statement is a JSON command, which `run_mongo_command` reads, and Kubernetes another, because its statement is a kubectl line, which `run_kubectl_read` reads.
@@ -37,6 +37,7 @@ It is off by default.
     - DuckDB: a `SELECT` (a `WITH` is fine), `VALUES`, `TABLE`, or `EXPLAIN` without `ANALYZE`.
     - SQL Server: a `SELECT` (a `WITH` is fine).
     - MySQL: a `SELECT` (a `WITH` is fine), `VALUES`, `TABLE` (MySQL, not MariaDB), or `EXPLAIN` without `ANALYZE`.
+    - ClickHouse: a `SELECT` (a `WITH` is fine), or `EXPLAIN` without `ANALYZE`.
   - `run_mongo_command` runs one read-only MongoDB command, the JSON command envelope agent mode reads: `find`, `findOne`, `aggregate`, `count` or `distinct` on one collection, as `command`.
     Runs on MongoDB; other engines refuse it.
     It reads and admits the command with agent mode's own reader, so a write operation and a write stage of a pipeline (`$out`, `$merge`) are refused before anything is acquired, in the sentence an agent run reads.
@@ -52,7 +53,7 @@ It is off by default.
     It takes no `database`: a statement names its namespace with `-n` or `-A`, and without one reads the connection's Default namespace.
 - Each statement tool is one statement language's MCP facet, declared in that language's own pack at `src/lib/agent/languages/<statement-language>/mcp.ts` and registered in `AGENT_LANGUAGE_MCP_FACETS`: the tool's name, its statement argument, its description and the words its refusals use.
   `src/lib/mcp/tools/statement-arms.ts` builds the tools from those facets and names no language, so a language that gains an MCP tool adds its facet and edits nothing under `src/lib/mcp/`.
-- Read-only is the database's own enforcement, not a filter over statement text: `run_read_query`, `run_kubectl_read` and `run_mongo_command` take the connection under Studio's agent read-only execution profile and run through the provider's read-only statement path, which PostgreSQL enforces with a read-only transaction, SQLite and DuckDB with a read-only open, SQL Server by verifying the principal cannot write, MySQL and MariaDB by a least-privilege principal beside a read-only transaction, MongoDB by proving at open that the user holds only reads of its database on a server that enforces authorization ([mongodb.md](./providers/mongodb.md)), and Kubernetes by Studio's request allowlist on the final method and path of every request together with the token's RBAC ([kubernetes.md](./providers/kubernetes.md)).
+- Read-only is the database's own enforcement, not a filter over statement text: `run_read_query`, `run_kubectl_read` and `run_mongo_command` take the connection under Studio's agent read-only execution profile and run through the provider's read-only statement path, which PostgreSQL enforces with a read-only transaction, SQLite and DuckDB with a read-only open, SQL Server by verifying the principal cannot write, MySQL and MariaDB by a least-privilege principal beside a read-only transaction, ClickHouse by `readonly = 1` on every request beside a user proven at open to hold only reads ([clickhouse.md](./providers/clickhouse.md)), MongoDB by proving at open that the user holds only reads of its database on a server that enforces authorization ([mongodb.md](./providers/mongodb.md)), and Kubernetes by Studio's request allowlist on the final method and path of every request together with the token's RBAC ([kubernetes.md](./providers/kubernetes.md)).
   A statement check runs first as defence in depth.
 - A result that carries database content starts with a text block telling the model to treat what follows as untrusted data.
 
@@ -139,11 +140,13 @@ A SQLite seed's `database` is an absolute path on the machine running Studio, an
 The built-in sample connections are never visible to an MCP client.
 An empty `list_connections` answer means no connection is opted in for your token's role: an operator adds `mcp: true` to a seed connection.
 
-`run_read_query` refuses a PostgreSQL or SQL Server connection whose own login could do more than read, so an opted-in seed for those engines needs a least-privilege principal.
+`run_read_query` refuses a PostgreSQL, SQL Server or ClickHouse connection whose own login could do more than read, so an opted-in seed for those engines needs a least-privilege principal.
 On PostgreSQL the seed's role must not be a superuser and must not hold `pg_read_server_files`, `pg_write_server_files` or `pg_execute_server_program`.
 On SQL Server the login must hold no fixed server role, neither `CONTROL SERVER` nor `ADMINISTER BULK OPERATIONS`, and none of `db_owner`, `db_accessadmin`, `db_securityadmin`, `db_ddladmin`, `db_backupoperator` or `db_datawriter`, and it must be granted `SHOWPLAN`.
+On ClickHouse the seed's user must hold only `SELECT` and `SHOW` on named databases or tables, with no source grant, no grant that `readonly = 1` leaves usable (such as `BACKUP`), no read of `system.query_log`, no table that reads an external source and no executable function on the server, as the open proves for agent mode ([clickhouse.md](./providers/clickhouse.md) section 5.6).
 A seed entry cannot carry a separate agent credential, so the fix is the seed's own login.
 `inspect_schema` acquires its connection read-only too, under `agent-operations` where `run_read_query` takes `agent-read-only`, and on PostgreSQL and SQL Server both profiles verify the principal at open, not per statement, so the same least-privilege requirement applies there too: a superuser PostgreSQL role or a privileged SQL Server login refuses `inspect_schema` as well.
+ClickHouse proves its user only for a connection that sends statements, so `inspect_schema` opens a ClickHouse connection unproven, as the editor does.
 MongoDB proves its principal only for a connection that sends statements, so `inspect_schema` opens a MongoDB connection unverified, as the editor does, and no principal check refuses it there (`tests/integration/mcp/inspect-schema.test.ts` lists the collections of the admin seed, of a server without authorization and of FerretDB).
 A Kubernetes seed's `password` is the ServiceAccount token every MCP call on it runs as, because a seed carries no separate agent token, so opt in a token bound to a read role such as `view` or `studio-reader` ([kubernetes.md](./providers/kubernetes.md#45-a-serviceaccount-token-view-and-studio-reader)).
 
@@ -343,6 +346,7 @@ For the first few seconds after that service starts, `opencode mcp list` can say
 | SQL Server | Studio stops waiting; the statement runs until the provider's deadline cancels it | The provider cancels the statement, and the client gets the timeout answer |
 | DuckDB | Studio stops waiting; the statement runs to completion and its result is discarded | The client gets the timeout answer near `timeout_ms`, and the statement runs on |
 | SQLite | An on-disk statement runs in a killable child process, so the client is answered at `timeout_ms` | The statement is killed at `timeout_ms`; an in-memory statement still runs to completion |
+| ClickHouse | Studio stops waiting; the statement runs on until its server-side `max_execution_time`, which is set to the time left rounded up to whole seconds, ends it | Studio closes the request at `timeout_ms`, ClickHouse cancels the statement, and the client gets the timeout answer |
 
 - One MCP query against a large SQLite table no longer stops the Studio process: the read runs in a
   child process and is killed at `timeout_ms`; only an in-memory SQLite read still blocks it.

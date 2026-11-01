@@ -703,7 +703,9 @@ describe("every agent-mode engine sentence is the one engine list (#246)", () =>
     const productList = `Query ${EXTERNAL_DATABASE_TYPES.map((type) => getDBConfig(type).label).join(", ")} from your browser, with a read-only agent beside them.`;
     expect(engineClaimsIn(productList)).toEqual([]);
     expect(
-      engineClaimsIn("- `run_read_query` runs on PostgreSQL, SQLite, DuckDB, SQL Server and MySQL in agent mode."),
+      engineClaimsIn(
+        "- `run_read_query` runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL and ClickHouse in agent mode.",
+      ),
     ).toEqual([]);
   });
 

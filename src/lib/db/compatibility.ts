@@ -601,7 +601,7 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
  * joins agent mode does not open to MCP as a side effect: its row stays false until a change of its own opens it.
  *
  * True for the five SQL engines `run_read_query` served before this record existed, so nothing moved when it landed,
- * for MongoDB, whose command `run_mongo_command` reads, and for Kubernetes, whose kubectl line `run_kubectl_read` reads
+ * for ClickHouse, opened to `run_read_query` by a change of its own, for MongoDB, whose command `run_mongo_command` reads, and for Kubernetes, whose kubectl line `run_kubectl_read` reads
  * under the agent's machine redaction. An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records
  * above it, and held false wherever `MCP_EXPOSABLE` is false and true only for an engine agent mode executes on by
  * `tests/unit/db/compatibility.test.ts`.
@@ -621,8 +621,9 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // Agent mode executes statements on Db2, and MCP read stays closed on it until a change of its own opens it.
   db2: false,
   mssql: true,
-  // Agent mode executes statements on ClickHouse, and MCP read stays closed on it until a change of its own opens it.
-  clickhouse: false,
+  // Opened on its own: run_read_query runs under the boundary agent mode uses, `readonly = 1` on every request and a
+  // user proven at open to hold only reads (docs/providers/clickhouse.md section 5.6).
+  clickhouse: true,
   // Agent mode executes statements on Druid, and MCP read stays closed on it until a change of its own opens it.
   druid: false,
   // Agent mode executes statements on Trino, and MCP read stays closed on it until a change of its own opens it.

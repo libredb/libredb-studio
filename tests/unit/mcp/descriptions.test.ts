@@ -51,7 +51,7 @@ describe("the tool descriptions", () => {
 
   test("run_read_query names the engines it serves, from the one list its handler gates on", () => {
     expect(RUN_READ_QUERY_ENGINES).toBe(namedList(RUN_READ_QUERY_TYPES.map((type) => getDBConfig(type).label)));
-    expect(RUN_READ_QUERY_ENGINES).toBe("PostgreSQL, SQLite, DuckDB, SQL Server and MySQL");
+    expect(RUN_READ_QUERY_ENGINES).toBe("PostgreSQL, SQLite, DuckDB, SQL Server, MySQL and ClickHouse");
     expect(RUN_READ_QUERY_DESCRIPTION).toContain(
       `Runs on ${RUN_READ_QUERY_ENGINES}; other engines refuse it, and list_connections' read_tool names the tool that reads each connection.`,
     );
