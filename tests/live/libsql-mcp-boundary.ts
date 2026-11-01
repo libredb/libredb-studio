@@ -138,10 +138,11 @@ function engineRefusalOf(result: ToolResult): string | null {
 }
 
 /**
- * The writes, each written for a table so the positive control runs it on the scratch copy. `refusedForEvery` marks a
- * statement the server refuses whatever the token, so its control is the same refusal rather than a run.
+ * The writes, each written for a table so the positive control runs it on the scratch copy. `refusedForEvery` holds the
+ * server's own wording for a statement it refuses whatever the token, so the bypassed check and its control both
+ * match that refusal rather than any error.
  */
-const WRITES: { sql: (table: string) => string; refusedForEvery?: true }[] = [
+const WRITES: { sql: (table: string) => string; refusedForEvery?: string }[] = [
   { sql: (t) => `INSERT INTO "${t}" (id, v) VALUES (100, 'x')` },
   { sql: (t) => `INSERT INTO "${t}" (id, v) VALUES (101, 'x') RETURNING id` },
   { sql: (t) => `INSERT INTO "${t}" (id, v) VALUES (1, 'x') ON CONFLICT (id) DO UPDATE SET v = 'y'` },
@@ -159,17 +160,17 @@ const WRITES: { sql: (table: string) => string; refusedForEvery?: true }[] = [
   { sql: () => "REINDEX" },
   { sql: () => "PRAGMA user_version = 5" },
   { sql: () => "PRAGMA foreign_keys = OFF" },
-  { sql: () => "ATTACH DATABASE ':memory:' AS other", refusedForEvery: true },
-  { sql: () => "DETACH DATABASE other", refusedForEvery: true },
-  { sql: () => `VACUUM INTO '/tmp/${PREFIX}copy.db'`, refusedForEvery: true },
-  { sql: () => "VACUUM", refusedForEvery: true },
-  { sql: () => "ANALYZE", refusedForEvery: true },
-  { sql: (t) => `CREATE TEMP TABLE "${t}_tmp" (a INTEGER)`, refusedForEvery: true },
-  { sql: () => "PRAGMA journal_mode = DELETE", refusedForEvery: true },
-  { sql: () => "PRAGMA writable_schema = ON", refusedForEvery: true },
-  { sql: () => "PRAGMA query_only = 0", refusedForEvery: true },
-  { sql: () => "SELECT load_extension('/tmp/libredb_lm_none')", refusedForEvery: true },
-  { sql: (t) => `SELECT 1; DELETE FROM "${t}"`, refusedForEvery: true },
+  { sql: () => "ATTACH DATABASE ':memory:' AS other", refusedForEvery: "unsupported statement" },
+  { sql: () => "DETACH DATABASE other", refusedForEvery: "no such database" },
+  { sql: () => `VACUUM INTO '/tmp/${PREFIX}copy.db'`, refusedForEvery: "unsupported statement" },
+  { sql: () => "VACUUM", refusedForEvery: "unsupported statement" },
+  { sql: () => "ANALYZE", refusedForEvery: "unsupported statement" },
+  { sql: (t) => `CREATE TEMP TABLE "${t}_tmp" (a INTEGER)`, refusedForEvery: "unsupported statement" },
+  { sql: () => "PRAGMA journal_mode = DELETE", refusedForEvery: "unsupported statement" },
+  { sql: () => "PRAGMA writable_schema = ON", refusedForEvery: "unsupported statement" },
+  { sql: () => "PRAGMA query_only = 0", refusedForEvery: "unsupported statement" },
+  { sql: () => "SELECT load_extension('/tmp/libredb_lm_none')", refusedForEvery: "not authorized" },
+  { sql: (t) => `SELECT 1; DELETE FROM "${t}"`, refusedForEvery: "more than one statement" },
 ];
 
 /** The writable token's answer to `sql`: `ran`, or the server's statement error. */
@@ -178,7 +179,7 @@ async function writableAnswer(sql: string): Promise<string> {
     await write(sql);
     return "ran";
   } catch (error) {
-    if (error instanceof LibSQLTransportError) return `refused: ${error.message.slice(0, 60)}`;
+    if (error instanceof LibSQLTransportError) return `refused: ${error.message.slice(0, 120)}`;
     throw error;
   }
 }
@@ -283,9 +284,9 @@ async function main(): Promise<void> {
     );
     const refusal = engineRefusalOf((await mcp(agent, { sql })).result) ?? "answered";
     const expected =
-      statement.refusedForEvery === true
-        ? !refusal.includes("Authorization forbidden") && refusal !== "answered"
-        : refusal.startsWith("libSQL request failed: Authorization forbidden: ");
+      statement.refusedForEvery === undefined
+        ? refusal.startsWith("libSQL request failed: Authorization forbidden: ")
+        : refusal.includes(statement.refusedForEvery) && !refusal.includes("Authorization forbidden");
     check(expected, `boundary: bypassed, the server refuses ${sql} -> ${refusal.slice(0, 120)}`);
   }
   const after = await stateHash();
@@ -295,7 +296,10 @@ async function main(): Promise<void> {
   for (const statement of WRITES) {
     const sql = statement.sql(SCRATCH);
     const answer = await writableAnswer(sql);
-    const expected = statement.refusedForEvery === true ? answer.startsWith("refused: ") : answer === "ran";
+    const expected =
+      statement.refusedForEvery === undefined
+        ? answer === "ran"
+        : answer.startsWith("refused: ") && answer.includes(statement.refusedForEvery);
     check(expected, `control: the writable token on ${sql} -> ${answer}`);
   }
   await write("PRAGMA user_version = 0");
