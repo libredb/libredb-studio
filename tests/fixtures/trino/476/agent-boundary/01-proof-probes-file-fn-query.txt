@@ -1,0 +1,35 @@
+# the proof's probes: a table function called with an argument name no function declares, and with no argument at all; the permission check comes before the argument check
+> [read-only transaction] SELECT * FROM TABLE("pg"."system"."query"(libredb_no_such_argument => 1))
+  INVALID_FUNCTION_ARGUMENT: line 1:43: Unexpected argument name: LIBREDB_NO_SUCH_ARGUMENT
+> [read-only transaction] SELECT * FROM TABLE("pg"."system"."raw_query"(libredb_no_such_argument => 1))
+  FUNCTION_NOT_FOUND: line 1:21: Table function 'pg.system.raw_query' not registered
+> [read-only transaction] SELECT * FROM TABLE("pg"."system"."query"())
+  MISSING_ARGUMENT: line 1:21: Missing argument: QUERY
+> [read-only transaction] SELECT * FROM TABLE("pg2"."system"."query"(libredb_no_such_argument => 1))
+  INVALID_FUNCTION_ARGUMENT: line 1:44: Unexpected argument name: LIBREDB_NO_SUCH_ARGUMENT
+> [read-only transaction] SELECT * FROM TABLE("pg2"."system"."raw_query"(libredb_no_such_argument => 1))
+  FUNCTION_NOT_FOUND: line 1:21: Table function 'pg2.system.raw_query' not registered
+> [read-only transaction] SELECT * FROM TABLE("pg2"."system"."query"())
+  MISSING_ARGUMENT: line 1:21: Missing argument: QUERY
+> [read-only transaction] SELECT * FROM TABLE("memory"."system"."query"(libredb_no_such_argument => 1))
+  FUNCTION_NOT_FOUND: line 1:21: Table function 'memory.system.query' not registered
+> [read-only transaction] SELECT * FROM TABLE("memory"."system"."raw_query"(libredb_no_such_argument => 1))
+  FUNCTION_NOT_FOUND: line 1:21: Table function 'memory.system.raw_query' not registered
+> [read-only transaction] SELECT * FROM TABLE("memory"."system"."query"())
+  FUNCTION_NOT_FOUND: line 1:21: Table function 'memory.system.query' not registered
+> [read-only transaction] SELECT * FROM TABLE("system"."system"."query"(libredb_no_such_argument => 1))
+  FUNCTION_NOT_FOUND: line 1:21: Table function 'system.system.query' not registered
+> [read-only transaction] SELECT * FROM TABLE("system"."system"."raw_query"(libredb_no_such_argument => 1))
+  FUNCTION_NOT_FOUND: line 1:21: Table function 'system.system.raw_query' not registered
+> [read-only transaction] SELECT * FROM TABLE("system"."system"."query"())
+  FUNCTION_NOT_FOUND: line 1:21: Table function 'system.system.query' not registered
+# a builtin table function, which every access control lets run, under the same probe
+> [read-only transaction] SELECT * FROM TABLE("system"."builtin"."sequence"(libredb_no_such_argument => 1))
+  INVALID_FUNCTION_ARGUMENT: line 1:51: Unexpected argument name: LIBREDB_NO_SUCH_ARGUMENT
+# catalog management, probed on a catalog name that does not exist
+> [read-only transaction] DROP CATALOG "libredb_agent_probe_capture"
+  PERMISSION_DENIED: Access Denied: Cannot drop catalog libredb_agent_probe_capture
+> [read-only transaction] DROP CATALOG IF EXISTS "libredb_agent_probe_capture"
+  PERMISSION_DENIED: Access Denied: Cannot drop catalog libredb_agent_probe_capture
+> [autocommit] DROP CATALOG "libredb_agent_probe_capture"
+  PERMISSION_DENIED: Access Denied: Cannot drop catalog libredb_agent_probe_capture

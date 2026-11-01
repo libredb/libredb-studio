@@ -1,0 +1,53 @@
+# a failed statement aborts the transaction; a ROLLBACK then ends it
+(START TRANSACTION READ ONLY)
+> SELECT 1 AS a
+  OK ["a"] [[1]]
+> SELECT * FROM TABLE("pg"."system"."query"(libredb_no_such_argument => 1))
+  PERMISSION_DENIED: Access Denied: Cannot execute function pg.system.query
+> SELECT 1 AS a
+  TRANSACTION_ALREADY_ABORTED: Current transaction is aborted, commands ignored until end of transaction block
+> ROLLBACK
+  OK [] [] (ended the transaction)
+# statements that end or nest a transaction, written inside one
+(START TRANSACTION READ ONLY)
+> COMMIT
+  OK [] [] (ended the transaction)
+> SELECT 1 AS a
+  UNKNOWN_TRANSACTION: Unknown transaction ID: <transaction id>. Possibly expired? Commands ignored until end of transaction block
+> ROLLBACK
+  OK [] [] (ended the transaction)
+(START TRANSACTION READ ONLY)
+> ROLLBACK
+  OK [] [] (ended the transaction)
+> SELECT 1 AS a
+  UNKNOWN_TRANSACTION: Unknown transaction ID: <transaction id>. Possibly expired? Commands ignored until end of transaction block
+> ROLLBACK
+  OK [] [] (ended the transaction)
+(START TRANSACTION READ ONLY)
+> START TRANSACTION
+  NOT_SUPPORTED: Nested transactions not supported
+> SELECT 1 AS a
+  TRANSACTION_ALREADY_ABORTED: Current transaction is aborted, commands ignored until end of transaction block
+> ROLLBACK
+  OK [] [] (ended the transaction)
+(START TRANSACTION READ ONLY)
+> START TRANSACTION READ WRITE
+  NOT_SUPPORTED: Nested transactions not supported
+> SELECT 1 AS a
+  TRANSACTION_ALREADY_ABORTED: Current transaction is aborted, commands ignored until end of transaction block
+> ROLLBACK
+  OK [] [] (ended the transaction)
+# a catalog created from another session while a transaction is open is listed and read inside it
+(START TRANSACTION READ ONLY)
+> SHOW CATALOGS
+  OK ["Catalog"] [["memory"],["pg"],["pg2"],["system"]]
+> [autocommit, meanwhile] CREATE CATALOG libredb_agent_late USING memory
+  PERMISSION_DENIED: Access Denied: Cannot create catalog libredb_agent_late
+> SHOW CATALOGS
+  OK ["Catalog"] [["memory"],["pg"],["pg2"],["system"]]
+> SELECT count(*) AS schemas FROM libredb_agent_late.information_schema.schemata
+  CATALOG_NOT_FOUND: line 1:33: Catalog 'libredb_agent_late' not found
+> [autocommit, meanwhile] DROP CATALOG IF EXISTS libredb_agent_late
+  PERMISSION_DENIED: Access Denied: Cannot drop catalog libredb_agent_late
+> ROLLBACK
+  OK [] [] (ended the transaction)

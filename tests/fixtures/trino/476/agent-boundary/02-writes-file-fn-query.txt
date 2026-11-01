@@ -1,0 +1,36 @@
+# the PostgreSQL table before, read through the pg catalog
+> [autocommit] SELECT a FROM pg.public.rp_t ORDER BY a
+  OK ["a"] [[1]]
+# inside a read-only transaction: Trino's own writes, the pass-through table function on two catalogs (a harmless read, a function that writes, a dblink write), CALL and session settings
+> [read-only transaction] INSERT INTO pg.public.rp_t VALUES (101)
+  READ_ONLY_VIOLATION: Cannot execute write in a read-only transaction
+> [read-only transaction] CREATE TABLE memory.default.rp_m AS SELECT 1 AS a
+  READ_ONLY_VIOLATION: Cannot execute write in a read-only transaction
+> [read-only transaction] SELECT * FROM TABLE("pg"."system"."query"(query => 'SELECT 1 AS one'))
+  OK ["one"] [[1]]
+> [read-only transaction] SELECT * FROM TABLE("pg"."system"."query"(query => 'SELECT current_setting(''transaction_read_only'') AS ro'))
+  OK ["ro"] [["on"]]
+> [read-only transaction] SELECT * FROM TABLE("pg"."system"."query"(query => 'SELECT nextval(''public.rp_seq'') AS n'))
+  JDBC_ERROR: ERROR: cannot execute nextval() in a read-only transaction
+> [read-only transaction] SELECT * FROM TABLE("pg"."system"."query"(query => 'SELECT * FROM dblink_exec(''dbname=postgres user=postgres'', ''INSERT INTO public.rp_t VALUES (102)'') AS r'))
+  OK ["r"] [["INSERT 0 1"]]
+> [read-only transaction] SELECT * FROM TABLE("pg2"."system"."query"(query => 'SELECT * FROM dblink_exec(''dbname=postgres user=postgres'', ''INSERT INTO public.rp_t VALUES (103)'') AS r'))
+  OK ["r"] [["INSERT 0 1"]]
+> [read-only transaction] CALL pg.system.execute(query => 'INSERT INTO public.rp_t VALUES (104)')
+  NOT_SUPPORTED: Procedures cannot be called within a transaction (use autocommit mode)
+> [read-only transaction] SET SESSION query_max_run_time = '1s'
+  OK [] []
+> [read-only transaction] SET SESSION AUTHORIZATION 'admin'
+  NOT_SUPPORTED: SET SESSION AUTHORIZATION not supported by client
+> [read-only transaction] CREATE CATALOG libredb_agent_probe_new USING memory
+  PERMISSION_DENIED: Access Denied: Cannot create catalog libredb_agent_probe_new
+# the same pass-through write and CALL in autocommit, outside any transaction
+> [autocommit] SELECT * FROM TABLE("pg"."system"."query"(query => 'SELECT * FROM dblink_exec(''dbname=postgres user=postgres'', ''INSERT INTO public.rp_t VALUES (105)'') AS r'))
+  OK ["r"] [["INSERT 0 1"]]
+> [autocommit] CALL pg.system.execute(query => 'INSERT INTO public.rp_t VALUES (106)')
+  OK [] []
+# the PostgreSQL table after: every value above 100 that is listed was written
+> [autocommit] SELECT a FROM pg.public.rp_t ORDER BY a
+  OK ["a"] [[1],[102],[103],[105],[106]]
+> [autocommit] DROP CATALOG IF EXISTS libredb_agent_probe_new
+  PERMISSION_DENIED: Access Denied: Cannot drop catalog libredb_agent_probe_new

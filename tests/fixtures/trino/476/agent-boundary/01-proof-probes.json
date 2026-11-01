@@ -1,0 +1,75 @@
+[
+ {
+  "note": "the proof's probes: a table function called with an argument name no function declares, and with no argument at all; the permission check comes before the argument check"
+ },
+ {
+  "sql": "SELECT * FROM TABLE(\"pg\".\"system\".\"query\"(libredb_no_such_argument => 1))",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SELECT * FROM TABLE(\"pg\".\"system\".\"raw_query\"(libredb_no_such_argument => 1))",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SELECT * FROM TABLE(\"pg\".\"system\".\"query\"())",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SELECT * FROM TABLE(\"pg2\".\"system\".\"query\"(libredb_no_such_argument => 1))",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SELECT * FROM TABLE(\"pg2\".\"system\".\"raw_query\"(libredb_no_such_argument => 1))",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SELECT * FROM TABLE(\"pg2\".\"system\".\"query\"())",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SELECT * FROM TABLE(\"memory\".\"system\".\"query\"(libredb_no_such_argument => 1))",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SELECT * FROM TABLE(\"memory\".\"system\".\"raw_query\"(libredb_no_such_argument => 1))",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SELECT * FROM TABLE(\"memory\".\"system\".\"query\"())",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SELECT * FROM TABLE(\"system\".\"system\".\"query\"(libredb_no_such_argument => 1))",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SELECT * FROM TABLE(\"system\".\"system\".\"raw_query\"(libredb_no_such_argument => 1))",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SELECT * FROM TABLE(\"system\".\"system\".\"query\"())",
+  "txn": "read-only"
+ },
+ {
+  "note": "a builtin table function, which every access control lets run, under the same probe"
+ },
+ {
+  "sql": "SELECT * FROM TABLE(\"system\".\"builtin\".\"sequence\"(libredb_no_such_argument => 1))",
+  "txn": "read-only"
+ },
+ {
+  "note": "catalog management, probed on a catalog name that does not exist"
+ },
+ {
+  "sql": "DROP CATALOG \"libredb_agent_probe_capture\"",
+  "txn": "read-only"
+ },
+ {
+  "sql": "DROP CATALOG IF EXISTS \"libredb_agent_probe_capture\"",
+  "txn": "read-only"
+ },
+ {
+  "sql": "DROP CATALOG \"libredb_agent_probe_capture\"",
+  "txn": "none"
+ }
+]

@@ -1,0 +1,78 @@
+[
+ {
+  "note": "the PostgreSQL table before, read through the pg catalog"
+ },
+ {
+  "sql": "SELECT a FROM pg.public.rp_t ORDER BY a",
+  "txn": "none"
+ },
+ {
+  "note": "inside a read-only transaction: Trino's own writes, the pass-through table function on two catalogs (a harmless read, a function that writes, a dblink write), CALL and session settings"
+ },
+ {
+  "sql": "INSERT INTO pg.public.rp_t VALUES (101)",
+  "txn": "read-only"
+ },
+ {
+  "sql": "CREATE TABLE memory.default.rp_m AS SELECT 1 AS a",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SELECT * FROM TABLE(\"pg\".\"system\".\"query\"(query => 'SELECT 1 AS one'))",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SELECT * FROM TABLE(\"pg\".\"system\".\"query\"(query => 'SELECT current_setting(''transaction_read_only'') AS ro'))",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SELECT * FROM TABLE(\"pg\".\"system\".\"query\"(query => 'SELECT nextval(''public.rp_seq'') AS n'))",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SELECT * FROM TABLE(\"pg\".\"system\".\"query\"(query => 'SELECT * FROM dblink_exec(''dbname=postgres user=postgres'', ''INSERT INTO public.rp_t VALUES (102)'') AS r'))",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SELECT * FROM TABLE(\"pg2\".\"system\".\"query\"(query => 'SELECT * FROM dblink_exec(''dbname=postgres user=postgres'', ''INSERT INTO public.rp_t VALUES (103)'') AS r'))",
+  "txn": "read-only"
+ },
+ {
+  "sql": "CALL pg.system.execute(query => 'INSERT INTO public.rp_t VALUES (104)')",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SET SESSION query_max_run_time = '1s'",
+  "txn": "read-only"
+ },
+ {
+  "sql": "SET SESSION AUTHORIZATION 'admin'",
+  "txn": "read-only"
+ },
+ {
+  "sql": "CREATE CATALOG libredb_agent_probe_new USING memory",
+  "txn": "read-only"
+ },
+ {
+  "note": "the same pass-through write and CALL in autocommit, outside any transaction"
+ },
+ {
+  "sql": "SELECT * FROM TABLE(\"pg\".\"system\".\"query\"(query => 'SELECT * FROM dblink_exec(''dbname=postgres user=postgres'', ''INSERT INTO public.rp_t VALUES (105)'') AS r'))",
+  "txn": "none"
+ },
+ {
+  "sql": "CALL pg.system.execute(query => 'INSERT INTO public.rp_t VALUES (106)')",
+  "txn": "none"
+ },
+ {
+  "note": "the PostgreSQL table after: every value above 100 that is listed was written"
+ },
+ {
+  "sql": "SELECT a FROM pg.public.rp_t ORDER BY a",
+  "txn": "none"
+ },
+ {
+  "sql": "DROP CATALOG IF EXISTS libredb_agent_probe_new",
+  "txn": "none"
+ }
+]
