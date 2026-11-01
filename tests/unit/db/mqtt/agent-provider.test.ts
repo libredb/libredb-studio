@@ -34,11 +34,15 @@ const BUDGET: ReadOnlyStatementBudget = { statementTimeoutMs: 10_000, maxResultR
 const PROFILE: ProviderExecutionContext = { readOnly: true, sendsStatements: true };
 const OPERATIONS: ProviderExecutionContext = { readOnly: true };
 
-/** Topics whose names stand for the people and devices behind them; none may reach an agent answer. */
+/**
+ * Topics whose names stand for the people and devices behind them; none may reach an agent answer.
+ * The payloads are letters no answer's figures or sentences can spell, so a timing such as 171 ms
+ * never reads as a leaked payload; their byte lengths are the ones the totals below count.
+ */
 const PEOPLE = [
   { topic: "homes/ayse-yilmaz/door", payload: "OPEN-SECRET-PAYLOAD" },
-  { topic: "people/alice/heart-rate", payload: "71" },
-  { topic: "factory/press-7/temp", payload: "21.5", retain: false },
+  { topic: "people/alice/heart-rate", payload: "Qx" },
+  { topic: "factory/press-7/temp", payload: "Qz.j", retain: false },
 ] as const;
 
 function connection(over: Partial<Record<string, unknown>> = {}): DatabaseConnection {
