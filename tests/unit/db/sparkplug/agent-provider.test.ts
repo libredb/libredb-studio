@@ -388,6 +388,23 @@ describe("a failure is worded by its kind, never in the broker's or the transpor
     );
   });
 
+  test("one refused subscription of an edge node read's three is said as a lower bound", async () => {
+    const provider = await answering({ subscriptionsRefused: 1 });
+    const result = await provider.queryReadOnly('{"read": "edgeNode", "group": "G", "edgeNode": "E"}', BUDGET);
+    expect(result.rows[0]).toMatchObject({ subscriptions_refused: 1 });
+    expect(result.warnings?.map((one) => one.message)).toContain(
+      "The broker refused 1 subscription of this read and granted the rest, so the read heard less than it asked for and its counts are lower bounds.",
+    );
+  });
+
+  test("a stored certificate a broker delivers on an exact read is not the object's message and is not counted", async () => {
+    const provider = await answering({
+      messages: [{ topic: "$sparkplug/certificates/spBv1.0/G/NBIRTH/E", payloadBytes: 40, receivedAt: 5 }],
+    });
+    const result = await provider.queryReadOnly('{"read": "edgeNode", "group": "G", "edgeNode": "E"}', BUDGET);
+    expect(result.rows[0]).toMatchObject({ seen: false, messages: 0, nbirth: 0, birth_seen: false });
+  });
+
   test("last_seen_ms is the last message's arrival, counted from the subscription", async () => {
     const provider = await answering({
       startedAt: 1_000,
