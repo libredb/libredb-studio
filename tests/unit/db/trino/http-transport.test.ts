@@ -36,7 +36,7 @@
  * layout.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { TrinoHttpTransport } from "@/lib/db/providers/sql/trino/http-transport";
+import { TRINO_PAGE_ENVELOPE_BYTES, TrinoHttpTransport } from "@/lib/db/providers/sql/trino/http-transport";
 import {
   TRINO_DIALECT,
   TrinoAnswerTooLargeError,
@@ -1755,6 +1755,90 @@ describe("TrinoHttpTransport answer caps", () => {
     sequence(...VERSION_PAGES);
 
     // [["476"]] is 9 bytes; the five pages around it are hundreds.
+    const result = await makeTransport().query("SELECT version()", { maxRowBytes: 9 });
+
+    expect(result.rows).toEqual([{ _col0: "476" }]);
+  });
+
+  /** A body that hands out 64 KiB of spaces on every pull and never ends, recording its pulls and its cancellation. */
+  function endlessBody() {
+    const seen = { pulls: 0, cancelled: false };
+    const chunk = new Uint8Array(64 * 1024).fill(0x20);
+    const body = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          seen.pulls += 1;
+          controller.enqueue(chunk);
+        },
+        cancel() {
+          seen.cancelled = true;
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    return { body, seen };
+  }
+
+  async function tooLarge(run: () => Promise<unknown>): Promise<TrinoAnswerTooLargeError> {
+    try {
+      await run();
+    } catch (error) {
+      expect(error).toBeInstanceOf(TrinoAnswerTooLargeError);
+      return error as TrinoAnswerTooLargeError;
+    }
+    throw new Error("the transport answered where it should have refused");
+  }
+
+  test("refuses a first page larger than the cap while reading it, without pulling the rest of its body", async () => {
+    const { body, seen } = endlessBody();
+    handler = () => new Response(body, { headers: { "content-type": "application/json" } });
+
+    const error = await tooLarge(() => makeTransport().query("SELECT v FROM t", { maxRowBytes: 1024 }));
+
+    // The read stops at the first 64 KiB chunk past the cap and the page's envelope allowance.
+    const limit = 1024 + TRINO_PAGE_ENVELOPE_BYTES;
+    expect(error.limit).toBe("bytes");
+    expect(error.cap).toBe(1024);
+    expect(error.seen).toBe(Math.ceil((limit + 1) / (64 * 1024)) * 64 * 1024);
+    expect(seen.pulls).toBe(Math.ceil((limit + 1) / (64 * 1024)));
+    expect(seen.cancelled).toBe(true);
+    expect(calls.map((call) => call.method)).toEqual(["POST"]);
+  });
+
+  test("bounds a later page by what the pages before it left of the cap, and cancels the statement", async () => {
+    const { body, seen } = endlessBody();
+    let served = 0;
+    handler = () => {
+      served += 1;
+      return served === 1 ? respond(ROWS_PAGE) : new Response(body);
+    };
+
+    // The first page's rows, [["a"],["b"],["c"]], are 19 bytes of a cap of 20, so one byte and the envelope remain.
+    const error = await tooLarge(() => makeTransport().query("SELECT v FROM t", { maxRowBytes: 20 }));
+
+    const pulls = Math.ceil((1 + TRINO_PAGE_ENVELOPE_BYTES + 1) / (64 * 1024));
+    expect(error.seen).toBe(19 + pulls * 64 * 1024);
+    expect(seen.pulls).toBe(pulls);
+    expect(seen.cancelled).toBe(true);
+    expect(calls.map((call) => call.method)).toEqual(["POST", "GET", "DELETE"]);
+  });
+
+  test("bounds a refusal's body the same way, and retries nothing past the cap", async () => {
+    const { body, seen } = endlessBody();
+    // Constructed: a 503 the protocol says to retry, whose body never ends.
+    handler = () => new Response(body, { status: 503 });
+
+    const error = await tooLarge(() => makeTransport().query("SELECT v FROM t", { maxRowBytes: 1024 }));
+
+    expect(error.limit).toBe("bytes");
+    expect(seen.cancelled).toBe(true);
+    expect(calls).toHaveLength(1);
+  });
+
+  test("reads a page whose envelope is larger than what the cap leaves, within the allowance", async () => {
+    sequence(SINGLE_PAGE);
+
+    // [["476"]] is 9 bytes; the page around it is hundreds, all within the envelope allowance.
     const result = await makeTransport().query("SELECT version()", { maxRowBytes: 9 });
 
     expect(result.rows).toEqual([{ _col0: "476" }]);

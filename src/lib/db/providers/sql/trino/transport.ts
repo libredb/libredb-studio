@@ -331,7 +331,9 @@ export interface TrinoQueryOptions {
   /**
    * The most bytes the answer's rows may hold, each page's rows measured as the JSON they arrived as, positional, so
    * never more than the same rows keyed by name. Past it, as past `maxRows`. The pages' own envelope is not counted:
-   * a slow statement is polled through many pages that carry only its progress.
+   * a slow statement is polled through many pages that carry only its progress. Set, every response body of the
+   * exchange, a refusal's and a retried one's included, is counted as it arrives and its read stopped once it passes
+   * what the pages before it left of the cap plus a page's envelope allowance, before it is decoded or parsed.
    */
   maxRowBytes?: number;
 }

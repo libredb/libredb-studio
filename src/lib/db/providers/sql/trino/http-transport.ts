@@ -44,6 +44,7 @@
 
 import { endpointUrl, type HttpOrigin, httpOrigin, rejectForeignLink, rejectRedirect } from "@/lib/db/http/endpoint";
 import { DatabaseConfigError } from "@/lib/db/errors";
+import { BodyLimitExceededError, readBoundedText } from "@/lib/db/http/bounded-body";
 import { httpTransportFetch } from "@/lib/db/http/egress-policy";
 import type { DatabaseConnection } from "@/lib/db/types";
 // A `bigint` column arrives as an UNQUOTED JSON number and this protocol has no
@@ -218,6 +219,14 @@ const MILLIS_PER_SECOND = 1_000;
  * failure mode being avoided is a truncation nobody was told about.
  */
 const MAX_PAGES = 5_000;
+
+/**
+ * What a page's body may hold beyond the row bytes a caller's `maxRowBytes` still leaves: the page's own envelope, its
+ * id, links, column declaration, progress report and remarks, which the cap does not count. A body is read under that
+ * bound as it arrives, so no page larger than the rows still allowed plus this is ever held whole. A page's envelope is
+ * a few kilobytes; one past a mebibyte is refused as an answer too large.
+ */
+export const TRINO_PAGE_ENVELOPE_BYTES = 1024 * 1024;
 
 /** How much of a plain-text refusal is quoted back to the user. */
 const MESSAGE_LIMIT = 300;
@@ -717,6 +726,15 @@ interface PageAnswer {
   headers: Headers;
 }
 
+/**
+ * The bound a request's body is read under: the caller's `maxRowBytes` (`cap`), the row bytes the pages before it
+ * already held (`accepted`), and so what is left of the cap plus a page's envelope. Absent, a body is read whole.
+ */
+interface BodyBudget {
+  cap: number;
+  accepted: number;
+}
+
 /** A completed exchange, with the transaction it started, if any. */
 interface Exchange {
   result: TrinoQueryResult;
@@ -903,7 +921,12 @@ export class TrinoHttpTransport implements TrinoTransport {
       }
 
       rejectForeignLink(next, this.origin);
-      answer = await this.request(next, { method: "GET", headers: this.pollHeaders() }, options.signal);
+      answer = await this.request(
+        next,
+        { method: "GET", headers: this.pollHeaders() },
+        options.signal,
+        options.maxRowBytes === undefined ? undefined : { cap: options.maxRowBytes, accepted: bytes },
+      );
     }
 
     if (fieldNames === null && positional.length > 0) {
@@ -940,6 +963,7 @@ export class TrinoHttpTransport implements TrinoTransport {
         body: withoutTerminator(sql, resolveSqlGrammar(this.dialect.id)),
       },
       options.signal,
+      options.maxRowBytes === undefined ? undefined : { cap: options.maxRowBytes, accepted: 0 },
     );
   }
 
@@ -1006,8 +1030,13 @@ export class TrinoHttpTransport implements TrinoTransport {
     return `X-${this.dialect.headerPrefix}-${suffix}`;
   }
 
-  private async request(url: string, init: RequestInit, signal?: AbortSignal): Promise<PageAnswer> {
-    const outcome = await this.send(url, init, signal);
+  private async request(
+    url: string,
+    init: RequestInit,
+    signal: AbortSignal | undefined,
+    budget: BodyBudget | undefined,
+  ): Promise<PageAnswer> {
+    const outcome = await this.send(url, init, signal, budget);
     const page = asRecord(parseJson(outcome.text));
     if (page === null) {
       throw new TrinoTransportError(
@@ -1026,18 +1055,25 @@ export class TrinoHttpTransport implements TrinoTransport {
    * One request, retried while the protocol says the failure was intermittent.
    *
    * The body is drained as text before anything is decided, so a refusal and a
-   * result are read the same way.
+   * result are read the same way, and under a budget each attempt's body, a refusal's
+   * as well as a page's, is read under the same bound as it arrives.
    */
-  private async send(url: string, init: RequestInit, signal?: AbortSignal): Promise<HttpOutcome> {
+  private async send(url: string, init: RequestInit, signal?: AbortSignal, budget?: BodyBudget): Promise<HttpOutcome> {
     for (let attempt = 1; ; attempt += 1) {
       let response: Response;
       let text: string;
       try {
         // A followed redirect would carry the credential to wherever it points.
         response = await httpTransportFetch(url, { ...init, redirect: "manual", ...(signal ? { signal } : {}) });
-        text = await response.text();
+        text =
+          budget === undefined
+            ? await response.text()
+            : await readBoundedText(response, budget.cap - budget.accepted + TRINO_PAGE_ENVELOPE_BYTES);
       } catch (error) {
         if (error instanceof DatabaseConfigError) throw error;
+        if (error instanceof BodyLimitExceededError && budget !== undefined) {
+          throw new TrinoAnswerTooLargeError("bytes", budget.accepted + error.bytesRead, budget.cap);
+        }
         // A refused socket, an unresolvable host, an abort and a body that stopped
         // arriving all land here, and all have to leave as the seam's error type.
         throw requestFailure(this.dialect, error, signal);
