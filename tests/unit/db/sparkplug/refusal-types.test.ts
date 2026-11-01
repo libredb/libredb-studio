@@ -70,7 +70,7 @@ describe("the CLASS of a connect refusal decides what the panel tells a user to 
    * answered" was held by nothing.
    */
   const reasonFor = async (endReason: string) => {
-    const provider = new SparkplugProvider(connection({ host: "plant.example", port: 1883 }), {}, async () => ({
+    const provider = new SparkplugProvider(connection({ host: "plant.example", port: 1883 }), {}, {}, async () => ({
       state: new ReadState(),
       endReason,
       messagesSeen: 0,
@@ -110,7 +110,7 @@ describe("a connection's own refusals are configuration errors, which is a diffe
     [{ port: 0 }, "a port outside 1 to 65,535"],
     [{ database: "plant/line1" }, "a group name that cannot be a filter"],
   ])("%s is refused as a DatabaseConfigError (%s)", async (over) => {
-    const error = await thrownAsync(() => new SparkplugProvider(connection(over), {}, reader).connect());
+    const error = await thrownAsync(() => new SparkplugProvider(connection(over), {}, {}, reader).connect());
     // Deliberately NOT a QueryError: this is what the connection was given, not what a read asked,
     // and the shipped MQTT provider classifies the same cases the same way.
     expect(error instanceof DatabaseConfigError).toBe(true);
@@ -118,7 +118,7 @@ describe("a connection's own refusals are configuration errors, which is a diffe
   });
 
   test("a read before connect is a QueryError, because it is a read that failed", async () => {
-    const error = await thrownAsync(() => new SparkplugProvider(connection(), {}, reader).listContainers());
+    const error = await thrownAsync(() => new SparkplugProvider(connection(), {}, {}, reader).listContainers());
     expect(error instanceof QueryError).toBe(true);
   });
 
@@ -184,14 +184,14 @@ describe("every surface reaches the boundary as a QueryError, and the boundary s
 
   test("a payload refusal from the reader survives connect as a QueryError", async () => {
     // This is the path a decode refusal will take once the shared transport lands.
-    const error = await thrownAsync(() => new SparkplugProvider(connection(), {}, refusingReader).connect());
+    const error = await thrownAsync(() => new SparkplugProvider(connection(), {}, {}, refusingReader).connect());
     expect(error instanceof QueryError).toBe(true);
     expect(error instanceof PayloadRefused).toBe(true);
     expect((error as Error).message).toContain("nesting deeper than 32 messages");
   });
 
   test("a payload refusal from the reader survives a console read as a QueryError", async () => {
-    const provider = new SparkplugProvider(connection(), {}, refusingReader);
+    const provider = new SparkplugProvider(connection(), {}, {}, refusingReader);
     // The connect read is the one that fails here, which is itself the first case.
     const error = await thrownAsync(() => provider.connect());
     expect(isQueryError(error)).toBe(true);
@@ -208,14 +208,14 @@ describe("every surface reaches the boundary as a QueryError, and the boundary s
     ["getOverview", (p: SparkplugProvider) => p.getOverview()],
     ["runMaintenance", (p: SparkplugProvider) => p.runMaintenance()],
   ])("%s on a closed connection reaches the boundary as a QueryError", async (_name, call) => {
-    const error = await thrownAsync(() => call(new SparkplugProvider(connection(), {}, reader)));
+    const error = await thrownAsync(() => call(new SparkplugProvider(connection(), {}, {}, reader)));
     expect(isQueryError(error)).toBe(true);
   });
 
   test("getHealth does NOT throw on a closed connection, which is deliberate", async () => {
     // Health is the one surface a panel asks before anything works, so it answers "unknown"
     // rather than refusing. A refusal here would blank the panel that is supposed to explain why.
-    const health = await new SparkplugProvider(connection(), {}, reader).getHealth();
+    const health = await new SparkplugProvider(connection(), {}, {}, reader).getHealth();
     expect(health.databaseSize).toBe("unknown");
     expect(health.cacheHitRatio).toBe("unknown");
   });
@@ -229,7 +229,7 @@ describe("every surface reaches the boundary as a QueryError, and the boundary s
     const broken = async () => {
       throw new TypeError("this is a programming mistake, not a refusal");
     };
-    const error = await thrownAsync(() => new SparkplugProvider(connection(), {}, broken).connect());
+    const error = await thrownAsync(() => new SparkplugProvider(connection(), {}, {}, broken).connect());
     expect(error instanceof TypeError).toBe(true);
     expect(error instanceof QueryError).toBe(false);
     expect(isQueryError(error)).toBe(false);

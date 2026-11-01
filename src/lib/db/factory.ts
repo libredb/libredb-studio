@@ -557,13 +557,13 @@ export async function createDatabaseProvider(
       return new NetconfProvider(connection, options, execution);
     }
 
-    // Sparkplug B (#1720), the third member of the `industrial/` family. Its own bounded MQTT session
-    // rather than the shipped MQTT read, because that read returns one row per topic and a Sparkplug
-    // read depends on the order of successive messages on one topic.
+    // Sparkplug B (#1720), the third member of the `industrial/` family. Its own bounded MQTT session rather than the
+    // shipped MQTT read, which returns one row per topic, since a Sparkplug read depends on the order of successive
+    // messages on one topic. The execution context decides whether the handle answers agent reads.
     case "sparkplug": {
       // The explicit /index specifier keeps this dynamic import statically analysable.
       const { SparkplugProvider } = await import("./providers/industrial/sparkplug/index");
-      return new SparkplugProvider(connection, options);
+      return new SparkplugProvider(connection, options, execution);
     }
 
     // Embedded databases - dynamically imported

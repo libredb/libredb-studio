@@ -47,11 +47,11 @@ describe("the row bound, at 1 and 10,000 as well as 0 and 10,001", () => {
 
 describe("the port range, at 1 and 65,535 as well as 0 and 65,536", () => {
   test.each([[1], [1883], [65_535]])("port %i is accepted", async (port) => {
-    await expect(new SparkplugProvider(connection({ port }), {}, reader).connect()).resolves.toBeUndefined();
+    await expect(new SparkplugProvider(connection({ port }), {}, {}, reader).connect()).resolves.toBeUndefined();
   });
 
   test.each([[0], [65_536], [-1]])("port %i is refused", async (port) => {
-    await expect(new SparkplugProvider(connection({ port }), {}, reader).connect()).rejects.toThrow(
+    await expect(new SparkplugProvider(connection({ port }), {}, {}, reader).connect()).rejects.toThrow(
       DatabaseConfigError,
     );
   });

@@ -41,6 +41,7 @@ import type {
   PerformanceMetrics,
   PreparedQuery,
   ProviderCapabilities,
+  ProviderExecutionContext,
   ProviderLabels,
   ProviderOptions,
   SlowQueryStats,
@@ -179,6 +180,7 @@ export class SparkplugProvider extends BaseDatabaseProvider {
   /**
    * Opens nothing: a provider built only for its declarations touches no socket.
    *
+   * `execution` is the execution context the factory passes, which tells an agent-mode handle from an editor one.
    * `read` is the seam. The integration tests replay a broker's recorded bytes through this same
    * class, so the topic parser, the decoder, the value layer and the birth state are the product's
    * and not a copy of them.
@@ -186,6 +188,7 @@ export class SparkplugProvider extends BaseDatabaseProvider {
   public constructor(
     config: DatabaseConnection,
     options: ProviderOptions = {},
+    private readonly execution: ProviderExecutionContext = {},
     private readonly read?: SparkplugReader,
   ) {
     super(config, options);

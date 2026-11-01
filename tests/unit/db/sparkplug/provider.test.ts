@@ -52,7 +52,7 @@ function readWith(): SparkplugReadOutcome {
 }
 
 const openProvider = async (over: Partial<DatabaseConnection> = {}) => {
-  const provider = new SparkplugProvider(connection(over), {}, async () => readWith());
+  const provider = new SparkplugProvider(connection(over), {}, {}, async () => readWith());
   await provider.connect();
   return provider;
 };
@@ -125,22 +125,22 @@ describe("what it declares without connecting", () => {
 
 describe("what it refuses before any socket exists", () => {
   test("a connection with no host", async () => {
-    const provider = new SparkplugProvider(connection({ host: "" }), {}, async () => readWith());
+    const provider = new SparkplugProvider(connection({ host: "" }), {}, {}, async () => readWith());
     await expect(provider.connect()).rejects.toThrow(/needs a broker address/);
   });
 
   test.each([[0], [70_000], [1.5]])("a port outside 1 to 65,535 (%s)", async (port) => {
-    const provider = new SparkplugProvider(connection({ port }), {}, async () => readWith());
+    const provider = new SparkplugProvider(connection({ port }), {}, {}, async () => readWith());
     await expect(provider.connect()).rejects.toThrow(/port between 1 and 65,535/);
   });
 
   test.each([["plant/line1"], ["G+"], ["G#"]])("a group name that cannot be a filter (%s)", async (database) => {
-    const provider = new SparkplugProvider(connection({ database }), {}, async () => readWith());
+    const provider = new SparkplugProvider(connection({ database }), {}, {}, async () => readWith());
     await expect(provider.connect()).rejects.toThrow(/cannot contain/);
   });
 
   test("an empty group field means every group and is not refused", async () => {
-    const provider = new SparkplugProvider(connection({ database: "" }), {}, async () => readWith());
+    const provider = new SparkplugProvider(connection({ database: "" }), {}, {}, async () => readWith());
     await expect(provider.connect()).resolves.toBeUndefined();
   });
 
@@ -161,7 +161,7 @@ describe("what it refuses before any socket exists", () => {
      *
      * Driven through the seam rather than a socket, so this stays a unit test.
      */
-    const provider = new SparkplugProvider(connection({ host: "broker.invalid", port: 1883 }), {}, async () => ({
+    const provider = new SparkplugProvider(connection({ host: "broker.invalid", port: 1883 }), {}, {}, async () => ({
       state: new ReadState(),
       endReason: "dial-failed",
       messagesSeen: 0,
@@ -188,7 +188,7 @@ describe("what it refuses before any socket exists", () => {
     quiet.takeBirth(topic("spBv1.0/G1/NBIRTH/E1"), { origin: "stored", receivedAt: 1, metrics: [] });
     quiet.takeBirth(topic("spBv1.0/G1/DBIRTH/E1/D1"), { origin: "stored", receivedAt: 1, metrics: [] });
 
-    const provider = new SparkplugProvider(connection(), {}, async () => ({
+    const provider = new SparkplugProvider(connection(), {}, {}, async () => ({
       state: quiet,
       endReason: "time-budget",
       messagesSeen: 0,
@@ -223,7 +223,7 @@ describe("what it refuses before any socket exists", () => {
     live.takeBirth(node, { origin: "live", receivedAt: 1, metrics: [] });
     live.takeSeq(node, 0);
 
-    const provider = new SparkplugProvider(connection(), {}, async () => ({
+    const provider = new SparkplugProvider(connection(), {}, {}, async () => ({
       state: live,
       endReason: "time-budget",
       messagesSeen: 1,
@@ -240,7 +240,7 @@ describe("what it refuses before any socket exists", () => {
     died.takeBirth(node, { origin: "live", bdSeq: "7", receivedAt: 1, metrics: [] });
     died.takeDeath(topic("spBv1.0/G1/NDEATH/E1"), "7", 2);
 
-    const provider = new SparkplugProvider(connection(), {}, async () => ({
+    const provider = new SparkplugProvider(connection(), {}, {}, async () => ({
       state: died,
       endReason: "time-budget",
       messagesSeen: 2,
@@ -263,7 +263,7 @@ describe("what it refuses before any socket exists", () => {
     died.takeBirth(topic("spBv1.0/G1/NBIRTH/E1"), { origin: "live", receivedAt: 1, metrics: [] });
     died.takeDeath(topic("spBv1.0/G1/NDEATH/E1"), undefined, 2);
 
-    const provider = new SparkplugProvider(connection(), {}, async () => ({
+    const provider = new SparkplugProvider(connection(), {}, {}, async () => ({
       state: died,
       endReason: "time-budget",
       messagesSeen: 2,
@@ -292,7 +292,7 @@ describe("what it refuses before any socket exists", () => {
      */
     const messages: string[] = [];
     for (const endReason of ["dial-failed", "connect-refused", "subscription-refused", "wildcards-unavailable"]) {
-      const provider = new SparkplugProvider(connection({ host: "plant.example", port: 1883 }), {}, async () => ({
+      const provider = new SparkplugProvider(connection({ host: "plant.example", port: 1883 }), {}, {}, async () => ({
         state: new ReadState(),
         endReason,
         messagesSeen: 0,
@@ -321,7 +321,7 @@ describe("what it refuses before any socket exists", () => {
     // The other half of the pair, and the reason the two are separate values: a connection that
     // worked and then ended has what it saw and why it stopped, so it must not be thrown away.
     for (const endReason of ["time-budget", "message-budget", "byte-budget", "broker-closed", "frame-refused"]) {
-      const provider = new SparkplugProvider(connection(), {}, async () => ({
+      const provider = new SparkplugProvider(connection(), {}, {}, async () => ({
         state: new ReadState(),
         endReason,
         messagesSeen: 0,
@@ -332,7 +332,7 @@ describe("what it refuses before any socket exists", () => {
   });
 
   test("a surface asked before connect says the connection is not open", async () => {
-    const provider = new SparkplugProvider(connection(), {}, async () => readWith());
+    const provider = new SparkplugProvider(connection(), {}, {}, async () => readWith());
     await expect(provider.listContainers()).rejects.toThrow(/not open/);
   });
 });
@@ -371,7 +371,7 @@ describe("the tree one read produces", () => {
         metrics: [{ name: "m", alias: "2", datatype: 1 }],
       });
     }
-    const provider = new SparkplugProvider(connection(), {}, async () => ({
+    const provider = new SparkplugProvider(connection(), {}, {}, async () => ({
       state,
       endReason: "budget",
       messagesSeen: 2,
@@ -394,7 +394,7 @@ describe("the tree one read produces", () => {
   test("an edge node with no certificate produces no node object", async () => {
     const state = new ReadState();
     state.takeSeq(topic("spBv1.0/G3/NDATA/E3"), 1);
-    const provider = new SparkplugProvider(connection(), {}, async () => ({
+    const provider = new SparkplugProvider(connection(), {}, {}, async () => ({
       state,
       endReason: "budget",
       messagesSeen: 1,
@@ -443,7 +443,7 @@ describe("the certificate behind an object", () => {
   test("no certificate gives a sentence that says why, not an empty document", async () => {
     const state = new ReadState();
     state.takeSeq(topic("spBv1.0/G4/NDATA/E4"), 0);
-    const provider = new SparkplugProvider(connection(), {}, async () => ({
+    const provider = new SparkplugProvider(connection(), {}, {}, async () => ({
       state,
       endReason: "budget",
       messagesSeen: 1,
@@ -488,7 +488,7 @@ describe("the console read", () => {
      * alone did not catch it.
      */
     const gorulen: number[] = [];
-    const provider = new SparkplugProvider(connection(), {}, async (request) => {
+    const provider = new SparkplugProvider(connection(), {}, {}, async (request) => {
       gorulen.push(request.windowSeconds);
       return readWith();
     });
@@ -572,7 +572,7 @@ describe("the console read", () => {
       });
     }
     state.takeDeath(parseTopic("spBv1.0/GB/NDEATH/EB") as NodeTopic, "2", 5_000);
-    const provider = new SparkplugProvider(connection(), {}, async () => ({
+    const provider = new SparkplugProvider(connection(), {}, {}, async () => ({
       state,
       endReason: "budget",
       messagesSeen: 3,
@@ -599,7 +599,7 @@ describe("the console read", () => {
     const node = parseTopic("spBv1.0/G5/NDATA/E5") as NodeTopic;
     state.takeSeq(node, 1);
     state.takeSeq(node, 9);
-    const provider = new SparkplugProvider(connection(), {}, async () => ({
+    const provider = new SparkplugProvider(connection(), {}, {}, async () => ({
       state,
       endReason: "the 3 second budget ended the read",
       messagesSeen: 2,
@@ -614,7 +614,7 @@ describe("the console read", () => {
   test("an edge node that published without a certificate is counted and named in the result", async () => {
     const state = new ReadState();
     state.takeSeq(parseTopic("spBv1.0/G6/NDATA/E6") as NodeTopic, 1);
-    const provider = new SparkplugProvider(connection(), {}, async () => ({
+    const provider = new SparkplugProvider(connection(), {}, {}, async () => ({
       state,
       endReason: "budget",
       messagesSeen: 1,
@@ -707,7 +707,7 @@ describe("the console read", () => {
 
 describe("the surfaces a broker does not have", () => {
   test("health before a read is unknown rather than zero", async () => {
-    const provider = new SparkplugProvider(connection(), {}, async () => readWith());
+    const provider = new SparkplugProvider(connection(), {}, {}, async () => readWith());
     const health = await provider.getHealth();
     expect(health.databaseSize).toBe("unknown");
     expect(health.cacheHitRatio).toBe("unknown");
@@ -800,7 +800,7 @@ describe("the surfaces a broker does not have", () => {
   */
   test("a window that passed in silence is reported as a caution, and a busy one is not", async () => {
     const quiet = new ReadState();
-    const silent = new SparkplugProvider(connection(), {}, async () => ({
+    const silent = new SparkplugProvider(connection(), {}, {}, async () => ({
       state: quiet,
       endReason: "time-budget",
       messagesSeen: 0,
