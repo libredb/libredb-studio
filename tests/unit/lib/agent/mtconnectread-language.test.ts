@@ -129,8 +129,11 @@ describe("the posture on MTConnect", () => {
   test("names exactly what the agent sends and reads, the withheld adapter connections, and never a write", () => {
     expect(posture.headline).toBe("Reads only");
     expect(posture.qualifier).toBe(
-      `${BUDGETS.maxResultRows} rows and ${BUDGETS.statementTimeoutMs / 1000} s per read, one request at a time per agent, over a client that sends only GET of nine routes`,
+      `${BUDGETS.maxResultRows} rows and ${BUDGETS.statementTimeoutMs / 1000} s per read, one request at a time on this connection's agent-mode handle and four MTConnect requests at once across Studio, over a client that sends only GET of nine routes`,
     );
+    // The permit is the handle's own, not the agent's: another handle or connection to the same agent holds its own.
+    expect(posture.body).toContain("the reads of this agent-mode handle never overlap");
+    expect(posture.body).not.toContain("reads of one agent never overlap");
     expect(posture.body).toContain("value, timestamp and sequence, and each asset's document as XML text");
     expect(posture.body).toContain("Withheld are the agent's own adapter connections");
     expect(posture.body).toContain("Each read reads the agent's device model first");

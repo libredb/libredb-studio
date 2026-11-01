@@ -8,6 +8,8 @@
  *   reads             what each admitted agent read answered through a real `MTConnectProvider` on the agent profile,
  *                     and every request it sent (method, path and query), read through a transport that records them;
  *   refusedBeforeSend each refused agent request's opening words, and how many requests it sent (0);
+ *   pathOracle        for a path that tests a withheld adapter id, a hit and a miss: what the agent itself answers to
+ *                     each, sent raw by THIS script, and that agent mode refuses both alike, the literal masked;
  *   surfaces          what the agent-mode handle's tree and other readings answered, and the requests they sent;
  *   raw               what each agent did with a PUT and a POST of an observation, a GET of `/cancel/id=1` and its
  *                     Swagger document, sent by THIS script with `fetch` and never by Studio, and whether the value
@@ -111,7 +113,7 @@ const READS = [
   "/current",
   `/${LATHE}/current`,
   '/current?path=//DataItem[@id="x1722-pos"]',
-  "/current?path=//Adapter",
+  '/current?path=//DataItem[@category="EVENT"]',
   "/sample?count=-5",
   `/${LATHE}/sample?path=//DataItem[@type="POSITION"]&count=-3`,
   "/assets",
@@ -133,8 +135,22 @@ const REFUSED = [
   "/../probe",
   "/asset/..",
   "/current?path=count(//DataItem)",
+  "/current?path=//Adapter",
+  '/current?path=//DataItem[starts-with(@id,"_")]',
   "/sample?count=201",
 ] as const;
+
+/**
+ * Paths that test a withheld adapter id, each with a literal the id holds and one it does not. `{}` is the literal. The
+ * literals name the adapter, so the capture records each case by its template and masks the literal in what it keeps.
+ */
+const PATH_ORACLE = [
+  ["//DataItem[contains(@id,'{}')]", "mtconnect-adapter_7878", "mtconnect-adapter_7879"],
+  ["//DataItem[starts-with(@id,'{}')]", "_mtconnect-a", "_mtconnect-b"],
+  ["//DataItem[@id='{}']", "_mtconnect-adapter_7878_adapter_uri", "_mtconnect-adapter_7879_adapter_uri"],
+] as const;
+
+const masked = (text: string, literal: string): string => text.replaceAll(literal, "{}");
 
 const agent = provider(PORT, true);
 await agent.connect();
@@ -167,6 +183,38 @@ for (const statement of REFUSED) {
   } catch (error) {
     refusedBeforeSend.push({ statement, refused: firstSentence(messageOf(error)), sent: sent.splice(0) });
   }
+}
+
+const pathOracle = [];
+for (const [template, hit, miss] of PATH_ORACLE) {
+  const outcomes = [];
+  for (const literal of [hit, miss]) {
+    const target = `/current?${new URLSearchParams({ path: template.replace("{}", literal) })}`;
+    const answer = await fetch(`http://127.0.0.1:${PORT}${target}`);
+    const text = await answer.text();
+    const agentAnswer = {
+      status: answer.status,
+      errorCode: /errorCode="([A-Z_]+)"/.exec(text)?.[1] ?? null,
+      observations: [...text.matchAll(/dataItemId="/g)].length,
+    };
+    let refused: string | null = null;
+    try {
+      await agent.queryReadOnly(`/current?path=${template.replace("{}", literal)}`, BUDGET);
+    } catch (error) {
+      refused = masked(messageOf(error), literal);
+    }
+    outcomes.push({
+      agentAnswer,
+      refused,
+      sent: sent.splice(0).map((line) => masked(line, encodeURIComponent(literal))),
+    });
+  }
+  pathOracle.push({
+    path: template,
+    hit: outcomes[0],
+    miss: outcomes[1],
+    agentModeAlike: outcomes[0].refused !== null && outcomes[0].refused === outcomes[1].refused,
+  });
 }
 
 const surfaces: Record<string, unknown> = {};
@@ -204,6 +252,13 @@ const capture = {
   connect: { sent: connectSent },
   reads,
   refusedBeforeSend,
+  pathOracle: pathOracle.map(({ path: template, hit, miss, agentModeAlike }) => ({
+    path: template,
+    agentAnswers: { hit: hit.agentAnswer, miss: miss.agentAnswer },
+    agentModeRefusesBothAlike: agentModeAlike,
+    agentModeRefusal: hit.refused === null ? null : firstSentence(hit.refused),
+    sent: { hit: hit.sent, miss: miss.sent },
+  })),
   surfaces: { ...surfaces, editorAgentDeviceItemCount: editorAgentItems },
   raw: {
     allowPutFalse: {

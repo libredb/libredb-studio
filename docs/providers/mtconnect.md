@@ -471,16 +471,21 @@ One request line, the statement, written as the console writes it with GET impli
 | `/assets`, `/{device}/assets` | the assets, one row per asset with its document |
 | `/asset/{assetIds}` | assets by id, one row per asset with its document |
 
-Everything [section 5.2](#52-what-phase-0-refuses-before-a-socket-opens) refuses is refused here too, before anything is sent, in agent mode's words: the guard's sentence followed by the list of the nine routes and their keys, and "Nothing was sent." (`refusedBeforeSend`: a PUT, a POST, a DELETE, `/cancel/id=1`, `/assets/{id}`, `/swagger`, `interval`, `heartbeat`, `frequency`, a second request line and a `path` function outside the subset each sent no request).
-One rule is agent mode's own: a path parameter written `.` or `..` is refused as a dot segment, since a URL resolves it to another path.
+Everything [section 5.2](#52-what-phase-0-refuses-before-a-socket-opens) refuses is refused here too, before anything is sent, in agent mode's words: the guard's sentence followed by the list of the nine routes and their keys, and "Nothing was sent." (`refusedBeforeSend`: a PUT, a POST, a DELETE, `/cancel/id=1`, `/assets/{id}`, `/swagger`, `interval`, `heartbeat`, `frequency`, a second request line, a `path` function outside the subset, `//Adapter` and `starts-with()` each sent no request).
+Two rules are agent mode's own.
+A path parameter written `.` or `..` is refused as a dot segment, since a URL resolves it to another path.
+And a `path` is narrower than the console's: one or more `//DataItem` alternatives joined by `|`, each with at most one predicate of equality tests `@attribute="value"` on `@id`, `@name`, `@type`, `@subType` or `@category`, joined by `and` or `or`, and every value one that a data item agent mode reads holds, as `/probe` lists it.
+The console's `contains()` and `starts-with()` and a test on any other element are refused before anything is sent, and a value no read data item holds is refused after the model read and before the request, in the same words whether the value is a withheld adapter id or no id at all.
+The reason is measured (`pathOracle`): the agent itself answers a path that matches a withheld adapter item with 200 and one that matches nothing with 400 `INVALID_XPATH`, for `contains()`, for `starts-with()` and for an exact `@id`, so a path that could test a withheld id for a text would let a model read the adapter's address back one character at a time; agent mode refuses each hit and its miss alike.
+Since every value must be one of an item agent mode answers, whether a path is admitted is decided from what it answers, never from what it withholds, and a path selects a withheld item only by a type, subtype, category or name that an answered item holds too, never by its address.
 A `count` past the row budget is refused before anything is sent, and the admission also refuses a request longer than 4,096 characters.
 
-Each read reads the device model first, with `GET /probe` on the agent's one permit, and then sends the request (`reads[].sent`), so the device a request names, the rows' join and the withheld items are decided from the model the agent serves at that read, and nothing of one read is kept for the next.
+Each read reads the device model first, with `GET /probe` on the handle's one permit (each provider instance holds its own, with four MTConnect requests at once across Studio), and then sends the request (`reads[].sent`), so the device a request names, the rows' join and the withheld items are decided from the model the agent serves at that read, and nothing of one read is kept for the next.
 A device the model does not hold is refused after the model read and before the request.
 
 A read is counted one row per observation, data item or asset.
 An observation walk stops at the first row past the row budget and the read is refused, never answered in part; a device model or an asset answer past it is refused with its count; a result past the byte budget, an answer past the route's byte cap ([section 3.4](#34-caps-are-in-bytes-not-in-rows)) and a read past its time budget, which covers the model read, the wait for the permit and the request, are refused in Studio's words.
-`count`, `from`, `to` and `at` select observations the buffer already serves to any client, and nothing withheld depends on them, so they are no oracle.
+`count`, `from`, `to` and `at` select observations the buffer already serves to any client, and nothing withheld depends on them, so they are no oracle; nor is `path`, under the rule above.
 A failure is worded by its category: the agent's own error document by its error code when the code is one the standard names, never by its text; a transport failure by its kind with the time budget; a document that is not MTConnect, an unreadable answer and an answer Studio's reader refuses by its own rule ([section 3.7](#37-a-non-mtconnect-answer-gets-our-own-sentence)) each by its category, never in the agent's words.
 
 ### 14.3 What is withheld, and why
@@ -490,7 +495,7 @@ An asset's attributes are its row's columns as on the console, and its document 
 
 Withheld on every agent-mode handle are the agent's own adapter connections.
 The agent writes an `Adapters` component under its Agent device and one `Adapter` component per adapter it reads from, and that component's name (`shdr://` and the adapter's host and port), its id, every one of its data item ids and the `ADAPTER_URI` value carry the network address of another system, measured on the fixture and on the demo ([section 10.2](#102-mcp-and-the-adapter-addresses)).
-No column of such an observation can be shown without the address, so every data item the model places inside an `Adapters` or `Adapter` component, and every observation whose component stream is one, is left out, and the answer warns how many it left out with the reason (`reads`: `/current` answered 16 rows and withheld 6, `/current?path=//Adapter` answered none and withheld 6, and no answer carried the adapter's address).
+No column of such an observation can be shown without the address, so every data item the model places inside an `Adapters` or `Adapter` component, and every observation whose component stream is one, is left out, and the answer warns how many it left out with the reason (`reads`: `/current` answered 16 rows and withheld 6, `/current?path=//DataItem[@category="EVENT"]` answered 13 and withheld 4, and no answer carried the adapter's address).
 The agent's other items (its availability, the devices it added, changed or removed, its asset counts) are answered, and so is every other device.
 
 | Path | Handle | What it reads |

@@ -18,7 +18,10 @@ import {
   MtconnectAgentError,
 } from "@/lib/db/providers/industrial/mtconnect/agent-read";
 import { MtcClientError } from "@/lib/db/providers/industrial/mtconnect/client";
-import { MTCONNECT_AGENT_READS } from "@/lib/db/providers/industrial/mtconnect/agent-statement";
+import {
+  MTCONNECT_AGENT_PATH_RULE,
+  MTCONNECT_AGENT_READS,
+} from "@/lib/db/providers/industrial/mtconnect/agent-statement";
 import { MTCONNECT_AGENT_WITHHELD } from "@/lib/db/providers/industrial/mtconnect/agent-surface";
 import { MTCONNECT_WITHHELD_SENTENCE } from "@/lib/db/providers/industrial/mtconnect/agent-withheld";
 import { MTConnectProvider, MTCONNECT_STATEMENT_LANGUAGE } from "@/lib/db/providers/industrial/mtconnect/index";
@@ -395,6 +398,77 @@ describe("what is refused before anything is sent, in agent mode's words with th
     expect(lines()).toEqual(["GET /probe", "GET /asset/%252e%252e"]);
   });
 
+  test("a path that tests a withheld id with a function is refused before anything is sent, a hit and a miss alike", async () => {
+    const provider = await opened();
+    recorded = [];
+    const messages: string[] = [];
+    for (const literal of ["mtconnect-adapter_7878", "mtconnect-adapter_7879", "_mtconnect-a", "_mtconnect-b"]) {
+      const refused = provider.queryReadOnly(`/current?path=//DataItem[contains(@id,"${literal}")]`, BUDGET);
+      await expect(refused).rejects.toBeInstanceOf(RefusedBeforeSendError);
+      messages.push(((await refused.catch((error: unknown) => error)) as Error).message.replace(literal, "<literal>"));
+    }
+    expect(new Set(messages).size).toBe(1);
+    expect(messages[0]).toContain(MTCONNECT_AGENT_PATH_RULE);
+    expect(messages[0]).toEndWith(`${MTCONNECT_AGENT_READS} Nothing was sent.`);
+    expect(recorded).toEqual([]);
+  });
+
+  test.each([
+    "/current?path=//Adapter",
+    '/current?path=//Adapter[starts-with(@name,"mtconnect")]',
+    '/current?path=//DataItem[starts-with(@id,"_")]',
+    '/current?path=//DataItem[@units="MILLIMETER"]',
+    '/current?path=//DataItem[@id="x1722-pos"][@id="x1722-pos"]',
+    '/current?path=//DataItem[@id="x1722-pos" xor @id="y"]',
+    "/current?path=//DataItem[@id=x1722-posx]",
+    '/current?path=//DataItem[@id="x1722-pos" @name="Xposition"]',
+    "/current?path=//DataItem//DataItem",
+    '/current?path=//DataItem|[@id="x1722-pos"]',
+    '/current?path=//DataItem[@id "x1722-pos"]',
+    '/current?path=//DataItem[id="x1722-pos"]',
+    '/current?path=//DataItem[@id="x1722-pos"]x',
+    "/current?path=//DataItems",
+  ])("a path outside agent mode's subset is refused before anything is sent: %s", async (statement) => {
+    const provider = await opened();
+    recorded = [];
+    const refused = provider.queryReadOnly(statement, BUDGET);
+    await expect(refused).rejects.toBeInstanceOf(RefusedBeforeSendError);
+    await expect(refused).rejects.toThrow(MTCONNECT_AGENT_PATH_RULE);
+    expect(recorded).toEqual([]);
+  });
+
+  test("a quoted value no read item holds is refused after the model read, a withheld value and an absent one alike", async () => {
+    const provider = await opened();
+    const messages: string[] = [];
+    for (const [test, literal] of [
+      ["@id", "_mtconnect-adapter_7878_adapter_uri"],
+      ["@id", "_mtconnect-adapter_7879_adapter_uri"],
+      ["@type", "ADAPTER_URI"],
+      ["@type", "NOT_A_TYPE"],
+    ] as const) {
+      recorded = [];
+      const refused = provider.queryReadOnly(`/current?path=//DataItem[${test}="${literal}"]`, BUDGET);
+      const error = (await refused.catch((caught: unknown) => caught)) as Error;
+      expect(error).toBeInstanceOf(MtconnectAgentError);
+      expect(lines()).toEqual(["GET /probe"]);
+      messages.push(error.message.replace(literal, "<literal>"));
+    }
+    expect(new Set(messages.slice(0, 2)).size).toBe(1);
+    expect(new Set(messages.slice(2)).size).toBe(1);
+    expect(messages[0]).toContain("names a value no data item agent mode reads holds");
+    expect(messages[0]).toEndWith(`${MTCONNECT_AGENT_READS} Nothing was sent.`);
+  });
+
+  test("equality tests on the values of read items are sent whole, joined by and, or and |", async () => {
+    const path = `//DataItem[@type="POSITION" and @subType='ACTUAL'] | //DataItem[ @name = "execution" or @category="CONDITION" ]|//DataItem`;
+    const encoded = new URLSearchParams({ path }).toString();
+    const provider = await opened(AGENT, { ...DEFAULT_ANSWERS, [`/current?${encoded}`]: capture("current") });
+    recorded = [];
+    const result = await provider.queryReadOnly(`/current?path=${path}`, BUDGET);
+    expect(lines()).toEqual(["GET /probe", `GET /current?${encoded}`]);
+    expect(result.rowCount).toBe(16);
+  });
+
   test("a device the agent's model does not hold is refused after the model read, before the request", async () => {
     const provider = await opened();
     recorded = [];
@@ -611,6 +685,21 @@ describe("an agent-mode handle's other surfaces", () => {
     expect(described.details).toHaveLength(7);
     // The tree reads the model the handle opened with; nothing more is sent.
     expect(lines()).toEqual(["GET /probe"]);
+  });
+
+  test("an item in a component nested below an Adapter is withheld too, in the tree and in a device model read", async () => {
+    const nested = capture("probe").replace(
+      "</DataItems></Adapter>",
+      '</DataItems><Components><Sensor id="_mtconnect-adapter_7878_sensor" name="link"><DataItems><DataItem category="EVENT" id="_mtconnect-adapter_7878_nested" type="CONNECTION_STATUS"/></DataItems></Sensor></Components></Adapter>',
+    );
+    expect(nested).toContain("_mtconnect-adapter_7878_nested");
+    const provider = await opened(AGENT, { ...DEFAULT_ANSWERS, "/probe": nested });
+    const listed = await provider.listObjects(["Agent"], "dataitem");
+    expect(listed).toHaveLength(7);
+    expect(JSON.stringify(listed)).not.toContain(ADAPTER);
+    const probe = await provider.queryReadOnly("/probe", BUDGET);
+    expect(JSON.stringify(probe.rows)).not.toContain(ADAPTER);
+    expect(probe.warnings?.[0]?.message).toStartWith("7 data items of the agent's adapter connections were withheld");
   });
 
   test("an editor handle still lists the adapter connections, as it always has", async () => {

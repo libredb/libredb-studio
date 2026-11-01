@@ -174,26 +174,39 @@
       "carriesAdapterAddress": false
     },
     {
-      "statement": "/current?path=//Adapter",
+      "statement": "/current?path=//DataItem[@category=\"EVENT\"]",
       "sent": [
         "GET /probe",
-        "GET /current?path=%2F%2FAdapter"
+        "GET /current?path=%2F%2FDataItem%5B%40category%3D%22EVENT%22%5D"
       ],
-      "rowCount": 0,
+      "rowCount": 13,
       "fields": [
         "device",
         "component",
+        "componentId",
+        "compositionId",
         "dataItemId",
         "name",
         "category",
         "type",
+        "subType",
+        "state",
         "value",
         "units",
         "timestamp",
-        "sequence"
+        "sequence",
+        "nativeCode",
+        "nativeSeverity",
+        "qualifier",
+        "conditionId",
+        "sampleCount",
+        "sampleRate",
+        "entryCount",
+        "quality",
+        "unknownToModel"
       ],
       "withheld": [
-        "6 observations of the agent's adapter connections were withheld from this answer."
+        "4 observations of the agent's adapter connections were withheld from this answer."
       ],
       "carriesAdapterAddress": false
     },
@@ -401,9 +414,88 @@
       "sent": []
     },
     {
+      "statement": "/current?path=//Adapter",
+      "refused": "The path is outside what agent mode sends.",
+      "sent": []
+    },
+    {
+      "statement": "/current?path=//DataItem[starts-with(@id,\"_\")]",
+      "refused": "The path is outside what agent mode sends.",
+      "sent": []
+    },
+    {
       "statement": "/sample?count=201",
       "refused": "count may not be larger than this read's row cap of 200.",
       "sent": []
+    }
+  ],
+  "pathOracle": [
+    {
+      "path": "//DataItem[contains(@id,'{}')]",
+      "agentAnswers": {
+        "hit": {
+          "status": 200,
+          "errorCode": null,
+          "observations": 6
+        },
+        "miss": {
+          "status": 400,
+          "errorCode": "INVALID_XPATH",
+          "observations": 0
+        }
+      },
+      "agentModeRefusesBothAlike": true,
+      "agentModeRefusal": "The path is outside what agent mode sends.",
+      "sent": {
+        "hit": [],
+        "miss": []
+      }
+    },
+    {
+      "path": "//DataItem[starts-with(@id,'{}')]",
+      "agentAnswers": {
+        "hit": {
+          "status": 200,
+          "errorCode": null,
+          "observations": 6
+        },
+        "miss": {
+          "status": 400,
+          "errorCode": "INVALID_XPATH",
+          "observations": 0
+        }
+      },
+      "agentModeRefusesBothAlike": true,
+      "agentModeRefusal": "The path is outside what agent mode sends.",
+      "sent": {
+        "hit": [],
+        "miss": []
+      }
+    },
+    {
+      "path": "//DataItem[@id='{}']",
+      "agentAnswers": {
+        "hit": {
+          "status": 200,
+          "errorCode": null,
+          "observations": 1
+        },
+        "miss": {
+          "status": 400,
+          "errorCode": "INVALID_XPATH",
+          "observations": 0
+        }
+      },
+      "agentModeRefusesBothAlike": true,
+      "agentModeRefusal": "The path's test @id=\"{}\" names a value no data item agent mode reads holds, so it is not sent: a value is the id of a data item of this agent's device model other than its withheld adapter connections.",
+      "sent": {
+        "hit": [
+          "GET /probe"
+        ],
+        "miss": [
+          "GET /probe"
+        ]
+      }
     }
   ],
   "surfaces": {

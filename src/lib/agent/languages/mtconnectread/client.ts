@@ -23,9 +23,9 @@ function mtconnectreadReadsPosture(bounds: StatementBudgets): AgentPosture {
   return {
     tone: "reads",
     headline: "Reads only",
-    qualifier: `${rows} rows and ${seconds} s per read, one request at a time per agent, over a client that sends only GET of nine routes`,
+    qualifier: `${rows} rows and ${seconds} s per read, one request at a time on this connection's agent-mode handle and four MTConnect requests at once across Studio, over a client that sends only GET of nine routes`,
     title: "Agent mode reads the MTConnect agent's device model, observations and assets, and never writes",
-    body: `Agent mode runs MTConnect reads it wrote itself, each one request line of the console's: the device model (/probe), the current observations (/current), a page of the buffer (/sample), the assets (/assets) or assets by id (/asset/{assetIds}), for every device or one. It answers the machine's observations as the console renders them, value, timestamp and sequence, and each asset's document as XML text, bounded to ${rows} rows and ${seconds} seconds each and refused past them rather than cut. ${WITHHELD} Each read reads the agent's device model first, and reads of one agent never overlap. Studio's agent client sends GET of nine routes and nothing else, so it cannot set an observation, add an asset, cancel a stream or open one. Nothing reaches your editor.`,
+    body: `Agent mode runs MTConnect reads it wrote itself, each one request line of the console's: the device model (/probe), the current observations (/current), a page of the buffer (/sample), the assets (/assets) or assets by id (/asset/{assetIds}), for every device or one. It answers the machine's observations as the console renders them, value, timestamp and sequence, and each asset's document as XML text, bounded to ${rows} rows and ${seconds} seconds each and refused past them rather than cut. ${WITHHELD} Each read reads the agent's device model first, and the reads of this agent-mode handle never overlap. Studio's agent client sends GET of nine routes and nothing else, so it cannot set an observation, add an asset, cancel a stream or open one. Nothing reaches your editor.`,
   };
 }
 

@@ -20,7 +20,8 @@
  * part of it is answered; a model or an asset answer is counted whole and refused. A result past the byte budget, an
  * answer past the route's byte cap and a read past its time budget are refused in Studio's words. The `count`, `from`,
  * `to` and `at` parameters select observations the buffer already serves to any client and nothing withheld depends
- * on them, so they are no oracle.
+ * on them, so they are no oracle. Nor is `path`: agent mode sends only equality tests whose every value is one a data
+ * item it answers holds (`agent-statement.ts`), so no path can test a withheld id, name or address for a text.
  *
  * FAILURES BY CATEGORY. The agent's own error document is answered by its error code when the code is one the
  * standard names, never by its text; a transport failure, an answer that is not MTConnect, an unreadable answer and
@@ -35,7 +36,11 @@ import {
   TIME_BUDGET_PREFIX,
 } from "@/lib/db/providers/sql/read-only-budget";
 import type { QueryResult, QueryWarning, ReadOnlyStatementBudget } from "@/lib/db/types";
-import { readMtconnectAgentStatement } from "./agent-statement";
+import {
+  MTCONNECT_AGENT_PATH_ATTRIBUTES,
+  readMtconnectAgentStatement,
+  type MtconnectAgentPathTest,
+} from "./agent-statement";
 import { itemWithheld, observationWithheld, withheldWarning } from "./agent-withheld";
 import { MtcClientError, type MtcAnswer } from "./client";
 import { guardRequestLine, type MtcRequest } from "./guard";
@@ -88,7 +93,7 @@ export const MTCONNECT_AGENT_FAILURE_SENTENCES = {
     `${rowBudgetSentence(allowed + 1, allowed)}: the agent's answer held at least ${allowed + 1} observations, one row each, and the walk stopped at the first one past the row budget, so the read was refused rather than cut; narrow it with a device, a path or a smaller count. ${STUDIO}`,
   /** The read was still running, or waiting for its turn on this agent, when its time budget ran out. */
   deadline: (ms: number): string =>
-    `${TIME_BUDGET_PREFIX}: no answer within ${ms}ms, Studio's time budget for one read, which covers the device model read, the wait for this agent's one permit and the read itself, so Studio stopped the read and refused it. ${STUDIO}`,
+    `${TIME_BUDGET_PREFIX}: no answer within ${ms}ms, Studio's time budget for one read, which covers the device model read, the wait for this handle's one permit and the read itself, so Studio stopped the read and refused it. ${STUDIO}`,
   /** An answer past the byte cap Studio reads one answer of its route under. */
   tooLarge: `The agent's answer passed the most Studio reads of one answer of this route, so Studio stopped reading it and refused the read rather than answer part of it; narrow it with a device, a path or a smaller count. ${STUDIO}`,
   /** The agent's own error document. */
@@ -275,9 +280,33 @@ function assetRows(answer: MtcAnswer, budget: ReadOnlyStatementBudget): Mtconnec
 }
 
 /**
+ * The values a path may test, by attribute: those of the data items agent mode reads, never of a withheld one. A path
+ * admitted against these selects a withheld item only by a value an item agent mode answers holds too, so no path can
+ * ask the agent whether a withheld id or name holds a text.
+ */
+function readablePathValues(model: MtcModel): (test: MtconnectAgentPathTest) => boolean {
+  const values = new Map(MTCONNECT_AGENT_PATH_ATTRIBUTES.map((attribute) => [attribute, new Set<string>()]));
+  for (const item of model.items.values()) {
+    if (itemWithheld(item)) continue;
+    const fields = {
+      id: item.dataItemId,
+      name: item.name,
+      type: item.type,
+      subType: item.subType,
+      category: item.category,
+    };
+    for (const attribute of MTCONNECT_AGENT_PATH_ATTRIBUTES) {
+      const value = fields[attribute];
+      if (value !== undefined) values.get(attribute)?.add(value);
+    }
+  }
+  return (test) => values.get(test.attribute)?.has(test.value) === true;
+}
+
+/**
  * One agent read: the model read fresh, the statement read again against it, and the request sent. The statement is
  * read by `readMtconnectAgentStatement` before this is called, so a refusal here is one the model decides: a device
- * it does not hold.
+ * it does not hold, or a path value no data item agent mode reads holds.
  */
 export async function runMtconnectAgentRead(
   reader: MtconnectAgentReader,
@@ -288,6 +317,7 @@ export async function runMtconnectAgentRead(
   const reading = readMtconnectAgentStatement(statement, {
     rowCap: budget.maxResultRows,
     knownDevices: new Set(model.devices.flatMap((device) => [device.name, device.uuid])),
+    readable: readablePathValues(model),
   });
   if (!reading.ok) throw new MtconnectAgentError(reading.message);
   const request = reading.request;

@@ -518,7 +518,7 @@ export class MTConnectProvider extends BaseDatabaseProvider {
    * One agent read. Only on a handle opened under the agent read-only profile; the request line is read by
    * `readMtconnectAgentStatement` and refused before anything is sent when it is not one of the nine GET routes, or
    * when its `count` passes the row budget. The read then reads the device model and sends the request, both on this
-   * agent's one permit and within the time budget, and its answer is refused past the row, byte or time budget rather
+   * handle's one permit and within the time budget, and its answer is refused past the row, byte or time budget rather
    * than cut. A failure is worded by its category, never in the agent's text.
    */
   public async queryReadOnly(
