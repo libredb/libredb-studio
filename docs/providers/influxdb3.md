@@ -148,6 +148,17 @@ Values are not withheld: rows reach the MCP client as they reach the agent.
 It runs a `SELECT` (a `WITH` is fine), `VALUES`, or `EXPLAIN` without `ANALYZE`: `TABLE` is a parser error on 3.12.0 Core and the read policy refuses it, and `EXPLAIN ANALYZE` runs the statement; it pages with `LIMIT n OFFSET m`, and an offset on `VALUES`, `EXPLAIN` or a query with its own `LIMIT` is refused.
 A result past 1000 rows or 1 MiB is refused, never cut, and one past `timeout_ms` is answered as the timeout: the provider closes the request at the deadline, and the server frees the statement's work (section 5.10).
 
+[`tests/live/influxdb3-mcp-boundary.ts`](../../tests/live/influxdb3-mcp-boundary.ts) replays the boundary record above through the tool's handler with its statement fence removed, against the `influxdb3` and `influxdb3-filelimit` services of section 12 and an `influxdb:3.11.0-core` server started the same way, and passed on 2026-11-01 (147 checks).
+The 3.12.0 Core server was served under `agent-read-only`, and the 3.11.0 Core server was refused at open through MCP.
+The MCP fence refused all 43 captured statements of section 3.5 before anything was acquired; with it removed, the read policy refused each before it was sent, and each sent raw with the same token was refused by the planner with the status and the words its capture records.
+`system.queries`, `system.parquet_files` and `"system"."queries"` passed the MCP fence and were refused by the `system` fence, while the server answered each sent raw; `system.influxdb_schema` was read.
+The token wrote a point through `/api/v3/write_lp` into a scratch database that MCP read back and the script deleted, and a hash of the databases, tables, columns, row counts and tokens read back the same before and after.
+`VALUES` and `EXPLAIN` answered, `TABLE` was refused by the read policy, a read paged with `offset`, a read past 1000 rows, one past 1 MiB and one past a one-second `timeout_ms` were each refused, the server answered the next call, and on the file-limit server a read over the limit was answered as the database's refusal.
+
+```sh
+LIBREDB_LIVE_INFLUXDB3_UNCHECKED_PORT=8183 bun tests/live/influxdb3-mcp-boundary.ts
+```
+
 #### Agent language pack
 
 Statement-language family: `sql`.
