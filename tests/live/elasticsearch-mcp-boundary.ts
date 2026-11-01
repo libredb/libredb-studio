@@ -52,6 +52,8 @@ import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProf
 import {
   CATALOG_COMMAND_REFUSAL,
   DOT_INDEX_REFUSAL,
+  EMPTY_NAME_REFUSAL,
+  UNREADABLE_REFUSAL,
 } from "@/lib/db/providers/sql/search/elasticsearch-agent-index-fence";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import type { ToolResult } from "@/lib/mcp/output";
@@ -336,12 +338,36 @@ const HIDDEN: readonly [string, string][] = [
   ['SELECT COUNT(*) AS n FROM "<.security-7>"', DOT_REFUSAL],
   ['SELECT COUNT(*) AS n FROM /* c */ ".security"', DOT_REFUSAL],
   ['SELECT COUNT(*) AS n FROM (SELECT * FROM ".security") s', DOT_REFUSAL],
+  ['SELECT COUNT(*) AS n FROM "*,.security*"', DOT_REFUSAL],
+  ['SELECT COUNT(*) AS n FROM "docker-cluster":".security"', DOT_REFUSAL],
+  ['SELECT COUNT(*) AS n FROM ""', `${NOT_SENT}${EMPTY_NAME_REFUSAL}.`],
+  // The engine reads the backslash as an ordinary character, so the string ends there and the security index is read.
+  ["SELECT 'a\\' AS x FROM \".security\"", DOT_REFUSAL],
   ["SHOW TABLES LIKE '.sec%'", COMMAND_REFUSAL],
   ['SHOW COLUMNS IN ".security"', DOT_REFUSAL],
   ['DESCRIBE ".security"', DOT_REFUSAL],
 ];
 
+/**
+ * Spellings the fence refuses although 9.1.4 answers none of them with rows sent raw: an empty name before a `.`, a
+ * mixed-case or URL-escaped name, and a quote that never closes. Each is refused unsent, and the raw answer is the engine's refusal.
+ */
+const REFUSED_UNREAD: readonly [string, string][] = [
+  ['SELECT COUNT(*) AS n FROM "".security', DOT_REFUSAL],
+  ['SELECT COUNT(*) AS n FROM ".SECURITY"', DOT_REFUSAL],
+  ['SELECT COUNT(*) AS n FROM "%2Esecurity"', DOT_REFUSAL],
+  ['SELECT COUNT(*) AS n FROM ".security', `${NOT_SENT}${UNREADABLE_REFUSAL}.`],
+];
+
 async function checkHidden(admin: ManagedConnection): Promise<void> {
+  for (const [sql, refusal] of REFUSED_UNREAD) {
+    const { result } = await mcp(admin, { sql });
+    const raw = await send(SECURED, "POST", "/_sql?format=json", { query: sql });
+    check(
+      textOf(result) === refusal && raw.status === 400 && !raw.text.includes('"rows"'),
+      `hidden: as the superuser, ${sql} is refused by the provider unsent; sent raw the engine refuses it -> ${raw.status}`,
+    );
+  }
   for (const [sql, refusal] of HIDDEN) {
     const { result, acquired } = await mcp(admin, { sql });
     const raw = await send(SECURED, "POST", "/_sql?format=json", { query: sql });

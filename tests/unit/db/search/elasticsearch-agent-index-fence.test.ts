@@ -10,6 +10,8 @@ import {
   assertAgentIndexNames,
   CATALOG_COMMAND_REFUSAL,
   DOT_INDEX_REFUSAL,
+  EMPTY_NAME_REFUSAL,
+  UNREADABLE_REFUSAL,
 } from "@/lib/db/providers/sql/search/elasticsearch-agent-index-fence";
 
 function thrown(run: () => void): QueryError {
@@ -40,6 +42,10 @@ describe("assertAgentIndexNames", () => {
     'SYS COLUMNS "odd ""name"""',
     "-- SHOW TABLES\nSELECT 1",
     "/* .security */ SELECT 1",
+    // A backslash is an ordinary character in both quotes, as the engine reads it, so each closes where it ends.
+    "SELECT customer FROM probe_orders WHERE customer = 'x\\'",
+    'SELECT "a\\" FROM probe_orders',
+    'SELECT COUNT(*) AS n FROM "remote:probe_orders"',
   ])("admits %p", (sql) => {
     expect(() => assertAgentIndexNames(sql)).not.toThrow();
   });
@@ -64,6 +70,20 @@ describe("assertAgentIndexNames", () => {
     "SELECT COUNT(*) AS n FROM probe_orders,.security",
     'SYS COLUMNS ".security"',
     'SYS COLUMNS "probe_orders,.security"',
+    'SELECT COUNT(*) AS n FROM "*,.security*"',
+    'SELECT COUNT(*) AS n FROM ".SECURITY"',
+    'SELECT COUNT(*) AS n FROM ".Security-7"',
+    'SELECT COUNT(*) AS n FROM "%2Esecurity"',
+    'SELECT COUNT(*) AS n FROM "%2esecurity"',
+    'SELECT COUNT(*) AS n FROM "\\u002Esecurity"',
+    'SELECT COUNT(*) AS n FROM "docker-cluster":".security"',
+    'SELECT COUNT(*) AS n FROM "x" . ".security"',
+    // The engine builds the name of an empty quoted name, a `.` and a bare one as a name that starts with a dot.
+    'SELECT COUNT(*) AS n FROM "".security',
+    'SELECT COUNT(*) AS n FROM "" . /* c */ security',
+    "SELECT COUNT(*) AS n FROM ``.security",
+    // A backslash closes nothing early here: the string ends at its second quote, and the dot-led name is code.
+    "SELECT 'a\\' AS x FROM \".security\"",
   ])("refuses %p, a name that starts with a dot", (sql) => {
     const error = thrown(() => assertAgentIndexNames(sql));
     expect(error).toBeInstanceOf(RefusedBeforeSendError);
@@ -96,6 +116,30 @@ describe("assertAgentIndexNames", () => {
       "The agent sends Elasticsearch no SHOW, DESCRIBE, SYS or DEBUG command but its own column catalog read, SYS COLUMNS for every table or for one: the others take an index pattern as a string, which the agent does not read as an index name",
     );
     expect(error.message).toBe(CATALOG_COMMAND_REFUSAL);
+  });
+
+  // `""` reads every open index on 9.1.4, and an empty name before a `.` would make the name after it dot-led.
+  test.each(['SELECT COUNT(*) AS n FROM ""', 'SELECT 1 AS ""'])("refuses %p, an empty quoted name", (sql) => {
+    const error = thrown(() => assertAgentIndexNames(sql));
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect(error.message).toBe(
+      "The agent names nothing in Elasticsearch with an empty quoted name: the engine reads an empty index name as every open index, and an empty name before a `.` would start the name after it with a dot",
+    );
+    expect(error.message).toBe(EMPTY_NAME_REFUSAL);
+  });
+
+  test.each([
+    'SELECT COUNT(*) AS n FROM ".security',
+    "SELECT COUNT(*) AS n FROM probe_orders WHERE customer = '.security",
+    'SELECT 1 /* FROM ".security"',
+    'SELECT [x FROM ".security"',
+  ])("refuses %p, whose quote or comment never closes", (sql) => {
+    const error = thrown(() => assertAgentIndexNames(sql));
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect(error.message).toBe(
+      "The agent sends Elasticsearch no statement whose quote or comment never closes, since where its names end cannot be read",
+    );
+    expect(error.message).toBe(UNREADABLE_REFUSAL);
   });
 
   test("names the engine and the statement on the refusal", () => {

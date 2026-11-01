@@ -62,6 +62,8 @@ import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
 import {
   CATALOG_COMMAND_REFUSAL,
   DOT_INDEX_REFUSAL,
+  EMPTY_NAME_REFUSAL,
+  UNREADABLE_REFUSAL,
 } from "@/lib/db/providers/sql/search/elasticsearch-agent-index-fence";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
@@ -4440,6 +4442,23 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
       isError: true,
     });
     expect(acquired).toEqual(["agent-read-only"]);
+    expect(statementsAfterOpen()).toEqual([]);
+  });
+
+  test.each([
+    ['SELECT COUNT(*) AS n FROM "docker-cluster":".security"', DOT_INDEX_REFUSAL],
+    ['SELECT COUNT(*) AS n FROM "*,.security*"', DOT_INDEX_REFUSAL],
+    ['SELECT COUNT(*) AS n FROM "%2Esecurity"', DOT_INDEX_REFUSAL],
+    ['SELECT COUNT(*) AS n FROM ""', EMPTY_NAME_REFUSAL],
+    ["SELECT 'a\\' AS x FROM \".security\"", DOT_INDEX_REFUSAL],
+    ['SELECT COUNT(*) AS n FROM ".security', UNREADABLE_REFUSAL],
+  ])("%p is refused by the provider before it is sent, through run_read_query", async (sql, sentence) => {
+    const result = await unfenced({ sql });
+
+    expect(result).toEqual({
+      content: [{ type: "text", text: `The statement was refused before it reached the database: ${sentence}.` }],
+      isError: true,
+    });
     expect(statementsAfterOpen()).toEqual([]);
   });
 
