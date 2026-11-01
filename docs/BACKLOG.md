@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S10 · 7
-- [Drivers and connections](#drivers-and-connections) — D1-D419, U17 · 308
+- [Drivers and connections](#drivers-and-connections) — D1-D421, U17 · 310
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U194 · 179
@@ -4220,6 +4220,25 @@ The agent path reads the same function.
 Found 2026-11-01 while verifying `run_read_query` on ClickHouse; pre-existing.
 
 **Done when:** `queryReadOnly` refuses any statement-chosen `FORMAT` clause, `Null` included, in Studio's words and before the request is sent where the grammar can tell, a provider test pins `FORMAT Null` and `FORMAT TSV`, and section 5.6 of `docs/providers/clickhouse.md` says so.
+
+### D420. The libSQL agent live check passes any statement error for the statements the server refuses for every token
+
+`tests/live/libsql-agent-boundary.ts` marks `ATTACH`, `VACUUM`, `VACUUM INTO`, `ANALYZE`, `CREATE TEMP TABLE`, the three pragmas, `load_extension`, `CREATE FUNCTION ... LANGUAGE wasm` and a second statement with `refusedForEvery: true`, and passes each when the answer merely starts with `refused: `, for the read-only token through `queryReadOnly` and for the writable token in the positive control.
+So any `QueryError` or `LibSQLTransportError` that is not a 403 passes, a connection failure or a server that stopped answering included, and the check cannot tell the server's own refusal from an outage.
+`tests/live/libsql-mcp-boundary.ts` holds each of those statements to the wording `docs/providers/libsql.md` section 3.6 records (`unsupported statement`, `no such database`, `not authorized`, `more than one statement`); the agent check was not tightened with it.
+Found 2026-11-01 while verifying MCP's `run_read_query` on libSQL.
+
+**Done when:** each `refusedForEvery` entry of the agent check carries the server's own wording for its statement, the syntax error of `CREATE FUNCTION ... LANGUAGE wasm` included, both the read-only and the writable leg match on it, and a run against the three servers of section 3.6 passes.
+
+### D421. The libSQL live checks reset the server's `user_version` to 0 instead of restoring it
+
+`tests/live/libsql-agent-boundary.ts` sends `PRAGMA user_version = 5` in its positive control and then `PRAGMA user_version = 0`, whatever the value was before the run.
+So on a server whose database already carried a `user_version`, which schema migration tools use to record the applied version, the run leaves it at 0, while the script's header names only the prefixed tables it creates and drops.
+`tests/live/libsql-mcp-boundary.ts` follows the same pattern in its positive control and its `cleanup()`.
+Measured 2026-11-01 on `ghcr.io/tursodatabase/libsql-server:v0.24.33`: a database set to `user_version = 7` read back 0 after `tests/live/libsql-mcp-boundary.ts` passed.
+Found 2026-11-01 while verifying MCP's `run_read_query` on libSQL.
+
+**Done when:** both checks read `user_version` before their first write, restore that value after the positive control and on exit, and the warning in section 3.6 of `docs/providers/libsql.md` says what a run writes.
 
 ## Value interpolation
 
