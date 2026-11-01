@@ -20,6 +20,10 @@
  *    document written through the document API into a scratch index, which MCP then reads and the script deletes; the
  *    index listing with its document counts, every mapping, the aliases, the templates and the pipelines read back
  *    the same before and after;
+ *  - the hidden indices: signed in as the superuser, each spelling of the security index that 9.1.4 answers raw (a
+ *    leading dot, a dot pattern, a comma list, an exclusion, date math, a subquery, a catalog command's pattern) is
+ *    refused by the provider's hidden-index fence before it is sent, `"*"` reaches no hidden index, and the
+ *    least-privilege role is refused the security index by the server and served the probe indices through MCP;
  *  - the forms and paging: a `SELECT` and an `EXPLAIN` answer; a `WITH` naming its own table, `VALUES` and `TABLE`
  *    pass the MCP fence and are refused by the engine; a read past `max_rows` names no next offset and says how to
  *    page by key, an offset is refused before anything is sent, and the next page asked for by key answers it;
@@ -45,6 +49,7 @@ import { randomBytes } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
+import { CATALOG_COMMAND_REFUSAL, DOT_INDEX_REFUSAL } from "@/lib/db/providers/sql/search/agent-index-fence";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import type { ToolResult } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
@@ -90,6 +95,9 @@ const RUN_READ_QUERY = mcpStatementArm("run_read_query");
 const UNFENCED: McpStatementArm = { ...RUN_READ_QUERY, fence: () => null };
 const ENGINES = RUN_READ_QUERY.engines;
 const ENGINE_PREFIX = "The database refused or failed the call: ";
+const NOT_SENT = "The statement was refused before it reached the database: ";
+const DOT_REFUSAL = `${NOT_SENT}${DOT_INDEX_REFUSAL}.`;
+const COMMAND_REFUSAL = `${NOT_SENT}${CATALOG_COMMAND_REFUSAL}.`;
 const KEYSET =
   "Page it in SQL: ORDER BY a unique field, and for the next page add WHERE that field > the last value read.";
 
@@ -284,13 +292,21 @@ async function checkBoundary(origin: URL, connection: ManagedConnection, label: 
       `${label}: the MCP fence refuses ${query} before anything is acquired`,
     );
     const { result, acquired } = await mcp(connection, { sql: query });
-    const engine = engineTextOf(result);
-    // A SELECT-shaped statement goes out with the page's LIMIT the tool adds, so its refusal names that text's column.
-    const same = engine === reason || engine?.replace(/^line 1:\d+:/, "") === reason.replace(/^line 1:\d+:/, "");
-    check(
-      acquired.join() === "agent-read-only" && same,
-      `${label}: bypassed, the grammar refuses ${query} in its own words -> ${engine?.slice(0, 90)}`,
-    );
+    if (query.startsWith("DEBUG ")) {
+      // A DEBUG command never reaches the grammar: the provider's catalog-command fence refuses it unsent.
+      check(
+        acquired.join() === "agent-read-only" && textOf(result) === COMMAND_REFUSAL,
+        `${label}: bypassed, the provider's fence refuses ${query} unsent -> ${textOf(result).slice(0, 90)}`,
+      );
+    } else {
+      const engine = engineTextOf(result);
+      // A SELECT-shaped statement goes out with the page's LIMIT the tool adds, so its refusal names that text's column.
+      const same = engine === reason || engine?.replace(/^line 1:\d+:/, "") === reason.replace(/^line 1:\d+:/, "");
+      check(
+        acquired.join() === "agent-read-only" && same,
+        `${label}: bypassed, the grammar refuses ${query} in its own words -> ${engine?.slice(0, 90)}`,
+      );
+    }
     const raw = await send(origin, "POST", "/_sql?format=json", { query });
     check(
       raw.status === 400 && raw.text.includes('"type":"parsing_exception"') && raw.text.includes(reason),
@@ -300,6 +316,71 @@ async function checkBoundary(origin: URL, connection: ManagedConnection, label: 
   check(
     (await clusterState(origin)) === before,
     `${label}: indices, counts, mappings, aliases, templates and pipelines read back the same`,
+  );
+}
+
+/**
+ * Each statement read the security index's rows, or its name, when the superuser sent it raw on 9.1.4: through MCP,
+ * signed in as that superuser, the provider's hidden-index fence refuses each before it is sent.
+ */
+const HIDDEN: readonly [string, string][] = [
+  ['SELECT COUNT(*) AS n FROM ".security"', DOT_REFUSAL],
+  ['SELECT COUNT(*) AS n FROM ".security-7"', DOT_REFUSAL],
+  ['SELECT COUNT(*) AS n FROM ".sec*"', DOT_REFUSAL],
+  ['SELECT COUNT(*) AS n FROM "probe_orders,.security-7"', DOT_REFUSAL],
+  ['SELECT COUNT(*) AS n FROM "*,.security"', DOT_REFUSAL],
+  ['SELECT COUNT(*) AS n FROM "-probe_orders,.security"', DOT_REFUSAL],
+  ['SELECT COUNT(*) AS n FROM "<.security-7>"', DOT_REFUSAL],
+  ['SELECT COUNT(*) AS n FROM /* c */ ".security"', DOT_REFUSAL],
+  ['SELECT COUNT(*) AS n FROM (SELECT * FROM ".security") s', DOT_REFUSAL],
+  ["SHOW TABLES LIKE '.sec%'", COMMAND_REFUSAL],
+  ['SHOW COLUMNS IN ".security"', DOT_REFUSAL],
+  ['DESCRIBE ".security"', DOT_REFUSAL],
+];
+
+async function checkHidden(admin: ManagedConnection): Promise<void> {
+  for (const [sql, refusal] of HIDDEN) {
+    const { result, acquired } = await mcp(admin, { sql });
+    const raw = await send(SECURED, "POST", "/_sql?format=json", { query: sql });
+    check(
+      textOf(result) === refusal &&
+        acquired.join() === "agent-read-only" &&
+        raw.status === 200 &&
+        raw.text.includes('"rows":[[') &&
+        (sql.startsWith("SELECT") || raw.text.includes(".security") || raw.text.includes("access_token")),
+      `hidden: as the superuser, ${sql} is refused by the provider unsent; sent raw it answers -> ${raw.status}`,
+    );
+  }
+  // A wildcard that does not start with a dot reaches no hidden index: its count is the open indices' own.
+  const counted = JSON.parse(await read(SECURED, "/*/_count")) as { count: number };
+  const all = await mcp(admin, { sql: 'SELECT COUNT(*) AS n FROM "*"' }, RUN_READ_QUERY);
+  check(
+    JSON.stringify(rowsOf(all.result)) === JSON.stringify([{ n: counted.count }]),
+    `hidden: "*" reaches no hidden index -> ${JSON.stringify(rowsOf(all.result))}, the open indices hold ${counted.count}`,
+  );
+  // The documented least-privilege role reads no hidden index even when a statement names one raw.
+  await send(SECURED, "PUT", `/_security/role/${SCRATCH}`, {
+    cluster: ["cluster:monitor/main"],
+    indices: [{ names: ["probe_*"], privileges: ["read", "view_index_metadata"] }],
+  });
+  await send(SECURED, "PUT", `/_security/user/${SCRATCH}`, { password: USER_PASSWORD, roles: [SCRATCH] });
+  const response = await fetch(new URL("/_sql?format=json", SECURED), {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: basic(SCRATCH, USER_PASSWORD) },
+    body: JSON.stringify({ query: 'SELECT COUNT(*) AS n FROM ".security"' }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  const body = await response.text();
+  check(
+    response.status !== 200 && !body.includes('"rows"'),
+    `hidden: the least-privilege role, sending ".security" raw, is refused by the server -> ${response.status}`,
+  );
+  const served = await mcp(seed("least-privilege", SECURED, { user: SCRATCH, password: USER_PASSWORD }), {
+    sql: "SELECT COUNT(*) AS n FROM probe_buckets",
+  });
+  check(
+    JSON.stringify(rowsOf(served.result)) === '[{"n":1500}]',
+    `hidden: the least-privilege role is served through MCP -> ${JSON.stringify(rowsOf(served.result))}`,
   );
 }
 
@@ -462,6 +543,7 @@ async function main(): Promise<void> {
   await checkUnreadVersion();
   await checkBoundary(ORIGIN, agent, "boundary");
   await checkBoundary(SECURED, admin, "boundary as the superuser");
+  await checkHidden(admin);
   await checkControl();
   await checkForms(agent);
   await checkPaging(agent);

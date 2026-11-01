@@ -12,6 +12,7 @@
  *    editor handle's `queryReadOnly` refuses with nothing sent;
  *  - the boundary: each write and DDL statement sent through `queryReadOnly` is refused by the grammar in the engine's
  *    own words (a `line 1:N: mismatched input` or `extraneous input` refusal, never a budget or a credential refusal),
+ *    a `DEBUG` command by the provider's catalog-command fence before it is sent,
  *    and the same text sent raw answers 400 `parsing_exception`; the index listing with its document counts, every
  *    mapping, the aliases, the templates and the pipelines read back the same before and after; the positive control
  *    is a document written through the document API, a route the provider does not send to, into a scratch index the
@@ -52,6 +53,7 @@ import { engineServerDialect } from "@/lib/agent/languages/engines/server";
 import { AgentRepairLedger } from "@/lib/agent/repair-ledger";
 import type { AgentToolContext } from "@/lib/agent/tools";
 import { createDatabaseProvider, executionContextFor } from "@/lib/db/factory";
+import { CATALOG_COMMAND_REFUSAL } from "@/lib/db/providers/sql/search/agent-index-fence";
 import { ExecutionArtifactStore } from "@/lib/db/operations/artifacts";
 import { ExecutionBudgetTracker } from "@/lib/db/operations/budgets";
 import { createCanonicalOperationRegistry } from "@/lib/db/operations/descriptors";
@@ -310,9 +312,12 @@ async function main(): Promise<void> {
   const before = await clusterState();
   for (const sql of WRITES) {
     const viaProvider = await refusalOf(() => agent.queryReadOnly!(sql, BUDGET));
+    // A DEBUG command never reaches the grammar on this path: the catalog-command fence refuses it unsent.
+    const refusedUnsent = sql.startsWith("DEBUG ");
     check(
-      viaProvider !== null && GRAMMAR_REFUSAL.test(viaProvider.message),
-      `boundary: queryReadOnly sends ${sql} and the grammar refuses it (${viaProvider?.message.slice(0, 70)})`,
+      viaProvider !== null &&
+        (refusedUnsent ? viaProvider.message === CATALOG_COMMAND_REFUSAL : GRAMMAR_REFUSAL.test(viaProvider.message)),
+      `boundary: queryReadOnly ${refusedUnsent ? "refuses" : "sends"} ${sql} and ${refusedUnsent ? "the fence" : "the grammar"} refuses it (${viaProvider?.message.slice(0, 70)})`,
     );
     const answer = await send("POST", "/_sql?format=json", { query: sql });
     check(

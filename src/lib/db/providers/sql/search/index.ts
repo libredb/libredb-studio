@@ -75,6 +75,7 @@
  */
 
 import { SQLBaseProvider } from "../sql-base";
+import { assertAgentIndexNames } from "./agent-index-fence";
 import {
   assertReadOnlyBudget,
   byteBudgetSentence,
@@ -356,6 +357,18 @@ interface SearchProduct {
    * answer a wildcard's columns under the wildcard rather than under each table, so it is not admitted.
    */
   readonly checkedSqlReleases: readonly string[];
+
+  /**
+   * Whether an agent statement is read for the hidden and system indices it names before it is sent, and refused when
+   * it names one (`agent-index-fence.ts`). The open checks no login, so a login that may read those indices reads them
+   * through SQL, and only their names stand between an agent statement and them.
+   *
+   * Elasticsearch: true. Measured on 9.1.4 signed in as the superuser: every hidden and system index, the security
+   * index among them, answers its rows to a statement that names it with a leading dot, and nothing else reaches one.
+   * OpenSearch: false, not measured on its grammar, whose identifier quoting differs; its agent path names any index
+   * the login may read (BACKLOG B167).
+   */
+  readonly fencesHiddenIndices: boolean;
 }
 
 export const ELASTICSEARCH_PRODUCT: SearchProduct = Object.freeze({
@@ -369,6 +382,7 @@ export const ELASTICSEARCH_PRODUCT: SearchProduct = Object.freeze({
   sqlDeleteSwitch: false,
   cutsAtResultLimit: false,
   checkedSqlReleases: Object.freeze(["9.1"]),
+  fencesHiddenIndices: true,
 });
 
 export const OPENSEARCH_PRODUCT: SearchProduct = Object.freeze({
@@ -382,6 +396,7 @@ export const OPENSEARCH_PRODUCT: SearchProduct = Object.freeze({
   sqlDeleteSwitch: true,
   cutsAtResultLimit: true,
   checkedSqlReleases: Object.freeze(["3.8"]),
+  fencesHiddenIndices: false,
 });
 
 // ============================================================================
@@ -1216,9 +1231,11 @@ abstract class SearchProvider extends SQLBaseProvider {
    * deadline is the budget's and the client's alone, refused in the shared time-budget sentence; the cluster keeps
    * working on a statement whose wait ended.
    *
-   * Refused outside the profile: a provider opened for the editor has no business running agent semantics. Each
-   * refusal raised before the request, the profile's and the estimate-plan mode's, is a
-   * `RefusedBeforeSendError`, so the agent and MCP say nothing reached the cluster.
+   * Refused outside the profile: a provider opened for the editor has no business running agent semantics. Where the
+   * product fences hidden indices, a statement naming one, or a catalog command but the agent's own, is refused next
+   * ({@link SearchProduct.fencesHiddenIndices}). Each refusal raised before the request, the profile's, the
+   * estimate-plan mode's and the fence's, is a `RefusedBeforeSendError`, so the agent and MCP say nothing reached the
+   * cluster.
    */
   protected async readOnlyStatement(
     sql: string,
@@ -1241,6 +1258,7 @@ abstract class SearchProvider extends SQLBaseProvider {
         sql,
       );
     }
+    if (this.product.fencesHiddenIndices) assertAgentIndexNames(sql);
 
     // Where the engine cuts an answer at its result limit, an answer that reaches the limit cannot be told from a cut
     // one, so the row bound stops one row short of it and the refusal names the limit. The limit is read before every

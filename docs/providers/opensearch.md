@@ -881,6 +881,7 @@ The relation, index and statistics kinds are refused with `SELECTOR_UNSUPPORTED_
 The other members are unsupported: the provider reads no `EXPLAIN` ([§3.10](#310-no-explain-the-statement-form-is-refused)), and a table profile would be an aggregate over a whole index, never measured.
 So investigation, database assessment and data analysis open here and send their statements through `queryReadOnly`, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`; the `sql-composers` requirement holds query optimization out; plan mode drafts here as on every engine ([B145](../BACKLOG.md)).
 The provider path has no statement fence of its own, and the plugin answers the composed command as it answers a SELECT.
+The hidden-index fence the shared module runs for Elasticsearch ([elasticsearch.md §5.9](./elasticsearch.md#59-the-agent-read-only-profile-rests-on-the-grammar)) is off here (`SearchProduct.fencesHiddenIndices` is false): it reads Elasticsearch's grammar, and which of this plugin's hidden and system indices a broad login reads through SQL was not measured, so an agent statement names any index the login may read ([B167](../BACKLOG.md)).
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
 MCP's statement read stays closed on OpenSearch (`MCP_STATEMENT_READ.opensearch` is false) until a change of its own opens it.
 

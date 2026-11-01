@@ -2704,6 +2704,16 @@ describe("OpenSearchProvider.queryReadOnly", () => {
     expect(sentBodies.at(-1)).toEqual({ query: "SELECT id, customer, total FROM probe_orders" });
   });
 
+  // The hidden-index fence is Elasticsearch's alone, measured on its grammar; OpenSearch's agent path sends a name
+  // that starts with a dot as written, and B167 records that its hidden indices are not measured.
+  test("sends a statement naming a hidden index as written: the hidden-index fence is Elasticsearch's alone", async () => {
+    const provider = await agentProvider();
+
+    await provider.queryReadOnly("SELECT id FROM `.opendistro-job-scheduler-lock`", AGENT_BUDGET);
+
+    expect(sentBodies.at(-1)).toEqual({ query: "SELECT id FROM `.opendistro-job-scheduler-lock`" });
+  });
+
   test("refuses an answer past the row budget, after closing the cursor that answer left open", async () => {
     const provider = await agentProvider();
 

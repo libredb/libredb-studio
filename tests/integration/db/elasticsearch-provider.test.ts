@@ -59,6 +59,7 @@ import {
 import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
 import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import { CATALOG_COMMAND_REFUSAL, DOT_INDEX_REFUSAL } from "@/lib/db/providers/sql/search/agent-index-fence";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
@@ -3874,17 +3875,25 @@ describe("Elasticsearch 9.1.4's write refusals, replayed", () => {
       expect(request?.body).toEqual({ ...entry.request.body, ...SQL_QUERY_OPTIONS });
       await provider.disconnect();
 
-      // And an agent read the grammar answers this way is refused in the engine's own words, never as rows.
+      // And an agent read the grammar answers this way is refused in the engine's own words, never as rows; a DEBUG
+      // command is refused by the agent path's catalog-command fence before it is sent.
       const agent = new ElasticsearchProvider(makeConnection(), {}, AGENT_PROFILE);
       replyFor = defaultReply;
       await agent.connect();
       overrideSql(fail(entry.status, entry.body));
+      const before = sqlRequests().length;
       const refused = await agent
         .queryReadOnly(entry.request.body.query, AGENT_BUDGET)
         .catch((caught: unknown) => caught);
       expect(refused).toBeInstanceOf(QueryError);
-      expect((refused as Error).message).toContain(reason);
-      expect(sqlRequests().at(-1)?.body).toMatchObject(entry.request.body);
+      if (entry.request.body.query.startsWith("DEBUG ")) {
+        expect(refused).toBeInstanceOf(RefusedBeforeSendError);
+        expect((refused as Error).message).toBe(CATALOG_COMMAND_REFUSAL);
+        expect(sqlRequests().length).toBe(before);
+      } else {
+        expect((refused as Error).message).toContain(reason);
+        expect(sqlRequests().at(-1)?.body).toMatchObject(entry.request.body);
+      }
       await agent.disconnect();
     },
   );
@@ -4085,6 +4094,26 @@ describe("ElasticsearchProvider.queryReadOnly", () => {
     expect(error.message).toContain("maxResultRows must be a positive integer");
     expect(sent.length).toBe(before);
   });
+
+  // Measured on 9.1.4 signed in as the superuser: each answers the security index's rows or names when sent raw.
+  test.each([
+    ['SELECT COUNT(*) AS n FROM ".security"', DOT_INDEX_REFUSAL],
+    ['SELECT COUNT(*) AS n FROM "probe_orders,.security-7"', DOT_INDEX_REFUSAL],
+    ['SYS COLUMNS ".security"', DOT_INDEX_REFUSAL],
+    ["SHOW TABLES LIKE '.sec%'", CATALOG_COMMAND_REFUSAL],
+  ])(
+    "refuses %p before it is sent: a hidden or system index, or a catalog command but the agent's own",
+    async (sql, sentence) => {
+      const provider = await agentProvider();
+      const before = sent.length;
+
+      const error = await refusal(provider.queryReadOnly(sql, AGENT_BUDGET));
+
+      expect(error).toBeInstanceOf(RefusedBeforeSendError);
+      expect(error.message).toBe(sentence);
+      expect(sent.length).toBe(before);
+    },
+  );
 
   test("refuses the estimate-plan mode, with nothing sent: no plan is composed here", async () => {
     const provider = await agentProvider();
@@ -4371,6 +4400,20 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
       const result = await unfenced({ sql });
 
       expect(acquired).toEqual(["agent-read-only"]);
+      if (sql.startsWith("DEBUG ")) {
+        // A DEBUG command never reaches the grammar: the agent path's catalog-command fence refuses it unsent.
+        expect(result).toEqual({
+          content: [
+            {
+              type: "text",
+              text: `The statement was refused before it reached the database: ${CATALOG_COMMAND_REFUSAL}.`,
+            },
+          ],
+          isError: true,
+        });
+        expect(statementsAfterOpen()).toEqual([]);
+        return;
+      }
       expect(statementsAfterOpen()).toEqual([paged]);
       const reason = (JSON.parse(entry.body) as { error: { reason: string } }).error.reason;
       const text = (result.content as { text: string }[]).map((part) => part.text);
@@ -4380,6 +4423,37 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
       expect(text[1]).toContain(reason);
     },
   );
+
+  // Signed in as the superuser on 9.1.4, each read the security index raw; the provider's fence keeps it out.
+  test.each([
+    ['SELECT COUNT(*) AS n FROM ".security"', DOT_INDEX_REFUSAL],
+    ['SELECT COUNT(*) AS n FROM ".sec*"', DOT_INDEX_REFUSAL],
+    ['SELECT COUNT(*) AS n FROM "<.security-7>"', DOT_INDEX_REFUSAL],
+  ])("%p passes the MCP fence and is refused by the provider before it is sent", async (sql, sentence) => {
+    const result = await call({ sql });
+
+    expect(result).toEqual({
+      content: [{ type: "text", text: `The statement was refused before it reached the database: ${sentence}.` }],
+      isError: true,
+    });
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(statementsAfterOpen()).toEqual([]);
+  });
+
+  test("a catalog command, the MCP fence removed, is refused by the provider before it is sent", async () => {
+    const result = await unfenced({ sql: "SHOW TABLES LIKE '.sec%'" });
+
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: `The statement was refused before it reached the database: ${CATALOG_COMMAND_REFUSAL}.`,
+        },
+      ],
+      isError: true,
+    });
+    expect(statementsAfterOpen()).toEqual([]);
+  });
 
   const refusedAtOpen = (sentence: string) => ({
     content: [
