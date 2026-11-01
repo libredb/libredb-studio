@@ -9,7 +9,8 @@ import type { DatabaseType } from "@/lib/types";
  *
  * Measured on 2026-10-27 by running each form: SQLite 3.53.4 refuses `TABLE`; DuckDB 1.5.5 runs all four; SQL Server
  * 2022 refuses a bare `VALUES` and `TABLE` and has no `EXPLAIN`; MySQL runs `VALUES ROW(...)` and `TABLE`, and MariaDB
- * 11.8 a bare `VALUES` list but no `TABLE`.
+ * 11.8 a bare `VALUES` list but no `TABLE`. Measured on 2026-11-01: ClickHouse 26.7.1.1315 refuses a bare `VALUES` and
+ * `TABLE` and runs `EXPLAIN`.
  */
 export interface ReadQueryForms {
   /** The statements, as the refusal names them after "runs one read-only statement:". */
@@ -49,7 +50,8 @@ export const READ_QUERY_FORMS: Readonly<Record<DatabaseType, ReadQueryForms | nu
   db2: null,
   // No bare VALUES, no TABLE statement and no EXPLAIN.
   mssql: { statements: "a SELECT (a WITH is fine)", paging: "ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY" },
-  clickhouse: null,
+  // A bare VALUES and TABLE are syntax errors (code 62); EXPLAIN runs.
+  clickhouse: { statements: "a SELECT (a WITH is fine), or EXPLAIN without ANALYZE", paging: LIMIT_OFFSET },
   druid: null,
   trino: null,
   cassandra: null,

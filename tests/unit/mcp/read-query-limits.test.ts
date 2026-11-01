@@ -85,11 +85,11 @@ describe("the texts", () => {
     expect(
       profileRefusalText(
         "The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution.",
-        "PostgreSQL, SQLite, DuckDB, SQL Server and MySQL",
+        "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL and ClickHouse",
         "run_read_query",
       ),
     ).toBe(
-      "run_read_query cannot run on this connection: The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution. It runs on PostgreSQL, SQLite, DuckDB, SQL Server and MySQL.",
+      "run_read_query cannot run on this connection: The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution. It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL and ClickHouse.",
     );
   });
 });
@@ -97,7 +97,9 @@ describe("the texts", () => {
 /**
  * The statements each served engine takes, among those the fence admits, as measured on 2026-10-27: SQLite 3.53.4 and
  * SQL Server 2022 refuse `TABLE`, SQL Server also refuses a bare `VALUES` and has no `EXPLAIN`, and MariaDB 11.8
- * refuses `TABLE` where MySQL runs it, so a refusal names only what the connection's engine runs.
+ * refuses `TABLE` where MySQL runs it, so a refusal names only what the connection's engine runs. ClickHouse
+ * 26.7.1.1315, measured on 2026-11-01, answers a bare `VALUES` and `TABLE` with a syntax error (code 62) and runs
+ * `EXPLAIN`.
  */
 describe("the accepted forms each engine's refusal names", () => {
   test.each([
@@ -106,6 +108,7 @@ describe("the accepted forms each engine's refusal names", () => {
     ["duckdb", "a SELECT (a WITH is fine), VALUES, TABLE, or EXPLAIN without ANALYZE"],
     ["mssql", "a SELECT (a WITH is fine)"],
     ["mysql", "a SELECT (a WITH is fine), VALUES, TABLE (MySQL, not MariaDB), or EXPLAIN without ANALYZE"],
+    ["clickhouse", "a SELECT (a WITH is fine), or EXPLAIN without ANALYZE"],
   ] as const)("%s: %s", (type, statements) => {
     expect(fenceRefusalText("NON_READ_STATEMENT", type)).toBe(
       `The statement was refused before it reached the database (NON_READ_STATEMENT). On this engine run_read_query runs one read-only statement: ${statements}.`,
@@ -261,6 +264,7 @@ describe("the prefixes the mapper matches still start a message in each provider
     mssql: ["src/lib/db/providers/sql/mssql.ts"],
     sqlite: ["src/lib/db/providers/sql/sqlite.ts"],
     duckdb: ["src/lib/db/providers/sql/duckdb/index.ts"],
+    clickhouse: ["src/lib/db/providers/sql/clickhouse/agent-read.ts", "src/lib/db/providers/sql/clickhouse/index.ts"],
     mongodb: ["src/lib/db/providers/document/mongodb/agent-read.ts"],
     kubernetes: [
       "src/lib/db/providers/platform/kubernetes/machine-read.ts",

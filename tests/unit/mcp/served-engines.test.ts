@@ -28,8 +28,21 @@ describe("mcpStatementEngines", () => {
     );
   });
 
-  test("leaves RUN_READ_QUERY_TYPES as it was before MCP_STATEMENT_READ existed", () => {
-    expect(RUN_READ_QUERY_TYPES).toEqual(["postgres", "sqlite", "duckdb", "mssql", "mysql"]);
+  test("serves ClickHouse beside the five SQL engines it served before MCP_STATEMENT_READ existed", () => {
+    expect(RUN_READ_QUERY_TYPES).toEqual(["postgres", "sqlite", "duckdb", "mssql", "mysql", "clickhouse"]);
+  });
+
+  // Opening ClickHouse moved no other engine: every other language still serves exactly what it did.
+  test("opening ClickHouse leaves every other language's served set as it was", () => {
+    const languages = [...new Set(Object.values(AGENT_STATEMENT_LANGUAGE))].filter(
+      (language): language is NonNullable<typeof language> => language !== null && language !== "sql",
+    );
+    const served = Object.fromEntries(languages.map((language) => [language, mcpStatementEngines(language)]));
+    expect(served).toEqual({
+      ...Object.fromEntries(languages.map((language) => [language, []])),
+      mongo: ["mongodb"],
+      kubectl: ["kubernetes"],
+    });
   });
 
   test("reads the shipped records when none are passed", () => {
@@ -53,6 +66,7 @@ describe("mcpStatementEngines", () => {
       "sqlite",
       "mssql",
       "mysql",
+      "clickhouse",
     ]);
   });
 

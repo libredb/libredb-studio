@@ -995,6 +995,15 @@ LIBREDB_LIVE_CLICKHOUSE_PORT=8123 LIBREDB_LIVE_CLICKHOUSE_USER=<admin> LIBREDB_L
   LIBREDB_LIVE_CLICKHOUSE_FUNCTIONS_DIR=<host path of the mounted directory> bun tests/live/clickhouse-agent-boundary.ts
 ```
 
+#### MCP read
+
+MCP's `run_read_query` serves ClickHouse through the agent's own path: it takes the connection under the agent read-only profile, so the open runs the proof above, and sends the statement through `queryReadOnly`, so every request carries `readonly = 1` and a table function that reaches another server is refused before it is sent.
+It shares the agent's profiled handle, so the proof runs at the open of that handle, as in agent mode, and a grant added after it is seen at the next open.
+A seed carries no separate agent credential, so the seed's own user must be one the open admits; the writable admin is refused, in the tool's sentence, before any statement runs.
+MCP's statement fence refuses a write-shaped statement before anything is acquired, as defence in depth; a source table function such as `url()` or `file()` is a `SELECT`, which the fence admits and the server refuses the agent user (`497`).
+It runs a `SELECT` (a `WITH` is fine), or `EXPLAIN` without `ANALYZE`: a bare `VALUES` and `TABLE` are syntax errors (code `62`) on 26.7.1.1315, and it pages with `LIMIT n OFFSET m`.
+A result past 1000 rows or 1 MiB is refused, never cut, and one past `timeout_ms` is answered as the timeout.
+
 #### Agent language pack
 
 Statement-language family: `sql`.
@@ -1014,7 +1023,7 @@ The catalog read takes `system.columns` and `system.tables`, which the server fi
 Each kind was run as the least-privilege user under `readonly = 1`.
 `profile_table` is still offered here and answers `UNSUPPORTED_DIALECT`, and `compare_plans` reads every plan as `unknown`, because the `clickhouse-json` strategy has no agent reading (B140).
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-MCP's statement read stays closed on ClickHouse (`MCP_STATEMENT_READ.clickhouse` is false) until a change of its own opens it.
+MCP's `run_read_query` runs a statement on ClickHouse (`MCP_STATEMENT_READ.clickhouse` is true) under the same boundary, described in "MCP read" above.
 
 ## 6. Schema introspection
 
