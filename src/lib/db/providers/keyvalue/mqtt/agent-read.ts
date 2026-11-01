@@ -144,6 +144,16 @@ export const MQTT_METADATA_ONLY: MetadataOnlyDeclaration = declareMetadataOnly(P
 export const MQTT_COMPLETENESS =
   "A topic not seen in the window may still exist: MQTT has no command that lists topics, so a subscriber sees a topic only when a message on it arrives in the window or the broker holds a retained message on it, and no answer is a complete count of the broker's topics or proof that a topic does not exist.";
 
+/**
+ * What the topic read's per-message columns are, said on every topic read, a miss's as a hit's so the two answers keep
+ * one shape: `retained`,
+ * `delivered_qos` and `payload_bytes` are the last message's, while `messages` counts the window, and a reader who
+ * takes them for totals misreports both (measured in a browser pass: seven messages read as "13 bytes combined" and
+ * "not retained" of a topic whose broker held a retained message on it).
+ */
+export const MQTT_TOPIC_LAST_MESSAGE =
+  "The topic's retained flag, delivered QoS and payload size are those of the last message seen on it, not totals over the window: a broker delivers a retained message only as the subscription starts, and every message published after that arrives with the retained flag clear, so retained false does not say the broker holds no retained message on the topic.";
+
 /** Why a window stopped, in agent mode's words: no remedy that writes a narrower filter, which agent mode cannot. */
 function stopWords(outcome: MqttReadOutcome): string {
   const reasons: Readonly<Record<MqttEndReason, string>> = {
@@ -256,6 +266,7 @@ export function mqttAgentResult(
     executionTime,
     warnings: [
       { message: windowSentence(answer) },
+      ...(answer.op === "topic" ? [{ message: MQTT_TOPIC_LAST_MESSAGE }] : []),
       ...(loss === undefined ? [] : [{ message: loss }]),
       { message: MQTT_COMPLETENESS },
     ],

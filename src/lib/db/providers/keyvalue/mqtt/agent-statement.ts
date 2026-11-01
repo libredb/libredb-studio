@@ -45,7 +45,7 @@ const NOTHING_SENT = "Nothing was sent.";
 const WINDOW_SECONDS = MQTT_READ_BUDGET_MS / 1000;
 
 /** The list of reads every refusal ends with, and the tool description and the posture say the same. */
-export const MQTT_AGENT_READS = `Agent mode on MQTT reads metadata only, one JSON object per read: {"read": "window"} listens to every topic (the filter #) for a window of ${WINDOW_SECONDS} seconds and answers totals only, the distinct topics seen, the messages, the retained messages and the payload bytes, never a topic name; {"read": "topic", "topic": "plant/line1/temp"} listens to the one topic the request names in full for the same window and answers whether a message was seen on it, its retained flag, the QoS it was delivered at, its payload size and when it was last seen, never its payload.`;
+export const MQTT_AGENT_READS = `Agent mode on MQTT reads metadata only, one JSON object per read: {"read": "window"} listens to every topic (the filter #) for a window of ${WINDOW_SECONDS} seconds and answers totals only, the distinct topics seen, the messages, the retained messages and the payload bytes, never a topic name; {"read": "topic", "topic": "plant/line1/temp"} listens to the one topic the request names in full for the same window and answers whether a message was seen on it and how many, and of the last message seen on it its retained flag, the QoS it was delivered at, its payload size and when it arrived, never its payload.`;
 
 export const MQTT_AGENT_SENTENCES = {
   empty: `The request holds no read. ${MQTT_AGENT_READS} ${NOTHING_SENT}`,

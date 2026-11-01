@@ -93,6 +93,16 @@ describe("the prompt texts", () => {
     expect(MQTT_AGENT_READS).toContain("never its payload");
   });
 
+  test("the topic read's flag, QoS and size are named as the last message's, never as a total", () => {
+    // Seen in a browser pass: a model read `payload_bytes` of a topic with seven messages as their combined size, and
+    // `retained: false` as "the messages were not retained" of a topic the broker held a retained message on.
+    const lastMessage =
+      "answers whether a message was seen on it and how many, and of the last message seen on it its retained flag, the QoS it was delivered at, its payload size and when it arrived";
+    expect(MQTT_AGENT_READS).toContain(lastMessage);
+    const posture = agentPosture({ mode: "agent", engine: "mqtt", engineLabel: "MQTT", handover: false });
+    expect(posture.body).toContain(lastMessage);
+  });
+
   test("the tool description names both reads, the window's columns, the completeness sentence and what is withheld", () => {
     const description = languageServerPack("mqttread").toolOverrides.investigation?.run_read_query?.description ?? "";
     expect(description).toContain(MQTT_AGENT_READS);

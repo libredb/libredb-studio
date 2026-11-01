@@ -9,6 +9,7 @@ import { QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import {
   MQTT_AGENT_MIN_STATEMENT_MS,
   MQTT_COMPLETENESS,
+  MQTT_TOPIC_LAST_MESSAGE,
   mqttAgentFailure,
   mqttAgentResult,
   runMqttAgentRead,
@@ -383,6 +384,7 @@ describe("the topic read", () => {
     expect(typeof result.rows[0]?.last_seen_ms).toBe("number");
     expect(result.warnings?.[0]?.message).toContain("Studio listened to the one topic the request named for ");
     expect(result.warnings?.[0]?.message).toContain("It counted 1 message on that topic.");
+    expect(result.warnings?.[1]?.message).toBe(MQTT_TOPIC_LAST_MESSAGE);
     expect(result.warnings?.at(-1)?.message).toBe(MQTT_COMPLETENESS);
     expectNoWithheld(answerText(result));
   });
@@ -408,6 +410,8 @@ describe("the topic read", () => {
       payload_bytes: null,
       last_seen_ms: null,
     });
+    // Said of a miss as of a hit, so the two answers keep one shape (the test below).
+    expect(result.warnings?.[1]?.message).toBe(MQTT_TOPIC_LAST_MESSAGE);
     expect(result.warnings?.at(-1)?.message).toBe(MQTT_COMPLETENESS);
   });
 
