@@ -211,7 +211,8 @@ const OUTLINE: readonly string[] = [
   "### 15.2 What an agent command may be",
   "### 15.3 Metadata only",
   "### 15.4 Agent language pack",
-  "### 15.5 Tests",
+  "### 15.5 What a key's grants reach",
+  "### 15.6 Tests",
 ];
 
 /** The "Before you connect" block, exactly. */
@@ -498,6 +499,9 @@ describe("docs/providers/s3.md: the connection, as the dialog and the builder st
     expect(machine).toContain("`MCP_EXPOSABLE.s3` is false");
     expect(machine).toContain("`MCP_STATEMENT_READ.s3` is false");
     expect(machine).toContain("no agent-mode path lists a key");
+    expect(machine).toContain(
+      "MCP may read S3 only with an agent read key of its own, beside the connection's key, whose grants hold the buckets it reads ([section 15.5](#155-what-a-keys-grants-reach)), and MCP reads seed connections alone, whose entries carry no agent credential, so no S3 connection can meet that condition yet.",
+    );
   });
 
   test("13. section 4.3 lists the shared SSL panel's modes in the dialog's order", () => {
@@ -1233,8 +1237,38 @@ describe("the backlog record of the S3 provider", () => {
     expect(b103).toBeGreaterThan(-1);
     expect(b104).toBeGreaterThan(b103);
     expect(AGENT_DOC).toContain(
-      "- **B104**: S3's `s3api` statement language reads metadata only, through six GET and HEAD reads alone, so no object key the request did not name, body, user metadata, tag, ETag, version id, owner, ACL, policy or endpoint reaches an agent answer, a bucket is counted whole and never by prefix, and data analysis, query optimization and database assessment are not offered; MCP is not offered for it (`MCP_EXPOSABLE.s3` is false) and it has no MCP statement tool (`MCP_STATEMENT_READ.s3` is false), so MCP `run_read_query` refuses it, because no MCP surface that lists buckets but never returns an object key is designed yet (`docs/providers/s3.md` sections 3.6 and 15).",
+      "- **B104**: S3's `s3api` statement language reads metadata only, through six GET and HEAD reads alone, so no object key the request did not name, body, user metadata, tag, ETag, version id, owner, ACL, policy or endpoint reaches an agent answer, a bucket is counted whole and never by prefix, and data analysis, query optimization and database assessment are not offered; MCP is not offered for it (`MCP_EXPOSABLE.s3` is false) and it has no MCP statement tool (`MCP_STATEMENT_READ.s3` is false), so MCP `run_read_query` refuses it, because MCP may read S3 only with an agent read key of its own and a seed entry, the one connection MCP reads, carries no agent credential (`docs/providers/s3.md` sections 3.6 and 15).",
     );
+  });
+
+  test("37a. section 15.3 names no MCP path, and section 15.5 cites the scope captures of three servers", () => {
+    const metadata = flat(sectionOf(DOC, "### 15.3 Metadata only"));
+    expect(metadata).not.toContain("MCP `inspect_schema`");
+    expect(metadata).toContain(
+      "| MCP | none | closed: `MCP_EXPOSABLE.s3` and `MCP_STATEMENT_READ.s3` are false ([section 3.6](#36-machine-access)) |",
+    );
+    const scope = flat(sectionOf(DOC, "### 15.5 What a key's grants reach"));
+    for (const set of ["silo-RELEASE.2026-09-16T00-00-00Z", "rustfs-1.0.1", "garage-v2.4.1"]) {
+      expect(existsSync(path.join(ROOT, `tests/fixtures/s3/agent-scope/${set}/scope.json`))).toBe(true);
+      expect(existsSync(path.join(ROOT, `tests/fixtures/s3/agent-scope/${set}/run.sh`))).toBe(true);
+    }
+    expect(scope).toContain("[`tests/live/s3-agent-scope.ts`](../../tests/live/s3-agent-scope.ts)");
+    expect(scope).toContain("[`tests/fixtures/s3/agent-scope/`](../../tests/fixtures/s3/agent-scope/)");
+  });
+
+  test("37b. every scope capture answers a bucket or key the key may not read as it answers a missing one", () => {
+    for (const set of ["silo-RELEASE.2026-09-16T00-00-00Z", "rustfs-1.0.1", "garage-v2.4.1"]) {
+      const capture = JSON.parse(read(`tests/fixtures/s3/agent-scope/${set}/scope.json`)) as {
+        readonly oracle: {
+          readonly ungrantedBucketLikeMissing: Readonly<Record<string, boolean>>;
+          readonly ungrantedPresentKeyLikeAbsent: boolean;
+        };
+        readonly leaks: readonly string[];
+      };
+      expect(Object.values(capture.oracle.ungrantedBucketLikeMissing)).toEqual([true, true, true, true, true, true]);
+      expect(capture.oracle.ungrantedPresentKeyLikeAbsent).toBe(true);
+      expect(capture.leaks).toEqual([]);
+    }
   });
 });
 
