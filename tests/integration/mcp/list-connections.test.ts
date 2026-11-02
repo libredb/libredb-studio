@@ -117,9 +117,9 @@ describe("the answer", () => {
 
   test("names the tool that runs a statement on each connection, and null where inspect_schema is the read", async () => {
     // From the one served-engine resolver: ClickHouse's, libSQL's, InfluxDB 3's, Elasticsearch's, OpenSearch's,
-    // Oracle's, Cassandra's and Couchbase's SQL is read by run_read_query, MongoDB's command by run_mongo_command, a
-    // Kubernetes line by run_kubectl_read, and an engine no statement tool serves, such as Redis, or Snowflake, InfluxDB
-    // over InfluxQL and Db2, whose agent reads stay closed to MCP, has none.
+    // Oracle's, Db2 LUW's, Cassandra's and Couchbase's SQL is read by run_read_query, MongoDB's command by
+    // run_mongo_command, a Kubernetes line by run_kubectl_read, and an engine no statement tool serves, such as Redis,
+    // or Snowflake and InfluxDB over InfluxQL, whose agent reads stay closed to MCP, has none.
     const CLUSTER = {
       id: "cluster",
       type: "kubernetes",
@@ -166,7 +166,7 @@ describe("the answer", () => {
       ["seed:search", "run_read_query"],
       ["seed:fork-search", "run_read_query"],
       ["seed:ledger", "run_read_query"],
-      ["seed:mainframe", null],
+      ["seed:mainframe", "run_read_query"],
       ["seed:ring", "run_read_query"],
       ["seed:mongo", "run_mongo_command"],
       ["seed:travel", "run_read_query"],

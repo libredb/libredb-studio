@@ -314,6 +314,12 @@ A column default is a CLOB in the catalog, so its first 254 bytes are read as `H
 
 A column's type is spelled as its declaration: `VARCHAR(n)`, `CHARACTER(n) FOR BIT DATA` for a binary character column, `DECIMAL(p,s)`, `TIMESTAMP` at the default precision 6 and `TIMESTAMP(p)` otherwise, `DECFLOAT(34)` or `DECFLOAT(16)`, and a character or graphic type declared in a unit other than its default keeps that unit, because its `LENGTH` is in bytes: `VARCHAR(10 CODEUNITS32)` has `LENGTH` 40 and `STRINGUNITSLENGTH` 10 (measured), and prints as declared.
 
+Under an agent profile, the operations profile's `inspect_schema` and grounding included, the columns and the code page are read from sources that hold no stored value instead, chosen by the profile and never as a fallback on an error ([`catalog.ts`](../../src/lib/db/providers/sql/db2/catalog.ts)): `SYSCAT.COLUMNS` keeps the second highest and lowest stored value of every column, and the agent user's seed revokes it from `PUBLIC` (section 10.1).
+The columns come from `SYSIBM.COLUMNS` in `ORDINAL_POSITION` order, a binary column's length and `FOR BIT DATA` from `SYSIBM.SQLCOLUMNS`, the primary key from `SYSCAT.TABCONST` and `SYSCAT.KEYCOLUSE`, the default from `SYSIBM.COLUMNS.COLUMN_DEFAULT`, which spells it as `SYSCAT.COLUMNS."DEFAULT"` does, and the code page from the character set `SYSIBM.COLUMNS` names for `SYSIBM.SYSDUMMY1.IBMREQD`, `IBM1208` in a Unicode database (captures 14 and 16 under [`tests/fixtures/db2/12.1.0.0/agent-boundary/`](../../tests/fixtures/db2/12.1.0.0/agent-boundary/)).
+Neither view keeps a `DECFLOAT` column's precision, so the provider reads it from a zero-row describe, `SELECT * FROM "schema"."table" WHERE 1 = 0`, of a base table that has a `DECFLOAT` column and that the session's grantees may read; it never describes a view, since a describe revalidates an invalid one, and Db2 refuses a describe of a table the user may not read (`SQL0551N`, capture 16).
+Two limits follow, and Studio guesses neither: a column declared in `CODEUNITS32` (or a graphic one in `CODEUNITS32`) shows its length in the type's default units, `VARCHAR(80)` for `VARCHAR(20 CODEUNITS32)`, because neither view keeps the units; and a `DECFLOAT` column of a table the user may not read, or of a view, shows `DECFLOAT` with no precision.
+Every other handle keeps the `SYSCAT.COLUMNS` reads above, whole.
+
 `describeObjects()` describes a whole folder in four round trips: the target list, then the columns, the foreign keys and the indexes of every target at once.
 A caller-bound limit cuts the target list and says so.
 
@@ -480,10 +486,10 @@ Only the table list can fail: a refused read is reported on that panel with the 
 
 ## 10. Agent and MCP
 
-Plan mode drafts SQL for Db2 and `inspect_schema` reads its schema through the provider's object surface on any connection, whatever its user.
+Plan mode drafts SQL for Db2 and `inspect_schema` reads its schema through the provider's object surface on any connection, whatever its user, from the value-free sources section 6.4 names.
 Agent mode executes statements on Db2 through `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/sql/db2/index.ts), under the profile section 10.1 describes.
-MCP's statement read stays closed on Db2 (`MCP_STATEMENT_READ.db2` is false), so the MCP tool `run_read_query` refuses a Db2 connection: the agent user reads the two stored values `SYSCAT.COLUMNS` keeps of every column, also for a table it holds no `SELECT` on, and that is not opened to an MCP client while it holds (B168, "What only the operator stops" in section 10.1).
-`READ_ONLY_ENFORCED` is false for Db2, so a seed that asks for a read-only Db2 connection is refused: the read-only boundary below holds only for the agent's own statements.
+MCP's `run_read_query` runs a statement on Db2 (`MCP_STATEMENT_READ.db2` is true) under the same boundary, described in "MCP read" at the end of section 10.1.
+`READ_ONLY_ENFORCED` is false for Db2, so a seed that asks for a read-only Db2 connection is refused: the read-only boundary below holds only for the agent's own statements and those MCP's `run_read_query` sends.
 
 `endOpenQueryTransaction()` is not implemented, because `query()` leaves no transaction open: it autocommits every statement on the shared client, and an interactive transaction runs on a session of its own (section 7.7).
 
@@ -582,6 +588,7 @@ Run the revokes the refusal names; on the measured 12.1.0.0 they are those in [`
 ```sql
 REVOKE UPDATE ON SYSSTAT.COLDIST FROM PUBLIC;  -- and the thirteen other SYSSTAT views
 REVOKE SELECT ON SYSCAT.COLDIST FROM PUBLIC;   -- and the eight other distribution statistics objects
+REVOKE SELECT ON SYSCAT.COLUMNS FROM PUBLIC;   -- and the six other objects that keep HIGH2KEY and LOW2KEY
 REVOKE CREATEIN, DROPIN ON SCHEMA SYSPUBLIC FROM PUBLIC;
 REVOKE CREATEIN ON SCHEMA SYSTOOLS FROM PUBLIC;
 REVOKE EXECUTE ON SPECIFIC PROCEDURE SYSPROC.ADMIN_CMD FROM PUBLIC RESTRICT;
@@ -601,7 +608,8 @@ REVOKE EXECUTE ON MODULE SYSIBMADM.DBMS_STATS FROM PUBLIC;
 REVOKE EXECUTE ON MODULE SYSIBMADM.DBMS_UTILITY FROM PUBLIC;
 ```
 
-The check needs the `SYSSTAT` and distribution statistics revokes, the `SYSPUBLIC` and `SYSTOOLS` revokes and the last seven module revokes.
+The check needs the `SYSSTAT` and distribution statistics revokes, the seven column statistics revokes, the `SYSPUBLIC` and `SYSTOOLS` revokes and the last seven module revokes.
+The seven are `SYSCAT.COLUMNS`, `SYSCAT.SYSCOLUMNS_UNION`, `SYSCAT.COLPARTITIONSTATS`, `SYSIBM.SYSCOLUMNS`, `SYSIBM.SYSCOLPARTITIONSTATS`, `SYSSTAT.COLUMNS` and `SYSSTAT.COLPARTITIONSTATS`, whose `HIGH2KEY` and `LOW2KEY` keep the second highest and lowest value of every column once `RUNSTATS` has run, and which a fresh database lets `PUBLIC` read (capture 13); revoking `SYSCAT.COLUMNS` takes it from every user and client tool of the database, so grant it back to each user or role that reads it first, as `GRANT SELECT ON SYSCAT.COLUMNS TO ROLE APP_READERS`.
 The `SYSPROC` procedure revokes and the `DBMS_JOB` revoke are hygiene the check does not need, since no agent statement can call a procedure; the seed keeps them because they close what the credential itself could do outside Studio.
 The module revokes take `DBMS_LOB`, `DBMS_UTILITY` and the others from every user: grant `EXECUTE` on a module back to each user or role whose code calls it, as `GRANT EXECUTE ON MODULE SYSIBMADM.DBMS_LOB TO USER APP_USER`, before revoking it from `PUBLIC`.
 
@@ -610,7 +618,7 @@ A schema Db2 creates implicitly, for a `CREATE` in a schema that does not exist,
 Grant `SELECT` on tables, or on views whose definitions read only tables, views the user may also read, and IBM's functions: a view that calls a function of yours refuses the user.
 A table with a row permission or a column mask anywhere in the database refuses every agent user; dropping the control, at the cost of what it protects, is the one remedy.
 
-What the agent reads beyond the tables needs no grant: the catalog reads below and plan-mode grounding read the `SYSCAT` views, which `PUBLIC` may read on a fresh database.
+What the agent reads beyond the tables needs no grant: the catalog reads below and plan-mode grounding read the `SYSCAT` views and the value-free column sources of section 6.4, which `PUBLIC` may read on a fresh database and still may after the revokes (capture 16).
 
 #### What only the operator stops
 
@@ -618,15 +626,12 @@ What the agent reads beyond the tables needs no grant: the catalog reads below a
 - A built-in function (`ORIGIN` B) needs no grant and has no catalog facts to read, so it is part of the SQL language the server parses, not something the check can refuse.
 - Inside the derived table only a function can be invoked, so no procedure, IBM's or not, is reachable from an agent statement, whatever the grants.
 - `LOCK TABLE` and `SET` are not residuals: the user may run them raw, and neither fits inside the derived table.
-- `SYSCAT.COLUMNS` keeps the second highest and second lowest value of every column as `HIGH2KEY` and `LOW2KEY` once `RUNSTATS` has run, and the agent user reads them for a table it holds no `SELECT` on (capture 12).
-  Seven IBM objects keep them: `SYSCAT.COLUMNS`, `SYSCAT.SYSCOLUMNS_UNION`, `SYSCAT.COLPARTITIONSTATS`, `SYSIBM.SYSCOLUMNS`, `SYSIBM.SYSCOLPARTITIONSTATS`, `SYSSTAT.COLUMNS` and `SYSSTAT.COLPARTITIONSTATS`, each of which a fresh database lets `PUBLIC` read through its own grant (measured), and Db2 grants no `SELECT` on a column alone (capture 13).
-  Revoking `SELECT` on the seven from `PUBLIC` refuses the values (`SQL0551N`), and `SYSIBM.COLUMNS`, which lists every column without them, stays readable, but it also refuses the provider's own catalog reads for that user: the code page read that every catalog read starts with, so the object tree, `inspect_schema` and the agent's grounding fail with `SQL0551N` on `SYSCAT.COLUMNS` (capture 14, and measured through the provider on 12.1.0.0 on 2026-11-02).
-  Neither `SYSIBM.COLUMNS` nor `SYSIBM.SQLCOLUMNS` carries what the column read shows: neither keeps a `DECFLOAT` column's precision, `SYSIBM.SQLCOLUMNS` leaves `DECFLOAT` columns out, `SYSIBM.COLUMNS` keeps no `VARBINARY` length, and neither keeps the string units a character column was declared in (capture 14).
-  So the check does not refuse the grant, the seed does not revoke it, statistics on a table whose values must not reach the agent are the operator's to withhold, and MCP's statement read stays closed on Db2 for this reason (B168).
+- The two type limits of section 6.4 are what the agent profiles give up for the column statistics revokes: a column declared in `CODEUNITS32` shows its length in the type's default units, and a `DECFLOAT` column of a table the user may not read, or of a view, shows no precision.
+  The describe reply carries the string units, but db2-node 1.0.25 does not expose them (B168).
 
 #### Boundary record
 
-Measured on 12.1.0.0 (the digest `run.sh` pins, 2026-10-29) by [`tests/live/db2-agent-boundary.ts`](../../tests/live/db2-agent-boundary.ts), with Studio's agent admission bypassed: 102 checks, all passing; re-run on 2026-11-02 with the distribution statistics checks, 114 checks, all passing, and again with the monitor reader checks, 126 checks, all passing.
+Measured on 12.1.0.0 (the digest `run.sh` pins, 2026-10-29) by [`tests/live/db2-agent-boundary.ts`](../../tests/live/db2-agent-boundary.ts), with Studio's agent admission bypassed: 102 checks, all passing; re-run on 2026-11-02 with the distribution statistics checks, 114 checks, all passing, and again with the monitor reader checks, 126 checks, all passing, and again with the column statistics revokes and the value-free sources, 151 checks, all passing.
 
 | Probe | Admitted agent user, through `queryReadOnly` | The same user, raw | Instance owner, positive control |
 | --- | --- | --- | --- |
@@ -640,11 +645,12 @@ Measured on 12.1.0.0 (the digest `run.sh` pins, 2026-10-29) by [`tests/live/db2-
 | `CREATE TABLE`, a function in `SYSTOOLS`, `UPDATE SYSSTAT.TABLES` | not sent | `SQL0552N`, `SQL0551N`, `SQL0551N` | not sent |
 
 The rows and `APP.ORDER_SEQ` read back the same before and after.
-The check refused, and admitted again once the grant or the object was gone: `EXECUTE` on an SQL table function that writes, granted to the user, to `PUBLIC`, to a role and through a grant on every function of its schema, measured to write a row for the user; `EXECUTE` on a module and on a package of the owner's; `READ` on a variable of the owner's; `USAGE` on a sequence; `INSERT` on a table; `CREATEIN` on a schema; `CREATETAB` and `IMPLICIT_SCHEMA` to `PUBLIC`; `DBADM`; `SETSESSIONUSER`; a role's `ADMIN OPTION`; `SELECT` on a view that calls a function of the owner's, on a view over a view the user may not read, lifted by granting the inner view, on a view over an alias of a table the user may not read, and on a view left inoperative by a dropped table; `EXECUTE` on IBM's `UTL_FILE` and `DBMS_PIPE` modules and on its `AUDIT_ARCHIVE` table function, each acting outside the call by its own catalog row and not on the measured list; `SELECT` on a view that calls IBM's `DBMS_RANDOM.VALUE`, refused by its module, and on a view over IBM's `AUDIT_ARCHIVE` table function, refused by the function's own row; a column mask on a table the user may not read; `SELECT` to `PUBLIC` on `SYSCAT.COLDIST`, `SYSSTAT.COLGROUPDIST` and `SYSIBM.SYSCOLDISTPARTITIONSTATS`, after a raw connection of the agent user was shown to read, through `SYSCAT.COLDIST`, a value of a table it may not read; `SELECT` on a view of the owner's over `SYSCAT.COLDIST`, after a raw connection was shown to read the same value through it, and on one over `SYSIBM.SYSCOLDIST`; `SELECT` on a view of the owner's over `MON_GET_PKG_CACHE_STMT`, after a raw connection was shown to read the owner's statement and its literal through it, and on one over `SYSIBMADM.MON_CURRENT_SQL`; a user's grant of `EXECUTE` on `MON_GET_PKG_CACHE_STMT` and on the `MONREPORT` module, and of `SELECT` on `SYSIBMADM.MON_CURRENT_SQL`; and a trusted context naming the agent user as its system authorization ID on the address the server saw the script at, enabled and then disabled, after a raw connection of the agent user was shown to hold its default role's `INSERT` with that role absent from `AUTH_LIST_ROLES_FOR_AUTHID`.
+The check refused, and admitted again once the grant or the object was gone: `EXECUTE` on an SQL table function that writes, granted to the user, to `PUBLIC`, to a role and through a grant on every function of its schema, measured to write a row for the user; `EXECUTE` on a module and on a package of the owner's; `READ` on a variable of the owner's; `USAGE` on a sequence; `INSERT` on a table; `CREATEIN` on a schema; `CREATETAB` and `IMPLICIT_SCHEMA` to `PUBLIC`; `DBADM`; `SETSESSIONUSER`; a role's `ADMIN OPTION`; `SELECT` on a view that calls a function of the owner's, on a view over a view the user may not read, lifted by granting the inner view, on a view over an alias of a table the user may not read, and on a view left inoperative by a dropped table; `EXECUTE` on IBM's `UTL_FILE` and `DBMS_PIPE` modules and on its `AUDIT_ARCHIVE` table function, each acting outside the call by its own catalog row and not on the measured list; `SELECT` on a view that calls IBM's `DBMS_RANDOM.VALUE`, refused by its module, and on a view over IBM's `AUDIT_ARCHIVE` table function, refused by the function's own row; a column mask on a table the user may not read; `SELECT` to `PUBLIC` on `SYSCAT.COLDIST`, `SYSSTAT.COLGROUPDIST` and `SYSIBM.SYSCOLDISTPARTITIONSTATS`, after a raw connection of the agent user was shown to read, through `SYSCAT.COLDIST`, a value of a table it may not read; `SELECT` on a view of the owner's over `SYSCAT.COLDIST`, after a raw connection was shown to read the same value through it, and on one over `SYSIBM.SYSCOLDIST`; `SELECT` on a view of the owner's over `MON_GET_PKG_CACHE_STMT`, after a raw connection was shown to read the owner's statement and its literal through it, and on one over `SYSIBMADM.MON_CURRENT_SQL`; a user's grant of `EXECUTE` on `MON_GET_PKG_CACHE_STMT` and on the `MONREPORT` module, and of `SELECT` on `SYSIBMADM.MON_CURRENT_SQL`; `SELECT` to `PUBLIC` on each of the seven objects that keep `HIGH2KEY` and `LOW2KEY`, after a raw connection of the agent user was shown refused the value under the seed and reading one of a table it may not read once `SYSCAT.COLUMNS` went back to `PUBLIC`; `SELECT` on a view of the owner's over `SYSCAT.COLUMNS`, after a raw connection was shown to read the same value through it, and on one over `SYSIBM.SYSCOLUMNS`; a grant on an alias of `SYSSTAT.COLUMNS`, refused by the revoke on `SYSSTAT.COLUMNS` itself; and a trusted context naming the agent user as its system authorization ID on the address the server saw the script at, enabled and then disabled, after a raw connection of the agent user was shown to hold its default role's `INSERT` with that role absent from `AUTH_LIST_ROLES_FOR_AUTHID`.
 It admitted a view over a table, a view over a view the user may read, a view calling `UPPER`, `LENGTH` and `SYSFUN.SPACE`, a view over `SYSCAT.TABLES`, and a user's grant of `EXECUTE` on `AUTH_LIST_GROUPS_FOR_AUTHID`, which the database's own grant already gives `PUBLIC`.
 It admitted `SYSPROC.DB_MEMBERS`, read through `queryReadOnly`, and a view calling `SYSPROC.GET_INDEX_COLNAMES`, both on the measured list.
 On one handle a call ran, an `INSERT` granted after it refused the next call, and the call after its revoke ran; each call read the agent user's own `CURRENT SCHEMA`.
 The operations profile opened the instance owner unchecked and listed its tables; it and an editor handle refused `queryReadOnly` before sending anything.
+Under the seed's revokes, the operations profile and the agent read-only profile, each opened as the agent user, listed the schemas, counted and listed the tables and described `APP.ORDERS` (columns, key, default, foreign key and indexes), a view and the whole folder from the value-free sources; `APP.ALLTYPES`'s two `DECFLOAT` columns read `DECFLOAT` while the user could not read the table and `DECFLOAT(34)` and `DECFLOAT(16)` once it could, its `CHAR(4) FOR BIT DATA` and `VARBINARY(16)` columns whole either way.
 The four catalog kinds answered as the agent user, and the column kind read a table in a schema made implicitly, which `SYSIBM` owns; that schema gave `PUBLIC` `CREATEIN`, which the check refused until it was revoked.
 A lateral read, a union and a table expression put beside the derived table by closing it early were each refused before they were sent, and a parenthesis inside a literal or a comment was read past.
 The budgets: a result of more than 3 rows under a budget of 3 was refused at the 4th, a result past a 20-byte budget was refused, a `CLOB`, a `BLOB` and an `XML` column were refused before any row was read, and a cross join under a 1.5-second deadline was refused at 1.5 seconds, the next call answering.
@@ -653,6 +659,31 @@ The script creates objects carrying the `LIBREDB_AB` prefix and drops them on ex
 
 ```sh
 LIBREDB_LIVE_DB2_PORT=50000 LIBREDB_LIVE_DB2_PASSWORD=<db2inst1's password> bun tests/live/db2-agent-boundary.ts
+```
+
+#### MCP read
+
+MCP's `run_read_query` serves Db2 through the agent's own path: it takes the connection under the agent read-only profile and sends the statement through `queryReadOnly`, so the check above runs before every statement, on the statement's own connection, with no verdict kept between calls, and the statement goes out inside the derived table.
+The check runs before each statement, not at the open, so a user it refuses is refused at the first statement, as that call's failure ("The database refused or failed the call: The agent read-only execution profile refuses the Db2 user ..."), before that statement is sent; a grant added after one call refuses the next call on the same handle.
+A seed carries no separate agent credential, so the seed's own user must be one the check admits, such as the compose service's `AGENT_RO`; the instance owner is refused, and so is a fresh database's user until the revokes above have run.
+`inspect_schema` takes the operations profile, which sends no statement and checks no user, so it reads a Db2 connection's schema whatever its user, from the value-free sources of section 6.4.
+MCP's statement fence refuses a write-shaped statement before anything is acquired, as defence in depth; `NEXT VALUE FOR` in a `VALUES` and an `EXPLAIN` without `ANALYZE` are reads to it, and the server refuses each inside the derived table (`SQL0348N`, `SQL0104N`).
+It runs a `SELECT` (a `WITH` is fine), or `VALUES`: `TABLE` and `EXPLAIN` are refused inside the derived table with `SQL0104N`, and it pages with `OFFSET m ROWS FETCH NEXT n ROWS ONLY`, which the provider writes inside that table; an `offset` on a statement with its own `FETCH FIRST` or `LIMIT`, or on a `VALUES`, is refused before it is sent.
+A result past 1000 rows or 1 MiB is refused, never cut.
+Neither `timeout_ms` nor a client that closes the call stops the statement on the server: the call is answered at once, and the statement runs to its end there, as section 7.4 records for every statement the provider stops waiting for.
+
+What the agent user reads beyond its tables was measured through the tool as the seeded user: a table it holds no `SELECT` on, the nine distribution statistics objects in every spelling (quoted, lower case, a comment inside the name), the statement history (`SYSIBMADM.TOP_DYNAMIC_SQL`, `MON_CURRENT_SQL`, `MON_GET_PKG_CACHE_STMT`, `SNAP_GET_DYN_SQL`) and other sessions (`MON_GET_CONNECTION`) are each refused by the server (`SQL0551N` or `SQL1092N`); Db2 keeps no password in its catalog, and IBM masks the federated option settings, which can hold a remote password, from every user but `SYSIBM` (capture 12).
+The catalog's object facts, view and routine text, the grants and the server's configuration views stay readable, as they are to any user of the database; the second highest and lowest value of every column, which `SYSCAT.COLUMNS` and six other objects keep as `HIGH2KEY` and `LOW2KEY`, are refused under the seed's revokes, through each of the seven, a view of the owner's and an alias.
+The instance owner, and a user holding any authority, is refused before it reads anything.
+
+[`tests/live/db2-mcp-boundary.ts`](../../tests/live/db2-mcp-boundary.ts) replays the boundary check above through the tool's handler with its statement fence removed, against 12.1.0.0, and passed on 2026-11-02, 77 checks.
+The seeded user read its tables; the instance owner, the seeded user granted each of `DBADM`, `DATAACCESS`, `ACCESSCTRL`, `SECADM` and `SQLADM`, and `PUBLIC` granted `SELECT` on `SYSCAT.COLDIST`, `SYSIBM.SYSCOLDIST` or `SYSSTAT.COLGROUPDIST` were each refused in the tool's sentence, and the seeded user was served again once the grant was gone.
+Every write, data change, compound block, `CALL`, `SET`, declared temporary table, `LOCK TABLE`, `COMMIT` and second statement was refused by the server through the handler (`SQL0104N`, `SQL20165N`, `SQL0348N`), and by the fence before anything was acquired with it in place; a statement that closes the derived table early was refused by the provider before it was sent.
+The instance owner ran the writes in a unit of work it rolled back, and a hash of the rows, the sequence, the agent user's grants and the fixture's tables read back the same before and after.
+A read past 1000 rows and one past 1 MiB were refused; a cross join answered at a two-second `timeout_ms` ran about 23 seconds more on the server, and one whose client closed the call after a second about 25 seconds more.
+
+```sh
+LIBREDB_LIVE_DB2_PORT=50000 LIBREDB_LIVE_DB2_PASSWORD=<db2inst1's password> bun tests/live/db2-mcp-boundary.ts
 ```
 
 #### Agent language pack
@@ -670,7 +701,7 @@ The agent reads it through `runServerPack` and `agentEnginePack`, and the dialec
 | `catalogCapture` | Dialect-bound | `"unsupported"` |
 
 This overlay overrides no Shared member, so every Shared member is the `sql` statement-language family's own.
-The catalog read takes `SYSCAT.COLUMNS` for the column kind, `SYSCAT.REFERENCES` and `SYSCAT.KEYCOLUSE` for the foreign keys, `SYSCAT.INDEXES` and `SYSCAT.INDEXCOLUSE` for the indexes, and `SYSCAT.TABLES.CARD` for the row estimates, which the last `RUNSTATS` recorded; every kind leaves out the system's own tables (`SYSCAT.TABLES.OWNERTYPE` S), by that fact rather than by a schema name, since a schema created implicitly is itself owned by `SYSIBM` (measured), names are trimmed, and a selector's schema and table are compared as string literals, exactly as the catalog spells them, an undelimited name in upper case.
+The catalog read takes `SYSIBM.COLUMNS` for the column kind, which keeps no stored value, its ISO type names spelled as the catalog's own (`CHARACTER VARYING` as `VARCHAR`), `SYSCAT.REFERENCES` and `SYSCAT.KEYCOLUSE` for the foreign keys, `SYSCAT.INDEXES` and `SYSCAT.INDEXCOLUSE` for the indexes, and `SYSCAT.TABLES.CARD` for the row estimates, which the last `RUNSTATS` recorded; every kind leaves out the system's own tables (`SYSCAT.TABLES.OWNERTYPE` S), by that fact rather than by a schema name, since a schema created implicitly is itself owned by `SYSIBM` (measured), names are trimmed, and a selector's schema and table are compared as string literals, exactly as the catalog spells them, an undelimited name in upper case.
 Each kind was run as the agent user through `queryReadOnly`.
 Investigation, database assessment and data analysis open on Db2; assessment cannot pass there, because its verdict needs a table profile and the engine composes none (B146); query optimization stays closed, and `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`, because the engine composes no estimating plan and no table profile (B148).
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.

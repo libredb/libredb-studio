@@ -76,7 +76,7 @@ const OTHER = env("LIBREDB_LIVE_COUCHBASE_OTHER_BUCKET");
 const CONTEXT = `default:\`${BUCKET}\``;
 const SCOPE = `\`${BUCKET}\`.\`_default\``;
 const ENGINES =
-  "It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Apache Cassandra and Couchbase.";
+  "It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra and Couchbase.";
 
 /** The tool as MCP registers it, and the same tool with its statement fence removed: the boundary under test. */
 const RUN_READ_QUERY = mcpStatementArm("run_read_query");
