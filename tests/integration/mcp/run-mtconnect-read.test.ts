@@ -29,7 +29,7 @@ import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statem
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
-import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
+import { pinMcpTestEnvironment, resetMcpTestState, waitFor, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
 
 pinMcpTestEnvironment();
@@ -242,7 +242,7 @@ describe("a read", () => {
     const result = await mtconnect("/asset/TOOL-1722");
     expect(result.isError ?? false).toBe(false);
     expect(result.structuredContent?.row_count).toBe(1);
-    const [row] = result.structuredContent?.rows as Array<Record<string, unknown>>;
+    const [row] = (result.structuredContent?.rows ?? []) as Array<Record<string, unknown>>;
     expect(row).toMatchObject({ assetId: "TOOL-1722", type: "CuttingTool" });
     expect(String(row.document)).toStartWith('<CuttingTool assetId="TOOL-1722"');
   });
@@ -400,15 +400,13 @@ describe("the wait", () => {
     const result = await direct("/sample?count=7", 500, new AbortController().signal);
     expect(result.content).toEqual([{ type: "text", text: timeoutText(500) }]);
     expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_timeout" });
-    const deadline = Date.now() + 2_000;
-    while (endedAt === null && Date.now() < deadline) await Bun.sleep(10);
-    expect(endedAt).not.toBeNull();
+    await waitFor(() => endedAt !== null);
   });
 
   test("a client cancel ends the wait at once, and the read runs on until the provider's own budget ends it", async () => {
     const controller = new AbortController();
     const pending = direct("/sample?count=7", 1_500, controller.signal);
-    while (!lines().includes("GET /sample?count=7")) await Bun.sleep(5);
+    await waitFor(() => lines().includes("GET /sample?count=7"));
     const cancelledAt = Date.now();
     controller.abort();
     const result = await pending;
@@ -416,9 +414,7 @@ describe("the wait", () => {
     expect(mcpEvents().at(-1)).toMatchObject({ target: "mcp/execution", reason: "mcp_cancelled" });
     // The cancel did not reach the request: it ended only when the read's own time budget, the time left, ran out.
     expect(endedAt).toBeNull();
-    const deadline = Date.now() + 3_000;
-    while (endedAt === null && Date.now() < deadline) await Bun.sleep(10);
-    expect(endedAt).not.toBeNull();
+    await waitFor(() => endedAt !== null);
     expect((endedAt ?? 0) - cancelledAt).toBeGreaterThan(200);
   });
 });
