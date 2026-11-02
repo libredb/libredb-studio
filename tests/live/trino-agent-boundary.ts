@@ -217,6 +217,7 @@ async function fenceAndBoundary(): Promise<void> {
       "PREPARE p FROM SELECT 1",
       "SELECT 1 AS a; COMMIT",
       'SELECT "user", query FROM "SYSTEM".runtime.queries',
+      "SELECT query FROM system/**/.runtime.queries",
     ]) {
       const error = await readOnly(provider, sql);
       check(error instanceof RefusedBeforeSendError, `${access}: refused before anything is sent: ${sql}`);

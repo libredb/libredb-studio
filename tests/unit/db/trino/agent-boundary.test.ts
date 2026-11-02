@@ -557,6 +557,10 @@ describe("the statement fence", () => {
       ["WITH q AS (SELECT * FROM system.metadata.catalogs) SELECT * FROM q"],
       ["SELECT * FROM TABLE(system.builtin.sequence(start => 1, stop => 3))"],
       ["SELECT * FROM system.queries"],
+      // A comment between the catalog and its first dot is not a token: Trino reads each of these as the catalog.
+      ["SELECT * FROM system/**/.runtime.queries"],
+      ["SELECT count(*) FROM system -- c\n.runtime.queries"],
+      ['SELECT * FROM "system"/**/."runtime"."queries"'],
     ])("refuses %j", (sql) => {
       expect(trinoAgentStatementRefusal(sql)).toBe(SYSTEM_CATALOG);
     });
