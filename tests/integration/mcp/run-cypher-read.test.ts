@@ -156,12 +156,12 @@ const mcpEvents = () =>
 const textOf = (result: Answered) => result.content.map((block) => block.text).join("\n");
 
 describe("the tool", () => {
-  test("is listed after run_mongo_command, read-only, with the statement schema and no offset or database", async () => {
+  test("is listed after run_qdrant_read, read-only, with the statement schema and no offset or database", async () => {
     const session = await connectClient(serve, { negotiation: "legacy" });
     try {
       const tools = (await session.client.listTools()).tools;
       const names = tools.map((tool) => tool.name);
-      expect(names.indexOf("run_cypher_read")).toBe(names.indexOf("run_mongo_command") + 1);
+      expect(names.indexOf("run_cypher_read")).toBe(names.indexOf("run_qdrant_read") + 1);
       const tool = tools.find((candidate) => candidate.name === "run_cypher_read");
       expect(tool?.description).toBe(RUN_CYPHER_READ_ARM.description);
       expect(tool?.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });

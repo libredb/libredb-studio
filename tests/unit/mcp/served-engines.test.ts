@@ -67,7 +67,16 @@ describe("mcpStatementEngines", () => {
   });
 
   test("reads the shipped records when none are passed", () => {
-    for (const language of ["sql", "mongo", "kubectl", "cypher", "libredbkv", "qdrantapi", "rabbitread", "kafkaread"] as const) {
+    for (const language of [
+      "sql",
+      "mongo",
+      "kubectl",
+      "cypher",
+      "libredbkv",
+      "qdrantapi",
+      "rabbitread",
+      "kafkaread",
+    ] as const) {
       expect(mcpStatementEngines(language)).toEqual(mcpStatementEngines(language, SHIPPED));
     }
   });

@@ -77,9 +77,9 @@ describe("MCP_STATEMENT_ARMS", () => {
       "run_mongo_command",
       "run_libredb_read",
       "run_qdrant_read",
+      "run_cypher_read",
       "run_rabbitmq_read",
       "run_kafka_read",
-      "run_cypher_read",
     ]);
   });
 
@@ -754,9 +754,9 @@ describe("the tool each engine is read with", () => {
       "run_mongo_command",
       "run_libredb_read",
       "run_qdrant_read",
+      "run_cypher_read",
       "run_rabbitmq_read",
       "run_kafka_read",
-      "run_cypher_read",
     ]);
   });
 
