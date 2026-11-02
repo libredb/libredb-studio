@@ -1,0 +1,12 @@
+{
+  "version": "1.19.1",
+  "name": "mcp-scope/collections-jwt-alias-read",
+  "capturedAt": "2026-11-02",
+  "principal": "a JWT whose access claim is [{\"collection\":\"mcp_other_alias\",\"access\":\"r\"}]",
+  "request": {
+    "method": "GET",
+    "path": "/collections"
+  },
+  "status": 200,
+  "body": "{\"result\":{\"collections\":[]},\"status\":\"ok\",\"time\":0}"
+}

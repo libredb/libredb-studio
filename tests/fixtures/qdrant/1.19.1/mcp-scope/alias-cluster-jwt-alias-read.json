@@ -1,0 +1,12 @@
+{
+  "version": "1.19.1",
+  "name": "mcp-scope/alias-cluster-jwt-alias-read",
+  "capturedAt": "2026-11-02",
+  "principal": "a JWT whose access claim is [{\"collection\":\"mcp_other_alias\",\"access\":\"r\"}]",
+  "request": {
+    "method": "GET",
+    "path": "/collections/mcp_other_alias/cluster"
+  },
+  "status": 200,
+  "body": "{\"result\":{\"peer_id\":680319220590868,\"shard_count\":1,\"local_shards\":[{\"shard_id\":0,\"points_count\":1,\"state\":\"Active\"}],\"remote_shards\":[],\"shard_transfers\":[]},\"status\":\"ok\",\"time\":0}"
+}
