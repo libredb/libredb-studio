@@ -314,7 +314,7 @@ describe("a refusal", () => {
     ]);
   });
 
-  test("a dbName naming another database, which the admission leaves to the provider, is refused there before anything is sent", async () => {
+  test("a dbName naming another database, which the admission leaves to the provider, is refused there once the connection is acquired, and the request is never sent", async () => {
     const statement = request("collections/list", { dbName: "scope_db_b" });
     expect(server.admit?.(statement)).toBeNull();
     const result = await milvus(statement);
