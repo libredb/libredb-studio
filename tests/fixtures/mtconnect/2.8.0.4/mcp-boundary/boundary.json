@@ -1,0 +1,407 @@
+{
+  "fixture": {
+    "image": "mtconnect/agent:2.8.0.4@sha256:c42f90850ab70d65ae5e73b14392b3041ed51065bd7bf287658db6f7260df641",
+    "adapter": "docker/mtconnect-init/adapter.py, one position every 10 s",
+    "agents": {
+      "17422": "AllowPut = false (docker/mtconnect-init/agent.cfg)",
+      "17423": "AllowPut = true",
+      "17424": "AllowPut = false, MqttService sink to an eclipse-mosquitto 2.0.22 broker"
+    },
+    "capturedAt": "2026-11-02"
+  },
+  "tool": "run_mtconnect_read",
+  "reads": [
+    {
+      "statement": "/probe",
+      "answered": true,
+      "rowCount": 16,
+      "sent": [
+        "GET /probe",
+        "GET /probe"
+      ],
+      "carriesAdapterAddress": false
+    },
+    {
+      "statement": "/LIBREDB-LATHE-1722/probe",
+      "answered": true,
+      "rowCount": 9,
+      "sent": [
+        "GET /probe",
+        "GET /LIBREDB-LATHE-1722/probe"
+      ],
+      "carriesAdapterAddress": false
+    },
+    {
+      "statement": "/current",
+      "answered": true,
+      "rowCount": 16,
+      "sent": [
+        "GET /probe",
+        "GET /current"
+      ],
+      "carriesAdapterAddress": false
+    },
+    {
+      "statement": "/LIBREDB-LATHE-1722/current",
+      "answered": true,
+      "rowCount": 9,
+      "sent": [
+        "GET /probe",
+        "GET /LIBREDB-LATHE-1722/current"
+      ],
+      "carriesAdapterAddress": false
+    },
+    {
+      "statement": "/current?path=//DataItem[@category=\"EVENT\"]",
+      "answered": true,
+      "rowCount": 13,
+      "sent": [
+        "GET /probe",
+        "GET /current?path=%2F%2FDataItem%5B%40category%3D%22EVENT%22%5D"
+      ],
+      "carriesAdapterAddress": false
+    },
+    {
+      "statement": "/sample?count=-5",
+      "answered": true,
+      "rowCount": 5,
+      "sent": [
+        "GET /probe",
+        "GET /sample?count=-5"
+      ],
+      "carriesAdapterAddress": false
+    },
+    {
+      "statement": "/LIBREDB-LATHE-1722/sample?path=//DataItem[@type=\"POSITION\"]&count=-3",
+      "answered": true,
+      "rowCount": 2,
+      "sent": [
+        "GET /probe",
+        "GET /LIBREDB-LATHE-1722/sample?path=%2F%2FDataItem%5B%40type%3D%22POSITION%22%5D&count=-3"
+      ],
+      "carriesAdapterAddress": false
+    },
+    {
+      "statement": "/assets",
+      "answered": true,
+      "rowCount": 1,
+      "sent": [
+        "GET /probe",
+        "GET /assets"
+      ],
+      "carriesAdapterAddress": false
+    },
+    {
+      "statement": "/LIBREDB-LATHE-1722/assets",
+      "answered": true,
+      "rowCount": 1,
+      "sent": [
+        "GET /probe",
+        "GET /LIBREDB-LATHE-1722/assets"
+      ],
+      "carriesAdapterAddress": false
+    },
+    {
+      "statement": "/asset/TOOL-1722",
+      "answered": true,
+      "rowCount": 1,
+      "sent": [
+        "GET /probe",
+        "GET /asset/TOOL-1722"
+      ],
+      "carriesAdapterAddress": false
+    }
+  ],
+  "writes": [
+    {
+      "statement": "PUT /probe",
+      "fenced": {
+        "refused": "The request was refused before it reached the agent (request).",
+        "acquired": 0,
+        "sent": []
+      },
+      "unfenced": {
+        "refused": "The statement was refused before it reached the database: PUT is not a method this provider sends.",
+        "sent": []
+      }
+    },
+    {
+      "statement": "PUT /LIBREDB-LATHE-1722?x1722-pos=9999",
+      "fenced": {
+        "refused": "The request was refused before it reached the agent (request).",
+        "acquired": 0,
+        "sent": []
+      },
+      "unfenced": {
+        "refused": "The statement was refused before it reached the database: PUT is not a method this provider sends.",
+        "sent": []
+      }
+    },
+    {
+      "statement": "POST /LIBREDB-LATHE-1722?p1722-prog=MCP.NC",
+      "fenced": {
+        "refused": "The request was refused before it reached the agent (request).",
+        "acquired": 0,
+        "sent": []
+      },
+      "unfenced": {
+        "refused": "The statement was refused before it reached the database: POST is not a method this provider sends.",
+        "sent": []
+      }
+    },
+    {
+      "statement": "DELETE /asset/TOOL-1722",
+      "fenced": {
+        "refused": "The request was refused before it reached the agent (request).",
+        "acquired": 0,
+        "sent": []
+      },
+      "unfenced": {
+        "refused": "The statement was refused before it reached the database: DELETE is not a method this provider sends.",
+        "sent": []
+      }
+    }
+  ],
+  "positiveControl": {
+    "agent": "AllowPut = true",
+    "throughUnfencedTool": {
+      "sent": [],
+      "valueChanged": false
+    },
+    "raw": {
+      "request": "PUT /LIBREDB-LATHE-1722?x1722-pos=4242",
+      "status": 200,
+      "valueChanged": true
+    }
+  },
+  "refused": [
+    {
+      "statement": "/cancel/id=1",
+      "fenced": {
+        "refused": "The request was refused before it reached the agent (request).",
+        "acquired": 0
+      },
+      "unfenced": {
+        "refused": "The statement was refused before it reached the database: GET /cancel/id=1 is not a route this provider runs.",
+        "sent": []
+      }
+    },
+    {
+      "statement": "/assets/TOOL-1722",
+      "fenced": {
+        "refused": "The request was refused before it reached the agent (request).",
+        "acquired": 0
+      },
+      "unfenced": {
+        "refused": "The statement was refused before it reached the database: GET /assets/TOOL-1722 is not a route this provider runs.",
+        "sent": []
+      }
+    },
+    {
+      "statement": "/swagger",
+      "fenced": {
+        "refused": "The request was refused before it reached the agent (request).",
+        "acquired": 0
+      },
+      "unfenced": {
+        "refused": "The statement was refused before it reached the database: GET /swagger is not a route this provider runs.",
+        "sent": []
+      }
+    },
+    {
+      "statement": "/sample?interval=1000",
+      "fenced": {
+        "refused": "The request was refused before it reached the agent (request).",
+        "acquired": 0
+      },
+      "unfenced": {
+        "refused": "The statement was refused before it reached the database: interval is not sent by this provider: streaming is out of scope for v1: an answer never ends, and the shared transport cannot carry it.",
+        "sent": []
+      }
+    },
+    {
+      "statement": "/current?heartbeat=1000",
+      "fenced": {
+        "refused": "The request was refused before it reached the agent (request).",
+        "acquired": 0
+      },
+      "unfenced": {
+        "refused": "The statement was refused before it reached the database: heartbeat is not sent by this provider: streaming is out of scope for v1.",
+        "sent": []
+      }
+    },
+    {
+      "statement": "/sample?frequency=1000",
+      "fenced": {
+        "refused": "The request was refused before it reached the agent (request).",
+        "acquired": 0
+      },
+      "unfenced": {
+        "refused": "The statement was refused before it reached the database: frequency is not sent by this provider: the deprecated spelling of interval.",
+        "sent": []
+      }
+    },
+    {
+      "statement": "/current\n/sample",
+      "fenced": {
+        "refused": "The request was refused before it reached the agent (request).",
+        "acquired": 0
+      },
+      "unfenced": {
+        "refused": "The statement was refused before it reached the database: A run sends one request.",
+        "sent": []
+      }
+    },
+    {
+      "statement": "/../probe",
+      "fenced": {
+        "refused": "The request was refused before it reached the agent (request).",
+        "acquired": 0
+      },
+      "unfenced": {
+        "refused": "The statement was refused before it reached the database: device is a dot segment, which a URL resolves to another path, so what would be sent is not the route that was written.",
+        "sent": []
+      }
+    },
+    {
+      "statement": "/current?path=count(//DataItem)",
+      "fenced": {
+        "refused": "The request was refused before it reached the agent (request).",
+        "acquired": 0
+      },
+      "unfenced": {
+        "refused": "The statement was refused before it reached the database: count() is not a function this provider sends.",
+        "sent": []
+      }
+    },
+    {
+      "statement": "/current?path=//Adapter",
+      "fenced": {
+        "refused": "The request was refused before it reached the agent (request).",
+        "acquired": 0
+      },
+      "unfenced": {
+        "refused": "The statement was refused before it reached the database: The path is outside what agent mode sends.",
+        "sent": []
+      }
+    },
+    {
+      "statement": "/current?path=//DataItem[starts-with(@id,\"_\")]",
+      "fenced": {
+        "refused": "The request was refused before it reached the agent (request).",
+        "acquired": 0
+      },
+      "unfenced": {
+        "refused": "The statement was refused before it reached the database: The path is outside what agent mode sends.",
+        "sent": []
+      }
+    },
+    {
+      "statement": "/sample?count=1001",
+      "fenced": {
+        "refused": "The statement was refused before it reached the database: count may not be larger than this read's row cap of 1000.",
+        "acquired": 1
+      },
+      "unfenced": {
+        "refused": "The statement was refused before it reached the database: count may not be larger than this read's row cap of 1000.",
+        "sent": []
+      }
+    }
+  ],
+  "pathOracle": {
+    "hitAndMissAlike": true,
+    "refusal": "The database refused or failed the call: The path's test @id=\"{}\" names a value no data item agent mode reads holds, so it is not sent: a value is the id of a data item of this agent's device model other than its withheld adapter connections.",
+    "sent": {
+      "hit": [
+        "GET /probe"
+      ],
+      "miss": [
+        "GET /probe"
+      ]
+    }
+  },
+  "limits": {
+    "cutAtMaxRows": {
+      "rowCount": 2,
+      "truncatedBy": "max_rows",
+      "hint": "More rows exist than this result holds, and this tool does not page with offset. Ask for at most 2 rows: an observation read answers one row per observation, a device model read one row per data item and an asset read one row per asset, so name one device, narrow the path to the data items you need, or give /sample or /assets a smaller count. To read past the 2 rows returned, read /sample from the sequence after the last one returned, or split the read by device or path, since an MTConnect read is never paged."
+    },
+    "timeout": {
+      "timeoutMs": 500,
+      "answer": "The statement did not finish within timeout_ms (500 ms).",
+      "answeredWithinMs": true,
+      "lastRequest": "GET /probe",
+      "providerRequestEnded": true
+    },
+    "cancel": {
+      "timeoutMs": 3000,
+      "cancelledAfterMs": 200,
+      "answer": "The call was cancelled before it finished.",
+      "answeredBeforeTheTimeLeft": true,
+      "providerRequestOpenWhenAnswered": true,
+      "providerRequestEndedNearTheTimeLeft": true
+    }
+  },
+  "assets": {
+    "stored": [
+      {
+        "asset": "FILE-1",
+        "type": "File",
+        "status": 200
+      },
+      {
+        "asset": "FILE-2",
+        "type": "File",
+        "status": 200
+      },
+      {
+        "asset": "TOOL-2",
+        "type": "CuttingTool",
+        "status": 200
+      }
+    ],
+    "agentServesTheUserinfoAsWritten": true,
+    "throughTheTool": {
+      "rows": [
+        {
+          "assetId": "TOOL-2",
+          "type": "CuttingTool"
+        },
+        {
+          "assetId": "FILE-2",
+          "type": "File"
+        },
+        {
+          "assetId": "FILE-1",
+          "type": "File"
+        },
+        {
+          "assetId": "TOOL-1722",
+          "type": "CuttingTool"
+        }
+      ],
+      "carriesTheUserName": false,
+      "carriesThePassword": false,
+      "carriesTheQuery": false,
+      "keepsTheHostAndPath": true,
+      "keepsTheFilePath": true,
+      "keepsTheToolDescription": true
+    }
+  },
+  "sink": {
+    "rawRoutesCarryingTheBroker": [],
+    "throughTheTool": {
+      "probeCarriesTheBroker": false,
+      "currentCarriesTheBroker": false
+    }
+  },
+  "factory": {
+    "answered": true,
+    "rowCount": 16
+  },
+  "state": {
+    "nextSequenceBefore": 36,
+    "nextSequenceAfter": 36,
+    "observationsBetween": []
+  }
+}
