@@ -288,9 +288,11 @@ const connection = {
 
 The `.libredb` file must be accessible on the filesystem of the machine running the Studio server.
 Remote LibreDB is not possible — the database has no server or wire protocol by design. If the
-file does not exist at `connect()` time, the `@libredb/libredb` package will create it (an empty
-ordered-KV store). If the path is missing entirely, `connect()` throws `DatabaseConfigError`
-before attempting to open anything.
+file does not exist at `connect()` time, the editor's open lets the `@libredb/libredb` package
+create it (an empty ordered-KV store, which is zero bytes on disk until its first commit). An
+agent or MCP acquisition never creates it: every execution profile opens an existing file only
+and refuses a missing one, see §15.1 and §15.2. If the path is missing entirely, `connect()`
+throws `DatabaseConfigError` before attempting to open anything.
 
 ### 4.2.1 On-disk format, locking, and version compatibility (0.2.x)
 
@@ -1425,6 +1427,8 @@ MCP's `run_libredb_read` reads through this same path, under the agent read-only
 
 The boundary is engine-enforced through the engine's own file seam: LibreDB has no read-only mode and no principal, and it reaches the disk only through the `FileSystem` it is given, writing through exactly one call of it, the write-ahead log's `append` (a commit appends, then fsyncs; recovery truncates a torn tail, then fsyncs).
 The read-only adapter opens the file read-only, a descriptor the operating system does not write through, and refuses a missing file rather than creating it.
+It then reads one byte past the size the descriptor reports, and refuses the file as no LibreDB file (`LibreDBNotAStoreError`, answered with the kernel's `NOT_A_DATABASE` sentence) when that byte exists and the size, asked again, has not grown past the first answer: a procfs file such as `/proc/self/environ` reports a size of 0 and is filled when read, and the kernel, which reads a file's size before its bytes, took it for an empty store.
+A zero-length regular file still opens, as an empty store: measured, a store the kernel created and closed with no commit is zero bytes on disk, because the file header is written with the first commit.
 The open does not wait, and what it opened is refused unless it is a regular file: the agent's handles reopen the file after `connect()` checked it, so a FIFO put at the path since then is refused (*"Failed to open LibreDB file: <path> is a named pipe (FIFO), not a regular file"*) instead of blocking the server's thread.
 Its `append` refuses before any write call, so the kernel answers the commit `FAILED` and latches the handle, refusing every later call on it until it is closed; its `truncate` and `fsync` change nothing, so recovery drops a torn tail from the handle's memory and leaves the bytes on disk as found.
 It declares no `lock`, so the kernel takes no `<path>.lock`: a profiled reader opens beside the editor's writer, which holds the lock, instead of being refused `LOCKED`, and the writer opens beside a reader that opened first.
@@ -1439,7 +1443,7 @@ The profiled provider also holds a handle for the agent's object reads (the inve
 A file gone since the open fails that read with the connection's sentence, as a statement does.
 `query()` on a profiled provider is refused before it reaches the held handle, so no write sent there can latch it for the object reads; statements go through `queryReadOnly` only.
 The acquisition in `src/lib/db/factory.ts` passes the execution context to the provider, and a handle is read-only only when it was opened for an acquisition that sends statements (`agent-read-only` and `agent-handover`), so `queryReadOnly` refuses a handle the editor or the operations profile opened, before anything is read.
-The operations profile is unchanged: it borrows the editor's open handle (`findOpenSingleWriterProvider`), and with none open it opens one of its own as the editor does.
+The operations profile borrows the editor's open handle (`findOpenSingleWriterProvider`), and with none open it opens one of its own that holds the writer's lock as the editor's does, so nothing commits beside it, through the read-only adapter (`libredbLockedReadOnlyFileSystem`), which takes the lock only once the file has been opened and checked: a missing file, or one the adapter refuses, is refused before `<path>.lock` is created, and the file is never created.
 
 ### 15.3 The statement path
 
@@ -1477,10 +1481,10 @@ A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES`
 
 ### 15.7 Boundary record
 
-- [`tests/unit/db/libredb/read-only-file.test.ts`](../../tests/unit/db/libredb/read-only-file.test.ts): the adapter against the real kernel, a held writer beside it, a bypassed `kv.set`, `delete` and raw transaction write with the file and the lock compared byte for byte, a descriptor a write through fails with `EBADF`, a path that is not a regular file refused from what was opened, a missing file, and a torn tail.
+- [`tests/unit/db/libredb/read-only-file.test.ts`](../../tests/unit/db/libredb/read-only-file.test.ts): the adapter against the real kernel, a held writer beside it, a bypassed `kv.set`, `delete` and raw transaction write with the file and the lock compared byte for byte, a descriptor a write through fails with `EBADF`, a path that is not a regular file refused from what was opened, a missing file, a torn tail, `/proc/self/environ` refused as no LibreDB file beside a zero-length file and a freshly created store that open as empty stores, and the locked form: the lock taken on an existing store and released on close, a missing file refused with no file and no lock created, and a procfs file refused before the lock is tried.
 - [`tests/unit/db/libredb/command.test.ts`](../../tests/unit/db/libredb/command.test.ts): every admitted form, and every refused spelling of a write, a second line and a malformed command.
-- [`tests/integration/db/libredb-provider.test.ts`](../../tests/integration/db/libredb-provider.test.ts), "the agent read-only profile": the refusal on an editor and an operations handle, a reader and a writer coexisting in both orders without `LOCKED`, the writes refused before the open, `query()` refused, the writes sent around everything on the provider's own store failing on the handle, a handle per statement closed on every path out and a replaced snapshot closed, the budgets, a missing or foreign file, and a FIFO put at the path after the open refused rather than waited on.
-- [`tests/integration/mcp/run-libredb-read.test.ts`](../../tests/integration/mcp/run-libredb-read.test.ts): the same boundary replayed through MCP's `run_libredb_read` on real files, through the MCP handler and the seed file: each read form, a read beside the editor's writer, every refused form at admission and, with that fence removed, a `put` and a `delete` refused by the provider's reader with the file byte for byte unchanged beside a writable positive control, both budgets, every data-scope probe of 15.8, and a timeout and a cancel during a read.
+- [`tests/integration/db/libredb-provider.test.ts`](../../tests/integration/db/libredb-provider.test.ts), "the agent read-only profile": the refusal on an editor and an operations handle, a reader and a writer coexisting in both orders without `LOCKED`, the writes refused before the open, `query()` refused, the writes sent around everything on the provider's own store failing on the handle, a handle per statement closed on every path out and a replaced snapshot closed, the budgets, a missing or foreign file, a FIFO put at the path after the open refused rather than waited on, an operations handle that holds the lock, changes no byte and refuses a missing file with no file and no lock created, a procfs file refused under both agent profiles, and the editor still creating a missing file.
+- [`tests/integration/mcp/run-libredb-read.test.ts`](../../tests/integration/mcp/run-libredb-read.test.ts): the same boundary replayed through MCP's `run_libredb_read` on real files, through the MCP handler and the seed file: each read form, a read beside the editor's writer, every refused form at admission and, with that fence removed, a `put` and a `delete` refused by the provider's reader with the file byte for byte unchanged beside a writable positive control, both budgets, every data-scope probe of 15.8 through both `run_libredb_read` and `inspect_schema`, and a timeout and a cancel during a read.
 - [`tests/isolated/factory.test.ts`](../../tests/isolated/factory.test.ts), "single-writer file reuse": the agent read-only acquisition opening its own read-only handle beside the held writer and never the writable one, the editor opening beside a profiled reader that opened first, the operations borrow unchanged, and the agent credential refused under the read-only profile with the file unchanged.
 
 ### 15.8 MCP: `run_libredb_read`
@@ -1499,10 +1503,11 @@ The engine has no principal, so a LibreDB seed proves none and carries none, and
 | Studio's storage database, its `-wal` and `-shm` files, `auth-bootstrap.json` (with its `.bak` and temporary files): users, sessions, audit, saved connections and credentials | No | The target check at open (`isReservedStoragePath`, [`src/lib/data-dir.ts`](../../src/lib/data-dir.ts)), by resolved path and by file identity, so a symbolic or hard link to one is refused too, before anything is opened |
 | A file that is not a LibreDB file, such as a copy of the storage database | No | The kernel's own format check, which refuses it as `NOT_A_DATABASE` and leaves it untouched |
 | The file's reserved internal namespace (the catalog, under U+0000) | No | Each key read is dropped from the answer when `isReservedKey` holds for it, so a `get` of a catalog key and a `range` or `prefix` across it answer no reserved row |
-| A file that does not exist | No | The read-only adapter refuses a missing file and creates none |
+| A file that does not exist | No | Both tools open an existing file only: `run_libredb_read` through the read-only adapter, and `inspect_schema` through the same adapter under the writer's lock, which is taken only once the file was opened, so neither creates the file or its `.lock`, and a later read still meets the missing file |
+| A file whose bytes run past the size it reports, such as `/proc/self/environ`, which reports 0 | No | The read-only adapter reads one byte past the reported size and refuses it as no LibreDB file, with the format check's sentence, under both tools |
 
 The built-in sample connection is never visible to an MCP client, so only an operator's seed reaches MCP.
 Measured on `@libredb/libredb` 0.2.2 by [`tests/integration/mcp/run-libredb-read.test.ts`](../../tests/integration/mcp/run-libredb-read.test.ts), through the MCP handler and the seed file, against real files.
 
 A cancel or a timeout is seen only when the read has ended, because the read runs on the server's own thread and cannot be stopped midway: a read that outran the time left of `timeout_ms` is then answered as the timeout, and a cancel delivered during a read arrives after the read's answer was settled.
-`run_libredb_read` takes no lock, so it never holds the file from the editor; `inspect_schema` opens the file as the operations profile does, which takes the exclusive lock when no Studio session holds the file open ([`docs/MCP.md`](../MCP.md)).
+`run_libredb_read` takes no lock, so it never holds the file from the editor; `inspect_schema` opens the file as the operations profile does, which takes the exclusive lock when no Studio session holds the file open, and opens an existing file only ([`docs/MCP.md`](../MCP.md)).

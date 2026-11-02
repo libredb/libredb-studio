@@ -73,7 +73,11 @@ import {
   TIME_BUDGET_PREFIX,
 } from "../sql/read-only-budget";
 import { type LibreDBReadCommand, readLibreDBReadCommand, tokenizeLibreDBCommand } from "./libredb-command";
-import { libredbReadOnlyFileSystem } from "./libredb-read-only-file";
+import {
+  LibreDBNotAStoreError,
+  libredbLockedReadOnlyFileSystem,
+  libredbReadOnlyFileSystem,
+} from "./libredb-read-only-file";
 import { CACHE_HIT_RATIO_UNAVAILABLE } from "@/lib/monitoring-cache-ratio";
 import * as fs from "fs";
 import { isReservedStoragePath } from "@/lib/data-dir";
@@ -81,6 +85,9 @@ import * as path from "path";
 
 /** SQLite's in-memory database name, which LibreDB does not have (#1450). */
 const LIBREDB_MEMORY_NAME = ":memory:";
+
+/** What a file that is not a LibreDB store is refused with, by the kernel's format check or the read-only adapter. */
+const LIBREDB_NOT_A_DATABASE = "The file is not a LibreDB database. It was left untouched \u2014 check the path.";
 
 /** The file the kernel keeps beside a database: its writer lock. */
 const LIBREDB_SIDECAR_SUFFIXES = [".lock"] as const;
@@ -105,6 +112,15 @@ function fileSnapshotOf(file: string): string {
 /** The file opened through the read-only adapter: no lock, and no call on the handle can change the file. */
 function openReadOnly(lib: LibreDBModule, file: string): LibreDatabase {
   return lib.open({ path: file, fs: libredbReadOnlyFileSystem() });
+}
+
+/**
+ * The operations profile's open: the read-only adapter under the writer's lock, so the file is held as the editor
+ * holds it, an existing file is opened only, and neither it nor its lock is created when it is missing.
+ */
+function openLockedReadOnly(lib: LibreDBModule, file: string): LibreDatabase {
+  const writer = lib.nodeFileSystem();
+  return lib.open({ path: file, fs: libredbLockedReadOnlyFileSystem((target) => writer.lock!(target)) });
 }
 
 /**
@@ -399,12 +415,19 @@ export class LibreDBProvider extends BaseDatabaseProvider {
    * unchanged.
    */
   private readonly readOnlyProfile: boolean;
+  /**
+   * Whether this handle was opened under an execution profile at all (`readOnly`), the operations profile included.
+   * Then the file must already exist: an acquisition never creates a file or its lock, while the editor's open
+   * creates a missing file as a new connection's store.
+   */
+  private readonly opensExistingOnly: boolean;
   /** The file's identity, size and modification time when the read-only handle opened: see `ensureConnected`. */
   private snapshotOf: string | null = null;
 
   constructor(config: DatabaseConnection, options: ProviderOptions = {}, execution: ProviderExecutionContext = {}) {
     super(config, options);
     this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
+    this.opensExistingOnly = execution.readOnly === true;
   }
 
   // --------------------------------------------------------------------------
@@ -570,6 +593,8 @@ export class LibreDBProvider extends BaseDatabaseProvider {
       if (this.readOnlyProfile) {
         this.snapshotOf = fileSnapshotOf(dbPath);
         this.db = openReadOnly(lib, dbPath);
+      } else if (this.opensExistingOnly) {
+        this.db = openLockedReadOnly(lib, dbPath);
       } else {
         this.db = lib.open({ path: dbPath });
       }
@@ -591,16 +616,17 @@ export class LibreDBProvider extends BaseDatabaseProvider {
    * generic wrapper together with non-kernel errors.
    */
   private describeOpenError(lib: LibreDBModule, error: unknown): string {
-    // Only the read-only open can meet a missing file: the editor's open creates it.
+    // Only an agent profile's open can meet a missing file: the editor's open creates it.
     if ((error as NodeJS.ErrnoException | null)?.code === "ENOENT") {
-      return `The LibreDB file ${this.resolveDatabasePath()} does not exist. The agent opens an existing file read-only and creates none.`;
+      return `The LibreDB file ${this.resolveDatabasePath()} does not exist. The agent opens an existing file only and creates none.`;
     }
+    if (error instanceof LibreDBNotAStoreError) return LIBREDB_NOT_A_DATABASE;
     if (error instanceof lib.LibreDbError) {
       switch (error.code) {
         case "LOCKED":
           return "LibreDB file is already open by another process (exclusive lock). Close the other writer, or wait for its lock to be released.";
         case "NOT_A_DATABASE":
-          return "The file is not a LibreDB database. It was left untouched — check the path.";
+          return LIBREDB_NOT_A_DATABASE;
         case "UNSUPPORTED_VERSION":
           return "The file was written by a newer version of LibreDB than this Studio supports. Upgrade the @libredb/libredb package.";
         case "CORRUPT_WAL":

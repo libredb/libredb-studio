@@ -469,7 +469,88 @@ describe("the data scope", () => {
     writeSeedFile(dir, [{ id: "absent", type: "libredb", database: absent }]);
     const result = await libredb("get users:1", {}, "seed:absent");
     expect(result.isError).toBe(true);
+    expect(text(result)).toContain(`The LibreDB file ${absent} does not exist.`);
     expect(existsSync(absent)).toBe(false);
+    expect(existsSync(`${absent}.lock`)).toBe(false);
+  });
+
+  test("inspect_schema refuses a file that does not exist with the same sentence, and creates neither it nor its lock", async () => {
+    const absent = join(dir, "absent-inspected.libredb");
+    writeSeedFile(dir, [{ id: "absent", type: "libredb", database: absent }]);
+    const inspected = await call("inspect_schema", { connection_id: "seed:absent" });
+    expect(inspected.isError).toBe(true);
+    expect(text(inspected)).toContain(`The LibreDB file ${absent} does not exist.`);
+    expect(existsSync(absent)).toBe(false);
+    expect(existsSync(`${absent}.lock`)).toBe(false);
+    // So a read after it still meets the missing file rather than an empty store it made.
+    const read = await libredb("prefix u", {}, "seed:absent");
+    expect(read.isError).toBe(true);
+    expect(text(read)).toContain(`The LibreDB file ${absent} does not exist.`);
+    expect(existsSync(absent)).toBe(false);
+  });
+
+  test("a name beside Studio's storage database that is not one of its files is never created by either tool", async () => {
+    const variant = join(STATE, "LIBREDB-STORAGE.DB");
+    writeSeedFile(dir, [{ id: "variant", type: "libredb", database: variant }]);
+    for (const result of [
+      await call("inspect_schema", { connection_id: "seed:variant" }),
+      await libredb("prefix u", {}, "seed:variant"),
+    ]) {
+      expect(result.isError).toBe(true);
+      expect(text(result)).toContain("does not exist");
+    }
+    expect(existsSync(variant)).toBe(false);
+    expect(existsSync(`${variant}.lock`)).toBe(false);
+  });
+
+  test("a reserved path is refused by both tools before anything is created beside it", async () => {
+    for (const result of [
+      await call("inspect_schema", { connection_id: "seed:storage" }),
+      await libredb("prefix u", {}, "seed:storage"),
+    ]) {
+      expect(result.isError).toBe(true);
+      expect(text(result)).toContain("This path is reserved for the server's own storage");
+    }
+    expect(existsSync(`${STORAGE}.lock`)).toBe(false);
+  });
+
+  test("a pseudo-file whose size reads 0 but which holds bytes is refused by both tools as no LibreDB file", async () => {
+    writeSeedFile(dir, [{ id: "environ", type: "libredb", database: "/proc/self/environ" }]);
+    for (const result of [
+      await call("inspect_schema", { connection_id: "seed:environ" }),
+      await libredb("prefix u", {}, "seed:environ"),
+    ]) {
+      expect(result.isError).toBe(true);
+      expect(text(result)).toContain("The file is not a LibreDB database. It was left untouched");
+      expect(text(result)).not.toContain("does not exist");
+    }
+  });
+
+  test("a zero-length file is an empty store, as a freshly created one is, and both tools read it", async () => {
+    const fresh = join(dir, "fresh.libredb");
+    const zero = join(dir, "zero.libredb");
+    open({ path: fresh }).close();
+    writeFileSync(zero, "");
+    // Measured: a store the kernel created and closed with no commit is zero bytes on disk.
+    expect(readFileSync(fresh).length).toBe(0);
+    try {
+      writeSeedFile(dir, [
+        { id: "fresh", type: "libredb", database: fresh },
+        { id: "zero", type: "libredb", database: zero },
+      ]);
+      for (const id of ["seed:fresh", "seed:zero"]) {
+        const inspected = await call("inspect_schema", { connection_id: id });
+        expect(inspected.isError).toBeFalsy();
+        const read = await libredb("prefix u", {}, id);
+        expect(read.isError).toBeFalsy();
+        expect(read.structuredContent?.rows).toEqual([]);
+      }
+      expect(readFileSync(fresh).length).toBe(0);
+      expect(readFileSync(zero).length).toBe(0);
+    } finally {
+      rmSync(fresh, { force: true });
+      rmSync(zero, { force: true });
+    }
   });
 
   test("the file's reserved namespace holds the catalog, and no command reads a key of it", async () => {

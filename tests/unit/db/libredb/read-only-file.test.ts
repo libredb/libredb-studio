@@ -6,12 +6,14 @@
  * it, byte for byte before and after, rather than trusting what the kernel says it did.
  */
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { open, kv } from "@libredb/libredb";
+import { open, kv, nodeFileSystem } from "@libredb/libredb";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import {
   LIBREDB_READ_ONLY_WRITE_REFUSAL,
+  LibreDBNotAStoreError,
+  libredbLockedReadOnlyFileSystem,
   libredbReadOnlyFileSystem,
 } from "@/lib/db/providers/embedded/libredb-read-only-file";
 import { testIf } from "../../../helpers/posix-tools";
@@ -188,5 +190,87 @@ describe("libredbReadOnlyFileSystem", () => {
     reader.close();
     expect(recovered).toEqual([5]);
     expect(snapshot()).toEqual(before);
+  });
+});
+
+// procfs reports a size of 0 for a file it fills when read, and the kernel reads a file's size before its bytes, so it
+// took one for an empty store. What was opened is read one byte past the size it reports.
+const NO_PROC = fs.existsSync("/proc/self/environ") ? null : "no /proc/self/environ on this platform";
+
+describe("a file whose bytes run past the size it reports", () => {
+  testIf(NO_PROC, "a procfs file that reads as size 0 is refused as no LibreDB file, its descriptor closed", () => {
+    const closes = spyOn(fs, "closeSync");
+    try {
+      expect(() => libredbReadOnlyFileSystem().open("/proc/self/environ")).toThrow(LibreDBNotAStoreError);
+      expect(closes).toHaveBeenCalledTimes(1);
+    } finally {
+      closes.mockRestore();
+    }
+    expect(() => open({ path: "/proc/self/environ", fs: libredbReadOnlyFileSystem() })).toThrow(
+      "/proc/self/environ reports 0 bytes but holds more, so it is not a LibreDB file",
+    );
+  });
+
+  test("a zero-length regular file is what a freshly created store is on disk, and opens as an empty store", () => {
+    const fresh = path.join(dir, "fresh.libredb");
+    open({ path: fresh }).close();
+    expect(fs.readFileSync(fresh).length).toBe(0);
+    const zero = path.join(dir, "zero.libredb");
+    fs.writeFileSync(zero, "");
+    for (const target of [fresh, zero]) {
+      const reader = open({ path: target, fs: libredbReadOnlyFileSystem() });
+      expect([...kv(reader).range("", "\uffff")]).toEqual([]);
+      reader.close();
+      expect(fs.readFileSync(target).length).toBe(0);
+    }
+  });
+});
+
+describe("libredbLockedReadOnlyFileSystem", () => {
+  const nodeLock = (target: string) => nodeFileSystem().lock!(target);
+
+  test("takes the writer lock on an existing store, reads it, and releases the lock on close", () => {
+    const db = open({ path: file, fs: libredbLockedReadOnlyFileSystem(nodeLock) });
+    try {
+      expect(fs.existsSync(`${file}.lock`)).toBe(true);
+      expect(kv(db).get("users:1")).toBe("Ada");
+      expect(() => open({ path: file })).toThrow(expect.objectContaining({ code: "LOCKED" }));
+    } finally {
+      db.close();
+    }
+    expect(fs.readdirSync(dir)).toEqual(["store.libredb"]);
+  });
+
+  test("refuses a missing file before the lock is taken, so neither the file nor its lock is created", () => {
+    const missing = path.join(dir, "missing.libredb");
+    expect(() => open({ path: missing, fs: libredbLockedReadOnlyFileSystem(nodeLock) })).toThrow(
+      expect.objectContaining({ code: "ENOENT" }),
+    );
+    expect(fs.readdirSync(dir)).toEqual(["store.libredb"]);
+  });
+
+  test("a write through it is refused and the file stays byte-identical", () => {
+    const before = fs.readFileSync(file);
+    const db = open({ path: file, fs: libredbLockedReadOnlyFileSystem(nodeLock) });
+    try {
+      expect(() => kv(db).set("users:3", "Linus")).toThrow();
+    } finally {
+      db.close();
+    }
+    expect(fs.readFileSync(file)).toEqual(before);
+  });
+
+  testIf(NO_PROC, "refuses a procfs file as no LibreDB file before any lock beside it is tried", () => {
+    const locks: string[] = [];
+    expect(() =>
+      open({
+        path: "/proc/self/environ",
+        fs: libredbLockedReadOnlyFileSystem((target) => {
+          locks.push(target);
+          return () => {};
+        }),
+      }),
+    ).toThrow(LibreDBNotAStoreError);
+    expect(locks).toEqual([]);
   });
 });
