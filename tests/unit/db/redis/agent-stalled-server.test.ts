@@ -96,7 +96,7 @@ beforeAll(async () => {
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
     socket.on("error", () => undefined);
-    let buffer = Buffer.alloc(0);
+    let buffer: Buffer = Buffer.alloc(0);
     socket.on("data", (chunk: Buffer) => {
       if (holding) return;
       const { commands, rest } = parse(Buffer.concat([buffer, chunk]));
