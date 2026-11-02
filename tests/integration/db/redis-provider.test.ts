@@ -155,6 +155,17 @@ const MOCK_KEY_TYPES: Record<string, string> = { "session:abc": "hash" };
 let databasesReply: string[] = ["databases", "16"];
 
 /**
+ * When set, `CONFIG` rejects with this error instead of answering `databasesReply` (#2163).
+ *
+ * Measured on valkey 9.1.3 through ioredis 5.11.1: a server started with
+ * `--rename-command CONFIG ""` rejects `CONFIG GET databases` with a `ReplyError` "ERR unknown
+ * command 'CONFIG', with args beginning with: 'GET' 'databases'", and an ACL user created with
+ * `-config` gets a `ReplyError` "NOPERM User noconf has no permissions to run the 'config|get'
+ * command".
+ */
+let configFailure: unknown = null;
+
+/**
  * One library, in the exact RESP2 shape ioredis hands back: a flat key/value list per
  * library, measured against redis 8.10.0 holding `docker/redis-init/01-object-fixture.redis`.
  * The nested `functions` entry is the library's registered functions and is deliberately
@@ -753,7 +764,10 @@ mock.module("ioredis", () => {
       // substitution is the only reading of the state this connection can be given, so the
       // mock has to make it or a provider that never asks would pass.
       if (this._inMulti) return "QUEUED";
-      if (cmd === "CONFIG") return databasesReply;
+      if (cmd === "CONFIG") {
+        if (configFailure !== null) throw configFailure;
+        return databasesReply;
+      }
       if (cmd === "SLOWLOG" && slowlogRefusal !== null) throw replyError(slowlogRefusal);
       if (cmd === "FUNCTION") {
         if (mockCall !== null) return await mockCall(command, ...args);
@@ -3005,6 +3019,7 @@ describe("RedisProvider", () => {
 
     beforeEach(async () => {
       databasesReply = ["databases", "16"];
+      configFailure = null;
       functionListReply = MOCK_FUNCTION_LIST;
       functionWithCodeReply = MOCK_FUNCTION_WITHCODE;
       functionRefusal = null;
@@ -3309,9 +3324,35 @@ describe("RedisProvider", () => {
       expect(containers.every((container) => container.level === 0)).toBe(true);
     });
 
-    test("a refused CONFIG GET raises rather than inventing a database list", async () => {
+    test("a CONFIG GET reply with no databases value raises rather than inventing a database list", async () => {
       databasesReply = [];
       await expect(provider.listContainers()).rejects.toThrow(/CONFIG GET databases/);
+    });
+
+    // #2163: a server that refuses the command still has the connection in one database.
+    test("a server that does not know CONFIG lists the session database alone", async () => {
+      provider = new RedisProvider({ ...baseConfig, database: "3" });
+      await provider.connect();
+      configFailure = replyError("ERR unknown command 'CONFIG', with args beginning with: 'GET' 'databases'");
+
+      expect(await provider.listContainers()).toEqual([{ path: ["3"], name: "3", level: 0, isSessionDefault: true }]);
+      expect(commandsSent()).toContain("CONFIG GET databases");
+    });
+
+    test("an ACL user refused CONFIG lists the session database alone", async () => {
+      configFailure = replyError("NOPERM User noconf has no permissions to run the 'config|get' command");
+
+      expect(await provider.listContainers()).toEqual([{ path: ["0"], name: "0", level: 0, isSessionDefault: true }]);
+    });
+
+    test("any other CONFIG GET error reply still raises", async () => {
+      configFailure = replyError("LOADING Valkey is loading the dataset in memory");
+      await expect(provider.listContainers()).rejects.toThrow(/LOADING/);
+    });
+
+    test("a transport failure on CONFIG GET still raises rather than listing one database", async () => {
+      configFailure = new Error("Connection is closed.");
+      await expect(provider.listContainers()).rejects.toThrow("Connection is closed.");
     });
 
     test("counts both kinds, seeded at zero before either read answers", async () => {

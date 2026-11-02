@@ -803,9 +803,9 @@ function keyGroupColumns(sampledTypes: ReadonlySet<string>): ColumnSchema[] {
  * 1: `CONFIG GET` accepts a glob and answers every matching parameter, so the position of a
  * parameter in the reply is a property of the request, not of the parameter.
  *
- * A reply with no such key raises. It is the shape a server that has disabled or renamed
- * CONFIG answers, and there is no honest fallback: 16 would be a number nobody measured,
- * and 1 would hide fifteen databases that may hold keys.
+ * A reply with no such key raises, because there is no honest fallback: 16 would be a number
+ * nobody measured, and 1 would hide fifteen databases that may hold keys. A server that refuses
+ * the command never reaches this parser: it rejects the call, which `listContainers` handles.
  */
 function parseDatabaseCount(reply: unknown): number {
   const entries = Array.isArray(reply) ? reply : [];
@@ -1033,6 +1033,17 @@ function shebangLibraryName(text: string): string | undefined {
  */
 function isServerErrorReply(error: unknown): boolean {
   return error instanceof Error && error.name === "ReplyError";
+}
+
+/**
+ * Whether a driver rejection is the server refusing the COMMAND itself, rather than any other
+ * error reply (#2163): an unknown or renamed command ("ERR unknown command ...") or an ACL
+ * denial ("NOPERM ..."). Both shapes are measured on valkey 9.1.3 in `listContainers`.
+ */
+function isRefusedCommandReply(error: unknown): boolean {
+  if (!isServerErrorReply(error)) return false;
+  const message = (error as Error).message;
+  return message.startsWith("ERR unknown command") || message.startsWith("NOPERM ");
 }
 
 /**
@@ -1958,9 +1969,18 @@ export class RedisProvider extends BaseDatabaseProvider {
    *
    * `CONFIG GET databases` and not a hardcoded 16: measured on redis 8.10.0, the stock
    * server answers 16 and the same image with `--cluster-enabled yes` answers 1, so the
-   * reply already carries the deployment's shape. A refused or unparsable reply RAISES
-   * (see `parseDatabaseCount`), because every fallback available here is a number nobody
+   * reply already carries the deployment's shape. A reply with no usable `databases` value
+   * RAISES (see `parseDatabaseCount`), because every count available here is a number nobody
    * measured.
+   *
+   * A server that REFUSES THE COMMAND lists the session database alone (#2163), the list the
+   * agent profile gets. That is not a count: the connection is in that database, so it is the
+   * one database known to exist. Measured on valkey 9.1.3 through ioredis 5.11.1: a server
+   * started with `--rename-command CONFIG ""` (DigitalOcean managed Valkey disables CONFIG the
+   * same way) answers "ERR unknown command 'CONFIG', with args beginning with: 'GET'
+   * 'databases'", and an ACL user created with `-config` answers "NOPERM User noconf has no
+   * permissions to run the 'config|get' command". Any other error reply, and a transport
+   * failure, still raises: neither says the server refused the command.
    *
    * Every database is listed, including the empty ones. A Redis database is not created and
    * not dropped: all of them exist at all times, so listing only the ones `INFO keyspace`
@@ -1970,13 +1990,16 @@ export class RedisProvider extends BaseDatabaseProvider {
     this.ensureConnected();
     if (parent !== undefined && parent.length > 0) return [];
     // The agent reads its connection's own database alone, and `CONFIG GET` is an admin command its user is refused.
-    if (this.readOnlyProfile) {
-      const session = String(this.sessionDatabase());
-      return [{ path: [session], name: session, level: 0, isSessionDefault: true }];
-    }
+    if (this.readOnlyProfile) return this.sessionDatabaseAlone();
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const reply = await (this.client as any).call("CONFIG", "GET", "databases");
+    let reply: unknown;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      reply = await (this.client as any).call("CONFIG", "GET", "databases");
+    } catch (error) {
+      if (isRefusedCommandReply(error)) return this.sessionDatabaseAlone();
+      throw error;
+    }
     const count = parseDatabaseCount(reply);
     const session = this.sessionDatabase();
 
@@ -1988,6 +2011,12 @@ export class RedisProvider extends BaseDatabaseProvider {
       // unlike a PostgreSQL `search_path` there is one answer and it is never ambiguous.
       isSessionDefault: index === session,
     }));
+  }
+
+  /** The container list holding only the database this connection is in. */
+  private sessionDatabaseAlone(): Container[] {
+    const session = String(this.sessionDatabase());
+    return [{ path: [session], name: session, level: 0, isSessionDefault: true }];
   }
 
   /**
