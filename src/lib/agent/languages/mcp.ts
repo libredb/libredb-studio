@@ -37,10 +37,11 @@ export interface AgentLanguageMcpWords {
   /** How a byte-cut result fits more rows, as the opening of a clause: "Project fewer fields". */
   readonly fewerFields: string;
   /**
-   * How to read past the `shown` rows a cut result returned, as the end of a sentence that starts "To ". `cut` names
-   * the cap that cut it, so advice that only a row cut can take, such as a higher max_rows, is left out of a byte cut.
+   * How to read past the `shown` rows a cut result of `statement` returned, as the end of a sentence that starts "To ".
+   * `cut` names the cap that cut it, so advice that only a row cut can take, such as a higher max_rows, is left out of a
+   * byte cut.
    */
-  readonly readPast: (shown: number, cut: "max_rows" | "result_bytes") => string;
+  readonly readPast: (shown: number, cut: "max_rows" | "result_bytes", statement: string) => string;
   /** The answer when even the first row does not fit the result cap. */
   readonly rowOverCap: string;
   /** What a refused statement never reached, as a noun phrase: "the cluster", "the database". */

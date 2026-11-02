@@ -993,8 +993,22 @@ describe("the mtconnectread arm", () => {
       cut: "result_bytes",
     });
     expect(bytes).toBe(
-      "More rows exist than the 32 KiB result limit holds, and 4 of them fitted; this tool does not page with offset. Name one device, narrow the path or give /sample or /assets a smaller count to fit more rows, and to read past the 4 rows returned, read /sample from the sequence after the last one returned, or split the read by device or path, since an MTConnect read is never paged.",
+      "More rows exist than the 32 KiB result limit holds, and 4 of them fitted; this tool does not page with offset. Name one device, narrow the path or give /sample or /assets a smaller count to fit more rows, and to read past the 4 rows returned, read the assets by type with /assets?type=..., by device with /{device}/assets or by id with /asset/{assetIds}, since an MTConnect read is never paged.",
     );
+    // An asset row carries no sequence, so an asset read is never pointed at /sample; every other read is.
+    for (const line of ["/assets", "/LATHE/assets?type=CuttingTool", "/asset/TOOL-1;TOOL-2"]) {
+      for (const cut of ["max_rows", "result_bytes"] as const) {
+        const text = RUN_MTCONNECT_READ_ARM.moreRows(line, "mtconnect", { maxRows: 100, shown: 4, cut });
+        expect(text).toContain(
+          "read the assets by type with /assets?type=..., by device with /{device}/assets or by id with /asset/{assetIds}",
+        );
+        expect(text).not.toContain("/sample from");
+      }
+    }
+    for (const line of ["/current", "/sample?count=-5", "/probe", "/assets/TOOL-1"]) {
+      const text = RUN_MTCONNECT_READ_ARM.moreRows(line, "mtconnect", { maxRows: 100, shown: 4, cut: "result_bytes" });
+      expect(text).toContain("read /sample from the sequence after the last one returned");
+    }
     for (const text of [hint, bytes, RUN_MTCONNECT_READ_ARM.rowOverCap]) {
       expect(text).not.toContain("$skip");
       expect(text).not.toContain("LIMIT");
@@ -1015,6 +1029,10 @@ describe("the mtconnectread arm", () => {
       "after a URL's start (a scheme and its colon in any case, or two slashes or backslashes) and the slashes or backslashes that follow, up to the last @ in the value",
     );
     expect(description).toContain("its user name, password, query string and fragment never reach the answer");
+    expect(description).toContain(
+      "Values are read after NFKC and percent-decoding: a word with a : before an @ is withheld from its start, past a scheme and //, to its last @",
+    );
+    expect(description).toContain("asset ids in observations alike");
   });
 });
 

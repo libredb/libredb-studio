@@ -43,6 +43,7 @@ import {
 } from "./agent-statement";
 import {
   itemWithheld,
+  observationNamesAssets,
   observationWithheld,
   withheldUrlWarning,
   withheldWarning,
@@ -208,6 +209,32 @@ function warningsOf(withheld: number, noun: "observation" | "data item"): QueryW
   return withheld === 0 ? [] : [{ message: withheldWarning(withheld, noun) }];
 }
 
+function urlWarningsOf(withheld: number): QueryWarning[] {
+  return withheld === 0 ? [] : [{ message: withheldUrlWarning(withheld) }];
+}
+
+/**
+ * An observation that names assets, its value read as an asset's text is: an asset id or type in its value, or in the
+ * keys and values of its data set, keeps no URL secret (`observationNamesAssets`).
+ */
+function assetReference(row: MtcRow, observation: MtcObservation, count: (withheld: number) => void): MtcRow {
+  const kept = (text: string): string => {
+    const url = withoutUrlSecrets(text);
+    count(url.withheld);
+    return url.text;
+  };
+  if (observation.children.length === 0) return { ...row, value: kept(row.value) };
+  const entries = JSON.parse(row.value) as Record<string, unknown>;
+  return {
+    ...row,
+    value: JSON.stringify(
+      Object.fromEntries(
+        Object.entries(entries).map(([key, value]) => [kept(key), typeof value === "string" ? kept(value) : value]),
+      ),
+    ),
+  };
+}
+
 /** The device model the read is decided under, read fresh: nothing of an earlier read is kept. */
 async function freshModel(reader: MtconnectAgentReader): Promise<MtcModel> {
   const answer = await reader.read(PROBE);
@@ -227,6 +254,7 @@ async function observations(
 ): Promise<MtconnectAgentAnswer> {
   const rows: MtcRow[] = [];
   let withheld = 0;
+  let urls = 0;
   let over = false;
   const walk = await reader.stream(request, (observation) => {
     const item = model.items.get(observation.attributes.dataItemId ?? "");
@@ -236,7 +264,13 @@ async function observations(
     }
     const row = buildRow(observation, model);
     if (row === undefined) return true;
-    rows.push(row);
+    rows.push(
+      observationNamesAssets(observation, item)
+        ? assetReference(row, observation, (count) => {
+            urls += count;
+          })
+        : row,
+    );
     if (rows.length > budget.maxResultRows) {
       over = true;
       return false;
@@ -253,7 +287,7 @@ async function observations(
   return {
     rows: sorted.map((row) => ({ ...row })),
     fields: sorted.length === 0 ? OBSERVATION_FIELDS : Object.keys(sorted[0]),
-    warnings: warningsOf(withheld, "observation"),
+    warnings: [...warningsOf(withheld, "observation"), ...urlWarningsOf(urls)],
   };
 }
 
@@ -356,7 +390,7 @@ function assetRows(answer: MtcAnswer, budget: ReadOnlyStatementBudget): Mtconnec
   return {
     rows,
     fields: rows.length === 0 ? [] : Object.keys(rows[0]),
-    warnings: withheld === 0 ? [] : [{ message: withheldUrlWarning(withheld) }],
+    warnings: urlWarningsOf(withheld),
   };
 }
 

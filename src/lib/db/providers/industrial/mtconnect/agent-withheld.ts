@@ -29,8 +29,19 @@
  * at its first two slashes or backslashes, since a WHATWG URL parser reads `http:\\u:p@h`, `http:/u:p@h` and
  * `http:u:p@h` as `http://u:p@h` and, against a base, `//u:p@h` too; everything after that start and the slashes or
  * backslashes that follow it, up to the last `@` in the value, is withheld, and so is everything from the first `?` or
- * `#` after that to the end of the value. A `mailto:` or `urn:` value, or a label and a colon before a mail address,
- * loses what lies between its colon and its `@` too; a mail address or a path with no scheme before it is kept.
+ * `#` after that to the end of the value. Two word rules add to it, a word being a run of the value between spaces (a
+ * tab or a line break is part of a word, as a URL parser drops it): a word holding an `@` with a `:` before it is
+ * withheld from its start to its last `@`, keeping only an opening quote or bracket, a scheme and its colon and two or
+ * more slashes or backslashes it starts with, since `login USER:PASS@host` and `ftp:USER:PASS@host` hold a user name
+ * where a scheme would stand; and a word holding a slash before a `?` or `#` is withheld from that `?` or `#` to its
+ * end, so `files.example/x.nc?token=T` keeps no token. A label and a colon before a mail address loses what lies
+ * between them; a mail address with no `:` before its `@`, a UNC path and a path with no query are kept.
+ * Every rule reads the value through a view of it: its NFKC form, so a fullwidth `ｈｔｔｐｓ：／／` reads as `https://`,
+ * then percent-decoded wherever an escape is valid, again until none is left, so `https%3A%2F%2FUSER%3APASS%40host`
+ * reads as its URL. Each unit of the view remembers the characters of the value it was read from, and a withheld part
+ * is cut from the value as written over all of them; a value still holding an escape after eight rounds is withheld
+ * whole. MEASURED on the same image: an asset put with a URL as its id is named whole by the `AssetChanged` value of
+ * `/current` and `/sample`, so an observation that names assets (`observationNamesAssets`) is read the same way.
  * An asset document's text is read as one string, as a consumer reads it: each element's own text, CDATA sections and
  * references included, with its children's text in the place each child holds, in document order, so a URL split by
  * the markup is read whole and each withheld part is cut out of every element's text it lands in; an `@`, `?` or `#`
@@ -64,13 +75,111 @@ export function observationWithheld(observation: MtcObservation, item: MtcDataIt
 
 /** Why a URL's user name, password, query string and fragment are withheld from an asset, in the words the warning repeats. */
 const MTCONNECT_WITHHELD_URL_SENTENCE =
-  "Agent mode keeps each URL in an asset to its scheme, host, port and path. A URL starts at a scheme and its colon, such as http: in any case, or at two slashes or backslashes; everything after that start and the slashes or backslashes that follow it, up to the last @ in the value, its user name and password, and everything from the first ? or # after that to the end of the value, its query string and fragment, where a credential, a signature or a token travels, is withheld.";
+  "Agent mode keeps each URL in an asset, and in an asset id or asset type an observation names, to its scheme, host, port and path, read after Unicode compatibility normalization and percent-decoding. A URL starts at a scheme and its colon, such as http: in any case, or at two slashes or backslashes; everything after that start and the slashes or backslashes that follow it, up to the last @ in the value, its user name and password, and everything from the first ? or # after that to the end of the value, its query string and fragment, where a credential, a signature or a token travels, is withheld. A word holding an @ with a : before it is withheld from its start to its last @, keeping only a scheme and two slashes it starts with, and a word holding a slash before a ? or # is withheld from that ? or # to its end.";
 
 const isLetter = (c: string): boolean => (c >= "A" && c <= "Z") || (c >= "a" && c <= "z");
 const isSlash = (c: string): boolean => c === "/" || c === "\\";
 const isDropped = (c: string): boolean => c === "\t" || c === "\n" || c === "\r";
 const isSchemeTail = (c: string): boolean =>
   isLetter(c) || (c >= "0" && c <= "9") || c === "+" || c === "." || c === "-" || isDropped(c);
+/** What ends a word: white space, but not a tab or a line break, which a URL parser drops from inside a URL. */
+const endsWord = (c: string): boolean => /\s/.test(c) && !isDropped(c);
+
+interface Range {
+  readonly from: number;
+  readonly to: number;
+}
+
+/** One character of the view a value is read through, and the span of the value's own text it was read from. */
+interface ViewUnit {
+  readonly c: string;
+  readonly from: number;
+  readonly to: number;
+}
+
+/** The rounds of percent-decoding a value is read through; a value still holding an escape after them is withheld whole. */
+const DECODE_ROUNDS = 8;
+const ESCAPES = /^(?:%[0-9A-Fa-f]{2})+$/;
+
+/** `text`, read from `from` to `to` of the value, in its Unicode compatibility form (NFKC), one unit per code unit. */
+function pushNormalized(units: ViewUnit[], text: string, from: number, to: number): void {
+  const normal = text.normalize("NFKC");
+  for (let at = 0; at < normal.length; at += 1) units.push({ c: normal[at], from, to });
+}
+
+/** The value one code point at a time in its NFKC form, so a fullwidth or other compatibility spelling reads as ASCII. */
+function normalizedUnits(text: string): ViewUnit[] {
+  const units: ViewUnit[] = [];
+  for (let at = 0; at < text.length; ) {
+    const code = text.codePointAt(at) as number;
+    const point = String.fromCodePoint(code);
+    if (code < 0x80) units.push({ c: point, from: at, to: at + 1 });
+    else pushNormalized(units, point, at, at + point.length);
+    at += point.length;
+  }
+  return units;
+}
+
+/**
+ * The character the valid escape at `at` stands for, in its NFKC form, and how many units the escape takes: one `%XX`
+ * for an ASCII byte, or the two to four of one UTF-8 sequence. Undefined where no valid escape starts there.
+ */
+function escapeAt(
+  units: readonly ViewUnit[],
+  at: number,
+): { readonly text: string; readonly length: number } | undefined {
+  const head = units
+    .slice(at, at + 3)
+    .map((unit) => unit.c)
+    .join("");
+  if (!ESCAPES.test(head)) return undefined;
+  const lead = Number.parseInt(head.slice(1), 16);
+  const bytes = lead < 0x80 ? 1 : lead >= 0xf0 ? 4 : lead >= 0xe0 ? 3 : 2;
+  const escapes = units
+    .slice(at, at + 3 * bytes)
+    .map((unit) => unit.c)
+    .join("");
+  if (escapes.length !== 3 * bytes || !ESCAPES.test(escapes)) return undefined;
+  try {
+    return { text: decodeURIComponent(escapes), length: 3 * bytes };
+  } catch {
+    // Not one valid UTF-8 sequence: left as written, as a URL client sends it.
+    return undefined;
+  }
+}
+
+/** One round of percent-decoding over the view, or undefined when it holds no valid escape. */
+function decodeOnce(units: readonly ViewUnit[]): ViewUnit[] | undefined {
+  const out: ViewUnit[] = [];
+  let decoded = false;
+  for (let at = 0; at < units.length; ) {
+    const escape = escapeAt(units, at);
+    if (escape === undefined) {
+      out.push(units[at]);
+      at += 1;
+      continue;
+    }
+    pushNormalized(out, escape.text, units[at].from, units[at + escape.length - 1].to);
+    decoded = true;
+    at += escape.length;
+  }
+  return decoded ? out : undefined;
+}
+
+/**
+ * The view a value is read through: NFKC, then percent-decoding of every valid escape, again until none is left, with
+ * each unit's span in the value. `whole` is true when escapes are still left after `DECODE_ROUNDS` rounds, so the value
+ * is withheld whole rather than read through a view it may still hide a URL from.
+ */
+function viewOf(text: string): { readonly units: readonly ViewUnit[]; readonly whole: boolean } {
+  let units = normalizedUnits(text);
+  for (let round = 0; round < DECODE_ROUNDS; round += 1) {
+    const next = decodeOnce(units);
+    if (next === undefined) return { units, whole: false };
+    units = next;
+  }
+  return { units, whole: decodeOnce(units) !== undefined };
+}
 
 /**
  * Where the first URL in `text` starts its authority: the index after the first scheme and its colon (a letter, then
@@ -99,21 +208,79 @@ function pastSlashes(text: string, from: number): number {
   return at;
 }
 
+/** The first `?` or `#` in `text` from `from` up to `to`, or -1. */
+function queryAt(text: string, from: number, to: number): number {
+  for (let at = from; at < to; at += 1) if (text[at] === "?" || text[at] === "#") return at;
+  return -1;
+}
+
 /**
- * Where the URL secrets of `text` lie, as ranges of it to withhold: its user name and password, from the URL's start up
- * to the last `@`, and its query string and fragment, from after the first `?` or `#` past that to the end. A range may
- * be empty (`http://@h`, `http://h/?`), and is withheld all the same, so a marker shows where it was.
+ * What a word's user information cut keeps at its start: an opening quote or bracket, a scheme and its colon, or a
+ * colon alone, and then two or more slashes or backslashes, the authority form whose scheme a URL keeps. Anything less
+ * keeps nothing, since `login:pw@h` and `ftp:pw@h` cannot be told apart.
  */
-function secretRanges(text: string): { readonly from: number; readonly to: number }[] {
-  const start = urlStart(text);
-  if (start === -1) return [];
-  const at = text.lastIndexOf("@");
-  const userinfo = at >= start;
-  const ranges = userinfo ? [{ from: start, to: at }] : [];
-  const rest = userinfo ? at + 1 : start;
-  const tail = text.slice(rest).search(/[?#]/);
-  if (tail !== -1) ranges.push({ from: rest + tail + 1, to: text.length });
+const KEPT_PREFIX = /^["'(<[{]*(?:[A-Za-z][A-Za-z0-9+.\-\t\n\r]*:|:)?[\t\n\r]*[/\\](?:[\t\n\r]*[/\\])+[\t\n\r]*/;
+
+/** The ranges of the view to withhold: the scheme rule over the whole value, then the word rules over each word. */
+function viewRanges(view: string): Range[] {
+  const ranges: Range[] = [];
+  const start = urlStart(view);
+  if (start !== -1) {
+    const at = view.lastIndexOf("@");
+    const userinfo = at >= start;
+    if (userinfo) ranges.push({ from: start, to: at });
+    const query = queryAt(view, userinfo ? at + 1 : start, view.length);
+    if (query !== -1) ranges.push({ from: query + 1, to: view.length });
+  }
+  for (let from = 0; from < view.length; ) {
+    let to = from;
+    let colon = -1;
+    let at = -1;
+    for (; to < view.length && !endsWord(view[to]); to += 1) {
+      if (view[to] === ":" && colon === -1) colon = to;
+      if (view[to] === "@") at = to;
+    }
+    // The prefix holds no @, so it ends before the word's last @ whenever the word has one.
+    const kept = from + (KEPT_PREFIX.exec(view.slice(from, to))?.[0].length ?? 0);
+    if (colon !== -1 && colon < at) ranges.push({ from: kept, to: at });
+    let slash = kept;
+    while (slash < to && !isSlash(view[slash])) slash += 1;
+    // From the first ? or # after a slash, whether or not an @ follows it: a query may hold an @ of its own.
+    const query = queryAt(view, slash + 1, to);
+    if (slash < to && query !== -1) ranges.push({ from: query + 1, to });
+    from = to + 1;
+  }
   return ranges;
+}
+
+/** `ranges` sorted, with every two that overlap or touch made one. */
+function merged(ranges: readonly Range[]): Range[] {
+  const out: Range[] = [];
+  for (const range of [...ranges].sort((a, b) => a.from - b.from || a.to - b.to)) {
+    const last = out[out.length - 1];
+    if (last !== undefined && range.from <= last.to)
+      out[out.length - 1] = { from: last.from, to: Math.max(last.to, range.to) };
+    else out.push(range);
+  }
+  return out;
+}
+
+/**
+ * Where the URL secrets of `text` lie, as ranges of it to withhold. Every rule reads the view (`viewOf`), and each
+ * range it finds is cut from the value's own text, over every character it was read from. A range may be empty
+ * (`http://@h`, `http://h/?`), and is withheld all the same, so a marker shows where it was.
+ */
+function secretRanges(text: string): readonly Range[] {
+  const { units, whole } = viewOf(text);
+  if (whole) return [{ from: 0, to: text.length }];
+  const position = (at: number): number => (at < units.length ? units[at].from : text.length);
+  return merged(
+    viewRanges(units.map((unit) => unit.c).join("")).map((range) =>
+      range.from === range.to
+        ? { from: position(range.from), to: position(range.from) }
+        : { from: units[range.from].from, to: units[range.to - 1].to },
+    ),
+  );
 }
 
 /**
@@ -159,9 +326,21 @@ export function withoutUrlSecrets(text: string): { readonly text: string; readon
   return { text: kept.texts[0], withheld: kept.withheld };
 }
 
-/** The warning an asset answer carries for the user names and passwords, query strings and fragments it withheld. */
+/**
+ * Whether an observation reports on assets, so its value or its keys are an asset id or an asset type the system that
+ * wrote the asset chose: its data item's type, or its own, starts `ASSET_` (`ASSET_CHANGED`, `ASSET_REMOVED`,
+ * `ASSET_COUNT`), or its element name starts `Asset`. MEASURED on the pinned image with `AllowPut = true`: an asset put
+ * with a URL as its id is named whole by the `AssetChanged` value of `/current` and `/sample`, and by `AssetRemoved`
+ * once removed, so these are read as an asset's own text is.
+ */
+export function observationNamesAssets(observation: MtcObservation, item: MtcDataItem | undefined): boolean {
+  const type = item?.type ?? observation.attributes.type ?? "";
+  return type.startsWith("ASSET_") || observation.element.startsWith("Asset");
+}
+
+/** The warning an answer carries for the user names and passwords, query strings and fragments it withheld. */
 export function withheldUrlWarning(count: number): string {
   return count === 1
-    ? `1 user name and password, query string or fragment of a URL in an asset was withheld from this answer. ${MTCONNECT_WITHHELD_URL_SENTENCE}`
-    : `${count} user names and passwords, query strings or fragments of URLs in assets were withheld from this answer. ${MTCONNECT_WITHHELD_URL_SENTENCE}`;
+    ? `1 user name and password, query string or fragment of a URL in an asset or an asset reference was withheld from this answer. ${MTCONNECT_WITHHELD_URL_SENTENCE}`
+    : `${count} user names and passwords, query strings or fragments of URLs in assets or asset references were withheld from this answer. ${MTCONNECT_WITHHELD_URL_SENTENCE}`;
 }

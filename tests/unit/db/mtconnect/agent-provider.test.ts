@@ -26,6 +26,7 @@ import { MTCONNECT_AGENT_WITHHELD } from "@/lib/db/providers/industrial/mtconnec
 import {
   MTCONNECT_WITHHELD_SENTENCE,
   withheldUrlWarning,
+  withheldWarning,
 } from "@/lib/db/providers/industrial/mtconnect/agent-withheld";
 import { MTConnectProvider, MTCONNECT_STATEMENT_LANGUAGE } from "@/lib/db/providers/industrial/mtconnect/index";
 import { MTC_ROUTES } from "@/lib/db/providers/industrial/mtconnect/routes";
@@ -340,7 +341,7 @@ describe("what an agent read sends and answers", () => {
     const [row] = result.rows;
     expect(row?.source).toBe("http:\\\\[withheld]@files.example/a");
     expect(String(row?.document)).toBe(
-      '<File assetId="FILE-2" applicationCategory="DEVICE" deviceUuid="LIBREDB-1722" source="http:\\\\[withheld]@files.example/a" timestamp="2026-11-02T12:27:05.801276Z"><FileLocation href="HTTP:\\/[withheld]@files.example/p.nc"/><Description>at ht\ttp:[withheld]<Note>[withheld]</Note>[withheld]@files.example/p.nc</Description></File>',
+      '<File assetId="FILE-2" applicationCategory="DEVICE" deviceUuid="LIBREDB-1722" source="http:\\\\[withheld]@files.example/a" timestamp="2026-11-02T12:27:05.801276Z"><FileLocation href="HTTP:\\/[withheld]@files.example/p.nc"/><Description>at [withheld]<Note>[withheld]</Note>[withheld]@files.example/p.nc</Description></File>',
     );
     for (const part of ["not-a-real", "real-pass", "word@", "<Note>n</Note>"]) {
       expect(JSON.stringify(result)).not.toContain(part);
@@ -399,6 +400,56 @@ describe("what an agent read sends and answers", () => {
     );
     for (const part of ["not-a-real", ...parts]) expect(JSON.stringify(result)).not.toContain(part);
     expect(result.warnings).toEqual([{ message: withheldUrlWarning(1) }]);
+  });
+
+  // MEASURED on mtconnect/agent:2.8.0.4 with AllowPut = true: an asset put with a URL as its id is withheld in /assets,
+  // and the AssetChanged observation of /current and /sample names it whole, as AssetRemoved does once it is removed.
+  test.each(["/current", "/sample?count=-5"])(
+    "%s answers an asset id or type an observation names with its URL secrets withheld, counted in the URL warning",
+    async (line) => {
+      const stream = capture("current")
+        .replace(
+          '<AssetChanged assetType="CuttingTool" dataItemId="d1722_asset_chg" sequence="33" timestamp="2026-10-14T23:57:41.022116Z">TOOL-1722</AssetChanged>',
+          '<AssetChanged assetType="ProgramNote" dataItemId="d1722_asset_chg" sequence="33" timestamp="2026-10-14T23:57:41.022116Z">ftp:not-a-real-user:not-a-real-password@h.example</AssetChanged>',
+        )
+        .replace(
+          '<Entry key="CuttingTool">1</Entry>',
+          '<Entry key="https%3A%2F%2Fnot-a-real-user%3Anot-a-real-password%40h.example">1</Entry><Entry key="CuttingTool" removed="true"/>',
+        )
+        .replace(
+          '<AssetRemoved assetType="UNAVAILABLE" dataItemId="d1722_asset_rem" sequence="22" timestamp="2026-10-14T23:57:41.017347Z">UNAVAILABLE</AssetRemoved>',
+          '<AssetRemoved assetType="ProgramNote" dataItemId="d1722_asset_rem" sequence="22" timestamp="2026-10-14T23:57:41.017347Z">files.example/x.nc?token=not-a-real-token</AssetRemoved>',
+        );
+      expect(stream).toContain("not-a-real-token");
+      expect(stream).toContain("h.example</AssetChanged>");
+      const provider = await opened(AGENT, { ...DEFAULT_ANSWERS, [line]: stream });
+      const result = await provider.queryReadOnly(line, BUDGET);
+      const value = (id: string) => result.rows.find((row) => row.dataItemId === id)?.value;
+      expect(value("d1722_asset_chg")).toBe("[withheld]@h.example");
+      expect(value("d1722_asset_count")).toBe('{"https%3A%2F%2F[withheld]%40h.example":"1","CuttingTool":null}');
+      expect(value("d1722_asset_rem")).toBe("files.example/x.nc?[withheld]");
+      expect(value("x1722-pos")).toBe("1724.5");
+      expect(JSON.stringify(result)).not.toContain("not-a-real");
+      expect(result.warnings).toEqual([
+        { message: withheldWarning(6, "observation") },
+        { message: withheldUrlWarning(3) },
+      ]);
+    },
+  );
+
+  test("an observation the model does not know is read as naming assets by its own type or element", async () => {
+    const stream = capture("current").replace(
+      '<Program dataItemId="p1722-prog" name="program" sequence="30" timestamp="2026-10-14T23:57:41.021Z">LIBREDB-TEST.NC</Program>',
+      '<Program dataItemId="p1722-prog" name="program" sequence="30" timestamp="2026-10-14T23:57:41.021Z">see login not-a-real-user:not-a-real-password@h</Program><AssetChanged dataItemId="unknown_chg" sequence="40" timestamp="2026-10-14T23:57:41.021Z">login not-a-real-user:x@h</AssetChanged><Message dataItemId="unknown_msg" type="ASSET_CHANGED" sequence="41" timestamp="2026-10-14T23:57:41.021Z">a:not-a-real-user@h</Message>',
+    );
+    const provider = await opened(AGENT, { ...DEFAULT_ANSWERS, "/current": stream });
+    const result = await provider.queryReadOnly("/current", BUDGET);
+    const value = (id: string) => result.rows.find((row) => row.dataItemId === id)?.value;
+    expect(value("unknown_chg")).toBe("login [withheld]@h");
+    expect(value("unknown_msg")).toBe("[withheld]@h");
+    // A value of a data item that names no asset is the machine's own reading, answered as written.
+    expect(value("p1722-prog")).toBe("see login not-a-real-user:not-a-real-password@h");
+    expect(result.warnings?.[1]).toEqual({ message: withheldUrlWarning(2) });
   });
 
   test("an asset carrying a processing instruction or an entity declaration is refused by Studio's rule, never answered", async () => {

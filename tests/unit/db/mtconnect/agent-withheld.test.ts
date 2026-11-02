@@ -119,21 +119,12 @@ describe("a URL in an asset, its user name, password, query and fragment withhel
       "http:\\\\not-a-real-user:not-a-real-password@files.example/x",
       "http:\\\\[withheld]@files.example/x",
     ],
-    ["one slash", "http:/not-a-real-user:not-a-real-password@files.example/x", "http:/[withheld]@files.example/x"],
-    ["no slash", "http:not-a-real-user:not-a-real-password@files.example/x", "http:[withheld]@files.example/x"],
     [
       "mixed case and mixed slashes",
       "HTTP:\\/not-a-real-user:not-a-real-password@files.example",
       "HTTP:\\/[withheld]@files.example",
     ],
     ["four backslashes", "https:\\\\\\\\not-a-real-user:not-a-real-password@h", "https:\\\\\\\\[withheld]@h"],
-    ["ftp with no slash", "ftp:not-a-real-user:not-a-real-password@h", "ftp:[withheld]@h"],
-    ["ws with no slash", "ws:not-a-real-user:not-a-real-password@h/x", "ws:[withheld]@h/x"],
-    ["wss with a backslash", "wss:\\not-a-real-user:not-a-real-password@h", "wss:\\[withheld]@h"],
-    ["mixed-case ftp, one slash", "FtP:/not-a-real-user:not-a-real-password@h", "FtP:/[withheld]@h"],
-    ["https with a port", "https:not-a-real-user:not-a-real-password@h:8443/a", "https:[withheld]@h:8443/a"],
-    ["a tab in the scheme", "http\t:not-a-real-user:not-a-real-password@h", "http\t:[withheld]@h"],
-    ["a line break in the scheme", "ht\ntp:not-a-real-user:not-a-real-password@h", "ht\ntp:[withheld]@h"],
     ["a tab between the slashes", "http:/\t/not-a-real-user:not-a-real-password@h", "http:/\t/[withheld]@h"],
     ["two slashes and no scheme", "//not-a-real-user:not-a-real-password@h/x", "//[withheld]@h/x"],
     ["two backslashes and no scheme", "\\\\not-a-real-user:not-a-real-password@h/x", "\\\\[withheld]@h/x"],
@@ -144,9 +135,27 @@ describe("a URL in an asset, its user name, password, query and fragment withhel
     for (const part of ["not-a-real-user", "not-a-real-password"]) expect(kept).not.toContain(part);
   });
 
+  // A scheme with fewer than two slashes after its colon is withheld with the user name: `login:pw@h` and `ftp:pw@h`
+  // cannot be told apart, so the word is cut from its start. These withheld only what followed the colon before.
+  test.each([
+    ["one slash", "http:/not-a-real-user:not-a-real-password@files.example/x", "[withheld]@files.example/x"],
+    ["no slash", "http:not-a-real-user:not-a-real-password@files.example/x", "[withheld]@files.example/x"],
+    ["ftp with no slash", "ftp:not-a-real-user:not-a-real-password@h", "[withheld]@h"],
+    ["ws with no slash", "ws:not-a-real-user:not-a-real-password@h/x", "[withheld]@h/x"],
+    ["wss with a backslash", "wss:\\not-a-real-user:not-a-real-password@h", "[withheld]@h"],
+    ["mixed-case ftp, one slash", "FtP:/not-a-real-user:not-a-real-password@h", "[withheld]@h"],
+    ["https with a port", "https:not-a-real-user:not-a-real-password@h:8443/a", "[withheld]@h:8443/a"],
+    ["a tab in the scheme", "http\t:not-a-real-user:not-a-real-password@h", "[withheld]@h"],
+    ["a line break in the scheme", "ht\ntp:not-a-real-user:not-a-real-password@h", "[withheld]@h"],
+    ["a word after text", "see ftp:not-a-real-user:not-a-real-password@h", "see [withheld]@h"],
+  ])("%s is withheld from the word's start", (_what, text, kept) => {
+    expect(withoutUrlSecrets(text)).toEqual({ text: kept, withheld: 1 });
+    for (const part of ["not-a-real-user", "not-a-real-password"]) expect(kept).not.toContain(part);
+  });
+
   test("a URL with no slash still has its query and fragment withheld", () => {
     expect(withoutUrlSecrets("https:not-a-real-user:not-a-real-password@h/a?sig=not-a-real-signature#t")).toEqual({
-      text: "https:[withheld]@h/a?[withheld]",
+      text: "[withheld]@h/a?[withheld]",
       withheld: 2,
     });
     expect(withoutUrlSecrets("http:files.example/p.nc?token=not-a-real-token")).toEqual({
@@ -157,11 +166,142 @@ describe("a URL in an asset, its user name, password, query and fragment withhel
 
   // MEASURED: `new URL()` reads no user name or password from these, but the cut is by position and withholds them too.
   test.each([
-    ["a mailto value", "mailto:operator@plant.example", "mailto:[withheld]@plant.example"],
-    ["a urn value", "urn:not-a-real-user:not-a-real-password@h", "urn:[withheld]@h"],
+    ["a mailto value", "mailto:operator@plant.example", "[withheld]@plant.example"],
+    ["a urn value", "urn:not-a-real-user:not-a-real-password@h", "[withheld]@h"],
     ["a label before a mail address", "Contact: operator@plant.example", "Contact:[withheld]@plant.example"],
-  ])("%s with an @ after its scheme loses what lies between", (_what, text, kept) => {
+  ])("%s with an @ after its colon loses what lies before the @", (_what, text, kept) => {
     expect(withoutUrlSecrets(text)).toEqual({ text: kept, withheld: 1 });
+  });
+
+  // Every rule reads the value after NFKC and percent-decoding, and cuts each range it finds from the value as written.
+  test.each([
+    [
+      "percent-encoded delimiters",
+      "https%3A%2F%2Fnot-a-real-user%3Anot-a-real-password%40files.example",
+      "https%3A%2F%2F[withheld]%40files.example",
+      1,
+    ],
+    [
+      "an encoded @ inside the password and a plain one after it",
+      "ftp://not-a-real-user:not%40a-real-password@files.example/p.nc",
+      "ftp://[withheld]@files.example/p.nc",
+      1,
+    ],
+    [
+      "lower-case escapes",
+      "https%3a%2f%2fnot-a-real-user%3anot-a-real-password%40h",
+      "https%3a%2f%2f[withheld]%40h",
+      1,
+    ],
+    [
+      "an escape encoded twice",
+      "ftp%253A%252F%252Fnot-a-real-user%253Anot-a-real-password%2540h",
+      "ftp%253A%252F%252F[withheld]%2540h",
+      1,
+    ],
+    [
+      "a fullwidth scheme",
+      "\uff48\uff54\uff54\uff50\uff53\uff1a\uff0f\uff0fnot-a-real-user:not-a-real-password@h",
+      "\uff48\uff54\uff54\uff50\uff53\uff1a\uff0f\uff0f[withheld]@h",
+      1,
+    ],
+    ["a fullwidth @", "login not-a-real-user:not-a-real-password\uff20h", "login [withheld]\uff20h", 1],
+    [
+      "a fullwidth @ percent-encoded",
+      "login not-a-real-user:not-a-real-password%EF%BC%A0h",
+      "login [withheld]%EF%BC%A0h",
+      1,
+    ],
+    ["a fullwidth query", "files.example/x.nc\uff1ftoken=not-a-real-token", "files.example/x.nc\uff1f[withheld]", 1],
+  ])("%s keeps no secret", (_what, text, kept, withheld) => {
+    expect(withoutUrlSecrets(text)).toEqual({ text: kept, withheld });
+    for (const part of ["not-a-real-user", "not-a-real-password", "not-a-real-token"]) expect(kept).not.toContain(part);
+  });
+
+  test.each([
+    ["a % that starts no escape", "100% at files.example/x", 0],
+    ["a broken UTF-8 sequence", "see %C3%28 and %E2%82", 0],
+    ["a truncated escape", "files%2", 0],
+    ["a lone surrogate", "tool \ud800 note", 0],
+    ["a compatibility character that expands", "\u3392 rated", 0],
+  ])("%s is left as written", (_what, text, withheld) => {
+    expect(withoutUrlSecrets(text)).toEqual({ text, withheld });
+  });
+
+  test("a character that expands under NFKC is withheld whole when a cut lands inside it", () => {
+    // U+2100 reads "a/c": the slash inside it makes the word a path, so the query after it is withheld.
+    expect(withoutUrlSecrets("\u2100?token=not-a-real-token")).toEqual({ text: "\u2100?[withheld]", withheld: 1 });
+    // U+33C2 reads "a.m.": a cut that starts inside it takes the whole character.
+    expect(withoutUrlSecrets("x:\u33c2@h")).toEqual({ text: "[withheld]@h", withheld: 1 });
+  });
+
+  test("a value still holding an escape after eight rounds of decoding is withheld whole", () => {
+    let nested = "%40";
+    for (let round = 0; round < 8; round += 1) nested = nested.replace("%", "%25");
+    expect(withoutUrlSecrets(`not-a-real-user:not-a-real-password${nested}h`)).toEqual({
+      text: "[withheld]",
+      withheld: 1,
+    });
+    expect(withoutUrlSecrets(`x${"%25".repeat(1)}40`)).toEqual({ text: "x%2540", withheld: 0 });
+  });
+
+  test.each([
+    [
+      "a user name and password after a word",
+      "login not-a-real-user:not-a-real-password@host",
+      "login [withheld]@host",
+    ],
+    ["after a quote", "see 'not-a-real-user:not-a-real-password@host'", "see [withheld]@host'"],
+    ["in brackets", "[not-a-real-user:not-a-real-password@host]", "[withheld]@host]"],
+    ["a user name holding a slash", "x not/a-real-user:not-a-real-password@host", "x [withheld]@host"],
+    ["a password starting with a slash", "x not-a-real-user:/not-a-real-password@host", "x [withheld]@host"],
+    [
+      "a scheme with two slashes keeps them",
+      "x 'https://not-a-real-user:not-a-real-password@host'",
+      "x 'https://[withheld]@host'",
+    ],
+  ])("a word holding an @ with a : before it: %s", (_what, text, kept) => {
+    expect(withoutUrlSecrets(text)).toEqual({ text: kept, withheld: 1 });
+  });
+
+  test.each([
+    ["a schemeless path", "files.example/x.nc?token=not-a-real-token", "files.example/x.nc?[withheld]"],
+    ["a fragment", "files.example/x.nc#token=not-a-real-token", "files.example/x.nc#[withheld]"],
+    ["a backslash path", "files.example\\x.nc?token=not-a-real-token", "files.example\\x.nc?[withheld]"],
+    ["a word in prose", "get files.example/x.nc?token=not-a-real-token now", "get files.example/x.nc?[withheld] now"],
+    ["a query holding an @", "a/b?t=not-a-real-token@h", "a/b?[withheld]"],
+    ["a mail address and a path", "bob@plant.example/x?token=not-a-real-token", "bob@plant.example/x?[withheld]"],
+  ])("a word holding a slash before a ? or #: %s", (_what, text, kept) => {
+    expect(withoutUrlSecrets(text)).toEqual({ text: kept, withheld: 1 });
+  });
+
+  test.each([
+    ["a question with no slash", "is T2 worn? yes"],
+    ["a hash with no slash", "tool #4 of 12"],
+    ["a ? before the slash", "why? a/b"],
+  ])("%s is left as written", (_what, text) => {
+    expect(withoutUrlSecrets(text)).toEqual({ text, withheld: 0 });
+  });
+
+  test("a password holding a ? keeps the host after its @", () => {
+    expect(withoutUrlSecrets("x ftp://not-a-real-user:not?a#real@files.example/p.nc")).toEqual({
+      text: "x ftp://[withheld]@files.example/p.nc",
+      withheld: 1,
+    });
+    // A slash and then a ? in the password read as a path and its query, so the cut runs to the word's end.
+    expect(withoutUrlSecrets("x not-a-real-user:not/a?real@files.example?t=not-a-real-token")).toEqual({
+      text: "x [withheld]",
+      withheld: 1,
+    });
+  });
+
+  test("a query holding an @ of its own is withheld to its end, and so is the host the last @ leaves in between", () => {
+    for (const text of [
+      "https://not-a-real-user:p@h/x?t=not-a-real-token@not-a-real-tail",
+      "https://not-a-real-user:p w@h/x?t=not-a-real-token@not-a-real-tail",
+    ]) {
+      expect(withoutUrlSecrets(text)).toEqual({ text: "https://[withheld]", withheld: 1 });
+    }
   });
 
   test("a scheme after the last @ withholds nothing before it", () => {
@@ -247,10 +387,10 @@ describe("a URL in an asset, its user name, password, query and fragment withhel
 
   test("the warning counts what was withheld, in the singular and the plural", () => {
     expect(withheldUrlWarning(1)).toStartWith(
-      "1 user name and password, query string or fragment of a URL in an asset was withheld",
+      "1 user name and password, query string or fragment of a URL in an asset or an asset reference was withheld",
     );
     expect(withheldUrlWarning(3)).toStartWith(
-      "3 user names and passwords, query strings or fragments of URLs in assets were withheld",
+      "3 user names and passwords, query strings or fragments of URLs in assets or asset references were withheld",
     );
   });
 });
