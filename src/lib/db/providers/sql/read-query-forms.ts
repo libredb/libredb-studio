@@ -26,6 +26,9 @@ import type { DatabaseType } from "@/lib/types";
  * on its keyspace, runs a `SELECT` (`JSON` and `DISTINCT` too) and answers `WITH`, `VALUES`, `TABLE`, `EXPLAIN` and
  * `OFFSET` with a syntax error; the agent path sends a `SELECT` of one table of the connection's keyspace or of
  * `system_schema` only, and a `WHERE token(<partition key>) > token(<last key read>)` answers the next partitions.
+ * Measured on 2026-11-02: Couchbase Server 8.0.2 Enterprise, through the agent read-only path, runs a `SELECT` (a
+ * `WITH` before it too) and pages it with `LIMIT n OFFSET m`, while the path's statement check refuses `EXPLAIN` and
+ * every other statement before it is sent, and SQL++ has no bare `VALUES` or `TABLE` statement.
  */
 export interface ReadQueryForms {
   /** The statements, as the refusal names them after "runs one read-only statement:". */
@@ -113,7 +116,9 @@ export const READ_QUERY_FORMS: Readonly<Record<DatabaseType, ReadQueryForms | nu
     pagesWithOffset: true,
   },
   mongodb: null,
-  couchbase: null,
+  // The agent path's statement check sends one SELECT (a WITH before it too) and refuses EXPLAIN before it is sent;
+  // SQL++ has no bare VALUES or TABLE statement.
+  couchbase: { statements: "a SELECT (a WITH is fine)", paging: LIMIT_OFFSET, pagesWithOffset: true },
   redis: null,
   prometheus: null,
   kafka: null,
