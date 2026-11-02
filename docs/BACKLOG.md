@@ -42,7 +42,7 @@ None of it is a GitHub issue.
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B166 · 86
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
-- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP9 · 9
+- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP10 · 10
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
 
 ---
@@ -9342,6 +9342,17 @@ OpenSearch shares the object surface: measured 2026-11-02 on OpenSearch 3.8.0 wi
 It also listed an alias over a visible index whose name starts with a dot (an alias over `.plugins-ml-config` answered that index's columns, `master_key` among them), the indices of the plugin families the OpenSearch dialect declares (`pluginIndexFamilies` in `http-transport.ts`) that `toIndexInfo` does not mark system, such as `ubi_queries`, `search-relevance-queryset` and `opensearch-forecast-results-history-<date>-1`, and an alias over a `top_queries-*` index, each with its columns, measured on 3.8.0 the same day; the statement check refuses their rows.
 
 **Done when:** under the agent-facing profiles the object listings drop the names `GET /_resolve/index` marks hidden or system, and the aliases that are hidden or sit over a hidden index, with a live test against a 9.1.4 node that pins all three cases, and on OpenSearch the hidden aliases, the aliases over a hidden index or over an index whose name starts with a dot, and the indices of the dialect's plugin families and the aliases over them, with a live test against a 3.8.0 node.
+
+### MCP10. `run_read_query`'s row refusal hides an engine row limit below 1000
+
+`classifyReadQueryFailure` in `src/lib/mcp/tools/read-query-limits.ts` maps every row-budget refusal to a fixed text, and the statement arms supply that text from `tooLarge` in `src/lib/mcp/tools/statement-arms.ts`: "The result has more than 1000 rows, the most this server reads for one call", followed by the advice to add a `LIMIT` of 1000 or less.
+OpenSearch refuses an answer that reaches `plugins.query.size_limit`, because the plugin cuts the rest without saying so, and its own sentence names that setting and its value; through `run_read_query` that sentence is replaced by the fixed text.
+So where the engine's limit is below 1000, the answer names a limit the query did not reach and advice that does not help.
+Repro: OpenSearch 3.8.0 with `plugins.query.size_limit` set to 500, `SELECT k FROM probe_buckets LIMIT 500` through `run_read_query` is answered "The result has more than 1000 rows ... Add a LIMIT of 1000 or less ...", while agent mode answers "OpenSearch answers at most 500 rows (plugins.query.size_limit) ...".
+`docs/providers/opensearch.md` (The statement path, MCP read) says what each path answers.
+Found 2026-11-02 while verifying `run_read_query` on OpenSearch.
+
+**Done when:** the refusal names the engine's own limit when the provider reports one, with a unit test.
 
 ---
 
