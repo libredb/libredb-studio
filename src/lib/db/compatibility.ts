@@ -603,8 +603,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
  *
  * True for the five SQL engines `run_read_query` served before this record existed, so nothing moved when it landed,
  * for ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Oracle, Db2, Cassandra and Couchbase, each opened to `run_read_query` by a change of its own, for MongoDB, whose command `run_mongo_command` reads, for Kubernetes, whose kubectl line `run_kubectl_read` reads
- * under the agent's machine redaction, for Qdrant, whose metadata request `run_qdrant_read` reads, and for Kafka, whose metadata
- * read `run_kafka_read` reads. An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records
+ * under the agent's machine redaction, for LibreDB, whose command `run_libredb_read` reads on a read-only handle, for
+ * Qdrant, whose metadata request `run_qdrant_read` reads, and for Kafka, whose metadata read `run_kafka_read` reads.
+ * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records
  * above it, and held false wherever `MCP_EXPOSABLE` is false and true only for an engine agent mode executes on by
  * `tests/unit/db/compatibility.test.ts`.
  */
@@ -719,8 +720,11 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // Agent mode executes window reads on Sparkplug, metadata only, and MCP read stays closed on it until a change of
   // its own opens it (BACKLOG B165).
   sparkplug: false,
-  // Agent mode executes statements on LibreDB, and MCP read stays closed on it until a change of its own opens it.
-  libredb: false,
+  // Opened on its own: run_libredb_read runs under the boundary agent mode uses, a read-only handle of its own for every
+  // command, opened through Studio's read-only file adapter, which takes no lock and cannot write; the seed names the
+  // one file it reads, Studio's own storage and credential files are refused as a target, and the file's reserved
+  // internal namespace is left out of every answer (docs/providers/libredb.md section 15).
+  libredb: true,
 });
 
 /**

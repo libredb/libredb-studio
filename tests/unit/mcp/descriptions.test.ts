@@ -22,6 +22,7 @@ pinMcpTestEnvironment();
 
 const RUN_KUBECTL_READ_ARM = mcpStatementArm("run_kubectl_read");
 const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
+const RUN_LIBREDB_READ_ARM = mcpStatementArm("run_libredb_read");
 const RUN_QDRANT_READ_ARM = mcpStatementArm("run_qdrant_read");
 const RUN_KAFKA_READ_ARM = mcpStatementArm("run_kafka_read");
 
@@ -35,6 +36,7 @@ const DESCRIPTIONS = [
   ["run_read_query", RUN_READ_QUERY_DESCRIPTION, "Run one read-only SQL statement"],
   ["run_kubectl_read", RUN_KUBECTL_READ_ARM.description, "Run one read-only kubectl read"],
   ["run_mongo_command", RUN_MONGO_COMMAND_ARM.description, "Run one read-only MongoDB command"],
+  ["run_libredb_read", RUN_LIBREDB_READ_ARM.description, "Run one read-only LibreDB command"],
   ["run_qdrant_read", RUN_QDRANT_READ_ARM.description, "Run one read-only Qdrant metadata read"],
   ["run_kafka_read", RUN_KAFKA_READ_ARM.description, "Run one read-only Kafka metadata read"],
 ] as const;
@@ -50,6 +52,7 @@ describe("the tool descriptions", () => {
     expect(RUN_READ_QUERY_DESCRIPTION.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
     expect(RUN_MONGO_COMMAND_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
     expect(RUN_KUBECTL_READ_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
+    expect(RUN_LIBREDB_READ_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
     expect(RUN_QDRANT_READ_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
     expect(RUN_KAFKA_READ_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
     expect(LIST_CONNECTIONS_DESCRIPTION).not.toContain(MCP_UNTRUSTED_NOTICE);
@@ -94,6 +97,12 @@ describe("the tool descriptions", () => {
       "Free-text status, event and log messages are not masked, so a Secret's name or a value an application printed can reach you there.",
     );
     expect(RUN_KUBECTL_READ_ARM.description).toContain("this tool takes no offset");
+  });
+
+  test("run_libredb_read names LibreDB, the one engine its handler gates on, and says what it never answers", () => {
+    expect(RUN_LIBREDB_READ_ARM.description).toContain("Runs on LibreDB; other engines refuse it.");
+    expect(RUN_LIBREDB_READ_ARM.description).toContain("The file's own internal catalog keys are never answered.");
+    expect(RUN_LIBREDB_READ_ARM.description).toContain("this tool takes no offset");
   });
 
   test("run_qdrant_read names Qdrant, the one engine its handler gates on, and says its answers are metadata only", () => {

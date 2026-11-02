@@ -47,9 +47,9 @@ describe("mcpStatementEngines", () => {
     ]);
   });
 
-  // Opening ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Oracle, Db2, Cassandra and Couchbase moved no other
-  // engine: every other language still serves exactly what it did.
-  test("opening ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Oracle, Db2, Cassandra and Couchbase leaves every other language's served set as it was", () => {
+  // Opening ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Oracle, Db2, Cassandra, Couchbase and LibreDB
+  // moved no other engine: every other language still serves exactly what it did.
+  test("opening ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Oracle, Db2, Cassandra, Couchbase and LibreDB leaves every other language's served set as it was", () => {
     const languages = [...new Set(Object.values(AGENT_STATEMENT_LANGUAGE))].filter(
       (language): language is NonNullable<typeof language> => language !== null && language !== "sql",
     );
@@ -58,22 +58,25 @@ describe("mcpStatementEngines", () => {
       ...Object.fromEntries(languages.map((language) => [language, []])),
       mongo: ["mongodb"],
       kubectl: ["kubernetes"],
+      libredbkv: ["libredb"],
       qdrantapi: ["qdrant"],
       kafkaread: ["kafka"],
     });
   });
 
   test("reads the shipped records when none are passed", () => {
-    for (const language of ["sql", "mongo", "kubectl", "qdrantapi", "kafkaread"] as const) {
+    for (const language of ["sql", "mongo", "kubectl", "libredbkv", "qdrantapi", "kafkaread"] as const) {
       expect(mcpStatementEngines(language)).toEqual(mcpStatementEngines(language, SHIPPED));
     }
   });
 
-  test("serves MongoDB, Kubernetes, Qdrant and Kafka each in its own language", () => {
-    // MongoDB opened with run_mongo_command, Kubernetes with run_kubectl_read, offered only machine-redacted, Qdrant with
-    // run_qdrant_read, metadata only, and Kafka with run_kafka_read, answered metadata-only.
+  test("serves MongoDB, Kubernetes, LibreDB, Qdrant and Kafka each in its own language", () => {
+    // MongoDB opened with run_mongo_command, Kubernetes with run_kubectl_read, offered only machine-redacted, LibreDB
+    // with run_libredb_read, on a read-only handle per command, Qdrant with run_qdrant_read, metadata only, and Kafka
+    // with run_kafka_read, answered metadata-only.
     expect(mcpStatementEngines("mongo")).toEqual(["mongodb"]);
     expect(mcpStatementEngines("kubectl")).toEqual(["kubernetes"]);
+    expect(mcpStatementEngines("libredbkv")).toEqual(["libredb"]);
     expect(mcpStatementEngines("qdrantapi")).toEqual(["qdrant"]);
     expect(mcpStatementEngines("kafkaread")).toEqual(["kafka"]);
   });
