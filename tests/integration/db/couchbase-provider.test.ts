@@ -2861,6 +2861,43 @@ describe("CouchbaseProvider agent read-only profile", () => {
       );
     });
 
+    test("the provider doc names data_reader among the roles the MCP open refuses, as the check does", () => {
+      const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/couchbase.md"), "utf8");
+
+      expect(doc).toContain(
+        "naming the role that reaches past those: the administrator, `ro_admin`, `query_system_catalog`, `data_reader`, `data_writer` held directly or through a group,",
+      );
+    });
+
+    test("the provider doc lists every system keyspace the narrow user reads rows from, each within its own scopes", () => {
+      const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/couchbase.md"), "utf8");
+
+      expect(doc).toContain(
+        "its own bucket and the keyspaces it holds a role on in `system:buckets`, `system:scopes`, `system:all_scopes`, `system:keyspaces`, `system:all_keyspaces`, `system:keyspaces_info` and `system:all_keyspaces_info`, the namespace in `system:namespaces`, a sequence in a scope it holds the role on, its value block included, in `system:sequences` and `system:all_sequences`,",
+      );
+      expect(doc).toContain(
+        "`system:indexes` shows it no index, and `system:all_indexes` only the indexes of the system keyspaces.",
+      );
+      expect(doc).toContain("None of these answers a row of a scope it holds no role on.");
+    });
+
+    test("the provider doc says an MCP client sees no role in a refused function call", () => {
+      const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/couchbase.md"), "utf8");
+
+      expect(doc).not.toContain("refused with 5010, whose cause names the missing role.");
+      expect(doc).toContain(
+        "refused with 5010, whose cause in the server's answer names the missing role, while Studio passes on only the message `Error evaluating projection`, so neither the agent nor an MCP client sees the role.",
+      );
+    });
+
+    test("the provider doc does not claim nextOffset pages a SELECT with its own OFFSET and no LIMIT", () => {
+      const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/couchbase.md"), "utf8");
+
+      expect(doc).toContain(
+        "A `SELECT` with an `OFFSET` of its own and no `LIMIT` is given a `nextOffset` too, but the call at that offset fails with a syntax error.",
+      );
+    });
+
     test("the provider doc records that the server answers an absent name differently from a refused one", () => {
       const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/couchbase.md"), "utf8");
 
