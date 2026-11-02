@@ -307,6 +307,10 @@ It never ends on an inferred signal, and the retain flag is a per-row label rath
 these three had no test that could produce them until a mutation run found that out; all three now do, in
 `tests/unit/db/mqtt/session.test.ts`.
 
+The time budget ends a read when the monotonic clock the read reports its durations with has run 3 seconds from when the connection was ready, not merely when its timer fires.
+A timer promises nothing against that clock: Bun's fired early on macOS, where CI measured a 2,999 ms window twice (runs 41381663638 and 41404970621).
+A timer that fires early is armed again for the rest, so a read the time budget ended never reports a window shorter than the budget.
+
 A read can also end because the broker ended it. The six end reasons and the sentence each produces are in
 section 10.
 

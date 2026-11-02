@@ -786,8 +786,22 @@ export async function readTopics(options: MqttSessionOptions): Promise<MqttReadO
       // timer's. The silence before the handshake is covered by `dial` below, and the silence after it by
       // `budget` plus `finish()`'s `!connected` arm.
       ping = setInterval(() => keepAlive(), options.pingEveryMs ?? MQTT_PING_INTERVAL_MS);
-      readyAtMs = sinceStart();
-      budget = setTimeout(() => finish("budget-time"), MQTT_READ_BUDGET_MS);
+      const readyAt = performance.now();
+      readyAtMs = Math.round(readyAt - started);
+      // THE WINDOW ENDS ON THE CLOCK IT IS REPORTED WITH, NOT ON THE TIMER. A timer promises nothing against
+      // `performance.now()`, and Bun's fired early on macOS: CI measured a 2,999 ms window
+      // (runs 41381663638 and 41404970621). An early timer is armed again for the rest, so the window is never
+      // short of the budget the doc promises.
+      const deadline = readyAt + MQTT_READ_BUDGET_MS;
+      const endAtDeadline = (): void => {
+        const left = deadline - performance.now();
+        if (left > 0) {
+          budget = setTimeout(endAtDeadline, Math.ceil(left));
+          return;
+        }
+        finish("budget-time");
+      };
+      budget = setTimeout(endAtDeadline, MQTT_READ_BUDGET_MS);
     };
 
     socket.once(opened.readyEvent, onReady);
