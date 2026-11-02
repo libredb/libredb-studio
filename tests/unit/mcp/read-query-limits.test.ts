@@ -54,6 +54,10 @@ const OWN_LIMIT =
 /** Elasticsearch SQL has no OFFSET, so the next page is asked for by key, as measured on 9.1.4. */
 const KEYSET = "ORDER BY a unique field, and for the next page add WHERE that field > the last value read";
 const NO_OFFSET = `This engine's SQL has no OFFSET, so this query cannot be paged with offset. Page it in SQL: ${KEYSET}.`;
+/** CQL has no OFFSET either (a syntax error on 5.0.9): the next partitions by token, rows of one partition by key. */
+const BY_TOKEN =
+  "LIMIT n, and for the next page add WHERE token(the partition key) > token(the last one read), or, within one partition, WHERE the clustering column > the last value read";
+const NO_CQL_OFFSET = `This engine's SQL has no OFFSET, so this query cannot be paged with offset. Page it in SQL: ${BY_TOKEN}.`;
 const OWN_LIMIT_MSSQL =
   "This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.";
 
@@ -63,15 +67,21 @@ describe("the texts", () => {
     expect(inSqlPaging("clickhouse")).toBe("Page it in SQL: LIMIT n OFFSET m.");
     expect(inSqlPaging("libsql")).toBe("Page it in SQL: LIMIT n OFFSET m.");
     expect(inSqlPaging("influxdb3")).toBe("Page it in SQL: LIMIT n OFFSET m.");
+    expect(inSqlPaging("opensearch")).toBe("Page it in SQL: LIMIT n OFFSET m.");
+    expect(inSqlPaging("couchbase")).toBe("Page it in SQL: LIMIT n OFFSET m.");
     expect(inSqlPaging("elasticsearch")).toBe(
       "Page it in SQL: ORDER BY a unique field, and for the next page add WHERE that field > the last value read.",
     );
+    expect(inSqlPaging("cassandra")).toBe(`Page it in SQL: ${BY_TOKEN}.`);
     expect(inSqlPaging("mssql")).toBe("Page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.");
     expect(moreRowsThanPageableHint("sqlite")).toBe(
       "More rows exist than this result holds, and this query cannot be paged with offset. Page it in SQL: LIMIT n OFFSET m.",
     );
     expect(moreRowsThanPageableHint("elasticsearch")).toBe(
       "More rows exist than this result holds, and this query cannot be paged with offset. Page it in SQL: ORDER BY a unique field, and for the next page add WHERE that field > the last value read.",
+    );
+    expect(moreRowsThanPageableHint("cassandra")).toBe(
+      `More rows exist than this result holds, and this query cannot be paged with offset. Page it in SQL: ${BY_TOKEN}.`,
     );
     expect(nextPageHint(100)).toBe("Call again with offset 100 for the next page.");
     expect(timeoutText(500)).toBe(
@@ -98,11 +108,11 @@ describe("the texts", () => {
     expect(
       profileRefusalText(
         "The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution.",
-        "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL) and Elasticsearch",
+        "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Apache Cassandra and Couchbase",
         "run_read_query",
       ),
     ).toBe(
-      "run_read_query cannot run on this connection: The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution. It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL) and Elasticsearch.",
+      "run_read_query cannot run on this connection: The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution. It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Apache Cassandra and Couchbase.",
     );
   });
 });
@@ -118,7 +128,15 @@ describe("the texts", () => {
  * too), answers `TABLE` with a parser error, and runs `EXPLAIN ANALYZE`, which the fence refuses. Elasticsearch
  * 9.1.4, measured on 2026-11-01 through the agent read-only path, runs a `SELECT` and `EXPLAIN`, parses a `WITH` but
  * reads a name it defines as an index ("Unknown index"), and refuses `VALUES`, `TABLE` and `EXPLAIN ANALYZE` in its
- * grammar.
+ * grammar. OpenSearch 3.8.0, measured on 2026-11-02 through the agent read-only path, runs a `SELECT` and pages it
+ * with `LIMIT n OFFSET m`; the path's statement check refuses a comment, a subquery, a `WITH`, a `JOIN` and a
+ * double-quoted name, and the plugin refuses `WITH`, `VALUES`, `TABLE` and `EXPLAIN`.
+ * Apache Cassandra 5.0.9, measured on 2026-11-02 as a role holding only SELECT on its keyspace, runs a `SELECT`
+ * (`JSON` and `DISTINCT` too) and answers `WITH`, `VALUES`, `TABLE`, `EXPLAIN` and `OFFSET` with a syntax error, and the
+ * agent path reads one table of the connection's keyspace or of `system_schema`.
+ * Couchbase Server 8.0.2 Enterprise, measured on 2026-11-02 through the agent read-only path, runs a `SELECT` (a
+ * `WITH` before it too), while the path's statement check refuses `EXPLAIN` and every other statement before it is
+ * sent, and SQL++ has no bare `VALUES` or `TABLE` statement.
  */
 describe("the accepted forms each engine's refusal names", () => {
   test.each([
@@ -134,6 +152,12 @@ describe("the accepted forms each engine's refusal names", () => {
       "elasticsearch",
       "a SELECT that reads at most one index expression, with no comment, subquery, WITH or JOIN, or an EXPLAIN of such a SELECT",
     ],
+    [
+      "opensearch",
+      "a SELECT that reads at most one index expression, with no comment, subquery, WITH, JOIN or double quote (quote a name in backticks)",
+    ],
+    ["cassandra", "a SELECT of one table of the connection's keyspace or of system_schema"],
+    ["couchbase", "a SELECT (a WITH is fine)"],
   ] as const)("%s: %s", (type, statements) => {
     expect(fenceRefusalText("NON_READ_STATEMENT", type)).toBe(
       `The statement was refused before it reached the database (NON_READ_STATEMENT). On this engine run_read_query runs one read-only statement: ${statements}.`,
@@ -148,9 +172,10 @@ describe("the accepted forms each engine's refusal names", () => {
     for (const type of RUN_READ_QUERY_TYPES) expect(READ_QUERY_FORMS[type]).not.toBeNull();
   });
 
-  test("every engine pages with OFFSET but Elasticsearch, whose SQL has none", () => {
-    expect(RUN_READ_QUERY_TYPES.filter((type) => !pagesWithOffset(type))).toEqual(["elasticsearch"]);
+  test("every engine pages with OFFSET but Elasticsearch and Cassandra, whose SQL has none", () => {
+    expect(RUN_READ_QUERY_TYPES.filter((type) => !pagesWithOffset(type))).toEqual(["elasticsearch", "cassandra"]);
     expect(READ_QUERY_FORMS.elasticsearch?.paging).toBe(KEYSET);
+    expect(READ_QUERY_FORMS.cassandra?.paging).toBe(BY_TOKEN);
   });
 
   test("an engine with no row is refused by name, never answered with another engine's forms", () => {
@@ -196,6 +221,32 @@ describe("the offset rule", () => {
     [
       "EXPLAIN SELECT k FROM probe_buckets",
       "elasticsearch",
+      "This statement's result cannot be paged. Call again without offset.",
+    ],
+    // OpenSearch's SQL has an OFFSET, so its offset refusals are the shared ones.
+    ["SELECT k FROM probe_buckets ORDER BY k LIMIT 5", "opensearch", OWN_LIMIT],
+    [
+      "SELECT k FROM probe_buckets",
+      "opensearch",
+      "This query cannot be paged with offset. Page it in SQL: LIMIT n OFFSET m.",
+    ],
+    [
+      "EXPLAIN SELECT k FROM probe_buckets",
+      "opensearch",
+      "This statement's result cannot be paged. Call again without offset.",
+    ],
+    ["SELECT id FROM probe.customers", "cassandra", NO_CQL_OFFSET],
+    ["SELECT id FROM probe.customers LIMIT 5", "cassandra", NO_CQL_OFFSET],
+    ["SELECT id FROM probe.customers WHERE id = 1 LIMIT 5 ALLOW FILTERING", "cassandra", NO_CQL_OFFSET],
+    ["SELECT d.n FROM `_default` AS d ORDER BY d.n LIMIT 2 OFFSET 1", "couchbase", OWN_LIMIT],
+    [
+      "SELECT d.n FROM `_default` AS d ORDER BY d.n",
+      "couchbase",
+      "This query cannot be paged with offset. Page it in SQL: LIMIT n OFFSET m.",
+    ],
+    [
+      "EXPLAIN SELECT d.n FROM `_default` AS d",
+      "couchbase",
       "This statement's result cannot be paged. Call again without offset.",
     ],
     ["VALUES (1), (2), (3)", "sqlite", "This statement's result cannot be paged. Call again without offset."],
@@ -318,6 +369,8 @@ describe("the prefixes the mapper matches still start a message in each provider
         "src/lib/db/providers/sql/libsql/index.ts",
         "src/lib/db/providers/timeseries/influxdb/sql-agent-read.ts",
         "src/lib/db/providers/sql/search/index.ts",
+        "src/lib/db/providers/sql/cassandra/index.ts",
+        "src/lib/db/providers/document/couchbase/index.ts",
       ],
     },
     MSSQL_TIME_BUDGET_PREFIX: { prefix: MSSQL_TIME_BUDGET_PREFIX, files: ["src/lib/db/providers/sql/mssql.ts"] },
@@ -333,6 +386,8 @@ describe("the prefixes the mapper matches still start a message in each provider
     libsql: ["src/lib/db/providers/sql/libsql/agent-read.ts", "src/lib/db/providers/sql/libsql/index.ts"],
     influxdb3: ["src/lib/db/providers/timeseries/influxdb/sql-agent-read.ts"],
     elasticsearch: ["src/lib/db/providers/sql/search/index.ts"],
+    cassandra: ["src/lib/db/providers/sql/cassandra/index.ts"],
+    couchbase: ["src/lib/db/providers/document/couchbase/index.ts"],
     mongodb: ["src/lib/db/providers/document/mongodb/agent-read.ts"],
     kubernetes: [
       "src/lib/db/providers/platform/kubernetes/machine-read.ts",

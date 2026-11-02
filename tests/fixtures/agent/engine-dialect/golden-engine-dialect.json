@@ -2342,7 +2342,10 @@
         "columns": [
           {
             "selector": {},
-            "sql": "DESCRIBE TABLES LIKE %"
+            "sql": {
+              "reasonCode": "SELECTOR_UNSUPPORTED_BY_DIALECT",
+              "message": "OpenSearch's every-table catalog read reaches the indices whose names start with a dot, so name a table instead"
+            }
           },
           {
             "selector": {

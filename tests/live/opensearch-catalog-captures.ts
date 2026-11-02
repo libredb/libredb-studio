@@ -30,11 +30,10 @@ const ORIGIN = process.env.LIBREDB_OS_ORIGIN ?? "http://127.0.0.1:9201";
 const SQL_PATH = "/_plugins/_sql";
 
 /**
- * Every catalog read captured, by name and the status it must answer: the whole inventory, one index, one alias, and a
- * name the node does not hold.
+ * Every catalog read captured, by name and the status it must answer: one index, one alias, and a name the node does not
+ * hold. The whole inventory is not among them: the overlay refuses to compose it, since `*` reaches the dot-led indices.
  */
 const SELECTORS: readonly (readonly [string, AgentCatalogSelector, number])[] = [
-  ["columns", { kind: "columns" }, 200],
   ["columns-table", { kind: "columns", table: "probe_shapes" }, 200],
   ["columns-alias", { kind: "columns", table: "probe_orders_alias" }, 200],
   ["columns-missing", { kind: "columns", table: "zq_no_such_index" }, 404],

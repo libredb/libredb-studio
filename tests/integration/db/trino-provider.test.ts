@@ -5298,6 +5298,28 @@ describe("queryReadOnly", () => {
     expect(recorded.open.size).toBe(0);
   });
 
+  test("an open under the profile on a connection that pins the system catalog is refused before anything is sent", async () => {
+    for (const database of ["system", "SYSTEM"]) {
+      const recorded = coordinator();
+      const provider = new TrinoProvider(makeConnection({ database }), {}, AGENT, () => recorded.transport);
+
+      const error = await provider.connect().catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(ExecutionProfileError);
+      expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
+      expect((error as Error).message).toBe(
+        "The agent read-only execution profile needs a Trino connection that pins a catalog other than system: the system catalog's runtime tables hold the text of every user's queries on this server, and a statement's unqualified names would read them. Pin the catalog that holds the data. Nothing was sent.",
+      );
+      expect(recorded.log).toEqual([]);
+      expect(provider.isConnected()).toBe(false);
+    }
+    // The editor and the operations profile send no agent statement, so they open on it as before.
+    const recorded = coordinator();
+    const editor = new TrinoProvider(makeConnection({ database: "system" }), {}, {}, () => recorded.transport);
+    await editor.connect();
+    expect(editor.isConnected()).toBe(true);
+  });
+
   test("an editor open and an open that sends no statement prove nothing", async () => {
     for (const execution of [{}, { readOnly: true }, { readOnly: true, sendsStatements: false }]) {
       const recorded = coordinator();

@@ -3580,7 +3580,7 @@ describe("MCP run_read_query on a libSQL connection", () => {
   ];
   const FORBIDDEN = "Authorization forbidden: Current session doesn't not have Write permission to namespace default";
   const ENGINES =
-    "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL) and Elasticsearch";
+    "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Apache Cassandra and Couchbase";
 
   function seed(overrides: Partial<ManagedConnection> = {}): ManagedConnection {
     return {

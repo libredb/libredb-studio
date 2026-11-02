@@ -38,7 +38,7 @@
  *    come back alphabetically, so declaration order is not recoverable - the tree
  *    orders partition key, then clustering, then the rest by name, and says so.
  */
-import { describe, expect, spyOn, test } from "bun:test";
+import { beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { policies, types } from "cassandra-driver";
 import {
   AuthenticationError,
@@ -50,6 +50,8 @@ import {
   RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
+import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
 import { cassandraAgentStatementRefusal } from "@/lib/db/providers/sql/cassandra/agent-boundary";
 import { CassandraDriverTransport, type CassandraSession } from "@/lib/db/providers/sql/cassandra/driver-transport";
 import { CassandraProvider } from "@/lib/db/providers/sql/cassandra/index";
@@ -93,6 +95,12 @@ import {
 } from "@/lib/db/object-kinds";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import type { DatabaseConnection } from "@/lib/types";
+import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import type { McpConnectionContext } from "@/lib/mcp/context";
+import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
+import type { ManagedConnection } from "@/lib/seed";
+import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 import { comparePaths } from "@/lib/db/object-path";
 
 const KEYSPACE = "probe";
@@ -4088,12 +4096,42 @@ describe("the agent read-only profile", () => {
 
     const error = await provider.queryReadOnly(sql, BUDGET).catch((failure: unknown) => failure);
     expect(error).toBeInstanceOf(RefusedBeforeSendError);
-    expect((error as Error).message).toBe(cassandraAgentStatementRefusal(sql) as string);
+    expect((error as Error).message).toBe(cassandraAgentStatementRefusal(sql, KEYSPACE) as string);
     expect((error as Error).message).toStartWith(
       "The agent read-only execution profile sends one CQL statement, a SELECT, and nothing else; ",
     );
     expect(primary.asked).toHaveLength(sent);
     expect(calls).toHaveLength(0);
+  });
+
+  test.each([
+    ["the traced statements of other sessions, which every role may read", "SELECT * FROM system_traces.sessions"],
+    ["the node's own row", "SELECT * FROM system.local"],
+    ["another keyspace", "SELECT * FROM other.t"],
+  ])("queryReadOnly refuses a read of %s before a session is opened or the role checked", async (_, sql) => {
+    const { provider, primary, calls } = await agentProvider(() => ({ [sql]: VOID_RESULT }));
+    await provider.connect();
+    const sent = primary.asked.length;
+
+    const error = await provider.queryReadOnly(sql, BUDGET).catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect((error as Error).message).toBe(cassandraAgentStatementRefusal(sql, KEYSPACE) as string);
+    expect((error as Error).message).toStartWith(
+      "The agent read-only execution profile reads the tables of the connection's keyspace and of system_schema, and nothing else; this SELECT reads ",
+    );
+    expect(primary.asked).toHaveLength(sent);
+    expect(calls).toHaveLength(0);
+  });
+
+  test("the scope is the connection's own keyspace: an unqualified table and the schema catalog are read", async () => {
+    const catalog = "SELECT column_name FROM system_schema.columns WHERE keyspace_name = 'probe'";
+    const unqualified = "SELECT id, name FROM customers LIMIT 3";
+    const { provider, calls } = await agentProvider(() => ({ [catalog]: VOID_RESULT, [unqualified]: CUSTOMERS }));
+    await provider.connect();
+
+    await expect(provider.queryReadOnly(unqualified, BUDGET)).resolves.toMatchObject({ rowCount: 2 });
+    await provider.queryReadOnly(catalog, BUDGET);
+    expect(calls.map((call) => call.asked.at(-1))).toEqual([unqualified, catalog]);
   });
 
   test("a result past the row budget is refused, not cut", async () => {
@@ -4206,5 +4244,317 @@ describe("the agent read-only profile", () => {
     await expect(provider.queryReadOnly(STATEMENT, { ...BUDGET, statementTimeoutMs: 500 })).rejects.toThrow(
       ConnectionError,
     );
+  });
+  /**
+   * MCP's `run_read_query` serves Cassandra through the same acquisition and `queryReadOnly` agent mode uses: the
+   * connection is taken under `agent-read-only`, whose open checks the role, and every statement is checked again on
+   * a session of its own. The MCP fence refuses a write-shaped statement before anything is acquired; a statement it
+   * admits that is not one SELECT of the connection's keyspace or of `system_schema` is refused by the provider's own
+   * fence, after the open and before the statement is sent.
+   */
+  describe("MCP run_read_query on a Cassandra connection", () => {
+    const SEED = {
+      id: "seed:ring",
+      name: "ring",
+      type: "cassandra",
+      seedId: "ring",
+      managed: true,
+      mcp: true,
+      roles: ["*"],
+      host: "cassandra.test",
+      port: 9042,
+      user: "agent_ro",
+      database: KEYSPACE,
+      localDataCenter: "datacenter1",
+      createdAt: new Date(),
+    } as ManagedConnection;
+
+    let acquired: ExecutionProfile[] = [];
+    let sessions: ReturnType<typeof agentSession>[] = [];
+    let timeouts: number[] = [];
+    let answers: Record<string, Reply> = {};
+    let openReplies: Record<string, Reply> = {};
+
+    /** A context over the one Cassandra seed, opening each acquisition the way the factory does, by its profile. */
+    const context = {
+      caller: { username: "alice", role: "admin" },
+      visibleConnections: async () => [SEED],
+      resolve: async () => SEED,
+      acquire: async (_connection: ManagedConnection, profile: ExecutionProfile) => {
+        acquired.push(profile);
+        const config = makeConnection({ user: "agent_ro", password: "not-a-real-password" });
+        const primary = agentSession({ ...healthyReplies(), ...checkReplies(openReplies) }, PROBE_REFUSED);
+        const provider = new CassandraProvider(
+          config,
+          {},
+          executionContextFor(profile),
+          new CassandraDriverTransport(config, 60_000, primary.session),
+          (readTimeoutMs) => {
+            timeouts.push(readTimeoutMs);
+            const call = agentSession({ ...checkReplies(), ...answers }, PROBE_REFUSED);
+            sessions.push(call);
+            return new CassandraDriverTransport(config, readTimeoutMs, call.session);
+          },
+        );
+        await provider.connect();
+        return provider;
+      },
+    } as unknown as McpConnectionContext;
+
+    function call(args: Record<string, unknown>) {
+      const parsed = RunReadQueryInputSchema.parse({ connection_id: SEED.id, ...args }) as McpStatementInput;
+      return runReadQuery(parsed, { context, signal: new AbortController().signal });
+    }
+
+    const textOf = (answer: { content: unknown }) =>
+      (answer.content as { type: string; text: string }[]).map((part) => part.text);
+    const sent = () => sessions.flatMap((session) => session.asked);
+    const PAGING =
+      "LIMIT n, and for the next page add WHERE token(the partition key) > token(the last one read), or, within one partition, WHERE the clustering column > the last value read";
+
+    beforeEach(() => {
+      acquired = [];
+      sessions = [];
+      timeouts = [];
+      answers = {};
+      openReplies = {};
+    });
+
+    test("the provider doc says MCP read is open here and names the statements it runs, from their records", () => {
+      const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/cassandra.md"), "utf8");
+
+      expect(MCP_STATEMENT_READ.cassandra).toBe(true);
+      expect(doc).toContain("`MCP_STATEMENT_READ.cassandra` is true");
+      expect(doc).not.toContain("MCP's statement read stays closed on Cassandra");
+      expect(doc.replaceAll("`", "")).toContain(`It runs ${readQueryFormsOf("cassandra").statements}:`);
+      expect(doc.replaceAll("`", "")).toContain(readQueryFormsOf("cassandra").paging);
+    });
+
+    test("reads rows under the agent profile, checked on the statement's own session, one row past max_rows", async () => {
+      const statement = "SELECT id, name FROM probe.customers LIMIT 2";
+      answers = { [statement]: CUSTOMERS };
+
+      const answer = await call({ sql: "SELECT id, name FROM probe.customers", max_rows: 1 });
+
+      expect(answer.isError).toBeUndefined();
+      expect(acquired).toEqual(["agent-read-only"]);
+      expect(answer.structuredContent).toMatchObject({
+        connection_id: SEED.id,
+        rows: [{ id: 1, name: "Ada" }],
+        row_count: 1,
+        truncated: true,
+        truncated_by: "max_rows",
+        pagination: { offset: 0, limit: 1, hasMore: true, nextOffset: null, wasLimited: true },
+        hint: `More rows exist than this result holds, and this query cannot be paged with offset. Page it in SQL: ${PAGING}.`,
+      });
+      expect(textOf(answer)[0]).toBe(MCP_UNTRUSTED_NOTICE);
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0].asked.slice(0, 5)).toEqual([
+        "SELECT release_version FROM system.local",
+        "SELECT key FROM system.versions",
+        CHECK_ROLES,
+        CHECK_PERMISSIONS,
+        CHECK_MASKS,
+      ]);
+      expect(sessions[0].asked.at(-1)).toBe(statement);
+      expect(sessions[0].state).toEqual({ connected: 1, shutdown: 1 });
+    });
+
+    test.each([
+      ["SELECT id FROM probe.customers", "the query"],
+      ["SELECT id FROM probe.customers LIMIT 5", "a query with its own LIMIT"],
+    ])("refuses an offset on %p (%s) before the statement is sent, saying how to page in CQL", async (sql) => {
+      const answer = await call({ sql, offset: 2 });
+
+      expect(answer).toEqual({
+        content: [
+          {
+            type: "text",
+            text: `This engine's SQL has no OFFSET, so this query cannot be paged with offset. Page it in SQL: ${PAGING}.`,
+          },
+        ],
+        isError: true,
+      });
+      expect(sessions).toHaveLength(0);
+    });
+
+    const fenced = (code: string) =>
+      `The statement was refused before it reached the database (${code}). On this engine run_read_query runs one read-only statement: a SELECT of one table of the connection's keyspace or of system_schema.`;
+
+    test.each([
+      ["INSERT INTO probe.customers (id, name) VALUES (9, 'x')", "NON_READ_STATEMENT"],
+      ["UPDATE probe.customers SET name = 'x' WHERE id = 1", "NON_READ_STATEMENT"],
+      ["DELETE FROM probe.customers WHERE id = 1", "NON_READ_STATEMENT"],
+      ["BEGIN BATCH INSERT INTO probe.customers (id, name) VALUES (9, 'x'); APPLY BATCH", "MULTIPLE_STATEMENTS"],
+      ["TRUNCATE probe.customers", "NON_READ_STATEMENT"],
+      ["CREATE TABLE probe.made (id int PRIMARY KEY)", "NON_READ_STATEMENT"],
+      ["DROP TABLE probe.customers", "NON_READ_STATEMENT"],
+      ["GRANT MODIFY ON KEYSPACE probe TO agent_ro", "NON_READ_STATEMENT"],
+      ["ALTER ROLE agent_ro WITH PASSWORD = 'not-a-real-password'", "NON_READ_STATEMENT"],
+      ["USE other", "NON_READ_STATEMENT"],
+      ["LIST ROLES", "NON_READ_STATEMENT"],
+      ["SELECT id FROM probe.customers; DROP TABLE probe.customers", "MULTIPLE_STATEMENTS"],
+      ["SELECT id FROM probe.customers -- x\rALTER ROLE agent_ro WITH PASSWORD = 'x'", "DIALECT_AMBIGUOUS_TEXT"],
+    ])("%p is refused at admission, before anything is acquired or sent", async (sql, code) => {
+      const answer = await call({ sql });
+
+      expect(answer).toEqual({ content: [{ type: "text", text: fenced(code) }], isError: true });
+      expect(acquired).toEqual([]);
+      expect(sessions).toHaveLength(0);
+    });
+
+    test.each([
+      ["WITH x AS (SELECT id FROM probe.customers) SELECT * FROM x"],
+      ["VALUES (1)"],
+      ["TABLE probe.customers"],
+      ["EXPLAIN SELECT id FROM probe.customers"],
+    ])("%p passes the MCP fence and is refused by the provider's before the statement is sent", async (sql) => {
+      const answer = await call({ sql });
+
+      expect(answer).toEqual({
+        content: [
+          {
+            type: "text",
+            text: `The statement was refused before it reached the database: ${cassandraAgentStatementRefusal(sql, KEYSPACE)}`,
+          },
+        ],
+        isError: true,
+      });
+      expect(textOf(answer)[0]).toContain("this statement does not begin with SELECT, so it was not sent.");
+      expect(acquired).toEqual(["agent-read-only"]);
+      expect(sessions).toHaveLength(0);
+    });
+
+    test.each([
+      ["SELECT * FROM system_traces.sessions", "system_traces.sessions"],
+      ['SELECT * FROM "system_traces"."events"', "system_traces.events"],
+      ["SELECT * FROM SYSTEM.LOCAL", "system.local"],
+      ["SELECT * FROM system_auth.roles", "system_auth.roles"],
+      ["SELECT * FROM other.t", "other.t"],
+    ])("a read of %p passes the MCP fence and is refused by the provider's, naming %s", async (sql, table) => {
+      const answer = await call({ sql });
+
+      expect(answer).toEqual({
+        content: [
+          {
+            type: "text",
+            text: `The statement was refused before it reached the database: The agent read-only execution profile reads the tables of the connection's keyspace and of system_schema, and nothing else; this SELECT reads ${table}, so it was not sent. Name a table of the keyspace probe, or of system_schema for the schema.`,
+          },
+        ],
+        isError: true,
+      });
+      expect(sessions).toHaveLength(0);
+    });
+
+    test("a SELECT the server refuses the role is answered as the database's refusal, in its words", async () => {
+      const statement = "SELECT probe.plus_one(id) FROM probe.customers WHERE id = 1 LIMIT 101";
+      answers = {
+        [statement]: responseError(
+          8448,
+          "User agent_ro has no EXECUTE permission on <function probe.plus_one(int)> or any of its parents",
+        ),
+      };
+
+      const answer = await call({ sql: "SELECT probe.plus_one(id) FROM probe.customers WHERE id = 1" });
+
+      expect(answer.isError).toBe(true);
+      expect(textOf(answer)).toEqual([
+        MCP_UNTRUSTED_NOTICE,
+        `${MCP_ENGINE_ERROR_PREFIX}User agent_ro has no EXECUTE permission on <function probe.plus_one(int)> or any of its parents`,
+      ]);
+      expect(sent().at(-1)).toBe(statement);
+    });
+
+    test("a role the check refuses is refused at open, in the profile's sentence, and nothing is sent", async () => {
+      openReplies = { [CHECK_ROLES]: roles(["agent_ro", true]) };
+
+      const answer = await call({ sql: "SELECT id FROM probe.customers" });
+
+      expect(acquired).toEqual(["agent-read-only"]);
+      expect(sessions).toHaveLength(0);
+      expect(answer).toEqual({
+        content: [
+          {
+            type: "text",
+            text: `run_read_query cannot run on this connection: The agent read-only execution profile refuses the Cassandra role agent_ro: it is a superuser (agent_ro), whom no grant restricts. Connect as a role that is no superuser, holds no superuser role, and holds only SELECT on the keyspace probe or on its tables. It runs on ${RUN_READ_QUERY_ENGINES}.`,
+          },
+        ],
+        isError: true,
+      });
+    });
+
+    test("a grant the open did not see refuses the call, on the statement's own session, in the profile's sentence", async () => {
+      answers = {
+        [CHECK_PERMISSIONS]: permissions(["<keyspace probe>", "SELECT"], ["<keyspace other>", "MODIFY"]),
+      };
+
+      const answer = await call({ sql: "SELECT id FROM probe.customers" });
+
+      expect(answer.isError).toBe(true);
+      expect(textOf(answer).join(" ")).toContain("it holds MODIFY on <keyspace other> (granted to agent_ro)");
+      expect(sent()).not.toContain("SELECT id FROM probe.customers LIMIT 101");
+    });
+
+    test("a result past the 1000-row provider budget is refused, never cut, and says how to page in CQL", async () => {
+      const many = result(
+        declare(["id", INT]),
+        Array.from({ length: 1001 }, (_, id) => ({ id })),
+      );
+      answers = { "SELECT id FROM probe.customers LIMIT 2000": many };
+
+      const answer = await call({ sql: "SELECT id FROM probe.customers LIMIT 2000" });
+
+      expect(answer).toEqual({
+        content: [
+          {
+            type: "text",
+            text: `The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, and page it in SQL: ${PAGING}.`,
+          },
+        ],
+        isError: true,
+      });
+    });
+
+    test("a result past the 1 MiB provider budget is refused, never cut", async () => {
+      answers = {
+        "SELECT name FROM probe.customers LIMIT 101": result(declare(["name", TEXT]), [
+          { name: "x".repeat(1_048_577) },
+        ]),
+      };
+
+      const answer = await call({ sql: "SELECT name FROM probe.customers" });
+
+      expect(answer).toEqual({
+        content: [
+          {
+            type: "text",
+            text: "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add a smaller LIMIT.",
+          },
+        ],
+        isError: true,
+      });
+    });
+
+    test("a statement past timeout_ms is answered as the timeout, the driver's read timeout never past it", async () => {
+      const timedOut = new Error("The host 127.0.0.1:9042 did not reply before timeout 1000 ms");
+      timedOut.name = "OperationTimedOutError";
+      answers = { "SELECT id FROM probe.customers LIMIT 101": timedOut };
+
+      const answer = await call({ sql: "SELECT id FROM probe.customers", timeout_ms: 1_000 });
+
+      expect(answer).toEqual({
+        content: [
+          {
+            type: "text",
+            text: "The statement did not finish within timeout_ms (1000 ms). Narrow it, or raise timeout_ms up to 30000.",
+          },
+        ],
+        isError: true,
+      });
+      expect(timeouts).toHaveLength(1);
+      expect(timeouts[0]).toBeGreaterThan(0);
+      expect(timeouts[0]).toBeLessThanOrEqual(1_000);
+      expect(sessions[0].state.shutdown).toBe(1);
+    });
   });
 });

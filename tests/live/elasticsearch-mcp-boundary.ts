@@ -127,7 +127,7 @@ const DOT_REFUSAL = unsent(DOT_INDEX_REFUSAL);
 const COMMAND_REFUSAL = unsent(STATEMENT_REFUSAL);
 /** The open's advice when it refuses a login for its reach. */
 const GRANT_INSTEAD =
-  "Give the agent a user whose role holds the cluster action cluster:monitor/main and read and view_index_metadata on the indices it reads, without allow_restricted_indices, such as the libredb_agent_read role";
+  "Give the agent a user whose role holds the cluster action cluster:monitor/main and read and view_index_metadata on the indices it reads, without allow_restricted_indices, such as the libredb_agent_read role, or libredb_seed_read for a seed that MCP reads";
 const KEYSET =
   "Page it in SQL: ORDER BY a unique field, and for the next page add WHERE that field > the last value read.";
 

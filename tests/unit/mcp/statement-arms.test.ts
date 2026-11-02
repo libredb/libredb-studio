@@ -192,6 +192,10 @@ describe("the SQL arm", () => {
     expect(RUN_READ_QUERY_ARM.tooLarge("SELECT k FROM probe_buckets LIMIT 2000", "elasticsearch")).toEqual({
       rows: "The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, and page it in SQL: ORDER BY a unique field, and for the next page add WHERE that field > the last value read.",
     });
+    // Nor does CQL's, which has no OFFSET either.
+    expect(RUN_READ_QUERY_ARM.tooLarge("SELECT id FROM probe.customers LIMIT 2000", "cassandra")).toEqual({
+      rows: "The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, and page it in SQL: LIMIT n, and for the next page add WHERE token(the partition key) > token(the last one read), or, within one partition, WHERE the clustering column > the last value read.",
+    });
   });
 
   test("takes a database, drops an unknown key rather than refusing it, and refuses an empty statement in its own words", () => {
@@ -412,7 +416,9 @@ describe("the tool each engine is read with", () => {
     expect(mcpStatementToolFor("influxdb3")).toBe("run_read_query");
     expect(mcpStatementToolFor("influxdb")).toBeNull();
     expect(mcpStatementToolFor("elasticsearch")).toBe("run_read_query");
-    expect(mcpStatementToolFor("opensearch")).toBeNull();
+    expect(mcpStatementToolFor("opensearch")).toBe("run_read_query");
+    expect(mcpStatementToolFor("cassandra")).toBe("run_read_query");
+    expect(mcpStatementToolFor("couchbase")).toBe("run_read_query");
     expect(mcpStatementToolFor("redis")).toBeNull();
     expect(mcpStatementToolFor("snowflake")).toBeNull();
   });
