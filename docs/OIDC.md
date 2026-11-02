@@ -87,7 +87,7 @@ Set these URLs in your identity provider:
 
 For local development, use `http://localhost:3000` instead.
 
-For a deployment built with `BASE_PATH=/studio`, register `https://your-domain.com/studio/api/auth/oidc/callback` and `https://your-domain.com/studio/login`. Keep the web origin unchanged. The authorization request and token exchange use the same prefixed callback URL, even when Next.js removes the prefix from the handler's request URL.
+For a deployment built with `BASE_PATH=/studio`, register `https://your-domain.com/studio/api/auth/oidc/callback` and `https://your-domain.com/studio/login`. Keep the web origin unchanged.
 
 ### 3. Start the App
 
