@@ -8,9 +8,10 @@
  * the `lookup` and `view` schemas, which an agent statement may not read, are left out of the read; only the
  * datasources (`druid`) stay in. Druid has no foreign key, so the relation
  * read is the projection the other engines answer, with no rows. It keeps no index object, since every dimension is
- * indexed inside its segments, and no row count in its catalog, so those two kinds are refused. The provider sends
- * only a SELECT to the server, so no estimating plan (`EXPLAIN PLAN FOR`) is composed, and a table profile, the
- * statistics reading and the grounding capture have no composition measured here.
+ * indexed inside its segments, and no row count in its catalog, so those two kinds are refused. The agent's statements
+ * are only a SELECT, so no estimating plan (`EXPLAIN PLAN FOR`) is composed; the provider's own EXPLAIN before each
+ * statement is a check the agent never sees. A table profile, the statistics reading and the grounding capture have no
+ * composition measured here.
  */
 import {
   type AgentCatalogRead,
