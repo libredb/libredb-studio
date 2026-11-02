@@ -123,7 +123,7 @@
         Node labels and relationship types with their properties as columns, indexes and constraints are browsable, and a click on a label or a relationship type writes a bounded sample read.
         Nodes, relationships and paths reach the grid as tagged JSON cells with the graph type in the column header, and a 64-bit integer or a temporal value keeps every digit.
         A Graph tab beside the grid draws a result's nodes and relationships, with no statement of its own.
-        Read-only by construction: every statement passes a read policy (no writes, no `LOAD CSV`, no APOC or GDS, allowlisted procedures, functions and SHOW forms), then the server's own classification (which an allowlisted SHOW form skips), then a READ session.
+        Read-only by construction: every statement passes a read policy (no writes, no `LOAD CSV`, no APOC or GDS, allowlisted procedures, functions and SHOW forms), then the server's own classification (which an allowlisted SHOW form skips in the editor, while agent and MCP reads classify every SHOW form), then a READ session.
         See [`providers/neo4j.md`](providers/neo4j.md).
 *   **Vector Databases:**
     *   **Milvus:** Read-only over Milvus's gRPC API through a client of Studio's own, tested on Milvus 3.0.2.
