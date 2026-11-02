@@ -257,11 +257,12 @@ describe("docs/providers/qdrant.md quotes what the code says", () => {
     expect(MCP_EXPOSABLE.qdrant).toBe(true);
     expect(READ_ONLY_ENFORCED.qdrant).toBe(true);
     expect(AGENT_EXECUTION_ENGINES).toContain("qdrant");
-    expect(MCP_STATEMENT_READ.qdrant).toBe(false);
+    expect(MCP_STATEMENT_READ.qdrant).toBe(true);
     const machine = sectionOf(DOC, "### 3.5 Machine access");
     expect(machine).toContain("(`mcp: true`)");
     expect(machine).toContain("Agent execution reads metadata only (section 15)");
-    expect(machine).toContain("MCP `run_read_query` refuses Qdrant");
+    expect(machine).toContain("MCP `run_qdrant_read` runs those same reads, under the same proof and projection");
+    expect(machine).toContain("MCP `run_read_query` refuses Qdrant, naming `run_qdrant_read`");
   });
 
   test("the doc keeps every sentence of the stated limits, the open-server clause included", () => {

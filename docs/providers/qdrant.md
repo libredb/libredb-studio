@@ -98,7 +98,8 @@ A server-side boundary exists only when the key itself is read-only on the serve
 
 MCP is offered (`mcp: true`): `inspect_schema` carries collection names, vector names, sizes, distances and datatypes, sparse vector names, and payload-index field names and types, and its description says that other payload keys may exist.
 It never carries payload values, vectors, collection `metadata`, strict-mode values or a sampled payload key.
-Agent execution reads metadata only (section 15), from a key the server proves read-only before every request, and MCP `run_read_query` refuses Qdrant, because the `qdrantapi` statement language declares no MCP tool (`MCP_STATEMENT_READ.qdrant` is false).
+Agent execution reads metadata only (section 15), from a key the server proves read-only before every request.
+MCP `run_qdrant_read` runs those same reads, under the same proof and projection (section 15.7), and MCP `run_read_query` refuses Qdrant, naming `run_qdrant_read`.
 No Qdrant request text reaches an AI route: there is no Explain, and the confirmation gate posts nothing for an analysis.
 
 ### 3.6 Lossless integers
@@ -574,7 +575,7 @@ This overlay overrides no Shared member, so every Shared member is the `qdrantap
 The family offers the investigation workflow, through `run_read_query` with one Qdrant request, and the operations workflow; it offers no data analysis, since its answers carry no stored value, and no query optimization or database assessment, since the server composes no plan and no profile, and no workflow hands an answer to the editor.
 The workflow classifier offers the model only these two.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-No MCP tool runs a Qdrant request: the family declares no MCP facet, and `MCP_STATEMENT_READ.qdrant` is false (B154).
+MCP reads Qdrant through the family's MCP facet, `run_qdrant_read` ([`src/lib/agent/languages/qdrantapi/mcp.ts`](../../src/lib/agent/languages/qdrantapi/mcp.ts)), opened by `MCP_STATEMENT_READ.qdrant` (section 15.7).
 
 ### 15.6 Tests
 
@@ -585,3 +586,33 @@ No MCP tool runs a Qdrant request: the family declares no MCP facet, and `MCP_ST
 - `tests/unit/db/qdrant/agent-provider.test.ts`: the open, the proof before every request, the exact request lines, URLs and bodies through the REST client, the wording of a failure and the budgets.
 - `tests/integration/db/qdrant-provider.test.ts`: the boundary replayed from the captures, the read-only principals' writes beside the positive controls.
 - `tests/unit/lib/db/redaction/metadata-only.test.ts`: the shared projection helpers.
+- `tests/integration/mcp/run-qdrant-read.test.ts`: `run_qdrant_read` through the real route and handler, answered from the captures: the proof before the read, the metadata-only answer, every refused form refused before anything is acquired, a key that can write refused at the open, and the row budget.
+- `tests/unit/db/qdrant/mcp-scope.test.ts`: what a collection-scoped JWT, an alias-scoped JWT and the read-only API key are answered for another collection's metadata, from [`tests/fixtures/qdrant/1.19.1/mcp-scope/`](../../tests/fixtures/qdrant/1.19.1/mcp-scope/).
+- [`tests/live/qdrant-mcp-boundary.ts`](../../tests/live/qdrant-mcp-boundary.ts): the live check of section 15.7, which writes those captures.
+
+### 15.7 MCP read
+
+`run_qdrant_read` takes one request in the agent's own form (section 15.3) as `statement`, reads and admits it with the agent's reader, so a point read, a scroll, a facet, a query, a count filter and a write are refused before anything is acquired, and runs it through `queryReadOnly` under the agent read-only profile, so the proof of section 15.2 runs before it and its answer is the projection of section 15.4.
+It takes no `offset`, since no Qdrant read is paged, and no `database`, since a request names its collection in its path.
+A read past `max_rows` is cut with the request's own advice, and a read past the 1000-row provider budget is refused, never cut.
+Under the agent profile `GET /collections` never lists more than 32 collections, since a key that lists more is refused, so a collection list never meets that budget; an alias list can.
+
+A seed opts in with a key the proof admits: the read-only API key, or a JWT whose access is `r`, globally or on the collections it should read.
+The API key, a JWT whose access is `m` or names none, a JWT that writes a collection or an alias, any key on a server with no key configured, no key, and a key listing more than 32 collections are refused at the open, in the tool's sentence, before the read is sent.
+A seed carries no separate agent key, so the seed's own key is the one proved.
+
+What a key reaches beyond the collections it is meant to read, in two layers:
+
+- The server's grants decide which collections and aliases a key sees.
+  A JWT whose access is `r` on one collection lists that collection alone and no alias, not even its own collection's, and is refused 403 another collection's configuration, existence, aliases, shard layout and count, whether that collection exists or not; a JWT whose access is `r` on one alias reads its collection through the alias and lists no collection.
+  The read-only API key and a JWT whose access is `r` globally read every collection and alias the server holds, which is their grant, so a seed that should see some collections only needs a collection-scoped JWT.
+- Studio's projection decides what of an answer reaches the client, whatever the request said: names, counts and flags only (section 15.4), so a shard layout carries no peer id and a collection read no configuration value the projection does not name.
+  A refusal is worded by its HTTP status alone, so a refused collection that exists reads the same as one that does not.
+
+The proof costs requests on every call: on a handle already open, the empty alias update, the collection list and one empty delete per listed collection come before the read, so a key listing N collections sends N + 3 requests per call, at most 35.
+The first call on a connection also opens the handle: the version, the collection list and the same proof, N + 4 more.
+
+A cancel or a timeout ends MCP's wait, not the provider's request: on a cancel the provider keeps its request open until its own deadline, set to the time left of `timeout_ms`, closes it; at `timeout_ms` the provider closes its request and the client gets the timeout answer.
+Every admitted read is answered in milliseconds on 1.19.1, so the measurement holds the request at a proxy that stops forwarding.
+
+[`tests/live/qdrant-mcp-boundary.ts`](../../tests/live/qdrant-mcp-boundary.ts) holds every claim of this section against fresh 1.19.1 servers, one with an API key, a read-only API key and JWT RBAC and one with no key.

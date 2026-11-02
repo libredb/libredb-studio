@@ -16,6 +16,7 @@ import type { DatabaseType } from "@/lib/types";
 
 const RUN_KUBECTL_READ_ARM = mcpStatementArm("run_kubectl_read");
 const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
+const RUN_QDRANT_READ_ARM = mcpStatementArm("run_qdrant_read");
 const ROOT = path.resolve(import.meta.dir, "../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
 const MCP_DOC = read("docs/MCP.md");
@@ -91,7 +92,7 @@ describe("docs/MCP.md", () => {
 
   test("names every statement tool this build registers, and counts the tools", () => {
     const tools = ["list_connections", "inspect_schema", ...servingStatementArms().map((arm) => arm.tool)];
-    const COUNT_WORDS = ["Zero", "One", "Two", "Three", "Four", "Five", "Six"];
+    const COUNT_WORDS = ["Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten"];
     expect(MCP_DOC).toContain(`- ${COUNT_WORDS[tools.length]} tools, each annotated read-only and closed-world:`);
     for (const tool of tools) expect(MCP_DOC).toMatch(new RegExp(`^ {2}- \`${tool}\` `, "m"));
   });
@@ -100,6 +101,19 @@ describe("docs/MCP.md", () => {
     expect(MCP_DOC).toContain(`Runs on ${RUN_MONGO_COMMAND_ARM.engines}; other engines refuse it.`);
     expect(MCP_DOC).toContain("`read_tool`");
     expect(MCP_DOC).not.toContain("B117");
+  });
+
+  test("carries run_qdrant_read's engine sentence, derived from its arm, its seed key, its proof's cost and its cancel row", () => {
+    expect(MCP_DOC).toContain(`Runs on ${RUN_QDRANT_READ_ARM.engines}; other engines refuse it.`);
+    expect(MCP_DOC).toContain(
+      "On Qdrant the seed's `password` must be the server's read-only API key or a JWT whose access is `r`, globally or on the collections the client should read",
+    );
+    expect(MCP_DOC).toContain(
+      "The proof runs before every call, so a key listing N collections costs N + 3 requests per call, N + 4 more on the call that opens the connection.",
+    );
+    expect(MCP_DOC).toContain(
+      "| Qdrant | Studio stops waiting; the provider keeps its request open until its own deadline, set to the time left of `timeout_ms`, closes it | The provider closes its request at `timeout_ms`, and the client gets the timeout answer |",
+    );
   });
 
   test("carries run_kubectl_read's engine sentence, derived from its arm, and says inspect_schema refuses Kubernetes", () => {
