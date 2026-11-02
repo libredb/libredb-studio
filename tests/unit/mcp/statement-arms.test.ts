@@ -37,6 +37,7 @@ const RUN_READ_QUERY_ARM = mcpStatementArm("run_read_query");
 const RUN_KUBECTL_READ_ARM = mcpStatementArm("run_kubectl_read");
 const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
 const RUN_QDRANT_READ_ARM = mcpStatementArm("run_qdrant_read");
+const RUN_KAFKA_READ_ARM = mcpStatementArm("run_kafka_read");
 const RunKubectlReadInputSchema = RUN_KUBECTL_READ_ARM.inputSchema;
 const RunReadQueryInputSchema = RUN_READ_QUERY_ARM.inputSchema;
 const RunMongoCommandInputSchema = RUN_MONGO_COMMAND_ARM.inputSchema;
@@ -55,16 +56,18 @@ describe("MCP_STATEMENT_ARMS", () => {
     }
   });
 
-  test("every language has its arm: run_read_query, run_kubectl_read, run_mongo_command and run_qdrant_read", () => {
+  test("every language has its arm: run_read_query, run_kubectl_read, run_mongo_command, run_qdrant_read and run_kafka_read", () => {
     expect(MCP_STATEMENT_ARMS.sql).toBe(RUN_READ_QUERY_ARM);
     expect(MCP_STATEMENT_ARMS.kubectl).toBe(RUN_KUBECTL_READ_ARM);
     expect(MCP_STATEMENT_ARMS.mongo).toBe(RUN_MONGO_COMMAND_ARM);
     expect(MCP_STATEMENT_ARMS.qdrantapi).toBe(RUN_QDRANT_READ_ARM);
+    expect(MCP_STATEMENT_ARMS.kafkaread).toBe(RUN_KAFKA_READ_ARM);
     expect(ARMS.map((arm) => arm.tool)).toEqual([
       "run_read_query",
       "run_kubectl_read",
       "run_mongo_command",
       "run_qdrant_read",
+      "run_kafka_read",
     ]);
   });
 
@@ -87,8 +90,6 @@ describe("MCP_STATEMENT_ARMS", () => {
     expect(mcpStatementToolFor("oxia")).toBeNull();
     expect(MCP_STATEMENT_ARMS.rabbitread).toBeNull();
     expect(mcpStatementToolFor("rabbitmq")).toBeNull();
-    expect(MCP_STATEMENT_ARMS.kafkaread).toBeNull();
-    expect(mcpStatementToolFor("kafka")).toBeNull();
     expect(MCP_STATEMENT_ARMS.s3api).toBeNull();
     expect(mcpStatementToolFor("s3")).toBeNull();
     expect(MCP_STATEMENT_ARMS.fsquery).toBeNull();
@@ -527,6 +528,101 @@ describe("the qdrantapi arm", () => {
   });
 });
 
+describe("the Kafka arm", () => {
+  const server = languageServer("kafkaread");
+  const topics = '{"read": "topics"}';
+
+  test("takes one read request, no offset and no database, and sends it as written", () => {
+    expect(RUN_KAFKA_READ_ARM.title).toBe("Run a read-only Kafka metadata read");
+    expect(RUN_KAFKA_READ_ARM.argument).toBe("statement");
+    expect(RUN_KAFKA_READ_ARM.paging).toBe("none");
+    expect(RUN_KAFKA_READ_ARM.types).toEqual(["kafka"]);
+    expect(RUN_KAFKA_READ_ARM.inputSchema.shape).not.toHaveProperty("offset");
+    expect(RUN_KAFKA_READ_ARM.inputSchema.shape).not.toHaveProperty("database");
+    for (const extra of [{ offset: 5 }, { database: "shop" }, { sql: "SELECT 1" }]) {
+      expect(
+        RUN_KAFKA_READ_ARM.inputSchema.safeParse({ connection_id: "seed:k", statement: topics, ...extra }).success,
+      ).toBe(false);
+    }
+    expect(RUN_KAFKA_READ_ARM.inputSchema.safeParse({ connection_id: "seed:k", statement: "" }).success).toBe(false);
+    // The request is JSON written as text, as the agent's own tool takes it; an object is not one.
+    expect(
+      RUN_KAFKA_READ_ARM.inputSchema.safeParse({ connection_id: "seed:k", statement: { read: "topics" } }).success,
+    ).toBe(false);
+  });
+
+  test("reads its argument with the agent's canonicalize", () => {
+    expect(RUN_KAFKA_READ_ARM.canonicalize(topics)).toBe(server.canonicalize(topics));
+    expect(RUN_KAFKA_READ_ARM.canonicalize({ read: "topics" })).toBeNull();
+  });
+
+  test.each([
+    ["a fetch", '{"read": "fetch", "topic": "orders"}'],
+    ["the editor's record read", '{"topic": "orders", "from": "earliest"}'],
+    ["an internal topic", '{"read": "offsets", "topic": "__transaction_state"}'],
+    ["a platform's own topic", '{"read": "offsets", "topic": "_schemas"}'],
+  ])("fences %s with the agent's admission and quotes its sentence", (_what, request) => {
+    const refusal = server.admit?.(request);
+    expect(refusal).not.toBeNull();
+    expect(RUN_KAFKA_READ_ARM.fence(request, "kafka")).toBe(
+      `The read request was refused before it reached the broker (${refusal?.code}). ${refusal?.message}`,
+    );
+  });
+
+  test("admits each of the four reads", () => {
+    for (const request of [
+      topics,
+      '{"read": "brokers", "after": 3}',
+      '{"read": "partitions", "topic": "orders"}',
+      '{"read": "offsets", "topic": "orders", "limit": 500}',
+    ]) {
+      expect(RUN_KAFKA_READ_ARM.fence(request, "kafka")).toBeNull();
+    }
+  });
+
+  test("answers a row refusal with the read's own row-cap advice", () => {
+    const rows = classifyReadQueryFailure(
+      new Error("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
+      1,
+      2,
+      RUN_KAFKA_READ_ARM.tooLarge(topics, "kafka"),
+    );
+    expect(rows).toEqual({
+      kind: "too-large",
+      text: `The result has more than 1000 rows, the most this server reads for one call. ${server.rowCapAdvice(topics, "1000")}`,
+    });
+  });
+
+  test("reads past a cut with after, never an offset, a SQL clause or a MongoDB stage", () => {
+    const hint = RUN_KAFKA_READ_ARM.moreRows(topics, "kafka", { maxRows: 100, shown: 100, cut: "max_rows" });
+    expect(hint).toBe(
+      `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice(topics, "100")} To read past the 100 rows returned, set "after" to the last topic name, node id or partition id among them.`,
+    );
+    const bytes = RUN_KAFKA_READ_ARM.moreRows(topics, "kafka", { maxRows: 100, shown: 40, cut: "result_bytes" });
+    expect(bytes).toBe(
+      `More rows exist than the 32 KiB result limit holds, and 40 of them fitted; this tool does not page with offset. A Kafka read's columns are fixed, so none can be left out to fit more rows, and to read past the 40 rows returned, set "after" to the last topic name, node id or partition id among them.`,
+    );
+    for (const text of [hint, bytes, RUN_KAFKA_READ_ARM.rowOverCap]) {
+      expect(text).not.toContain("$skip");
+      expect(text).not.toContain("LIMIT");
+    }
+    expect(RUN_KAFKA_READ_ARM.rowOverCap).toBe(
+      "One row of this result is larger than the 32 KiB result limit. Read a narrower listing, one topic's partitions or offsets, and run it again.",
+    );
+  });
+
+  test("describes the four reads, what is never read, the paging and its engine", () => {
+    const description = RUN_KAFKA_READ_ARM.description;
+    expect(description.startsWith("Run one read-only Kafka metadata read")).toBe(true);
+    expect(description).toContain("Runs on Apache Kafka; other engines refuse it.");
+    expect(description).toContain("this tool takes no offset");
+    for (const read of ["topics", "brokers", "partitions", "offsets"])
+      expect(description).toContain(`"read": "${read}"`);
+    expect(description).toContain("no record's key, value, headers or timestamp is ever fetched");
+    expect(description).toContain("a platform's own topics (a leading underscore, or connect-) are withheld");
+  });
+});
+
 describe("the tool each engine is read with", () => {
   test("is the tool whose arm serves it, and null where none does", () => {
     for (const type of SHIPPED_DATABASE_TYPES) {
@@ -536,10 +632,11 @@ describe("the tool each engine is read with", () => {
     }
   });
 
-  test("MongoDB is read with run_mongo_command, Kubernetes with run_kubectl_read, Qdrant with run_qdrant_read, the SQL engines with run_read_query, the rest with none", () => {
+  test("MongoDB is read with run_mongo_command, Kubernetes with run_kubectl_read, Qdrant with run_qdrant_read, Kafka with run_kafka_read, the SQL engines with run_read_query, the rest with none", () => {
     expect(mcpStatementToolFor("mongodb")).toBe("run_mongo_command");
     expect(mcpStatementToolFor("kubernetes")).toBe("run_kubectl_read");
     expect(mcpStatementToolFor("qdrant")).toBe("run_qdrant_read");
+    expect(mcpStatementToolFor("kafka")).toBe("run_kafka_read");
     for (const type of RUN_READ_QUERY_TYPES) expect(mcpStatementToolFor(type)).toBe("run_read_query");
     expect(mcpStatementToolFor("clickhouse")).toBe("run_read_query");
     expect(mcpStatementToolFor("libsql")).toBe("run_read_query");
@@ -562,6 +659,7 @@ describe("the tool each engine is read with", () => {
       "run_kubectl_read",
       "run_mongo_command",
       "run_qdrant_read",
+      "run_kafka_read",
     ]);
   });
 
@@ -606,11 +704,12 @@ describe("the tool each engine is read with", () => {
  * to its provider's own declaration: no relation kind where the arm says none, at least one where it does not.
  */
 describe("the arms whose engines hold no table", () => {
-  test("kubectl declares it, SQL, MongoDB and Qdrant do not", () => {
+  test("kubectl declares it, SQL, MongoDB, Qdrant and Kafka do not", () => {
     expect(RUN_KUBECTL_READ_ARM.holdsNoTables).toBe(true);
     expect(RUN_READ_QUERY_ARM.holdsNoTables).toBe(false);
     expect(RUN_MONGO_COMMAND_ARM.holdsNoTables).toBe(false);
     expect(RUN_QDRANT_READ_ARM.holdsNoTables).toBe(false);
+    expect(RUN_KAFKA_READ_ARM.holdsNoTables).toBe(false);
   });
 
   test.each(ARMS.flatMap((arm) => arm.types.map((type) => [arm.tool, type, arm] as const)))(
@@ -631,6 +730,7 @@ describe("the arms whose engines hold no table", () => {
     expect(mcpTablelessReadTool("kubernetes")).toBe("run_kubectl_read");
     expect(mcpTablelessReadTool("mongodb")).toBeNull();
     expect(mcpTablelessReadTool("qdrant")).toBeNull();
+    expect(mcpTablelessReadTool("kafka")).toBeNull();
     expect(mcpTablelessReadTool("postgres")).toBeNull();
     expect(mcpTablelessReadTool("redis")).toBeNull();
   });

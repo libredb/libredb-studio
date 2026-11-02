@@ -603,7 +603,8 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
  *
  * True for the five SQL engines `run_read_query` served before this record existed, so nothing moved when it landed,
  * for ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Oracle, Db2, Cassandra and Couchbase, each opened to `run_read_query` by a change of its own, for MongoDB, whose command `run_mongo_command` reads, for Kubernetes, whose kubectl line `run_kubectl_read` reads
- * under the agent's machine redaction, and for Qdrant, whose metadata request `run_qdrant_read` reads. An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records
+ * under the agent's machine redaction, for Qdrant, whose metadata request `run_qdrant_read` reads, and for Kafka, whose metadata
+ * read `run_kafka_read` reads. An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records
  * above it, and held false wherever `MCP_EXPOSABLE` is false and true only for an engine agent mode executes on by
  * `tests/unit/db/compatibility.test.ts`.
  */
@@ -657,9 +658,10 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // Agent mode executes PromQL reads on Prometheus, with the flags and every URL's userinfo and query string withheld,
   // and MCP read stays closed on it until a change of its own opens it (BACKLOG B161).
   prometheus: false,
-  // Agent mode executes metadata-only reads on Kafka, and MCP read stays closed on it until a change of its own opens
-  // it (BACKLOG B157).
-  kafka: false,
+  // Opened on its own: run_kafka_read runs under the boundary agent mode uses, a client that holds the Metadata and
+  // ListOffsets reads alone, answered metadata-only with a platform's own topics withheld
+  // (docs/providers/kafka.md section 16).
+  kafka: true,
   // Agent mode executes metadata-only reads on etcd, and MCP read stays closed on it until a change of its own opens
   // it.
   etcd: false,

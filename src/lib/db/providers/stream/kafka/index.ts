@@ -19,7 +19,8 @@
  * partition's earliest and end offsets, never a record's key, value, headers or timestamp, a broker's host and port,
  * a config, a log directory or a consumer group. On a handle opened for any agent-mode profile every other surface
  * goes through that client too (`agent-surface.ts`): the editor's read and an object's source are refused, and what
- * needs a withheld read answers its reason. MCP read stays closed on this engine.
+ * needs a withheld read answers its reason, and a platform's own topics are withheld. MCP's `run_kafka_read` reads
+ * through the same `queryReadOnly`.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
@@ -58,7 +59,7 @@ import {
   kafkaAgentResult,
   runKafkaAgentRead,
 } from "./agent-metadata-read";
-import { readKafkaAgentStatement } from "./agent-statement";
+import { isWithheldKafkaTopic, KAFKA_AGENT_SENTENCES, readKafkaAgentStatement } from "./agent-statement";
 import {
   agentCountObjects,
   agentDescribeObject,
@@ -162,10 +163,21 @@ export class KafkaProvider extends BaseDatabaseProvider {
     this.ensureConnected();
     // Assigned before setConnected(true) and cleared with setConnected(false), so a connected provider has one.
     const client = this.client!;
+    // A platform's own topic is never named to the broker, and never answered when the broker lists it.
+    const refuseWithheld = (topics: readonly string[]) => {
+      if (topics.some(isWithheldKafkaTopic)) throw new QueryError(KAFKA_AGENT_SENTENCES.platform, this.type);
+    };
     return {
-      metadata: (topics) => client.metadata(topics),
-      listTopics: () => client.listTopics(),
-      offsets: (topic, at) => client.offsets(topic, at),
+      metadata: async (topics) => {
+        refuseWithheld(topics ?? []);
+        const answer = await client.metadata(topics);
+        return { ...answer, topics: answer.topics.filter((topic) => !isWithheldKafkaTopic(topic.name)) };
+      },
+      listTopics: async () => (await client.listTopics()).filter((name) => !isWithheldKafkaTopic(name)),
+      offsets: async (topic, at) => {
+        refuseWithheld([topic]);
+        return client.offsets(topic, at);
+      },
     };
   }
 

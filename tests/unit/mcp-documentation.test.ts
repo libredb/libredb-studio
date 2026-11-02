@@ -17,6 +17,7 @@ import type { DatabaseType } from "@/lib/types";
 const RUN_KUBECTL_READ_ARM = mcpStatementArm("run_kubectl_read");
 const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
 const RUN_QDRANT_READ_ARM = mcpStatementArm("run_qdrant_read");
+const RUN_KAFKA_READ_ARM = mcpStatementArm("run_kafka_read");
 const ROOT = path.resolve(import.meta.dir, "../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
 const MCP_DOC = read("docs/MCP.md");
@@ -123,6 +124,15 @@ describe("docs/MCP.md", () => {
     );
     expect(MCP_DOC).not.toContain("On Kubernetes it lists no table");
     expect(MCP_DOC).not.toContain("B105");
+  });
+
+  test("carries run_kafka_read's engine sentence, derived from its arm, the withheld topics and the seed's login", () => {
+    expect(MCP_DOC).toContain(`Runs on ${RUN_KAFKA_READ_ARM.engines}; other engines refuse it.`);
+    expect(MCP_DOC).toContain("are withheld from every listing, as they are in agent mode and in `inspect_schema`");
+    expect(MCP_DOC).toContain(
+      "A Kafka seed needs no least-privilege principal and none is proven, since the agent's client can send no write whatever the login may do",
+    );
+    expect(MCP_DOC).toMatch(/^\| Apache Kafka \| /m);
   });
 
   test("claims only SELECT for every engine, and names the record that opens MCP read", () => {
