@@ -52,7 +52,7 @@ const CLUSTER_SEED = {
 /** Every key name and value the capture seeded; none may reach an answer. */
 const SEEDED = /\/app\/|\/other\/|fixture-/;
 
-let principal: EtcdAgentPrincipal = "reader-range";
+let principal: EtcdAgentPrincipal | "auth-off" = "reader-range";
 let overrides: Partial<EtcdClient> = {};
 let client: FakeEtcdClient = createFakeEtcdClient();
 /** Whether the next acquisition hands out a provider opened under the profile it asked for, or an editor's. */

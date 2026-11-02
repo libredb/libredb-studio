@@ -162,7 +162,7 @@ describe("the open under the agent read-only profile", () => {
       },
     });
     const { provider } = build(connectionOf("agent_reader_range"), client, OPERATIONS);
-    const failure = await provider.connect().catch((error: unknown) => error as Error);
+    const failure = (await provider.connect().catch((error: unknown) => error)) as Error;
     expect(failure).not.toBeInstanceOf(ExecutionProfileError);
     expect(failure.message).toStartWith("Authentication is not enabled on this etcd");
   });
