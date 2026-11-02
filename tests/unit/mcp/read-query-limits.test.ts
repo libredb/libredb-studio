@@ -36,6 +36,7 @@ import {
   READ_ONLY_REFUSALS,
   ROW_OVER_CAP_TEXT,
   timeoutText,
+  tooLargeTextsOf,
 } from "@/lib/mcp/tools/read-query-limits";
 import { RUN_READ_QUERY_TYPES } from "../../helpers/run-read-query";
 
@@ -58,8 +59,9 @@ const NO_OFFSET = `This engine's SQL has no OFFSET, so this query cannot be page
 const BY_TOKEN =
   "LIMIT n, and for the next page add WHERE token(the partition key) > token(the last one read), or, within one partition, WHERE the clustering column > the last value read";
 const NO_CQL_OFFSET = `This engine's SQL has no OFFSET, so this query cannot be paged with offset. Page it in SQL: ${BY_TOKEN}.`;
+/** Oracle has no LIMIT (ORA-03047 on 23ai); its own row limiting clauses are named instead. */
 const OWN_LIMIT_ORACLE =
-  "This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.";
+  "This query has its own FETCH FIRST, OFFSET ... FETCH or ROWNUM, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.";
 const OWN_LIMIT_MSSQL =
   "This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.";
 
@@ -359,6 +361,18 @@ describe("the budget sentences every provider shares (D367)", () => {
     ]);
     expect(rowBudgetSentence(1, 0).startsWith(`${ROW_BUDGET_PREFIX}: `)).toBe(true);
     expect(byteBudgetSentence(1, 0).startsWith(`${BYTE_BUDGET_PREFIX}: `)).toBe(true);
+  });
+
+  // Oracle has no LIMIT, so its budget refusals name its own row limiting clause.
+  test("answers Oracle's budget refusals in Oracle's clause", () => {
+    expect(tooLargeTextsOf("oracle")).toEqual({
+      rows: "The result has more than 1000 rows, the most this server reads for one call. Add FETCH FIRST n ROWS ONLY with n of 1000 or less, or remove your own FETCH FIRST, OFFSET ... FETCH or ROWNUM and page with offset.",
+      bytes:
+        "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add FETCH FIRST n ROWS ONLY with a smaller n.",
+    });
+    for (const type of ["postgres", "mssql", "clickhouse", "opensearch"] as const) {
+      expect(tooLargeTextsOf(type)).toEqual({});
+    }
   });
 
   // MongoDB's row refusal adds a cursor-bound tail after the shared sentence; the mapper still reads it.

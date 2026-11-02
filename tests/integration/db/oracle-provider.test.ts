@@ -6988,7 +6988,7 @@ describe("MCP run_read_query on an Oracle connection", () => {
 
   test("refuses an offset on a statement it cannot page, before anything is acquired", async () => {
     const OWN =
-      "This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.";
+      "This query has its own FETCH FIRST, OFFSET ... FETCH or ROWNUM, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.";
     for (const [sql, text] of [
       ["SELECT id FROM app_owner.orders ORDER BY id FETCH FIRST 5 ROWS ONLY", OWN],
       ["SELECT id FROM app_owner.orders ORDER BY id OFFSET 1 ROWS FETCH NEXT 5 ROWS ONLY", OWN],
@@ -7163,7 +7163,7 @@ describe("MCP run_read_query on an Oracle connection", () => {
       content: [
         {
           type: "text",
-          text: "The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, or remove your own LIMIT and page with offset.",
+          text: "The result has more than 1000 rows, the most this server reads for one call. Add FETCH FIRST n ROWS ONLY with n of 1000 or less, or remove your own FETCH FIRST, OFFSET ... FETCH or ROWNUM and page with offset.",
         },
       ],
       isError: true,

@@ -563,13 +563,14 @@ async function main(): Promise<void> {
   const own = await mcp(RO, { sql: `SELECT ID FROM ${DATA} FETCH FIRST 3 ROWS ONLY`, offset: 1 }, RUN_READ_QUERY);
   check(
     textOf(own.result) ===
-      "This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY." &&
+      "This query has its own FETCH FIRST, OFFSET ... FETCH or ROWNUM, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY." &&
       own.result.isError === true,
     `limits: an offset on a query with its own row limiting clause is refused before it is sent -> ${textOf(own.result)}`,
   );
   const rows = await mcp(RO, { sql: `SELECT ID FROM ${DATA} FETCH FIRST 1001 ROWS ONLY` }, RUN_READ_QUERY);
   check(
-    textOf(rows.result).startsWith("The result has more than 1000 rows"),
+    textOf(rows.result) ===
+      "The result has more than 1000 rows, the most this server reads for one call. Add FETCH FIRST n ROWS ONLY with n of 1000 or less, or remove your own FETCH FIRST, OFFSET ... FETCH or ROWNUM and page with offset.",
     `limits: rows past the provider budget -> ${textOf(rows.result)}`,
   );
   const bytes = await mcp(
@@ -580,7 +581,8 @@ async function main(): Promise<void> {
     RUN_READ_QUERY,
   );
   check(
-    textOf(bytes.result).startsWith("The result is larger than 1 MiB"),
+    textOf(bytes.result) ===
+      "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add FETCH FIRST n ROWS ONLY with a smaller n.",
     `limits: bytes past the provider budget -> ${textOf(bytes.result)}`,
   );
   const slow = await mcp(

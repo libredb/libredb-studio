@@ -24,7 +24,8 @@ import type { DatabaseType } from "@/lib/types";
  * SHOW or DESCRIBE. Measured on 2026-11-02: Oracle AI Database 26ai Free 23.26.3, through the agent read-only path,
  * runs a `SELECT` and a `WITH`, answers a bare `VALUES` and `TABLE` with ORA-00900 and `EXPLAIN` with ORA-02000,
  * refuses `EXPLAIN PLAN`, which writes its rows into PLAN_TABLE, inside the read-only transaction (ORA-01456), and
- * pages with `OFFSET m ROWS FETCH NEXT n ROWS ONLY`.
+ * pages with `OFFSET m ROWS FETCH NEXT n ROWS ONLY`; it has no `LIMIT` (ORA-03047), so its row refusals name its own
+ * row limiting clause.
  * Measured on 2026-11-02: Apache Cassandra 5.0.9, as a role holding only SELECT
  * on its keyspace, runs a `SELECT` (`JSON` and `DISTINCT` too) and answers `WITH`, `VALUES`, `TABLE`, `EXPLAIN` and
  * `OFFSET` with a syntax error; the agent path sends a `SELECT` of one table of the connection's keyspace or of
@@ -43,6 +44,12 @@ export interface ReadQueryForms {
    * no next offset and refuses one before anything is sent, and `paging` says how to page without it.
    */
   readonly pagesWithOffset: boolean;
+  /**
+   * The engine's own row limiting clause, on an engine whose SQL has no `LIMIT`: `own` names every clause that makes a
+   * query its own limit, as "This query has its own ..." reads, and `add` is the clause that reads at most n rows.
+   * Absent, the refusals name `LIMIT`.
+   */
+  readonly rowLimit?: { readonly own: string; readonly add: string };
 }
 
 const LIMIT_OFFSET = "LIMIT n OFFSET m";
@@ -77,11 +84,12 @@ export const READ_QUERY_FORMS: Readonly<Record<DatabaseType, ReadQueryForms | nu
     pagesWithOffset: true,
   },
   // A bare VALUES and TABLE are ORA-00900, and EXPLAIN PLAN writes into PLAN_TABLE, refused in the read-only
-  // transaction.
+  // transaction. LIMIT is ORA-03047; ROWNUM counts as a query's own limit, as the query analyzer reads it.
   oracle: {
     statements: "a SELECT (a WITH is fine)",
     paging: "ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY",
     pagesWithOffset: true,
+    rowLimit: { own: "FETCH FIRST, OFFSET ... FETCH or ROWNUM", add: "FETCH FIRST n ROWS ONLY" },
   },
   db2: null,
   // No bare VALUES, no TABLE statement and no EXPLAIN.
