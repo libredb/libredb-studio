@@ -25,12 +25,8 @@ Standalone artifacts (tarballs, .deb/.rpm, Homebrew formula, snap) are published
 starting with the first release that includes the release-artifacts workflow — older releases
 have Docker images only.
 
-> **Runtime note:** every channel here runs the production server under Node (`node server.js`),
-> including the Docker image — the default tag's runner stage is `node:26.9.0-trixie-slim`, the
-> `-alpine` tag's is `node:26.9.0-alpine3.23` and the `-alpine-slim` tag's is Alpine's own `nodejs`
-> package (see [Image tag model](#image-tag-model)), and in all three `CMD` execs
-> `node server.js`; Bun is only used to install dependencies during the Docker build and for local
-> development (`bun dev`). The SQLite DB provider adapts to whichever runtime it finds
+> **Runtime note:** every channel here runs the production server under Node (`node server.js`), including the Docker image: the default tag's runner stage is the official Node 26 `trixie-slim` image, the `-alpine` tag's is the official Node 26 `alpine3.23` image (each pinned to one Node 26 release by its Dockerfile's `FROM` line) and the `-alpine-slim` tag's is Alpine's own `nodejs` package (see [Image tag model](#image-tag-model)), and in all three `CMD` execs `node server.js`; Bun is only used to install dependencies during the Docker build and for local development (`bun dev`).
+> The SQLite DB provider adapts to whichever runtime it finds
 > (`bun:sqlite` under Bun, `node:sqlite` under Node) — see
 > [docs/providers/sqlite.md, Runtime & driver selection](providers/sqlite.md#runtime--driver-selection).
 
@@ -316,9 +312,11 @@ for the same reason `latest` and `dev` do.
 
 | Suffix | Dockerfile | Base | Engines | Use |
 |---|---|---|---|---|
-| none | `Dockerfile` | `node:26.9.0-trixie-slim` (glibc) | all, and the only one where Oracle **Thick** mode can be layered on | the default; unchanged, and what every example in this repository pulls |
-| `-alpine` | `Dockerfile.alpine` | `node:26.9.0-alpine3.23` (musl) | all, Oracle **Thin** only | a much smaller OS attack surface: measured with Trivy 0.73.0 on 2026-09-15, the Debian base carries 3 CRITICAL / 52 HIGH OS findings that belong to the distro (the newest `node:26-trixie-slim` scores identically) against 0 / 2 for `node:26-alpine` |
-| `-alpine-slim` | `Dockerfile.alpine-slim` | `alpine:3.23` with Alpine's own `nodejs` package | all except **DuckDB** | smallest; see the trade below |
+| none | `Dockerfile` | official Node 26 image on `trixie-slim` (glibc) | all, and the only one where Oracle **Thick** mode can be layered on | the default; unchanged, and what every example in this repository pulls |
+| `-alpine` | `Dockerfile.alpine` | official Node 26 image on `alpine3.23` (musl) | all, Oracle **Thin** only | a much smaller OS attack surface: measured with Trivy 0.73.0 on 2026-09-15, the Debian base carries 3 CRITICAL / 52 HIGH OS findings that belong to the distro (the newest `node:26-trixie-slim` scores identically) against 0 / 2 for `node:26-alpine` |
+| `-alpine-slim` | `Dockerfile.alpine-slim` | `alpine:3.24` with Alpine's own `nodejs` package | all except **DuckDB** | smallest; see the trade below |
+
+The two official Node bases are pinned to one exact Node 26 release in each Dockerfile's `FROM` line, which a Dependabot base-image bump moves, so the table names only the major; the Dockerfile is the authority for the exact release.
 
 `-alpine-slim` trades features for size and is the only variant that does. It drops the DuckDB
 driver (four packages ending in a ~70 MB `libduckdb.so`) and sharp/libvips, and it runs Alpine's

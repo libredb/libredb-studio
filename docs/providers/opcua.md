@@ -1076,7 +1076,7 @@ that handed out the point answers `BadContinuationPointInvalid`.
 
 ### 11.3 The in-process server, and the dialog
 
-[`tests/integration/db/opcua-server.test.ts`](../../tests/integration/db/opcua-server.test.ts) — 19
+[`tests/integration/db/opcua-server.test.ts`](../../tests/integration/db/opcua-server.test.ts) — 20
 tests against a **real server in this process**: `node-opcua-server` 2.187.18, a devDependency, is
 started on a loopback port in `beforeAll` with a two-node address space of its own. It needs no
 container, and it is where the library really runs: GetEndpoints, the secure channel, CreateSession,

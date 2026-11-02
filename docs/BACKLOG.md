@@ -31,8 +31,8 @@ None of it is a GitHub issue.
 - [Drivers and connections](#drivers-and-connections) — D1-D421, U17 · 310
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U195 · 181
-- [Dependencies](#dependencies) — P1-P12 · 10
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U196 · 182
+- [Dependencies](#dependencies) — P1-P13 · 11
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
 - [Security Phase 1 deferrals](#security-phase-1-deferrals) — H1–H14 · 4
@@ -6699,6 +6699,20 @@ Found 2026-11-02 while reviewing Druid's explain path.
 
 **Done when:** a planner error from the explain names the line and column of the user's own text, the prefix's width taken back out of a first-line position or the prefix written so that no first-line column moves, decided once for every strategy that prefixes, with a unit test on a first-line and a later-line error for Druid.
 
+### U196. The results header keeps its duplicate row-count stats while the tab strip clips the Dashboard tab
+
+The results-pane header in `src/components/studio/BottomPanel.tsx` lays out a tab strip that scrolls with a hidden scrollbar (`min-w-0 overflow-x-auto`) beside a `shrink-0` group holding the `{rowCount} rows • {executionTime}ms` span and the Export button.
+The span's comment says it is "Dropped first when the panel is narrow", because the stats bar below repeats it, but it is shown from `@4xl/panel` (56rem, 896 px), while the whole header needs roughly 1030 px with nine result tabs and roughly 1100 px when the Graph tab is offered.
+Between those widths the span keeps its space and the strip clips its last tab, so the header reads "Dashbo" right beside "2000 rows • 2ms", with nothing showing that the strip scrolls.
+The tab is clipped, not drawn under the label: a browser probe measured the Dashboard button's box 21 px past the span's left edge, but `getBoundingClientRect` ignores the strip's clipping, and that part of the box lies in the hidden overflow.
+The tab stays reachable by horizontal scroll or keyboard focus, so no function is lost.
+The likely cause is the breakpoint, and the candidate fix is one class on the span, `@4xl/panel:inline` to `@6xl/panel:inline` (72rem, 1152 px), which also covers the Graph tab; it has not been rendered, the widths above are read from screenshots rather than measured, and the Export label's width changes with its count.
+A fixed breakpoint goes stale whenever a tab is added, so hiding the span whenever the strip overflows is the alternative.
+
+Found 2026-11-02 in the browser smoke pass of the Dependabot sweep on `main` (fc54d4c86), a 1440x900 window with the sidebar dragged to 436 px, on a SQLite `SELECT` of 2000 rows; the same with #2167 applied, so not a dependency regression.
+
+**Done when:** at every results-pane width the duplicate stats span is hidden before any result tab is clipped, with the Graph tab offered and not, and a browser check at the widths above shows the whole tab strip and the Export button with no clipped label.
+
 ## Dependencies
 
 ### P1. The desktop shell's `glib` advisory has no reachable fix while Tauri v2 targets GTK 3
@@ -6874,6 +6888,16 @@ The note records why they are not reachable here: Monaco sanitizes markdown with
 Found 2026-10-28 while closing the dependency advisories.
 
 **Done when:** a monaco-editor release whose `min/vs` and `esm` trees inline DOMPurify 3.4.17 or later is taken, and the `dompurify` override and its note are removed as the note says.
+
+### P13. neo4j-driver-lite 6.3.0 waits for the agent-boundary captures on Neo4j Enterprise
+
+`neo4j-driver-lite` is pinned exactly at 6.2.0, and 6.3.0 (published 2026-10-29) was held out of the Dependabot production group in #2167.
+On 6.3.0 the evidence harness (`tests/live/neo4j-evidence.ts`) against the pinned 5.26.31 Community server matched every committed capture, but the agent-boundary captures of `tests/live/neo4j-agent-captures.ts` were not recorded again, because their `run.sh` starts Neo4j Enterprise, whose licence only the person running it can accept.
+6.3.0 also refuses a non-empty token without a scheme instead of treating it as `none` (neo4j/neo4j-javascript-driver#1451); every token Studio builds is `auth.basic` or absent, and an absent token still maps to `none`, so this change does not reach the provider, but the provider's measurement is incomplete without the agent-boundary captures.
+
+Found 2026-11-02 while taking the Dependabot production group (#2167); the pin stays at 6.2.0.
+
+**Done when:** the agent-boundary captures are recorded on 6.3.0 or a later release against the Enterprise fixture and match the committed ones (or the differences are taken into the provider and `docs/providers/neo4j.md`), and the pin moves to it with the measurement its `//dependencies` note asks for, with `neo4j-driver-core` and `neo4j-driver-bolt-connection` on the same version.
 
 ## Documentation
 
