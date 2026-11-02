@@ -95,7 +95,16 @@ describe("the proof over the captured principals", () => {
     });
   });
 
-  test.each(["reader-all", "reader-range", "no-roles"] as const)(
+  test("reader-all holds READ only and is refused, since its READ holds every key", async () => {
+    const capture = principalCapture("reader-all");
+    const client = createFakeEtcdClient(capturedClient(capture));
+    expect(await verdict(client, capture.$captured.principal)).toEqual({
+      message: ETCD_PROOF_SENTENCES.everyKey,
+      reason: "PROFILE_PRIVILEGES_TOO_BROAD",
+    });
+  });
+
+  test.each(["reader-range", "no-roles"] as const)(
     "%s holds READ only, reads its own roles, and is proved",
     async (name) => {
       const capture = principalCapture(name);
@@ -148,6 +157,65 @@ describe("the proof over the captured principals", () => {
     const capture = principalCapture("reader-all");
     expect(capture.probes.leaseGrant?.outcome).toBe("ok");
     expect(capture.probes.leaseRevokeGranted?.outcome).toBe("ok");
+  });
+});
+
+describe("a READ range that reaches a Kubernetes storage prefix or every key", () => {
+  const enabled = async () => ({ enabled: true, authRevision: "1" });
+  const text = (value: string) => new TextEncoder().encode(value);
+  /** The proof's verdict for a user whose one role grants READ on `key` up to `rangeEnd`. */
+  const readOn = (key: string, rangeEnd?: string) =>
+    verdict(
+      createFakeEtcdClient({
+        authStatus: enabled,
+        userGet: async () => ["reader"],
+        roleGet: async () => [
+          { type: "read", key: text(key), ...(rangeEnd === undefined ? {} : { rangeEnd: text(rangeEnd) }) },
+        ],
+      }),
+      "agent",
+    );
+
+  test("READ on every key, etcd's key 0x00 with its open end 0x00, is refused", async () => {
+    expect(await readOn("\0", "\0")).toEqual({
+      message: ETCD_PROOF_SENTENCES.everyKey,
+      reason: "PROFILE_PRIVILEGES_TOO_BROAD",
+    });
+  });
+
+  test.each([
+    ["the /registry/ prefix", "/registry/", "/registry0", "/registry/"],
+    ["one Secret's key", "/registry/secrets/default/token", undefined, "/registry/"],
+    ["a prefix above it", "/", "0", "/registry/"],
+    ["a range across it", "/a", "/z", "/registry/"],
+    ["OpenShift's prefix", "/kubernetes.io/secrets/", "/kubernetes.io/secrets0", "/kubernetes.io/"],
+    ["k3s's bootstrap keys", "/bootstrap/", "/bootstrap0", "/bootstrap/"],
+  ] as const)("READ on %s is refused, naming the prefix it reaches", async (_what, key, end, prefix) => {
+    expect(await readOn(key, end)).toEqual({
+      message: ETCD_PROOF_SENTENCES.kubernetes(prefix),
+      reason: "PROFILE_PRIVILEGES_TOO_BROAD",
+    });
+  });
+
+  test.each([
+    ["an application prefix", "/app/", "/app0"],
+    ["the key /registry itself, which holds no key under /registry/", "/registry", undefined],
+    ["a range that begins just past every key under /registry/", "/registry0", "/registry1"],
+  ] as const)("READ on %s is proved", async (_what, key, end) => {
+    expect(await readOn(key, end)).toBe("proved");
+  });
+
+  test("one role that reaches the prefix refuses the user, whatever its other roles grant", async () => {
+    const client = createFakeEtcdClient({
+      authStatus: enabled,
+      userGet: async () => ["app", "registry"],
+      roleGet: async (role: string) => [
+        role === "app"
+          ? { type: "read", key: text("/app/"), rangeEnd: text("/app0") }
+          : { type: "read", key: text("/registry/pods/"), rangeEnd: text("/registry/pods0") },
+      ],
+    });
+    expect(await verdict(client, "agent")).toMatchObject({ message: ETCD_PROOF_SENTENCES.kubernetes("/registry/") });
   });
 });
 

@@ -602,6 +602,8 @@ When the handle opens, and again before every command, under that command's dead
 - `AuthStatus` must answer `enabled`: with authentication off etcd answers every request from anyone, writes, compaction, defragmentation, snapshots and user changes included (`auth-off.json`).
 - `UserGet` of the user itself must list no `root` role: a user granted the root role may do everything `root` may (`root-role.json`).
 - `RoleGet` of each of its roles must list READ permissions only: WRITE or READWRITE on any range refuses the profile.
+- No READ range of those roles may hold every key, or a key under a prefix a Kubernetes distribution stores its objects under ([section 3.2](#32-kubernetes-writes-are-refused-e8): `/registry/`, OpenShift's `/kubernetes.io/` and `/openshift.io/`, k3s's `/bootstrap/` and `/k3s/`, `/rke2/`, each with and without its leading `/`), Secrets among them: the one-key read below answers no key and no value, but its `exists` would tell such a user which Secrets a cluster holds.
+  The refusal names the prefix the range reaches, from Studio's own list, never a name the server sent.
 
 etcd v3.7.2 answers `UserGet` of the user itself and `RoleGet` of its own roles to a user who is not root, and refuses it every other user and role (`reader-range.json`: `userGetRoot` and `roleGet:agent_read_all(not held)` are `permission denied`).
 A user whose own reads are refused is refused the profile, never assumed a reader.
@@ -616,7 +618,7 @@ What the measured users get:
 | no user, authentication off | every one admitted | refused before any socket: the connection names no user |
 | `root` | every one admitted | refused before any socket, by name |
 | a user holding the root role | every one admitted | refused: root role |
-| READ on every key | every key write, compaction, defragmentation, snapshot, member and user change refused; a lease granted and revoked | proved |
+| READ on every key | every key write, compaction, defragmentation, snapshot, member and user change refused; a lease granted and revoked | refused: its READ holds every key |
 | READ on `/app/` | as above | proved |
 | READ on `/app/`, READWRITE on `/scratch/` | a put and a delete under `/scratch/` admitted | refused: a role grants READWRITE |
 | READ on `/app/`, WRITE on `/scratch/` | a put and a delete under `/scratch/` admitted | refused: a role grants WRITE |
@@ -626,6 +628,7 @@ A User and Password on a server with authentication off never reach the proof: t
 Nothing is kept between two proofs: WRITE granted to a role after a command passed is read at the next one, and the same token writes with it at once (`midrun.json`), so the command is refused and never sent.
 A call the roles do not govern is the server's to admit: v3.7.2 grants and revokes a lease for any authenticated user, a READ-only one included (`reader-all.json`, `leaseGrant`), so the proof cannot rule those out, and the closed table, which sends no lease grant, no lease revoke and no write, is what stops them.
 A transport failure is raised as itself, never read as a verdict.
+Since no user the proof admits may read every key, the count of every key is always refused by the server, in the failure sentence of [section 15.4](#154-metadata-only); the table still holds it.
 The operations profile sends no command of the model's, so it opens with any user and no proof, and plan mode keeps grounding on a privileged connection, root included.
 
 ### 15.3 What an agent command may be

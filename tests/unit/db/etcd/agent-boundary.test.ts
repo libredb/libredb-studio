@@ -61,13 +61,13 @@ async function proved(principal: EtcdAgentPrincipal): Promise<boolean> {
 }
 
 describe("what the proof admits, the server refuses every write to", () => {
-  test("the proof admits exactly the READ-only principals", async () => {
+  test("the proof admits exactly the READ-only principals whose READ does not hold every key", async () => {
     const admitted: string[] = [];
     for (const principal of ETCD_AGENT_PRINCIPALS) if (await proved(principal)) admitted.push(principal);
-    expect(admitted).toEqual(["reader-all", "reader-range", "no-roles"]);
+    expect(admitted).toEqual(["reader-range", "no-roles"]);
   });
 
-  test.each(["reader-all", "reader-range", "no-roles"] as const)(
+  test.each(["reader-range", "no-roles"] as const)(
     "%s is refused every write as an authorization refusal, and the server is unchanged",
     (principal) => {
       const capture = principalCapture(principal);
@@ -119,7 +119,7 @@ describe("every read of the table answers no key name or value", () => {
   ];
   const BUDGET = { maxResultRows: 200, maxResultBytes: 64 * 1024, statementTimeoutMs: 10_000 };
 
-  test.each(["reader-all", "reader-range", "no-roles"] as const)("as %s, answer or refusal", async (principal) => {
+  test.each(["reader-range", "no-roles"] as const)("as %s, answer or refusal", async (principal) => {
     const capture = principalCapture(principal);
     const client = createFakeEtcdClient({
       ...capturedClient(capture),
