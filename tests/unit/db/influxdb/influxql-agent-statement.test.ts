@@ -13,6 +13,7 @@ import {
 } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-statement";
 import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 import { loadInfluxCapture } from "../../../helpers/influxdb-fixtures";
+import { INFLUXQL_QUERY_TEXT_SPELLINGS } from "../../../helpers/influxql-query-text-spellings";
 
 describe("readInfluxqlAgentStatement", () => {
   test.each([
@@ -91,6 +92,13 @@ describe("readInfluxqlAgentStatement", () => {
       expect(readInfluxqlAgentStatement(text).ok).toBe(false);
     }
   });
+
+  test.each(INFLUXQL_QUERY_TEXT_SPELLINGS.map((text) => [text]))(
+    "refuses %p, a spelling of a read of statement text, before anything is sent",
+    (text) => {
+      expect(readInfluxqlAgentStatement(text).ok).toBe(false);
+    },
+  );
 
   test.each([
     ["EXPLAIN SHOW MEASUREMENTS", "SHOW"],

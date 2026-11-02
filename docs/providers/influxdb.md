@@ -741,6 +741,12 @@ A token's write on a bucket it cannot read is out of InfluxQL's reach (`write-pr
   A 1.13.1 reader with a database is answered `SHOW QUERIES` with another user's running statement and name (`show-queries-during-admin-read-reader`) and `SHOW CONTINUOUS QUERIES` with the text an administrator wrote (`show-continuous-queries-reader`); `SHOW USERS`, `GRANTS`, `STATS`, `DIAGNOSTICS`, `SHARDS`, `SHARD GROUPS`, `SUBSCRIPTIONS` and `KILL QUERY` are answered to an admin alone.
 - `EXPLAIN` of a `SELECT` only.
 
+Every spelling of `SHOW QUERIES` and `SHOW CONTINUOUS QUERIES` in [`tests/helpers/influxql-query-text-spellings.ts`](../../tests/helpers/influxql-query-text-spellings.ts) is refused here: case, whitespace, quoting, a terminator, a second statement, a comment and the forms that wrap one.
+A second layer reads the answer alone, never the statement: a series with a `query` column that is not led by `time` is refused whatever was sent, before a row is counted.
+Every `SELECT` result leads with `time` and no catalog read an agent sends has a `query` column, while `SHOW QUERIES` (`qid`, `query`, ... in every 1.x release) and `SHOW CONTINUOUS QUERIES` (`name`, `query`) have one, so other principals' statement text never leaves the provider even if a spelling got past the reader:
+
+> Read-only execution was refused: this answer has the shape of SHOW QUERIES or SHOW CONTINUOUS QUERIES, which carry statements the server's principals wrote, and an agent read never returns one
+
 The statement is sent with the connection's database as `db`; the route table fixes every other key, so no retention policy, epoch or chunking a caller chose reaches the server, and nothing carries from one statement to the next.
 A `SELECT` is read chunked and a `SHOW` or `EXPLAIN` whole, as in section 5.2.
 

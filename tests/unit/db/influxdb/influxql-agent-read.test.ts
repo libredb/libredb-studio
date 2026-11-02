@@ -11,6 +11,7 @@ import type { InfluxAnswer, InfluxRequest } from "@/lib/db/providers/timeseries/
 import {
   INFLUXQL_AGENT_ENVELOPE_ALLOWANCE_BYTES,
   INFLUXQL_AGENT_PROBED_DATABASES,
+  INFLUXQL_AGENT_QUERY_TEXT_SENTENCE,
   INFLUXQL_AGENT_WIRE_EXPANSION,
   influxqlAgentReadFailure,
   influxqlAgentResponseCap,
@@ -406,5 +407,73 @@ describe("shapeInfluxqlAgentAnswer", () => {
   test("an answer the server words as an error stays the shaper's error", () => {
     const refused = '{"results":[{"statement_id":0,"error":"insufficient permissions"}]}';
     expect(() => shapeInfluxqlAgentAnswer(refused, BUDGET, [], "SELECT 1")).toThrow();
+  });
+});
+
+/**
+ * The second layer under the reader: an answer in the shape of SHOW QUERIES or SHOW CONTINUOUS QUERIES is refused
+ * from its columns alone, whatever statement was sent, so other principals' statement text never leaves the provider
+ * even if a spelling ever got past the reader. The captures record `<qid>` and `<client>` in place of values that
+ * change per run; the qid is written back as a number so the body is the JSON the server sent.
+ */
+describe("shapeInfluxqlAgentAnswer refuses statement text by the answer's shape", () => {
+  const WIDE: ReadOnlyStatementBudget = { statementTimeoutMs: 5_000, maxResultRows: 100, maxResultBytes: 100_000 };
+  const body = (name: string) => at("1.13.1", name).body.replaceAll("<qid>", "7");
+  const series = (list: readonly { name?: string; columns: readonly string[]; values: unknown[][] }[]) =>
+    JSON.stringify({ results: [{ statement_id: 0, series: list }] });
+
+  function refusal(text: string, statement: string): QueryError {
+    try {
+      shapeInfluxqlAgentAnswer(text, WIDE, [], statement);
+    } catch (error) {
+      expect(error).toBeInstanceOf(QueryError);
+      return error as QueryError;
+    }
+    throw new Error("the answer was not refused");
+  }
+
+  test.each([
+    ["show-queries-reader", "reader"],
+    ["show-queries-during-admin-read-reader", "SELECT count(v) FROM big"],
+    ["show-continuous-queries-reader", "CREATE CONTINUOUS QUERY cq_hourly"],
+  ])("refuses the 1.13.1 capture %s and carries none of its text", (name, text) => {
+    expect(body(name)).toContain(text);
+    const error = refusal(body(name), "SELECT * FROM home");
+    expect(error.message).toBe(INFLUXQL_AGENT_QUERY_TEXT_SENTENCE);
+    expect(error.message).not.toContain(text);
+  });
+
+  test.each([
+    ["SHOW QUERIES before 1.8, with no host or user", ["qid", "query", "database", "duration", "status"]],
+    ["SHOW QUERIES with no status", ["qid", "query", "database", "duration"]],
+    ["SHOW CONTINUOUS QUERIES", ["name", "query"]],
+  ])("refuses %s, with no row", (_shape, columns) => {
+    expect(refusal(series([{ columns, values: [] }]), "SHOW MEASUREMENTS").message).toBe(
+      INFLUXQL_AGENT_QUERY_TEXT_SENTENCE,
+    );
+  });
+
+  test("refuses a query-text series behind an admitted one", () => {
+    const text = series([
+      { name: "home", columns: ["name"], values: [["home"]] },
+      { name: "other", columns: ["name", "query"], values: [["cq", "CREATE CONTINUOUS QUERY cq ON other BEGIN END"]] },
+    ]);
+    expect(refusal(text, "SHOW MEASUREMENTS").message).toBe(INFLUXQL_AGENT_QUERY_TEXT_SENTENCE);
+  });
+
+  test("answers a SELECT of a field named query, which the server leads with time", () => {
+    const text = series([{ name: "log", columns: ["time", "query", "qid"], values: [[0, "q", 1]] }]);
+    expect(shapeInfluxqlAgentAnswer(text, WIDE, [], 'SELECT "query", "qid" FROM "log"').rows).toEqual([
+      { time: 0, query: "q", qid: 1 },
+    ]);
+  });
+
+  test.each([
+    "show-measurements-reader",
+    "show-tag-values-reader",
+    "show-field-keys-reader",
+    "show-retention-policies-reader",
+  ])("answers the admitted catalog read %s", (name) => {
+    expect(shapeInfluxqlAgentAnswer(body(name), WIDE, [], "SHOW MEASUREMENTS").rows.length).toBeGreaterThan(0);
   });
 });
