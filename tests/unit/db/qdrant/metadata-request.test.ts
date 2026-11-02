@@ -49,6 +49,10 @@ describe("the routes an agent request may name", () => {
     "POST /collections/plain/points/count {}",
     'POST /collections/plain/points/count {"exact": false}',
     "POST /collections/plain/points/count?consistency=majority",
+    "POST /collections/plain/points/count?consistency=all",
+    "POST /collections/plain/points/count?consistency=2",
+    "POST /collections/plain/points/count?timeout=1",
+    'POST /collections/plain/points/count?consistency=quorum&timeout=3600 {"exact": true}',
     "GET /collections/plain/cluster",
     "// a comment the console strips\nGET /collections",
   ];
@@ -124,6 +128,39 @@ describe("what is refused before anything is sent", () => {
     });
   }
 
+  // A count's `exact` is a boolean in the server's CountRequest; any other value is answered 400 by the server, so the
+  // agent's reader refuses it first, naming the value's JSON kind and never the value.
+  const exacts: readonly [string, string][] = [
+    ['"yes"', "a string"],
+    ['{"with_payload": true}', "an object"],
+    ["[true]", "a list"],
+    ["1", "a number"],
+  ];
+  for (const [value, kind] of exacts) {
+    test(`a count's exact of ${value} is refused before anything is sent: it takes true or false`, () => {
+      expect(readQdrantAgentStatement(`POST /collections/plain/points/count {"exact": ${value}}`)).toEqual({
+        ok: false,
+        code: "count-shape",
+        message: QDRANT_AGENT_SENTENCES.countExact(kind),
+      });
+    });
+  }
+
+  test("a count's exact written as null is the console's left-out key, read as the default true", () => {
+    const reading = readQdrantAgentStatement('POST /collections/plain/points/count {"exact": null}');
+    if (!reading.ok) throw new Error(reading.message);
+    expect(reading.plan.body).toEqual({ exact: true });
+  });
+
+  test("the sentence for a count's exact names the value's kind, never the value", () => {
+    expect(QDRANT_AGENT_SENTENCES.countExact("a string")).toBe(
+      'An agent\'s count takes "exact" as true or false; it was given a string. Nothing was sent.',
+    );
+    const reading = readQdrantAgentStatement('POST /collections/plain/points/count {"exact": "stored-secret"}');
+    expect(reading.ok).toBe(false);
+    if (!reading.ok) expect(reading.message).not.toContain("stored-secret");
+  });
+
   const grammar = [
     "PUT /collections/plain/points",
     "DELETE /collections/plain",
@@ -134,6 +171,10 @@ describe("what is refused before anything is sent", () => {
     "GET /telemetry",
     "GET /collections/plain/points/count",
     'POST /collections/plain/points/count {"exakt": true}',
+    "POST /collections/plain/points/count?wait=true",
+    "POST /collections/plain/points/count?consistency=one",
+    "POST /collections/plain/points/count?timeout=0",
+    "GET /collections?timeout=1",
     "GET /collections/..",
     "GET /collections/plain\nGET /collections/other",
     "",

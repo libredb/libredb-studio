@@ -249,6 +249,25 @@ describe("one agent request", () => {
     expect(result.rows).toEqual([{ collection: "plain", count: 3 }]);
   });
 
+  test("a count's declared query keys are sent: consistency as written, and a timeout clamped to the deadline", async () => {
+    const { provider, wire } = await connected();
+    const result = await provider.queryReadOnly(
+      "POST /collections/plain/points/count?consistency=all&timeout=3600",
+      BUDGET,
+    );
+    const sent = wire.requests.slice(PROOF.length);
+    expect(sent.map(({ method, url, body }) => [method, url, body])).toEqual([
+      [
+        "POST",
+        expect.stringMatching(
+          /^http:\/\/127\.0\.0\.1:6333\/collections\/plain\/points\/count\?consistency=all&timeout=[34]$/,
+        ),
+        '{"exact":true}',
+      ],
+    ]);
+    expect(result.rows).toEqual([{ collection: "plain", count: 3 }]);
+  });
+
   test("a collection the key can write that appears after the open is refused at the next request, which is not sent", async () => {
     let collections = agentAnswer("collections-read-only");
     const { provider, wire } = await connected(

@@ -529,8 +529,8 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // Offered for the two metadata tools (vector-family E17); `run_read_query` does not serve it, because the provider
   // implements no `queryReadOnly`.
   milvus: true,
-  // Offered for the two metadata tools, carrying names and types only (vector-family spec 4.4); `run_read_query` does not
-  // serve it, because the provider implements no `queryReadOnly`.
+  // Offered for the two metadata tools, carrying names and types only (vector-family spec 4.4), and for
+  // `run_qdrant_read`, which MCP_STATEMENT_READ opens on it.
   qdrant: true,
   // As Milvus and Qdrant (#1566 spec 3.5): offered for the two metadata tools; tenant names are a collection's detail,
   // listed in its Source up to 1,024 as Milvus lists partitions, and `run_read_query` does not serve it.
@@ -602,8 +602,8 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
  * joins agent mode does not open to MCP as a side effect: its row stays false until a change of its own opens it.
  *
  * True for the five SQL engines `run_read_query` served before this record existed, so nothing moved when it landed,
- * for ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Oracle, Db2, Cassandra and Couchbase, each opened to `run_read_query` by a change of its own, for MongoDB, whose command `run_mongo_command` reads, and for Kubernetes, whose kubectl line `run_kubectl_read` reads
- * under the agent's machine redaction. An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records
+ * for ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Oracle, Db2, Cassandra and Couchbase, each opened to `run_read_query` by a change of its own, for MongoDB, whose command `run_mongo_command` reads, for Kubernetes, whose kubectl line `run_kubectl_read` reads
+ * under the agent's machine redaction, and for Qdrant, whose metadata request `run_qdrant_read` reads. An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records
  * above it, and held false wherever `MCP_EXPOSABLE` is false and true only for an engine agent mode executes on by
  * `tests/unit/db/compatibility.test.ts`.
  */
@@ -668,9 +668,11 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // Agent mode executes metadata-only reads on Milvus, and MCP read stays closed on it until a change of its own
   // opens it.
   milvus: false,
-  // Agent mode executes metadata-only reads on Qdrant, and MCP read stays closed on it until a change of its own
-  // opens it.
-  qdrant: false,
+  // Opened on its own: run_qdrant_read runs under the boundary agent mode uses, the provider's closed table of read
+  // routes and a key the server refuses an empty alias update and an empty point delete on every collection it lists,
+  // before every request, with every answer projected to names, counts and flags (docs/providers/qdrant.md, section
+  // Agent mode).
+  qdrant: true,
   // Agent mode executes metadata-only reads on Weaviate, and MCP read stays closed on it until a change of its own
   // opens it.
   weaviate: false,

@@ -47,13 +47,13 @@ export function fingerprintKubectl(text: string): string {
  */
 const KUBECTL_ROW_CAP_ADVICE: Readonly<Record<string, (allowed: string) => string>> = Object.freeze({
   get: (allowed: string) =>
-    `Ask for at most ${allowed} objects: name a namespace with -n, or narrow with -l or --field-selector, and run it again.`,
+    `Ask for at most ${allowed} object${allowed === "1" ? "" : "s"}: name a namespace with -n, or narrow with -l or --field-selector, and run it again.`,
   top: (allowed: string) =>
-    `Ask for at most ${allowed} pods: name a namespace with -n, or narrow with -l, and run it again.`,
+    `Ask for at most ${allowed} pod${allowed === "1" ? "" : "s"}: name a namespace with -n, or narrow with -l, and run it again.`,
   logs: (allowed: string) =>
-    `Ask for at most ${allowed} lines: lower --tail, or name one container with -c, and run it again.`,
+    `Ask for at most ${allowed} line${allowed === "1" ? "" : "s"}: lower --tail, or name one container with -c, and run it again.`,
   events: (allowed: string) =>
-    `Ask for at most ${allowed} events: name a namespace with -n, narrow with --for TYPE/NAME, or ask for --types Warning, and run it again.`,
+    `Ask for at most ${allowed} event${allowed === "1" ? "" : "s"}: name a namespace with -n, narrow with --for TYPE/NAME, or ask for --types Warning, and run it again.`,
 });
 
 /** The sentence for a kubectl read refused past the row budget. Exported for its tests, like the fingerprint. */
@@ -61,7 +61,7 @@ export function kubectlRowCapAdvice(statement: string, allowed: string): string 
   const run = readKubectlRun(statement);
   const advice = run.ok ? KUBECTL_ROW_CAP_ADVICE[run.statement.command] : undefined;
   return advice === undefined
-    ? `Ask for at most ${allowed} rows: narrow the read to fewer objects, and run it again.`
+    ? `Ask for at most ${allowed} row${allowed === "1" ? "" : "s"}: narrow the read to fewer objects, and run it again.`
     : advice(allowed);
 }
 

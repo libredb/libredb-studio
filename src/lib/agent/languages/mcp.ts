@@ -15,6 +15,7 @@ import type { z } from "zod";
 import type { AgentStatementLanguageId } from "../agent-manifest";
 import { KUBECTL_MCP_FACET } from "./kubectl/mcp";
 import { MONGO_MCP_FACET } from "./mongo/mcp";
+import { QDRANTAPI_MCP_FACET } from "./qdrantapi/mcp";
 import { SQL_MCP_FACET } from "./sql/mcp";
 
 /** What the MCP module hands a facet's description: the served engines' names and the shared result limits. */
@@ -28,8 +29,11 @@ export interface AgentLanguageMcpServed {
 export interface AgentLanguageMcpWords {
   /** How a byte-cut result fits more rows, as the opening of a clause: "Project fewer fields". */
   readonly fewerFields: string;
-  /** How to read past the rows a cut result returned, as the end of a sentence that starts "To ". */
-  readonly readPast: (shown: number) => string;
+  /**
+   * How to read past the `shown` rows a cut result returned, as the end of a sentence that starts "To ". `cut` names
+   * the cap that cut it, so advice that only a row cut can take, such as a higher max_rows, is left out of a byte cut.
+   */
+  readonly readPast: (shown: number, cut: "max_rows" | "result_bytes") => string;
   /** The answer when even the first row does not fit the result cap. */
   readonly rowOverCap: string;
   /** What a refused statement never reached, as a noun phrase: "the cluster", "the database". */
@@ -76,8 +80,7 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   influxql: null,
   // No MCP statement tool yet: MCP read stays closed on Weaviate until a change of its own declares one and opens it.
   weaviateapi: null,
-  // No MCP statement tool yet: MCP read stays closed on Qdrant until a change of its own declares one and opens it.
-  qdrantapi: null,
+  qdrantapi: QDRANTAPI_MCP_FACET,
   // No MCP statement tool yet: MCP read stays closed on Neo4j until a change of its own declares one and opens it.
   cypher: null,
   // No MCP statement tool yet: MCP read stays closed on Milvus until a change of its own declares one and opens it.

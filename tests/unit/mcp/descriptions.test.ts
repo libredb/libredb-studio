@@ -22,6 +22,7 @@ pinMcpTestEnvironment();
 
 const RUN_KUBECTL_READ_ARM = mcpStatementArm("run_kubectl_read");
 const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
+const RUN_QDRANT_READ_ARM = mcpStatementArm("run_qdrant_read");
 
 afterEach(async () => {
   await resetMcpTestState();
@@ -33,6 +34,7 @@ const DESCRIPTIONS = [
   ["run_read_query", RUN_READ_QUERY_DESCRIPTION, "Run one read-only SQL statement"],
   ["run_kubectl_read", RUN_KUBECTL_READ_ARM.description, "Run one read-only kubectl read"],
   ["run_mongo_command", RUN_MONGO_COMMAND_ARM.description, "Run one read-only MongoDB command"],
+  ["run_qdrant_read", RUN_QDRANT_READ_ARM.description, "Run one read-only Qdrant metadata read"],
 ] as const;
 
 describe("the tool descriptions", () => {
@@ -46,6 +48,7 @@ describe("the tool descriptions", () => {
     expect(RUN_READ_QUERY_DESCRIPTION.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
     expect(RUN_MONGO_COMMAND_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
     expect(RUN_KUBECTL_READ_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
+    expect(RUN_QDRANT_READ_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
     expect(LIST_CONNECTIONS_DESCRIPTION).not.toContain(MCP_UNTRUSTED_NOTICE);
   });
 
@@ -88,6 +91,12 @@ describe("the tool descriptions", () => {
       "Free-text status, event and log messages are not masked, so a Secret's name or a value an application printed can reach you there.",
     );
     expect(RUN_KUBECTL_READ_ARM.description).toContain("this tool takes no offset");
+  });
+
+  test("run_qdrant_read names Qdrant, the one engine its handler gates on, and says its answers are metadata only", () => {
+    expect(RUN_QDRANT_READ_ARM.description).toContain("Runs on Qdrant; other engines refuse it.");
+    expect(RUN_QDRANT_READ_ARM.description).toContain("names, counts and flags only, never a stored payload or vector");
+    expect(RUN_QDRANT_READ_ARM.description).toContain("this tool takes no offset");
   });
 
   test("inspect_schema says an engine with no tables refuses it, and where to read it instead", () => {

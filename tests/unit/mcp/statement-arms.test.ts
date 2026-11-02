@@ -36,9 +36,11 @@ const ARMS = Object.values(MCP_STATEMENT_ARMS).flatMap((arm) => (arm === null ? 
 const RUN_READ_QUERY_ARM = mcpStatementArm("run_read_query");
 const RUN_KUBECTL_READ_ARM = mcpStatementArm("run_kubectl_read");
 const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
+const RUN_QDRANT_READ_ARM = mcpStatementArm("run_qdrant_read");
 const RunKubectlReadInputSchema = RUN_KUBECTL_READ_ARM.inputSchema;
 const RunReadQueryInputSchema = RUN_READ_QUERY_ARM.inputSchema;
 const RunMongoCommandInputSchema = RUN_MONGO_COMMAND_ARM.inputSchema;
+const RunQdrantReadInputSchema = RUN_QDRANT_READ_ARM.inputSchema;
 
 /** True only when `A` and `B` are the same union, member for member. */
 type SameUnion<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
@@ -53,11 +55,17 @@ describe("MCP_STATEMENT_ARMS", () => {
     }
   });
 
-  test("every language has its arm: run_read_query, run_kubectl_read and run_mongo_command", () => {
+  test("every language has its arm: run_read_query, run_kubectl_read, run_mongo_command and run_qdrant_read", () => {
     expect(MCP_STATEMENT_ARMS.sql).toBe(RUN_READ_QUERY_ARM);
     expect(MCP_STATEMENT_ARMS.kubectl).toBe(RUN_KUBECTL_READ_ARM);
     expect(MCP_STATEMENT_ARMS.mongo).toBe(RUN_MONGO_COMMAND_ARM);
-    expect(ARMS.map((arm) => arm.tool)).toEqual(["run_read_query", "run_kubectl_read", "run_mongo_command"]);
+    expect(MCP_STATEMENT_ARMS.qdrantapi).toBe(RUN_QDRANT_READ_ARM);
+    expect(ARMS.map((arm) => arm.tool)).toEqual([
+      "run_read_query",
+      "run_kubectl_read",
+      "run_mongo_command",
+      "run_qdrant_read",
+    ]);
   });
 
   test("a language with no MCP tool yet has no arm, and its engine no read tool", () => {
@@ -67,8 +75,6 @@ describe("MCP_STATEMENT_ARMS", () => {
     expect(mcpStatementToolFor("influxdb")).toBeNull();
     expect(MCP_STATEMENT_ARMS.weaviateapi).toBeNull();
     expect(mcpStatementToolFor("weaviate")).toBeNull();
-    expect(MCP_STATEMENT_ARMS.qdrantapi).toBeNull();
-    expect(mcpStatementToolFor("qdrant")).toBeNull();
     expect(MCP_STATEMENT_ARMS.cypher).toBeNull();
     expect(mcpStatementToolFor("neo4j")).toBeNull();
     expect(MCP_STATEMENT_ARMS.milvusrpc).toBeNull();
@@ -299,6 +305,15 @@ describe("the MongoDB arm", () => {
     );
   });
 
+  test("a cut at one row names one document and one row", () => {
+    expect(RUN_MONGO_COMMAND_ARM.moreRows(find, "mongodb", { maxRows: 1, shown: 1, cut: "max_rows" })).toBe(
+      'More rows exist than this result holds, and this tool does not page with offset. Ask for at most 1 document: narrow the filter, or set "options": {"limit": 1}, and run it again. To read past the 1 row returned, skip it with a find\'s "skip" or a $skip stage.',
+    );
+    expect(RUN_MONGO_COMMAND_ARM.moreRows(find, "mongodb", { maxRows: 100, shown: 1, cut: "result_bytes" })).toBe(
+      'More rows exist than the 32 KiB result limit holds, and 1 of them fitted; this tool does not page with offset. Project fewer fields to fit more rows, and to read past the 1 row returned, skip it with a find\'s "skip" or a $skip stage.',
+    );
+  });
+
   test("a cut at the result cap advises fewer fields and skipping the rows that fitted, never the same limit", () => {
     const limited = JSON.stringify({ collection: "orders", operation: "find", options: { limit: 100 } });
     const hint = RUN_MONGO_COMMAND_ARM.moreRows(limited, "mongodb", { maxRows: 100, shown: 15, cut: "result_bytes" });
@@ -362,6 +377,12 @@ describe("the kubectl arm", () => {
     });
   });
 
+  test("a cut at one row names one pod and one row", () => {
+    expect(RUN_KUBECTL_READ_ARM.moreRows("top pods -A", "kubernetes", { maxRows: 1, shown: 1, cut: "max_rows" })).toBe(
+      "More rows exist than this result holds, and this tool does not page with offset. Ask for at most 1 pod: name a namespace with -n, or narrow with -l, and run it again. To read past the 1 row returned, split the read into narrower ones, since a kubectl read is never paged.",
+    );
+  });
+
   test("names neither a MongoDB stage nor a SQL clause where more rows exist, and says a kubectl read is not paged", () => {
     const hint = RUN_KUBECTL_READ_ARM.moreRows("get pods -A", "kubernetes", {
       maxRows: 100,
@@ -398,6 +419,114 @@ describe("the kubectl arm", () => {
   });
 });
 
+describe("the qdrantapi arm", () => {
+  const server = languageServer("qdrantapi");
+
+  test("takes one request, no offset and no database, and sends it as written", () => {
+    expect(RUN_QDRANT_READ_ARM.title).toBe("Run a read-only Qdrant metadata read");
+    expect(RUN_QDRANT_READ_ARM.argument).toBe("statement");
+    expect(RUN_QDRANT_READ_ARM.paging).toBe("none");
+    expect(RUN_QDRANT_READ_ARM.types).toEqual(["qdrant"]);
+    expect(RUN_QDRANT_READ_ARM.inputSchema.shape).not.toHaveProperty("offset");
+    expect(RUN_QDRANT_READ_ARM.inputSchema.shape).not.toHaveProperty("database");
+    for (const extra of [{ offset: 5 }, { database: "plain" }, { sql: "SELECT 1" }]) {
+      expect(
+        RunQdrantReadInputSchema.safeParse({ connection_id: "seed:q", statement: "GET /collections", ...extra })
+          .success,
+      ).toBe(false);
+    }
+    expect(RunQdrantReadInputSchema.safeParse({ connection_id: "seed:q", statement: "" }).success).toBe(false);
+  });
+
+  test("reads its argument with the agent's canonicalize", () => {
+    expect(RUN_QDRANT_READ_ARM.canonicalize("GET /collections")).toBe(server.canonicalize("GET /collections"));
+    expect(RUN_QDRANT_READ_ARM.canonicalize({ statement: "GET /collections" })).toBeNull();
+  });
+
+  test.each([
+    ["a point read", 'POST /collections/plain/points\n{"ids": [1]}'],
+    ["a query", 'POST /collections/plain/points/query\n{"query": [0.1, 0.2]}'],
+    ["a count filter", 'POST /collections/plain/points/count\n{"filter": {"must": []}}'],
+    ["a write", 'PUT /collections/plain/points\n{"points": []}'],
+    ["a request past 4,096 characters", `GET /collections/${"a".repeat(4_100)}`],
+  ])("fences %s with the agent's admission and quotes its sentence", (_what, request) => {
+    const refusal = server.admit?.(request);
+    expect(refusal).not.toBeNull();
+    expect(RUN_QDRANT_READ_ARM.fence(request, "qdrant")).toBe(
+      `The request was refused before it reached the server (${refusal?.code}). ${refusal?.message}`,
+    );
+  });
+
+  test("admits a metadata read and a bare count", () => {
+    expect(RUN_QDRANT_READ_ARM.fence("GET /collections", "qdrant")).toBeNull();
+    expect(RUN_QDRANT_READ_ARM.fence('POST /collections/plain/points/count\n{"exact": true}', "qdrant")).toBeNull();
+  });
+
+  test("answers a row refusal with the request's own row-cap advice", () => {
+    const rows = classifyReadQueryFailure(
+      new Error("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
+      1,
+      2,
+      RUN_QDRANT_READ_ARM.tooLarge("GET /aliases", "qdrant"),
+    );
+    expect(rows).toEqual({
+      kind: "too-large",
+      text: `The result has more than 1000 rows, the most this server reads for one call. ${server.rowCapAdvice("GET /aliases", "1000")}`,
+    });
+  });
+
+  test("names neither a MongoDB stage nor a SQL clause where more rows exist, and says a Qdrant read is not paged", () => {
+    const hint = RUN_QDRANT_READ_ARM.moreRows("GET /aliases", "qdrant", { maxRows: 100, shown: 100, cut: "max_rows" });
+    expect(hint).toBe(
+      `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice("GET /aliases", "100")} To read past the 100 rows returned, raise max_rows (at most 500), or read a narrower route, since a Qdrant read is never paged.`,
+    );
+    const bytes = RUN_QDRANT_READ_ARM.moreRows("GET /aliases", "qdrant", {
+      maxRows: 100,
+      shown: 4,
+      cut: "result_bytes",
+    });
+    expect(bytes).toBe(
+      "More rows exist than the 32 KiB result limit holds, and 4 of them fitted; this tool does not page with offset. Read a narrower route, one collection instead of a whole list, or a collection's count, aliases or cluster layout instead of its full description, to fit more rows, and to read past the 4 rows returned, read a narrower route, since a Qdrant read is never paged.",
+    );
+    expect(bytes).not.toContain("max_rows");
+    // A read of one collection is already narrow: its hint must not tell the client to read one collection on its own.
+    const one = RUN_QDRANT_READ_ARM.moreRows("GET /collections/plain", "qdrant", {
+      maxRows: 100,
+      shown: 100,
+      cut: "max_rows",
+    });
+    expect(one).toContain("raise max_rows (at most 500)");
+    expect(one).not.toContain("read each collection on its own");
+    for (const text of [hint, bytes, RUN_QDRANT_READ_ARM.rowOverCap]) {
+      expect(text).not.toContain("$skip");
+      expect(text).not.toContain("LIMIT");
+    }
+    expect(RUN_QDRANT_READ_ARM.rowOverCap).toBe(
+      "One row of this result is larger than the 32 KiB result limit. Read one collection on its own, and run it again.",
+    );
+  });
+
+  test("a cut at one row names one row, and a byte cut never advises raising max_rows", () => {
+    expect(RUN_QDRANT_READ_ARM.moreRows("GET /aliases", "qdrant", { maxRows: 1, shown: 1, cut: "max_rows" })).toBe(
+      "More rows exist than this result holds, and this tool does not page with offset. Ask for at most 1 row: read one collection's aliases with GET /collections/{collection}/aliases instead of every alias, and run it again. To read past the 1 row returned, raise max_rows (at most 500), or read a narrower route, since a Qdrant read is never paged.",
+    );
+    expect(
+      RUN_QDRANT_READ_ARM.moreRows("GET /aliases", "qdrant", { maxRows: 100, shown: 1, cut: "result_bytes" }),
+    ).toBe(
+      "More rows exist than the 32 KiB result limit holds, and 1 of them fitted; this tool does not page with offset. Read a narrower route, one collection instead of a whole list, or a collection's count, aliases or cluster layout instead of its full description, to fit more rows, and to read past the 1 row returned, read a narrower route, since a Qdrant read is never paged.",
+    );
+  });
+
+  test("describes the reads it takes, the refusals, the proof and its engine", () => {
+    const description = RUN_QDRANT_READ_ARM.description;
+    expect(description.startsWith("Run one read-only Qdrant metadata read")).toBe(true);
+    expect(description).toContain("Runs on Qdrant; other engines refuse it.");
+    expect(description).toContain("this tool takes no offset");
+    expect(description).toContain("never a stored payload or vector");
+    expect(description).toContain("an empty alias update and an empty point delete");
+  });
+});
+
 describe("the tool each engine is read with", () => {
   test("is the tool whose arm serves it, and null where none does", () => {
     for (const type of SHIPPED_DATABASE_TYPES) {
@@ -407,9 +536,10 @@ describe("the tool each engine is read with", () => {
     }
   });
 
-  test("MongoDB is read with run_mongo_command, Kubernetes with run_kubectl_read, the SQL engines with run_read_query, the rest with none", () => {
+  test("MongoDB is read with run_mongo_command, Kubernetes with run_kubectl_read, Qdrant with run_qdrant_read, the SQL engines with run_read_query, the rest with none", () => {
     expect(mcpStatementToolFor("mongodb")).toBe("run_mongo_command");
     expect(mcpStatementToolFor("kubernetes")).toBe("run_kubectl_read");
+    expect(mcpStatementToolFor("qdrant")).toBe("run_qdrant_read");
     for (const type of RUN_READ_QUERY_TYPES) expect(mcpStatementToolFor(type)).toBe("run_read_query");
     expect(mcpStatementToolFor("clickhouse")).toBe("run_read_query");
     expect(mcpStatementToolFor("libsql")).toBe("run_read_query");
@@ -431,6 +561,7 @@ describe("the tool each engine is read with", () => {
       "run_read_query",
       "run_kubectl_read",
       "run_mongo_command",
+      "run_qdrant_read",
     ]);
   });
 
@@ -475,10 +606,11 @@ describe("the tool each engine is read with", () => {
  * to its provider's own declaration: no relation kind where the arm says none, at least one where it does not.
  */
 describe("the arms whose engines hold no table", () => {
-  test("kubectl declares it, SQL and MongoDB do not", () => {
+  test("kubectl declares it, SQL, MongoDB and Qdrant do not", () => {
     expect(RUN_KUBECTL_READ_ARM.holdsNoTables).toBe(true);
     expect(RUN_READ_QUERY_ARM.holdsNoTables).toBe(false);
     expect(RUN_MONGO_COMMAND_ARM.holdsNoTables).toBe(false);
+    expect(RUN_QDRANT_READ_ARM.holdsNoTables).toBe(false);
   });
 
   test.each(ARMS.flatMap((arm) => arm.types.map((type) => [arm.tool, type, arm] as const)))(
@@ -498,6 +630,7 @@ describe("the arms whose engines hold no table", () => {
     }
     expect(mcpTablelessReadTool("kubernetes")).toBe("run_kubectl_read");
     expect(mcpTablelessReadTool("mongodb")).toBeNull();
+    expect(mcpTablelessReadTool("qdrant")).toBeNull();
     expect(mcpTablelessReadTool("postgres")).toBeNull();
     expect(mcpTablelessReadTool("redis")).toBeNull();
   });

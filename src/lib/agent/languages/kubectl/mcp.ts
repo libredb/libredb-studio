@@ -27,7 +27,7 @@ export const KUBECTL_MCP_FACET = Object.freeze({
   words: {
     fewerFields: "Read fewer fields, without -o wide, -o yaml or -o json,",
     readPast: (shown: number) =>
-      `read past the ${shown} rows returned, split the read into narrower ones, since a kubectl read is never paged.`,
+      `read past the ${shown} row${shown === 1 ? "" : "s"} returned, split the read into narrower ones, since a kubectl read is never paged.`,
     rowOverCap:
       "One row of this result is larger than the 32 KiB result limit. Read it in a shorter form, without -o yaml or -o json, and run it again.",
     reached: "the cluster",

@@ -227,7 +227,8 @@ function shown(text: string): string {
   return JSON.stringify(text.length > SHOWN ? `${text.slice(0, SHOWN)}...` : text);
 }
 
-function kindOf(value: TaggedJson | undefined): string {
+/** The JSON kind of a value, as a refusal names it, never the value itself. */
+export function kindOf(value: TaggedJson | undefined): string {
   if (value === undefined) return "nothing";
   if (value === null) return "null";
   if (Array.isArray(value)) return "a list";
