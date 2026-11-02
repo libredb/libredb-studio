@@ -97,9 +97,9 @@ export async function GET(request: Request) {
     const oidcConfig = getOIDCConfig();
     const config = await discoverProvider(oidcConfig);
 
-    // Next.js removes basePath from the handler URL. Match the login route's public callback path.
+    // Restore the public base path that Next.js removes from the handler URL.
     const internalUrl = new URL(request.url);
-    const callbackUrl = new URL(`${withBasePath("/api/auth/oidc/callback")}${internalUrl.search}`, origin);
+    const callbackUrl = new URL(`${withBasePath(internalUrl.pathname)}${internalUrl.search}`, origin);
 
     const exchange = await exchangeCode(config, callbackUrl, oidcState.code_verifier, oidcState.state, oidcState.nonce);
 
