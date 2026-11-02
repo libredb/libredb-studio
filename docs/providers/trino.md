@@ -2106,7 +2106,7 @@ The relation kind answers the same projection the other engines answer with no r
 The index and statistics kinds are refused with `SELECTOR_UNSUPPORTED_BY_DIALECT`: there is no index object, and the row counts Trino has come from `SHOW STATS`, which is not a `SELECT`.
 So investigation, database assessment and data analysis open here and send their statements through `queryReadOnly`, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`; database assessment cannot pass with no table profile ([B146](../BACKLOG.md)), and the `sql-composers` requirement holds query optimization out, since the agent path sends no `EXPLAIN` ([B166](../BACKLOG.md)); plan mode drafts here as on every engine.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-MCP's statement read stays closed on Trino (`MCP_STATEMENT_READ.trino` is false) until a change of its own opens it, and the MCP metadata tools serve it as before (`MCP_EXPOSABLE.trino` is true).
+MCP's statement read stays closed on Trino (`MCP_STATEMENT_READ.trino` is false) until a change of its own opens it, and that change needs an open that proves the connection's user cannot read other users' query text, since the statement fence above is the only layer between it and `system.runtime.queries` (B166), and the MCP metadata tools serve it as before (`MCP_EXPOSABLE.trino` is true).
 
 ### 15.6 Boundary record
 
