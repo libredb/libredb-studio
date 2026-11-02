@@ -461,6 +461,18 @@ describe("shapeInfluxqlAgentAnswer refuses statement text by the answer's shape"
     expect(refusal(text, "SHOW MEASUREMENTS").message).toBe(INFLUXQL_AGENT_QUERY_TEXT_SENTENCE);
   });
 
+  test("refuses statement text before a row is counted: in a partial answer, and in one past the row budget", () => {
+    const columns = ["qid", "query", "database", "duration"];
+    const partial = JSON.stringify({
+      results: [{ statement_id: 0, series: [{ columns, values: [[7, "SELECT 1", "home", "1s"]] }], partial: true }],
+    });
+    expect(refusal(partial, "SHOW MEASUREMENTS").message).toBe(INFLUXQL_AGENT_QUERY_TEXT_SENTENCE);
+    const rows = Array.from({ length: WIDE.maxResultRows + 5 }, (_, i) => [i, "SELECT 1", "home", "1s"]);
+    expect(refusal(series([{ columns, values: rows }]), "SHOW MEASUREMENTS").message).toBe(
+      INFLUXQL_AGENT_QUERY_TEXT_SENTENCE,
+    );
+  });
+
   test("answers a SELECT of a field named query, which the server leads with time", () => {
     const text = series([{ name: "log", columns: ["time", "query", "qid"], values: [[0, "q", 1]] }]);
     expect(shapeInfluxqlAgentAnswer(text, WIDE, [], 'SELECT "query", "qid" FROM "log"').rows).toEqual([
