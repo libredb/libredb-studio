@@ -306,16 +306,91 @@ describe("the type check before any frame", () => {
     expect(h.dials()).toBe(0);
   });
 
+  const OBJECT_NOT_FOUND = { status: 404, body: '{"error":"Object Not Found","reason":"Not Found"}' };
+  const VHOST_NOT_FOUND = { status: 404, body: '{"error":"not_found","reason":"Not Found"}' };
+  const typeCheckKey = stubKey(routeTarget("stream-type", { vhost: "/", name: "orders" }, ""));
+  const exchangeKey = stubKey(routeTarget("exchange", { vhost: "/", name: "orders" }, ""));
+  const EXCHANGE_ANSWER = JSON.stringify({
+    name: "orders",
+    vhost: "/",
+    type: "direct",
+    durable: true,
+    auto_delete: false,
+    internal: false,
+    arguments: {},
+  });
+
   test.each([
-    ["a virtual host the user may not use", 404, '{"error":"not_found","reason":"Not Found"}'],
-    ["a virtual host or a stream that does not exist", 404, '{"error":"Object Not Found","reason":"Not Found"}'],
-    ["a refused login on the virtual host", 401, '{"error":"not_authorised","reason":"Not authorised"}'],
-  ])("%s is refused in one sentence that does not tell them apart, with no dial", async (_name, status, body) => {
+    ["a virtual host the user may not use", VHOST_NOT_FOUND],
+    [
+      "a refused login on the virtual host",
+      { status: 401, body: '{"error":"not_authorised","reason":"Not authorised"}' },
+    ],
+  ])("%s is refused in the one sentence, with no exchange GET and no dial", async (_name, answer) => {
     const h = await handle(AGENT);
-    h.stub.answer(stubKey(routeTarget("stream-type", { vhost: "/", name: "orders" }, "")), { status, body });
+    h.stub.answer(typeCheckKey, answer);
+    const before = h.stub.requests.length;
     const error = await refusal(h.provider.queryReadOnly(READ(), BUDGET));
     expect(error).toBeInstanceOf(QueryError);
     expect(error.message).toBe(rabbitmqAgentUnreadable("/", "orders"));
+    expect(h.stub.requests.slice(before).map((request) => request.path)).toEqual(["/api/queues/%2F/orders"]);
+    expect(h.dials()).toBe(0);
+  });
+
+  test.each([
+    ["no exchange of the name either", OBJECT_NOT_FOUND],
+    ["an exchange answer of a virtual host the user may not use", VHOST_NOT_FOUND],
+  ])("a name with no queue and %s is refused in the one sentence, with no dial", async (_name, answer) => {
+    const h = await handle(AGENT);
+    h.stub.answer(typeCheckKey, OBJECT_NOT_FOUND);
+    h.stub.answer(exchangeKey, answer);
+    const before = h.stub.requests.length;
+    const error = await refusal(h.provider.queryReadOnly(READ(), BUDGET));
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error.message).toBe(rabbitmqAgentUnreadable("/", "orders"));
+    expect(h.stub.requests.slice(before).map((request) => request.path)).toEqual([
+      "/api/queues/%2F/orders",
+      "/api/exchanges/%2F/orders",
+    ]);
+    expect(h.dials()).toBe(0);
+  });
+
+  test("an exchange of the name is refused as not a stream, not as a name the virtual host lacks, with no dial", async () => {
+    const h = await handle(AGENT);
+    h.stub.answer(typeCheckKey, OBJECT_NOT_FOUND);
+    h.stub.answer(exchangeKey, { status: 200, body: EXCHANGE_ANSWER });
+    const error = await refusal(h.provider.queryReadOnly(READ(), BUDGET));
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error.message).toBe(notAStream("orders", "").message);
+    expect(error.message).toBe('"orders" is not a stream; Studio reads streams only.');
+    expect(h.dials()).toBe(0);
+  });
+
+  test("a failure of the exchange GET is that failure's own sentence, not the one sentence", async () => {
+    const h = await handle(AGENT);
+    h.stub.answer(typeCheckKey, OBJECT_NOT_FOUND);
+    h.stub.answer(exchangeKey, { status: 503, body: "" });
+    const error = await refusal(h.provider.queryReadOnly(READ(), BUDGET));
+    expect(error.message).toBe("The management API at 127.0.0.1:15672 answered with a server error (503).");
+    expect(h.dials()).toBe(0);
+  });
+
+  test("D ending the exchange GET is the time budget's refusal", async () => {
+    const h = await handle(AGENT);
+    h.stub.answer(typeCheckKey, OBJECT_NOT_FOUND);
+    h.stub.answer(
+      exchangeKey,
+      (request) =>
+        new Promise((_resolve, reject) => request.signal.addEventListener("abort", () => reject(new Error("stopped")))),
+    );
+    const pending = refusal(h.provider.queryReadOnly(READ(), BUDGET));
+    await until(
+      () => h.stub.requests.some((request) => request.path === "/api/exchanges/%2F/orders"),
+      "the exchange GET",
+    );
+    h.deadlines.fire();
+    const error = await pending;
+    expect(error.message).toBe(RABBITMQ_AGENT_STOP_SENTENCES.timeout(BUDGET.statementTimeoutMs));
     expect(h.dials()).toBe(0);
   });
 
