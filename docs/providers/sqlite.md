@@ -47,14 +47,10 @@ for a web-based editor:
   connect to over the network. SQLite-as-target therefore fits **self-hosted / Docker / local-dev /
   edge** deployments (where the file is co-located with Studio) and **zero-config trials** (instant,
   no server to provision) — it is **not** a multi-tenant SaaS target.
-- **It works under both Bun and Node.** The provider selects the runtime's built-in driver at
-  connect time — see [Runtime & driver selection](#runtime--driver-selection). All packaged
-  distribution channels — the official Docker image, `npx @libredb/studio`, the Homebrew tap, the
-  `.deb`/`.rpm` packages, and the standalone tarballs — run the built app with `node server.js` (the
-  Docker image's runner stage is `node:26.9.0-trixie-slim`; the other channels bundle their own pinned
-  Node 24 runtime), so they all use `node:sqlite`. `bun:sqlite` is used for local development
-  (`bun dev`) and the test suite, where Next.js runs directly under Bun. Only on a runtime with
-  neither driver does `connect()` throw a `DatabaseConfigError`.
+- **It works under both Bun and Node.** The provider selects the runtime's built-in driver at connect time (see [Runtime & driver selection](#runtime--driver-selection)).
+  All packaged distribution channels (the official Docker image, `npx @libredb/studio`, the Homebrew tap, the `.deb`/`.rpm` packages, and the standalone tarballs) run the built app with `node server.js` (the Docker image's runner stage is the official Node 26 image, its exact release pinned by the `Dockerfile`'s `FROM` line; the other channels bundle their own pinned Node 24 runtime), so they all use `node:sqlite`.
+  `bun:sqlite` is used for local development (`bun dev`) and the test suite, where Next.js runs directly under Bun.
+  Only on a runtime with neither driver does `connect()` throw a `DatabaseConfigError`.
 
 Position it accordingly: a developer-friendly, works-everywhere, frictionless-onboarding feature —
 not an enterprise/SaaS headline.
