@@ -626,7 +626,8 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // Opened on its own: run_read_query runs under the boundary agent mode uses, `readonly = 1` on every request and a
   // user proven at open to hold only reads (docs/providers/clickhouse.md section 5.6).
   clickhouse: true,
-  // Agent mode executes statements on Druid, and MCP read stays closed on it until a change of its own opens it.
+  // Agent mode executes statements on Druid, and MCP read stays closed on it until a change of its own opens it: a
+  // LOOKUP of a literal key is kept out by the statement fence alone (BACKLOG B151).
   druid: false,
   // Agent mode executes statements on Trino, and MCP read stays closed on it until a change of its own opens it.
   trino: false,
