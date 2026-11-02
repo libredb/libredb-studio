@@ -168,7 +168,7 @@ describe("the agent's reads on the agent read-only profile", () => {
     expect(sent()).toEqual([]);
   });
 
-  test("a server's refusal is worded by its status, never by its body", async () => {
+  test("a named read the server refuses is answered as a missing one would be, never by the server's body", async () => {
     const { s3 } = await provider(READ_ONLY, {}, (request) =>
       request.target.path === "/"
         ? xmlAnswer(bucketsXml(["sales"]))
@@ -176,7 +176,8 @@ describe("the agent's reads on the agent read-only profile", () => {
     );
     const failure = await failureOf(s3.queryReadOnly("aws s3api get-bucket-location --bucket sales", BUDGET));
     expect(failure).toBeInstanceOf(QueryError);
-    expect(failure.message).toBe(S3_AGENT_FAILURE_SENTENCES.denied);
+    expect(failure.message).toBe(S3_AGENT_FAILURE_SENTENCES.notFound);
+    expect(failure.message).not.toContain(MARKER);
   });
 
   test("a server that does not answer within the time budget is the time budget's refusal", async () => {
