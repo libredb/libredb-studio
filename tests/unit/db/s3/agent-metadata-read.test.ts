@@ -301,6 +301,17 @@ describe("a named bucket or key that is missing or not readable", () => {
     ["a 404 behind a delete marker", () => ({ status: 404, headers: [["x-amz-delete-marker", "true"]] })],
     ["a 404 named NoSuchBucket", () => ({ status: 404, headers: [["x-minio-error-code", "NoSuchBucket"]] })],
     ["a NoSuchKey body", () => xmlAnswer(errorXml("NoSuchKey", `The key ${MARKER} does not exist`), 404)],
+    // A body that is not S3's error XML, or one sent compressed, must not tell a 403 from a 404 either.
+    [
+      "a 403 whose body is not S3 XML",
+      () => ({ status: 403, body: `<html>${MARKER}</html>`, contentType: "text/html" }),
+    ],
+    [
+      "a 404 whose body is not S3 XML",
+      () => ({ status: 404, body: `<html>${MARKER}</html>`, contentType: "text/html" }),
+    ],
+    ["a 403 sent compressed", () => ({ ...xmlAnswer(errorXml("AccessDenied", MARKER), 403), contentEncoding: "gzip" })],
+    ["a 404 sent compressed", () => ({ ...xmlAnswer(errorXml("NoSuchBucket", MARKER), 404), contentEncoding: "gzip" })],
   ];
 
   test.each(NAMED.map((plan) => [plan.op, plan] as const))("%s answers each one in one sentence", async (_op, plan) => {

@@ -160,9 +160,11 @@ export interface S3AgentReadContext {
  * A server's answer that a named bucket or key is missing or not readable. A server may refuse a bucket the key is
  * granted nothing on with 403 and answer one that does not exist with 404, as Garage does, while MinIO's lineage
  * answers both 403 to a key its policy scopes; and a HEAD of a key cannot tell a missing bucket from a missing key.
+ * The status alone decides, whatever the body holds: a body that is not S3's error XML, or one sent compressed, for
+ * one of the two statuses would otherwise tell them apart.
  */
 const isMissingOrRefused = (error: unknown): error is S3ServerError =>
-  error instanceof S3ServerError && (error.status === 403 || error.status === 404) && error.problem === undefined;
+  error instanceof S3ServerError && (error.status === 403 || error.status === 404);
 
 /**
  * A whole bucket's object count and total size: every page of the bucket with no prefix and no delimiter, each asking
