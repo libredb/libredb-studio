@@ -40,7 +40,7 @@
 import oracledb from "oracledb";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import type { ToolResult } from "@/lib/mcp/output";
+import { MCP_UNTRUSTED_NOTICE, type ToolResult } from "@/lib/mcp/output";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
@@ -186,7 +186,6 @@ function engineCodesOf(result: ToolResult): string[] {
     : [];
 }
 
-const ENGINES = RUN_READ_QUERY.engines;
 const REFUSAL_OPENING = "run_read_query cannot run on this connection: The agent read-only execution profile refuses";
 
 /** PUBLIC's grants the fresh database holds that the check refuses, as the agent check revokes them. */
@@ -477,10 +476,11 @@ async function main(): Promise<void> {
     check(
       result.isError === true &&
         acquired.join() === "agent-read-only" &&
+        result.content.length === 2 &&
+        result.content[0]?.text === MCP_UNTRUSTED_NOTICE &&
         text.startsWith(`${REFUSAL_OPENING} the Oracle user ${name}: `) &&
-        text.endsWith(`It runs on ${ENGINES}.`) &&
         text.includes(user.says),
-      `principal: ${name} is refused through MCP before its statement, naming ${user.says} -> ${text}`,
+      `principal: ${name} is refused through MCP before its statement, behind the untrusted notice, naming ${user.says} -> ${text}`,
     );
     await clearProviderCache();
   }
@@ -489,7 +489,8 @@ async function main(): Promise<void> {
   ]);
   const linked = await mcp(RO, { sql: "SELECT 1 AS N FROM DUAL" }, RUN_READ_QUERY);
   check(
-    textOf(linked.result).startsWith(`${REFUSAL_OPENING} the Oracle user ${RO}: `) &&
+    linked.result.content[0]?.text === MCP_UNTRUSTED_NOTICE &&
+      textOf(linked.result).startsWith(`${REFUSAL_OPENING} the Oracle user ${RO}: `) &&
       textOf(linked.result).includes(`DROP PUBLIC DATABASE LINK "${PREFIX}LINK"`),
     `principal: while a PUBLIC database link exists the served user is refused through MCP -> ${textOf(linked.result)}`,
   );

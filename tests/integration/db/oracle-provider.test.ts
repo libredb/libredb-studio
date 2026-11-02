@@ -7078,6 +7078,16 @@ describe("MCP run_read_query on an Oracle connection", () => {
     isError: true as const,
   });
 
+  // The check runs on the statement call, and its refusal quotes names any user of the database may have chosen, so it
+  // comes behind the untrusted-data notice.
+  const refusedAtStatement = (sentence: string) => ({
+    content: [
+      { type: "text" as const, text: MCP_UNTRUSTED_NOTICE },
+      { type: "text" as const, text: `run_read_query cannot run on this connection: ${sentence}.` },
+    ],
+    isError: true as const,
+  });
+
   test.each([
     [
       "a user that is not READ ONLY, such as SYSTEM",
@@ -7109,7 +7119,7 @@ describe("MCP run_read_query on an Oracle connection", () => {
     const result = await call({ sql: "SELECT id FROM app_owner.orders" });
 
     expect(acquired).toEqual(["agent-read-only"]);
-    expect(result).toEqual(refused(text));
+    expect(result).toEqual(refusedAtStatement(text));
     expect(statementsSent()).toEqual([]);
   });
 
