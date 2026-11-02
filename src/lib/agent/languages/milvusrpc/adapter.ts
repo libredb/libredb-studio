@@ -24,21 +24,24 @@ export function fingerprintMilvusrpc(text: string): string {
   return createHash("sha256").update(canonical).digest("hex");
 }
 
+/** `row` for a budget of one, `rows` otherwise. */
+const rows = (allowed: string): string => (allowed === "1" ? "row" : "rows");
+
 /**
  * The row-cap advice of each read that lists many rows. The keys are the language copy's `adviceKeys`, and
  * `statement-languages.test.ts` holds the two to each other.
  */
 const MILVUS_ROW_CAP_ADVICE: Readonly<Record<string, (allowed: string) => string>> = Object.freeze({
   databases: (allowed: string) =>
-    `Ask for at most ${allowed} rows: read the connection's own database with databases/describe instead of the whole list, and run it again.`,
+    `Ask for at most ${allowed} ${rows(allowed)}: read the connection's own database with databases/describe instead of the whole list, and run it again.`,
   collections: (allowed: string) =>
-    `Ask for at most ${allowed} rows: read one collection with collections/describe instead of the whole list, and run it again.`,
+    `Ask for at most ${allowed} ${rows(allowed)}: read one collection with collections/describe instead of the whole list, and run it again.`,
   collection: (allowed: string) =>
-    `Ask for at most ${allowed} rows: read the collection's indexes with indexes/list, or its row count with collections/get_stats, instead of every field, and run it again.`,
+    `Ask for at most ${allowed} ${rows(allowed)}: read the collection's indexes with indexes/list, or its row count with collections/get_stats, instead of every field, and run it again.`,
   partitions: (allowed: string) =>
-    `Ask for at most ${allowed} rows: read the collection's load state or row count instead of every partition, and run it again.`,
+    `Ask for at most ${allowed} ${rows(allowed)}: read the collection's load state or row count instead of every partition, and run it again.`,
   aliases: (allowed: string) =>
-    `Ask for at most ${allowed} rows: read one alias with aliases/describe and an aliasName instead of the collection's whole list, and run it again.`,
+    `Ask for at most ${allowed} ${rows(allowed)}: read one alias with aliases/describe and an aliasName instead of the collection's whole list, and run it again.`,
 });
 
 const ADVICE_OF: Readonly<Record<string, string>> = Object.freeze({
@@ -54,7 +57,7 @@ export function milvusrpcRowCapAdvice(statement: string, allowed: string): strin
   const reading = readMilvusAgentStatement(statement);
   const key = reading.ok ? ADVICE_OF[reading.plan.op] : undefined;
   return key === undefined
-    ? `Ask for at most ${allowed} rows: read one collection instead of the whole list, and run it again.`
+    ? `Ask for at most ${allowed} ${rows(allowed)}: read one collection instead of the whole list, and run it again.`
     : MILVUS_ROW_CAP_ADVICE[key](allowed);
 }
 

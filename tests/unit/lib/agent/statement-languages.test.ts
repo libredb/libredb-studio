@@ -766,6 +766,27 @@ describe("the milvusrpc language's server adapter and admission", () => {
     }
   });
 
+  test("a budget of one row says row, not rows, in every sentence", () => {
+    expect(milvusrpcRowCapAdvice("POST /v2/vectordb/databases/list", "1")).toBe(
+      "Ask for at most 1 row: read the connection's own database with databases/describe instead of the whole list, and run it again.",
+    );
+    expect(milvusrpcRowCapAdvice("POST /v2/vectordb/collections/list", "1")).toBe(
+      "Ask for at most 1 row: read one collection with collections/describe instead of the whole list, and run it again.",
+    );
+    expect(milvusrpcRowCapAdvice(describe_('{"collectionName": "docs"}'), "1")).toBe(
+      "Ask for at most 1 row: read the collection's indexes with indexes/list, or its row count with collections/get_stats, instead of every field, and run it again.",
+    );
+    expect(milvusrpcRowCapAdvice('POST /v2/vectordb/partitions/list\n{"collectionName": "docs"}', "1")).toBe(
+      "Ask for at most 1 row: read the collection's load state or row count instead of every partition, and run it again.",
+    );
+    expect(milvusrpcRowCapAdvice('POST /v2/vectordb/aliases/list\n{"collectionName": "docs"}', "1")).toBe(
+      "Ask for at most 1 row: read one alias with aliases/describe and an aliasName instead of the collection's whole list, and run it again.",
+    );
+    expect(milvusrpcRowCapAdvice("POST /v2/vectordb/entities/query", "1")).toBe(
+      "Ask for at most 1 row: read one collection instead of the whole list, and run it again.",
+    );
+  });
+
   test("a request without advice of its own, or one that is refused, gets the generic sentence", () => {
     const generic = "Ask for at most 200 rows: read one collection instead of the whole list, and run it again.";
     expect(milvusrpcRowCapAdvice('POST /v2/vectordb/indexes/list\n{"collectionName": "docs"}', "200")).toBe(generic);
