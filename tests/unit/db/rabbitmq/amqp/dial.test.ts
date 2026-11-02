@@ -24,25 +24,24 @@ interface Counted {
   readonly names: (string | false)[];
 }
 
-const servers: Counted[] = [];
+/** Every server listening, a loopback listener's ::1 twin included, closed after the file. */
+const listening: Server[] = [];
 const open = new Set<Socket>();
 let certificates: TransportCertificates;
 
-async function listen(
-  kind:
-    | "plain"
-    | "silent"
-    | "amqp"
-    | {
-        readonly cert: string;
-        readonly key: string;
-        readonly clientCa?: string;
-        /** Require a client certificate the CA signed, refusing the connection without one, at this TLS version. */
-        readonly refuse?: "TLSv1.2" | "TLSv1.3";
-      },
-  host = "127.0.0.1",
-) {
-  const counted = { accepted: 0, names: [] as (string | false)[] } as Counted & { server: Server; port: number };
+type Kind =
+  | "plain"
+  | "silent"
+  | "amqp"
+  | {
+      readonly cert: string;
+      readonly key: string;
+      readonly clientCa?: string;
+      /** Require a client certificate the CA signed, refusing the connection without one, at this TLS version. */
+      readonly refuse?: "TLSv1.2" | "TLSv1.3";
+    };
+
+function serve(kind: Kind, counted: Counted): Server {
   const server =
     typeof kind === "object"
       ? createTlsServer(
@@ -75,10 +74,58 @@ async function listen(
     socket.on("error", () => {});
   });
   server.on("tlsClientError", () => {});
-  await new Promise<void>((resolve) => server.listen(0, host, resolve));
-  Object.assign(counted, { server, port: (server.address() as AddressInfo).port });
-  servers.push(counted);
-  return counted;
+  return server;
+}
+
+function bind(server: Server, port: number, host: string): Promise<number> {
+  return new Promise<number>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, host, () => {
+      server.removeListener("error", reject);
+      resolve((server.address() as AddressInfo).port);
+    });
+  });
+}
+
+const close = (server: Server) => new Promise<void>((resolve) => server.close(() => resolve()));
+
+/**
+ * A listener on `host`. One on 127.0.0.1 also holds the same port on ::1, with a twin of the same kind counting into
+ * the same record, so a dial to "localhost" reaches it whichever family the name resolves to first. GitHub's Ubuntu
+ * runner image maps localhost to ::1 as well as 127.0.0.1 (images/ubuntu/scripts/build/configure-environment.sh in
+ * actions/runner-images edits /etc/hosts), and glibc's default address ordering (RFC 6724) ranks ::1 above 127.0.0.1,
+ * so the resolver can return ::1 first. Without the twin, a ::1 socket holding the same port number then takes the
+ * dial, such as this file's own plain ::1 listener (it accepts and never writes, kept open until afterAll) or another
+ * file's; a TLS dial it accepts never finishes a handshake and waits out the 5 s test timeout, the likely cause of the
+ * timeout in CI run 41424787260. A ::1 port taken by anything else is a retry on another port. Handlers added to
+ * `.server` cover the 127.0.0.1 socket only, so a test that adds them dials 127.0.0.1, not localhost.
+ */
+async function listen(kind: Kind, host = "127.0.0.1") {
+  const counted = { accepted: 0, names: [] as (string | false)[] } as Counted & { server: Server; port: number };
+  for (let attempt = 1; ; attempt += 1) {
+    const server = serve(kind, counted);
+    // oxlint-disable-next-line no-await-in-loop -- each attempt needs the previous one's port to be closed or kept
+    const port = await bind(server, 0, host);
+    if (host === "127.0.0.1") {
+      const twin = serve(kind, counted);
+      // oxlint-disable-next-line no-await-in-loop -- the twin takes the port the line above was given
+      const refused = await bind(twin, port, "::1").then(
+        () => null,
+        (error: NodeJS.ErrnoException) => error,
+      );
+      if (refused) {
+        // The twin never listened, so only the 127.0.0.1 server is open; close it before a retry or a rethrow.
+        // oxlint-disable-next-line no-await-in-loop -- the next attempt starts after this port is released
+        await close(server);
+        if (refused.code !== "EADDRINUSE" || attempt === 10) throw refused;
+        continue;
+      }
+      listening.push(twin);
+    }
+    listening.push(server);
+    Object.assign(counted, { server, port });
+    return counted;
+  }
 }
 
 const endpoint = (host: string, port: number, tls: AmqpEndpoint["tls"] = null): AmqpEndpoint => ({
@@ -118,7 +165,7 @@ beforeAll(() => {
 });
 afterAll(async () => {
   for (const socket of open) socket.destroy();
-  for (const { server } of servers) await new Promise<void>((resolve) => server.close(() => resolve()));
+  for (const server of listening) await close(server);
 });
 
 describe("plain dials", () => {
