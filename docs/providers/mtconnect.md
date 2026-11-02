@@ -393,8 +393,8 @@ So the provider withholds them itself, on every handle opened for an agent-mode 
 the handle the MCP metadata tools acquire as well as agent mode's own: every data item inside an
 `Adapter` component is left out of the tree, the device model and every observation answer, and
 an answer counts what it left out ([section 14.3](#143-what-is-withheld-and-why)). The editor's
-handles show them, as they always have. MCP's `run_read_query` does not serve this engine
-(`MCP_STATEMENT_READ.mtconnect` is false).
+handles show them, as they always have. MCP's `run_mtconnect_read` reads through agent mode's own
+`queryReadOnly`, so it withholds them too ([section 14.5](#145-mcp-run_mtconnect_read)).
 
 ## 11. Testing
 
@@ -423,7 +423,7 @@ stand-in, and no local copy of a rule the shared modules own.
 - The `path` subset is narrower than XPath, and each exclusion is a measurement rather than a
   preference (5.2).
 - The Agent device's adapter addresses are shown on an editor handle; every agent-mode handle, the
-  MCP metadata tools' included, withholds them (10.2).
+  MCP tools' included, withholds them (10.2).
 - A composition's own name is carried where the observation has one; MEASURED on 6 of 478.
 
 ## Migration DDL
@@ -501,11 +501,18 @@ The agent writes an `Adapters` component under its Agent device and one `Adapter
 No column of such an observation can be shown without the address, so every data item the model places inside an `Adapters` or `Adapter` component, and every observation whose component stream is one, is left out, and the answer warns how many it left out with the reason (`reads`: `/current` answered 16 rows and withheld 6, `/current?path=//DataItem[@category="EVENT"]` answered 13 and withheld 4, and no answer carried the adapter's address).
 The agent's other items (its availability, the devices it added, changed or removed, its asset counts) are answered, and so is every other device.
 
+Withheld from every asset on an agent-mode handle are the secrets a URL in it can carry.
+Measured on the pinned image with `AllowPut = true` ([`mcp-boundary/boundary.json`](../../tests/fixtures/mtconnect/2.8.0.4/mcp-boundary/boundary.json), `assets`): a File asset put with a `FileLocation href` carrying a user name, a password and a query string is stored and served by `/assets` exactly as written, so an asset can carry whatever credential the system that wrote it put in a URL.
+So every URL in an asset's document and columns keeps its scheme, host, port, path and fragment, which say where a file is, and its user name, password and query string, where a credential or a signature travels, read `[withheld]`; the answer warns how many it withheld.
+A path with no scheme, such as a `file:` location's path or a UNC path in a tool's description, is answered as written, and so are observation values.
+The same capture configures an agent with an MQTT sink: the broker's address reached none of the routes of the table, so nothing more is withheld for it.
+
 | Path | Handle | What it reads |
 | --- | --- | --- |
 | Investigation reads | agent read-only profile | `GET /probe`, then one request of [section 14.2](#142-what-an-agent-request-may-be) |
 | Investigation grounding and plan-mode grounding | either agent profile | the device model the handle read when it opened: devices, data items and conditions by name, the adapter connections left out, no value and no asset; the asset count answers its reason and no asset is listed |
 | Connect | either agent profile | one `GET /probe`, and nothing else (`connect.sent`) |
+| MCP `run_mtconnect_read` | agent read-only profile | the same reads as an investigation, through the same withheld set ([section 14.5](#145-mcp-run_mtconnect_read)) |
 | MCP metadata tools | either agent profile | the same device model, through the same withheld set |
 | Console, overview, health, performance, slow-query, session, table, index and storage readings | either agent profile | nothing: each is refused with its reason, never answered with Studio's own figures or an empty reading |
 
@@ -522,4 +529,23 @@ The investigation rule tells the model to read what the question names directly,
 Plan mode's safety strip is the shared one, which is true here: an agent-mode handle reads only the device model when it opens, and that one read grounds the plan; plan mode follows the provider's `statementLanguage` label, which names the console's request line, its routes and what is never drafted.
 The editor language id stays `mtconnect`, and the fence alias `mtconnectread` names this engine.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-No MCP tool runs an MTConnect request: the family declares no MCP facet and `MCP_STATEMENT_READ.mtconnect` is false ([B163](../BACKLOG.md#b163-mtconnects-agent-reads-withhold-the-adapter-connections-and-it-has-no-mcp-statement-read)), `MCP_EXPOSABLE.mtconnect` stays true for the metadata tools, and `READ_ONLY_ENFORCED.mtconnect` is unchanged.
+MCP runs an MTConnect request with `run_mtconnect_read`, the tool the family declares in its MCP facet ([`src/lib/agent/languages/mtconnectread/mcp.ts`](../../src/lib/agent/languages/mtconnectread/mcp.ts)), and `MCP_STATEMENT_READ.mtconnect` is true ([section 14.5](#145-mcp-run_mtconnect_read)); `MCP_EXPOSABLE.mtconnect` is true, and `READ_ONLY_ENFORCED.mtconnect` is unchanged.
+
+### 14.5 MCP: `run_mtconnect_read`
+
+`run_mtconnect_read` takes one request line as `statement`, read and admitted by agent mode's own reader, acquires the connection under the agent read-only profile and runs it through the same `queryReadOnly` as an investigation's read, so it sends `GET /probe` and then one GET of a route of [section 14.2](#142-what-an-agent-request-may-be), and answers with the same withheld set.
+It takes no `offset` and no `database`.
+Every claim below cites [`tests/fixtures/mtconnect/2.8.0.4/mcp-boundary/boundary.json`](../../tests/fixtures/mtconnect/2.8.0.4/mcp-boundary/boundary.json), recorded by its `run.sh` against the compose fixture's adapter, an eclipse-mosquitto broker and three agents of the pinned image (`AllowPut = false`, `AllowPut = true`, and an MQTT sink), and written by [`tests/live/mtconnect-mcp-boundary.ts`](../../tests/live/mtconnect-mcp-boundary.ts), which drives the tool's handler as MCP registers it and with its fence removed.
+
+The boundary is the provider's closed route table, not the tool's fence (`writes`, `positiveControl`, `refused`).
+Each write-shaped line, a PUT, a POST and a DELETE, is refused by the fence before anything is acquired, and with the fence removed by the provider before anything is sent; the same PUT sent raw to the `AllowPut = true` agent set the value it named, while the unfenced tool on that agent sent nothing and changed nothing.
+`/cancel`, `/swagger`, every streaming parameter, a second line, a dot segment, a path function, `//Adapter` and a `count` past the 1000-row budget sent nothing either way.
+A path testing a withheld adapter id and one testing an id no item holds were refused in the same words after the model read alone (`pathOracle`), and the fixture agent's buffer did not move across the run (`state`).
+
+What a call reads, in two layers.
+Layer 1, what the server grants: nothing, because an MTConnect agent authenticates nothing; a seed carries no credential, whoever reaches the agent's port reads what it serves, and an agent set `AllowPut = true` accepts writes from anyone, which is why the route table is the boundary and no login can be.
+Layer 2, what Studio withholds whatever the request says, decided on the agent's answer rather than by reading the request: the agent's own adapter connections ([section 14.3](#143-what-is-withheld-and-why), `reads`: no answer carried the adapter's address), and the user name, password and query string of every URL in an asset (`assets`: the agent served the planted user information as written, and the tool's answer carried none of the three while it kept the host, the path and a `file:` location).
+The MQTT sink's broker address reached no route of the table and no answer (`sink`), so it needs no withholding.
+
+A cancel or a timeout ends the wait, not the request (`limits`, with the agent paused): at the minimum `timeout_ms` of 500 the client got the timeout answer and the provider's own request had ended; a client cancel 200 ms into a call with `timeout_ms` 3000 was answered at once while the provider's request stayed open until its own time budget, the time left, closed it near 3000 ms.
+An agent route answers one document, so nothing runs on the agent after its request closes.
