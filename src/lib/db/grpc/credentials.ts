@@ -1,7 +1,7 @@
 /**
  * The channel credentials of the SSL / TLS mapping, with the IP-identity rule of docs/BACKLOG.md D132, and the closing
  * wrapper that lets nothing of a channel outlive its close (the measured record of grpc-js 1.14.5, kept whole;
- * 1.14.6 changes none of the code paths that record names).
+ * 1.14.6 and 1.14.7 change none of the code paths that record names).
  * Nothing here knows about an engine, and no provider is imported; server-only.
  */
 import type { Socket } from "node:net";

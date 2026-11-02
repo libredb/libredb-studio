@@ -2280,7 +2280,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ================================================================================
-elkjs 0.12.0 (https://github.com/kieler/elkjs)
+elkjs 0.12.1 (https://github.com/kieler/elkjs)
 License: EPL-2.0 (offered as EPL-2.0 OR GPL-3.0-or-later; distributed here under EPL-2.0)
 ================================================================================
 
@@ -2289,7 +2289,7 @@ include elkjs's lib/elk-api.js, lib/elk-worker.min.js and lib/elk.bundled.js
 unmodified; those files carry no license header of their own.
 
 Source code:
-  https://github.com/kieler/elkjs/tree/0.12.0
+  https://github.com/kieler/elkjs/tree/0.12.1
   and the Eclipse Layout Kernel it is transpiled from, https://github.com/eclipse-elk/elk
 
 # Eclipse Public License - v 2.0
