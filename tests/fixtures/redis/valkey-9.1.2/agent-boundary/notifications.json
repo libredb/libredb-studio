@@ -2,7 +2,7 @@
   "$captured": {
     "image": "valkey/valkey:9.1.2@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd",
     "version": "9.1.2",
-    "date": "2026-10-30",
+    "date": "2026-11-02",
     "runtime": "bun 1.4.4",
     "principal": "agent_reader_info",
     "rules": "on ~* +@read +info",
@@ -188,6 +188,94 @@
         "MEMORY",
         "USAGE",
         "agent:missing"
+      ],
+      "outcome": "ok",
+      "published": []
+    },
+    {
+      "argv": [
+        "PTTL",
+        "agent:missing"
+      ],
+      "outcome": "ok",
+      "published": [
+        "__keyspace@0__:agent:missing keymiss",
+        "__keyevent@0__:keymiss agent:missing"
+      ]
+    },
+    {
+      "argv": [
+        "STRLEN",
+        "agent:missing"
+      ],
+      "outcome": "ok",
+      "published": [
+        "__keyspace@0__:agent:missing keymiss",
+        "__keyevent@0__:keymiss agent:missing"
+      ]
+    },
+    {
+      "argv": [
+        "LLEN",
+        "agent:missing"
+      ],
+      "outcome": "ok",
+      "published": [
+        "__keyspace@0__:agent:missing keymiss",
+        "__keyevent@0__:keymiss agent:missing"
+      ]
+    },
+    {
+      "argv": [
+        "HLEN",
+        "agent:missing"
+      ],
+      "outcome": "ok",
+      "published": [
+        "__keyspace@0__:agent:missing keymiss",
+        "__keyevent@0__:keymiss agent:missing"
+      ]
+    },
+    {
+      "argv": [
+        "SCARD",
+        "agent:missing"
+      ],
+      "outcome": "ok",
+      "published": [
+        "__keyspace@0__:agent:missing keymiss",
+        "__keyevent@0__:keymiss agent:missing"
+      ]
+    },
+    {
+      "argv": [
+        "ZCARD",
+        "agent:missing"
+      ],
+      "outcome": "ok",
+      "published": [
+        "__keyspace@0__:agent:missing keymiss",
+        "__keyevent@0__:keymiss agent:missing"
+      ]
+    },
+    {
+      "argv": [
+        "XLEN",
+        "agent:missing"
+      ],
+      "outcome": "ok",
+      "published": [
+        "__keyspace@0__:agent:missing keymiss",
+        "__keyevent@0__:keymiss agent:missing"
+      ]
+    },
+    {
+      "argv": [
+        "MEMORY",
+        "USAGE",
+        "agent:missing",
+        "SAMPLES",
+        "5"
       ],
       "outcome": "ok",
       "published": []

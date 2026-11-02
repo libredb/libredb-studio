@@ -124,6 +124,21 @@ const TABLE: ReadonlyArray<readonly string[]> = [
   ["MEMORY", "USAGE", KEYS.missing],
 ];
 
+/**
+ * The table's key reads that `TABLE` does not try on a missing key, tried on one for the keyspace notifications only, so
+ * the record of which reads publish a `keymiss` event covers every key read of the table.
+ */
+const MISSING_KEY_READS: ReadonlyArray<readonly string[]> = [
+  ["PTTL", KEYS.missing],
+  ["STRLEN", KEYS.missing],
+  ["LLEN", KEYS.missing],
+  ["HLEN", KEYS.missing],
+  ["SCARD", KEYS.missing],
+  ["ZCARD", KEYS.missing],
+  ["XLEN", KEYS.missing],
+  ["MEMORY", "USAGE", KEYS.missing, "SAMPLES", "5"],
+];
+
 /** Reads outside the table, for the record of what the server would do with them. */
 const OUTSIDE: ReadonlyArray<readonly string[]> = [
   ["INFO", "server"],
@@ -372,7 +387,7 @@ async function main(): Promise<void> {
   listener.on("pmessage", (_pattern: string, channel: string, message: string) => heard.push(`${channel} ${message}`));
   await listener.psubscribe("__key*@*__:*");
   const notifications: Array<{ argv: readonly string[]; outcome: string; published: string[] }> = [];
-  for (const argv of [...TABLE, ...PROBES]) {
+  for (const argv of [...TABLE, ...MISSING_KEY_READS, ...PROBES]) {
     heard.length = 0;
     const step = await run(PRINCIPALS["reader-info"], argv);
     await new Promise((resolve) => setTimeout(resolve, 50));

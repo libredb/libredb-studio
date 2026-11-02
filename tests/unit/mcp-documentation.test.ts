@@ -188,6 +188,22 @@ describe("docs/MCP.md", () => {
     expect(MCP_DOC).toMatch(/^\| Redis \| Studio stops waiting; /m);
   });
 
+  test("states run_redis_read's waits, its seed's SELECT and its keymiss reads as the code and the capture have them", () => {
+    // `openClient` sends SELECT for a database other than 0, which @read does not hold, under the call's time left;
+    // the TCP connect waits for the provider's query timeout instead.
+    expect(MCP_DOC).toContain("a seed that names a database other than 0 also needs `+select`");
+    const row = MCP_DOC.split("\n").find((line) => line.startsWith("| Redis | Studio stops waiting; "));
+    expect(row).toContain(
+      "the sign-in, the `SELECT` of a database other than 0, the proof's round trip and the command",
+    );
+    expect(row).toContain("the provider's query timeout");
+    expect(row).not.toContain("three times");
+    // tests/fixtures/redis/<version>/agent-boundary/notifications.json: every key read of the table but these two.
+    expect(MCP_DOC).toContain(
+      "every key read of the table but `OBJECT ENCODING` and `MEMORY USAGE` publishes a `keymiss` event naming that key",
+    );
+  });
+
   test("claims only SELECT for every engine, and names the record that opens MCP read", () => {
     expect(MCP_DOC).toContain(
       "A `SELECT` runs on every engine it serves; a refused statement's answer names what else that engine takes.",

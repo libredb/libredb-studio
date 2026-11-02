@@ -20,8 +20,9 @@
  *    the database; a `~*` reader answers whether any key exists; inspect_schema, which takes the operations profile,
  *    lists the leading segments of the key groupings for any user, `default` included;
  *  - the limits: a read past `timeout_ms` (the server held by `DEBUG SLEEP`) is answered as the timeout, and a cancelled
- *    call is answered as the cancel at once while the provider's read runs on: each of its steps, the connection's AUTH,
- *    the proof's round trip and the command, takes the call's time left as its own command timeout.
+ *    call is answered as the cancel at once while the provider's read runs on: each of its steps after the TCP connect,
+ *    the connection's AUTH, the proof's round trip and the command, takes the call's time left as its own command
+ *    timeout (a connection to a database other than 0 adds a SELECT, which this check's database 0 does not send).
  *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name. Run it against a server you may write to,
  * whose `default` user is the stock `nopass +@all` and which allows `DEBUG` (`--enable-debug-command yes`):
@@ -404,8 +405,9 @@ async function main(): Promise<void> {
     textOf(cancelled.result) === "The call was cancelled before it finished." && cancelled.elapsed < 1_000,
     `limits: a cancel answers at once -> ${textOf(cancelled.result)} (${cancelled.elapsed} ms)`,
   );
-  // Each step of the read (the connection's AUTH, the proof's round trip, the command) takes the time left as its own
-  // command timeout, so a server that answers none of them holds the read past the time left, never past three times it.
+  // On database 0 each step of the read after the connect (the connection's AUTH, the proof's round trip, the command)
+  // takes the time left as its own command timeout, so a held server holds the read past the time left, never past three
+  // times it; a database other than 0 adds a fourth step, its SELECT.
   check(
     settledAt !== null && settledAt >= 1_500 && settledAt < 6_500,
     `limits: the provider's read settles after the cancel, each of its steps bounded by the call's time left -> ${settledAt} ms`,
