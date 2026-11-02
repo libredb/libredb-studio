@@ -1,9 +1,0 @@
-# Acceptance Criteria — Milestone {{MILESTONE}}
-
-> STUB: planning mode (`loop/PROMPT-PLANNING.md`) rewrites this file (as `.loop/ACCEPTANCE.md`)
-> from the `loop:queued` queue and the `.loop/TRIAGE.md` sanitized specs — one functional
-> criterion per queued issue plus the standard Quality / Documentation / Process sections.
-> A human may instead list issues here by hand before planning runs (the human-listed path).
->
-> The completion sentinel for this milestone is `{{SENTINEL}}`;
-> the marker file `.loop/COMPLETE` remains the only authoritative completion signal.

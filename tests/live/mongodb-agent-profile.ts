@@ -38,8 +38,8 @@
  * PROFILE_UNSUPPORTED_TARGET and opened by the operations profile.
  *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name (`EXCLUDED` in `tests/runner/discover.ts`).
- * CI runs it in the "Functional Smoke (PostgreSQL, MongoDB, RabbitMQ)" job of .github/workflows/ci.yml, and
- * loop/scripts/functional-smoke.sh runs it locally. It needs Docker and nothing else:
+ * CI runs it in the "Functional Smoke (PostgreSQL, MongoDB, RabbitMQ)" job of .github/workflows/ci.yml. It needs
+ * Docker and nothing else:
  *
  *   bun tests/live/mongodb-agent-profile.ts            # MongoDB 9.0.4, with and without authorization
  *   bun tests/live/mongodb-agent-profile.ts --matrix   # also 8.3.11, 7.0.43 and FerretDB 2.7.0
