@@ -332,7 +332,8 @@ describe("what an agent read sends and answers", () => {
 
   test("a URL with no :// after its scheme, or split by a CDATA, a character reference or a child, keeps no secret", async () => {
     // An element's text is joined across its CDATA sections, references and children before any URL is read in it, and
-    // an attribute value is one string with its references resolved, so no part of one value is read alone.
+    // an attribute value is one string with its references resolved, so no part of one value is read alone. An href is
+    // a URL-typed field, parsed as a URL, so it is answered as the parser serializes it: scheme in lower case, slashes.
     const file =
       '<File assetId="FILE-2" applicationCategory="DEVICE" deviceUuid="LIBREDB-1722" source="http:&#92;&#92;reader:not-a-real-password@files.example/a" timestamp="2026-11-02T12:27:05.801276Z"><FileLocation href="HTTP:\\/not-a-real-user:not-a-real-password@files.example/p.nc"/><Description>at ht&#9;tp:not-<![CDATA[a-real-user:not-a-]]>real-pass<Note>n</Note>word@files.example/p.nc</Description></File>';
     const assets = capture("assets").replace(/<Assets>[\s\S]*<\/Assets>/, `<Assets>${file}</Assets>`);
@@ -341,7 +342,7 @@ describe("what an agent read sends and answers", () => {
     const [row] = result.rows;
     expect(row?.source).toBe("http:\\\\[withheld]@files.example/a");
     expect(String(row?.document)).toBe(
-      '<File assetId="FILE-2" applicationCategory="DEVICE" deviceUuid="LIBREDB-1722" source="http:\\\\[withheld]@files.example/a" timestamp="2026-11-02T12:27:05.801276Z"><FileLocation href="HTTP:\\/[withheld]@files.example/p.nc"/><Description>at [withheld]<Note>[withheld]</Note>[withheld]@files.example/p.nc</Description></File>',
+      '<File assetId="FILE-2" applicationCategory="DEVICE" deviceUuid="LIBREDB-1722" source="http:\\\\[withheld]@files.example/a" timestamp="2026-11-02T12:27:05.801276Z"><FileLocation href="http://[withheld]@files.example/p.nc"/><Description>at [withheld]<Note>[withheld]</Note>[withheld]@files.example/p.nc</Description></File>',
     );
     for (const part of ["not-a-real", "real-pass", "word@", "<Note>n</Note>"]) {
       expect(JSON.stringify(result)).not.toContain(part);
@@ -436,6 +437,56 @@ describe("what an agent read sends and answers", () => {
       ]);
     },
   );
+
+  test("a table-shaped data set under an asset type has its keys and values read at every depth", async () => {
+    const stream = capture("current").replace(
+      '<Entry key="CuttingTool">1</Entry>',
+      '<Entry key="ftp://not-a-real-user:not-a-real-password@h.example/a"><Cell key="login not-a-real-user:not-a-real-password@k.example">https://not-a-real-user:x@v.example/c?token=not-a-real-token</Cell><Cell key="plain">2</Cell></Entry>',
+    );
+    expect(stream).toContain("<Cell key=");
+    const provider = await opened(AGENT, { ...DEFAULT_ANSWERS, "/current": stream });
+    const result = await provider.queryReadOnly("/current", BUDGET);
+    const value = result.rows.find((row) => row.dataItemId === "d1722_asset_count")?.value;
+    expect(JSON.parse(String(value))).toEqual({
+      "ftp://[withheld]@h.example/a": {
+        "login [withheld]@k.example": "https://[withheld]@v.example/c?[withheld]",
+        plain: "2",
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("not-a-real");
+    expect(result.warnings?.[1]).toEqual({ message: withheldUrlWarning(4) });
+  });
+
+  // The adversarial spellings that touch an href, as an agent with AllowPut stores them: the value of the attribute is
+  // text the parser reads, so a reference for @ written in it is text, and a lookalike colon is no colon.
+  test.each([
+    ["a decimal reference for @", "https://not-a-real-user:not-a-real-password&amp;#64;h.example/x.nc"],
+    ["a named reference for @", "https://not-a-real-user:not-a-real-password&amp;commat;h.example/x.nc"],
+    ["a hex reference for @", "https://not-a-real-user:not-a-real-password&amp;#x40;h.example/x.nc"],
+    ["a value that does not parse", "https://not-a-real-user:not-a-real-password@h.example:port/x.nc"],
+    ["a confusable colon", "https\ua789\u2215\u2215not-a-real-user\ua789not-a-real-password@h.example/x.nc"],
+  ])("an href with %s keeps no user name or password", async (_, href) => {
+    const file = `<File assetId="FILE-9" deviceUuid="LIBREDB-1722" timestamp="2026-11-02T12:27:05.801276Z"><FileLocation href="${href}"/><FileLocation xlink:href="${href}"/></File>`;
+    const assets = capture("assets").replace(/<Assets>[\s\S]*<\/Assets>/, `<Assets>${file}</Assets>`);
+    const provider = await opened(AGENT, { ...DEFAULT_ANSWERS, "/assets": assets });
+    const result = await provider.queryReadOnly("/assets", BUDGET);
+    expect(String(result.rows[0]?.document)).toContain(
+      '<FileLocation href="[withheld]"/><FileLocation xlink:href="[withheld]"/>',
+    );
+    expect(JSON.stringify(result)).not.toContain("not-a-real");
+    expect(result.warnings).toEqual([{ message: withheldUrlWarning(2) }]);
+  });
+
+  test("an asset's own href column is read as a URL-typed field too, and counted once, in the document", async () => {
+    const file =
+      '<File assetId="FILE-8" deviceUuid="LIBREDB-1722" timestamp="2026-11-02T12:27:05.801276Z" href="HTTP:\\/not-a-real-user:not-a-real-password@files.example/p.nc"/>';
+    const assets = capture("assets").replace(/<Assets>[\s\S]*<\/Assets>/, `<Assets>${file}</Assets>`);
+    const provider = await opened(AGENT, { ...DEFAULT_ANSWERS, "/assets": assets });
+    const result = await provider.queryReadOnly("/assets", BUDGET);
+    expect(result.rows[0]?.href).toBe("http://[withheld]@files.example/p.nc");
+    expect(JSON.stringify(result)).not.toContain("not-a-real");
+    expect(result.warnings).toEqual([{ message: withheldUrlWarning(1) }]);
+  });
 
   test("an observation the model does not know is read as naming assets by its own type or element", async () => {
     const stream = capture("current").replace(

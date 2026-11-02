@@ -8,7 +8,8 @@
  * name and a password whose pieces are joined by `@`, a quote, a slash, `#`, `?` or a space; a host, a path, a query
  * token and a fragment; any subset of `:/@?#` percent-encoded everywhere in the value, in either hex case; a prefix of a
  * word, a quote or a bracket. The asset projection splits the value across its element's text, CDATA sections and
- * child elements, and carries it in an attribute; the observation projection splits it across an `AssetChanged`
+ * child elements, and carries it in an attribute; the href projection carries it in a `FileLocation href` and an
+ * `xlink:href`, the fields read as URLs by the parser; the observation projection splits it across an `AssetChanged`
  * value's text and CDATA sections, and carries it as an `AssetCountDataSet` key.
  *
  * Where nothing marks a URL's start (no scheme and fewer than two slashes), a space ends the word the rule reads, so
@@ -205,6 +206,26 @@ describe(`${CASES} generated URL spellings, seed ${SEED}`, () => {
           const id = index % 2 === 0 ? `NOTE-${at}-${index}` : built.value;
           return `<ProgramNote assetId="${escape(id)}" deviceUuid="LIBREDB-1722" timestamp="2026-11-02T00:00:00Z" source="${escape(built.value)}"><Note>${split(built.value, true)}</Note></ProgramNote>`;
         })
+        .join("");
+      const answer = capture("assets").replace(/<Assets>[\s\S]*<\/Assets>/, `<Assets>${assets}</Assets>`);
+      for (const built of cases) for (const piece of built.pieces) expect(answer).toContain(piece);
+      const rows = await read("/assets", answer);
+      expect(rows.length).toBe(cases.length);
+      rows.forEach((row, index) => {
+        const text = JSON.stringify(row);
+        for (const piece of cases[index].pieces) expect(text, cases[index].value).not.toContain(piece);
+      });
+    },
+  );
+
+  test.each(batches.map((cases, at) => [at, cases] as const))(
+    "batch %d: the href projection keeps no piece, in a FileLocation href and an xlink:href read as URLs",
+    async (at, cases) => {
+      const assets = cases
+        .map(
+          (built, index) =>
+            `<File assetId="FILE-${at}-${index}" deviceUuid="LIBREDB-1722" timestamp="2026-11-02T00:00:00Z"><FileLocation href="${escape(built.value)}"/><Link xlink:href="${escape(built.value)}"/></File>`,
+        )
         .join("");
       const answer = capture("assets").replace(/<Assets>[\s\S]*<\/Assets>/, `<Assets>${assets}</Assets>`);
       for (const built of cases) for (const piece of built.pieces) expect(answer).toContain(piece);

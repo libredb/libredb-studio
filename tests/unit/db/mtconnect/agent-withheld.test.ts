@@ -8,10 +8,13 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { renderXmlElement } from "@/lib/db/providers/industrial/mtconnect/agent-read";
 import {
+  isUrlAttribute,
   itemWithheld,
   observationWithheld,
   withheldUrlWarning,
   withheldWarning,
+  withoutAttributeSecrets,
+  withoutUrlFieldSecrets,
   withoutUrlSecrets,
   withoutUrlSecretsAcross,
 } from "@/lib/db/providers/industrial/mtconnect/agent-withheld";
@@ -392,6 +395,105 @@ describe("a URL in an asset, its user name, password, query and fragment withhel
     expect(withheldUrlWarning(3)).toStartWith(
       "3 user names and passwords, query strings or fragments of URLs in assets or asset references were withheld",
     );
+  });
+});
+
+describe("a URL-typed field, withheld by its structure whatever its spelling", () => {
+  test("href and xlink:href, under any prefix and in any case, are the URL-typed attributes", () => {
+    for (const name of ["href", "xlink:href", "x:href", "HREF"]) expect(isUrlAttribute(name)).toBe(true);
+    for (const name of ["source", "hrefs", "url", "xlinkhref"]) expect(isUrlAttribute(name)).toBe(false);
+  });
+
+  // The adversarial spellings that touch an href: an @ written as a character reference, which a URL parser reads as
+  // text, and a colon or slash in a lookalike form; each leaves a value the parser refuses, so it is withheld whole.
+  test.each([
+    ["a decimal reference for @", "https://not-a-real-user:not-a-real-password&#64;h.example/x.nc"],
+    ["a named reference for @", "https://not-a-real-user:not-a-real-password&commat;h.example/x.nc"],
+    ["a hex reference for @", "https://not-a-real-user:not-a-real-password&#x40;h.example/x.nc"],
+    ["a reference for @ with no password", "https://not-a-real-user&#64;h.example/x.nc"],
+    [
+      "a confusable colon and slashes",
+      "https\ua789\u2215\u2215not-a-real-user\ua789not-a-real-password@h.example/x.nc",
+    ],
+    ["a value that is no URL", "not-a-real-user not-a-real-password"],
+    ["a relative reference with no authority", "./objs/not-a-real-user:not-a-real-password@h"],
+    ["a value the text rule leaves without its scheme", "x-file:not-a-real-user:not-a-real-password@h"],
+    ["a scheme with no slashes and a user name the parser reads as a host", "https:not-a-real-user?n@h.example/x"],
+  ])("%s is withheld whole", (_, value) => {
+    expect(withoutUrlFieldSecrets(value)).toEqual({ text: "[withheld]", withheld: 1 });
+  });
+
+  test.each([
+    [
+      "a user name, a password and a query",
+      "ftp://not-a-real-user:not-a-real-password@files.example/p.nc?token=not-a-real-token",
+      "ftp://[withheld]@files.example/p.nc?[withheld]",
+      2,
+    ],
+    [
+      "backslashes and a mixed-case scheme, as the parser reads them",
+      "HTTP:\\/not-a-real-user:not-a-real-password@files.example/p.nc",
+      "http://[withheld]@files.example/p.nc",
+      1,
+    ],
+    [
+      "a password holding an @ and a quote, and a fragment",
+      "ftp://not-a-real-user:odd@x'w@files.example/p3.nc#token=not-a-real-token",
+      "ftp://[withheld]@files.example/p3.nc#[withheld]",
+      2,
+    ],
+    [
+      "a lookalike colon inside the user information",
+      "https://not-a-real-user\ua789not-a-real-password@h.example/x.nc",
+      "https://[withheld]@h.example/x.nc",
+      1,
+    ],
+    [
+      "a scheme-relative reference",
+      "//not-a-real-user:not-a-real-password@h.example/x?not-a-real-token",
+      "//[withheld]@h.example/x?[withheld]",
+      2,
+    ],
+    ["an empty query", "http://h.example/?", "http://h.example/?[withheld]", 1],
+    [
+      "an encoded query in the path, read by the text rule first",
+      "https://h.example/x%3Ftoken%3Dnot-a-real-token",
+      "https://h.example/x%3F[withheld]",
+      1,
+    ],
+    [
+      "a user name the parser reads as a host, cut by the text rule first",
+      "https://not-a-real-user?not-a-real-name@h.example/x.nc?token=not-a-real-token",
+      "https://[withheld]@h.example/x.nc?[withheld]",
+      2,
+    ],
+    ["a file location", "file:///opt/programs/p.nc", "file:///opt/programs/p.nc", 0],
+    [
+      "an IPv6 host and a port",
+      "http://not-a-real-user:not-a-real-password@[::1]:8080/x",
+      "http://[withheld]@[::1]:8080/x",
+      1,
+    ],
+    [
+      "an international host, serialized by the parser",
+      "https://b\u00fccher.example/x",
+      "https://xn--bcher-kva.example/x",
+      0,
+    ],
+  ])("%s keeps the scheme, host, port and path", (_, value, kept, withheld) => {
+    expect(withoutUrlFieldSecrets(value)).toEqual({ text: kept, withheld });
+    expect(kept).not.toContain("not-a-real");
+  });
+
+  test("an attribute that is not URL-typed keeps the text rule", () => {
+    expect(withoutAttributeSecrets("source", "see https://not-a-real-user:x@h.example/x")).toEqual({
+      text: "see https://[withheld]@h.example/x",
+      withheld: 1,
+    });
+    expect(withoutAttributeSecrets("href", "see https://not-a-real-user:x@h.example/x")).toEqual({
+      text: "[withheld]",
+      withheld: 1,
+    });
   });
 });
 

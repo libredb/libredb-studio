@@ -23,7 +23,7 @@
  * asset's document and attributes can carry whatever credential the system that wrote the asset put in a URL. A URL
  * keeps its scheme and, after its user information, its host, port and path, which say where a file is; its user name
  * and password, its query string and its fragment, where a credential, a signature or a token travels, read
- * `[withheld]`, and the answer counts them. The cut is made by position, never by parsing the URL, and leans to
+ * `[withheld]`, and the answer counts them. In text, the cut is made by position, never by parsing the URL, and leans to
  * withholding more: the values are decoded text, in which a password may hold an `@`, a quote, a slash, a `#`, a `?`
  * or a space that a URL client still sends. A URL starts at the first scheme and colon in the value, in any case, or
  * at its first two slashes or backslashes, since a WHATWG URL parser reads `http:\\u:p@h`, `http:/u:p@h` and
@@ -45,7 +45,11 @@
  * An asset document's text is read as one string, as a consumer reads it: each element's own text, CDATA sections and
  * references included, with its children's text in the place each child holds, in document order, so a URL split by
  * the markup is read whole and each withheld part is cut out of every element's text it lands in; an `@`, `?` or `#`
- * in a later element's text widens the cut into it. An attribute value is one string of its own.
+ * in a later element's text widens the cut into it. An attribute value is one string of its own. An attribute the
+ * standard types as a URI, `href` and `xlink:href`, is the credential channel the standard defines, and is withheld by
+ * structure rather than by position: it is parsed by the WHATWG URL parser and keeps its scheme, host, port and path as
+ * the parser serializes them, or is withheld whole when it does not parse, whatever its spelling
+ * (`withoutUrlFieldSecrets`).
  * MEASURED on the same image with an MQTT sink configured: the broker's address reaches no route of the table.
  *
  * Browser-safe: no Node built-in, no server module.
@@ -75,7 +79,7 @@ export function observationWithheld(observation: MtcObservation, item: MtcDataIt
 
 /** Why a URL's user name, password, query string and fragment are withheld from an asset, in the words the warning repeats. */
 const MTCONNECT_WITHHELD_URL_SENTENCE =
-  "Agent mode keeps each URL in an asset, and in an asset id or asset type an observation names, to its scheme, host, port and path, read after Unicode compatibility normalization and percent-decoding. A URL starts at a scheme and its colon, such as http: in any case, or at two slashes or backslashes; everything after that start and the slashes or backslashes that follow it, up to the last @ in the value, its user name and password, and everything from the first ? or # after that to the end of the value, its query string and fragment, where a credential, a signature or a token travels, is withheld. A word holding an @ with a : before it is withheld from its start to its last @, keeping only a scheme and two slashes it starts with, and a word holding a slash before a ? or # is withheld from that ? or # to its end.";
+  "Agent mode keeps each URL in an asset, and in an asset id or asset type an observation names, to its scheme, host, port and path, read after Unicode compatibility normalization and percent-decoding. A URL starts at a scheme and its colon, such as http: in any case, or at two slashes or backslashes; everything after that start and the slashes or backslashes that follow it, up to the last @ in the value, its user name and password, and everything from the first ? or # after that to the end of the value, its query string and fragment, where a credential, a signature or a token travels, is withheld. A word holding an @ with a : before it is withheld from its start to its last @, keeping only a scheme and two slashes it starts with, and a word holding a slash before a ? or # is withheld from that ? or # to its end. An href attribute, the field the standard types as a URI, is read as one URL by a WHATWG URL parser: it keeps its scheme, host, port and path and loses its user name, password, query string and fragment, and is withheld whole when it does not parse.";
 
 const isLetter = (c: string): boolean => (c >= "A" && c <= "Z") || (c >= "a" && c <= "z");
 const isSlash = (c: string): boolean => c === "/" || c === "\\";
@@ -324,6 +328,84 @@ export function withoutUrlSecretsAcross(pieces: readonly string[]): {
 export function withoutUrlSecrets(text: string): { readonly text: string; readonly withheld: number } {
   const kept = withoutUrlSecretsAcross([text]);
   return { text: kept.texts[0], withheld: kept.withheld };
+}
+
+/** The two bases a reference without a scheme is read against: one with its own authority reads the same host on both. */
+const URL_BASES = ["http://a.invalid/", "http://b.invalid/"] as const;
+
+/** A host and port a URL field keeps: a bracketed IP address or a run of the characters a host name is spelled in. */
+const KEPT_HOST = /^(?:\[[0-9A-Fa-f:.]+\]|[A-Za-z0-9._~-]*)(?::[0-9]+)?$/;
+
+/**
+ * Whether an attribute is one the standard types as a URI, so its value is read as one URL by a WHATWG URL parser rather
+ * than as text: `href` and `xlink:href`, under whatever prefix the agent wrote, since a prefix is never resolved.
+ */
+export function isUrlAttribute(name: string): boolean {
+  const lower = name.toLowerCase();
+  return lower === "href" || lower.endsWith(":href");
+}
+
+/**
+ * `value` read as the WHATWG URL parser a URL client uses reads it (`new URL`): absolute, or against a base when it has
+ * an authority of its own (`//host`). Undefined when it does not parse, or is a reference with no authority.
+ */
+function parsedUrl(value: string): { readonly url: URL; readonly schemeRelative: boolean } | undefined {
+  try {
+    return { url: new URL(value), schemeRelative: false };
+  } catch {
+    // Not an absolute URL: read against two bases below.
+  }
+  try {
+    const [first, second] = URL_BASES.map((base) => new URL(value, base));
+    return first.host === second.host ? { url: first, schemeRelative: true } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Whether a part the parser cut holds more than the markers the text rule already left and the marks around them. */
+const holdsMore = (part: string): boolean =>
+  part.replace(/\[withheld\]|%5Bwithheld%5D/g, "").replace(/[:?#]/g, "") !== "";
+
+/**
+ * A URL-typed field (`isUrlAttribute`) withheld by structure, whatever its spelling. The text rule (`withoutUrlSecrets`)
+ * reads the value first, as it reads any text; what it leaves is parsed by the WHATWG URL parser a URL client uses, and
+ * when it parses it keeps its scheme, host, port and path, as the parser serializes them, while its user name and
+ * password and its query string and fragment read `[withheld]`. When it does not parse, is a reference with neither a
+ * scheme nor an authority, or names a host outside a host name's characters, the whole value is withheld. A part the
+ * parser cuts is counted unless the text rule already withheld all of it.
+ */
+export function withoutUrlFieldSecrets(value: string): { readonly text: string; readonly withheld: number } {
+  const read = withoutUrlSecrets(value);
+  const parsed = parsedUrl(read.text);
+  if (parsed === undefined || !KEPT_HOST.test(parsed.url.host)) return { text: "[withheld]", withheld: 1 };
+  const { url, schemeRelative } = parsed;
+  const noUser = new URL(url.href);
+  noUser.username = "";
+  noUser.password = "";
+  const kept = new URL(noUser.href);
+  kept.search = "";
+  kept.hash = "";
+  const userinfo = noUser.href !== url.href;
+  const tail = noUser.href.slice(kept.href.length);
+  const href = schemeRelative ? kept.href.slice(kept.protocol.length) : kept.href;
+  // With an authority the user information marker stands after the slashes.
+  const start = href.indexOf("//") + 2;
+  return {
+    text: `${userinfo ? `${href.slice(0, start)}[withheld]@${href.slice(start)}` : href}${tail === "" ? "" : `${tail[0]}[withheld]`}`,
+    withheld:
+      read.withheld +
+      (userinfo && holdsMore(`${url.username}:${url.password}`) ? 1 : 0) +
+      (tail !== "" && holdsMore(tail) ? 1 : 0),
+  };
+}
+
+/** An attribute value with its URL secrets withheld: by structure for a URL-typed attribute, by the text rule otherwise. */
+export function withoutAttributeSecrets(
+  name: string,
+  value: string,
+): { readonly text: string; readonly withheld: number } {
+  return isUrlAttribute(name) ? withoutUrlFieldSecrets(value) : withoutUrlSecrets(value);
 }
 
 /**

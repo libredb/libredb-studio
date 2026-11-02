@@ -47,6 +47,7 @@ import {
   observationWithheld,
   withheldUrlWarning,
   withheldWarning,
+  withoutAttributeSecrets,
   withoutUrlSecrets,
   withoutUrlSecretsAcross,
 } from "./agent-withheld";
@@ -224,15 +225,14 @@ function assetReference(row: MtcRow, observation: MtcObservation, count: (withhe
     return url.text;
   };
   if (observation.children.length === 0) return { ...row, value: kept(row.value) };
-  const entries = JSON.parse(row.value) as Record<string, unknown>;
-  return {
-    ...row,
-    value: JSON.stringify(
-      Object.fromEntries(
-        Object.entries(entries).map(([key, value]) => [kept(key), typeof value === "string" ? kept(value) : value]),
-      ),
-    ),
-  };
+  // Every key and string value at every depth: a TABLE entry is an object of cells, and its cells are read too.
+  const deep = (value: unknown): unknown =>
+    typeof value === "string"
+      ? kept(value)
+      : value === null || typeof value !== "object"
+        ? value
+        : Object.fromEntries(Object.entries(value).map(([key, inner]) => [kept(key), deep(inner)]));
+  return { ...row, value: JSON.stringify(deep(JSON.parse(row.value))) };
 }
 
 /** The device model the read is decided under, read fresh: nothing of an earlier read is kept. */
@@ -310,9 +310,10 @@ function modelRows(answer: MtcAnswer, request: MtcRequest, budget: ReadOnlyState
 }
 
 /**
- * An asset document with every URL in its attribute values and text kept to what `withoutUrlSecrets` keeps. Its text is
- * read as one string in document order, each element's own text with its children's text in place, so a URL split by
- * the markup is read whole; each attribute value is read on its own.
+ * An asset document with every URL in its attribute values and text kept to what `withoutUrlSecrets` keeps, and every
+ * URL-typed attribute to what `withoutUrlFieldSecrets` keeps. Its text is read as one string in document order, each
+ * element's own text with its children's text in place, so a URL split by the markup is read whole; each attribute
+ * value is read on its own.
  */
 function withUrlsKept(document: MtcElement, count: (withheld: number) => void): MtcElement {
   const pieces: string[] = [];
@@ -327,8 +328,8 @@ function withUrlsKept(document: MtcElement, count: (withheld: number) => void): 
   const text = withoutUrlSecretsAcross(pieces);
   count(text.withheld);
   let next = 0;
-  const kept = (value: string): string => {
-    const url = withoutUrlSecrets(value);
+  const kept = (name: string, value: string): string => {
+    const url = withoutAttributeSecrets(name, value);
     count(url.withheld);
     return url.text;
   };
@@ -346,7 +347,9 @@ function withUrlsKept(document: MtcElement, count: (withheld: number) => void): 
     own.push(text.texts[next++]);
     return {
       ...element,
-      attributes: Object.fromEntries(Object.entries(element.attributes).map(([name, value]) => [name, kept(value)])),
+      attributes: Object.fromEntries(
+        Object.entries(element.attributes).map(([name, value]) => [name, kept(name, value)]),
+      ),
       text: own.join(""),
       children,
       childOffsets,
@@ -381,7 +384,7 @@ function assetRows(answer: MtcAnswer, budget: ReadOnlyStatementBudget): Mtconnec
       ...Object.fromEntries(
         Object.entries(columns).map(([name, value]) => [
           name,
-          typeof value === "string" ? withoutUrlSecrets(value).text : value,
+          typeof value === "string" ? withoutAttributeSecrets(name, value).text : value,
         ]),
       ),
       document: renderXmlElement(document),
