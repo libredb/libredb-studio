@@ -800,7 +800,9 @@ describe("createDatabaseProvider", () => {
       "Read-only execution requires a provider opened under the agent read-only profile",
     );
     expect(sent).toEqual([]);
-    await expect(profiled.queryReadOnly("SELECT x FROM probe.t", AGENT_BUDGET)).resolves.toMatchObject({ rows: [{ x: 1 }] });
+    await expect(profiled.queryReadOnly("SELECT x FROM probe.t", AGENT_BUDGET)).resolves.toMatchObject({
+      rows: [{ x: 1 }],
+    });
     expect(sent.at(-1)).toBe("SELECT x FROM probe.t");
   });
 
