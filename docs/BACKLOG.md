@@ -8547,15 +8547,6 @@ Not fixed there: a model's choice is not something the snapshot can force, and t
 
 **Done when:** a server-side check flags a drafted read over a whole partly readable group, by the group's name only so E13 holds, and the answer card shows the flag, with a test that a draft over `/config/` is flagged while one over `/app/` is not.
 
-### B93. Neo4j has no MCP statement read
-
-No MCP tool runs Cypher: the `cypher` language pack declares no MCP facet (`AGENT_LANGUAGE_MCP_FACETS.cypher` is null) and `MCP_STATEMENT_READ.neo4j` is false; plan mode and the MCP metadata tools work.
-The agent half closed on 2026-10-30: `Neo4jProvider` implements `queryReadOnly` on Enterprise Edition for a user the server proves read-only before every statement, its roles granting only reads, no `LOAD` and no extension it can execute, under the editor's read policy, gate and READ session; Community Edition is refused at open by name (`docs/providers/neo4j.md`, section Agent mode).
-
-Found 2026-10-03 while designing the Neo4j provider (spec 6.4).
-
-**Done when:** MCP serves Neo4j's Cypher through its own MCP facet in its language pack (`src/lib/agent/languages/cypher/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), under the same user proof, with `MCP_STATEMENT_READ.neo4j` opened by the owner, and an MCP call drives a `LOAD CSV` and a write to their refusal in a test.
-
 ### B94. InfluxDB over InfluxQL has no MCP statement read and no 2.x agent token
 
 No MCP tool runs InfluxQL: the `influxql` language pack declares no MCP facet (`AGENT_LANGUAGE_MCP_FACETS.influxql` is null) and `MCP_STATEMENT_READ.influxdb` is false; plan mode and the MCP metadata tools work (`MCP_EXPOSABLE` in `src/lib/db/compatibility.ts`).
