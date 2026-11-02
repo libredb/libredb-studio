@@ -6859,10 +6859,11 @@ The wire dump (`DB2_WIRE_DEBUG_HEX=1`) of one failure shows the step before it: 
 A loop of the same two reads on one fresh connection, 50 times on each server, did not fail, so the trigger needs more of the live check's sequence than those two statements.
 1.0.27 also fixes K24: a bound CLOB, DBCLOB or BLOB is written alone and beside other parameters, 100000, 40000 and 70000 bytes long, on 12.1.0.0 and 11.5.9.0, so D225 waits on this entry.
 Reported upstream as gurungabit/db2-node#37.
+`.github/dependabot.yml` ignores exactly 1.0.26 and 1.0.27, because the weekly production group proposed 1.0.27 in #1966 and again in #2167, and it was held by hand in each; a later release is still proposed.
 
 Found 2026-10-26 while measuring `db2-node` 1.0.27 for the Dependabot production group; the pin stays at 1.0.25.
 
-**Done when:** a `db2-node` release passes `tests/live/db2-live-check.ts` in 8 of 8 runs on each of Db2 12.1.0.0 and 11.5.9.0, and the pin moves to it with the measurement its `//dependencies` note asks for.
+**Done when:** a `db2-node` release passes `tests/live/db2-live-check.ts` in 8 of 8 runs on each of Db2 12.1.0.0 and 11.5.9.0, the pin moves to it with the measurement its `//dependencies` note asks for, and the `db2-node` ignore entry in `.github/dependabot.yml` is removed with it.
 
 ### P12. Monaco's own copy of DOMPurify stays at 3.4.15 until a Monaco release takes 3.4.17
 

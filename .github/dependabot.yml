@@ -44,7 +44,7 @@ updates:
       prefix: "chore(deps)"
       prefix-development: "chore(deps-dev)"
 
-    # Both groups batch minor and patch only, which means a major that is not
+    # Every group batches minor and patch only, which means a major that is not
     # ignored below arrives as its own pull request. That is deliberate, not an
     # oversight: batching majors with routine updates makes one pull request that
     # cannot be merged as a unit - refusing recharts 3 would also hold back the
@@ -62,6 +62,25 @@ updates:
     # is then to separate them with `patterns` instead. Cosmetic either way -
     # check the grouping on the first run before assuming it took.
     groups:
+      # The node-opcua trio, in one pull request of its own. node-opcua-client
+      # and node-opcua-certificate-manager ship and node-opcua-server is the
+      # devDependency the integration suite starts, so the two groups below
+      # split them across two pull requests whenever both sides have an update,
+      # since the dependency type decides the group. They move together and
+      # to one version (781e89b6c, docs/providers/opcua.md section 2.1): a
+      # client and server on different releases install a second
+      # node-opcua-types, whose classes then register twice. This group comes
+      # first on purpose, because a dependency that matches more than one group
+      # goes to the first it matches. It does not make the three share a
+      # version: Dependabot offers each package its own newest release, and the
+      # monorepo publishes a package only when it changes (there is no
+      # node-opcua-certificate-manager 2.187.18), so check that all three land
+      # on one version before merging.
+      node-opcua:
+        applies-to: version-updates
+        patterns: ["node-opcua-*"]
+        update-types: ["minor", "patch"]
+
       # What ships. Kept separate from tooling because a reviewer weighs these
       # against "does the editor still work in a browser", not "does lint pass".
       production:
@@ -116,6 +135,16 @@ updates:
       # this version (see tsup.config.ts). Moving it is an export-quality
       # decision to make in a browser, not a version bump.
       - dependency-name: "@zumer/snapdom"
+
+      # db2-node 1.0.26 and 1.0.27 intermittently fail a statement with
+      # QRYNOPRM on a live Db2, where 1.0.25 passes the live check 8 of 8
+      # (docs/BACKLOG.md P11). Our unit tests mock the driver, so the bump goes
+      # green in CI, and the weekly production group proposed it again in #1966
+      # and #2167, to be held by hand. Only these two versions are ignored, so a
+      # later release is still proposed, and it is measured live before it
+      # merges. Remove this entry when P11 closes.
+      - dependency-name: "db2-node"
+        versions: ["1.0.26", "1.0.27"]
 
       # Held at the major @simplewebauthn/server depends on (^2.1.0 as of
       # 14.0.3). tests/helpers/attestation-chain.ts builds attestation chains
