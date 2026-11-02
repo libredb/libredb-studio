@@ -49,17 +49,11 @@ bounds are its own. The disagreements are tabulated where they bite: [5.4](#54-b
 `src/lib/db/providers/industrial/opcua/` is the first provider under `industrial/`. It is reached
 through `createDatabaseProvider` like any other and extends `BaseDatabaseProvider`.
 
-Three dependencies, all pure JavaScript with no native addon: `node-opcua-client` 2.187.16 (126
-packages in its own closure, measured as a fresh lockfile holding only it) and
-`node-opcua-certificate-manager` 2.187.16, which the bridge imports directly for the strict trust
-store, plus `node-opcua-server` 2.187.16 as a **devDependency**, which is the in-process server the
-integration suite starts. Measured on 2026-10-26: the three together add 117 packages to the
-lockfile, counted by removing them and regenerating it. The three move together and to one version:
-the packages of that monorepo are published only when they change, so a release the three do not
-all share leaves one pin behind, and a server and client split across releases install a second
-`node-opcua-types`, whose classes then register twice ("Class EUInformation already in
-constructorMap"). `bun.lock` holds one copy each of `node-opcua-certificate-manager` and
-`node-opcua-types`.
+Three dependencies, all pure JavaScript with no native addon: `node-opcua-client` 2.187.18 (126 packages in its own closure, measured as a fresh lockfile holding only it) and `node-opcua-certificate-manager` 2.187.16, which the bridge imports directly for the strict trust store, plus `node-opcua-server` 2.187.18 as a **devDependency**, which is the in-process server the integration suite starts.
+Measured on 2026-11-02: the three together add 117 packages to the lockfile, counted by removing them and regenerating it.
+The three move together: the packages of that monorepo are published only when they change, so a release the three do not all share leaves one pin behind, and a server and client split across releases install a second `node-opcua-types`, whose classes then register twice ("Class EUInformation already in constructorMap").
+The certificate manager's pin is that case: 2.187.18 of it does not exist (`npm view node-opcua-certificate-manager@2.187.18` answers 404), and both 2.187.18 packages depend on its 2.187.16 exactly.
+`bun.lock` holds one copy each of `node-opcua-certificate-manager` and `node-opcua-types`.
 
 Both production packages are declared in `serverExternalPackages`, because two modules under them
 cannot be bundled, measured by removing both names and building: `node-opcua-crypto` 6.2.3 computes
@@ -1083,7 +1077,7 @@ that handed out the point answers `BadContinuationPointInvalid`.
 ### 11.3 The in-process server, and the dialog
 
 [`tests/integration/db/opcua-server.test.ts`](../../tests/integration/db/opcua-server.test.ts) — 19
-tests against a **real server in this process**: `node-opcua-server` 2.187.16, a devDependency, is
+tests against a **real server in this process**: `node-opcua-server` 2.187.18, a devDependency, is
 started on a loopback port in `beforeAll` with a two-node address space of its own. It needs no
 container, and it is where the library really runs: GetEndpoints, the secure channel, CreateSession,
 the encoder and the status codes are all the library's. It adds a third stack to the
@@ -1258,7 +1252,7 @@ The refusal reason it prints, verbatim:
 - OPC 10000-5 (Part 5), Information Model — operational limits (6.3.11)
 - OPC 10000-6 (Part 6), Mappings — node id string form (5.1.12)
 - OPC 10000-11 (Part 11), Historical Access — `ReadRawModifiedDetails` (6.5.3)
-- [`node-opcua`](https://github.com/node-opcua/node-opcua) 2.187.16
+- [`node-opcua`](https://github.com/node-opcua/node-opcua) 2.187.18
 - Issue [#1677](https://github.com/libredb/libredb-studio/issues/1677)
 
 ---
