@@ -857,7 +857,7 @@ describe("the rabbitread arm", () => {
     );
     const bytes = RUN_RABBITMQ_READ_ARM.moreRows(read, "rabbitmq", { maxRows: 100, shown: 40, cut: "result_bytes" });
     expect(bytes).toBe(
-      'More rows exist than the 32 KiB result limit holds, and 40 of them fitted; this tool does not page with offset. Write a smaller "limit" to fit more rows, and to read past the 40 rows returned, start the next read at {"offset": n}, where n is the last offset returned plus one.',
+      'More rows exist than the 32 KiB result limit holds, and 40 of them fitted; this tool does not page with offset. A row is only an offset and a body size and cannot be made smaller, so read on in later reads, from {"offset": n} or a later start, to fit more rows, and to read past the 40 rows returned, start the next read at {"offset": n}, where n is the last offset returned plus one.',
     );
     for (const text of [hint, bytes, RUN_RABBITMQ_READ_ARM.rowOverCap]) {
       expect(text).not.toContain("$skip");
@@ -888,6 +888,13 @@ describe("the rabbitread arm", () => {
     expect(description).toContain("its offset and its body size, and nothing else");
     expect(description).toContain("a classic or quorum queue is refused");
     expect(description).toContain('this tool takes no offset, so read on with "from": {"offset": n}');
+  });
+
+  test("says what an early stop and a read from next answer, since an MCP answer carries no warning text", () => {
+    const description = RUN_RABBITMQ_READ_ARM.description;
+    expect(description).toContain(
+      'A read that stops before its limit because no message arrived for 1 s answers the messages it read, and that stop is not proof of the stream\'s end. "next" answers only messages published after the read starts, so a read from "next" that nothing is published to during the read answers no rows.',
+    );
   });
 });
 
