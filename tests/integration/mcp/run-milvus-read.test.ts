@@ -249,7 +249,7 @@ describe("inspect_schema", () => {
   const inspect = (seed: string, extra: Record<string, unknown> = {}) =>
     call("inspect_schema", { connection_id: `seed:${seed}`, include_columns: false, ...extra });
   const databasesSent = () =>
-    wire.calls.map((logged) => `${logged.method}:${String((logged.args[0] as { db_name?: string }).db_name)}`);
+    wire.calls.map((logged) => `${logged.method}:${String((logged.args?.[0] as { db_name?: string }).db_name)}`);
 
   test("reads the seed's own database, as run_milvus_read does, and lists no other", async () => {
     const result = await inspect("vectors");
