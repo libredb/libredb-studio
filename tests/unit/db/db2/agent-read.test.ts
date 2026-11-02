@@ -73,6 +73,12 @@ const keepsToTheCall = (alias: string) =>
   `OR ${alias}.ROUTINESCHEMA = 'SYSPROC' AND COALESCE(${alias}.ROUTINETYPE, '') = 'F' ` +
   `AND ${alias}.SPECIFICNAME IN (${MEASURED_READERS.map((name) => `'${name}'`).join(", ")}))`;
 
+/** The table or view named by `schema` and `name` is IBM's and holds a COLVALUE column: the distribution statistics. */
+const storedValues = (schema: string, name: string) =>
+  "EXISTS (SELECT 1 FROM SYSCAT.TABLES t JOIN SYSCAT.COLUMNS c ON c.TABSCHEMA = t.TABSCHEMA " +
+  `AND c.TABNAME = t.TABNAME WHERE t.TABSCHEMA = ${schema} AND t.TABNAME = ${name} AND t.OWNERTYPE = 'S' ` +
+  "AND c.COLNAME = 'COLVALUE')";
+
 /** IBM's routine, and a procedure, which no agent statement can call, or a routine that keeps to the call. */
 const admittedRoutine = (alias: string) =>
   `COALESCE(${alias}.OWNERTYPE, '') = 'S' AND (COALESCE(${alias}.ROUTINETYPE, '') = 'P' OR ${keepsToTheCall(alias)})`;
@@ -152,8 +158,9 @@ const PINNED: Record<Statement, string> = {
     "WHERE x.TYPE = 'N' OR x.TYPE IN ('V', 'W') AND (NOT EXISTS (SELECT 1 FROM SYSCAT.VIEWS v " +
     "WHERE v.VIEWSCHEMA = x.TABSCHEMA AND v.VIEWNAME = x.TABNAME AND v.VALID = 'Y') " +
     "OR EXISTS (SELECT 1 FROM SYSCAT.TABDEP d WHERE d.TABSCHEMA = x.TABSCHEMA AND d.TABNAME = x.TABNAME AND NOT (" +
-    "d.BTYPE IN ('T', 'S', 'U', 'H', 'L', 'O', 'R') " +
-    "OR d.BTYPE IN ('V', 'W') AND (EXISTS (SELECT 1 FROM SYSCAT.TABLES b WHERE b.TABSCHEMA = d.BSCHEMA " +
+    `d.BTYPE IN ('T', 'S', 'U', 'H', 'L', 'O', 'R') AND NOT ${storedValues("d.BSCHEMA", "d.BNAME")} ` +
+    `OR d.BTYPE IN ('V', 'W') AND NOT ${storedValues("d.BSCHEMA", "d.BNAME")} ` +
+    "AND (EXISTS (SELECT 1 FROM SYSCAT.TABLES b WHERE b.TABSCHEMA = d.BSCHEMA " +
     "AND b.TABNAME = d.BNAME AND b.OWNERTYPE = 'S') " +
     "OR EXISTS (SELECT 1 FROM ROOTS o WHERE o.TABSCHEMA = d.BSCHEMA AND o.TABNAME = d.BNAME)) " +
     "OR d.BTYPE = 'F' AND EXISTS (SELECT 1 FROM SYSCAT.ROUTINES f WHERE f.ROUTINESCHEMA = d.BSCHEMA " +
@@ -167,9 +174,7 @@ const PINNED: Record<Statement, string> = {
     `WITH ${GRANTEES} ` +
     "SELECT a.GRANTEE, a.GRANTEETYPE, 'SELECT' AS PRIVILEGE, 'TABLE' AS KIND, a.TABSCHEMA AS SCHEMA, " +
     `a.TABNAME AS NAME FROM SYSCAT.TABAUTH a ${held("a")} WHERE a.SELECTAUTH <> 'N' ` +
-    "AND EXISTS (SELECT 1 FROM SYSCAT.TABLES t JOIN SYSCAT.COLUMNS c ON c.TABSCHEMA = t.TABSCHEMA " +
-    "AND c.TABNAME = t.TABNAME WHERE t.TABSCHEMA = a.TABSCHEMA AND t.TABNAME = a.TABNAME AND t.OWNERTYPE = 'S' " +
-    "AND c.COLNAME = 'COLVALUE') ORDER BY 5, 6, 1",
+    `AND ${storedValues("a.TABSCHEMA", "a.TABNAME")} ORDER BY 5, 6, 1`,
   controls:
     "SELECT CONTROLSCHEMA AS SCHEMA, CONTROLNAME AS NAME, TABSCHEMA, TABNAME FROM SYSCAT.CONTROLS " +
     "WHERE OWNERTYPE <> 'S' ORDER BY 3, 4, 1, 2",
@@ -373,8 +378,8 @@ describe("verifyAgentPrincipal", () => {
     });
     expect(error.message).toBe(
       "The agent read-only execution profile refuses the Db2 user AGENT_RO: it may read a view that calls code that " +
-        "is not IBM's or an IBM function that acts outside the call or modifies data, or reads a view or alias the " +
-        "check cannot follow, a view that is not valid, or a nickname, " +
+        "is not IBM's or an IBM function that acts outside the call or modifies data, or reads the catalog's " +
+        "distribution statistics or a view or alias the check cannot follow, a view that is not valid, or a nickname, " +
         "which reads another server; each runs with its owner's authority. Run, as an administrator: " +
         'REVOKE SELECT ON TABLE "APP"."CALLS_CODE" FROM USER "AGENT_RO"; ' +
         'REVOKE SELECT ON TABLE "APP"."REMOTE_ORDERS" FROM PUBLIC.',

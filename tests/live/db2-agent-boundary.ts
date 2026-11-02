@@ -23,7 +23,7 @@
  *    refused by its module; a view over IBM's AUDIT_ARCHIVE table function, refused by the function's own row; a
  *    view over a view it may not read; a view over an alias of a table it may not read; a view left inoperative; a column mask anywhere in the database; SETSESSIONUSER; a role with its ADMIN
  *    OPTION; SELECT on the catalog's distribution statistics, whose values the user is first shown to read for a table
- *    it may not read; a trusted context naming the user as its system authorization ID, on the address the server sees this
+ *    it may not read, and on a view of the owner's over them, directly or over the base table; a trusted context naming the user as its system authorization ID, on the address the server sees this
  *    script at, whose default role a raw connection of the user is first shown to hold, and the same context
  *    disabled; and on one handle a grant added after a call refuses the next call, and its revoke admits the one after;
  *  - it admits a view over a table, a view over a view it may read, a view calling IBM's own function, IBM's DB_MEMBERS
@@ -166,6 +166,8 @@ async function refusedUntilLifted(
 }
 
 const CLEANUP = [
+  "DROP VIEW APP.LIBREDB_AB_STATS",
+  "DROP VIEW APP.LIBREDB_AB_BASESTATS",
   "DROP VIEW APP.LIBREDB_AB_RANDOM",
   "DROP VIEW APP.LIBREDB_AB_AUDIT",
   "DROP VIEW APP.LIBREDB_AB_LISTED",
@@ -592,6 +594,42 @@ try {
       `REVOKE SELECT ON TABLE "${schema}"."${name}" FROM PUBLIC`,
     );
   }
+  // A view of the owner's over the distribution statistics reads them with its owner's authority: measured first that
+  // the agent user reads a stored value through it, then refused by the check, through a view and through a view
+  // over the base table, until its grant is gone.
+  await setup([
+    "CREATE VIEW APP.LIBREDB_AB_STATS AS SELECT TABNAME, COLVALUE FROM SYSCAT.COLDIST",
+    "CREATE VIEW APP.LIBREDB_AB_BASESTATS AS SELECT TBNAME, COLVALUE FROM SYSIBM.SYSCOLDIST",
+    "GRANT SELECT ON APP.LIBREDB_AB_STATS TO USER AGENT_RO",
+  ]);
+  {
+    const agentRaw = await raw("agent_ro", AGENT_PASSWORD);
+    const values = (
+      await agentRaw.query(
+        "SELECT COLVALUE FROM APP.LIBREDB_AB_STATS WHERE TABNAME = 'LIBREDB_AB_SECRET' AND COLVALUE IS NOT NULL",
+      )
+    ).rows.map((row) => String((row as Record<string, unknown>).COLVALUE));
+    await agentRaw.close();
+    check(
+      values.includes("'owner-only'"),
+      "a granted view of the owner's over SYSCAT.COLDIST gave the agent user a stored value of a table it may not read",
+    );
+  }
+  await setup(["REVOKE SELECT ON APP.LIBREDB_AB_STATS FROM USER AGENT_RO"]);
+  await refusedUntilLifted(
+    provider,
+    "a view of the owner's over SYSCAT.COLDIST",
+    ["GRANT SELECT ON APP.LIBREDB_AB_STATS TO USER AGENT_RO"],
+    ["REVOKE SELECT ON APP.LIBREDB_AB_STATS FROM USER AGENT_RO"],
+    'REVOKE SELECT ON TABLE "APP"."LIBREDB_AB_STATS" FROM USER "AGENT_RO"',
+  );
+  await refusedUntilLifted(
+    provider,
+    "a view of the owner's over SYSIBM.SYSCOLDIST",
+    ["GRANT SELECT ON APP.LIBREDB_AB_BASESTATS TO USER AGENT_RO"],
+    ["REVOKE SELECT ON APP.LIBREDB_AB_BASESTATS FROM USER AGENT_RO"],
+    'REVOKE SELECT ON TABLE "APP"."LIBREDB_AB_BASESTATS" FROM USER "AGENT_RO"',
+  );
   // IBM's code by its own catalog row: a module holding a function that acts outside the call, and a function of
   // IBM's that does and is not on the measured list, are refused; a function on that list is admitted, called raw.
   for (const ibmModule of ["UTL_FILE", "DBMS_PIPE"]) {

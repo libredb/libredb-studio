@@ -44,7 +44,9 @@
  * 4. They may read no table object that is not IBM's and is a nickname, which reads another server, or a view that is
  *    not valid (a SELECT revalidates it and runs what it calls now), or a view whose dependencies (`SYSCAT.TABDEP`)
  *    hold anything but a table, a function that is IBM's and admitted by item 3, a variable that is IBM's, a view
- *    that is IBM's or one this check also examines, or an alias of a table object this check examines. A view that
+ *    that is IBM's or one this check also examines, or an alias of a table object this check examines; a table or
+ *    view that holds the distribution statistics of item 5 is refused there too, since the view reads it with its
+ *    owner's authority. A view that
  *    calls a routine of an IBM module depends on the module itself, so it is refused whatever the routine reads.
  * 5. They may read none of the catalog's distribution statistics: an IBM table or view with a `COLVALUE` column, whose
  *    rows hold the most frequent values and the quantiles of every table's columns after `RUNSTATS`, so the user
@@ -116,6 +118,18 @@ function keepsToTheCall(alias: string): string {
  */
 function admittedRoutine(alias: string): string {
   return `COALESCE(${alias}.OWNERTYPE, '') = 'S' AND (COALESCE(${alias}.ROUTINETYPE, '') = 'P' OR ${keepsToTheCall(alias)})`;
+}
+
+/**
+ * The table or view `schema`.`name` names is IBM's and holds a `COLVALUE` column: the catalog's distribution
+ * statistics, read by the catalog's own rows rather than by a list of names.
+ */
+function storedValues(schema: string, name: string): string {
+  return (
+    "EXISTS (SELECT 1 FROM SYSCAT.TABLES t JOIN SYSCAT.COLUMNS c ON c.TABSCHEMA = t.TABSCHEMA " +
+    `AND c.TABNAME = t.TABNAME WHERE t.TABSCHEMA = ${schema} AND t.TABNAME = ${name} AND t.OWNERTYPE = 'S' ` +
+    "AND c.COLNAME = 'COLVALUE')"
+  );
 }
 
 /** The privileges a lateral VALUES spreads one catalog row into, one per column that may hold it. */
@@ -239,8 +253,9 @@ export const AGENT_PRINCIPAL_STATEMENTS = Object.freeze({
     "WHERE x.TYPE = 'N' OR x.TYPE IN ('V', 'W') AND (NOT EXISTS (SELECT 1 FROM SYSCAT.VIEWS v " +
     "WHERE v.VIEWSCHEMA = x.TABSCHEMA AND v.VIEWNAME = x.TABNAME AND v.VALID = 'Y') " +
     "OR EXISTS (SELECT 1 FROM SYSCAT.TABDEP d WHERE d.TABSCHEMA = x.TABSCHEMA AND d.TABNAME = x.TABNAME AND NOT (" +
-    "d.BTYPE IN ('T', 'S', 'U', 'H', 'L', 'O', 'R') " +
-    "OR d.BTYPE IN ('V', 'W') AND (EXISTS (SELECT 1 FROM SYSCAT.TABLES b WHERE b.TABSCHEMA = d.BSCHEMA " +
+    `d.BTYPE IN ('T', 'S', 'U', 'H', 'L', 'O', 'R') AND NOT ${storedValues("d.BSCHEMA", "d.BNAME")} ` +
+    `OR d.BTYPE IN ('V', 'W') AND NOT ${storedValues("d.BSCHEMA", "d.BNAME")} ` +
+    "AND (EXISTS (SELECT 1 FROM SYSCAT.TABLES b WHERE b.TABSCHEMA = d.BSCHEMA " +
     "AND b.TABNAME = d.BNAME AND b.OWNERTYPE = 'S') " +
     "OR EXISTS (SELECT 1 FROM ROOTS o WHERE o.TABSCHEMA = d.BSCHEMA AND o.TABNAME = d.BNAME)) " +
     "OR d.BTYPE = 'F' AND EXISTS (SELECT 1 FROM SYSCAT.ROUTINES f WHERE f.ROUTINESCHEMA = d.BSCHEMA " +
@@ -250,14 +265,11 @@ export const AGENT_PRINCIPAL_STATEMENTS = Object.freeze({
     "WHERE o.TABSCHEMA = s.BASE_TABSCHEMA AND o.TABNAME = s.BASE_TABNAME)) " +
     "OR d.BTYPE = 'v' AND EXISTS (SELECT 1 FROM SYSCAT.VARIABLES g WHERE g.VARSCHEMA = d.BSCHEMA " +
     "AND g.VARNAME = d.BNAME AND g.OWNERTYPE = 'S')))) ORDER BY 3, 4, 1",
-  // An IBM catalog object holding a COLVALUE column, by its own catalog rows rather than by a list of names.
   statistics:
     `WITH ${GRANTEES} ` +
     "SELECT a.GRANTEE, a.GRANTEETYPE, 'SELECT' AS PRIVILEGE, 'TABLE' AS KIND, a.TABSCHEMA AS SCHEMA, " +
     `a.TABNAME AS NAME FROM SYSCAT.TABAUTH a ${held("a")} WHERE a.SELECTAUTH <> 'N' ` +
-    "AND EXISTS (SELECT 1 FROM SYSCAT.TABLES t JOIN SYSCAT.COLUMNS c ON c.TABSCHEMA = t.TABSCHEMA " +
-    "AND c.TABNAME = t.TABNAME WHERE t.TABSCHEMA = a.TABSCHEMA AND t.TABNAME = a.TABNAME AND t.OWNERTYPE = 'S' " +
-    "AND c.COLNAME = 'COLVALUE') ORDER BY 5, 6, 1",
+    `AND ${storedValues("a.TABSCHEMA", "a.TABNAME")} ORDER BY 5, 6, 1`,
   controls:
     "SELECT CONTROLSCHEMA AS SCHEMA, CONTROLNAME AS NAME, TABSCHEMA, TABNAME FROM SYSCAT.CONTROLS " +
     "WHERE OWNERTYPE <> 'S' ORDER BY 3, 4, 1, 2",
@@ -419,8 +431,8 @@ function reachFinding(rows: Rows): Finding | null {
   return {
     what:
       "it may read a view that calls code that is not IBM's or an IBM function that acts outside the call or modifies " +
-      "data, or reads a view or alias the check cannot follow, a view that is not valid, or a nickname, which reads " +
-      "another server; each runs with its owner's authority",
+      "data, or reads the catalog's distribution statistics or a view or alias the check cannot follow, a view that " +
+      "is not valid, or a nickname, which reads another server; each runs with its owner's authority",
     statements: rows.map((row) => {
       const [name, type, schema, object] = text(row, "reach", ["GRANTEE", "GRANTEETYPE", "SCHEMA", "NAME"]);
       return `REVOKE SELECT ON TABLE ${quoted(schema)}.${quoted(object)} FROM ${grantee(name, type, "reach")}`;
