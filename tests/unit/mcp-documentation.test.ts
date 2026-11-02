@@ -20,6 +20,7 @@ const RUN_LIBREDB_READ_ARM = mcpStatementArm("run_libredb_read");
 const RUN_WEAVIATE_READ_ARM = mcpStatementArm("run_weaviate_read");
 const RUN_QDRANT_READ_ARM = mcpStatementArm("run_qdrant_read");
 const RUN_MILVUS_READ_ARM = mcpStatementArm("run_milvus_read");
+const RUN_ETCD_READ_ARM = mcpStatementArm("run_etcd_read");
 const RUN_KAFKA_READ_ARM = mcpStatementArm("run_kafka_read");
 const RUN_RABBITMQ_READ_ARM = mcpStatementArm("run_rabbitmq_read");
 const RUN_REDIS_READ_ARM = mcpStatementArm("run_redis_read");
@@ -115,6 +116,7 @@ describe("docs/MCP.md", () => {
       "Twelve",
       "Thirteen",
       "Fourteen",
+      "Fifteen",
     ];
     expect(MCP_DOC).toContain(`- ${COUNT_WORDS[tools.length]} tools, each annotated read-only and closed-world:`);
     for (const tool of tools) expect(MCP_DOC).toMatch(new RegExp(`^ {2}- \`${tool}\` `, "m"));
@@ -145,6 +147,23 @@ describe("docs/MCP.md", () => {
     expect(MCP_DOC).toContain("a call naming a collection is sent only when the user's `ShowCollections` lists it");
     expect(MCP_DOC).toContain("database, partition and function names reach MCP through it");
     expect(MCP_DOC).toMatch(/^\| Milvus \| /m);
+  });
+
+  test("carries run_etcd_read's engine sentence, derived from its arm, its seed user, its proof's cost, inspect_schema's page and its cancel row", () => {
+    expect(MCP_DOC).toContain(`Runs on ${RUN_ETCD_READ_ARM.engines}; other engines refuse it.`);
+    expect(MCP_DOC).toContain(
+      "unless authentication is on and the seed's `user` holds no root role and roles that grant READ only, on the prefixes the client should read",
+    );
+    expect(MCP_DOC).toContain(
+      "An etcd seed with `mcp: true` whose `user` is `root` is refused when the seed file loads.",
+    );
+    expect(MCP_DOC).toContain(
+      "The proof runs before every call, so a user holding N roles costs N + 2 requests per call before the read.",
+    );
+    expect(MCP_DOC).toContain("On etcd it lists no key prefix and answers an empty page");
+    expect(MCP_DOC).toContain(
+      "| etcd | Studio stops waiting; the provider's gRPC call stays open until its own deadline, set to the time left of `timeout_ms`, cancels it | The provider cancels its gRPC call at `timeout_ms`, and the client gets the timeout answer |",
+    );
   });
 
   test("carries run_kubectl_read's engine sentence, derived from its arm, and says inspect_schema refuses Kubernetes", () => {
@@ -276,11 +295,12 @@ describe("docs/MCP.md", () => {
     const refused = SHIPPED_DATABASE_TYPES.filter((type) => !MCP_EXPOSABLE[type]).map(
       (type) => DB_UI_CONFIG[type].label,
     );
-    // The control that the record answers: etcd, Oxia, S3, MQTT, Firestore, OPC UA, Modbus, NETCONF and Sparkplug B
-    // are the engines it refuses today, with SNMP (#1721) among them: a Get is a read of one numbered object, and the
-    // tools answer schemas rather than objects. Kubernetes left the list with run_kubectl_read, machine-redacted.
+    // The control that the record answers: Oxia, S3, MQTT, Firestore, OPC UA, Modbus, NETCONF and Sparkplug B are the
+    // engines it refuses today, with SNMP (#1721) among them: a Get is a read of one numbered object, and the tools
+    // answer schemas rather than objects. Kubernetes left the list with run_kubectl_read, machine-redacted, and etcd
+    // with run_etcd_read, metadata only.
     expect(refused).toEqual(
-      ["etcd", "oxia", "s3", "mqtt", "firestore", "opcua", "modbus", "netconf", "snmp", "sparkplug"].map(
+      ["oxia", "s3", "mqtt", "firestore", "opcua", "modbus", "netconf", "snmp", "sparkplug"].map(
         (type) => DB_UI_CONFIG[type as DatabaseType].label,
       ),
     );

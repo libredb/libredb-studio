@@ -9,7 +9,7 @@ Tracking issue: [#1089](https://github.com/libredb/libredb-studio/issues/1089), 
 
 Studio reads and writes an etcd cluster through a subset of `etcdctl`'s command line, shows its keys as prefix groups in the object tree and every key in the Keys panel, edits a key's value through a guarded transaction, and offers compaction, defragmentation and alarm disarm to an admin.
 It is Kubernetes-aware: every write that touches a Kubernetes key prefix or kube-apiserver's `compact_rev_key` is refused before any write is sent, a Kubernetes protobuf or encrypted value and every secret are withheld on every surface, and a Kubernetes JSON or CBOR value is shown with its label.
-It is bound to Studio's RBAC through a seed-declared read-only mode, admin-only cluster operations and machine-access rules: agent mode reads the cluster's metadata only ([section 15](#15-agent-mode)), and no MCP.
+It is bound to Studio's RBAC through a seed-declared read-only mode, admin-only cluster operations and machine-access rules: agent mode and MCP's `run_etcd_read` read the cluster's metadata only ([section 15](#15-agent-mode)).
 
 ### Concept mapping
 
@@ -142,10 +142,10 @@ The same recipe, with what each field does, is in [SEED_CONNECTIONS.md](../SEED_
 
 ### 3.5 Machine access (E12)
 
-The provider's read-only query path is agent mode's alone and reads metadata only, under a user the server proves reads only ([section 15](#15-agent-mode)), and plan mode drafts reads for the user to run.
+The provider's read-only query path is agent mode's and MCP's `run_etcd_read`, and reads metadata only, under a user the server proves reads only ([section 15](#15-agent-mode)), and plan mode drafts reads for the user to run.
 Every agent profile, the `agent-operations` profile that reaches every engine included, opens the provider read-only, so it is refused every write in the third sentence of the table above, and lists no key, key prefix or key range.
-MCP stays closed: key names and values can carry secrets, and what an MCP client may read of an etcd cluster is a decision of its own (BACKLOG B136).
-An etcd seed with `mcp: true` is refused when the seed file loads: "mcp is not offered for etcd: the product does not expose this engine to MCP clients. Remove mcp from this connection."
+MCP reads etcd through that path alone ([section 15.7](#157-mcp-read)), so key names and values reach no MCP client, and `inspect_schema` lists no key prefix.
+An etcd seed with `mcp: true` whose `user` is `root` is refused when the seed file loads: "Seed connection "cluster": user is refused: an etcd seed with mcp: true is read by MCP clients under the agent read-only profile, which refuses etcd's root user, since root may read and write every key. Give the seed an etcd user of its own whose roles grant READ only on the prefixes it should read, outside every Kubernetes storage prefix, or remove mcp from this connection."
 
 ### 3.6 Measurements
 
@@ -234,7 +234,8 @@ Typed commands and the surfaces that walk no key (the member, lease, user and ro
 
 ### Connection string
 
-`etcd` has no connection string scheme, no `readTls`, no `paste` and no seed load check: every field of its row in `CONNECTION_STRING` is `null` ([`connection-string.ts`](../../src/lib/db/providers/keyvalue/etcd/connection-string.ts)).
+`etcd` has no connection string scheme, no `readTls` and no `paste`: those fields of its row in `CONNECTION_STRING` are `null` ([`connection-string.ts`](../../src/lib/db/providers/keyvalue/etcd/connection-string.ts)).
+Its `validateSeed` refuses at seed load a seed with `mcp: true` whose `user` is `root` ([section 3.5](#35-machine-access-e12)); a `user` written as a `${...}` reference is left to the proof when the connection opens.
 
 ### Execution UI
 
@@ -650,7 +651,8 @@ Each agent-mode path reads this much:
 | Investigation commands | agent read-only profile | the closed table above, projected to names, counts and sizes |
 | Investigation grounding, plan-mode grounding and the operations workflow | either agent profile | the members, lease ids, user and role names; the key-prefix folder is withheld with the reason and lists nothing |
 | Operations readings | operations profile | health and storage from `Status` and the alarm list, a lost quorum naming how many errors `Status` holds, never their text; table statistics are refused, since each row would name a key prefix |
-| MCP | none | closed: `MCP_EXPOSABLE.etcd` is false |
+| MCP `run_etcd_read` | agent read-only profile | the closed table above, as an investigation command reads it ([section 15.7](#157-mcp-read)) |
+| MCP `inspect_schema` | operations profile | nothing: the key-prefix folder lists no group, so the page is empty |
 
 On a handle of either agent profile the Keys panel walk, a key's, a role's and a lease's source, the table statistics and the editor's command path are refused, and a refusal names what the user may read by how many ranges, never by one.
 An editor handle keeps every read.
@@ -683,7 +685,7 @@ This overlay overrides no Shared member, so every Shared member is the `etcdctl`
 The family offers the investigation workflow, through `run_read_query` with one etcdctl command, and the operations workflow; it offers no data analysis, since its answers carry no stored value, and no query optimization or database assessment, since the server composes no plan and no profile, and no workflow hands an answer to the editor.
 The workflow classifier offers the model only these two.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-No MCP tool runs an etcdctl command: the family declares no MCP facet, and `MCP_STATEMENT_READ.etcd` is false (B136).
+MCP clients run an etcdctl command with `run_etcd_read`, the tool the family declares in its MCP facet ([`src/lib/agent/languages/etcdctl/mcp.ts`](../../src/lib/agent/languages/etcdctl/mcp.ts)), opened by `MCP_STATEMENT_READ.etcd` ([section 15.7](#157-mcp-read)).
 
 ### 15.6 Tests
 
@@ -693,3 +695,36 @@ No MCP tool runs an etcdctl command: the family declares no MCP facet, and `MCP_
 - `tests/unit/db/etcd/agent-provider.test.ts`: the open, the proof before every command, the exact request sent, the object surface and the monitoring reads of either agent profile, and the wording of a failure.
 - `tests/unit/db/etcd/agent-boundary.test.ts`: the captured writes as the boundary test, with the root user as the positive control and the server's state compared before and after.
 - `tests/integration/db/etcd-provider.test.ts`: over the real adapter, `queryReadOnly` refused on an editor handle, and on an operations-profile handle a grounding capture that names no key prefix and no key, the key-prefix folder withheld and the table statistics refused.
+- `tests/integration/mcp/run-etcd-read.test.ts`: `run_etcd_read` through the real route, seed file and handler over the captured answers: the reads, every refusal before anything is acquired, the open's refusals in the tool's sentence, a key outside the ranges answered alike whether it exists or not, and `inspect_schema`'s empty page.
+- `tests/unit/db/etcd/mcp-scope.test.ts`: the raw answers of [`tests/fixtures/etcd/v3.7.2/mcp-scope/`](../../tests/fixtures/etcd/v3.7.2/mcp-scope/), the server's grants and Studio's side each pinned on its own.
+- `tests/live/etcd-mcp-boundary.ts`, run by that directory's `run.sh`: the boundary replayed through MCP against two fresh v3.7.2 servers, every form, refusal, open, data-scope probe and limit below.
+
+### 15.7 MCP read
+
+`run_etcd_read` takes one etcdctl command as `statement` and runs it through `queryReadOnly` under the agent read-only profile, so every rule above holds for it unchanged: the closed table, the proof before every command, and the metadata-only projection.
+The agent's own reader is the tool's fence, so a command outside the table is refused before anything is acquired, in the sentence an agent run reads; with that fence removed the provider's reader refuses it before anything is sent (`tests/live/etcd-mcp-boundary.ts`).
+It takes no `offset` and no `database`: a result past `max_rows` is cut with the row-cap advice, and one past the 1,000-row provider budget is refused, never cut.
+
+The seed's user is proved at the open and before every command, as [section 15.2](#152-the-read-only-proof) describes, and the open's refusal is answered in the tool's sentence before the command is sent.
+Measured on v3.7.2 through MCP: root, a user holding the root role, a READWRITE range, READ on every key, READ on `/registry/`, on one Secret's key and on `/`, a connection that names no user, and a user and password on a server with authentication off are each refused; READ on `/app/`, on one key of `/app/`, and no role at all are proved.
+A seed with `mcp: true` whose `user` is `root` is refused when the seed file loads, [section 3.5](#35-machine-access-e12); every other condition is the server's to answer, so it is checked at the open.
+The proof costs a user holding N roles N + 2 requests per call before the read (`AuthStatus`, `UserGet`, one `RoleGet` per role), read from the server's own gRPC counters.
+
+What a user reading `/app/` reaches, in two layers:
+
+| Item | Server's grants | Studio |
+| --- | --- | --- |
+| a key under `/app/` | answered | existence, revisions, version, lease and value size; never the key or its value |
+| a Kubernetes Secret's key, existing or not, and a key of another prefix | refused `permission denied` alike (`secret-present-reader-app.json`, `secret-absent-reader-app.json`, `outside-reader-app.json`) | one sentence by the error's category, so a hit and a miss read the same |
+| the lease list | refused while any lease holds a key the user may not read (`lease-list-reader-app.json`), else answered | lease ids only |
+| a lease's keys | refused for a lease holding a `/registry/` key (`lease-keys-registry-reader-app.json`) | never sent: `lease timetolive --keys` is outside the table |
+| one lease's time to live, by id | answered, for any lease, since no role governs it | id, existence and seconds; no key it holds |
+| status, alarms and members | answered, since no role governs them (`status-reader-app.json`, `alarm-list-reader-app.json`, `member-list-reader-app.json`) | a member's id, name and how many peer and client URLs it has, never an address; status's member and leader ids and sizes |
+| the count of every key | refused, since no user the proof admits reads every key | the failure sentence |
+
+So the key-range scope is held by the server's own role check, which does not depend on parsing the command, and the proof, which keeps a user that could read Kubernetes' keys from opening at all.
+A `get` of one key fetches that key's value into Studio's process, bounded by the receive cap, to count its bytes; the projection reduces it to `value_bytes`, and no answer, error or log line carries it.
+A cluster that keeps Kubernetes objects under a custom `--etcd-prefix` is not in Studio's list; give the agent's user READ only on the application prefixes it should read.
+
+A cancel or a timeout ends the wait: the provider's gRPC call carries the time left of `timeout_ms` as its signal, so at `timeout_ms` it is cancelled and the client gets the timeout answer (measured: the call ended 501 ms after it began at `timeout_ms` 500, through a proxy that stopped forwarding); a client cancel is answered at once, and the call stays open until that deadline cancels it (measured: 3,002 ms at `timeout_ms` 3,000).
+A token renewal never sends the read again once the signal has aborted, so no retry extends a read past the time left.

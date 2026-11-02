@@ -218,18 +218,29 @@ describe("the read-only recipe, in the provider doc and in docs/SEED_CONNECTIONS
 });
 
 describe("docs/providers/etcd.md section 3.5 states the machine access the product gives and refuses (E12)", () => {
-  test("agent execution reads metadata only, and MCP stays closed for etcd", () => {
+  test("agent execution and MCP read metadata only on etcd", () => {
     expect(AGENT_EXECUTION_ENGINES).toContain("etcd");
-    expect(MCP_EXPOSABLE.etcd).toBe(false);
-    expect(MCP_STATEMENT_READ.etcd).toBe(false);
-    expect(MACHINE).toContain("The provider's read-only query path is agent mode's alone and reads metadata only");
-    expect(MACHINE).toContain("MCP stays closed");
+    expect(MCP_EXPOSABLE.etcd).toBe(true);
+    expect(MCP_STATEMENT_READ.etcd).toBe(true);
+    expect(MACHINE).toContain("The provider's read-only query path is agent mode's and MCP's `run_etcd_read`");
+    expect(MACHINE).toContain("so key names and values reach no MCP client, and `inspect_schema` lists no key prefix");
   });
 
-  test("the MCP refusal quoted is the one the seed schema gives", () => {
+  test("the MCP seed refusal quoted is the one the seed schema gives", () => {
     const parsed = SeedConfigSchema.safeParse({
       version: "1",
-      connections: [{ id: "cluster", name: "Cluster", type: "etcd", host: "etcd.internal", roles: ["*"], mcp: true }],
+      connections: [
+        {
+          id: "cluster",
+          name: "Cluster",
+          type: "etcd",
+          host: "etcd.internal",
+          user: "root",
+          password: "${ETCD_ROOT_PASSWORD}",
+          roles: ["*"],
+          mcp: true,
+        },
+      ],
     });
     const message = parsed.error?.issues[0]?.message;
     expect(message).toBeDefined();
