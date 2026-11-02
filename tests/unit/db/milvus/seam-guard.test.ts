@@ -29,8 +29,9 @@ const GENERATOR = "scripts/generate-milvus-descriptor.mjs";
 const HARNESS = "tests/live/milvus-evidence.ts";
 /** The agent boundary's capture probe, run by hand through its run.sh, which drives grpc-js as the harness does. */
 const AGENT_PROBE = "tests/fixtures/milvus/agent-boundary-probe.ts";
-/** The data scope's capture probe, run by hand through its run.sh. */
+/** The data scope's capture probe and the MCP boundary's live check, each run by hand through its run.sh. */
 const SCOPE_PROBE = "tests/fixtures/milvus/mcp-scope-probe.ts";
+const MCP_LIVE = "tests/live/milvus-mcp-boundary.ts";
 const ADAPTER_TEST = "tests/unit/db/milvus/grpc-client.test.ts";
 const TLS_TEST = "tests/unit/db/milvus/tls-handshake.test.ts";
 const HANDSHAKE_CASES = "tests/helpers/milvus-handshake-cases.ts";
@@ -42,12 +43,13 @@ const SOURCE_FILE = /\.(c|m)?(t|j)sx?$/;
 /** The files this guard holds; the etcd guard skips exactly these. */
 const MILVUS_HELD: readonly RegExp[] = GRPC_SEAM_HOLDINGS.milvus.held;
 
-const GRPC_IMPORTERS = [HARNESS, AGENT_PROBE, SCOPE_PROBE, ADAPTER_TEST, TLS_TEST, HANDSHAKE_CASES];
+const GRPC_IMPORTERS = [HARNESS, AGENT_PROBE, SCOPE_PROBE, MCP_LIVE, ADAPTER_TEST, TLS_TEST, HANDSHAKE_CASES];
 const PROTO_LOADER_IMPORTERS = [
   ADAPTER,
   HARNESS,
   AGENT_PROBE,
   SCOPE_PROBE,
+  MCP_LIVE,
   ADAPTER_TEST,
   HANDSHAKE_CASES,
   DESCRIPTOR,
@@ -56,7 +58,7 @@ const PROTO_LOADER_IMPORTERS = [
 ];
 const DESCRIPTOR_IMPORTERS = [ADAPTER];
 const DESCRIPTOR_READERS = [GENERATOR, DESCRIPTOR_TEST, WIRE_FIELDS_TEST, THIS_FILE];
-const GENERATOR_IMPORTERS = [HARNESS, AGENT_PROBE, SCOPE_PROBE, DESCRIPTOR_TEST];
+const GENERATOR_IMPORTERS = [HARNESS, AGENT_PROBE, SCOPE_PROBE, MCP_LIVE, DESCRIPTOR_TEST];
 /** The modules with no logger and no console output (E19). */
 const NO_LOGGER = [
   `${MILVUS}/client.ts`,

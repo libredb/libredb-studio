@@ -61,3 +61,8 @@ The container is removed when the run ends; `MILVUS_PREFIX` names it and `MILVUS
 - `list-databases-*`, `show-collections-*`, `list-aliases-*`, `describe-database-*`: the listings and the database reads, the connection's own database and another.
 - `describe-collection-<tag>-*`, `statistics-<tag>-*`, `load-state-<tag>-*`, `show-partitions-<tag>-*`, `describe-index-<tag>-*`, `list-aliases-of-<tag>-*`: each collection read naming a granted collection, an ungranted one, a missing name, an alias of a granted and of an ungranted collection, and an alias in another database.
 - `describe-alias-*`, `describe-index-missing-index-*`, `batch-describe-collection-*`: the alias reads, a missing index, and the bulk describe `inspect_schema` reads through.
+
+## The MCP boundary
+
+`3.0.2/mcp-boundary/boundary.json` is what `tests/live/milvus-mcp-boundary.ts` recorded of MCP's `run_milvus_read` and `inspect_schema` on two fresh 3.0.2 servers, one with authorization on and one with it off: each check's name, its outcome and what it saw.
+`3.0.2/mcp-boundary/run.sh` starts the servers, generates root's password for the run, runs the script and removes the containers; the script makes every other user's password and refuses to write a file holding any of them.
