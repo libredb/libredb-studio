@@ -1293,6 +1293,18 @@ A client that closes its request stops the wait only: the statement runs on unti
 Measured on 2026-11-02 by watching `V$SESSION` as SYSTEM: two seconds after a three-second `timeout_ms` the statement's session was gone, and after a cancel 1.5 seconds into a 12-second `timeout_ms` a three-way join of `ALL_OBJECTS` was still active at 11.5 seconds and gone at 14.
 `inspect_schema` opens under the operations profile, which sends no statement, so the check does not run there: it lists what the seed's user may see in the `ALL_*` views, as the editor does.
 
+[`tests/live/oracle-mcp-boundary.ts`](../../tests/live/oracle-mcp-boundary.ts) replays the boundary record above through the tool's handler with its statement fence removed, against the 26ai Free 23.26.3 container `run.sh` names, and passed on 2026-11-02 (79 checks).
+The READ ONLY user holding `CREATE SESSION`, `SELECT` on one table and the two policy catalogs read its table; SYSTEM, a READ WRITE user, a user holding `EXECUTE` on a definer's-rights function, the `CONNECT`, `DBA`, `SELECT_CATALOG_ROLE` or `AUDIT_VIEWER` role, `SELECT ANY TABLE`, `READ ANY TABLE`, `SELECT ANY DICTIONARY`, `SELECT` on `SYS.USER$` or `SELECT` on a sequence were each refused through MCP before the statement was sent, naming the statement that lifts it, and so was the READ ONLY user while a `PUBLIC` database link existed, served again once it was dropped.
+Each of those users that reads beyond its grants was first shown, signed in directly, to read `SYS.DBA_USERS`, `SYS.USER$`, `UNIFIED_AUDIT_TRAIL` or another schema's table.
+The served user was refused by the server with `ORA-00942`, through MCP with the fence removed, `SYS.USER$` qualified, quoted, in lower case and through a `PUBLIC` synonym, `DBA_USERS`, `SYS.LINK$`, `V$SESSION`, `SYS.V_$SQL`, `X$KSPPI`, `SYS.AUD$`, `UNIFIED_AUDIT_TRAIL`, `SYS.DBA_SOURCE`, and another schema's table bare and quoted, and read `ALL_USERS` and `V$VERSION`, which `PUBLIC` may.
+With the fence removed, `INSERT`, `UPDATE`, `DELETE` and `MERGE` on a table it holds those grants on, `CREATE TABLE`, a global temporary table, `SELECT ... FOR UPDATE` with its own `ROWNUM` limit, `LOCK TABLE`, a PL/SQL write after a read, `COMMIT`, `ROLLBACK` and `GRANT` were each refused with `ORA-28194`, a write after `ALTER SESSION SET READ_ONLY = FALSE` with `ORA-65023`, `ALTER SYSTEM` with `ORA-01031`, a second statement with `ORA-03405`, `ALTER SESSION SET EDITION` with `ORA-38814` and `EXPLAIN PLAN` with `ORA-01456`; a `SELECT ... FOR UPDATE` without a limit of its own is paged by the tool, and the parser refuses the `FETCH FIRST` after `FOR UPDATE` with `ORA-03049`.
+The schema owner ran each write on its own objects, and the table rows, the sequence, `open_cursors`, the owner's objects, `PUBLIC`'s grants and the links read back the same before and after.
+A read paged with `offset`; an offset on a query with its own `FETCH FIRST` was refused; a read with its own clause past 1000 rows, one past 1 MiB and one past a two-second `timeout_ms` were each refused, and the next call was served.
+
+```sh
+LIBREDB_LIVE_ORACLE_PORT=15217 LIBREDB_LIVE_ORACLE_PASSWORD=<SYS and SYSTEM password> bun tests/live/oracle-mcp-boundary.ts
+```
+
 #### Agent language pack
 
 Statement-language family: `sql`.
