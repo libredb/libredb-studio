@@ -48,8 +48,12 @@ import {
   SCHEMA_TRIGGER_SOURCE,
   TABLE_TRIGGER_SOURCE,
   VIEW_SOURCE,
+  DECFLOAT_DESCRIBABLE_SQL,
+  VALUE_FREE_CODE_PAGE_SQL,
+  VALUE_FREE_COLUMNS,
   bulkDetailSql,
   bulkTargetSql,
+  zeroRowDescribeSql,
 } from "@/lib/db/providers/sql/db2/catalog";
 import {
   DB2_CONTAINER_LEVELS,
@@ -311,6 +315,57 @@ function columnRows(relation: FakeRelation, withName: boolean): Record<string, u
   }));
 }
 
+/** The ISO names SYSIBM.COLUMNS answers for the fixture's types (capture 16). */
+const ISO_TYPES: Record<string, string> = { VARCHAR: "CHARACTER VARYING" };
+
+/** One relation's columns as the value-free read answers them: SYSIBM.COLUMNS, SQLCOLUMNS and the key. */
+function valueFreeColumnRows(relation: FakeRelation, withName: boolean): Record<string, unknown>[] {
+  return (relation.columns ?? []).map((column) => ({
+    ...(withName ? { OBJECT_NAME_HEX: hex(relation.name) } : {}),
+    COLUMN_NAME_HEX: hex(column.name),
+    DATA_TYPE: ISO_TYPES[column.type] ?? column.type,
+    UDT_NAME_HEX: null,
+    CHARACTER_MAXIMUM_LENGTH: column.type === "VARCHAR" ? column.length : null,
+    NUMERIC_PRECISION: column.type === "DECIMAL" ? column.length : null,
+    NUMERIC_SCALE: column.type === "DECIMAL" ? column.scale : null,
+    DATETIME_PRECISION: null,
+    NULLS: column.nulls ?? "Y",
+    DEFAULT_BYTES: column.default === undefined ? null : hex(column.default),
+    DEFAULT_LENGTH: column.default === undefined ? null : column.default.length,
+    // SQLCOLUMNS leaves a DECFLOAT column out (capture 14).
+    SQL_TYPE_NAME: column.type === "DECFLOAT" ? null : column.type,
+    COLUMN_SIZE: column.type === "DECFLOAT" ? null : (column.length ?? null),
+    KEYSEQ: column.keyseq ?? null,
+  }));
+}
+
+/** Relations a test adds for the value-free reads only, cleared after each test. */
+let extraRelations: FakeRelation[] = [];
+/** The tables of `extraRelations` the session may read, which the describable read answers. */
+let readableExtras = new Set<string>();
+
+function valueFreeRelations(): FakeRelation[] {
+  return [...RELATIONS, ...extraRelations];
+}
+
+/** A zero-row describe of one fixture table: each column's driver metadata, a DECFLOAT's precision included. */
+function describeAnswer(sql: string): Db2QueryResult | undefined {
+  const relation = valueFreeRelations().find(
+    (candidate) => sql === zeroRowDescribeSql(candidate.schema, candidate.name),
+  );
+  if (relation === undefined) return undefined;
+  return {
+    rows: [],
+    rowCount: 0,
+    columns: (relation.columns ?? []).map((column) =>
+      column.type === "DECFLOAT"
+        ? { name: column.name, typeName: `DecFloat(${column.length})`, nullable: true, precision: column.length }
+        : { name: column.name, typeName: "Integer", nullable: column.nulls !== "N" },
+    ),
+    diagnostics: [],
+  };
+}
+
 function foreignKeyRows(schema: string, table: string, withName: boolean): Record<string, unknown>[] {
   return FOREIGN_KEYS.filter((fk) => fk.schema === schema && fk.table === table).map((fk) => ({
     ...(withName ? { OBJECT_NAME_HEX: hex(fk.table) } : {}),
@@ -352,9 +407,9 @@ function bulkTargets(params: unknown[]): FakeRelation[] {
   const [schema, type, third] = params as [string, string, unknown];
   // Bounded, the third value is the bound; unbounded, the detail reads' third value is the schema.
   const bound = typeof third === "number" ? third : undefined;
-  const all = RELATIONS.filter((relation) => relation.schema === schema && relation.type === type).sort((a, b) =>
-    a.name < b.name ? -1 : 1,
-  );
+  const all = valueFreeRelations()
+    .filter((relation) => relation.schema === schema && relation.type === type)
+    .sort((a, b) => (a.name < b.name ? -1 : 1));
   return bound === undefined ? all : all.slice(0, bound);
 }
 
@@ -364,6 +419,23 @@ function catalogAnswer(sql: string, params: unknown[] = []): Db2QueryResult | un
   switch (sql) {
     case CODE_PAGE_SQL:
       return rows([{ CODEPAGE: 1208 }]);
+    case VALUE_FREE_CODE_PAGE_SQL:
+      return rows([{ CHARACTER_SET_NAME: "IBM1208" }]);
+    case VALUE_FREE_COLUMNS.object: {
+      const relation = valueFreeRelations().find(
+        (candidate) => candidate.schema === schema && candidate.name === second,
+      );
+      return rows(relation === undefined ? [] : valueFreeColumnRows(relation, false));
+    }
+    case VALUE_FREE_COLUMNS.bulk(false):
+    case VALUE_FREE_COLUMNS.bulk(true):
+      return rows(bulkTargets(params).flatMap((relation) => valueFreeColumnRows(relation, true)));
+    case DECFLOAT_DESCRIBABLE_SQL:
+      return rows(
+        extraRelations
+          .filter((relation) => relation.schema === schema && readableExtras.has(relation.name))
+          .map((relation) => ({ NAME_HEX: hex(relation.name) })),
+      );
     case CONTAINERS_SQL:
       return rows(SCHEMAS.map((name) => ({ NAME_HEX: hex(name), IS_SESSION_DEFAULT: name === "DB2INST1" ? 1 : 0 })));
     case COUNTS_SQL:
@@ -478,7 +550,7 @@ function catalogAnswer(sql: string, params: unknown[] = []): Db2QueryResult | un
           })),
       );
     default:
-      return undefined;
+      return describeAnswer(sql);
   }
 }
 
@@ -626,6 +698,8 @@ async function connected(
 }
 
 afterEach(() => {
+  extraRelations = [];
+  readableExtras = new Set();
   sent = [];
   built = [];
   closed = 0;
@@ -1717,6 +1791,138 @@ describe("Db2Provider: object surface", () => {
       );
     }
     await expect(provider.describeObjects(["APP"], "nope")).rejects.toThrow('Db2 declares no object kind "nope"');
+  });
+});
+
+describe("Db2Provider: the agent profiles read the columns from value-free sources", () => {
+  const ORDERS_DETAIL = {
+    path: ["APP", "ORDERS"],
+    columns: [
+      { name: "ID", type: "INTEGER", nullable: false, isPrimary: true },
+      { name: "CUSTOMER_ID", type: "INTEGER", nullable: true, isPrimary: false },
+      { name: "TOTAL", type: "DECIMAL(12,2)", nullable: true, isPrimary: false, defaultValue: "0" },
+      { name: "NOTE", type: "VARCHAR(200)", nullable: true, isPrimary: false },
+    ],
+    indexes: [
+      { name: "ORDERS_CUSTOMER_IX", columns: ["CUSTOMER_ID", "TOTAL"], unique: false },
+      { name: "SYSIBM.SQL230101", columns: ["ID"], unique: true },
+    ],
+    foreignKeys: [{ columnName: "CUSTOMER_ID", referencedTable: "CUSTOMERS", referencedColumn: "ID" }],
+  };
+
+  /** Every statement sent that names an object keeping stored values of other tables' columns. */
+  const valueReads = () => sent.filter((statement) => /SYSCAT\.COLUMNS|SYSIBM\.SYSCOLUMNS/.test(statement.sql));
+
+  test.each([
+    ["the operations profile", { readOnly: true, sendsStatements: false }],
+    ["the agent read-only profile", { readOnly: true, sendsStatements: true }],
+  ] as const)("%s describes a table as the editor does, and never reads SYSCAT.COLUMNS", async (_name, execution) => {
+    const provider = await connected({}, execution);
+
+    expect(await provider.describeObject(["APP", "ORDERS"], "table")).toEqual(ORDERS_DETAIL);
+    const bulk = await provider.describeObjects(["APP"], "table");
+    expect(bulk.details.find((detail) => detail.path[1] === "ORDERS")).toEqual(ORDERS_DETAIL);
+    expect(sent.map((statement) => statement.sql)).toContain(VALUE_FREE_CODE_PAGE_SQL);
+    expect(sent.map((statement) => statement.sql)).toContain(VALUE_FREE_COLUMNS.object);
+    expect(valueReads()).toEqual([]);
+  });
+
+  test("an editor handle keeps reading SYSCAT.COLUMNS, and no value-free statement", async () => {
+    const provider = await connected();
+
+    expect(await provider.describeObject(["APP", "ORDERS"], "table")).toEqual(ORDERS_DETAIL);
+    const statements = sent.map((statement) => statement.sql);
+    expect(statements).toContain(CODE_PAGE_SQL);
+    expect(statements).toContain(OBJECT_COLUMNS_SQL);
+    expect(statements).not.toContain(VALUE_FREE_CODE_PAGE_SQL);
+    expect(statements).not.toContain(VALUE_FREE_COLUMNS.object);
+  });
+
+  const decfloat = (name: string, length: number): FakeColumn => ({ name, type: "DECFLOAT", length });
+
+  function addRates(): void {
+    extraRelations = [
+      { schema: "APP", name: "RATES", type: "T", columns: [id("ID", 1), decfloat("R16", 16), decfloat("R34", 34)] },
+      { schema: "APP", name: "SEALED_RATES", type: "T", columns: [id("ID", 1), decfloat("R34", 34)] },
+      { schema: "APP", name: "RATES_VIEW", type: "V", valid: "N", columns: [decfloat("R34", 34)] },
+    ];
+    readableExtras = new Set(["RATES"]);
+  }
+
+  test("a DECFLOAT column of a table the user may read shows the precision a zero-row describe answers", async () => {
+    addRates();
+    const provider = await connected({}, { readOnly: true });
+
+    const detail = await provider.describeObject(["APP", "RATES"], "table");
+
+    expect(detail.columns.map((column) => column.type)).toEqual(["INTEGER", "DECFLOAT(16)", "DECFLOAT(34)"]);
+    expect(sent.filter((statement) => statement.sql === zeroRowDescribeSql("APP", "RATES"))).toHaveLength(1);
+    expect(sent.find((statement) => statement.sql === DECFLOAT_DESCRIBABLE_SQL)?.params).toEqual(["APP"]);
+  });
+
+  test("a table the user may not read is never described, and its DECFLOAT shows no precision", async () => {
+    addRates();
+    const provider = await connected({}, { readOnly: true });
+
+    const detail = await provider.describeObject(["APP", "SEALED_RATES"], "table");
+
+    expect(detail.columns.map((column) => column.type)).toEqual(["INTEGER", "DECFLOAT"]);
+    expect(sent.filter((statement) => statement.sql.startsWith("SELECT * FROM"))).toEqual([]);
+  });
+
+  test("a view is never described, so an invalid one is not revalidated", async () => {
+    addRates();
+    const provider = await connected({}, { readOnly: true });
+
+    const detail = await provider.describeObject(["APP", "RATES_VIEW"], "view");
+
+    expect(detail.columns.map((column) => column.type)).toEqual(["DECFLOAT"]);
+    expect(sent.filter((statement) => statement.sql === DECFLOAT_DESCRIBABLE_SQL)).toEqual([]);
+    expect(sent.filter((statement) => statement.sql.startsWith("SELECT * FROM"))).toEqual([]);
+  });
+
+  test("a table without a DECFLOAT column costs no describe and no privilege read", async () => {
+    addRates();
+    const provider = await connected({}, { readOnly: true });
+
+    await provider.describeObject(["APP", "ORDERS"], "table");
+
+    expect(sent.filter((statement) => statement.sql === DECFLOAT_DESCRIBABLE_SQL)).toEqual([]);
+  });
+
+  test("a bulk read describes each readable table once, and only those", async () => {
+    addRates();
+    const provider = await connected({}, { readOnly: true });
+
+    const batch = await provider.describeObjects(["APP"], "table");
+
+    const types = Object.fromEntries(
+      batch.details.map((detail) => [detail.path[1], detail.columns.map((column) => column.type)]),
+    );
+    expect(types.RATES).toEqual(["INTEGER", "DECFLOAT(16)", "DECFLOAT(34)"]);
+    expect(types.SEALED_RATES).toEqual(["INTEGER", "DECFLOAT"]);
+    expect(types.ORDERS).toEqual(["INTEGER", "INTEGER", "DECIMAL(12,2)", "VARCHAR(200)"]);
+    expect(sent.filter((statement) => statement.sql === DECFLOAT_DESCRIBABLE_SQL)).toHaveLength(1);
+    expect(
+      sent.filter((statement) => statement.sql.startsWith("SELECT * FROM")).map((statement) => statement.sql),
+    ).toEqual([zeroRowDescribeSql("APP", "RATES")]);
+  });
+
+  test("a refused describe is the call's error, never a fallback to another source", async () => {
+    addRates();
+    refused.set(zeroRowDescribeSql("APP", "RATES"), new Error("SQL0551N refused"));
+    const provider = await connected({}, { readOnly: true });
+
+    await expect(provider.describeObject(["APP", "RATES"], "table")).rejects.toThrow("SQL0551N refused");
+    expect(valueReads()).toEqual([]);
+  });
+
+  test("a refused code page read is the call's error, and SYSCAT.COLUMNS is not read instead", async () => {
+    refused.set(VALUE_FREE_CODE_PAGE_SQL, new Error("SQL0551N on SYSIBM.COLUMNS"));
+    const provider = await connected({}, { readOnly: true });
+
+    await expect(provider.listContainers()).rejects.toThrow("SQL0551N on SYSIBM.COLUMNS");
+    expect(valueReads()).toEqual([]);
   });
 });
 

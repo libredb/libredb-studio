@@ -1,0 +1,12 @@
+DROP VIEW APP.LIBREDB_VF_VIEW
+DB20000I  The SQL command completed successfully.
+
+DROP TABLE APP.LIBREDB_VF_TYPES
+DB20000I  The SQL command completed successfully.
+
+DROP TABLE APP.LIBREDB_VF_HIDDEN
+DB20000I  The SQL command completed successfully.
+
+DROP DISTINCT TYPE APP.LIBREDB_VF_MONEY
+DB20000I  The SQL command completed successfully.
+

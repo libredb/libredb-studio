@@ -170,6 +170,9 @@ async function refusedUntilLifted(
 }
 
 const CLEANUP = [
+  "DROP VIEW APP.LIBREDB_AB_HIGHKEYS",
+  "DROP VIEW APP.LIBREDB_AB_BASEKEYS",
+  "DROP ALIAS APP.LIBREDB_AB_KEYALIAS",
   "DROP VIEW APP.LIBREDB_AB_STATS",
   "DROP VIEW APP.LIBREDB_AB_PKG",
   "DROP VIEW APP.LIBREDB_AB_CURRENT",
@@ -637,6 +640,87 @@ try {
     ["REVOKE SELECT ON APP.LIBREDB_AB_BASESTATS FROM USER AGENT_RO"],
     'REVOKE SELECT ON TABLE "APP"."LIBREDB_AB_BASESTATS" FROM USER "AGENT_RO"',
   );
+  // The seven objects that keep HIGH2KEY and LOW2KEY, the second highest and lowest stored value of every column, which
+  // the seed revokes from PUBLIC. Measured first: under the seed the agent user is refused the values, and once SELECT
+  // on SYSCAT.COLUMNS goes back to PUBLIC it reads one of a table it may not read; then a grant on any of the seven,
+  // a view of the owner's over one and an alias of one are each refused by the check until they are gone.
+  {
+    const agentRaw = await raw("agent_ro", AGENT_PASSWORD);
+    const high2key = "SELECT HIGH2KEY FROM SYSCAT.COLUMNS WHERE TABSCHEMA = 'APP' AND TABNAME = 'LIBREDB_AB_SECRET'";
+    let sealed: unknown;
+    try {
+      await agentRaw.query(high2key);
+    } catch (error) {
+      sealed = error;
+    }
+    await setup(["GRANT SELECT ON SYSCAT.COLUMNS TO PUBLIC"]);
+    const values = (await agentRaw.query(high2key)).rows.map((row) =>
+      String((row as Record<string, unknown>).HIGH2KEY),
+    );
+    await setup(["REVOKE SELECT ON SYSCAT.COLUMNS FROM PUBLIC"]);
+    await agentRaw.close();
+    check(
+      sqlcode(sealed) === -551 && values.some((value) => value.includes("owner-")),
+      `the seed refuses the agent user HIGH2KEY, and SELECT on SYSCAT.COLUMNS gives it a stored value of a table it may not read (${values.join(", ")})`,
+    );
+  }
+  for (const [schema, name] of [
+    ["SYSCAT", "COLUMNS"],
+    ["SYSCAT", "SYSCOLUMNS_UNION"],
+    ["SYSCAT", "COLPARTITIONSTATS"],
+    ["SYSIBM", "SYSCOLUMNS"],
+    ["SYSIBM", "SYSCOLPARTITIONSTATS"],
+    ["SYSSTAT", "COLUMNS"],
+    ["SYSSTAT", "COLPARTITIONSTATS"],
+  ]) {
+    await refusedUntilLifted(
+      provider,
+      `SELECT on the column statistics ${schema}.${name}, to PUBLIC`,
+      [`GRANT SELECT ON ${schema}.${name} TO PUBLIC`],
+      [`REVOKE SELECT ON ${schema}.${name} FROM PUBLIC`],
+      `REVOKE SELECT ON TABLE "${schema}"."${name}" FROM PUBLIC`,
+    );
+  }
+  await setup([
+    "CREATE VIEW APP.LIBREDB_AB_HIGHKEYS AS SELECT TABNAME, COLNAME, HIGH2KEY, LOW2KEY FROM SYSCAT.COLUMNS",
+    "CREATE VIEW APP.LIBREDB_AB_BASEKEYS AS SELECT TBNAME, NAME, HIGH2KEY, LOW2KEY FROM SYSIBM.SYSCOLUMNS",
+    "CREATE ALIAS APP.LIBREDB_AB_KEYALIAS FOR SYSSTAT.COLUMNS",
+  ]);
+  {
+    await setup(["GRANT SELECT ON APP.LIBREDB_AB_HIGHKEYS TO USER AGENT_RO"]);
+    const agentRaw = await raw("agent_ro", AGENT_PASSWORD);
+    const values = (
+      await agentRaw.query("SELECT HIGH2KEY FROM APP.LIBREDB_AB_HIGHKEYS WHERE TABNAME = 'LIBREDB_AB_SECRET'")
+    ).rows.map((row) => String((row as Record<string, unknown>).HIGH2KEY));
+    await agentRaw.close();
+    await setup(["REVOKE SELECT ON APP.LIBREDB_AB_HIGHKEYS FROM USER AGENT_RO"]);
+    check(
+      values.some((value) => value.includes("owner-")),
+      "a granted view of the owner's over SYSCAT.COLUMNS gave the agent user a stored value of a table it may not read",
+    );
+  }
+  await refusedUntilLifted(
+    provider,
+    "a view of the owner's over SYSCAT.COLUMNS",
+    ["GRANT SELECT ON APP.LIBREDB_AB_HIGHKEYS TO USER AGENT_RO"],
+    ["REVOKE SELECT ON APP.LIBREDB_AB_HIGHKEYS FROM USER AGENT_RO"],
+    'REVOKE SELECT ON TABLE "APP"."LIBREDB_AB_HIGHKEYS" FROM USER "AGENT_RO"',
+  );
+  await refusedUntilLifted(
+    provider,
+    "a view of the owner's over SYSIBM.SYSCOLUMNS",
+    ["GRANT SELECT ON APP.LIBREDB_AB_BASEKEYS TO USER AGENT_RO"],
+    ["REVOKE SELECT ON APP.LIBREDB_AB_BASEKEYS FROM USER AGENT_RO"],
+    'REVOKE SELECT ON TABLE "APP"."LIBREDB_AB_BASEKEYS" FROM USER "AGENT_RO"',
+  );
+  // A grant on an alias is a grant on the object it names, so the check names that object's revoke.
+  await refusedUntilLifted(
+    provider,
+    "a grant on an alias of SYSSTAT.COLUMNS",
+    ["GRANT SELECT ON APP.LIBREDB_AB_KEYALIAS TO USER AGENT_RO"],
+    ["REVOKE SELECT ON APP.LIBREDB_AB_KEYALIAS FROM USER AGENT_RO"],
+    'REVOKE SELECT ON TABLE "SYSSTAT"."COLUMNS" FROM USER "AGENT_RO"',
+  );
   // IBM's monitor readers read no data and act outside no call by their own catalog rows, and a fresh database grants
   // them to no one. Measured first that a view of the owner's over MON_GET_PKG_CACHE_STMT shows the agent user the
   // owner's statement, its literal included; then each way in is refused until it is gone: that view, a user's grant
@@ -884,6 +968,62 @@ try {
   );
   await editor.disconnect();
 
+  // ---- The object surface, as the agent user, from the value-free sources ------------------------------------------
+  // Both agent profiles read the columns and the code page from what keeps no stored value, since the seed revokes
+  // SYSCAT.COLUMNS: the object tree, inspect_schema and the agent's grounding answer as the agent user.
+  const surfaceAs = await createDatabaseProvider(
+    connection("live-db2-ops-agent", "agent_ro", AGENT_PASSWORD),
+    {},
+    executionContextFor("agent-operations"),
+  );
+  await surfaceAs.connect();
+  for (const [label, handle] of [
+    ["the operations profile", surfaceAs],
+    ["the agent read-only profile", provider],
+  ] as const) {
+    const containers = await handle.listContainers();
+    const counts = await handle.countObjects(["APP"]);
+    const tables = await handle.listObjects(["APP"], "table");
+    const orders = await handle.describeObject(["APP", "ORDERS"], "table");
+    const view = await handle.describeObject(["APP", "ORDER_SUMMARY"], "view");
+    const bulk = await handle.describeObjects(["APP"], "table");
+    check(
+      containers.some((container) => container.name === "APP") &&
+        typeof counts.table?.count === "number" &&
+        tables.some((table) => table.name === "ORDERS") &&
+        JSON.stringify(orders.columns) ===
+          JSON.stringify([
+            { name: "ID", type: "INTEGER", nullable: false, isPrimary: true },
+            { name: "CUSTOMER_ID", type: "INTEGER", nullable: true, isPrimary: false },
+            { name: "TOTAL", type: "DECIMAL(12,2)", nullable: true, isPrimary: false, defaultValue: "0" },
+            { name: "NOTE", type: "VARCHAR(200)", nullable: true, isPrimary: false },
+          ]) &&
+        orders.foreignKeys.length === 1 &&
+        orders.indexes.length > 0 &&
+        view.columns.length === 2 &&
+        bulk.details.some((detail) => detail.path[1] === "ALLTYPES" && detail.columns.length === 25),
+      `${label}: the object surface answers the agent user from the value-free sources (${JSON.stringify(orders.columns)})`,
+    );
+  }
+  // A DECFLOAT column shows its precision only on a table the user may read, by a zero-row describe.
+  const decfloats = async () =>
+    (await surfaceAs.describeObject(["APP", "ALLTYPES"], "table")).columns
+      .filter((column) => column.name.startsWith("C_DECF") || column.name === "C_VBIN" || column.name === "C_CHARBIT")
+      .map((column) => column.type)
+      .join(", ");
+  const sealedTypes = await decfloats();
+  await setup(["GRANT SELECT ON APP.ALLTYPES TO USER AGENT_RO"]);
+  await surfaceAs.disconnect();
+  await surfaceAs.connect();
+  const readableTypes = await decfloats();
+  await setup(["REVOKE SELECT ON APP.ALLTYPES FROM USER AGENT_RO"]);
+  check(
+    sealedTypes === "DECFLOAT, DECFLOAT, CHARACTER(4) FOR BIT DATA, VARBINARY(16)" &&
+      readableTypes === "DECFLOAT(34), DECFLOAT(16), CHARACTER(4) FOR BIT DATA, VARBINARY(16)",
+    `a DECFLOAT column shows its precision only on a table the agent user may read (${sealedTypes} / ${readableTypes})`,
+  );
+  await surfaceAs.disconnect();
+
   // ---- The catalog reads ---------------------------------------------------------------------------------------------
   const kindColumn = {
     columns: "column_name",
@@ -936,7 +1076,7 @@ try {
   await setup(["DROP TABLE LIBREDB_AB_IMPLICIT.T", "DROP SCHEMA LIBREDB_AB_IMPLICIT RESTRICT"]);
 
   // ---- The budgets -----------------------------------------------------------------------------------------------------
-  const rowsOver = await refusalOf(provider, "SELECT COLNAME FROM SYSCAT.COLUMNS", { ...BUDGET, maxResultRows: 3 });
+  const rowsOver = await refusalOf(provider, "SELECT COLUMN_NAME FROM SYSIBM.COLUMNS", { ...BUDGET, maxResultRows: 3 });
   check(
     rowsOver instanceof Error &&
       rowsOver.message.startsWith("Read-only execution exceeded the row budget: 4 rows > 3 allowed"),
@@ -957,7 +1097,7 @@ try {
   }
   await setup(["REVOKE SELECT ON APP.ALLTYPES FROM USER AGENT_RO"]);
   const started = Date.now();
-  const slow = await refusalOf(provider, "SELECT COUNT(*) FROM SYSCAT.COLUMNS A, SYSCAT.COLUMNS B, SYSCAT.COLUMNS C", {
+  const slow = await refusalOf(provider, "SELECT COUNT(*) FROM SYSCAT.TABLES A, SYSCAT.TABLES B, SYSCAT.TABLES C", {
     ...BUDGET,
     statementTimeoutMs: 1_500,
   });
