@@ -280,7 +280,7 @@ No node name and no other principal's name is shown.
 - The plan-mode inventory names each object by its virtual host, a dot and its name, so the stream `orders` reaches the model as `/.orders`; the request language it is given says that `"stream"` takes only the part after `/.`.
 - MCP `inspect_schema` makes 2 GETs per call (`/api/vhosts` and the chosen virtual host's Streams page), plus `connect()`'s 2 on a fresh instance; above 500 streams it sees the Streams folder's 500 names as the whole list, and a stream outside them is reached only by a typed read.
 - MCP matches a named virtual host case-insensitively, so of `Billing` and `billing` a call naming `billing` reads the one listed first.
-- There is no MCP `run_read_query` for RabbitMQ: `MCP_STATEMENT_READ.rabbitmq` is false, and the `rabbitread` language declares no MCP statement tool (B108).
+- MCP clients read a stream with `run_rabbitmq_read`, through the agent read-only profile, read request, closed table and projection an agent read uses, so an MCP answer carries each message's offset and body size only; which message values a model may read is still open (B108) ([§17.6](#176-mcp-read)).
 
 ## 9. What Studio costs the broker
 
@@ -540,6 +540,7 @@ CI runs it in the Functional Smoke job against a fresh 4.3.6 broker; 4.2.9 is ru
 - 2026-10-12, a 50 ms round trip: 10 stored messages read in full, stopped idle after 1,425 ms.
 - 2026-10-12, a vhost of 520 classic queues, 1 quorum queue and 510 streams filled in 5,296 ms; the Streams folder held 500 streams.
 - 2026-10-31, RabbitMQ 4.3.6 and 4.2.9, the agent boundary capture: a read-only user's `basic.get`, acked consume, `queue.purge` and management purge and get each removed messages; the agent's reads answered offsets and body sizes only and left every queue as it was; the 406 backstop held on a classic and a quorum queue declared under a stream's name.
+- 2026-11-02, RabbitMQ 4.3.6, the MCP boundary capture: `run_rabbitmq_read` answered offsets and body sizes only for six starts, refused another virtual host in the same words for a stream that exists and one that does not, and left every queue as it was; the administrator's raw `basic.get` removed one message.
 <!-- live-record:end -->
 
 ### 14.5 The agent boundary capture
@@ -621,7 +622,7 @@ Each agent-mode path reads this much:
 | Investigation reads | agent read-only profile | one stream read, projected to offsets and body sizes |
 | Investigation grounding, plan-mode grounding, the operations workflow and MCP `inspect_schema` | either agent profile | virtual host, stream, queue and exchange names and counts, and a stream's columns `offset` and `body_bytes`; never a message, an argument, a binding or a policy |
 | Operations readings | operations profile | health and the overview, version and alarm state only; the sessions, slow-query, table, index and storage readings answer empty with no GET ([§7](#7-monitoring-and-health)) |
-| MCP `run_read_query` | none | closed: `MCP_STATEMENT_READ.rabbitmq` is false |
+| MCP `run_rabbitmq_read` | agent read-only profile | one stream read, projected to offsets and body sizes, as an investigation read |
 
 On a handle of either agent profile the editor's read and an object's source are refused; an editor handle keeps every read and renders every message cell.
 
@@ -636,7 +637,7 @@ This overlay overrides no Shared member, so every Shared member is the `rabbitre
 The family offers the investigation workflow, through `run_read_query` with one read request, and the operations workflow; it offers no data analysis, since its answers carry no stored value, and no query optimization or database assessment, since the broker composes no plan and no profile, and no workflow hands an answer to the editor.
 The workflow classifier offers the model only these two.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-No MCP tool runs a RabbitMQ read request: the family declares no MCP facet, and `MCP_STATEMENT_READ.rabbitmq` is false (B108).
+MCP clients run a RabbitMQ read request with `run_rabbitmq_read`, the tool the family declares in its MCP facet ([`src/lib/agent/languages/rabbitread/mcp.ts`](../../src/lib/agent/languages/rabbitread/mcp.ts)), and `MCP_STATEMENT_READ.rabbitmq` is true ([§17.6](#176-mcp-read)).
 
 ### 17.5 Tests
 
@@ -644,3 +645,26 @@ No MCP tool runs a RabbitMQ read request: the family declares no MCP facet, and 
 - `tests/unit/db/rabbitmq/agent-metadata-read.test.ts`: the projection, every stop answered or refused, and the wording of a failure.
 - `tests/unit/db/rabbitmq/agent-provider.test.ts`: the profile, the whole AMQP conversation of an admitted read against a fake broker, no marker of a body, header, property or routing key in any answer, the type check and the 406 backstop, every stop refused, the budgets, and the editor's surfaces on either agent profile.
 - `tests/unit/db/rabbitmq/agent-boundary.test.ts`: the captures as the boundary test, with the broker honouring every refused take and purge as the positive control, every queue's message count unchanged by an agent read, and no captured marker in an agent answer.
+- `tests/integration/mcp/run-rabbitmq-read.test.ts`: `run_rabbitmq_read` on the real provider over the management stub and a fake broker, through the real route and seed file: a read answered offsets and body sizes behind the untrusted-content notice with no marker, a cut at `max_rows` naming the next offset, each request the admission refuses refused before anything is acquired, a classic queue at the type check, an editor handle, the other engines' tools, a timeout and a cancel.
+- `tests/unit/db/rabbitmq/mcp-boundary.test.ts`: the MCP capture of §17.6 as the MCP boundary test.
+
+### 17.6 MCP read
+
+MCP's `run_rabbitmq_read` reads through the same path as an agent read: it acquires the connection under the agent read-only profile, reads and admits the request with the same adapter, and calls `queryReadOnly`, so the boundary is the structural closed table of §17.1 and every answer is §17.3's projection ([`docs/MCP.md`](../MCP.md)).
+No seed user is proven read-only, because none can be: a read permission also grants a take and a purge, so the tool serves any user, the administrator included.
+[`tests/fixtures/rabbitmq/4.3.6/mcp-boundary/run.sh`](../../tests/fixtures/rabbitmq/4.3.6/mcp-boundary/run.sh) starts a fresh digest-pinned broker, and [`tests/live/rabbitmq-mcp-boundary.ts`](../../tests/live/rabbitmq-mcp-boundary.ts) drives the tool's own handler with the factory's acquisition and writes `mcp-boundary.json` beside the script, with no password in it.
+
+What an MCP client reads is decided in two layers, measured there as a user tagged `management` with read permission on one stream of `/`, no configure or write permission, and no permission on a second virtual host:
+
+| Item | Stopped by | Measured |
+| --- | --- | --- |
+| A message's body, headers, properties and routing key | layer 2: the metadata-only projection, built on the answer whatever the request said | no marker in any answer (`accepted`, `cut`, `scope`) |
+| A take, publish, purge or declare | layer 2: the read client, which encodes none, and the admission before it | every queue's count unchanged; the administrator's raw `basic.get` removed one (`control`) |
+| A classic or quorum queue | layer 2: the type check before any frame, and the 406 backstop | refused at the type check, and with the type check answered as a stream, by the 406 (`boundary`) |
+| A stream of a virtual host the user has no permission on | layer 1: the broker | refused in the same words whether the stream exists: "This user has no permissions on virtual host ...: grant them to show its queues and exchanges." |
+| A stream of its own virtual host outside its read pattern | layer 1: the broker | refused: "This user may not read stream ...: its read permission pattern on ... does not match the name." |
+| Another virtual host's streams, for the administrator | nothing: the broker lets it read every virtual host | answered offsets and body sizes only (`scope.broadOtherVhost`) |
+
+Within a virtual host the user may use, a stream outside its read pattern and a name that does not exist are refused in different words, so the user learns which names exist there; MCP `inspect_schema` lists those stream names to the same user anyway.
+So opt in a user with read permission on the streams of one virtual host and nothing more: the administrator reads every virtual host's offsets and sizes.
+A cancel ends MCP's wait at once, and the read runs on until it reaches its `limit`, finds no message for 1 s, or meets its deadline, the time left of `timeout_ms`, measured as a cancel answered at 300 ms while a read fed a message every 400 ms settled at its 2,000 ms deadline (`cancel`).

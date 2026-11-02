@@ -8644,19 +8644,19 @@ Found 2026-10-12 while designing the Firestore provider; narrowed 2026-10-31 whe
 
 **Done when:** the owner rules on which document ids, fields and values agent mode may read on Firestore and how they are redacted, the `fsquery` pack offers the workflows that ruling opens, an MCP metadata surface that lists collections and never returns a document id is designed and `MCP_EXPOSABLE.firestore` turns true for it, a per-engine exposure ruling opens MCP statement read for Firestore, the pack declares its MCP facet (`src/lib/agent/languages/fsquery/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same table, projection and read allowance, and `MCP_STATEMENT_READ.firestore` is true, with tests that every MCP answer carries no document id or value and every billed request is charged; cited in `docs/AGENT.md`.
 
-### B108. RabbitMQ's agent reads are metadata only, and it has no MCP statement tool
+### B108. RabbitMQ's agent and MCP reads are metadata only
 
 Agent mode executes RabbitMQ stream reads under the `rabbitread` statement language, one read request of the editor's own shape per call (`docs/providers/rabbitmq.md`, section 17).
 A read permission in RabbitMQ also grants a take and a purge, measured on 4.3.6 and 4.2.9, so no account can be the boundary, and the provider's structural closed table is: a read client with no encoder for a take, publish, purge or declare, the management API's type check refusing a classic or quorum queue before any frame, and the `x-stream-offset` every consume carries, which the broker refuses with 406 on a classic or quorum queue declared under a stream's name after the check.
 A message's body, headers, every property and its routing key count as stored values, so every answer is each message's offset and body size alone (`ProviderCapabilities.metadataOnly`, `src/lib/db/redaction/metadata-only.ts`); the request can filter by no property, header or body and count by no value, a limit past the row budget is refused before it is sent, and a read that stops before its limit for any reason but the stream's end is refused rather than cut.
 On a handle of either agent profile the editor's read and an object's source are refused, and the grounding of the investigation and of plan mode, the operations workflow and MCP `inspect_schema` describe a stream by the agent read's columns, never a message cell.
 So the language offers the investigation and the operations workflow only: data analysis needs stored values, and query optimization and database assessment need a plan and a profile the broker does not compose.
-Its MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) and `MCP_STATEMENT_READ.rabbitmq` is false, so MCP `run_read_query` refuses a RabbitMQ connection, while `MCP_EXPOSABLE.rabbitmq` stays true for the two metadata tools, which carry names and counts only.
-Kept so that message exposure and MCP statement read are decisions of their own rather than side effects of agent mode joining.
+MCP `run_rabbitmq_read`, the `rabbitread` pack's MCP facet (`src/lib/agent/languages/rabbitread/mcp.ts`), runs the same read request under the same table and projection, so an MCP answer carries offsets and body sizes only too.
+Kept so that message exposure is a decision of its own rather than a side effect of agent mode or MCP read joining.
 
-Found 2026-10-12 while designing the RabbitMQ provider; narrowed 2026-10-31 when agent mode joined RabbitMQ.
+Found 2026-10-12 while designing the RabbitMQ provider; narrowed 2026-10-31 when agent mode joined RabbitMQ, and 2026-11-02 when MCP statement read opened on RabbitMQ.
 
-**Done when:** the owner rules on which message values agent mode may read on RabbitMQ and how they are redacted, the `rabbitread` pack offers the workflows that ruling opens, a per-engine exposure ruling opens MCP statement read for RabbitMQ, the pack declares its MCP facet (`src/lib/agent/languages/rabbitread/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same table and projection, and `MCP_STATEMENT_READ.rabbitmq` is true, with tests that every MCP answer carries no message value; cited in `docs/AGENT.md`.
+**Done when:** the owner rules on which message values agent mode and MCP may read on RabbitMQ and how they are redacted, the `rabbitread` pack offers the workflows that ruling opens, and tests show every agent and MCP answer carries no message value the ruling withholds; cited in `docs/AGENT.md`.
 
 ### B110. The answer card counts every inventoried object under the engine's entity noun
 

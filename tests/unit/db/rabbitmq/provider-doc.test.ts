@@ -12,6 +12,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { connectionFieldLabel, DB_UI_CONFIG } from "@/lib/db-ui-config";
+import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import type { CredentialWarning } from "@/lib/db/credential-warnings";
 import {
   AMQP_PORT_REQUIRED,
@@ -180,6 +181,18 @@ describe("statements the provider makes, printed whole", () => {
     expect(DOC).toContain(
       "Studio checks for readable classic or quorum queues only when the broker has the rabbitmq_stream_management plugin; without it, check the read pattern by hand.\nStream reads do not need the plugin.",
     );
+  });
+});
+
+describe("MCP read is open, and the doc says so", () => {
+  test("sections 8 and 17 name run_rabbitmq_read and no closed MCP read", () => {
+    expect(MCP_STATEMENT_READ.rabbitmq).toBe(true);
+    expect(DOC).toContain("- MCP clients read a stream with `run_rabbitmq_read`");
+    expect(rowOf("MCP `run_rabbitmq_read`")).toBe(
+      "| MCP `run_rabbitmq_read` | agent read-only profile | one stream read, projected to offsets and body sizes, as an investigation read |",
+    );
+    expect(DOC).not.toContain("There is no MCP `run_read_query` for RabbitMQ");
+    expect(DOC).not.toContain("`MCP_STATEMENT_READ.rabbitmq` is false");
   });
 });
 
