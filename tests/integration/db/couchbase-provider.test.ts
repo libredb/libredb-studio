@@ -2777,7 +2777,8 @@ describe("CouchbaseProvider agent read-only profile", () => {
    * MCP's `run_read_query` serves Couchbase through the same acquisition and `queryReadOnly` agent mode uses: the
    * connection is taken under `agent-read-only`, whose open checks the user, and every statement is checked again and
    * fenced to one SELECT before it is sent. The MCP fence refuses a write-shaped statement before anything is acquired;
-   * an EXPLAIN passes that fence and is refused by the provider's, after the open and before the statement is sent.
+   * an EXPLAIN, a VALUES and a TABLE text pass that fence and are refused by the provider's, after the open and before
+   * the statement is sent.
    */
   describe("MCP run_read_query on a Couchbase connection", () => {
     const SEED = {
@@ -2838,6 +2839,34 @@ describe("CouchbaseProvider agent read-only profile", () => {
       expect(doc).toContain("`MCP_STATEMENT_READ.couchbase` is true");
       expect(doc).not.toContain("MCP's statement read stays closed on Couchbase");
       expect(doc.replaceAll("`", "")).toContain(`It runs ${readQueryFormsOf(COUCHBASE).statements}:`);
+    });
+
+    test("the provider doc records which statements pass the MCP fence and which the provider refuses after it", () => {
+      const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/couchbase.md"), "utf8");
+
+      expect(doc).toContain(
+        "`run_read_query`'s own fence refuses every other statement before anything is acquired, but for an `EXPLAIN`, a `VALUES` and a `TABLE` text, which pass it and which the provider's fence refuses after the open and before anything is sent.",
+      );
+    });
+
+    test("the provider doc records that ADVISOR's session forms are refused and its one-statement form answers within the role", () => {
+      const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/couchbase.md"), "utf8");
+
+      expect(doc).not.toContain("`CURL()`, `ADVISOR()` and `NEXTVAL`");
+      expect(doc).toContain(
+        "`ADVISOR()`'s session forms (`start`, `get`, `list` and the rest), refused for `query_system_catalog`;",
+      );
+      expect(doc).toContain(
+        "`ADVISOR()` given one statement runs for the user and recommends indexes on a keyspace it holds the role on, while for any other keyspace its answer row holds the server's missing-role message and nothing more.",
+      );
+    });
+
+    test("the provider doc records that the server answers an absent name differently from a refused one", () => {
+      const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/couchbase.md"), "utf8");
+
+      expect(doc).toContain(
+        "The server answers a bucket, scope or collection that does not exist as not found (12003, 12021) and one that exists as a missing role (13014), so the user can learn whether a name exists, but not what it holds.",
+      );
     });
 
     test("reads rows under the agent profile, the user checked at the open and again before the statement", async () => {
@@ -2929,21 +2958,24 @@ describe("CouchbaseProvider agent read-only profile", () => {
       expect(cluster.sent).toEqual([]);
     });
 
-    test("an EXPLAIN passes the MCP fence and is refused by the provider's before the statement is sent", async () => {
-      const result = await call({ sql: "EXPLAIN SELECT d.n FROM `_default` AS d" });
+    test.each([["EXPLAIN SELECT d.n FROM `_default` AS d"], ["VALUES (1)"], ["TABLE `_default`"]])(
+      "%p passes the MCP fence and is refused by the provider's before the statement is sent",
+      async (sql) => {
+        const result = await call({ sql });
 
-      expect(result).toEqual({
-        content: [
-          {
-            type: "text",
-            text: "The statement was refused before it reached the database: The agent read-only execution profile sends one SQL++ statement, a SELECT (a WITH before it is fine), and nothing else; this statement does not begin with SELECT or WITH, so it was not sent. A user holding only query_select may still run UPDATE STATISTICS, BEGIN WORK, PREPARE and EXECUTE, so only a SELECT reaches the server.",
-          },
-        ],
-        isError: true,
-      });
-      expect(acquired).toEqual(["agent-read-only"]);
-      expect(paths(cluster.sent)).toEqual(["GET /whoami", "GET /pools/default/nodeServices", "probe"]);
-    });
+        expect(result).toEqual({
+          content: [
+            {
+              type: "text",
+              text: "The statement was refused before it reached the database: The agent read-only execution profile sends one SQL++ statement, a SELECT (a WITH before it is fine), and nothing else; this statement does not begin with SELECT or WITH, so it was not sent. A user holding only query_select may still run UPDATE STATISTICS, BEGIN WORK, PREPARE and EXECUTE, so only a SELECT reaches the server.",
+            },
+          ],
+          isError: true,
+        });
+        expect(acquired).toEqual(["agent-read-only"]);
+        expect(paths(cluster.sent)).toEqual(["GET /whoami", "GET /pools/default/nodeServices", "probe"]);
+      },
+    );
 
     test("a read past the user's role is answered as the database's refusal", async () => {
       cluster.statement = () => ({

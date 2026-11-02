@@ -21,8 +21,11 @@
  *    dictionary, the cluster's nodes, vitals or bucket settings, in each spelling (backticks, namespace, relative to
  *    the query context, a subquery, a join, `USE KEYS`, mixed case, a comment), passes the MCP fence and is refused by
  *    the server in its own words (13014 naming the missing role, or the keyspace not found for a spelling that names
- *    none); `CURL()`, `ADVISOR()`, `NEXTVAL` and each user-defined function call likewise; the system keyspaces the user may read answer only its own user, its own bucket and the
- *    keyspaces it holds a role on;
+ *    none); `CURL()`, `NEXTVAL`, `ADVISOR()`'s session forms and each user-defined function call likewise; `ADVISOR()`
+ *    given one statement recommends indexes on the user's own keyspace and answers another's with the missing-role
+ *    message in its row; a bucket, scope or collection that does not exist is answered as not found, one that exists as
+ *    a missing role; the system keyspaces the user may read answer only its own user, its own bucket and the keyspaces
+ *    it holds a role on;
  *  - the state: the documents of every bucket and scope, the users, functions, scopes and indexes read the same before
  *    and after; the administrator runs the writes, the positive control;
  *  - the forms, paging and limits: a SELECT and a WITH answer; a read past max_rows names the next offset and that
@@ -289,6 +292,8 @@ const OUT_OF_SCOPE: readonly string[] = [
   "SELECT * FROM system:awr",
   'SELECT CURL("http://127.0.0.1:8091/settings/rbac/users") AS v',
   'SELECT ADVISOR({"action": "start", "duration": "1m"}) AS v',
+  'SELECT ADVISOR({"action": "get"}) AS v',
+  'SELECT ADVISOR({"action": "list"}) AS v',
   `SELECT NEXTVAL FOR ${SCOPE}.${PREFIX}seq AS v`,
 ];
 
@@ -504,6 +509,45 @@ async function dataScope(): Promise<void> {
   );
   const indexes = await rowsOf("SELECT i.`name` FROM system:indexes AS i");
   check(indexes?.length === 0, `scope: system:indexes shows the user no index -> ${indexes?.length}`);
+
+  // ADVISOR() given one statement runs for the user: it recommends indexes on a keyspace the user holds the role on, and
+  // answers any other with the server's missing-role message inside its row.
+  const own = JSON.stringify(await rowsOf('SELECT ADVISOR("SELECT * FROM `_default` WHERE n = 1") AS a'));
+  check(
+    own.includes('"recommended_indexes"') && own.includes(`ON \`default\`:\`${BUCKET}\`.\`_default\`.\`_default\``),
+    `scope: ADVISOR() given one statement recommends indexes on the user's own keyspace -> ${own}`,
+  );
+  const theirs = await rowsOf(`SELECT ADVISOR("SELECT * FROM default:\`${OTHER}\` WHERE n = 1") AS a`);
+  const answer = (theirs?.[0]?.a ?? {}) as { errors?: { error?: string }[] };
+  const theirErrors = answer.errors ?? [];
+  check(
+    theirs?.length === 1 &&
+      Object.keys(answer).join() === "errors" &&
+      theirErrors.length === 1 &&
+      theirErrors[0]?.error ===
+        `User does not have credentials to run SELECT queries on default:${OTHER}. Add role query_select on default:${OTHER} to allow the statement to run.`,
+    `scope: ADVISOR() given another bucket's statement answers the missing-role message and nothing more -> ${JSON.stringify(theirs)}`,
+  );
+
+  // A name that does not exist is answered as not found, one that exists as a missing role.
+  const absent: readonly [string, string][] = [
+    [
+      `SELECT d.* FROM default:\`${PREFIX}nobucket\` AS d`,
+      `Keyspace not found in CB datastore: default:${PREFIX}nobucket (near line 1, column 17) - cause: No bucket named ${PREFIX}nobucket`,
+    ],
+    ["SELECT c.* FROM s9.c9 AS c", `Scope not found in CB datastore default:${BUCKET}.s9 (near line 1, column 17)`],
+    [
+      "SELECT c.* FROM s1.c9 AS c",
+      `Keyspace not found in CB datastore: default:${BUCKET}.s1.c9 (near line 1, column 17)`,
+    ],
+  ];
+  for (const [statement, words] of absent) {
+    const { result } = await mcp(agent, { sql: statement }, RUN_READ_QUERY);
+    check(
+      result.isError === true && lastText(result) === `${ENGINE_PREFIX}${words}`,
+      `scope: a name that does not exist is answered as not found: ${statement} -> ${lastText(result)}`,
+    );
+  }
 }
 
 async function formsAndLimits(): Promise<void> {
@@ -545,11 +589,14 @@ async function formsAndLimits(): Promise<void> {
       own.acquired.join() === "agent-read-only",
     `paging: an offset on a query with its own LIMIT is refused before it is sent -> ${textOf(own.result)}`,
   );
-  const explain = await mcp(agent, { sql: "EXPLAIN SELECT x FROM ARRAY_RANGE(0, 3) AS x" }, RUN_READ_QUERY);
-  check(
-    textOf(explain.result).startsWith(`${NOT_SENT}${FENCE}; this statement does not begin with SELECT or WITH`),
-    `forms: an EXPLAIN passes the MCP fence and the provider refuses it before it is sent -> ${textOf(explain.result)}`,
-  );
+  for (const statement of ["EXPLAIN SELECT x FROM ARRAY_RANGE(0, 3) AS x", "VALUES (1)", "TABLE `_default`"]) {
+    const passed = await mcp(agent, { sql: statement }, RUN_READ_QUERY);
+    check(
+      textOf(passed.result).startsWith(`${NOT_SENT}${FENCE}; this statement does not begin with SELECT or WITH`) &&
+        passed.acquired.join() === "agent-read-only",
+      `forms: ${JSON.stringify(statement)} passes the MCP fence and the provider refuses it before it is sent -> ${textOf(passed.result)}`,
+    );
+  }
 
   const rows = await mcp(agent, { sql: "SELECT RAW x FROM ARRAY_RANGE(0, 2000) AS x LIMIT 1500" }, RUN_READ_QUERY);
   check(
