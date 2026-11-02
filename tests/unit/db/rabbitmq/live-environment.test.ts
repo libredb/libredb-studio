@@ -618,9 +618,9 @@ describe("the CI step", () => {
     expect(run.slice(0, run.indexOf("while")).includes("docker exec")).toBe(false);
   });
 
-  test("the AMQP dial's runtime cases join the Node 26.10.0 step", () => {
+  test("the AMQP dial's runtime cases join the step on the image's Node", () => {
     const node26 = CI.jobs.test.steps.find(
-      (s) => s.name?.includes("on Node 26.10.0") && s.run?.includes("NODE_TRANSPORT_NODES"),
+      (s) => s.name?.includes("on the image's Node") && s.run?.includes("NODE_TRANSPORT_NODES"),
     );
     expect(node26?.run).toContain("tests/unit/db/rabbitmq/dial-runtimes.test.ts");
   });

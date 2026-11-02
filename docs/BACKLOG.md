@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S11 · 8
-- [Drivers and connections](#drivers-and-connections) — D1-D421, U17 · 310
+- [Drivers and connections](#drivers-and-connections) — D1-D421, U17 · 309
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U195 · 181
@@ -3526,13 +3526,13 @@ Found 2026-10-14 in the final review of the Apache Spark provider (#1759).
 ### D353. The Spark gRPC runtime cases never run on the Node major production uses
 
 `tests/unit/db/spark/grpc-runtimes.test.ts` runs its bundled child under `Bun.which("node")`, which in the `Unit & Integration Tests` job is the Node 24 that `.github/workflows/ci.yml` installs.
-The job's Node 26 step runs `tests/unit/db/http/node-transport-runtimes.test.ts`, `tests/unit/db/s3/client-wire.test.ts`, `tests/unit/db/rabbitmq/dial-runtimes.test.ts`, `tests/unit/db/mqtt/dial-runtimes.test.ts` and `tests/unit/db/snowflake/key-runtimes.test.ts`, and not the Spark file, while the `Dockerfile` runner stage is `node:26.11.1-trixie-slim`.
+The job's step on the image's Node, the release the `Dockerfile` runner stage names, runs `tests/unit/db/http/node-transport-runtimes.test.ts`, `tests/unit/db/s3/client-wire.test.ts`, `tests/unit/db/rabbitmq/dial-runtimes.test.ts`, `tests/unit/db/mqtt/dial-runtimes.test.ts` and `tests/unit/db/snowflake/key-runtimes.test.ts`, and not the Spark file.
 A grpc-js or TLS behaviour that differs on Node 26 would reach users with every check green; the Bun parent already holds the stricter IP server-name rule, which narrows the gap.
-Verified 2026-10-14 by reading `ci.yml`, the `Dockerfile` and the test on `main` at 5b77948ee.
+Verified 2026-10-14 by reading `ci.yml`, the `Dockerfile` and the test on `main` at 5b77948ee; re-read 2026-11-02, after that step began reading its Node release from the `Dockerfile`, and the Spark file is still not in it.
 
 Found 2026-10-14 in the final review of the Apache Spark provider (#1759).
 
-**Done when:** the existing Node 26 step's runner command also names `tests/unit/db/spark/grpc-runtimes.test.ts` (no new step), and the CI log of that step shows the Spark runtime cases passing under Node 26.
+**Done when:** the existing step on the image's Node also names `tests/unit/db/spark/grpc-runtimes.test.ts` (no new step), and the CI log of that step shows the Spark runtime cases passing under Node 26.
 
 ### D355. A discarded Spark metadata session is never released, so each server restart leaves one session open until its idle timeout
 
@@ -3580,16 +3580,6 @@ Verified 2026-10-14 by reading the three call sites on `main` at 5b77948ee.
 Found 2026-10-14 in the final review of the Apache Spark provider (#1759).
 
 **Done when:** each stream is pre-checked once (`readIpcColumns` takes the result of the check its caller ran, or one entry point checks and reads), a stream with more than one record batch is still refused before apache-arrow reads it, and a case in `tests/unit/db/spark/arrow.test.ts` counts one `checkIpcStream` pass per stream.
-
-### D359. CI's Node 26 step pins 26.10.0 and says it matches the Dockerfile, which runs 26.11.1
-
-The Node 26 step of the `Unit & Integration Tests` job in `.github/workflows/ci.yml` installs Node 26.10.0, asserts `v26.10.0`, and its comment says production runs on Node 26.10.0, the Dockerfile's runner stage.
-The `Dockerfile`'s builder and runner stages are `node:26.11.1-trixie-slim`, so the transport, S3 client wire, RabbitMQ dial and Snowflake key runtime cases that step runs are measured on a Node release production does not run (checked 2026-10-14 on `main` at 5b77948ee).
-A behaviour change in 26.11.1 that those cases pin would reach users with the step green.
-
-Found 2026-10-14 while filing the Apache Spark provider's follow-ups (#1759); pre-existing.
-
-**Done when:** the Node 26 step installs and asserts the version the `Dockerfile` runner stage names, and a test reads both files and fails when they differ.
 
 ### D360. The RabbitMQ hostile-peer test can fail on a loaded machine while the ignores-close peer still holds its socket
 

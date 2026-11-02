@@ -1,6 +1,6 @@
 /**
  * The MQTT dial's address rule on the runtimes production runs: a Bun child and one Node child per binary that
- * NODE_TRANSPORT_NODES lists (or the node on PATH), so CI's Node 24 step and its Node 26.10.0 step both run it.
+ * NODE_TRANSPORT_NODES lists (or the node on PATH), so CI's Node 24 suite and its step on the image's Node both run it.
  * `egress.test.ts` holds the same rule under Bun with mocked modules; this file holds it on Node too, where a socket
  * treats an error from its lookup differently.
  *
@@ -191,7 +191,7 @@ describe("the MQTT dial's address rule on Bun and every listed Node", () => {
       jobs: { test: { steps: { name?: string; run?: string }[] } };
     };
     const node26 = ci.jobs.test.steps.find(
-      (step) => step.name?.includes("on Node 26.10.0") && step.run?.includes("NODE_TRANSPORT_NODES"),
+      (step) => step.name?.includes("on the image's Node") && step.run?.includes("NODE_TRANSPORT_NODES"),
     );
     expect(node26?.run).toContain("tests/unit/db/mqtt/dial-runtimes.test.ts");
   });
