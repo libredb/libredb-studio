@@ -123,6 +123,28 @@ describe("every request outside the table is refused before anything is sent", (
   });
 
   test.each([
+    "lease keep-alive 694d8147df1dc4c8",
+    "lease keep-alive --once 694d8147df1dc4c8",
+    "lease grant 60",
+    "watch",
+  ])("%s, a command outside the table the parser refuses an argument of, reads as outside the table", (text) => {
+    // The editor's sentence would name a form, such as --once, that the table refuses too.
+    expect(readEtcdAgentStatement(text)).toEqual({
+      ok: false,
+      code: "metadata-only",
+      message: ETCD_AGENT_SENTENCES.metadataOnly,
+    });
+  });
+
+  test("a bad argument of a command inside the table keeps the parser's sentence", () => {
+    const reading = readEtcdAgentStatement("lease timetolive not-a-lease");
+    expect(reading.ok).toBe(false);
+    if (reading.ok) return;
+    expect(reading.code).toBe("request");
+    expect(reading.message).not.toBe(ETCD_AGENT_SENTENCES.metadataOnly);
+  });
+
+  test.each([
     "get /app/config --secretflag",
     "get /app/config --print-value-only",
     "get /app/config --endpoints=http://x:2379",

@@ -637,7 +637,7 @@ The operations profile sends no command of the model's, so it opens with any use
 ### 15.3 What an agent command may be
 
 One etcdctl command, read by the editor's parser.
-A command outside the table, an abbreviated command and a flag the table's reads do not take are refused with agent mode's own sentence, which lists the reads it holds.
+A command outside the table, whatever its arguments, an abbreviated command and a flag the table's reads do not take are refused with agent mode's own sentence, which lists the reads it holds, so no refusal suggests a form of a command the table refuses, such as `lease keep-alive --once`.
 A request the parser cannot read, such as a second command or shell syntax, is refused with the parser's sentence followed by that list.
 A key is 1 to 4,096 bytes and is written as the editor reads one ([section 5.1](#51-the-grammar)).
 The request sent carries the command's own key and the provider's limit and nothing else of the request's: no revision, header or prefix, and only the connection's token, which the provider renews itself.
