@@ -1047,6 +1047,19 @@ function isRefusedCommandReply(error: unknown): boolean {
 }
 
 /**
+ * A server refusal's reason as an agent-mode handle words it. Redis words a missing command `NOPERM User <user> has no
+ * permissions to run the '<command>' command`, which names the ACL user, so a `NOPERM` reaches an agent or an MCP
+ * client as the command it names and the code, never the user; any other error line keeps the server's words.
+ */
+function agentRefusalReason(error: Error): string {
+  if (!error.message.startsWith("NOPERM")) return error.message;
+  const command = /'([^']+)' command/.exec(error.message)?.[1];
+  return command === undefined
+    ? "the connection's ACL user may not access a key or channel it needs (NOPERM)."
+    : `the connection's ACL user does not hold the '${command}' command it needs (NOPERM).`;
+}
+
+/**
  * How a server's reply to a refused credential begins.
  *
  * Measured 2026-10-04 through ioredis 5.11.1. On redis 8.10.2 and valkey 9.1.2 a wrong password,
@@ -1575,10 +1588,8 @@ export class RedisProvider extends BaseDatabaseProvider {
         await client.select(db).catch((error: unknown) => {
           // A SELECT the server did not answer is not a refusal of the database, so it is raised as the client's own.
           if (!isServerErrorReply(error)) throw error;
-          throw new QueryError(
-            `Redis refused database ${db}: ${error instanceof Error ? error.message : String(error)}`,
-            "redis",
-          );
+          const reason = this.agentProfile ? agentRefusalReason(error as Error) : (error as Error).message;
+          throw new QueryError(`Redis refused database ${db}: ${reason}`, "redis");
         });
       }
       return client;
@@ -1988,6 +1999,10 @@ export class RedisProvider extends BaseDatabaseProvider {
     const client = await this.openClient(db);
     try {
       return await read(client);
+    } catch (error) {
+      // On an agent-mode handle a server refusal is worded without the ACL user its words name.
+      if (!this.agentProfile || !isServerErrorReply(error)) throw error;
+      throw new QueryError(`Redis refused the read: ${agentRefusalReason(error as Error)}`, "redis");
     } finally {
       client.disconnect();
     }

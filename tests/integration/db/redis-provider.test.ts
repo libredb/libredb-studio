@@ -375,6 +375,10 @@ let pingFailure: Error | null = null;
 /** When set, `SLOWLOG` is refused with this sentence, as it is for an ACL user without `+slowlog`. */
 let slowlogRefusal: string | null = null;
 
+/** Server error replies to `SCAN` and `SELECT`, as an ACL user without the command is refused each. */
+let scanReplyRefusal: string | null = null;
+let selectRefusal: string | null = null;
+
 /** Keys whose `TYPE` the server refuses, as an ACL user without `+type` is refused. */
 const typeRefusals = new Set<string>();
 
@@ -600,6 +604,7 @@ mock.module("ioredis", () => {
      * redis 8.10.0 refuses `SELECT 99` with on a stock 16-database server.
      */
     async select(db: number) {
+      if (selectRefusal !== null) throw replyError(selectRefusal);
       if (db >= Number(databasesReply[1])) throw replyError("ERR DB index is out of range");
       this._db = db;
       this._state.database = db;
@@ -652,6 +657,7 @@ mock.module("ioredis", () => {
       scanCalls += 1;
       scanArgv.push({ cursor, args });
       if (scanRefusal !== null) throw new Error(scanRefusal);
+      if (scanReplyRefusal !== null) throw replyError(scanReplyRefusal);
       if (scanPages !== null) return scanPage(scanPages, cursor, args);
       if (scanOverflows) return ["42", [...(MOCK_KEYS_BY_DB[this._db] ?? []), ...OVERFLOW_KEYS]];
       return ["0", MOCK_KEYS_BY_DB[this._db] ?? []];
@@ -2697,7 +2703,50 @@ describe("RedisProvider", () => {
       mockCallResults.SLOWLOG = MOCK_SLOWLOG_ENTRIES;
       scanPages = null;
       mockClientList = MOCK_CLIENT_LIST;
+      configFailure = null;
+      scanReplyRefusal = null;
+      selectRefusal = null;
       await agent.disconnect();
+    });
+
+    /** What Redis 8.10.2 refuses a `~* +@read` user each command with, naming the user. */
+    const refusedTo = (command: string) => `NOPERM User agent_reader has no permissions to run the '${command}' command`;
+
+    // The editor handle's refusal shapes are pinned under listContainers (#2163); this pins the agent-mode handle to the same list.
+    test("a user refused CONFIG GET lists the session database alone on an agent-mode handle", async () => {
+      configFailure = replyError(refusedTo("config|get"));
+      const session = new RedisProvider({ ...baseConfig, database: "2" }, {}, OPERATIONS);
+      await session.connect();
+      expect(await session.listContainers()).toEqual([{ path: ["2"], name: "2", level: 0, isSessionDefault: true }]);
+      await session.disconnect();
+    });
+
+    test("a refusal of the object surface on an agent-mode handle names the command and never the user", async () => {
+      scanReplyRefusal = refusedTo("scan");
+      const refused = (await agent.listObjects(["0"], "keyspace").then(
+        () => undefined,
+        (error: unknown) => error,
+      )) as Error;
+      expect(refused).toBeInstanceOf(QueryError);
+      expect(refused.message).toBe(
+        "Redis refused the read: the connection's ACL user does not hold the 'scan' command it needs (NOPERM).",
+      );
+      await provider.connect();
+      await expect(provider.listObjects(["0"], "keyspace")).rejects.toThrow(refusedTo("scan"));
+    });
+
+    test("a SELECT refused on an agent-mode handle names the command and never the user", async () => {
+      selectRefusal = refusedTo("select");
+      const numbered = new RedisProvider({ ...baseConfig, database: "1" }, {}, OPERATIONS);
+      await expect(numbered.connect()).rejects.toThrow(
+        "Redis refused database 1: the connection's ACL user does not hold the 'select' command it needs (NOPERM).",
+      );
+      selectRefusal = "NOPERM No permissions to access a key";
+      await expect(numbered.connect()).rejects.toThrow(
+        "Redis refused database 1: the connection's ACL user may not access a key or channel it needs (NOPERM).",
+      );
+      selectRefusal = "ERR DB index is out of range";
+      await expect(numbered.connect()).rejects.toThrow("Redis refused database 1: ERR DB index is out of range");
     });
 
     test("a slow-log entry carries the command name, the argument count and the timing, never an argument", async () => {
