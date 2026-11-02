@@ -11,9 +11,17 @@ import {
   RABBITMQ_METADATA_ONLY,
   rabbitmqAgentFailure,
   rabbitmqAgentResult,
+  rabbitmqAgentUnreadable,
 } from "@/lib/db/providers/stream/rabbitmq/agent-metadata-read";
 import type { RawMessage, StopReason } from "@/lib/db/providers/stream/rabbitmq/amqp/read-loop";
-import { IDLE_WARNING, NEXT_EMPTY_WARNING, queryError } from "@/lib/db/providers/stream/rabbitmq/errors";
+import {
+  IDLE_WARNING,
+  NEXT_EMPTY_WARNING,
+  ObjectNotFoundError,
+  queryError,
+  VhostAccessError,
+  vhostUnavailableSentence,
+} from "@/lib/db/providers/stream/rabbitmq/errors";
 import { parseReadRequest } from "@/lib/db/providers/stream/rabbitmq/request";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 
@@ -109,15 +117,37 @@ describe("the stops that refuse rather than cut", () => {
 
 describe("the failures", () => {
   test("a timeout before the broker started the read is the time budget's refusal", () => {
-    const worded = rabbitmqAgentFailure(new TimeoutError("waited", "rabbitmq", 4_000), 4_000, "the statement");
+    const worded = rabbitmqAgentFailure(
+      new TimeoutError("waited", "rabbitmq", 4_000),
+      4_000,
+      request(),
+      "the statement",
+    );
     expect(worded).toBeInstanceOf(QueryError);
     expect(worded?.message).toBe("Read-only execution exceeded the time budget: no answer within 4000ms");
     expect(worded?.query).toBe("the statement");
   });
 
   test("errors.ts's own sentences and defects pass on unchanged", () => {
-    expect(rabbitmqAgentFailure(queryError("own sentence"), 4_000, "s")).toBeUndefined();
-    expect(rabbitmqAgentFailure(new TypeError("defect"), 4_000, "s")).toBeUndefined();
+    expect(rabbitmqAgentFailure(queryError("own sentence"), 4_000, request(), "s")).toBeUndefined();
+    expect(rabbitmqAgentFailure(new TypeError("defect"), 4_000, request(), "s")).toBeUndefined();
+  });
+
+  test("a virtual host the user may not use and one or an object that does not exist answer the same words", () => {
+    const named = parseReadRequest(JSON.stringify({ vhost: "tenant-b", stream: "st-other", from: "first", limit: 2 }));
+    const words = rabbitmqAgentUnreadable("tenant-b", "st-other");
+    expect(words).toBe(
+      'Virtual host "tenant-b" does not exist, this user has no permissions on it, or it has no queue, stream or exchange "st-other": name a stream this user may read.',
+    );
+    for (const error of [
+      new VhostAccessError(vhostUnavailableSentence("tenant-b"), "tenant-b"),
+      new ObjectNotFoundError("missing", "tenant-b", "st-other"),
+    ]) {
+      const worded = rabbitmqAgentFailure(error, 4_000, named, "the statement");
+      expect(worded).toBeInstanceOf(QueryError);
+      expect(worded?.message).toBe(words);
+      expect(worded?.query).toBe("the statement");
+    }
   });
 });
 

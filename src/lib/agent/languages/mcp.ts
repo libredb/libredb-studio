@@ -18,6 +18,7 @@ import { KUBECTL_MCP_FACET } from "./kubectl/mcp";
 import { LIBREDBKV_MCP_FACET } from "./libredbkv/mcp";
 import { MONGO_MCP_FACET } from "./mongo/mcp";
 import { QDRANTAPI_MCP_FACET } from "./qdrantapi/mcp";
+import { RABBITREAD_MCP_FACET } from "./rabbitread/mcp";
 import { SQL_MCP_FACET } from "./sql/mcp";
 
 /** What the MCP module hands a facet's description: the served engines' names and the shared result limits. */
@@ -92,8 +93,7 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   etcdctl: null,
   // No MCP statement tool yet: MCP read stays closed on Oxia until a change of its own declares one and opens it.
   oxiacli: null,
-  // No MCP statement tool yet: MCP read stays closed on RabbitMQ until a change of its own declares one and opens it.
-  rabbitread: null,
+  rabbitread: RABBITREAD_MCP_FACET,
   kafkaread: KAFKAREAD_MCP_FACET,
   // No MCP statement tool yet: MCP read stays closed on S3 until a change of its own declares one and opens it.
   s3api: null,

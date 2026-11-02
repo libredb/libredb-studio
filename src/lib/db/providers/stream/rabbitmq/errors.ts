@@ -249,10 +249,30 @@ function vhostAccess(vhost: string): VhostAccessError {
   return new VhostAccessError(vhostUnavailableSentence(vhost), vhost);
 }
 
+/**
+ * A missing vhost or object, over HTTP or AMQP. Its own class, so the agent read can give it the words of a vhost the
+ * user may not use: the broker answers the two differently, which would tell a vhost the user cannot list apart from
+ * one that does not exist.
+ */
+export class ObjectNotFoundError extends QueryError {
+  constructor(
+    message: string,
+    readonly vhost: string,
+    readonly object: string,
+  ) {
+    super(message, RABBITMQ_TYPE);
+    this.name = "ObjectNotFoundError";
+    Object.setPrototypeOf(this, ObjectNotFoundError.prototype);
+    OWN.add(this);
+  }
+}
+
 /** A missing vhost or object, over HTTP or AMQP. */
-function missingObject(vhost: string, name: string): QueryError {
-  return queryError(
+function missingObject(vhost: string, name: string): ObjectNotFoundError {
+  return new ObjectNotFoundError(
     `Virtual host ${quoteName(vhost)} has no queue, stream or exchange ${quoteName(name)}, or the virtual host does not exist: refresh the tree.`,
+    vhost,
+    name,
   );
 }
 

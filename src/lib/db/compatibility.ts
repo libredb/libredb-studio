@@ -560,9 +560,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // is billed to the user's project, and no MCP surface that lists collections but never a document id is designed yet
   // (BACKLOG B107).
   firestore: false,
-  // Offered for the two metadata tools, carrying stream names and the fixed read columns only; `run_read_query` does
-  // not serve it: the provider's read-only query path is agent mode's alone and reads metadata only, and
-  // MCP_STATEMENT_READ keeps MCP read closed on it (BACKLOG B108).
+  // Offered for the two metadata tools, carrying stream names and the fixed read columns only, and for
+  // `run_rabbitmq_read`, which reads through agent mode's metadata-only path: each message's offset and body size,
+  // never a message value (BACKLOG B108).
   rabbitmq: true,
   // Outside this version, as for etcd, Oxia, S3 and MQTT. Agent mode reads values with their
   // engineering units and withholds the server's configuration, role identities and session
@@ -604,7 +604,8 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
  * True for the five SQL engines `run_read_query` served before this record existed, so nothing moved when it landed,
  * for ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Oracle, Db2, Cassandra and Couchbase, each opened to `run_read_query` by a change of its own, for MongoDB, whose command `run_mongo_command` reads, for Kubernetes, whose kubectl line `run_kubectl_read` reads
  * under the agent's machine redaction, for LibreDB, whose command `run_libredb_read` reads on a read-only handle, for
- * Qdrant, whose metadata request `run_qdrant_read` reads, and for Kafka, whose metadata read `run_kafka_read` reads.
+ * Qdrant, whose metadata request `run_qdrant_read` reads, for RabbitMQ, whose stream read request `run_rabbitmq_read`
+ * reads metadata only, and for Kafka, whose metadata read `run_kafka_read` reads.
  * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records
  * above it, and held false wherever `MCP_EXPOSABLE` is false and true only for an engine agent mode executes on by
  * `tests/unit/db/compatibility.test.ts`.
@@ -699,9 +700,11 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // Agent mode executes metadata-only reads on Firestore, and MCP read stays closed on it until a change of its own
   // opens it (BACKLOG B107).
   firestore: false,
-  // Agent mode executes metadata-only stream reads on RabbitMQ, and MCP read stays closed on it until a change of its
-  // own opens it.
-  rabbitmq: false,
+  // Opened on its own: run_rabbitmq_read runs under the boundary agent mode uses, the provider's structural closed
+  // table (a read client that encodes no take, publish, purge or declare, the stream-only type check before any frame
+  // and the `x-stream-offset` 406 backstop), answered metadata only, each message's offset and body size; message values
+  // stay withheld (docs/providers/rabbitmq.md section 17, BACKLOG B108).
+  rabbitmq: true,
   // Agent mode executes reads with engineering units on OPC UA, and MCP read stays closed on it until a change of its
   // own opens it (BACKLOG B162).
   opcua: false,

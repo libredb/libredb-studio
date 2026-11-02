@@ -19,6 +19,7 @@ const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
 const RUN_LIBREDB_READ_ARM = mcpStatementArm("run_libredb_read");
 const RUN_QDRANT_READ_ARM = mcpStatementArm("run_qdrant_read");
 const RUN_KAFKA_READ_ARM = mcpStatementArm("run_kafka_read");
+const RUN_RABBITMQ_READ_ARM = mcpStatementArm("run_rabbitmq_read");
 const ROOT = path.resolve(import.meta.dir, "../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
 const MCP_DOC = read("docs/MCP.md");
@@ -134,6 +135,24 @@ describe("docs/MCP.md", () => {
       "A Kafka seed needs no least-privilege principal and none is proven, since the agent's client can send no write whatever the login may do",
     );
     expect(MCP_DOC).toMatch(/^\| Apache Kafka \| /m);
+  });
+
+  test("carries run_rabbitmq_read's engine sentence, derived from its arm, what it withholds and its cancel row", () => {
+    expect(MCP_DOC).toContain(`Runs on ${RUN_RABBITMQ_READ_ARM.engines}; other engines refuse it.`);
+    expect(MCP_DOC).toContain(
+      "Its answer is the agent's metadata-only projection: each message's offset and body size, and never a message's body, headers, properties or routing key.",
+    );
+    expect(MCP_DOC).toMatch(/^\| RabbitMQ \| Studio stops waiting; /m);
+    const cancelRow = MCP_DOC.split("\n").find((text) => text.startsWith("| RabbitMQ | Studio stops waiting; "));
+    expect(cancelRow).toContain(
+      "until then the read keeps the seed's one read slot, so a later call on that seed waits for it, and one whose `timeout_ms` ends first is answered as the timeout",
+    );
+    expect(MCP_DOC).toContain(
+      "An answer carries no warning text: a read that stops before its `limit` because no message arrived for 1 s answers the messages it read, which is not proof of the stream's end, and a read from `next` answers only messages published after the read starts, and the tool's description says both.",
+    );
+    const line = MCP_DOC.split("\n").find((text) => text.startsWith("- Read-only is the database's own enforcement"));
+    expect(line).toContain("`run_rabbitmq_read`");
+    expect(line).toContain("RabbitMQ by Studio's read client");
   });
 
   test("carries run_libredb_read's engine sentence, derived from its arm, its data scope and its cancel row", () => {

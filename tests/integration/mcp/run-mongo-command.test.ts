@@ -135,6 +135,7 @@ describe("the tool", () => {
         "run_mongo_command",
         "run_libredb_read",
         "run_qdrant_read",
+        "run_rabbitmq_read",
         "run_kafka_read",
       ]);
       const tool = tools.find((candidate) => candidate.name === "run_mongo_command");

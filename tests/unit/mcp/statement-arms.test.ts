@@ -39,11 +39,13 @@ const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
 const RUN_LIBREDB_READ_ARM = mcpStatementArm("run_libredb_read");
 const RUN_QDRANT_READ_ARM = mcpStatementArm("run_qdrant_read");
 const RUN_KAFKA_READ_ARM = mcpStatementArm("run_kafka_read");
+const RUN_RABBITMQ_READ_ARM = mcpStatementArm("run_rabbitmq_read");
 const RunKubectlReadInputSchema = RUN_KUBECTL_READ_ARM.inputSchema;
 const RunReadQueryInputSchema = RUN_READ_QUERY_ARM.inputSchema;
 const RunMongoCommandInputSchema = RUN_MONGO_COMMAND_ARM.inputSchema;
 const RunLibredbReadInputSchema = RUN_LIBREDB_READ_ARM.inputSchema;
 const RunQdrantReadInputSchema = RUN_QDRANT_READ_ARM.inputSchema;
+const RunRabbitmqReadInputSchema = RUN_RABBITMQ_READ_ARM.inputSchema;
 
 /** True only when `A` and `B` are the same union, member for member. */
 type SameUnion<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
@@ -58,12 +60,13 @@ describe("MCP_STATEMENT_ARMS", () => {
     }
   });
 
-  test("every language has its arm: run_read_query, run_kubectl_read, run_mongo_command, run_libredb_read, run_qdrant_read and run_kafka_read", () => {
+  test("every language has its arm: run_read_query, run_kubectl_read, run_mongo_command, run_libredb_read, run_qdrant_read, run_rabbitmq_read and run_kafka_read", () => {
     expect(MCP_STATEMENT_ARMS.sql).toBe(RUN_READ_QUERY_ARM);
     expect(MCP_STATEMENT_ARMS.kubectl).toBe(RUN_KUBECTL_READ_ARM);
     expect(MCP_STATEMENT_ARMS.mongo).toBe(RUN_MONGO_COMMAND_ARM);
     expect(MCP_STATEMENT_ARMS.libredbkv).toBe(RUN_LIBREDB_READ_ARM);
     expect(MCP_STATEMENT_ARMS.qdrantapi).toBe(RUN_QDRANT_READ_ARM);
+    expect(MCP_STATEMENT_ARMS.rabbitread).toBe(RUN_RABBITMQ_READ_ARM);
     expect(MCP_STATEMENT_ARMS.kafkaread).toBe(RUN_KAFKA_READ_ARM);
     expect(ARMS.map((arm) => arm.tool)).toEqual([
       "run_read_query",
@@ -71,6 +74,7 @@ describe("MCP_STATEMENT_ARMS", () => {
       "run_mongo_command",
       "run_libredb_read",
       "run_qdrant_read",
+      "run_rabbitmq_read",
       "run_kafka_read",
     ]);
   });
@@ -90,8 +94,6 @@ describe("MCP_STATEMENT_ARMS", () => {
     expect(mcpStatementToolFor("etcd")).toBeNull();
     expect(MCP_STATEMENT_ARMS.oxiacli).toBeNull();
     expect(mcpStatementToolFor("oxia")).toBeNull();
-    expect(MCP_STATEMENT_ARMS.rabbitread).toBeNull();
-    expect(mcpStatementToolFor("rabbitmq")).toBeNull();
     expect(MCP_STATEMENT_ARMS.s3api).toBeNull();
     expect(mcpStatementToolFor("s3")).toBeNull();
     expect(MCP_STATEMENT_ARMS.fsquery).toBeNull();
@@ -634,11 +636,12 @@ describe("the tool each engine is read with", () => {
     }
   });
 
-  test("MongoDB is read with run_mongo_command, Kubernetes with run_kubectl_read, LibreDB with run_libredb_read, Qdrant with run_qdrant_read, Kafka with run_kafka_read, the SQL engines with run_read_query, the rest with none", () => {
+  test("MongoDB is read with run_mongo_command, Kubernetes with run_kubectl_read, LibreDB with run_libredb_read, Qdrant with run_qdrant_read, RabbitMQ with run_rabbitmq_read, Kafka with run_kafka_read, the SQL engines with run_read_query, the rest with none", () => {
     expect(mcpStatementToolFor("mongodb")).toBe("run_mongo_command");
     expect(mcpStatementToolFor("kubernetes")).toBe("run_kubectl_read");
     expect(mcpStatementToolFor("libredb")).toBe("run_libredb_read");
     expect(mcpStatementToolFor("qdrant")).toBe("run_qdrant_read");
+    expect(mcpStatementToolFor("rabbitmq")).toBe("run_rabbitmq_read");
     expect(mcpStatementToolFor("kafka")).toBe("run_kafka_read");
     for (const type of RUN_READ_QUERY_TYPES) expect(mcpStatementToolFor(type)).toBe("run_read_query");
     expect(mcpStatementToolFor("clickhouse")).toBe("run_read_query");
@@ -663,6 +666,7 @@ describe("the tool each engine is read with", () => {
       "run_mongo_command",
       "run_libredb_read",
       "run_qdrant_read",
+      "run_rabbitmq_read",
       "run_kafka_read",
     ]);
   });
@@ -804,19 +808,111 @@ describe("the libredbkv arm", () => {
   });
 });
 
+describe("the rabbitread arm", () => {
+  const server = languageServer("rabbitread");
+  const read = JSON.stringify({ vhost: "/", stream: "orders", from: "first", limit: 50 });
+
+  test("takes one read request, no offset and no database, and sends it as written", () => {
+    expect(RUN_RABBITMQ_READ_ARM.title).toBe("Run a read-only RabbitMQ stream read");
+    expect(RUN_RABBITMQ_READ_ARM.argument).toBe("statement");
+    expect(RUN_RABBITMQ_READ_ARM.paging).toBe("none");
+    expect(RUN_RABBITMQ_READ_ARM.types).toEqual(["rabbitmq"]);
+    expect(RUN_RABBITMQ_READ_ARM.inputSchema.shape).not.toHaveProperty("offset");
+    expect(RUN_RABBITMQ_READ_ARM.inputSchema.shape).not.toHaveProperty("database");
+    for (const extra of [{ offset: 5 }, { database: "/" }, { sql: "SELECT 1" }]) {
+      expect(RunRabbitmqReadInputSchema.safeParse({ connection_id: "seed:r", statement: read, ...extra }).success).toBe(
+        false,
+      );
+    }
+    const empty = RunRabbitmqReadInputSchema.safeParse({ connection_id: "seed:r", statement: "" });
+    expect(empty.error?.issues.map((issue) => issue.message)).toEqual(["statement cannot be empty"]);
+  });
+
+  test("reads its argument with the agent's canonicalize", () => {
+    expect(RUN_RABBITMQ_READ_ARM.canonicalize(read)).toBe(server.canonicalize(read));
+    expect(RUN_RABBITMQ_READ_ARM.canonicalize({ vhost: "/" })).toBeNull();
+  });
+
+  test.each([
+    ["a key the request does not take", JSON.stringify({ vhost: "/", stream: "orders", headers: { a: "b" } })],
+    ["a limit past 500", JSON.stringify({ vhost: "/", stream: "orders", limit: 501 })],
+    ["text that is no read request", "queue.purge orders"],
+  ])("fences %s with the agent's admission and quotes its sentence", (_what, statement) => {
+    const refusal = server.admit?.(statement);
+    expect(refusal).not.toBeNull();
+    expect(RUN_RABBITMQ_READ_ARM.fence(statement, "rabbitmq")).toBe(
+      `The read request was refused before it reached the broker (${refusal?.code}). ${refusal?.message}`,
+    );
+  });
+
+  test("admits a read", () => {
+    expect(RUN_RABBITMQ_READ_ARM.fence(read, "rabbitmq")).toBeNull();
+    expect(RUN_RABBITMQ_READ_ARM.fence(JSON.stringify({ vhost: "/", stream: "orders" }), "rabbitmq")).toBeNull();
+  });
+
+  test("names no SQL clause or MongoDB stage where more rows exist, and reads on from the next offset", () => {
+    const hint = RUN_RABBITMQ_READ_ARM.moreRows(read, "rabbitmq", { maxRows: 100, shown: 100, cut: "max_rows" });
+    expect(hint).toBe(
+      `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice(read, "100")} To read past the 100 rows returned, start the next read at {"offset": n}, where n is the last offset returned plus one.`,
+    );
+    const bytes = RUN_RABBITMQ_READ_ARM.moreRows(read, "rabbitmq", { maxRows: 100, shown: 40, cut: "result_bytes" });
+    expect(bytes).toBe(
+      'More rows exist than the 32 KiB result limit holds, and 40 of them fitted; this tool does not page with offset. A row is only an offset and a body size and cannot be made smaller, so read on in later reads, from {"offset": n} or a later start, to fit more rows, and to read past the 40 rows returned, start the next read at {"offset": n}, where n is the last offset returned plus one.',
+    );
+    for (const text of [hint, bytes, RUN_RABBITMQ_READ_ARM.rowOverCap]) {
+      expect(text).not.toContain("$skip");
+      expect(text).not.toContain("LIMIT");
+    }
+    expect(RUN_RABBITMQ_READ_ARM.rowOverCap).toBe(
+      "One row of this result is larger than the 32 KiB result limit, though a row holds only an offset and a body size. Run the read again.",
+    );
+  });
+
+  test("answers a row refusal with the read's own row-cap advice", () => {
+    const rows = classifyReadQueryFailure(
+      new Error("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
+      1,
+      2,
+      RUN_RABBITMQ_READ_ARM.tooLarge(read, "rabbitmq"),
+    );
+    expect(rows).toEqual({
+      kind: "too-large",
+      text: `The result has more than 1000 rows, the most this server reads for one call. ${server.rowCapAdvice(read, "1000")}`,
+    });
+  });
+
+  test("describes the request it takes, what it withholds, the refusals and its engine", () => {
+    const description = RUN_RABBITMQ_READ_ARM.description;
+    expect(description.startsWith("Run one read-only read of one RabbitMQ stream")).toBe(true);
+    expect(description).toContain("Runs on RabbitMQ; other engines refuse it.");
+    expect(description).toContain("its offset and its body size, and nothing else");
+    expect(description).toContain("a classic or quorum queue is refused");
+    expect(description).toContain('this tool takes no offset, so read on with "from": {"offset": n}');
+  });
+
+  test("says what an early stop and a read from next answer, since an MCP answer carries no warning text", () => {
+    const description = RUN_RABBITMQ_READ_ARM.description;
+    expect(description).toContain(
+      'A read that stops before its limit because no message arrived for 1 s answers the messages it read, and that stop is not proof of the stream\'s end. "next" answers only messages published after the read starts, so a read from "next" that nothing is published to during the read answers no rows.',
+    );
+  });
+});
+
 /**
  * An engine that holds no object inspect_schema lists is refused there by name, rather than answered an empty page,
  * and the refusal names its statement tool. The arm declares it for its language, and every engine it serves is held
  * to its provider's own declaration: no relation kind where the arm says none, at least one where it does not.
  */
 describe("the arms whose engines hold no table", () => {
-  test("kubectl declares it, SQL, MongoDB, libredbkv, Qdrant and Kafka do not", () => {
+  test("kubectl declares it, SQL, MongoDB, libredbkv, Qdrant, rabbitread and Kafka do not", () => {
     expect(RUN_KUBECTL_READ_ARM.holdsNoTables).toBe(true);
     expect(RUN_READ_QUERY_ARM.holdsNoTables).toBe(false);
     expect(RUN_MONGO_COMMAND_ARM.holdsNoTables).toBe(false);
     // A LibreDB table, collection and keyspace are relations, so inspect_schema lists them.
     expect(RUN_LIBREDB_READ_ARM.holdsNoTables).toBe(false);
     expect(RUN_QDRANT_READ_ARM.holdsNoTables).toBe(false);
+    // A RabbitMQ stream is a relation, so inspect_schema lists the streams and their agent columns.
+    expect(RUN_RABBITMQ_READ_ARM.holdsNoTables).toBe(false);
     expect(RUN_KAFKA_READ_ARM.holdsNoTables).toBe(false);
   });
 
@@ -842,5 +938,6 @@ describe("the arms whose engines hold no table", () => {
     expect(mcpTablelessReadTool("postgres")).toBeNull();
     expect(mcpTablelessReadTool("redis")).toBeNull();
     expect(mcpTablelessReadTool("libredb")).toBeNull();
+    expect(mcpTablelessReadTool("rabbitmq")).toBeNull();
   });
 });

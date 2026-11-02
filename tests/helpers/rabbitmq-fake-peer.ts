@@ -807,7 +807,7 @@ export const HOSTILE_PEERS: readonly HostilePeer[] = [
   {
     name: "consume-404",
     steps: () => [...ready().slice(0, -1), { send: serverFrames.channelClose(404, "NOT_FOUND - no queue", 60, 20) }],
-    expect: ["error:QueryError"],
+    expect: ["error:ObjectNotFoundError"],
   },
   {
     name: "good",
