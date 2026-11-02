@@ -816,6 +816,10 @@ describe("the Redis arm", () => {
     for (const word of ["DBSIZE", "MEMORY USAGE", "SCAN", "KEYS", "INFO", "never repeats the key"]) {
       expect(description).toContain(word);
     }
+    // The data-scope promise: what a call reads is bounded by the ACL user's key patterns, enforced by the server.
+    expect(description).toContain(
+      "The connection's ACL user is proved read-only by the server before every command, and a key outside that user's key patterns is refused by the server.",
+    );
   });
 });
 
