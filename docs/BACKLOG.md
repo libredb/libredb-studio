@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S11 · 8
-- [Drivers and connections](#drivers-and-connections) — D1-D422, U17 · 310
+- [Drivers and connections](#drivers-and-connections) — D1-D423, U17 · 311
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U196 · 182
@@ -2094,10 +2094,7 @@ Found 2026-10-03 while building the Milvus console (vector-family spec 5.4, R33 
 
 ### D160. The Db2 compose service reports healthy without its object fixture
 
-`docker/db2-init/01-object-fixture.sh` used to print "db2-init: fixture already loaded" on the first start of a fresh volume while `APP` was empty, because it read any answer of its count query other than `0` as a loaded fixture, and the count, run in a pipeline, answered `SQL1024N A database connection does not exist` every time (a db2 command in a pipeline does not share the connection the shell made).
-It now reads the count through a file, loads the fixture on `0`, skips it on `1`, and exits non-zero with the server's answer on stderr on anything else (`tests/unit/docker-db2-object-fixture.test.ts`).
-Measured 2026-11-02 on 12.1.0.0: a fresh container loaded the fixture (11 tables in `APP` and `REPORTING`), a second run of the script on that database skipped it, and a run against a database name that does not exist exited 1 with `SQL1013N` on stderr.
-The service's healthcheck still reads only `db2gcf -s`, so a start whose fixture check failed reports the service healthy, and the failure is visible only in the container log.
+The service's healthcheck reads only `db2gcf -s`, so a start on which `docker/db2-init/01-object-fixture.sh` failed, because its check of `APP.ORDERS` answered neither 0 nor 1 or because the load ended with an error, still reports the service healthy, and the failure shows only in the container log.
 
 Found 2026-10-03 by a browser pass over the Db2 object browser.
 
@@ -4243,14 +4240,23 @@ Found 2026-11-01 while fixing the MQTT read's window durations.
 ### D422. db2-node decodes fixed-length CODEUNITS32 strings as fixed-width
 
 On Db2 12.1.0.0, `db2-node` 1.0.25 (the pin) and 1.0.27 decode a `CHAR(n CODEUNITS32)` or `GRAPHIC(n CODEUNITS32)` column with the fixed width its descriptor declares, while the server sends a 2-byte length before each value.
-A query that selects one fails with "query ended with undecoded row data", or returns wrong values and fewer rows with no error.
-Measured 2026-11-02 through 1.0.25: reading one non-NULL row of a `CHAR(5 CODEUNITS32)` or `GRAPHIC(5 CODEUNITS32)` column failed with that error, and `GRAPHIC(10 CODEUNITS32)` beside a `NOT NULL` `INTEGER` over 3 rows answered 2 rows with shifted values; `VARCHAR`, `VARGRAPHIC` and `CODEUNITS16` `GRAPHIC` columns read exactly.
+A query that selects one either fails with a protocol error ("query ended with undecoded row data" or "Non-null fetch SQLDIAGGRP is not supported") or returns wrong values without an error, sometimes with fewer rows.
+Measured 2026-11-02 through 1.0.25: reading one non-NULL row of a `CHAR(5 CODEUNITS32)` or `GRAPHIC(5 CODEUNITS32)` column failed with "query ended with undecoded row data", and every row of the `CHAR(5 CODEUNITS32)` table with "Non-null fetch SQLDIAGGRP is not supported"; `GRAPHIC(1 CODEUNITS32)` answered every row with no error and `\u0001x` where `'x'` was inserted, and `GRAPHIC(10 CODEUNITS32)` beside a `NOT NULL` `INTEGER` over 3 rows answered 2 rows with shifted values; `VARCHAR`, `VARGRAPHIC` and `CODEUNITS16` `GRAPHIC` columns read exactly.
 Studio cannot work around it without parsing the wire format itself; section 4 of `docs/providers/db2.md` states it.
 Reported upstream as [gurungabit/db2-node#42](https://github.com/gurungabit/db2-node/issues/42).
 
 Found 2026-11-02 while verifying the Db2 agent and MCP read paths.
 
 **Done when:** Studio's pinned `db2-node` decodes fixed-length `CHAR(n CODEUNITS32)` and `GRAPHIC(n CODEUNITS32)` columns, with a check in `tests/live/db2-agent-boundary.ts` or `tests/live/db2-live-check.ts` that selects one of each against Db2 12.1.0.0 and compares every row and value.
+
+### D423. The Db2 compose service does not come back after a stop and a start
+
+A Db2 12.1.0.0 container started the way `database-compose.yml` starts the `db2` service (same environment, capabilities and `/var/custom` mounts, no volume for `/database`) set up its database and loaded the fixture, but after `docker stop` and `docker start` its entrypoint ran "Restoring global registry file" and "Creating instance" again, logged `SQL20427N` with `CIE0774E The DB2 Text Search configuration could not be found`, and `db2icrt` failed with `DBI1264E`, so the container exited.
+The service declares `restart: unless-stopped`, so a host reboot or a `docker compose restart` would take this path; it was measured once, on 12.1.0.0 only, and the cause is not known.
+
+Found 2026-11-02 while verifying the fix for D160.
+
+**Done when:** a stop and a start of the `db2` service, measured on 12.1.0.0 and 11.5.9.0, bring the database back with its fixture, or the compose file states why the service cannot be restarted and how to recreate it.
 
 ## Value interpolation
 

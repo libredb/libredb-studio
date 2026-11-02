@@ -42,6 +42,7 @@ const STUB_DB2 = [
   "  -x)",
   '    if [ -p /dev/stdout ]; then echo "SQL1024N  A database connection does not exist.  SQLSTATE=08003"; exit 4; fi',
   '    printf "%s\\n" "$STUB_ANSWER"; exit "$STUB_ANSWER_RC" ;;',
+  '  -td@) exit "$STUB_LOAD_RC" ;;',
   "  *) exit 0 ;;",
   "esac",
   "",
@@ -54,7 +55,7 @@ describeIf(CANNOT_RUN, "docker/db2-init/01-object-fixture.sh", () => {
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
   });
 
-  function run(stub: { answer?: string; answerRc?: number; connect?: "fail" }) {
+  function run(stub: { answer?: string; answerRc?: number; connect?: "fail"; loadRc?: number }) {
     const root = mkdtempSync(join(tmpdir(), "libredb-db2-fixture-"));
     roots.push(root);
     const bin = join(root, "bin");
@@ -78,6 +79,7 @@ describeIf(CANNOT_RUN, "docker/db2-init/01-object-fixture.sh", () => {
         STUB_ANSWER: stub.answer ?? "",
         STUB_ANSWER_RC: String(stub.answerRc ?? 0),
         STUB_CONNECT: stub.connect ?? "",
+        STUB_LOAD_RC: String(stub.loadRc ?? 0),
       },
       stdout: "pipe",
       stderr: "pipe",
@@ -97,6 +99,14 @@ describeIf(CANNOT_RUN, "docker/db2-init/01-object-fixture.sh", () => {
     expect(result.loaded).toBe(true);
     expect(result.terminated).toBe(true);
     expect(result.exitCode).toBe(0);
+  });
+
+  test("fails loudly when the fixture load answers an error", () => {
+    const result = run({ answer: "          0", loadRc: 4 });
+    expect(result.loaded).toBe(true);
+    expect(result.stderr).toContain("db2-init: the fixture load failed");
+    expect(result.terminated).toBe(true);
+    expect(result.exitCode).not.toBe(0);
   });
 
   test("skips the fixture when the count answers 1", () => {

@@ -177,7 +177,8 @@ The provider declares CLOB, DBCLOB and BLOB in `inlineEditRefusedColumns`, so th
 The declared length does not reach a result, a `CLOB(1M)` column arrives described as `VarChar(32777)` and a `CLOB(1K)` as `CLOB`, so every such column is refused and named, a short one included.
 Reading them is exact since 1.0.25: `SELECT *` over `APP.ALLTYPES` answers all 25 columns and 3 rows, each value equal to the column read on its own (K4, fixed).
 
-db2-node 1.0.25, the pinned version, and 1.0.27, the latest release, decode a fixed-length `CHAR(n CODEUNITS32)` or `GRAPHIC(n CODEUNITS32)` column as fixed-width although Db2 12.1 sends its values length-prefixed, so a query that selects one either fails with "query ended with undecoded row data" or returns wrong values and fewer rows without an error, while `VARCHAR`, `VARGRAPHIC` and `CODEUNITS16` `GRAPHIC` columns are not affected ([gurungabit/db2-node#42](https://github.com/gurungabit/db2-node/issues/42)).
+db2-node 1.0.25, the pinned version, and 1.0.27, the latest release, decode a fixed-length `CHAR(n CODEUNITS32)` or `GRAPHIC(n CODEUNITS32)` column as fixed-width although Db2 12.1 sends its values length-prefixed, so a query that selects one either fails with a protocol error ("query ended with undecoded row data" or "Non-null fetch SQLDIAGGRP is not supported") or returns wrong values without an error, sometimes with fewer rows, while `VARCHAR`, `VARGRAPHIC` and `CODEUNITS16` `GRAPHIC` columns are not affected ([gurungabit/db2-node#42](https://github.com/gurungabit/db2-node/issues/42)).
+It is not probed by `tests/live/db2-known-issues.ts` and was measured on 12.1.0.0 only.
 D422 in `docs/BACKLOG.md` tracks it.
 
 ### Fixed in 1.0.25
