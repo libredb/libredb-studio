@@ -8562,10 +8562,13 @@ No MCP tool runs InfluxQL: the `influxql` language pack declares no MCP facet (`
 The agent half closed on 2026-10-30: the `influxdb` provider implements `queryReadOnly` for a principal the server proves read-only before every statement, under the agent's InfluxQL statement reader (`docs/providers/influxdb.md`, section Agent mode).
 Its agent credential takes the default form, `agentUser` and `agentPassword` together, which is a 1.x user; a 2.x token beside the connection's own credential has no form, because one provider class serves both lines and declares its form before it knows the line, so a 2.x connection gives the agent a read-only token as its own credential.
 `influxdb3` left this entry on 2026-10-29: agent mode executes its DataFusion SQL under the 3.12 Core planner's write refusals, and on 2026-11-01 MCP's `run_read_query` opened on it under the same boundary (`docs/providers/influxdb3.md` section 3.5), with `MCP_STATEMENT_READ.influxdb` left false.
+MCP read on `influxdb` waits on one more condition, measured on 1.13.1 on 2026-11-02: a catalog read's database scope rests on the agent's statement reader alone, which refuses a `SHOW` naming any database (`docs/providers/influxdb.md` section 15.3).
+No layer that reads the answer can hold that scope, since a `SHOW` answer names no database and has the shape of the same read on the connection's own one, and MCP read opens only where a layer independent of parsing the request holds the scope.
+The answer-side refusal of statement text (`SHOW QUERIES`, `SHOW CONTINUOUS QUERIES`) is already in place for agent mode.
 
 Found 2026-10-04 while designing the InfluxDB provider (ruling R10).
 
-**Done when:** MCP serves `influxdb`'s InfluxQL through its own MCP facet in its language pack (`src/lib/agent/languages/influxql/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), under the same principal proof, with `MCP_STATEMENT_READ.influxdb` opened by the owner, and a 2.x agent token is accepted beside the connection's own credential, with tests.
+**Done when:** MCP serves `influxdb`'s InfluxQL through its own MCP facet in its language pack (`src/lib/agent/languages/influxql/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), under the same principal proof, with the catalog reads' database scope held by a layer independent of the reader and `MCP_STATEMENT_READ.influxdb` opened by the owner, and a 2.x agent token is accepted beside the connection's own credential, with tests.
 
 ### B100. Oxia's agent reads are metadata only, and it has no MCP statement tool
 

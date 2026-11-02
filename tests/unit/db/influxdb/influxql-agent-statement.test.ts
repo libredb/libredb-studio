@@ -13,6 +13,7 @@ import {
 } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-statement";
 import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
 import { loadInfluxCapture } from "../../../helpers/influxdb-fixtures";
+import { INFLUXQL_QUERY_TEXT_SPELLINGS } from "../../../helpers/influxql-query-text-spellings";
 
 describe("readInfluxqlAgentStatement", () => {
   test.each([
@@ -90,6 +91,60 @@ describe("readInfluxqlAgentStatement", () => {
     for (const text of ["SHOW QUERIES", "SHOW CONTINUOUS QUERIES"]) {
       expect(readInfluxqlAgentStatement(text).ok).toBe(false);
     }
+  });
+
+  test.each(INFLUXQL_QUERY_TEXT_SPELLINGS.map((text) => [text]))(
+    "refuses %p, a spelling of a read of statement text, before anything is sent",
+    (text) => {
+      expect(readInfluxqlAgentStatement(text).ok).toBe(false);
+    },
+  );
+
+  test.each([
+    'SHOW MEASUREMENTS ON "other"',
+    'SHOW MEASUREMENTS ON "home"',
+    "show measurements on other",
+    "SHOW RETENTION POLICIES ON other",
+    'SHOW MEASUREMENT EXACT CARDINALITY ON "other"',
+    'SHOW MEASUREMENT CARDINALITY ON "other"',
+    'SHOW SERIES ON "other"',
+    'SHOW SERIES EXACT CARDINALITY ON "other"',
+    'SHOW TAG KEYS ON "other" FROM "m"',
+    'SHOW TAG KEY CARDINALITY ON "other"',
+    'SHOW TAG KEY EXACT CARDINALITY ON "other"',
+    'SHOW TAG VALUES ON "other" WITH KEY = "tenant"',
+    'SHOW TAG VALUES CARDINALITY ON "other" WITH KEY = "tenant"',
+    'SHOW TAG VALUES EXACT CARDINALITY ON "other" WITH KEY = "tenant"',
+    'SHOW FIELD KEYS ON "other"',
+    'SHOW FIELD KEY CARDINALITY ON "other"',
+    'SHOW FIELD KEY EXACT CARDINALITY ON "other"',
+    "SHOW MEASUREMENTS ON /other/",
+    'SHOW SERIES FROM "other"."autogen"."m"',
+    'SHOW SERIES FROM "other".."m"',
+    "SHOW SERIES FROM other..m",
+    'SHOW SERIES FROM "home"."autogen"."home"',
+    'SHOW FIELD KEYS FROM "other"."autogen"."m"',
+    'SHOW TAG KEYS FROM "other".."m"',
+    'SHOW TAG VALUES FROM "other"."autogen"."m" WITH KEY = "tenant"',
+    'SHOW SERIES FROM "home", "other".."m"',
+    'SHOW SERIES FROM "other"../m/',
+    'SHOW SERIES EXACT CARDINALITY FROM "other"."autogen"."m"',
+  ])("refuses %p: an agent SHOW reads the connection's own database and names none", (text) => {
+    expect(readInfluxqlAgentStatement(text)).toEqual({
+      ok: false,
+      code: "show-database",
+      message: INFLUXQL_AGENT_SENTENCES.showDatabase,
+    });
+  });
+
+  test.each([
+    'SHOW SERIES FROM "autogen"."home"',
+    'SHOW FIELD KEYS FROM "home"',
+    "SHOW SERIES FROM /ho/",
+    'SHOW TAG VALUES FROM "autogen"./ho/ WITH KEY = "room"',
+    "SHOW SERIES WHERE room = 'on.the.wall'",
+  ])("admits %p: no database is named", (text) => {
+    expect(readInfluxqlAgentStatement(text)).toEqual({ ok: true, statement: "SHOW" });
   });
 
   test.each([

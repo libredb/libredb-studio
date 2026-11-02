@@ -2,8 +2,8 @@
  * The agent's reader of one InfluxQL statement: what the agent read-only profile sends, read before anything is sent.
  *
  * Pure, and safe in a browser bundle: it reads only the lexer and the read policy. It is the read policy
- * (`evaluateInfluxql`, the editor's own gate) and three refusals on top of it, each from the server's answers in
- * tests/fixtures/influxdb/1.13.1/agent-boundary/ and 2.9.1/agent-boundary/:
+ * (`evaluateInfluxql`, the editor's own gate) and four refusals on top of it, the captured ones from the server's
+ * answers in tests/fixtures/influxdb/1.13.1/agent-boundary/ and 2.9.1/agent-boundary/:
  *
  * - **No carriage return and no comment.** Both servers end a `--` comment at a lone `\r` and read what follows as a
  *   second statement, read a `\r` between two words as a space, and run a statement after a `/* *\/` comment
@@ -16,6 +16,11 @@
  *   `SUBSCRIPTIONS` read the server's administration and are answered to an administrator only. So the word after
  *   `SHOW` is one of `INFLUXQL_AGENT_SHOW_KINDS`, which read the databases, retention policies, measurements, series,
  *   tags and fields the principal may read, and their cardinality.
+ * - **A SHOW of the connection's own database.** A SHOW names no database: no `ON` clause and no source of three
+ *   segments (`"db"."rp"."m"`, `"db".."m"`), whether it names another database or the connection's own. The
+ *   connection's database is sent as `db` with every statement, so an agent SHOW reads it and nothing else, and the
+ *   catalog an agent is shown never rests on the server scoping a SHOW by its grants. A SELECT still names any
+ *   database the principal holds READ on, which the server refuses when it does not.
  * - **EXPLAIN of a SELECT only.** `EXPLAIN [ANALYZE] [VERBOSE]` before a `SELECT`; the policy also lets an `EXPLAIN`
  *   stand before a `SHOW`, which no agent read needs.
  *
@@ -25,7 +30,13 @@
 import { type InfluxqlToken, lexInfluxql } from "./influxql-lexer";
 import { evaluateInfluxql, type InfluxqlStatementKind } from "./influxql-policy";
 
-export type InfluxqlAgentRefusalCode = "policy" | "carriage-return" | "comment" | "show-kind" | "explain-target";
+export type InfluxqlAgentRefusalCode =
+  | "policy"
+  | "carriage-return"
+  | "comment"
+  | "show-kind"
+  | "show-database"
+  | "explain-target";
 
 export type InfluxqlAgentReading =
   | { readonly ok: true; readonly statement: InfluxqlStatementKind }
@@ -49,6 +60,8 @@ export const INFLUXQL_AGENT_SENTENCES = {
   /** `word` is a folded keyword, "a quoted name", "a name", "a symbol" or "nothing", never user text. */
   showKind: (word: string): string =>
     `An agent read does not run SHOW ${word}: what it reads is the server's users, grants, running or continuous queries, or its internals. The SHOW reads an agent runs are DATABASES, RETENTION POLICIES, MEASUREMENTS, SERIES, TAG KEYS, TAG VALUES, FIELD KEYS and their CARDINALITY forms. Nothing was sent.`,
+  showDatabase:
+    'An agent SHOW reads the connection\'s own database and names none: drop the ON clause, and name a measurement by itself or as "rp"."measurement". Nothing was sent.',
   /** `word` is a folded keyword, "a quoted name", "a name", "a symbol" or "nothing", never user text. */
   explainTarget: (word: string): string =>
     `An agent EXPLAIN explains a SELECT only, and this one is followed by ${word}. Nothing was sent.`,
@@ -85,6 +98,10 @@ export function readInfluxqlAgentStatement(text: string): InfluxqlAgentReading {
     const kind = significant[1];
     if (kind?.kind !== "keyword" || !INFLUXQL_AGENT_SHOW_KINDS.has(kind.value as string)) {
       return refuse("show-kind", INFLUXQL_AGENT_SENTENCES.showKind(wordOf(kind)));
+    }
+    const on = significant.some((token) => token.kind === "keyword" && token.value === "ON");
+    if (on || verdict.namedDatabases.length > 0) {
+      return refuse("show-database", INFLUXQL_AGENT_SENTENCES.showDatabase);
     }
   }
   if (verdict.statement === "EXPLAIN") {
