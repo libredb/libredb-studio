@@ -357,7 +357,10 @@ export interface SearchResolvedIndex {
   readonly name: string;
   /** Whether the server marks the index hidden. */
   readonly hidden: boolean;
-  /** Whether the server marks the index a system index. */
+  /**
+   * Whether the server marks the index a system index, or its name falls in a family the product's dialect declares the
+   * bundled plugins write into with no mark (OpenSearch's `top_queries-*` among them).
+   */
   readonly system: boolean;
 }
 

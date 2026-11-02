@@ -379,10 +379,11 @@ interface SearchProduct {
    * the check refuses an index, alias or data stream the server marks hidden or system.
    *
    * OpenSearch (`opensearch-agent-index-fence.ts`): measured on 3.8.0, with security off and as `admin` with it on, a
-   * hidden index, an alias over one, a backing index named directly and an index whose name starts with a dot each
-   * answer to a statement that names them, and the security index answers its columns; OpenSearch marks no index a
-   * system index and names its system indices with a leading dot, so the check refuses an index the server marks
-   * hidden and an index or data stream whose name starts with a dot.
+   * hidden index, an alias over one, a backing index named directly, an index whose name starts with a dot and a
+   * bundled plugin's index with neither, such as `top_queries-<date>-<n>`, each answer to a statement that names them,
+   * and the security index answers its columns; OpenSearch marks no index a system index, so the check refuses an
+   * index the server marks hidden, an index or data stream whose name starts with a dot, and an index of a plugin
+   * family the dialect declares, which the transport's resolution marks system.
    */
   readonly agentStatementCheck: (sql: string, transport: SearchTransport, signal: AbortSignal) => Promise<void>;
 
@@ -407,11 +408,12 @@ interface SearchProduct {
 
   /**
    * Whether the open of a connection that sends agent statements probes, after the version read and before any agent
-   * statement is sent, what its login may do, and refuses a login the security plugin lets administer it, or whose
+   * statement is sent, what its login may do, and refuses a login the security plugin lets call its REST API, or whose
    * document delete by query or index close on a fresh index name passes the plugin's permission check. It narrows the
-   * login and stands beside the statement check, which is the boundary: a role granting writes on a pattern the fresh
-   * name does not match passes the probes, and the SQL endpoint refuses its writes anyway. A server with its security
-   * plugin off has no login and is admitted with the statement check alone.
+   * login and does not show that it cannot write: a role granting index writes, creation, deletion or aliases by
+   * granular actions, or on a pattern the fresh name does not match, passes the probes. The boundary is the statement
+   * check and the SQL plugin, which refuse every write whatever the login. A server with its security plugin off has
+   * no login and is admitted with the statement check alone.
    *
    * Elasticsearch: false; its login check reads its privilege endpoints. OpenSearch: true (measured on 3.8.0: `admin`
    * fails all three, a role granting `write` on `*` the delete by query, one granting `manage` on `*` the close, and
@@ -1233,7 +1235,7 @@ abstract class SearchProvider extends SQLBaseProvider {
   }
 
   /**
-   * Refuses a login the security plugin lets administer it, or whose document delete by query or index close on a
+   * Refuses a login the security plugin lets call its REST API, or whose document delete by query or index close on a
    * fresh index name passes the plugin's permission check, read after the version read and before any agent statement
    * is sent ({@link SearchProduct.checksLoginWrites}). A server with its security plugin off has no login to check and
    * is admitted with the statement check alone; a probe that fails or cannot be read refuses the profile, since what
@@ -1251,12 +1253,12 @@ abstract class SearchProvider extends SQLBaseProvider {
     }
     if (writes === null) return;
     const findings: string[] = [];
-    if (writes.administersSecurity) findings.push("may administer the security plugin");
-    if (writes.deletesDocuments) findings.push("may delete documents in an index of any name");
-    if (writes.managesIndices) findings.push("may close an index of any name");
+    if (writes.administersSecurity) findings.push("may call the security plugin's REST API");
+    if (writes.deletesDocuments) findings.push("passed the delete by query on a fresh index name");
+    if (writes.managesIndices) findings.push("passed the index close on a fresh index name");
     if (findings.length === 0) return;
     throw new ExecutionProfileError(
-      `The agent read-only profile needs an ${this.product.label} login that may not write, manage indices or administer the security plugin; the user ${writes.user} ${findings.join(", and ")}, so the connection is refused. Give the agent a user whose role holds the cluster actions cluster:monitor/main and cluster:monitor/state and only reads on the indices it reads, such as the libredb_agent_read role`,
+      `The agent read-only profile refuses an ${this.product.label} login that the security plugin lets call its REST API, or whose delete by query or index close on a fresh index name passes the plugin's permission check; these probes narrow the login and do not show that it cannot write, since the statement check and the SQL plugin refuse every write whatever the login. The user ${writes.user} ${findings.join(", and ")}, so the connection is refused. Give the agent a user whose role holds the cluster actions cluster:monitor/main and cluster:monitor/state and only reads on the indices it reads, such as the libredb_agent_read role`,
       "PROFILE_PRIVILEGES_TOO_BROAD",
     );
   }

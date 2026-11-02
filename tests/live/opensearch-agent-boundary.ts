@@ -30,12 +30,17 @@
  *    read with certainty, among them a bare name with an `@` in it, which 3.8.0 ends at the `@` (so beside a visible
  *    index named `<hidden>@y` it answers the hidden index's rows raw), while the data stream read by its own name is
  *    served; with security on, as a role reading every index;
+ *  - the plugins' own indices: every index of a family the dialect declares (`top_queries-*` from query insights, and
+ *    with security on `security-auditlog-*` from the audit log, are required on the node; `ubi_*`, `search-relevance-*`,
+ *    `opensearch-forecast-*` and `opensearch-ad-plugin-*` are checked where present), sent raw as the reader's login,
+ *    answers, and through `queryReadOnly` each is refused before it is sent, by its name, through `t*`, a comma list,
+ *    an alias the script makes over the query insights index, and the one-table catalog read of the family; with
+ *    security on, as a role reading every index;
  *  - with security on, the login probes: the admin, a role writing every index and a role managing every index are
  *    each refused at open, and the probes leave no index behind;
  *  - the catalog read: the `DESCRIBE TABLES` command the agent's OpenSearch overlay composes for one table, answered
  *    through `queryReadOnly` and mapped into column rows; the every-table read, which the overlay refuses to compose
- *    and the statement check refuses when it is sent anyway (`*` reaches dot-led indices); the cluster unchanged
- *    afterwards;
+ *    and the statement check's reader refuses before anything is sent; the cluster unchanged afterwards;
  *  - with security on (LIBREDB_OS_AGENT_USER set): the agent user's role holds the cluster actions
  *    `cluster:monitor/main` and `cluster:monitor/state` and, on `probe_*`, `read`, `indices:admin/mappings/get` and
  *    `indices:monitor/settings/get`; without either cluster action the agent profile is refused at open; the user reads
@@ -83,7 +88,6 @@ import {
   EXCLUSION_REFUSAL,
   FROM_REFUSAL,
   hiddenTargetRefusal,
-  resolveFailedRefusal,
   STATEMENT_REFUSAL,
   SUBQUERY_REFUSAL,
   UNREADABLE_REFUSAL,
@@ -165,13 +169,26 @@ async function read(pathname: string): Promise<string> {
 
 /** Whether an index is one the node writes on its own, or one of the script's scratch indices. */
 function unwatched(index: string): boolean {
-  return (
-    index.startsWith(".") ||
-    index.startsWith("top_queries-") ||
-    index.startsWith("security-auditlog-") ||
-    index === SCRATCH ||
-    index === OUTSIDE
-  );
+  return index.startsWith(".") || inPluginFamily(index) || index === SCRATCH || index === OUTSIDE;
+}
+
+/**
+ * The index families the plugins bundled with 3.8.0 write their own records into with no leading dot and no hidden
+ * mark, as the OpenSearch dialect declares them (`pluginIndexFamilies` in `http-transport.ts`): a name, or a prefix
+ * where it ends in `-`.
+ */
+const PLUGIN_FAMILIES = [
+  "top_queries-",
+  "security-auditlog-",
+  "ubi_queries",
+  "ubi_events",
+  "search-relevance-",
+  "opensearch-forecast-",
+  "opensearch-ad-plugin-",
+] as const;
+
+function inPluginFamily(index: string): boolean {
+  return PLUGIN_FAMILIES.some((family) => (family.endsWith("-") ? index.startsWith(family) : index === family));
 }
 
 /** Everything a write or a DDL statement could change, as one text. */
@@ -441,7 +458,7 @@ async function openAs(user: string, password: string): Promise<DatabaseProvider>
 }
 
 const TOO_BROAD =
-  "The agent read-only profile needs an OpenSearch login that may not write, manage indices or administer the security plugin; the user ";
+  "The agent read-only profile refuses an OpenSearch login that the security plugin lets call its REST API, or whose delete by query or index close on a fresh index name passes the plugin's permission check; these probes narrow the login and do not show that it cannot write, since the statement check and the SQL plugin refuse every write whatever the login. The user ";
 const GRANT_INSTEAD =
   ", so the connection is refused. Give the agent a user whose role holds the cluster actions cluster:monitor/main and cluster:monitor/state and only reads on the indices it reads, such as the libredb_agent_read role";
 
@@ -454,12 +471,12 @@ async function checkLoginProbes(): Promise<void> {
   const admin = await refusalOf(() => openAs(ADMIN_USER, ADMIN_PASSWORD));
   check(
     admin?.message ===
-      `${TOO_BROAD}${ADMIN_USER} may administer the security plugin, and may delete documents in an index of any name, and may close an index of any name${GRANT_INSTEAD}`,
+      `${TOO_BROAD}${ADMIN_USER} may call the security plugin's REST API, and passed the delete by query on a fresh index name, and passed the index close on a fresh index name${GRANT_INSTEAD}`,
     `login: the admin is refused at open -> ${admin?.message.slice(0, 160)}`,
   );
   const kinds = [
-    [`${SCRATCH}_wr`, ["read", "write"], "may delete documents in an index of any name"],
-    [`${SCRATCH}_mg`, ["read", "manage"], "may close an index of any name"],
+    [`${SCRATCH}_wr`, ["read", "write"], "passed the delete by query on a fresh index name"],
+    [`${SCRATCH}_mg`, ["read", "manage"], "passed the index close on a fresh index name"],
   ] as const;
   for (const [name, actions, finding] of kinds) {
     await userWithRole(name, [{ index_patterns: ["*"], allowed_actions: [...actions] }]);
@@ -584,6 +601,73 @@ async function checkHiddenTargets(agent: DatabaseProvider): Promise<void> {
     await send("DELETE", `/${hid}`);
     await send("DELETE", `/${encodeURIComponent(at)}`);
     await send("DELETE", `/${dot}`);
+  }
+}
+
+/**
+ * The plugins' own indices, named with no dot and marked neither hidden nor system: each answers sent raw as the
+ * reader's login, and the statement check refuses each before it is sent, by its name, through a wildcard, a comma list,
+ * an alias over one and the one-table catalog read. With security on the reads run as a role reading every index.
+ */
+async function checkPluginIndices(agent: DatabaseProvider): Promise<void> {
+  const view = `${SCRATCH}_pv`;
+  const wide = `${SCRATCH}_pw`;
+  let reader = agent;
+  let auth = ADMIN_AUTH;
+  const present = (JSON.parse(await read("/_cat/indices?format=json&h=index&s=index")) as { index: string }[])
+    .map((row) => row.index)
+    .filter(inPluginFamily);
+  const insights = present.find((index) => index.startsWith("top_queries-"));
+  const audit = present.find((index) => index.startsWith("security-auditlog-"));
+  check(
+    insights !== undefined && (!SECURED || audit !== undefined),
+    `plugin: the node holds the query insights index${SECURED ? " and the audit log" : ""} -> ${present.join(", ")}`,
+  );
+  if (insights === undefined) return;
+  try {
+    const made = await send("POST", "/_aliases", { actions: [{ add: { index: insights, alias: view } }] });
+    check(made.status === 200, `plugin: the script makes an alias over ${insights} -> ${made.status}`);
+    if (SECURED) {
+      await userWithRole(wide, [{ index_patterns: ["*"], allowed_actions: [...AGENT_INDICES] }]);
+      reader = await openAs(wide, AGENT_PASSWORD);
+      auth = basic(wide, AGENT_PASSWORD);
+      check(reader.isConnected(), "plugin: with security on, a role reading every index opens the agent profile");
+    }
+    // Sent raw as the same login, each answers: nothing on the server keeps them from a SQL read.
+    for (const reference of [...present, "t*", view]) {
+      const raw = await send("POST", "/_plugins/_sql", { query: `SELECT * FROM \`${reference}\` LIMIT 1` }, auth);
+      const rows = raw.status === 200 ? (JSON.parse(raw.text) as { datarows: unknown[] }).datarows.length : -1;
+      const needsRows = reference === insights || reference === audit || reference === "t*" || reference === view;
+      check(
+        raw.status === 200 && (!needsRows || rows > 0),
+        `plugin: SELECT * FROM \`${reference}\` sent raw answers -> ${raw.status} ${rows} row(s)`,
+      );
+    }
+    const references = [
+      ...present,
+      "t*",
+      "top_queries-*",
+      "probe_orders,top_queries-*",
+      "probe_orders,t*",
+      view,
+      ...(SECURED ? ["security-auditlog-*", "se*"] : []),
+    ];
+    for (const reference of references) {
+      const refused = await refusalOf(() => reader.queryReadOnly!(`SELECT * FROM \`${reference}\` LIMIT 1`, BUDGET));
+      check(
+        refused?.name === "RefusedBeforeSendError" && refused.message === hiddenTargetRefusal(reference),
+        `plugin: SELECT * FROM \`${reference}\` is refused before it is sent -> ${refused?.message.slice(0, 90)}`,
+      );
+    }
+    const described = await refusalOf(() => reader.queryReadOnly!("DESCRIBE TABLES LIKE 'top_queries-*'", BUDGET));
+    check(
+      described?.name === "RefusedBeforeSendError" && described.message === hiddenTargetRefusal("top_queries-*"),
+      `plugin: DESCRIBE TABLES LIKE 'top_queries-*' is refused before it is sent -> ${described?.message.slice(0, 90)}`,
+    );
+  } finally {
+    if (reader !== agent) await reader.disconnect();
+    if (SECURED) await dropUser(wide);
+    await send("POST", "/_aliases", { actions: [{ remove: { index: insights, alias: view } }] });
   }
 }
 
@@ -743,7 +827,7 @@ async function checkCatalog(agent: DatabaseProvider, before: string): Promise<vo
   const catalogRead = engineServerDialect("opensearch").catalogRead;
   if (catalogRead === "unsupported" || catalogRead.mapRows === undefined) throw new Error("no catalog read to check");
   // Every table is `*`, which reaches the indices whose names start with a dot on a stock node, so the overlay refuses
-  // to compose it, and the statement check refuses it before it is sent; a role on probe_* alone cannot resolve `*`.
+  // to compose it, and the statement check's reader refuses it before anything is sent, whatever the login.
   const composed = await refusalOf(async () => composeCatalogRead("opensearch", { kind: "columns" }));
   check(
     composed?.name === "AgentComposedSqlError" && composed.message.endsWith("so name a table instead"),
@@ -751,12 +835,9 @@ async function checkCatalog(agent: DatabaseProvider, before: string): Promise<vo
   );
   const everyTable = "DESCRIBE TABLES LIKE %";
   const refused = await refusalOf(() => agent.queryReadOnly!(everyTable, BUDGET));
-  const expected = SECURED
-    ? resolveFailedRefusal("*", "OpenSearch refused the credentials (HTTP 403)")
-    : hiddenTargetRefusal("*");
   check(
-    refused?.name === "RefusedBeforeSendError" && refused.message === expected,
-    `catalog: ${everyTable} names every index, dot-led ones among them, so the statement check refuses it unsent -> ${refused?.message.slice(0, 90)}`,
+    refused?.name === "RefusedBeforeSendError" && refused.message === STATEMENT_REFUSAL,
+    `catalog: ${everyTable} names every index, dot-led ones among them, so the reader refuses it unsent -> ${refused?.message.slice(0, 90)}`,
   );
   const raw = await send("POST", "/_plugins/_sql", { query: everyTable });
   check(
@@ -795,6 +876,7 @@ async function main(): Promise<void> {
 
   await checkLoginProbes();
   await checkHiddenTargets(agent);
+  await checkPluginIndices(agent);
   const before = await checkBoundary(agent);
   await checkBudgets(agent);
   await checkCatalog(agent, before);

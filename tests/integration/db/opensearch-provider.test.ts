@@ -742,6 +742,9 @@ const STOCK_RESOLVE_BODY = JSON.stringify({
   data_streams: [],
 });
 
+/** The query insights plugin's index on that node: no leading dot and no hidden mark. */
+const STOCK_INSIGHTS = { name: "top_queries-2026.08.18-74305", attributes: ["open"] };
+
 /** The index expression a resolution or a field capabilities path names, decoded. */
 function expressionOf(path: string, prefix: string, suffix: string): string {
   const raw = path.slice(prefix.length, path.indexOf(suffix, prefix.length));
@@ -759,6 +762,16 @@ function resolveReply(path: string): Reply {
   if (expression === "probe_orders_alias") {
     return ok('{"indices":[],"aliases":[{"name":"probe_orders_alias","indices":["probe_orders"]}],"data_streams":[]}');
   }
+  if (expression === "t*") return ok(JSON.stringify({ indices: [STOCK_INSIGHTS], aliases: [], data_streams: [] }));
+  if (expression === "probe_insights_view") {
+    return ok(
+      JSON.stringify({
+        indices: [],
+        aliases: [{ name: "probe_insights_view", indices: [STOCK_INSIGHTS.name] }],
+        data_streams: [],
+      }),
+    );
+  }
   return ok(JSON.stringify({ indices: [{ name: expression, attributes: ["open"] }], aliases: [], data_streams: [] }));
 }
 
@@ -769,7 +782,12 @@ function fieldCapsReply(path: string): Reply {
     return ok('{"indices":[".plugins-ml-config","probe_orders","top_queries-2026.08.18-74305"],"fields":{}}');
   }
   if (expression.includes("no_such")) return ok('{"indices":[],"fields":{}}');
-  const read = expression === "probe_orders_alias" ? "probe_orders" : expression;
+  const read =
+    expression === "probe_orders_alias"
+      ? "probe_orders"
+      : expression === "t*" || expression === "probe_insights_view"
+        ? STOCK_INSIGHTS.name
+        : expression;
   return ok(JSON.stringify({ indices: [read], fields: {} }));
 }
 
@@ -787,7 +805,7 @@ function sqlReply(sql: string): Reply {
   if (sql.includes("nope_missing")) return { status: 404, body: MISSING_INDEX_BODY };
   if (sql.includes(" AS who")) return ok(ALIASED_BODY);
   if (sql.includes("address")) return ok(CONTAINERS_BODY);
-  if (sql.includes("top_queries")) return ok(PAGE_ONE_BODY);
+  if (sql.includes("top_queries") || sql.includes("probe_paged")) return ok(PAGE_ONE_BODY);
 
   return ok(ORDERS_BODY);
 }
@@ -2801,11 +2819,11 @@ describe("OpenSearchProvider agent profile open: the login probes", () => {
       "admin",
       true,
       { byQuery: true, close: true },
-      "may administer the security plugin, and may delete documents in an index of any name, and may close an index of any name",
+      "may call the security plugin's REST API, and passed the delete by query on a fresh index name, and passed the index close on a fresh index name",
     ],
-    ["libredb_wr", false, { byQuery: true, close: false }, "may delete documents in an index of any name"],
-    ["libredb_mg", false, { byQuery: false, close: true }, "may close an index of any name"],
-    ["libredb_sec", true, { byQuery: false, close: false }, "may administer the security plugin"],
+    ["libredb_wr", false, { byQuery: true, close: false }, "passed the delete by query on a fresh index name"],
+    ["libredb_mg", false, { byQuery: false, close: true }, "passed the index close on a fresh index name"],
+    ["libredb_sec", true, { byQuery: false, close: false }, "may call the security plugin's REST API"],
   ] as const)("refuses %s, naming what it may do", async (user, apiAccess, passes, findings) => {
     securityOn(user, apiAccess, passes);
 
@@ -2814,7 +2832,7 @@ describe("OpenSearchProvider agent profile open: the login probes", () => {
     expect(error).toBeInstanceOf(ExecutionProfileError);
     expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
     expect((error as Error).message).toBe(
-      `The agent read-only profile needs an OpenSearch login that may not write, manage indices or administer the security plugin; the user ${user} ${findings}, so the connection is refused. Give the agent a user whose role holds the cluster actions cluster:monitor/main and cluster:monitor/state and only reads on the indices it reads, such as the libredb_agent_read role`,
+      `The agent read-only profile refuses an OpenSearch login that the security plugin lets call its REST API, or whose delete by query or index close on a fresh index name passes the plugin's permission check; these probes narrow the login and do not show that it cannot write, since the statement check and the SQL plugin refuse every write whatever the login. The user ${user} ${findings}, so the connection is refused. Give the agent a user whose role holds the cluster actions cluster:monitor/main and cluster:monitor/state and only reads on the indices it reads, such as the libredb_agent_read role`,
     );
   });
 
@@ -2890,6 +2908,7 @@ describe("OpenSearchProvider.queryReadOnly", () => {
     ["SELECT id FROM `probe_*,-probe_shapes`", EXCLUSION_REFUSAL],
     ['SELECT id FROM "probe_orders"', CHARACTER_REFUSAL],
     ["SHOW TABLES LIKE %", STATEMENT_REFUSAL],
+    ["DESCRIBE TABLES LIKE %", STATEMENT_REFUSAL],
   ])("refuses %p before anything is sent", async (sql, sentence) => {
     const provider = await agentProvider();
     const before = sentPaths.length;
@@ -2904,6 +2923,16 @@ describe("OpenSearchProvider.queryReadOnly", () => {
   test.each([
     ["SELECT COUNT(*) AS n FROM `*`", hiddenTargetRefusal("*")],
     ["SELECT id FROM zq_no_such_index", unresolvedRefusal("zq_no_such_index")],
+    // The query insights plugin's index carries no dot and no hidden mark: its family is what marks it.
+    [
+      "SELECT source, indices FROM `top_queries-2026.08.18-74305` LIMIT 2",
+      hiddenTargetRefusal("top_queries-2026.08.18-74305"),
+    ],
+    ["SELECT * FROM `t*`", hiddenTargetRefusal("t*")],
+    ["SELECT * FROM `security-auditlog-2026.11.02`", hiddenTargetRefusal("security-auditlog-2026.11.02")],
+    ["SELECT * FROM ubi_queries", hiddenTargetRefusal("ubi_queries")],
+    ["SELECT * FROM probe_insights_view", hiddenTargetRefusal("probe_insights_view")],
+    ["DESCRIBE TABLES LIKE 'top_queries-2026.08.18-74305'", hiddenTargetRefusal("top_queries-2026.08.18-74305")],
   ])("refuses %p after the server's resolution, with no statement sent", async (sql, sentence) => {
     const provider = await agentProvider();
     const before = sentPaths.length;
@@ -2921,7 +2950,7 @@ describe("OpenSearchProvider.queryReadOnly", () => {
     const provider = await agentProvider();
 
     const error = await refusal(
-      provider.queryReadOnly("SELECT id FROM `top_queries-2026.08.18-74305`", { ...AGENT_BUDGET, maxResultRows: 1 }),
+      provider.queryReadOnly("SELECT id FROM probe_paged", { ...AGENT_BUDGET, maxResultRows: 1 }),
     );
 
     expect(error).toBeInstanceOf(QueryError);
@@ -2933,7 +2962,7 @@ describe("OpenSearchProvider.queryReadOnly", () => {
   test("follows the cursor while the answer stays inside the budget", async () => {
     const provider = await agentProvider();
 
-    const result = await provider.queryReadOnly("SELECT id FROM `top_queries-2026.08.18-74305`", AGENT_BUDGET);
+    const result = await provider.queryReadOnly("SELECT id FROM probe_paged", AGENT_BUDGET);
 
     expect(result.rowCount).toBe(5);
   });
@@ -3032,7 +3061,7 @@ describe("OpenSearchProvider.queryReadOnly", () => {
     const provider = await agentProvider();
 
     const error = await refusal(
-      provider.queryReadOnly("SELECT id FROM `top_queries-2026.08.18-74305`", { ...AGENT_BUDGET, maxResultRows: 1 }),
+      provider.queryReadOnly("SELECT id FROM probe_paged", { ...AGENT_BUDGET, maxResultRows: 1 }),
     );
 
     expect(error.message).toBe("Read-only execution exceeded the row budget: 2 rows > 1 allowed");
@@ -3161,17 +3190,17 @@ describe("OpenSearch 3.8.0's catalog-read answers, replayed through queryReadOnl
   );
 
   // Every table is `*`, which reaches the indices whose names start with a dot on a stock node: the overlay never
-  // composes it, and the statement check refuses it when it arrives anyway.
-  test("the every-table read is refused by the statement check, since `*` reaches a dot-led index", async () => {
+  // composes it, and the reader refuses it when it arrives anyway, before any request.
+  test("the every-table read is refused by the reader, before anything is sent", async () => {
     const agent = new OpenSearchProvider(makeConnection(), {}, AGENT_PROFILE);
     await agent.connect();
-    const before = sentBodies.length;
+    const before = sentPaths.length;
 
     const error = await agent.queryReadOnly("DESCRIBE TABLES LIKE %", AGENT_BUDGET).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(RefusedBeforeSendError);
-    expect((error as Error).message).toBe(hiddenTargetRefusal("*"));
-    expect(sentBodies.slice(before).some((body) => body !== null)).toBe(false);
+    expect((error as Error).message).toBe(STATEMENT_REFUSAL);
+    expect(sentPaths.length).toBe(before);
   });
 
   test("a name the node does not hold is refused as resolving to none, before the command is sent", async () => {
@@ -3415,7 +3444,7 @@ describe("MCP run_read_query on an OpenSearch connection", () => {
       content: [
         {
           type: "text",
-          text: `run_read_query cannot run on this connection: The agent read-only profile needs an OpenSearch login that may not write, manage indices or administer the security plugin; the user admin may administer the security plugin, and may delete documents in an index of any name, and may close an index of any name, so the connection is refused. Give the agent a user whose role holds the cluster actions cluster:monitor/main and cluster:monitor/state and only reads on the indices it reads, such as the libredb_agent_read role. It runs on ${RUN_READ_QUERY_ENGINES}.`,
+          text: `run_read_query cannot run on this connection: The agent read-only profile refuses an OpenSearch login that the security plugin lets call its REST API, or whose delete by query or index close on a fresh index name passes the plugin's permission check; these probes narrow the login and do not show that it cannot write, since the statement check and the SQL plugin refuse every write whatever the login. The user admin may call the security plugin's REST API, and passed the delete by query on a fresh index name, and passed the index close on a fresh index name, so the connection is refused. Give the agent a user whose role holds the cluster actions cluster:monitor/main and cluster:monitor/state and only reads on the indices it reads, such as the libredb_agent_read role. It runs on ${RUN_READ_QUERY_ENGINES}.`,
         },
       ],
       isError: true,

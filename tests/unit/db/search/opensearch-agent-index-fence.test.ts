@@ -1,8 +1,9 @@
 /**
- * The OpenSearch agent read-only path's statement check. The reader admits one SELECT or the agent's own DESCRIBE
- * TABLES LIKE read, written so that a reader and both of the 3.8.0 plugin's SQL engines split it into the same tokens,
- * and names the one index expression it reads; the server's answer about that expression then refuses a hidden target,
- * or one whose name starts with a dot. Every refusal is pinned in its full sentence, and every request the check sends
+ * The OpenSearch agent read-only path's statement check. The reader admits one SELECT or the agent's own one-table
+ * DESCRIBE TABLES LIKE read, written so that a reader and both of the 3.8.0 plugin's SQL engines split it into the same
+ * tokens, and names the one index expression it reads; the server's answer about that expression then refuses a hidden
+ * or system target, which includes an index of a family a bundled plugin writes into, or one whose name starts with a
+ * dot. Every refusal is pinned in its full sentence, and every request the check sends
  * in its order: the server's own resolution of the expression, the indices the SQL endpoint reads for it, and the
  * resolution of each index read only through an alias.
  */
@@ -68,8 +69,6 @@ describe("agentIndexReference: the statements it admits, and the index expressio
     ["SELECT t1.customer, x2._y FROM probe_orders t1", "probe_orders"],
     ["SELECT customer\r\n\tFROM\nprobe_orders", "probe_orders"],
     ["SELECT 'café' AS c, `naïve` FROM probe_orders", "probe_orders"],
-    ["DESCRIBE TABLES LIKE %", "*"],
-    ["describe tables like %", "*"],
     ["DESCRIBE TABLES LIKE 'probe_orders'", "probe_orders"],
   ])("admits %p, reading %p", (sql, reference) => {
     expect(agentIndexReference(sql)).toBe(reference);
@@ -139,6 +138,8 @@ describe("agentIndexReference: what it refuses before anything is sent", () => {
     "   ",
     "SHOW TABLES LIKE %",
     "SHOW TABLES LIKE probe%",
+    "DESCRIBE TABLES LIKE %",
+    "describe tables like %",
     "DESCRIBE TABLES",
     "DESCRIBE TABLES LIKE probe_orders",
     "DESCRIBE TABLES LIKE `probe_orders`",
@@ -152,7 +153,7 @@ describe("agentIndexReference: what it refuses before anything is sent", () => {
     "TABLE probe_orders",
     "DELETE FROM probe_orders",
     "INSERT INTO probe_orders (id) VALUES (2)",
-  ])("refuses %p: not a SELECT or the agent's catalog read", (sql) => {
+  ])("refuses %p: not a SELECT or the agent's one-table catalog read", (sql) => {
     refusedWith(sql, STATEMENT_REFUSAL);
   });
 
@@ -251,7 +252,7 @@ describe("agentIndexReference: what it refuses before anything is sent", () => {
       "The agent sends OpenSearch no statement whose quote never closes or whose backtick-quoted name holds a backtick, since where its names end cannot be read",
     );
     expect(STATEMENT_REFUSAL).toBe(
-      "The agent sends OpenSearch one SELECT, or its own column catalog read, DESCRIBE TABLES LIKE % for every table or DESCRIBE TABLES LIKE with one quoted table: no other DESCRIBE or SHOW command",
+      "The agent sends OpenSearch one SELECT, or its own one-table column catalog read, DESCRIBE TABLES LIKE with one quoted table: no other DESCRIBE or SHOW command, and not the every-table read, DESCRIBE TABLES LIKE %",
     );
     expect(SUBQUERY_REFUSAL).toBe(
       "The agent sends OpenSearch no statement with a second SELECT or a WITH in it: every index it reads must be the one written after its FROM",
@@ -363,7 +364,7 @@ describe("assertReferenceVisible: the server's answer about the reference", () =
 
     expectRefused(await checked("x", transport), hiddenTargetRefusal("x"));
     expect(hiddenTargetRefusal("x")).toBe(
-      'The agent reads no OpenSearch index the server marks hidden, nor an index or data stream whose name starts with a dot, and the server resolves "x" to one',
+      'The agent reads no OpenSearch index the server marks hidden or system, no index or data stream whose name starts with a dot, and no index of a family a bundled plugin writes its own records into without either mark, and the server resolves "x" to one',
     );
     expect(asked).toEqual(["resolve x"]);
   });
@@ -399,6 +400,7 @@ describe("assertReferenceVisible: the server's answer about the reference", () =
   test.each([
     ["a hidden index", { name: "probe_hidden", hidden: true, system: false }],
     ["an index whose name starts with a dot", open(".probe_dot")],
+    ["an index of a plugin's family, marked system", { name: "top_queries-2026.11.02-1", hidden: false, system: true }],
   ])("refuses an alias over %s, read from the index's own resolution", async (_name, index) => {
     const { transport, asked } = fakeTransport({
       targets: {

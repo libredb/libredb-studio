@@ -772,6 +772,34 @@ interface SearchDialectSpec {
    */
   readonly restrictedIndices: RestrictedIndices | null;
   /**
+   * The index families the plugins bundled with the product write their own records into under a name with no leading
+   * dot, on an index the server marks neither hidden nor system: each a name, or a prefix where it ends in `*`. The
+   * server's own index resolution ({@link SearchHttpTransport.resolveTargets}) marks an index in one a system index, so
+   * the agent statement check, which refuses a system index, refuses it on the concrete name the server resolves a
+   * name, a wildcard, a comma list or an alias to.
+   *
+   * Elasticsearch: none; 9.1.4 marks its own system indices in the resolution.
+   *
+   * OpenSearch: measured on 3.8.0 (2026-11-02), single nodes with security off and on and the bundled plugins, after
+   * searches, SQL statements and a failed sign-in, and after each plugin below was driven through its own REST API.
+   * Every other index those plugins created was named with a leading dot. The resolution marks none of these:
+   *
+   *  - `top_queries-*`: the query insights plugin's local exporter, one index a day (`top_queries-2026.11.02-89252`),
+   *    holding the search requests the node served, other users' among them;
+   *  - `security-auditlog-*`: the security plugin's audit log in its default index (`security-auditlog-2026.11.02`),
+   *    with security on: users' names, client addresses and the privileges they were refused;
+   *  - `ubi_queries` and `ubi_events`: the user behavior insights plugin's stores, made by its initialize call;
+   *  - `search-relevance-*`: the search relevance plugin's query sets, search configurations, judgments and
+   *    experiments (`search-relevance-queryset` and `search-relevance-search-config` measured, the rest named in it);
+   *  - `opensearch-forecast-*` and `opensearch-ad-plugin-*`: the anomaly detection plugin's forecast results
+   *    (`opensearch-forecast-results-history-2026.11.02-1`, behind the alias `opensearch-forecast-results`) and its
+   *    insights (`opensearch-ad-plugin-insights-history-2026.11.02-1`), and the custom result indices it requires
+   *    under each prefix.
+   *
+   * A user index named into one of these families is refused with them.
+   */
+  readonly pluginIndexFamilies: readonly string[];
+  /**
    * The query string of the field capabilities request that resolves a SQL table the way the product's SQL endpoint
    * does, which the agent statement check asks for the concrete indices a statement reads.
    *
@@ -947,6 +975,7 @@ const DIALECTS: Readonly<Record<SearchDialectId, SearchDialectSpec>> = Object.fr
         `.kibana_usage_counters_${VERSION_SLOT}_001`,
       ]),
     }),
+    pluginIndexFamilies: Object.freeze([]),
     sqlTableResolution: "fields=_index&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open",
     loginProbes: false,
   },
@@ -1015,6 +1044,15 @@ const DIALECTS: Readonly<Record<SearchDialectId, SearchDialectSpec>> = Object.fr
      */
     sqlResultLimit: "plugins.query.size_limit",
     restrictedIndices: null,
+    pluginIndexFamilies: Object.freeze([
+      "top_queries-*",
+      "security-auditlog-*",
+      "ubi_queries",
+      "ubi_events",
+      "search-relevance-*",
+      "opensearch-forecast-*",
+      "opensearch-ad-plugin-*",
+    ]),
     sqlTableResolution: "fields=_index&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open",
     loginProbes: true,
     sqlDelete: {
@@ -1528,11 +1566,21 @@ function isTextList(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
+/** Whether an index name falls in one of the families: a name, or a prefix where the family ends in `*`. */
+function inFamily(name: string, families: readonly string[]): boolean {
+  return families.some((family) => (family.endsWith("*") ? name.startsWith(family.slice(0, -1)) : name === family));
+}
+
 /**
  * An index resolution as the seam's targets, or null when it is not the measured shape: three lists, every entry an
- * object with a name, an index's attributes and an alias's indices lists of text.
+ * object with a name, an index's attributes and an alias's indices lists of text. An index is a system index where
+ * the server marks it so, or where its name falls in one of the dialect's plugin index families
+ * ({@link SearchDialectSpec.pluginIndexFamilies}).
  */
-function resolvedTargets(answer: Record<string, unknown> | null): SearchResolvedTargets | null {
+function resolvedTargets(
+  answer: Record<string, unknown> | null,
+  pluginIndexFamilies: readonly string[],
+): SearchResolvedTargets | null {
   const indices = answer?.[RESOLVE_FIELDS.INDICES];
   const aliases = answer?.[RESOLVE_FIELDS.ALIASES];
   const dataStreams = answer?.[RESOLVE_FIELDS.DATA_STREAMS];
@@ -1550,7 +1598,7 @@ function resolvedTargets(answer: Record<string, unknown> | null): SearchResolved
     read.indices.push({
       name,
       hidden: attributes.includes(HIDDEN_ATTRIBUTE),
-      system: attributes.includes(SYSTEM_ATTRIBUTE),
+      system: attributes.includes(SYSTEM_ATTRIBUTE) || inFamily(name, pluginIndexFamilies),
     });
   }
   for (const entry of aliases as unknown[]) {
@@ -2073,7 +2121,7 @@ export class SearchHttpTransport implements SearchTransport {
     for (const chunk of mappingChunks(expressions)) {
       // oxlint-disable-next-line no-await-in-loop -- one request line at a time, each read before the next is sent.
       const answer = asRecord(await this.request(this.url(`${RESOLVE_INDEX_PATH}/${chunk}`, RESOLVE_QUERY), signal));
-      const read = resolvedTargets(answer);
+      const read = resolvedTargets(answer, this.spec.pluginIndexFamilies);
       if (read === null) throw unreadableBody(this.spec, "an index resolution");
       indices.push(...read.indices);
       aliases.push(...read.aliases);

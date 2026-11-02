@@ -26,6 +26,10 @@
  *    through MCP before it is sent, as are a comment, `#` and a double-quoted name; a bare name with an `@` in it,
  *    which 3.8.0 ends at the `@` (so beside a visible index named `<hidden>@y` it answers the hidden index's rows), is
  *    refused through the fenced tool and unfenced alike; the data stream read by its own name is served;
+ *  - the plugins' own indices, on both nodes: every index of a family the dialect declares (`top_queries-*`, and with
+ *    security on `security-auditlog-*`, are required; the others are checked where present) answers sent raw, as the
+ *    role reading every index with security on, and MCP refuses each before it is sent, by its name, through `t*`, a
+ *    comma list, an alias the script makes over the query insights index and the one-table catalog read of the family;
  *  - the security index with security on: signed in as a role reading every index, which the open admits,
  *    `.opendistro_security`, quoted or bare, and `*` are refused by the statement check before they are sent, while
  *    `admin` sending the first raw is answered its columns;
@@ -113,7 +117,7 @@ const NOT_SENT = "The statement was refused before it reached the database: ";
 /** The tool's answer for a statement the provider refused before it was sent. */
 const unsent = (sentence: string) => `${NOT_SENT}${sentence}.`;
 const TOO_BROAD =
-  "run_read_query cannot run on this connection: The agent read-only profile needs an OpenSearch login that may not write, manage indices or administer the security plugin; the user ";
+  "run_read_query cannot run on this connection: The agent read-only profile refuses an OpenSearch login that the security plugin lets call its REST API, or whose delete by query or index close on a fresh index name passes the plugin's permission check; these probes narrow the login and do not show that it cannot write, since the statement check and the SQL plugin refuse every write whatever the login. The user ";
 const GRANT_INSTEAD = `, so the connection is refused. Give the agent a user whose role holds the cluster actions cluster:monitor/main and cluster:monitor/state and only reads on the indices it reads, such as the libredb_agent_read role. It runs on ${ENGINES}.`;
 /** The plugin's refusal of a statement that is not a read, as 3.8.0 words it. */
 const PLUGIN_REFUSAL = /Query must start with SELECT, DELETE, SHOW or DESCRIBE: |Illegal SQL expression : /;
@@ -156,12 +160,26 @@ async function read(origin: URL, pathname: string): Promise<string> {
   return answer.text;
 }
 
+/**
+ * The index families the plugins bundled with 3.8.0 write their own records into with no leading dot and no hidden
+ * mark, as the OpenSearch dialect declares them (`pluginIndexFamilies` in `http-transport.ts`): a name, or a prefix
+ * where it ends in `-`.
+ */
+const PLUGIN_FAMILIES = [
+  "top_queries-",
+  "security-auditlog-",
+  "ubi_queries",
+  "ubi_events",
+  "search-relevance-",
+  "opensearch-forecast-",
+  "opensearch-ad-plugin-",
+] as const;
+
+const inPluginFamily = (index: string) =>
+  PLUGIN_FAMILIES.some((family) => (family.endsWith("-") ? index.startsWith(family) : index === family));
+
 /** Whether an index is one the node writes on its own, or one the script made. */
-const unwatched = (index: string) =>
-  index.startsWith(".") ||
-  index.startsWith("top_queries-") ||
-  index.startsWith("security-auditlog-") ||
-  index.startsWith(SCRATCH);
+const unwatched = (index: string) => index.startsWith(".") || inPluginFamily(index) || index.startsWith(SCRATCH);
 
 /** Everything a write or a DDL statement could change, as one text. */
 async function clusterState(origin: URL): Promise<string> {
@@ -292,13 +310,13 @@ async function checkOpen(agent: ManagedConnection): Promise<{ seedRole: ManagedC
   });
   check(
     textOf(admin.result) ===
-      `${TOO_BROAD}${ADMIN_USER} may administer the security plugin, and may delete documents in an index of any name, and may close an index of any name${GRANT_INSTEAD}` &&
+      `${TOO_BROAD}${ADMIN_USER} may call the security plugin's REST API, and passed the delete by query on a fresh index name, and passed the index close on a fresh index name${GRANT_INSTEAD}` &&
       admin.acquired.join() === "agent-read-only",
     `open: with security on, a seed signed in as admin is refused at open -> ${textOf(admin.result).slice(0, 200)}`,
   );
   for (const [kind, actions, finding] of [
-    ["writer", ["read", "write"], "may delete documents in an index of any name"],
-    ["manager", ["read", "manage"], "may close an index of any name"],
+    ["writer", ["read", "write"], "passed the delete by query on a fresh index name"],
+    ["manager", ["read", "manage"], "passed the index close on a fresh index name"],
   ] as const) {
     const login = await userWithRole(kind, {
       cluster_permissions: AGENT_CLUSTER,
@@ -475,6 +493,68 @@ async function checkHiddenTargets(agent: ManagedConnection): Promise<void> {
     await send(ORIGIN, "DELETE", `/${hid}`);
     await send(ORIGIN, "DELETE", `/${encodeURIComponent(at)}`);
     await send(ORIGIN, "DELETE", `/${dot}`);
+  }
+}
+
+/**
+ * The plugins' own indices on one node, named with no dot and marked neither hidden nor system: each answers sent raw
+ * as the reader's login, and MCP refuses each before it is sent, by its name, through a wildcard, a comma list, an
+ * alias over one and the one-table catalog read.
+ */
+async function checkPluginIndices(origin: URL, reader: ManagedConnection, label: string): Promise<void> {
+  const view = `${SCRATCH}_pv`;
+  const login = (reader as { user?: string }).user;
+  const auth: Record<string, string> = login === undefined ? {} : { authorization: basic(login, USER_PASSWORD) };
+  const present = (JSON.parse(await read(origin, "/_cat/indices?format=json&h=index&s=index")) as { index: string }[])
+    .map((row) => row.index)
+    .filter(inPluginFamily);
+  const insights = present.find((index) => index.startsWith("top_queries-"));
+  const audit = present.find((index) => index.startsWith("security-auditlog-"));
+  check(
+    insights !== undefined && (origin !== SECURED || audit !== undefined),
+    `plugin (${label}): the node holds the query insights index${origin === SECURED ? " and the audit log" : ""} -> ${present.join(", ")}`,
+  );
+  if (insights === undefined) return;
+  try {
+    const made = await send(origin, "POST", "/_aliases", { actions: [{ add: { index: insights, alias: view } }] });
+    check(made.status === 200, `plugin (${label}): the script makes an alias over ${insights} -> ${made.status}`);
+    for (const reference of [...present, "t*", view]) {
+      const raw = await fetch(new URL("/_plugins/_sql", origin), {
+        method: "POST",
+        headers: { "content-type": "application/json", ...auth },
+        body: JSON.stringify({ query: `SELECT * FROM \`${reference}\` LIMIT 1` }),
+        signal: AbortSignal.timeout(30_000),
+      });
+      const text = await raw.text();
+      const rows = raw.status === 200 ? (JSON.parse(text) as { datarows: unknown[] }).datarows.length : -1;
+      const needsRows = reference === insights || reference === audit || reference === "t*" || reference === view;
+      check(
+        raw.status === 200 && (!needsRows || rows > 0),
+        `plugin (${label}): SELECT * FROM \`${reference}\` sent raw as the reader's login answers -> ${raw.status} ${rows} row(s)`,
+      );
+    }
+    const references = [
+      ...present,
+      "t*",
+      "top_queries-*",
+      "probe_orders,top_queries-*",
+      "probe_orders,t*",
+      view,
+      ...(origin === SECURED ? ["security-auditlog-*", "se*"] : []),
+    ];
+    const statements: [string, string][] = [
+      ...references.map((reference): [string, string] => [`SELECT * FROM \`${reference}\` LIMIT 1`, reference]),
+      ["DESCRIBE TABLES LIKE 'top_queries-*'", "top_queries-*"],
+    ];
+    for (const [sql, reference] of statements) {
+      const { result, acquired } = await mcp(reader, { sql });
+      check(
+        textOf(result) === unsent(hiddenTargetRefusal(reference)) && acquired.join() === "agent-read-only",
+        `plugin (${label}): ${sql} is refused before it is sent -> ${textOf(result).slice(0, 110)}`,
+      );
+    }
+  } finally {
+    await send(origin, "POST", "/_aliases", { actions: [{ remove: { index: insights, alias: view } }] });
   }
 }
 
@@ -666,6 +746,8 @@ async function main(): Promise<void> {
   const agent = seed("os-3-8", ORIGIN);
   const { seedRole, wide } = await checkOpen(agent);
   await checkHiddenTargets(agent);
+  await checkPluginIndices(ORIGIN, agent, "security off");
+  await checkPluginIndices(SECURED, wide, "security on, a role reading every index");
   await checkBoundary(ORIGIN, agent, "boundary");
   await checkBoundary(SECURED, seedRole, "boundary as the seed role");
   await checkSecurityIndex(wide);

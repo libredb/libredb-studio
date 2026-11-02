@@ -4,10 +4,12 @@
  *
  * Measured on 3.8.0 on 2026-11-02, with the security plugin off and signed in as `admin` with it on, OpenSearch SQL
  * answers the rows of an index the statement names whatever the server marks it: a hidden index by its name, a hidden
- * index through an alias over it, a data stream's backing index by its own name, and an index whose name starts with a
- * dot, such as the ML plugin's `.plugins-ml-config`, by its name or through `*`; signed in as `admin`, the security
- * index `.opendistro_security` answers its columns (its documents stay hidden from every REST read). So, as on
- * Elasticsearch, the check is two layers, and neither is a list of index names to keep away.
+ * index through an alias over it, a data stream's backing index by its own name, an index whose name starts with a
+ * dot, such as the ML plugin's `.plugins-ml-config`, by its name or through `*`, and a bundled plugin's index with no
+ * dot and no hidden mark, such as the query insights plugin's `top_queries-<date>-<n>`, by its name or through `t*`;
+ * signed in as `admin`, the security index `.opendistro_security` answers its columns (its documents stay hidden from
+ * every REST read), and with security on, a role reading `*` reads the audit log `security-auditlog-<date>`. So, as on
+ * Elasticsearch, the check is two layers.
  *
  * The reader. A reference is named with certainty only where the reader and the plugin split the text into the same
  * tokens. The plugin holds two SQL engines, the new one and the older one it falls back to, which read some text their
@@ -24,16 +26,18 @@
  *    surrogate with no partner. The engine upper-cases the keywords it reads, and some letters outside ASCII
  *    upper-case into ASCII ones;
  *  - a number that runs into a letter or `_`, or carries an exponent;
- *  - any statement but one `SELECT` or the agent's own column catalog read, `DESCRIBE TABLES LIKE %` for every table
- *    or `DESCRIBE TABLES LIKE '<table>'` for one;
+ *  - any statement but one `SELECT` or the agent's own column catalog read of one table, `DESCRIBE TABLES LIKE
+ *    '<table>'`; so the every-table read, `DESCRIBE TABLES LIKE %`, which the agent's overlay never composes, is
+ *    refused;
  *  - a second `SELECT`, or a `WITH`, anywhere, so no subquery reads an index;
  *  - a `FROM` but the one at the top level of the `SELECT` and one inside `EXTRACT(...)`, which takes a value;
  *  - a top-level `FROM` that is not followed by one table identifier, an optional alias, and then `WHERE`, `GROUP`,
  *    `HAVING`, `ORDER`, `LIMIT` or the end, so no `JOIN`, second relation, comma, `/` type, qualifier or datasource:
  *    3.8.0 joins a qualified name's parts with a dot into one index name, and reads `` `@opensearch`.probe_orders ``
  *    from its default datasource;
- *  - a reference with a name that starts with a dot, as the system indices' names do, whether or not the index it
- *    names is hidden, and a reference with an exclusion, a part that starts with `-`;
+ *  - a reference with a name that starts with a dot, as the security index and most bundled plugins' indices are
+ *    named, whether or not the index it names is hidden, and a reference with an exclusion, a part that starts with
+ *    `-`;
  *  - a reference that is not then a comma list of names and wildcards written in letters, digits, `_`, `-`, `.`, `*` and
  *    `@`, none of them empty and none starting with `_` or `@`.
  *
@@ -41,23 +45,24 @@
  *
  *  - the server's own resolution of the reference (`SearchTransport.resolveTargets`), with the wildcard expansion the
  *    SQL endpoint uses, names the indices, aliases and data streams it reaches: the statement is refused when it names
- *    nothing, an index the server marks hidden or whose name starts with a dot, or a data stream whose name starts
- *    with a dot. OpenSearch marks no index a system index, and its system indices are named with a leading dot, so
- *    the name is the mark; its data streams carry no mark of their own;
+ *    nothing, an index the server marks hidden or system or whose name starts with a dot, or a data stream whose name
+ *    starts with a dot. OpenSearch marks no index a system index in the resolution, and a leading dot is not every
+ *    plugin's mark: the bundled plugins also write into indices named without one, on indices the server marks
+ *    neither hidden nor system, so the dialect's measured row of those families (`pluginIndexFamilies` in
+ *    `http-transport.ts`) marks an index in one a system index on the concrete name the server resolves; its data
+ *    streams carry no mark of their own;
  *  - the SQL endpoint's own resolution of the reference (`SearchTransport.sqlTableIndices`), a request naming the same
  *    indices as the mappings read the plugin resolves a table with (measured equal over names, wildcards, comma lists,
  *    aliases over hidden and visible indices, a hidden alias and a data stream), names the concrete indices the
  *    statement reads: the statement is refused when that names none, or an index the first resolution does not
  *    account for, as one it names, a backing index of a data stream it names, or an index behind an alias it names;
- *    and an index read only through an alias is resolved by its own name, and refuses the statement when the server
- *    marks it hidden or its name starts with a dot.
+ *    and an index read only through an alias is resolved by its own name, and refuses the statement when it is
+ *    hidden or system or its name starts with a dot.
  *
  * So an alias over a data stream, whose backing indices the server marks hidden, is refused; a data stream is read by
  * its own name. An alias is not asked about for a mark of its own: what it reads is the indices behind it, each
- * checked by name, and asking would need a privilege a reader does not otherwise hold. The every-table catalog read
- * resolves `*`, which reaches the indices whose names start with a dot on every 3.8.0 node, so it is refused there and
- * the agent names a table instead. The check and the statement are separate requests, so a change made to the cluster
- * between them is not seen.
+ * checked by name, and asking would need a privilege a reader does not otherwise hold. The check and the statement
+ * are separate requests, so a change made to the cluster between them is not seen.
  *
  * Every refusal is a `RefusedBeforeSendError`: nothing reached the SQL endpoint.
  */
@@ -77,7 +82,7 @@ export const UNREADABLE_REFUSAL =
   "The agent sends OpenSearch no statement whose quote never closes or whose backtick-quoted name holds a backtick, since where its names end cannot be read";
 
 export const STATEMENT_REFUSAL =
-  "The agent sends OpenSearch one SELECT, or its own column catalog read, DESCRIBE TABLES LIKE % for every table or DESCRIBE TABLES LIKE with one quoted table: no other DESCRIBE or SHOW command";
+  "The agent sends OpenSearch one SELECT, or its own one-table column catalog read, DESCRIBE TABLES LIKE with one quoted table: no other DESCRIBE or SHOW command, and not the every-table read, DESCRIBE TABLES LIKE %";
 
 export const SUBQUERY_REFUSAL =
   "The agent sends OpenSearch no statement with a second SELECT or a WITH in it: every index it reads must be the one written after its FROM";
@@ -96,9 +101,9 @@ export function expressionRefusal(reference: string): string {
   return `The agent writes an OpenSearch index expression as comma-separated names and wildcards of letters, digits, _, -, ., * and @, none empty and none starting with _ or @, with no space, date math, remote cluster or datasource, and "${reference}" is not one`;
 }
 
-/** The refusal of a reference the server resolves to a hidden target or one named with a leading dot. */
+/** The refusal of a reference the server resolves to a hidden or system target, or one named with a leading dot. */
 export function hiddenTargetRefusal(reference: string): string {
-  return `The agent reads no OpenSearch index the server marks hidden, nor an index or data stream whose name starts with a dot, and the server resolves "${reference}" to one`;
+  return `The agent reads no OpenSearch index the server marks hidden or system, no index or data stream whose name starts with a dot, and no index of a family a bundled plugin writes its own records into without either mark, and the server resolves "${reference}" to one`;
 }
 
 /** The refusal of a reference the SQL endpoint resolves to an index the server's own resolution does not account for. */
@@ -267,20 +272,19 @@ function assertExpression(sql: string, reference: string): void {
 
 /**
  * The index expression an agent statement reads, read from its text alone: the table identifier after the top-level
- * FROM of a `SELECT`, the table of the agent's `DESCRIBE TABLES LIKE '<table>'`, or `*` for `DESCRIBE TABLES LIKE %`,
- * which reads every table; null for a `SELECT` with no FROM. Refuses a statement the reader cannot read with certainty,
- * and a reference with an empty, malformed or dot-led name, before anything is sent.
+ * FROM of a `SELECT`, or the table of the agent's one-table `DESCRIBE TABLES LIKE '<table>'`; null for a `SELECT` with
+ * no FROM. Refuses a statement the reader cannot read with certainty, the every-table `DESCRIBE TABLES LIKE %`, and a
+ * reference with an empty, malformed or dot-led name, before anything is sent.
  */
 export function agentIndexReference(sql: string): string | null {
   const read = tokens(sql);
   let reference: string | null;
   if (isWord(read[0], "DESCRIBE")) {
     const [, tables, like, table, ...rest] = read;
-    const every = isOperator(table, "%");
-    if (!isWord(tables, "TABLES") || !isWord(like, "LIKE") || rest.length > 0 || !(every || table?.kind === "string")) {
+    if (!isWord(tables, "TABLES") || !isWord(like, "LIKE") || rest.length > 0 || table?.kind !== "string") {
       throw refuse(STATEMENT_REFUSAL, sql);
     }
-    reference = table.kind === "string" ? table.text : "*";
+    reference = table.text;
   } else {
     if (!isWord(read[0], "SELECT")) throw refuse(STATEMENT_REFUSAL, sql);
     reference = selectReference(sql, read.slice(1));
@@ -289,13 +293,16 @@ export function agentIndexReference(sql: string): string | null {
   return reference;
 }
 
-/** An index the server marks hidden, or whose name starts with a dot, the name OpenSearch's system indices carry. */
+/**
+ * An index the server marks hidden or system, the second including an index of a bundled plugin's family the dialect
+ * declares, or whose name starts with a dot, as most of the bundled plugins' indices are named.
+ */
 const isMarked = (index: SearchResolvedIndex): boolean => index.hidden || index.system || index.name.startsWith(".");
 
 /**
  * Asks the server what `reference` resolves to for the login, in its own index resolution and in the SQL endpoint's,
- * and refuses the statement when either answer cannot be read or names nothing, when the first names an index the
- * server marks hidden, or an index or data stream whose name starts with a dot, or when the second names an index the
+ * and refuses the statement when either answer cannot be read or names nothing, when the first names an index that is
+ * hidden or system, or an index or data stream whose name starts with a dot, or when the second names an index the
  * first does not account for or one behind an alias that is so marked or named. Each request goes out on `signal`.
  */
 export async function assertReferenceVisible(

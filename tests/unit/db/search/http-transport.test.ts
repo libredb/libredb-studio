@@ -1311,6 +1311,60 @@ describe("SearchHttpTransport index resolution", () => {
     expect((caught as Error).message).toBe("Elasticsearch answered an alias listing the client could not read");
   });
 
+  /**
+   * The index families the plugins bundled with OpenSearch 3.8.0 write their own records into with no leading dot and
+   * no hidden mark, each measured on a stock node with security off and on (2026-11-02), beside names that only look
+   * like them. OpenSearch marks none of them, so its dialect's row of families marks each as the system index it is;
+   * Elasticsearch, whose server marks its own system indices, marks none of the same names.
+   */
+  const PLUGIN_OWNED = [
+    "top_queries-2026.11.02-89252",
+    "security-auditlog-2026.11.02",
+    "ubi_queries",
+    "ubi_events",
+    "search-relevance-queryset",
+    "search-relevance-search-config",
+    "opensearch-forecast-results-history-2026.11.02-1",
+    "opensearch-forecast-result-mine",
+    "opensearch-ad-plugin-insights-history-2026.11.02-1",
+    "opensearch-ad-plugin-result-mine",
+  ];
+  const LOOK_ALIKES = [
+    "top_queries",
+    "my-top_queries-2026.11.02-1",
+    "security-auditlog",
+    "ubi_queries_2026",
+    "ubi_events-x",
+    "search-relevance",
+    "searchrelevance-x",
+    "opensearch-forecast",
+    "opensearch-ad",
+    "probe_orders",
+  ];
+  const resolution = () =>
+    json({
+      indices: [...PLUGIN_OWNED, ...LOOK_ALIKES].map((name) => ({ name, attributes: ["open"] })),
+      aliases: [],
+      data_streams: [],
+    });
+
+  test("OpenSearch marks an index of a family its bundled plugins write into as a system index, by its name", async () => {
+    handler = resolution;
+
+    const targets = await new SearchHttpTransport("opensearch", makeConnection("opensearch")).resolveTargets(["*"]);
+
+    expect(targets.indices.filter((index) => index.system).map((index) => index.name)).toEqual(PLUGIN_OWNED);
+    expect(targets.indices.every((index) => !index.hidden)).toBe(true);
+  });
+
+  test("Elasticsearch marks none of the same names, its server marking its own system indices", async () => {
+    handler = resolution;
+
+    const targets = await transport().resolveTargets(["*"]);
+
+    expect(targets.indices.some((index) => index.system)).toBe(false);
+  });
+
   test("reads each asked data stream's marks from the data stream listing", async () => {
     handler = () =>
       json({
