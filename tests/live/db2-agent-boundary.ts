@@ -33,8 +33,8 @@
  *    over a view it may read, a view calling IBM's own functions, SYSFUN's among them, a view over SYSCAT.TABLES, IBM's DB_MEMBERS
  *    and a view calling GET_INDEX_COLNAMES, both on the list of IBM functions measured as reading only; the casts and
  *    comparisons Db2 generates for a distinct type, granted to PUBLIC by the database, and a view calling them, while a
- *    function the owner sources on one of them or on its own code is refused, and a generated function cannot be
- *    replaced or dropped;
+ *    function the owner sources on one of them or on its own code, or writes over the type, is refused, and so is
+ *    one written over the type and transferred to the agent user; a generated function cannot be replaced or dropped;
  *  - each call has a connection of its own: what one call's session holds is not the next one's;
  *  - the operations profile opens the instance owner unproven; an editor handle refuses `queryReadOnly`;
  *  - the object surface as the agent user, from the value-free sources: a DECFLOAT column's precision on a table it
@@ -213,6 +213,7 @@ const CLEANUP = [
   "DROP TABLE APP.LIBREDB_AB_CHECKPEND",
   "DROP TABLE APP.LIBREDB_AB_REORGPEND",
   "DROP FUNCTION APP.LIBREDB_AB_EQ",
+  "DROP FUNCTION APP.LIBREDB_AB_PEEK",
   "DROP TABLE APP.LIBREDB_AB_TYPED",
   "DROP DISTINCT TYPE APP.LIBREDB_AB_MONEY",
 ];
@@ -1142,39 +1143,74 @@ try {
     replaced.join(", ") === "-658, -658",
     `a generated function cannot be replaced or dropped (SQLCODE ${replaced.join(", ")})`,
   );
-  // A function a user sources on a generated one, or on its own code, is the user's: refused, naming only it.
+  // A function a user sources on a generated one or on its own code, or writes over the type, reading a table the
+  // agent user may not read, is the user's: refused, naming only it.
   await setup([
     "CREATE FUNCTION APP.LIBREDB_AB_EQ (APP.LIBREDB_AB_MONEY, APP.LIBREDB_AB_MONEY) RETURNS BOOLEAN " +
       'SOURCE APP."=" (APP.LIBREDB_AB_MONEY, APP.LIBREDB_AB_MONEY)',
     "CREATE FUNCTION APP.LIBREDB_AB_RD2 () RETURNS VARCHAR(20) SOURCE APP.LIBREDB_AB_READ ()",
+    "CREATE FUNCTION APP.LIBREDB_AB_PEEK (M APP.LIBREDB_AB_MONEY) RETURNS VARCHAR(20) LANGUAGE SQL " +
+      "READS SQL DATA NO EXTERNAL ACTION RETURN (SELECT MAX(V) FROM APP.LIBREDB_AB_SECRET WHERE APP.DECIMAL(M) IS NOT NULL)",
     "GRANT EXECUTE ON FUNCTION APP.LIBREDB_AB_EQ TO USER AGENT_RO",
     "GRANT EXECUTE ON FUNCTION APP.LIBREDB_AB_RD2 TO USER AGENT_RO",
+    "GRANT EXECUTE ON FUNCTION APP.LIBREDB_AB_PEEK TO USER AGENT_RO",
   ]);
   const sourced = await rows(
-    "SELECT SPECIFICNAME, ORIGIN, SOURCESCHEMA FROM SYSCAT.ROUTINES WHERE ROUTINESCHEMA = 'APP' " +
-      "AND ROUTINENAME IN ('LIBREDB_AB_EQ', 'LIBREDB_AB_RD2') ORDER BY ROUTINENAME",
+    "SELECT ROUTINENAME, SPECIFICNAME, ORIGIN, COALESCE(SOURCESCHEMA, '-') AS SOURCESCHEMA FROM SYSCAT.ROUTINES " +
+      "WHERE ROUTINESCHEMA = 'APP' " +
+      "AND ROUTINENAME IN ('LIBREDB_AB_EQ', 'LIBREDB_AB_PEEK', 'LIBREDB_AB_RD2') ORDER BY ROUTINENAME",
   );
   const sourcedRefusal = await refusalOf(provider, "SELECT ID FROM APP.ORDERS");
   const sourcedMessage = sourcedRefusal instanceof Error ? sourcedRefusal.message : "";
   check(
     sourcedRefusal instanceof ExecutionProfileError &&
-      sourced.length === 2 &&
-      sourced.every(
-        (row) =>
-          String(row.ORIGIN) === "U" &&
-          String(row.SOURCESCHEMA).trimEnd() === "APP" &&
-          sourcedMessage.includes(
-            `REVOKE EXECUTE ON SPECIFIC FUNCTION "APP"."${String(row.SPECIFICNAME).trimEnd()}" FROM USER "AGENT_RO" RESTRICT`,
-          ),
+      sourced
+        .map((row) => `${String(row.ROUTINENAME)}:${String(row.ORIGIN)}:${String(row.SOURCESCHEMA).trimEnd()}`)
+        .join(", ") === "LIBREDB_AB_EQ:U:APP, LIBREDB_AB_PEEK:Q:-, LIBREDB_AB_RD2:U:APP" &&
+      sourced.every((row) =>
+        sourcedMessage.includes(
+          `REVOKE EXECUTE ON SPECIFIC FUNCTION "APP"."${String(row.SPECIFICNAME).trimEnd()}" FROM USER "AGENT_RO" RESTRICT`,
+        ),
       ) &&
       !generated.some((name) => sourcedMessage.includes(name)),
-    `a function sourced on a generated one, or on the owner's own code, is refused, naming it and no generated function${sourcedRefusal instanceof Error ? "" : " (admitted)"}${sourcedRefusal instanceof Error && !(sourcedRefusal instanceof ExecutionProfileError) ? ` (got: ${sourcedMessage.slice(0, 300)})` : ""}`,
+    `a function sourced on a generated one or on the owner's own code, or one the owner writes over the type, is refused, naming each and no generated function${sourcedRefusal instanceof Error ? "" : " (admitted)"}${sourcedRefusal instanceof Error && !(sourcedRefusal instanceof ExecutionProfileError) ? ` (got: ${sourcedMessage.slice(0, 300)})` : ""}`,
   );
-  await setup(["DROP FUNCTION APP.LIBREDB_AB_EQ", "DROP FUNCTION APP.LIBREDB_AB_RD2"]);
+  await setup([
+    "DROP FUNCTION APP.LIBREDB_AB_EQ",
+    "DROP FUNCTION APP.LIBREDB_AB_RD2",
+    "DROP FUNCTION APP.LIBREDB_AB_PEEK",
+  ]);
   const afterSourced = await refusalOf(provider, "SELECT ID FROM APP.ORDERS");
   check(
     afterSourced === undefined,
     `admitted once they are gone${afterSourced instanceof Error ? ` (got: ${afterSourced.message.slice(0, 300)})` : ""}`,
+  );
+  // A function written over the type and handed to the agent user holds EXECUTE through the database's own grant,
+  // as the owner of any routine does, so only its own ORIGIN tells it from a generated one.
+  await setup([
+    "CREATE FUNCTION APP.LIBREDB_AB_PEEK (M APP.LIBREDB_AB_MONEY) RETURNS VARCHAR(20) LANGUAGE SQL " +
+      "READS SQL DATA NO EXTERNAL ACTION RETURN (SELECT MAX(V) FROM APP.LIBREDB_AB_SECRET WHERE APP.DECIMAL(M) IS NOT NULL)",
+    "TRANSFER OWNERSHIP OF FUNCTION APP.LIBREDB_AB_PEEK TO USER AGENT_RO PRESERVE PRIVILEGES",
+  ]);
+  const handed = (
+    await rows(
+      "SELECT a.GRANTORTYPE, r.ORIGIN, r.OWNERTYPE FROM SYSCAT.ROUTINEAUTH a JOIN SYSCAT.ROUTINES r " +
+        "ON r.ROUTINESCHEMA = a.SCHEMA AND r.SPECIFICNAME = a.SPECIFICNAME WHERE r.ROUTINESCHEMA = 'APP' " +
+        "AND r.ROUTINENAME = 'LIBREDB_AB_PEEK' AND a.GRANTEE = 'AGENT_RO'",
+    )
+  )
+    .map((row) => `${String(row.GRANTORTYPE)}:${String(row.ORIGIN)}:${String(row.OWNERTYPE)}`)
+    .join(", ");
+  const handedRefusal = await refusalOf(provider, "SELECT ID FROM APP.ORDERS");
+  await setup(["DROP FUNCTION APP.LIBREDB_AB_PEEK"]);
+  const afterHanded = await refusalOf(provider, "SELECT ID FROM APP.ORDERS");
+  check(
+    handed === "S:Q:U" &&
+      handedRefusal instanceof ExecutionProfileError &&
+      handedRefusal.message.includes('REVOKE EXECUTE ON SPECIFIC FUNCTION "APP"."SQL') &&
+      !generated.some((name) => handedRefusal.message.includes(name)) &&
+      afterHanded === undefined,
+    `a function written over the type and transferred to the agent user (${handed}) is refused, and admitted once dropped${handedRefusal instanceof ExecutionProfileError ? "" : " (admitted)"}`,
   );
   const typedSurface = (await surfaceAs.describeObject(["APP", "LIBREDB_AB_TYPED"], "table")).columns
     .map((column) => column.type)
