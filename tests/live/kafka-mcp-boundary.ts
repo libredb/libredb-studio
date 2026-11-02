@@ -226,9 +226,7 @@ const textOf = (result: ToolResult): string =>
   result.content.map((part) => ("text" in part ? part.text : "")).join("\n");
 
 const rowsOf = (result: ToolResult): Record<string, unknown>[] =>
-  ((result.structuredContent as { rows?: Record<string, unknown>[] } | undefined)?.rows ?? []).map((row) => ({
-    ...row,
-  }));
+  (result.structuredContent as { rows?: Record<string, unknown>[] } | undefined)?.rows ?? [];
 
 const topicsOf = (result: ToolResult): string[] => rowsOf(result).map((row) => String(row.topic));
 

@@ -142,7 +142,7 @@ afterAll(() => {
 interface Answered {
   isError?: boolean;
   content: Array<{ type: string; text: string }>;
-  structuredContent?: Record<string, any>;
+  structuredContent?: { rows?: Array<Record<string, unknown>>; hint?: string | null; [key: string]: unknown };
 }
 
 async function call(name: string, args: Record<string, unknown>): Promise<Answered> {
@@ -212,11 +212,7 @@ describe("a read", () => {
       pagination: { offset: 0, limit: 100, hasMore: false, nextOffset: null, wasLimited: false },
       hint: null,
     });
-    expect(result.structuredContent?.rows.map((row: { topic: string }) => row.topic)).toEqual([
-      "audit",
-      "orders",
-      "payments",
-    ]);
+    expect(result.structuredContent?.rows?.map((row) => row.topic)).toEqual(["audit", "orders", "payments"]);
     // Only the listed page's topics are named to the broker, and no platform topic is among them.
     expect(fake.calls).toEqual(["listTopics", 'metadata ["audit","orders","payments"]']);
     expect(mcpEvents().map((event) => [event.action, event.target, event.result])).toEqual([
