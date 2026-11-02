@@ -25,6 +25,7 @@ import { RabbitMQProvider } from "@/lib/db/providers/stream/rabbitmq/index";
 import { routeTarget } from "@/lib/db/providers/stream/rabbitmq/management/routes";
 import { McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_CANCELLED_TEXT, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { timeoutText } from "@/lib/mcp/tools/read-query-limits";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
@@ -402,7 +403,12 @@ describe("a refusal", () => {
 
 describe("the wait", () => {
   /** One call through the statement core with the route's acquisition, under `signal`. */
-  async function direct(statement: string, timeoutMs: number, signal: AbortSignal) {
+  async function direct(
+    statement: string,
+    timeoutMs: number,
+    signal: AbortSignal,
+    acquire: typeof brokerProvider = brokerProvider,
+  ) {
     const connection = {
       ...BROKER_SEED,
       id: "seed:broker",
@@ -417,7 +423,7 @@ describe("the wait", () => {
       caller: { username: "mcp-test", role: "admin" },
       visibleConnections: async () => [connection],
       resolve: async () => connection,
-      acquire: brokerProvider,
+      acquire,
     } as unknown as McpConnectionContext;
     const input = RUN_RABBITMQ_READ_ARM.inputSchema.parse({
       connection_id: "seed:broker",
@@ -458,5 +464,34 @@ describe("the wait", () => {
     expect(sockets[0].destroyed).toBe(false);
     await until(() => sockets[0].destroyed, "the read's connection to close", 3_000);
     expect(Date.now() - started).toBeGreaterThanOrEqual(1_400);
+  });
+
+  test("a cancelled read keeps the seed's one read slot until its deadline, and a later call on that seed waits for it", async () => {
+    // The factory hands every call on one seed and profile the same provider, whose read limiter holds one read.
+    let shared: Promise<RabbitMQProvider> | undefined;
+    const sameProvider: typeof brokerProvider = (connection, profile) => {
+      shared ??= brokerProvider(connection, profile);
+      return shared;
+    };
+    const trickle = Array.from({ length: 8 }, (_, index): PeerStep[] => [
+      { waitMs: 600 },
+      { send: markedDelivery(index + 1, BigInt(index)) },
+    ]).flat();
+    peer = await startFakePeer([...handshakeSteps(), ...trickle]);
+    const controller = new AbortController();
+    const started = Date.now();
+    const cancelled = direct(READ(10), 1_500, controller.signal, sameProvider);
+    await until(() => sockets.length === 1, "the read's connection to open");
+    controller.abort();
+    expect(await cancelled).toEqual({ isError: true, content: [{ type: "text", text: MCP_CANCELLED_TEXT }] });
+    const waiting = await direct(READ(1), 500, new AbortController().signal, sameProvider);
+    expect(waiting).toEqual({ isError: true, content: [{ type: "text", text: timeoutText(500) }] });
+    expect(dials).toBe(1);
+    await until(() => sockets[0].destroyed, "the cancelled read's connection to close", 3_000);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(1_400);
+    const after = await direct(READ(1), 3_000, new AbortController().signal, sameProvider);
+    expect(after.isError ?? false).toBe(false);
+    expect(after.structuredContent).toMatchObject({ rows: [{ offset: 0, body_bytes: MARKERS.body.length }] });
+    expect(dials).toBe(2);
   });
 });

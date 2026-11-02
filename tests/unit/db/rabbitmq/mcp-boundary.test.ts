@@ -9,8 +9,9 @@
  * are refused by the broker's 406; every queue holds what it held. The data scope: a user with read permission on one
  * stream of `/` is refused another virtual host in the same words whether the stream exists or not, and whether the
  * virtual host exists or not, and a stream of `/` outside its read pattern by the broker; the administrator reads the other virtual host, offsets and sizes only;
- * and no answer holds a message marker. The limits: timeout_ms at its minimum, and a cancel that ends the wait while
- * the read runs on to the provider's deadline.
+ * an exchange's name is refused as not a stream in `/` and in the one sentence in the other virtual host; and no answer
+ * holds a message marker. The limits: timeout_ms at its minimum, and a cancel that ends the wait while the read runs on
+ * to the provider's deadline, keeping the seed's one read slot until then.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
@@ -52,6 +53,8 @@ interface Capture {
       | "absentVhostStream"
       | "privateStream"
       | "missingStream"
+      | "exchange"
+      | "otherVhostExchange"
       | "broadOtherVhost",
       Recorded
     >
@@ -62,6 +65,14 @@ interface Capture {
     readonly answeredAfterMs: number;
     readonly timeoutMs: number;
     readonly readSettled: { readonly afterMs: number; readonly outcome: string };
+    readonly waiting: {
+      readonly answer: Recorded;
+      readonly startedAfterMs: number;
+      readonly answeredAfterMs: number;
+      readonly timeoutMs: number;
+      readonly dials: number;
+    };
+    readonly after: { readonly answer: Recorded; readonly dials: number };
   };
   readonly after: Counts;
   readonly control: { readonly take: string; readonly after: Counts };
@@ -81,6 +92,8 @@ const answers: readonly Recorded[] = [
   ...Object.values(capture.scope),
   capture.timeout,
   capture.cancel.answer,
+  capture.cancel.waiting.answer,
+  capture.cancel.after.answer,
 ];
 
 /** The text after the untrusted-content notice: what the broker's refusal reached the client as. */
@@ -179,6 +192,13 @@ describe("the data scope", () => {
     );
   });
 
+  test("an exchange's name is refused as not a stream in its own virtual host, and in the one sentence in another", () => {
+    expect(refusalOf(capture.scope.exchange)).toBe(`${ENGINE_REFUSAL}${notAStream("ex-mcp", "").message}`);
+    expect(refusalOf(capture.scope.otherVhostExchange)).toBe(
+      `${ENGINE_REFUSAL}${rabbitmqAgentUnreadable("tenant-b", "ex-other")}`,
+    );
+  });
+
   test("the administrator reads the other virtual host, offsets and body sizes only", () => {
     expect(capture.scope.broadOtherVhost.isError).toBe(false);
     expect(capture.scope.broadOtherVhost.rows?.map((row) => Object.keys(row))).toEqual([
@@ -201,5 +221,19 @@ describe("the wait", () => {
     expect(left).toBeGreaterThan(capture.cancel.timeoutMs - 100);
     expect(left).toBeLessThanOrEqual(capture.cancel.timeoutMs);
     expect(capture.cancel.readSettled.outcome).toBe(RABBITMQ_AGENT_STOP_SENTENCES.deadline(left));
+  });
+
+  test("the cancelled read keeps the seed's read slot: a call on that seed waits, and is answered as its timeout", () => {
+    const { waiting } = capture.cancel;
+    expect(waiting.startedAfterMs).toBeLessThan(capture.cancel.timeoutMs);
+    expect(waiting.answeredAfterMs).toBeLessThan(capture.cancel.readSettled.afterMs);
+    expect(waiting.answer.text).toBe(timeoutText(waiting.timeoutMs));
+    expect(waiting.dials).toBe(1);
+  });
+
+  test("the deadline frees the slot: a call after the read settled reads at once on a connection of its own", () => {
+    expect(capture.cancel.after.answer.isError).toBe(false);
+    expect(capture.cancel.after.answer.rows).toHaveLength(1);
+    expect(capture.cancel.after.dials).toBe(2);
   });
 });

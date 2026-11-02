@@ -202,6 +202,22 @@ describe("MCP read is open, and the doc says so", () => {
       .replace('"SAMPLE-STREAM"', "{stream}");
     expect(DOC).toContain(`refused in one sentence, "${sentence}"`);
   });
+
+  test("section 17 says an exchange of the name is refused as not a stream", () => {
+    const sentence = notAStream("SAMPLE-EXCHANGE", "").message.replace('"SAMPLE-EXCHANGE"', "{stream}");
+    expect(DOC).toContain(
+      `An exchange of the name in a virtual host the user may use is refused as not a stream, "${sentence}"`,
+    );
+  });
+
+  test("section 17 says an MCP answer carries no warning text, and that a cancelled read keeps the read slot", () => {
+    expect(DOC).toContain(
+      "An MCP answer carries no warning text, so `run_rabbitmq_read`'s description says that an early stop on an idle stream is not proof of the stream's end and that `next` answers only messages published after the read starts.",
+    );
+    expect(DOC).toContain(
+      "Until then the read keeps the seed's one read slot, since the provider reads one stream at a time and the MCP calls on a seed share one provider, so a later call on that seed waits for it, and one whose `timeout_ms` ends first is answered as the timeout with no AMQP connection of its own (`cancel.waiting`).",
+    );
+  });
 });
 
 describe("the seed table is the seed's", () => {

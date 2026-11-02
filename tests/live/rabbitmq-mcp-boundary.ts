@@ -23,10 +23,12 @@
  *    positive control is the administrator's raw `basic.get`, which removes a message from the same kind of queue;
  *  - the data scope: a user with read permission on one stream of `/` alone, naming a stream of another virtual host
  *    (one that exists and one that does not), a stream of a virtual host the broker does not have, and a stream of `/`
- *    outside its read pattern, each refused, with the wording that reaches the client recorded; the administrator, which the broker lets read every virtual
+ *    outside its read pattern, each refused, with the wording that reaches the client recorded; an exchange's name in
+ *    `/` and in the other virtual host; the administrator, which the broker lets read every virtual
  *    host, reading the other one, answered offsets and sizes only; and no message marker in any answer;
  *  - the limits: a read past timeout_ms at its 500 ms minimum, and a client cancel of a read fed a message every 400
- *    ms, with the time the cancel was answered and the time the read itself settled;
+ *    ms, with the time the cancel was answered and the time the read itself settled, a call on the same provider
+ *    while the cancelled read runs on, and one after it settled, each with the AMQP connections dialled by then;
  *  - every queue's message count, read with a passive queue.declare, the same before and after.
  *
  * Run by hand through run.sh, never by `bun run test`, which runs no file under tests/live/.
@@ -39,6 +41,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
 import { createNodeTransport } from "@/lib/db/http/node-transport";
 import { RabbitMQProvider } from "@/lib/db/providers/stream/rabbitmq";
+import { type AmqpDial, dialAmqp } from "@/lib/db/providers/stream/rabbitmq/amqp/dial";
 import type { ManagementTransportFactory } from "@/lib/db/providers/stream/rabbitmq/management/client";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import type { ToolResult } from "@/lib/mcp/output";
@@ -86,6 +89,8 @@ const OTHER_STREAM = "st-other";
 /** The stream the cancel probe publishes to while it reads, kept out of the counts. */
 const TRICKLE_STREAM = "st-trickle";
 const EXCHANGE = "ex-mcp";
+/** An exchange of the other virtual host, which the narrow user has no permission on. */
+const OTHER_EXCHANGE = "ex-other";
 const QUEUES = { classic: "q-classic", swapClassic: "st-swap-classic", swapQuorum: "st-swap-quorum" } as const;
 const MARKERS = {
   body: "mcp-live-marker-body",
@@ -314,6 +319,7 @@ async function seedBroker(): Promise<void> {
   await declare(OTHER_VHOST, OTHER_STREAM, "stream");
   await declare("/", TRICKLE_STREAM, "stream");
   await admin.call("PUT", `/api/exchanges/%2F/${EXCHANGE}`, { type: "direct", durable: true });
+  await admin.call("PUT", `/api/exchanges/${OTHER_VHOST}/${OTHER_EXCHANGE}`, { type: "direct", durable: true });
   await admin.call("POST", `/api/bindings/%2F/e/${EXCHANGE}/q/${STREAM}`, { routing_key: MARKERS.routingKey });
   await publish("/", EXCHANGE, MARKERS.routingKey, 5, "mcp");
   await publish("/", "", PRIVATE_STREAM, 2, "private");
@@ -395,6 +401,8 @@ async function main() {
     absentVhostStream: await mcp(narrow, { statement: request(ABSENT_VHOST, OTHER_STREAM, "first", 2) }),
     privateStream: await mcp(narrow, { statement: request("/", PRIVATE_STREAM, "first", 2) }),
     missingStream: await mcp(narrow, { statement: request("/", "st-missing", "first", 2) }),
+    exchange: await mcp(narrow, { statement: request("/", EXCHANGE, "first", 2) }),
+    otherVhostExchange: await mcp(narrow, { statement: request(OTHER_VHOST, OTHER_EXCHANGE, "first", 2) }),
     broadOtherVhost: await mcp(broad, { statement: request(OTHER_VHOST, OTHER_STREAM, "first", 2) }),
   };
 
@@ -402,19 +410,33 @@ async function main() {
 
   // The cancel: a message every 400 ms keeps the read from idling for 1 s and from reaching its limit of 10, so only
   // the provider's deadline, the time left of timeout_ms, ends it. The read runs on a provider of the production class
-  // built for this probe, whose queryReadOnly is wrapped to time when the read itself settles.
+  // built for this probe, whose queryReadOnly is wrapped to time when the first read itself settles. Every call of the
+  // probe gets that one provider, as the factory hands every call on one seed and profile the same one, and its dial is
+  // counted, so the calls after the cancel show whether they waited for the read slot or opened a connection.
   let readSettled: { readonly afterMs: number; readonly outcome: string } | null = null;
+  const firstSettled = Promise.withResolvers<void>();
+  let dials = 0;
+  const countedDial: AmqpDial = (endpoint, signal) => {
+    dials += 1;
+    return dialAmqp(endpoint, signal);
+  };
   const controller = new AbortController();
   const cancelStarted = Date.now();
-  const timed = async (connection: ManagedConnection) => {
+  let shared: Promise<RabbitMQProvider> | undefined;
+  const build = async (connection: ManagedConnection) => {
     const provider = new RabbitMQProvider(
       connection as DatabaseConnection,
       {},
       { readOnly: true, sendsStatements: true },
+      { dial: countedDial },
     );
     await provider.connect();
     const read = provider.queryReadOnly.bind(provider);
+    let calls = 0;
     provider.queryReadOnly = async (...args) => {
+      const first = calls === 0;
+      calls += 1;
+      if (!first) return read(...args);
       try {
         const result = await read(...args);
         readSettled = { afterMs: Date.now() - cancelStarted, outcome: `answered ${result.rowCount} rows` };
@@ -422,9 +444,15 @@ async function main() {
       } catch (error) {
         readSettled = { afterMs: Date.now() - cancelStarted, outcome: (error as Error).message };
         throw error;
+      } finally {
+        firstSettled.resolve();
       }
     };
     return provider;
+  };
+  const timed = (connection: ManagedConnection) => {
+    shared ??= build(connection);
+    return shared;
   };
   const trickle = (async () => {
     for (let n = 0; n < 10; n += 1) {
@@ -444,10 +472,26 @@ async function main() {
   controller.abort();
   const cancelled = await pending;
   const answeredAfterMs = Date.now() - cancelStarted;
+  const waitingStarted = Date.now();
+  const waitingAnswer = await mcp(
+    narrow,
+    { statement: request("/", TRICKLE_STREAM, "first", 1), timeout_ms: 1_000 },
+    { acquire: timed },
+  );
+  const waiting = {
+    answer: waitingAnswer,
+    startedAfterMs: waitingStarted - cancelStarted,
+    answeredAfterMs: Date.now() - cancelStarted,
+    timeoutMs: 1_000,
+    dials,
+  };
+  await firstSettled.promise;
+  const afterAnswer = await mcp(narrow, { statement: request("/", TRICKLE_STREAM, "first", 1) }, { acquire: timed });
+  const after = { answer: afterAnswer, dials };
   await trickle;
   const settledBy = readSettled as { readonly afterMs: number; readonly outcome: string } | null;
 
-  const after = await counts();
+  const countsAfter = await counts();
   const control = { take: await adminTake(QUEUES.classic), after: await counts() };
 
   const capture = {
@@ -469,8 +513,8 @@ async function main() {
     boundary,
     scope,
     timeout,
-    cancel: { answer: cancelled, answeredAfterMs, timeoutMs: 2_000, readSettled: settledBy },
-    after,
+    cancel: { answer: cancelled, answeredAfterMs, timeoutMs: 2_000, readSettled: settledBy, waiting, after },
+    after: countsAfter,
     control,
   };
   const text = `${JSON.stringify(capture, null, 2)}\n`;

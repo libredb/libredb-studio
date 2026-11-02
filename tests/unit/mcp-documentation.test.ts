@@ -143,6 +143,13 @@ describe("docs/MCP.md", () => {
       "Its answer is the agent's metadata-only projection: each message's offset and body size, and never a message's body, headers, properties or routing key.",
     );
     expect(MCP_DOC).toMatch(/^\| RabbitMQ \| Studio stops waiting; /m);
+    const cancelRow = MCP_DOC.split("\n").find((text) => text.startsWith("| RabbitMQ | Studio stops waiting; "));
+    expect(cancelRow).toContain(
+      "until then the read keeps the seed's one read slot, so a later call on that seed waits for it, and one whose `timeout_ms` ends first is answered as the timeout",
+    );
+    expect(MCP_DOC).toContain(
+      "An answer carries no warning text: a read that stops before its `limit` because no message arrived for 1 s answers the messages it read, which is not proof of the stream's end, and a read from `next` answers only messages published after the read starts, and the tool's description says both.",
+    );
     const line = MCP_DOC.split("\n").find((text) => text.startsWith("- Read-only is the database's own enforcement"));
     expect(line).toContain("`run_rabbitmq_read`");
     expect(line).toContain("RabbitMQ by Studio's read client");
