@@ -949,8 +949,24 @@ ERR SELECT is not allowed in cluster mode
 ```
 
 So the reply already reflects the deployment and nothing reads `cluster_enabled` to work it out. A
-refused or unparsable reply **raises**: 16 would be a number nobody measured, and 1 would hide
-fifteen databases that may hold keys. Every database is listed, including the empty ones, because a
+reply with no usable `databases` value **raises**: 16 would be a number nobody measured, and 1 would hide
+fifteen databases that may hold keys.
+
+A server that **refuses the command** lists the session database alone (#2163), the same list the agent's read-only profile gets.
+That is not an invented count: the connection is in that database, so keys can still be browsed.
+Measured on valkey 9.1.3 through ioredis 5.11.1:
+
+```
+$ valkey-cli CONFIG GET databases                # --rename-command CONFIG ""
+ERR unknown command 'CONFIG', with args beginning with: 'GET' 'databases'
+$ valkey-cli --user noconf --pass pw CONFIG GET databases  # ACL user with -config
+NOPERM User noconf has no permissions to run the 'config|get' command
+```
+
+DigitalOcean managed Valkey 9 answers the first shape (measured 2026-11-01).
+Any other error reply, and a dropped connection, still raises.
+
+Every database is listed, including the empty ones, because a
 Redis database is never created and never dropped — all of them exist at all times, so listing only
 the ones `INFO keyspace` mentions would hide a database a person is about to write to.
 
