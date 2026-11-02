@@ -42,6 +42,8 @@ import {
   ETCD_REFUSED_GLOBAL_FLAGS,
 } from "@/lib/db/providers/keyvalue/etcd/commands";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { admitEtcdctlStatement, ETCDCTL_AGENT_MAX_STATEMENT_CHARS } from "@/lib/db/operations/etcdctl-admission";
+import { ETCD_AGENT_MAX_KEY_BYTES } from "@/lib/db/providers/keyvalue/etcd/agent-statement";
 
 import { PROGRAMME_CONTROL_IDS } from "../../../../scripts/security-check.mjs";
 import { createFakeEtcdClient } from "../../../helpers/etcd-fake-client";
@@ -541,6 +543,22 @@ describe("docs/providers/etcd.md states the limits of spec E17 and the Kubernete
     expect(kubernetes).toContain("Never put the client key in `seedConnections.config`");
     expect(kubernetes).toContain("kube-apiserver compacts etcd every 5 minutes");
     expect(kubernetes).toContain("verify-full");
+  });
+});
+
+describe("docs/providers/etcd.md section 15.3 states the longest key an agent command reaches", () => {
+  const section = sectionOf(DOC, "### 15.3 What an agent command may be") ?? "";
+  const reached = ETCDCTL_AGENT_MAX_STATEMENT_CHARS - "get ".length;
+  const count = (value: number) => value.toLocaleString("en-US");
+
+  test("the bound quoted is the command cap less the get, below the reader's own key cap", () => {
+    expect(reached).toBeLessThan(ETCD_AGENT_MAX_KEY_BYTES);
+    expect(admitEtcdctlStatement(`get /${"a".repeat(reached - 1)}`)).toBeNull();
+    expect(admitEtcdctlStatement(`get /${"a".repeat(reached)}`)?.code).toBe("agent-too-large");
+    expect(section).toContain(`at most ${count(reached)} bytes`);
+    expect(section).toContain(`${count(ETCDCTL_AGENT_MAX_STATEMENT_CHARS)} characters`);
+    expect(section).toContain(`${count(ETCD_AGENT_MAX_KEY_BYTES)} bytes`);
+    expect(section).not.toContain(`A key is 1 to ${count(ETCD_AGENT_MAX_KEY_BYTES)} bytes`);
   });
 });
 

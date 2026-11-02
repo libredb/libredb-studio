@@ -639,7 +639,8 @@ The operations profile sends no command of the model's, so it opens with any use
 One etcdctl command, read by the editor's parser.
 A command outside the table, whatever its arguments, an abbreviated command and a flag the table's reads do not take are refused with agent mode's own sentence, which lists the reads it holds, so no refusal suggests a form of a command the table refuses, such as `lease keep-alive --once`.
 A request the parser cannot read, such as a second command or shell syntax, is refused with the parser's sentence followed by that list.
-A key is 1 to 4,096 bytes and is written as the editor reads one ([section 5.1](#51-the-grammar)).
+A key is 1 byte or more and is written as the editor reads one ([section 5.1](#51-the-grammar)).
+The reader takes a key of up to 4,096 bytes, but an agent command is at most 4,096 characters, so `get <key>` names a key of at most 4,092 characters: a key of single-byte characters is at most 4,092 bytes, and only one written with multibyte characters reaches 4,096.
 The request sent carries the command's own key and the provider's limit and nothing else of the request's: no revision, header or prefix, and only the connection's token, which the provider renews itself.
 Everything else is refused before anything is sent, by a sentence that quotes no stored value: at most it names the command's own command word or flag.
 
@@ -711,6 +712,8 @@ The seed's user is proved at the open and before every command, as [section 15.2
 Measured on v3.7.2 through MCP: root, a user holding the root role, a READWRITE range, READ on every key, READ on `/registry/`, on one Secret's key and on `/`, a connection that names no user, and a user and password on a server with authentication off are each refused; READ on `/app/`, on one key of `/app/`, and no role at all are proved.
 A seed with `mcp: true` whose `user` is `root` is refused when the seed file loads, [section 3.5](#35-machine-access-e12); every other condition is the server's to answer, so it is checked at the open.
 The proof costs a user holding N roles N + 2 requests per call before the read (`AuthStatus`, `UserGet`, one `RoleGet` per role), read from the server's own gRPC counters.
+The first call on a connection opens it, which costs 2N + 6 requests more before that proof: `Authenticate`, `Status`, `AuthStatus`, `UserGet` and one `RoleGet` per role for the connection's grants, then the proof at the open.
+A connection the open refuses is not kept, so every call on it opens it again, up to the request that refused it.
 
 What a user reading `/app/` reaches, in two layers:
 
