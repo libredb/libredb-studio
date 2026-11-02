@@ -83,7 +83,7 @@ async function serversBuiltBy(send: () => Promise<Response>): Promise<number> {
   try {
     const response = await send();
     await response.text();
-    return registrations.calls / 5;
+    return registrations.calls / 6;
   } finally {
     registrations.restore();
   }
@@ -199,6 +199,7 @@ describe("one server per served request", () => {
           "run_read_query",
           "run_kubectl_read",
           "run_mongo_command",
+          "run_influxql_read",
         ]);
       }
       expect(connects.calls).toBe(0);
@@ -461,6 +462,6 @@ describe("the module-scope handler", () => {
   test("still serves after every earlier test in this file has torn down its clients", async () => {
     const response = await serve(legacyPost({ jsonrpc: "2.0", id: 99, method: "tools/list" }, { token }));
     expect(response.status).toBe(200);
-    expect((await readJsonRpc(response)).result?.tools).toHaveLength(5);
+    expect((await readJsonRpc(response)).result?.tools).toHaveLength(6);
   });
 });

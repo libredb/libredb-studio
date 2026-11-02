@@ -162,7 +162,7 @@ describe("the answer", () => {
       ["seed:events", "run_read_query"],
       ["seed:edge", "run_read_query"],
       ["seed:metrics", "run_read_query"],
-      ["seed:legacy-metrics", null],
+      ["seed:legacy-metrics", "run_influxql_read"],
       ["seed:search", "run_read_query"],
       ["seed:fork-search", "run_read_query"],
       ["seed:ledger", "run_read_query"],

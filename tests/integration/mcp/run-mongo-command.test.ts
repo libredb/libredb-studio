@@ -133,6 +133,7 @@ describe("the tool", () => {
         "run_read_query",
         "run_kubectl_read",
         "run_mongo_command",
+        "run_influxql_read",
       ]);
       const tool = tools.find((candidate) => candidate.name === "run_mongo_command");
       expect(tool?.description).toBe(RUN_MONGO_COMMAND_ARM.description);

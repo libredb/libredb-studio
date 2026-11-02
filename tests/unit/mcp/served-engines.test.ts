@@ -48,8 +48,8 @@ describe("mcpStatementEngines", () => {
   });
 
   // Opening ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Oracle, Db2, Cassandra and Couchbase moved no other
-  // engine: every other language still serves exactly what it did.
-  test("opening ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Oracle, Db2, Cassandra and Couchbase leaves every other language's served set as it was", () => {
+  // engine: every other language serves exactly the engines a change of its own opened.
+  test("every other language serves only the engines a change of its own opened", () => {
     const languages = [...new Set(Object.values(AGENT_STATEMENT_LANGUAGE))].filter(
       (language): language is NonNullable<typeof language> => language !== null && language !== "sql",
     );
@@ -58,11 +58,12 @@ describe("mcpStatementEngines", () => {
       ...Object.fromEntries(languages.map((language) => [language, []])),
       mongo: ["mongodb"],
       kubectl: ["kubernetes"],
+      influxql: ["influxdb"],
     });
   });
 
   test("reads the shipped records when none are passed", () => {
-    for (const language of ["sql", "mongo", "kubectl"] as const) {
+    for (const language of ["sql", "mongo", "kubectl", "influxql"] as const) {
       expect(mcpStatementEngines(language)).toEqual(mcpStatementEngines(language, SHIPPED));
     }
   });
@@ -94,12 +95,17 @@ describe("mcpStatementEngines", () => {
     ]);
   });
 
-  // InfluxDB 3's SQL shares a provider directory with InfluxDB's InfluxQL, and opening the first left the second shut.
-  test("opening InfluxDB 3 leaves InfluxDB over InfluxQL unserved by every statement tool", () => {
-    expect(MCP_STATEMENT_READ.influxdb).toBe(false);
+  // InfluxDB 3's SQL shares a provider directory with InfluxDB's InfluxQL, and each opened by a row of its own: InfluxQL
+  // is served by its own language's tool, never by run_read_query, and closing it moves InfluxDB 3 nowhere.
+  test("InfluxDB over InfluxQL is served by its own language alone, through its own row, beside InfluxDB 3", () => {
+    expect(MCP_STATEMENT_READ.influxdb).toBe(true);
     expect(AGENT_STATEMENT_LANGUAGE.influxdb).toBe("influxql");
-    expect(mcpStatementEngines("influxql")).toEqual([]);
+    expect(mcpStatementEngines("influxql")).toEqual(["influxdb"]);
     expect(RUN_READ_QUERY_TYPES).not.toContain("influxdb");
+    expect(RUN_READ_QUERY_TYPES).toContain("influxdb3");
+    const closed = { ...SHIPPED, statementRead: { ...MCP_STATEMENT_READ, influxdb: false } };
+    expect(mcpStatementEngines("influxql", closed)).toEqual([]);
+    expect(mcpStatementEngines("sql", closed)).toEqual(RUN_READ_QUERY_TYPES);
   });
 
   // One provider directory serves Elasticsearch and OpenSearch, and each opened by a row of its own: the two rows are
