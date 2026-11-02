@@ -472,16 +472,16 @@
       "ok": true,
       "detail": {
         "answer": "The statement did not finish within timeout_ms (500 ms). Narrow it, or raise timeout_ms up to 30000.",
-        "ms": 505
+        "ms": 502
       }
     },
     {
-      "check": "a client cancel while the broker is paused ends the wait at once",
+      "check": "a client cancel while the broker is paused ends the wait at once, answered as the cancellation",
       "ok": true,
       "detail": {
         "answer": "The call was cancelled before it finished.",
         "isError": true,
-        "ms": 302
+        "ms": 301
       }
     },
     {
@@ -495,7 +495,7 @@
             "cluster_id": "8L6g3nShT-eMCtK--X86sw"
           }
         ],
-        "ms": 9
+        "ms": 5
       }
     },
     {

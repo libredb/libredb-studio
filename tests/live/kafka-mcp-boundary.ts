@@ -374,11 +374,17 @@ async function limits(): Promise<void> {
     const cancelled = mcp("super", '{"read": "brokers"}', { timeoutMs: 10_000, signal: controller.signal });
     setTimeout(() => controller.abort(), 300);
     const answered = await cancelled;
-    check("a client cancel while the broker is paused ends the wait at once", answered.ms < 3_000, {
-      answer: textOf(answered.result),
-      isError: answered.result.isError === true,
-      ms: answered.ms,
-    });
+    check(
+      "a client cancel while the broker is paused ends the wait at once, answered as the cancellation",
+      answered.result.isError === true &&
+        textOf(answered.result) === "The call was cancelled before it finished." &&
+        answered.ms < 3_000,
+      {
+        answer: textOf(answered.result),
+        isError: answered.result.isError === true,
+        ms: answered.ms,
+      },
+    );
   } finally {
     must("docker", ["unpause", CONTAINER]);
   }
