@@ -58,7 +58,7 @@ import {
   kafkaAgentResult,
   runKafkaAgentRead,
 } from "./agent-metadata-read";
-import { readKafkaAgentStatement } from "./agent-statement";
+import { isWithheldKafkaTopic, KAFKA_AGENT_SENTENCES, readKafkaAgentStatement } from "./agent-statement";
 import {
   agentCountObjects,
   agentDescribeObject,
@@ -162,10 +162,21 @@ export class KafkaProvider extends BaseDatabaseProvider {
     this.ensureConnected();
     // Assigned before setConnected(true) and cleared with setConnected(false), so a connected provider has one.
     const client = this.client!;
+    // A platform's own topic is never named to the broker, and never answered when the broker lists it.
+    const refuseWithheld = (topics: readonly string[]) => {
+      if (topics.some(isWithheldKafkaTopic)) throw new QueryError(KAFKA_AGENT_SENTENCES.platform, this.type);
+    };
     return {
-      metadata: (topics) => client.metadata(topics),
-      listTopics: () => client.listTopics(),
-      offsets: (topic, at) => client.offsets(topic, at),
+      metadata: async (topics) => {
+        refuseWithheld(topics ?? []);
+        const answer = await client.metadata(topics);
+        return { ...answer, topics: answer.topics.filter((topic) => !isWithheldKafkaTopic(topic.name)) };
+      },
+      listTopics: async () => (await client.listTopics()).filter((name) => !isWithheldKafkaTopic(name)),
+      offsets: async (topic, at) => {
+        refuseWithheld([topic]);
+        return client.offsets(topic, at);
+      },
     };
   }
 

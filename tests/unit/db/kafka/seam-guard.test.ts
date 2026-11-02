@@ -2696,10 +2696,7 @@ describe("the agent read path reaches Metadata and ListOffsets alone", () => {
     const index = read("index.ts");
     expect(
       agentClientKeys(
-        index.replace(
-          "listTopics: () => client.listTopics(),",
-          "listTopics: () => client.listTopics(),\n      fetch: client.fetch,",
-        ),
+        index.replace("      listTopics: async () =>", "      fetch: client.fetch,\n      listTopics: async () =>"),
       ),
     ).toEqual(["fetch", "listTopics", "metadata", "offsets"]);
     expect(
