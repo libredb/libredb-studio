@@ -19,7 +19,8 @@
  * partition's earliest and end offsets, never a record's key, value, headers or timestamp, a broker's host and port,
  * a config, a log directory or a consumer group. On a handle opened for any agent-mode profile every other surface
  * goes through that client too (`agent-surface.ts`): the editor's read and an object's source are refused, and what
- * needs a withheld read answers its reason. MCP read stays closed on this engine.
+ * needs a withheld read answers its reason, and a platform's own topics are withheld. MCP's `run_kafka_read` reads
+ * through the same `queryReadOnly`.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";

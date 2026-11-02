@@ -78,6 +78,7 @@ const TOOL_NAMES = [
   "run_kubectl_read",
   "run_mongo_command",
   "run_qdrant_read",
+  "run_kafka_read",
 ];
 const legacyInitialize = (protocolVersion: string) =>
   legacyPost(

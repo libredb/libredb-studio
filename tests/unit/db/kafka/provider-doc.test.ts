@@ -22,13 +22,16 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { connectionFieldHint, connectionFieldLabel, DB_UI_CONFIG } from "@/lib/db-ui-config";
+import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import { KafkaProvider } from "@/lib/db/providers/stream/kafka";
+import { isWithheldKafkaTopic } from "@/lib/db/providers/stream/kafka/agent-statement";
 import { KAFKA_DEFAULT_PORT, kafkaConnectionOptions } from "@/lib/db/providers/stream/kafka/connection-options";
 import { overviewFrom } from "@/lib/db/providers/stream/kafka/monitoring";
 import { KAFKA_TOPIC_COLUMNS, KAFKA_TOPIC_LIST_CAP } from "@/lib/db/providers/stream/kafka/objects";
 import { KAFKA_CELL_LIMIT, KAFKA_RESULT_BYTE_BUDGET } from "@/lib/db/providers/stream/kafka/read";
 import { parseReadRequest } from "@/lib/db/providers/stream/kafka/request";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { mcpStatementToolFor } from "@/lib/mcp/tools/statement-arms";
 import type { DatabaseConnection } from "@/lib/types";
 import { CENSUS_CONNECTION } from "../../../helpers/census-connection";
 
@@ -275,5 +278,29 @@ describe("docs/providers/kafka.md says what the provider does not do", () => {
     expect(new KafkaProvider(KAFKA).getCapabilities().supportsConnectionString).toBe(false);
     expect(DOC).toContain("| **SSH tunnel** | Refused");
     expect(DOC).toContain("| **Connection string** | Not supported");
+  });
+});
+
+describe("docs/providers/kafka.md states MCP's run_kafka_read as the code opens it", () => {
+  const section = DOC.slice(DOC.indexOf("## 16. MCP"));
+
+  test("names the tool, its facet and the record that opens it, and the platform topics withheld", () => {
+    expect(MCP_STATEMENT_READ.kafka).toBe(true);
+    expect(mcpStatementToolFor("kafka")).toBe("run_kafka_read");
+    expect(section).toContain("MCP clients read a Kafka connection with `run_kafka_read`");
+    expect(section).toContain("`MCP_STATEMENT_READ.kafka` is true");
+    expect(section).toContain("src/lib/agent/languages/kafkaread/mcp.ts");
+    expect(DOC).toContain("| MCP `run_kafka_read` | agent read-only profile |");
+    expect(DOC).not.toContain("MCP `run_read_query` stays closed on Kafka");
+    for (const topic of ["_schemas", "_confluent-metrics", "connect-configs"]) {
+      expect(isWithheldKafkaTopic(topic)).toBe(true);
+      expect(section).toContain(`\`${topic}\``);
+    }
+  });
+
+  test("states both layers of the data scope and that a seed needs no least-privilege principal", () => {
+    expect(section).toContain("The first is the broker's");
+    expect(section).toContain("The second is Studio's, independent of the request");
+    expect(section).toContain("A Kafka seed needs no least-privilege principal, and none is proven");
   });
 });

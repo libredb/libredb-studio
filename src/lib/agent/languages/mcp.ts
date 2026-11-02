@@ -13,6 +13,7 @@
  */
 import type { z } from "zod";
 import type { AgentStatementLanguageId } from "../agent-manifest";
+import { KAFKAREAD_MCP_FACET } from "./kafkaread/mcp";
 import { KUBECTL_MCP_FACET } from "./kubectl/mcp";
 import { MONGO_MCP_FACET } from "./mongo/mcp";
 import { QDRANTAPI_MCP_FACET } from "./qdrantapi/mcp";
@@ -93,8 +94,7 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   oxiacli: null,
   // No MCP statement tool yet: MCP read stays closed on RabbitMQ until a change of its own declares one and opens it.
   rabbitread: null,
-  // No MCP statement tool yet: MCP read stays closed on Kafka until a change of its own declares one and opens it.
-  kafkaread: null,
+  kafkaread: KAFKAREAD_MCP_FACET,
   // No MCP statement tool yet: MCP read stays closed on S3 until a change of its own declares one and opens it.
   s3api: null,
   // No MCP statement tool yet: MCP read stays closed on Firestore until a change of its own declares one and opens it.

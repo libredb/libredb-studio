@@ -23,6 +23,7 @@ pinMcpTestEnvironment();
 const RUN_KUBECTL_READ_ARM = mcpStatementArm("run_kubectl_read");
 const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
 const RUN_QDRANT_READ_ARM = mcpStatementArm("run_qdrant_read");
+const RUN_KAFKA_READ_ARM = mcpStatementArm("run_kafka_read");
 
 afterEach(async () => {
   await resetMcpTestState();
@@ -35,6 +36,7 @@ const DESCRIPTIONS = [
   ["run_kubectl_read", RUN_KUBECTL_READ_ARM.description, "Run one read-only kubectl read"],
   ["run_mongo_command", RUN_MONGO_COMMAND_ARM.description, "Run one read-only MongoDB command"],
   ["run_qdrant_read", RUN_QDRANT_READ_ARM.description, "Run one read-only Qdrant metadata read"],
+  ["run_kafka_read", RUN_KAFKA_READ_ARM.description, "Run one read-only Kafka metadata read"],
 ] as const;
 
 describe("the tool descriptions", () => {
@@ -49,6 +51,7 @@ describe("the tool descriptions", () => {
     expect(RUN_MONGO_COMMAND_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
     expect(RUN_KUBECTL_READ_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
     expect(RUN_QDRANT_READ_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
+    expect(RUN_KAFKA_READ_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
     expect(LIST_CONNECTIONS_DESCRIPTION).not.toContain(MCP_UNTRUSTED_NOTICE);
   });
 
@@ -97,6 +100,13 @@ describe("the tool descriptions", () => {
     expect(RUN_QDRANT_READ_ARM.description).toContain("Runs on Qdrant; other engines refuse it.");
     expect(RUN_QDRANT_READ_ARM.description).toContain("names, counts and flags only, never a stored payload or vector");
     expect(RUN_QDRANT_READ_ARM.description).toContain("this tool takes no offset");
+  });
+
+  test("run_kafka_read names Apache Kafka, the one engine its handler gates on, says what it never reads, and pages with after", () => {
+    expect(RUN_KAFKA_READ_ARM.description).toContain("Runs on Apache Kafka; other engines refuse it.");
+    expect(RUN_KAFKA_READ_ARM.description).toContain("no record's key, value, headers or timestamp is ever fetched");
+    expect(RUN_KAFKA_READ_ARM.description).toContain("this tool takes no offset");
+    expect(RUN_KAFKA_READ_ARM.description).toContain('page inside the request with "limit" and "after"');
   });
 
   test("inspect_schema says an engine with no tables refuses it, and where to read it instead", () => {
