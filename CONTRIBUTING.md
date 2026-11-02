@@ -68,6 +68,8 @@ Feature suggestions are welcome! Please provide:
      && bun run security:check && bun run test && bun run build
    ```
 
+   `bun run typecheck` and `bun run build` give Node a 6 GB heap themselves, because a first run without the incremental cache outgrows the default of about 4 GB, so you do not need to set `NODE_OPTIONS`.
+
    **CI is the merge gate.** If you cannot run a command locally, list that command and the reason
    under a `Testing` heading in your PR body; submit the PR, and a maintainer will approve the fork's
    workflow run so CI can verify it. You do not need to withdraw correct work because a local tool
