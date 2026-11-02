@@ -1906,13 +1906,14 @@ describe("composeCatalogRead — Couchbase", () => {
 /**
  * Druid reads its catalog with a SELECT on INFORMATION_SCHEMA, which the server filters to the datasources the user may
  * read (measured on 37.0.0 as a user holding READ on one datasource, `tests/fixtures/druid/37.0.0/agent-boundary/`
- * capture 06), and every statement here is one the agent fence admits.
+ * capture 06), and every statement here is one the agent fence admits. The `sys`, `lookup` and `view` schemas, which
+ * the fence refuses a statement to read, are left out of the read, so it offers no table an agent statement cannot read.
  */
 describe("composeCatalogRead: Druid", () => {
   const COLUMNS =
     "SELECT TABLE_SCHEMA AS table_schema, TABLE_NAME AS table_name, COLUMN_NAME AS column_name, " +
     "DATA_TYPE AS data_type, IS_NULLABLE AS is_nullable, ORDINAL_POSITION AS ordinal_position " +
-    "FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA NOT IN ('sys', 'INFORMATION_SCHEMA')";
+    "FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA NOT IN ('sys', 'INFORMATION_SCHEMA', 'lookup', 'view')";
 
   test("the column kind is exactly the statement below, narrowed by schema and table", () => {
     expect(composeCatalogRead("druid", { kind: "columns" })).toBe(
