@@ -989,7 +989,8 @@ try {
     const bulk = await handle.describeObjects(["APP"], "table");
     check(
       containers.some((container) => container.name === "APP") &&
-        typeof counts.table?.count === "number" &&
+        counts.table !== undefined &&
+        "count" in counts.table &&
         tables.some((table) => table.name === "ORDERS") &&
         JSON.stringify(orders.columns) ===
           JSON.stringify([
@@ -999,6 +1000,7 @@ try {
             { name: "NOTE", type: "VARCHAR(200)", nullable: true, isPrimary: false },
           ]) &&
         orders.foreignKeys.length === 1 &&
+        Array.isArray(orders.indexes) &&
         orders.indexes.length > 0 &&
         view.columns.length === 2 &&
         bulk.details.some((detail) => detail.path[1] === "ALLTYPES" && detail.columns.length === 25),

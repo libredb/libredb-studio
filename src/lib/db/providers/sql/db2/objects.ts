@@ -238,6 +238,7 @@ async function describeDecfloats(
   for (const readable of await reader.read(DECFLOAT_DESCRIBABLE_SQL, [schema])) {
     const table = String(readable.NAME);
     if (!waiting.has(table)) continue;
+    // oxlint-disable-next-line no-await-in-loop -- the describes share the one client, one at a time.
     const precisions = decfloatPrecisions(await reader.describe(schema, table));
     for (const row of rows) {
       const precision = precisions.get(String(row.COLUMN_NAME));
