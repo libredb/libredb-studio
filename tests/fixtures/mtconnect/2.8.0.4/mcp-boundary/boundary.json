@@ -365,6 +365,11 @@
         "status": 200
       },
       {
+        "asset": "FILE-5",
+        "type": "File",
+        "status": 200
+      },
+      {
         "asset": "TOOL-5",
         "type": "CuttingTool",
         "status": 200
@@ -383,6 +388,7 @@
     "agentServesTheUserinfoAsWritten": true,
     "agentServesTheOddUserinfoAsWritten": true,
     "agentServesTheBackslashUserinfoAsWritten": true,
+    "agentStoresTheReferenceAt": true,
     "agentServesTheSplitToolDescription": "<Description>see https://USER:</Description>",
     "agentServesTheSplitExtensionNote": "<Note>see https://USER:<b>PASSWORD-PART-1</b>PASSWORD-PART-2@files.example/programs/p5.nc</Note>",
     "throughTheTool": {
@@ -398,6 +404,10 @@
         {
           "assetId": "TOOL-5",
           "type": "CuttingTool"
+        },
+        {
+          "assetId": "FILE-5",
+          "type": "File"
         },
         {
           "assetId": "FILE-4",
@@ -429,6 +439,8 @@
       "keepsTheHostAndPath": true,
       "keepsTheOddHostAndPath": true,
       "keepsTheBackslashHostAndPath": true,
+      "carriesTheReferenceAtUserinfo": false,
+      "withholdsTheReferenceAtHrefWhole": true,
       "keepsTheFilePath": true,
       "keepsTheToolDescription": true,
       "carriesTheSplitPassword": false,
@@ -489,11 +501,11 @@
       },
       "currentAssetObservations": [
         {
-          "dataItemId": "agent_c0a698bd_asset_rem",
+          "dataItemId": "agent_c0a698bd_asset_chg",
           "value": "UNAVAILABLE"
         },
         {
-          "dataItemId": "agent_c0a698bd_asset_chg",
+          "dataItemId": "agent_c0a698bd_asset_rem",
           "value": "UNAVAILABLE"
         },
         {
@@ -507,11 +519,11 @@
       ],
       "assetSampleObservations": [
         {
-          "dataItemId": "agent_c0a698bd_asset_rem",
+          "dataItemId": "agent_c0a698bd_asset_chg",
           "value": "UNAVAILABLE"
         },
         {
-          "dataItemId": "agent_c0a698bd_asset_chg",
+          "dataItemId": "agent_c0a698bd_asset_rem",
           "value": "UNAVAILABLE"
         },
         {
@@ -541,6 +553,10 @@
         {
           "dataItemId": "d1722_asset_chg",
           "value": "FILE-4"
+        },
+        {
+          "dataItemId": "d1722_asset_chg",
+          "value": "FILE-5"
         },
         {
           "dataItemId": "d1722_asset_chg",

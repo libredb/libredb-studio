@@ -22,8 +22,9 @@
  *                     cancel with the agent paused: when MCP answered and when the provider's own request ended;
  *   assets            File and CuttingTool assets put raw on the AllowPut agent, one with a URL carrying a user name,
  *                     password and query, one whose password holds an @ and a quote and whose fragment holds a
- *                     token, one with backslashes after its scheme, and one whose description splits a user name
- *                     and password across a child element, read through the tool: what reached the answer; then
+ *                     token, one with backslashes after its scheme, one whose href writes its @ as a character
+ *                     reference the agent stores as text, and one whose description splits a user name and password
+ *                     across a child element, read through the tool: what reached the answer; then
  *                     two assets whose ids are URLs, one percent-encoded, and four URL spellings (percent-encoded, a
  *                     schemeless path with a token, `login USER:PASS@host`, a fullwidth scheme), read through
  *                     `/assets`, `/current` and `/sample`, where `AssetChanged` and `AssetRemoved` name an asset's id;
@@ -71,6 +72,8 @@ const FAKE_SECRETS = [
   "not-a-real-fragment",
   "backslash-user",
   "backslash-pass",
+  "entity-user",
+  "entity-pass",
   "split-user",
   "half-a",
   "-secret",
@@ -468,6 +471,11 @@ const FILE_WITH_ODD_SECRET =
 // A location with backslashes and no :// after its scheme, which a WHATWG URL parser reads as http://user:pass@host.
 const FILE_WITH_BACKSLASH_SECRET =
   '<File assetId="FILE-4" name="p4.nc" mediaType="text/plain" applicationCategory="DEVICE" applicationType="DATA" size="10" versionId="1" state="PRODUCTION"><FileLocation href="http:\\\\backslash-user:backslash-pass@files.example/programs/p4.nc"/><Destinations><Destination>LIBREDB-1722</Destination></Destinations><CreationTime>2026-01-01T00:00:00Z</CreationTime></File>';
+// An href whose @ is written as a character reference, so the agent stores the reference as text: a URL parser reads no
+// user information in it, and the field is withheld by its structure, so neither the user name nor the password may
+// reach the answer.
+const FILE_WITH_REFERENCE_AT =
+  '<File assetId="FILE-5" name="p5.nc" mediaType="text/plain" applicationCategory="DEVICE" applicationType="DATA" size="10" versionId="1" state="PRODUCTION"><FileLocation href="https://entity-user:entity-pass&amp;#64;files.example/x"/><Destinations><Destination>LIBREDB-1722</Destination></Destinations><CreationTime>2026-01-01T00:00:00Z</CreationTime></File>';
 // A URL with its user name in an element's own text and its password split across a child element, which a consumer
 // reads as one string: no piece of either may reach the answer. Put twice, as a CuttingTool's description and as an
 // extension asset's element, to record which of them the agent stores with the child in place.
@@ -483,6 +491,7 @@ for (const [id, type, body] of [
   ["FILE-2", "File", FILE_WITH_PATH],
   ["FILE-3", "File", FILE_WITH_ODD_SECRET],
   ["FILE-4", "File", FILE_WITH_BACKSLASH_SECRET],
+  ["FILE-5", "File", FILE_WITH_REFERENCE_AT],
   ["TOOL-5", "CuttingTool", TOOL_WITH_SPLIT_SECRET],
   ["NOTE-1", "ProgramNote", EXTENSION_WITH_SPLIT_SECRET],
   ["TOOL-2", "CuttingTool", TOOL_WITH_PATH],
@@ -516,6 +525,7 @@ const assets = {
   agentServesTheUserinfoAsWritten: rawAssets.includes("not-a-real-password"),
   agentServesTheOddUserinfoAsWritten: rawAssets.includes("odd-pass@x") && rawAssets.includes("odd-word@files.example"),
   agentServesTheBackslashUserinfoAsWritten: rawAssets.includes("http:\\\\backslash-user:backslash-pass@files.example"),
+  agentStoresTheReferenceAt: rawAssets.includes("entity-user:entity-pass&amp;#64;files.example"),
   agentServesTheSplitToolDescription: servedElement(rawAssets, "TOOL-5", "Description"),
   agentServesTheSplitExtensionNote: servedElement(rawAssets, "NOTE-1", "Note"),
   throughTheTool: {
@@ -529,7 +539,11 @@ const assets = {
     keepsTheHostAndPath: assetText.includes("ftp://[withheld]@files.example/programs/program.nc?[withheld]"),
     keepsTheOddHostAndPath: assetText.includes("ftp://[withheld]@files.example/programs/p3.nc#[withheld]"),
     keepsTheBackslashHostAndPath: rowsOf(assetsRead.result).some((row) =>
-      String(row.document).includes("http:\\\\[withheld]@files.example/programs/p4.nc"),
+      String(row.document).includes("http://[withheld]@files.example/programs/p4.nc"),
+    ),
+    carriesTheReferenceAtUserinfo: assetText.includes("entity-user") || assetText.includes("entity-pass"),
+    withholdsTheReferenceAtHrefWhole: rowsOf(assetsRead.result).some(
+      (row) => row.assetId === "FILE-5" && String(row.document).includes('<FileLocation href="[withheld]"/>'),
     ),
     keepsTheFilePath: assetText.includes("file:///opt/programs/p2.nc"),
     keepsTheToolDescription: assetText.includes("//fileserver/tools/T2.pdf"),
@@ -561,6 +575,12 @@ check(
     !assets.throughTheTool.carriesTheBackslashUserinfo &&
     assets.throughTheTool.keepsTheBackslashHostAndPath,
   "a location with backslashes and no :// after its scheme reaches no answer with its user name or password",
+);
+check(
+  assets.agentStoresTheReferenceAt &&
+    !assets.throughTheTool.carriesTheReferenceAtUserinfo &&
+    assets.throughTheTool.withholdsTheReferenceAtHrefWhole,
+  "an href whose @ is a character reference stored as text reaches no answer with its user name or password",
 );
 
 // MEASURED: the agent stores a CuttingTool's description only up to its first child, so the password never reaches
