@@ -265,6 +265,34 @@ describe("docs/MCP.md", () => {
     );
   });
 
+  test("says what a cancel and a timeout do to an Apache Cassandra statement, as measured on 5.0.9", () => {
+    expect(MCP_DOC).toContain(
+      "| Apache Cassandra | Studio stops waiting; the native protocol has no cancel, so the coordinator runs the statement to its end, and the provider closes the call's session when the answer arrives or at the time left of `timeout_ms` | The driver's read timeout, set to the time left, ends the wait and the provider closes the call's session; the coordinator runs the statement to its end, and the client gets the timeout answer |",
+    );
+  });
+
+  // A seed carries no agent user, so the seed's own role is the one checked, and the provider's read scope is part of
+  // the boundary the doc names.
+  test("says what Apache Cassandra needs of a seed, what the boundary is, that inspect_schema opens it unchecked, and how it pages without OFFSET", () => {
+    expect(MCP_DOC).toContain(
+      "Apache Cassandra by a role checked at open and again before every statement, on that statement's own session, to be no superuser and to hold only `SELECT` on the connection's keyspace, on an Apache Cassandra 5.0 server that enforces its grants, while the provider sends one `SELECT` of a table of that keyspace or of `system_schema` and nothing else ([cassandra.md](./providers/cassandra.md))",
+    );
+    expect(MCP_DOC).toContain(
+      "On Apache Cassandra the seed must name its keyspace as `database`, a keyspace of the user's data, since a seed bound to one of Cassandra's own keyspaces (`system`, `system_auth`, `system_traces` and the rest) is refused at open whatever its role holds, and its `user` must be a role that is no superuser, holds no superuser role, and holds only `SELECT` on that keyspace or on tables of it, directly or through roles granted to it, with no column of the keyspace masked by a function outside the `system` keyspace, on an Apache Cassandra 5.0 server with `PasswordAuthenticator` and `CassandraAuthorizer`, as the check proves for agent mode ([cassandra.md](./providers/cassandra.md) section 14.2): the image's default `cassandra` superuser is refused, and so is a role holding `MODIFY`, `EXECUTE`, `UNMASK` or `DESCRIBE`, or `SELECT` on every keyspace, a node on `AllowAllAuthorizer`, and ScyllaDB.",
+    );
+    expect(MCP_DOC).toContain(
+      "Apache Cassandra checks its role only for a connection that sends statements, so `inspect_schema` opens an Apache Cassandra connection unproven, as the editor does, with a superuser too.",
+    );
+    expect(MCP_DOC).toContain(
+      "CQL has no `OFFSET` either, so on Apache Cassandra `pagination.nextOffset` is always `null`, an `offset` is refused before anything is sent, and the answer says how to page without one: keep a `LIMIT`, and for the next page add `WHERE token(<partition key>) > token(<the last one read>)`, or within one partition `WHERE <clustering column> > <the last value read>`.",
+    );
+    const doc = read("docs/providers/cassandra.md");
+    expect(doc).toContain(
+      "A `SELECT` without its own `LIMIT` is cut at `max_rows` (100 by default, at most 500), and `pagination.hasMore` says more rows exist; a query whose own `LIMIT` is past 1000 rows, or a result past 1 MiB, is refused, never cut.",
+    );
+    expect(doc).toContain("a read with its own `LIMIT` past 1000 rows, and a result past 1 MiB, is refused, never cut");
+  });
+
   // run_read_query pages a SELECT with no LIMIT of its own at max_rows; only a LIMIT of its own past the 1000-row
   // provider budget reaches the refusal, so no provider doc may say every result past 1000 rows is refused.
   test.each([
@@ -294,7 +322,7 @@ describe("docs/MCP.md", () => {
 
   test("says which libSQL token a seed needs and that inspect_schema opens libSQL unproven", () => {
     expect(MCP_DOC).toContain(
-      "`run_read_query` refuses a PostgreSQL, SQL Server, ClickHouse or libSQL connection whose own login could do more than read",
+      "`run_read_query` refuses a PostgreSQL, SQL Server, ClickHouse, libSQL or Apache Cassandra connection whose own login could do more than read",
     );
     expect(MCP_DOC).toContain(
       "libSQL by a token proven at open to be read-only, which the server refuses every write ([libsql.md](./providers/libsql.md))",

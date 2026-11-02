@@ -28,7 +28,7 @@ describe("mcpStatementEngines", () => {
     );
   });
 
-  test("serves ClickHouse, libSQL, InfluxDB 3, Elasticsearch and OpenSearch beside the five SQL engines it served before MCP_STATEMENT_READ existed", () => {
+  test("serves ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch and Cassandra beside the five SQL engines it served before MCP_STATEMENT_READ existed", () => {
     expect(RUN_READ_QUERY_TYPES).toEqual([
       "postgres",
       "sqlite",
@@ -40,12 +40,13 @@ describe("mcpStatementEngines", () => {
       "influxdb3",
       "elasticsearch",
       "opensearch",
+      "cassandra",
     ]);
   });
 
-  // Opening ClickHouse, libSQL, InfluxDB 3, Elasticsearch and OpenSearch moved no other engine: every other language
+  // Opening ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch and Cassandra moved no other engine: every other language
   // still serves exactly what it did.
-  test("opening ClickHouse, libSQL, InfluxDB 3, Elasticsearch and OpenSearch leaves every other language's served set as it was", () => {
+  test("opening ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch and Cassandra leaves every other language's served set as it was", () => {
     const languages = [...new Set(Object.values(AGENT_STATEMENT_LANGUAGE))].filter(
       (language): language is NonNullable<typeof language> => language !== null && language !== "sql",
     );
@@ -83,6 +84,7 @@ describe("mcpStatementEngines", () => {
       "influxdb3",
       "elasticsearch",
       "opensearch",
+      "cassandra",
     ]);
   });
 

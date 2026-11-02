@@ -4,6 +4,7 @@
  * Every statement the check sends is pinned by its full text, and each refusal by its code and its words.
  */
 import { describe, expect, test } from "bun:test";
+import { CASSANDRA_SERVER_OVERLAY } from "@/lib/agent/languages/sql/engines/cassandra";
 import { ExecutionProfileError } from "@/lib/db/errors";
 import {
   CASSANDRA_AGENT_RELEASE_CQL,
@@ -264,6 +265,52 @@ describe("what the connection must name", () => {
       "The agent read-only execution profile reads one keyspace, the connection's own, and this connection names none, so the role's reach cannot be bounded. Set the keyspace on the connection.",
     );
     expect(asked).toEqual([]);
+  });
+
+  test.each([
+    "system",
+    "system_schema",
+    "system_auth",
+    "system_distributed",
+    "system_traces",
+    "system_views",
+    "system_virtual_schema",
+  ])(
+    "a keyspace of the server's own: %s is refused once the server is known, before the role is read",
+    async (keyspace) => {
+      // A role granted SELECT on system_auth and bound to it holds only SELECT on its own keyspace, so the role check
+      // alone would admit it, and its reads would include every role's password hash.
+      const { asked, read } = reader(healthy());
+      const error = await verifyCassandraAgentProfile(read, { role: "agent_ro", keyspace, nonce: NONCE }).catch(
+        (failure: unknown) => failure,
+      );
+      expect(error).toBeInstanceOf(ExecutionProfileError);
+      expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
+      expect((error as Error).message).toBe(
+        `The agent read-only execution profile reads the connection's keyspace, and this connection names ${keyspace}, one of the keyspaces Apache Cassandra keeps for itself, which hold its roles and their password hashes, other sessions' traced statements and the node's own state, so the connection is refused. Set the keyspace on the connection to a keyspace of your data.`,
+      );
+      expect(asked).toEqual([CASSANDRA_AGENT_RELEASE_CQL, CASSANDRA_AGENT_SCYLLA_CQL]);
+    },
+  );
+
+  test("a keyspace of the server's own is refused in any case", async () => {
+    const error = await refusal(healthy(), "agent_ro", "System_Auth");
+    expect(error.reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
+    expect(error.message).toContain("this connection names System_Auth, one of the keyspaces Apache Cassandra keeps");
+  });
+
+  test("a user keyspace named like a system one is the user's: system_reports is read as any other", async () => {
+    const statements = cassandraAgentStatements("agent_ro", "system_reports", NONCE);
+    const { read } = reader({
+      ...healthy(),
+      [statements.roles]: rows([roleRow("agent_ro")]),
+      [statements.permissions]: rows([permissionRow("agent_ro", "<keyspace system_reports>", "SELECT")]),
+      [statements.masks]: NO_COLUMNS,
+      [statements.probe]: unauthorized("User agent_ro has no DROP permission"),
+    });
+    await expect(
+      verifyCassandraAgentProfile(read, { role: "agent_ro", keyspace: "system_reports", nonce: NONCE }),
+    ).resolves.toBe(undefined);
   });
 });
 
@@ -685,7 +732,7 @@ describe("the statement fence: one statement, a SELECT, before anything is sent"
     ["a carriage return inside a block comment", "/* a\rb */ SELECT id FROM probe.customers"],
     ["a carriage return inside a string", "SELECT id FROM probe.customers WHERE name = 'a -- b\rc'"],
   ])("admits %s", (_, sql) => {
-    expect(cassandraAgentStatementRefusal(sql)).toBeNull();
+    expect(cassandraAgentStatementRefusal(sql, "probe")).toBeNull();
   });
 
   test.each([
@@ -760,6 +807,84 @@ describe("the statement fence: one statement, a SELECT, before anything is sent"
       CARRIAGE_RETURN,
     ],
   ])("refuses %s", (_, sql, reason) => {
-    expect(cassandraAgentStatementRefusal(sql)).toBe(reason);
+    expect(cassandraAgentStatementRefusal(sql, "probe")).toBe(reason);
+  });
+});
+
+/**
+ * Capture 15: a role holding only SELECT on its keyspace reads, with no grant, `system.local`, `system.peers`,
+ * `system.peers_v2`, `system.size_estimates`, `system.table_estimates`, every `system_schema` and
+ * `system_virtual_schema` table, and `system_traces.sessions` and `system_traces.events`, which hold the text of other
+ * sessions' traced statements; the server refuses it every other table outside its keyspace. So the fence reads the
+ * table a SELECT names after its FROM, as CQL's grammar reads it, and sends a read of the connection's keyspace or of
+ * `system_schema` only.
+ */
+describe("the statement fence: the table a SELECT reads", () => {
+  const SCOPE =
+    "The agent read-only execution profile reads the tables of the connection's keyspace and of system_schema, and nothing else";
+  const outside = (table: string) =>
+    `${SCOPE}; this SELECT reads ${table}, so it was not sent. Name a table of the keyspace probe, or of system_schema for the schema.`;
+  const UNREAD = `${SCOPE}; which table this SELECT reads cannot be told from its text, so it was not sent. Write FROM and then a table of the keyspace probe, as table, probe.table or a quoted name.`;
+
+  test.each([
+    ["an unqualified table, which the connection's keyspace holds", "SELECT id FROM customers"],
+    ["a table of the keyspace", "SELECT id FROM probe.customers"],
+    ["quoted names", 'SELECT id FROM "probe"."customers"'],
+    ["an unquoted keyspace in capitals, which CQL folds to lower case", "SELECT id FROM PROBE.Customers"],
+    ["quoted names with no space around them", 'SELECT"id"FROM"probe"."customers"'],
+    ["a block comment around the dot", "SELECT id FROM probe /* x */ . customers"],
+    ["a line comment before the dot", "SELECT id FROM probe\n-- x\n.customers"],
+    ["the schema catalog", "SELECT column_name FROM system_schema.columns WHERE keyspace_name = 'probe'"],
+    ["a built-in function named with the system keyspace", "SELECT system.now() FROM probe.customers"],
+    ["a cast, whose AS is inside brackets", "SELECT CAST(id AS text) FROM probe.customers"],
+    ["a column alias spelled from, quoted", 'SELECT id AS "from" FROM probe.customers'],
+    ["a FROM inside a string", "SELECT id FROM probe.customers WHERE name = 'x FROM system_traces.sessions'"],
+    ["a FROM inside a subscript's string", "SELECT m['from system_traces.sessions'] FROM probe.t"],
+    ["SELECT JSON", "SELECT JSON id FROM probe.customers"],
+    ["a lowercase from", "select id from probe.customers"],
+  ])("admits %s", (_, sql) => {
+    expect(cassandraAgentStatementRefusal(sql, "probe")).toBeNull();
+  });
+
+  test("admits the column inventory agent mode composes, a read of system_schema", () => {
+    const read = CASSANDRA_SERVER_OVERLAY.dialect.catalogRead.compose.columns({ schema: "probe", table: "customers" });
+    expect(read).toContain(" FROM system_schema.columns WHERE ");
+    expect(cassandraAgentStatementRefusal(read, "probe")).toBeNull();
+  });
+
+  test.each([
+    ["the traced statements of other sessions", "SELECT * FROM system_traces.sessions", "system_traces.sessions"],
+    ["their events", "SELECT activity FROM system_traces.events", "system_traces.events"],
+    ["quoted names", 'SELECT * FROM "system_traces"."sessions"', "system_traces.sessions"],
+    ["capitals, which CQL folds", "SELECT * FROM SYSTEM_TRACES.SESSIONS", "system_traces.sessions"],
+    ["mixed case", "SELECT * FROM System_Traces.Sessions", "system_traces.sessions"],
+    ["a block comment around the dot", "SELECT * FROM system_traces /* x */ . sessions", "system_traces.sessions"],
+    ["a line comment before the dot", "SELECT * FROM system_traces\n-- x\n.sessions", "system_traces.sessions"],
+    ["no space at all", 'SELECT"session_id"FROM"system_traces"."sessions"', "system_traces.sessions"],
+    ["a tab after FROM", "SELECT * FROM\tsystem_traces.sessions", "system_traces.sessions"],
+    ["a quoted table of an unquoted keyspace", 'SELECT * FROM system_traces."sessions"', "system_traces.sessions"],
+    ["the node's own row", "SELECT * FROM system.local", "system.local"],
+    ["the peers", "SELECT * FROM system.peers_v2", "system.peers_v2"],
+    ["the size estimates", "SELECT * FROM system.size_estimates", "system.size_estimates"],
+    ["the virtual tables' catalog", "SELECT * FROM system_virtual_schema.tables", "system_virtual_schema.tables"],
+    ["the roles and their hashes", "SELECT * FROM system_auth.roles", "system_auth.roles"],
+    ["the clients", "SELECT * FROM system_views.clients", "system_views.clients"],
+    ["the repair history", "SELECT * FROM system_distributed.repair_history", "system_distributed.repair_history"],
+    ["another keyspace", "SELECT * FROM other.t", "other.t"],
+    ["a quoted keyspace whose case differs", 'SELECT * FROM "Probe".customers', "Probe.customers"],
+  ])("refuses a read of %s", (_, sql, table) => {
+    expect(cassandraAgentStatementRefusal(sql, "probe")).toBe(outside(table));
+  });
+
+  test.each([
+    ["no FROM", "SELECT now()"],
+    ["nothing after FROM", "SELECT id FROM"],
+    ["a string after FROM", "SELECT id FROM 'probe'.customers"],
+    ["nothing after the dot", "SELECT id FROM probe."],
+    ["a name that starts with a digit", "SELECT id FROM 1probe.customers"],
+    ["an empty quoted name", 'SELECT id FROM "".customers'],
+    ["a FROM inside brackets before the statement's own", "SELECT fn(x FROM y) FROM probe.t"],
+  ])("refuses %s, as unreadable", (_, sql) => {
+    expect(cassandraAgentStatementRefusal(sql, "probe")).toBe(UNREAD);
   });
 });
