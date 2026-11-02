@@ -11,8 +11,10 @@
  *  - the open, through MCP: a role holding SELECT on the keyspace, and one holding SELECT on a table of it, are
  *    served; the image's superuser, a superuser role, a role granted a superuser role, MODIFY on a second keyspace,
  *    SELECT on every keyspace, EXECUTE on a function, UNMASK, MODIFY through a role granted to a role granted to it, a
- *    keyspace with a column masked by a user-defined function, and a role holding nothing are each refused before any
- *    statement runs, in the MCP refusal sentence;
+ *    keyspace with a column masked by a user-defined function, a role holding nothing, and a role holding SELECT on
+ *    `system_auth`, `system_traces` or `system` and bound to it are each refused before any statement runs, in the MCP
+ *    refusal sentence, the role table's password hashes never answered though the role reads them on a session of
+ *    its own;
  *  - the boundary, the MCP fence bypassed: each write, conditional write, BATCH, TRUNCATE, DDL statement, GRANT,
  *    REVOKE, role statement and USE is refused by the provider before it is sent, and a call of a user-defined
  *    function or aggregate, a SELECT, reaches the server and is refused by it as Unauthorized, in its own words; the
@@ -117,12 +119,16 @@ async function admin(cql: string): Promise<{ rows: Record<string, unknown>[] }> 
   return adminTransport.execute(cql);
 }
 
-/** What `cql` sent as `user` on a driver session of its own answers: its rows, or the server's code and words. */
+/**
+ * What `cql` sent as `user` on a driver session of its own, bound to `keyspace`, answers: its rows, or the server's
+ * code and words.
+ */
 async function asRole(
   user: string,
   cql: string,
+  keyspace = KS,
 ): Promise<{ rows: Record<string, unknown>[] } | { code: number | null; message: string }> {
-  const transport = new CassandraDriverTransport(seed(user, PASSWORD), 30_000);
+  const transport = new CassandraDriverTransport(seed(user, PASSWORD, PORT, keyspace), 30_000);
   await transport.connect();
   try {
     return { rows: (await transport.execute(cql)).rows };
@@ -268,6 +274,9 @@ async function seedServer(): Promise<void> {
   );
   await role(`${PREFIX}none`);
   await role(`${PREFIX}masked`, `GRANT SELECT ON KEYSPACE ${SCRATCH} TO ${PREFIX}masked`);
+  for (const keyspace of SYSTEM_BOUND) {
+    await role(`${PREFIX}${keyspace}`, `GRANT SELECT ON KEYSPACE ${keyspace} TO ${PREFIX}${keyspace}`);
+  }
 }
 
 /** Inserts `count` rows through one prepared statement, many at a time. */
@@ -292,6 +301,16 @@ async function fill(cql: string, count: number, values: (id: number) => unknown[
   }
 }
 
+/**
+ * Cassandra's own keyspaces a role is bound to: each role holds SELECT on its keyspace alone, which the role check
+ * reads as bounded, so only the refusal of a system keyspace as the connection's keeps it from the role table's
+ * password hashes, other sessions' traces and the node's own tables.
+ */
+const SYSTEM_BOUND = ["system_auth", "system_traces", "system"] as const;
+
+/** A bcrypt digest as `system_auth.roles.salted_hash` holds one. */
+const BCRYPT = /\$2[aby]\$\d\d\$/;
+
 const ROLES = [
   "ro",
   "table",
@@ -307,6 +326,7 @@ const ROLES = [
   "super_inner",
   "none",
   "masked",
+  ...SYSTEM_BOUND,
 ];
 
 async function cleanup(): Promise<void> {
@@ -426,6 +446,11 @@ async function main(): Promise<void> {
       `the column ${SCRATCH}.masked.secret is masked with the user-defined function ${SCRATCH}.redact`,
     ],
     [seed(`${PREFIX}none`, PASSWORD), `${PREFIX}none`, "holds none"],
+    ...SYSTEM_BOUND.map((keyspace): [ManagedConnection, string, string] => [
+      seed(`${PREFIX}${keyspace}`, PASSWORD, PORT, keyspace),
+      `${PREFIX}${keyspace} bound to ${keyspace}`,
+      `this connection names ${keyspace}, one of the keyspaces Apache Cassandra keeps for itself`,
+    ]),
   ];
   for (const [connection, who, says] of refusedOpens) {
     const { result, acquired } = await mcp(connection, { sql: `SELECT id FROM ${connection.database}.customers` });
@@ -437,6 +462,32 @@ async function main(): Promise<void> {
         text.endsWith(`It runs on ${ENGINES}.`) &&
         text.includes(says),
       `open: ${who} is refused through MCP -> ${text}`,
+    );
+  }
+
+  // A role holding SELECT on system_auth, bound to it: the server would serve it the role table, hashes included.
+  const hashes = await asRole(`${PREFIX}system_auth`, "SELECT role, salted_hash FROM roles", "system_auth");
+  check(
+    "rows" in hashes && hashes.rows.some((row) => BCRYPT.test(String(row.salted_hash))),
+    `control: on a session of its own the role bound to system_auth reads the role table's password hashes -> ${"rows" in hashes ? `${hashes.rows.length} rows` : hashes.message}`,
+  );
+  for (const arm of [RUN_READ_QUERY, UNFENCED]) {
+    const { result, acquired } = await mcp(
+      seed(`${PREFIX}system_auth`, PASSWORD, PORT, "system_auth"),
+      {
+        sql: "SELECT role, is_superuser, salted_hash FROM roles",
+      },
+      arm,
+    );
+    const text = textOf(result);
+    check(
+      result.isError === true &&
+        acquired.join() === "agent-read-only" &&
+        text.startsWith("run_read_query cannot run on this connection: ") &&
+        text.includes("this connection names system_auth, one of the keyspaces Apache Cassandra keeps for itself") &&
+        !BCRYPT.test(text) &&
+        result.structuredContent === undefined,
+      `open: ${arm === UNFENCED ? "bypassed, " : ""}the role table read on a connection bound to system_auth is refused at open, and no hash is answered -> ${text}`,
     );
   }
 

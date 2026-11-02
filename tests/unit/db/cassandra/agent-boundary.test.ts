@@ -266,6 +266,52 @@ describe("what the connection must name", () => {
     );
     expect(asked).toEqual([]);
   });
+
+  test.each([
+    "system",
+    "system_schema",
+    "system_auth",
+    "system_distributed",
+    "system_traces",
+    "system_views",
+    "system_virtual_schema",
+  ])(
+    "a keyspace of the server's own: %s is refused once the server is known, before the role is read",
+    async (keyspace) => {
+      // A role granted SELECT on system_auth and bound to it holds only SELECT on its own keyspace, so the role check
+      // alone would admit it, and its reads would include every role's password hash.
+      const { asked, read } = reader(healthy());
+      const error = await verifyCassandraAgentProfile(read, { role: "agent_ro", keyspace, nonce: NONCE }).catch(
+        (failure: unknown) => failure,
+      );
+      expect(error).toBeInstanceOf(ExecutionProfileError);
+      expect((error as ExecutionProfileError).reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
+      expect((error as Error).message).toBe(
+        `The agent read-only execution profile reads the connection's keyspace, and this connection names ${keyspace}, one of the keyspaces Apache Cassandra keeps for itself, which hold its roles and their password hashes, other sessions' traced statements and the node's own state, so the connection is refused. Set the keyspace on the connection to a keyspace of your data.`,
+      );
+      expect(asked).toEqual([CASSANDRA_AGENT_RELEASE_CQL, CASSANDRA_AGENT_SCYLLA_CQL]);
+    },
+  );
+
+  test("a keyspace of the server's own is refused in any case", async () => {
+    const error = await refusal(healthy(), "agent_ro", "System_Auth");
+    expect(error.reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
+    expect(error.message).toContain("this connection names System_Auth, one of the keyspaces Apache Cassandra keeps");
+  });
+
+  test("a user keyspace named like a system one is the user's: system_reports is read as any other", async () => {
+    const statements = cassandraAgentStatements("agent_ro", "system_reports", NONCE);
+    const { read } = reader({
+      ...healthy(),
+      [statements.roles]: rows([roleRow("agent_ro")]),
+      [statements.permissions]: rows([permissionRow("agent_ro", "<keyspace system_reports>", "SELECT")]),
+      [statements.masks]: NO_COLUMNS,
+      [statements.probe]: unauthorized("User agent_ro has no DROP permission"),
+    });
+    await expect(
+      verifyCassandraAgentProfile(read, { role: "agent_ro", keyspace: "system_reports", nonce: NONCE }),
+    ).resolves.toBe(undefined);
+  });
 });
 
 describe("the role listing", () => {

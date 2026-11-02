@@ -33,6 +33,10 @@
  *    a fresh random suffix, in the bound keyspace; the role holds no DROP, so an enforcing server answers Unauthorized,
  *    and a server that enforces nothing drops nothing, since no such table exists (captures 02 and 07).
  *
+ * Between checks 1 and 2, a connection bound to one of Cassandra's own keyspaces (`CASSANDRA_SYSTEM_KEYSPACES`) is
+ * refused: the role is bounded by its keyspace, so a role holding only SELECT on `system_auth` and bound to it would
+ * pass every check and read every role's password hash.
+ *
  * Every finding of checks 2 to 4 is collected and named in one refusal. A failure to reach the server leaves as it
  * came, and a check the server refuses to answer is a refusal of the profile, so no failure admits a role.
  *
@@ -47,6 +51,7 @@
  */
 import { ExecutionProfileError } from "../../../errors";
 import { hasLoneCarriageReturnInLineComment, readSqlSpan } from "@/lib/sql/spans";
+import { CASSANDRA_SYSTEM_KEYSPACES } from "./objects";
 import { CASSANDRA_SQL_GRAMMAR } from "./sql-grammar";
 import { type CassandraQueryResult, CassandraTransportError, type CassandraFaultCategory } from "./transport";
 
@@ -122,6 +127,21 @@ async function assertMeasuredServer(read: CassandraAgentReader): Promise<void> {
   }
   throw new ExecutionProfileError(
     "The agent read-only execution profile is proven on Apache Cassandra 5.0 only; this server answers system.versions, which ScyllaDB keeps and Apache Cassandra does not, so its enforcement is unmeasured and the connection is refused.",
+    "PROFILE_UNSUPPORTED_TARGET",
+  );
+}
+
+/**
+ * The bound keyspace is not one Apache Cassandra keeps for itself. Checks 3 and 4 and the read-scope check bound the
+ * role to its keyspace, so a role holding only SELECT on `system_auth` and bound to it passes them, and reads every
+ * role's password hash; `system_traces` and `system` hold other sessions' statements and the node's state the same way.
+ * The list is the provider's exact one, compared in lower case so no spelling of one passes; a user keyspace merely
+ * named like one, `system_reports` say, is the user's.
+ */
+function assertDataKeyspace(keyspace: string): void {
+  if (!CASSANDRA_SYSTEM_KEYSPACES.includes(keyspace.toLowerCase())) return;
+  throw new ExecutionProfileError(
+    `The agent read-only execution profile reads the connection's keyspace, and this connection names ${keyspace}, one of the keyspaces Apache Cassandra keeps for itself, which hold its roles and their password hashes, other sessions' traced statements and the node's own state, so the connection is refused. Set the keyspace on the connection to a keyspace of your data.`,
     "PROFILE_UNSUPPORTED_TARGET",
   );
 }
@@ -252,6 +272,7 @@ export async function verifyCassandraAgentProfile(
     );
   }
   await assertMeasuredServer(read);
+  assertDataKeyspace(keyspace);
   const statements = cassandraAgentStatements(role, keyspace, nonce);
   const superusers = superuserRoles(await readListing(read, statements.roles, role, "roles"), role);
   const permissions = permissionFindings(
