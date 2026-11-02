@@ -177,6 +177,9 @@ The provider declares CLOB, DBCLOB and BLOB in `inlineEditRefusedColumns`, so th
 The declared length does not reach a result, a `CLOB(1M)` column arrives described as `VarChar(32777)` and a `CLOB(1K)` as `CLOB`, so every such column is refused and named, a short one included.
 Reading them is exact since 1.0.25: `SELECT *` over `APP.ALLTYPES` answers all 25 columns and 3 rows, each value equal to the column read on its own (K4, fixed).
 
+db2-node 1.0.25, the pinned version, and 1.0.27, the latest release, decode a fixed-length `CHAR(n CODEUNITS32)` or `GRAPHIC(n CODEUNITS32)` column as fixed-width although Db2 12.1 sends its values length-prefixed, so a query that selects one either fails with "query ended with undecoded row data" or returns wrong values and fewer rows without an error, while `VARCHAR`, `VARGRAPHIC` and `CODEUNITS16` `GRAPHIC` columns are not affected ([gurungabit/db2-node#42](https://github.com/gurungabit/db2-node/issues/42)).
+D422 in `docs/BACKLOG.md` tracks it.
+
 ### Fixed in 1.0.25
 
 These were measured on 1.0.24, reported upstream one issue each, and fixed in [1.0.25](https://github.com/gurungabit/db2-node/releases/tag/v1.0.25); each now probes `GONE` on 12.1.0.0 and 11.5.9.0, and the provider workaround each one needed is gone with it unless the line says otherwise.

@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S11 · 8
-- [Drivers and connections](#drivers-and-connections) — D1-D421, U17 · 309
+- [Drivers and connections](#drivers-and-connections) — D1-D422, U17 · 310
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U196 · 182
@@ -2092,17 +2092,16 @@ Found 2026-10-03 while building the Milvus console (vector-family spec 5.4, R33 
 
 **Done when:** users paste commented Milvus bodies; then the dialect declares `bodyComments: true` in one data change, with corpus cases for a comment inside a string, after a value and at the end of the body.
 
-### D160. The Db2 compose service can skip its object fixture on a fresh volume
+### D160. The Db2 compose service reports healthy without its object fixture
 
-On the first start of a fresh volume, `docker/db2-init/01-object-fixture.sh` printed "db2-init: fixture already loaded", yet `SELECT COUNT(*) FROM SYSCAT.TABLES WHERE TABSCHEMA IN ('APP','REPORTING')` returned 0.
-Running `/var/custom-fixture/01-object-fixture.sql` by hand then loaded it with no SQL error.
-The script loads the fixture only when its count query prints exactly `0`, and prints the skip message for anything else, so a query that fails or warns at that point of the start reads as a loaded fixture.
+`docker/db2-init/01-object-fixture.sh` used to print "db2-init: fixture already loaded" on the first start of a fresh volume while `APP` was empty, because it read any answer of its count query other than `0` as a loaded fixture, and the count, run in a pipeline, answered `SQL1024N A database connection does not exist` every time (a db2 command in a pipeline does not share the connection the shell made).
+It now reads the count through a file, loads the fixture on `0`, skips it on `1`, and exits non-zero with the server's answer on stderr on anything else (`tests/unit/docker-db2-object-fixture.test.ts`).
+Measured 2026-11-02 on 12.1.0.0: a fresh container loaded the fixture (11 tables in `APP` and `REPORTING`), a second run of the script on that database skipped it, and a run against a database name that does not exist exited 1 with `SQL1013N` on stderr.
+The service's healthcheck still reads only `db2gcf -s`, so a start whose fixture check failed reports the service healthy, and the failure is visible only in the container log.
 
-Found 2026-10-03 by the browser pass of #1246.
-Seen again on 2026-10-04, on three fresh volumes in a row (12.1.0.0 twice, 11.5.9.0 once), each printing the skip message over an empty `APP`; run by hand moments after "Setup has completed", the same count query answered `SQL1024N A database connection does not exist`, which the script reads as a loaded fixture.
-Measured 2026-10-29: the count runs in a pipeline (`db2 -x ... | tr -d ' '`), and a db2 command in a pipeline does not share the connection the shell made, so it answers `SQL1024N` whenever it runs; `VALUES 1` piped the same way answers it too, and read through a file it answers 1. `docker/db2-init/02-agent-principal.sh` reads its own count through a file for that reason.
+Found 2026-10-03 by a browser pass over the Db2 object browser.
 
-**Done when:** the script tells a failed or warning count query from a non-zero count and fails loudly on the first, a fresh volume gets the fixture, and the check that the fixture loaded is part of the service's own start.
+**Done when:** the service's own start or healthcheck fails while `APP.ORDERS` is missing, so a Db2 service without its fixture never reports healthy.
 
 ### D161. A PostgreSQL session's duration can read below zero
 
@@ -4240,6 +4239,18 @@ The MQTT read had the same pattern and now takes every duration from `performanc
 Found 2026-11-01 while fixing the MQTT read's window durations.
 
 **Done when:** every Sparkplug duration comes from the monotonic clock while `lastHeardAt` stays a wall-clock time, and a test that steps the wall clock back mid-read shows `window_ms` and `listened_ms` unchanged.
+
+### D422. db2-node decodes fixed-length CODEUNITS32 strings as fixed-width
+
+On Db2 12.1.0.0, `db2-node` 1.0.25 (the pin) and 1.0.27 decode a `CHAR(n CODEUNITS32)` or `GRAPHIC(n CODEUNITS32)` column with the fixed width its descriptor declares, while the server sends a 2-byte length before each value.
+A query that selects one fails with "query ended with undecoded row data", or returns wrong values and fewer rows with no error.
+Measured 2026-11-02 through 1.0.25: reading one non-NULL row of a `CHAR(5 CODEUNITS32)` or `GRAPHIC(5 CODEUNITS32)` column failed with that error, and `GRAPHIC(10 CODEUNITS32)` beside a `NOT NULL` `INTEGER` over 3 rows answered 2 rows with shifted values; `VARCHAR`, `VARGRAPHIC` and `CODEUNITS16` `GRAPHIC` columns read exactly.
+Studio cannot work around it without parsing the wire format itself; section 4 of `docs/providers/db2.md` states it.
+Reported upstream as [gurungabit/db2-node#42](https://github.com/gurungabit/db2-node/issues/42).
+
+Found 2026-11-02 while verifying the Db2 agent and MCP read paths.
+
+**Done when:** Studio's pinned `db2-node` decodes fixed-length `CHAR(n CODEUNITS32)` and `GRAPHIC(n CODEUNITS32)` columns, with a check in `tests/live/db2-agent-boundary.ts` or `tests/live/db2-live-check.ts` that selects one of each against Db2 12.1.0.0 and compares every row and value.
 
 ## Value interpolation
 
