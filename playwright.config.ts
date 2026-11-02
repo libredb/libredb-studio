@@ -73,7 +73,7 @@ export default defineConfig({
       // run under their own projects below, against the second server, passkey.spec.ts against the third,
       // launch.spec.ts against the fourth and the firestore browse spec against the fifth.
       testIgnore:
-        /(?:offline-editor|base-path|kafka-provider|etcd-provider|neo4j-provider|milvus-provider|qdrant-provider|weaviate-provider|influxdb-providers|mtconnect-provider|modbus-provider|oxia-provider|databend-provider|snowflake-provider|spark-provider|s3-provider|kubernetes-provider|firestore-connection|firestore-provider|rabbitmq-provider|mqtt-provider|passkey|launch)\.spec\.ts/,
+        /(?:offline-editor|base-path|kafka-provider|etcd-provider|neo4j-provider|milvus-provider|qdrant-provider|weaviate-provider|influxdb-providers|mtconnect-provider|modbus-provider|oxia-provider|databend-provider|snowflake-provider|spark-provider|s3-provider|kubernetes-provider|firestore-connection|firestore-provider|rabbitmq-provider|mqtt-provider|passkey|totp-enrolment-qr|launch)\.spec\.ts/,
     },
     {
       // Every other spec in this suite signs in as the same shared user@libredb.org account
@@ -243,7 +243,7 @@ export default defineConfig({
       // authenticator is a Chrome DevTools Protocol feature (e2e/helpers/virtual-authenticator.ts).
       name: "chromium-passkey",
       use: { ...devices["Desktop Chrome"], baseURL: `http://localhost:${passkeyPort}` },
-      testMatch: /(^|\/)passkey\.spec\.ts$/,
+      testMatch: /(^|\/)(passkey|totp-enrolment-qr)\.spec\.ts$/,
     },
     {
       // Launch sign-in needs the LAUNCH_TOKEN_* variables, an account registry for the launched person, and
