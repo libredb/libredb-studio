@@ -139,7 +139,7 @@
   "scripts": {
     "shortcuts:sync": "bun scripts/sync-shortcuts.mjs",
     "dev": "node scripts/copy-monaco.mjs && next dev",
-    "build": "node scripts/copy-monaco.mjs && next build",
+    "build": "node scripts/copy-monaco.mjs && NODE_OPTIONS=\"--max-old-space-size=6144 $NODE_OPTIONS\" next build",
     "build:lib": "tsup && node scripts/copy-theme.mjs",
     "attw": "rm -rf .attw && bun pm pack --quiet --destination .attw && attw .attw/*.tgz --profile node16 --exclude-entrypoints styles.css",
     "lib:closure": "node scripts/check-lib-closure.mjs",
@@ -150,7 +150,7 @@
     "lint": "oxlint && eslint . && node scripts/only-check.mjs",
     "only:check": "node scripts/only-check.mjs",
     "lint:oxc": "oxlint",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "NODE_OPTIONS=\"--max-old-space-size=6144 $NODE_OPTIONS\" tsc --noEmit",
     "test": "bun tests/run-tests.ts",
     "agent:eval": "bun tests/evals/real-model.ts",
     "test:evals": "bun tests/run-tests.ts tests/evals",
