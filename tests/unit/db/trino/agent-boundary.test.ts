@@ -538,4 +538,47 @@ describe("the statement fence", () => {
       `${FENCE}; this text goes on after its first statement's semicolon, so it was not sent. Send one SELECT at a time.`,
     );
   });
+
+  /**
+   * Measured on Trino 476 under the read-only access control, alone and beside file rules: any user reads every other
+   * user's query text in system.runtime.queries, in every spelling below (a quoted name is case-insensitive too), so a
+   * statement that names the system catalog is not sent.
+   */
+  describe("the system catalog", () => {
+    const SYSTEM_CATALOG = `${FENCE}; this statement names the system catalog, whose runtime tables hold the text of every user's queries on this server, so it was not sent. Read the tables of the catalogs that hold the data.`;
+
+    test.each([
+      ["SELECT * FROM system.runtime.queries"],
+      ['SELECT count(*) FROM "SYSTEM"."RUNTIME"."QUERIES"'],
+      ["SELECT count(*) FROM SyStEm . /* c */ runtime -- x\n . queries"],
+      ['SELECT * FROM "system".runtime."queries"'],
+      ['SELECT * FROM "system" . x . y'],
+      ["SELECT a FROM pg.public.t WHERE a IN (SELECT query_id FROM system.runtime.tasks)"],
+      ["WITH q AS (SELECT * FROM system.metadata.catalogs) SELECT * FROM q"],
+      ["SELECT * FROM TABLE(system.builtin.sequence(start => 1, stop => 3))"],
+      ["SELECT * FROM system.queries"],
+      // A comment between the catalog and its first dot is not a token: Trino reads each of these as the catalog.
+      ["SELECT * FROM system/**/.runtime.queries"],
+      ["SELECT count(*) FROM system -- c\n.runtime.queries"],
+      ['SELECT * FROM "system"/**/."runtime"."queries"'],
+    ])("refuses %j", (sql) => {
+      expect(trinoAgentStatementRefusal(sql)).toBe(SYSTEM_CATALOG);
+    });
+
+    test.each([
+      ["SELECT * FROM pg.system.t"],
+      ["SELECT * FROM pg . system . t"],
+      ["SELECT 'system.runtime.queries' AS s"],
+      ["SELECT system FROM pg.public.t"],
+      ["SELECT x.system FROM pg.public.t x"],
+      ['SELECT "system.runtime.queries" FROM pg.public.t'],
+      ["SELECT * FROM pg.public.t -- system.runtime.queries"],
+      ["SELECT * FROM pg.public.t /* system.runtime.queries */"],
+      ["SELECT * FROM mysystem.t"],
+      ["SELECT * FROM system_x.t"],
+      ['SELECT * FROM "sys""tem".x.y'],
+    ])("admits %j", (sql) => {
+      expect(trinoAgentStatementRefusal(sql)).toBeNull();
+    });
+  });
 });
