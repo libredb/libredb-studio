@@ -51,7 +51,7 @@ export function observationWithheld(observation: MtcObservation, item: MtcDataIt
 }
 
 /** Why a URL's user name, password and query string are withheld from an asset, in the words the warning repeats. */
-export const MTCONNECT_WITHHELD_URL_SENTENCE =
+const MTCONNECT_WITHHELD_URL_SENTENCE =
   "Agent mode keeps each URL in an asset to its scheme, host, port, path and fragment, and withholds its user name, password and query string, where a credential or a signature travels.";
 
 /**
