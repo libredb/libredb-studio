@@ -22,7 +22,8 @@
  *    table function, each acting outside the call by its own catalog row; a view calling IBM's DBMS_RANDOM.VALUE,
  *    refused by its module; a view over IBM's AUDIT_ARCHIVE table function, refused by the function's own row; a
  *    view over a view it may not read; a view over an alias of a table it may not read; a view left inoperative; a column mask anywhere in the database; SETSESSIONUSER; a role with its ADMIN
- *    OPTION; a trusted context naming the user as its system authorization ID, on the address the server sees this
+ *    OPTION; SELECT on the catalog's distribution statistics, whose values the user is first shown to read for a table
+ *    it may not read; a trusted context naming the user as its system authorization ID, on the address the server sees this
  *    script at, whose default role a raw connection of the user is first shown to hold, and the same context
  *    disabled; and on one handle a grant added after a call refuses the next call, and its revoke admits the one after;
  *  - it admits a view over a table, a view over a view it may read, a view calling IBM's own function, IBM's DB_MEMBERS
@@ -549,6 +550,48 @@ try {
     ["DROP MASK APP.LIBREDB_AB_MASK"],
     '"APP"."LIBREDB_AB_MASK" on "APP"."LIBREDB_AB_SECRET"',
   );
+  // Measured first: with SELECT on the distribution statistics, which a fresh database gives PUBLIC, the agent user reads
+  // a stored value of a table it may not read. The check refuses such a grant, through any of the nine objects.
+  // A value held by more than one row, so RUNSTATS records it among the frequent values (a one-row table gets none).
+  await setup([
+    "INSERT INTO APP.LIBREDB_AB_SECRET VALUES ('owner-only'), ('owner-only'), ('owner-other')",
+    "CALL SYSPROC.ADMIN_CMD('RUNSTATS ON TABLE APP.LIBREDB_AB_SECRET WITH DISTRIBUTION')",
+    "GRANT SELECT ON SYSCAT.COLDIST TO PUBLIC",
+  ]);
+  {
+    const agentRaw = await raw("agent_ro", AGENT_PASSWORD);
+    const values = (
+      await agentRaw.query(
+        "SELECT COLVALUE FROM SYSCAT.COLDIST WHERE TABSCHEMA = 'APP' AND TABNAME = 'LIBREDB_AB_SECRET' " +
+          "AND COLVALUE IS NOT NULL",
+      )
+    ).rows.map((row) => String((row as Record<string, unknown>).COLVALUE));
+    let secret: unknown;
+    try {
+      await agentRaw.query("SELECT V FROM APP.LIBREDB_AB_SECRET");
+    } catch (error) {
+      secret = error;
+    }
+    await agentRaw.close();
+    check(
+      values.includes("'owner-only'") && sqlcode(secret) === -551,
+      "SELECT on SYSCAT.COLDIST gave the agent user a stored value of a table it may not read",
+    );
+  }
+  await setup(["REVOKE SELECT ON SYSCAT.COLDIST FROM PUBLIC"]);
+  for (const [schema, name] of [
+    ["SYSCAT", "COLDIST"],
+    ["SYSSTAT", "COLGROUPDIST"],
+    ["SYSIBM", "SYSCOLDISTPARTITIONSTATS"],
+  ]) {
+    await refusedUntilLifted(
+      provider,
+      `SELECT on the distribution statistics ${schema}.${name}, to PUBLIC`,
+      [`GRANT SELECT ON ${schema}.${name} TO PUBLIC`],
+      [`REVOKE SELECT ON ${schema}.${name} FROM PUBLIC`],
+      `REVOKE SELECT ON TABLE "${schema}"."${name}" FROM PUBLIC`,
+    );
+  }
   // IBM's code by its own catalog row: a module holding a function that acts outside the call, and a function of
   // IBM's that does and is not on the measured list, are refused; a function on that list is admitted, called raw.
   for (const ibmModule of ["UTL_FILE", "DBMS_PIPE"]) {

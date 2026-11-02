@@ -46,7 +46,12 @@
  *    hold anything but a table, a function that is IBM's and admitted by item 3, a variable that is IBM's, a view
  *    that is IBM's or one this check also examines, or an alias of a table object this check examines. A view that
  *    calls a routine of an IBM module depends on the module itself, so it is refused whatever the routine reads.
- * 5. `SYSCAT.CONTROLS` lists no row permission or column mask anywhere in the database that is not IBM's: Db2 evaluates
+ * 5. They may read none of the catalog's distribution statistics: an IBM table or view with a `COLVALUE` column, whose
+ *    rows hold the most frequent values and the quantiles of every table's columns after `RUNSTATS`, so the user
+ *    read values of a table it holds no SELECT on (measured). A fresh database lets PUBLIC read all nine. The second
+ *    highest and lowest values `SYSCAT.COLUMNS` keeps as `HIGH2KEY` and `LOW2KEY` stay readable: the agent's own
+ *    catalog read needs that view, and Db2 grants no SELECT on a column alone.
+ * 6. `SYSCAT.CONTROLS` lists no row permission or column mask anywhere in the database that is not IBM's: Db2 evaluates
  *    it for any reader of the table it guards, a reader through a view included, and it can call a secured function
  *    with its owner's authority (measured). A fresh database holds five, IBM's own masks on its catalog tables.
  *
@@ -245,6 +250,14 @@ export const AGENT_PRINCIPAL_STATEMENTS = Object.freeze({
     "WHERE o.TABSCHEMA = s.BASE_TABSCHEMA AND o.TABNAME = s.BASE_TABNAME)) " +
     "OR d.BTYPE = 'v' AND EXISTS (SELECT 1 FROM SYSCAT.VARIABLES g WHERE g.VARSCHEMA = d.BSCHEMA " +
     "AND g.VARNAME = d.BNAME AND g.OWNERTYPE = 'S')))) ORDER BY 3, 4, 1",
+  // An IBM catalog object holding a COLVALUE column, by its own catalog rows rather than by a list of names.
+  statistics:
+    `WITH ${GRANTEES} ` +
+    "SELECT a.GRANTEE, a.GRANTEETYPE, 'SELECT' AS PRIVILEGE, 'TABLE' AS KIND, a.TABSCHEMA AS SCHEMA, " +
+    `a.TABNAME AS NAME FROM SYSCAT.TABAUTH a ${held("a")} WHERE a.SELECTAUTH <> 'N' ` +
+    "AND EXISTS (SELECT 1 FROM SYSCAT.TABLES t JOIN SYSCAT.COLUMNS c ON c.TABSCHEMA = t.TABSCHEMA " +
+    "AND c.TABNAME = t.TABNAME WHERE t.TABSCHEMA = a.TABSCHEMA AND t.TABNAME = a.TABNAME AND t.OWNERTYPE = 'S' " +
+    "AND c.COLNAME = 'COLVALUE') ORDER BY 5, 6, 1",
   controls:
     "SELECT CONTROLSCHEMA AS SCHEMA, CONTROLNAME AS NAME, TABSCHEMA, TABNAME FROM SYSCAT.CONTROLS " +
     "WHERE OWNERTYPE <> 'S' ORDER BY 3, 4, 1, 2",
@@ -415,6 +428,16 @@ function reachFinding(rows: Rows): Finding | null {
   };
 }
 
+function statisticsFinding(rows: Rows): Finding | null {
+  if (rows.length === 0) return null;
+  return {
+    what:
+      "it may read the catalog's distribution statistics, which hold stored values of every table's columns, " +
+      "whether or not it may read the table",
+    statements: rows.map((row) => revoke(row, "statistics")),
+  };
+}
+
 function controlsFinding(rows: Rows): Finding | null {
   if (rows.length === 0) return null;
   const named = rows.map((row) => {
@@ -446,6 +469,7 @@ export async function verifyAgentPrincipal(read: Db2AgentReader): Promise<void> 
     privilegesFinding(await read(AGENT_PRINCIPAL_STATEMENTS.privileges)),
     codeFinding(await read(AGENT_PRINCIPAL_STATEMENTS.code)),
     reachFinding(await read(AGENT_PRINCIPAL_STATEMENTS.reach)),
+    statisticsFinding(await read(AGENT_PRINCIPAL_STATEMENTS.statistics)),
     controlsFinding(await read(AGENT_PRINCIPAL_STATEMENTS.controls)),
   ].filter((found): found is Finding => found !== null);
   if (findings.length === 0) return;

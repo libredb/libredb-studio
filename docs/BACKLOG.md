@@ -40,7 +40,7 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B166 · 86
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B168 · 87
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
 - [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP10 · 10
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
@@ -9179,6 +9179,15 @@ Kept so that the engine joined on the members measured on it, nothing composed f
 Found 2026-11-01 with agent execution on Trino.
 
 **Done when:** the Trino overlay gains an estimating plan whose `EXPLAIN` the agent path's fence admits, measured on 476, and a profile composition, or a recorded decision that it keeps none, with tests for each, and a per-engine exposure ruling opens MCP statement reads on Trino through the same check and read-only transaction with `MCP_STATEMENT_READ.trino` true, once the open proves, beyond the statement text, that the connection's user cannot read other users' query text, with a test that refuses a user who can; cited in `docs/AGENT.md`.
+
+### B168. Db2's agent path reads the second highest and lowest value of every column from `SYSCAT.COLUMNS`
+
+The Db2 agent check refuses a user whose grantees may read the catalog's distribution statistics, the nine objects whose `COLVALUE` holds the most frequent values and the quantiles of every table's columns, since with them the least-privilege user read values of a table it holds no `SELECT` on (`statistics` in `src/lib/db/providers/sql/db2/agent-read.ts`).
+`SYSCAT.COLUMNS` also keeps two values of every column once `RUNSTATS` has run, `HIGH2KEY` and `LOW2KEY`, and so do `SYSSTAT.COLUMNS`, `SYSIBM.SYSCOLUMNS` and the partition statistics; measured on 12.1.0.0 on 2026-11-02, the seeded agent user read both for a table it may not read, through `queryReadOnly` and through MCP's `run_read_query` (capture 12 of `tests/fixtures/db2/12.1.0.0/agent-boundary/`).
+The agent's catalog read and its grounding read `SYSCAT.COLUMNS`, and Db2 grants no `SELECT` on a column alone, so the check cannot refuse the grant without closing the agent; `docs/providers/db2.md` section 10.1 names it a residual for the operator.
+Found 2026-11-02 while opening MCP's `run_read_query` on Db2.
+
+**Done when:** the agent's catalog read and grounding take the column facts they need from a source that holds no stored value, the check refuses a grant that reads `HIGH2KEY` or `LOW2KEY`, a provider test and the live check pin both, and section 10.1 no longer names the residual; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 

@@ -9,7 +9,8 @@
  * pass-through or session-user privilege; no EXECUTE on code that is not IBM's, which runs with its owner's authority,
  * nor on an IBM function, or a module holding one, whose own catalog row reads EXTERNAL_ACTION E or SQL_DATA_ACCESS M,
  * unless capture 10 lists it as measured reading only (procedures are admitted: no agent statement can call one); no
- * view that calls such code, reads a view or alias the check cannot follow or a nickname, or is not valid; and no row
+ * view that calls such code, reads a view or alias the check cannot follow or a nickname, or is not valid; no SELECT
+ * on the catalog's distribution statistics, which hold stored values of every table's columns; and no row
  * permission or column mask anywhere in the database that is not IBM's. IBM's is the object's own OWNERTYPE, never its
  * schema. Every catalog view is named SYSCAT.<view>. Each refusal names the statements that would lift it, or the
  * controls it found.
@@ -162,12 +163,28 @@ const PINNED: Record<Statement, string> = {
     "WHERE o.TABSCHEMA = s.BASE_TABSCHEMA AND o.TABNAME = s.BASE_TABNAME)) " +
     "OR d.BTYPE = 'v' AND EXISTS (SELECT 1 FROM SYSCAT.VARIABLES g WHERE g.VARSCHEMA = d.BSCHEMA " +
     "AND g.VARNAME = d.BNAME AND g.OWNERTYPE = 'S')))) ORDER BY 3, 4, 1",
+  statistics:
+    `WITH ${GRANTEES} ` +
+    "SELECT a.GRANTEE, a.GRANTEETYPE, 'SELECT' AS PRIVILEGE, 'TABLE' AS KIND, a.TABSCHEMA AS SCHEMA, " +
+    `a.TABNAME AS NAME FROM SYSCAT.TABAUTH a ${held("a")} WHERE a.SELECTAUTH <> 'N' ` +
+    "AND EXISTS (SELECT 1 FROM SYSCAT.TABLES t JOIN SYSCAT.COLUMNS c ON c.TABSCHEMA = t.TABSCHEMA " +
+    "AND c.TABNAME = t.TABNAME WHERE t.TABSCHEMA = a.TABSCHEMA AND t.TABNAME = a.TABNAME AND t.OWNERTYPE = 'S' " +
+    "AND c.COLNAME = 'COLVALUE') ORDER BY 5, 6, 1",
   controls:
     "SELECT CONTROLSCHEMA AS SCHEMA, CONTROLNAME AS NAME, TABSCHEMA, TABNAME FROM SYSCAT.CONTROLS " +
     "WHERE OWNERTYPE <> 'S' ORDER BY 3, 4, 1, 2",
 };
 
-const ORDER: readonly Statement[] = ["user", "contexts", "authorities", "privileges", "code", "reach", "controls"];
+const ORDER: readonly Statement[] = [
+  "user",
+  "contexts",
+  "authorities",
+  "privileges",
+  "code",
+  "reach",
+  "statistics",
+  "controls",
+];
 
 /** A reader answering each check from `answers`, the user AGENT_RO by default, recording what it was sent. */
 function reader(answers: Partial<Record<Statement, Rows>> = {}) {
@@ -361,6 +378,25 @@ describe("verifyAgentPrincipal", () => {
         "which reads another server; each runs with its owner's authority. Run, as an administrator: " +
         'REVOKE SELECT ON TABLE "APP"."CALLS_CODE" FROM USER "AGENT_RO"; ' +
         'REVOKE SELECT ON TABLE "APP"."REMOTE_ORDERS" FROM PUBLIC.',
+    );
+  });
+
+  // Measured on 12.1.0.0: a fresh database lets PUBLIC read the catalog's distribution statistics, whose COLVALUE
+  // column holds the most frequent values and the quantiles of every table's columns, so the least-privilege user read
+  // values of a table it holds no SELECT on.
+  test("a grant that reads the catalog's distribution statistics refuses it, naming the revoke for each", async () => {
+    const error = await refusal({
+      statistics: [
+        privilege("PUBLIC", "G", "SELECT", "TABLE", "SYSCAT", "COLDIST"),
+        privilege("AGENT_RO", "U", "SELECT", "TABLE", "SYSIBM", "SYSCOLGROUPDIST"),
+      ],
+    });
+    expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
+    expect(error.message).toBe(
+      "The agent read-only execution profile refuses the Db2 user AGENT_RO: it may read the catalog's distribution " +
+        "statistics, which hold stored values of every table's columns, whether or not it may read the table. " +
+        'Run, as an administrator: REVOKE SELECT ON TABLE "SYSCAT"."COLDIST" FROM PUBLIC; ' +
+        'REVOKE SELECT ON TABLE "SYSIBM"."SYSCOLGROUPDIST" FROM USER "AGENT_RO".',
     );
   });
 
