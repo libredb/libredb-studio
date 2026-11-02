@@ -387,7 +387,8 @@ try {
   );
   check(
     // The server answers Neo.ClientError.Security.Forbidden, which the provider's error table words as a refused write.
-    lastOf(narrowIndexes.result).startsWith("The database refused or failed the call: ") &&
+    lastOf(narrowIndexes.result) ===
+      "The database refused or failed the call: The server refused a write: Neo4j connections are read-only in this version." &&
       rowsOf(narrowIndexes.result) === null,
     `the narrow user is refused the index listing by the server: ${lastOf(narrowIndexes.result).slice(0, 160)}`,
   );
@@ -403,6 +404,9 @@ try {
   const systemKeys = await mcp(onSystem, { statement: "CALL db.propertyKeys()" });
   check(
     rowsOf(systemMatch.result) === null &&
+      lastOf(systemMatch.result).includes(
+        "The statement could not be checked by the server, so it was not run: The following unsupported clauses were used: MATCH",
+      ) &&
       rowsOf(systemLabels.result)?.length === 0 &&
       rowsOf(systemKeys.result)?.length === 0,
     `a seed bound to system reads nothing of the system graph: ${lastOf(systemMatch.result).slice(0, 160)}`,
@@ -411,7 +415,10 @@ try {
     statement: "MATCH (n) RETURN n LIMIT 1",
   });
   check(
-    noAccess.result.isError === true && !textOf(noAccess.result).includes("another tenant"),
+    noAccess.result.isError === true &&
+      textOf(noAccess.result).startsWith(
+        "run_cypher_read cannot run on this connection: The agent read-only profile could not read the server's answer to CALL dbms.components(), so this user is not proved read-only and is refused.",
+      ),
     `a seed bound to a database its user may not access is refused: ${textOf(noAccess.result).slice(0, 140)}`,
   );
   const inspected = await inspectSchema(InspectSchemaInputSchema.parse({ connection_id: AGENT.id }), {

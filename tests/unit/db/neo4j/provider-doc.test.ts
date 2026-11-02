@@ -797,6 +797,23 @@ describe("docs/providers/neo4j.md section 15 states the agent path as the code d
     expect(AGENT).toContain("[`src/lib/agent/languages/cypher/mcp.ts`](../../src/lib/agent/languages/cypher/mcp.ts)");
   });
 
+  test("the MCP timeout and cancel measurements are the committed capture's", () => {
+    const MCP = docSection(DOC, "15.7 MCP: `run_cypher_read`") ?? "";
+    const RUN = read("tests/fixtures/neo4j/5.26.31/mcp-boundary/run.txt");
+    const timeout = /answered in (\d+) ms, and the server ended the statement (\d+) ms later/.exec(RUN);
+    const close = /a client close: answered in (\d+) ms, and the statement ran on the server (\d+) ms more/.exec(RUN);
+    expect(timeout).not.toBeNull();
+    expect(close).not.toBeNull();
+    expect(MCP).toContain(
+      `answered as the timeout at ${timeout?.[1]} ms and left \`SHOW TRANSACTIONS\` ${timeout?.[2]} ms later`,
+    );
+    const closedAfter = Math.round(Number(close?.[1]) / 1000);
+    const ranOn = Math.round(Number(close?.[2]) / 1000);
+    expect(MCP).toContain(
+      `closed after ${closedAfter} s of a 10 s call, it left \`SHOW TRANSACTIONS\` about ${ranOn} s later`,
+    );
+  });
+
   test("the pinned versions and the proof's row bound are the ones the code holds", () => {
     expect(Object.keys(NEO4J_BUILT_IN_ROUTINES)).toEqual(["5.26.31"]);
     expect(AGENT).toContain("5.26.31 today");

@@ -161,7 +161,8 @@ Measured on 5.26.31 on 2026-10-03: `CYPHER 5 EXPLAIN runtime=slotted MATCH (n) R
 `r` runs.
 `s` runs only when the statement calls an allowlisted procedure, because the policy has already refused every other procedure: `CALL dbms.components()` is classified `s` and runs.
 Every other type, a plan with no type, and an `EXPLAIN` that failed refuse the statement, and nothing is run.
-An allowed SHOW form skips the gate, because the server classifies the database forms `s`, a class that also holds administration; the policy has already restricted them to the forms of section 3.2.
+On the editor path an allowed SHOW form skips the gate, because the server classifies the database forms `s`, a class that also holds administration; the policy has already restricted them to the forms of section 3.2.
+An agent handle classifies the SHOW forms too, so the database forms are refused there (section 15.3).
 The gate costs one round trip per statement, which the design accepted because the maintainer's first axis is security.
 
 ### 3.6 Machine access
@@ -645,7 +646,7 @@ Two layers bound it, measured through the MCP handler on 5.26.31 Enterprise with
 
 **A cancel and a timeout.**
 `queryReadOnly` takes the time left of `timeout_ms` as its budget, sent as the transaction's timeout and kept as the call's own deadline, and closing the session at it ends the server's work.
-At the 500 ms minimum `timeout_ms`, a read that ran on was answered as the timeout at 501 ms and left `SHOW TRANSACTIONS` 35 ms later.
+At the 500 ms minimum `timeout_ms`, a read that ran on was answered as the timeout at 522 ms and left `SHOW TRANSACTIONS` 63 ms later.
 A client that closes the call is answered at once, and the statement runs on to the time it had left: closed after 2 s of a 10 s call, it left `SHOW TRANSACTIONS` about 8 s later, so a cancel ends the wait, not the read.
 
 Run the check against a disposable Enterprise server, after exporting `NEO4J_ACCEPT_LICENSE_AGREEMENT` yourself, since only you can accept Neo4j's licence:
