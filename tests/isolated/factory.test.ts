@@ -931,7 +931,7 @@ describe("createDatabaseProvider", () => {
           RESOURCES: "[]",
         };
         return {
-          rows: [statement.startsWith("EXPLAIN PLAN FOR ") ? planned : { x: 1 }],
+          rows: [statement.startsWith("EXPLAIN PLAN FOR\n") ? planned : { x: 1 }],
           fieldNames: ["x"],
           sqlTypes: {},
           nativeTypes: {},

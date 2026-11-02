@@ -2979,7 +2979,7 @@ describe("queryReadOnly", () => {
   );
   const PROBE =
     /^INSERT INTO "libredb_agent_probe_[0-9a-f]{24}" SELECT TIME_PARSE\('2026-01-01'\) AS __time PARTITIONED BY ALL$/;
-  const EXPLAIN = "EXPLAIN PLAN FOR ";
+  const EXPLAIN = "EXPLAIN PLAN FOR\n";
   /** The planner's answer for a statement over one datasource, as Druid 37.0.0 answers it (capture 08). */
   const PLANNED = {
     PLAN: JSON.stringify([{ query: { queryType: "scan", dataSource: { type: "table", name: "t" } } }]),
@@ -3107,10 +3107,10 @@ describe("queryReadOnly", () => {
     expect(sent).toEqual([
       "probe",
       "probe",
-      "EXPLAIN PLAN FOR SELECT 1 AS a",
+      "EXPLAIN PLAN FOR\nSELECT 1 AS a",
       "SELECT 1 AS a",
       "probe",
-      "EXPLAIN PLAN FOR SELECT 2 AS a",
+      "EXPLAIN PLAN FOR\nSELECT 2 AS a",
       "SELECT 2 AS a",
     ]);
     const statements = recorded.agent.filter((call) => !PROBE.test(call.sql));
@@ -3145,7 +3145,7 @@ describe("queryReadOnly", () => {
     expect(error).toBeInstanceOf(RefusedBeforeSendError);
     expect((error as Error).message).toBe(druidAgentReachRefusal(sysScan) ?? "admitted");
     expect((error as Error).message).toContain("the table sys.segments");
-    expect(recorded.agent.at(-1)?.sql).toBe(`EXPLAIN PLAN FOR ${sql}`);
+    expect(recorded.agent.at(-1)?.sql).toBe(`EXPLAIN PLAN FOR\n${sql}`);
     expect(recorded.agent.filter((call) => call.sql === sql)).toEqual([]);
   });
 
@@ -3188,6 +3188,25 @@ describe("queryReadOnly", () => {
     const error = await provider.queryReadOnly("SELECT n FROM nope", AGENT_BUDGET).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(QueryError);
     expect((error as Error).message).toBe("Object 'nope' not found");
+  });
+
+  // Measured on 37.0.0: `SELECT nope` sent raw answers line 1, column 8, and asked of the planner on a line of its own,
+  // line 2, column 8, so the agent repairs the statement from the position the statement itself would have answered.
+  test("a planner's refusal points at the statement's own line and column", async () => {
+    const recorded = recording(undefined, async () => {
+      throw new DruidTransportError(
+        "Column 'nope' not found in any table (line [2], column [8])",
+        "INVALID_INPUT",
+        "invalidInput",
+        "USER",
+      );
+    });
+    const provider = await open(recorded);
+    const error = await provider.queryReadOnly("SELECT nope", AGENT_BUDGET).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error).not.toBeInstanceOf(RefusedBeforeSendError);
+    expect((error as Error).message).toBe("Column 'nope' not found in any table (line [1], column [8])");
+    expect(recorded.agent.filter((call) => call.sql === "SELECT nope")).toEqual([]);
   });
 
   test("a probe the server runs mid-handle refuses the statement, which is never sent", async () => {
@@ -3346,7 +3365,7 @@ describe("queryReadOnly", () => {
       await expect(provider.queryReadOnly("SELECT n FROM t", SHORT)).rejects.toThrow(
         "Read-only execution exceeded the time budget: no answer within 20ms",
       );
-      expect(recorded.agent.at(-1)?.sql).toBe("EXPLAIN PLAN FOR SELECT n FROM t");
+      expect(recorded.agent.at(-1)?.sql).toBe("EXPLAIN PLAN FOR\nSELECT n FROM t");
       expect(recorded.cancels).toEqual([]);
     });
 

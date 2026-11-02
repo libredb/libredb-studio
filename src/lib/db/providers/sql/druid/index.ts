@@ -86,6 +86,7 @@ import {
 import {
   DRUID_UNREADABLE_PLAN_REFUSAL,
   druidAgentExplainStatement,
+  druidAgentPlanErrorMessage,
   druidAgentReachRefusal,
   druidAgentStatementRefusal,
   verifyDruidAgentEngine,
@@ -606,11 +607,21 @@ export class DruidProvider extends SQLBaseProvider {
         signal,
         maxResponseBytes,
       });
-    } catch (error) {
+    } catch (caught) {
       if (signal.aborted) throw this.timeBudgetError(budget, sql, null);
-      if (error instanceof DruidAnswerTooLargeError) {
+      if (caught instanceof DruidAnswerTooLargeError) {
         throw new RefusedBeforeSendError(DRUID_UNREADABLE_PLAN_REFUSAL, this.type, sql);
       }
+      // The server's words, with each position it names moved back onto the statement's own line.
+      const error =
+        caught instanceof DruidTransportError && caught.isServerAnswer()
+          ? new DruidTransportError(
+              druidAgentPlanErrorMessage(caught.message),
+              caught.category,
+              caught.errorCode,
+              caught.persona,
+            )
+          : caught;
       if (error instanceof DruidTransportError && error.is("FORBIDDEN")) {
         throw new QueryError(error.message, this.type, sql);
       }

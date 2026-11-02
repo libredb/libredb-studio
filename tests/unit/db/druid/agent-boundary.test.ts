@@ -8,6 +8,7 @@ import { describe, expect, test } from "bun:test";
 import { ExecutionProfileError } from "@/lib/db/errors";
 import {
   druidAgentExplainStatement,
+  druidAgentPlanErrorMessage,
   druidAgentProbeStatement,
   druidAgentReachRefusal,
   druidAgentStatementRefusal,
@@ -307,8 +308,33 @@ const DATA_RESOURCE = [{ name: "libredb_agent_data", type: "DATASOURCE" }];
  * and held to datasources. Every plan shape below is one Druid 37.0.0 answered (capture 08).
  */
 describe("the planner check", () => {
-  test("asks the planner for the statement as it will be sent", () => {
-    expect(druidAgentExplainStatement("SELECT x FROM t LIMIT 3")).toBe("EXPLAIN PLAN FOR SELECT x FROM t LIMIT 3");
+  test("asks the planner for the statement as it will be sent, on a line of its own", () => {
+    expect(druidAgentExplainStatement("SELECT x FROM t LIMIT 3")).toBe("EXPLAIN PLAN FOR\nSELECT x FROM t LIMIT 3");
+  });
+
+  // Measured on 37.0.0: `SELECT nope` answers column 8 of line 1 sent raw, and line 2, column 8 asked of the planner on
+  // a line of its own; `SELECT 1,\n  nope` answers line 2, column 3 raw, and line 3, column 3 asked of the planner.
+  test.each([
+    [
+      "Column 'nope' not found in any table (line [2], column [8])",
+      "Column 'nope' not found in any table (line [1], column [8])",
+    ],
+    [
+      "Column 'nope' not found in any table (line [3], column [3])",
+      "Column 'nope' not found in any table (line [2], column [3])",
+    ],
+    [
+      'Received an unexpected token [1] (line [2], column [10]), acceptable options: [<EOF>, "ORDER"]',
+      'Received an unexpected token [1] (line [1], column [10]), acceptable options: [<EOF>, "ORDER"]',
+    ],
+    // A position on the planner's own first line is not one in the statement, so it is left as the server wrote it.
+    [
+      "Received an unexpected token [x] (line [1], column [5])",
+      "Received an unexpected token [x] (line [1], column [5])",
+    ],
+    ["Object 'nope' not found", "Object 'nope' not found"],
+  ])("moves the planner's position %j back onto the statement's own line", (message, statements) => {
+    expect(druidAgentPlanErrorMessage(message)).toBe(statements);
   });
 
   test.each([
@@ -414,6 +440,25 @@ describe("the planner check", () => {
       "the table libredb_agent_other, which it does not list among the datasources the statement reads",
     ],
     [
+      "a union with a member the planner does not list as one the statement reads",
+      native({ type: "union", dataSources: [DATA, { type: "table", name: "libredb_agent_other" }] }),
+      DATA_RESOURCE,
+      "the table libredb_agent_other, which it does not list among the datasources the statement reads",
+    ],
+    [
+      "a union with a lookup member",
+      native({ type: "union", dataSources: [DATA, { type: "lookup", lookup: "l" }] }),
+      DATA_RESOURCE,
+      "the lookup l",
+    ],
+    [
+      "an unnest over a datasource the planner does not list as one the statement reads",
+      native({ type: "unnest", base: { type: "table", name: "libredb_agent_other" } }),
+      DATA_RESOURCE,
+      "the table libredb_agent_other, which it does not list among the datasources the statement reads",
+    ],
+    ["an unnest over a lookup", native({ type: "unnest", base: { type: "lookup", lookup: "l" } }), [], "the lookup l"],
+    [
       "a resource that is not a datasource",
       native(DATA),
       [...DATA_RESOURCE, { name: "v", type: "VIEW" }],
@@ -427,7 +472,13 @@ describe("the planner check", () => {
 
   test.each([
     ["no row", { ...ANSWERED, rows: [] }],
-    ["two rows", { ...explained(native(DATA), DATA_RESOURCE), rows: [{}, {}] }],
+    [
+      "two rows, each a plan it would admit",
+      (() => {
+        const answer = explained(native(DATA), DATA_RESOURCE);
+        return { ...answer, rows: [answer.rows[0], answer.rows[0]] };
+      })(),
+    ],
     ["no PLAN", { ...ANSWERED, rows: [{ RESOURCES: "[]" }] }],
     ["a PLAN that is not text", { ...ANSWERED, rows: [{ PLAN: 1, RESOURCES: "[]" }] }],
     ["RESOURCES that are not JSON", explained(native(DATA), "not json")],
@@ -444,6 +495,17 @@ describe("the planner check", () => {
     [
       "a Calcite plan with a line it does not know",
       explained("BindableTableScan(table=[[INFORMATION_SCHEMA, TABLES]])\nDruidQueryRel(x)\n", []),
+    ],
+    // A scan is read only in the shape Calcite writes it, `table=[[schema, table]]`; any other scan line is unreadable.
+    ["a scan with no space after the schema", explained("BindableTableScan(table=[[sys,segments]])\n", [])],
+    ["a scan that names its table another way", explained("BindableTableScan(name=[sys.segments])\n", [])],
+    ["a scan of another kind", explained("BindableTableFunctionScan(invocation=[segments()])\n", [])],
+    [
+      "a scan line among readable ones",
+      explained(
+        "BindableJoin(condition=[=($0, $1)], joinType=[inner])\n  BindableTableScan(table=[[INFORMATION_SCHEMA, TABLES]])\n  BindableTableScan(table=[[sys,segments]])\n",
+        [],
+      ),
     ],
     ["a nesting past any real plan", explained(native(nested(40)), [])],
   ])("refuses %s as unreadable", (_name, answer) => {

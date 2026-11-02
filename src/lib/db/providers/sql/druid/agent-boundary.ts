@@ -217,9 +217,26 @@ function goesOn(): string {
 /** The refusal of a statement whose plan, as the planner answered it, cannot be read. */
 export const DRUID_UNREADABLE_PLAN_REFUSAL = `${FENCE}; the planner's account of what this statement reads could not be read, so it was not sent.`;
 
-/** The statement that asks the planner what `sql` reads: Druid's EXPLAIN never runs the statement it plans. */
+/**
+ * The statement that asks the planner what `sql` reads: Druid's EXPLAIN never runs the statement it plans. The prefix
+ * takes a line of its own, so a position the planner reports in the statement keeps its column, one line further down
+ * (`druidAgentPlanErrorMessage`).
+ */
 export function druidAgentExplainStatement(sql: string): string {
-  return `EXPLAIN PLAN FOR ${sql}`;
+  return `EXPLAIN PLAN FOR\n${sql}`;
+}
+
+/**
+ * The planner's refusal of `EXPLAIN PLAN FOR` the statement, each position in it moved back onto the statement's own
+ * line, so the agent repairs the statement from where the statement itself would have been refused. Measured on 37.0.0:
+ * Druid writes a position as `(line [L], column [C])`, counted over the whole text it received, and `SELECT nope`
+ * answers line 1, column 8 sent raw and line 2, column 8 after the prefix's line. A position on the prefix's own line
+ * is not one in the statement and stays as the server wrote it.
+ */
+export function druidAgentPlanErrorMessage(message: string): string {
+  return message.replace(/\(line \[(\d+)\], column \[(\d+)\]\)/g, (position, line: string, column: string) =>
+    Number(line) > 1 ? `(line [${Number(line) - 1}], column [${column}])` : position,
+  );
 }
 
 /** The dataSource types a statement over datasources plans into (capture 08); any other type is refused. */
@@ -233,7 +250,9 @@ const CATALOG_SCHEMA = "INFORMATION_SCHEMA";
 
 /** One line of a Calcite plan, as Druid answers a read of INFORMATION_SCHEMA or `sys` (capture 08). */
 const CALCITE_LINE = /^ *Bindable[A-Za-z]+\(/;
-const CALCITE_SCAN = /BindableTableScan\(table=\[\[([^,\]]+), ([^\]]+)\]\]/g;
+/** A line that reads a table, in whatever shape: each must be a scan in the one shape Calcite writes it. */
+const CALCITE_READS = /Scan\(/;
+const CALCITE_SCAN = /^ *BindableTableScan\(table=\[\[([^,\]]+), ([^\]]+)\]\]/;
 
 /** A refusal while the plan is walked: what the statement reads, or null when the plan cannot be read. */
 class PlanRefusal extends Error {
@@ -315,14 +334,19 @@ function resourceDatasources(cell: unknown): Set<string> {
 }
 
 /**
- * A Calcite plan: only `Bindable` lines, and every scan on INFORMATION_SCHEMA. A plan with no scan reads no table: the
+ * A Calcite plan: only `Bindable` lines, and every line that scans anything a `BindableTableScan` of
+ * `table=[[schema, table]]` on INFORMATION_SCHEMA; a scan in any other shape is a plan this cannot read. A plan with no scan reads no table: the
  * planner answers a filter it proves empty, such as the agent's relation read (`WHERE 1 = 0`), with
  * `BindableValues(tuples=[[]])` (measured on 37.0.0).
  */
 function readCalcitePlan(plan: string): void {
   const lines = plan.split("\n").filter((line) => line.trim() !== "");
   if (lines.length === 0 || !lines.every((line) => CALCITE_LINE.test(line))) throw new PlanRefusal(null);
-  for (const [, schema, table] of plan.matchAll(CALCITE_SCAN)) {
+  for (const line of lines) {
+    if (!CALCITE_READS.test(line)) continue;
+    const scan = CALCITE_SCAN.exec(line);
+    if (scan === null) throw new PlanRefusal(null);
+    const [, schema, table] = scan;
     if (schema !== CATALOG_SCHEMA) throw new PlanRefusal(`the table ${schema}.${table}`);
   }
 }
