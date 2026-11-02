@@ -27,11 +27,11 @@ None of it is a GitHub issue.
 
 **Sections**
 
-- [SQL statement reading](#sql-statement-reading) — S2-S10 · 7
+- [SQL statement reading](#sql-statement-reading) — S2-S11 · 8
 - [Drivers and connections](#drivers-and-connections) — D1-D421, U17 · 310
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
-- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X25, U2-U194 · 179
+- [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U195 · 181
 - [Dependencies](#dependencies) — P1-P12 · 10
 - [Documentation](#documentation) — DOC3-DOC35 · 31
 - [Release pipeline](#release-pipeline) — REL1-REL9 · 9
@@ -40,9 +40,9 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B168 · 87
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B169 · 88
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
-- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP10 · 10
+- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP13 · 13
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
 
 ---
@@ -158,6 +158,17 @@ Druid refuses a lone `SET` ("Statement list is missing a non-SET statement"), so
 Found 2026-10-28 while probing Druid's grammar row on Apache Druid 37.0.0.
 
 **Done when:** the `druid` row declares that a run of `SET` statements belongs to the statement after it, the splitter keeps the run and that statement as one unit, `tests/unit/sql/statement-splitter.test.ts` pins a `SET` and a `SELECT` as one unit beside a following `SELECT` as a second, and the pair is run once on a live Druid.
+
+### S11. A statement that opens with a parenthesis reads as no statement
+
+`readOperativeKeyword` in `src/lib/sql/operative-keyword.ts` finds no keyword when the statement's first code character is `(`, so `inspectAgentStatement` in `src/lib/db/operations/statement-guard.ts` answers `NO_STATEMENT` for a parenthesised query such as `(SELECT 1 FROM DUAL) UNION ALL (SELECT 2 FROM DUAL)`.
+The guard reads under `DEFAULT_SQL_GRAMMAR` whatever the connection, so the answer is the same on every engine.
+Measured 2026-11-02 with a unit call: `(SELECT 1 FROM DUAL) UNION ALL (SELECT 2 FROM DUAL)`, `(SELECT 1)` and `((SELECT 1)) UNION (SELECT 2)` each answered `NO_STATEMENT`, while `SELECT 1 UNION ALL (SELECT 2)` answered no objection.
+So MCP's `run_read_query` refuses such a read before it reaches the database, "The statement was refused before it reached the database (NO_STATEMENT)", followed by the engine's accepted forms, which name the `SELECT` the refused text is; plan mode's read check marks the same draft as not a read, and a rewrite card carrying one is refused.
+`analyzeQuery` in `src/lib/db/utils/query-limiter.ts` types the same text `OTHER`, so the editor writes no row bound on it either.
+Found 2026-11-02 while reviewing the shared statement guard.
+
+**Done when:** the reader reads through the leading parentheses of a query expression to the keyword inside, the guard answers a parenthesised `SELECT` and a parenthesised compound query as a read and still refuses one whose body carries a side-effect word, the limiter's reading of the same text is decided in that change, and unit tests pin each shape in the guard's and the limiter's test files.
 
 ---
 
@@ -4691,6 +4702,20 @@ Found by the acceptance pass of the vector-family work; the menu entries predate
 
 **Done when:** PostgreSQL and SQLite declare `kinds` on the operations their row menus offer, naming the kinds each engine runs them on, measured on a PostgreSQL materialized view and on SQLite's `ANALYZE` of a view, and a test asserts that a view's row menu offers no maintenance entry its engine would not run.
 
+### X26. The row limiter pages a statement that has its own OFFSET and no LIMIT with a second OFFSET
+
+`applyQueryLimit` in `src/lib/db/utils/query-limiter.ts` keeps a statement's own bound only when `analyzeQuery` reports a `LIMIT`, and a digit `OFFSET` with no `LIMIT` is not one, so the limiter writes its own clause after it.
+The first page is then `... OFFSET 5 LIMIT 1001`, and every later page is `... OFFSET 5 LIMIT 1001 OFFSET 1000`: two `OFFSET` clauses, and the statement's own offset left out of the page's arithmetic.
+Measured 2026-11-02 with a unit call of each provider's `prepareQuery` for `SELECT a FROM t ORDER BY a OFFSET 5` at offsets 0 and 1000.
+PostgreSQL, MySQL, SQLite, libSQL, DuckDB, ClickHouse, OpenSearch, Couchbase, InfluxDB 3, Databend, Snowflake and BigQuery reach `applyQueryLimit` and write the shape above.
+The engines with a limiter of their own write the same defect in their own words: Trino `OFFSET 5 OFFSET 1000 LIMIT 1001`, Spark `LIMIT 1001 OFFSET 1000 OFFSET 5`, and SQL Server, Oracle and Db2 `OFFSET 5 OFFSET 1000 ROWS FETCH NEXT 1001 ROWS ONLY`.
+Elasticsearch refuses an offset outright and Druid writes no bound on this statement.
+Because the provider reports `wasLimited`, MCP's `run_read_query` serves the first page and names a `nextOffset`, and the call with that offset fails with the engine's syntax error; measured on Couchbase Server 8.0.2.
+The editor's next-page request sends its offset through the same `prepareQuery`.
+Found 2026-11-02 while verifying `run_read_query` on Couchbase.
+
+**Done when:** on every limiter that writes a page, a statement that carries its own offset and no limit is either paged with the two offsets added into one clause or kept as its own bound (nothing written, `wasLimited` false, so `run_read_query` names no next offset and answers an offset with its own-bound sentence), with a unit test per limiter on `OFFSET 5` at offsets 0 and 1000 and a `run_read_query` handler test that no `nextOffset` it names leads to a refused call.
+
 ---
 
 `U24` to `U31` came out of the #789 design that put columns back under an object row. Each was named
@@ -6663,6 +6688,16 @@ When the engine's overlay declares `planEstimate` `"unsupported"`, `inspect_plan
 Seen 2026-11-01 on Trino 476 (`trinodb/trino:476` by digest, the agent-boundary fixture's `read-only` coordinator) in a browser pass, twice: asked to send one heavy `SELECT`, the model called `inspect_plan` first, the rail showed "Refused before the database" over `UNSUPPORTED_DIALECT`, and in both runs the model then never sent the statement (runs `arun_9fc772e2c99549519cd41fb5ec787b20`, `arun_1452c8479f8c48dba0d2cb38ac525801`); every engine whose overlay declares `planEstimate` `"unsupported"` takes the same path, not checked in a browser.
 
 **Done when:** a not-sent refusal whose detail is a bare code shows a sentence saying what was refused and why, with the code beside it, read from the refusal rather than a type-id branch, and a timeline test pins it for `inspect_plan` on a dialect with no estimating plan.
+
+### U195. The editor's Druid explain reports a first-line planner error 17 columns to the right of the user's text
+
+`buildSql` of `druidNativeStrategy` in `src/lib/explain/druid-native.ts` writes `EXPLAIN PLAN FOR ` (17 characters) in front of the statement on its first line, and Druid's planner reports an error by line and column of the text it was sent.
+So an error on the statement's first line is reported 17 columns to the right of where the user's text has it, while an error on a later line is reported where it is.
+Measured on Apache Druid 37.0.0.
+The other strategies that prefix `EXPLAIN ` on the same line (`src/lib/explain/couchbase-json.ts`, `src/lib/explain/postgres-text.ts` and others) have the same shape, not measured.
+Found 2026-11-02 while reviewing Druid's explain path.
+
+**Done when:** a planner error from the explain names the line and column of the user's own text, the prefix's width taken back out of a first-line position or the prefix written so that no first-line column moves, decided once for every strategy that prefixes, with a unit test on a first-line and a later-line error for Druid.
 
 ## Dependencies
 
@@ -9197,6 +9232,17 @@ Found 2026-11-02 while opening MCP's `run_read_query` on Db2.
 
 **Done when:** the provider's catalog reads and the agent's composed column read take the column facts they need from a source that holds no stored value, without losing a declared type the column read shows today, the check refuses a grant that reads `HIGH2KEY` or `LOW2KEY`, directly or through a view or an alias, the seed revokes those grants from `PUBLIC`, a provider test and the live check pin each, section 10.1 of `docs/providers/db2.md` no longer names the residual, and a per-engine exposure decision opens MCP statement reads on Db2 with `MCP_STATEMENT_READ.db2` true; cited in `docs/AGENT.md`.
 
+### B169. Couchbase answers a refused user-defined function call as "Error evaluating projection", without the role it lacks
+
+`payloadError` in `src/lib/db/providers/document/couchbase/http-transport.ts` builds the `CouchbaseError` from `errors[0].msg` alone.
+When the least-privilege agent user calls a user-defined function inside a projection, Couchbase answers code 5010 with the message "Error evaluating projection", and the refusal itself, code 13014 with a sentence naming the missing role, sits only in `errors[0].reason` (`reason.cause.missing_role` and `reason.message`).
+`mapAgentStatementError` in `src/lib/db/providers/document/couchbase/index.ts` passes a role refusal on as the statement's to repair only for a top-level 13014, so the 5010 falls through to `mapCouchbaseError`, which answers the bare message.
+Neither agent mode nor MCP's `run_read_query` can tell the model which role the call needed.
+Measured on Couchbase Server 8.0.2 Enterprise: capture 02 of `tests/fixtures/couchbase/8.0.2/agent-boundary/` holds the answers for a scoped inline function (`query_execute_functions`), a scoped JavaScript function (`query_execute_external_functions`) and a global inline function (`query_execute_global_functions`), and section 15.7 of `docs/providers/couchbase.md` states that the role is lost.
+Found 2026-11-02 while verifying `run_read_query` on Couchbase.
+
+**Done when:** a 5010 whose `reason` carries 13014 reaches the agent path and `run_read_query` as the role refusal naming the missing role, read from the structured `reason` rather than its prose, a transport and a provider test pin the three captured answers, and `docs/providers/couchbase.md` no longer says the role is lost; cited in `docs/AGENT.md`.
+
 ## Passkey deferrals (#785)
 
 Each was decided when passkey sign-in was designed, not overlooked.
@@ -9373,6 +9419,35 @@ Repro: OpenSearch 3.8.0 with `plugins.query.size_limit` set to 500, `SELECT k FR
 Found 2026-11-02 while verifying `run_read_query` on OpenSearch.
 
 **Done when:** the refusal names the engine's own limit when the provider reports one, with a unit test.
+
+### MCP11. SQL Server's `run_read_query` budget refusals advise a `LIMIT`
+
+`tooLargeTextsOf` in `src/lib/mcp/tools/read-query-limits.ts` gives an engine its own row refusal only when the engine does not page with offset, and SQL Server's row in `src/lib/db/providers/sql/read-query-forms.ts` pages with offset, so `run_read_query` answers its row and byte refusals with the shared texts.
+Measured 2026-11-02 with a unit call of `classifyReadQueryFailure` on the provider's budget sentences under SQL Server's texts: "Add a LIMIT of 1000 or less, or remove your own LIMIT and page with offset" and "Select fewer or narrower columns, or add a smaller LIMIT".
+T-SQL has no `LIMIT`: it bounds rows with `TOP n` or with `ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY`, the form the same row names for paging, so a client that follows the advice writes a statement SQL Server refuses, and the provider's own bound is a `TOP` there.
+`ReadQueryForms` carries an engine's statements and its paging clause but no row limit clause, so the budget texts have nothing engine-specific to name, and another engine without `LIMIT` that opens to `run_read_query` meets the same texts.
+Found 2026-11-02 while reviewing the `run_read_query` budget refusals.
+
+**Done when:** each served engine's row states its own row limit clause, both budget refusals name it, SQL Server's name `TOP n` and the `OFFSET ... FETCH` form, every other served engine's refusals stay byte-identical, and a unit test pins the texts per served engine.
+
+### MCP12. A profile refusal raised when `run_read_query` acquires its connection carries no untrusted-data notice
+
+`execute` in `src/lib/mcp/tools/run-statement.ts` answers an `ExecutionProfileError` raised by `acquire` with `ownWordsError(profileRefusalText(...))`, Studio's own words with no `MCP_UNTRUSTED_NOTICE` before them.
+The provider's sentence can quote names a database user chose: ClickHouse's check in `src/lib/db/providers/sql/clickhouse/agent-boundary.ts` names the user and each grant's target, such as `ClickHouse user "<user>" holds <privilege> ON <target>`.
+A profile refusal raised while the statement runs takes `failureAnswer`, where `classifyReadQueryFailure` answers it as the engine's error through `engineError`, which carries the notice, so only the acquire branch answers without it.
+`inspect_schema` answers an `ExecutionProfileError` the same way on purpose (`src/lib/mcp/tools/inspect-schema.ts`), so the gap is on both tools.
+Found 2026-11-02 while reviewing `run_read_query`'s refusal paths.
+
+**Done when:** a profile refusal whose sentence can carry a name the database holds reaches the client after `MCP_UNTRUSTED_NOTICE` on both tools, or the provider's sentence is split so that only Studio's words go unmarked, with a handler test per tool on a refusal that quotes a user name.
+
+### MCP13. Couchbase's `inspect_schema` lists the columns it inferred from sampled documents
+
+`docs/MCP.md` and `INSPECT_SCHEMA_DESCRIPTION` in `src/lib/mcp/tools/inspect-schema.ts` say a column an engine only inferred from sampled data is never listed, and `machineColumns` in `src/lib/db/detailed-object.ts` drops a column only when its `provenance` is `"sampled"`.
+Couchbase stores no schema: `describeObject` infers a collection's columns with `INFER` over a document sample (`src/lib/db/providers/document/couchbase/introspect.ts`), and none of those columns carries `provenance: "sampled"`, while Firestore's and Qdrant's sampled columns do.
+So `inspect_schema` on a Couchbase connection lists every inferred field as a column, and agent grounding and the AI panels, which the same document says never receive such a column, receive them through the same filter.
+Found 2026-11-02 while reviewing `inspect_schema` on Couchbase.
+
+**Done when:** Couchbase's inferred columns are marked sampled, `inspect_schema` and agent grounding leave them out as they do Firestore's, the object tree still shows them with the sampled mark, and a provider test and an `inspect_schema` handler test pin both.
 
 ---
 
