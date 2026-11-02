@@ -1,6 +1,6 @@
 /**
  * run_libredb_read: MCP's libredbkv arm, run by the statement core over the real LibreDB provider, the real factory and
- * real files, through the real route, seed file and handler. LibreDB is embedded, with no server to start, so this is
+ * real files, through the real seed file and MCP handler. LibreDB is embedded, with no server to start, so this is
  * the boundary replay itself: every check below opens the same kernel against the same kind of file a seed names.
  *
  * The command is the agent's own, read and admitted by the agent's own libredbkv adapter, and every command opens the
