@@ -355,17 +355,27 @@
         "status": 200
       },
       {
+        "asset": "FILE-3",
+        "type": "File",
+        "status": 200
+      },
+      {
         "asset": "TOOL-2",
         "type": "CuttingTool",
         "status": 200
       }
     ],
     "agentServesTheUserinfoAsWritten": true,
+    "agentServesTheOddUserinfoAsWritten": true,
     "throughTheTool": {
       "rows": [
         {
           "assetId": "TOOL-2",
           "type": "CuttingTool"
+        },
+        {
+          "assetId": "FILE-3",
+          "type": "File"
         },
         {
           "assetId": "FILE-2",
@@ -383,7 +393,10 @@
       "carriesTheUserName": false,
       "carriesThePassword": false,
       "carriesTheQuery": false,
+      "carriesTheOddPassword": false,
+      "carriesTheFragment": false,
       "keepsTheHostAndPath": true,
+      "keepsTheOddHostAndPath": true,
       "keepsTheFilePath": true,
       "keepsTheToolDescription": true
     }

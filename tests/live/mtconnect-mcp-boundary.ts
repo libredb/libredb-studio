@@ -21,7 +21,8 @@
  *   limits            a read cut at max_rows, a read at the minimum timeout_ms with the agent paused, and a client
  *                     cancel with the agent paused: when MCP answered and when the provider's own request ended;
  *   assets            File and CuttingTool assets put raw on the AllowPut agent, one with a URL carrying a user name,
- *                     password and query, read through the tool: what reached the answer;
+ *                     password and query, one whose password holds an @ and a quote and whose fragment holds a
+ *                     token, read through the tool: what reached the answer;
  *   sink              the MQTT sink agent's nine routes read raw and its model read through the tool: whether the
  *                     broker's address reached any of them;
  *   factory           one read through the factory's own profiled acquisition, as the route makes it;
@@ -57,11 +58,24 @@ const ADAPTER = /mtconnect-adapter/i;
 /** The MQTT sink's broker, by the network alias the sink agent dials. */
 const BROKER = /mqtt-broker/i;
 /** The fake credential and signature the asset probe writes, which no answer may carry. */
-const FAKE_SECRETS = ["not-a-real-user", "not-a-real-password", "not-a-real-token"];
+const FAKE_SECRETS = [
+  "not-a-real-user",
+  "not-a-real-password",
+  "not-a-real-token",
+  "odd-pass",
+  "odd-word",
+  "not-a-real-fragment",
+];
 
 /** The tool as MCP registers it, and the same tool with its fence removed: the boundary under test. */
 const FENCED = mcpStatementArm("run_mtconnect_read");
 const UNFENCED: McpStatementArm = { ...FENCED, fence: () => null };
+
+/** The fence's refusal: the MCP admission's own words, the same for every form it refuses. */
+const FENCE_REFUSAL = "The request was refused before it reached the agent (request).";
+/** The provider's refusal of a form, before anything is sent, in its own words. */
+const providerRefusal = (reason: string): string =>
+  `The statement was refused before it reached the database: ${reason}`;
 
 let failures = 0;
 function check(ok: boolean, line: string): void {
@@ -231,28 +245,37 @@ for (const statement of READS) {
 
 // Write-shaped lines: the fence refuses each before anything is acquired; unfenced, the provider before anything is
 // sent. The PUT and POST also run unfenced against the AllowPut agent, beside the raw positive control below.
+// Each row names the refusal it must draw, so a call that fails for another reason, before the fence or the provider
+// reads the line, fails the check rather than passing it.
 const WRITES = [
-  "PUT /probe",
-  `PUT /${LATHE}?x1722-pos=9999`,
-  `POST /${LATHE}?p1722-prog=MCP.NC`,
-  "DELETE /asset/TOOL-1722",
-];
+  ["PUT /probe", "PUT"],
+  [`PUT /${LATHE}?x1722-pos=9999`, "PUT"],
+  [`POST /${LATHE}?p1722-prog=MCP.NC`, "POST"],
+  ["DELETE /asset/TOOL-1722", "DELETE"],
+] as const;
 const writes = [];
-for (const statement of WRITES) {
+for (const [statement, method] of WRITES) {
   const fenced = await mcp(fixture, statement);
   const unfenced = await mcp(fixture, statement, { arm: UNFENCED });
+  const fencedRefusal = firstSentence(textOf(fenced.result));
+  const unfencedRefusal = firstSentence(textOf(unfenced.result));
   check(
-    fenced.result.isError === true && fenced.acquired === 0 && fenced.sent.length === 0,
-    `${statement}: fenced tool refuses before anything is acquired`,
+    fenced.result.isError === true &&
+      fencedRefusal === FENCE_REFUSAL &&
+      fenced.acquired === 0 &&
+      fenced.sent.length === 0,
+    `${statement}: fenced tool refuses in the fence's words before anything is acquired`,
   );
   check(
-    unfenced.result.isError === true && unfenced.sent.length === 0,
-    `${statement}: with the fence removed the provider refuses before anything is sent`,
+    unfenced.result.isError === true &&
+      unfencedRefusal === providerRefusal(`${method} is not a method this provider sends.`) &&
+      unfenced.sent.length === 0,
+    `${statement}: with the fence removed the provider refuses the method before anything is sent`,
   );
   writes.push({
     statement,
-    fenced: { refused: firstSentence(textOf(fenced.result)), acquired: fenced.acquired, sent: fenced.sent },
-    unfenced: { refused: firstSentence(textOf(unfenced.result)), sent: unfenced.sent },
+    fenced: { refused: fencedRefusal, acquired: fenced.acquired, sent: fenced.sent },
+    unfenced: { refused: unfencedRefusal, sent: unfenced.sent },
   });
 }
 const putBefore = await valueOf(PUT_PORT, "x1722-pos");
@@ -272,33 +295,62 @@ const positiveControl = {
   raw: { request: `PUT /${LATHE}?x1722-pos=4242`, status: rawPut.status, valueChanged: putAfterMcp !== putAfterRaw },
 };
 
-// Every other refused form, fenced and unfenced.
+// Every other refused form, fenced and unfenced, each with the provider's reason for it. The count past the row cap is
+// the provider's to refuse, so the fence lets it through and the provider's words answer both.
+const PAST_THE_ROW_CAP = providerRefusal("count may not be larger than this read's row cap of 1000.");
+const OUTSIDE_THE_PATH_SUBSET = providerRefusal("The path is outside what agent mode sends.");
 const REFUSED = [
-  "/cancel/id=1",
-  "/assets/TOOL-1722",
-  "/swagger",
-  "/sample?interval=1000",
-  "/current?heartbeat=1000",
-  "/sample?frequency=1000",
-  "/current\n/sample",
-  "/../probe",
-  "/current?path=count(//DataItem)",
-  "/current?path=//Adapter",
-  '/current?path=//DataItem[starts-with(@id,"_")]',
-  "/sample?count=1001",
+  ["/cancel/id=1", FENCE_REFUSAL, providerRefusal("GET /cancel/id=1 is not a route this provider runs.")],
+  ["/assets/TOOL-1722", FENCE_REFUSAL, providerRefusal("GET /assets/TOOL-1722 is not a route this provider runs.")],
+  ["/swagger", FENCE_REFUSAL, providerRefusal("GET /swagger is not a route this provider runs.")],
+  [
+    "/sample?interval=1000",
+    FENCE_REFUSAL,
+    providerRefusal(
+      "interval is not sent by this provider: streaming is out of scope for v1: an answer never ends, and the shared transport cannot carry it.",
+    ),
+  ],
+  [
+    "/current?heartbeat=1000",
+    FENCE_REFUSAL,
+    providerRefusal("heartbeat is not sent by this provider: streaming is out of scope for v1."),
+  ],
+  [
+    "/sample?frequency=1000",
+    FENCE_REFUSAL,
+    providerRefusal("frequency is not sent by this provider: the deprecated spelling of interval."),
+  ],
+  ["/current\n/sample", FENCE_REFUSAL, providerRefusal("A run sends one request.")],
+  [
+    "/../probe",
+    FENCE_REFUSAL,
+    providerRefusal(
+      "device is a dot segment, which a URL resolves to another path, so what would be sent is not the route that was written.",
+    ),
+  ],
+  ["/current?path=count(//DataItem)", FENCE_REFUSAL, providerRefusal("count() is not a function this provider sends.")],
+  ["/current?path=//Adapter", FENCE_REFUSAL, OUTSIDE_THE_PATH_SUBSET],
+  ['/current?path=//DataItem[starts-with(@id,"_")]', FENCE_REFUSAL, OUTSIDE_THE_PATH_SUBSET],
+  ["/sample?count=1001", PAST_THE_ROW_CAP, PAST_THE_ROW_CAP],
 ] as const;
 const refused = [];
-for (const statement of REFUSED) {
+for (const [statement, fencedWords, unfencedWords] of REFUSED) {
   const fenced = await mcp(fixture, statement);
   const unfenced = await mcp(fixture, statement, { arm: UNFENCED });
+  const fencedRefusal = firstSentence(textOf(fenced.result));
+  const unfencedRefusal = firstSentence(textOf(unfenced.result));
   check(
-    fenced.result.isError === true && unfenced.result.isError === true && unfenced.sent.length === 0,
-    `${JSON.stringify(statement)}: refused fenced and unfenced, nothing sent`,
+    fenced.result.isError === true &&
+      fencedRefusal === fencedWords &&
+      unfenced.result.isError === true &&
+      unfencedRefusal === unfencedWords &&
+      unfenced.sent.length === 0,
+    `${JSON.stringify(statement)}: refused fenced and unfenced in the expected words, nothing sent`,
   );
   refused.push({
     statement,
-    fenced: { refused: firstSentence(textOf(fenced.result)), acquired: fenced.acquired },
-    unfenced: { refused: firstSentence(textOf(unfenced.result)), sent: unfenced.sent },
+    fenced: { refused: fencedRefusal, acquired: fenced.acquired },
+    unfenced: { refused: unfencedRefusal, sent: unfenced.sent },
   });
 }
 
@@ -389,12 +441,17 @@ const FILE_WITH_SECRET =
   '<File assetId="FILE-1" name="program.nc" mediaType="text/plain" applicationCategory="DEVICE" applicationType="DATA" size="1024" versionId="1" state="PRODUCTION"><FileLocation href="ftp://not-a-real-user:not-a-real-password@files.example/programs/program.nc?token=not-a-real-token"/><Signature>0000</Signature><Destinations><Destination>LIBREDB-1722</Destination></Destinations><CreationTime>2026-01-01T00:00:00Z</CreationTime></File>';
 const FILE_WITH_PATH =
   '<File assetId="FILE-2" name="p2.nc" mediaType="text/plain" applicationCategory="DEVICE" applicationType="DATA" size="10" versionId="1" state="PRODUCTION"><FileLocation href="file:///opt/programs/p2.nc"/><Destinations><Destination>LIBREDB-1722</Destination></Destinations><CreationTime>2026-01-01T00:00:00Z</CreationTime></File>';
+// A password holding an @ and a quote, and a token in the fragment: a URL client splits the user information at the
+// last @, so no part of either may reach the answer.
+const FILE_WITH_ODD_SECRET =
+  '<File assetId="FILE-3" name="p3.nc" mediaType="text/plain" applicationCategory="DEVICE" applicationType="DATA" size="10" versionId="1" state="PRODUCTION"><FileLocation href="ftp://not-a-real-user:odd-pass@x&apos;odd-word@files.example/programs/p3.nc#token=not-a-real-fragment"/><Destinations><Destination>LIBREDB-1722</Destination></Destinations><CreationTime>2026-01-01T00:00:00Z</CreationTime></File>';
 const TOOL_WITH_PATH =
   '<CuttingTool assetId="TOOL-2" toolId="T2" serialNumber="SN-2"><Description>see //fileserver/tools/T2.pdf</Description><CuttingToolLifeCycle><ProgramToolNumber>2</ProgramToolNumber><CutterStatus><Status>NEW</Status></CutterStatus></CuttingToolLifeCycle></CuttingTool>';
 const stored = [];
 for (const [id, type, body] of [
   ["FILE-1", "File", FILE_WITH_SECRET],
   ["FILE-2", "File", FILE_WITH_PATH],
+  ["FILE-3", "File", FILE_WITH_ODD_SECRET],
   ["TOOL-2", "CuttingTool", TOOL_WITH_PATH],
 ] as const) {
   const answer = await fetch(`http://127.0.0.1:${PUT_PORT}/asset/${id}?type=${type}&device=${LATHE}`, {
@@ -410,12 +467,16 @@ const assetText = JSON.stringify(assetsRead.result);
 const assets = {
   stored,
   agentServesTheUserinfoAsWritten: rawAssets.includes("not-a-real-password"),
+  agentServesTheOddUserinfoAsWritten: rawAssets.includes("odd-pass@x") && rawAssets.includes("odd-word@files.example"),
   throughTheTool: {
     rows: rowsOf(assetsRead.result).map((row) => ({ assetId: row.assetId, type: row.type })),
     carriesTheUserName: assetText.includes("not-a-real-user"),
     carriesThePassword: assetText.includes("not-a-real-password"),
     carriesTheQuery: assetText.includes("not-a-real-token"),
+    carriesTheOddPassword: assetText.includes("odd-pass") || assetText.includes("odd-word"),
+    carriesTheFragment: assetText.includes("not-a-real-fragment"),
     keepsTheHostAndPath: assetText.includes("ftp://[withheld]@files.example/programs/program.nc?[withheld]"),
+    keepsTheOddHostAndPath: assetText.includes("ftp://[withheld]@files.example/programs/p3.nc#[withheld]"),
     keepsTheFilePath: assetText.includes("file:///opt/programs/p2.nc"),
     keepsTheToolDescription: assetText.includes("//fileserver/tools/T2.pdf"),
   },
@@ -428,6 +489,13 @@ check(
     assets.throughTheTool.keepsTheHostAndPath &&
     assets.throughTheTool.keepsTheFilePath,
   "the tool answers the File asset's location with its user name, password and query withheld",
+);
+check(
+  assets.agentServesTheOddUserinfoAsWritten &&
+    !assets.throughTheTool.carriesTheOddPassword &&
+    !assets.throughTheTool.carriesTheFragment &&
+    assets.throughTheTool.keepsTheOddHostAndPath,
+  "a password holding an @ and a quote, and a token in the fragment, reach no answer while the host and path do",
 );
 
 // The MQTT sink agent: the broker's address, raw on every route and through the tool's model read.
