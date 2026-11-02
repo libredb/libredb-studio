@@ -62,6 +62,7 @@ describe("mcpStatementEngines", () => {
       rediscli: ["redis"],
       libredbkv: ["libredb"],
       qdrantapi: ["qdrant"],
+      etcdctl: ["etcd"],
       rabbitread: ["rabbitmq"],
       kafkaread: ["kafka"],
       weaviateapi: ["weaviate"],
@@ -78,6 +79,7 @@ describe("mcpStatementEngines", () => {
       "cypher",
       "libredbkv",
       "qdrantapi",
+      "etcdctl",
       "rabbitread",
       "kafkaread",
       "rediscli",
@@ -89,18 +91,20 @@ describe("mcpStatementEngines", () => {
     }
   });
 
-  test("serves MongoDB, Kubernetes, Neo4j, Redis, LibreDB, Qdrant, RabbitMQ, Kafka, Weaviate, MTConnect and Milvus each in its own language", () => {
+  test("serves MongoDB, Kubernetes, Neo4j, Redis, LibreDB, Qdrant, etcd, RabbitMQ, Kafka, Weaviate, MTConnect and Milvus each in its own language", () => {
     // MongoDB opened with run_mongo_command, Kubernetes with run_kubectl_read, offered only machine-redacted, Neo4j
     // with run_cypher_read, Redis with run_redis_read, metadata only, LibreDB with run_libredb_read, on a read-only
-    // handle per command, Qdrant with run_qdrant_read, metadata only, RabbitMQ with run_rabbitmq_read, metadata only,
-    // Kafka with run_kafka_read, answered metadata-only, Weaviate with run_weaviate_read, metadata only, MTConnect with
-    // run_mtconnect_read, its adapter connections withheld, and Milvus with run_milvus_read, answered metadata-only.
+    // handle per command, Qdrant with run_qdrant_read, metadata only, etcd with run_etcd_read, metadata only, RabbitMQ
+    // with run_rabbitmq_read, metadata only, Kafka with run_kafka_read, answered metadata-only, Weaviate with
+    // run_weaviate_read, metadata only, MTConnect with run_mtconnect_read, its adapter connections withheld, and Milvus
+    // with run_milvus_read, answered metadata-only.
     expect(mcpStatementEngines("mongo")).toEqual(["mongodb"]);
     expect(mcpStatementEngines("kubectl")).toEqual(["kubernetes"]);
     expect(mcpStatementEngines("cypher")).toEqual(["neo4j"]);
     expect(mcpStatementEngines("rediscli")).toEqual(["redis"]);
     expect(mcpStatementEngines("libredbkv")).toEqual(["libredb"]);
     expect(mcpStatementEngines("qdrantapi")).toEqual(["qdrant"]);
+    expect(mcpStatementEngines("etcdctl")).toEqual(["etcd"]);
     expect(mcpStatementEngines("rabbitread")).toEqual(["rabbitmq"]);
     expect(mcpStatementEngines("kafkaread")).toEqual(["kafka"]);
     expect(mcpStatementEngines("weaviateapi")).toEqual(["weaviate"]);

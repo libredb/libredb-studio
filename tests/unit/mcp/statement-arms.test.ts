@@ -38,6 +38,7 @@ const RUN_KUBECTL_READ_ARM = mcpStatementArm("run_kubectl_read");
 const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
 const RUN_LIBREDB_READ_ARM = mcpStatementArm("run_libredb_read");
 const RUN_QDRANT_READ_ARM = mcpStatementArm("run_qdrant_read");
+const RUN_ETCD_READ_ARM = mcpStatementArm("run_etcd_read");
 const RUN_KAFKA_READ_ARM = mcpStatementArm("run_kafka_read");
 const RUN_RABBITMQ_READ_ARM = mcpStatementArm("run_rabbitmq_read");
 const RUN_CYPHER_READ_ARM = mcpStatementArm("run_cypher_read");
@@ -68,13 +69,14 @@ describe("MCP_STATEMENT_ARMS", () => {
     }
   });
 
-  test("every language has its arm: run_read_query, run_kubectl_read, run_mongo_command, run_libredb_read, run_weaviate_read, run_qdrant_read, run_rabbitmq_read, run_kafka_read, run_cypher_read, run_milvus_read, run_redis_read and run_mtconnect_read", () => {
+  test("every language has its arm: run_read_query, run_kubectl_read, run_mongo_command, run_libredb_read, run_weaviate_read, run_qdrant_read, run_etcd_read, run_rabbitmq_read, run_kafka_read, run_cypher_read, run_milvus_read, run_redis_read and run_mtconnect_read", () => {
     expect(MCP_STATEMENT_ARMS.sql).toBe(RUN_READ_QUERY_ARM);
     expect(MCP_STATEMENT_ARMS.kubectl).toBe(RUN_KUBECTL_READ_ARM);
     expect(MCP_STATEMENT_ARMS.mongo).toBe(RUN_MONGO_COMMAND_ARM);
     expect(MCP_STATEMENT_ARMS.libredbkv).toBe(RUN_LIBREDB_READ_ARM);
     expect(MCP_STATEMENT_ARMS.weaviateapi).toBe(RUN_WEAVIATE_READ_ARM);
     expect(MCP_STATEMENT_ARMS.qdrantapi).toBe(RUN_QDRANT_READ_ARM);
+    expect(MCP_STATEMENT_ARMS.etcdctl).toBe(RUN_ETCD_READ_ARM);
     expect(MCP_STATEMENT_ARMS.rabbitread).toBe(RUN_RABBITMQ_READ_ARM);
     expect(MCP_STATEMENT_ARMS.kafkaread).toBe(RUN_KAFKA_READ_ARM);
     expect(MCP_STATEMENT_ARMS.cypher).toBe(RUN_CYPHER_READ_ARM);
@@ -91,6 +93,7 @@ describe("MCP_STATEMENT_ARMS", () => {
       "run_cypher_read",
       "run_milvus_read",
       "run_redis_read",
+      "run_etcd_read",
       "run_rabbitmq_read",
       "run_kafka_read",
       "run_mtconnect_read",
@@ -100,8 +103,6 @@ describe("MCP_STATEMENT_ARMS", () => {
   test("a language with no MCP tool yet has no arm, and its engine no read tool", () => {
     expect(MCP_STATEMENT_ARMS.influxql).toBeNull();
     expect(mcpStatementToolFor("influxdb")).toBeNull();
-    expect(MCP_STATEMENT_ARMS.etcdctl).toBeNull();
-    expect(mcpStatementToolFor("etcd")).toBeNull();
     expect(MCP_STATEMENT_ARMS.oxiacli).toBeNull();
     expect(mcpStatementToolFor("oxia")).toBeNull();
     expect(MCP_STATEMENT_ARMS.s3api).toBeNull();
@@ -635,6 +636,91 @@ describe("the qdrantapi arm", () => {
   });
 });
 
+describe("the etcdctl arm", () => {
+  const server = languageServer("etcdctl");
+  const RunEtcdReadInputSchema = RUN_ETCD_READ_ARM.inputSchema;
+
+  test("takes one command, no offset and no database, and sends it as written", () => {
+    expect(RUN_ETCD_READ_ARM.title).toBe("Run a read-only etcd metadata read");
+    expect(RUN_ETCD_READ_ARM.argument).toBe("statement");
+    expect(RUN_ETCD_READ_ARM.paging).toBe("none");
+    expect(RUN_ETCD_READ_ARM.types).toEqual(["etcd"]);
+    expect(RUN_ETCD_READ_ARM.inputSchema.shape).not.toHaveProperty("offset");
+    expect(RUN_ETCD_READ_ARM.inputSchema.shape).not.toHaveProperty("database");
+    for (const extra of [{ offset: 5 }, { database: "app" }, { sql: "SELECT 1" }]) {
+      expect(
+        RunEtcdReadInputSchema.safeParse({ connection_id: "seed:e", statement: "endpoint status", ...extra }).success,
+      ).toBe(false);
+    }
+    expect(RunEtcdReadInputSchema.safeParse({ connection_id: "seed:e", statement: "" }).success).toBe(false);
+  });
+
+  test("reads its argument with the agent's canonicalize", () => {
+    expect(RUN_ETCD_READ_ARM.canonicalize("  member list ")).toBe(server.canonicalize("  member list "));
+    expect(RUN_ETCD_READ_ARM.canonicalize({ statement: "member list" })).toBeNull();
+  });
+
+  test.each([
+    ["a prefix get", "get /app/ --prefix"],
+    ["a prefix count", "get /registry/ --prefix --count-only"],
+    ["a keys-only get", "get /app/config --keys-only"],
+    ["a lease's keys", "lease timetolive 694d8147df1dc4c8 --keys"],
+    ["a watch", "watch /app/config"],
+    ["a write", "put /app/config value"],
+    ["a second command", "member list; endpoint status"],
+  ])("fences %s with the agent's admission and quotes its sentence", (_what, command) => {
+    const refusal = server.admit?.(command);
+    expect(refusal).not.toBeNull();
+    expect(RUN_ETCD_READ_ARM.fence(command, "etcd")).toBe(
+      `The command was refused before it reached the cluster (${refusal?.code}). ${refusal?.message}`,
+    );
+  });
+
+  test("admits the metadata reads and the get of one key", () => {
+    for (const command of ["endpoint status", "member list", "lease list", "get /app/config"]) {
+      expect(RUN_ETCD_READ_ARM.fence(command, "etcd")).toBeNull();
+    }
+  });
+
+  test("answers a row refusal with the command's own row-cap advice", () => {
+    const rows = classifyReadQueryFailure(
+      new Error("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
+      1,
+      2,
+      RUN_ETCD_READ_ARM.tooLarge("lease list", "etcd"),
+    );
+    expect(rows).toEqual({
+      kind: "too-large",
+      text: `The result has more than 1000 rows, the most this server reads for one call. ${server.rowCapAdvice("lease list", "1000")}`,
+    });
+  });
+
+  test("says an etcd read is not paged, and a byte cut never advises raising max_rows", () => {
+    expect(RUN_ETCD_READ_ARM.moreRows("lease list", "etcd", { maxRows: 100, shown: 100, cut: "max_rows" })).toBe(
+      `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice("lease list", "100")} To read past the 100 rows returned, raise max_rows (at most 500), or read one lease with lease timetolive, since an etcd read is never paged.`,
+    );
+    const bytes = RUN_ETCD_READ_ARM.moreRows("lease list", "etcd", { maxRows: 100, shown: 1, cut: "result_bytes" });
+    expect(bytes).toBe(
+      "More rows exist than the 32 KiB result limit holds, and 1 of them fitted; this tool does not page with offset. Read one lease with lease timetolive, or the cluster with endpoint status, instead of a whole list, to fit more rows, and to read past the 1 row returned, read one lease with lease timetolive, since an etcd read is never paged.",
+    );
+    expect(bytes).not.toContain("max_rows");
+    expect(RUN_ETCD_READ_ARM.rowOverCap).toBe(
+      "One row of this result is larger than the 32 KiB result limit. Read one lease or one key on its own, and run it again.",
+    );
+  });
+
+  test("describes the reads it takes, the refusals, the proof, inspect_schema and its engine", () => {
+    const description = RUN_ETCD_READ_ARM.description;
+    expect(description.startsWith("Run one read-only etcd metadata read")).toBe(true);
+    expect(description).toContain("Runs on etcd; other engines refuse it.");
+    expect(description).toContain("this tool takes no offset");
+    expect(description).toContain("never a key name, a stored value or a member's address");
+    expect(description).toContain("on no Kubernetes storage prefix and not on every key");
+    expect(description).toContain("A key outside the user's READ ranges is refused alike whether it exists or not.");
+    expect(description).toContain("inspect_schema lists no key prefix of an etcd connection");
+  });
+});
+
 describe("the Kafka arm", () => {
   const server = languageServer("kafkaread");
   const topics = '{"read": "topics"}';
@@ -1146,12 +1232,13 @@ describe("the tool each engine is read with", () => {
     }
   });
 
-  test("MongoDB is read with run_mongo_command, Kubernetes with run_kubectl_read, LibreDB with run_libredb_read, Weaviate with run_weaviate_read, Qdrant with run_qdrant_read, RabbitMQ with run_rabbitmq_read, Kafka with run_kafka_read, Neo4j with run_cypher_read, Milvus with run_milvus_read, Redis with run_redis_read, MTConnect with run_mtconnect_read, the SQL engines with run_read_query, the rest with none", () => {
+  test("MongoDB is read with run_mongo_command, Kubernetes with run_kubectl_read, LibreDB with run_libredb_read, Weaviate with run_weaviate_read, Qdrant with run_qdrant_read, etcd with run_etcd_read, RabbitMQ with run_rabbitmq_read, Kafka with run_kafka_read, Neo4j with run_cypher_read, Milvus with run_milvus_read, Redis with run_redis_read, MTConnect with run_mtconnect_read, the SQL engines with run_read_query, the rest with none", () => {
     expect(mcpStatementToolFor("mongodb")).toBe("run_mongo_command");
     expect(mcpStatementToolFor("kubernetes")).toBe("run_kubectl_read");
     expect(mcpStatementToolFor("libredb")).toBe("run_libredb_read");
     expect(mcpStatementToolFor("weaviate")).toBe("run_weaviate_read");
     expect(mcpStatementToolFor("qdrant")).toBe("run_qdrant_read");
+    expect(mcpStatementToolFor("etcd")).toBe("run_etcd_read");
     expect(mcpStatementToolFor("rabbitmq")).toBe("run_rabbitmq_read");
     expect(mcpStatementToolFor("kafka")).toBe("run_kafka_read");
     expect(mcpStatementToolFor("neo4j")).toBe("run_cypher_read");
@@ -1184,6 +1271,7 @@ describe("the tool each engine is read with", () => {
       "run_cypher_read",
       "run_milvus_read",
       "run_redis_read",
+      "run_etcd_read",
       "run_rabbitmq_read",
       "run_kafka_read",
       "run_mtconnect_read",
@@ -1423,7 +1511,7 @@ describe("the rabbitread arm", () => {
  * to its provider's own declaration: no relation kind where the arm says none, at least one where it does not.
  */
 describe("the arms whose engines hold no table", () => {
-  test("kubectl declares it, SQL, MongoDB, libredbkv, Weaviate, Qdrant, rabbitread, Kafka, Cypher, Milvus, Redis and MTConnect do not", () => {
+  test("kubectl declares it, SQL, MongoDB, libredbkv, Weaviate, Qdrant, etcd, rabbitread, Kafka, Cypher, Milvus, Redis and MTConnect do not", () => {
     expect(RUN_KUBECTL_READ_ARM.holdsNoTables).toBe(true);
     expect(RUN_READ_QUERY_ARM.holdsNoTables).toBe(false);
     expect(RUN_MONGO_COMMAND_ARM.holdsNoTables).toBe(false);
@@ -1431,6 +1519,8 @@ describe("the arms whose engines hold no table", () => {
     expect(RUN_WEAVIATE_READ_ARM.holdsNoTables).toBe(false);
     expect(RUN_LIBREDB_READ_ARM.holdsNoTables).toBe(false);
     expect(RUN_QDRANT_READ_ARM.holdsNoTables).toBe(false);
+    // A key prefix is a relation kind; every agent-mode handle lists none, so inspect_schema answers an empty page.
+    expect(RUN_ETCD_READ_ARM.holdsNoTables).toBe(false);
     // A RabbitMQ stream is a relation, so inspect_schema lists the streams and their agent columns.
     expect(RUN_RABBITMQ_READ_ARM.holdsNoTables).toBe(false);
     expect(RUN_KAFKA_READ_ARM.holdsNoTables).toBe(false);
@@ -1459,6 +1549,7 @@ describe("the arms whose engines hold no table", () => {
     expect(mcpTablelessReadTool("kubernetes")).toBe("run_kubectl_read");
     expect(mcpTablelessReadTool("mongodb")).toBeNull();
     expect(mcpTablelessReadTool("qdrant")).toBeNull();
+    expect(mcpTablelessReadTool("etcd")).toBeNull();
     expect(mcpTablelessReadTool("kafka")).toBeNull();
     expect(mcpTablelessReadTool("neo4j")).toBeNull();
     expect(mcpTablelessReadTool("milvus")).toBeNull();

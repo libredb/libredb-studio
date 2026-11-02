@@ -139,6 +139,7 @@ describe("the tool", () => {
         "run_cypher_read",
         "run_milvus_read",
         "run_redis_read",
+        "run_etcd_read",
         "run_rabbitmq_read",
         "run_kafka_read",
         "run_mtconnect_read",

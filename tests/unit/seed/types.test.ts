@@ -9,6 +9,7 @@ import {
   SHIPPED_DATABASE_TYPES,
 } from "@/lib/db/compatibility";
 import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
+import { ETCD_MCP_ROOT_REFUSAL } from "@/lib/db/providers/keyvalue/etcd/connection-string";
 import { refuseMcpWhereNotOffered, SeedConnectionSchema, SeedConfigSchema, SeedDefaultsSchema } from "@/lib/seed/types";
 
 /**
@@ -426,9 +427,7 @@ describe("SeedDefaultsSchema and the MCP opt-in", () => {
  * The MCP opt-in on an engine MCP is not offered for (#1089): refused at load, read from
  * `MCP_EXPOSABLE` and never from a type-id. The rule is pinned here through `refuseMcpWhereNotOffered`
  * handed a copy of the record that answers false for another shipped type, the way `offersReadOnlyToggle`
- * is handed its engine's answer, so no case depends on which engine the record refuses; etcd, the one
- * shipped engine it refuses, is pinned through the wired `SeedConfigSchema` in the describe "SeedConfigSchema:
- * MCP is not offered for etcd (#1089 E12)" below.
+ * is handed its engine's answer, so no case depends on which engine the record refuses.
  */
 describe("SeedConnectionSchema: the MCP opt-in where MCP is not offered (#1089)", () => {
   const connection = { id: "cluster", name: "Cluster", host: "cluster.internal", roles: ["*"] };
@@ -1008,21 +1007,32 @@ describe("SeedConfigSchema: a read-only etcd seed (#1089 E6)", () => {
   });
 });
 
-describe("SeedConfigSchema: MCP is not offered for etcd (#1089 E12)", () => {
+describe("SeedConfigSchema: an etcd seed opted into MCP", () => {
   const etcd = { id: "cluster", name: "Cluster", type: "etcd", host: "etcd.internal", roles: ["*"] };
+  const issuesOf = (connection: Record<string, unknown>) =>
+    (SeedConfigSchema.safeParse({ version: "1", connections: [connection] }).error?.issues ?? []).map((issue) => [
+      issue.path.join("."),
+      issue.message,
+    ]);
 
-  it("refuses an etcd seed with mcp: true, with an issue on mcp that names etcd", () => {
-    const result = SeedConfigSchema.safeParse({ version: "1", connections: [{ ...etcd, mcp: true }] });
-    expect(result.success).toBe(false);
-    const issues = result.error?.issues ?? [];
-    expect(issues.map((issue) => issue.path.join("."))).toEqual(["connections.0.mcp"]);
-    expect(issues[0]?.message).toContain("etcd");
-    expect(issues[0]?.message).toContain("MCP");
+  it("parses one with mcp: true and a user of its own, which the server proves reads only when it opens", () => {
+    expect(issuesOf({ ...etcd, user: "agent_reader", password: "${ETCD_READER_PASSWORD}", mcp: true })).toEqual([]);
   });
 
-  it("parses an etcd seed that says nothing of mcp, and one with mcp: false", () => {
+  it("refuses one with mcp: true that signs in as root, naming the field and why", () => {
+    expect(issuesOf({ ...etcd, user: "root", password: "${ETCD_ROOT_PASSWORD}", mcp: true })).toEqual([
+      ["connections.0.user", `Seed connection "cluster": user is refused: ${ETCD_MCP_ROOT_REFUSAL}`],
+    ]);
+  });
+
+  it("leaves root, and a user written as a reference, to the editor and to the check at open", () => {
+    expect(issuesOf({ ...etcd, user: "root", password: "${ETCD_ROOT_PASSWORD}" })).toEqual([]);
+    expect(issuesOf({ ...etcd, user: "root", password: "${ETCD_ROOT_PASSWORD}", mcp: false })).toEqual([]);
+    expect(issuesOf({ ...etcd, user: "${ETCD_USER}", password: "${ETCD_PASSWORD}", mcp: true })).toEqual([]);
+  });
+
+  it("parses one that says nothing of mcp", () => {
     expect(SeedConfigSchema.safeParse({ version: "1", connections: [etcd] }).success).toBe(true);
-    expect(SeedConfigSchema.safeParse({ version: "1", connections: [{ ...etcd, mcp: false }] }).success).toBe(true);
   });
 });
 

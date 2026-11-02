@@ -28,9 +28,14 @@ export interface SeedFieldRefusal {
   readonly sentence: string;
 }
 
-/** The fields a load check reads, as the file writes them: every one may be absent or a `${...}` reference. */
+/**
+ * The fields a load check reads, as the file writes them: every text one may be absent or a `${...}` reference, and
+ * `mcp` is the connection's MCP opt-in.
+ */
 export type SeedCheckedFields = Readonly<
-  Partial<Record<"host" | "user" | "authMethod" | "privateKey" | "password" | "role", string>>
+  Partial<Record<"host" | "user" | "authMethod" | "privateKey" | "password" | "role", string>> & {
+    readonly mcp?: boolean;
+  }
 >;
 
 /**

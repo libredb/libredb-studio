@@ -6,7 +6,7 @@
  * serves after every earlier test has torn down.
  *
  * Servers are counted by McpServer.prototype.registerTool, which the factory calls once per tool,
- * thirteen times per server; providers by the real SQLite provider's connect.
+ * fifteen times per server; providers by the real SQLite provider's connect.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -83,7 +83,7 @@ async function serversBuiltBy(send: () => Promise<Response>): Promise<number> {
   try {
     const response = await send();
     await response.text();
-    return registrations.calls / 14;
+    return registrations.calls / 15;
   } finally {
     registrations.restore();
   }
@@ -205,6 +205,7 @@ describe("one server per served request", () => {
           "run_cypher_read",
           "run_milvus_read",
           "run_redis_read",
+          "run_etcd_read",
           "run_rabbitmq_read",
           "run_kafka_read",
           "run_mtconnect_read",
@@ -470,6 +471,6 @@ describe("the module-scope handler", () => {
   test("still serves after every earlier test in this file has torn down its clients", async () => {
     const response = await serve(legacyPost({ jsonrpc: "2.0", id: 99, method: "tools/list" }, { token }));
     expect(response.status).toBe(200);
-    expect((await readJsonRpc(response)).result?.tools).toHaveLength(14);
+    expect((await readJsonRpc(response)).result?.tools).toHaveLength(15);
   });
 });
