@@ -22,10 +22,15 @@
  *    table function, each acting outside the call by its own catalog row; a view calling IBM's DBMS_RANDOM.VALUE,
  *    refused by its module; a view over IBM's AUDIT_ARCHIVE table function, refused by the function's own row; a
  *    view over a view it may not read; a view over an alias of a table it may not read; a view left inoperative; a column mask anywhere in the database; SETSESSIONUSER; a role with its ADMIN
- *    OPTION; a trusted context naming the user as its system authorization ID, on the address the server sees this
+ *    OPTION; SELECT on the catalog's distribution statistics, whose values the user is first shown to read for a table
+ *    it may not read, and on a view of the owner's over them, directly or over the base table; IBM's monitor readers
+ *    by a user's grant, EXECUTE on MON_GET_PKG_CACHE_STMT and the MONREPORT module and SELECT on
+ *    SYSIBMADM.MON_CURRENT_SQL, and a view of the owner's over the function or that view, whose statement text the
+ *    user is first shown to read through the function's view; a trusted context naming the user as its system authorization ID, on the address the server sees this
  *    script at, whose default role a raw connection of the user is first shown to hold, and the same context
  *    disabled; and on one handle a grant added after a call refuses the next call, and its revoke admits the one after;
- *  - it admits a view over a table, a view over a view it may read, a view calling IBM's own function, IBM's DB_MEMBERS
+ *  - it admits a user's grant of an IBM function PUBLIC holds by the database's own grant, a view over a table, a view
+ *    over a view it may read, a view calling IBM's own functions, SYSFUN's among them, a view over SYSCAT.TABLES, IBM's DB_MEMBERS
  *    and a view calling GET_INDEX_COLNAMES, both on the list of IBM functions measured as reading only;
  *  - each call has a connection of its own: what one call's session holds is not the next one's;
  *  - the operations profile opens the instance owner unproven; an editor handle refuses `queryReadOnly`;
@@ -165,6 +170,11 @@ async function refusedUntilLifted(
 }
 
 const CLEANUP = [
+  "DROP VIEW APP.LIBREDB_AB_STATS",
+  "DROP VIEW APP.LIBREDB_AB_PKG",
+  "DROP VIEW APP.LIBREDB_AB_CURRENT",
+  "DROP VIEW APP.LIBREDB_AB_CATALOG",
+  "DROP VIEW APP.LIBREDB_AB_BASESTATS",
   "DROP VIEW APP.LIBREDB_AB_RANDOM",
   "DROP VIEW APP.LIBREDB_AB_AUDIT",
   "DROP VIEW APP.LIBREDB_AB_LISTED",
@@ -549,6 +559,153 @@ try {
     ["DROP MASK APP.LIBREDB_AB_MASK"],
     '"APP"."LIBREDB_AB_MASK" on "APP"."LIBREDB_AB_SECRET"',
   );
+  // Measured first: with SELECT on the distribution statistics, which a fresh database gives PUBLIC, the agent user reads
+  // a stored value of a table it may not read. The check refuses such a grant, through any of the nine objects.
+  // A value held by more than one row, so RUNSTATS records it among the frequent values (a one-row table gets none).
+  await setup([
+    "INSERT INTO APP.LIBREDB_AB_SECRET VALUES ('owner-only'), ('owner-only'), ('owner-other')",
+    "CALL SYSPROC.ADMIN_CMD('RUNSTATS ON TABLE APP.LIBREDB_AB_SECRET WITH DISTRIBUTION')",
+    "GRANT SELECT ON SYSCAT.COLDIST TO PUBLIC",
+  ]);
+  {
+    const agentRaw = await raw("agent_ro", AGENT_PASSWORD);
+    const values = (
+      await agentRaw.query(
+        "SELECT COLVALUE FROM SYSCAT.COLDIST WHERE TABSCHEMA = 'APP' AND TABNAME = 'LIBREDB_AB_SECRET' " +
+          "AND COLVALUE IS NOT NULL",
+      )
+    ).rows.map((row) => String((row as Record<string, unknown>).COLVALUE));
+    let secret: unknown;
+    try {
+      await agentRaw.query("SELECT V FROM APP.LIBREDB_AB_SECRET");
+    } catch (error) {
+      secret = error;
+    }
+    await agentRaw.close();
+    check(
+      values.includes("'owner-only'") && sqlcode(secret) === -551,
+      "SELECT on SYSCAT.COLDIST gave the agent user a stored value of a table it may not read",
+    );
+  }
+  await setup(["REVOKE SELECT ON SYSCAT.COLDIST FROM PUBLIC"]);
+  for (const [schema, name] of [
+    ["SYSCAT", "COLDIST"],
+    ["SYSSTAT", "COLGROUPDIST"],
+    ["SYSIBM", "SYSCOLDISTPARTITIONSTATS"],
+  ]) {
+    await refusedUntilLifted(
+      provider,
+      `SELECT on the distribution statistics ${schema}.${name}, to PUBLIC`,
+      [`GRANT SELECT ON ${schema}.${name} TO PUBLIC`],
+      [`REVOKE SELECT ON ${schema}.${name} FROM PUBLIC`],
+      `REVOKE SELECT ON TABLE "${schema}"."${name}" FROM PUBLIC`,
+    );
+  }
+  // A view of the owner's over the distribution statistics reads them with its owner's authority: measured first that
+  // the agent user reads a stored value through it, then refused by the check, through a view and through a view
+  // over the base table, until its grant is gone.
+  await setup([
+    "CREATE VIEW APP.LIBREDB_AB_STATS AS SELECT TABNAME, COLVALUE FROM SYSCAT.COLDIST",
+    "CREATE VIEW APP.LIBREDB_AB_BASESTATS AS SELECT TBNAME, COLVALUE FROM SYSIBM.SYSCOLDIST",
+    "GRANT SELECT ON APP.LIBREDB_AB_STATS TO USER AGENT_RO",
+  ]);
+  {
+    const agentRaw = await raw("agent_ro", AGENT_PASSWORD);
+    const values = (
+      await agentRaw.query(
+        "SELECT COLVALUE FROM APP.LIBREDB_AB_STATS WHERE TABNAME = 'LIBREDB_AB_SECRET' AND COLVALUE IS NOT NULL",
+      )
+    ).rows.map((row) => String((row as Record<string, unknown>).COLVALUE));
+    await agentRaw.close();
+    check(
+      values.includes("'owner-only'"),
+      "a granted view of the owner's over SYSCAT.COLDIST gave the agent user a stored value of a table it may not read",
+    );
+  }
+  await setup(["REVOKE SELECT ON APP.LIBREDB_AB_STATS FROM USER AGENT_RO"]);
+  await refusedUntilLifted(
+    provider,
+    "a view of the owner's over SYSCAT.COLDIST",
+    ["GRANT SELECT ON APP.LIBREDB_AB_STATS TO USER AGENT_RO"],
+    ["REVOKE SELECT ON APP.LIBREDB_AB_STATS FROM USER AGENT_RO"],
+    'REVOKE SELECT ON TABLE "APP"."LIBREDB_AB_STATS" FROM USER "AGENT_RO"',
+  );
+  await refusedUntilLifted(
+    provider,
+    "a view of the owner's over SYSIBM.SYSCOLDIST",
+    ["GRANT SELECT ON APP.LIBREDB_AB_BASESTATS TO USER AGENT_RO"],
+    ["REVOKE SELECT ON APP.LIBREDB_AB_BASESTATS FROM USER AGENT_RO"],
+    'REVOKE SELECT ON TABLE "APP"."LIBREDB_AB_BASESTATS" FROM USER "AGENT_RO"',
+  );
+  // IBM's monitor readers read no data and act outside no call by their own catalog rows, and a fresh database grants
+  // them to no one. Measured first that a view of the owner's over MON_GET_PKG_CACHE_STMT shows the agent user the
+  // owner's statement, its literal included; then each way in is refused until it is gone: that view, a user's grant
+  // on the function, on the SYSIBMADM.MON_CURRENT_SQL view and on the MONREPORT module, and a view over that view.
+  await setup([
+    "CREATE VIEW APP.LIBREDB_AB_PKG AS SELECT CAST(STMT_TEXT AS VARCHAR(2000)) AS STMT_TEXT " +
+      "FROM TABLE (SYSPROC.MON_GET_PKG_CACHE_STMT(NULL, NULL, NULL, -2)) AS T",
+    "CREATE VIEW APP.LIBREDB_AB_CURRENT AS SELECT VARCHAR(STMT_TEXT, 200) AS STMT_TEXT FROM SYSIBMADM.MON_CURRENT_SQL",
+    "SELECT COUNT(*) FROM APP.LIBREDB_AB_SECRET WHERE V = 'owner-literal-in-history'",
+    "GRANT SELECT ON APP.LIBREDB_AB_PKG TO USER AGENT_RO",
+  ]);
+  {
+    const agentRaw = await raw("agent_ro", AGENT_PASSWORD);
+    const texts = (
+      await agentRaw.query(
+        "SELECT STMT_TEXT FROM APP.LIBREDB_AB_PKG WHERE STMT_TEXT LIKE 'SELECT COUNT(*) FROM APP.LIBREDB_AB_SECRET%'",
+      )
+    ).rows.map((row) => String((row as Record<string, unknown>).STMT_TEXT));
+    await agentRaw.close();
+    check(
+      texts.some((text) => text.includes("'owner-literal-in-history'")),
+      "a granted view of the owner's over MON_GET_PKG_CACHE_STMT showed the agent user the owner's statement and its literal",
+    );
+  }
+  await setup(["REVOKE SELECT ON APP.LIBREDB_AB_PKG FROM USER AGENT_RO"]);
+  for (const [what, grant, lift, names] of [
+    [
+      "a view of the owner's over MON_GET_PKG_CACHE_STMT",
+      "GRANT SELECT ON APP.LIBREDB_AB_PKG TO USER AGENT_RO",
+      "REVOKE SELECT ON APP.LIBREDB_AB_PKG FROM USER AGENT_RO",
+      'REVOKE SELECT ON TABLE "APP"."LIBREDB_AB_PKG" FROM USER "AGENT_RO"',
+    ],
+    [
+      "EXECUTE on MON_GET_PKG_CACHE_STMT, by a user's grant",
+      "GRANT EXECUTE ON FUNCTION SYSPROC.MON_GET_PKG_CACHE_STMT TO USER AGENT_RO",
+      "REVOKE EXECUTE ON FUNCTION SYSPROC.MON_GET_PKG_CACHE_STMT FROM USER AGENT_RO RESTRICT",
+      'REVOKE EXECUTE ON SPECIFIC FUNCTION "SYSPROC"."MON_GET_PKG_CACHE_STMT" FROM USER "AGENT_RO" RESTRICT',
+    ],
+    [
+      "SELECT on SYSIBMADM.MON_CURRENT_SQL, by a user's grant",
+      "GRANT SELECT ON SYSIBMADM.MON_CURRENT_SQL TO USER AGENT_RO",
+      "REVOKE SELECT ON SYSIBMADM.MON_CURRENT_SQL FROM USER AGENT_RO",
+      'REVOKE SELECT ON TABLE "SYSIBMADM"."MON_CURRENT_SQL" FROM USER "AGENT_RO"',
+    ],
+    [
+      "a view of the owner's over SYSIBMADM.MON_CURRENT_SQL",
+      "GRANT SELECT ON APP.LIBREDB_AB_CURRENT TO USER AGENT_RO",
+      "REVOKE SELECT ON APP.LIBREDB_AB_CURRENT FROM USER AGENT_RO",
+      'REVOKE SELECT ON TABLE "APP"."LIBREDB_AB_CURRENT" FROM USER "AGENT_RO"',
+    ],
+    [
+      "EXECUTE on IBM's MONREPORT module, by a user's grant",
+      "GRANT EXECUTE ON MODULE SYSIBMADM.MONREPORT TO USER AGENT_RO",
+      "REVOKE EXECUTE ON MODULE SYSIBMADM.MONREPORT FROM USER AGENT_RO",
+      'REVOKE EXECUTE ON MODULE "SYSIBMADM"."MONREPORT" FROM USER "AGENT_RO"',
+    ],
+  ]) {
+    await refusedUntilLifted(provider, what, [grant], [lift], names);
+  }
+  // A user's grant of an IBM function the database's own grant already gives PUBLIC adds nothing, so it is admitted.
+  await setup(["GRANT EXECUTE ON FUNCTION SYSPROC.AUTH_LIST_GROUPS_FOR_AUTHID TO USER AGENT_RO"]);
+  {
+    const regranted = await refusalOf(provider, "SELECT ID FROM APP.ORDERS");
+    check(
+      regranted === undefined,
+      `admitted: a user's grant of an IBM function PUBLIC already holds by the database's grant${regranted instanceof Error ? ` (got: ${regranted.message.slice(0, 300)})` : ""}`,
+    );
+  }
+  await setup(["REVOKE EXECUTE ON FUNCTION SYSPROC.AUTH_LIST_GROUPS_FOR_AUTHID FROM USER AGENT_RO RESTRICT"]);
   // IBM's code by its own catalog row: a module holding a function that acts outside the call, and a function of
   // IBM's that does and is not on the measured list, are refused; a function on that list is admitted, called raw.
   for (const ibmModule of ["UTL_FILE", "DBMS_PIPE"]) {
@@ -663,10 +820,13 @@ try {
   );
   await setup(["REVOKE INSERT ON APP.LIBREDB_AB_LEDGER FROM ROLE LIBREDB_AB_ROLE"]);
 
-  // Admitted: a view over a table, a view over a view the user may read, and a view calling IBM's own function.
+  // Admitted: a view over a table, a view over a view the user may read, a view calling IBM's own functions, one of
+  // them in SYSFUN, which Db2 runs for any user without a grant, and a view over a catalog view PUBLIC may read.
   await setup([
     "CREATE VIEW APP.LIBREDB_AB_PLAIN AS SELECT ID FROM APP.ORDERS",
-    "CREATE VIEW APP.LIBREDB_AB_IBM AS SELECT UPPER(NAME) AS N, LENGTH(NAME) AS L FROM APP.CUSTOMERS",
+    "CREATE VIEW APP.LIBREDB_AB_IBM AS SELECT UPPER(NAME) AS N, LENGTH(NAME) AS L, SYSFUN.SPACE(1) AS S FROM APP.CUSTOMERS",
+    "CREATE VIEW APP.LIBREDB_AB_CATALOG AS SELECT TABNAME FROM SYSCAT.TABLES WHERE TABSCHEMA = 'APP'",
+    "GRANT SELECT ON APP.LIBREDB_AB_CATALOG TO USER AGENT_RO",
     "CREATE VIEW APP.LIBREDB_AB_OUTER2 AS SELECT ID FROM APP.LIBREDB_AB_PLAIN",
     "GRANT SELECT ON APP.LIBREDB_AB_PLAIN TO USER AGENT_RO",
     "GRANT SELECT ON APP.LIBREDB_AB_IBM TO USER AGENT_RO",
@@ -675,7 +835,7 @@ try {
   const plain = await refusalOf(provider, "SELECT N, L FROM APP.LIBREDB_AB_IBM");
   check(
     plain === undefined,
-    `admitted: a view over a table, one over a view it may read, and one calling IBM's UPPER${plain instanceof Error ? ` (got: ${plain.message.slice(0, 300)})` : ""}`,
+    `admitted: a view over a table, one over a view it may read, one calling IBM's UPPER and SYSFUN.SPACE, and one over SYSCAT.TABLES${plain instanceof Error ? ` (got: ${plain.message.slice(0, 300)})` : ""}`,
   );
   await setup(["DROP VIEW APP.LIBREDB_AB_OUTER2"]);
 

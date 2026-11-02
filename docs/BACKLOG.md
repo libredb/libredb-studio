@@ -40,9 +40,9 @@ None of it is a GitHub issue.
 - [Security Phase 3 deferrals](#security-phase-3-deferrals) — K4-K8 · 5
 - [Security scanner triage](#security-scanner-triage) — SCAN1-SCAN2 · 2
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
-- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B167 · 87
+- [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B168 · 87
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
-- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP9 · 9
+- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP10 · 10
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
 
 ---
@@ -1832,7 +1832,7 @@ Both reach the caller as a shorter list with no reason: `GET /api/connections/ma
 ### D128. A read-only statement cannot be cancelled, so a cancelled or timed-out MCP query keeps running
 
 `queryReadOnly` takes no signal (`DatabaseProvider.queryReadOnly` in `src/lib/db/types.ts`), and `cancelQuery` cannot find its statement.
-When an MCP client cancels by closing the request, or `timeout_ms` passes, `run_read_query` stops waiting but the statement runs on: on PostgreSQL until `statement_timeout`, on SQL Server until the provider's deadline, on DuckDB to completion, on SQLite while blocking the process (A1), on ClickHouse until its `max_execution_time`, set to the time left, on libSQL and InfluxDB 3 until the provider closes its request at the time left, and on Elasticsearch to its end; a `timeout_ms` on ClickHouse, libSQL and InfluxDB 3 does end the statement, since the provider closes the request at its deadline, and ClickHouse cancels a read-only query whose client goes away, as sqld and InfluxDB 3 Core stop one (measured on sqld 0.24.33 and on InfluxDB 3 Core 3.12.0 on 2026-11-01), while Elasticsearch runs the statement to its end whether the request is closed at `timeout_ms` or by a cancel, and then holds no search context for it (measured on 9.1.4 on 2026-11-01).
+When an MCP client cancels by closing the request, or `timeout_ms` passes, `run_read_query` stops waiting but the statement runs on: on PostgreSQL until `statement_timeout`, on SQL Server until the provider's deadline, on DuckDB to completion, on SQLite while blocking the process (A1), on ClickHouse until its `max_execution_time`, set to the time left, on libSQL, InfluxDB 3 and Couchbase until the provider closes its request at the time left, on Elasticsearch and OpenSearch to its end, and on Apache Cassandra to its end, since the native protocol has no cancel; a `timeout_ms` on ClickHouse, libSQL, InfluxDB 3 and Couchbase does end the statement, since the provider closes the request at its deadline, and ClickHouse cancels a read-only query whose client goes away, as sqld, InfluxDB 3 Core and the Couchbase query service stop one (measured on sqld 0.24.33 and on InfluxDB 3 Core 3.12.0 on 2026-11-01, and on Couchbase Server 8.0.2 Enterprise on 2026-11-02), while Elasticsearch runs the statement to its end whether the request is closed at `timeout_ms` or by a cancel, and then holds no search context for it (measured on 9.1.4 on 2026-11-01), as OpenSearch runs the search to its end and then holds none (measured on 3.8.0 on 2026-11-02), and an Apache Cassandra coordinator runs the statement to its end after either (measured on 5.0.9 on 2026-11-02, where over three runs `system_views.queries` listed a filtered count for 875 to 4638 ms past the timeout answer and 721 to 1875 ms past a cancel).
 A 2025-era `notifications/cancelled` sent in its own `POST` does not even stop the wait: the stateless server answers it 202 without knowing the call, which runs to completion or `timeout_ms` (`tests/integration/mcp/http-route.test.ts`).
 This departs from the MCP rule that a server should stop work on a cancelled request as soon as practical.
 
@@ -9171,21 +9171,25 @@ The other four dialect members are `"unsupported"`: the estimating plan, the pro
 Trino has `EXPLAIN`, and the editor reads its plan, but the provider sends only one statement whose first keyword is `SELECT` or `WITH` on the agent path, since a statement that ends or nests the read-only transaction, changes the session or calls a procedure must never reach the server; an estimating plan would need that fence to admit `EXPLAIN` by the server's own reading, never measured for the fence, and a table profile would be an aggregate over a whole table, never measured.
 So investigation, database assessment and data analysis open on Trino, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`, and database assessment, which needs a table profile, opens but cannot pass (B146); the `sql-composers` requirement holds query optimization out; plan mode drafts there and grounds under the operations profile, whose open runs no check.
 `MCP_STATEMENT_READ.trino` is false, so MCP `run_read_query` answers that the engine is not served, while the MCP metadata tools serve Trino as before (`MCP_EXPOSABLE.trino` is true).
+The read-only access control lets every identity read every other user's query text in `system.runtime.queries` (measured on 476, 2026-11-02).
+The agent path refuses a statement that names the `system` catalog and an open that pins it, but that is a check on the statement text alone: a view stored in another catalog over that table is not a name it sees, and the operator's query rules that hide other users' queries cannot be proved from the connection's own session, since only another identity's query would show them.
+So MCP statement reads stay closed until Studio can prove at open that the connection's user cannot read other users' queries.
 Kept so that the engine joined on the members measured on it, nothing composed from another engine's rule, and so that MCP statement reads on Trino are a decision of their own rather than a side effect of agent mode joining.
 
 Found 2026-11-01 with agent execution on Trino.
 
-**Done when:** the Trino overlay gains an estimating plan whose `EXPLAIN` the agent path's fence admits, measured on 476, and a profile composition, or a recorded decision that it keeps none, with tests for each, and a per-engine exposure ruling opens MCP statement reads on Trino through the same check and read-only transaction with `MCP_STATEMENT_READ.trino` true; cited in `docs/AGENT.md`.
+**Done when:** the Trino overlay gains an estimating plan whose `EXPLAIN` the agent path's fence admits, measured on 476, and a profile composition, or a recorded decision that it keeps none, with tests for each, and a per-engine exposure ruling opens MCP statement reads on Trino through the same check and read-only transaction with `MCP_STATEMENT_READ.trino` true, once the open proves, beyond the statement text, that the connection's user cannot read other users' query text, with a test that refuses a user who can; cited in `docs/AGENT.md`.
 
-### B167. OpenSearch's agent path names any index its login may read, hidden and system indices included
+### B168. Db2's agent path reads the second highest and lowest value of every column from `SYSCAT.COLUMNS`, so MCP's statement read stays closed on Db2
 
-The Elasticsearch and OpenSearch providers share `src/lib/db/providers/sql/search/`, and the boundary of each is its SQL endpoint's refusal of every write; Elasticsearch's open also checks the login when security is on, and OpenSearch's checks none.
-Measured on Elasticsearch 9.1.4 on 2026-11-01, a hidden or system index, a hidden data stream and an alias over a hidden index each answered its rows through SQL to a statement that names it, so Elasticsearch's agent path reads each statement before it is sent and asks the server what its one index expression resolves to, in its own index resolution and in the one its SQL endpoint makes, refusing a hidden or system target (`elasticsearch-agent-index-fence.ts`, `SearchProduct.fencesHiddenIndices`; `docs/providers/elasticsearch.md` section 5.9).
-That check reads Elasticsearch's grammar and asks Elasticsearch's two index resolutions, and is off on OpenSearch, whose identifier quoting differs and whose own hidden and system indices were not read through its SQL plugin with a broad login, so an OpenSearch agent statement names any index the login may read, and a least-privilege login is what keeps those indices from it.
-`MCP_STATEMENT_READ.opensearch` is false, so no MCP client reaches them.
-Found 2026-11-01 while opening MCP's `run_read_query` on Elasticsearch.
+The Db2 agent check refuses a user whose grantees may read the catalog's distribution statistics, the nine objects whose `COLVALUE` holds the most frequent values and the quantiles of every table's columns, since with them the least-privilege user read values of a table it holds no `SELECT` on (`statistics` in `src/lib/db/providers/sql/db2/agent-read.ts`).
+`SYSCAT.COLUMNS` also keeps two values of every column once `RUNSTATS` has run, `HIGH2KEY` and `LOW2KEY`, and so do six more IBM objects (`SYSCAT.SYSCOLUMNS_UNION`, `SYSCAT.COLPARTITIONSTATS`, `SYSIBM.SYSCOLUMNS`, `SYSIBM.SYSCOLPARTITIONSTATS`, `SYSSTAT.COLUMNS`, `SYSSTAT.COLPARTITIONSTATS`); measured on 12.1.0.0 on 2026-11-02, the seeded agent user read both for a table it may not read, through `queryReadOnly` and through MCP's `run_read_query` (captures 12 and 13 of `tests/fixtures/db2/12.1.0.0/agent-boundary/`).
+A value of a table the user holds no `SELECT` on is a data-scope leak, so `MCP_STATEMENT_READ.db2` stays false until this closes.
+`SYSIBM.COLUMNS` lists every column without the values and stays readable once `SELECT` on the seven is revoked from `PUBLIC`, so it can serve the agent's composed column read; but the revoke also refuses, with `SQL0551N`, the provider's own catalog reads for that user, which read `SYSCAT.COLUMNS` for the database's code page and for each column's declared type, so its object tree, `inspect_schema` and the agent's grounding fail (capture 14).
+No IBM object without the values carries what that column read shows: neither `SYSIBM.COLUMNS` nor `SYSIBM.SQLCOLUMNS` keeps a `DECFLOAT` column's precision or the string units, `SYSIBM.SQLCOLUMNS` leaves `DECFLOAT` columns out, and `SYSIBM.COLUMNS` keeps no `VARBINARY` length.
+Found 2026-11-02 while opening MCP's `run_read_query` on Db2.
 
-**Done when:** a broad login's SQL reads of OpenSearch 3.8's hidden and system indices are measured, and either a statement check runs on OpenSearch with its own grammar and index resolution, pinned by tests and replayed live, or a recorded measurement shows none is reachable; cited in `docs/AGENT.md`.
+**Done when:** the provider's catalog reads and the agent's composed column read take the column facts they need from a source that holds no stored value, without losing a declared type the column read shows today, the check refuses a grant that reads `HIGH2KEY` or `LOW2KEY`, directly or through a view or an alias, the seed revokes those grants from `PUBLIC`, a provider test and the live check pin each, section 10.1 of `docs/providers/db2.md` no longer names the residual, and a per-engine exposure decision opens MCP statement reads on Db2 with `MCP_STATEMENT_READ.db2` true; cited in `docs/AGENT.md`.
 
 ## Passkey deferrals (#785)
 
@@ -9340,7 +9344,7 @@ Found 2026-11-01 while verifying `run_read_query` on InfluxDB 3.12.0 Core.
 
 **Done when:** a statement the read policy refuses through `run_read_query` is answered with the forms that tool runs on InfluxDB 3, the editor and agent mode keep the policy's sentence, and a test sends `TABLE` through the tool's handler and pins the answer.
 
-### MCP9. On Elasticsearch, `inspect_schema` and agent grounding list hidden indices and aliases with their columns
+### MCP9. On Elasticsearch and OpenSearch, `inspect_schema` and agent grounding list hidden indices and aliases with their columns
 
 `inspect_schema` and agent grounding read Elasticsearch's object surface under the operations profile, and that surface tells a system object by its name alone.
 `toIndexInfo` in `src/lib/db/providers/sql/search/http-transport.ts` marks only a name that starts with a dot as a system index, `GET /_cat/indices` is sent without `expand_wildcards`, so it lists hidden indices too, and `readKind` in `src/lib/db/providers/sql/search/index.ts` drops only what is marked system.
@@ -9348,8 +9352,21 @@ So a hidden index whose name has no leading dot, a hidden alias, and an alias ov
 Measured 2026-11-02 on Elasticsearch 9.1.4 with security off: `inspect_schema` listed an index created with `index.hidden`, a hidden alias over `probe_orders` and an alias over that hidden index, each with the columns of the index behind it.
 Their rows are not exposed: the provider's statement check refuses a statement naming any of them before it is sent.
 Found 2026-11-02 while reviewing `run_read_query` on Elasticsearch.
+OpenSearch shares the object surface: measured 2026-11-02 on OpenSearch 3.8.0 with security off, `GET /_cat/indices` leaves a hidden index out, but `inspect_schema` listed a hidden alias over `probe_orders` and an alias over a hidden index, each with the columns of the index behind it; their rows are kept out the same way, by OpenSearch's own statement check.
+It also listed an alias over a visible index whose name starts with a dot (an alias over `.plugins-ml-config` answered that index's columns, `master_key` among them), the indices of the plugin families the OpenSearch dialect declares (`pluginIndexFamilies` in `http-transport.ts`) that `toIndexInfo` does not mark system, such as `ubi_queries`, `search-relevance-queryset` and `opensearch-forecast-results-history-<date>-1`, and an alias over a `top_queries-*` index, each with its columns, measured on 3.8.0 the same day; the statement check refuses their rows.
 
-**Done when:** under the agent-facing profiles the object listings drop the names `GET /_resolve/index` marks hidden or system, and the aliases that are hidden or sit over a hidden index, with a live test against a 9.1.4 node that pins all three cases.
+**Done when:** under the agent-facing profiles the object listings drop the names `GET /_resolve/index` marks hidden or system, and the aliases that are hidden or sit over a hidden index, with a live test against a 9.1.4 node that pins all three cases, and on OpenSearch the hidden aliases, the aliases over a hidden index or over an index whose name starts with a dot, and the indices of the dialect's plugin families and the aliases over them, with a live test against a 3.8.0 node.
+
+### MCP10. `run_read_query`'s row refusal hides an engine row limit below 1000
+
+`classifyReadQueryFailure` in `src/lib/mcp/tools/read-query-limits.ts` maps every row-budget refusal to a fixed text, and the statement arms supply that text from `tooLarge` in `src/lib/mcp/tools/statement-arms.ts`: "The result has more than 1000 rows, the most this server reads for one call", followed by the advice to add a `LIMIT` of 1000 or less.
+OpenSearch refuses an answer that reaches `plugins.query.size_limit`, because the plugin cuts the rest without saying so, and its own sentence names that setting and its value; through `run_read_query` that sentence is replaced by the fixed text.
+So where the engine's limit is below 1000, the answer names a limit the query did not reach and advice that does not help.
+Repro: OpenSearch 3.8.0 with `plugins.query.size_limit` set to 500, `SELECT k FROM probe_buckets LIMIT 500` through `run_read_query` is answered "The result has more than 1000 rows ... Add a LIMIT of 1000 or less ...", while agent mode answers "OpenSearch answers at most 500 rows (plugins.query.size_limit) ...".
+`docs/providers/opensearch.md` (The statement path, MCP read) says what each path answers.
+Found 2026-11-02 while verifying `run_read_query` on OpenSearch.
+
+**Done when:** the refusal names the engine's own limit when the provider reports one, with a unit test.
 
 ---
 

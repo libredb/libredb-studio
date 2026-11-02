@@ -1,0 +1,102 @@
+SELECT COLNAME, HIGH2KEY, LOW2KEY FROM SYSCAT.COLUMNS WHERE TABSCHEMA = 'APP' AND TABNAME = 'ALLTYPES' AND COLNAME = 'C_VCHAR'
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "SELECT". Object: "SYSCAT.COLUMNS".  
+SQLSTATE=42501
+
+SELECT COUNT(*) FROM SYSIBM.SYSCOLUMNS
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "SELECT". Object: "SYSIBM.SYSCOLUMNS".  
+SQLSTATE=42501
+
+SELECT COUNT(*) FROM SYSSTAT.COLUMNS
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "SELECT". Object: "SYSSTAT.COLUMNS".  
+SQLSTATE=42501
+
+SELECT COUNT(*) FROM SYSCAT.SYSCOLUMNS_UNION
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "SELECT". Object: "SYSCAT.SYSCOLUMNS_UNION".  
+SQLSTATE=42501
+
+SELECT CODEPAGE FROM SYSCAT.COLUMNS WHERE TABSCHEMA = 'SYSIBM' AND TABNAME = 'SYSDUMMY1' AND COLNAME = 'IBMREQD'
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "SELECT". Object: "SYSCAT.COLUMNS".  
+SQLSTATE=42501
+
+SELECT COLNAME, TYPENAME, LENGTH, SCALE FROM SYSCAT.COLUMNS WHERE TABSCHEMA = 'APP' AND TABNAME = 'ORDERS' ORDER BY COLNO
+SQL0551N  The statement failed because the authorization ID does not have the 
+required authorization or privilege to perform the operation.  Authorization 
+ID: "AGENT_RO".  Operation: "SELECT". Object: "SYSCAT.COLUMNS".  
+SQLSTATE=42501
+
+SELECT VARCHAR(COLUMN_NAME, 10) AS COLUMN_NAME, VARCHAR(DATA_TYPE, 20) AS DATA_TYPE, CHARACTER_MAXIMUM_LENGTH AS CML, CHARACTER_OCTET_LENGTH AS COL, NUMERIC_PRECISION AS NP, NUMERIC_SCALE AS NS, IS_NULLABLE, ORDINAL_POSITION FROM SYSIBM.COLUMNS WHERE TABLE_SCHEMA = 'APP' AND TABLE_NAME = 'ALLTYPES' ORDER BY ORDINAL_POSITION
+
+COLUMN_NAME DATA_TYPE            CML         COL         NP          NS          IS_NULLABLE ORDINAL_POSITION
+----------- -------------------- ----------- ----------- ----------- ----------- ----------- ----------------
+ID          INTEGER                        -           -          10           0 NO                         1
+SQL0445W  Value "CHARACTER LARGE OBJECT" has been truncated.  SQLSTATE=01004
+
+C_SMALL     SMALLINT                       -           -           5           0 YES                        2
+C_INT       INTEGER                        -           -          10           0 YES                        3
+C_BIG       BIGINT                         -           -          19           - YES                        4
+C_DEC       DECIMAL                        -           -          31           8 YES                        5
+C_DECF      DECFLOAT                       -           -           -           - YES                        6
+C_DECF16    DECFLOAT                       -           -           -           - YES                        7
+C_REAL      REAL                           -           -          24           - YES                        8
+C_DBL       DOUBLE PRECISION               -           -          53           - YES                        9
+C_DATE      DATE                           -           -           -           - YES                       10
+C_TIME      TIME                           -           -           -           - YES                       11
+C_TS6       TIMESTAMP                      -           -           -           - YES                       12
+C_TS12      TIMESTAMP                      -           -           -           - YES                       13
+C_TS0       TIMESTAMP                      -           -           -           - YES                       14
+C_CHAR      CHARACTER                     10          10           -           - YES                       15
+C_VCHAR     CHARACTER VARYING             50          50           -           - YES                       16
+C_CHARBIT   CHARACTER                      4           4           -           - YES                       17
+C_VBIN      VARBINARY                      -           -           -           - YES                       18
+C_GRAPH     GRAPHIC                        5          10           -           - YES                       19
+C_VGRAPH    GRAPHIC VARYING               20          40           -           - YES                       20
+C_CLOB      CHARACTER LARGE OBJE     1048576     1048576           -           - YES                       21
+C_DBCLOB    DOUBLE-BYTE CHARACTE        1024        2048           -           - YES                       22
+C_BLOB      BINARY LARGE OBJECT      1048576     1048576           -           - YES                       23
+C_XML       XML                            -           -           -           - YES                       24
+C_BOOL      BOOLEAN                        -           -           -           - YES                       25
+
+  25 record(s) selected with 1 warning messages printed.
+
+
+SELECT VARCHAR(COLUMN_NAME, 10) AS COLUMN_NAME, VARCHAR(TYPE_NAME, 22) AS TYPE_NAME, COLUMN_SIZE, DECIMAL_DIGITS, ORDINAL_POSITION FROM SYSIBM.SQLCOLUMNS WHERE TABLE_SCHEM = 'APP' AND TABLE_NAME = 'ALLTYPES' ORDER BY ORDINAL_POSITION
+
+COLUMN_NAME TYPE_NAME              COLUMN_SIZE DECIMAL_DIGITS ORDINAL_POSITION
+----------- ---------------------- ----------- -------------- ----------------
+ID          INTEGER                         10              0                1
+C_SMALL     SMALLINT                         5              0                2
+C_INT       INTEGER                         10              0                3
+C_BIG       BIGINT                          19              0                4
+C_DEC       DECIMAL                         31              8                5
+C_REAL      REAL                            24              -                8
+C_DBL       DOUBLE                          53              -                9
+C_DATE      DATE                            10              -               10
+C_TIME      TIME                             8              0               11
+C_TS6       TIMESTAMP                       26              6               12
+C_TS12      TIMESTAMP                       32             12               13
+C_TS0       TIMESTAMP                       19              0               14
+C_CHAR      CHAR                            10              -               15
+C_VCHAR     VARCHAR                         50              -               16
+C_CHARBIT   CHAR () FOR BIT DATA             4              -               17
+C_VBIN      VARBINARY                       16              -               18
+C_GRAPH     GRAPHIC                          5              -               19
+C_VGRAPH    VARGRAPHIC                      20              -               20
+C_CLOB      CLOB                       1048576              -               21
+C_DBCLOB    DBCLOB                        1024              -               22
+C_BLOB      BLOB                       1048576              -               23
+C_XML       XML                              0              -               24
+C_BOOL      BOOLEAN                          1              0               25
+
+  23 record(s) selected.
+
+

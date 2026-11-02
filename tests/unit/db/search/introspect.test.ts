@@ -33,6 +33,7 @@ import type {
   SearchDataStreamMarks,
   SearchIndexInfo,
   SearchLoginReach,
+  SearchLoginWrites,
   SearchMappingField,
   SearchObjectDefinition,
   SearchObjectInfo,
@@ -162,6 +163,9 @@ function createTransport(options: FakeOptions = {}) {
     },
     loginReach: (): Promise<SearchLoginReach | null> => {
       throw new Error("introspection checked the login");
+    },
+    loginWrites: (): Promise<SearchLoginWrites | null> => {
+      throw new Error("introspection probed the login");
     },
     resolveTargets: (): Promise<SearchResolvedTargets> => {
       throw new Error("introspection resolved an agent statement's index expression");

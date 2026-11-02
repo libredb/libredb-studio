@@ -678,7 +678,7 @@ export class CassandraProvider extends SQLBaseProvider {
     if (mode !== "execute") {
       throw new RefusedBeforeSendError("Apache Cassandra composes no estimating plan for the agent", this.type, sql);
     }
-    const fenced = cassandraAgentStatementRefusal(sql);
+    const fenced = cassandraAgentStatementRefusal(sql, this.config.database ?? "");
     if (fenced !== null) throw new RefusedBeforeSendError(fenced, this.type, sql);
 
     return this.trackQuery(async () => {

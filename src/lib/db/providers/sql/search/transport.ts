@@ -334,6 +334,18 @@ export interface SearchLoginReach {
   readonly restrictedGrants: SearchRestrictedGrants | null;
 }
 
+/** What a login may do that a read-only agent must not, as {@link SearchTransport.loginWrites} probes it. */
+export interface SearchLoginWrites {
+  /** The user the server says the request was made as. */
+  readonly user: string;
+  /** Whether the server lets the login call its security plugin's REST API, which administers users and roles. */
+  readonly administersSecurity: boolean;
+  /** Whether a document delete by query on a fresh index name passed the server's permission check. */
+  readonly deletesDocuments: boolean;
+  /** Whether an index close on a fresh index name passed the server's permission check. */
+  readonly managesIndices: boolean;
+}
+
 /** The index privileges a login's listing grants with `allow_restricted_indices`, on this cluster and on remote ones. */
 export interface SearchRestrictedGrants {
   readonly local: readonly string[];
@@ -345,7 +357,10 @@ export interface SearchResolvedIndex {
   readonly name: string;
   /** Whether the server marks the index hidden. */
   readonly hidden: boolean;
-  /** Whether the server marks the index a system index. */
+  /**
+   * Whether the server marks the index a system index, or its name falls in a family the product's dialect declares the
+   * bundled plugins write into with no mark (OpenSearch's `top_queries-*` among them).
+   */
   readonly system: boolean;
 }
 
@@ -431,6 +446,15 @@ export interface SearchTransport {
   loginReach(version: string, signal?: AbortSignal): Promise<SearchLoginReach | null>;
 
   /**
+   * What the login making the request may do that a read-only agent must not, as the server answers probes that change
+   * nothing: whether its security plugin lets the login administer it, and whether a document delete by query and an
+   * index close, each on a fresh name no index holds, pass the plugin's permission check. Null when the server runs
+   * without its security plugin, so no login exists to check. Only a product that declares the probes answers; another
+   * refuses before any request.
+   */
+  loginWrites(signal?: AbortSignal): Promise<SearchLoginWrites | null>;
+
+  /**
    * What the server resolves each index expression to for the login making the request, with the wildcard expansion
    * the SQL endpoint resolves a table with, merged into one answer. Each expression is resolved as a whole, its comma
    * list, exclusions and wildcards included; one the server cannot resolve, a name that does not exist or the login may
@@ -441,8 +465,8 @@ export interface SearchTransport {
   /**
    * The concrete indices the SQL endpoint reads for a table written as `expression`, resolved for the login making the
    * request the way the endpoint resolves one: a field capabilities request with the index options its resolver sends.
-   * Only a product whose SQL resolution was measured answers; another refuses before any request. An answer that holds
-   * a failure for any index fails the call, since the indices the endpoint reads are then not all known.
+   * Each product's request was measured against what its SQL endpoint reads. An answer that holds a failure for any
+   * index fails the call, since the indices the endpoint reads are then not all known.
    */
   sqlTableIndices(expression: string, signal?: AbortSignal): Promise<string[]>;
 

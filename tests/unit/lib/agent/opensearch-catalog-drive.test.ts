@@ -24,18 +24,18 @@ import { answersProse, callsTool, modelOver, scriptedModel } from "../../../isol
 
 /**
  * The statement workflows on OpenSearch, driven through the real run loop, the real OpenSearch overlay and the
- * real catalog read: investigation, data analysis and database assessment open, read the catalog through the composed
- * `DESCRIBE TABLES LIKE %` command as mapped column rows, and send the model's own statement through `queryReadOnly`. Query
- * optimization stays closed, because OpenSearch composes no estimating plan. The engine's catalog answer is the one
- * 3.8.0 gave (tests/fixtures/opensearch/3.8.0/catalog-read/columns.json).
+ * real catalog read: investigation, data analysis and database assessment open, read one table's columns through the
+ * composed `DESCRIBE TABLES LIKE '<table>'` command as mapped column rows, and send the model's own statement through
+ * `queryReadOnly`. Query optimization stays closed, because OpenSearch composes no estimating plan. The engine's catalog
+ * answer is the one 3.8.0 gave (tests/fixtures/opensearch/3.8.0/catalog-read/columns-table.json).
  */
 
 const CATALOG_CAPTURE = path.posix.join(
   import.meta.dir.replaceAll("\\", "/"),
-  "../../../fixtures/opensearch/3.8.0/catalog-read/columns.json",
+  "../../../fixtures/opensearch/3.8.0/catalog-read/columns-table.json",
 );
 
-/** The engine's `DESCRIBE TABLES LIKE %` answer as the provider hands it on. */
+/** The engine's `DESCRIBE TABLES LIKE 'probe_shapes'` answer as the provider hands it on. */
 function capturedCatalog(): QueryResult {
   const capture = JSON.parse(fs.readFileSync(CATALOG_CAPTURE, "utf8")) as { body: string };
   const answer = JSON.parse(capture.body) as { schema: { name: string }[]; datarows: unknown[][] };
@@ -45,6 +45,7 @@ function capturedCatalog(): QueryResult {
 }
 
 const CATALOG = capturedCatalog();
+const CATALOG_READ = "DESCRIBE TABLES LIKE 'probe_shapes'";
 const MODEL_READ = "SELECT customer, COUNT(*) AS n FROM probe_orders GROUP BY customer";
 
 const dataDirs: string[] = [];
@@ -59,7 +60,11 @@ const connection = CENSUS_CONNECTION.opensearch;
 async function drive(
   workflowType: AgentRunWorkflowType,
   turns: readonly ReturnType<typeof callsTool>[],
-): Promise<{ readonly events: readonly AgentRunEvent[]; readonly sent: readonly string[] }> {
+): Promise<{
+  readonly events: readonly AgentRunEvent[];
+  readonly sent: readonly string[];
+  readonly transcripts: readonly string[];
+}> {
   forgetHeldSnapshots();
   const declared = await createDatabaseProvider(connection);
   const capabilities = declared.getCapabilities();
@@ -67,7 +72,7 @@ async function drive(
   const provider = {
     queryReadOnly: async (sql: string): Promise<QueryResult> => {
       sent.push(sql);
-      return sql === "DESCRIBE TABLES LIKE %"
+      return sql === CATALOG_READ
         ? structuredClone(CATALOG)
         : { rows: [{ customer: "acme", n: 2 }], fields: ["customer", "n"], rowCount: 1, executionTime: 1 };
     },
@@ -111,7 +116,7 @@ async function drive(
   }).catch(() => undefined);
   const view = await store.read(run.runId);
   if (!view) throw new Error(`run ${run.runId} has no ledger`);
-  return { events: view.record.events, sent };
+  return { events: view.record.events, sent, transcripts: script.turns.map((turn) => turn.transcript) };
 }
 
 describe("the statement workflows on OpenSearch", () => {
@@ -119,10 +124,10 @@ describe("the statement workflows on OpenSearch", () => {
     "%s opens, reads the catalog through the composed command as column rows, and sends the model's statement",
     async (workflow) => {
       const { events, sent } = await drive(workflow, [
-        callsTool("inspect_schema", { kind: "columns" }, "call_1"),
+        callsTool("inspect_schema", { kind: "columns", table: "probe_shapes" }, "call_1"),
         callsTool("run_read_query", { sql: MODEL_READ, rationale: "count the orders per customer" }, "call_2"),
       ]);
-      expect(sent).toEqual(["DESCRIBE TABLES LIKE %", MODEL_READ]);
+      expect(sent).toEqual([CATALOG_READ, MODEL_READ]);
       const completed = events.flatMap((event) => (event.kind === "tool-completed" ? [event.artifact] : []));
       expect(completed.map((artifact) => artifact.operationId)).toEqual(["sql.query.read", "sql.query.read"]);
       expect(completed[0]?.summary).toMatchObject({
@@ -132,11 +137,18 @@ describe("the statement workflows on OpenSearch", () => {
     },
   );
 
-  test("one table's catalog read names the table as a string, the form that takes the name as written", async () => {
-    const { sent } = await drive("investigation", [
-      callsTool("inspect_schema", { kind: "columns", table: "probe_shapes" }, "call_1"),
+  test("a catalog read that names no table is refused with nothing sent, and the model is told why", async () => {
+    const { events, sent, transcripts } = await drive("investigation", [
+      callsTool("inspect_schema", { kind: "columns" }, "call_1"),
     ]);
-    expect(sent).toEqual(["DESCRIBE TABLES LIKE 'probe_shapes'"]);
+    expect(sent).toEqual([]);
+    expect(events.some((event) => event.kind === "tool-completed")).toBe(false);
+    const refused = events.flatMap((event) => (event.kind === "tool-refused" ? [event.refusal] : []));
+    expect(refused).toEqual([
+      { class: "not-sent", reasonCode: "INVALID_TOOL_INPUT", detail: "SELECTOR_UNSUPPORTED_BY_DIALECT" },
+    ]);
+    // The model is handed the reason code, as for every selector refusal, and calls the tool again with a table.
+    expect(transcripts[1]).toContain("(SELECTOR_UNSUPPORTED_BY_DIALECT)");
   });
 
   test("query optimization stays closed: OpenSearch composes no estimating plan", () => {
@@ -148,7 +160,7 @@ describe("the statement workflows on OpenSearch", () => {
 
   test("the composed command written by the model is refused before it is sent", async () => {
     const { events, sent } = await drive("investigation", [
-      callsTool("run_read_query", { sql: "DESCRIBE TABLES LIKE %", rationale: "list the columns" }, "call_1"),
+      callsTool("run_read_query", { sql: CATALOG_READ, rationale: "list the columns" }, "call_1"),
     ]);
     expect(sent).toEqual([]);
     const refused = events.flatMap((event) => (event.kind === "tool-refused" ? [event.refusal] : []));

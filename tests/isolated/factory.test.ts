@@ -777,7 +777,7 @@ describe("createDatabaseProvider", () => {
         rows: [{ role: "agent_ro", resource: "<keyspace probe>", permission: "SELECT" }],
         fieldNames: ["role", "resource", "permission"],
       },
-      "SELECT 1": { rows: [{ x: 1 }], fieldNames: ["x"] },
+      "SELECT x FROM probe.t": { rows: [{ x: 1 }], fieldNames: ["x"] },
     };
     const openAgentTransport = () => ({
       kind: "native" as const,
@@ -796,12 +796,14 @@ describe("createDatabaseProvider", () => {
     for (const provider of [profiled, editor]) {
       Object.assign(provider, { openAgentTransport, ensureConnected: () => undefined, transport: {} });
     }
-    await expect(editor.queryReadOnly("SELECT 1", AGENT_BUDGET)).rejects.toThrow(
+    await expect(editor.queryReadOnly("SELECT x FROM probe.t", AGENT_BUDGET)).rejects.toThrow(
       "Read-only execution requires a provider opened under the agent read-only profile",
     );
     expect(sent).toEqual([]);
-    await expect(profiled.queryReadOnly("SELECT 1", AGENT_BUDGET)).resolves.toMatchObject({ rows: [{ x: 1 }] });
-    expect(sent.at(-1)).toBe("SELECT 1");
+    await expect(profiled.queryReadOnly("SELECT x FROM probe.t", AGENT_BUDGET)).resolves.toMatchObject({
+      rows: [{ x: 1 }],
+    });
+    expect(sent.at(-1)).toBe("SELECT x FROM probe.t");
   });
 
   test("the execution context rides along to couchbase: queryReadOnly answers only under the agent profile", async () => {

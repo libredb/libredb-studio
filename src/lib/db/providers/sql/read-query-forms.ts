@@ -17,7 +17,18 @@ import type { DatabaseType } from "@/lib/types";
  * path, runs a `SELECT` that reads at most one index expression and an `EXPLAIN` of one, while the path's statement
  * check refuses a comment, a subquery, a `WITH` and a `JOIN` before they are sent, the grammar refuses `VALUES`,
  * `TABLE` and `EXPLAIN ANALYZE`, and there is no `OFFSET` at all, so it pages by key: a `WHERE` on a sort key past the
- * last value read answers the next rows.
+ * last value read answers the next rows. Measured on 2026-11-02: OpenSearch 3.8.0, through the agent read-only path,
+ * runs a `SELECT` that reads at most one index expression, and pages it with `LIMIT n OFFSET m`, while the path's
+ * statement check refuses a comment, a subquery, a `WITH`, a `JOIN` and a double-quoted name before they are sent, and
+ * the plugin refuses `WITH`, `VALUES`, `TABLE` and `EXPLAIN`, each a statement that must start with SELECT, DELETE,
+ * SHOW or DESCRIBE.
+ * Measured on 2026-11-02: Apache Cassandra 5.0.9, as a role holding only SELECT
+ * on its keyspace, runs a `SELECT` (`JSON` and `DISTINCT` too) and answers `WITH`, `VALUES`, `TABLE`, `EXPLAIN` and
+ * `OFFSET` with a syntax error; the agent path sends a `SELECT` of one table of the connection's keyspace or of
+ * `system_schema` only, and a `WHERE token(<partition key>) > token(<last key read>)` answers the next partitions.
+ * Measured on 2026-11-02: Couchbase Server 8.0.2 Enterprise, through the agent read-only path, runs a `SELECT` (a
+ * `WITH` before it too) and pages it with `LIMIT n OFFSET m`, while the path's statement check refuses `EXPLAIN` and
+ * every other statement before it is sent, and SQL++ has no bare `VALUES` or `TABLE` statement.
  */
 export interface ReadQueryForms {
   /** The statements, as the refusal names them after "runs one read-only statement:". */
@@ -78,7 +89,15 @@ export const READ_QUERY_FORMS: Readonly<Record<DatabaseType, ReadQueryForms | nu
   },
   druid: null,
   trino: null,
-  cassandra: null,
+  // CQL: no WITH, VALUES, TABLE or EXPLAIN, and no OFFSET (each a syntax error), so the next page is asked for by token
+  // across partitions and by clustering key within one; the agent path reads the connection's keyspace and
+  // system_schema only.
+  cassandra: {
+    statements: "a SELECT of one table of the connection's keyspace or of system_schema",
+    paging:
+      "LIMIT n, and for the next page add WHERE token(the partition key) > token(the last one read), or, within one partition, WHERE the clustering column > the last value read",
+    pagesWithOffset: false,
+  },
   // The agent path's statement check refuses a comment, a subquery, a WITH and a JOIN before they are sent; VALUES,
   // TABLE and EXPLAIN ANALYZE are grammar refusals; and there is no OFFSET (a parsing_exception), so the next page is
   // asked for by key.
@@ -88,9 +107,18 @@ export const READ_QUERY_FORMS: Readonly<Record<DatabaseType, ReadQueryForms | nu
     paging: "ORDER BY a unique field, and for the next page add WHERE that field > the last value read",
     pagesWithOffset: false,
   },
-  opensearch: null,
+  // The agent path's statement check refuses a comment, a subquery, a WITH, a JOIN and a double quote before they are
+  // sent, and the plugin refuses WITH, VALUES, TABLE and EXPLAIN; OFFSET pages (measured on 3.8.0).
+  opensearch: {
+    statements:
+      "a SELECT that reads at most one index expression, with no comment, subquery, WITH, JOIN or double quote (quote a name in backticks)",
+    paging: LIMIT_OFFSET,
+    pagesWithOffset: true,
+  },
   mongodb: null,
-  couchbase: null,
+  // The agent path's statement check sends one SELECT (a WITH before it too) and refuses EXPLAIN before it is sent;
+  // SQL++ has no bare VALUES or TABLE statement.
+  couchbase: { statements: "a SELECT (a WITH is fine)", paging: LIMIT_OFFSET, pagesWithOffset: true },
   redis: null,
   prometheus: null,
   kafka: null,

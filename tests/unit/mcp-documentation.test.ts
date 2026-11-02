@@ -215,6 +215,24 @@ describe("docs/MCP.md", () => {
     );
   });
 
+  test("says what a cancel and a timeout do to a Couchbase statement, as measured on 8.0.2 Enterprise", () => {
+    expect(MCP_DOC).toContain(
+      "| Couchbase | Studio stops waiting; the statement runs on until the provider closes its request at the time left of `timeout_ms`, which stops it on the query service | Studio closes the request at `timeout_ms` and the query service, whose own timeout is set to the time left, stops the statement, and the client gets the timeout answer |",
+    );
+  });
+
+  test("says what Couchbase needs of a seed, how it enforces read-only, and that inspect_schema opens it unchecked", () => {
+    expect(MCP_DOC).toContain(
+      "Couchbase by a user whose only roles are `query_select` on named scopes of the connection's bucket, checked at open and again before every statement on a server proven to refuse that user a write, behind the provider's fence that sends one `SELECT` ([couchbase.md](./providers/couchbase.md))",
+    );
+    expect(MCP_DOC).toContain(
+      "On Couchbase the seed's user must hold no role but `query_select` on named scopes of the seed's bucket (`query_select[<bucket>:<scope>]`, one for each scope it reads), never on every scope or on the bucket's `_system` scope, counting the roles of its groups, on a server that refuses that user a write, as the check proves at open and before every statement for agent mode ([couchbase.md](./providers/couchbase.md) section 15.7): the administrator, `ro_admin`, `query_system_catalog`, `data_reader`, a role on another bucket, a group that grants a writing role and every Community Edition user are refused.",
+    );
+    expect(MCP_DOC).toContain(
+      "Couchbase checks its user only for a connection that sends statements, so `inspect_schema` opens a Couchbase connection unchecked, as the editor does, with the administrator too.",
+    );
+  });
+
   test("says what a cancel and a timeout do to an Elasticsearch statement, as measured on 9.1.4", () => {
     expect(MCP_DOC).toContain(
       "| Elasticsearch | Studio stops waiting, and the provider closes its request at the time left of `timeout_ms`; the cluster runs the statement to its end, and holds no search context for it once it ends | Studio closes the request at `timeout_ms`, the cluster runs the statement to its end and then holds no search context for it, and the client gets the timeout answer |",
@@ -243,19 +261,72 @@ describe("docs/MCP.md", () => {
     );
   });
 
+  test("says what a cancel and a timeout do to an OpenSearch statement, as measured on 3.8.0", () => {
+    expect(MCP_DOC).toContain(
+      "| OpenSearch | Studio stops waiting, and the provider closes its request at the time left of `timeout_ms`; the cluster runs the search to its end, and holds no search context for it once it ends | Studio closes the request at `timeout_ms`, the cluster runs the search to its end and then holds no search context for it, and the client gets the timeout answer |",
+    );
+  });
+
+  // The login probes narrow the login; the statement check keeps hidden, dot-led and plugin-owned indices from a statement.
+  test("says what OpenSearch needs of a seed, that a broad login is refused at open, and what the boundary is", () => {
+    expect(MCP_DOC).toContain(
+      "OpenSearch by its SQL plugin, which refuses every write and DDL statement, on a server whose `DELETE` setting is proved off and whose 3.8 release line is checked at open, with a login probed at open, when security is on, for access to the security plugin's REST API and for a delete by query and an index close on a fresh index name, which narrows the login while the statement check and the plugin refuse every write whatever it is, and with hidden and dot-led indices and the indices the bundled plugins write into kept from each statement by the provider's statement check ([opensearch.md](./providers/opensearch.md))",
+    );
+    expect(MCP_DOC).toContain(
+      "On OpenSearch with security on, the open asks the security plugin whether the seed's login may call its REST API and probes a document delete by query and an index close on a fresh index name, and refuses, before any statement runs, a login the plugin lets do any of the three, so a seed signed in as `admin` is refused.\n" +
+        "The probes show only that: a role granting writes on a pattern the fresh name does not match, or only granular write, create, delete or alias actions, passes them, and the statement check and the plugin refuse every write it sends, so the boundary is not the login.\n" +
+        "With security on or off, hidden and dot-led indices and the indices the bundled plugins write into, such as `top_queries-*` and `security-auditlog-*`, are kept from each statement by the provider's statement check, which reads the statement before sending it and asks the server what its one index expression resolves to, in its own index resolution and in the field capabilities request that names the indices the SQL plugin reads.\n" +
+        "`run_read_query` needs the cluster actions `cluster:monitor/main` and `cluster:monitor/state` and, on the indices to read, `read`, `indices:admin/mappings/get` and `indices:monitor/settings/get`, and `inspect_schema` also the cluster actions `cluster:monitor/health`, `cluster:admin/ingest/pipeline/get` and `indices:admin/index_template/get` and five index actions on every index, which is the `libredb_seed_read` role of [opensearch.md](./providers/opensearch.md) section 5.9, so opt in a seed signed in with that role.",
+    );
+    expect(MCP_DOC).toContain(
+      "OpenSearch proves its `DELETE` off, checks its server's release and probes its login only for a connection that sends statements, so `inspect_schema` opens an OpenSearch connection on any release and with any login, as the editor does.",
+    );
+  });
+
+  test("says what a cancel and a timeout do to an Apache Cassandra statement, as measured on 5.0.9", () => {
+    expect(MCP_DOC).toContain(
+      "| Apache Cassandra | Studio stops waiting; the native protocol has no cancel, so the coordinator runs the statement to its end, and the provider closes the call's session when the answer arrives or at the time left of `timeout_ms` | The driver's read timeout, set to the time left, ends the wait and the provider closes the call's session; the coordinator runs the statement to its end, and the client gets the timeout answer |",
+    );
+  });
+
+  // A seed carries no agent user, so the seed's own role is the one checked, and the provider's read scope is part of
+  // the boundary the doc names.
+  test("says what Apache Cassandra needs of a seed, what the boundary is, that inspect_schema opens it unchecked, and how it pages without OFFSET", () => {
+    expect(MCP_DOC).toContain(
+      "Apache Cassandra by a role checked at open and again before every statement, on that statement's own session, to be no superuser and to hold only `SELECT` on the connection's keyspace, on an Apache Cassandra 5.0 server that enforces its grants, while the provider sends one `SELECT` of a table of that keyspace or of `system_schema` and nothing else ([cassandra.md](./providers/cassandra.md))",
+    );
+    expect(MCP_DOC).toContain(
+      "On Apache Cassandra the seed must name its keyspace as `database`, a keyspace of the user's data, since a seed bound to one of Cassandra's own keyspaces (`system`, `system_auth`, `system_traces` and the rest) is refused at open whatever its role holds, and its `user` must be a role that is no superuser, holds no superuser role, and holds only `SELECT` on that keyspace or on tables of it, directly or through roles granted to it, with no column of the keyspace masked by a function outside the `system` keyspace, on an Apache Cassandra 5.0 server with `PasswordAuthenticator` and `CassandraAuthorizer`, as the check proves for agent mode ([cassandra.md](./providers/cassandra.md) section 14.2): the image's default `cassandra` superuser is refused, and so is a role holding `MODIFY`, `EXECUTE`, `UNMASK` or `DESCRIBE`, or `SELECT` on every keyspace, a node on `AllowAllAuthorizer`, and ScyllaDB.",
+    );
+    expect(MCP_DOC).toContain(
+      "Apache Cassandra checks its role only for a connection that sends statements, so `inspect_schema` opens an Apache Cassandra connection unproven, as the editor does, with a superuser too.",
+    );
+    expect(MCP_DOC).toContain(
+      "CQL has no `OFFSET` either, so on Apache Cassandra `pagination.nextOffset` is always `null`, an `offset` is refused before anything is sent, and the answer says how to page without one: keep a `LIMIT`, and for the next page add `WHERE token(<partition key>) > token(<the last one read>)`, or within one partition `WHERE <clustering column> > <the last value read>`.",
+    );
+    const doc = read("docs/providers/cassandra.md");
+    expect(doc).toContain(
+      "A `SELECT` without its own `LIMIT` is cut at `max_rows` (100 by default, at most 500), and `pagination.hasMore` says more rows exist; a query whose own `LIMIT` is past 1000 rows, or a result past 1 MiB, is refused, never cut.",
+    );
+    expect(doc).toContain("a read with its own `LIMIT` past 1000 rows, and a result past 1 MiB, is refused, never cut");
+  });
+
   // run_read_query pages a SELECT with no LIMIT of its own at max_rows; only a LIMIT of its own past the 1000-row
   // provider budget reaches the refusal, so no provider doc may say every result past 1000 rows is refused.
-  test.each(["docs/providers/clickhouse.md", "docs/providers/libsql.md", "docs/providers/influxdb3.md"])(
-    "%s says run_read_query pages a SELECT without its own LIMIT and refuses only a LIMIT past 1000",
-    (doc) => {
-      const text = read(doc);
-      expect(text).toContain(
-        "A `SELECT` without its own `LIMIT` is paged at `max_rows` (100 by default, at most 500), and `pagination.hasMore` and `pagination.nextOffset` say where the next page starts; a query whose own `LIMIT` is past 1000 rows, or a result past 1 MiB, is refused, never cut.",
-      );
-      expect(text).not.toContain("A result past 1000 rows or 1 MiB is refused");
-      expect(text).toContain("read with its own `LIMIT` past 1000 rows");
-    },
-  );
+  test.each([
+    "docs/providers/clickhouse.md",
+    "docs/providers/libsql.md",
+    "docs/providers/influxdb3.md",
+    "docs/providers/opensearch.md",
+    "docs/providers/couchbase.md",
+  ])("%s says run_read_query pages a SELECT without its own LIMIT and refuses only a LIMIT past 1000", (doc) => {
+    const text = read(doc);
+    expect(text).toContain(
+      "A `SELECT` without its own `LIMIT` is paged at `max_rows` (100 by default, at most 500), and `pagination.hasMore` and `pagination.nextOffset` say where the next page starts; a query whose own `LIMIT` is past 1000 rows, or a result past 1 MiB, is refused, never cut.",
+    );
+    expect(text).not.toContain("A result past 1000 rows or 1 MiB is refused");
+    expect(text).toContain("read with its own `LIMIT` past 1000 rows");
+  });
 
   test("names how each engine run_read_query serves enforces read-only, from the one engine list", () => {
     const line = MCP_DOC.split("\n").find((text) => text.startsWith("- Read-only is the database's own enforcement"));
@@ -270,7 +341,7 @@ describe("docs/MCP.md", () => {
 
   test("says which libSQL token a seed needs and that inspect_schema opens libSQL unproven", () => {
     expect(MCP_DOC).toContain(
-      "`run_read_query` refuses a PostgreSQL, SQL Server, ClickHouse or libSQL connection whose own login could do more than read",
+      "`run_read_query` refuses a PostgreSQL, SQL Server, ClickHouse, libSQL, Apache Cassandra or Couchbase connection whose own login could do more than read",
     );
     expect(MCP_DOC).toContain(
       "libSQL by a token proven at open to be read-only, which the server refuses every write ([libsql.md](./providers/libsql.md))",

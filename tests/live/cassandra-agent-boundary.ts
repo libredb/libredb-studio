@@ -25,6 +25,9 @@
  *  - the check before every statement: a grant of MODIFY, of a superuser role and a user-defined mask added after one
  *    call refuse the next on the same handle, and their removal admits the one after;
  *  - the session: a `USE` is refused before it is sent, and an unqualified table reads the connection's keyspace;
+ *  - the read scope: a read of the trace tables, which hold other sessions' traced statements, of `system.local` and
+ *    of another keyspace is refused before it is sent, while the role reads the trace table on a driver session of
+ *    its own, the control that shows the server would answer; the schema catalog answers;
  *  - CQL's grammar: a tagged dollar run, which the fence refuses, is a syntax error on the server too;
  *  - the budgets: a result past the row budget and one past the byte budget are refused;
  *  - the password: the admitted role's change of its own password through `queryReadOnly` is refused before it is sent
@@ -450,6 +453,34 @@ async function main(): Promise<void> {
   check(
     commented.rows?.length === 1,
     `a SELECT behind comments, in lowercase, with a semicolon in a comment, is admitted: ${commented.error?.message ?? `${commented.rows?.length} rows`}`,
+  );
+  // The read scope: tables every role may read with no grant, and another keyspace, are refused before they are sent.
+  const trace = await admin("SELECT session_id FROM system_traces.sessions LIMIT 1");
+  const traceControl = await asRole(`${PREFIX}ro`, "SELECT session_id FROM system_traces.sessions LIMIT 1");
+  check(
+    traceControl === null,
+    `control: on a driver session of its own the role reads the trace table (${trace.rows.length} row seen as the superuser): ${traceControl?.message ?? "read"}`,
+  );
+  for (const [cql, table] of [
+    ["SELECT * FROM system_traces.sessions", "system_traces.sessions"],
+    ['SELECT * FROM "system_traces"."events"', "system_traces.events"],
+    ["SELECT * FROM SYSTEM.LOCAL", "system.local"],
+    [`SELECT * FROM ${OTHER}.t`, `${OTHER}.t`],
+  ] as const) {
+    const scoped = await readOnly(reader, cql);
+    check(
+      scoped.error instanceof RefusedBeforeSendError &&
+        scoped.error.message.includes(`; this SELECT reads ${table}, so it was not sent.`),
+      `the read scope refuses ${cql} before it is sent: ${scoped.error?.message ?? "ran"}`,
+    );
+  }
+  const schema = await readOnly(
+    reader,
+    `SELECT column_name FROM system_schema.columns WHERE keyspace_name = '${KS}' AND table_name = 'customers'`,
+  );
+  check(
+    schema.rows?.length === 2,
+    `the schema catalog answers: ${schema.error?.message ?? `${schema.rows?.length} rows`}`,
   );
   // CQL's grammar: the tagged dollar run the fence refuses is a syntax error on the server too.
   const tagged = await admin("SELECT $t$x$t$ FROM system.local").then(

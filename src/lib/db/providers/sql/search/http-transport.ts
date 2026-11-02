@@ -86,6 +86,7 @@ import {
   type SearchErrorCategory,
   type SearchIndexInfo,
   type SearchLoginReach,
+  type SearchLoginWrites,
   type SearchMappingField,
   type SearchObjectDefinition,
   type SearchObjectInfo,
@@ -189,6 +190,48 @@ const EVERY_INDEX = "*";
 
 /** Where a restricted index name carries the server's release: replaced by the version the open read. */
 const VERSION_SLOT = "{version}";
+
+/**
+ * The security plugin's answer to what the login making the request may do through the plugin's REST API, which every
+ * user may ask about itself. Measured on OpenSearch 3.8.0 with security on (2026-11-02): `admin` answers
+ * `has_api_access` true and a user whose role holds only reads answers false, each with its `user_name`.
+ */
+const PERMISSIONS_INFO_PATH = "/_plugins/_security/api/permissionsinfo";
+
+/**
+ * What a node started with the security plugin off answers it: no such endpoint is registered, so the request is
+ * refused before any handler (measured on 3.8.0, HTTP 400 with this string as `error`). It means no login exists to
+ * check, and nothing else answers it, so an exact match is read as that and any other refusal as a failed check.
+ */
+const NO_SECURITY_PLUGIN_ABSENCE: AbsenceRule = {
+  status: 400,
+  whateverTheBodyCarries: false,
+  stringError: `no handler found for uri [${PERMISSIONS_INFO_PATH}] and method [GET]`,
+};
+
+const PERMISSIONS_FIELDS = Object.freeze({ USER: "user_name", API_ACCESS: "has_api_access" } as const);
+
+/** The fresh index name the login's probes name: this prefix and 32 random hex digits, so no index holds it. */
+const LOGIN_PROBE_PREFIX = "libredb_write_probe_";
+
+/**
+ * The two probes of what a login may do to an index, each a request on the fresh name that the security plugin checks
+ * against the login's roles before the index is looked up, and that changes nothing where it passes, since no index
+ * holds the name. Measured on 3.8.0 with security on (2026-11-02): a user whose role holds `read` on `probe_*` is
+ * refused both with 403 `security_exception`; `admin` reaches the missing index with both; a role granting `write` on
+ * `*` reaches it with the delete by query alone, and one granting `manage` on `*` with the close alone; and no index
+ * is created by either.
+ */
+const DELETE_BY_QUERY_SUFFIX = "/_delete_by_query";
+const CLOSE_SUFFIX = "/_close";
+const MATCH_NONE_BODY = JSON.stringify({ query: { match_none: {} } });
+
+/** A probe that passed the security plugin's check and reached the missing index: 404, `no such index`. */
+const PROBE_PASSED: AbsenceRule = {
+  status: 404,
+  whateverTheBodyCarries: false,
+  objectError: { type: "index_not_found_exception", reasonStart: "no such index [" },
+};
 
 /**
  * The server's own resolution of an index expression for the login making the request: the indices, aliases and data
@@ -729,8 +772,36 @@ interface SearchDialectSpec {
    */
   readonly restrictedIndices: RestrictedIndices | null;
   /**
+   * The index families the plugins bundled with the product write their own records into under a name with no leading
+   * dot, on an index the server marks neither hidden nor system: each a name, or a prefix where it ends in `*`. The
+   * server's own index resolution ({@link SearchHttpTransport.resolveTargets}) marks an index in one a system index, so
+   * the agent statement check, which refuses a system index, refuses it on the concrete name the server resolves a
+   * name, a wildcard, a comma list or an alias to.
+   *
+   * Elasticsearch: none; 9.1.4 marks its own system indices in the resolution.
+   *
+   * OpenSearch: measured on 3.8.0 (2026-11-02), single nodes with security off and on and the bundled plugins, after
+   * searches, SQL statements and a failed sign-in, and after each plugin below was driven through its own REST API.
+   * Every other index those plugins created was named with a leading dot. The resolution marks none of these:
+   *
+   *  - `top_queries-*`: the query insights plugin's local exporter, one index a day (`top_queries-2026.11.02-89252`),
+   *    holding the search requests the node served, other users' among them;
+   *  - `security-auditlog-*`: the security plugin's audit log in its default index (`security-auditlog-2026.11.02`),
+   *    with security on: users' names, client addresses and the privileges they were refused;
+   *  - `ubi_queries` and `ubi_events`: the user behavior insights plugin's stores, made by its initialize call;
+   *  - `search-relevance-*`: the search relevance plugin's query sets, search configurations, judgments and
+   *    experiments (`search-relevance-queryset` and `search-relevance-search-config` measured, the rest named in it);
+   *  - `opensearch-forecast-*` and `opensearch-ad-plugin-*`: the anomaly detection plugin's forecast results
+   *    (`opensearch-forecast-results-history-2026.11.02-1`, behind the alias `opensearch-forecast-results`) and its
+   *    insights (`opensearch-ad-plugin-insights-history-2026.11.02-1`), and the custom result indices it requires
+   *    under each prefix.
+   *
+   * A user index named into one of these families is refused with them.
+   */
+  readonly pluginIndexFamilies: readonly string[];
+  /**
    * The query string of the field capabilities request that resolves a SQL table the way the product's SQL endpoint
-   * does, or null where that resolution was never measured and no agent statement's index is checked through it.
+   * does, which the agent statement check asks for the concrete indices a statement reads.
    *
    * Elasticsearch: 9.1.4's SQL resolver (`IndexResolver.FIELD_CAPS_INDICES_OPTIONS`) skips a name it cannot find
    * (`ignore_unavailable`), allows an expression that matches nothing (`allow_no_indices`) and expands wildcards to open
@@ -743,10 +814,23 @@ interface SearchDialectSpec {
    * expression), and every index maps `_index`, so the answer stays one name per index. Two of the resolver's options
    * are not sent: it admits a closed index, which this answer leaves out and no statement reads (each answered 403,
    * index closed, measured), and it leaves out a throttled index, which this answer keeps, since the parameter for it
-   * is deprecated on 9.1.4 (measured) and keeping one only adds an index to what the check asks about. OpenSearch:
-   * null.
+   * is deprecated on 9.1.4 (measured) and keeping one only adds an index to what the check asks about.
+   *
+   * OpenSearch: the same request. 3.8.0's SQL plugin resolves a table through the index mappings, read with the
+   * default index options (open indices that are not hidden, an alias to the indices behind it, a data stream to its
+   * backing indices), and this request answered the same indices as `GET /<expression>/_mapping` over names,
+   * wildcards, comma lists, aliases over hidden and visible indices, a hidden alias and a data stream, with security
+   * off and as a role reading one index family with it on (measured 2026-11-02); `SELECT` read the rows of exactly
+   * those indices wherever it answered.
    */
-  readonly sqlTableResolution: string | null;
+  readonly sqlTableResolution: string;
+  /**
+   * Whether the login check probes what the login may do: the security plugin's own answer to whether it administers
+   * the plugin, and a document delete by query and an index close on a fresh name no index holds, each refused by the
+   * plugin's permission check for a login that may not. Elasticsearch: false, its login check reads the privilege
+   * endpoints instead. OpenSearch: true (measured on 3.8.0, see {@link PERMISSIONS_INFO_PATH} and {@link CLOSE_SUFFIX}).
+   */
+  readonly loginProbes: boolean;
 }
 
 /** The restricted system indices a login check asks about: family patterns, names, and names that carry the release. */
@@ -891,7 +975,9 @@ const DIALECTS: Readonly<Record<SearchDialectId, SearchDialectSpec>> = Object.fr
         `.kibana_usage_counters_${VERSION_SLOT}_001`,
       ]),
     }),
+    pluginIndexFamilies: Object.freeze([]),
     sqlTableResolution: "fields=_index&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open",
+    loginProbes: false,
   },
   opensearch: {
     label: "OpenSearch",
@@ -958,7 +1044,17 @@ const DIALECTS: Readonly<Record<SearchDialectId, SearchDialectSpec>> = Object.fr
      */
     sqlResultLimit: "plugins.query.size_limit",
     restrictedIndices: null,
-    sqlTableResolution: null,
+    pluginIndexFamilies: Object.freeze([
+      "top_queries-*",
+      "security-auditlog-*",
+      "ubi_queries",
+      "ubi_events",
+      "search-relevance-*",
+      "opensearch-forecast-*",
+      "opensearch-ad-plugin-*",
+    ]),
+    sqlTableResolution: "fields=_index&ignore_unavailable=true&allow_no_indices=true&expand_wildcards=open",
+    loginProbes: true,
     sqlDelete: {
       setting: "plugins.sql.delete.enabled",
       refusals: [
@@ -1470,11 +1566,21 @@ function isTextList(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
+/** Whether an index name falls in one of the families: a name, or a prefix where the family ends in `*`. */
+function inFamily(name: string, families: readonly string[]): boolean {
+  return families.some((family) => (family.endsWith("*") ? name.startsWith(family.slice(0, -1)) : name === family));
+}
+
 /**
  * An index resolution as the seam's targets, or null when it is not the measured shape: three lists, every entry an
- * object with a name, an index's attributes and an alias's indices lists of text.
+ * object with a name, an index's attributes and an alias's indices lists of text. An index is a system index where
+ * the server marks it so, or where its name falls in one of the dialect's plugin index families
+ * ({@link SearchDialectSpec.pluginIndexFamilies}).
  */
-function resolvedTargets(answer: Record<string, unknown> | null): SearchResolvedTargets | null {
+function resolvedTargets(
+  answer: Record<string, unknown> | null,
+  pluginIndexFamilies: readonly string[],
+): SearchResolvedTargets | null {
   const indices = answer?.[RESOLVE_FIELDS.INDICES];
   const aliases = answer?.[RESOLVE_FIELDS.ALIASES];
   const dataStreams = answer?.[RESOLVE_FIELDS.DATA_STREAMS];
@@ -1492,7 +1598,7 @@ function resolvedTargets(answer: Record<string, unknown> | null): SearchResolved
     read.indices.push({
       name,
       hidden: attributes.includes(HIDDEN_ATTRIBUTE),
-      system: attributes.includes(SYSTEM_ATTRIBUTE),
+      system: attributes.includes(SYSTEM_ATTRIBUTE) || inFamily(name, pluginIndexFamilies),
     });
   }
   for (const entry of aliases as unknown[]) {
@@ -1960,6 +2066,48 @@ export class SearchHttpTransport implements SearchTransport {
     };
   }
 
+  public async loginWrites(signal?: AbortSignal): Promise<SearchLoginWrites | null> {
+    if (!this.spec.loginProbes) {
+      throw new SearchTransportError("unsupported", `${this.spec.label} declares no probes to check a login with`);
+    }
+    const info = await this.request(this.url(PERMISSIONS_INFO_PATH), signal, undefined, NO_SECURITY_PLUGIN_ABSENCE);
+    if (info === null) return null;
+    const answer = asRecord(info);
+    const user = answer === null ? null : textField(answer, PERMISSIONS_FIELDS.USER);
+    const administersSecurity = answer?.[PERMISSIONS_FIELDS.API_ACCESS];
+    if (user === null || typeof administersSecurity !== "boolean") {
+      throw unreadableBody(this.spec, "a permissions answer");
+    }
+    const index = `/${LOGIN_PROBE_PREFIX}${crypto.randomUUID().replaceAll("-", "")}`;
+    return {
+      user,
+      administersSecurity,
+      deletesDocuments: await this.passesPermissionCheck(`${index}${DELETE_BY_QUERY_SUFFIX}`, MATCH_NONE_BODY, signal),
+      managesIndices: await this.passesPermissionCheck(`${index}${CLOSE_SUFFIX}`, "{}", signal),
+    };
+  }
+
+  /**
+   * Whether a probe passed the security plugin's permission check: true where it reached the missing index, false
+   * where the plugin refused it with 403; any other answer fails the check, since what the login may do is then
+   * unproven.
+   */
+  private async passesPermissionCheck(path: string, body: string, signal?: AbortSignal): Promise<boolean> {
+    try {
+      const answer = await this.request(this.url(path), signal, body, PROBE_PASSED);
+      if (answer !== null) throw unreadableBody(this.spec, "a permission probe");
+      return true;
+    } catch (error) {
+      if (
+        error instanceof SearchTransportError &&
+        error.message === `${this.spec.label} refused the credentials (HTTP 403)`
+      ) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
   /**
    * Each expression goes out percent-encoded whole, so its own commas, exclusions and wildcards are the server's to
    * read, and several are joined by a literal comma into request lines no longer than the bulk mapping read's
@@ -1973,7 +2121,7 @@ export class SearchHttpTransport implements SearchTransport {
     for (const chunk of mappingChunks(expressions)) {
       // oxlint-disable-next-line no-await-in-loop -- one request line at a time, each read before the next is sent.
       const answer = asRecord(await this.request(this.url(`${RESOLVE_INDEX_PATH}/${chunk}`, RESOLVE_QUERY), signal));
-      const read = resolvedTargets(answer);
+      const read = resolvedTargets(answer, this.spec.pluginIndexFamilies);
       if (read === null) throw unreadableBody(this.spec, "an index resolution");
       indices.push(...read.indices);
       aliases.push(...read.aliases);
@@ -1987,15 +2135,11 @@ export class SearchHttpTransport implements SearchTransport {
    * the server's to read.
    */
   public async sqlTableIndices(expression: string, signal?: AbortSignal): Promise<string[]> {
-    const query = this.spec.sqlTableResolution;
-    if (query === null) {
-      throw new SearchTransportError(
-        "unsupported",
-        `${this.spec.label} declares no measured resolution of a SQL table to check an agent statement against`,
-      );
-    }
     const answer = asRecord(
-      await this.request(this.url(`/${encodeURIComponent(expression)}${FIELD_CAPS_SUFFIX}`, query), signal),
+      await this.request(
+        this.url(`/${encodeURIComponent(expression)}${FIELD_CAPS_SUFFIX}`, this.spec.sqlTableResolution),
+        signal,
+      ),
     );
     const indices = answer?.[FIELD_CAPS_FIELDS.INDICES];
     const failures = answer?.[FIELD_CAPS_FIELDS.FAILURES];

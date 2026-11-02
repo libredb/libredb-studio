@@ -28,7 +28,7 @@ describe("mcpStatementEngines", () => {
     );
   });
 
-  test("serves ClickHouse, libSQL, InfluxDB 3 and Elasticsearch beside the five SQL engines it served before MCP_STATEMENT_READ existed", () => {
+  test("serves ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Cassandra and Couchbase beside the five SQL engines it served before MCP_STATEMENT_READ existed", () => {
     expect(RUN_READ_QUERY_TYPES).toEqual([
       "postgres",
       "sqlite",
@@ -39,12 +39,15 @@ describe("mcpStatementEngines", () => {
       "libsql",
       "influxdb3",
       "elasticsearch",
+      "opensearch",
+      "cassandra",
+      "couchbase",
     ]);
   });
 
-  // Opening ClickHouse, libSQL, InfluxDB 3 and Elasticsearch moved no other engine: every other language still serves
-  // exactly what it did.
-  test("opening ClickHouse, libSQL, InfluxDB 3 and Elasticsearch leaves every other language's served set as it was", () => {
+  // Opening ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Cassandra and Couchbase moved no other engine:
+  // every other language still serves exactly what it did.
+  test("opening ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Cassandra and Couchbase leaves every other language's served set as it was", () => {
     const languages = [...new Set(Object.values(AGENT_STATEMENT_LANGUAGE))].filter(
       (language): language is NonNullable<typeof language> => language !== null && language !== "sql",
     );
@@ -81,6 +84,9 @@ describe("mcpStatementEngines", () => {
       "libsql",
       "influxdb3",
       "elasticsearch",
+      "opensearch",
+      "cassandra",
+      "couchbase",
     ]);
   });
 
@@ -92,13 +98,18 @@ describe("mcpStatementEngines", () => {
     expect(RUN_READ_QUERY_TYPES).not.toContain("influxdb");
   });
 
-  // One provider directory serves Elasticsearch and OpenSearch, and opening the first left the second shut.
-  test("opening Elasticsearch leaves OpenSearch unserved by every statement tool", () => {
-    expect(MCP_STATEMENT_READ.opensearch).toBe(false);
+  // One provider directory serves Elasticsearch and OpenSearch, and each opened by a row of its own: the two rows are
+  // separate, so opening OpenSearch moved Elasticsearch's membership nowhere.
+  test("OpenSearch is served by run_read_query alone, through its own row, beside Elasticsearch's", () => {
+    expect(MCP_STATEMENT_READ.opensearch).toBe(true);
     expect(MCP_EXPOSABLE.opensearch).toBe(true);
     expect(AGENT_EXECUTION_ENGINES).toContain("opensearch");
     expect(AGENT_STATEMENT_LANGUAGE.opensearch).toBe("sql");
-    expect(RUN_READ_QUERY_TYPES).not.toContain("opensearch");
+    expect(RUN_READ_QUERY_TYPES).toContain("opensearch");
+    expect(RUN_READ_QUERY_TYPES).toContain("elasticsearch");
+    expect(
+      mcpStatementEngines("sql", { ...SHIPPED, statementRead: { ...MCP_STATEMENT_READ, opensearch: false } }),
+    ).toEqual(RUN_READ_QUERY_TYPES.filter((type) => type !== "opensearch"));
   });
 
   test("an engine MCP is not offered for is not served, whatever its MCP read row says", () => {
