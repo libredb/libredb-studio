@@ -2343,6 +2343,37 @@ describe("Db2Provider: queryReadOnly under the agent read-only profile", () => {
     expect(provider.isInTransaction()).toBe(false);
   });
 
+  test("the check it sends before the statement admits the casts and comparisons Db2 generates for a distinct type, by their own catalog rows", async () => {
+    server();
+    const provider = await connected({}, AGENT);
+    await provider.queryReadOnly(STATEMENT, budget);
+
+    // CREATE DISTINCT TYPE grants PUBLIC EXECUTE on them; refusing them would refuse every database with such a type.
+    const generated = (alias: string) =>
+      `(COALESCE(${alias}.OWNERTYPE, '') = 'S' OR COALESCE(${alias}.ORIGIN, '') = 'S' ` +
+      `AND COALESCE(${alias}.ROUTINETYPE, '') = 'F' ` +
+      `AND (${alias}.IMPLEMENTATION IS NULL OR ${alias}.IMPLEMENTATION LIKE 'SYSIBM.%') ` +
+      `AND EXISTS (SELECT 1 FROM SYSCAT.ROUTINEPARMS w WHERE w.ROUTINESCHEMA = ${alias}.ROUTINESCHEMA ` +
+      `AND w.SPECIFICNAME = ${alias}.SPECIFICNAME AND EXISTS (SELECT 1 FROM SYSCAT.DATATYPES y ` +
+      `WHERE y.TYPESCHEMA = w.TYPESCHEMA AND y.TYPENAME = w.TYPENAME AND y.TYPESCHEMA = ${alias}.ROUTINESCHEMA ` +
+      "AND y.METATYPE = 'T' AND y.SOURCESCHEMA = 'SYSIBM')) " +
+      `AND NOT EXISTS (SELECT 1 FROM SYSCAT.ROUTINEPARMS w WHERE w.ROUTINESCHEMA = ${alias}.ROUTINESCHEMA ` +
+      `AND w.SPECIFICNAME = ${alias}.SPECIFICNAME AND COALESCE(w.TYPESCHEMA, '') <> 'SYSIBM' ` +
+      "AND NOT EXISTS (SELECT 1 FROM SYSCAT.DATATYPES y WHERE y.TYPESCHEMA = w.TYPESCHEMA " +
+      `AND y.TYPENAME = w.TYPENAME AND y.TYPESCHEMA = ${alias}.ROUTINESCHEMA AND y.METATYPE = 'T' ` +
+      "AND y.SOURCESCHEMA = 'SYSIBM'))) ";
+    const sentChecks = transactionCalls.map((call) => call.call);
+    const code = sentChecks.find((sql) => sql === AGENT_PRINCIPAL_STATEMENTS.code) ?? "";
+    const reach = sentChecks.find((sql) => sql === AGENT_PRINCIPAL_STATEMENTS.reach) ?? "";
+    // A granted routine and a view's function dependency are both admitted by the same rule, and only by it.
+    expect(code).toContain(`AND NOT (${generated("r")}AND (COALESCE(r.ROUTINETYPE, '') = 'P' OR `);
+    expect(reach).toContain(
+      `AND f.SPECIFICNAME = d.BNAME AND ${generated("f")}AND (COALESCE(f.ROUTINETYPE, '') = 'P' OR `,
+    );
+    // A function a user sources, ORIGIN U, is never of that kind, whatever it is sourced on.
+    expect(code.split("COALESCE(r.ORIGIN, '') = 'S' AND COALESCE(r.ROUTINETYPE, '') = 'F'")).toHaveLength(2);
+  });
+
   test("a check that refuses the user leaves as it came, sends no statement, and still rolls back and closes", async () => {
     server();
     const base = transactionQuery;

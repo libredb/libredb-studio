@@ -31,7 +31,10 @@
  *    disabled; and on one handle a grant added after a call refuses the next call, and its revoke admits the one after;
  *  - it admits a user's grant of an IBM function PUBLIC holds by the database's own grant, a view over a table, a view
  *    over a view it may read, a view calling IBM's own functions, SYSFUN's among them, a view over SYSCAT.TABLES, IBM's DB_MEMBERS
- *    and a view calling GET_INDEX_COLNAMES, both on the list of IBM functions measured as reading only;
+ *    and a view calling GET_INDEX_COLNAMES, both on the list of IBM functions measured as reading only; the casts and
+ *    comparisons Db2 generates for a distinct type, granted to PUBLIC by the database, and a view calling them, while a
+ *    function the owner sources on one of them or on its own code is refused, and a generated function cannot be
+ *    replaced or dropped;
  *  - each call has a connection of its own: what one call's session holds is not the next one's;
  *  - the operations profile opens the instance owner unproven; an editor handle refuses `queryReadOnly`;
  *  - the object surface as the agent user, from the value-free sources: a DECFLOAT column's precision on a table it
@@ -173,6 +176,7 @@ async function refusedUntilLifted(
 }
 
 const CLEANUP = [
+  "DROP VIEW APP.LIBREDB_AB_TYPEDVIEW",
   "DROP VIEW APP.LIBREDB_AB_HIGHKEYS",
   "DROP VIEW APP.LIBREDB_AB_BASEKEYS",
   "DROP ALIAS APP.LIBREDB_AB_KEYALIAS",
@@ -194,6 +198,7 @@ const CLEANUP = [
   "DROP TABLE APP.LIBREDB_AB_GONE",
   "DROP ALIAS APP.LIBREDB_AB_ALIAS",
   "DROP MASK APP.LIBREDB_AB_MASK",
+  "DROP FUNCTION APP.LIBREDB_AB_RD2",
   "DROP FUNCTION APP.LIBREDB_AB_WRITE",
   "DROP FUNCTION APP.LIBREDB_AB_READ",
   "DROP MODULE APP.LIBREDB_AB_MOD",
@@ -207,6 +212,7 @@ const CLEANUP = [
   "DROP SCHEMA LIBREDB_AB_IMPLICIT RESTRICT",
   "DROP TABLE APP.LIBREDB_AB_CHECKPEND",
   "DROP TABLE APP.LIBREDB_AB_REORGPEND",
+  "DROP FUNCTION APP.LIBREDB_AB_EQ",
   "DROP TABLE APP.LIBREDB_AB_TYPED",
   "DROP DISTINCT TYPE APP.LIBREDB_AB_MONEY",
 ];
@@ -1082,14 +1088,93 @@ try {
     "CREATE TABLE APP.LIBREDB_AB_TYPED (ID INTEGER NOT NULL, C_MONEY APP.LIBREDB_AB_MONEY)",
     "GRANT SELECT ON APP.LIBREDB_AB_TYPED TO USER AGENT_RO",
   ]);
-  // Creating a distinct type creates its cast functions with EXECUTE to PUBLIC, which the check refuses as code that
-  // is not IBM's, so they are revoked as the refusal says.
-  await setup(
+  // Creating a distinct type creates its two casts and six comparisons, with EXECUTE to PUBLIC through the database's
+  // own grant. The check admits them by their own catalog rows, so the agent user is served with them in place.
+  const generated = (
+    await rows(
+      "SELECT r.SPECIFICNAME FROM SYSCAT.ROUTINES r JOIN SYSCAT.ROUTINEAUTH a ON a.SCHEMA = r.ROUTINESCHEMA " +
+        "AND a.SPECIFICNAME = r.SPECIFICNAME WHERE r.ROUTINESCHEMA = 'APP' AND r.ORIGIN = 'S' AND r.OWNERTYPE = 'U' " +
+        "AND a.GRANTEE = 'PUBLIC' AND a.GRANTORTYPE = 'S' AND a.EXECUTEAUTH = 'Y' ORDER BY 1",
+    )
+  ).map((row) => String(row.SPECIFICNAME).trimEnd());
+  const typedRead = await refusalOf(
+    provider,
+    // Named by schema: the comparisons are found through the SQL path, which holds no user schema by default.
+    'SELECT ID FROM APP.LIBREDB_AB_TYPED WHERE APP."="(C_MONEY, APP.LIBREDB_AB_MONEY(12.34)) OR APP.DECIMAL(C_MONEY) > 0',
+  );
+  check(
+    generated.length === 8 && typedRead === undefined,
+    `the casts and comparisons Db2 generates for a distinct type, ${generated.length} granted to PUBLIC by the database, are admitted, and a statement calling them answers${typedRead instanceof Error ? ` (got: ${typedRead.message.slice(0, 300)})` : ""}`,
+  );
+  await setup([
+    "CREATE VIEW APP.LIBREDB_AB_TYPEDVIEW AS SELECT ID, APP.DECIMAL(C_MONEY) AS AMOUNT FROM APP.LIBREDB_AB_TYPED " +
+      'WHERE APP.">"(C_MONEY, APP.LIBREDB_AB_MONEY(0.00))',
+    "GRANT SELECT ON APP.LIBREDB_AB_TYPEDVIEW TO USER AGENT_RO",
+  ]);
+  const typedViewDeps = Number(
     (
       await rows(
-        "SELECT DISTINCT SPECIFICNAME FROM SYSCAT.ROUTINEPARMS WHERE ROUTINESCHEMA = 'APP' AND TYPESCHEMA = 'APP' AND TYPENAME = 'LIBREDB_AB_MONEY'",
+        "SELECT COUNT(*) AS N FROM SYSCAT.TABDEP WHERE TABSCHEMA = 'APP' AND TABNAME = 'LIBREDB_AB_TYPEDVIEW' AND BTYPE = 'F'",
       )
-    ).map((row) => `REVOKE EXECUTE ON SPECIFIC FUNCTION APP."${String(row.SPECIFICNAME)}" FROM PUBLIC RESTRICT`),
+    )[0].N,
+  );
+  const typedViewRead = await refusalOf(provider, "SELECT ID, AMOUNT FROM APP.LIBREDB_AB_TYPEDVIEW");
+  check(
+    typedViewDeps > 0 && typedViewRead === undefined,
+    `a view of the owner's calling them, ${typedViewDeps} function dependencies, is admitted${typedViewRead instanceof Error ? ` (got: ${typedViewRead.message.slice(0, 300)})` : ""}`,
+  );
+  await setup(["DROP VIEW APP.LIBREDB_AB_TYPEDVIEW"]);
+  // A generated function cannot be replaced: Db2 refuses to drop, alter or replace it.
+  const replaced: (number | undefined)[] = [];
+  for (const sql of [
+    "CREATE OR REPLACE FUNCTION APP.LIBREDB_AB_MONEY (X DECIMAL(9, 2)) RETURNS APP.LIBREDB_AB_MONEY LANGUAGE SQL " +
+      "RETURN CAST(X AS APP.LIBREDB_AB_MONEY)",
+    `DROP SPECIFIC FUNCTION APP."${generated[0]}"`,
+  ]) {
+    try {
+      await admin.query(sql);
+      replaced.push(0);
+    } catch (error) {
+      replaced.push(sqlcode(error));
+    }
+  }
+  check(
+    replaced.join(", ") === "-658, -658",
+    `a generated function cannot be replaced or dropped (SQLCODE ${replaced.join(", ")})`,
+  );
+  // A function a user sources on a generated one, or on its own code, is the user's: refused, naming only it.
+  await setup([
+    "CREATE FUNCTION APP.LIBREDB_AB_EQ (APP.LIBREDB_AB_MONEY, APP.LIBREDB_AB_MONEY) RETURNS BOOLEAN " +
+      'SOURCE APP."=" (APP.LIBREDB_AB_MONEY, APP.LIBREDB_AB_MONEY)',
+    "CREATE FUNCTION APP.LIBREDB_AB_RD2 () RETURNS VARCHAR(20) SOURCE APP.LIBREDB_AB_READ ()",
+    "GRANT EXECUTE ON FUNCTION APP.LIBREDB_AB_EQ TO USER AGENT_RO",
+    "GRANT EXECUTE ON FUNCTION APP.LIBREDB_AB_RD2 TO USER AGENT_RO",
+  ]);
+  const sourced = await rows(
+    "SELECT SPECIFICNAME, ORIGIN, SOURCESCHEMA FROM SYSCAT.ROUTINES WHERE ROUTINESCHEMA = 'APP' " +
+      "AND ROUTINENAME IN ('LIBREDB_AB_EQ', 'LIBREDB_AB_RD2') ORDER BY ROUTINENAME",
+  );
+  const sourcedRefusal = await refusalOf(provider, "SELECT ID FROM APP.ORDERS");
+  const sourcedMessage = sourcedRefusal instanceof Error ? sourcedRefusal.message : "";
+  check(
+    sourcedRefusal instanceof ExecutionProfileError &&
+      sourced.length === 2 &&
+      sourced.every(
+        (row) =>
+          String(row.ORIGIN) === "U" &&
+          String(row.SOURCESCHEMA).trimEnd() === "APP" &&
+          sourcedMessage.includes(
+            `REVOKE EXECUTE ON SPECIFIC FUNCTION "APP"."${String(row.SPECIFICNAME).trimEnd()}" FROM USER "AGENT_RO" RESTRICT`,
+          ),
+      ) &&
+      !generated.some((name) => sourcedMessage.includes(name)),
+    `a function sourced on a generated one, or on the owner's own code, is refused, naming it and no generated function${sourcedRefusal instanceof Error ? "" : " (admitted)"}${sourcedRefusal instanceof Error && !(sourcedRefusal instanceof ExecutionProfileError) ? ` (got: ${sourcedMessage.slice(0, 300)})` : ""}`,
+  );
+  await setup(["DROP FUNCTION APP.LIBREDB_AB_EQ", "DROP FUNCTION APP.LIBREDB_AB_RD2"]);
+  const afterSourced = await refusalOf(provider, "SELECT ID FROM APP.ORDERS");
+  check(
+    afterSourced === undefined,
+    `admitted once they are gone${afterSourced instanceof Error ? ` (got: ${afterSourced.message.slice(0, 300)})` : ""}`,
   );
   const typedSurface = (await surfaceAs.describeObject(["APP", "LIBREDB_AB_TYPED"], "table")).columns
     .map((column) => column.type)

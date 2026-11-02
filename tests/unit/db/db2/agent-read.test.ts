@@ -109,9 +109,32 @@ const unreadableIbm = (schema: string, name: string) =>
   `EXISTS (SELECT 1 FROM SYSCAT.TABLES b WHERE b.TABSCHEMA = ${schema} AND b.TABNAME = ${name} ` +
   `AND b.OWNERTYPE = 'S') AND NOT ${readableByGrant(schema, name)}`;
 
-/** IBM's routine, and a procedure, which no agent statement can call, or a routine that keeps to the call. */
+/** The ROUTINEPARMS row `parm` is of a distinct type in the routine's own schema whose source is IBM's. */
+const distinctTypeOf = (parm: string, alias: string) =>
+  `EXISTS (SELECT 1 FROM SYSCAT.DATATYPES y WHERE y.TYPESCHEMA = ${parm}.TYPESCHEMA AND y.TYPENAME = ${parm}.TYPENAME ` +
+  `AND y.TYPESCHEMA = ${alias}.ROUTINESCHEMA AND y.METATYPE = 'T' AND y.SOURCESCHEMA = 'SYSIBM')`;
+
+/**
+ * A function Db2 generated for a distinct type, a cast or a comparison: ORIGIN S, owned by the type's owner, its
+ * parameters and result each the distinct type or an IBM type, and implemented by IBM's function or by none. Measured
+ * on 12.1.0.0: Db2 grants PUBLIC EXECUTE on each, and refuses to drop, alter or replace one (SQL0658N).
+ */
+const generatedForDistinctType = (alias: string) =>
+  `COALESCE(${alias}.ORIGIN, '') = 'S' AND COALESCE(${alias}.ROUTINETYPE, '') = 'F' ` +
+  `AND (${alias}.IMPLEMENTATION IS NULL OR ${alias}.IMPLEMENTATION LIKE 'SYSIBM.%') ` +
+  `AND EXISTS (SELECT 1 FROM SYSCAT.ROUTINEPARMS w WHERE w.ROUTINESCHEMA = ${alias}.ROUTINESCHEMA ` +
+  `AND w.SPECIFICNAME = ${alias}.SPECIFICNAME AND ${distinctTypeOf("w", alias)}) ` +
+  `AND NOT EXISTS (SELECT 1 FROM SYSCAT.ROUTINEPARMS w WHERE w.ROUTINESCHEMA = ${alias}.ROUTINESCHEMA ` +
+  `AND w.SPECIFICNAME = ${alias}.SPECIFICNAME AND COALESCE(w.TYPESCHEMA, '') <> 'SYSIBM' ` +
+  `AND NOT ${distinctTypeOf("w", alias)})`;
+
+/**
+ * IBM's routine or one Db2 generated for a distinct type, and a procedure, which no agent statement can call, or a
+ * routine that keeps to the call.
+ */
 const admittedRoutine = (alias: string) =>
-  `COALESCE(${alias}.OWNERTYPE, '') = 'S' AND (COALESCE(${alias}.ROUTINETYPE, '') = 'P' OR ${keepsToTheCall(alias)})`;
+  `(COALESCE(${alias}.OWNERTYPE, '') = 'S' OR ${generatedForDistinctType(alias)}) ` +
+  `AND (COALESCE(${alias}.ROUTINETYPE, '') = 'P' OR ${keepsToTheCall(alias)})`;
 
 const PINNED: Record<Statement, string> = {
   user: "SELECT CAST(SESSION_USER AS VARCHAR(128)) AS USERNAME FROM SYSIBM.SYSDUMMY1",

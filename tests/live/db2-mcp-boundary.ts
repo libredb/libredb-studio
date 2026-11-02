@@ -14,6 +14,8 @@
  *    user a view or an alias of the owner's over either, are each refused before the statement is sent, with the
  *    check's own refusal;
  *    on one cached handle a grant added after a served call refuses the next call and its revoke admits the one after;
+ *    with a distinct type in the database, whose generated casts and comparisons Db2 grants to PUBLIC, the seeded user
+ *    is served a statement calling them;
  *  - the boundary, with the MCP fence bypassed: each write, data change, `NEXT VALUE FOR`, compound block, `CALL`,
  *    `SET`, declared temporary table, `LOCK TABLE`, `COMMIT` and second statement is sent as the seeded user through
  *    the MCP handler and refused by the server with its own SQLCODE, and a statement that closes the derived table
@@ -325,6 +327,8 @@ async function untilSlowEnds(limitMs = 120_000): Promise<number> {
 }
 
 const CLEANUP = [
+  "DROP TABLE APP.LIBREDB_LM_TYPED",
+  "DROP DISTINCT TYPE APP.LIBREDB_LM_MONEY",
   "DROP VIEW APP.LIBREDB_LM_KEYS",
   "DROP ALIAS APP.LIBREDB_LM_KEYS_ALIAS",
   "DROP VIEW APP.LIBREDB_LM_STATS",
@@ -350,6 +354,26 @@ try {
   check(
     rowsOf(served.result)?.length === 2 && served.acquired.join(",") === "agent-read-only",
     `the seeded agent user is served under the agent read-only profile (${served.acquired.join(",")})`,
+  );
+
+  // A distinct type's generated casts and comparisons, which Db2 grants to PUBLIC, leave the seeded user served.
+  await setup([
+    "CREATE DISTINCT TYPE APP.LIBREDB_LM_MONEY AS DECIMAL(9, 2) WITH COMPARISONS",
+    "CREATE TABLE APP.LIBREDB_LM_TYPED (ID INTEGER NOT NULL, C_MONEY APP.LIBREDB_LM_MONEY)",
+    "INSERT INTO APP.LIBREDB_LM_TYPED VALUES (1, APP.LIBREDB_LM_MONEY(12.34))",
+    "GRANT SELECT ON APP.LIBREDB_LM_TYPED TO USER AGENT_RO",
+  ]);
+  const typed = await mcp(
+    AGENT,
+    {
+      sql: 'SELECT ID, APP.DECIMAL(C_MONEY) AS AMOUNT FROM APP.LIBREDB_LM_TYPED WHERE APP."="(C_MONEY, APP.LIBREDB_LM_MONEY(12.34))',
+    },
+    RUN_READ_QUERY,
+  );
+  await setup(["DROP TABLE APP.LIBREDB_LM_TYPED", "DROP DISTINCT TYPE APP.LIBREDB_LM_MONEY"]);
+  check(
+    rowsOf(typed.result)?.length === 1,
+    `with a distinct type in the database, the seeded user is served a statement calling its generated functions: ${textOf(typed.result).slice(0, 300)}`,
   );
 
   // ---- The check refuses, through MCP, before the statement is sent -----------------------------------------------
