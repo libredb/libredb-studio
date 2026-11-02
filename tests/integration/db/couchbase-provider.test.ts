@@ -2796,7 +2796,7 @@ describe("CouchbaseProvider agent read-only profile", () => {
       createdAt: new Date(),
     } as ManagedConnection;
     const ENGINES =
-      "It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Apache Cassandra and Couchbase.";
+      "It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Apache Cassandra and Couchbase.";
 
     let cluster: AgentCluster;
     let acquired: ExecutionProfile[] = [];

@@ -117,9 +117,9 @@ describe("the answer", () => {
 
   test("names the tool that runs a statement on each connection, and null where inspect_schema is the read", async () => {
     // From the one served-engine resolver: ClickHouse's, libSQL's, InfluxDB 3's, Elasticsearch's, OpenSearch's,
-    // Cassandra's and Couchbase's SQL is read by run_read_query, MongoDB's command by run_mongo_command, a Kubernetes
-    // line by run_kubectl_read, and an engine no statement tool serves, such as Redis, or Snowflake and InfluxDB over
-    // InfluxQL, whose agent reads stay closed to MCP, has none.
+    // Oracle's, Cassandra's and Couchbase's SQL is read by run_read_query, MongoDB's command by run_mongo_command, a
+    // Kubernetes line by run_kubectl_read, and an engine no statement tool serves, such as Redis, or Snowflake, InfluxDB
+    // over InfluxQL and Db2, whose agent reads stay closed to MCP, has none.
     const CLUSTER = {
       id: "cluster",
       type: "kubernetes",
@@ -145,6 +145,8 @@ describe("the answer", () => {
       { id: "legacy-metrics", type: "influxdb", host: "127.0.0.1", port: 8086, database: "home" },
       { id: "search", type: "elasticsearch", host: "127.0.0.1", port: 9200 },
       { id: "fork-search", type: "opensearch", host: "127.0.0.1", port: 9201 },
+      { id: "ledger", type: "oracle", host: "127.0.0.1", port: 1521, serviceName: "FREEPDB1" },
+      { id: "mainframe", type: "db2", host: "127.0.0.1", port: 50000, database: "SAMPLE" },
       { id: "ring", type: "cassandra", host: "127.0.0.1", port: 9042, database: "shop" },
       { id: "mongo", type: "mongodb", host: "127.0.0.1", port: 27017, database: "app" },
       { id: "travel", type: "couchbase", host: "127.0.0.1", port: 8091, database: "travel" },
@@ -163,6 +165,8 @@ describe("the answer", () => {
       ["seed:legacy-metrics", null],
       ["seed:search", "run_read_query"],
       ["seed:fork-search", "run_read_query"],
+      ["seed:ledger", "run_read_query"],
+      ["seed:mainframe", null],
       ["seed:ring", "run_read_query"],
       ["seed:mongo", "run_mongo_command"],
       ["seed:travel", "run_read_query"],

@@ -21,7 +21,10 @@ import type { DatabaseType } from "@/lib/types";
  * runs a `SELECT` that reads at most one index expression, and pages it with `LIMIT n OFFSET m`, while the path's
  * statement check refuses a comment, a subquery, a `WITH`, a `JOIN` and a double-quoted name before they are sent, and
  * the plugin refuses `WITH`, `VALUES`, `TABLE` and `EXPLAIN`, each a statement that must start with SELECT, DELETE,
- * SHOW or DESCRIBE.
+ * SHOW or DESCRIBE. Measured on 2026-11-02: Oracle AI Database 26ai Free 23.26.3, through the agent read-only path,
+ * runs a `SELECT` and a `WITH`, answers a bare `VALUES` and `TABLE` with ORA-00900 and `EXPLAIN` with ORA-02000,
+ * refuses `EXPLAIN PLAN`, which writes its rows into PLAN_TABLE, inside the read-only transaction (ORA-01456), and
+ * pages with `OFFSET m ROWS FETCH NEXT n ROWS ONLY`.
  * Measured on 2026-11-02: Apache Cassandra 5.0.9, as a role holding only SELECT
  * on its keyspace, runs a `SELECT` (`JSON` and `DISTINCT` too) and answers `WITH`, `VALUES`, `TABLE`, `EXPLAIN` and
  * `OFFSET` with a syntax error; the agent path sends a `SELECT` of one table of the connection's keyspace or of
@@ -73,7 +76,13 @@ export const READ_QUERY_FORMS: Readonly<Record<DatabaseType, ReadQueryForms | nu
     paging: LIMIT_OFFSET,
     pagesWithOffset: true,
   },
-  oracle: null,
+  // A bare VALUES and TABLE are ORA-00900, and EXPLAIN PLAN writes into PLAN_TABLE, refused in the read-only
+  // transaction.
+  oracle: {
+    statements: "a SELECT (a WITH is fine)",
+    paging: "ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY",
+    pagesWithOffset: true,
+  },
   db2: null,
   // No bare VALUES, no TABLE statement and no EXPLAIN.
   mssql: {

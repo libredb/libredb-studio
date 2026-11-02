@@ -1278,6 +1278,21 @@ The script revokes `PUBLIC`'s grants and does not grant them back, so run it on 
 LIBREDB_LIVE_ORACLE_PORT=15217 LIBREDB_LIVE_ORACLE_PASSWORD=<SYS and SYSTEM password> bun tests/live/oracle-agent-boundary.ts
 ```
 
+#### MCP read
+
+MCP's `run_read_query` serves Oracle through the agent's own path: it takes the connection under the agent read-only profile and sends the statement through `queryReadOnly`, so each call opens a session of its own, `SET TRANSACTION READ ONLY`, runs the check above on that session and then the statement.
+The check runs before every statement, as in agent mode, not once at the open: a grant or a policy added between two calls refuses the next call, and a lifted refusal admits it.
+A seed carries no separate agent credential, so the seed's own user must be one the check admits, the READ ONLY user of "The agent user" above; any other is refused from the statement call, in the tool's sentence (`run_read_query cannot run on this connection: The agent read-only execution profile refuses the Oracle user ...`), and its statement is never sent: a user that is not READ ONLY, such as SYSTEM or the schema owner, one holding a system privilege beyond `CREATE SESSION` or a role carrying one, `CONNECT` and `DBA` included, `EXECUTE` on code that is not Oracle's, or a grant on a schema Oracle maintains beyond the two policy catalogs, and any user while the database holds a database link or a policy item 7 or 8 refuses.
+What the user reads is what it is granted: READ ONLY stops writes, not reads, so item 13 and item 11 keep the dictionary, the audit trail, other sessions and every schema it is not granted out of reach, and what `PUBLIC` may read stays readable, as for every user of the database.
+MCP's statement fence refuses a write-shaped statement before anything is acquired, as defence in depth: DML, DDL, `LOCK TABLE`, `SELECT ... FOR UPDATE`, a PL/SQL block, `CALL`, `ALTER SESSION`, `ALTER SYSTEM`, `GRANT`, `COMMIT`, `SET TRANSACTION` and a second statement.
+It runs a `SELECT` (a `WITH` is fine): a bare `VALUES` and `TABLE` answer `ORA-00900` and `EXPLAIN` without `PLAN` `ORA-02000`, and `EXPLAIN PLAN`, which the fence admits, writes its rows into `PLAN_TABLE` and is refused inside the call's read-only transaction with `ORA-01456`.
+It pages with `OFFSET m ROWS FETCH NEXT n ROWS ONLY`, appended by the provider's `prepareQuery`, page one `FETCH FIRST n ROWS ONLY`; an offset on a query with its own row limiting clause (`FETCH FIRST`, `OFFSET ... FETCH` or `ROWNUM`) is refused, and so is one on any statement that is not a `SELECT`.
+A `SELECT` without its own row limiting clause is paged at `max_rows` (100 by default, at most 500), and `pagination.hasMore` and `pagination.nextOffset` say where the next page starts; a query whose own clause is past 1000 rows, or a result past 1 MiB, is refused, never cut.
+A read past `timeout_ms` is answered as the timeout: the driver's `callTimeout`, set to the time left, ends the statement's session, which stops it on the server.
+A client that closes its request stops the wait only: the statement runs on until that call timeout.
+Measured on 2026-11-02 by watching `V$SESSION` as SYSTEM: two seconds after a three-second `timeout_ms` the statement's session was gone, and after a cancel 1.5 seconds into a 12-second `timeout_ms` a three-way join of `ALL_OBJECTS` was still active at 11.5 seconds and gone at 14.
+`inspect_schema` opens under the operations profile, which sends no statement, so the check does not run there: it lists what the seed's user may see in the `ALL_*` views, as the editor does.
+
 #### Agent language pack
 
 Statement-language family: `sql`.
@@ -1297,7 +1312,7 @@ The catalog read takes `ALL_TAB_COLUMNS` for the column kind, `ALL_CONSTRAINTS` 
 Each kind was run as the admitted READ ONLY user.
 Investigation, database assessment and data analysis open on Oracle; assessment cannot pass there, because its verdict needs a table profile and the engine composes none (B146); query optimization stays closed, and `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`, because the engine composes no estimating plan and no table profile (B147).
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-MCP's statement read stays closed on Oracle (`MCP_STATEMENT_READ.oracle` is false) until a change of its own opens it.
+MCP's `run_read_query` runs a statement on Oracle (`MCP_STATEMENT_READ.oracle` is true) under the same boundary, described in "MCP read" above.
 
 ## 6. Transactions
 

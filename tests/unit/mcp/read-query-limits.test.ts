@@ -58,6 +58,8 @@ const NO_OFFSET = `This engine's SQL has no OFFSET, so this query cannot be page
 const BY_TOKEN =
   "LIMIT n, and for the next page add WHERE token(the partition key) > token(the last one read), or, within one partition, WHERE the clustering column > the last value read";
 const NO_CQL_OFFSET = `This engine's SQL has no OFFSET, so this query cannot be paged with offset. Page it in SQL: ${BY_TOKEN}.`;
+const OWN_LIMIT_ORACLE =
+  "This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.";
 const OWN_LIMIT_MSSQL =
   "This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.";
 
@@ -74,6 +76,7 @@ describe("the texts", () => {
     );
     expect(inSqlPaging("cassandra")).toBe(`Page it in SQL: ${BY_TOKEN}.`);
     expect(inSqlPaging("mssql")).toBe("Page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.");
+    expect(inSqlPaging("oracle")).toBe("Page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.");
     expect(moreRowsThanPageableHint("sqlite")).toBe(
       "More rows exist than this result holds, and this query cannot be paged with offset. Page it in SQL: LIMIT n OFFSET m.",
     );
@@ -108,11 +111,11 @@ describe("the texts", () => {
     expect(
       profileRefusalText(
         "The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution.",
-        "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Apache Cassandra and Couchbase",
+        "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Apache Cassandra and Couchbase",
         "run_read_query",
       ),
     ).toBe(
-      "run_read_query cannot run on this connection: The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution. It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Apache Cassandra and Couchbase.",
+      "run_read_query cannot run on this connection: The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution. It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Apache Cassandra and Couchbase.",
     );
   });
 });
@@ -130,7 +133,10 @@ describe("the texts", () => {
  * reads a name it defines as an index ("Unknown index"), and refuses `VALUES`, `TABLE` and `EXPLAIN ANALYZE` in its
  * grammar. OpenSearch 3.8.0, measured on 2026-11-02 through the agent read-only path, runs a `SELECT` and pages it
  * with `LIMIT n OFFSET m`; the path's statement check refuses a comment, a subquery, a `WITH`, a `JOIN` and a
- * double-quoted name, and the plugin refuses `WITH`, `VALUES`, `TABLE` and `EXPLAIN`.
+ * double-quoted name, and the plugin refuses `WITH`, `VALUES`, `TABLE` and `EXPLAIN`. Oracle AI Database 26ai Free
+ * 23.26.3, measured on 2026-11-02 through the agent read-only path, runs a `SELECT` and a `WITH`, answers a bare
+ * `VALUES` and `TABLE` with ORA-00900 and `EXPLAIN` with ORA-02000, and refuses `EXPLAIN PLAN`, which writes its rows
+ * into PLAN_TABLE, inside the read-only transaction (ORA-01456).
  * Apache Cassandra 5.0.9, measured on 2026-11-02 as a role holding only SELECT on its keyspace, runs a `SELECT`
  * (`JSON` and `DISTINCT` too) and answers `WITH`, `VALUES`, `TABLE`, `EXPLAIN` and `OFFSET` with a syntax error, and the
  * agent path reads one table of the connection's keyspace or of `system_schema`.
@@ -156,6 +162,7 @@ describe("the accepted forms each engine's refusal names", () => {
       "opensearch",
       "a SELECT that reads at most one index expression, with no comment, subquery, WITH, JOIN or double quote (quote a name in backticks)",
     ],
+    ["oracle", "a SELECT (a WITH is fine)"],
     ["cassandra", "a SELECT of one table of the connection's keyspace or of system_schema"],
     ["couchbase", "a SELECT (a WITH is fine)"],
   ] as const)("%s: %s", (type, statements) => {
@@ -233,6 +240,21 @@ describe("the offset rule", () => {
     [
       "EXPLAIN SELECT k FROM probe_buckets",
       "opensearch",
+      "This statement's result cannot be paged. Call again without offset.",
+    ],
+    // Oracle's own row limiting clause, its OFFSET form, and ROWNUM each count as the query's own limit.
+    ["SELECT id FROM t ORDER BY id FETCH FIRST 3 ROWS ONLY", "oracle", OWN_LIMIT_ORACLE],
+    ["SELECT id FROM t ORDER BY id OFFSET 1 ROWS FETCH NEXT 3 ROWS ONLY", "oracle", OWN_LIMIT_ORACLE],
+    ["SELECT id FROM t WHERE ROWNUM <= 3", "oracle", OWN_LIMIT_ORACLE],
+    [
+      "SELECT id FROM t",
+      "oracle",
+      "This query cannot be paged with offset. Page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.",
+    ],
+    ["VALUES (1)", "oracle", "This statement's result cannot be paged. Call again without offset."],
+    [
+      "EXPLAIN PLAN FOR SELECT 1 FROM DUAL",
+      "oracle",
       "This statement's result cannot be paged. Call again without offset.",
     ],
     ["SELECT id FROM probe.customers", "cassandra", NO_CQL_OFFSET],
@@ -369,6 +391,7 @@ describe("the prefixes the mapper matches still start a message in each provider
         "src/lib/db/providers/sql/libsql/index.ts",
         "src/lib/db/providers/timeseries/influxdb/sql-agent-read.ts",
         "src/lib/db/providers/sql/search/index.ts",
+        "src/lib/db/providers/sql/oracle/agent-read.ts",
         "src/lib/db/providers/sql/cassandra/index.ts",
         "src/lib/db/providers/document/couchbase/index.ts",
       ],
@@ -386,6 +409,7 @@ describe("the prefixes the mapper matches still start a message in each provider
     libsql: ["src/lib/db/providers/sql/libsql/agent-read.ts", "src/lib/db/providers/sql/libsql/index.ts"],
     influxdb3: ["src/lib/db/providers/timeseries/influxdb/sql-agent-read.ts"],
     elasticsearch: ["src/lib/db/providers/sql/search/index.ts"],
+    oracle: ["src/lib/db/providers/sql/oracle/agent-read.ts"],
     cassandra: ["src/lib/db/providers/sql/cassandra/index.ts"],
     couchbase: ["src/lib/db/providers/document/couchbase/index.ts"],
     mongodb: ["src/lib/db/providers/document/mongodb/agent-read.ts"],
