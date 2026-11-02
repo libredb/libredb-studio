@@ -63,6 +63,7 @@ describe("the texts", () => {
     expect(inSqlPaging("clickhouse")).toBe("Page it in SQL: LIMIT n OFFSET m.");
     expect(inSqlPaging("libsql")).toBe("Page it in SQL: LIMIT n OFFSET m.");
     expect(inSqlPaging("influxdb3")).toBe("Page it in SQL: LIMIT n OFFSET m.");
+    expect(inSqlPaging("opensearch")).toBe("Page it in SQL: LIMIT n OFFSET m.");
     expect(inSqlPaging("elasticsearch")).toBe(
       "Page it in SQL: ORDER BY a unique field, and for the next page add WHERE that field > the last value read.",
     );
@@ -98,11 +99,11 @@ describe("the texts", () => {
     expect(
       profileRefusalText(
         "The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution.",
-        "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL) and Elasticsearch",
+        "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch and OpenSearch",
         "run_read_query",
       ),
     ).toBe(
-      "run_read_query cannot run on this connection: The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution. It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL) and Elasticsearch.",
+      "run_read_query cannot run on this connection: The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution. It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch and OpenSearch.",
     );
   });
 });
@@ -118,7 +119,9 @@ describe("the texts", () => {
  * too), answers `TABLE` with a parser error, and runs `EXPLAIN ANALYZE`, which the fence refuses. Elasticsearch
  * 9.1.4, measured on 2026-11-01 through the agent read-only path, runs a `SELECT` and `EXPLAIN`, parses a `WITH` but
  * reads a name it defines as an index ("Unknown index"), and refuses `VALUES`, `TABLE` and `EXPLAIN ANALYZE` in its
- * grammar.
+ * grammar. OpenSearch 3.8.0, measured on 2026-11-02 through the agent read-only path, runs a `SELECT` and pages it
+ * with `LIMIT n OFFSET m`; the path's statement check refuses a comment, a subquery, a `WITH`, a `JOIN` and a
+ * double-quoted name, and the plugin refuses `WITH`, `VALUES`, `TABLE` and `EXPLAIN`.
  */
 describe("the accepted forms each engine's refusal names", () => {
   test.each([
@@ -133,6 +136,10 @@ describe("the accepted forms each engine's refusal names", () => {
     [
       "elasticsearch",
       "a SELECT that reads at most one index expression, with no comment, subquery, WITH or JOIN, or an EXPLAIN of such a SELECT",
+    ],
+    [
+      "opensearch",
+      "a SELECT that reads at most one index expression, with no comment, subquery, WITH, JOIN or double quote (quote a name in backticks)",
     ],
   ] as const)("%s: %s", (type, statements) => {
     expect(fenceRefusalText("NON_READ_STATEMENT", type)).toBe(
@@ -196,6 +203,18 @@ describe("the offset rule", () => {
     [
       "EXPLAIN SELECT k FROM probe_buckets",
       "elasticsearch",
+      "This statement's result cannot be paged. Call again without offset.",
+    ],
+    // OpenSearch's SQL has an OFFSET, so its offset refusals are the shared ones.
+    ["SELECT k FROM probe_buckets ORDER BY k LIMIT 5", "opensearch", OWN_LIMIT],
+    [
+      "SELECT k FROM probe_buckets",
+      "opensearch",
+      "This query cannot be paged with offset. Page it in SQL: LIMIT n OFFSET m.",
+    ],
+    [
+      "EXPLAIN SELECT k FROM probe_buckets",
+      "opensearch",
       "This statement's result cannot be paged. Call again without offset.",
     ],
     ["VALUES (1), (2), (3)", "sqlite", "This statement's result cannot be paged. Call again without offset."],

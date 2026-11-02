@@ -41,9 +41,7 @@ describe("the composed command", () => {
     expect(Object.isFrozen(read.compose)).toBe(true);
   });
 
-  test("reads every table's columns with an unquoted %, and one table's with its name as a string", () => {
-    expect(composeCatalogRead("opensearch", { kind: "columns" })).toBe("DESCRIBE TABLES LIKE %");
-    expect(composeCatalogRead("opensearch", {})).toBe("DESCRIBE TABLES LIKE %");
+  test("reads one table's columns with its name as a string", () => {
     expect(composeCatalogRead("opensearch", { kind: "columns", table: "probe_shapes" })).toBe(
       "DESCRIBE TABLES LIKE 'probe_shapes'",
     );
@@ -53,11 +51,24 @@ describe("the composed command", () => {
     );
   });
 
-  test("each composed command is admitted by identity, and refused as model text", () => {
-    for (const sql of ["DESCRIBE TABLES LIKE 'probe_shapes'", "DESCRIBE TABLES LIKE %"]) {
-      expect(agentQueryReadSqlInput.safeParse({ sql, composed: admitComposedStatement(sql) }).success).toBe(true);
-      expect(agentReadSqlInput.safeParse({ sql }).success).toBe(false);
-    }
+  test.each([
+    ["no selector", {}],
+    ["the column kind with no table", { kind: "columns" }],
+  ] as const)(
+    "refuses %s, since every table's read resolves `*`, which reaches the dot-led indices",
+    (_label, selector) => {
+      const error = refusal(() => composeCatalogRead("opensearch", selector));
+      expect(error.reasonCode).toBe("SELECTOR_UNSUPPORTED_BY_DIALECT");
+      expect(error.message).toBe(
+        "OpenSearch's every-table catalog read reaches the indices whose names start with a dot, so name a table instead",
+      );
+    },
+  );
+
+  test("the composed command is admitted by identity, and refused as model text", () => {
+    const sql = "DESCRIBE TABLES LIKE 'probe_shapes'";
+    expect(agentQueryReadSqlInput.safeParse({ sql, composed: admitComposedStatement(sql) }).success).toBe(true);
+    expect(agentReadSqlInput.safeParse({ sql }).success).toBe(false);
   });
 
   test.each([
@@ -137,13 +148,11 @@ const COLUMN_FIELDS = ["table_name", "column_name", "data_type", "is_nullable", 
 describe("the row mapper, driven by 3.8.0's answers", () => {
   test("every capture answers exactly the statement the overlay composes", () => {
     expect([...CAPTURES.keys()].sort()).toEqual([
-      "catalog-read/columns",
       "catalog-read/columns-alias",
       "catalog-read/columns-missing",
       "catalog-read/columns-table",
     ]);
     const composed: Record<string, readonly [string, number]> = {
-      columns: [composeCatalogRead("opensearch", { kind: "columns" }), 200],
       "columns-alias": [composeCatalogRead("opensearch", { table: "probe_orders_alias" }), 200],
       "columns-missing": [composeCatalogRead("opensearch", { table: "zq_no_such_index" }), 404],
       "columns-table": [composeCatalogRead("opensearch", { table: "probe_shapes" }), 200],
@@ -173,25 +182,6 @@ describe("the row mapper, driven by 3.8.0's answers", () => {
         is_nullable: "",
         ordinal_position,
       })),
-    });
-  });
-
-  test("every table's answer keeps one row per engine row, each read off that row, under each table's own name", () => {
-    const rows = engineRows(capture("columns"));
-    const mapped = catalogRead().mapRows?.("columns", rows);
-    expect(mapped?.fields).toEqual(COLUMN_FIELDS);
-    expect(mapped?.rows).toHaveLength(rows.length);
-    const tables = new Set(mapped?.rows.map((row) => row.table_name));
-    for (const table of ["probe_buckets", "probe_orders", "probe_shapes"]) expect(tables).toContain(table);
-    expect(tables).not.toContain("%");
-    mapped?.rows.forEach((row, i) => {
-      expect(row).toEqual({
-        table_name: rows[i]?.TABLE_NAME,
-        column_name: rows[i]?.COLUMN_NAME,
-        data_type: rows[i]?.TYPE_NAME,
-        is_nullable: rows[i]?.IS_NULLABLE,
-        ordinal_position: rows[i]?.ORDINAL_POSITION,
-      });
     });
   });
 

@@ -17,7 +17,11 @@ import type { DatabaseType } from "@/lib/types";
  * path, runs a `SELECT` that reads at most one index expression and an `EXPLAIN` of one, while the path's statement
  * check refuses a comment, a subquery, a `WITH` and a `JOIN` before they are sent, the grammar refuses `VALUES`,
  * `TABLE` and `EXPLAIN ANALYZE`, and there is no `OFFSET` at all, so it pages by key: a `WHERE` on a sort key past the
- * last value read answers the next rows.
+ * last value read answers the next rows. Measured on 2026-11-02: OpenSearch 3.8.0, through the agent read-only path,
+ * runs a `SELECT` that reads at most one index expression, and pages it with `LIMIT n OFFSET m`, while the path's
+ * statement check refuses a comment, a subquery, a `WITH`, a `JOIN` and a double-quoted name before they are sent, and
+ * the plugin refuses `WITH`, `VALUES`, `TABLE` and `EXPLAIN`, each a statement that must start with SELECT, DELETE,
+ * SHOW or DESCRIBE.
  */
 export interface ReadQueryForms {
   /** The statements, as the refusal names them after "runs one read-only statement:". */
@@ -88,7 +92,14 @@ export const READ_QUERY_FORMS: Readonly<Record<DatabaseType, ReadQueryForms | nu
     paging: "ORDER BY a unique field, and for the next page add WHERE that field > the last value read",
     pagesWithOffset: false,
   },
-  opensearch: null,
+  // The agent path's statement check refuses a comment, a subquery, a WITH, a JOIN and a double quote before they are
+  // sent, and the plugin refuses WITH, VALUES, TABLE and EXPLAIN; OFFSET pages (measured on 3.8.0).
+  opensearch: {
+    statements:
+      "a SELECT that reads at most one index expression, with no comment, subquery, WITH, JOIN or double quote (quote a name in backticks)",
+    paging: LIMIT_OFFSET,
+    pagesWithOffset: true,
+  },
   mongodb: null,
   couchbase: null,
   redis: null,

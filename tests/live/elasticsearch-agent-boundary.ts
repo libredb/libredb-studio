@@ -411,7 +411,7 @@ async function checkHiddenTargets(): Promise<void> {
 const TOO_BROAD =
   "The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; the user ";
 const GRANT_INSTEAD =
-  ", so the connection is refused. Give the agent a user whose role holds the cluster action cluster:monitor/main and read and view_index_metadata on the indices it reads, without allow_restricted_indices, such as the libredb_agent_read role";
+  ", so the connection is refused. Give the agent a user whose role holds the cluster action cluster:monitor/main and read and view_index_metadata on the indices it reads, without allow_restricted_indices, such as the libredb_agent_read role, or libredb_seed_read for a seed that MCP reads";
 
 /** `read` with `allow_restricted_indices` on `names`, as a role grants it locally or, with its clusters, remotely. */
 const restrictedRead = (names: readonly string[]) => ({ names, privileges: ["read"], allow_restricted_indices: true });
