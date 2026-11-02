@@ -52,6 +52,16 @@ const UNFENCED: McpStatementArm = { ...RUN_LIBREDB_READ_ARM, fence: () => null }
 /** Studio's own state, where the server would keep it: its storage database, sidecars and credential file. */
 const STATE = join(dir, "state");
 const STORAGE = join(STATE, "libredb-storage.db");
+// macOS and Windows file systems fold case, so there a case variant of a name is the same file.
+const FOLDS_CASE = (() => {
+  const probe = join(tmpdir(), `libredb-case-probe-${process.pid}`);
+  writeFileSync(probe, "");
+  try {
+    return existsSync(probe.toUpperCase());
+  } finally {
+    rmSync(probe, { force: true });
+  }
+})();
 const BOOTSTRAP = join(STATE, "auth-bootstrap.json");
 const previousStoragePath = process.env.STORAGE_SQLITE_PATH;
 process.env.STORAGE_SQLITE_PATH = STORAGE;
@@ -501,19 +511,38 @@ describe("the data scope", () => {
     expect(existsSync(absent)).toBe(false);
   });
 
-  test("a name beside Studio's storage database that is not one of its files is never created by either tool", async () => {
-    const variant = join(STATE, "LIBREDB-STORAGE.DB");
-    writeSeedFile(dir, [{ id: "variant", type: "libredb", database: variant }]);
-    for (const result of [
-      await call("inspect_schema", { connection_id: "seed:variant" }),
-      await libredb("prefix u", {}, "seed:variant"),
-    ]) {
-      expect(result.isError).toBe(true);
-      expect(text(result)).toContain("does not exist");
-    }
-    expect(existsSync(variant)).toBe(false);
-    expect(existsSync(`${variant}.lock`)).toBe(false);
-  });
+  test.skipIf(FOLDS_CASE)(
+    "a name beside Studio's storage database that is not one of its files is never created by either tool",
+    async () => {
+      const variant = join(STATE, "LIBREDB-STORAGE.DB");
+      writeSeedFile(dir, [{ id: "variant", type: "libredb", database: variant }]);
+      for (const result of [
+        await call("inspect_schema", { connection_id: "seed:variant" }),
+        await libredb("prefix u", {}, "seed:variant"),
+      ]) {
+        expect(result.isError).toBe(true);
+        expect(text(result)).toContain("does not exist");
+      }
+      expect(existsSync(variant)).toBe(false);
+      expect(existsSync(`${variant}.lock`)).toBe(false);
+    },
+  );
+
+  test.skipIf(!FOLDS_CASE)(
+    "on a file system that folds case, a case variant of the storage database's name is refused as that database",
+    async () => {
+      const variant = join(STATE, "LIBREDB-STORAGE.DB");
+      writeSeedFile(dir, [{ id: "variant", type: "libredb", database: variant }]);
+      for (const result of [
+        await call("inspect_schema", { connection_id: "seed:variant" }),
+        await libredb("prefix u", {}, "seed:variant"),
+      ]) {
+        expect(result.isError).toBe(true);
+        expect(text(result)).toContain("This path is reserved for the server's own storage");
+      }
+      expect(existsSync(`${STORAGE}.lock`)).toBe(false);
+    },
+  );
 
   test("a reserved path is refused by both tools before anything is created beside it", async () => {
     for (const result of [
@@ -526,17 +555,21 @@ describe("the data scope", () => {
     expect(existsSync(`${STORAGE}.lock`)).toBe(false);
   });
 
-  test("a pseudo-file whose size reads 0 but which holds bytes is refused by both tools as no LibreDB file", async () => {
-    writeSeedFile(dir, [{ id: "environ", type: "libredb", database: "/proc/self/environ" }]);
-    for (const result of [
-      await call("inspect_schema", { connection_id: "seed:environ" }),
-      await libredb("prefix u", {}, "seed:environ"),
-    ]) {
-      expect(result.isError).toBe(true);
-      expect(text(result)).toContain("The file is not a LibreDB database. It was left untouched");
-      expect(text(result)).not.toContain("does not exist");
-    }
-  });
+  // Only Linux has /proc; there it reports a size of 0 for a file that holds bytes.
+  test.skipIf(!existsSync("/proc/self/environ"))(
+    "a pseudo-file whose size reads 0 but which holds bytes is refused by both tools as no LibreDB file",
+    async () => {
+      writeSeedFile(dir, [{ id: "environ", type: "libredb", database: "/proc/self/environ" }]);
+      for (const result of [
+        await call("inspect_schema", { connection_id: "seed:environ" }),
+        await libredb("prefix u", {}, "seed:environ"),
+      ]) {
+        expect(result.isError).toBe(true);
+        expect(text(result)).toContain("The file is not a LibreDB database. It was left untouched");
+        expect(text(result)).not.toContain("does not exist");
+      }
+    },
+  );
 
   test("a zero-length file is an empty store, as a freshly created one is, and both tools read it", async () => {
     const fresh = join(dir, "fresh.libredb");
