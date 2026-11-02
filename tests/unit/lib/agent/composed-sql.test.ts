@@ -1749,8 +1749,8 @@ describe("composeCatalogRead — Oracle", () => {
 
 /**
  * Db2's catalog read runs as the agent user too, whose own schema or a public alias could hold an object named like a
- * catalog view; an unqualified name resolves to that first. So every view is named SYSCAT.<view>, the schemas the system
- * owns are left out by SYSCAT.SCHEMATA.OWNERTYPE rather than by their names, and each kind is pinned whole here, a
+ * catalog view; an unqualified name resolves to that first. So every view is named SYSCAT.<view>, the columns are read
+ * from SYSIBM.COLUMNS, which keeps no stored value, the schemas the system owns are left out by SYSCAT.SCHEMATA.OWNERTYPE rather than by their names, and each kind is pinned whole here, a
  * selector's literals included.
  */
 describe("composeCatalogRead — Db2", () => {
@@ -1758,13 +1758,20 @@ describe("composeCatalogRead — Db2", () => {
   const EXCLUDED = (schema: string, table: string) =>
     `EXISTS (SELECT 1 FROM SYSCAT.TABLES o WHERE o.TABSCHEMA = ${schema} AND o.TABNAME = ${table} AND o.OWNERTYPE <> 'S')`;
 
-  test("each kind is exactly the statement below, every catalog view named SYSCAT.<view>", () => {
+  test("each kind is exactly the statement below, every catalog view named by its schema", () => {
     const selector = { schema: "APP", table: "ORDERS" };
+    // SYSIBM.COLUMNS, which keeps no stored value: SYSCAT.COLUMNS keeps HIGH2KEY and LOW2KEY, and the agent user's
+    // seed revokes it from PUBLIC. Its ISO type names are spelled as SYSCAT spells them.
     expect(composeCatalogRead("db2", { ...selector, kind: "columns" })).toBe(
-      'SELECT RTRIM(c.TABSCHEMA) AS "table_schema", c.TABNAME AS "table_name", c.COLNAME AS "column_name", ' +
-        'RTRIM(c.TYPENAME) AS "data_type", c.NULLS AS "is_nullable", c.COLNO + 1 AS "ordinal_position" ' +
-        `FROM SYSCAT.COLUMNS c WHERE ${EXCLUDED("c.TABSCHEMA", "c.TABNAME")} AND c.TABSCHEMA = 'APP' AND c.TABNAME = 'ORDERS' ` +
-        "ORDER BY c.TABSCHEMA, c.TABNAME, c.COLNO",
+      'SELECT RTRIM(c.TABLE_SCHEMA) AS "table_schema", c.TABLE_NAME AS "table_name", c.COLUMN_NAME AS "column_name", ' +
+        "CASE c.DATA_TYPE WHEN 'CHARACTER VARYING' THEN 'VARCHAR' WHEN 'GRAPHIC VARYING' THEN 'VARGRAPHIC' " +
+        "WHEN 'CHARACTER LARGE OBJECT' THEN 'CLOB' WHEN 'DOUBLE-BYTE CHARACTER LARGE OBJECT' THEN 'DBCLOB' " +
+        "WHEN 'BINARY LARGE OBJECT' THEN 'BLOB' WHEN 'DOUBLE PRECISION' THEN 'DOUBLE' " +
+        "WHEN 'USER-DEFINED' THEN c.UDT_NAME ELSE c.DATA_TYPE END AS \"data_type\", " +
+        "CASE c.IS_NULLABLE WHEN 'YES' THEN 'Y' ELSE 'N' END AS \"is_nullable\", " +
+        'c.ORDINAL_POSITION AS "ordinal_position" ' +
+        `FROM SYSIBM.COLUMNS c WHERE ${EXCLUDED("c.TABLE_SCHEMA", "c.TABLE_NAME")} AND c.TABLE_SCHEMA = 'APP' AND c.TABLE_NAME = 'ORDERS' ` +
+        "ORDER BY c.TABLE_SCHEMA, c.TABLE_NAME, c.ORDINAL_POSITION",
     );
     expect(composeCatalogRead("db2", { ...selector, kind: "relations" })).toBe(
       'SELECT RTRIM(r.TABSCHEMA) AS "table_schema", r.TABNAME AS "table_name", k.COLNAME AS "column_name", ' +
@@ -1793,13 +1800,15 @@ describe("composeCatalogRead — Db2", () => {
     );
   });
 
-  test("no kind names a catalog view without SYSCAT., and each passes the agent's input guard", () => {
+  test("no kind names a catalog view without its schema, and each passes the agent's input guard", () => {
     for (const kind of ["columns", "relations", "indexes", "statistics"] as const) {
       const sql = composeCatalogRead("db2", { kind });
       expect(guardAccepts(sql), kind).toBe(true);
       for (const [, source] of sql.matchAll(/\b(?:FROM|JOIN)\s+([A-Za-z_$#][\w$#.]*)/g)) {
-        expect(source.startsWith("SYSCAT."), `${kind}: ${source}`).toBe(true);
+        expect(source.startsWith("SYSCAT.") || source === "SYSIBM.COLUMNS", `${kind}: ${source}`).toBe(true);
       }
+      // No kind reads an object that keeps stored values of other tables' columns.
+      expect(sql, kind).not.toMatch(/SYSCAT\.COLUMNS|SYSIBM\.SYSCOLUMNS|SYSSTAT\.|HIGH2KEY|LOW2KEY|COLVALUE/);
     }
   });
 
