@@ -96,7 +96,20 @@ describe("docs/MCP.md", () => {
 
   test("names every statement tool this build registers, and counts the tools", () => {
     const tools = ["list_connections", "inspect_schema", ...servingStatementArms().map((arm) => arm.tool)];
-    const COUNT_WORDS = ["Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven"];
+    const COUNT_WORDS = [
+      "Zero",
+      "One",
+      "Two",
+      "Three",
+      "Four",
+      "Five",
+      "Six",
+      "Seven",
+      "Eight",
+      "Nine",
+      "Ten",
+      "Eleven",
+    ];
     expect(MCP_DOC).toContain(`- ${COUNT_WORDS[tools.length]} tools, each annotated read-only and closed-world:`);
     for (const tool of tools) expect(MCP_DOC).toMatch(new RegExp(`^ {2}- \`${tool}\` `, "m"));
   });
