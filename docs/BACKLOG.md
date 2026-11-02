@@ -980,31 +980,6 @@ statement MEANS, and none of them is reset.
 **Done when:** either the pool resets a connection on release, or every route that mutates session state
 restores it in a `finally`, and the choice is written down where the next writer of a route will read it.
 
-### D88. A multi-statement text sent to the single-statement query route answers HTTP 500
-
-`POST /api/db/query` is the single-statement route and nothing stops a caller sending two. PostgreSQL
-runs both, `pg` answers an ARRAY of results for a multi-statement simple query, and
-`PostgresProvider.query()` reads `result.rows` off that array, which is `undefined`. The route then
-reads `result.rows.length` and throws, so the caller gets a 500 with no sentence about what was wrong
-with their request, after both statements have already run.
-
-MEASURED 2026-09-15 on PostgreSQL 18.4 through `pg` 8.23: a simple query of two statements answers
-`[Result, Result]` with the engine's own command tags, and `Array.prototype.rows` does not exist.
-Read in the tree at the same commit: `src/lib/db/providers/sql/postgres.ts` returns `rows: result.rows`
-from `query()`, and `src/app/api/db/query/route.ts` reads `result.rows.length`.
-
-Found while probing D74. Not caused by it and not fixed by it.
-
-The route's `explain` arm refuses such a text since #1311 (`Only a single statement can be explained`,
-read under the connection type's grammar, before a provider is opened), because there the second
-statement was not only a 500: the background plan request re-ran the INSERT after a leading SELECT. A
-plain run without `explain` still reaches the provider and is what this entry is about.
-
-**Done when:** the route either refuses a text carrying more than one statement with a sentence, or the
-provider names which result of an array it answers with. The first is the smaller change and is what
-the route's own name claims; D76's single-statement check on the object-edit path is the precedent for
-asking the engine rather than splitting the text.
-
 ### D89. A count mismatch is reported on the `interrupted` arm, whose documented meaning says the engine never answered
 
 `applyObjectEdit` on `postgres` counts the results the round trip answered and reports
