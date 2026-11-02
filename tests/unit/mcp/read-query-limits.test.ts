@@ -62,6 +62,9 @@ const NO_CQL_OFFSET = `This engine's SQL has no OFFSET, so this query cannot be 
 /** Oracle has no LIMIT (ORA-03047 on 23ai); its own row limiting clauses are named instead. */
 const OWN_LIMIT_ORACLE =
   "This query has its own FETCH FIRST, OFFSET ... FETCH or ROWNUM, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.";
+/** Db2's own row limiting clauses, LIMIT among them, are named rather than SQL Server's TOP (measured on 12.1.0.0). */
+const OWN_LIMIT_DB2 =
+  "This query has its own FETCH FIRST, OFFSET ... FETCH or LIMIT, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.";
 const OWN_LIMIT_MSSQL =
   "This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.";
 
@@ -79,6 +82,7 @@ describe("the texts", () => {
     expect(inSqlPaging("cassandra")).toBe(`Page it in SQL: ${BY_TOKEN}.`);
     expect(inSqlPaging("mssql")).toBe("Page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.");
     expect(inSqlPaging("oracle")).toBe("Page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.");
+    expect(inSqlPaging("db2")).toBe("Page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.");
     expect(moreRowsThanPageableHint("sqlite")).toBe(
       "More rows exist than this result holds, and this query cannot be paged with offset. Page it in SQL: LIMIT n OFFSET m.",
     );
@@ -113,11 +117,11 @@ describe("the texts", () => {
     expect(
       profileRefusalText(
         "The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution.",
-        "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Apache Cassandra and Couchbase",
+        "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra and Couchbase",
         "run_read_query",
       ),
     ).toBe(
-      "run_read_query cannot run on this connection: The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution. It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Apache Cassandra and Couchbase.",
+      "run_read_query cannot run on this connection: The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution. It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra and Couchbase.",
     );
   });
 });
@@ -145,6 +149,8 @@ describe("the texts", () => {
  * Couchbase Server 8.0.2 Enterprise, measured on 2026-11-02 through the agent read-only path, runs a `SELECT` (a
  * `WITH` before it too), while the path's statement check refuses `EXPLAIN` and every other statement before it is
  * sent, and SQL++ has no bare `VALUES` or `TABLE` statement.
+ * Db2 12.1.0.0, measured on 2026-11-02 through the agent read-only path, which sends the statement inside a derived
+ * table, runs a `SELECT`, a `WITH` and a bare `VALUES`, and answers `TABLE` and `EXPLAIN` with SQL0104N.
  */
 describe("the accepted forms each engine's refusal names", () => {
   test.each([
@@ -165,6 +171,7 @@ describe("the accepted forms each engine's refusal names", () => {
       "a SELECT that reads at most one index expression, with no comment, subquery, WITH, JOIN or double quote (quote a name in backticks)",
     ],
     ["oracle", "a SELECT (a WITH is fine)"],
+    ["db2", "a SELECT (a WITH is fine), or VALUES"],
     ["cassandra", "a SELECT of one table of the connection's keyspace or of system_schema"],
     ["couchbase", "a SELECT (a WITH is fine)"],
   ] as const)("%s: %s", (type, statements) => {
@@ -257,6 +264,22 @@ describe("the offset rule", () => {
     [
       "EXPLAIN PLAN FOR SELECT 1 FROM DUAL",
       "oracle",
+      "This statement's result cannot be paged. Call again without offset.",
+    ],
+    // Db2's FETCH FIRST, its OFFSET form and LIMIT each count as the query's own limit.
+    ["SELECT ID FROM APP.ORDERS ORDER BY ID FETCH FIRST 2 ROWS ONLY", "db2", OWN_LIMIT_DB2],
+    ["SELECT ID FROM APP.ORDERS ORDER BY ID OFFSET 1 ROWS FETCH NEXT 2 ROWS ONLY", "db2", OWN_LIMIT_DB2],
+    ["SELECT ID FROM APP.ORDERS ORDER BY ID LIMIT 2 OFFSET 1", "db2", OWN_LIMIT_DB2],
+    ["SELECT ID FROM APP.ORDERS ORDER BY ID LIMIT 2", "db2", OWN_LIMIT_DB2],
+    [
+      "SELECT ID FROM APP.ORDERS ORDER BY ID",
+      "db2",
+      "This query cannot be paged with offset. Page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.",
+    ],
+    ["VALUES (1), (2), (3)", "db2", "This statement's result cannot be paged. Call again without offset."],
+    [
+      "EXPLAIN PLAN FOR SELECT ID FROM APP.ORDERS",
+      "db2",
       "This statement's result cannot be paged. Call again without offset.",
     ],
     ["SELECT id FROM probe.customers", "cassandra", NO_CQL_OFFSET],
@@ -375,6 +398,15 @@ describe("the budget sentences every provider shares (D367)", () => {
     }
   });
 
+  // Db2 names its own row limiting clauses too, LIMIT among them, never SQL Server's TOP.
+  test("answers Db2's budget refusals in Db2's clause", () => {
+    expect(tooLargeTextsOf("db2")).toEqual({
+      rows: "The result has more than 1000 rows, the most this server reads for one call. Add FETCH FIRST n ROWS ONLY with n of 1000 or less, or remove your own FETCH FIRST, OFFSET ... FETCH or LIMIT and page with offset.",
+      bytes:
+        "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add FETCH FIRST n ROWS ONLY with a smaller n.",
+    });
+  });
+
   // MongoDB's row refusal adds a cursor-bound tail after the shared sentence; the mapper still reads it.
   // kubectl's own refusals are fed to the mapper in tests/unit/db/kubernetes/machine-read.test.ts.
   test("maps MongoDB's row refusal at the cursor bound to too-large", () => {
@@ -406,6 +438,7 @@ describe("the prefixes the mapper matches still start a message in each provider
         "src/lib/db/providers/timeseries/influxdb/sql-agent-read.ts",
         "src/lib/db/providers/sql/search/index.ts",
         "src/lib/db/providers/sql/oracle/agent-read.ts",
+        "src/lib/db/providers/sql/db2/index.ts",
         "src/lib/db/providers/sql/cassandra/index.ts",
         "src/lib/db/providers/document/couchbase/index.ts",
       ],
@@ -424,6 +457,7 @@ describe("the prefixes the mapper matches still start a message in each provider
     influxdb3: ["src/lib/db/providers/timeseries/influxdb/sql-agent-read.ts"],
     elasticsearch: ["src/lib/db/providers/sql/search/index.ts"],
     oracle: ["src/lib/db/providers/sql/oracle/agent-read.ts"],
+    db2: ["src/lib/db/providers/sql/db2/agent-read.ts"],
     cassandra: ["src/lib/db/providers/sql/cassandra/index.ts"],
     couchbase: ["src/lib/db/providers/document/couchbase/index.ts"],
     mongodb: ["src/lib/db/providers/document/mongodb/agent-read.ts"],

@@ -76,11 +76,15 @@ const keepsToTheCall = (alias: string) =>
   `OR ${alias}.ROUTINESCHEMA = 'SYSPROC' AND COALESCE(${alias}.ROUTINETYPE, '') = 'F' ` +
   `AND ${alias}.SPECIFICNAME IN (${MEASURED_READERS.map((name) => `'${name}'`).join(", ")}))`;
 
-/** The table or view named by `schema` and `name` is IBM's and holds a COLVALUE column: the distribution statistics. */
+/**
+ * The table or view named by `schema` and `name` is IBM's and holds a COLVALUE, HIGH2KEY or LOW2KEY column: the
+ * distribution statistics, or the column statistics' second highest and lowest values. Read through SYSIBM.COLUMNS,
+ * which lists IBM's own objects and keeps no stored value, since the seed revokes SYSCAT.COLUMNS from PUBLIC.
+ */
 const storedValues = (schema: string, name: string) =>
-  "EXISTS (SELECT 1 FROM SYSCAT.TABLES t JOIN SYSCAT.COLUMNS c ON c.TABSCHEMA = t.TABSCHEMA " +
-  `AND c.TABNAME = t.TABNAME WHERE t.TABSCHEMA = ${schema} AND t.TABNAME = ${name} AND t.OWNERTYPE = 'S' ` +
-  "AND c.COLNAME = 'COLVALUE')";
+  "EXISTS (SELECT 1 FROM SYSCAT.TABLES t JOIN SYSIBM.COLUMNS c ON c.TABLE_SCHEMA = t.TABSCHEMA " +
+  `AND c.TABLE_NAME = t.TABNAME WHERE t.TABSCHEMA = ${schema} AND t.TABNAME = ${name} AND t.OWNERTYPE = 'S' ` +
+  "AND c.COLUMN_NAME IN ('COLVALUE', 'HIGH2KEY', 'LOW2KEY'))";
 
 /**
  * The session's grantees hold the routine `alias` names through a grant the database made for itself (GRANTORTYPE S),
@@ -105,9 +109,32 @@ const unreadableIbm = (schema: string, name: string) =>
   `EXISTS (SELECT 1 FROM SYSCAT.TABLES b WHERE b.TABSCHEMA = ${schema} AND b.TABNAME = ${name} ` +
   `AND b.OWNERTYPE = 'S') AND NOT ${readableByGrant(schema, name)}`;
 
-/** IBM's routine, and a procedure, which no agent statement can call, or a routine that keeps to the call. */
+/** The ROUTINEPARMS row `parm` is of a distinct type in the routine's own schema whose source is IBM's. */
+const distinctTypeOf = (parm: string, alias: string) =>
+  `EXISTS (SELECT 1 FROM SYSCAT.DATATYPES y WHERE y.TYPESCHEMA = ${parm}.TYPESCHEMA AND y.TYPENAME = ${parm}.TYPENAME ` +
+  `AND y.TYPESCHEMA = ${alias}.ROUTINESCHEMA AND y.METATYPE = 'T' AND y.SOURCESCHEMA = 'SYSIBM')`;
+
+/**
+ * A function Db2 generated for a distinct type, a cast or a comparison: ORIGIN S, owned by the type's owner, its
+ * parameters and result each the distinct type or an IBM type, and implemented by IBM's function or by none. Measured
+ * on 12.1.0.0: Db2 grants PUBLIC EXECUTE on each, and refuses to drop, alter or replace one (SQL0658N).
+ */
+const generatedForDistinctType = (alias: string) =>
+  `COALESCE(${alias}.ORIGIN, '') = 'S' AND COALESCE(${alias}.ROUTINETYPE, '') = 'F' ` +
+  `AND (${alias}.IMPLEMENTATION IS NULL OR ${alias}.IMPLEMENTATION LIKE 'SYSIBM.%') ` +
+  `AND EXISTS (SELECT 1 FROM SYSCAT.ROUTINEPARMS w WHERE w.ROUTINESCHEMA = ${alias}.ROUTINESCHEMA ` +
+  `AND w.SPECIFICNAME = ${alias}.SPECIFICNAME AND ${distinctTypeOf("w", alias)}) ` +
+  `AND NOT EXISTS (SELECT 1 FROM SYSCAT.ROUTINEPARMS w WHERE w.ROUTINESCHEMA = ${alias}.ROUTINESCHEMA ` +
+  `AND w.SPECIFICNAME = ${alias}.SPECIFICNAME AND COALESCE(w.TYPESCHEMA, '') <> 'SYSIBM' ` +
+  `AND NOT ${distinctTypeOf("w", alias)})`;
+
+/**
+ * IBM's routine or one Db2 generated for a distinct type, and a procedure, which no agent statement can call, or a
+ * routine that keeps to the call.
+ */
 const admittedRoutine = (alias: string) =>
-  `COALESCE(${alias}.OWNERTYPE, '') = 'S' AND (COALESCE(${alias}.ROUTINETYPE, '') = 'P' OR ${keepsToTheCall(alias)})`;
+  `(COALESCE(${alias}.OWNERTYPE, '') = 'S' OR ${generatedForDistinctType(alias)}) ` +
+  `AND (COALESCE(${alias}.ROUTINETYPE, '') = 'P' OR ${keepsToTheCall(alias)})`;
 
 const PINNED: Record<Statement, string> = {
   user: "SELECT CAST(SESSION_USER AS VARCHAR(128)) AS USERNAME FROM SYSIBM.SYSDUMMY1",
@@ -411,7 +438,7 @@ describe("verifyAgentPrincipal", () => {
     expect(error.message).toBe(
       "The agent read-only execution profile refuses the Db2 user AGENT_RO: it may read a view that calls code that " +
         "is not IBM's, an IBM function that acts outside the call or modifies data, or one the database's own grants " +
-        "do not let the user call, or reads the catalog's distribution statistics, an IBM table or view the " +
+        "do not let the user call, or reads the catalog's distribution or column statistics, an IBM table or view the " +
         "database's own grants do not let the user read, or a view or alias the check cannot follow, a view that is " +
         "not valid, or a nickname, which reads another server; each runs with its owner's authority. " +
         "Run, as an administrator: " +
@@ -431,17 +458,20 @@ describe("verifyAgentPrincipal", () => {
         privilege("PUBLIC", "G", "SELECT", "TABLE", "SYSCAT", "COLDIST"),
         privilege("AGENT_RO", "U", "SELECT", "TABLE", "SYSIBM", "SYSCOLGROUPDIST"),
         privilege("AGENT_RO", "U", "SELECT", "TABLE", "SYSIBMADM", "MON_CURRENT_SQL"),
+        privilege("PUBLIC", "G", "SELECT", "TABLE", "SYSCAT", "COLUMNS"),
       ],
     });
     expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
     expect(error.message).toBe(
       "The agent read-only execution profile refuses the Db2 user AGENT_RO: it may read the catalog's distribution " +
-        "statistics, which hold stored values of every table's columns, whether or not it may read the table, or an " +
+        "or column statistics, which hold stored values of every table's columns, whether or not it may read the " +
+        "table, or an " +
         "IBM table or view only a grant a user made lets it read, such as a monitor view of other sessions' " +
         "statements. " +
         'Run, as an administrator: REVOKE SELECT ON TABLE "SYSCAT"."COLDIST" FROM PUBLIC; ' +
         'REVOKE SELECT ON TABLE "SYSIBM"."SYSCOLGROUPDIST" FROM USER "AGENT_RO"; ' +
-        'REVOKE SELECT ON TABLE "SYSIBMADM"."MON_CURRENT_SQL" FROM USER "AGENT_RO".',
+        'REVOKE SELECT ON TABLE "SYSIBMADM"."MON_CURRENT_SQL" FROM USER "AGENT_RO"; ' +
+        'REVOKE SELECT ON TABLE "SYSCAT"."COLUMNS" FROM PUBLIC.',
     );
   });
 

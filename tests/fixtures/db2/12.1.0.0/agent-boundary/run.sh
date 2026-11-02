@@ -13,8 +13,14 @@
 # docker/db2-init/02-agent-principal.sql, the seed's PUBLIC revokes, so its capture has no .sql here. Captures 00 to 11
 # were recorded on 2026-10-29, before the seed revoked SELECT on the distribution statistics; 12 was recorded on
 # 2026-11-02 after the seed with those revokes had run. 13 revokes from PUBLIC the seven objects that keep HIGH2KEY and
-# LOW2KEY, which the seed does not, and 14 shows what the agent user then reads; both were recorded on 2026-11-02 on a
-# container holding the object fixture and the seed.
+# LOW2KEY, which the seed did not then, and 14 shows what the agent user then reads; both were recorded on 2026-11-02 on
+# a container holding the object fixture and the seed. The seed now revokes those seven too, so a fresh run records 13's
+# revokes as SQL0556N. 15 to 17 were recorded on 2026-11-02 on a container whose seed holds the seven revokes: 15 creates
+# a table of the types the value-free column read spells, 16 shows what SYSIBM.COLUMNS, SYSIBM.SQLCOLUMNS and a zero-row
+# describe answer the agent user, and 17 drops what 15 created. 16 was re-recorded on 2026-11-02 to read a distinct
+# type's name from UDT_SCHEMA and UDT_NAME. 18 to 20 were recorded on 2026-11-02 on the same kind of container: 18
+# leaves a table set integrity pending and one REORG-pending, 19 shows the agent user that a zero-row read of either
+# answers while a read of the check-pending table's rows is refused, and 20 drops them.
 set -euo pipefail
 name="$1"
 dir="$(cd "$(dirname "$0")" && pwd)"
@@ -59,3 +65,9 @@ in_container su - db2inst1 -c "db2 connect to testdb >/dev/null; db2 \"CALL SYSP
 clp agent-ro 12-catalog-scope-as-agent-ro
 clp db2inst1 13-column-statistics-revokes-as-db2inst1
 clp agent-ro 14-column-sources-as-agent-ro
+clp db2inst1 15-value-free-fixture-as-db2inst1
+clp agent-ro 16-value-free-sources-as-agent-ro
+clp db2inst1 17-value-free-fixture-drop-as-db2inst1
+clp db2inst1 18-pending-states-as-db2inst1
+clp agent-ro 19-pending-states-as-agent-ro
+clp db2inst1 20-pending-states-drop-as-db2inst1

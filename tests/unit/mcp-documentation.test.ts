@@ -378,6 +378,20 @@ describe("docs/MCP.md", () => {
     );
   });
 
+  // Measured on Db2 12.1.0.0 through run_read_query: neither a timeout nor a client close stops the statement on the
+  // server, which runs to its end; the user is checked before every statement, and inspect_schema checks none.
+  test("says what a Db2 seed needs, that inspect_schema opens it unchecked, and what a cancel and a timeout do", () => {
+    expect(MCP_DOC).toContain(
+      "`run_read_query` refuses a Db2 LUW connection whose own user could do more than read, checked before every statement rather than at the open, so an opted-in Db2 seed needs a least-privilege user too.",
+    );
+    expect(MCP_DOC).toContain(
+      "Db2 LUW checks its user only before a statement it sends, so `inspect_schema` opens a Db2 connection unchecked, as the editor does.",
+    );
+    expect(MCP_DOC).toContain(
+      "| Db2 LUW | Studio stops waiting; the statement runs on the server to its end, and the provider closes its connection once it has ended | Studio stops waiting at `timeout_ms`, the statement runs on the server to its end, and the client gets the timeout answer |",
+    );
+  });
+
   test("says an MCP call on a LibreDB file keeps the Studio editor out until its handle is idle for 30 minutes", () => {
     expect(MCP_DOC).toContain(
       "- An MCP call on a LibreDB connection that no Studio session holds open opens the file itself and keeps its exclusive lock until that handle has been idle for 30 minutes.",

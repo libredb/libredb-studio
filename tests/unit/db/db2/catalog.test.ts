@@ -377,3 +377,177 @@ describe("sourceText", () => {
     expect(() => sourceText([{ TEXT_BYTES: "41" }, { TEXT_BYTES: null }], 2, UTF8_CODE_PAGE)).toThrow(QueryError);
   });
 });
+
+describe("the value-free column source", () => {
+  /** Every object that keeps a stored value of another table's columns (captures 13 and 16). */
+  const VALUE_HOLDERS =
+    /SYSCAT\.COLUMNS|SYSCAT\.SYSCOLUMNS_UNION|COLPARTITIONSTATS|SYSIBM\.SYSCOLUMNS|SYSSTAT\.|COLDIST|COLGROUPDIST|HIGH2KEY|LOW2KEY|COLVALUE/;
+
+  test.each([
+    ["VALUE_FREE_CODE_PAGE_SQL", catalog.VALUE_FREE_CODE_PAGE_SQL],
+    ["VALUE_FREE_COLUMNS.object", catalog.VALUE_FREE_COLUMNS.object],
+    ["VALUE_FREE_COLUMNS.bulk(false)", catalog.VALUE_FREE_COLUMNS.bulk(false)],
+    ["VALUE_FREE_COLUMNS.bulk(true)", catalog.VALUE_FREE_COLUMNS.bulk(true)],
+    ["DECFLOAT_DESCRIBABLE_SQL", catalog.DECFLOAT_DESCRIBABLE_SQL],
+  ])("%s reads no object that keeps stored values", (_name, sql) => {
+    expect(sql).not.toMatch(VALUE_HOLDERS);
+  });
+
+  test("the editor's source still reads SYSCAT.COLUMNS, unchanged", () => {
+    expect(catalog.SYSCAT_COLUMNS.object).toBe(catalog.OBJECT_COLUMNS_SQL);
+    expect(catalog.SYSCAT_COLUMNS.bulk(true)).toBe(bulkDetailSql(true).columns);
+    expect(catalog.SYSCAT_COLUMNS.bulk(false)).toBe(bulkDetailSql(false).columns);
+    expect(catalog.SYSCAT_COLUMNS.type).toBe(columnType);
+    expect(catalog.SYSCAT_COLUMNS.describesDecfloat).toBe(false);
+    expect(catalog.VALUE_FREE_COLUMNS.describesDecfloat).toBe(true);
+  });
+
+  test("the columns come from SYSIBM.COLUMNS, binary lengths from SYSIBM.SQLCOLUMNS, the key from the constraint", () => {
+    const sql = catalog.VALUE_FREE_COLUMNS.object;
+    expect(sql).toContain("FROM SYSIBM.COLUMNS c");
+    expect(sql).toContain("LEFT JOIN SYSIBM.SQLCOLUMNS s");
+    expect(sql).toContain("SYSCAT.TABCONST");
+    expect(sql).toContain("SYSCAT.KEYCOLUSE");
+    expect(sql).toContain("ORDER BY c.ORDINAL_POSITION");
+    expect(sql.match(/\?/g)).toHaveLength(2);
+  });
+
+  test("the bulk read scopes itself to the target set, as the catalog's does", () => {
+    expect(catalog.VALUE_FREE_COLUMNS.bulk(true)).toContain("c.TABLE_NAME IN (SELECT OBJECT_NAME FROM TARGET)");
+    expect(catalog.VALUE_FREE_COLUMNS.bulk(true).match(/\?/g)).toHaveLength(4);
+    expect(catalog.VALUE_FREE_COLUMNS.bulk(false).match(/\?/g)).toHaveLength(3);
+  });
+
+  test("the code page is read off the character set SYSIBM.COLUMNS names (capture 16: IBM1208)", () => {
+    expect(catalog.VALUE_FREE_CODE_PAGE_SQL).toContain("TABLE_NAME = 'SYSDUMMY1'");
+    expect(catalog.codePageOfCharacterSet("IBM1208")).toBe(UTF8_CODE_PAGE);
+    expect(catalog.codePageOfCharacterSet("IBM819")).toBe(819);
+  });
+
+  test.each([["UTF-8"], [null], [1208], ["IBM"], ["IBM12x"]])(
+    "a character set of %p is refused, never guessed",
+    (name) => {
+      expect(() => catalog.codePageOfCharacterSet(name)).toThrow(QueryError);
+      expect(() => catalog.codePageOfCharacterSet(name)).toThrow(/Db2 answered no code page this provider can read/);
+    },
+  );
+
+  const row = (fields: Record<string, unknown>) => ({
+    CHARACTER_MAXIMUM_LENGTH: null,
+    NUMERIC_PRECISION: null,
+    NUMERIC_SCALE: null,
+    DATETIME_PRECISION: null,
+    SQL_TYPE_NAME: null,
+    COLUMN_SIZE: null,
+    ...fields,
+  });
+
+  // Each row as SYSIBM.COLUMNS and SYSIBM.SQLCOLUMNS answered it in captures 14 and 16.
+  test.each([
+    [{ DATA_TYPE: "INTEGER", NUMERIC_PRECISION: 10, NUMERIC_SCALE: 0 }, "INTEGER"],
+    [{ DATA_TYPE: "DECIMAL", NUMERIC_PRECISION: 31, NUMERIC_SCALE: 8 }, "DECIMAL(31,8)"],
+    [{ DATA_TYPE: "DOUBLE PRECISION", NUMERIC_PRECISION: 53 }, "DOUBLE"],
+    [{ DATA_TYPE: "TIMESTAMP", DATETIME_PRECISION: 6 }, "TIMESTAMP"],
+    [{ DATA_TYPE: "TIMESTAMP", DATETIME_PRECISION: 12 }, "TIMESTAMP(12)"],
+    [{ DATA_TYPE: "TIMESTAMP", DATETIME_PRECISION: 0 }, "TIMESTAMP(0)"],
+    [{ DATA_TYPE: "CHARACTER", CHARACTER_MAXIMUM_LENGTH: 10, SQL_TYPE_NAME: "CHAR" }, "CHARACTER(10)"],
+    [{ DATA_TYPE: "CHARACTER VARYING", CHARACTER_MAXIMUM_LENGTH: 50, SQL_TYPE_NAME: "VARCHAR" }, "VARCHAR(50)"],
+    [
+      { DATA_TYPE: "CHARACTER", CHARACTER_MAXIMUM_LENGTH: 4, SQL_TYPE_NAME: "CHAR () FOR BIT DATA" },
+      "CHARACTER(4) FOR BIT DATA",
+    ],
+    [
+      { DATA_TYPE: "CHARACTER VARYING", CHARACTER_MAXIMUM_LENGTH: 8, SQL_TYPE_NAME: "VARCHAR () FOR BIT DATA" },
+      "VARCHAR(8) FOR BIT DATA",
+    ],
+    // VARCHAR(20 CODEUNITS32) and GRAPHIC(5 CODEUNITS32): neither view keeps the units, so the length is the
+    // type's default units', a documented limit.
+    [{ DATA_TYPE: "CHARACTER VARYING", CHARACTER_MAXIMUM_LENGTH: 80, SQL_TYPE_NAME: "VARCHAR" }, "VARCHAR(80)"],
+    [{ DATA_TYPE: "GRAPHIC", CHARACTER_MAXIMUM_LENGTH: 10, SQL_TYPE_NAME: "GRAPHIC" }, "GRAPHIC(10)"],
+    [{ DATA_TYPE: "GRAPHIC VARYING", CHARACTER_MAXIMUM_LENGTH: 20 }, "VARGRAPHIC(20)"],
+    [{ DATA_TYPE: "CHARACTER LARGE OBJECT", CHARACTER_MAXIMUM_LENGTH: 1048576 }, "CLOB(1048576)"],
+    [{ DATA_TYPE: "DOUBLE-BYTE CHARACTER LARGE OBJECT", CHARACTER_MAXIMUM_LENGTH: 1024 }, "DBCLOB(1024)"],
+    [{ DATA_TYPE: "BINARY LARGE OBJECT", CHARACTER_MAXIMUM_LENGTH: 1048576 }, "BLOB(1048576)"],
+    [{ DATA_TYPE: "VARBINARY", SQL_TYPE_NAME: "VARBINARY", COLUMN_SIZE: 16 }, "VARBINARY(16)"],
+    [{ DATA_TYPE: "BINARY", SQL_TYPE_NAME: "BINARY", COLUMN_SIZE: 8 }, "BINARY(8)"],
+    // SYSIBM.COLUMNS keeps no binary length; without the SQLCOLUMNS row the length is not shown, never guessed.
+    [{ DATA_TYPE: "VARBINARY" }, "VARBINARY"],
+    // A distinct-type column: DATA_TYPE USER-DEFINED, and the type's own name in UDT_NAME (capture 16).
+    [{ DATA_TYPE: "USER-DEFINED", UDT_NAME: "LIBREDB_VF_MONEY" }, "LIBREDB_VF_MONEY"],
+    [{ DATA_TYPE: "DECFLOAT" }, "DECFLOAT"],
+    [{ DATA_TYPE: "DECFLOAT", DECFLOAT_PRECISION: 16 }, "DECFLOAT(16)"],
+    [{ DATA_TYPE: "DECFLOAT", DECFLOAT_PRECISION: 34 }, "DECFLOAT(34)"],
+    [{ DATA_TYPE: "XML" }, "XML"],
+    [{ DATA_TYPE: "BOOLEAN" }, "BOOLEAN"],
+  ])("%p is %p", (fields, expected) => {
+    expect(catalog.valueFreeColumnType(row(fields))).toBe(expected);
+  });
+
+  test("a value-free row describes a column as the catalog's row does", () => {
+    const detail = objectDetailFromRows(
+      ["APP", "ORDERS"],
+      "APP",
+      {
+        columns: [
+          { COLUMN_NAME: "ID", DATA_TYPE: "INTEGER", NULLS: "N", KEYSEQ: 1, DEFAULT_BYTES: null, DEFAULT_LENGTH: null },
+          {
+            COLUMN_NAME: "TOTAL",
+            DATA_TYPE: "DECIMAL",
+            NUMERIC_PRECISION: 12,
+            NUMERIC_SCALE: 2,
+            NULLS: "Y",
+            KEYSEQ: null,
+            DEFAULT_BYTES: hex("0"),
+            DEFAULT_LENGTH: 1,
+          },
+        ],
+        foreignKeys: [],
+        indexes: [],
+      },
+      UTF8_CODE_PAGE,
+      catalog.VALUE_FREE_COLUMNS.type,
+    );
+
+    expect(detail.columns).toEqual([
+      { name: "ID", type: "INTEGER", nullable: false, isPrimary: true },
+      { name: "TOTAL", type: "DECIMAL(12,2)", nullable: true, isPrimary: false, defaultValue: "0" },
+    ]);
+  });
+
+  test("a DECFLOAT column waits for a describe only in the value-free source", () => {
+    expect(catalog.isUndescribedDecfloat({ DATA_TYPE: "DECFLOAT" })).toBe(true);
+    expect(catalog.isUndescribedDecfloat({ DATA_TYPE: "DECFLOAT", DECFLOAT_PRECISION: 34 })).toBe(false);
+    expect(catalog.isUndescribedDecfloat({ DATA_TYPE: "INTEGER" })).toBe(false);
+  });
+
+  test("the zero-row describe names the table delimited, so no name can widen it", () => {
+    expect(catalog.zeroRowDescribeSql("APP", 'A"B')).toBe('SELECT * FROM "APP"."A""B" WHERE 1 = 0');
+  });
+
+  test("the describe answers each DECFLOAT column's precision as db2-node reports it (measured on 1.0.25)", () => {
+    const precisions = catalog.decfloatPrecisions([
+      { name: "C_DF16", typeName: "DecFloat(16)", nullable: true, precision: 16 },
+      { name: "C_DF34", typeName: "DecFloat(34)", nullable: true, precision: 34 },
+      { name: "C_DEC", typeName: "Decimal { precision: 31, scale: 5 }", nullable: true, precision: 31, scale: 5 },
+      { name: "C_ODD", typeName: "DecFloat(7)", nullable: true, precision: 7 },
+      { name: "C_NONE", typeName: "DecFloat(16)", nullable: true },
+    ]);
+
+    expect([...precisions]).toEqual([
+      ["C_DF16", 16],
+      ["C_DF34", 34],
+    ]);
+  });
+
+  test("the describable tables are base tables with a DECFLOAT column that the session's grantees may read", () => {
+    const sql = catalog.DECFLOAT_DESCRIBABLE_SQL;
+    expect(sql).toContain("t.TYPE = 'T'");
+    expect(sql).toContain("c.DATA_TYPE = 'DECFLOAT'");
+    expect(sql).toContain("SYSCAT.TABAUTH");
+    expect(sql).toContain("SELECTAUTH <> 'N'");
+    expect(sql).toContain("CONTROLAUTH <> 'N'");
+    expect(sql).toContain("SELECTINAUTH <> 'N'");
+    expect(sql).toContain("'DATAACCESS'");
+    expect(sql.match(/\?/g)).toHaveLength(1);
+  });
+});

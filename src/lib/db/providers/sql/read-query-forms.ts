@@ -33,6 +33,9 @@ import type { DatabaseType } from "@/lib/types";
  * Measured on 2026-11-02: Couchbase Server 8.0.2 Enterprise, through the agent read-only path, runs a `SELECT` (a
  * `WITH` before it too) and pages it with `LIMIT n OFFSET m`, while the path's statement check refuses `EXPLAIN` and
  * every other statement before it is sent, and SQL++ has no bare `VALUES` or `TABLE` statement.
+ * Measured on 2026-11-02: Db2 12.1.0.0, through the agent read-only path, which sends the statement inside a derived
+ * table, runs a `SELECT`, a `WITH` and a bare `VALUES`, answers `TABLE` and `EXPLAIN` with SQL0104N, and pages with
+ * `OFFSET m ROWS FETCH NEXT n ROWS ONLY` inside that table.
  */
 export interface ReadQueryForms {
   /** The statements, as the refusal names them after "runs one read-only statement:". */
@@ -91,7 +94,14 @@ export const READ_QUERY_FORMS: Readonly<Record<DatabaseType, ReadQueryForms | nu
     pagesWithOffset: true,
     rowLimit: { own: "FETCH FIRST, OFFSET ... FETCH or ROWNUM", add: "FETCH FIRST n ROWS ONLY" },
   },
-  db2: null,
+  // Only a fullselect fits the derived table the agent path sends: TABLE and EXPLAIN are SQL0104N there. FETCH FIRST,
+  // OFFSET ... FETCH and LIMIT each make a query its own limit, as the query analyzer reads it.
+  db2: {
+    statements: "a SELECT (a WITH is fine), or VALUES",
+    paging: "ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY",
+    pagesWithOffset: true,
+    rowLimit: { own: "FETCH FIRST, OFFSET ... FETCH or LIMIT", add: "FETCH FIRST n ROWS ONLY" },
+  },
   // No bare VALUES, no TABLE statement and no EXPLAIN.
   mssql: {
     statements: "a SELECT (a WITH is fine)",

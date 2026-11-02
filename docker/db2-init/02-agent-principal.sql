@@ -5,7 +5,9 @@
 -- The agent's check before each statement refuses a user whose groups, roles or PUBLIC hold anything that writes or
 -- runs outside the read (docs/providers/db2.md, "The agent user"). A fresh 12.1 database gives PUBLIC exactly these,
 -- so they are revoked here, from every user of this database: UPDATE on the statistics views, SELECT on the catalog's
--- distribution statistics, whose COLVALUE column holds stored values of every table's columns, CREATEIN and DROPIN on
+-- distribution statistics, whose COLVALUE column holds stored values of every table's columns, SELECT on the seven
+-- column catalog objects whose HIGH2KEY and LOW2KEY columns hold the second highest and lowest stored value of every
+-- column (SYSCAT.COLUMNS among them: grant it back to each user or role that reads it), CREATEIN and DROPIN on
 -- the public alias schema SYSPUBLIC, CREATEIN on SYSTOOLS, and EXECUTE on the SYSIBMADM modules whose functions the
 -- catalog marks EXTERNAL ACTION or MODIFIES SQL DATA. The EXECUTE revokes on the SYSPROC procedures that write a server
 -- file, reach another server or schedule work, and on DBMS_JOB, are hygiene the check does not need: an agent statement
@@ -36,6 +38,13 @@ REVOKE SELECT ON SYSCAT.COLGROUPDIST FROM PUBLIC;
 REVOKE SELECT ON SYSSTAT.COLDIST FROM PUBLIC;
 REVOKE SELECT ON SYSSTAT.COLDISTPARTITIONSTATS FROM PUBLIC;
 REVOKE SELECT ON SYSSTAT.COLGROUPDIST FROM PUBLIC;
+REVOKE SELECT ON SYSCAT.COLUMNS FROM PUBLIC;
+REVOKE SELECT ON SYSCAT.SYSCOLUMNS_UNION FROM PUBLIC;
+REVOKE SELECT ON SYSCAT.COLPARTITIONSTATS FROM PUBLIC;
+REVOKE SELECT ON SYSIBM.SYSCOLUMNS FROM PUBLIC;
+REVOKE SELECT ON SYSIBM.SYSCOLPARTITIONSTATS FROM PUBLIC;
+REVOKE SELECT ON SYSSTAT.COLUMNS FROM PUBLIC;
+REVOKE SELECT ON SYSSTAT.COLPARTITIONSTATS FROM PUBLIC;
 REVOKE CREATEIN, DROPIN ON SCHEMA SYSPUBLIC FROM PUBLIC;
 REVOKE CREATEIN ON SCHEMA SYSTOOLS FROM PUBLIC;
 REVOKE EXECUTE ON SPECIFIC PROCEDURE SYSPROC.ADMIN_CMD FROM PUBLIC RESTRICT;

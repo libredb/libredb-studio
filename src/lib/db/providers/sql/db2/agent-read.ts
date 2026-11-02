@@ -40,7 +40,9 @@
  *    reading only (`reading-functions.ts`). IBM's procedures are admitted: the agent's statement is a fullselect in a
  *    derived table, where no `CALL` fits, so only a function or method can be invoked. They read or write no global
  *    variable that is not IBM's, whose default can call code. A grant on every routine of a schema is refused when
- *    any routine there is not admitted. An IBM function, method or module counts only through a grant the database
+ *    any routine there is not admitted. The casts and comparisons Db2 generates for a distinct type count as IBM's,
+ *    identified by their own catalog rows (`generatedForDistinctType`): `CREATE DISTINCT TYPE` grants PUBLIC EXECUTE
+ *    on them, and taking that away would take the type's casts from every user. An IBM function, method or module counts only through a grant the database
  *    made for itself (`GRANTORTYPE` S), or a SYSIBM or SYSFUN function, which needs none: IBM's monitor readers, such
  *    as `MON_GET_PKG_CACHE_STMT` and the MONREPORT module, keep to the call by their own rows, and a fresh database
  *    grants them to no one, so a user's grant is what shows other sessions' statements (measured).
@@ -54,10 +56,12 @@
  *    that calls a routine of an IBM module depends on the module itself, so it is refused whatever the routine reads.
  * 5. They may read none of the catalog's distribution statistics: an IBM table or view with a `COLVALUE` column, whose
  *    rows hold the most frequent values and the quantiles of every table's columns after `RUNSTATS`, so the user
- *    read values of a table it holds no SELECT on (measured). A fresh database lets PUBLIC read all nine. The second
- *    highest and lowest values `SYSCAT.COLUMNS` keeps as `HIGH2KEY` and `LOW2KEY` stay readable: the provider's own
- *    catalog reads need that view, and Db2 grants no SELECT on a column alone (B168). Nor may they read an IBM table
- *    or view through a user's grant that no grant of the database's matches, such as `SYSIBMADM.MON_CURRENT_SQL`.
+ *    read values of a table it holds no SELECT on (measured). A fresh database lets PUBLIC read all nine. Nor any of
+ *    the seven that keep the second highest and lowest value of every column as `HIGH2KEY` and `LOW2KEY`,
+ *    `SYSCAT.COLUMNS` among them, which a fresh database also lets PUBLIC read (capture 13); Db2 grants no SELECT on a
+ *    column alone, so the provider reads columns from value-free sources under the agent profiles (`catalog.ts`).
+ *    Nor may they read an IBM table or view through a user's grant that no grant of the database's matches, such as
+ *    `SYSIBMADM.MON_CURRENT_SQL`.
  * 6. `SYSCAT.CONTROLS` lists no row permission or column mask anywhere in the database that is not IBM's: Db2 evaluates
  *    it for any reader of the table it guards, a reader through a view included, and it can call a secured function
  *    with its owner's authority (measured). A fresh database holds five, IBM's own masks on its catalog tables.
@@ -83,7 +87,7 @@ export type Db2AgentReader = (sql: string) => Promise<Rows>;
 const list = (names: readonly string[]) => names.map((name) => `'${name}'`).join(", ");
 
 /** The session's grantees as a common table expression `G`, each with the type the catalog's grantee columns use. */
-const GRANTEES =
+export const GRANTEES =
   "G (GRANTEE, GRANTEETYPE) AS (VALUES (CAST(SESSION_USER AS VARCHAR(128)), CAST('U' AS CHAR(1))), " +
   "(CAST('PUBLIC' AS VARCHAR(128)), CAST('G' AS CHAR(1))) " +
   "UNION SELECT CAST(a.\"GROUP\" AS VARCHAR(128)), CAST('G' AS CHAR(1)) " +
@@ -153,24 +157,61 @@ function unreadableIbm(schema: string, name: string): string {
   );
 }
 
-/**
- * The `SYSCAT.ROUTINES` row `alias` is IBM's, and a procedure or a routine that keeps to the call. A procedure is
- * admitted because the agent's statement is a fullselect in a derived table, where no `CALL` fits: only a function or
- * method can be invoked from it.
- */
-function admittedRoutine(alias: string): string {
-  return `COALESCE(${alias}.OWNERTYPE, '') = 'S' AND (COALESCE(${alias}.ROUTINETYPE, '') = 'P' OR ${keepsToTheCall(alias)})`;
+/** The `SYSCAT.ROUTINEPARMS` row `parm` is of a distinct type in the routine `alias`'s own schema, sourced on IBM's. */
+function distinctTypeOf(parm: string, alias: string): string {
+  return (
+    `EXISTS (SELECT 1 FROM SYSCAT.DATATYPES y WHERE y.TYPESCHEMA = ${parm}.TYPESCHEMA AND y.TYPENAME = ${parm}.TYPENAME ` +
+    `AND y.TYPESCHEMA = ${alias}.ROUTINESCHEMA AND y.METATYPE = 'T' AND y.SOURCESCHEMA = 'SYSIBM')`
+  );
 }
 
 /**
- * The table or view `schema`.`name` names is IBM's and holds a `COLVALUE` column: the catalog's distribution
- * statistics, read by the catalog's own rows rather than by a list of names.
+ * The `SYSCAT.ROUTINES` row `alias` is a function Db2 generated for a distinct type: its two casts and, `WITH
+ * COMPARISONS`, its six comparisons. `CREATE DISTINCT TYPE` makes them in the type's schema, owned by the type's owner
+ * (`OWNERTYPE` U), with `ORIGIN` S, no source routine, blank `EXTERNAL_ACTION` and `SQL_DATA_ACCESS`, and grants PUBLIC
+ * EXECUTE on each through the database's own grant (`GRANTORTYPE` S). Each is identified by its own rows: `ORIGIN` S,
+ * every parameter and its result the distinct type or an IBM type, at least one the distinct type, and implemented by
+ * IBM's function (a comparison's `IMPLEMENTATION` names `SYSIBM.=` and the like) or by none (a cast). A user cannot make
+ * such a row: Db2 refuses to drop, alter or replace a generated function (SQL0658N), a function of the same signature
+ * (SQL0454N) and one named like a comparison (SQL0457N), and a function a user sources on a generated one reads `ORIGIN`
+ * U. A structured, array or row type's generated routines are not of a distinct type, so they stay refused (measured on
+ * 12.1.0.0).
+ */
+function generatedForDistinctType(alias: string): string {
+  return (
+    `COALESCE(${alias}.ORIGIN, '') = 'S' AND COALESCE(${alias}.ROUTINETYPE, '') = 'F' ` +
+    `AND (${alias}.IMPLEMENTATION IS NULL OR ${alias}.IMPLEMENTATION LIKE 'SYSIBM.%') ` +
+    `AND EXISTS (SELECT 1 FROM SYSCAT.ROUTINEPARMS w WHERE w.ROUTINESCHEMA = ${alias}.ROUTINESCHEMA ` +
+    `AND w.SPECIFICNAME = ${alias}.SPECIFICNAME AND ${distinctTypeOf("w", alias)}) ` +
+    `AND NOT EXISTS (SELECT 1 FROM SYSCAT.ROUTINEPARMS w WHERE w.ROUTINESCHEMA = ${alias}.ROUTINESCHEMA ` +
+    `AND w.SPECIFICNAME = ${alias}.SPECIFICNAME AND COALESCE(w.TYPESCHEMA, '') <> 'SYSIBM' ` +
+    `AND NOT ${distinctTypeOf("w", alias)})`
+  );
+}
+
+/**
+ * The `SYSCAT.ROUTINES` row `alias` is IBM's or one Db2 generated for a distinct type, and a procedure or a routine
+ * that keeps to the call. A procedure is admitted because the agent's statement is a fullselect in a derived table,
+ * where no `CALL` fits: only a function or method can be invoked from it.
+ */
+function admittedRoutine(alias: string): string {
+  return (
+    `(COALESCE(${alias}.OWNERTYPE, '') = 'S' OR ${generatedForDistinctType(alias)}) ` +
+    `AND (COALESCE(${alias}.ROUTINETYPE, '') = 'P' OR ${keepsToTheCall(alias)})`
+  );
+}
+
+/**
+ * The table or view `schema`.`name` names is IBM's and holds a `COLVALUE`, `HIGH2KEY` or `LOW2KEY` column: the
+ * catalog's distribution statistics, or the column statistics' second highest and lowest values, read by the catalog's
+ * own rows rather than by a list of names. The columns are read from `SYSIBM.COLUMNS`, which lists IBM's own objects
+ * and keeps no stored value (capture 16), since the seed revokes `SYSCAT.COLUMNS` from PUBLIC.
  */
 function storedValues(schema: string, name: string): string {
   return (
-    "EXISTS (SELECT 1 FROM SYSCAT.TABLES t JOIN SYSCAT.COLUMNS c ON c.TABSCHEMA = t.TABSCHEMA " +
-    `AND c.TABNAME = t.TABNAME WHERE t.TABSCHEMA = ${schema} AND t.TABNAME = ${name} AND t.OWNERTYPE = 'S' ` +
-    "AND c.COLNAME = 'COLVALUE')"
+    "EXISTS (SELECT 1 FROM SYSCAT.TABLES t JOIN SYSIBM.COLUMNS c ON c.TABLE_SCHEMA = t.TABSCHEMA " +
+    `AND c.TABLE_NAME = t.TABNAME WHERE t.TABSCHEMA = ${schema} AND t.TABNAME = ${name} AND t.OWNERTYPE = 'S' ` +
+    "AND c.COLUMN_NAME IN ('COLVALUE', 'HIGH2KEY', 'LOW2KEY'))"
   );
 }
 
@@ -479,8 +520,8 @@ function reachFinding(rows: Rows): Finding | null {
   return {
     what:
       "it may read a view that calls code that is not IBM's, an IBM function that acts outside the call or modifies " +
-      "data, or one the database's own grants do not let the user call, or reads the catalog's distribution " +
-      "statistics, an IBM table or view the database's own grants do not let the user read, or a view or alias the " +
+      "data, or one the database's own grants do not let the user call, or reads the catalog's distribution or " +
+      "column statistics, an IBM table or view the database's own grants do not let the user read, or a view or alias the " +
       "check cannot follow, a view that is not valid, or a nickname, which reads another server; each runs with its " +
       "owner's authority",
     statements: rows.map((row) => {
@@ -494,7 +535,7 @@ function statisticsFinding(rows: Rows): Finding | null {
   if (rows.length === 0) return null;
   return {
     what:
-      "it may read the catalog's distribution statistics, which hold stored values of every table's columns, " +
+      "it may read the catalog's distribution or column statistics, which hold stored values of every table's columns, " +
       "whether or not it may read the table, or an IBM table or view only a grant a user made lets it read, such as " +
       "a monitor view of other sessions' statements",
     statements: rows.map((row) => revoke(row, "statistics")),
