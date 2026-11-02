@@ -2,13 +2,10 @@
  * Functional smoke: the product's reason to exist, end to end - boot the real
  * app, log in, create a PostgreSQL connection through the real connection
  * modal, run a SQL query, and see the rows in the results grid. This is the
- * invariant no change may break (the maintainer loop runs it as the last step
- * before declaring a milestone complete; CI runs it with the regular E2E job).
+ * invariant no change may break (CI runs it in the functional-smoke job).
  *
  * The spec manages its own throwaway PostgreSQL container. Without a Docker
- * daemon the spec SKIPS (annotated) - fine for a dev machine; the loop's
- * close-out wrapper (loop/scripts/functional-smoke.sh) hard-fails on missing
- * Docker instead, so the loop can never pass this gate vacuously.
+ * daemon the spec SKIPS (annotated) - fine for a dev machine.
  */
 import { execFileSync } from "node:child_process";
 import { expect, test } from "@playwright/test";

@@ -1982,7 +1982,7 @@ left byte-identical, so a marker the model reconstructs is defanged there as wel
 **Database content is untrusted input.** A table name, a column comment, a row value and an engine
 error message all come from whoever can write to the database, so everything crossing into a prompt
 is fenced first: a header naming what the content is and where it came from, and a stated boundary
-the content cannot forge. This is the same firewall the maintainer loop applies to public issue text.
+the content cannot forge.
 
 **A binary cell reaches the model as hex, not as its wire JSON** (2026-08-24). A `bytea`, `BLOB` or
 `blob` value used to be put in the prompt by a plain `JSON.stringify`, so the model was handed

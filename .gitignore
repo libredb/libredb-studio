@@ -176,8 +176,6 @@ deploy/rancher/results/
 docs/summaries/
 docs/archived/
 
-# Maintainer loop runtime artifacts (not source)
-.loop/
 .tokens
 
 # DO marketplace scripts fetched at build time (see deploy/digitalocean/README.md)

@@ -28,7 +28,7 @@
  *     request; the run's own loop honours it at its next step checkpoint and ends
  *     the run, releasing its budget and its artifacts together. Nothing relies on
  *     a cancel propagating out of a database driver — after the tool layer's own
- *     commit it does not (recorded in `.loop/PROGRESS.md` for T6).
+ *     commit it does not.
  *
  * Cost, stated because it is a real trade: every operation folds the run's whole
  * ledger before acting, and the record returned after an append is re-read rather

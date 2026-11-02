@@ -23,8 +23,7 @@
  * The chart block covers the one deployment constraint the runtime imposes (the
  * zero-config durable backend takes file locks, so it is single-instance) plus the
  * verbatim operator copy of the chart, which is the mistake a chart edit made outside
- * `bun run chart:bump` actually produces — CI catches it, and the maintainer loop
- * cannot push, so this is the only local guard.
+ * `bun run chart:bump` actually produces — CI catches it, and this is the local guard.
  */
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";

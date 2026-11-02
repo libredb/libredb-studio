@@ -8,8 +8,7 @@
  *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name (`EXCLUDED` in
  * `tests/runner/discover.ts`). CI runs it in the "Functional Smoke (PostgreSQL, MongoDB, RabbitMQ)" job of
- * .github/workflows/ci.yml, and loop/scripts/functional-smoke.sh runs it locally. It needs Docker
- * and nothing else:
+ * .github/workflows/ci.yml. It needs Docker and nothing else:
  *
  *   bun tests/live/postgres-read-only-live.ts
  *
