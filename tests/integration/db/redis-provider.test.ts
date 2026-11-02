@@ -600,7 +600,7 @@ mock.module("ioredis", () => {
      * redis 8.10.0 refuses `SELECT 99` with on a stock 16-database server.
      */
     async select(db: number) {
-      if (db >= Number(databasesReply[1])) throw new Error("ERR DB index is out of range");
+      if (db >= Number(databasesReply[1])) throw replyError("ERR DB index is out of range");
       this._db = db;
       this._state.database = db;
       return "OK";

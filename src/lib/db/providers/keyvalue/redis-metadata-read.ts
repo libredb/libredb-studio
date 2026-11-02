@@ -148,6 +148,9 @@ function codeOf(message: string): string | undefined {
   return match !== null && NAMED_CODES.has(match[1]) ? match[1] : undefined;
 }
 
+/** The error ioredis rejects a command with when its `commandTimeout` passes without an answer. */
+export const REDIS_COMMAND_TIMED_OUT = "Command timed out";
+
 /**
  * The agent's wording of a failure, or undefined for one the provider passes on as it is (a refused connect, whose
  * words name the host and the credential's fate, never a key). A server's error line is worded by its code alone, a
@@ -160,7 +163,7 @@ export function redisAgentFailure(
 ): QueryError | undefined {
   if (error instanceof MetadataProjectionError) return new QueryError(error.message, "redis", statement);
   if (!(error instanceof Error)) return undefined;
-  if (error.message === "Command timed out") {
+  if (error.message === REDIS_COMMAND_TIMED_OUT) {
     return new QueryError(`${TIME_BUDGET_PREFIX}: no answer within ${budget.statementTimeoutMs}ms`, "redis", statement);
   }
   if (error.name !== "ReplyError") return undefined;
