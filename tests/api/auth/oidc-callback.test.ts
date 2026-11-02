@@ -436,35 +436,43 @@ describe("GET /api/auth/oidc/callback", () => {
     }
   });
 
-  test("OIDC callback preserves the mount through exchange, redirect and state cleanup", async () => {
-    await withBasePathEnv("/tools/libredb", async () => {
-      mockCookieGet.mockReturnValue({ value: "encrypted-state-cookie" });
-      mockDecryptState.mockResolvedValue({ code_verifier: "v", state: "s", nonce: "n" });
-      mockGetOIDCConfig.mockImplementation(() => ({
-        issuer: "https://example.auth0.com",
-        clientId: "id",
-        clientSecret: "secret",
-        scope: "openid",
-        roleClaim: "roles",
-        rolePrefix: undefined,
-        adminRoles: ["admin"],
-        userRoles: ["user"],
-      }));
-      mockExchangeCode.mockResolvedValue(exchanged({ ...defaultClaims }));
-      mockExchangeCode.mockClear();
-      mockMapOIDCRole.mockReturnValue("user");
-      mockCookieStore.delete.mockClear();
-      const url = "https://studio.example/tools/libredb/api/auth/oidc/callback?code=c&state=s";
-      const response = await GET(new Request(url));
-      expect(mockExchangeCode.mock.calls[0]?.[1]?.toString()).toBe(url);
-      expect(response.headers.get("location")).toBe("https://studio.example/tools/libredb/");
-      expect(mockCookieStore.delete).toHaveBeenCalledWith({ name: "oidc-state", path: "/tools/libredb" });
-      mockCookieGet.mockReturnValue(undefined);
-      expect((await GET(new Request(url))).headers.get("location")).toBe(
-        "https://studio.example/tools/libredb/login?error=oidc_state_missing",
-      );
-    });
-  });
+  test.each(["", "/studio", "/tools/libredb"])(
+    "OIDC callback restores the public mount %s for token exchange",
+    async (basePath) => {
+      await withBasePathEnv(basePath, async () => {
+        mockCookieGet.mockReturnValue({ value: "encrypted-state-cookie" });
+        mockDecryptState.mockResolvedValue({ code_verifier: "v", state: "s", nonce: "n" });
+        mockGetOIDCConfig.mockImplementation(() => ({
+          issuer: "https://example.auth0.com",
+          clientId: "id",
+          clientSecret: "secret",
+          scope: "openid",
+          roleClaim: "roles",
+          rolePrefix: undefined,
+          adminRoles: ["admin"],
+          userRoles: ["user"],
+        }));
+        mockExchangeCode.mockResolvedValue(exchanged({ ...defaultClaims }));
+        mockExchangeCode.mockClear();
+        mockMapOIDCRole.mockReturnValue("user");
+        mockCookieStore.delete.mockClear();
+        mockGetPublicOrigin.mockReturnValue("https://studio.example");
+        // Next.js removes the base path from the route-handler URL.
+        const url = "http://localhost:3000/api/auth/oidc/callback?code=c%2B1&state=s%2F2";
+        const response = await GET(new Request(url));
+        expect(mockExchangeCode.mock.calls[0]?.[1]?.toString()).toBe(
+          `https://studio.example${basePath}/api/auth/oidc/callback?code=c%2B1&state=s%2F2`,
+        );
+        expect(mockExchangeCode.mock.calls[0]?.slice(2)).toEqual(["v", "s", "n"]);
+        expect(response.headers.get("location")).toBe(`https://studio.example${basePath}/`);
+        expect(mockCookieStore.delete).toHaveBeenCalledWith({ name: "oidc-state", path: basePath || "/" });
+        mockCookieGet.mockReturnValue(undefined);
+        expect((await GET(new Request(url))).headers.get("location")).toBe(
+          `https://studio.example${basePath}/login?error=oidc_state_missing`,
+        );
+      });
+    },
+  );
 
   describe("OIDC_LOGOUT_HINT", () => {
     const originalHint = process.env.OIDC_LOGOUT_HINT;
