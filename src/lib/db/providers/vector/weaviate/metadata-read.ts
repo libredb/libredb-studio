@@ -19,7 +19,9 @@
  *   read is worded as one that does not exist (`data-scope/alias-docs-scoped`, `alias-missing-scoped`).
  * - **A name in a collection's place.** Weaviate resolves an alias there and checks the target's grants alone
  *   (`data-scope/collection-alias-scoped` and the other `*-alias-*` captures), so a name is sent there only when the
- *   key's own collection list or alias list, which the server filters by its grants, holds it.
+ *   key's own collection list or alias list, which the server filters by its grants, holds it, and an alias is sent
+ *   as the collection its list entry names: the server resolves an alias when the request arrives, so an alias
+ *   repointed after the list was read would otherwise be answered as a collection the list never showed.
  *
  * Pure: it receives the answers and never a client.
  */
@@ -167,14 +169,21 @@ const ALIASES_REQUEST: WeaviateRequest = Object.freeze({
   query: Object.freeze({}),
 });
 
-/** The names one of the key's own lists holds: each entry's `key`, from the list under `field`. */
-async function listedNames(
+/**
+ * The agent's refusal of a count through an alias that the server answers over GraphQL alone: the GraphQL document
+ * names the collection as the request was written, so it would name the alias, which the server resolves when the
+ * request arrives rather than as the key's alias list named it.
+ */
+export const WEAVIATE_AGENT_ALIAS_GRAPHQL =
+  "This server answers the count over GraphQL, whose request would name the alias, and agent mode sends an alias only as the collection the key's alias list names. Name that collection, which GET /v1/aliases lists, instead. Nothing was counted.";
+
+/** The entries of one of the key's own lists, from the list under `field`. */
+async function listEntries(
   send: (request: WeaviateRequest, signal: AbortSignal) => Promise<WeaviateAnswer>,
   request: WeaviateRequest,
   field: "classes" | "aliases",
-  key: "class" | "alias",
   signal: AbortSignal,
-): Promise<readonly string[]> {
+): Promise<readonly Json[]> {
   const answer = await send(request, signal);
   const failure = answerFailure(answer);
   if (failure !== undefined) throw failure;
@@ -184,26 +193,36 @@ async function listedNames(
   } catch {
     throw shapeError();
   }
-  return objects(object(parsed)[field] ?? []).map((entry) => {
-    const name = entry[key];
-    if (typeof name !== "string") throw shapeError();
-    return name;
-  });
+  return objects(object(parsed)[field] ?? []);
+}
+
+/** An entry's name under `key`, which must be a string. */
+function entryName(entry: Json, key: "class" | "alias"): string {
+  const name = entry[key];
+  if (typeof name !== "string") throw shapeError();
+  return name;
 }
 
 /**
- * Whether the key's own lists hold `name`, exactly as spelled: its collection list, `GET /v1/schema`, then its alias
- * list, `GET /v1/aliases`, read only when the first does not hold it. The server filters both by the key's grants
- * (`data-scope/schema-scoped`, `aliases-scoped`), so a name held by neither is one the key may not read or one that
- * does not exist. A list the server refuses throws its failure, and one Studio cannot read is withheld.
+ * The collection the key's own lists name for `name`, exactly as spelled, or undefined when neither holds it: its
+ * collection list, `GET /v1/schema`, answers a collection as itself, and its alias list, `GET /v1/aliases`, read only
+ * when the first does not hold the name, answers an alias as the collection its entry names. The server filters both
+ * by the key's grants (`data-scope/schema-scoped`, `aliases-scoped`), so a name held by neither is one the key may not
+ * read or one that does not exist. A list the server refuses throws its failure, and one Studio cannot read is
+ * withheld.
  */
-export async function keyListsWeaviateName(
+export async function weaviateListedCollection(
   send: (request: WeaviateRequest, signal: AbortSignal) => Promise<WeaviateAnswer>,
   name: string,
   signal: AbortSignal,
-): Promise<boolean> {
-  if ((await listedNames(send, SCHEMA_REQUEST, "classes", "class", signal)).includes(name)) return true;
-  return (await listedNames(send, ALIASES_REQUEST, "aliases", "alias", signal)).includes(name);
+): Promise<string | undefined> {
+  const classes = await listEntries(send, SCHEMA_REQUEST, "classes", signal);
+  if (classes.some((entry) => entryName(entry, "class") === name)) return name;
+  const aliases = await listEntries(send, ALIASES_REQUEST, "aliases", signal);
+  for (const entry of aliases) {
+    if (entryName(entry, "alias") === name) return entryName(entry, "class");
+  }
+  return undefined;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

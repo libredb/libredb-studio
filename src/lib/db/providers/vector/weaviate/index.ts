@@ -53,13 +53,14 @@ import {
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import type { QueryWarning } from "@/lib/types";
 import {
-  keyListsWeaviateName,
   keylessAgentRefusal,
   proveWeaviateViewer,
   shapeWeaviateAgentAnswer,
+  WEAVIATE_AGENT_ALIAS_GRAPHQL,
   WEAVIATE_AGENT_UNREADABLE,
   WEAVIATE_METADATA_ONLY,
   weaviateAgentFailure,
+  weaviateListedCollection,
 } from "./metadata-read";
 import { readWeaviateAgentStatement } from "./metadata-request";
 import type {
@@ -398,8 +399,9 @@ export class WeaviateProvider extends BaseDatabaseProvider {
    * request's own deadline, the server is asked again who the key is, with no verdict kept from the open or the
    * request before, and the request runs as the console runs it, the tenant's own record read first so a COLD
    * tenant is refused rather than woken, with a path memory of its own. A request whose path names a collection is
-   * sent only when the key's own collection or alias list holds the name, since the server reads an alias there as
-   * the collection it names. Its answer is the metadata-only projection of its operation, refused past the row or
+   * sent only when the key's own collection or alias list holds the name, and an alias is sent as the collection the
+   * alias list names, since the server reads an alias there as whatever collection it names when the request arrives;
+   * a count the server answers over GraphQL alone, whose document names the alias, is refused. Its answer is the metadata-only projection of its operation, refused past the row or
    * byte budget rather than cut, and a server refusal is worded without the server's words, a refusal and a not-found
    * of a named collection, alias, tenant or shard in one sentence.
    */
@@ -416,15 +418,28 @@ export class WeaviateProvider extends BaseDatabaseProvider {
     if (!reading.ok) throw new RefusedBeforeSendError(reading.message, this.type, statement);
     const { client, options } = session;
     const signal = AbortSignal.timeout(budget.statementTimeoutMs);
-    // A name where a collection's name stands is sent only when the key's own lists hold it; once per request.
-    const admitted = new Set<string>();
+    // A name where a collection's name stands is sent only when the key's own lists hold it, and as the collection
+    // they name, so the server checks exactly that collection; the lists are read once per request.
+    const admitted = new Map<string, string>();
+    const admit = async (name: string, read: AbortSignal): Promise<string> => {
+      const known = admitted.get(name);
+      if (known !== undefined) return known;
+      const listed = await weaviateListedCollection((list, at) => client.send(list, at), name, read);
+      if (listed === undefined) throw new QueryError(WEAVIATE_AGENT_UNREADABLE, this.type, statement);
+      admitted.set(name, listed);
+      return listed;
+    };
     const send = async (request: WeaviateRequest, read: AbortSignal): Promise<WeaviateAnswer> => {
       const name = request.params.collection;
-      if (name !== undefined && !admitted.has(name)) {
-        if (!(await keyListsWeaviateName((list, at) => client.send(list, at), name, read))) {
-          throw new QueryError(WEAVIATE_AGENT_UNREADABLE, this.type, statement);
-        }
-        admitted.add(name);
+      if (name !== undefined) {
+        const collection = await admit(name, read);
+        return client.send({ ...request, params: { ...request.params, collection } }, read);
+      }
+      // A GraphQL count names the collection in its document as the request wrote it, so it is sent for a collection
+      // the key's lists hold as itself and never for an alias.
+      const counted = reading.plan.collection;
+      if (request.op === "graphql" && counted !== null && (await admit(counted, read)) !== counted) {
+        throw new QueryError(WEAVIATE_AGENT_ALIAS_GRAPHQL, this.type, statement);
       }
       return client.send(request, read);
     };

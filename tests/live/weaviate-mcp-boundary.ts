@@ -23,6 +23,9 @@
  *    the key's grants where a collection's name stands, which the server reads as the collection it names, is refused
  *    before the request is sent, and a name that does not exist is answered the sentence a name outside the grants is,
  *    though the server answers the two apart;
+ *  - the alias repoint: while root repoints the alias the scoped key may read between its collection and a tenanted
+ *    collection the key reads directly, parallel reads through the alias are each answered the collection the key's
+ *    alias list named, or refused, and never the tenanted collection the list did not show;
  *  - inspect_schema, through MCP: a key that may read a collection's definition and none of its objects is answered
  *    the collection's columns, its vector's dimension `?`, and no word of the server's;
  *  - a COLD tenant: a count naming it is refused, and the tenant is still COLD after;
@@ -521,6 +524,58 @@ async function theDataScope(): Promise<void> {
   );
 }
 
+/**
+ * The scoped key may read LmNotesAlias only while it names LmNote, and reads LmTenanted's tenant acme directly. Root
+ * repoints the alias between the two in a loop while reads through it run three at a time: an answer naming LmTenanted
+ * or its tenant would be the alias's new target, which the key's alias list did not show when the read was admitted.
+ */
+async function theAliasRepoint(): Promise<void> {
+  const scoped = seed("scoped", keys.scoped);
+  const statements = [
+    "GET /v1/nodes/LmNotesAlias?output=verbose",
+    "GET /v1/schema/LmNotesAlias/tenants",
+    "GET /v1/schema/LmNotesAlias/shards?tenant=acme",
+  ];
+  const calls = statements.flatMap((statement) => Array.from({ length: 40 }, () => statement));
+  const stopping = new AbortController();
+  let flips = 0;
+  const flipping = (async () => {
+    while (!stopping.signal.aborted) {
+      await root("PUT", "/v1/aliases/LmNotesAlias", { class: flips % 2 === 0 ? "LmTenanted" : "LmNote" });
+      flips++;
+    }
+  })();
+  const answers: { statement: string; result: ToolResult }[] = [];
+  try {
+    await Promise.all(
+      [0, 1, 2].map(async (lane) => {
+        for (let index = lane; index < calls.length; index += 3) {
+          const statement = calls[index];
+          answers.push({ statement, result: (await mcp(scoped, { statement })).result });
+        }
+      }),
+    );
+  } finally {
+    stopping.abort();
+    await flipping;
+    await root("PUT", "/v1/aliases/LmNotesAlias", { class: "LmNote" });
+  }
+  // The statement names the tenant acme, so a tenant leaks as a row's value, not as a word anywhere in the result.
+  const leaked = answers.filter(
+    ({ result }) =>
+      JSON.stringify(result).includes("LmTenanted") ||
+      rowsOf(result).some((row) => Object.values(row).includes("acme")),
+  );
+  const served = answers.filter(({ result }) => result.isError === undefined);
+  check(
+    flips > 0 &&
+      answers.length === calls.length &&
+      leaked.length === 0 &&
+      served.every(({ result }) => column(result, "collection").every((name) => name === "LmNote")),
+    `repoint: ${answers.length} reads through LmNotesAlias over ${flips} repoints, ${served.length} answered, ${leaked.length} naming LmTenanted or its tenant${leaked.length === 0 ? "" : ` -> ${leaked[0].statement} ${textOf(leaked[0].result).slice(0, 120)}`}`,
+  );
+}
+
 async function theInspection(): Promise<void> {
   const nodata = seed("nodata", keys.nodata);
   const sampled = await raw(RBAC, keys.nodata, "GET", "/v1/objects?class=LmNote&limit=1&include=vector");
@@ -650,6 +705,7 @@ try {
   await theOpen();
   await theBoundary();
   await theDataScope();
+  await theAliasRepoint();
   await theInspection();
   await theColdTenant();
   await theLimits();

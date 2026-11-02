@@ -440,6 +440,7 @@ A collection's objects are counted with an aggregate and its shards read with `G
 This holds for agent mode as much as for MCP; before it, a verbose node read answered one row per shard, with its name, object count, indexing status and loaded flag.
 A server refusal is worded by its status and category alone, never the server's message.
 Of a request that names a collection, alias, tenant or shard, a refusal and a not-found are one sentence, `WEAVIATE_AGENT_UNREADABLE` in `metadata-read.ts`, since the server answers the two apart: an alias outside the key's grants is 403 and a missing one 404 in any case, and a missing collection or tenant is 404 to a key that may read them all and 403 to one that may not (`data-scope/alias-docs-scoped`, `alias-missing-scoped`, `alias-docs-lower-scoped`, `collection-missing-viewer`, `tenant-missing-viewer`).
+A count through an alias that the server answers over GraphQL alone is refused in its own sentence, `WEAVIATE_AGENT_ALIAS_GRAPHQL`, which names no collection (section 15.8).
 A result past the row or byte budget is refused, never cut, and an estimating plan is refused.
 
 ### 15.6 Agent language pack
@@ -482,8 +483,12 @@ Measured on 1.40.2 with the built-in viewer and with such a role, scoped to one 
 
 The server resolves an alias in a collection's place and checks the grants of the collection it names alone.
 So before a request whose path names a collection is sent, the provider reads the key's own collection list, `GET /v1/schema`, and when that does not hold the name exactly as spelled, the key's own alias list, `GET /v1/aliases`; a name neither holds is refused in the one sentence of section 15.5 and the request is not sent.
-Both lists are the server's own, filtered by the key's grants, and are read for every request, as the viewer proof is, so an alias granted to the key is read through as far as its collection's grants reach, and the collection it names is one the key's alias list already shows.
-The check reads the name from the request the provider sends, not from the agent's reading of the text.
+Both lists are the server's own, filtered by the key's grants, and are read for every request, as the viewer proof is.
+A name the collection list holds is sent as written; an alias the alias list holds is sent as the collection its entry names, never as the alias, so the server checks the grants of exactly that collection.
+The server resolves an alias when the request arrives, so an alias an administrator repoints after the list was read and before the request is sent would otherwise be answered as its new collection, which the key's alias list did not show; sent as the listed collection, it is answered that collection or refused.
+An answer names the collection the list named, which the key's alias list already shows, or the alias as the request wrote it.
+A count the server answers over GraphQL alone, on a line without REST aggregates or with them switched off, names the collection in the GraphQL document as the request wrote it, so a count through an alias is refused there and a count naming the collection is sent.
+The check reads the name from each request the provider sends, not from the agent's reading of the text.
 So tenant and alias names reach an answer only where the server filters them by the key's grants, and a per-tenant count only through a count the server checks against the tenant.
 
 ### 15.9 MCP read
@@ -498,6 +503,6 @@ On a connection already open the two open requests are not sent again; the proof
 The tool takes no `offset` and no `database`; a read past the 1000-row provider budget is refused, never cut, so a collection with more than 1000 tenants cannot be listed and is read one tenant at a time.
 `queryReadOnly` takes no cancel signal: a client cancel ends MCP's wait, and the request stays open until its answer or the provider's transport deadline, set to the time left of `timeout_ms`, closes it (docs/MCP.md, "Limits").
 Measured through a proxy that held a read's answer back: at the minimum `timeout_ms` of 500 the client got the timeout answer after about 500 ms and the provider closed its request then, and a cancel after one second was answered at once while the request stayed open until about four seconds, the time left of a `timeout_ms` of 4000.
-[`tests/live/weaviate-mcp-boundary.ts`](../../tests/live/weaviate-mcp-boundary.ts) replays all of this through the MCP tool's own handler against live 1.40.2 servers: the open for each refused key, every write, object read, search, GraphQL, filter and user or role read refused by the provider's reader with the MCP fence bypassed, the viewer refused the same writes 403 by the server while root runs them, the state unchanged, the data scope of section 15.8 with an alias in a collection's place and a missing name beside one outside the grants, `inspect_schema` for a key that may read no object, a `COLD` tenant, the limits, the timeout and the cancel.
+[`tests/live/weaviate-mcp-boundary.ts`](../../tests/live/weaviate-mcp-boundary.ts) replays all of this through the MCP tool's own handler against live 1.40.2 servers: the open for each refused key, every write, object read, search, GraphQL, filter and user or role read refused by the provider's reader with the MCP fence bypassed, the viewer refused the same writes 403 by the server while root runs them, the state unchanged, the data scope of section 15.8 with an alias in a collection's place and a missing name beside one outside the grants, an alias repointed between two collections while reads through it run in parallel, `inspect_schema` for a key that may read no object, a `COLD` tenant, the limits, the timeout and the cancel.
 Measured on 2026-11-02: every check passed.
 An OIDC group is refused by the proof (section 15.2), but needs an OIDC provider, so that case is held by the unit tests over a constructed answer and not replayed live.

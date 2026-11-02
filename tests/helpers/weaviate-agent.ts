@@ -45,9 +45,13 @@ function scopeCaptureNames(): readonly string[] {
 /**
  * A recording transport's answers for a data-scope `principal` (`viewer`, `scoped`, `nodata`): each request line is
  * answered with the data-scope capture of the same line sent as that principal, and the meta read with the
- * agent-boundary viewer's, since every key is answered the same meta; a line no capture holds throws by name.
+ * agent-boundary viewer's, since every key is answered the same meta; `overrides` answers a request line otherwise. A
+ * line no capture holds throws by name.
  */
-export function scopeServer(principal: string): RecordedAnswer {
+export function scopeServer(
+  principal: string,
+  overrides: Readonly<Record<string, WeaviateAnswer>> = {},
+): RecordedAnswer {
   const byLine = new Map<string, WeaviateAnswer>([["GET /v1/meta", agentAnswer("meta-viewer")]]);
   for (const name of scopeCaptureNames()) {
     if (!name.endsWith(`-${principal}`)) continue;
@@ -55,7 +59,7 @@ export function scopeServer(principal: string): RecordedAnswer {
     byLine.set(`${capture.request.method} ${capture.request.path}`, scopeAnswer(name));
   }
   return (_request, line) => {
-    const found = byLine.get(line);
+    const found = overrides[line] ?? byLine.get(line);
     if (found === undefined) throw new Error(`no ${principal} data-scope capture answers ${line}`);
     return asResponse(found);
   };

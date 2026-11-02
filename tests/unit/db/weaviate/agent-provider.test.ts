@@ -10,13 +10,23 @@
 import { describe, expect, test } from "bun:test";
 import { ExecutionProfileError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import type { NodeResponse } from "@/lib/db/http/node-transport";
-import { WEAVIATE_AGENT_UNREADABLE, WEAVIATE_PROOF_SENTENCES } from "@/lib/db/providers/vector/weaviate/metadata-read";
+import {
+  WEAVIATE_AGENT_ALIAS_GRAPHQL,
+  WEAVIATE_AGENT_UNREADABLE,
+  WEAVIATE_PROOF_SENTENCES,
+} from "@/lib/db/providers/vector/weaviate/metadata-read";
 import { WEAVIATE_AGENT_SENTENCES } from "@/lib/db/providers/vector/weaviate/metadata-request";
 import type { WeaviateAnswer } from "@/lib/db/providers/vector/weaviate/client";
 import { WeaviateProvider } from "@/lib/db/providers/vector/weaviate/index";
 import { createRestWeaviateClient } from "@/lib/db/providers/vector/weaviate/rest-client";
 import type { DatabaseConnection, ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
-import { agentAnswer, agentCollectionAnswer, agentServer, scopeServer } from "../../../helpers/weaviate-agent";
+import {
+  agentAnswer,
+  agentCollectionAnswer,
+  agentServer,
+  scopeAnswer,
+  scopeServer,
+} from "../../../helpers/weaviate-agent";
 import { rejection, WEAVIATE_TEST_CONNECTION } from "../../../helpers/weaviate-surface";
 import { type RecordedAnswer, recordingWeaviateTransport } from "../../../helpers/weaviate-wire";
 
@@ -449,8 +459,8 @@ describe("one agent request", () => {
  * cannot read and a name that does not exist are one sentence.
  */
 describe("a name in a collection's place, as the key's own lists hold it", () => {
-  async function scoped(principal = "scoped") {
-    const made = agentProvider(scopeServer(principal));
+  async function scoped(principal = "scoped", overrides: Readonly<Record<string, WeaviateAnswer>> = {}) {
+    const made = agentProvider(scopeServer(principal, overrides));
     await made.provider.connect();
     made.wire.calls.length = 0;
     return made;
@@ -522,16 +532,98 @@ describe("a name in a collection's place, as the key's own lists hold it", () =>
     expect(result.rows).toEqual([{ tenant: "acme", status: "HOT" }]);
   });
 
-  test("an alias the key lists is admitted, and its read answers the target's properties", async () => {
-    const { provider, wire } = await scoped();
+  test("an alias the key lists is admitted and sent as the collection its list names", async () => {
+    const { provider, wire } = await scoped("scoped", {
+      "GET /v1/schema/Note": scopeAnswer("collection-notes-alias-scoped"),
+    });
     const result = await provider.queryReadOnly("GET /v1/schema/NotesAlias", BUDGET);
+    expect(lines(wire)).toEqual(["GET /v1/users/own-info", "GET /v1/schema", "GET /v1/aliases", "GET /v1/schema/Note"]);
+    expect(result.rows.map((row) => row.property)).toEqual(["body"]);
+  });
+
+  // The viewer's alias list maps TenantedAlias to Tenanted (data-scope/aliases-viewer): every route that names a
+  // collection is sent with Tenanted, so the server checks exactly the collection the list named.
+  const rewritten: readonly [string, string[]][] = [
+    ["GET /v1/schema/TenantedAlias", ["GET /v1/schema/Tenanted"]],
+    ["GET /v1/schema/TenantedAlias/tenants", ["GET /v1/schema/Tenanted", "GET /v1/schema/Tenanted/tenants"]],
+    ["GET /v1/schema/TenantedAlias/tenants/acme", ["GET /v1/schema/Tenanted", "GET /v1/schema/Tenanted/tenants/acme"]],
+    [
+      "GET /v1/schema/TenantedAlias/shards?tenant=globex",
+      [
+        "GET /v1/schema/Tenanted",
+        "GET /v1/schema/Tenanted/tenants/globex",
+        "GET /v1/schema/Tenanted/shards?tenant=globex",
+      ],
+    ],
+    [
+      "GET /v1/nodes/TenantedAlias?output=verbose",
+      ["GET /v1/schema/Tenanted", "GET /v1/nodes/Tenanted?output=verbose"],
+    ],
+    [
+      'POST /v1/aggregate/TenantedAlias {"tenant": "acme"}',
+      ["GET /v1/schema/Tenanted", "GET /v1/schema/Tenanted/tenants/acme", "POST /v1/aggregate/Tenanted"],
+    ],
+  ];
+  for (const [text, sent] of rewritten) {
+    test(`${text} is sent with the collection the key's alias list names, never the alias`, async () => {
+      const { provider, wire } = await scoped("viewer");
+      await provider.queryReadOnly(text, BUDGET);
+      expect(lines(wire)).toEqual(["GET /v1/users/own-info", "GET /v1/schema", "GET /v1/aliases", ...sent]);
+      expect(lines(wire).some((line) => line.includes("TenantedAlias"))).toBe(false);
+    });
+  }
+
+  test("an alias repointed after its list was read is still sent as the collection the list named", async () => {
+    // The scoped key's list maps NotesAlias to Note; the server answers the alias itself as Tenanted, as it does once
+    // an administrator repoints it there, so a request sent with the alias would be answered Tenanted's nodes.
+    const note = JSON.stringify({
+      nodes: [{ name: "node1", status: "HEALTHY", shards: [{ class: "Note", name: "s" }] }],
+    });
+    const { provider, wire } = await scoped("scoped", {
+      "GET /v1/schema/Note": scopeAnswer("collection-notes-alias-scoped"),
+      "GET /v1/schema/NotesAlias": scopeAnswer("collection-tenanted-scoped"),
+      "GET /v1/nodes/Note?output=verbose": {
+        status: 200,
+        contentType: "application/json",
+        retryAfter: null,
+        text: note,
+      },
+      "GET /v1/nodes/NotesAlias?output=verbose": scopeAnswer("collection-nodes-tenanted-scoped"),
+    });
+    const result = await provider.queryReadOnly("GET /v1/nodes/NotesAlias?output=verbose", BUDGET);
     expect(lines(wire)).toEqual([
       "GET /v1/users/own-info",
       "GET /v1/schema",
       "GET /v1/aliases",
-      "GET /v1/schema/NotesAlias",
+      "GET /v1/schema/Note",
+      "GET /v1/nodes/Note?output=verbose",
     ]);
-    expect(result.rows.map((row) => row.property)).toEqual(["body"]);
+    expect(result.rows).toEqual([{ node: "node1", collection: "Note" }]);
+    expect(JSON.stringify(result)).not.toContain("Tenanted");
+  });
+
+  test("a count through an alias is not sent over GraphQL, whose body would name the alias", async () => {
+    const { provider, wire } = await scoped("viewer", {
+      "POST /v1/aggregate/Tenanted": {
+        status: 404,
+        contentType: "application/json",
+        retryAfter: null,
+        text: JSON.stringify({ code: 404, message: "path /v1/aggregate/Tenanted was not found" }),
+      },
+    });
+    const error = await rejection(
+      provider.queryReadOnly('POST /v1/aggregate/TenantedAlias {"tenant": "acme"}', BUDGET),
+    );
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toBe(WEAVIATE_AGENT_ALIAS_GRAPHQL);
+    expect(lines(wire)).toEqual([
+      "GET /v1/users/own-info",
+      "GET /v1/schema",
+      "GET /v1/aliases",
+      "GET /v1/schema/Tenanted",
+      "GET /v1/schema/Tenanted/tenants/acme",
+      "POST /v1/aggregate/Tenanted",
+    ]);
   });
 
   test("a fresh connection's count of a granted tenant sends seven requests, the count last", async () => {

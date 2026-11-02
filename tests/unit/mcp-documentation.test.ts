@@ -226,7 +226,7 @@ describe("docs/MCP.md", () => {
       "On Weaviate it lists each collection's declared properties and vectors and never its tenants or aliases, which `run_weaviate_read` reads as far as the key's grants reach; it reads no stored object, so a vector's dimension, which the schema does not declare, reads `?`, and a call wakes no tenant.",
     );
     expect(MCP_DOC).toContain(
-      "a name in a collection's place is sent only when the key's own collection or alias list holds it, because the server reads an alias there as the collection it names, and a name that does not exist and one outside the grants are one answer",
+      "a name in a collection's place is sent only when the key's own collection or alias list holds it, and an alias as the collection its list entry names, because the server reads an alias there as whatever collection it names when the request arrives, and a name that does not exist and one outside the grants are one answer",
     );
     expect(MCP_DOC).not.toContain("a collection's tenants and aliases are never returned");
     expect(MCP_DOC).toContain(
