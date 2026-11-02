@@ -32,19 +32,22 @@ PASS SHOW DATABASES YIELD address AS a RETURN a: refused by the server's own cla
 PASS SHOW DATABASE neo4j: refused by the server's own classification, no address read
 PASS SHOW DEFAULT DATABASE: refused by the server's own classification, no address read
 PASS SHOW HOME DATABASE: refused by the server's own classification, no address read
-PASS a narrow user reads its denied property as null, never sees the label it may not traverse, and its schema reads leave both out
+PASS a narrow user reads a denied property as null through n.prop, and properties(), keys() and n {.*} leave its key out
+PASS a narrow user never reads a denied value, never sees the label it may not traverse, and its schema reads leave both out
 PASS db.propertyKeys names every property key of the database to the narrow user, the denied ones included, and no value
-PASS the narrow user is refused the index listing by the server: The database refused or failed the call: The server refused a write: Neo4j connections are read-only in this version.
+PASS the narrow user is refused the index listing by the server, as a privilege refusal: The server refused this statement for this user's privileges: Show indexes on database 'neo4j' is not allowed for user 'lm_narrow' with roles [PUBLIC, lm_narro
+PASS inspect_schema lists the narrow user's labels and columns without the index privilege: [{"name":"LmPerson","kind":"label","columns":[{"name":"name","data_type":"String","is_nullable":false,"default_value":null,"is_primary_key":false}],"columns_omitted":0,"indexes_omitted":0}]
+PASS inspect_schema with include_indexes says the indexes are unavailable to the narrow user: The index listing was refused for this user's privileges, so no index is shown: Show indexes on database 'neo4j' is not 
 PASS sent raw, USE of another database is refused to the narrow user (Neo.ClientError.Security.Forbidden) and answered to a reader of every database (ran), which Studio's reader refuses
 PASS a seed bound to system reads nothing of the system graph: The database refused or failed the call: The statement could not be checked by the server, so it was not run: The following unsupported clauses were used: MATCH
-PASS a seed bound to a database its user may not access is refused: run_cypher_read cannot run on this connection: The agent read-only profile could not read the server's answer to CALL dbms.components(), so 
+PASS a seed bound to a database its user may not access is refused as missing that access: The agent read-only profile needs a user with ACCESS on the connection's database, and the server refuses this user ACCESS on the database "lmother", so this user is not pro
 PASS inspect_schema lists the reader's labels on the same seed
 PASS SKIP and LIMIT page a read
 PASS a read past max_rows is cut to it, and the hint pages with SKIP and LIMIT
 PASS a read past the 1000-row budget is refused, never cut: The result has more than 1000 rows, the most this server reads for one call. Ask for at most 1000 rows: narrow
 PASS a read past the 1 MiB budget is refused, never cut: The result is larger than 1 MiB, the most this server reads for one call. Narrow the read to fewer or smaller 
-PASS timeout_ms at its 500 ms minimum: answered in 522 ms, and the server ended the statement 63 ms later
-PASS a client close: answered in 2006 ms, and the statement ran on the server 8204 ms more, to the time it had left
+PASS timeout_ms at its 500 ms minimum: answered in 501 ms, and the server ended the statement 34 ms later
+PASS a client close: answered in 2000 ms, and the statement ran on the server 8078 ms more, to the time it had left
 PASS the call after them answers
 PASS the node counts read the same before and after (neo4j=3 lmother=1)
 all checks passed

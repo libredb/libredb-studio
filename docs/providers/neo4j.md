@@ -356,7 +356,8 @@ A count is the listing's length, and a listing the server refuses answers that k
 A label's or a relationship type's columns come from `CALL db.schema.nodeTypeProperties() YIELD nodeLabels, propertyName, propertyTypes, mandatory` and `CALL db.schema.relTypeProperties() YIELD relType, propertyName, propertyTypes, mandatory`: the property name, the `propertyTypes` text as returned, and `nullable` false only when every row naming that owner and property says `mandatory`.
 A label with no property has no columns.
 Its indexes are the index rows whose entity type and labels or types name it.
-The property and index reads answer every object at once, so they are shared by concurrent callers and kept for 60 seconds, then read again: a schema change shows in the tree within a minute, and listing the container drops the cache at once.
+A user without `SHOW INDEX` is refused `SHOW INDEXES` (`Neo.ClientError.Security.Forbidden`) but may read the property rows, so its columns stand and its indexes are answered unavailable, in the sentence `The index listing was refused for this user's privileges, so no index is shown: <the server's words>`; any other failure of the index read still fails the object's detail.
+The property and index reads answer every object at once, so they are shared by concurrent callers and kept for 60 seconds, a refused index read included, then read again: a schema change shows in the tree within a minute, and listing the container drops the cache at once.
 A tree click on a label writes `` MATCH (n:`Label`) RETURN n LIMIT 100 ``, and on a relationship type `` MATCH (a)-[r:`TYPE`]->(b) RETURN a, r, b LIMIT 100 ``, with every name backticked and every backtick doubled, so a name with a space, a backtick or non-ASCII letters reads back as itself; an index and a constraint have no click action.
 An object whose name holds a unicode escape, a backslash then `u` at the end of an odd run of backslashes, such as `Caf\u00e9`, is listed but cannot be opened: the quoting refuses the name with the read policy's own pattern, `CYPHER_UNICODE_ESCAPE`, since the server would decode the escape and read another name, so the click answers that the name cannot be written as a Cypher identifier and sends nothing (#1295).
 The schema diagram is not offered on a `queryLanguage: "cypher"` connection (`offersSchemaDiagram` in `src/lib/db/types.ts`): relationship types are not tables, and the diagram's `_id` heuristic would invent edges.
@@ -634,17 +635,18 @@ It takes no `offset`: a result cut at `max_rows` or at the 32 KiB result limit s
 
 **The seed's user.** A seed carries no separate agent credential, so the seed's own `user` is the one the proof must admit, on Enterprise Edition: a copy of `reader` with `LOAD` revoked from `PUBLIC` or denied to one of its roles, as section 15.1 says.
 The administrator, a user with the `editor` role, a reader also granted `LOAD` and Community Edition are refused at the open, before any statement is sent, in the tool's sentence.
-`inspect_schema` opens the connection under the operations profile, which proves nothing, so it lists labels and relationship types for any user, as the editor does.
+`inspect_schema` opens the connection under the operations profile, which proves nothing, so it lists, as the editor does, the labels and relationship types the seed's user may traverse, with the properties it may read, for any user with `ACCESS` on the database.
+A user without `SHOW INDEX` is listed the same, and with `include_indexes` each object's indexes are answered unavailable, in the sentence of section 6.1, rather than the call refused.
 
 **What the user reads, and which layer stops what.**
 Two layers bound it, measured through the MCP handler on 5.26.31 Enterprise with a reader of every database and with a narrow user granted `ACCESS` on one database and `MATCH` on one label, one property of it denied and another label's traversal denied (`tests/live/neo4j-mcp-boundary.ts`, `tests/fixtures/neo4j/5.26.31/mcp-boundary/run.txt`):
 
 | What | Layer that stops it |
 |---|---|
-| A denied property's value | the user's grants: the server answers it `null`, in `properties()` and in every schema read |
-| A label the user may not traverse | the user's grants: its nodes, `db.labels()`, `db.schema.nodeTypeProperties()` and `db.schema.visualization()` leave it out |
-| Index and constraint listings without `SHOW INDEX` or `SHOW CONSTRAINT` | the user's grants: the server refuses the listing |
-| Another database | the user's grants refuse `USE` of a database it has no `ACCESS` on; a user with `ACCESS` on it is answered, and only Studio's reader stops that, so grant `ACCESS` on the connection's database alone |
+| A denied property's value | the user's grants: `n.prop` reads `null`, and `properties()`, `keys()`, `n {.*}`, `db.schema.nodeTypeProperties()` and `inspect_schema` leave its key out |
+| A label the user may not traverse | the user's grants: its nodes, `db.labels()`, `db.schema.nodeTypeProperties()`, `db.schema.visualization()` and `inspect_schema` leave it out |
+| Index and constraint listings without `SHOW INDEX` or `SHOW CONSTRAINT` | the user's grants: the server refuses the listing, answered as the privilege refusal of section 10, and `inspect_schema` answers the indexes unavailable |
+| Another database | the user's grants refuse `USE` of a database it has no `ACCESS` on, and a seed bound to such a database is refused at open as missing that access (section 15.1); a user with `ACCESS` on it is answered, and only Studio's reader stops that, so grant `ACCESS` on the connection's database alone |
 | The system graph, with the seed bound to `system` | the server: it runs only administration commands there, refuses `MATCH` and `RETURN`, and answers the schema procedures empty |
 | A database listing and the address of every server | the server's classification of the statement (section 15.3), whatever the user may see |
 | Other users' transactions, settings and roles | the proof: a user granted `SHOW TRANSACTION`, `SHOW SETTING` or any administrator's action is refused, since only the read actions of section 15.1 pass it, and the reader allows no `SHOW` form or procedure that lists them |
@@ -654,7 +656,7 @@ Two layers bound it, measured through the MCP handler on 5.26.31 Enterprise with
 
 **A cancel and a timeout.**
 `queryReadOnly` takes the time left of `timeout_ms` as its budget, sent as the transaction's timeout and kept as the call's own deadline, and closing the session at it ends the server's work.
-At the 500 ms minimum `timeout_ms`, a read that ran on was answered as the timeout at 522 ms and left `SHOW TRANSACTIONS` 63 ms later.
+At the 500 ms minimum `timeout_ms`, a read that ran on was answered as the timeout at 501 ms and left `SHOW TRANSACTIONS` 34 ms later.
 A client that closes the call is answered at once, and the statement runs on to the time it had left: closed after 2 s of a 10 s call, it left `SHOW TRANSACTIONS` about 8 s later, so a cancel ends the wait, not the read.
 
 Run the check against a disposable Enterprise server, after exporting `NEO4J_ACCEPT_LICENSE_AGREEMENT` yourself, since only you can accept Neo4j's licence:

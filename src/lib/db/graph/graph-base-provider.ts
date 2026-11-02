@@ -119,6 +119,8 @@ const CATALOG_CUT_REASON = "the catalog's listing stopped at its row bound";
 const PROPERTY_CUT_REASON = "the catalog's property read stopped at its row bound";
 /** An index read the row bound cut: any object's indexes may be missing some, or all. */
 const INDEX_CUT_REASON = "the catalog's index read stopped at its row bound";
+/** An index read the server refused for the user's privileges, followed by the server's words. */
+const INDEX_REFUSED = "The index listing was refused for this user's privileges, so no index is shown";
 
 const RELATION_ENTITY = { label: "NODE", relationship_type: "RELATIONSHIP" } as const;
 
@@ -137,7 +139,8 @@ interface CachedRead<T> {
 }
 
 type PropertyRead = Awaited<ReturnType<GraphCatalog["propertyRows"]>>;
-type IndexRead = Awaited<ReturnType<GraphCatalog["indexRows"]>>;
+/** The index rows, or the sentence of a listing the server refused for the user's privileges. */
+type IndexRead = Awaited<ReturnType<GraphCatalog["indexRows"]>> | { readonly refused: string };
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -538,7 +541,9 @@ export abstract class GraphBaseProvider extends BaseDatabaseProvider {
 
   /**
    * Columns and indexes for a label or a relationship type; an index or a constraint has neither.
-   * `cuts` names each read the catalog's row bound cut, so the caller reports it (SR16).
+   * `cuts` names each read the catalog's row bound cut, so the caller reports it (SR16). An index read
+   * the server refused for the user's privileges leaves the columns standing, its indexes unavailable:
+   * a user may read a label's properties without the privilege to list indexes.
    */
   private async detailOf(
     database: string,
@@ -554,10 +559,16 @@ export abstract class GraphBaseProvider extends BaseDatabaseProvider {
       detail: {
         path: [...path],
         columns: columnsOf(name, properties.rows),
-        indexes: indexesOf(name, RELATION_ENTITY[kind], indexes.rows),
+        indexes:
+          "refused" in indexes
+            ? { unavailable: indexes.refused }
+            : indexesOf(name, RELATION_ENTITY[kind], indexes.rows),
         foreignKeys: [],
       },
-      cuts: [...(properties.truncated ? [PROPERTY_CUT_REASON] : []), ...(indexes.truncated ? [INDEX_CUT_REASON] : [])],
+      cuts: [
+        ...(properties.truncated ? [PROPERTY_CUT_REASON] : []),
+        ...("truncated" in indexes && indexes.truncated ? [INDEX_CUT_REASON] : []),
+      ],
     };
   }
 
@@ -597,8 +608,18 @@ export abstract class GraphBaseProvider extends BaseDatabaseProvider {
     );
   }
 
+  /** Kept like any read, a refusal included, so a privilege granted since shows within the cache's minute. */
   private indexRows(database: string): Promise<IndexRead> {
-    return this.cached(this.indexCache, database, () => this.profile.catalog.indexRows(this.client(), database));
+    return this.cached(this.indexCache, database, async (): Promise<IndexRead> => {
+      try {
+        return await this.profile.catalog.indexRows(this.client(), database);
+      } catch (error) {
+        if (error instanceof GraphClientError && error.category === "forbidden") {
+          return { refused: `${INDEX_REFUSED}: ${error.message}` };
+        }
+        throw error;
+      }
+    });
   }
 
   /** A read kept for `CATALOG_CACHE_MS` and shared by concurrent callers; a rejected one is evicted. */

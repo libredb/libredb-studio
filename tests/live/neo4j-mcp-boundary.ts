@@ -20,10 +20,12 @@
  *  - the forms: a MATCH, each allowlisted procedure, and the index, constraint, procedure and function listings answer;
  *    the SHOW DATABASE forms are refused by the server's own classification, the address of every server never read;
  *  - what a narrow user reads: a user granted MATCH on one label with one property denied and another label's
- *    traversal denied reads the denied property as null, never sees the hidden label in its listings, and is refused
- *    the index listing; `db.propertyKeys` names every property key of the database, the denied one included, never a
- *    value; a seed bound to `system` reads nothing of the system graph, and a seed bound to a database the user may
- *    not access is refused at open;
+ *    traversal denied reads the denied property as null through `n.prop`, while `properties()`, `keys()` and
+ *    `n {.*}` leave its key out, never sees the hidden label in its listings, and is refused the index listing as a
+ *    privilege refusal; `inspect_schema` lists its labels and columns all the same, with the indexes unavailable;
+ *    `db.propertyKeys` names every property key of the database, the denied one included, never a value; a seed bound
+ *    to `system` reads nothing of the system graph, and a seed bound to a database the user may not access is refused
+ *    at open as missing that access;
  *  - the limits: SKIP and LIMIT page a read; a read past `max_rows` is cut with the hint; one past the 1000-row
  *    provider budget and one past the 1 MiB budget are refused, never cut; a read past the minimum `timeout_ms` is
  *    answered as the timeout and ended on the server; a read whose client closes the call is answered at once and runs
@@ -364,20 +366,33 @@ try {
   // ---- What a narrow user reads ------------------------------------------------------------------------------------
   const narrowRows = await mcp(NARROW, { statement: "MATCH (n:LmPerson) RETURN n.name AS name, n.ssn AS ssn" });
   const narrowProps = await mcp(NARROW, { statement: "MATCH (n:LmPerson) RETURN properties(n) AS p" });
+  const narrowKeysOf = await mcp(NARROW, { statement: "MATCH (n:LmPerson) RETURN keys(n) AS k" });
+  const narrowMap = await mcp(NARROW, { statement: "MATCH (n:LmPerson) RETURN n {.*} AS m" });
   const narrowSecret = await mcp(NARROW, { statement: "MATCH (n:LmSecret) RETURN n.code AS code" });
   const narrowLabels = await mcp(NARROW, { statement: "CALL db.labels()" });
   const narrowTypes = await mcp(NARROW, { statement: "CALL db.schema.nodeTypeProperties()" });
   const narrowKeys = await mcp(NARROW, { statement: "CALL db.propertyKeys()" });
   const narrowIndexes = await mcp(NARROW, { statement: "SHOW INDEXES" });
-  const all = JSON.stringify([narrowRows, narrowProps, narrowSecret, narrowLabels, narrowTypes].map((c) => c.result));
+  const all = JSON.stringify(
+    [narrowRows, narrowProps, narrowKeysOf, narrowMap, narrowSecret, narrowLabels, narrowTypes].map((c) => c.result),
+  );
+  const leftOut = (result: ToolResult, column: string) =>
+    rowsOf(result)?.length === 2 && !JSON.stringify(rowsOf(result)?.map((row) => row[column])).includes("ssn");
   check(
-    rowsOf(narrowRows.result)?.every((row) => row.ssn === null) === true &&
-      !all.includes("000-00-0000") &&
+    rowsOf(narrowRows.result)?.length === 2 &&
+      rowsOf(narrowRows.result)?.every((row) => row.ssn === null) === true &&
+      leftOut(narrowProps.result, "p") &&
+      leftOut(narrowKeysOf.result, "k") &&
+      leftOut(narrowMap.result, "m"),
+    "a narrow user reads a denied property as null through n.prop, and properties(), keys() and n {.*} leave its key out",
+  );
+  check(
+    !all.includes("000-00-0000") &&
       !all.includes("not-a-real-code") &&
       rowsOf(narrowSecret.result)?.length === 0 &&
       !JSON.stringify(rowsOf(narrowLabels.result)).includes("LmSecret") &&
       !JSON.stringify(rowsOf(narrowTypes.result)).includes('"ssn"'),
-    "a narrow user reads its denied property as null, never sees the label it may not traverse, and its schema reads leave both out",
+    "a narrow user never reads a denied value, never sees the label it may not traverse, and its schema reads leave both out",
   );
   check(
     JSON.stringify(rowsOf(narrowKeys.result)).includes('"ssn"') &&
@@ -386,11 +401,48 @@ try {
     "db.propertyKeys names every property key of the database to the narrow user, the denied ones included, and no value",
   );
   check(
-    // The server answers Neo.ClientError.Security.Forbidden, which the provider's error table words as a refused write.
-    lastOf(narrowIndexes.result) ===
-      "The database refused or failed the call: The server refused a write: Neo4j connections are read-only in this version." &&
+    // The server answers Neo.ClientError.Security.Forbidden, which the provider's error table words as a privilege
+    // refusal with the server's own words, never as a write.
+    lastOf(narrowIndexes.result).startsWith(
+      "The database refused or failed the call: The server refused this statement for this user's privileges: Show indexes on database 'neo4j' is not allowed for user 'lm_narrow'",
+    ) &&
+      !lastOf(narrowIndexes.result).includes("write") &&
       rowsOf(narrowIndexes.result) === null,
-    `the narrow user is refused the index listing by the server: ${lastOf(narrowIndexes.result).slice(0, 160)}`,
+    `the narrow user is refused the index listing by the server, as a privilege refusal: ${lastOf(narrowIndexes.result).slice(41, 200)}`,
+  );
+  const narrowSchema = await inspectSchema(InspectSchemaInputSchema.parse({ connection_id: NARROW.id }), {
+    context: contextOf(NARROW, []),
+    signal: new AbortController().signal,
+  });
+  const narrowSchemaIndexes = await inspectSchema(
+    InspectSchemaInputSchema.parse({ connection_id: NARROW.id, include_indexes: true }),
+    { context: contextOf(NARROW, []), signal: new AbortController().signal },
+  );
+  const tablesOf = (result: ToolResult) =>
+    (
+      result as {
+        structuredContent?: {
+          tables?: { name: string; columns?: { name: string }[]; indexes?: { unavailable?: string } | unknown[] }[];
+        };
+      }
+    ).structuredContent?.tables ?? [];
+  const narrowTables = tablesOf(narrowSchema);
+  const indexedTables = tablesOf(narrowSchemaIndexes);
+  check(
+    narrowSchema.isError !== true &&
+      JSON.stringify(narrowTables.map((table) => [table.name, table.columns?.map((column) => column.name)])) ===
+        JSON.stringify([["LmPerson", ["name"]]]) &&
+      !JSON.stringify(narrowSchema).includes("LmSecret"),
+    `inspect_schema lists the narrow user's labels and columns without the index privilege: ${JSON.stringify(narrowTables)}`,
+  );
+  const unavailable = (indexedTables[0]?.indexes as { unavailable?: string } | undefined)?.unavailable ?? "";
+  check(
+    narrowSchemaIndexes.isError !== true &&
+      indexedTables.length === 1 &&
+      unavailable.startsWith(
+        "The index listing was refused for this user's privileges, so no index is shown: Show indexes on database 'neo4j' is not allowed",
+      ),
+    `inspect_schema with include_indexes says the indexes are unavailable to the narrow user: ${unavailable.slice(0, 120)}`,
   );
   const narrowUse = await rawAnswer(narrowDriver, "USE lmother MATCH (n) RETURN n LIMIT 1", "READ");
   const agentUse = await rawAnswer(agentDriver, "USE lmother MATCH (n) RETURN n LIMIT 1", "READ");
@@ -417,9 +469,9 @@ try {
   check(
     noAccess.result.isError === true &&
       textOf(noAccess.result).startsWith(
-        "run_cypher_read cannot run on this connection: The agent read-only profile could not read the server's answer to CALL dbms.components(), so this user is not proved read-only and is refused.",
+        'run_cypher_read cannot run on this connection: The agent read-only profile needs a user with ACCESS on the connection\'s database, and the server refuses this user ACCESS on the database "lmother", so this user is not proved read-only and is refused.',
       ),
-    `a seed bound to a database its user may not access is refused: ${textOf(noAccess.result).slice(0, 140)}`,
+    `a seed bound to a database its user may not access is refused as missing that access: ${textOf(noAccess.result).slice(47, 220)}`,
   );
   const inspected = await inspectSchema(InspectSchemaInputSchema.parse({ connection_id: AGENT.id }), {
     context: contextOf(AGENT, []),
