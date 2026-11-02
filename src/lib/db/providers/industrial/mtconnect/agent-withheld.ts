@@ -31,8 +31,10 @@
  * backslashes that follow it, up to the last `@` in the value, is withheld, and so is everything from the first `?` or
  * `#` after that to the end of the value. A `mailto:` or `urn:` value, or a label and a colon before a mail address,
  * loses what lies between its colon and its `@` too; a mail address or a path with no scheme before it is kept.
- * An element's text is joined across its CDATA sections, references and children before it is read, and an attribute
- * value is one string, so a URL split by the markup is read whole.
+ * An asset document's text is read as one string, as a consumer reads it: each element's own text, CDATA sections and
+ * references included, with its children's text in the place each child holds, in document order, so a URL split by
+ * the markup is read whole and each withheld part is cut out of every element's text it lands in; an `@`, `?` or `#`
+ * in a later element's text widens the cut into it. An attribute value is one string of its own.
  * MEASURED on the same image with an MQTT sink configured: the broker's address reaches no route of the table.
  *
  * Browser-safe: no Node built-in, no server module.
@@ -98,20 +100,63 @@ function pastSlashes(text: string, from: number): number {
 }
 
 /**
+ * Where the URL secrets of `text` lie, as ranges of it to withhold: its user name and password, from the URL's start up
+ * to the last `@`, and its query string and fragment, from after the first `?` or `#` past that to the end. A range may
+ * be empty (`http://@h`, `http://h/?`), and is withheld all the same, so a marker shows where it was.
+ */
+function secretRanges(text: string): { readonly from: number; readonly to: number }[] {
+  const start = urlStart(text);
+  if (start === -1) return [];
+  const at = text.lastIndexOf("@");
+  const userinfo = at >= start;
+  const ranges = userinfo ? [{ from: start, to: at }] : [];
+  const rest = userinfo ? at + 1 : start;
+  const tail = text.slice(rest).search(/[?#]/);
+  if (tail !== -1) ranges.push({ from: rest + tail + 1, to: text.length });
+  return ranges;
+}
+
+/**
+ * `pieces`, read as one text in their order, with its URL secrets read `[withheld]`, and how many parts were withheld.
+ * A part that crosses pieces is cut out of every piece it touches, each of which reads `[withheld]` in its place, and
+ * is counted once; an empty part is marked in the piece holding the character before it. This is
+ * how an element's text is read with its children's text in place, so a URL split by the markup keeps no secret.
+ */
+export function withoutUrlSecretsAcross(pieces: readonly string[]): {
+  readonly texts: string[];
+  readonly withheld: number;
+} {
+  const ranges = secretRanges(pieces.join(""));
+  let from = 0;
+  const texts = pieces.map((piece) => {
+    const start = from;
+    const end = start + piece.length;
+    from = end;
+    let out = "";
+    let at = start;
+    for (const range of ranges) {
+      const touches =
+        range.from === range.to
+          ? range.from > start && range.from <= end
+          : Math.max(range.from, start) < Math.min(range.to, end);
+      if (!touches) continue;
+      const cut = Math.max(range.from, start);
+      out += `${piece.slice(at - start, cut - start)}[withheld]`;
+      at = Math.min(range.to, end);
+    }
+    return `${out}${piece.slice(at - start)}`;
+  });
+  return { texts, withheld: ranges.length };
+}
+
+/**
  * `text` with its URL secrets read `[withheld]`, and how many parts were withheld. A URL starts at a scheme and its
  * colon or at two slashes or backslashes, with or without slashes after the colon, as a URL parser reads `http:`,
  * `http:/`, `http:\\` and `//` alike; a mail address or a path with neither before it is left as written.
  */
 export function withoutUrlSecrets(text: string): { readonly text: string; readonly withheld: number } {
-  const start = urlStart(text);
-  if (start === -1) return { text, withheld: 0 };
-  const at = text.lastIndexOf("@");
-  const userinfo = at >= start;
-  const head = `${text.slice(0, start)}${userinfo ? "[withheld]@" : ""}`;
-  const rest = text.slice(userinfo ? at + 1 : start);
-  const tail = rest.search(/[?#]/);
-  if (tail === -1) return { text: `${head}${rest}`, withheld: userinfo ? 1 : 0 };
-  return { text: `${head}${rest.slice(0, tail + 1)}[withheld]`, withheld: userinfo ? 2 : 1 };
+  const kept = withoutUrlSecretsAcross([text]);
+  return { text: kept.texts[0], withheld: kept.withheld };
 }
 
 /** The warning an asset answer carries for the user names and passwords, query strings and fragments it withheld. */

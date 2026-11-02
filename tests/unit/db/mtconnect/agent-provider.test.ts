@@ -340,10 +340,65 @@ describe("what an agent read sends and answers", () => {
     const [row] = result.rows;
     expect(row?.source).toBe("http:\\\\[withheld]@files.example/a");
     expect(String(row?.document)).toBe(
-      '<File assetId="FILE-2" applicationCategory="DEVICE" deviceUuid="LIBREDB-1722" source="http:\\\\[withheld]@files.example/a" timestamp="2026-11-02T12:27:05.801276Z"><FileLocation href="HTTP:\\/[withheld]@files.example/p.nc"/><Description>at ht\ttp:[withheld]@files.example/p.nc<Note>n</Note></Description></File>',
+      '<File assetId="FILE-2" applicationCategory="DEVICE" deviceUuid="LIBREDB-1722" source="http:\\\\[withheld]@files.example/a" timestamp="2026-11-02T12:27:05.801276Z"><FileLocation href="HTTP:\\/[withheld]@files.example/p.nc"/><Description>at ht\ttp:[withheld]<Note>[withheld]</Note>[withheld]@files.example/p.nc</Description></File>',
     );
-    for (const part of ["not-a-real", "real-pass", "word@"]) expect(JSON.stringify(result)).not.toContain(part);
+    for (const part of ["not-a-real", "real-pass", "word@", "<Note>n</Note>"]) {
+      expect(JSON.stringify(result)).not.toContain(part);
+    }
     expect(result.warnings).toEqual([{ message: withheldUrlWarning(3) }]);
+  });
+
+  // An asset's text is read as a consumer reads it: one string, each child's text in its place, so a user name and
+  // password split between an element's own text and its children's is withheld from every piece it lands in. An
+  // agent with AllowPut stores and serves an asset as written, so mixed content in one cannot be ruled out.
+  test.each([
+    [
+      "split between an element's text and its child's",
+      "<Description>http:\\\\not-a-real-user:<x>not-a-real-password</x>@files.example/x</Description>",
+      "<Description>http:\\\\[withheld]<x>[withheld]</x>@files.example/x</Description>",
+      ["not-a-real-user", "not-a-real-password"],
+    ],
+    [
+      "split by a child inside the password",
+      "<Description>see https://not-a-real-user:<b>not-a-</b>real-password@files.example</Description>",
+      "<Description>see https://[withheld]<b>[withheld]</b>[withheld]@files.example</Description>",
+      ["not-a-real-user", "<b>not-a-</b>", "real-password"],
+    ],
+    [
+      "split across nested children",
+      "<Description>ftp://not-a-real-user<b>:not-<i>a-real-</i>pass</b>word@files.example/p</Description>",
+      "<Description>ftp://[withheld]<b>[withheld]<i>[withheld]</i>[withheld]</b>[withheld]@files.example/p</Description>",
+      ["not-a-real-user", ":not-", "a-real-", ">pass<", ">word@"],
+    ],
+    [
+      "split across a CDATA and a child",
+      "<Description><![CDATA[http://not-a-real-user:not-]]><b>a-real-password</b>@files.example/p</Description>",
+      "<Description>http://[withheld]<b>[withheld]</b>@files.example/p</Description>",
+      ["not-a-real-user", "not-", "a-real-password"],
+    ],
+    [
+      "with its @ in a following sibling's text",
+      "<Description><Part>http://not-a-real-user:not-a-real-</Part><Part>password@files.example/p</Part></Description>",
+      "<Description><Part>http://[withheld]</Part><Part>[withheld]@files.example/p</Part></Description>",
+      ["not-a-real-user", "not-a-real-", "password@"],
+    ],
+    [
+      "wholly inside one child",
+      "<Description>Manual at <Link>http://not-a-real-user:not-a-real-password@files.example/m.pdf</Link> for T1</Description>",
+      "<Description>Manual at <Link>http://[withheld]@files.example/m.pdf</Link> for T1</Description>",
+      ["not-a-real-user", "not-a-real-password"],
+    ],
+  ])("a URL %s keeps no part of the user name or password, counted once", async (_what, description, kept, parts) => {
+    const file = `<File assetId="FILE-3" applicationCategory="DEVICE" deviceUuid="LIBREDB-1722" timestamp="2026-11-02T12:27:05.801276Z">${description}</File>`;
+    const assets = capture("assets").replace(/<Assets>[\s\S]*<\/Assets>/, `<Assets>${file}</Assets>`);
+    const provider = await opened(AGENT, { ...DEFAULT_ANSWERS, "/assets": assets });
+    const result = await provider.queryReadOnly("/assets", BUDGET);
+    const [row] = result.rows;
+    expect(String(row?.document)).toBe(
+      `<File assetId="FILE-3" applicationCategory="DEVICE" deviceUuid="LIBREDB-1722" timestamp="2026-11-02T12:27:05.801276Z">${kept}</File>`,
+    );
+    for (const part of ["not-a-real", ...parts]) expect(JSON.stringify(result)).not.toContain(part);
+    expect(result.warnings).toEqual([{ message: withheldUrlWarning(1) }]);
   });
 
   test("an asset carrying a processing instruction or an entity declaration is refused by Studio's rule, never answered", async () => {

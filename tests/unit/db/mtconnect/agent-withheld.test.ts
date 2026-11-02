@@ -13,6 +13,7 @@ import {
   withheldUrlWarning,
   withheldWarning,
   withoutUrlSecrets,
+  withoutUrlSecretsAcross,
 } from "@/lib/db/providers/industrial/mtconnect/agent-withheld";
 import { indexMtconnectModel, type MtcModel } from "@/lib/db/providers/industrial/mtconnect/model";
 import { readMtconnectXml, type MtcElement, type MtcObservation } from "@/lib/db/providers/industrial/mtconnect/xml";
@@ -183,6 +184,67 @@ describe("a URL in an asset, its user name, password, query and fragment withhel
     expect(withoutUrlSecrets(text)).toEqual({ text, withheld: 0 });
   });
 
+  // A consumer reads an element's text as one string, its children's text in place, so a URL split by the markup is read
+  // over the joined text and each withheld part is cut out of every piece it touches.
+  test("a part that crosses pieces is withheld from each of them, and counted once", () => {
+    expect(
+      withoutUrlSecretsAcross([
+        "see https://not-a-real-user:",
+        "not-a-",
+        "real-password@files.example/x?sig=",
+        "s",
+        "ig",
+      ]),
+    ).toEqual({
+      texts: [
+        "see https://[withheld]",
+        "[withheld]",
+        "[withheld]@files.example/x?[withheld]",
+        "[withheld]",
+        "[withheld]",
+      ],
+      withheld: 2,
+    });
+  });
+
+  test("an empty piece inside a withheld part stays empty", () => {
+    expect(withoutUrlSecretsAcross(["http://not-a-real-user:", "", "not-a-real-password@h"])).toEqual({
+      texts: ["http://[withheld]", "", "[withheld]@h"],
+      withheld: 1,
+    });
+  });
+
+  test("a later piece's ? or # widens the cut into it, since the pieces are one text", () => {
+    expect(withoutUrlSecretsAcross(["http://files.example/x", "T#2 insert"])).toEqual({
+      texts: ["http://files.example/x", "T#[withheld]"],
+      withheld: 1,
+    });
+  });
+
+  test("a URL inside one piece leaves the other pieces as written", () => {
+    expect(
+      withoutUrlSecretsAcross(["Manual at ", "http://not-a-real-user:not-a-real-password@h/m.pdf", " for T1"]),
+    ).toEqual({
+      texts: ["Manual at ", "http://[withheld]@h/m.pdf", " for T1"],
+      withheld: 1,
+    });
+  });
+
+  test("an empty part is withheld in the piece that holds the character before it", () => {
+    expect(withoutUrlSecretsAcross(["http://", "@h/x", "?", ""])).toEqual({
+      texts: ["http://[withheld]", "@h/x", "?[withheld]", ""],
+      withheld: 2,
+    });
+    expect(withoutUrlSecretsAcross(["", "plain", ""])).toEqual({ texts: ["", "plain", ""], withheld: 0 });
+  });
+
+  test("the slashes after a scheme may sit in the next piece", () => {
+    expect(withoutUrlSecretsAcross(["http:", "//not-a-real-user:", "not-a-real-password", "@h"])).toEqual({
+      texts: ["http:", "//[withheld]", "[withheld]", "@h"],
+      withheld: 1,
+    });
+  });
+
   test("the warning counts what was withheld, in the singular and the plural", () => {
     expect(withheldUrlWarning(1)).toStartWith(
       "1 user name and password, query string or fragment of a URL in an asset was withheld",
@@ -194,12 +256,13 @@ describe("a URL in an asset, its user name, password, query and fragment withhel
 });
 
 describe("an asset's document rendered as text", () => {
-  const element = (name: string, attributes: Record<string, string>, text: string, children: MtcElement[] = []) => ({
-    name,
-    attributes,
-    text,
-    children,
-  });
+  const element = (
+    name: string,
+    attributes: Record<string, string>,
+    text: string,
+    children: MtcElement[] = [],
+    childOffsets: number[] = children.map(() => text.length),
+  ): MtcElement => ({ name, attributes, text, children, childOffsets });
 
   test("an empty element closes itself, and attribute values are escaped", () => {
     expect(renderXmlElement(element("Tool", { note: 'a "b" & <c>' }, ""))).toBe(
@@ -211,5 +274,10 @@ describe("an asset's document rendered as text", () => {
     expect(renderXmlElement(element("x:Life", {}, "1 < 2", [element("Status", {}, "NEW & used")]))).toBe(
       "<x:Life>1 &lt; 2<Status>NEW &amp; used</Status></x:Life>",
     );
+  });
+
+  test("text and children in the order the document holds them", () => {
+    const mixed = element("Description", {}, "see  & more", [element("b", {}, "bold"), element("i", {}, "it")], [4, 6]);
+    expect(renderXmlElement(mixed)).toBe("<Description>see <b>bold</b> &amp;<i>it</i> more</Description>");
   });
 });

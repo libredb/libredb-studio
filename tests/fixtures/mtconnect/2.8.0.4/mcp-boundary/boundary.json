@@ -365,6 +365,16 @@
         "status": 200
       },
       {
+        "asset": "TOOL-5",
+        "type": "CuttingTool",
+        "status": 200
+      },
+      {
+        "asset": "NOTE-1",
+        "type": "ProgramNote",
+        "status": 200
+      },
+      {
         "asset": "TOOL-2",
         "type": "CuttingTool",
         "status": 200
@@ -373,10 +383,20 @@
     "agentServesTheUserinfoAsWritten": true,
     "agentServesTheOddUserinfoAsWritten": true,
     "agentServesTheBackslashUserinfoAsWritten": true,
+    "agentServesTheSplitToolDescription": "<Description>see https://USER:</Description>",
+    "agentServesTheSplitExtensionNote": "<Note>see https://USER:<b>PASSWORD-PART-1</b>PASSWORD-PART-2@files.example/programs/p5.nc</Note>",
     "throughTheTool": {
       "rows": [
         {
           "assetId": "TOOL-2",
+          "type": "CuttingTool"
+        },
+        {
+          "assetId": "NOTE-1",
+          "type": "ProgramNote"
+        },
+        {
+          "assetId": "TOOL-5",
           "type": "CuttingTool"
         },
         {
@@ -410,7 +430,11 @@
       "keepsTheOddHostAndPath": true,
       "keepsTheBackslashHostAndPath": true,
       "keepsTheFilePath": true,
-      "keepsTheToolDescription": true
+      "keepsTheToolDescription": true,
+      "carriesTheSplitPassword": false,
+      "carriesTheSplitExtensionUserName": false,
+      "splitToolDescription": "<Description>see https://USER:</Description>",
+      "splitExtensionNote": "<Note>see https://[withheld]<b>[withheld]</b>[withheld]@files.example/programs/p5.nc</Note>"
     }
   },
   "sink": {

@@ -22,7 +22,8 @@
  *                     cancel with the agent paused: when MCP answered and when the provider's own request ended;
  *   assets            File and CuttingTool assets put raw on the AllowPut agent, one with a URL carrying a user name,
  *                     password and query, one whose password holds an @ and a quote and whose fragment holds a
- *                     token, read through the tool: what reached the answer;
+ *                     token, one with backslashes after its scheme, and one whose description splits a user name
+ *                     and password across a child element, read through the tool: what reached the answer;
  *   sink              the MQTT sink agent's nine routes read raw and its model read through the tool: whether the
  *                     broker's address reached any of them;
  *   factory           one read through the factory's own profiled acquisition, as the route makes it;
@@ -67,6 +68,9 @@ const FAKE_SECRETS = [
   "not-a-real-fragment",
   "backslash-user",
   "backslash-pass",
+  "split-user",
+  "half-a",
+  "-secret",
 ];
 
 /** The tool as MCP registers it, and the same tool with its fence removed: the boundary under test. */
@@ -450,6 +454,13 @@ const FILE_WITH_ODD_SECRET =
 // A location with backslashes and no :// after its scheme, which a WHATWG URL parser reads as http://user:pass@host.
 const FILE_WITH_BACKSLASH_SECRET =
   '<File assetId="FILE-4" name="p4.nc" mediaType="text/plain" applicationCategory="DEVICE" applicationType="DATA" size="10" versionId="1" state="PRODUCTION"><FileLocation href="http:\\\\backslash-user:backslash-pass@files.example/programs/p4.nc"/><Destinations><Destination>LIBREDB-1722</Destination></Destinations><CreationTime>2026-01-01T00:00:00Z</CreationTime></File>';
+// A URL with its user name in an element's own text and its password split across a child element, which a consumer
+// reads as one string: no piece of either may reach the answer. Put twice, as a CuttingTool's description and as an
+// extension asset's element, to record which of them the agent stores with the child in place.
+const TOOL_WITH_SPLIT_SECRET =
+  '<CuttingTool assetId="TOOL-5" toolId="T5" serialNumber="SN-5"><Description>see https://split-user:<b>half-a</b>-secret@files.example/programs/p5.nc</Description><CuttingToolLifeCycle><ProgramToolNumber>5</ProgramToolNumber><CutterStatus><Status>NEW</Status></CutterStatus></CuttingToolLifeCycle></CuttingTool>';
+const EXTENSION_WITH_SPLIT_SECRET =
+  '<ProgramNote assetId="NOTE-1"><Note>see https://split-user:<b>half-a</b>-secret@files.example/programs/p5.nc</Note></ProgramNote>';
 const TOOL_WITH_PATH =
   '<CuttingTool assetId="TOOL-2" toolId="T2" serialNumber="SN-2"><Description>see //fileserver/tools/T2.pdf</Description><CuttingToolLifeCycle><ProgramToolNumber>2</ProgramToolNumber><CutterStatus><Status>NEW</Status></CutterStatus></CuttingToolLifeCycle></CuttingTool>';
 const stored = [];
@@ -458,6 +469,8 @@ for (const [id, type, body] of [
   ["FILE-2", "File", FILE_WITH_PATH],
   ["FILE-3", "File", FILE_WITH_ODD_SECRET],
   ["FILE-4", "File", FILE_WITH_BACKSLASH_SECRET],
+  ["TOOL-5", "CuttingTool", TOOL_WITH_SPLIT_SECRET],
+  ["NOTE-1", "ProgramNote", EXTENSION_WITH_SPLIT_SECRET],
   ["TOOL-2", "CuttingTool", TOOL_WITH_PATH],
 ] as const) {
   const answer = await fetch(`http://127.0.0.1:${PUT_PORT}/asset/${id}?type=${type}&device=${LATHE}`, {
@@ -470,11 +483,27 @@ for (const [id, type, body] of [
 const rawAssets = await (await fetch(`http://127.0.0.1:${PUT_PORT}/assets`)).text();
 const assetsRead = await mcp(putAgent, "/assets");
 const assetText = JSON.stringify(assetsRead.result);
+/** An element of an asset as the agent serves it, with the fake user name and password pieces named, never quoted. */
+const servedElement = (document: string, id: string, element: string): string | null => {
+  const asset = new RegExp(`<(\\w+)\\b[^>]*assetId="${id}"[\\s\\S]*?</\\1>`).exec(document)?.[0];
+  const found = asset === undefined ? undefined : new RegExp(`<${element}\\b[\\s\\S]*?</${element}>`).exec(asset)?.[0];
+  return found === undefined
+    ? null
+    : found
+        .replaceAll("split-user", "USER")
+        .replaceAll("half-a", "PASSWORD-PART-1")
+        .replaceAll("-secret", "PASSWORD-PART-2");
+};
+const toolDocuments = rowsOf(assetsRead.result)
+  .map((row) => String(row.document))
+  .join("");
 const assets = {
   stored,
   agentServesTheUserinfoAsWritten: rawAssets.includes("not-a-real-password"),
   agentServesTheOddUserinfoAsWritten: rawAssets.includes("odd-pass@x") && rawAssets.includes("odd-word@files.example"),
   agentServesTheBackslashUserinfoAsWritten: rawAssets.includes("http:\\\\backslash-user:backslash-pass@files.example"),
+  agentServesTheSplitToolDescription: servedElement(rawAssets, "TOOL-5", "Description"),
+  agentServesTheSplitExtensionNote: servedElement(rawAssets, "NOTE-1", "Note"),
   throughTheTool: {
     rows: rowsOf(assetsRead.result).map((row) => ({ assetId: row.assetId, type: row.type })),
     carriesTheUserName: assetText.includes("not-a-real-user"),
@@ -490,6 +519,10 @@ const assets = {
     ),
     keepsTheFilePath: assetText.includes("file:///opt/programs/p2.nc"),
     keepsTheToolDescription: assetText.includes("//fileserver/tools/T2.pdf"),
+    carriesTheSplitPassword: ["half-a", "-secret"].some((part) => assetText.includes(part)),
+    carriesTheSplitExtensionUserName: servedElement(toolDocuments, "NOTE-1", "Note")?.includes("USER") !== false,
+    splitToolDescription: servedElement(toolDocuments, "TOOL-5", "Description"),
+    splitExtensionNote: servedElement(toolDocuments, "NOTE-1", "Note"),
   },
 };
 check(assets.agentServesTheUserinfoAsWritten, "the AllowPut agent serves a File asset's userinfo as written");
@@ -514,6 +547,16 @@ check(
     !assets.throughTheTool.carriesTheBackslashUserinfo &&
     assets.throughTheTool.keepsTheBackslashHostAndPath,
   "a location with backslashes and no :// after its scheme reaches no answer with its user name or password",
+);
+
+// MEASURED: the agent stores a CuttingTool's description only up to its first child, so the password never reaches
+// its answer and what is left, `https://` and the user name with no @ after it, is read as a host; an extension asset
+// is stored and served with the child in place, and is the case the check holds the tool to.
+check(
+  assets.agentServesTheSplitExtensionNote?.includes("USER:<b>PASSWORD-PART-1</b>PASSWORD-PART-2@") === true &&
+    !assets.throughTheTool.carriesTheSplitPassword &&
+    !assets.throughTheTool.carriesTheSplitExtensionUserName,
+  "a user name and password split across an extension asset's child element reach no answer in any piece",
 );
 
 // The MQTT sink agent: the broker's address, raw on every route and through the tool's model read.
