@@ -19,6 +19,7 @@ const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
 const RUN_LIBREDB_READ_ARM = mcpStatementArm("run_libredb_read");
 const RUN_WEAVIATE_READ_ARM = mcpStatementArm("run_weaviate_read");
 const RUN_QDRANT_READ_ARM = mcpStatementArm("run_qdrant_read");
+const RUN_MILVUS_READ_ARM = mcpStatementArm("run_milvus_read");
 const RUN_KAFKA_READ_ARM = mcpStatementArm("run_kafka_read");
 const RUN_RABBITMQ_READ_ARM = mcpStatementArm("run_rabbitmq_read");
 const RUN_REDIS_READ_ARM = mcpStatementArm("run_redis_read");
@@ -113,6 +114,7 @@ describe("docs/MCP.md", () => {
       "Eleven",
       "Twelve",
       "Thirteen",
+      "Fourteen",
     ];
     expect(MCP_DOC).toContain(`- ${COUNT_WORDS[tools.length]} tools, each annotated read-only and closed-world:`);
     for (const tool of tools) expect(MCP_DOC).toMatch(new RegExp(`^ {2}- \`${tool}\` `, "m"));
@@ -135,6 +137,14 @@ describe("docs/MCP.md", () => {
     expect(MCP_DOC).toContain(
       "| Qdrant | Studio stops waiting; the provider keeps its request open until its own deadline, set to the time left of `timeout_ms`, closes it | The provider closes its request at `timeout_ms`, and the client gets the timeout answer |",
     );
+  });
+
+  test("carries run_milvus_read's engine sentence, derived from its arm, its seed's user, its data scope and its cancel row", () => {
+    expect(MCP_DOC).toContain(`Runs on ${RUN_MILVUS_READ_ARM.engines}; other engines refuse it.`);
+    expect(MCP_DOC).toContain("A Milvus seed's user must be one `run_milvus_read` proves read-only before every read");
+    expect(MCP_DOC).toContain("a call naming a collection is sent only when the user's `ShowCollections` lists it");
+    expect(MCP_DOC).toContain("database, partition and function names reach MCP through it");
+    expect(MCP_DOC).toMatch(/^\| Milvus \| /m);
   });
 
   test("carries run_kubectl_read's engine sentence, derived from its arm, and says inspect_schema refuses Kubernetes", () => {

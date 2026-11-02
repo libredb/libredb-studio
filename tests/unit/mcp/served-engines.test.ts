@@ -66,6 +66,7 @@ describe("mcpStatementEngines", () => {
       kafkaread: ["kafka"],
       weaviateapi: ["weaviate"],
       mtconnectread: ["mtconnect"],
+      milvusrpc: ["milvus"],
     });
   });
 
@@ -82,17 +83,18 @@ describe("mcpStatementEngines", () => {
       "rediscli",
       "weaviateapi",
       "mtconnectread",
+      "milvusrpc",
     ] as const) {
       expect(mcpStatementEngines(language)).toEqual(mcpStatementEngines(language, SHIPPED));
     }
   });
 
-  test("serves MongoDB, Kubernetes, Neo4j, Redis, LibreDB, Qdrant, RabbitMQ, Kafka, Weaviate and MTConnect each in its own language", () => {
+  test("serves MongoDB, Kubernetes, Neo4j, Redis, LibreDB, Qdrant, RabbitMQ, Kafka, Weaviate, MTConnect and Milvus each in its own language", () => {
     // MongoDB opened with run_mongo_command, Kubernetes with run_kubectl_read, offered only machine-redacted, Neo4j
     // with run_cypher_read, Redis with run_redis_read, metadata only, LibreDB with run_libredb_read, on a read-only
     // handle per command, Qdrant with run_qdrant_read, metadata only, RabbitMQ with run_rabbitmq_read, metadata only,
-    // Kafka with run_kafka_read, answered metadata-only, Weaviate with run_weaviate_read, metadata only, and MTConnect with
-    // run_mtconnect_read, its adapter connections withheld.
+    // Kafka with run_kafka_read, answered metadata-only, Weaviate with run_weaviate_read, metadata only, MTConnect with
+    // run_mtconnect_read, its adapter connections withheld, and Milvus with run_milvus_read, answered metadata-only.
     expect(mcpStatementEngines("mongo")).toEqual(["mongodb"]);
     expect(mcpStatementEngines("kubectl")).toEqual(["kubernetes"]);
     expect(mcpStatementEngines("cypher")).toEqual(["neo4j"]);
@@ -103,6 +105,7 @@ describe("mcpStatementEngines", () => {
     expect(mcpStatementEngines("kafkaread")).toEqual(["kafka"]);
     expect(mcpStatementEngines("weaviateapi")).toEqual(["weaviate"]);
     expect(mcpStatementEngines("mtconnectread")).toEqual(["mtconnect"]);
+    expect(mcpStatementEngines("milvusrpc")).toEqual(["milvus"]);
   });
 
   test("an agent engine whose MCP read row is false is not served, though every other record lets it through", () => {

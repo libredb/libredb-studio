@@ -38,7 +38,7 @@ export const GRPC_SEAM_HOLDINGS: Readonly<Record<string, GrpcSeamHolding>> = {
       /^tests\/unit\/db\/milvus\//,
       /^tests\/helpers\/milvus-/,
       /^tests\/live\/milvus-/,
-      /^tests\/fixtures\/milvus\/agent-boundary-probe\.ts$/,
+      /^tests\/fixtures\/milvus\/(?:agent-boundary|mcp-scope)-probe\.ts$/,
     ],
     transportImporters: [
       "src/lib/db/providers/vector/milvus/grpc-client.ts",

@@ -223,11 +223,15 @@ describe("docs/providers/milvus.md quotes what the code says", () => {
   test("machine access is what the records say", () => {
     expect(MCP_EXPOSABLE.milvus).toBe(true);
     expect(AGENT_EXECUTION_ENGINES).toContain("milvus");
-    expect(MCP_STATEMENT_READ.milvus).toBe(false);
+    expect(MCP_STATEMENT_READ.milvus).toBe(true);
     const machine = sectionOf(DOC, "### 3.5 Machine access");
     expect(machine).toContain("(`mcp: true`)");
     expect(machine).toContain("Agent execution reads metadata only");
-    expect(machine).toContain("MCP `run_read_query` still refuses Milvus");
+    expect(machine).toContain("MCP's `run_milvus_read` sends the same reads under the same proof");
+    expect(machine).toContain("MCP `run_read_query` refuses Milvus, naming that tool");
+    const mcp = sectionOf(DOC, "### 15.6 MCP read");
+    expect(mcp).toContain("A client cancel ends the wait, not the read");
+    expect(mcp).toContain("each in its own sentence");
   });
 
   test("the data scope names the layer that stops each item, and every capture it cites is on disk", () => {

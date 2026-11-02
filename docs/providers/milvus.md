@@ -112,7 +112,7 @@ Measured on 3.0.2: the server lists `DatabaseReadOnly` as those two privileges (
 ### 3.5 Machine access
 
 MCP clients may be given a Milvus seed connection (`mcp: true`): `inspect_schema` and the agent's grounding carry names and types only, never a value, a vector, a default value, a function's parameters or a sampled key.
-Agent execution reads metadata only, as a user the server proves read-only before every request (section 15), and MCP `run_read_query` still refuses Milvus; plan mode drafts a request that a person runs.
+Agent execution reads metadata only, as a user the server proves read-only before every request (section 15), MCP's `run_milvus_read` sends the same reads under the same proof (section 15.6), and MCP `run_read_query` refuses Milvus, naming that tool; plan mode drafts a request that a person runs.
 No Milvus statement reaches an AI route: Explain is not offered, and the confirmation gate posts nothing to the query-safety analysis for a Milvus request.
 
 ### 3.6 Lossless integers
@@ -666,9 +666,19 @@ This overlay overrides no Shared member, so every Shared member is the `milvusrp
 The family offers the investigation workflow, through `run_read_query` with one Milvus request, and the operations workflow; it offers no data analysis, since its answers carry no stored value, and no query optimization or database assessment, since the server composes no plan and no profile, and no workflow hands an answer to the editor.
 The workflow classifier offers the model only these two.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-No MCP tool runs a Milvus request: the family declares no MCP facet, and `MCP_STATEMENT_READ.milvus` is false (B155).
+MCP clients read Milvus with `run_milvus_read`, the tool the family declares in its MCP facet ([`src/lib/agent/languages/milvusrpc/mcp.ts`](../../src/lib/agent/languages/milvusrpc/mcp.ts)), and `MCP_STATEMENT_READ.milvus` is true (section 15.6); what stays open is in B155.
 
-### 15.6 Tests
+### 15.6 MCP read
+
+`run_milvus_read` takes one request in the agent's own form, read and admitted by the same reader, and runs it through the same `queryReadOnly` under the agent read-only profile: the open proves the seed's user, the proof runs again before every request, every call is checked against the user's own collection list (section 15.3.1), and every answer is the projection of section 15.4.
+So an MCP seed's user must pass the proof of section 15.2: root, the admin role, a writer, a custom group and a server with authorization off are refused at the open, each in its own sentence.
+Recommended: a user granted `CollectionReadOnly` on the collections the client may read, with `ShowCollections` and `DescribeDatabase` on their database, or `DatabaseReadOnly` and `CollectionReadOnly` on one database.
+The two data-scope layers of section 15.3.1 hold for MCP unchanged; the names MCP clients newly read through it, beside the collection and field names `inspect_schema` already lists, are the user's databases, partitions, functions, indexes and aliases.
+`inspect_schema` opens its connection under the operations profile, unproved, and lists what the seed's user's own `ShowCollections` lists, so a narrow user's listing is its own collections; a root or writer seed is listed every collection there, while `run_milvus_read` refuses it.
+A client cancel ends the wait, not the read: the request's gRPC calls, the proof's among them, run on until answered or until the provider cancels them at the time left of `timeout_ms`, and the channel has no retry or reconnect that could extend them; a `timeout_ms` cancels the call in flight.
+Measured on 3.0.2 by [`tests/live/milvus-mcp-boundary.ts`](../../tests/live/milvus-mcp-boundary.ts), run by [`tests/fixtures/milvus/3.0.2/mcp-boundary/run.sh`](../../tests/fixtures/milvus/3.0.2/mcp-boundary/run.sh), which records `boundary.json` beside it: with the server paused, a read at a `timeout_ms` of 500 is answered as the timeout at 501 ms and a cancel 300 ms in at 301 ms, the server answers the next call once it resumes, and no promise is left rejected; the same check replays the open's refusals, every admitted route, the writes and value reads refused with the admission removed beside a positive control, the data scope, an alias repointed under parallel reads and `inspect_schema` as the narrow user.
+
+### 15.7 Tests
 
 - `tests/unit/db/milvus/read-only-proof.test.ts`: the privileges a read-only user may hold, held to 3.0.2's groups, and the proof over every principal's captures, a grant made during the run included.
 - `tests/unit/db/milvus/metadata-request.test.ts`: the routes an agent request may name, and every refusal before the network.
@@ -676,3 +686,4 @@ No MCP tool runs a Milvus request: the family declares no MCP facet, and `MCP_ST
 - `tests/unit/db/milvus/agent-provider.test.ts`: the open, the proof before every request, the exact RPCs, requests and metadata through the adapter, the wording of a failure and the budgets.
 - `tests/integration/db/milvus-provider.test.ts`: the boundary replayed from the captures, the read-only principals' writes beside the positive controls, and the proof's verdict on every principal.
 - `tests/unit/lib/db/redaction/metadata-only.test.ts`: the shared projection helpers.
+- `tests/integration/mcp/run-milvus-read.test.ts`: `run_milvus_read` through the real route over the data-scope captures, the proof, the scope refusals, the admission and the limits.
