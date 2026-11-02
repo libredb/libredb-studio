@@ -408,7 +408,7 @@ export class RabbitMQProvider extends BaseDatabaseProvider {
       const read = await runAgentRead(reading.plan, this.readDependencies(session, deadlineMs));
       return rabbitmqAgentResult(read, reading.plan, budget, statement);
     } catch (error) {
-      throw rabbitmqAgentFailure(error, deadlineMs, statement) ?? error;
+      throw rabbitmqAgentFailure(error, deadlineMs, reading.plan, statement) ?? error;
     }
   }
 

@@ -540,7 +540,7 @@ CI runs it in the Functional Smoke job against a fresh 4.3.6 broker; 4.2.9 is ru
 - 2026-10-12, a 50 ms round trip: 10 stored messages read in full, stopped idle after 1,425 ms.
 - 2026-10-12, a vhost of 520 classic queues, 1 quorum queue and 510 streams filled in 5,296 ms; the Streams folder held 500 streams.
 - 2026-10-31, RabbitMQ 4.3.6 and 4.2.9, the agent boundary capture: a read-only user's `basic.get`, acked consume, `queue.purge` and management purge and get each removed messages; the agent's reads answered offsets and body sizes only and left every queue as it was; the 406 backstop held on a classic and a quorum queue declared under a stream's name.
-- 2026-11-02, RabbitMQ 4.3.6, the MCP boundary capture: `run_rabbitmq_read` answered offsets and body sizes only for six starts, refused another virtual host in the same words for a stream that exists and one that does not, and left every queue as it was; the administrator's raw `basic.get` removed one message.
+- 2026-11-02, RabbitMQ 4.3.6, the MCP boundary capture: `run_rabbitmq_read` answered offsets and body sizes only for six starts, refused another virtual host in the same words for a stream that exists, one that does not and a virtual host that does not exist, and left every queue as it was; the administrator's raw `basic.get` removed one message.
 <!-- live-record:end -->
 
 ### 14.5 The agent boundary capture
@@ -613,6 +613,8 @@ RabbitMQ declares `ProviderCapabilities.metadataOnly`: every answer is projected
 A read that stops at its limit answers, and so does one that stops with no message within 1 s, the stream's end as far as the read can tell, with the one fixed sentence that says it is not proof of the end.
 Every other stop refuses the answer rather than cutting it: the deadline (the time budget's refusal), the 8 MiB Studio holds for one read, the 64 MiB one read may transfer, a stop, the broker's cancel or close, and the 541 close at a message the broker cannot convert, which names how many messages it read first and never the message.
 A failure before the broker started the read is the time budget's refusal when the deadline ended it, and otherwise one of [§11](#11-error-handling)'s own sentences, each picked by a reply code or a fixed pattern and never quoting the broker.
+One exception: a virtual host the user may not use and a virtual host or stream that does not exist are refused in one sentence, "Virtual host {vhost} does not exist, this user has no permissions on it, or it has no queue, stream or exchange {stream}: name a stream this user may read."
+Measured on 4.3.6, the type check answers a virtual host that exists without permission with 404 `not_found` and one that does not exist with 404 `Object Not Found`, so §11's two sentences would tell a virtual host the user cannot list apart from a missing one.
 A result past the byte budget is refused, never cut, and an estimating plan is refused.
 
 Each agent-mode path reads this much:
@@ -661,7 +663,7 @@ What an MCP client reads is decided in two layers, measured there as a user tagg
 | A message's body, headers, properties and routing key | layer 2: the metadata-only projection, built on the answer whatever the request said | no marker in any answer (`accepted`, `cut`, `scope`) |
 | A take, publish, purge or declare | layer 2: the read client, which encodes none, and the admission before it | every queue's count unchanged; the administrator's raw `basic.get` removed one (`control`) |
 | A classic or quorum queue | layer 2: the type check before any frame, and the 406 backstop | refused at the type check, and with the type check answered as a stream, by the 406 (`boundary`) |
-| A stream of a virtual host the user has no permission on | layer 1: the broker | refused in the same words whether the stream exists: "This user has no permissions on virtual host ...: grant them to show its queues and exchanges." |
+| A stream of a virtual host the user has no permission on | layer 1: the broker, and the agent's one refusal sentence | refused in the same words whether the stream exists and whether the virtual host exists: "Virtual host ... does not exist, this user has no permissions on it, or it has no queue, stream or exchange ...: name a stream this user may read." (`scope.otherVhostStream`, `scope.otherVhostMissing`, `scope.absentVhostStream`) |
 | A stream of its own virtual host outside its read pattern | layer 1: the broker | refused: "This user may not read stream ...: its read permission pattern on ... does not match the name." |
 | Another virtual host's streams, for the administrator | nothing: the broker lets it read every virtual host | answered offsets and body sizes only (`scope.broadOtherVhost`) |
 

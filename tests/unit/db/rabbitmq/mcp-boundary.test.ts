@@ -7,14 +7,19 @@
  * message. The boundary: with the admission removed, the provider's own reader refuses every request the admission
  * does, a classic queue is refused at the type check, and a classic and a quorum queue declared under a stream's name
  * are refused by the broker's 406; every queue holds what it held. The data scope: a user with read permission on one
- * stream of `/` is refused another virtual host in the same words whether the stream exists or not, and a stream of
- * `/` outside its read pattern by the broker; the administrator reads the other virtual host, offsets and sizes only;
+ * stream of `/` is refused another virtual host in the same words whether the stream exists or not, and whether the
+ * virtual host exists or not, and a stream of `/` outside its read pattern by the broker; the administrator reads the other virtual host, offsets and sizes only;
  * and no answer holds a message marker. The limits: timeout_ms at its minimum, and a cancel that ends the wait while
  * the read runs on to the provider's deadline.
  */
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { posix } from "node:path";
+import {
+  RABBITMQ_AGENT_STOP_SENTENCES,
+  rabbitmqAgentUnreadable,
+} from "@/lib/db/providers/stream/rabbitmq/agent-metadata-read";
+import { readRabbitMQAgentStatement } from "@/lib/db/providers/stream/rabbitmq/agent-statement";
 import { notAStream } from "@/lib/db/providers/stream/rabbitmq/errors";
 import { MCP_CANCELLED_TEXT } from "@/lib/mcp/output";
 import { timeoutText } from "@/lib/mcp/tools/read-query-limits";
@@ -36,10 +41,20 @@ interface Capture {
   readonly before: Counts;
   readonly accepted: Readonly<Record<string, Recorded>>;
   readonly cut: Recorded;
-  readonly admission: Readonly<Record<string, { readonly fenced: Recorded; readonly unfenced: Recorded }>>;
+  readonly admission: Readonly<
+    Record<string, { readonly statement: string; readonly fenced: Recorded; readonly unfenced: Recorded }>
+  >;
   readonly boundary: Readonly<Record<"classic" | "swapClassic" | "swapQuorum", Recorded>>;
   readonly scope: Readonly<
-    Record<"otherVhostStream" | "otherVhostMissing" | "privateStream" | "missingStream" | "broadOtherVhost", Recorded>
+    Record<
+      | "otherVhostStream"
+      | "otherVhostMissing"
+      | "absentVhostStream"
+      | "privateStream"
+      | "missingStream"
+      | "broadOtherVhost",
+      Recorded
+    >
   >;
   readonly timeout: Recorded;
   readonly cancel: {
@@ -88,13 +103,15 @@ describe("the boundary", () => {
 
   test.each(Object.entries(capture.admission))(
     "%s is refused by the admission before anything is acquired, and by the provider's reader without it",
-    (_name, { fenced, unfenced }) => {
+    (_name, { statement, fenced, unfenced }) => {
       expect(fenced.isError).toBe(true);
       expect(fenced.acquired).toEqual([]);
       expect(fenced.text).toStartWith("The read request was refused before it reached the broker (");
       expect(unfenced.isError).toBe(true);
       expect(unfenced.acquired).toEqual(["agent-read-only"]);
-      expect(unfenced.text).toStartWith("The statement was refused before it reached the database: ");
+      const reading = readRabbitMQAgentStatement(statement);
+      if (reading.ok) throw new Error(`the provider's reader admits ${statement}`);
+      expect(unfenced.text).toBe(`The statement was refused before it reached the database: ${reading.message}`);
     },
   );
 
@@ -141,17 +158,25 @@ describe("the reads", () => {
 });
 
 describe("the data scope", () => {
-  test("a user with no permission on another virtual host is refused it, in the same words whether the stream exists", () => {
-    const words = `${ENGINE_REFUSAL}This user has no permissions on virtual host "tenant-b": grant them to show its queues and exchanges.`;
-    expect(refusalOf(capture.scope.otherVhostStream)).toBe(words);
-    expect(refusalOf(capture.scope.otherVhostMissing)).toBe(words);
+  test("another virtual host is refused in the same words whether the stream exists and whether the virtual host exists", () => {
+    expect(refusalOf(capture.scope.otherVhostStream)).toBe(
+      `${ENGINE_REFUSAL}${rabbitmqAgentUnreadable("tenant-b", "st-other")}`,
+    );
+    expect(refusalOf(capture.scope.otherVhostMissing)).toBe(
+      `${ENGINE_REFUSAL}${rabbitmqAgentUnreadable("tenant-b", "st-missing")}`,
+    );
+    expect(refusalOf(capture.scope.absentVhostStream)).toBe(
+      `${ENGINE_REFUSAL}${rabbitmqAgentUnreadable("tenant-absent", "st-other")}`,
+    );
   });
 
   test("a stream of its own virtual host outside its read pattern is refused by the broker", () => {
     expect(refusalOf(capture.scope.privateStream)).toBe(
       `${ENGINE_REFUSAL}This user may not read stream "st-private": its read permission pattern on "/" does not match the name.`,
     );
-    expect(refusalOf(capture.scope.missingStream)).toStartWith(`${ENGINE_REFUSAL}Virtual host "/" has no queue`);
+    expect(refusalOf(capture.scope.missingStream)).toBe(
+      `${ENGINE_REFUSAL}${rabbitmqAgentUnreadable("/", "st-missing")}`,
+    );
   });
 
   test("the administrator reads the other virtual host, offsets and body sizes only", () => {
@@ -172,6 +197,9 @@ describe("the wait", () => {
     expect(capture.cancel.answer.text).toBe(MCP_CANCELLED_TEXT);
     expect(capture.cancel.answeredAfterMs).toBeLessThan(1_000);
     expect(capture.cancel.readSettled.afterMs).toBeGreaterThanOrEqual(capture.cancel.timeoutMs - 100);
-    expect(capture.cancel.readSettled.outcome).toStartWith("Read-only execution exceeded the time budget");
+    const left = Number(/within (\d+)ms/.exec(capture.cancel.readSettled.outcome)?.[1]);
+    expect(left).toBeGreaterThan(capture.cancel.timeoutMs - 100);
+    expect(left).toBeLessThanOrEqual(capture.cancel.timeoutMs);
+    expect(capture.cancel.readSettled.outcome).toBe(RABBITMQ_AGENT_STOP_SENTENCES.deadline(left));
   });
 });

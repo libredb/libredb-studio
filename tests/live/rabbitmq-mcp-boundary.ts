@@ -22,8 +22,8 @@
  *    queue declared under a stream's name, with the type check answered as a stream, refused by the broker's 406; the
  *    positive control is the administrator's raw `basic.get`, which removes a message from the same kind of queue;
  *  - the data scope: a user with read permission on one stream of `/` alone, naming a stream of another virtual host
- *    (one that exists and one that does not) and a stream of `/` outside its read pattern, each refused by the broker,
- *    with the wording that reaches the client recorded; the administrator, which the broker lets read every virtual
+ *    (one that exists and one that does not), a stream of a virtual host the broker does not have, and a stream of `/`
+ *    outside its read pattern, each refused, with the wording that reaches the client recorded; the administrator, which the broker lets read every virtual
  *    host, reading the other one, answered offsets and sizes only; and no message marker in any answer;
  *  - the limits: a read past timeout_ms at its 500 ms minimum, and a client cancel of a read fed a message every 400
  *    ms, with the time the cancel was answered and the time the read itself settled;
@@ -78,6 +78,8 @@ const NARROW_PASSWORD = randomBytes(18).toString("hex");
 const SECRETS: readonly string[] = [ADMIN_PASSWORD, NARROW_PASSWORD];
 
 const OTHER_VHOST = "tenant-b";
+/** A virtual host the broker does not have: its refusal must read as the one of a virtual host the user may not use. */
+const ABSENT_VHOST = "tenant-absent";
 const STREAM = "st-mcp";
 const PRIVATE_STREAM = "st-private";
 const OTHER_STREAM = "st-other";
@@ -364,9 +366,10 @@ async function main() {
     "a limit past 500": request("/", STREAM, "first", 501),
     "text that is no read request": `queue.purge ${STREAM}`,
   };
-  const admission: Record<string, { fenced: Recorded; unfenced: Recorded }> = {};
+  const admission: Record<string, { statement: string; fenced: Recorded; unfenced: Recorded }> = {};
   for (const [name, statement] of Object.entries(shapes)) {
     admission[name] = {
+      statement,
       fenced: await mcp(narrow, { statement }),
       unfenced: await mcp(narrow, { statement }, { arm: UNFENCED }),
     };
@@ -389,6 +392,7 @@ async function main() {
   const scope = {
     otherVhostStream: await mcp(narrow, { statement: request(OTHER_VHOST, OTHER_STREAM, "first", 2) }),
     otherVhostMissing: await mcp(narrow, { statement: request(OTHER_VHOST, "st-missing", "first", 2) }),
+    absentVhostStream: await mcp(narrow, { statement: request(ABSENT_VHOST, OTHER_STREAM, "first", 2) }),
     privateStream: await mcp(narrow, { statement: request("/", PRIVATE_STREAM, "first", 2) }),
     missingStream: await mcp(narrow, { statement: request("/", "st-missing", "first", 2) }),
     broadOtherVhost: await mcp(broad, { statement: request(OTHER_VHOST, OTHER_STREAM, "first", 2) }),
@@ -455,7 +459,7 @@ async function main() {
       runtime: `bun ${Bun.version}`,
       narrow: `${NARROW}: tag management; on / configure ^$, write ^$, read ^${STREAM}$; no permission on ${OTHER_VHOST}`,
       broad: `${ADMIN}: tag administrator; configure, write and read .* on / and ${OTHER_VHOST}`,
-      note: "Each call runs through runStatement with the factory's agent read-only acquisition, the way the MCP route makes it. `admission` holds each request the rabbitread admission refuses, sent through the tool and again with the admission removed. `boundary` has the admission removed: a classic queue at the type check, and a classic and a quorum queue declared under a stream's name with the type check answered as a stream. `control` is the administrator's raw no-ack basic.get after every MCP call, the take the closed table never sends.",
+      note: "Each call runs through runStatement with the factory's agent read-only acquisition, the way the MCP route makes it. `admission` holds each request the rabbitread admission refuses, with its statement, sent through the tool and again with the admission removed. `boundary` has the admission removed: a classic queue at the type check, and a classic and a quorum queue declared under a stream's name with the type check answered as a stream. `control` is the administrator's raw no-ack basic.get after every MCP call, the take the closed table never sends.",
     },
     markers: MARKERS,
     before,

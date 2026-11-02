@@ -14,6 +14,7 @@ import path from "node:path";
 import { connectionFieldLabel, DB_UI_CONFIG } from "@/lib/db-ui-config";
 import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
 import type { CredentialWarning } from "@/lib/db/credential-warnings";
+import { rabbitmqAgentUnreadable } from "@/lib/db/providers/stream/rabbitmq/agent-metadata-read";
 import {
   AMQP_PORT_REQUIRED,
   exchangesSampledFrom,
@@ -193,6 +194,13 @@ describe("MCP read is open, and the doc says so", () => {
     );
     expect(DOC).not.toContain("There is no MCP `run_read_query` for RabbitMQ");
     expect(DOC).not.toContain("`MCP_STATEMENT_READ.rabbitmq` is false");
+  });
+
+  test("section 17 prints the one sentence an agent read refuses another or a missing virtual host in", () => {
+    const sentence = rabbitmqAgentUnreadable("SAMPLE-VHOST", "SAMPLE-STREAM")
+      .replace('"SAMPLE-VHOST"', "{vhost}")
+      .replace('"SAMPLE-STREAM"', "{stream}");
+    expect(DOC).toContain(`refused in one sentence, "${sentence}"`);
   });
 });
 

@@ -215,7 +215,10 @@ describe("management failures", () => {
 
   test("on an object route, Object Not Found names the vhost and the object; any other 404 or a 401 is vhost access", () => {
     const missing = E.managementStatusError(404, '{"error":"Object Not Found"}', context());
-    expect(missing).toBeInstanceOf(QueryError);
+    expect(missing).toBeInstanceOf(E.ObjectNotFoundError);
+    expect(E.isOwnError(missing)).toBe(true);
+    const found = missing as E.ObjectNotFoundError;
+    expect({ vhost: found.vhost, object: found.object }).toEqual({ vhost: "/", object: "orders" });
     expect(missing.message).toBe(
       'Virtual host "/" has no queue, stream or exchange "orders", or the virtual host does not exist: refresh the tree.',
     );

@@ -15,7 +15,10 @@ import {
   MAX_STATEMENT_TIMEOUT_MS,
   rowBudgetSentence,
 } from "@/lib/db/providers/sql/read-only-budget";
-import { RABBITMQ_AGENT_STOP_SENTENCES } from "@/lib/db/providers/stream/rabbitmq/agent-metadata-read";
+import {
+  RABBITMQ_AGENT_STOP_SENTENCES,
+  rabbitmqAgentUnreadable,
+} from "@/lib/db/providers/stream/rabbitmq/agent-metadata-read";
 import { RABBITMQ_AGENT_SENTENCES } from "@/lib/db/providers/stream/rabbitmq/agent-statement";
 import { type AmqpDial, type AmqpSocket, DialAborted, dialAmqp } from "@/lib/db/providers/stream/rabbitmq/amqp/dial";
 import {
@@ -300,6 +303,19 @@ describe("the type check before any frame", () => {
     expect(error).toBeInstanceOf(QueryError);
     expect(error.message).toBe(notAStream("orders", type).message);
     expect(h.stub.requests.slice(before).map((request) => request.path)).toEqual(["/api/queues/%2F/orders"]);
+    expect(h.dials()).toBe(0);
+  });
+
+  test.each([
+    ["a virtual host the user may not use", 404, '{"error":"not_found","reason":"Not Found"}'],
+    ["a virtual host or a stream that does not exist", 404, '{"error":"Object Not Found","reason":"Not Found"}'],
+    ["a refused login on the virtual host", 401, '{"error":"not_authorised","reason":"Not authorised"}'],
+  ])("%s is refused in one sentence that does not tell them apart, with no dial", async (_name, status, body) => {
+    const h = await handle(AGENT);
+    h.stub.answer(stubKey(routeTarget("stream-type", { vhost: "/", name: "orders" }, "")), { status, body });
+    const error = await refusal(h.provider.queryReadOnly(READ(), BUDGET));
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error.message).toBe(rabbitmqAgentUnreadable("/", "orders"));
     expect(h.dials()).toBe(0);
   });
 
