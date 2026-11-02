@@ -277,6 +277,11 @@ describe("the offset rule", () => {
       "This query cannot be paged with offset. Page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.",
     ],
     ["VALUES (1), (2), (3)", "db2", "This statement's result cannot be paged. Call again without offset."],
+    [
+      "EXPLAIN PLAN FOR SELECT ID FROM APP.ORDERS",
+      "db2",
+      "This statement's result cannot be paged. Call again without offset.",
+    ],
     ["SELECT id FROM probe.customers", "cassandra", NO_CQL_OFFSET],
     ["SELECT id FROM probe.customers LIMIT 5", "cassandra", NO_CQL_OFFSET],
     ["SELECT id FROM probe.customers WHERE id = 1 LIMIT 5 ALLOW FILTERING", "cassandra", NO_CQL_OFFSET],
