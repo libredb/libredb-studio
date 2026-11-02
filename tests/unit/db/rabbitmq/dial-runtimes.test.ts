@@ -1,6 +1,6 @@
 /**
  * The AMQP dial on the runtimes production runs: a Bun child and one Node child per binary that NODE_TRANSPORT_NODES
- * lists (or the node on PATH), so CI's Node 24 step and its Node 26.10.0 step both run it. Each child runs a bundle of
+ * lists (or the node on PATH), so CI's Node 24 suite and its step on the image's Node both run it. Each child runs a bundle of
  * `amqp/dial.ts` against listeners this file starts, and starts from an unbundled entry.mjs that answers two names
  * itself: metadata.test with 169.254.169.254, and pinned.test with 127.0.0.1, a name no resolver knows, so a dial that
  * reaches the listener by it proves the address dialled is the checked lookup's answer.

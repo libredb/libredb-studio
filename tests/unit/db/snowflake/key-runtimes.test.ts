@@ -1,8 +1,8 @@
 /**
  * The Snowflake key intake on the runtimes production runs: in this Bun process and in one Node child per binary that
  * NODE_TRANSPORT_NODES lists, split on the path delimiter, or else in the `node` on PATH, so CI's Node 24 runs them and
- * NODE_TRANSPORT_NODES can list Node 24, 26.10 and 26.12 in one pass. Each child must report the version its binary
- * prints, so a listed Node never passes as another.
+ * its step on the image's Node runs them again, and one pass can list several Node binaries. Each child must report the
+ * version its binary prints, so a listed Node never passes as another.
  *
  * Each child runs one bundle that Bun.build({ target: "node" }) makes of auth.ts and the key helper around the text of
  * `runCases`, the function this process runs in place. The missing and wrong passphrase errors differ by runtime (Bun
