@@ -6,15 +6,13 @@
  * a second statement past.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import {
   INFLUXQL_AGENT_SENTENCES,
   INFLUXQL_AGENT_SHOW_KINDS,
   readInfluxqlAgentStatement,
 } from "@/lib/db/providers/timeseries/influxdb/influxql-agent-statement";
 import { INFLUXQL_POLICY_SENTENCES } from "@/lib/db/providers/timeseries/influxdb/influxql-policy";
-import { INFLUX_FIXTURES_DIR, loadInfluxCapture } from "../../../helpers/influxdb-fixtures";
+import { loadInfluxCapture } from "../../../helpers/influxdb-fixtures";
 import { INFLUXQL_QUERY_TEXT_SPELLINGS } from "../../../helpers/influxql-query-text-spellings";
 
 describe("readInfluxqlAgentStatement", () => {
@@ -94,21 +92,6 @@ describe("readInfluxqlAgentStatement", () => {
       expect(readInfluxqlAgentStatement(text).ok).toBe(false);
     }
   });
-
-  // What each line answered every spelling, sent raw as a user granted READ on one database
-  // (tests/fixtures/influxdb/<version>/mcp-boundary/, recorded by tests/live/influxdb-mcp-boundary.ts).
-  test.each(["1.13.1", "2.9.1"] as const)(
-    "the %s capture holds every spelling, and the reader refuses each the server answered with statement text",
-    (version) => {
-      const captured = JSON.parse(
-        readFileSync(join(INFLUX_FIXTURES_DIR, version, "mcp-boundary", "query-text-spellings.json"), "utf8"),
-      ) as { entries: { statement: string; statementText: boolean }[] };
-      expect(captured.entries.map((entry) => entry.statement)).toEqual([...INFLUXQL_QUERY_TEXT_SPELLINGS]);
-      const answered = captured.entries.filter((entry) => entry.statementText);
-      expect(answered.length > 0).toBe(version === "1.13.1");
-      for (const { statement } of answered) expect(readInfluxqlAgentStatement(statement).ok).toBe(false);
-    },
-  );
 
   test.each(INFLUXQL_QUERY_TEXT_SPELLINGS.map((text) => [text]))(
     "refuses %p, a spelling of a read of statement text, before anything is sent",

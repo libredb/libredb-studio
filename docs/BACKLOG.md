@@ -8556,16 +8556,16 @@ Found 2026-10-03 while designing the Neo4j provider (spec 6.4).
 
 **Done when:** MCP serves Neo4j's Cypher through its own MCP facet in its language pack (`src/lib/agent/languages/cypher/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), under the same user proof, with `MCP_STATEMENT_READ.neo4j` opened by the owner, and an MCP call drives a `LOAD CSV` and a write to their refusal in a test.
 
-### B94. InfluxDB over InfluxQL has no 2.x agent token
+### B94. InfluxDB over InfluxQL has no MCP statement read and no 2.x agent token
 
-Agent mode on InfluxDB over InfluxQL takes its agent credential in the default form, `agentUser` and `agentPassword` together, which is a 1.x user; a 2.x token beside the connection's own credential has no form, because one provider class serves both lines and declares its form before it knows the line, so a 2.x connection gives the agent a read-only token as its own credential.
+No MCP tool runs InfluxQL: the `influxql` language pack declares no MCP facet (`AGENT_LANGUAGE_MCP_FACETS.influxql` is null) and `MCP_STATEMENT_READ.influxdb` is false; plan mode and the MCP metadata tools work (`MCP_EXPOSABLE` in `src/lib/db/compatibility.ts`).
 The agent half closed on 2026-10-30: the `influxdb` provider implements `queryReadOnly` for a principal the server proves read-only before every statement, under the agent's InfluxQL statement reader (`docs/providers/influxdb.md`, section Agent mode).
-The MCP half closed on 2026-11-02: `run_influxql_read`, the `influxql` language's MCP facet (`src/lib/agent/languages/influxql/mcp.ts`), runs InfluxQL under the same principal proof, with an answer in the shape of SHOW QUERIES or SHOW CONTINUOUS QUERIES refused from its columns, and `MCP_STATEMENT_READ.influxdb` is true (`docs/providers/influxdb.md` section 15.8); an MCP seed carries no separate agent credential, so this entry does not reach it.
-`influxdb3` left this entry on 2026-10-29: agent mode executes its DataFusion SQL under the 3.12 Core planner's write refusals, and on 2026-11-01 MCP's `run_read_query` opened on it under the same boundary (`docs/providers/influxdb3.md` section 3.5).
+Its agent credential takes the default form, `agentUser` and `agentPassword` together, which is a 1.x user; a 2.x token beside the connection's own credential has no form, because one provider class serves both lines and declares its form before it knows the line, so a 2.x connection gives the agent a read-only token as its own credential.
+`influxdb3` left this entry on 2026-10-29: agent mode executes its DataFusion SQL under the 3.12 Core planner's write refusals, and on 2026-11-01 MCP's `run_read_query` opened on it under the same boundary (`docs/providers/influxdb3.md` section 3.5), with `MCP_STATEMENT_READ.influxdb` left false.
 
-Found 2026-10-04 while designing the InfluxDB provider (ruling R10); narrowed 2026-11-02 when MCP read opened on InfluxQL.
+Found 2026-10-04 while designing the InfluxDB provider (ruling R10).
 
-**Done when:** a 2.x agent token is accepted beside the connection's own credential, proved by the same principal proof, with tests.
+**Done when:** MCP serves `influxdb`'s InfluxQL through its own MCP facet in its language pack (`src/lib/agent/languages/influxql/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), under the same principal proof, with `MCP_STATEMENT_READ.influxdb` opened by the owner, and a 2.x agent token is accepted beside the connection's own credential, with tests.
 
 ### B100. Oxia's agent reads are metadata only, and it has no MCP statement tool
 

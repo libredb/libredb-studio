@@ -36,11 +36,9 @@ const ARMS = Object.values(MCP_STATEMENT_ARMS).flatMap((arm) => (arm === null ? 
 const RUN_READ_QUERY_ARM = mcpStatementArm("run_read_query");
 const RUN_KUBECTL_READ_ARM = mcpStatementArm("run_kubectl_read");
 const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
-const RUN_INFLUXQL_READ_ARM = mcpStatementArm("run_influxql_read");
 const RunKubectlReadInputSchema = RUN_KUBECTL_READ_ARM.inputSchema;
 const RunReadQueryInputSchema = RUN_READ_QUERY_ARM.inputSchema;
 const RunMongoCommandInputSchema = RUN_MONGO_COMMAND_ARM.inputSchema;
-const RunInfluxqlReadInputSchema = RUN_INFLUXQL_READ_ARM.inputSchema;
 
 /** True only when `A` and `B` are the same union, member for member. */
 type SameUnion<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;
@@ -55,22 +53,18 @@ describe("MCP_STATEMENT_ARMS", () => {
     }
   });
 
-  test("every language has its arm: run_read_query, run_kubectl_read, run_mongo_command and run_influxql_read", () => {
+  test("every language has its arm: run_read_query, run_kubectl_read and run_mongo_command", () => {
     expect(MCP_STATEMENT_ARMS.sql).toBe(RUN_READ_QUERY_ARM);
     expect(MCP_STATEMENT_ARMS.kubectl).toBe(RUN_KUBECTL_READ_ARM);
     expect(MCP_STATEMENT_ARMS.mongo).toBe(RUN_MONGO_COMMAND_ARM);
-    expect(MCP_STATEMENT_ARMS.influxql).toBe(RUN_INFLUXQL_READ_ARM);
-    expect(ARMS.map((arm) => arm.tool)).toEqual([
-      "run_read_query",
-      "run_kubectl_read",
-      "run_mongo_command",
-      "run_influxql_read",
-    ]);
+    expect(ARMS.map((arm) => arm.tool)).toEqual(["run_read_query", "run_kubectl_read", "run_mongo_command"]);
   });
 
   test("a language with no MCP tool yet has no arm, and its engine no read tool", () => {
     expect(MCP_STATEMENT_ARMS.libredbkv).toBeNull();
     expect(mcpStatementToolFor("libredb")).toBeNull();
+    expect(MCP_STATEMENT_ARMS.influxql).toBeNull();
+    expect(mcpStatementToolFor("influxdb")).toBeNull();
     expect(MCP_STATEMENT_ARMS.weaviateapi).toBeNull();
     expect(mcpStatementToolFor("weaviate")).toBeNull();
     expect(MCP_STATEMENT_ARMS.qdrantapi).toBeNull();
@@ -404,98 +398,6 @@ describe("the kubectl arm", () => {
   });
 });
 
-describe("the InfluxQL arm", () => {
-  const server = languageServer("influxql");
-
-  test("takes one statement, no offset and no database, and sends it as written", () => {
-    expect(RUN_INFLUXQL_READ_ARM.title).toBe("Run a read-only InfluxQL statement");
-    expect(RUN_INFLUXQL_READ_ARM.argument).toBe("statement");
-    expect(RUN_INFLUXQL_READ_ARM.paging).toBe("none");
-    expect(RUN_INFLUXQL_READ_ARM.types).toEqual(["influxdb"]);
-    expect(RUN_INFLUXQL_READ_ARM.inputSchema.shape).not.toHaveProperty("offset");
-    expect(RUN_INFLUXQL_READ_ARM.inputSchema.shape).not.toHaveProperty("database");
-    for (const extra of [{ offset: 5 }, { database: "home" }, { sql: "SELECT 1" }]) {
-      expect(
-        RunInfluxqlReadInputSchema.safeParse({ connection_id: "seed:i", statement: "SHOW DATABASES", ...extra })
-          .success,
-      ).toBe(false);
-    }
-    expect(RunInfluxqlReadInputSchema.safeParse({ connection_id: "seed:i", statement: "" }).success).toBe(false);
-  });
-
-  test("reads its argument with the agent's canonicalize", () => {
-    expect(RUN_INFLUXQL_READ_ARM.canonicalize("SHOW MEASUREMENTS")).toBe(server.canonicalize("SHOW MEASUREMENTS"));
-    expect(RUN_INFLUXQL_READ_ARM.canonicalize({ statement: "SHOW MEASUREMENTS" })).toBeNull();
-  });
-
-  test.each([
-    ["INTO", 'SELECT * INTO "other".."m" FROM home'],
-    ["a write", "DROP MEASUREMENT home"],
-    ["SHOW QUERIES", "SHOW QUERIES"],
-    ["SHOW CONTINUOUS QUERIES", "show continuous queries"],
-    ["a comment", "SELECT * FROM home -- c"],
-  ])("fences %s with the agent's admission and quotes its sentence", (_what, statement) => {
-    const refusal = server.admit?.(statement);
-    expect(refusal).not.toBeNull();
-    expect(RUN_INFLUXQL_READ_ARM.fence(statement, "influxdb")).toBe(
-      `The statement was refused before it reached the database (${refusal?.code}). ${refusal?.message}`,
-    );
-  });
-
-  test("admits a read", () => {
-    expect(RUN_INFLUXQL_READ_ARM.fence("SELECT temp FROM home WHERE time > now() - 1h", "influxdb")).toBeNull();
-    expect(RUN_INFLUXQL_READ_ARM.fence("SHOW TAG KEYS FROM home", "influxdb")).toBeNull();
-    expect(RUN_INFLUXQL_READ_ARM.fence("EXPLAIN SELECT * FROM home", "influxdb")).toBeNull();
-  });
-
-  test("answers a row refusal with the statement's own row-cap advice", () => {
-    const statement = "SELECT * FROM home";
-    const rows = classifyReadQueryFailure(
-      new Error("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
-      1,
-      2,
-      RUN_INFLUXQL_READ_ARM.tooLarge(statement, "influxdb"),
-    );
-    expect(rows).toEqual({
-      kind: "too-large",
-      text: `The result has more than 1000 rows, the most this server reads for one call. ${server.rowCapAdvice(statement, "1000")}`,
-    });
-  });
-
-  test("pages inside the statement where more rows exist, never with an offset argument or a MongoDB stage", () => {
-    const hint = RUN_INFLUXQL_READ_ARM.moreRows("SELECT * FROM home", "influxdb", {
-      maxRows: 100,
-      shown: 100,
-      cut: "max_rows",
-    });
-    expect(hint).toBe(
-      `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice("SELECT * FROM home", "100")} To read past the 100 rows returned, add OFFSET 100 to the statement, or narrow its time range, since LIMIT and OFFSET count per series.`,
-    );
-    const bytes = RUN_INFLUXQL_READ_ARM.moreRows("SELECT * FROM home", "influxdb", {
-      maxRows: 100,
-      shown: 4,
-      cut: "result_bytes",
-    });
-    expect(bytes).toBe(
-      "More rows exist than the 32 KiB result limit holds, and 4 of them fitted; this tool does not page with offset. Select fewer fields to fit more rows, and to read past the 4 rows returned, add OFFSET 4 to the statement, or narrow its time range, since LIMIT and OFFSET count per series.",
-    );
-    for (const text of [hint, bytes, RUN_INFLUXQL_READ_ARM.rowOverCap]) expect(text).not.toContain("$skip");
-    expect(RUN_INFLUXQL_READ_ARM.rowOverCap).toBe(
-      "One row of this result is larger than the 32 KiB result limit. Select fewer or narrower fields, and run it again.",
-    );
-  });
-
-  test("describes the statements it takes, the refusals, the principal and its engine", () => {
-    const description = RUN_INFLUXQL_READ_ARM.description;
-    expect(description.startsWith("Run one read-only InfluxQL statement")).toBe(true);
-    expect(description).toContain("Runs on InfluxDB (InfluxQL); other engines refuse it.");
-    expect(description).toContain("this tool takes no offset");
-    expect(description).toContain("SHOW QUERIES, SHOW CONTINUOUS QUERIES");
-    expect(description).toContain("an answer in the shape of SHOW QUERIES or SHOW CONTINUOUS QUERIES is refused");
-    expect(description).toContain("a no-op write on every database it lists");
-  });
-});
-
 describe("the tool each engine is read with", () => {
   test("is the tool whose arm serves it, and null where none does", () => {
     for (const type of SHIPPED_DATABASE_TYPES) {
@@ -505,14 +407,14 @@ describe("the tool each engine is read with", () => {
     }
   });
 
-  test("MongoDB is read with run_mongo_command, Kubernetes with run_kubectl_read, InfluxDB with run_influxql_read, the SQL engines with run_read_query, the rest with none", () => {
+  test("MongoDB is read with run_mongo_command, Kubernetes with run_kubectl_read, the SQL engines with run_read_query, the rest with none", () => {
     expect(mcpStatementToolFor("mongodb")).toBe("run_mongo_command");
     expect(mcpStatementToolFor("kubernetes")).toBe("run_kubectl_read");
     for (const type of RUN_READ_QUERY_TYPES) expect(mcpStatementToolFor(type)).toBe("run_read_query");
     expect(mcpStatementToolFor("clickhouse")).toBe("run_read_query");
     expect(mcpStatementToolFor("libsql")).toBe("run_read_query");
     expect(mcpStatementToolFor("influxdb3")).toBe("run_read_query");
-    expect(mcpStatementToolFor("influxdb")).toBe("run_influxql_read");
+    expect(mcpStatementToolFor("influxdb")).toBeNull();
     expect(mcpStatementToolFor("elasticsearch")).toBe("run_read_query");
     expect(mcpStatementToolFor("opensearch")).toBe("run_read_query");
     expect(mcpStatementToolFor("oracle")).toBe("run_read_query");
@@ -529,7 +431,6 @@ describe("the tool each engine is read with", () => {
       "run_read_query",
       "run_kubectl_read",
       "run_mongo_command",
-      "run_influxql_read",
     ]);
   });
 
@@ -574,11 +475,10 @@ describe("the tool each engine is read with", () => {
  * to its provider's own declaration: no relation kind where the arm says none, at least one where it does not.
  */
 describe("the arms whose engines hold no table", () => {
-  test("kubectl declares it, SQL, MongoDB and InfluxQL do not", () => {
+  test("kubectl declares it, SQL and MongoDB do not", () => {
     expect(RUN_KUBECTL_READ_ARM.holdsNoTables).toBe(true);
     expect(RUN_READ_QUERY_ARM.holdsNoTables).toBe(false);
     expect(RUN_MONGO_COMMAND_ARM.holdsNoTables).toBe(false);
-    expect(RUN_INFLUXQL_READ_ARM.holdsNoTables).toBe(false);
   });
 
   test.each(ARMS.flatMap((arm) => arm.types.map((type) => [arm.tool, type, arm] as const)))(
