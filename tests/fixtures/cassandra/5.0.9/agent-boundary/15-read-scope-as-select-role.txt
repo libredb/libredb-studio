@@ -1,0 +1,100 @@
+== as scope15_agent, holding only SELECT on scope15: one read of every table the server lists
+scope15.t: ok, 0 rows
+scope15_other.t: error code=8448: User scope15_agent has no SELECT permission on <table scope15_other.t> or any of its parents
+system.IndexInfo: error code=8448: User scope15_agent has no SELECT permission on <table system.IndexInfo> or any of its parents
+system.available_ranges: error code=8448: User scope15_agent has no SELECT permission on <table system.available_ranges> or any of its parents
+system.available_ranges_v2: error code=8448: User scope15_agent has no SELECT permission on <table system.available_ranges_v2> or any of its parents
+system.batches: error code=8448: User scope15_agent has no SELECT permission on <table system.batches> or any of its parents
+system.built_views: error code=8448: User scope15_agent has no SELECT permission on <table system.built_views> or any of its parents
+system.compaction_history: error code=8448: User scope15_agent has no SELECT permission on <table system.compaction_history> or any of its parents
+system.local: ok, 1 rows
+system.paxos: error code=8448: User scope15_agent has no SELECT permission on <table system.paxos> or any of its parents
+system.paxos_repair_history: error code=8448: User scope15_agent has no SELECT permission on <table system.paxos_repair_history> or any of its parents
+system.peer_events: error code=8448: User scope15_agent has no SELECT permission on <table system.peer_events> or any of its parents
+system.peer_events_v2: error code=8448: User scope15_agent has no SELECT permission on <table system.peer_events_v2> or any of its parents
+system.peers: ok, 0 rows
+system.peers_v2: ok, 0 rows
+system.prepared_statements: error code=8448: User scope15_agent has no SELECT permission on <table system.prepared_statements> or any of its parents
+system.repairs: error code=8448: User scope15_agent has no SELECT permission on <table system.repairs> or any of its parents
+system.size_estimates: ok, 1 rows
+system.sstable_activity: error code=8448: User scope15_agent has no SELECT permission on <table system.sstable_activity> or any of its parents
+system.sstable_activity_v2: error code=8448: User scope15_agent has no SELECT permission on <table system.sstable_activity_v2> or any of its parents
+system.table_estimates: ok, 1 rows
+system.top_partitions: error code=8448: User scope15_agent has no SELECT permission on <table system.top_partitions> or any of its parents
+system.transferred_ranges: error code=8448: User scope15_agent has no SELECT permission on <table system.transferred_ranges> or any of its parents
+system.transferred_ranges_v2: error code=8448: User scope15_agent has no SELECT permission on <table system.transferred_ranges_v2> or any of its parents
+system.view_builds_in_progress: error code=8448: User scope15_agent has no SELECT permission on <table system.view_builds_in_progress> or any of its parents
+system_auth.cidr_groups: error code=8448: User scope15_agent has no SELECT permission on <table system_auth.cidr_groups> or any of its parents
+system_auth.cidr_permissions: error code=8448: User scope15_agent has no SELECT permission on <table system_auth.cidr_permissions> or any of its parents
+system_auth.identity_to_role: error code=8448: User scope15_agent has no SELECT permission on <table system_auth.identity_to_role> or any of its parents
+system_auth.network_permissions: error code=8448: User scope15_agent has no SELECT permission on <table system_auth.network_permissions> or any of its parents
+system_auth.resource_role_permissons_index: error code=8448: User scope15_agent has no SELECT permission on <table system_auth.resource_role_permissons_index> or any of its parents
+system_auth.role_members: error code=8448: User scope15_agent has no SELECT permission on <table system_auth.role_members> or any of its parents
+system_auth.role_permissions: error code=8448: User scope15_agent has no SELECT permission on <table system_auth.role_permissions> or any of its parents
+system_auth.roles: error code=8448: User scope15_agent has no SELECT permission on <table system_auth.roles> or any of its parents
+system_distributed.parent_repair_history: error code=8448: User scope15_agent has no SELECT permission on <table system_distributed.parent_repair_history> or any of its parents
+system_distributed.partition_denylist: error code=8448: User scope15_agent has no SELECT permission on <table system_distributed.partition_denylist> or any of its parents
+system_distributed.repair_history: error code=8448: User scope15_agent has no SELECT permission on <table system_distributed.repair_history> or any of its parents
+system_distributed.view_build_status: error code=8448: User scope15_agent has no SELECT permission on <table system_distributed.view_build_status> or any of its parents
+system_schema.aggregates: ok, 0 rows
+system_schema.column_masks: ok, 0 rows
+system_schema.columns: ok, 1 rows
+system_schema.dropped_columns: ok, 1 rows
+system_schema.functions: ok, 0 rows
+system_schema.indexes: ok, 1 rows
+system_schema.keyspaces: ok, 1 rows
+system_schema.tables: ok, 1 rows
+system_schema.triggers: ok, 0 rows
+system_schema.types: ok, 0 rows
+system_schema.views: ok, 0 rows
+system_traces.events: ok, 1 rows
+system_traces.sessions: ok, 1 rows
+system_views.batch_metrics: error code=8448: User scope15_agent has no SELECT permission on <table system_views.batch_metrics> or any of its parents
+system_views.caches: error code=8448: User scope15_agent has no SELECT permission on <table system_views.caches> or any of its parents
+system_views.cidr_filtering_metrics_counts: error code=8448: User scope15_agent has no SELECT permission on <table system_views.cidr_filtering_metrics_counts> or any of its parents
+system_views.cidr_filtering_metrics_latencies: error code=8448: User scope15_agent has no SELECT permission on <table system_views.cidr_filtering_metrics_latencies> or any of its parents
+system_views.clients: error code=8448: User scope15_agent has no SELECT permission on <table system_views.clients> or any of its parents
+system_views.coordinator_read_latency: error code=8448: User scope15_agent has no SELECT permission on <table system_views.coordinator_read_latency> or any of its parents
+system_views.coordinator_scan_latency: error code=8448: User scope15_agent has no SELECT permission on <table system_views.coordinator_scan_latency> or any of its parents
+system_views.coordinator_write_latency: error code=8448: User scope15_agent has no SELECT permission on <table system_views.coordinator_write_latency> or any of its parents
+system_views.cql_metrics: error code=8448: User scope15_agent has no SELECT permission on <table system_views.cql_metrics> or any of its parents
+system_views.credentials_cache_keys: error code=8448: User scope15_agent has no SELECT permission on <table system_views.credentials_cache_keys> or any of its parents
+system_views.disk_usage: error code=8448: User scope15_agent has no SELECT permission on <table system_views.disk_usage> or any of its parents
+system_views.gossip_info: error code=8448: User scope15_agent has no SELECT permission on <table system_views.gossip_info> or any of its parents
+system_views.internode_inbound: error code=8448: User scope15_agent has no SELECT permission on <table system_views.internode_inbound> or any of its parents
+system_views.internode_outbound: error code=8448: User scope15_agent has no SELECT permission on <table system_views.internode_outbound> or any of its parents
+system_views.jmx_permissions_cache_keys: error code=8448: User scope15_agent has no SELECT permission on <table system_views.jmx_permissions_cache_keys> or any of its parents
+system_views.local_read_latency: error code=8448: User scope15_agent has no SELECT permission on <table system_views.local_read_latency> or any of its parents
+system_views.local_scan_latency: error code=8448: User scope15_agent has no SELECT permission on <table system_views.local_scan_latency> or any of its parents
+system_views.local_write_latency: error code=8448: User scope15_agent has no SELECT permission on <table system_views.local_write_latency> or any of its parents
+system_views.max_partition_size: error code=8448: User scope15_agent has no SELECT permission on <table system_views.max_partition_size> or any of its parents
+system_views.max_sstable_duration: error code=8448: User scope15_agent has no SELECT permission on <table system_views.max_sstable_duration> or any of its parents
+system_views.max_sstable_size: error code=8448: User scope15_agent has no SELECT permission on <table system_views.max_sstable_size> or any of its parents
+system_views.network_permissions_cache_keys: error code=8448: User scope15_agent has no SELECT permission on <table system_views.network_permissions_cache_keys> or any of its parents
+system_views.pending_hints: error code=8448: User scope15_agent has no SELECT permission on <table system_views.pending_hints> or any of its parents
+system_views.permissions_cache_keys: error code=8448: User scope15_agent has no SELECT permission on <table system_views.permissions_cache_keys> or any of its parents
+system_views.queries: error code=8448: User scope15_agent has no SELECT permission on <table system_views.queries> or any of its parents
+system_views.repair_jobs: error code=8448: User scope15_agent has no SELECT permission on <table system_views.repair_jobs> or any of its parents
+system_views.repair_participates: error code=8448: User scope15_agent has no SELECT permission on <table system_views.repair_participates> or any of its parents
+system_views.repair_sessions: error code=8448: User scope15_agent has no SELECT permission on <table system_views.repair_sessions> or any of its parents
+system_views.repair_validations: error code=8448: User scope15_agent has no SELECT permission on <table system_views.repair_validations> or any of its parents
+system_views.repairs: error code=8448: User scope15_agent has no SELECT permission on <table system_views.repairs> or any of its parents
+system_views.roles_cache_keys: error code=8448: User scope15_agent has no SELECT permission on <table system_views.roles_cache_keys> or any of its parents
+system_views.rows_per_read: error code=8448: User scope15_agent has no SELECT permission on <table system_views.rows_per_read> or any of its parents
+system_views.sai_column_indexes: error code=8448: User scope15_agent has no SELECT permission on <table system_views.sai_column_indexes> or any of its parents
+system_views.sai_sstable_index_segments: error code=8448: User scope15_agent has no SELECT permission on <table system_views.sai_sstable_index_segments> or any of its parents
+system_views.sai_sstable_indexes: error code=8448: User scope15_agent has no SELECT permission on <table system_views.sai_sstable_indexes> or any of its parents
+system_views.settings: error code=8448: User scope15_agent has no SELECT permission on <table system_views.settings> or any of its parents
+system_views.snapshots: error code=8448: User scope15_agent has no SELECT permission on <table system_views.snapshots> or any of its parents
+system_views.sstable_tasks: error code=8448: User scope15_agent has no SELECT permission on <table system_views.sstable_tasks> or any of its parents
+system_views.streaming: error code=8448: User scope15_agent has no SELECT permission on <table system_views.streaming> or any of its parents
+system_views.system_logs: error code=8448: User scope15_agent has no SELECT permission on <table system_views.system_logs> or any of its parents
+system_views.system_properties: error code=8448: User scope15_agent has no SELECT permission on <table system_views.system_properties> or any of its parents
+system_views.thread_pools: error code=8448: User scope15_agent has no SELECT permission on <table system_views.thread_pools> or any of its parents
+system_views.tombstones_per_read: error code=8448: User scope15_agent has no SELECT permission on <table system_views.tombstones_per_read> or any of its parents
+system_virtual_schema.columns: ok, 1 rows
+system_virtual_schema.keyspaces: ok, 1 rows
+system_virtual_schema.tables: ok, 1 rows
+== as scope15_agent: the trace of the superuser's statement on scope15_other
+  command=QUERY request=Execute CQL3 query query="SELECT v FROM scope15_other.t WHERE id = 1"
+  activity="Parsing SELECT v FROM scope15_other.t WHERE id = 1"

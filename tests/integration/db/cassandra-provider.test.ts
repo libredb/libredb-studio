@@ -4088,12 +4088,42 @@ describe("the agent read-only profile", () => {
 
     const error = await provider.queryReadOnly(sql, BUDGET).catch((failure: unknown) => failure);
     expect(error).toBeInstanceOf(RefusedBeforeSendError);
-    expect((error as Error).message).toBe(cassandraAgentStatementRefusal(sql) as string);
+    expect((error as Error).message).toBe(cassandraAgentStatementRefusal(sql, KEYSPACE) as string);
     expect((error as Error).message).toStartWith(
       "The agent read-only execution profile sends one CQL statement, a SELECT, and nothing else; ",
     );
     expect(primary.asked).toHaveLength(sent);
     expect(calls).toHaveLength(0);
+  });
+
+  test.each([
+    ["the traced statements of other sessions, which every role may read", "SELECT * FROM system_traces.sessions"],
+    ["the node's own row", "SELECT * FROM system.local"],
+    ["another keyspace", "SELECT * FROM other.t"],
+  ])("queryReadOnly refuses a read of %s before a session is opened or the role checked", async (_, sql) => {
+    const { provider, primary, calls } = await agentProvider(() => ({ [sql]: VOID_RESULT }));
+    await provider.connect();
+    const sent = primary.asked.length;
+
+    const error = await provider.queryReadOnly(sql, BUDGET).catch((failure: unknown) => failure);
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect((error as Error).message).toBe(cassandraAgentStatementRefusal(sql, KEYSPACE) as string);
+    expect((error as Error).message).toStartWith(
+      "The agent read-only execution profile reads the tables of the connection's keyspace and of system_schema, and nothing else; this SELECT reads ",
+    );
+    expect(primary.asked).toHaveLength(sent);
+    expect(calls).toHaveLength(0);
+  });
+
+  test("the scope is the connection's own keyspace: an unqualified table and the schema catalog are read", async () => {
+    const catalog = "SELECT column_name FROM system_schema.columns WHERE keyspace_name = 'probe'";
+    const unqualified = "SELECT id, name FROM customers LIMIT 3";
+    const { provider, calls } = await agentProvider(() => ({ [catalog]: VOID_RESULT, [unqualified]: CUSTOMERS }));
+    await provider.connect();
+
+    await expect(provider.queryReadOnly(unqualified, BUDGET)).resolves.toMatchObject({ rowCount: 2 });
+    await provider.queryReadOnly(catalog, BUDGET);
+    expect(calls.map((call) => call.asked.at(-1))).toEqual([unqualified, catalog]);
   });
 
   test("a result past the row budget is refused, not cut", async () => {
