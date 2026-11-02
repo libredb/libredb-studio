@@ -60,10 +60,11 @@ import { MCP_STATEMENT_ARMS, mcpStatementToolFor, servingStatementArms, type Mcp
  *
  * The boundary is the agent-read-only acquisition and the provider's queryReadOnly, which the factory refuses to hand
  * out for an engine without one; this module never calls query(), and that is what makes every statement tool's
- * readOnlyHint true. An engine the arm does not serve is refused before anything is acquired, naming the tool that
- * does serve it, and the arm's fence then runs as defence in depth. One deadline, the call's start plus timeout_ms,
- * covers acquisition and execution; neither a cancel nor the deadline stops a statement already running
- * (docs/BACKLOG.md D128), they end the wait.
+ * readOnlyHint true. A profile refusal, from the acquisition or from a provider that proves its principal before every
+ * statement, is answered in the tool's own sentence. An engine the arm does not serve is refused before anything is
+ * acquired, naming the tool that does serve it, and the arm's fence then runs as defence in depth. One deadline, the
+ * call's start plus timeout_ms, covers acquisition and execution; neither a cancel nor the deadline stops a statement
+ * already running (docs/BACKLOG.md D128), they end the wait.
  *
  * Rows are fetched one past the page where the arm pages, so the extra row proves more exist, cut to max_rows, then
  * cut to the result cap by binary search. offset on a query the provider did not rewrite is refused before anything
@@ -273,6 +274,11 @@ async function execute(
   );
   if (executed.kind === "cancelled") return [ownWordsError(MCP_CANCELLED_TEXT), "mcp_cancelled"];
   if (executed.kind === "timeout") return [ownWordsError(timeoutText(args.timeout_ms)), "mcp_timeout"];
+  // A provider whose principal check runs before every statement, rather than at the open, refuses there: the same
+  // refusal as the open's, in the same sentence.
+  if (executed.kind === "failed" && executed.error instanceof ExecutionProfileError) {
+    return [ownWordsError(profileRefusalText(executed.error.message, arm.engines, arm.tool)), "mcp_execution_failed"];
+  }
   if (executed.kind === "failed") return failureAnswer(call, executed.error, executed.settledAt, deadline, record);
   return resultOf(call, connection.type, prepared.prepared, executed.value);
 }

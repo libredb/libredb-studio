@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { open, table } from "@libredb/libredb";
 import { getServerAuditBuffer } from "@/lib/audit";
-import { OffsetUnsupportedError, RefusedBeforeSendError } from "@/lib/db/errors";
+import { ExecutionProfileError, OffsetUnsupportedError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { LibreDBProvider } from "@/lib/db/providers/embedded/libredb";
 import { DuckDBProvider } from "@/lib/db/providers/sql/duckdb";
 import { SnowflakeProvider } from "@/lib/db/providers/sql/snowflake/index";
@@ -504,6 +504,34 @@ describe("the boundary", () => {
         },
       ]);
       expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_statement_refused" });
+    } finally {
+      failing.restore();
+    }
+  });
+
+  // An engine whose check runs before every statement rather than at the open refuses a too-broad principal from
+  // queryReadOnly: the same refusal, so it is answered in the same sentence the open's refusal is.
+  test("a profile refusal raised by the statement call itself is answered in the tool's sentence, not as the database's", async () => {
+    const failing = failNextCall(
+      SQLiteProvider.prototype,
+      "queryReadOnly",
+      new ExecutionProfileError(
+        "The agent read-only execution profile refuses the user: not-a-real-reason.",
+        "PROFILE_PRIVILEGES_TOO_BROAD",
+      ),
+    );
+    try {
+      const result = await direct({ connection_id: "seed:shop", sql: "SELECT 1" });
+      expect(result).toEqual({
+        content: [
+          {
+            type: "text",
+            text: "run_read_query cannot run on this connection: The agent read-only execution profile refuses the user: not-a-real-reason. It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch and OpenSearch.",
+          },
+        ],
+        isError: true,
+      });
+      expect(mcpEvents().at(-1)).toMatchObject({ reason: "mcp_execution_failed" });
     } finally {
       failing.restore();
     }
