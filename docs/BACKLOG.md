@@ -1874,7 +1874,7 @@ Found 2026-09-30 while designing the etcd provider (#1089, spec 6.1).
 
 ### D132. grpc-js sends an IP-literal target as the TLS server name, which Node 25 and later and Bun refuse
 
-`@grpc/grpc-js` 1.14.5 sets the TLS `servername` from the dial target (`connectionOptions.servername = remoteHost` in `build/src/channel-credentials.js`), and 1.14.6 still does, and Node 25 and later and Bun refuse an IP address as a server name with `ERR_INVALID_ARG_VALUE`, "Setting the TLS ServerName to an IP address is not permitted".
+`@grpc/grpc-js` 1.14.5 sets the TLS `servername` from the dial target (`connectionOptions.servername = remoteHost` in `build/src/channel-credentials.js`), and 1.14.6 and 1.14.7 still do, and Node 25 and later and Bun refuse an IP address as a server name with `ERR_INVALID_ARG_VALUE`, "Setting the TLS ServerName to an IP address is not permitted".
 The etcd provider works around it with a server-name override that is not an IP and a `checkServerIdentity` that verifies the IP (spec E5), which depends on grpc-js internals and is why grpc-js is pinned exactly.
 Amended 2026-10-04: the override now lives once, in `grpcTlsIdentity` (`src/lib/db/grpc/tls.ts`) and `grpcChannelCredentials` (`src/lib/db/grpc/credentials.ts`), for every gRPC provider.
 No open grpc-node issue covers it; the closed #1919 is about `0.0.0.0`.
