@@ -385,16 +385,18 @@ export abstract class GraphBaseProvider extends BaseDatabaseProvider {
 
   /**
    * One statement a subclass's own path has already read: the engine's statement gate (unless it is an allowed `SHOW`
-   * form), then one READ run on the connected client, under `options` with the product's transaction metadata, a
-   * transport failure through the error table. What a read-only path adds before or after it is the subclass's.
+   * form and `gateShowForms` is not set), then one READ run on the connected client, under `options` with the
+   * product's transaction metadata, a transport failure through the error table. What a read-only path adds before or
+   * after it is the subclass's.
    */
   protected async runVerdict(
     verdict: Extract<CypherReadVerdict, { allowed: true }>,
     options: GraphRunOptions,
+    gateShowForms = false,
   ): Promise<{ result: GraphRunResult; executionTime: number }> {
     const client = this.client();
     const run: GraphRunOptions = { ...options, metadata: RUN_METADATA };
-    await this.passGate(client, verdict, run);
+    await this.passGate(client, verdict, run, gateShowForms);
     return this.measureExecution(() => this.mapped(() => client.run(verdict.statement.text, run)));
   }
 
@@ -413,16 +415,17 @@ export abstract class GraphBaseProvider extends BaseDatabaseProvider {
   }
 
   /**
-   * The engine's statement gate (SR10), skipped for an allowed `SHOW` form. A refusal, or any error
-   * while checking, stops the statement; a cancel during the check reports the cancellation.
+   * The engine's statement gate (SR10), skipped for an allowed `SHOW` form unless `gateShowForms` is set. A refusal, or
+   * any error while checking, stops the statement; a cancel during the check reports the cancellation.
    */
   private async passGate(
     client: GraphClient,
     verdict: Extract<CypherReadVerdict, { allowed: true }>,
     options: GraphRunOptions,
+    gateShowForms = false,
   ): Promise<void> {
     const gate = this.profile.statementGate;
-    if (gate === undefined || verdict.isShow) return;
+    if (gate === undefined || (verdict.isShow && !gateShowForms)) return;
     let refusal: CypherRefusal | undefined;
     try {
       refusal = await gate(client, verdict, options);
