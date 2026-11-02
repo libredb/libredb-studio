@@ -9330,7 +9330,7 @@ Found 2026-11-01 while verifying `run_read_query` on InfluxDB 3.12.0 Core.
 
 **Done when:** a statement the read policy refuses through `run_read_query` is answered with the forms that tool runs on InfluxDB 3, the editor and agent mode keep the policy's sentence, and a test sends `TABLE` through the tool's handler and pins the answer.
 
-### MCP9. On Elasticsearch, `inspect_schema` and agent grounding list hidden indices and aliases with their columns
+### MCP9. On Elasticsearch and OpenSearch, `inspect_schema` and agent grounding list hidden indices and aliases with their columns
 
 `inspect_schema` and agent grounding read Elasticsearch's object surface under the operations profile, and that surface tells a system object by its name alone.
 `toIndexInfo` in `src/lib/db/providers/sql/search/http-transport.ts` marks only a name that starts with a dot as a system index, `GET /_cat/indices` is sent without `expand_wildcards`, so it lists hidden indices too, and `readKind` in `src/lib/db/providers/sql/search/index.ts` drops only what is marked system.
