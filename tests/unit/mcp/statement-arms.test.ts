@@ -1011,7 +1011,8 @@ describe("the mtconnectread arm", () => {
     expect(description).toContain("this tool takes no offset");
     expect(description).toContain("/cancel");
     expect(description).toContain("adapter connections");
-    expect(description).toContain("a URL's user name, password and query string read [withheld]");
+    expect(description).toContain("from a URL's :// to the last @ in the value");
+    expect(description).toContain("its user name, password, query string and fragment never reach the answer");
   });
 });
 

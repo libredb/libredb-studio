@@ -70,14 +70,42 @@ describe("the adapter connections, read from the agent's own model", () => {
   });
 });
 
-describe("a URL in an asset, its user name, password and query withheld", () => {
+describe("a URL in an asset, its user name, password, query and fragment withheld", () => {
   test.each([
     ["ftp://not-a-real-user:not-a-real-password@files.example/p.nc", "ftp://[withheld]@files.example/p.nc", 1],
     ["https://files.example/p.nc?token=not-a-real-token", "https://files.example/p.nc?[withheld]", 1],
-    ["HTTPS://u@files.example:8443/a/b?x=1#part", "HTTPS://[withheld]@files.example:8443/a/b?[withheld]#part", 2],
-    ["see https://a.example/x and s3://u:p@bucket/key", "see https://a.example/x and s3://[withheld]@bucket/key", 1],
+    ["https://files.example/p.nc#token=not-a-real-token", "https://files.example/p.nc#[withheld]", 1],
+    ["HTTPS://u@files.example:8443/a/b?x=1#part", "HTTPS://[withheld]@files.example:8443/a/b?[withheld]", 2],
+    ["see https://a.example/x and s3://u:p@bucket/key", "see https://[withheld]@bucket/key", 1],
+    ["https://files.example/p.nc?a=1 and file:///opt/p.nc", "https://files.example/p.nc?[withheld]", 1],
+    ["mail ops@plant.example or ftp://files.example/p.nc", "mail ops@plant.example or ftp://files.example/p.nc", 0],
   ])("%s reads %s", (text, kept, withheld) => {
     expect(withoutUrlSecrets(text)).toEqual({ text: kept, withheld });
+  });
+
+  // Each password is one WHATWG URL parsing accepts, or one a client that splits at the last @ would send: the values
+  // are decoded attribute and element text, so a quote or an angle bracket is a character of the URL like any other.
+  test.each([
+    ["an @", "ftp://not-a-real-user:not@a@real@files.example/p.nc"],
+    ["a single quote", "ftp://not-a-real-user:not'a'real@files.example/p.nc"],
+    ["a double quote", 'ftp://not-a-real-user:not"a"real@files.example/p.nc'],
+    ["angle brackets", "ftp://not-a-real-user:not<a>real@files.example/p.nc"],
+    ["a slash", "ftp://not-a-real-user:not/a/real@files.example/p.nc"],
+    ["a hash", "ftp://not-a-real-user:not#a#real@files.example/p.nc"],
+    ["a question mark", "ftp://not-a-real-user:not?a?real@files.example/p.nc"],
+    ["a space", "ftp://not-a-real-user:not a real@files.example/p.nc"],
+  ])("a password holding %s leaves no part of the user name or password", (_what, text) => {
+    const { text: kept, withheld } = withoutUrlSecrets(text);
+    expect(kept).toBe("ftp://[withheld]@files.example/p.nc");
+    expect(withheld).toBe(1);
+    for (const part of ["not-a-real-user", "not", "real"]) expect(kept).not.toContain(part);
+  });
+
+  test("a URL with no scheme in front of its :// is still kept to what follows its last @", () => {
+    expect(withoutUrlSecrets("://not-a-real-user:not-a-real-password@files.example/p.nc")).toEqual({
+      text: "://[withheld]@files.example/p.nc",
+      withheld: 1,
+    });
   });
 
   test.each([
@@ -92,10 +120,10 @@ describe("a URL in an asset, its user name, password and query withheld", () => 
 
   test("the warning counts what was withheld, in the singular and the plural", () => {
     expect(withheldUrlWarning(1)).toStartWith(
-      "1 user name, password or query string of a URL in an asset was withheld",
+      "1 user name and password, query string or fragment of a URL in an asset was withheld",
     );
     expect(withheldUrlWarning(3)).toStartWith(
-      "3 user names, passwords or query strings of URLs in assets were withheld",
+      "3 user names and passwords, query strings or fragments of URLs in assets were withheld",
     );
   });
 });

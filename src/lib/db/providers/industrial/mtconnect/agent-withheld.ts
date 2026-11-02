@@ -20,9 +20,13 @@
  *
  * NOR IS A URL'S SECRET IN AN ASSET. MEASURED on the pinned image with `AllowPut = true`: a File asset whose
  * `FileLocation href` carries a user name and password is stored and served by `/assets` exactly as written, so an
- * asset's document and attributes can carry whatever credential the system that wrote the asset put in a URL. Every
- * URL in an asset keeps its scheme, host, port, path and fragment, which say where a file is, and its user name,
- * password and query string, where a credential or a signature travels, read `[withheld]`; the answer counts them.
+ * asset's document and attributes can carry whatever credential the system that wrote the asset put in a URL. A URL
+ * keeps its scheme and, after its user information, its host, port and path, which say where a file is; its user name
+ * and password, its query string and its fragment, where a credential, a signature or a token travels, read
+ * `[withheld]`, and the answer counts them. The cut is made by position, never by parsing the URL, and leans to
+ * withholding more: the values are decoded text, in which a password may hold an `@`, a quote, a slash, a `#`, a `?`
+ * or a space that a URL client still sends, so everything from the first `://` in a value to the last `@` after it
+ * is withheld, and so is everything from the first `?` or `#` after that to the end of the value.
  * MEASURED on the same image with an MQTT sink configured: the broker's address reaches no route of the table.
  *
  * Browser-safe: no Node built-in, no server module.
@@ -50,30 +54,30 @@ export function observationWithheld(observation: MtcObservation, item: MtcDataIt
   return observation.componentType !== undefined && MTC_ADAPTER_COMPONENTS.has(observation.componentType);
 }
 
-/** Why a URL's user name, password and query string are withheld from an asset, in the words the warning repeats. */
+/** Why a URL's user name, password, query string and fragment are withheld from an asset, in the words the warning repeats. */
 const MTCONNECT_WITHHELD_URL_SENTENCE =
-  "Agent mode keeps each URL in an asset to its scheme, host, port, path and fragment, and withholds its user name, password and query string, where a credential or a signature travels.";
+  "Agent mode keeps each URL in an asset to its scheme, host, port and path, and withholds everything from its :// to the last @ in the value, its user name and password, and everything from the first ? or # after that to the end of the value, its query string and fragment, where a credential, a signature or a token travels.";
 
 /**
- * A URL: its scheme, then an optional user name and password ending in `@`, a host with its port, a path, and an
- * optional query string. A mail address or a path with no scheme is no URL here.
+ * `text` with its URL secrets read `[withheld]`, and how many parts were withheld. A URL is a `://`; a mail address
+ * or a path with no `://` is left as written.
  */
-const URL_PATTERN = /\b([A-Za-z][A-Za-z0-9+.-]*:\/\/)([^\s/?#@"'<>]*@)?([^\s/?#"'<>]*[^\s?#"'<>]*)(\?[^\s#"'<>]*)?/g;
-
-/** `text` with every URL's user name, password and query string read `[withheld]`, and how many were withheld. */
 export function withoutUrlSecrets(text: string): { readonly text: string; readonly withheld: number } {
-  let withheld = 0;
-  const kept = text.replace(URL_PATTERN, (_url, scheme: string, userinfo?: string, rest?: string, query?: string) => {
-    if (userinfo !== undefined) withheld += 1;
-    if (query !== undefined) withheld += 1;
-    return `${scheme}${userinfo === undefined ? "" : "[withheld]@"}${rest}${query === undefined ? "" : "?[withheld]"}`;
-  });
-  return { text: kept, withheld };
+  const authority = text.indexOf("://");
+  if (authority === -1) return { text, withheld: 0 };
+  const start = authority + "://".length;
+  const at = text.lastIndexOf("@");
+  const userinfo = at >= start;
+  const head = `${text.slice(0, start)}${userinfo ? "[withheld]@" : ""}`;
+  const rest = text.slice(userinfo ? at + 1 : start);
+  const tail = rest.search(/[?#]/);
+  if (tail === -1) return { text: `${head}${rest}`, withheld: userinfo ? 1 : 0 };
+  return { text: `${head}${rest.slice(0, tail + 1)}[withheld]`, withheld: userinfo ? 2 : 1 };
 }
 
-/** The warning an asset answer carries for the user names, passwords and query strings it withheld. */
+/** The warning an asset answer carries for the user names and passwords, query strings and fragments it withheld. */
 export function withheldUrlWarning(count: number): string {
   return count === 1
-    ? `1 user name, password or query string of a URL in an asset was withheld from this answer. ${MTCONNECT_WITHHELD_URL_SENTENCE}`
-    : `${count} user names, passwords or query strings of URLs in assets were withheld from this answer. ${MTCONNECT_WITHHELD_URL_SENTENCE}`;
+    ? `1 user name and password, query string or fragment of a URL in an asset was withheld from this answer. ${MTCONNECT_WITHHELD_URL_SENTENCE}`
+    : `${count} user names and passwords, query strings or fragments of URLs in assets were withheld from this answer. ${MTCONNECT_WITHHELD_URL_SENTENCE}`;
 }

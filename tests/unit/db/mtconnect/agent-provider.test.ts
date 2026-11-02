@@ -312,7 +312,7 @@ describe("what an agent read sends and answers", () => {
     expect(document).not.toContain("CDATA");
   });
 
-  test("a URL in an asset keeps its scheme, host and path, and its user name, password and query read [withheld]", async () => {
+  test("a URL in an asset keeps its scheme, host and path, and its user name, password, query and fragment read [withheld]", async () => {
     // MEASURED on mtconnect/agent:2.8.0.4 with AllowPut = true: a File asset PUT with a FileLocation href carrying a
     // user name and password is stored and served by /assets exactly as written.
     const file =
@@ -323,7 +323,7 @@ describe("what an agent read sends and answers", () => {
     const [row] = result.rows;
     expect(row?.source).toBe("https://[withheld]@files.example/index?[withheld]");
     expect(String(row?.document)).toBe(
-      '<File assetId="FILE-1" applicationCategory="DEVICE" deviceUuid="LIBREDB-1722" source="https://[withheld]@files.example/index?[withheld]" timestamp="2026-11-02T12:27:05.801276Z"><FileLocation href="ftp://[withheld]@files.example/programs/program.nc"/><Description>also at https://files.example/p.nc?[withheld] and file:///opt/programs/p.nc</Description></File>',
+      '<File assetId="FILE-1" applicationCategory="DEVICE" deviceUuid="LIBREDB-1722" source="https://[withheld]@files.example/index?[withheld]" timestamp="2026-11-02T12:27:05.801276Z"><FileLocation href="ftp://[withheld]@files.example/programs/program.nc"/><Description>also at https://files.example/p.nc?[withheld]</Description></File>',
     );
     expect(JSON.stringify(result)).not.toContain("not-a-real");
     expect(result.warnings).toEqual([{ message: withheldUrlWarning(4) }]);
