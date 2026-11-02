@@ -10,7 +10,11 @@
 # Run it from the repository root once the container logs "Setup has completed". It loads the object fixture
 # (docker/db2-init/01-object-fixture.sql) and creates the operating-system user AGENT_RO first. Every capture runs
 # under the CLP with autocommit on, except 05, which rolls its own unit of work back. 07 runs
-# docker/db2-init/02-agent-principal.sql, the seed's PUBLIC revokes, so its capture has no .sql here.
+# docker/db2-init/02-agent-principal.sql, the seed's PUBLIC revokes, so its capture has no .sql here. Captures 00 to 11
+# were recorded on 2026-10-29, before the seed revoked SELECT on the distribution statistics; 12 was recorded on
+# 2026-11-02 after the seed with those revokes had run. 13 revokes from PUBLIC the seven objects that keep HIGH2KEY and
+# LOW2KEY, which the seed does not, and 14 shows what the agent user then reads; both were recorded on 2026-11-02 on a
+# container holding the object fixture and the seed.
 set -euo pipefail
 name="$1"
 dir="$(cd "$(dirname "$0")" && pwd)"
@@ -51,3 +55,7 @@ clp agent-ro 08-after-revokes-as-agent-ro
 clp agent-ro 09-trusted-contexts-as-agent-ro
 clp agent-ro 10-external-action-functions-as-agent-ro
 clp db2inst1 11-ibm-module-alter-as-db2inst1
+in_container su - db2inst1 -c "db2 connect to testdb >/dev/null; db2 \"CALL SYSPROC.ADMIN_CMD('RUNSTATS ON TABLE APP.SECRET WITH DISTRIBUTION')\" >/dev/null; db2 terminate >/dev/null"
+clp agent-ro 12-catalog-scope-as-agent-ro
+clp db2inst1 13-column-statistics-revokes-as-db2inst1
+clp agent-ro 14-column-sources-as-agent-ro
