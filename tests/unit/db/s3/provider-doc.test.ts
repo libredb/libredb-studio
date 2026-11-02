@@ -33,6 +33,7 @@ import {
   type NodeByteTransport,
   TransportError,
 } from "@/lib/db/http/node-transport";
+import { S3_AGENT_FAILURE_SENTENCES } from "@/lib/db/providers/objectstore/s3/agent-metadata-read";
 import type { S3ClientContext } from "@/lib/db/providers/objectstore/s3/client";
 import { buildS3ConnectionOptions } from "@/lib/db/providers/objectstore/s3/connection-options";
 import { S3_COMMAND_TABLE, type S3FlagSpec } from "@/lib/db/providers/objectstore/s3/console/commands";
@@ -1259,14 +1260,24 @@ describe("the backlog record of the S3 provider", () => {
   test("37b. every scope capture answers a bucket or key the key may not read as it answers a missing one", () => {
     for (const set of ["silo-RELEASE.2026-09-16T00-00-00Z", "rustfs-1.0.1", "garage-v2.4.1"]) {
       const capture = JSON.parse(read(`tests/fixtures/s3/agent-scope/${set}/scope.json`)) as {
+        readonly agent: readonly { readonly statement: string; readonly as: string; readonly refused?: string }[];
         readonly oracle: {
           readonly ungrantedBucketLikeMissing: Readonly<Record<string, boolean>>;
           readonly ungrantedPresentKeyLikeAbsent: boolean;
+          readonly objectsOnlyPresentKeyLikeAbsent: boolean;
         };
         readonly leaks: readonly string[];
       };
       expect(Object.values(capture.oracle.ungrantedBucketLikeMissing)).toEqual([true, true, true, true, true, true]);
       expect(capture.oracle.ungrantedPresentKeyLikeAbsent).toBe(true);
+      // GetObject alone lets the key learn whether an object exists, so head-object may tell it too.
+      expect(capture.oracle.objectsOnlyPresentKeyLikeAbsent).toBe(false);
+      const unreadable = capture.agent.filter(
+        (record) => record.as === "scoped" && /(--bucket |s3:\/\/)scope-(other|missing)(\s|$)/.test(record.statement),
+      );
+      expect(unreadable, set).toHaveLength(12);
+      for (const record of unreadable)
+        expect(record.refused, record.statement).toBe(S3_AGENT_FAILURE_SENTENCES.notFound);
       expect(capture.leaks).toEqual([]);
     }
   });

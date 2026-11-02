@@ -28,12 +28,17 @@
  * Nothing written holds a credential: no access key id or secret, not even as a placeholder, and the script refuses to
  * write a capture that holds any of the eight values.
  *
+ * The run exits non-zero when a capture holds a leak, an oracle entry for an ungranted bucket or key is false, or a
+ * scoped-key read of scope-other or scope-missing is refused in any words but the notFound sentence; the capture is
+ * still written, so what failed can be read.
+ *
  * Run by hand through run.sh, never by `bun run test`, which runs no file under tests/live/.
  */
 // oxlint-disable no-await-in-loop -- each step runs after the one before, on purpose: a capture records what the server holds then.
 import { request as httpRequest } from "node:http";
 import { writeFileSync } from "node:fs";
 import path from "node:path";
+import { S3_AGENT_FAILURE_SENTENCES } from "@/lib/db/providers/objectstore/s3/agent-metadata-read";
 import { S3Provider } from "@/lib/db/providers/objectstore/s3/index";
 import { amzDateOf, canonicalQueryOf, signatureV4 } from "@/lib/db/providers/objectstore/s3/sigv4";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
@@ -354,7 +359,20 @@ async function main(): Promise<void> {
   writeFileSync(path.join(OUT, "scope.json"), text);
   console.log(`${SERVER}: ${agent.length} agent records, ${rawRecords.length} raw HEADs, leaks ${leaks.length}`);
   console.log(JSON.stringify(oracle, null, 2));
-  if (leaks.length > 0) process.exitCode = 1;
+  // The oracle compares two answers to each other, so two alike wrong refusals would pass it: every scoped-key read
+  // of a bucket it is granted nothing on, or of one that does not exist, must be refused in the notFound sentence.
+  const wrongRefusals = [BUCKETS.other, BUCKETS.missing]
+    .flatMap((bucket) => bucketReads(bucket))
+    .filter((statement) => find("scoped", statement)?.refused !== S3_AGENT_FAILURE_SENTENCES.notFound);
+  const oracleFalse = [
+    ...Object.entries(oracle.ungrantedBucketLikeMissing)
+      .filter(([, alike]) => !alike)
+      .map(([statement]) => statement),
+    ...(oracle.ungrantedPresentKeyLikeAbsent ? [] : ["ungrantedPresentKeyLikeAbsent"]),
+  ];
+  for (const statement of wrongRefusals) console.error(`not refused in the notFound sentence: ${statement}`);
+  for (const entry of oracleFalse) console.error(`oracle entry false: ${entry}`);
+  if (leaks.length > 0 || wrongRefusals.length > 0 || oracleFalse.length > 0) process.exitCode = 1;
 }
 
 await main();
