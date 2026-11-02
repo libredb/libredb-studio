@@ -95,6 +95,8 @@ beforeAll(() => {
   const largeStore = kv(large);
   for (let i = 0; i < 40; i += 1) largeStore.set(`l:${String(i).padStart(2, "0")}`, "w".repeat(30 * 1024));
   largeStore.set("big:1", VALUE_32K);
+  largeStore.set("half:15", "h".repeat(15 * 1024));
+  largeStore.set("half:16", "h".repeat(16 * 1024));
   large.close();
 });
 
@@ -273,6 +275,16 @@ describe("a read", () => {
     expect(result.isError).toBe(true);
     expect(text(result)).toContain(RUN_LIBREDB_READ_ARM.rowOverCap);
     expect(text(result)).not.toContain(VALUE_32K.slice(0, 1024));
+  });
+
+  test("the limit measures the whole tool result, which carries a row twice, so a 16 KiB value is refused and 15 KiB fits", async () => {
+    const fits = await libredb("get half:15", {}, "seed:large");
+    expect(fits.isError).toBeFalsy();
+    expect(fits.structuredContent?.rows).toEqual([{ key: "half:15", value: "h".repeat(15 * 1024) }]);
+    expect(text(fits)).toContain("h".repeat(15 * 1024));
+    const refused = await libredb("get half:16", {}, "seed:large");
+    expect(refused.isError).toBe(true);
+    expect(text(refused)).toContain(RUN_LIBREDB_READ_ARM.rowOverCap);
   });
 
   test("reads beside the editor's writer, which holds the lock, and sees what it has committed", async () => {

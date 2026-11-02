@@ -149,6 +149,11 @@ describe("docs/MCP.md", () => {
     expect(line).toContain("`run_libredb_read`");
     expect(line).toContain("LibreDB by a read-only handle opened for each command");
     expect(MCP_DOC).not.toContain("B152");
+    // The result limit measures the whole tool result, which carries every row twice, so a value of half of it fails.
+    expect(MCP_DOC).toContain(
+      "since that limit measures the whole tool result, which carries every row twice, once in its text block and once in `structuredContent`, a value of about 16 KiB is already refused.",
+    );
+    expect(MCP_DOC).not.toContain("a value larger than the 32 KiB result limit is refused whole");
   });
 
   test("claims only SELECT for every engine, and names the record that opens MCP read", () => {
