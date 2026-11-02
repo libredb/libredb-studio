@@ -65,6 +65,8 @@ const FAKE_SECRETS = [
   "odd-pass",
   "odd-word",
   "not-a-real-fragment",
+  "backslash-user",
+  "backslash-pass",
 ];
 
 /** The tool as MCP registers it, and the same tool with its fence removed: the boundary under test. */
@@ -445,6 +447,9 @@ const FILE_WITH_PATH =
 // last @, so no part of either may reach the answer.
 const FILE_WITH_ODD_SECRET =
   '<File assetId="FILE-3" name="p3.nc" mediaType="text/plain" applicationCategory="DEVICE" applicationType="DATA" size="10" versionId="1" state="PRODUCTION"><FileLocation href="ftp://not-a-real-user:odd-pass@x&apos;odd-word@files.example/programs/p3.nc#token=not-a-real-fragment"/><Destinations><Destination>LIBREDB-1722</Destination></Destinations><CreationTime>2026-01-01T00:00:00Z</CreationTime></File>';
+// A location with backslashes and no :// after its scheme, which a WHATWG URL parser reads as http://user:pass@host.
+const FILE_WITH_BACKSLASH_SECRET =
+  '<File assetId="FILE-4" name="p4.nc" mediaType="text/plain" applicationCategory="DEVICE" applicationType="DATA" size="10" versionId="1" state="PRODUCTION"><FileLocation href="http:\\\\backslash-user:backslash-pass@files.example/programs/p4.nc"/><Destinations><Destination>LIBREDB-1722</Destination></Destinations><CreationTime>2026-01-01T00:00:00Z</CreationTime></File>';
 const TOOL_WITH_PATH =
   '<CuttingTool assetId="TOOL-2" toolId="T2" serialNumber="SN-2"><Description>see //fileserver/tools/T2.pdf</Description><CuttingToolLifeCycle><ProgramToolNumber>2</ProgramToolNumber><CutterStatus><Status>NEW</Status></CutterStatus></CuttingToolLifeCycle></CuttingTool>';
 const stored = [];
@@ -452,6 +457,7 @@ for (const [id, type, body] of [
   ["FILE-1", "File", FILE_WITH_SECRET],
   ["FILE-2", "File", FILE_WITH_PATH],
   ["FILE-3", "File", FILE_WITH_ODD_SECRET],
+  ["FILE-4", "File", FILE_WITH_BACKSLASH_SECRET],
   ["TOOL-2", "CuttingTool", TOOL_WITH_PATH],
 ] as const) {
   const answer = await fetch(`http://127.0.0.1:${PUT_PORT}/asset/${id}?type=${type}&device=${LATHE}`, {
@@ -468,6 +474,7 @@ const assets = {
   stored,
   agentServesTheUserinfoAsWritten: rawAssets.includes("not-a-real-password"),
   agentServesTheOddUserinfoAsWritten: rawAssets.includes("odd-pass@x") && rawAssets.includes("odd-word@files.example"),
+  agentServesTheBackslashUserinfoAsWritten: rawAssets.includes("http:\\\\backslash-user:backslash-pass@files.example"),
   throughTheTool: {
     rows: rowsOf(assetsRead.result).map((row) => ({ assetId: row.assetId, type: row.type })),
     carriesTheUserName: assetText.includes("not-a-real-user"),
@@ -475,8 +482,12 @@ const assets = {
     carriesTheQuery: assetText.includes("not-a-real-token"),
     carriesTheOddPassword: assetText.includes("odd-pass") || assetText.includes("odd-word"),
     carriesTheFragment: assetText.includes("not-a-real-fragment"),
+    carriesTheBackslashUserinfo: assetText.includes("backslash-user") || assetText.includes("backslash-pass"),
     keepsTheHostAndPath: assetText.includes("ftp://[withheld]@files.example/programs/program.nc?[withheld]"),
     keepsTheOddHostAndPath: assetText.includes("ftp://[withheld]@files.example/programs/p3.nc#[withheld]"),
+    keepsTheBackslashHostAndPath: rowsOf(assetsRead.result).some((row) =>
+      String(row.document).includes("http:\\\\[withheld]@files.example/programs/p4.nc"),
+    ),
     keepsTheFilePath: assetText.includes("file:///opt/programs/p2.nc"),
     keepsTheToolDescription: assetText.includes("//fileserver/tools/T2.pdf"),
   },
@@ -496,6 +507,13 @@ check(
     !assets.throughTheTool.carriesTheFragment &&
     assets.throughTheTool.keepsTheOddHostAndPath,
   "a password holding an @ and a quote, and a token in the fragment, reach no answer while the host and path do",
+);
+
+check(
+  assets.agentServesTheBackslashUserinfoAsWritten &&
+    !assets.throughTheTool.carriesTheBackslashUserinfo &&
+    assets.throughTheTool.keepsTheBackslashHostAndPath,
+  "a location with backslashes and no :// after its scheme reaches no answer with its user name or password",
 );
 
 // The MQTT sink agent: the broker's address, raw on every route and through the tool's model read.

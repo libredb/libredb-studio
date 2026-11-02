@@ -329,6 +329,23 @@ describe("what an agent read sends and answers", () => {
     expect(result.warnings).toEqual([{ message: withheldUrlWarning(4) }]);
   });
 
+  test("a URL with no :// after its scheme, or split by a CDATA, a character reference or a child, keeps no secret", async () => {
+    // An element's text is joined across its CDATA sections, references and children before any URL is read in it, and
+    // an attribute value is one string with its references resolved, so no part of one value is read alone.
+    const file =
+      '<File assetId="FILE-2" applicationCategory="DEVICE" deviceUuid="LIBREDB-1722" source="http:&#92;&#92;reader:not-a-real-password@files.example/a" timestamp="2026-11-02T12:27:05.801276Z"><FileLocation href="HTTP:\\/not-a-real-user:not-a-real-password@files.example/p.nc"/><Description>at ht&#9;tp:not-<![CDATA[a-real-user:not-a-]]>real-pass<Note>n</Note>word@files.example/p.nc</Description></File>';
+    const assets = capture("assets").replace(/<Assets>[\s\S]*<\/Assets>/, `<Assets>${file}</Assets>`);
+    const provider = await opened(AGENT, { ...DEFAULT_ANSWERS, "/assets": assets });
+    const result = await provider.queryReadOnly("/assets", BUDGET);
+    const [row] = result.rows;
+    expect(row?.source).toBe("http:\\\\[withheld]@files.example/a");
+    expect(String(row?.document)).toBe(
+      '<File assetId="FILE-2" applicationCategory="DEVICE" deviceUuid="LIBREDB-1722" source="http:\\\\[withheld]@files.example/a" timestamp="2026-11-02T12:27:05.801276Z"><FileLocation href="HTTP:\\/[withheld]@files.example/p.nc"/><Description>at ht\ttp:[withheld]@files.example/p.nc<Note>n</Note></Description></File>',
+    );
+    for (const part of ["not-a-real", "real-pass", "word@"]) expect(JSON.stringify(result)).not.toContain(part);
+    expect(result.warnings).toEqual([{ message: withheldUrlWarning(3) }]);
+  });
+
   test("an asset carrying a processing instruction or an entity declaration is refused by Studio's rule, never answered", async () => {
     for (const hostile of [
       capture("asset-tool").replace("<Status>NEW</Status>", "<Status><?evil run?>NEW</Status>"),

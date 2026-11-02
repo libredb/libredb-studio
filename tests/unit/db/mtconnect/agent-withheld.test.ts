@@ -108,11 +108,76 @@ describe("a URL in an asset, its user name, password, query and fragment withhel
     });
   });
 
+  // MEASURED with `new URL()` in Bun and Node: each of these yields the user name and the password. For http, https,
+  // ws, wss and ftp any run of `/` or `\\` after the colon, or none, starts the authority, a scheme is read in any case,
+  // and a tab or a line break anywhere is dropped before parsing; against a base URL of those schemes, two slashes or
+  // backslashes start an authority too.
+  test.each([
+    [
+      "two backslashes",
+      "http:\\\\not-a-real-user:not-a-real-password@files.example/x",
+      "http:\\\\[withheld]@files.example/x",
+    ],
+    ["one slash", "http:/not-a-real-user:not-a-real-password@files.example/x", "http:/[withheld]@files.example/x"],
+    ["no slash", "http:not-a-real-user:not-a-real-password@files.example/x", "http:[withheld]@files.example/x"],
+    [
+      "mixed case and mixed slashes",
+      "HTTP:\\/not-a-real-user:not-a-real-password@files.example",
+      "HTTP:\\/[withheld]@files.example",
+    ],
+    ["four backslashes", "https:\\\\\\\\not-a-real-user:not-a-real-password@h", "https:\\\\\\\\[withheld]@h"],
+    ["ftp with no slash", "ftp:not-a-real-user:not-a-real-password@h", "ftp:[withheld]@h"],
+    ["ws with no slash", "ws:not-a-real-user:not-a-real-password@h/x", "ws:[withheld]@h/x"],
+    ["wss with a backslash", "wss:\\not-a-real-user:not-a-real-password@h", "wss:\\[withheld]@h"],
+    ["mixed-case ftp, one slash", "FtP:/not-a-real-user:not-a-real-password@h", "FtP:/[withheld]@h"],
+    ["https with a port", "https:not-a-real-user:not-a-real-password@h:8443/a", "https:[withheld]@h:8443/a"],
+    ["a tab in the scheme", "http\t:not-a-real-user:not-a-real-password@h", "http\t:[withheld]@h"],
+    ["a line break in the scheme", "ht\ntp:not-a-real-user:not-a-real-password@h", "ht\ntp:[withheld]@h"],
+    ["a tab between the slashes", "http:/\t/not-a-real-user:not-a-real-password@h", "http:/\t/[withheld]@h"],
+    ["two slashes and no scheme", "//not-a-real-user:not-a-real-password@h/x", "//[withheld]@h/x"],
+    ["two backslashes and no scheme", "\\\\not-a-real-user:not-a-real-password@h/x", "\\\\[withheld]@h/x"],
+    ["a tab between two slashes and no scheme", "/\t/not-a-real-user:not-a-real-password@h/x", "/\t/[withheld]@h/x"],
+    ["a URL after text", "at http:\\\\not-a-real-user:not-a-real-password@h", "at http:\\\\[withheld]@h"],
+  ])("%s keeps no part of the user name or password", (_what, text, kept) => {
+    expect(withoutUrlSecrets(text)).toEqual({ text: kept, withheld: 1 });
+    for (const part of ["not-a-real-user", "not-a-real-password"]) expect(kept).not.toContain(part);
+  });
+
+  test("a URL with no slash still has its query and fragment withheld", () => {
+    expect(withoutUrlSecrets("https:not-a-real-user:not-a-real-password@h/a?sig=not-a-real-signature#t")).toEqual({
+      text: "https:[withheld]@h/a?[withheld]",
+      withheld: 2,
+    });
+    expect(withoutUrlSecrets("http:files.example/p.nc?token=not-a-real-token")).toEqual({
+      text: "http:files.example/p.nc?[withheld]",
+      withheld: 1,
+    });
+  });
+
+  // MEASURED: `new URL()` reads no user name or password from these, but the cut is by position and withholds them too.
+  test.each([
+    ["a mailto value", "mailto:operator@plant.example", "mailto:[withheld]@plant.example"],
+    ["a urn value", "urn:not-a-real-user:not-a-real-password@h", "urn:[withheld]@h"],
+    ["a label before a mail address", "Contact: operator@plant.example", "Contact:[withheld]@plant.example"],
+  ])("%s with an @ after its scheme loses what lies between", (_what, text, kept) => {
+    expect(withoutUrlSecrets(text)).toEqual({ text: kept, withheld: 1 });
+  });
+
+  test("a scheme after the last @ withholds nothing before it", () => {
+    expect(withoutUrlSecrets("operator@plant.example via http:files.example/p.nc")).toEqual({
+      text: "operator@plant.example via http:files.example/p.nc",
+      withheld: 0,
+    });
+  });
+
   test.each([
     ["a URL with neither", "https://files.example/programs/p.nc"],
     ["a file URL", "file:///opt/programs/p.nc"],
     ["a mail address", "operator@plant.example"],
     ["a UNC path", "//fileserver/tools/T2.pdf"],
+    ["a backslash UNC path", "\\\\fileserver\\tools\\T2.pdf"],
+    ["a relative path", "tools/T2.pdf"],
+    ["a time of day", "changed at 12:00 by the second shift"],
     ["plain text", "NEW & used"],
   ])("%s is left as written", (_what, text) => {
     expect(withoutUrlSecrets(text)).toEqual({ text, withheld: 0 });

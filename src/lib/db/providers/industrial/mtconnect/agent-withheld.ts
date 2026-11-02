@@ -25,8 +25,14 @@
  * and password, its query string and its fragment, where a credential, a signature or a token travels, read
  * `[withheld]`, and the answer counts them. The cut is made by position, never by parsing the URL, and leans to
  * withholding more: the values are decoded text, in which a password may hold an `@`, a quote, a slash, a `#`, a `?`
- * or a space that a URL client still sends, so everything from the first `://` in a value to the last `@` after it
- * is withheld, and so is everything from the first `?` or `#` after that to the end of the value.
+ * or a space that a URL client still sends. A URL starts at the first scheme and colon in the value, in any case, or
+ * at its first two slashes or backslashes, since a WHATWG URL parser reads `http:\\u:p@h`, `http:/u:p@h` and
+ * `http:u:p@h` as `http://u:p@h` and, against a base, `//u:p@h` too; everything after that start and the slashes or
+ * backslashes that follow it, up to the last `@` in the value, is withheld, and so is everything from the first `?` or
+ * `#` after that to the end of the value. A `mailto:` or `urn:` value, or a label and a colon before a mail address,
+ * loses what lies between its colon and its `@` too; a mail address or a path with no scheme before it is kept.
+ * An element's text is joined across its CDATA sections, references and children before it is read, and an attribute
+ * value is one string, so a URL split by the markup is read whole.
  * MEASURED on the same image with an MQTT sink configured: the broker's address reaches no route of the table.
  *
  * Browser-safe: no Node built-in, no server module.
@@ -56,16 +62,49 @@ export function observationWithheld(observation: MtcObservation, item: MtcDataIt
 
 /** Why a URL's user name, password, query string and fragment are withheld from an asset, in the words the warning repeats. */
 const MTCONNECT_WITHHELD_URL_SENTENCE =
-  "Agent mode keeps each URL in an asset to its scheme, host, port and path, and withholds everything from its :// to the last @ in the value, its user name and password, and everything from the first ? or # after that to the end of the value, its query string and fragment, where a credential, a signature or a token travels.";
+  "Agent mode keeps each URL in an asset to its scheme, host, port and path. A URL starts at a scheme and its colon, such as http: in any case, or at two slashes or backslashes; everything after that start and the slashes or backslashes that follow it, up to the last @ in the value, its user name and password, and everything from the first ? or # after that to the end of the value, its query string and fragment, where a credential, a signature or a token travels, is withheld.";
+
+const isLetter = (c: string): boolean => (c >= "A" && c <= "Z") || (c >= "a" && c <= "z");
+const isSlash = (c: string): boolean => c === "/" || c === "\\";
+const isDropped = (c: string): boolean => c === "\t" || c === "\n" || c === "\r";
+const isSchemeTail = (c: string): boolean =>
+  isLetter(c) || (c >= "0" && c <= "9") || c === "+" || c === "." || c === "-" || isDropped(c);
 
 /**
- * `text` with its URL secrets read `[withheld]`, and how many parts were withheld. A URL is a `://`; a mail address
- * or a path with no `://` is left as written.
+ * Where the first URL in `text` starts its authority: the index after the first scheme and its colon (a letter, then
+ * letters, digits, `+`, `.` or `-`, in any case) or after the first two slashes or backslashes, and after the run of
+ * slashes and backslashes that follows. A tab or a line break inside either counts as part of it, since a URL parser
+ * drops them. One pass over the text, so a long value costs no more than its length.
+ */
+function urlStart(text: string): number {
+  let scheme = false;
+  for (let at = 0; at < text.length; at += 1) {
+    const c = text[at];
+    if (c === ":" && scheme) return pastSlashes(text, at + 1);
+    if (isSlash(c)) {
+      let next = at + 1;
+      while (next < text.length && isDropped(text[next])) next += 1;
+      if (next < text.length && isSlash(text[next])) return pastSlashes(text, next + 1);
+    }
+    scheme = isSchemeTail(c) ? scheme || isLetter(c) : false;
+  }
+  return -1;
+}
+
+function pastSlashes(text: string, from: number): number {
+  let at = from;
+  while (at < text.length && (isSlash(text[at]) || isDropped(text[at]))) at += 1;
+  return at;
+}
+
+/**
+ * `text` with its URL secrets read `[withheld]`, and how many parts were withheld. A URL starts at a scheme and its
+ * colon or at two slashes or backslashes, with or without slashes after the colon, as a URL parser reads `http:`,
+ * `http:/`, `http:\\` and `//` alike; a mail address or a path with neither before it is left as written.
  */
 export function withoutUrlSecrets(text: string): { readonly text: string; readonly withheld: number } {
-  const authority = text.indexOf("://");
-  if (authority === -1) return { text, withheld: 0 };
-  const start = authority + "://".length;
+  const start = urlStart(text);
+  if (start === -1) return { text, withheld: 0 };
   const at = text.lastIndexOf("@");
   const userinfo = at >= start;
   const head = `${text.slice(0, start)}${userinfo ? "[withheld]@" : ""}`;
