@@ -22,6 +22,10 @@ import type { DatabaseType } from "@/lib/types";
  * statement check refuses a comment, a subquery, a `WITH`, a `JOIN` and a double-quoted name before they are sent, and
  * the plugin refuses `WITH`, `VALUES`, `TABLE` and `EXPLAIN`, each a statement that must start with SELECT, DELETE,
  * SHOW or DESCRIBE.
+ * Measured on 2026-11-02: Apache Cassandra 5.0.9, as a role holding only SELECT
+ * on its keyspace, runs a `SELECT` (`JSON` and `DISTINCT` too) and answers `WITH`, `VALUES`, `TABLE`, `EXPLAIN` and
+ * `OFFSET` with a syntax error; the agent path sends a `SELECT` of one table of the connection's keyspace or of
+ * `system_schema` only, and a `WHERE token(<partition key>) > token(<last key read>)` answers the next partitions.
  */
 export interface ReadQueryForms {
   /** The statements, as the refusal names them after "runs one read-only statement:". */
@@ -82,7 +86,15 @@ export const READ_QUERY_FORMS: Readonly<Record<DatabaseType, ReadQueryForms | nu
   },
   druid: null,
   trino: null,
-  cassandra: null,
+  // CQL: no WITH, VALUES, TABLE or EXPLAIN, and no OFFSET (each a syntax error), so the next page is asked for by token
+  // across partitions and by clustering key within one; the agent path reads the connection's keyspace and
+  // system_schema only.
+  cassandra: {
+    statements: "a SELECT of one table of the connection's keyspace or of system_schema",
+    paging:
+      "LIMIT n, and for the next page add WHERE token(the partition key) > token(the last one read), or, within one partition, WHERE the clustering column > the last value read",
+    pagesWithOffset: false,
+  },
   // The agent path's statement check refuses a comment, a subquery, a WITH and a JOIN before they are sent; VALUES,
   // TABLE and EXPLAIN ANALYZE are grammar refusals; and there is no OFFSET (a parsing_exception), so the next page is
   // asked for by key.

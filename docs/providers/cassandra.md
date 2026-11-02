@@ -31,6 +31,7 @@
 | **Source** | [`src/lib/db/providers/sql/cassandra/`](../../src/lib/db/providers/sql/cassandra/) |
 | **Tests** | [`tests/integration/db/cassandra-provider.test.ts`](../../tests/integration/db/cassandra-provider.test.ts) + [`tests/unit/db/cassandra/`](../../tests/unit/db/cassandra/) |
 | **Agent mode** | Read-only statements under a role holding only `SELECT` on the connection's keyspace, proven before every statement on Apache Cassandra 5.0; ScyllaDB refused ([§14](#14-agent-mode-a-role-holding-only-select-proven-before-every-statement)) |
+| **MCP** | `run_read_query` runs a `SELECT` of the connection's keyspace or of `system_schema` under the same boundary ([§14.7](#147-mcp-read)) |
 | **Tracking issue** | [#424 — Wire-compatibility and new engines](https://github.com/libredb/libredb-studio/issues/424), Phase 4 |
 
 ---
@@ -544,7 +545,8 @@ alternatives are worse in a way that matters: sending the clause fails with an e
 keyword the user never typed, and dropping it silently returns page **one** while the editor appends
 it to what it already shows — duplicate rows presented as new ones, which is a wrong *answer*.
 `search/index.ts` refuses Elasticsearch's identical gap the same way.
-The refusal is an `OffsetUnsupportedError`, a `QueryError` of its own class (`src/lib/db/errors.ts`), so MCP `run_read_query` answers exactly this refusal as an offset refusal in this sentence, and any other failure of `prepareQuery` as the engine's.
+The refusal is an `OffsetUnsupportedError`, a `QueryError` of its own class (`src/lib/db/errors.ts`), so a caller can tell it from any other failure of `prepareQuery`.
+MCP `run_read_query` never reaches it: Cassandra's row in `src/lib/db/providers/sql/read-query-forms.ts` says its SQL has no offset, so an `offset` is refused before `prepareQuery` is asked, in the sentence that says how to page in CQL ([§14.7](#147-mcp-read)).
 
 **2. `ALLOW FILTERING` must stay last.**
 
@@ -1899,13 +1901,31 @@ CQL has no `NOT IN` to leave the system keyspaces out of a read of every keyspac
 The relation, index and statistics kinds are refused with `SELECTOR_UNSUPPORTED_BY_DIALECT`: CQL has no foreign key, its index catalog names no column a key read could use, and the server keeps no row count it can vouch for ([§3.2](#32-there-is-no-honest-row-count-and-no-honest-size)).
 So investigation, database assessment and data analysis open here and send their statements through `queryReadOnly`, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`; database assessment cannot pass with no table profile ([B146](../BACKLOG.md)), and the `sql-composers` requirement holds query optimization out ([B149](../BACKLOG.md)); plan mode drafts here as on every engine.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-MCP's statement read stays closed on Cassandra (`MCP_STATEMENT_READ.cassandra` is false) until a change of its own opens it.
+MCP's `run_read_query` runs on Cassandra (`MCP_STATEMENT_READ.cassandra` is true) under this same boundary ([§14.7](#147-mcp-read)).
 
 ### 14.6 Boundary record
 
 `bun tests/live/cassandra-agent-boundary.ts`, run on 2026-10-30 against a `cassandra:5.0.9` node set up as `run.sh` shows, with a second node on `AllowAllAuthorizer` and a ScyllaDB 2026.2.4 node, passes 94 checks through the production path (`createDatabaseProvider` with the profile's execution context, `connect`, `queryReadOnly`) and with no admission of Studio's in front: the open admits a keyspace and a table reader and refuses each role of step 2 and 3 above and a keyspace with a user-defined mask; each write, DDL, grant and role statement is refused by the fence before it is sent, and each user-defined function and aggregate call, a `SELECT`, passes the fence and is refused by the server as Unauthorized; behind the fence, every one of those statements sent as the role on a driver session of its own is refused as Unauthorized, never as a syntax error, while the superuser runs every one of them on a scratch keyspace; the keyspace's rows, tables and functions and the roles read the same after; the MODIFY role really writes into its second keyspace and a SELECT-only read of a masked column really runs the function; a grant, a superuser role and a mask added after one call each refuse the next and their removal admits the one after; a `USE` is refused before it is sent, and a lowercase `SELECT` behind comments of all three forms answers; both budgets refuse; `AllowAllAuthorizer` and ScyllaDB are refused at open; and the role's change of its own password is refused before it is sent, its old password still signing in, while the same statement on a driver session of its own is accepted.
 Three checks were added on 2026-10-30 and run that day against the `PasswordAuthenticator` node alone, where all 95 checks passed: the password change written after a carriage return in a comment is refused before it is sent and the old password still signs in, while on a driver session of its own the server runs the same text as the password change and the new password signs in.
 Six checks were added on 2026-11-02 for the read scope of [§14.3](#143-the-statement-path), and the run that day against the three nodes passed all 103: the role reads the trace table on a driver session of its own, while a read of `system_traces.sessions`, of `"system_traces"."events"`, of `SYSTEM.LOCAL` and of another keyspace is refused before it is sent, and the schema catalog answers.
+
+### 14.7 MCP read
+
+MCP's `run_read_query` serves Cassandra through the boundary of [§14.1](#141-the-boundary-is-the-role) to [§14.3](#143-the-statement-path), and through nothing weaker: the connection is acquired under the agent read-only profile, so the role is checked at the open of that shared handle, and every statement goes through `queryReadOnly`, which checks the role again on a session opened for that statement alone before sending it, keeping no verdict between calls.
+The MCP statement fence runs first, as defence in depth, and refuses a write, `BATCH`, `TRUNCATE`, DDL, `GRANT`, `REVOKE`, role statement, `USE`, `LIST` and a second statement before anything is acquired.
+It runs a `SELECT` of one table of the connection's keyspace or of `system_schema`: a `WITH`, `VALUES`, `TABLE` and `EXPLAIN` pass that fence and are refused by the provider before they are sent, and each is a syntax error on 5.0.9 too, measured on 2026-11-02 as the `SELECT`-only role.
+A `SELECT` without its own `LIMIT` is cut at `max_rows` (100 by default, at most 500), and `pagination.hasMore` says more rows exist; a query whose own `LIMIT` is past 1000 rows, or a result past 1 MiB, is refused, never cut.
+CQL has no `OFFSET`, so an `offset` is refused before anything is sent, no answer names a next offset, and a result cut at `max_rows` says to page in CQL: LIMIT n, and for the next page add WHERE token(the partition key) > token(the last one read), or, within one partition, WHERE the clustering column > the last value read.
+A seed carries no separate agent user, so the seed's own `user` is the role checked: it must name the keyspace as `database`, and be a role that is no superuser and holds only `SELECT` on that keyspace or its tables, as [§14.2](#142-the-check-before-every-statement) proves; the image's default `cassandra` superuser is refused at open, in the tool's sentence.
+`inspect_schema` takes the operations profile, which sends no statement, so it opens a Cassandra connection unchecked, as the editor does, and as plan mode grounds.
+A cancel or a `timeout_ms` ends the wait, not the statement: the native protocol has no cancel, so the coordinator runs the statement to its end, and the provider closes the call's session at the time left of `timeout_ms` or when the answer arrives.
+
+`bun tests/live/cassandra-mcp-boundary.ts`, run on 2026-11-02 against a `cassandra:5.0.9` node set up as `run.sh` shows, with a second node on `AllowAllAuthorizer` and a ScyllaDB 2026.2.4 node, passed all 128 checks through the MCP tool's own handler (`runStatement`), with the factory's profiled acquisition:
+
+- the open: a keyspace reader and a table reader are served; the image's superuser and each role [§14.6](#146-boundary-record) refuses at open are refused before any statement runs, in the sentence "run_read_query cannot run on this connection: ...", and so are the `AllowAllAuthorizer` node and ScyllaDB;
+- the boundary, the MCP fence bypassed: each write, conditional write, `BATCH`, `TRUNCATE`, DDL statement, `GRANT`, `REVOKE`, role statement, `USE`, second statement and text after a carriage return in a comment is refused by the provider before it is sent, and a call of a user-defined function or aggregate reaches the server and is answered as Unauthorized in its own words; each of those statements sent as the role on a driver session of its own is refused by the server as Unauthorized (code 8448), the superuser runs each on a scratch keyspace, and a hash of the keyspace's rows, tables and functions and of the roles is the same before and after; with the fence in place each one that is not a `SELECT` is refused before anything is acquired;
+- the read scope: the role reads the trace of the superuser's statement, a marker value included, and `system.local` on a driver session of its own and is refused `system_auth.roles`, while through MCP every read outside the keyspace and `system_schema` is refused before it is sent, in every spelling (quoted, capitals, comments around the dot, no space at all), with and without the MCP fence, and no answer carries the marker; the schema catalog and an unqualified table answer;
+- the limits: a read past `max_rows` is cut and names CQL's paging, and the token and clustering pages it names read the next rows; an `offset` is refused; a read with its own `LIMIT` past 1000 rows, and a result past 1 MiB, is refused, never cut; at a `timeout_ms` of 500 the call answered the timeout at 500 ms and `system_views.queries` listed the filtered count for 875 ms more, and a cancel was answered at once while the count ran 721 ms more.
 
 ## Migration DDL
 
