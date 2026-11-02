@@ -535,30 +535,41 @@ async function kubernetesRefusals(provider: DatabaseProvider, label: string): Pr
   });
 }
 
-/** Spec E6 in its three arms: every write, an edit and every maintenance operation, refused. */
+/**
+ * Spec E6 in its three arms: every write, an edit and every maintenance operation, refused. A handle opened with an
+ * execution profile is an agent handle (#2107), which refuses the editor's command path and a key's source with the
+ * agent surface's sentence before E6 is reached, so on that arm the commands and the source meet that refusal, and the
+ * apply and the maintenance operations meet E6's sentence.
+ */
 async function readOnlyRefusals(
   fixture: Fixture,
   label: string,
   credentials: Partial<DatabaseConnection>,
 ): Promise<void> {
-  const arms: ReadonlyArray<readonly [string, DatabaseConnection, ProviderExecutionContext | undefined, string]> = [
+  const agentSurface = "An etcd handle opened for agent mode answers only the agent's metadata reads";
+  const arms: ReadonlyArray<
+    readonly [string, DatabaseConnection, ProviderExecutionContext | undefined, string, boolean]
+  > = [
     [
       "a seed",
       connectionFor(fixture, { ...credentials, readOnly: true, seedId: "live-read-only" }),
       undefined,
       "This connection is read-only (set in the operator's seed file)",
+      false,
     ],
     [
       "a connection of the user's own",
       connectionFor(fixture, { ...credentials, readOnly: true }),
       undefined,
       "This connection is read-only: turn off Read-only in its settings to write",
+      false,
     ],
     [
       "an execution profile",
       connectionFor(fixture, credentials),
       { readOnly: true },
       "This run opens the connection read-only (agent execution profile)",
+      true,
     ],
   ];
   const writable = await open(connectionFor(fixture, credentials));
@@ -572,9 +583,11 @@ async function readOnlyRefusals(
     text: `${part.text} `,
   });
   await writable.disconnect();
-  for (const [arm, connection, execution, sentence] of arms) {
+  for (const [arm, connection, execution, sentence, agentHandle] of arms) {
     // oxlint-disable-next-line no-await-in-loop -- the checks run one at a time against a live server, in order, so each snapshot and socket census sees one step.
     const provider = await open(connection, execution);
+    const commandClasses = agentHandle ? ["RefusedBeforeSendError"] : ["QueryError", "DatabaseConfigError"];
+    const commandSentence = agentHandle ? agentSurface : sentence;
     for (const text of [
       `put ${SCRATCH_PREFIX}ro v`,
       `del ${SCRATCH_PREFIX}ro`,
@@ -584,20 +597,29 @@ async function readOnlyRefusals(
       "lease keep-alive 694d8147df1dc4c8 --once",
     ]) {
       // oxlint-disable-next-line no-await-in-loop -- the checks run one at a time against a live server, in order, so each snapshot and socket census sees one step.
-      await refusal(
-        `${label}: E6 (${arm}) refuses ${JSON.stringify(text)}`,
-        ["QueryError", "DatabaseConfigError"],
-        [sentence],
-        () => provider.query(text),
+      await refusal(`${label}: E6 (${arm}) refuses ${JSON.stringify(text)}`, commandClasses, [commandSentence], () =>
+        provider.query(text),
       );
     }
     // oxlint-disable-next-line no-await-in-loop -- the checks run one at a time against a live server, in order, so each snapshot and socket census sees one step.
     await check(`${label}: E6 (${arm}) offers no edit and refuses a plan built read-write`, async () => {
-      const doc = (await provider.readObjectSource?.(["/app/cfg"], "key")) as ObjectSourceDocument;
-      must(editOf(doc)?.offered === false, "the Source part offers an edit");
+      if (agentHandle) {
+        const withheld = await provider.readObjectSource?.(["/app/cfg"], "key").then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+        must(
+          withheld instanceof Error && withheld.name === "QueryError" && withheld.message.includes(agentSurface),
+          `the key's source was not withheld: ${describeError(withheld)}`,
+        );
+      } else {
+        const doc = (await provider.readObjectSource?.(["/app/cfg"], "key")) as ObjectSourceDocument;
+        must(editOf(doc)?.offered === false, "the Source part offers an edit");
+      }
       must(built?.built === true, "the read-write build did not build");
       const outcome = await provider.applyObjectEdit?.(built.plan);
       must(outcome?.outcome === "refused", `the apply answered ${JSON.stringify(outcome)}`);
+      must(JSON.stringify(outcome).includes(sentence), `the apply did not name the mode: ${JSON.stringify(outcome)}`);
       return sentence;
     });
     for (const type of ["compact", "defragment", "disarm"] as const) {
