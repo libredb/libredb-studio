@@ -18,7 +18,9 @@
  *    granted a view left invalid, a table with a virtual column or a hidden one of a function-based index, a view over a
  *    view granted only DEBUG, a table of its own with a virtual column, one that may no longer read either policy
  *    catalog, one granted a sequence, one holding a role that is not a default role, one granted a directory, one
- *    holding ALTER SYSTEM, one owning a private database link, and any user while a PUBLIC database link exists, or
+ *    holding ALTER SYSTEM, one owning a private database link, one granted SYS.USER$ or SYS.V_$SESSION, directly or
+ *    through a default role, AUDIT_VIEWER, SELECT ANY DICTIONARY or SELECT_CATALOG_ROLE inside a default role, and any
+ *    user while a PUBLIC database link exists, or
  *    while the database holds a row-level policy or a fine-grained auditing handler of the owner's anywhere, Oracle's
  *    SYSTEM.HELP and SYSTEM.SQLPLUS_PRODUCT_PROFILE included, or an audit condition, and admits each again once the
  *    grant, the policy, the synonym or the table is gone or the private link dropped by its owner set READ WRITE; a
@@ -845,6 +847,49 @@ async function main(): Promise<void> {
       ],
       revoke: [`DROP PUBLIC DATABASE LINK ${PREFIX}LINK`],
       names: `DROP PUBLIC DATABASE LINK "${PREFIX}LINK"`,
+    },
+    // READ ONLY stops writes, not reads: a grant on a schema Oracle maintains reads what PUBLIC cannot.
+    {
+      label: "SELECT on SYS.USER$, the users' password hashes",
+      grant: [`GRANT SELECT ON SYS.USER$ TO ${RO}`],
+      revoke: [`REVOKE SELECT ON SYS.USER$ FROM ${RO}`],
+      names: `REVOKE SELECT ON "SYS"."USER$" FROM "${RO}"`,
+      admin: "SYS",
+    },
+    {
+      label: "SELECT on SYS.V_$SESSION, other sessions",
+      grant: [`GRANT SELECT ON SYS.V_$SESSION TO ${RO}`],
+      revoke: [`REVOKE SELECT ON SYS.V_$SESSION FROM ${RO}`],
+      names: `REVOKE SELECT ON "SYS"."V_$SESSION" FROM "${RO}"`,
+      admin: "SYS",
+    },
+    {
+      label: "the AUDIT_VIEWER role, the unified audit trail",
+      grant: [`GRANT AUDIT_VIEWER TO ${RO}`],
+      revoke: [`REVOKE AUDIT_VIEWER FROM ${RO}`],
+      names: `REVOKE "AUDIT_VIEWER" FROM "${RO}"`,
+      admin: "SYS",
+    },
+    {
+      label: "SELECT on SYS.USER$ through a default role",
+      grant: [`GRANT SELECT ON SYS.USER$ TO ${PREFIX}ROLE`, `GRANT ${PREFIX}ROLE TO ${RO}`],
+      revoke: [`REVOKE ${PREFIX}ROLE FROM ${RO}`, `REVOKE SELECT ON SYS.USER$ FROM ${PREFIX}ROLE`],
+      names: `REVOKE "${PREFIX}ROLE" FROM "${RO}"`,
+      admin: "SYS",
+    },
+    {
+      label: "SELECT ANY DICTIONARY through a default role",
+      grant: [`GRANT SELECT ANY DICTIONARY TO ${PREFIX}ROLE`, `GRANT ${PREFIX}ROLE TO ${RO}`],
+      revoke: [`REVOKE ${PREFIX}ROLE FROM ${RO}`, `REVOKE SELECT ANY DICTIONARY FROM ${PREFIX}ROLE`],
+      names: `REVOKE SELECT ANY DICTIONARY FROM "${PREFIX}ROLE"`,
+      admin: "SYS",
+    },
+    {
+      label: "SELECT_CATALOG_ROLE inside a default role",
+      grant: [`GRANT SELECT_CATALOG_ROLE TO ${PREFIX}ROLE`, `GRANT ${PREFIX}ROLE TO ${RO}`],
+      revoke: [`REVOKE ${PREFIX}ROLE FROM ${RO}`, `REVOKE SELECT_CATALOG_ROLE FROM ${PREFIX}ROLE`],
+      names: `REVOKE "${PREFIX}ROLE" FROM "${RO}"`,
+      admin: "SYS",
     },
   ];
   for (const { label, grant, revoke, names, admin = "SYSTEM" } of refusedThenLifted) {

@@ -72,12 +72,19 @@ export function pagesWithOffset(type: DatabaseType): boolean {
 
 /**
  * The budget refusals in `type`'s words where they differ from the shared ones: an engine with no offset is never told
- * to page with one.
+ * to page with one, and an engine with no `LIMIT` is told its own row limiting clause.
  */
-export function tooLargeTextsOf(type: DatabaseType): Partial<Record<"rows", string>> {
+export function tooLargeTextsOf(type: DatabaseType): Partial<Record<"rows" | "bytes", string>> {
+  const { rowLimit, paging } = readQueryFormsOf(type);
+  if (rowLimit !== undefined) {
+    return {
+      rows: `The result has more than 1000 rows, the most this server reads for one call. Add ${rowLimit.add} with n of 1000 or less, or remove your own ${rowLimit.own} and page with offset.`,
+      bytes: `The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add ${rowLimit.add} with a smaller n.`,
+    };
+  }
   if (pagesWithOffset(type)) return {};
   return {
-    rows: `The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, and page it in SQL: ${readQueryFormsOf(type).paging}.`,
+    rows: `The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, and page it in SQL: ${paging}.`,
   };
 }
 
@@ -102,7 +109,8 @@ export function offsetRefusalText(sql: string, type: DatabaseType): string {
     return `This engine's SQL has no OFFSET, so this query cannot be paged with offset. ${inSqlPaging(type)}`;
   }
   if (!info.hasLimit) return `This query cannot be paged with offset. ${inSqlPaging(type)}`;
-  return `This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ${readQueryFormsOf(type).paging}.`;
+  const { rowLimit, paging } = readQueryFormsOf(type);
+  return `This query has its own ${rowLimit?.own ?? "LIMIT or TOP"}, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ${paging}.`;
 }
 
 export function timeoutText(timeoutMs: number): string {

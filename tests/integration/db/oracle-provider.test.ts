@@ -28,6 +28,15 @@ import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { generateTableQuery, generateSelectQuery } from "@/lib/query-generators";
 import { ORACLE_CREATE_TABLE } from "@/lib/db/providers/sql/oracle-create-table";
 import { AGENT_PRINCIPAL_STATEMENTS } from "@/lib/db/providers/sql/oracle/agent-read";
+import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
+import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import type { McpConnectionContext } from "@/lib/mcp/context";
+import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
+import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
+import type { ManagedConnection } from "@/lib/seed";
+import { RUN_READ_QUERY_ENGINES, RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 
 // ---------------------------------------------------------------------------
 // Mock oracledb BEFORE loading the provider
@@ -6804,5 +6813,387 @@ describe("OracleProvider.queryReadOnly", () => {
   test("the editor's own path still commits each statement, as it did", async () => {
     await provider.query("SELECT 1 FROM DUAL");
     expect(connectionLog.find((entry) => entry.event === "execute")?.opts?.autoCommit).toBe(true);
+  });
+});
+
+// ============================================================================
+// MCP run_read_query on Oracle
+// ============================================================================
+
+/**
+ * MCP's `run_read_query` serves Oracle through the factory's own `agent-read-only` acquisition and the provider's
+ * `queryReadOnly`, the path agent mode uses: each call opens a session of its own, `SET TRANSACTION READ ONLY`, the
+ * check of the user on that session, then the statement. The check runs before every statement, not at the open, so a
+ * too-broad user is refused from the statement call, in the tool's own sentence. The MCP fence refuses a write-shaped
+ * statement before anything is acquired; a write that reaches the server, its fence removed, is the server's
+ * ORA-28194. The seed's own user is the credential, since a seed carries no separate agent credential.
+ */
+describe("MCP run_read_query on an Oracle connection", () => {
+  const CHECKS = Object.values(AGENT_PRINCIPAL_STATEMENTS);
+  const CHECK_SET = new Set<string>(CHECKS);
+  const CLEAN_USER = { rows: [{ USERNAME: "APP_RO", READ_ONLY: "YES" }], metaData: [] };
+  const ID = { name: "ID", dbType: DB_TYPE_VARCHAR, dbTypeName: "NUMBER" };
+  const ids = (count: number) => ({
+    rows: Array.from({ length: count }, (_, index) => ({ ID: index + 1 })),
+    metaData: [ID],
+  });
+  let acquired: ExecutionProfile[] = [];
+  /** What the model's statement answers; every check answers a clean READ ONLY user unless `check` says otherwise. */
+  let statement: (sql: string) => unknown = () => ids(1);
+  let check: (sql: string) => unknown = () => undefined;
+
+  const executed = () => connectionLog.filter((entry) => entry.event === "execute").map((entry) => entry.sql as string);
+  const statementsSent = () =>
+    executed().filter(
+      (sql) => !CHECK_SET.has(sql) && sql !== "SET TRANSACTION READ ONLY" && sql !== "SELECT 1 FROM DUAL",
+    );
+
+  function seed(overrides: Partial<ManagedConnection> = {}): ManagedConnection {
+    return {
+      id: "seed:ledger",
+      name: "ledger",
+      type: "oracle",
+      seedId: "ledger",
+      managed: true,
+      mcp: true,
+      roles: ["*"],
+      host: "127.0.0.1",
+      port: 1521,
+      serviceName: "FREEPDB1",
+      user: "APP_RO",
+      password: "not-a-real-password",
+      createdAt: new Date("2026-11-02T00:00:00.000Z"),
+      ...overrides,
+    } as ManagedConnection;
+  }
+
+  function contextFor(target: ManagedConnection): McpConnectionContext {
+    return {
+      caller: { username: "alice", role: "admin" },
+      visibleConnections: async () => [target],
+      resolve: async () => target,
+      acquire: (connection: ManagedConnection, profile: ExecutionProfile) => {
+        acquired.push(profile);
+        return acquireExecutionProfileProvider(connection, profile);
+      },
+    } as unknown as McpConnectionContext;
+  }
+
+  function call(args: Record<string, unknown>, target: ManagedConnection = seed()) {
+    const parsed = RunReadQueryInputSchema.parse({ connection_id: target.id, ...args }) as McpStatementInput;
+    return runReadQuery(parsed, { context: contextFor(target), signal: new AbortController().signal });
+  }
+
+  /** The same tool with its statement fence removed, so a write reaches the boundary under test. */
+  const UNFENCED: McpStatementArm = { ...mcpStatementArm("run_read_query"), fence: () => null };
+
+  function unfenced(args: Record<string, unknown>, target: ManagedConnection = seed()) {
+    const parsed = UNFENCED.inputSchema.parse({ connection_id: target.id, ...args }) as McpStatementInput;
+    return runStatement(UNFENCED, parsed, { context: contextFor(target), signal: new AbortController().signal });
+  }
+
+  beforeEach(() => {
+    acquired = [];
+    connectionLog = [];
+    statement = () => ids(1);
+    check = () => undefined;
+    mockExecuteFn = async (sql: string, _params?: unknown[], opts?: unknown) => {
+      const answered = CHECK_SET.has(sql) ? check(sql) : sql === "SET TRANSACTION READ ONLY" ? {} : statement(sql);
+      if (answered instanceof Error) throw answered;
+      if (answered === undefined) {
+        return sql === AGENT_PRINCIPAL_STATEMENTS.readOnly ? CLEAN_USER : { rows: [], metaData: [] };
+      }
+      if ((opts as { resultSet?: boolean } | undefined)?.resultSet !== true || !("rows" in (answered as object))) {
+        return answered;
+      }
+      const { rows, metaData } = answered as { rows: unknown[]; metaData: unknown[] };
+      return {
+        metaData,
+        resultSet: { getRows: async (count: number) => rows.slice(0, count), close: async () => {} },
+      };
+    };
+    mockConnCloseFn = async () => {};
+    mockRollbackFn = async () => {};
+    mockBreakFn = async () => {};
+    mockPoolCloseFn = async () => {};
+    mockCreatePoolFn = async () => createMockPool();
+    mockStandaloneConnectFn = async () => createMockConnection();
+  });
+
+  afterEach(async () => {
+    await clearProviderCache();
+  });
+
+  test("the provider doc says MCP read is open here and names the statements it runs, from their records", () => {
+    const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/oracle.md"), "utf8");
+
+    expect(MCP_STATEMENT_READ.oracle).toBe(true);
+    expect(doc).toContain("`MCP_STATEMENT_READ.oracle` is true");
+    expect(doc).not.toContain("MCP's statement read stays closed on Oracle");
+    expect(doc.replaceAll("`", "")).toContain(`It runs ${readQueryFormsOf("oracle").statements}:`);
+  });
+
+  test("reads rows under the agent profile after the check, paged one row past max_rows", async () => {
+    statement = () => ids(3);
+
+    const result = await call({ sql: "SELECT id FROM app_owner.orders ORDER BY id", max_rows: 2 });
+
+    expect(result.isError).toBeUndefined();
+    expect(acquired).toEqual(["agent-read-only"]);
+    // The check runs on the statement's own session, inside its read-only transaction, right before it.
+    const sent = executed();
+    const lastCall = sent.slice(sent.lastIndexOf("SET TRANSACTION READ ONLY"));
+    expect(lastCall).toEqual([
+      "SET TRANSACTION READ ONLY",
+      ...CHECKS,
+      "SELECT id FROM app_owner.orders ORDER BY id FETCH FIRST 3 ROWS ONLY",
+    ]);
+    expect(result.structuredContent).toMatchObject({
+      connection_id: "seed:ledger",
+      columns: [{ name: "ID" }],
+      rows: [{ ID: 1 }, { ID: 2 }],
+      row_count: 2,
+      truncated: true,
+      truncated_by: "max_rows",
+      pagination: { offset: 0, limit: 2, hasMore: true, nextOffset: 2, wasLimited: true },
+      hint: "Call again with offset 2 for the next page.",
+    });
+    expect((result.content as { text: string }[])[0]?.text).toBe(MCP_UNTRUSTED_NOTICE);
+  });
+
+  test("the check runs before every statement, never once at the open", async () => {
+    await call({ sql: "SELECT id FROM app_owner.orders" });
+    connectionLog = [];
+    const second = await call({ sql: "SELECT id FROM app_owner.orders" });
+
+    expect(second.isError).toBeUndefined();
+    expect(executed()).toEqual([
+      "SET TRANSACTION READ ONLY",
+      ...CHECKS,
+      "SELECT id FROM app_owner.orders FETCH FIRST 101 ROWS ONLY",
+    ]);
+  });
+
+  test("pages with Oracle's own OFFSET m ROWS FETCH NEXT n ROWS ONLY", async () => {
+    const result = await call({ sql: "SELECT id FROM app_owner.orders ORDER BY id", max_rows: 2, offset: 2 });
+
+    expect(statementsSent().at(-1)).toBe(
+      "SELECT id FROM app_owner.orders ORDER BY id OFFSET 2 ROWS FETCH NEXT 3 ROWS ONLY",
+    );
+    expect(result.structuredContent).toMatchObject({
+      rows: [{ ID: 1 }],
+      pagination: { offset: 2, limit: 2, hasMore: false, nextOffset: null, wasLimited: true },
+    });
+  });
+
+  test("refuses an offset on a statement it cannot page, before anything is acquired", async () => {
+    const OWN =
+      "This query has its own FETCH FIRST, OFFSET ... FETCH or ROWNUM, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.";
+    for (const [sql, text] of [
+      ["SELECT id FROM app_owner.orders ORDER BY id FETCH FIRST 5 ROWS ONLY", OWN],
+      ["SELECT id FROM app_owner.orders ORDER BY id OFFSET 1 ROWS FETCH NEXT 5 ROWS ONLY", OWN],
+      ["SELECT id FROM app_owner.orders WHERE ROWNUM <= 5", OWN],
+      ["EXPLAIN PLAN FOR SELECT 1 FROM DUAL", "This statement's result cannot be paged. Call again without offset."],
+    ] as const) {
+      const result = await call({ sql, offset: 1 });
+
+      expect(result).toEqual({ content: [{ type: "text", text }], isError: true });
+      expect(statementsSent()).toEqual([]);
+    }
+  });
+
+  const fenced = (code: string) =>
+    `The statement was refused before it reached the database (${code}). On this engine run_read_query runs one read-only statement: a SELECT (a WITH is fine).`;
+
+  test.each([
+    ["INSERT INTO app_owner.orders (id) VALUES (9)", "NON_READ_STATEMENT"],
+    ["UPDATE app_owner.orders SET id = 0", "NON_READ_STATEMENT"],
+    ["DELETE FROM app_owner.orders", "NON_READ_STATEMENT"],
+    [
+      "MERGE INTO app_owner.orders o USING DUAL ON (1 = 0) WHEN NOT MATCHED THEN INSERT (id) VALUES (3)",
+      "NON_READ_STATEMENT",
+    ],
+    ["CREATE TABLE app_owner.copy (id NUMBER)", "NON_READ_STATEMENT"],
+    ["CREATE GLOBAL TEMPORARY TABLE app_owner.scratch (id NUMBER)", "NON_READ_STATEMENT"],
+    ["DROP TABLE app_owner.orders", "NON_READ_STATEMENT"],
+    ["TRUNCATE TABLE app_owner.orders", "NON_READ_STATEMENT"],
+    ["LOCK TABLE app_owner.orders IN EXCLUSIVE MODE", "NON_READ_STATEMENT"],
+    ["SELECT id FROM app_owner.orders FOR UPDATE", "SIDE_EFFECT_KEYWORD"],
+    ["BEGIN INSERT INTO app_owner.orders VALUES (1); END;", "MULTIPLE_STATEMENTS"],
+    ["CALL app_owner.bump()", "NON_READ_STATEMENT"],
+    ["ALTER SESSION SET CURRENT_SCHEMA = APP_OWNER", "NON_READ_STATEMENT"],
+    ["ALTER SYSTEM SET open_cursors = 400", "NON_READ_STATEMENT"],
+    ["GRANT SELECT ON app_owner.orders TO PUBLIC", "NON_READ_STATEMENT"],
+    ["COMMIT", "NON_READ_STATEMENT"],
+    ["SET TRANSACTION READ WRITE", "NON_READ_STATEMENT"],
+    ["SELECT 1 FROM DUAL; DELETE FROM app_owner.orders", "MULTIPLE_STATEMENTS"],
+    ["EXPLAIN PLAN FOR DELETE FROM app_owner.orders", "SIDE_EFFECT_KEYWORD"],
+  ])("%p is refused at admission, before anything is acquired or sent", async (sql, code) => {
+    const result = await call({ sql });
+
+    expect(result).toEqual({ content: [{ type: "text", text: fenced(code) }], isError: true });
+    expect(acquired).toEqual([]);
+    expect(connectionLog).toEqual([]);
+  });
+
+  test("a write that reaches the server, its fence removed, is answered as the server's own refusal", async () => {
+    statement = () => Object.assign(new Error("ORA-28194: Can perform read operations only"), { errorNum: 28194 });
+
+    const result = await unfenced({ sql: "DELETE FROM app_owner.orders" });
+
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(executed().at(-1)).toBe("DELETE FROM app_owner.orders");
+    expect(result.isError).toBe(true);
+    expect(result.content[0]).toEqual({ type: "text", text: MCP_UNTRUSTED_NOTICE });
+    expect((result.content[1] as { text: string }).text).toStartWith(
+      `${MCP_ENGINE_ERROR_PREFIX}ORA-28194: Can perform read operations only`,
+    );
+  });
+
+  // EXPLAIN PLAN passes the fence, which admits an EXPLAIN without ANALYZE, and writes its rows into PLAN_TABLE, which
+  // the call's read-only transaction refuses (ORA-01456, measured on 26ai Free 23.26.3).
+  test("EXPLAIN PLAN passes admission and is the server's refusal, a write inside the read-only transaction", async () => {
+    statement = () =>
+      Object.assign(
+        new Error(
+          "ORA-00604: Error occurred at recursive SQL level 1. Check subsequent errors.\nORA-01456: may not perform insert, delete, update operation inside a READ ONLY transaction",
+        ),
+        { errorNum: 604 },
+      );
+
+    const result = await call({ sql: "EXPLAIN PLAN FOR SELECT 1 FROM DUAL" });
+
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(executed().at(-1)).toBe("EXPLAIN PLAN FOR SELECT 1 FROM DUAL");
+    expect((result.content[1] as { text: string }).text).toContain("ORA-01456");
+  });
+
+  const refused = (sentence: string) => ({
+    content: [
+      {
+        type: "text" as const,
+        text: `run_read_query cannot run on this connection: ${sentence}. It runs on ${RUN_READ_QUERY_ENGINES}.`,
+      },
+    ],
+    isError: true as const,
+  });
+
+  // The check runs on the statement call, and its refusal quotes names any user of the database may have chosen, so it
+  // comes behind the untrusted-data notice.
+  const refusedAtStatement = (sentence: string) => ({
+    content: [
+      { type: "text" as const, text: MCP_UNTRUSTED_NOTICE },
+      { type: "text" as const, text: `run_read_query cannot run on this connection: ${sentence}.` },
+    ],
+    isError: true as const,
+  });
+
+  test.each([
+    [
+      "a user that is not READ ONLY, such as SYSTEM",
+      AGENT_PRINCIPAL_STATEMENTS.readOnly,
+      { rows: [{ USERNAME: "SYSTEM", READ_ONLY: "NO" }] },
+      'The agent read-only execution profile refuses the Oracle user SYSTEM: SYSTEM is not set READ ONLY. Run, as an administrator: ALTER USER "SYSTEM" READ ONLY',
+    ],
+    [
+      "a user holding EXECUTE on a definer's-rights function",
+      AGENT_PRINCIPAL_STATEMENTS.units,
+      { rows: [{ GRANTEE: "APP_RO", OWNER: "APP_OWNER", NAME: "BUMP", OBJECT_TYPE: "FUNCTION" }] },
+      'The agent read-only execution profile refuses the Oracle user APP_RO: it holds EXECUTE on code Oracle does not maintain, which runs with its owner\'s rights. Run, as an administrator: REVOKE EXECUTE ON "APP_OWNER"."BUMP" FROM "APP_RO"',
+    ],
+    [
+      "a user holding a role that reads the dictionary",
+      AGENT_PRINCIPAL_STATEMENTS.dictionary,
+      { rows: [{ KIND: "ROLE", GRANTEE: "APP_RO", OWNER: null, NAME: "SELECT_CATALOG_ROLE", PRIVILEGE: null }] },
+      'The agent read-only execution profile refuses the Oracle user APP_RO: it holds a privilege on an object of a schema Oracle maintains, beyond SELECT on SYS.DBA_POLICIES and SYS.DBA_AUDIT_POLICIES, which reads what every user of the database may not, such as the dictionary, the audit trail or other sessions. Run, as an administrator: REVOKE "SELECT_CATALOG_ROLE" FROM "APP_RO"',
+    ],
+    [
+      "a user holding a system privilege that reads every schema",
+      AGENT_PRINCIPAL_STATEMENTS.systemPrivileges,
+      { rows: [{ PRIVILEGE: "SELECT ANY TABLE", GRANTEE: "APP_RO" }] },
+      'The agent read-only execution profile refuses the Oracle user APP_RO: it holds a system privilege beyond CREATE SESSION. Run, as an administrator: REVOKE SELECT ANY TABLE FROM "APP_RO"',
+    ],
+  ] as const)("%s is refused before its statement is sent, in the tool's sentence", async (_label, at, rows, text) => {
+    check = (sql) => (sql === at ? rows : undefined);
+
+    const result = await call({ sql: "SELECT id FROM app_owner.orders" });
+
+    expect(acquired).toEqual(["agent-read-only"]);
+    expect(result).toEqual(refusedAtStatement(text));
+    expect(statementsSent()).toEqual([]);
+  });
+
+  test("a grant lifted between two calls admits the next call", async () => {
+    let granted = true;
+    check = (sql) =>
+      sql === AGENT_PRINCIPAL_STATEMENTS.dictionary && granted
+        ? { rows: [{ KIND: "OBJECT", GRANTEE: "APP_RO", OWNER: "SYS", NAME: "USER$", PRIVILEGE: "SELECT" }] }
+        : undefined;
+
+    expect((await call({ sql: "SELECT id FROM app_owner.orders" })).isError).toBe(true);
+    granted = false;
+    expect((await call({ sql: "SELECT id FROM app_owner.orders" })).isError).toBeUndefined();
+  });
+
+  test("an agent credential beside a connection string is refused before the provider is built", async () => {
+    const target = seed({
+      host: undefined,
+      port: undefined,
+      connectionString: "127.0.0.1:1521/FREEPDB1",
+      agentUser: "APP_RO",
+      agentPassword: "not-a-real-password",
+    } as Partial<ManagedConnection>);
+
+    const result = await call({ sql: "SELECT 1 FROM DUAL" }, target);
+
+    expect(result).toEqual(
+      refused(
+        'Connection "seed:ledger" configures an agent credential alongside a connection string; the credential cannot be applied, so acquisition is refused',
+      ),
+    );
+    expect(connectionLog).toEqual([]);
+  });
+
+  test("a result past the 1000-row provider budget is refused, never cut", async () => {
+    statement = () => ids(1_001);
+
+    const result = await call({ sql: "SELECT id FROM app_owner.orders FETCH FIRST 1001 ROWS ONLY" });
+
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: "The result has more than 1000 rows, the most this server reads for one call. Add FETCH FIRST n ROWS ONLY with n of 1000 or less, or remove your own FETCH FIRST, OFFSET ... FETCH or ROWNUM and page with offset.",
+        },
+      ],
+      isError: true,
+    });
+  });
+
+  test("a result past the 1 MiB provider budget is refused, never cut", async () => {
+    statement = () => ({ rows: [{ DOC: "x".repeat(1_100_000) }], metaData: [{ name: "DOC", dbType: DB_TYPE_CLOB }] });
+
+    const result = await call({ sql: "SELECT doc FROM app_owner.docs" });
+
+    expect((result.content[0] as { text: string }).text).toStartWith("The result is larger than 1 MiB");
+  });
+
+  test("a statement past timeout_ms is answered as the timeout, the driver's call timeout set to the time left", async () => {
+    statement = () => new Error("NJS-123: call timeout of 1000 ms exceeded");
+
+    const result = await call({ sql: "SELECT id FROM app_owner.orders", timeout_ms: 1_000 });
+
+    expect(result).toEqual({
+      content: [
+        {
+          type: "text",
+          text: "The statement did not finish within timeout_ms (1000 ms). Narrow it, or raise timeout_ms up to 30000.",
+        },
+      ],
+      isError: true,
+    });
+    const sent = connectionLog.filter((entry) => entry.event === "execute").at(-1);
+    expect(sent?.callTimeout).toBeGreaterThan(0);
+    expect(sent?.callTimeout).toBeLessThanOrEqual(1_000);
   });
 });

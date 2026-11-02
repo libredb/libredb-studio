@@ -59,6 +59,13 @@
  * 11. The session holds no system privilege but CREATE SESSION.
  * 12. `ALL_DB_LINKS` lists no link, PUBLIC or its own, since a link reaches another database under its stored
  *    credential.
+ * 13. It and the roles it holds, but not PUBLIC, hold no privilege on an object of a schema `ALL_USERS` marks
+ *    Oracle-maintained, but SELECT on the two catalogs items 7 and 8 read. READ ONLY stops writes, not reads: such a
+ *    grant, direct or through a role such as SELECT_CATALOG_ROLE or AUDIT_VIEWER, reads what PUBLIC cannot, the users'
+ *    password hashes in SYS.USER$, the unified audit trail and other sessions in V$SESSION included (measured). The
+ *    schema's flag is enough here, since it only refuses. A role is named by the role the user or PUBLIC holds,
+ *    however deep the grant lies under it; a session role the dictionary does not trace to one is named by its grant,
+ *    fail closed. What PUBLIC itself may read, every user of the database reads.
  *
  * Every finding is collected and named in one refusal, as the statements that lift it, or, for a policy, as the
  * policy. A revoke can uncover the next finding: a granted view over a view the refusal names is refused once that
@@ -184,6 +191,23 @@ const REACHING_PACKAGES: readonly string[] = [
   "DBMS_XSLPROCESSOR",
 ];
 
+/**
+ * A grant `p` on an object of a schema Oracle maintains (item 13), other than a directory, item 10's, and the two policy
+ * catalogs the check itself reads.
+ */
+const ORACLE_SCHEMA_GRANT =
+  "EXISTS (SELECT 1 FROM SYS.ALL_USERS s WHERE s.USERNAME = p.TABLE_SCHEMA AND s.ORACLE_MAINTAINED = 'Y') " +
+  "AND NVL(p.TYPE, '-') <> 'DIRECTORY' " +
+  "AND NOT (p.TABLE_SCHEMA = 'SYS' AND p.TABLE_NAME IN ('DBA_POLICIES', 'DBA_AUDIT_POLICIES') AND p.PRIVILEGE = 'SELECT')";
+
+/**
+ * The roles the user or PUBLIC holds by a grant `USER_ROLE_PRIVS` lists, and every role granted under one of them
+ * (`ROLE_ROLE_PRIVS`): a role item 13 can name the revoke of. A session role outside them is read by its grants.
+ */
+const TRACED_ROLES =
+  "(SELECT t.GRANTED_ROLE FROM SYS.USER_ROLE_PRIVS t UNION SELECT u.GRANTED_ROLE FROM SYS.ROLE_ROLE_PRIVS u " +
+  "START WITH u.ROLE IN (SELECT v.GRANTED_ROLE FROM SYS.USER_ROLE_PRIVS v) CONNECT BY PRIOR u.GRANTED_ROLE = u.ROLE)";
+
 /** The check's statements, in the order they are sent. Each is one SELECT the agent user may run on any 23ai. */
 export const AGENT_PRINCIPAL_STATEMENTS = Object.freeze({
   readOnly: "SELECT USERNAME, READ_ONLY FROM SYS.USER_USERS",
@@ -235,6 +259,16 @@ export const AGENT_PRINCIPAL_STATEMENTS = Object.freeze({
     "(SELECT USERNAME AS GRANTEE, PRIVILEGE FROM SYS.USER_SYS_PRIVS UNION ALL SELECT ROLE, PRIVILEGE FROM SYS.ROLE_SYS_PRIVS) g " +
     "ON g.PRIVILEGE = p.PRIVILEGE WHERE p.PRIVILEGE <> 'CREATE SESSION' ORDER BY 1, 2",
   links: "SELECT OWNER, DB_LINK FROM SYS.ALL_DB_LINKS ORDER BY 1, 2",
+  // The user's own grants and those of a session role it cannot trace, by the grant; each role the user or PUBLIC
+  // holds whose closure holds one, by the role, which is what to revoke.
+  dictionary:
+    "SELECT 'OBJECT' AS KIND, p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME, p.PRIVILEGE " +
+    "FROM SYS.ALL_TAB_PRIVS p WHERE (p.GRANTEE = USER OR p.GRANTEE IN (SELECT ROLE FROM SYS.SESSION_ROLES) " +
+    `AND p.GRANTEE NOT IN ${TRACED_ROLES}) AND ${ORACLE_SCHEMA_GRANT} ` +
+    "UNION SELECT 'ROLE', g.USERNAME, NULL, g.GRANTED_ROLE, NULL FROM SYS.USER_ROLE_PRIVS g " +
+    "WHERE EXISTS (SELECT 1 FROM SYS.ALL_TAB_PRIVS p WHERE p.GRANTEE IN (SELECT g.GRANTED_ROLE FROM SYS.DUAL " +
+    "UNION ALL SELECT r.GRANTED_ROLE FROM SYS.ROLE_ROLE_PRIVS r START WITH r.ROLE = g.GRANTED_ROLE " +
+    `CONNECT BY PRIOR r.GRANTED_ROLE = r.ROLE) AND ${ORACLE_SCHEMA_GRANT}) ORDER BY 1, 2, 3, 4, 5`,
 });
 
 /** At most this many statements are listed in a refusal; the rest are counted. */
@@ -488,6 +522,21 @@ function linksFinding(rows: Rows): Finding | null {
   };
 }
 
+function dictionaryFinding(rows: Rows): Finding | null {
+  if (rows.length === 0) return null;
+  return {
+    what: "it holds a privilege on an object of a schema Oracle maintains, beyond SELECT on SYS.DBA_POLICIES and SYS.DBA_AUDIT_POLICIES, which reads what every user of the database may not, such as the dictionary, the audit trail or other sessions",
+    statements: rows.map((row) => {
+      if (row.KIND === "ROLE") {
+        const [to, role] = text(row, "USER_ROLE_PRIVS", "GRANTEE", "NAME");
+        return `REVOKE ${quoted(role)} FROM ${grantee(to)}`;
+      }
+      const [to, owner, name, privilege] = text(row, "ALL_TAB_PRIVS", "GRANTEE", "OWNER", "NAME", "PRIVILEGE");
+      return `REVOKE ${privilege} ON ${quoted(owner)}.${quoted(name)} FROM ${grantee(to)}`;
+    }),
+  };
+}
+
 /** Whether `error` is the server's answer that `USER_USERS` has no `READ_ONLY` column. */
 function isMissingReadOnlyColumn(error: unknown): boolean {
   return error instanceof Error && /\bORA-00904\b/.test(error.message);
@@ -523,6 +572,7 @@ export async function verifyAgentPrincipal(read: OracleAgentReader): Promise<voi
     reachFinding(await read(AGENT_PRINCIPAL_STATEMENTS.reach)),
     systemPrivilegesFinding(await read(AGENT_PRINCIPAL_STATEMENTS.systemPrivileges)),
     linksFinding(await read(AGENT_PRINCIPAL_STATEMENTS.links)),
+    dictionaryFinding(await read(AGENT_PRINCIPAL_STATEMENTS.dictionary)),
   ].filter((found): found is Finding => found !== null);
   if (findings.length === 0) return;
 

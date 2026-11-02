@@ -19,6 +19,15 @@ const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
 const ROOT = path.resolve(import.meta.dir, "../..");
 const read = (relative: string): string => readFileSync(path.join(ROOT, relative), "utf8");
 const MCP_DOC = read("docs/MCP.md");
+
+const ORACLE_CANCEL_ROW =
+  "| Oracle | Studio stops waiting; the statement runs on until the driver's call timeout, set to the time left of `timeout_ms`, ends its session, which stops it | The driver's call timeout ends the statement's session at `timeout_ms`, Oracle stops the statement within two seconds, and the client gets the timeout answer |";
+const ORACLE_BOUNDARY =
+  "Oracle by a user set `ALTER USER ... READ ONLY`, which the server refuses every write, checked before every statement, on that statement's own session, to reach nothing READ ONLY leaves open and to read nothing of Oracle's own schemas beyond what `PUBLIC` may ([oracle.md](./providers/oracle.md))";
+const ORACLE_SEED =
+  "On Oracle (23ai and later) the seed's user must be a local user set `ALTER USER ... READ ONLY` that holds `CREATE SESSION`, `SELECT` on the tables to read and, granted by SYS, `SELECT` on `SYS.DBA_POLICIES` and `SYS.DBA_AUDIT_POLICIES`, and nothing more, as the check before each agent statement proves ([oracle.md](./providers/oracle.md) section 5.7).\n" +
+  "The check runs before every statement, not at the open, so `run_read_query` answers its refusal in its own sentence and sends nothing: a user that is not READ ONLY, such as SYSTEM or the schema owner, one holding a system privilege beyond `CREATE SESSION` or a role carrying one, `CONNECT` and `DBA` included, `EXECUTE` on code that is not Oracle's, or any grant on a schema Oracle maintains beyond those two catalogs, such as `SELECT_CATALOG_ROLE` or `AUDIT_VIEWER`, and any user while the database holds a database link or a row-level security or fine-grained auditing policy that runs code that is not Oracle's.\n" +
+  "A grant added between two calls refuses the next call, and a lifted one admits it.";
 const API_DOCS = read("docs/API_DOCS.md");
 const DOC_URL = "https://studio.example.com/api/mcp";
 const CLIENTS = ["Claude Code", "Codex", "Cursor", "VS Code", "Gemini CLI", "OpenCode"];
@@ -311,6 +320,24 @@ describe("docs/MCP.md", () => {
     expect(doc).toContain("a read with its own `LIMIT` past 1000 rows, and a result past 1 MiB, is refused, never cut");
   });
 
+  test("says what a cancel and a timeout do to an Oracle statement, as measured on 26ai Free 23.26.3", () => {
+    expect(MCP_DOC).toContain(ORACLE_CANCEL_ROW);
+    expect(read("docs/BACKLOG.md")).toContain(
+      "and on Oracle until the driver's call timeout, set to the time left, ends the statement's session",
+    );
+  });
+
+  // Oracle proves its user before every statement, not at the open, and its data scope is the user's grants: the doc
+  // names the user a seed needs, what is refused in the tool's own sentence, and when the check runs.
+  test("says what Oracle needs of a seed, what is refused and when, and that inspect_schema opens it unchecked", () => {
+    expect(MCP_DOC).toContain(ORACLE_BOUNDARY);
+    expect(MCP_DOC).toContain(ORACLE_SEED);
+    expect(MCP_DOC).toContain(
+      "Oracle checks its user only on a call that sends a statement, so `inspect_schema` opens an Oracle connection unchecked, as the editor does, and lists what the seed's user may see in the `ALL_*` views.",
+    );
+    expect(MCP_DOC).toContain("    - Oracle: a `SELECT` (a `WITH` is fine).");
+  });
+
   // run_read_query pages a SELECT with no LIMIT of its own at max_rows; only a LIMIT of its own past the 1000-row
   // provider budget reaches the refusal, so no provider doc may say every result past 1000 rows is refused.
   test.each([
@@ -341,7 +368,7 @@ describe("docs/MCP.md", () => {
 
   test("says which libSQL token a seed needs and that inspect_schema opens libSQL unproven", () => {
     expect(MCP_DOC).toContain(
-      "`run_read_query` refuses a PostgreSQL, SQL Server, ClickHouse, libSQL, Apache Cassandra or Couchbase connection whose own login could do more than read",
+      "`run_read_query` refuses a PostgreSQL, SQL Server, ClickHouse, libSQL, Oracle, Apache Cassandra or Couchbase connection whose own login could do more than read",
     );
     expect(MCP_DOC).toContain(
       "libSQL by a token proven at open to be read-only, which the server refuses every write ([libsql.md](./providers/libsql.md))",
