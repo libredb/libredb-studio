@@ -110,6 +110,7 @@ describe("docs/MCP.md", () => {
       "Nine",
       "Ten",
       "Eleven",
+      "Twelve",
     ];
     expect(MCP_DOC).toContain(`- ${COUNT_WORDS[tools.length]} tools, each annotated read-only and closed-world:`);
     for (const tool of tools) expect(MCP_DOC).toMatch(new RegExp(`^ {2}- \`${tool}\` `, "m"));
