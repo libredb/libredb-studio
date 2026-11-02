@@ -219,6 +219,7 @@ describe("a read", () => {
       "GET /v1/schema/TenantedAlias/tenants",
       'POST /v1/aggregate/TenantedAlias {"tenant": "acme"}',
     ]) {
+      // oxlint-disable-next-line no-await-in-loop -- one MCP session after another over the one recording transport.
       const result = await weaviate(statement);
       expect(result.isError).toBe(true);
       texts.push(textOf(result));

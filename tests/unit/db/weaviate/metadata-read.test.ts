@@ -676,18 +676,25 @@ describe("a name where a collection's name stands", () => {
   });
 
   test("an alias it may not list, a collection it may not read, a missing name and another case are not", async () => {
-    for (const name of ["TenantedAlias", "DocsAlias", "Doc", "Missing", "tenanted", "notesalias"]) {
-      const { sent, send } = lists(scopeAnswer("schema-scoped"), scopeAnswer("aliases-scoped"));
-      expect({ name, admitted: await keyListsWeaviateName(send, name, signal) }).toEqual({ name, admitted: false });
-      expect(sent).toEqual([SCHEMA, ALIASES]);
-    }
+    const names = ["TenantedAlias", "DocsAlias", "Doc", "Missing", "tenanted", "notesalias"];
+    const read = await Promise.all(
+      names.map(async (name) => {
+        const { sent, send } = lists(scopeAnswer("schema-scoped"), scopeAnswer("aliases-scoped"));
+        return { name, admitted: await keyListsWeaviateName(send, name, signal), sent };
+      }),
+    );
+    expect(read).toEqual(names.map((name) => ({ name, admitted: false, sent: [SCHEMA, ALIASES] })));
   });
 
   test("the viewer's lists admit every collection and alias", async () => {
-    for (const name of ["Doc", "Note", "Tenanted", "DocsAlias", "NotesAlias", "TenantedAlias"]) {
-      const { send } = lists(scopeAnswer("schema-viewer"), scopeAnswer("aliases-viewer"));
-      expect({ name, admitted: await keyListsWeaviateName(send, name, signal) }).toEqual({ name, admitted: true });
-    }
+    const names = ["Doc", "Note", "Tenanted", "DocsAlias", "NotesAlias", "TenantedAlias"];
+    const read = await Promise.all(
+      names.map(async (name) => {
+        const { send } = lists(scopeAnswer("schema-viewer"), scopeAnswer("aliases-viewer"));
+        return { name, admitted: await keyListsWeaviateName(send, name, signal) };
+      }),
+    );
+    expect(read).toEqual(names.map((name) => ({ name, admitted: true })));
   });
 
   test("a list the server refuses is its failure, and one Studio cannot read is withheld", async () => {
@@ -696,17 +703,26 @@ describe("a name where a collection's name stands", () => {
     const error = await keyListsWeaviateName(refused.send, "Note", signal).catch((thrown: unknown) => thrown);
     expect(error).toBeInstanceOf(WeaviateError);
     expect((error as WeaviateError).status).toBe(403);
-    for (const [schema, aliases] of [
+    const odd = [
       [json({ classes: 3 }), json({ aliases: [] })],
       [json({ classes: [{ class: 3 }] }), json({ aliases: [] })],
       [json({ classes: [] }), json({ aliases: [{ alias: { value: "stored" } }] })],
       [{ ...json({}), text: "not json" }, json({ aliases: [] })],
-    ] as const) {
-      const odd = lists(schema, aliases);
-      await expect(keyListsWeaviateName(odd.send, "Note", signal)).rejects.toThrow(
-        "Weaviate's answer is not in the shape Studio reads for this request, so it was withheld from agent mode.",
-      );
-    }
+    ] as const;
+    const messages = await Promise.all(
+      odd.map(([schema, aliases]) =>
+        keyListsWeaviateName(lists(schema, aliases).send, "Note", signal).then(
+          () => "admitted",
+          (thrown: unknown) => (thrown as Error).message,
+        ),
+      ),
+    );
+    expect(messages).toEqual(
+      odd.map(
+        () =>
+          "Weaviate's answer is not in the shape Studio reads for this request, so it was withheld from agent mode.",
+      ),
+    );
     const empty = lists(json({}), json({}));
     expect(await keyListsWeaviateName(empty.send, "Note", signal)).toBe(false);
   });
