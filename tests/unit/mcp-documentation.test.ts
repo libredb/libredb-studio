@@ -223,7 +223,10 @@ describe("docs/MCP.md", () => {
   test("carries run_weaviate_read's engine sentence, and says which Weaviate names each tool returns", () => {
     expect(MCP_DOC).toContain(`Runs on ${RUN_WEAVIATE_READ_ARM.engines}; other engines refuse it.`);
     expect(MCP_DOC).toContain(
-      "On Weaviate it lists each collection's declared properties and vectors and never its tenants or aliases, which `run_weaviate_read` reads as far as the key's grants reach; a call wakes no tenant.",
+      "On Weaviate it lists each collection's declared properties and vectors and never its tenants or aliases, which `run_weaviate_read` reads as far as the key's grants reach; it reads no stored object, so a vector's dimension, which the schema does not declare, reads `?`, and a call wakes no tenant.",
+    );
+    expect(MCP_DOC).toContain(
+      "a name in a collection's place is sent only when the key's own collection or alias list holds it, because the server reads an alias there as the collection it names, and a name that does not exist and one outside the grants are one answer",
     );
     expect(MCP_DOC).not.toContain("a collection's tenants and aliases are never returned");
     expect(MCP_DOC).toContain(
