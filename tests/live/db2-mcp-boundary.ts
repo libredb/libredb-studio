@@ -10,8 +10,9 @@
  *
  *  - the check, through MCP: the seeded user (docker/db2-init/02-agent-principal.sql) is served; the instance owner,
  *    the seeded user granted DBADM, DATAACCESS, ACCESSCTRL, SECADM or SQLADM, and PUBLIC granted SELECT on the
- *    catalog's distribution statistics, or the seeded user a view or an alias of the owner's over them, are each
- *    refused before the statement is sent, in the MCP refusal sentence;
+ *    catalog's distribution statistics or on any of the seven objects that keep HIGH2KEY and LOW2KEY, or the seeded
+ *    user a view or an alias of the owner's over either, are each refused before the statement is sent, with the
+ *    check's own refusal;
  *    on one cached handle a grant added after a served call refuses the next call and its revoke admits the one after;
  *  - the boundary, with the MCP fence bypassed: each write, data change, `NEXT VALUE FOR`, compound block, `CALL`,
  *    `SET`, declared temporary table, `LOCK TABLE`, `COMMIT` and second statement is sent as the seeded user through
@@ -20,8 +21,10 @@
  *    acquired, but for `NEXT VALUE FOR` in a `VALUES`, which the fence admits and the server refuses; the instance owner runs the writes in a unit of work it rolls back, the positive control; a hash of the
  *    rows, the sequence, the agent user's grants and the fixture's tables is the same before and after;
  *  - what it reads beyond its tables: a table it holds no SELECT on, the distribution statistics in every spelling,
- *    the statement history and other sessions are each refused by the server, and the second highest and lowest
- *    value `SYSCAT.COLUMNS` keeps of every column is read, the residual the provider doc names;
+ *    the second highest and lowest value of every column through each of the seven objects that keep it, the
+ *    statement history and other sessions are each refused by the server;
+ *  - the catalog reads the agent profiles make from value-free sources: `inspect_schema` lists and describes the
+ *    seeded user's tables under the seed's revokes;
  *  - the forms and paging: a SELECT, a WITH and a VALUES answer; TABLE and EXPLAIN are refused by the server; a page
  *    past the first is asked for with `offset` and answered from the next row; an offset on a statement with its own
  *    FETCH FIRST or on a VALUES is refused before anything is sent;
@@ -35,6 +38,9 @@
  *   docker compose -f database-compose.yml up -d db2
  *   LIBREDB_LIVE_DB2_PORT=50000 LIBREDB_LIVE_DB2_PASSWORD=<db2inst1's password> bun tests/live/db2-mcp-boundary.ts
  *
+ * The check's refusal comes from the statement call, so the tool answers it as that call's failure, after the
+ * untrusted-data notice; the match below takes the refusal's own sentence, never any error.
+ *
  * Every object it creates carries the `LIBREDB_LM` prefix and is dropped on exit, and every grant it adds is revoked.
  * Each check prints one line, no credential among them, and any failure ends the run non-zero.
  */
@@ -44,6 +50,7 @@ import { Client } from "db2-node";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
 import type { McpConnectionContext } from "@/lib/mcp/context";
 import { MCP_CANCELLED_TEXT, type ToolResult } from "@/lib/mcp/output";
+import { inspectSchema, InspectSchemaInputSchema } from "@/lib/mcp/tools/inspect-schema";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
@@ -183,17 +190,20 @@ function rowsOf(result: ToolResult): Record<string, unknown>[] | null {
 
 const ENGINES = `It runs on ${RUN_READ_QUERY.engines}.`;
 
-/** A refusal of the agent user by the check, in the MCP sentence, naming `names`. */
+/** The check's own refusal sentence, as `agent-read.ts` writes it. */
+const CHECK_REFUSAL = "The agent read-only execution profile refuses the Db2 user ";
+
+/**
+ * A refusal of the agent user by the check, naming `names`. The check runs inside the statement call, so the tool
+ * answers it as that call's failure after the untrusted-data notice, or, where the tool answers a profile refusal in
+ * its own sentence, in that sentence; either way the last block is the check's refusal itself, never another error.
+ */
 function refusedByCheck(result: ToolResult, names: string): boolean {
-  const text = textOf(result);
-  return (
-    result.isError === true &&
-    text.startsWith(
-      "run_read_query cannot run on this connection: The agent read-only execution profile refuses the Db2 user ",
-    ) &&
-    text.includes(names) &&
-    text.endsWith(ENGINES)
-  );
+  const last = result.content.map((part) => ("text" in part ? part.text : "")).at(-1) ?? "";
+  const asFailure = last.startsWith(`The database refused or failed the call: ${CHECK_REFUSAL}`);
+  const inToolSentence =
+    last.startsWith(`run_read_query cannot run on this connection: ${CHECK_REFUSAL}`) && last.endsWith(ENGINES);
+  return result.isError === true && (asFailure || inToolSentence) && last.includes(names);
 }
 
 async function stateHash(): Promise<string> {
@@ -278,8 +288,24 @@ const SCOPE: readonly (readonly [string, string, readonly number[]])[] = [
 /** The authorities the instance owner grants the seeded user, each refused by the check through MCP. */
 const AUTHORITIES = ["DBADM", "DATAACCESS", "ACCESSCTRL", "SECADM", "SQLADM"] as const;
 
-/** A statement that runs for seconds on the measured server, as the agent user may: a three-way catalog cross join. */
-const SLOW = "SELECT COUNT(*) AS N FROM SYSCAT.COLUMNS A, SYSCAT.COLUMNS B, SYSCAT.COLUMNS C";
+/**
+ * A statement that runs for seconds on the measured server, as the agent user may: a three-way catalog cross join,
+ * times 25. SYSCAT.TABLES rather than SYSCAT.COLUMNS, which the seed revokes.
+ */
+const SLOW =
+  "SELECT COUNT_BIG(*) AS N FROM SYSCAT.TABLES A, SYSCAT.TABLES B, SYSCAT.TABLES C, " +
+  `(VALUES ${Array.from({ length: 25 }, (_, index) => index + 1).join(", ")}) AS D (N)`;
+
+/** The seven objects that keep HIGH2KEY and LOW2KEY, each with the column that names the table a row describes. */
+const COLUMN_STATISTICS: readonly (readonly [string, string, string])[] = [
+  ["SYSCAT", "COLUMNS", "TABNAME"],
+  ["SYSCAT", "SYSCOLUMNS_UNION", "TBNAME"],
+  ["SYSCAT", "COLPARTITIONSTATS", "TABNAME"],
+  ["SYSIBM", "SYSCOLUMNS", "TBNAME"],
+  ["SYSIBM", "SYSCOLPARTITIONSTATS", "TBNAME"],
+  ["SYSSTAT", "COLUMNS", "TABNAME"],
+  ["SYSSTAT", "COLPARTITIONSTATS", "TABNAME"],
+];
 
 /** Whether the agent user's slow statement is still executing on the server, read by the instance owner. */
 async function slowRunning(): Promise<boolean> {
@@ -299,6 +325,8 @@ async function untilSlowEnds(limitMs = 120_000): Promise<number> {
 }
 
 const CLEANUP = [
+  "DROP VIEW APP.LIBREDB_LM_KEYS",
+  "DROP ALIAS APP.LIBREDB_LM_KEYS_ALIAS",
   "DROP VIEW APP.LIBREDB_LM_STATS",
   "DROP ALIAS APP.LIBREDB_LM_STATS_ALIAS",
   "DROP TABLE APP.LIBREDB_LM_SECRET",
@@ -312,6 +340,8 @@ try {
     "CALL SYSPROC.ADMIN_CMD('RUNSTATS ON TABLE APP.LIBREDB_LM_SECRET WITH DISTRIBUTION')",
     "CREATE VIEW APP.LIBREDB_LM_STATS AS SELECT TABNAME, COLVALUE FROM SYSCAT.COLDIST",
     "CREATE ALIAS APP.LIBREDB_LM_STATS_ALIAS FOR SYSCAT.COLDIST",
+    "CREATE VIEW APP.LIBREDB_LM_KEYS AS SELECT TABNAME, COLNAME, HIGH2KEY, LOW2KEY FROM SYSCAT.COLUMNS",
+    "CREATE ALIAS APP.LIBREDB_LM_KEYS_ALIAS FOR SYSIBM.SYSCOLUMNS",
   ]);
   const before = await stateHash();
 
@@ -322,11 +352,11 @@ try {
     `the seeded agent user is served under the agent read-only profile (${served.acquired.join(",")})`,
   );
 
-  // ---- The check refuses, through MCP, in the tool's sentence -----------------------------------------------------
+  // ---- The check refuses, through MCP, before the statement is sent -----------------------------------------------
   const owner = await mcp(OWNER, { sql: "SELECT ID FROM APP.ORDERS" }, RUN_READ_QUERY);
   check(
     refusedByCheck(owner.result, "it holds a database or instance authority beyond CONNECT"),
-    `the instance owner is refused in the tool's sentence: ${textOf(owner.result).slice(0, 220)}`,
+    `the instance owner is refused by the check: ${textOf(owner.result).slice(0, 400)}`,
   );
   const ownerScope = await mcp(
     OWNER,
@@ -345,7 +375,7 @@ try {
     check(
       refusedByCheck(refused.result, `REVOKE ${authority} ON DATABASE FROM USER "AGENT_RO"`) &&
         rowsOf(again.result) !== null,
-      `${authority} granted to the seeded user: refused in the tool's sentence, served again once revoked`,
+      `${authority} granted to the seeded user: refused by the check, served again once revoked`,
     );
   }
   for (const [schema, name] of [
@@ -363,26 +393,58 @@ try {
     check(
       refusedByCheck(refused.result, `REVOKE SELECT ON TABLE "${schema}"."${name}" FROM PUBLIC`) &&
         !textOf(refused.result).includes("owner-only"),
-      `SELECT on ${schema}.${name} to PUBLIC: refused in the tool's sentence, before the statement is sent`,
+      `SELECT on ${schema}.${name} to PUBLIC: refused by the check, before the statement is sent`,
+    );
+  }
+  for (const [schema, name, table] of COLUMN_STATISTICS) {
+    await setup([`GRANT SELECT ON ${schema}.${name} TO PUBLIC`]);
+    const refused = await mcp(
+      AGENT,
+      { sql: `SELECT HIGH2KEY, LOW2KEY FROM ${schema}.${name} WHERE ${table} = 'LIBREDB_LM_SECRET'` },
+      RUN_READ_QUERY,
+    );
+    await setup([`REVOKE SELECT ON ${schema}.${name} FROM PUBLIC`]);
+    check(
+      refusedByCheck(refused.result, `REVOKE SELECT ON TABLE "${schema}"."${name}" FROM PUBLIC`) &&
+        !textOf(refused.result).includes("owner-"),
+      `SELECT on the column statistics ${schema}.${name} to PUBLIC: refused by the check, before the statement is sent`,
     );
   }
   // A view or an alias of the owner's over the distribution statistics: a grant on the alias is a grant on the object it
   // names, and the view reads them with its owner's authority. Each is refused before the statement is sent.
-  for (const [label, object, names] of [
-    ["a view of the owner's over SYSCAT.COLDIST", "APP.LIBREDB_LM_STATS", '"APP"."LIBREDB_LM_STATS"'],
-    ["an alias of the owner's for SYSCAT.COLDIST", "APP.LIBREDB_LM_STATS_ALIAS", '"SYSCAT"."COLDIST"'],
+  for (const [label, object, names, sql] of [
+    [
+      "a view of the owner's over SYSCAT.COLDIST",
+      "APP.LIBREDB_LM_STATS",
+      '"APP"."LIBREDB_LM_STATS"',
+      "SELECT COLVALUE FROM APP.LIBREDB_LM_STATS WHERE TABNAME = 'LIBREDB_LM_SECRET'",
+    ],
+    [
+      "an alias of the owner's for SYSCAT.COLDIST",
+      "APP.LIBREDB_LM_STATS_ALIAS",
+      '"SYSCAT"."COLDIST"',
+      "SELECT COLVALUE FROM APP.LIBREDB_LM_STATS_ALIAS WHERE TABNAME = 'LIBREDB_LM_SECRET'",
+    ],
+    [
+      "a view of the owner's over SYSCAT.COLUMNS",
+      "APP.LIBREDB_LM_KEYS",
+      '"APP"."LIBREDB_LM_KEYS"',
+      "SELECT HIGH2KEY, LOW2KEY FROM APP.LIBREDB_LM_KEYS WHERE TABNAME = 'LIBREDB_LM_SECRET'",
+    ],
+    [
+      "an alias of the owner's for SYSIBM.SYSCOLUMNS",
+      "APP.LIBREDB_LM_KEYS_ALIAS",
+      '"SYSIBM"."SYSCOLUMNS"',
+      "SELECT HIGH2KEY, LOW2KEY FROM APP.LIBREDB_LM_KEYS_ALIAS WHERE TBNAME = 'LIBREDB_LM_SECRET'",
+    ],
   ]) {
     await setup([`GRANT SELECT ON ${object} TO USER AGENT_RO`]);
-    const refused = await mcp(
-      AGENT,
-      { sql: `SELECT COLVALUE FROM ${object} WHERE TABNAME = 'LIBREDB_LM_SECRET'` },
-      RUN_READ_QUERY,
-    );
+    const refused = await mcp(AGENT, { sql }, RUN_READ_QUERY);
     await setup([`REVOKE SELECT ON ${object} FROM USER AGENT_RO`]);
     check(
       refusedByCheck(refused.result, `REVOKE SELECT ON TABLE ${names} FROM USER "AGENT_RO"`) &&
         !textOf(refused.result).includes("owner-only"),
-      `${label}, granted to the seeded user: refused in the tool's sentence, before the statement is sent`,
+      `${label}, granted to the seeded user: refused by the check, before the statement is sent`,
     );
   }
 
@@ -458,17 +520,43 @@ try {
       `${label}: refused by the server through MCP (SQLCODE ${code})`,
     );
   }
-  const residual = await mcp(
-    AGENT,
-    {
-      sql: "SELECT COLNAME, HIGH2KEY, LOW2KEY FROM SYSCAT.COLUMNS WHERE TABSCHEMA = 'APP' AND TABNAME = 'LIBREDB_LM_SECRET'",
-    },
-    RUN_READ_QUERY,
-  );
-  check(
-    JSON.stringify(rowsOf(residual.result)).includes("owner-"),
-    "residual: SYSCAT.COLUMNS answers the second highest and lowest value of a column of a table it may not read",
-  );
+  // The second highest and lowest value of every column, through each object that keeps it: the seed revoked all seven.
+  for (const [schema, name, table] of COLUMN_STATISTICS) {
+    const answered = await mcp(
+      AGENT,
+      { sql: `SELECT HIGH2KEY, LOW2KEY FROM ${schema}.${name} WHERE ${table} = 'LIBREDB_LM_SECRET'` },
+      RUN_READ_QUERY,
+    );
+    const code = engineCodeOf(answered.result);
+    check(
+      code === -551 && !textOf(answered.result).includes("owner-"),
+      `HIGH2KEY and LOW2KEY through ${schema}.${name}: refused by the server through MCP (SQLCODE ${code})`,
+    );
+  }
+
+  // ---- The agent profiles' catalog reads, from the value-free sources ---------------------------------------------
+  {
+    const context = {
+      caller: { username: "live", role: "admin" },
+      visibleConnections: async () => [AGENT],
+      resolve: async () => AGENT,
+      acquire: (target: ManagedConnection, profile: ExecutionProfile) =>
+        acquireExecutionProfileProvider(target, profile),
+    } as unknown as McpConnectionContext;
+    const inspected = await inspectSchema(
+      InspectSchemaInputSchema.parse({ connection_id: AGENT.id, schema: "APP", table: "ORDERS" }),
+      { context, signal: new AbortController().signal },
+    );
+    const tables = (inspected as { structuredContent?: { tables?: { name: string; columns?: unknown[] }[] } })
+      .structuredContent?.tables;
+    check(
+      inspected.isError !== true &&
+        tables?.length === 1 &&
+        tables[0].columns?.length === 4 &&
+        JSON.stringify(tables[0].columns).includes("DECIMAL(12,2)"),
+      `inspect_schema describes APP.ORDERS as the seeded user under the seed's revokes: ${textOf(inspected).slice(0, 300)}`,
+    );
+  }
 
   // ---- The forms and paging -------------------------------------------------------------------------------------
   const forms: [string, string, boolean | number][] = [
@@ -485,13 +573,10 @@ try {
       `${label}: ${expected === true ? "answers" : `refused by the server (SQLCODE ${engineCodeOf(answered.result)})`}`,
     );
   }
-  const page1 = await mcp(AGENT, { sql: "SELECT COLNAME FROM SYSCAT.COLUMNS ORDER BY 1", max_rows: 5 }, RUN_READ_QUERY);
-  const page2 = await mcp(
-    AGENT,
-    { sql: "SELECT COLNAME FROM SYSCAT.COLUMNS ORDER BY 1", max_rows: 5, offset: 5 },
-    RUN_READ_QUERY,
-  );
-  const all = await mcp(AGENT, { sql: "SELECT COLNAME FROM SYSCAT.COLUMNS ORDER BY 1 FETCH FIRST 10 ROWS ONLY" });
+  const ordered = "SELECT TABSCHEMA, TABNAME FROM SYSCAT.TABLES ORDER BY TABSCHEMA, TABNAME";
+  const page1 = await mcp(AGENT, { sql: ordered, max_rows: 5 }, RUN_READ_QUERY);
+  const page2 = await mcp(AGENT, { sql: ordered, max_rows: 5, offset: 5 }, RUN_READ_QUERY);
+  const all = await mcp(AGENT, { sql: `${ordered} FETCH FIRST 10 ROWS ONLY` });
   const paged = (result: ToolResult) =>
     (result as { structuredContent?: { pagination?: { nextOffset: number | null } } }).structuredContent?.pagination;
   check(
@@ -520,7 +605,7 @@ try {
   // ---- The limits ---------------------------------------------------------------------------------------------------
   const tooMany = await mcp(
     AGENT,
-    { sql: "SELECT COLNAME FROM SYSCAT.COLUMNS FETCH FIRST 2000 ROWS ONLY" },
+    { sql: "SELECT COLUMN_NAME FROM SYSIBM.COLUMNS FETCH FIRST 2000 ROWS ONLY" },
     RUN_READ_QUERY,
   );
   check(
@@ -529,7 +614,7 @@ try {
   );
   const tooBig = await mcp(
     AGENT,
-    { sql: "SELECT REPEAT('x', 30000) AS X FROM SYSCAT.COLUMNS FETCH FIRST 60 ROWS ONLY" },
+    { sql: "SELECT REPEAT('x', 30000) AS X FROM SYSIBM.COLUMNS FETCH FIRST 60 ROWS ONLY" },
     RUN_READ_QUERY,
   );
   check(
@@ -569,6 +654,7 @@ try {
     "REVOKE SELECT ON SYSCAT.COLDIST FROM PUBLIC",
     "REVOKE SELECT ON SYSIBM.SYSCOLDIST FROM PUBLIC",
     "REVOKE SELECT ON SYSSTAT.COLGROUPDIST FROM PUBLIC",
+    ...COLUMN_STATISTICS.map(([schema, name]) => `REVOKE SELECT ON ${schema}.${name} FROM PUBLIC`),
     "REVOKE INSERT ON APP.ORDERS FROM USER AGENT_RO",
     ...CLEANUP,
   ]);
