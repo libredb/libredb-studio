@@ -367,12 +367,15 @@ describe("the boundary", () => {
     }
   });
 
-  test("an engine with no read-only statement path is refused before anything is acquired, and no writable method runs", async () => {
+  test("an engine whose statements another tool reads is refused before anything is acquired, and no writable method runs", async () => {
     const acquisitions = countMethod(McpConnectionContext.prototype, "acquire");
     const writes = countMethod(LibreDBProvider.prototype, "query");
     try {
       const result = await direct({ connection_id: "seed:notes", sql: "SELECT 1" });
-      expect(result).toEqual({ isError: true, content: [{ type: "text", text: notServed("LibreDB") }] });
+      expect(result).toEqual({
+        isError: true,
+        content: [{ type: "text", text: notServed("LibreDB", "run_libredb_read") }],
+      });
       expect(acquisitions.calls).toBe(0);
       expect(writes.calls).toBe(0);
       expect(mcpEvents()).toEqual([

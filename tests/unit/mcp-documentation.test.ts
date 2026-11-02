@@ -16,6 +16,7 @@ import type { DatabaseType } from "@/lib/types";
 
 const RUN_KUBECTL_READ_ARM = mcpStatementArm("run_kubectl_read");
 const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
+const RUN_LIBREDB_READ_ARM = mcpStatementArm("run_libredb_read");
 const RUN_QDRANT_READ_ARM = mcpStatementArm("run_qdrant_read");
 const RUN_KAFKA_READ_ARM = mcpStatementArm("run_kafka_read");
 const ROOT = path.resolve(import.meta.dir, "../..");
@@ -133,6 +134,26 @@ describe("docs/MCP.md", () => {
       "A Kafka seed needs no least-privilege principal and none is proven, since the agent's client can send no write whatever the login may do",
     );
     expect(MCP_DOC).toMatch(/^\| Apache Kafka \| /m);
+  });
+
+  test("carries run_libredb_read's engine sentence, derived from its arm, its data scope and its cancel row", () => {
+    expect(MCP_DOC).toContain(`Runs on ${RUN_LIBREDB_READ_ARM.engines}; other engines refuse it.`);
+    expect(MCP_DOC).toContain(
+      "Each command opens the seed's file read-only, on a handle of its own that takes no lock and cannot write",
+    );
+    expect(MCP_DOC).toContain(
+      "Studio's own storage database, its `-wal` and `-shm` files and its `auth-bootstrap.json` are refused as a LibreDB target before anything is opened",
+    );
+    expect(MCP_DOC).toMatch(/^\| LibreDB \| The read runs on the Studio server's own thread /m);
+    const line = MCP_DOC.split("\n").find((text) => text.startsWith("- Read-only is the database's own enforcement"));
+    expect(line).toContain("`run_libredb_read`");
+    expect(line).toContain("LibreDB by a read-only handle opened for each command");
+    expect(MCP_DOC).not.toContain("B152");
+    // The result limit measures the whole tool result, which carries every row twice, so a value of half of it fails.
+    expect(MCP_DOC).toContain(
+      "since that limit measures the whole tool result, which carries every row twice, once in its text block and once in `structuredContent`, a value of about 16 KiB is already refused.",
+    );
+    expect(MCP_DOC).not.toContain("a value larger than the 32 KiB result limit is refused whole");
   });
 
   test("claims only SELECT for every engine, and names the record that opens MCP read", () => {

@@ -15,6 +15,7 @@ import type { z } from "zod";
 import type { AgentStatementLanguageId } from "../agent-manifest";
 import { KAFKAREAD_MCP_FACET } from "./kafkaread/mcp";
 import { KUBECTL_MCP_FACET } from "./kubectl/mcp";
+import { LIBREDBKV_MCP_FACET } from "./libredbkv/mcp";
 import { MONGO_MCP_FACET } from "./mongo/mcp";
 import { QDRANTAPI_MCP_FACET } from "./qdrantapi/mcp";
 import { SQL_MCP_FACET } from "./sql/mcp";
@@ -75,8 +76,7 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   sql: SQL_MCP_FACET,
   kubectl: KUBECTL_MCP_FACET,
   mongo: MONGO_MCP_FACET,
-  // No MCP statement tool yet: MCP read stays closed on LibreDB until a change of its own declares one and opens it.
-  libredbkv: null,
+  libredbkv: LIBREDBKV_MCP_FACET,
   // No MCP statement tool yet: MCP read stays closed on InfluxDB until a change of its own declares one and opens it.
   influxql: null,
   // No MCP statement tool yet: MCP read stays closed on Weaviate until a change of its own declares one and opens it.

@@ -118,9 +118,9 @@ describe("the answer", () => {
   test("names the tool that runs a statement on each connection, and null where inspect_schema is the read", async () => {
     // From the one served-engine resolver: ClickHouse's, libSQL's, InfluxDB 3's, Elasticsearch's, OpenSearch's,
     // Oracle's, Db2 LUW's, Cassandra's and Couchbase's SQL is read by run_read_query, MongoDB's command by
-    // run_mongo_command, a Kubernetes line by run_kubectl_read, a Qdrant request by run_qdrant_read, a Kafka metadata
-    // read by run_kafka_read, and an engine no statement tool serves, such as Redis, or Snowflake and InfluxDB over
-    // InfluxQL, whose agent reads stay closed to MCP, has none.
+    // run_mongo_command, a Kubernetes line by run_kubectl_read, a LibreDB command by run_libredb_read, a Qdrant request
+    // by run_qdrant_read, a Kafka metadata read by run_kafka_read, and an engine no statement tool serves, such as
+    // Redis, or Snowflake and InfluxDB over InfluxQL, whose agent reads stay closed to MCP, has none.
     const CLUSTER = {
       id: "cluster",
       type: "kubernetes",
@@ -152,6 +152,7 @@ describe("the answer", () => {
       { id: "mongo", type: "mongodb", host: "127.0.0.1", port: 27017, database: "app" },
       { id: "travel", type: "couchbase", host: "127.0.0.1", port: 8091, database: "travel" },
       CLUSTER,
+      { id: "kv", type: "libredb", database: join(dir, "kv.libredb") },
       { id: "vectors", type: "qdrant", host: "127.0.0.1", port: 6333 },
       { id: "stream", type: "kafka", host: "127.0.0.1", port: 9092 },
       { id: "cache", type: "redis", host: "127.0.0.1", port: 6379 },
@@ -174,6 +175,7 @@ describe("the answer", () => {
       ["seed:mongo", "run_mongo_command"],
       ["seed:travel", "run_read_query"],
       ["seed:cluster", "run_kubectl_read"],
+      ["seed:kv", "run_libredb_read"],
       ["seed:vectors", "run_qdrant_read"],
       ["seed:stream", "run_kafka_read"],
       ["seed:cache", null],

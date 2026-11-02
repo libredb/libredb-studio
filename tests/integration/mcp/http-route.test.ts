@@ -130,7 +130,7 @@ describe("a client pinned to revision 2026-07-28", () => {
 });
 
 describe("the route in front of the SDK", () => {
-  test("lets the default client connect and list the seven tools", async () => {
+  test("lets the default client connect and list the eight tools", async () => {
     const session = await connectClient(serve, { token });
     try {
       expect((await session.client.listTools()).tools.map((tool) => tool.name)).toEqual([
@@ -139,6 +139,7 @@ describe("the route in front of the SDK", () => {
         "run_read_query",
         "run_kubectl_read",
         "run_mongo_command",
+        "run_libredb_read",
         "run_qdrant_read",
         "run_kafka_read",
       ]);
@@ -319,7 +320,7 @@ describe("pre-processing at the route", () => {
       const posts = session.http.requests.filter((request) => request.method === "POST");
       expect(posts[0].headers.get("mcp-protocol-version")).toBeNull();
       for (const later of posts.slice(1)) expect(later.headers.get("mcp-protocol-version")).toBe("2025-11-25");
-      expect((await session.client.listTools()).tools).toHaveLength(7);
+      expect((await session.client.listTools()).tools).toHaveLength(8);
     } finally {
       await session.close();
     }
@@ -421,9 +422,9 @@ describe("pre-processing at the route", () => {
         id: 4,
       });
       expect(registrations.calls).toBe(0);
-      // The control: a modern tools/list builds one server, which registers the seven tools.
+      // The control: a modern tools/list builds one server, which registers the eight tools.
       await readJsonRpc(await serve(modernPost("tools/list", {}, { token })));
-      expect(registrations.calls).toBe(7);
+      expect(registrations.calls).toBe(8);
     } finally {
       registrations.restore();
     }

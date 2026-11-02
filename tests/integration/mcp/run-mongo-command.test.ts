@@ -133,6 +133,7 @@ describe("the tool", () => {
         "run_read_query",
         "run_kubectl_read",
         "run_mongo_command",
+        "run_libredb_read",
         "run_qdrant_read",
         "run_kafka_read",
       ]);

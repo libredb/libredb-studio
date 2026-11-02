@@ -36,11 +36,13 @@ const ARMS = Object.values(MCP_STATEMENT_ARMS).flatMap((arm) => (arm === null ? 
 const RUN_READ_QUERY_ARM = mcpStatementArm("run_read_query");
 const RUN_KUBECTL_READ_ARM = mcpStatementArm("run_kubectl_read");
 const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
+const RUN_LIBREDB_READ_ARM = mcpStatementArm("run_libredb_read");
 const RUN_QDRANT_READ_ARM = mcpStatementArm("run_qdrant_read");
 const RUN_KAFKA_READ_ARM = mcpStatementArm("run_kafka_read");
 const RunKubectlReadInputSchema = RUN_KUBECTL_READ_ARM.inputSchema;
 const RunReadQueryInputSchema = RUN_READ_QUERY_ARM.inputSchema;
 const RunMongoCommandInputSchema = RUN_MONGO_COMMAND_ARM.inputSchema;
+const RunLibredbReadInputSchema = RUN_LIBREDB_READ_ARM.inputSchema;
 const RunQdrantReadInputSchema = RUN_QDRANT_READ_ARM.inputSchema;
 
 /** True only when `A` and `B` are the same union, member for member. */
@@ -56,24 +58,24 @@ describe("MCP_STATEMENT_ARMS", () => {
     }
   });
 
-  test("every language has its arm: run_read_query, run_kubectl_read, run_mongo_command, run_qdrant_read and run_kafka_read", () => {
+  test("every language has its arm: run_read_query, run_kubectl_read, run_mongo_command, run_libredb_read, run_qdrant_read and run_kafka_read", () => {
     expect(MCP_STATEMENT_ARMS.sql).toBe(RUN_READ_QUERY_ARM);
     expect(MCP_STATEMENT_ARMS.kubectl).toBe(RUN_KUBECTL_READ_ARM);
     expect(MCP_STATEMENT_ARMS.mongo).toBe(RUN_MONGO_COMMAND_ARM);
+    expect(MCP_STATEMENT_ARMS.libredbkv).toBe(RUN_LIBREDB_READ_ARM);
     expect(MCP_STATEMENT_ARMS.qdrantapi).toBe(RUN_QDRANT_READ_ARM);
     expect(MCP_STATEMENT_ARMS.kafkaread).toBe(RUN_KAFKA_READ_ARM);
     expect(ARMS.map((arm) => arm.tool)).toEqual([
       "run_read_query",
       "run_kubectl_read",
       "run_mongo_command",
+      "run_libredb_read",
       "run_qdrant_read",
       "run_kafka_read",
     ]);
   });
 
   test("a language with no MCP tool yet has no arm, and its engine no read tool", () => {
-    expect(MCP_STATEMENT_ARMS.libredbkv).toBeNull();
-    expect(mcpStatementToolFor("libredb")).toBeNull();
     expect(MCP_STATEMENT_ARMS.influxql).toBeNull();
     expect(mcpStatementToolFor("influxdb")).toBeNull();
     expect(MCP_STATEMENT_ARMS.weaviateapi).toBeNull();
@@ -632,9 +634,10 @@ describe("the tool each engine is read with", () => {
     }
   });
 
-  test("MongoDB is read with run_mongo_command, Kubernetes with run_kubectl_read, Qdrant with run_qdrant_read, Kafka with run_kafka_read, the SQL engines with run_read_query, the rest with none", () => {
+  test("MongoDB is read with run_mongo_command, Kubernetes with run_kubectl_read, LibreDB with run_libredb_read, Qdrant with run_qdrant_read, Kafka with run_kafka_read, the SQL engines with run_read_query, the rest with none", () => {
     expect(mcpStatementToolFor("mongodb")).toBe("run_mongo_command");
     expect(mcpStatementToolFor("kubernetes")).toBe("run_kubectl_read");
+    expect(mcpStatementToolFor("libredb")).toBe("run_libredb_read");
     expect(mcpStatementToolFor("qdrant")).toBe("run_qdrant_read");
     expect(mcpStatementToolFor("kafka")).toBe("run_kafka_read");
     for (const type of RUN_READ_QUERY_TYPES) expect(mcpStatementToolFor(type)).toBe("run_read_query");
@@ -658,6 +661,7 @@ describe("the tool each engine is read with", () => {
       "run_read_query",
       "run_kubectl_read",
       "run_mongo_command",
+      "run_libredb_read",
       "run_qdrant_read",
       "run_kafka_read",
     ]);
@@ -698,16 +702,120 @@ describe("the tool each engine is read with", () => {
   });
 });
 
+describe("the libredbkv arm", () => {
+  const server = languageServer("libredbkv");
+
+  test("takes one command, no offset and no database, and sends it as written", () => {
+    expect(RUN_LIBREDB_READ_ARM.title).toBe("Run a read-only LibreDB command");
+    expect(RUN_LIBREDB_READ_ARM.argument).toBe("statement");
+    expect(RUN_LIBREDB_READ_ARM.paging).toBe("none");
+    expect(RUN_LIBREDB_READ_ARM.types).toEqual(["libredb"]);
+    expect(RUN_LIBREDB_READ_ARM.inputSchema.shape).not.toHaveProperty("offset");
+    // A LibreDB connection's database is its file's path, which the seed names: a client never names another file.
+    expect(RUN_LIBREDB_READ_ARM.inputSchema.shape).not.toHaveProperty("database");
+    for (const extra of [{ offset: 5 }, { database: "/tmp/other.libredb" }, { sql: "SELECT 1" }]) {
+      expect(
+        RunLibredbReadInputSchema.safeParse({ connection_id: "seed:kv", statement: "get users:1", ...extra }).success,
+      ).toBe(false);
+    }
+    const empty = RunLibredbReadInputSchema.safeParse({ connection_id: "seed:kv", statement: "" });
+    expect(empty.error?.issues.map((issue) => issue.message)).toEqual(["statement cannot be empty"]);
+  });
+
+  test("reads its argument with the agent's canonicalize", () => {
+    expect(RUN_LIBREDB_READ_ARM.canonicalize("prefix users:")).toBe(server.canonicalize("prefix users:"));
+    expect(RUN_LIBREDB_READ_ARM.canonicalize({ get: "users:1" })).toBeNull();
+  });
+
+  test.each([
+    ["a put", "put users:1 x"],
+    ["a delete", "delete users:1"],
+    ["a quoted write", '"put" users:1 x'],
+    ["a second line", "get users:1\nput users:1 x"],
+    ["text that is no command", "SELECT 1"],
+    ["a command longer than the agent takes", `get ${"k".repeat(4_100)}`],
+  ])("fences %s with the agent's admission and quotes its sentence", (_what, statement) => {
+    const refusal = server.admit?.(statement);
+    expect(refusal).not.toBeNull();
+    expect(RUN_LIBREDB_READ_ARM.fence(statement, "libredb")).toBe(
+      `The command was refused before it reached the file (${refusal?.code}). ${refusal?.message}`,
+    );
+  });
+
+  test("admits each read", () => {
+    for (const statement of ["get users:1", "prefix users:", "range users:1 users:9", 'get "a key"']) {
+      expect(RUN_LIBREDB_READ_ARM.fence(statement, "libredb")).toBeNull();
+    }
+  });
+
+  test("names no SQL clause or MongoDB stage where more rows exist, and reads on with a range", () => {
+    const hint = RUN_LIBREDB_READ_ARM.moreRows("prefix users:", "libredb", {
+      maxRows: 100,
+      shown: 100,
+      cut: "max_rows",
+    });
+    expect(hint).toBe(
+      `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice("prefix users:", "100")} To read past the 100 rows returned, read on with range <the last key returned> <end>: a range includes its start, so its first row is the last one returned again.`,
+    );
+    const bytes = RUN_LIBREDB_READ_ARM.moreRows("prefix users:", "libredb", {
+      maxRows: 100,
+      shown: 40,
+      cut: "result_bytes",
+    });
+    expect(bytes).toBe(
+      "More rows exist than the 32 KiB result limit holds, and 40 of them fitted; this tool does not page with offset. Read keys whose values are smaller to fit more rows, and to read past the 40 rows returned, read on with range <the last key returned> <end>: a range includes its start, so its first row is the last one returned again.",
+    );
+    for (const text of [hint, bytes, RUN_LIBREDB_READ_ARM.rowOverCap]) {
+      expect(text).not.toContain("$skip");
+      expect(text).not.toContain("LIMIT");
+    }
+    expect(RUN_LIBREDB_READ_ARM.rowOverCap).toBe(
+      "One row of this result is larger than the 32 KiB result limit: a key's value is answered whole, never cut. Read keys whose values are smaller.",
+    );
+  });
+
+  test("answers a row refusal with the command's own row-cap advice", () => {
+    const rows = classifyReadQueryFailure(
+      new Error("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
+      1,
+      2,
+      RUN_LIBREDB_READ_ARM.tooLarge("range a b", "libredb"),
+    );
+    expect(rows).toEqual({
+      kind: "too-large",
+      text: `The result has more than 1000 rows, the most this server reads for one call. ${server.rowCapAdvice("range a b", "1000")}`,
+    });
+  });
+
+  test("describes the commands it takes, the handle it reads through, the refusals and its engine", () => {
+    const description = RUN_LIBREDB_READ_ARM.description;
+    expect(description.startsWith("Run one read-only LibreDB command")).toBe(true);
+    expect(description).toContain("Runs on LibreDB; other engines refuse it.");
+    expect(description).toContain("get <key>");
+    expect(description).toContain("prefix <p>");
+    expect(description).toContain("range <start> <end>");
+    expect(description).toContain("put, delete and anything else are refused before the file is opened");
+    expect(description).toContain(
+      "opens the connection's file read-only, on a handle of its own that takes no lock and cannot write",
+    );
+    expect(description).toContain(
+      "this tool takes no offset, so narrow the read with a longer prefix or a closer range",
+    );
+  });
+});
+
 /**
  * An engine that holds no object inspect_schema lists is refused there by name, rather than answered an empty page,
  * and the refusal names its statement tool. The arm declares it for its language, and every engine it serves is held
  * to its provider's own declaration: no relation kind where the arm says none, at least one where it does not.
  */
 describe("the arms whose engines hold no table", () => {
-  test("kubectl declares it, SQL, MongoDB, Qdrant and Kafka do not", () => {
+  test("kubectl declares it, SQL, MongoDB, libredbkv, Qdrant and Kafka do not", () => {
     expect(RUN_KUBECTL_READ_ARM.holdsNoTables).toBe(true);
     expect(RUN_READ_QUERY_ARM.holdsNoTables).toBe(false);
     expect(RUN_MONGO_COMMAND_ARM.holdsNoTables).toBe(false);
+    // A LibreDB table, collection and keyspace are relations, so inspect_schema lists them.
+    expect(RUN_LIBREDB_READ_ARM.holdsNoTables).toBe(false);
     expect(RUN_QDRANT_READ_ARM.holdsNoTables).toBe(false);
     expect(RUN_KAFKA_READ_ARM.holdsNoTables).toBe(false);
   });
@@ -733,5 +841,6 @@ describe("the arms whose engines hold no table", () => {
     expect(mcpTablelessReadTool("kafka")).toBeNull();
     expect(mcpTablelessReadTool("postgres")).toBeNull();
     expect(mcpTablelessReadTool("redis")).toBeNull();
+    expect(mcpTablelessReadTool("libredb")).toBeNull();
   });
 });
