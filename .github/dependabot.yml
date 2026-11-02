@@ -117,6 +117,19 @@ updates:
       # decision to make in a browser, not a version bump.
       - dependency-name: "@zumer/snapdom"
 
+      # Held at the major @simplewebauthn/server depends on (^2.1.0 as of
+      # 14.0.3). tests/helpers/attestation-chain.ts builds attestation chains
+      # with it, and tests/unit/lib/passkey/dependency-floor.test.ts fails unless
+      # this range equals the server's own, so both resolve to one copy. Two
+      # copies register into the one shared tsyringe container and the first to
+      # load answers for both: measured with x509 3 beside the server's x509 2
+      # (#2169), certificate generation fails with "Cannot get schema for
+      # 'AlgorithmIdentifier' target", and node-opcua-crypto, split off onto its
+      # own nested copy, fails the same way once the server has loaded. Lift
+      # this when a server release moves to x509 3.
+      - dependency-name: "@peculiar/x509"
+        update-types: ["version-update:semver-major"]
+
   # ------------------------------------------------------- VS Code extension
   # vscode-extension/ is an npm package with its own package-lock.json (vsce
   # reads dependencies only through npm or Yarn 1), so it is the one place the
