@@ -1,6 +1,7 @@
 /**
  * The Weaviate agent boundary captures (tests/fixtures/weaviate/1.40.2/agent-boundary/, written by its run.sh): one
- * file per request a 1.40.2 server was sent raw, with the principal it was sent as and what the server answered.
+ * file per request a 1.40.2 server was sent raw, with the principal it was sent as and what the server answered. The
+ * data-scope captures beside them (1.40.2/data-scope/) are the same reads sent as a broad and a narrow principal.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { posix } from "node:path";
@@ -8,14 +9,9 @@ import type { NodeResponse } from "@/lib/db/http/node-transport";
 import type { WeaviateAnswer } from "@/lib/db/providers/vector/weaviate/client";
 import type { RecordedAnswer } from "./weaviate-wire";
 
-const DIRECTORY = posix.join(
-  import.meta.dir.replaceAll("\\", "/"),
-  "..",
-  "fixtures",
-  "weaviate",
-  "1.40.2",
-  "agent-boundary",
-);
+const VERSION_DIRECTORY = posix.join(import.meta.dir.replaceAll("\\", "/"), "..", "fixtures", "weaviate", "1.40.2");
+const DIRECTORY = posix.join(VERSION_DIRECTORY, "agent-boundary");
+const SCOPE_DIRECTORY = posix.join(VERSION_DIRECTORY, "data-scope");
 
 export interface WeaviateAgentCapture {
   readonly name: string;
@@ -30,6 +26,17 @@ export interface WeaviateAgentCapture {
 /** One capture by its file name, without `.json`. */
 export function agentCapture(name: string): WeaviateAgentCapture {
   return JSON.parse(readFileSync(posix.join(DIRECTORY, `${name}.json`), "utf8")) as WeaviateAgentCapture;
+}
+
+/** One data-scope capture by its file name, without `.json`: `<read>-viewer` or `<read>-scoped`. */
+export function scopeCapture(name: string): WeaviateAgentCapture {
+  return JSON.parse(readFileSync(posix.join(SCOPE_DIRECTORY, `${name}.json`), "utf8")) as WeaviateAgentCapture;
+}
+
+/** A data-scope capture's answer as it crosses the client seam. */
+export function scopeAnswer(name: string): WeaviateAnswer {
+  const capture = scopeCapture(name);
+  return { status: capture.status, contentType: capture.contentType, retryAfter: null, text: capture.body };
 }
 
 /** Every capture's file name, without `.json`. */

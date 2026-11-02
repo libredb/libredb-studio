@@ -26,7 +26,7 @@ import type { WeaviateAnswered } from "@/lib/db/providers/vector/weaviate/execut
 import type { WeaviatePlan } from "@/lib/db/providers/vector/weaviate/request";
 import type { WeaviatePath } from "@/lib/db/providers/vector/weaviate/versions";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
-import { agentAnswer, agentCapture, agentCollectionAnswer } from "../../../helpers/weaviate-agent";
+import { agentAnswer, agentCapture, agentCollectionAnswer, scopeAnswer } from "../../../helpers/weaviate-agent";
 
 const BUDGET: ReadOnlyStatementBudget = { statementTimeoutMs: 5_000, maxResultRows: 100, maxResultBytes: 65_536 };
 const SECRET = "stored-";
@@ -271,24 +271,37 @@ describe("the metadata-only projections, over what 1.40.2 answered a viewer", ()
     ]);
   });
 
-  test("nodes: one row per node, and per shard where the read asks for verbose output", () => {
+  test("nodes: one row per node, and per collection on each node where the read asks for verbose output", () => {
     const minimal = JSON.parse(agentCapture("nodes-viewer").body) as { nodes: Record<string, unknown>[] };
     const nodes = shape("GET /v1/nodes", json({ nodes: minimal.nodes.map(({ shards: _shards, ...node }) => node) }));
     expect(nodes.fields).toEqual(["node", "status", "version", "objects", "shards"]);
     expect(nodes.rows).toEqual([{ node: "node1", status: "HEALTHY", version: "1.40.2", objects: 0, shards: 4 }]);
     const verbose = shape("GET /v1/nodes/Note?output=verbose", agentAnswer("collection-nodes-viewer"));
-    expect(verbose.fields).toEqual(["node", "collection", "shard", "objects", "vector_indexing_status", "loaded"]);
-    expect(verbose.rows).toEqual([
-      {
-        node: "node1",
-        collection: "Note",
-        shard: expect.any(String),
-        objects: 0,
-        vector_indexing_status: "READY",
-        loaded: true,
-      },
-    ]);
+    expect(verbose.fields).toEqual(["node", "collection", "shards", "objects"]);
+    expect(verbose.rows).toEqual([{ node: "node1", collection: "Note", shards: 1, objects: 0 }]);
     expect(shape("GET /v1/nodes?output=verbose", json({ nodes: [{ name: "n" }] })).rows).toEqual([]);
+  });
+
+  test("a verbose node read counts each collection's shards and objects, and names no shard", () => {
+    const shard = (name: string, collection: string, objectCount?: unknown) => ({
+      class: collection,
+      name,
+      ...(objectCount === undefined ? {} : { objectCount }),
+    });
+    const answer = json({
+      nodes: [
+        { name: "n1", shards: [shard("acme", "Tenanted", 2), shard("globex", "Tenanted", 5), shard("s1", "Note", 3)] },
+        { name: "n2", shards: [shard("initech", "Tenanted", 1), shard("s2", "Note")] },
+      ],
+    });
+    const result = shape("GET /v1/nodes?output=verbose", answer);
+    expect(result.rows).toEqual([
+      { node: "n1", collection: "Tenanted", shards: 2, objects: 7 },
+      { node: "n1", collection: "Note", shards: 1, objects: 3 },
+      { node: "n2", collection: "Tenanted", shards: 1, objects: 1 },
+      { node: "n2", collection: "Note", shards: 1, objects: null },
+    ]);
+    for (const name of ["acme", "globex", "initech", "s1", "s2"]) expect(JSON.stringify(result)).not.toContain(name);
   });
 
   test("an aggregate: the collection, the tenant and the count, over REST and over GraphQL", () => {
@@ -328,6 +341,70 @@ describe("the metadata-only projections, over what 1.40.2 answered a viewer", ()
       { column: "tenant", kind: "name" },
       { column: "count", kind: "count" },
     ]);
+  });
+});
+
+/**
+ * The data scope, from what 1.40.2 answered a broad principal (the built-in viewer) and a narrow one (a custom role of
+ * viewer actions scoped to Note, the tenant acme of Tenanted, the alias NotesAlias and the node reads of Note and
+ * Tenanted) in tests/fixtures/weaviate/1.40.2/data-scope/. The server filters the schema, tenant and alias lists by the
+ * role and refuses a named collection, tenant, alias or count outside it; a verbose node read is filtered by collection
+ * only and names every tenant of a collection as a shard, so the projection names no shard.
+ */
+describe("the data scope a key that passes the proof reads", () => {
+  const rowsOf = (text: string, name: string) => shape(text, scopeAnswer(name)).rows;
+
+  test("a role of viewer actions scoped to some collections passes the proof", () => {
+    expect(() => readWeaviateViewerProof(scopeAnswer("own-info-scoped"))).not.toThrow();
+  });
+
+  test("the server lists only the collections, tenants and aliases the narrow role grants", () => {
+    // Weaviate's own order differs between two identical reads, so each list is compared sorted.
+    const column = (text: string, name: string, key: string) =>
+      rowsOf(text, name)
+        .map((row) => String(row[key]))
+        .sort();
+    expect(column("GET /v1/schema", "schema-viewer", "collection")).toEqual(["Doc", "Note", "Tenanted"]);
+    expect(column("GET /v1/schema", "schema-scoped", "collection")).toEqual(["Note", "Tenanted"]);
+    expect(column("GET /v1/schema/Tenanted/tenants", "tenants-viewer", "tenant")).toEqual([
+      "acme",
+      "globex",
+      "initech",
+    ]);
+    expect(rowsOf("GET /v1/schema/Tenanted/tenants", "tenants-scoped")).toEqual([{ tenant: "acme", status: "HOT" }]);
+    expect(column("GET /v1/aliases", "aliases-viewer", "alias")).toEqual(["DocsAlias", "NotesAlias"]);
+    expect(rowsOf("GET /v1/aliases", "aliases-scoped")).toEqual([{ alias: "NotesAlias", collection: "Note" }]);
+  });
+
+  test("the server refuses the narrow role a collection, tenant, alias, node read or count it does not grant", () => {
+    for (const read of [
+      "collection-doc",
+      "shards-doc",
+      "tenant-globex",
+      "shards-globex",
+      "alias-docs",
+      "collection-nodes-doc",
+      "aggregate-doc",
+      "aggregate-globex",
+    ]) {
+      expect({ read, status: scopeAnswer(`${read}-scoped`).status }).toEqual({ read, status: 403 });
+      expect({ read, status: scopeAnswer(`${read}-viewer`).status }).toEqual({ read, status: 200 });
+    }
+  });
+
+  test("a verbose node read names tenants the role does not grant, and the projection names none of them", () => {
+    for (const name of ["collection-nodes-tenanted-scoped", "nodes-verbose-scoped"]) {
+      const raw = scopeAnswer(name).text;
+      expect(raw).toContain('"name":"globex"');
+      expect(raw).toContain('"name":"initech"');
+    }
+    const tenanted = rowsOf("GET /v1/nodes/Tenanted?output=verbose", "collection-nodes-tenanted-scoped");
+    expect(tenanted).toEqual([{ node: "node1", collection: "Tenanted", shards: 3, objects: expect.any(Number) }]);
+    const every = rowsOf("GET /v1/nodes?output=verbose", "nodes-verbose-scoped");
+    expect(every.map((row) => `${row.collection}:${row.shards}`).sort()).toEqual(["Note:1", "Tenanted:3"]);
+    for (const tenant of ["acme", "globex", "initech"]) {
+      expect(JSON.stringify([tenanted, every])).not.toContain(tenant);
+    }
   });
 });
 
@@ -376,6 +453,21 @@ describe("a stored value reaches no row, column name or nested cell", () => {
     withheld("POST /v1/aggregate/Note", json({ count: [0.1, 0.2, 0.3] }), "rest");
     withheld("POST /v1/aggregate/Note", json({ count: { stored: "stored-value" } }), "rest");
     withheld("GET /v1/nodes", json({ nodes: [{ name: "n", status: "HEALTHY", stats: { objectCount: "stored-v" } }] }));
+  });
+
+  test("a shard count that holds text, or a collection that is not a name, withholds a verbose node read", () => {
+    const verbose = (shards: unknown[]) => json({ nodes: [{ name: "n", shards }] });
+    withheld("GET /v1/nodes?output=verbose", verbose([{ class: "Note", name: "s", objectCount: "stored-v" }]));
+    withheld(
+      "GET /v1/nodes?output=verbose",
+      verbose([
+        { class: "Note", name: "s", objectCount: 1 },
+        { class: "Note", name: "t", objectCount: -1 },
+      ]),
+    );
+    expect(withheld("GET /v1/nodes?output=verbose", verbose([{ class: { v: "stored-x" }, name: "s" }]))).toContain(
+      '"collection"',
+    );
   });
 
   test("a name past one line withholds the answer: a stored text block is not a name", () => {

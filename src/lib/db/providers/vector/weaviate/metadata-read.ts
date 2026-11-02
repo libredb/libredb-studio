@@ -237,24 +237,34 @@ const NODES: MetadataProjection<Json> = [
   { column: "shards", kind: "count", read: (node) => at(node, "stats", "shardCount"), optional: true },
 ];
 
-/** One shard of a verbose node read, beside the name of the node that holds it. */
-interface NodeShard {
+/**
+ * The shards one node holds of one collection, read from a verbose node read. A multi-tenant collection's shard is
+ * named after its tenant, and 1.40.2 lists every tenant of a collection the key may read nodes of, whatever tenants
+ * the key may read (`data-scope/collection-nodes-tenanted-scoped`), so a shard is counted here and never named.
+ */
+interface NodeCollection {
   readonly node: unknown;
-  readonly shard: Json;
+  readonly collection: unknown;
+  readonly shards: readonly Json[];
 }
 
-const NODE_SHARDS: MetadataProjection<NodeShard> = [
+/** The objects a node holds of one collection: the sum of its shards' counts, or what is not a count where one is not. */
+function objectsOf(row: NodeCollection): unknown {
+  let sum = 0;
+  for (const shard of row.shards) {
+    const count = shard.objectCount;
+    if (count === undefined || count === null) return undefined;
+    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) return count;
+    sum += count;
+  }
+  return sum;
+}
+
+const NODE_SHARDS: MetadataProjection<NodeCollection> = [
   { column: "node", kind: "name", read: (row) => row.node },
-  { column: "collection", kind: "name", read: (row) => row.shard.class },
-  { column: "shard", kind: "name", read: (row) => row.shard.name },
-  { column: "objects", kind: "count", read: (row) => row.shard.objectCount, optional: true },
-  {
-    column: "vector_indexing_status",
-    kind: "name",
-    read: (row) => row.shard.vectorIndexingStatus,
-    optional: true,
-  },
-  { column: "loaded", kind: "flag", read: (row) => row.shard.loaded, optional: true },
+  { column: "collection", kind: "name", read: (row) => row.collection },
+  { column: "shards", kind: "count", read: (row) => row.shards.length },
+  { column: "objects", kind: "count", read: objectsOf, optional: true },
 ];
 
 const AGGREGATE: MetadataProjection<Json> = [
@@ -356,9 +366,17 @@ function sourcesOf(id: WeaviateProjectionId, answer: unknown, answered: Weaviate
     case "nodes":
       return objects(object(answer).nodes);
     case "node-shards":
-      return objects(object(answer).nodes).flatMap((node) =>
-        objects(node.shards ?? []).map((shard): NodeShard => ({ node: node.name, shard })),
-      );
+      return objects(object(answer).nodes).flatMap((node) => {
+        const byCollection = new Map<unknown, Json[]>();
+        for (const shard of objects(node.shards ?? [])) {
+          const held = byCollection.get(shard.class);
+          if (held === undefined) byCollection.set(shard.class, [shard]);
+          else held.push(shard);
+        }
+        return [...byCollection].map(
+          ([collection, shards]): NodeCollection => ({ node: node.name, collection, shards }),
+        );
+      });
     case "aggregate":
       return [
         {

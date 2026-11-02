@@ -428,11 +428,13 @@ Weaviate declares `ProviderCapabilities.metadataOnly`: every answer is projected
 | tenants, one tenant | `tenant`, `status` |
 | aliases, one alias | `alias`, `collection` |
 | nodes | `node`, `status`, `version`, `objects`, `shards` |
-| nodes with `output=verbose` | `node`, `collection`, `shard`, `objects`, `vector_indexing_status`, `loaded` |
+| nodes with `output=verbose` | `node`, `collection`, `shards` (how many), `objects` (their sum), one row per collection on each node |
 | aggregate | `collection`, `tenant`, `count` |
 
 A column's name comes from the projection, never from a key the store holds, and nothing the projection does not name reaches a row: no description, module setting, base URL or host name.
 A cell that does not fit its kind, such as an object, a list or a vector where a name or a count stands, or a name holding a line break, withholds the whole answer, naming the column and never the value.
+A verbose node read names no shard: a multi-tenant collection's shards are named after its tenants, and the server lists every one of them to a key that may read the collection's nodes, whatever tenants the key may read (section 15.8), so the projection counts each collection's shards and objects on each node instead.
+This holds for agent mode as much as for MCP; before it, a verbose node read answered one row per shard, with its name, object count, indexing status and loaded flag.
 A server refusal is worded by its status and category alone, never the server's message.
 A result past the row or byte budget is refused, never cut, and an estimating plan is refused.
 
@@ -456,3 +458,19 @@ No MCP tool runs a Weaviate request: the family declares no MCP facet, and `MCP_
 - `tests/unit/db/weaviate/agent-provider.test.ts`: the open, the proof before every request, the exact request lines and bodies through the REST client, the tenant refusal, the wording of a failure and the budgets.
 - `tests/integration/db/weaviate-provider.test.ts`: the boundary replayed from the captures, the viewer's writes beside the positive control.
 - `tests/unit/lib/db/redaction/metadata-only.test.ts`: the shared projection helpers.
+
+### 15.8 Data scope
+
+What a key that passes the viewer proof reads is what its roles grant, and the proof checks the actions, not their scope, so a custom role of viewer actions scoped to some collections, tenants and aliases passes it.
+Measured on 1.40.2 with the built-in viewer and with such a role, scoped to one collection, one tenant of a multi-tenant collection, one alias and the node reads of two collections, every read sent raw ([`tests/fixtures/weaviate/1.40.2/data-scope/`](../../tests/fixtures/weaviate/1.40.2/data-scope/), recorded by its `run.sh`):
+
+| Read | What the scoped role is answered | Which layer stops what it does not grant |
+| --- | --- | --- |
+| `GET /v1/schema` | the collections it may read, and no other (`schema-*`) | the server |
+| a collection, its shards, a tenant or a count outside its grants | 403 (`collection-doc-*`, `shards-*`, `tenant-globex-*`, `aggregate-*`) | the server |
+| `GET /v1/schema/{collection}/tenants` | the tenants it may read, and no other (`tenants-*`) | the server |
+| `GET /v1/aliases`, one alias | the aliases it may read; another is 403 (`aliases-*`, `alias-docs-*`) | the server |
+| `GET /v1/nodes?output=verbose`, `GET /v1/nodes/{collection}?output=verbose` | only the collections it may read nodes of, but every tenant of each, named as a shard (`nodes-verbose-*`, `collection-nodes-*`) | Studio: the projection counts shards and names none (section 15.5) |
+| `GET /v1/meta`, `GET /v1/nodes` | the server's version and its nodes, the same for every key | none needed: no collection, tenant or alias is named |
+
+So tenant and alias names reach an answer only where the server filters them by the key's grants, and a per-tenant count only through a count the server checks against the tenant.
