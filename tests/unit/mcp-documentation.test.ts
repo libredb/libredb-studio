@@ -263,6 +263,8 @@ describe("docs/MCP.md", () => {
     expect(MCP_DOC).toContain(
       "OpenSearch proves its `DELETE` off, checks its server's release and probes its login only for a connection that sends statements, so `inspect_schema` opens an OpenSearch connection on any release and with any login, as the editor does.",
     );
+  });
+
   test("says what a cancel and a timeout do to an Apache Cassandra statement, as measured on 5.0.9", () => {
     expect(MCP_DOC).toContain(
       "| Apache Cassandra | Studio stops waiting; the native protocol has no cancel, so the coordinator runs the statement to its end, and the provider closes the call's session when the answer arrives or at the time left of `timeout_ms` | The driver's read timeout, set to the time left, ends the wait and the provider closes the call's session; the coordinator runs the statement to its end, and the client gets the timeout answer |",
