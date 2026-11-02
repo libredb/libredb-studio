@@ -777,6 +777,13 @@ describe("docs/providers/neo4j.md section 15 states the agent path as the code d
     expect(AGENT).toContain(quoted((error as Error).message));
   });
 
+  test("the refusal of a user without ACCESS on the database is quoted as the proof words it", async () => {
+    const noAccess = recordedGraphClient(path.join(NEO4J_FIXTURES, "agent-boundary", "no_access"));
+    const error = await proveNeo4jAgentPrincipal(noAccess, { database: "neo4j", timeoutMs: 1000 }).catch((e) => e);
+    expect(AGENT).toContain(quoted((error as Error).message));
+    expect(AGENT).toContain("`no_access/proof-components`");
+  });
+
   test("the carriage return refusal is quoted as the reader words it", () => {
     const reading = readNeo4jAgentStatement("RETURN 1\r");
     if (reading.ok) throw new Error("admitted");

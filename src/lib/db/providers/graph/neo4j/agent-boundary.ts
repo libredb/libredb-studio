@@ -61,6 +61,14 @@ const UNSUPPORTED_ADMINISTRATION = "Neo.ClientError.Statement.UnsupportedAdminis
 
 const NOTHING_ELSE = "Nothing else was sent.";
 
+/**
+ * How 5.26.31 begins the message of a `Security.Forbidden` answer to a user without ACCESS on the session's database
+ * (`no_access/proof-components`). The same code answers a procedure the user may not execute
+ * (`ext_denied/call-extension-procedure`), so the message's opening, which the server writes before the database's
+ * name, is what tells them apart.
+ */
+const NO_ACCESS_PREFIX = "ACCESS on database ";
+
 export interface Neo4jAgentProofOptions {
   /** The connection's database: the one every agent statement runs on. */
   readonly database: string;
@@ -120,6 +128,16 @@ export async function proveNeo4jAgentPrincipal(
       ) {
         throw unsupported(
           "The agent read-only profile needs Neo4j Enterprise Edition, and this server reports Enterprise Edition but refuses SHOW USER PRIVILEGES as unsupported, as Community Edition does, so it is refused.",
+        );
+      }
+      if (
+        error instanceof GraphClientError &&
+        error.category === "forbidden" &&
+        error.message.startsWith(NO_ACCESS_PREFIX)
+      ) {
+        throw new ExecutionProfileError(
+          `The agent read-only profile needs a user with ACCESS on the connection's database, and the server refuses this user ACCESS on the database ${JSON.stringify(options.database)}, so this user is not proved read-only and is refused. Grant it ACCESS on that database. ${NOTHING_ELSE}`,
+          "PROFILE_PRIVILEGES_TOO_NARROW",
         );
       }
       throw unread(statement);

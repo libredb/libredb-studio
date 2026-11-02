@@ -566,6 +566,10 @@ The proof reads and the statement each run in a Bolt session of their own, one a
    The same reader denied `EXECUTE` on the extension's names lists only the built-ins and is admitted (`ext_denied`).
 
 Any answer other than the measured shapes refuses the profile, and a proof read cut at its 1,000-row bound is not read.
+A user the server refuses `ACCESS` on the connection's database is answered `Neo.ClientError.Security.Forbidden` with a message that opens `ACCESS on database` (`no_access/proof-components`), and is refused as missing that access, under `PROFILE_PRIVILEGES_TOO_NARROW`:
+> The agent read-only profile needs a user with ACCESS on the connection's database, and the server refuses this user ACCESS on the database "neo4j", so this user is not proved read-only and is refused. Grant it ACCESS on that database. Nothing else was sent.
+
+The same code answers a procedure the user may not execute (`ext_denied/call-extension-procedure`), so any other refusal of a proof read keeps the sentence that the server's answer could not be read.
 The operations profile sends no statement, so its acquisitions open unproved and plan mode keeps grounding on a user that can write.
 
 To set up an agent user: create a role as a copy of `reader`, grant it to a user, and either `REVOKE GRANT LOAD ON ALL DATA FROM PUBLIC` or `DENY LOAD ON ALL DATA` to that role; on a server with extensions, `DENY EXECUTE PROCEDURE` and `DENY EXECUTE USER DEFINED FUNCTION` on their names to that role.
