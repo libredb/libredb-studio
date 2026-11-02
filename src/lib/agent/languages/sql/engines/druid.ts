@@ -4,12 +4,14 @@
  *
  * Druid reads its catalog with a SELECT on INFORMATION_SCHEMA, which the server filters to the datasources the user
  * may read, so a user holding READ on one datasource reads that datasource's columns and no other's (measured on
- * 37.0.0, `tests/fixtures/druid/37.0.0/agent-boundary/` capture 06). The `sys` schema and INFORMATION_SCHEMA itself are
- * left out of the read; datasources (`druid`) and lookups (`lookup`) stay in. Druid has no foreign key, so the relation
+ * 37.0.0, `tests/fixtures/druid/37.0.0/agent-boundary/` capture 06). The `sys` schema, INFORMATION_SCHEMA itself and
+ * the `lookup` and `view` schemas, which an agent statement may not read, are left out of the read; only the
+ * datasources (`druid`) stay in. Druid has no foreign key, so the relation
  * read is the projection the other engines answer, with no rows. It keeps no index object, since every dimension is
- * indexed inside its segments, and no row count in its catalog, so those two kinds are refused. The provider sends
- * only a SELECT to the server, so no estimating plan (`EXPLAIN PLAN FOR`) is composed, and a table profile, the
- * statistics reading and the grounding capture have no composition measured here.
+ * indexed inside its segments, and no row count in its catalog, so those two kinds are refused. The agent's statements
+ * are only a SELECT, so no estimating plan (`EXPLAIN PLAN FOR`) is composed; the provider's own EXPLAIN before each
+ * statement is a check the agent never sees. A table profile, the statistics reading and the grounding capture have no
+ * composition measured here.
  */
 import {
   type AgentCatalogRead,
@@ -19,8 +21,11 @@ import {
 } from "../../../composed-sql-primitives";
 import type { AgentEngineServerOverlay, SqlServerDialect } from "../../pack";
 
-/** The schemas Druid keeps for itself, excluded from the column read. */
-const DRUID_SCHEMA_EXCLUSION = "TABLE_SCHEMA NOT IN ('sys', 'INFORMATION_SCHEMA')";
+/**
+ * The schemas Druid keeps for itself, and the lookup and view schemas, excluded from the column read: an agent
+ * statement may not read them (`druidAgentStatementRefusal`), so the read offers no table the agent cannot read.
+ */
+const DRUID_SCHEMA_EXCLUSION = "TABLE_SCHEMA NOT IN ('sys', 'INFORMATION_SCHEMA', 'lookup', 'view')";
 
 /** The selector's schema and table as conditions on INFORMATION_SCHEMA's own columns. */
 function narrowing(selector: AgentCatalogSelector): string {

@@ -914,8 +914,8 @@ describe("createDatabaseProvider", () => {
     const profiled = await createDatabaseProvider(conn, {}, { readOnly: true, sendsStatements: true });
     const editor = await createDatabaseProvider(conn);
     if (profiled.queryReadOnly === undefined || editor.queryReadOnly === undefined) throw new Error("no queryReadOnly");
-    // A transport answering the engine probe with the native engine's refusal and the statement with one row, so only
-    // the context tells the two apart.
+    // A transport answering the engine probe with the native engine's refusal, the planner's question with a plan of
+    // inline rows, and the statement with one row, so only the context tells the two apart.
     const sent: string[] = [];
     const transport = {
       agentQuery: async (statement: string) => {
@@ -926,8 +926,12 @@ describe("createDatabaseProvider", () => {
             "INVALID_INPUT",
           );
         }
+        const planned = {
+          PLAN: JSON.stringify([{ query: { queryType: "scan", dataSource: { type: "inline", rows: [[1]] } } }]),
+          RESOURCES: "[]",
+        };
         return {
-          rows: [{ x: 1 }],
+          rows: [statement.startsWith("EXPLAIN PLAN FOR\n") ? planned : { x: 1 }],
           fieldNames: ["x"],
           sqlTypes: {},
           nativeTypes: {},

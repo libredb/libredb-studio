@@ -55,7 +55,7 @@ import {
   RefusedBeforeSendError,
   TimeoutError,
 } from "@/lib/db/errors";
-import { druidAgentStatementRefusal } from "@/lib/db/providers/sql/druid/agent-boundary";
+import { druidAgentReachRefusal, druidAgentStatementRefusal } from "@/lib/db/providers/sql/druid/agent-boundary";
 import {
   type DruidAgentQueryOptions,
   DruidAnswerTooLargeError,
@@ -2979,6 +2979,13 @@ describe("queryReadOnly", () => {
   );
   const PROBE =
     /^INSERT INTO "libredb_agent_probe_[0-9a-f]{24}" SELECT TIME_PARSE\('2026-01-01'\) AS __time PARTITIONED BY ALL$/;
+  const EXPLAIN = "EXPLAIN PLAN FOR\n";
+  /** The planner's answer for a statement over one datasource, as Druid 37.0.0 answers it (capture 08). */
+  const PLANNED = {
+    PLAN: JSON.stringify([{ query: { queryType: "scan", dataSource: { type: "table", name: "t" } } }]),
+    RESOURCES: JSON.stringify([{ name: "t", type: "DATASOURCE" }]),
+    ATTRIBUTES: '{"statementType":"SELECT"}',
+  };
 
   const rowsOf = (rows: Record<string, unknown>[]): DruidQueryResult => ({
     rows,
@@ -2994,9 +3001,13 @@ describe("queryReadOnly", () => {
     opts: DruidAgentQueryOptions;
   }
 
-  /** A transport answering the probe with the native engine's refusal and every other statement from `answer`. */
+  /**
+   * A transport answering the probe with the native engine's refusal, the planner's question with `plan`, and every
+   * other statement from `answer`.
+   */
   function recording(
     answer: (sql: string, opts: DruidAgentQueryOptions) => Promise<DruidQueryResult> = async () => rowsOf([{ n: 1 }]),
+    plan: (sql: string, opts: DruidAgentQueryOptions) => Promise<DruidQueryResult> = async () => rowsOf([PLANNED]),
   ) {
     const agent: AgentCall[] = [];
     const cancels: { queryId: string; signal: AbortSignal }[] = [];
@@ -3011,6 +3022,7 @@ describe("queryReadOnly", () => {
       agentQuery: async (sql, opts) => {
         agent.push({ sql, opts });
         if (PROBE.test(sql)) throw NATIVE_INSERT_REFUSAL;
+        if (sql.startsWith(EXPLAIN)) return plan(sql, opts);
         return answer(sql, opts);
       },
       cancel: async (queryId, signal) => {
@@ -3092,7 +3104,15 @@ describe("queryReadOnly", () => {
     expect(first.rows).toEqual([{ n: 1 }]);
     expect(first.fields).toEqual(["n"]);
     const sent = recorded.agent.map((call) => (PROBE.test(call.sql) ? "probe" : call.sql));
-    expect(sent).toEqual(["probe", "probe", "SELECT 1 AS a", "probe", "SELECT 2 AS a"]);
+    expect(sent).toEqual([
+      "probe",
+      "probe",
+      "EXPLAIN PLAN FOR\nSELECT 1 AS a",
+      "SELECT 1 AS a",
+      "probe",
+      "EXPLAIN PLAN FOR\nSELECT 2 AS a",
+      "SELECT 2 AS a",
+    ]);
     const statements = recorded.agent.filter((call) => !PROBE.test(call.sql));
     for (const call of statements) {
       expect(call.opts.timeoutMs).toBe(30000);
@@ -3103,9 +3123,106 @@ describe("queryReadOnly", () => {
     expect(new Set(ids).size).toBe(ids.length);
     const probes = recorded.agent.filter((call) => PROBE.test(call.sql)).map((call) => call.sql);
     expect(new Set(probes).size).toBe(probes.length);
-    // The probe and the statement of one call share its deadline.
+    // The probe, the planner's question and the statement of one call share its deadline.
     expect(recorded.agent[1].opts.signal).toBe(recorded.agent[2].opts.signal);
+    expect(recorded.agent[2].opts.signal).toBe(recorded.agent[3].opts.signal);
     expect(recorded.agent[1].opts.timeoutMs).toBe(15000);
+  });
+
+  test("a statement the planner says reads beyond the datasources is refused before it is sent", async () => {
+    const sysScan = rowsOf([
+      {
+        PLAN: "BindableAggregate(group=[{}], n=[COUNT()])\n  BindableTableScan(table=[[sys, segments]])\n",
+        RESOURCES: "[]",
+        ATTRIBUTES: '{"statementType":"SELECT"}',
+      },
+    ]);
+    const recorded = recording(undefined, async () => sysScan);
+    const provider = await open(recorded);
+    // A spelling the statement fence reads as another name: only the planner's answer names sys.segments.
+    const sql = 'SELECT COUNT(*) AS n FROM "segments"';
+    const error = await provider.queryReadOnly(sql, AGENT_BUDGET).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect((error as Error).message).toBe(druidAgentReachRefusal(sysScan) ?? "admitted");
+    expect((error as Error).message).toContain("the table sys.segments");
+    expect(recorded.agent.at(-1)?.sql).toBe(`EXPLAIN PLAN FOR\n${sql}`);
+    expect(recorded.agent.filter((call) => call.sql === sql)).toEqual([]);
+  });
+
+  test("a planner's answer past the statement's byte cap is refused as unreadable, and the statement is not sent", async () => {
+    const recorded = recording(undefined, async (_sql, opts) => {
+      throw new DruidAnswerTooLargeError(opts.maxResponseBytes);
+    });
+    const provider = await open(recorded);
+    const error = await provider.queryReadOnly("SELECT n FROM t", AGENT_BUDGET).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(RefusedBeforeSendError);
+    expect((error as Error).message).toEndWith(
+      "; the planner's account of what this statement reads could not be read, so it was not sent.",
+    );
+    expect(recorded.agent.at(-1)?.opts.maxResponseBytes).toBe(2 * 1000 + 65536);
+    expect(recorded.agent.filter((call) => call.sql === "SELECT n FROM t")).toEqual([]);
+    expect(recorded.cancels).toEqual([]);
+  });
+
+  test("a datasource the planner refuses the user is the statement's to repair, and the statement is not sent", async () => {
+    const recorded = recording(undefined, async () => {
+      throw new DruidTransportError(
+        "Druid refused the statement with HTTP 403: Unauthorized",
+        "FORBIDDEN",
+        "forbidden",
+      );
+    });
+    const provider = await open(recorded);
+    const error = await provider.queryReadOnly("SELECT n FROM other", AGENT_BUDGET).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error).not.toBeInstanceOf(RefusedBeforeSendError);
+    expect((error as Error).message).toBe("Druid refused the statement with HTTP 403: Unauthorized");
+    expect(recorded.agent.filter((call) => call.sql === "SELECT n FROM other")).toEqual([]);
+  });
+
+  test("a statement the planner cannot plan is the statement's to repair, in the server's words", async () => {
+    const recorded = recording(undefined, async () => {
+      throw new DruidTransportError("Object 'nope' not found", "INVALID_INPUT", "invalidInput", "USER");
+    });
+    const provider = await open(recorded);
+    const error = await provider.queryReadOnly("SELECT n FROM nope", AGENT_BUDGET).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(QueryError);
+    expect((error as Error).message).toBe("Object 'nope' not found");
+  });
+
+  // Measured on 37.0.0: `SELECT nope` sent raw answers line 1, column 8, and asked of the planner on a line of its own,
+  // line 2, column 8, so the agent repairs the statement from the position the statement itself would have answered.
+  test("a planner's refusal points at the statement's own line and column", async () => {
+    const recorded = recording(undefined, async () => {
+      throw new DruidTransportError(
+        "Column 'nope' not found in any table (line [2], column [8])",
+        "INVALID_INPUT",
+        "invalidInput",
+        "USER",
+      );
+    });
+    const provider = await open(recorded);
+    const error = await provider.queryReadOnly("SELECT nope", AGENT_BUDGET).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(QueryError);
+    expect(error).not.toBeInstanceOf(RefusedBeforeSendError);
+    expect((error as Error).message).toBe("Column 'nope' not found in any table (line [1], column [8])");
+    expect(recorded.agent.filter((call) => call.sql === "SELECT nope")).toEqual([]);
+  });
+
+  test("a planner the provider cannot reach is the environment's failure, and the statement is not sent", async () => {
+    const recorded = recording(undefined, async () => {
+      throw new DruidTransportError(
+        "Druid request failed: connection refused at 127.0.0.1:8888 (line [2], column [8])",
+      );
+    });
+    const provider = await open(recorded);
+    const error = await provider.queryReadOnly("SELECT nope", AGENT_BUDGET).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ConnectionError);
+    // Only the server's own answer counts its positions over the planner's text, so this message is left as it came.
+    expect((error as Error).message).toBe(
+      "Failed to connect to druid database: Druid request failed: connection refused at 127.0.0.1:8888 (line [2], column [8])",
+    );
+    expect(recorded.agent.filter((call) => call.sql === "SELECT nope")).toEqual([]);
   });
 
   test("a probe the server runs mid-handle refuses the statement, which is never sent", async () => {
@@ -3256,6 +3373,16 @@ describe("queryReadOnly", () => {
       await expect(provider.queryReadOnly("SELECT n FROM t", SHORT)).rejects.toThrow(
         "Read-only execution exceeded the time budget: no answer within 20ms; its cancel could not be confirmed: Druid refused the cancel with HTTP 403",
       );
+    });
+
+    test("a deadline that passes while the planner is asked refuses on the time budget, and cancels nothing", async () => {
+      const recorded = recording(undefined, hangs);
+      const provider = await open(recorded);
+      await expect(provider.queryReadOnly("SELECT n FROM t", SHORT)).rejects.toThrow(
+        "Read-only execution exceeded the time budget: no answer within 20ms",
+      );
+      expect(recorded.agent.at(-1)?.sql).toBe("EXPLAIN PLAN FOR\nSELECT n FROM t");
+      expect(recorded.cancels).toEqual([]);
     });
 
     test("a deadline that passes during the probe refuses on the time budget, and cancels nothing", async () => {

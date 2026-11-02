@@ -7,7 +7,10 @@
 import { describe, expect, test } from "bun:test";
 import { ExecutionProfileError } from "@/lib/db/errors";
 import {
+  druidAgentExplainStatement,
+  druidAgentPlanMessage,
   druidAgentProbeStatement,
+  druidAgentReachRefusal,
   druidAgentStatementRefusal,
   verifyDruidAgentEngine,
 } from "@/lib/db/providers/sql/druid/agent-boundary";
@@ -211,6 +214,63 @@ describe("the statement fence", () => {
     );
   });
 
+  const OUTSIDE_DATASOURCES = `${FENCE}; this statement reads the sys, lookup or view schema or calls LOOKUP, which answer the cluster's own servers, segments, tasks, supervisors, lookups or views rather than a datasource's rows, so it was not sent. Read the datasources themselves.`;
+
+  test.each([
+    ["SELECT * FROM sys.segments"],
+    ["SELECT COUNT(*) AS n FROM sys.tasks"],
+    ["SELECT spec FROM sys.supervisors"],
+    ["SELECT * FROM sys.server_segments"],
+    ["SELECT * FROM sys.servers"],
+    ["SELECT * FROM sys.server_properties"],
+    ['SELECT * FROM "sys"."segments"'],
+    ["SELECT * FROM SYS.segments"],
+    ['SELECT * FROM "SyS".segments'],
+    ["SELECT * FROM sys /* c */ . segments"],
+    ["SELECT * FROM sys -- c\n.segments"],
+    ["SELECT * FROM druid.sys.segments"],
+    ["SELECT * FROM lookup.libredb_country_names"],
+    ['SELECT k FROM "lookup"."libredb_country_names"'],
+    ["SELECT d.x FROM libredb_agent_data d JOIN lookup.l ON d.s = l.k"],
+    ["SELECT * FROM view.v"],
+    ["SELECT LOOKUP('US', 'libredb_country_names') AS a"],
+    ["SELECT lookup (s, 'l') AS a FROM t"],
+    ["SELECT \"LOOKUP\"(s, 'l') AS a FROM t"],
+    ["WITH t AS (SELECT * FROM sys.segments) SELECT COUNT(*) FROM t"],
+    ["SELECT ARRAY[(SELECT COUNT(*) FROM sys.tasks)] AS a"],
+  ])("refuses %j, which reads beyond the datasources", (sql) => {
+    expect(druidAgentStatementRefusal(sql)).toBe(OUTSIDE_DATASOURCES);
+  });
+
+  test.each([
+    ["SELECT sys FROM t"],
+    ['SELECT "sys" FROM t'],
+    ["SELECT t.sys FROM t"],
+    ["SELECT lookup FROM t"],
+    ["SELECT 'sys.segments' AS a"],
+    ["SELECT 1 AS a -- sys.segments"],
+    ["SELECT 1 AS a /* LOOKUP(x) */"],
+    ["SELECT systems.x FROM systems"],
+    ["SELECT * FROM my_sys.t"],
+    ["SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = 'druid'"],
+  ])("admits %j, which names no schema beyond the datasources", (sql) => {
+    expect(druidAgentStatementRefusal(sql)).toBeNull();
+  });
+
+  test.each([
+    ['SELECT COUNT(*) AS n FROM U&"\\0073ys".segments'],
+    ['SELECT COUNT(*) AS n FROM u&"\\006cookup".libredb_country_names'],
+    ["SELECT U&\"!0073ys\" UESCAPE '!' FROM t"],
+  ])("refuses %j, a name spelled with Unicode escapes, which the reader cannot compare", (sql) => {
+    expect(druidAgentStatementRefusal(sql)).toBe(
+      `${FENCE}; this statement spells a quoted name with Unicode escapes (U&"..."), which the server reads as another name, so it was not sent. Write the name itself.`,
+    );
+  });
+
+  test("admits a Unicode-escaped string literal, which is a value and not a name", () => {
+    expect(druidAgentStatementRefusal("SELECT U&'\\0073ys' AS a")).toBeNull();
+  });
+
   test("refuses text that holds no statement", () => {
     for (const sql of ["", "   ", "-- only a comment", "// only a comment", "/* only */", ";"]) {
       expect(druidAgentStatementRefusal(sql)).not.toBeNull();
@@ -220,3 +280,242 @@ describe("the statement fence", () => {
     );
   });
 });
+
+/** One EXPLAIN PLAN FOR answer, as the transport hands it back: a row of three JSON-text columns. */
+function explained(plan: unknown, resources: unknown = []): DruidQueryResult {
+  return {
+    ...ANSWERED,
+    fieldNames: ["PLAN", "RESOURCES", "ATTRIBUTES"],
+    rows: [
+      {
+        PLAN: typeof plan === "string" ? plan : JSON.stringify(plan),
+        RESOURCES: typeof resources === "string" ? resources : JSON.stringify(resources),
+        ATTRIBUTES: '{"statementType":"SELECT"}',
+      },
+    ],
+  };
+}
+
+/** A native plan of one query over `dataSource`, as Druid 37.0.0 answers it (capture 08), with `extra` merged in. */
+const native = (dataSource: unknown, extra: Record<string, unknown> = {}) => [
+  { query: { queryType: "scan", dataSource, columns: ["x"], ...extra }, signature: [], columnMappings: [] },
+];
+const DATA = { type: "table", name: "libredb_agent_data" };
+const DATA_RESOURCE = [{ name: "libredb_agent_data", type: "DATASOURCE" }];
+
+/**
+ * The second layer: what the planner says a statement reads, asked with EXPLAIN PLAN FOR before the statement is sent,
+ * and held to datasources. Every plan shape below is one Druid 37.0.0 answered (capture 08).
+ */
+describe("the planner check", () => {
+  test("asks the planner for the statement as it will be sent, on a line of its own", () => {
+    expect(druidAgentExplainStatement("SELECT x FROM t LIMIT 3")).toBe("EXPLAIN PLAN FOR\nSELECT x FROM t LIMIT 3");
+  });
+
+  // Measured on 37.0.0: `SELECT nope` answers column 8 of line 1 sent raw, and line 2, column 8 asked of the planner on
+  // a line of its own; `SELECT 1,\n  nope` answers line 2, column 3 raw, and line 3, column 3 asked of the planner.
+  test.each([
+    [
+      "Column 'nope' not found in any table (line [2], column [8])",
+      "Column 'nope' not found in any table (line [1], column [8])",
+    ],
+    [
+      "Column 'nope' not found in any table (line [3], column [3])",
+      "Column 'nope' not found in any table (line [2], column [3])",
+    ],
+    [
+      'Received an unexpected token [1] (line [2], column [10]), acceptable options: [<EOF>, "ORDER"]',
+      'Received an unexpected token [1] (line [1], column [10]), acceptable options: [<EOF>, "ORDER"]',
+    ],
+    // A position on the planner's own first line is not one in the statement, so it is left as the server wrote it.
+    [
+      "Received an unexpected token [x] (line [1], column [5])",
+      "Received an unexpected token [x] (line [1], column [5])",
+    ],
+    ["Object 'nope' not found", "Object 'nope' not found"],
+  ])("moves the planner's position %j back onto the statement's own line", (message, statements) => {
+    expect(druidAgentPlanMessage(message)).toBe(statements);
+  });
+
+  test.each([
+    ["a scan of a datasource", native(DATA), DATA_RESOURCE],
+    ["inline rows", native({ type: "inline", columnNames: ["a"], columnTypes: ["LONG"], rows: [[1]] }), []],
+    ["a union of datasources", native({ type: "union", dataSources: [DATA, DATA] }), DATA_RESOURCE],
+    [
+      "an unnest over a datasource",
+      native({
+        type: "unnest",
+        base: DATA,
+        virtualColumn: { type: "expression", name: "j0.unnest", expression: '"s"' },
+      }),
+      DATA_RESOURCE,
+    ],
+    [
+      "a join of a datasource and a subquery over it",
+      native({
+        type: "join",
+        left: DATA,
+        right: { type: "query", query: { queryType: "groupBy", dataSource: DATA } },
+        joinType: "INNER",
+      }),
+      DATA_RESOURCE,
+    ],
+    [
+      "a join of a datasource and inline rows",
+      native({ type: "join", left: DATA, right: { type: "inline", rows: [[1]] }, joinType: "INNER" }),
+      DATA_RESOURCE,
+    ],
+    [
+      "a read of INFORMATION_SCHEMA, which plans as Calcite's own scan",
+      "BindableProject(TABLE_NAME=[$2])\n  BindableFilter(condition=[=($1, 'druid')])\n    BindableTableScan(table=[[INFORMATION_SCHEMA, TABLES]])\n",
+      [],
+    ],
+    [
+      "a join of two INFORMATION_SCHEMA tables",
+      "BindableJoin(condition=[=($0, $1)], joinType=[inner])\n  BindableTableScan(table=[[INFORMATION_SCHEMA, TABLES]])\n  BindableTableScan(table=[[INFORMATION_SCHEMA, COLUMNS]], projects=[[1]])\n",
+      [],
+    ],
+    // A statement whose filter the planner proves empty, the agent's relation read among them, reads no table at all.
+    ["a Calcite plan that reads no table", "BindableValues(tuples=[[]])\n", []],
+  ])("admits %s", (_name, plan, resources) => {
+    expect(druidAgentReachRefusal(explained(plan, resources))).toBeNull();
+  });
+
+  const reads = (what: string) =>
+    `${FENCE}; the planner says this statement reads ${what}, which is not a datasource, so it was not sent. Read the datasources themselves.`;
+
+  test.each([
+    [
+      "a system table",
+      "BindableAggregate(group=[{}], n=[COUNT()])\n  BindableTableScan(table=[[sys, segments]])\n",
+      [],
+      "the table sys.segments",
+    ],
+    [
+      "a system table joined to INFORMATION_SCHEMA",
+      "BindableProject(TABLE_NAME=[$0])\n  BindableJoin(condition=[=($0, $1)], joinType=[inner])\n    BindableProject(TABLE_NAME=[$2])\n      BindableTableScan(table=[[INFORMATION_SCHEMA, TABLES]])\n    BindableTableScan(table=[[sys, segments]], projects=[[1]])\n",
+      [],
+      "the table sys.segments",
+    ],
+    ["a lookup", native({ type: "lookup", lookup: "libredb_country_names" }), [], "the lookup libredb_country_names"],
+    [
+      "a datasource joined to a lookup",
+      native({ type: "join", left: DATA, right: { type: "lookup", lookup: "libredb_country_names" } }),
+      DATA_RESOURCE,
+      "the lookup libredb_country_names",
+    ],
+    [
+      "a lookup in a subquery",
+      native({ type: "query", query: { queryType: "groupBy", dataSource: { type: "lookup", lookup: "l" } } }),
+      [],
+      "the lookup l",
+    ],
+    [
+      "the lookup function over a column",
+      native(DATA, {
+        virtualColumns: [{ type: "expression", name: "v0", expression: "lookup(\"s\",'libredb_country_names')" }],
+      }),
+      DATA_RESOURCE,
+      "a lookup, through the lookup function",
+    ],
+    [
+      "a registered lookup in a dimension",
+      native(DATA, {
+        dimensions: [{ type: "extraction", dimension: "s", extractionFn: { type: "registeredLookup", lookup: "l" } }],
+      }),
+      DATA_RESOURCE,
+      "a lookup, through the lookup function",
+    ],
+    ["external data", native({ type: "external", inputSource: { type: "http" } }), [], "a dataSource of type external"],
+    [
+      "a dataSource of a type it does not know",
+      native({ type: "restrict", base: DATA }),
+      DATA_RESOURCE,
+      "a dataSource of type restrict",
+    ],
+    [
+      "a datasource the planner does not list as one the statement reads",
+      native({ type: "table", name: "libredb_agent_other" }),
+      DATA_RESOURCE,
+      "the table libredb_agent_other, which it does not list among the datasources the statement reads",
+    ],
+    [
+      "a union with a member the planner does not list as one the statement reads",
+      native({ type: "union", dataSources: [DATA, { type: "table", name: "libredb_agent_other" }] }),
+      DATA_RESOURCE,
+      "the table libredb_agent_other, which it does not list among the datasources the statement reads",
+    ],
+    [
+      "a union with a lookup member",
+      native({ type: "union", dataSources: [DATA, { type: "lookup", lookup: "l" }] }),
+      DATA_RESOURCE,
+      "the lookup l",
+    ],
+    [
+      "an unnest over a datasource the planner does not list as one the statement reads",
+      native({ type: "unnest", base: { type: "table", name: "libredb_agent_other" } }),
+      DATA_RESOURCE,
+      "the table libredb_agent_other, which it does not list among the datasources the statement reads",
+    ],
+    ["an unnest over a lookup", native({ type: "unnest", base: { type: "lookup", lookup: "l" } }), [], "the lookup l"],
+    [
+      "a resource that is not a datasource",
+      native(DATA),
+      [...DATA_RESOURCE, { name: "v", type: "VIEW" }],
+      "the VIEW v",
+    ],
+  ])("refuses %s", (_name, plan, resources, what) => {
+    expect(druidAgentReachRefusal(explained(plan, resources))).toBe(reads(what));
+  });
+
+  const UNREADABLE = `${FENCE}; the planner's account of what this statement reads could not be read, so it was not sent.`;
+
+  test.each([
+    ["no row", { ...ANSWERED, rows: [] }],
+    [
+      "two rows, each a plan it would admit",
+      (() => {
+        const answer = explained(native(DATA), DATA_RESOURCE);
+        return { ...answer, rows: [answer.rows[0], answer.rows[0]] };
+      })(),
+    ],
+    ["no PLAN", { ...ANSWERED, rows: [{ RESOURCES: "[]" }] }],
+    ["a PLAN that is not text", { ...ANSWERED, rows: [{ PLAN: 1, RESOURCES: "[]" }] }],
+    ["RESOURCES that are not JSON", explained(native(DATA), "not json")],
+    ["RESOURCES that are not a list", explained(native(DATA), "{}")],
+    ["a resource with no type", explained(native(DATA), [{ name: "x" }])],
+    ["a native plan with no query", explained([{ signature: [] }], [])],
+    ["an empty native plan", explained([], [])],
+    ["a query with no dataSource", explained([{ query: { queryType: "scan" } }], [])],
+    ["a join with no right side", explained(native({ type: "join", left: DATA }), DATA_RESOURCE)],
+    ["a union with no list", explained(native({ type: "union" }), DATA_RESOURCE)],
+    ["a table with no name", explained(native({ type: "table" }), DATA_RESOURCE)],
+    ["a lookup with no name", explained(native({ type: "lookup" }), [])],
+    ["text that is no plan", explained("SELECT 1", [])],
+    [
+      "a Calcite plan with a line it does not know",
+      explained("BindableTableScan(table=[[INFORMATION_SCHEMA, TABLES]])\nDruidQueryRel(x)\n", []),
+    ],
+    // A scan is read only in the shape Calcite writes it, `table=[[schema, table]]`; any other scan line is unreadable.
+    ["a scan with no space after the schema", explained("BindableTableScan(table=[[sys,segments]])\n", [])],
+    ["a scan that names its table another way", explained("BindableTableScan(name=[sys.segments])\n", [])],
+    ["a scan of another kind", explained("BindableTableFunctionScan(invocation=[segments()])\n", [])],
+    [
+      "a scan line among readable ones",
+      explained(
+        "BindableJoin(condition=[=($0, $1)], joinType=[inner])\n  BindableTableScan(table=[[INFORMATION_SCHEMA, TABLES]])\n  BindableTableScan(table=[[sys,segments]])\n",
+        [],
+      ),
+    ],
+    ["a nesting past any real plan", explained(native(nested(40)), [])],
+  ])("refuses %s as unreadable", (_name, answer) => {
+    expect(druidAgentReachRefusal(answer as DruidQueryResult)).toBe(UNREADABLE);
+  });
+});
+
+/** A dataSource nested `depth` subqueries deep over inline rows. */
+function nested(depth: number): unknown {
+  let dataSource: unknown = { type: "inline", rows: [[1]] };
+  for (let level = 0; level < depth; level++) dataSource = { type: "query", query: { queryType: "scan", dataSource } };
+  return dataSource;
+}

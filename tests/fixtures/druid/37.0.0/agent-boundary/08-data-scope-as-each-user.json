@@ -1,0 +1,910 @@
+[
+ {
+  "note": "druid-basic-security, as admin: two lookups, which no permission of the authorizer names"
+ },
+ {
+  "as": "admin",
+  "rest": "POST /proxy/coordinator/druid/coordinator/v1/lookups/config",
+  "body": {}
+ },
+ {
+  "as": "admin",
+  "rest": "POST /proxy/coordinator/druid/coordinator/v1/lookups/config",
+  "body": {
+   "__default": {
+    "libredb_country_names": {
+     "version": "v1",
+     "lookupExtractorFactory": {
+      "type": "map",
+      "map": {
+       "TR": "Turkey",
+       "DE": "Germany",
+       "US": "United States"
+      }
+     }
+    },
+    "libredb_status_labels": {
+     "version": "v1",
+     "lookupExtractorFactory": {
+      "type": "map",
+      "map": {
+       "1": "active",
+       "2": "archived"
+      }
+     }
+    }
+   }
+  }
+ },
+ {
+  "note": "the Broker loads the lookups on its own polling period"
+ },
+ {
+  "sleep": 120000
+ },
+ {
+  "note": "what a SELECT reaches beyond the datasources, as agent_ro"
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT * FROM sys.segments LIMIT 1",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT * FROM sys.tasks LIMIT 1",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT * FROM sys.supervisors LIMIT 1",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT * FROM sys.server_segments LIMIT 1",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM sys.servers",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM sys.server_properties",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM U&\"\\0073ys\".segments",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM SYS.segments",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM druid.sys.segments",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT * FROM lookup.libredb_country_names",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT LOOKUP('US', 'libredb_country_names') AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM libredb_agent_data WHERE LOOKUP(s, 'libredb_country_names') = 'Turkey'",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES ORDER BY 1, 2",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT * FROM INFORMATION_SCHEMA.SCHEMATA",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "note": "what a SELECT reaches beyond the datasources, as agent_state"
+ },
+ {
+  "as": "agent_state",
+  "sql": {
+   "query": "SELECT * FROM sys.segments LIMIT 1",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_state",
+  "sql": {
+   "query": "SELECT * FROM sys.tasks LIMIT 1",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_state",
+  "sql": {
+   "query": "SELECT * FROM sys.supervisors LIMIT 1",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_state",
+  "sql": {
+   "query": "SELECT * FROM sys.server_segments LIMIT 1",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_state",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM sys.servers",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_state",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM sys.server_properties",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_state",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM U&\"\\0073ys\".segments",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_state",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM SYS.segments",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_state",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM druid.sys.segments",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_state",
+  "sql": {
+   "query": "SELECT * FROM lookup.libredb_country_names",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_state",
+  "sql": {
+   "query": "SELECT LOOKUP('US', 'libredb_country_names') AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_state",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM libredb_agent_data WHERE LOOKUP(s, 'libredb_country_names') = 'Turkey'",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_state",
+  "sql": {
+   "query": "SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES ORDER BY 1, 2",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_state",
+  "sql": {
+   "query": "SELECT * FROM INFORMATION_SCHEMA.SCHEMATA",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "note": "what a SELECT reaches beyond the datasources, as agent_rw"
+ },
+ {
+  "as": "agent_rw",
+  "sql": {
+   "query": "SELECT * FROM sys.segments LIMIT 1",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_rw",
+  "sql": {
+   "query": "SELECT * FROM sys.tasks LIMIT 1",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_rw",
+  "sql": {
+   "query": "SELECT * FROM sys.supervisors LIMIT 1",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_rw",
+  "sql": {
+   "query": "SELECT * FROM sys.server_segments LIMIT 1",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_rw",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM sys.servers",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_rw",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM sys.server_properties",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_rw",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM U&\"\\0073ys\".segments",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_rw",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM SYS.segments",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_rw",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM druid.sys.segments",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_rw",
+  "sql": {
+   "query": "SELECT * FROM lookup.libredb_country_names",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_rw",
+  "sql": {
+   "query": "SELECT LOOKUP('US', 'libredb_country_names') AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_rw",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM libredb_agent_data WHERE LOOKUP(s, 'libredb_country_names') = 'Turkey'",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_rw",
+  "sql": {
+   "query": "SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES ORDER BY 1, 2",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_rw",
+  "sql": {
+   "query": "SELECT * FROM INFORMATION_SCHEMA.SCHEMATA",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "note": "what a SELECT reaches beyond the datasources, as admin"
+ },
+ {
+  "as": "admin",
+  "sql": {
+   "query": "SELECT * FROM sys.segments LIMIT 1",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "admin",
+  "sql": {
+   "query": "SELECT * FROM sys.tasks LIMIT 1",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "admin",
+  "sql": {
+   "query": "SELECT * FROM sys.supervisors LIMIT 1",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "admin",
+  "sql": {
+   "query": "SELECT * FROM sys.server_segments LIMIT 1",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "admin",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM sys.servers",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "admin",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM sys.server_properties",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "admin",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM U&\"\\0073ys\".segments",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "admin",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM SYS.segments",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "admin",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM druid.sys.segments",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "admin",
+  "sql": {
+   "query": "SELECT * FROM lookup.libredb_country_names",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "admin",
+  "sql": {
+   "query": "SELECT LOOKUP('US', 'libredb_country_names') AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "admin",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM libredb_agent_data WHERE LOOKUP(s, 'libredb_country_names') = 'Turkey'",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "admin",
+  "sql": {
+   "query": "SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES ORDER BY 1, 2",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "admin",
+  "sql": {
+   "query": "SELECT * FROM INFORMATION_SCHEMA.SCHEMATA",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "note": "what the planner says a statement reads (EXPLAIN PLAN FOR), as agent_ro: a native plan names its dataSources, a system table or INFORMATION_SCHEMA plans as Calcite's own scan, and RESOURCES lists only datasources"
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "EXPLAIN PLAN FOR SELECT x FROM libredb_agent_data LIMIT 2",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "EXPLAIN PLAN FOR SELECT 1 AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "EXPLAIN PLAN FOR SELECT COUNT(*) FROM (SELECT x FROM libredb_agent_data UNION ALL SELECT x FROM libredb_agent_data)",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "EXPLAIN PLAN FOR SELECT u.v FROM libredb_agent_data, UNNEST(MV_TO_ARRAY(s)) AS u(v) LIMIT 2",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "EXPLAIN PLAN FOR SELECT s FROM libredb_agent_data WHERE s IN (SELECT s FROM libredb_agent_data WHERE x = 1) LIMIT 2",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "EXPLAIN PLAN FOR SELECT COUNT(*) FROM sys.segments",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "EXPLAIN PLAN FOR SELECT COUNT(*) AS n FROM U&\"\\0073ys\".segments",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "EXPLAIN PLAN FOR SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "EXPLAIN PLAN FOR SELECT t.TABLE_NAME FROM INFORMATION_SCHEMA.TABLES t JOIN sys.segments s ON t.TABLE_NAME = s.datasource",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "EXPLAIN PLAN FOR SELECT * FROM lookup.libredb_country_names",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "EXPLAIN PLAN FOR SELECT d.s, l.v FROM libredb_agent_data d JOIN lookup.libredb_country_names l ON d.s = l.k LIMIT 2",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "EXPLAIN PLAN FOR SELECT s, LOOKUP(s, 'libredb_country_names') AS n FROM libredb_agent_data LIMIT 2",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "EXPLAIN PLAN FOR SELECT LOOKUP('US', 'libredb_country_names') AS a",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "EXPLAIN PLAN FOR SELECT x FROM libredb_agent_data WHERE LOOKUP(s, 'libredb_country_names') = 'Turkey' LIMIT 1",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "EXPLAIN PLAN FOR SELECT COUNT(*) FROM libredb_agent_other",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "note": "paging with LIMIT and OFFSET under the native engine, as agent_ro"
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT x FROM libredb_agent_data LIMIT 3 OFFSET 2",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT s, COUNT(*) AS n FROM libredb_agent_data GROUP BY s ORDER BY s LIMIT 3 OFFSET 2",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT COUNT(*) AS n FROM libredb_agent_data LIMIT 3 OFFSET 1",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "SELECT x FROM libredb_agent_data ORDER BY x LIMIT 3 OFFSET 2",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "VALUES (1), (2)",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ },
+ {
+  "as": "agent_ro",
+  "sql": {
+   "query": "TABLE libredb_agent_data",
+   "resultFormat": "array",
+   "header": true,
+   "context": {
+    "engine": "native"
+   }
+  }
+ }
+]

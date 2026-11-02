@@ -8928,17 +8928,23 @@ Found 2026-10-30 with agent execution on Couchbase.
 
 **Done when:** the Couchbase overlay gains an estimating plan whose `EXPLAIN SELECT` the agent path's fence admits, measured on 8.0, and a profile composition, or a recorded decision that it keeps none, with tests for each; cited in `docs/AGENT.md`.
 
-### B151. Apache Druid composes no estimating plan, profile, statistics reading or grounding capture
+### B151. Apache Druid composes no estimating plan, profile, statistics reading or grounding capture, and has no MCP statement read
 
 Druid's engine overlay (`src/lib/agent/languages/sql/engines/druid.ts`) supplies the catalog read alone: the column kind reads `INFORMATION_SCHEMA.COLUMNS`, which the server filters to the datasources the user may read, and the relation kind answers the projection the other engines answer with no rows, since a datasource cannot reference another; the index and statistics kinds are refused, since every dimension is indexed inside its segments and the catalog keeps no row count (the segment list does, and is not read).
 The other four dialect members are `"unsupported"`: the estimating plan, the profile composition, the statistics reading and the grounding capture.
 Druid has `EXPLAIN PLAN FOR`, and the editor reads its native plan, but the provider sends only one statement whose first keyword is `SELECT` or `WITH` on the agent path, since a `SET` before a statement selects another engine and replaces the request's query id; an estimating plan would need that fence to admit `EXPLAIN PLAN FOR SELECT` by the server's own reading, never measured for the fence. A table profile would be an aggregate over a whole datasource, never measured.
 So investigation, database assessment and data analysis open on Druid, where `inspect_plan` and `profile_table` answer `UNSUPPORTED_DIALECT`, and database assessment, which needs a table profile, opens but cannot pass (B146); the `sql-composers` requirement holds query optimization out; plan mode drafts there and grounds under the operations profile.
-Kept so that the engine joined on the members measured on it, and nothing composed from another engine's rule.
+The provider does send `EXPLAIN PLAN FOR` the agent's statement before it, but as its own check of what the statement reads, never as an answer to the agent.
+`MCP_STATEMENT_READ.druid` is false, so MCP `run_read_query` answers that the engine is not served, while the MCP metadata tools serve Druid as before (`MCP_EXPOSABLE.druid` is true).
+Measured on 37.0.0 on 2026-11-02 (`tests/fixtures/druid/37.0.0/agent-boundary/` capture 08): every login reads every lookup, both as a table of the `lookup` schema and through `LOOKUP`, since no permission of druid-basic-security names a lookup, and the segment, task and supervisor lists of its datasources, each supervisor's spec among them, and a holder of `STATE` `READ` the server tables.
+The agent path keeps a statement out of all of them twice: the statement fence refuses the `sys`, `lookup` and `view` schemas, `LOOKUP` and a name spelled with Unicode escapes, and the planner check refuses a statement whose `EXPLAIN PLAN FOR` reads anything but datasources and `INFORMATION_SCHEMA`.
+But the planner evaluates `LOOKUP` of a literal key while it plans, and rewrites a filter on `LOOKUP` of a column into one on the keys it maps from, so neither plan shows a lookup, and for those the statement fence, which reads the text, is the only layer.
+The one parse-independent check measured, refusing a login that `INFORMATION_SCHEMA` shows any lookup, would refuse agent mode on every cluster that registers a lookup, the repository's own Druid fixture included.
+Kept so that the engine joined on the members measured on it, nothing composed from another engine's rule, and so that MCP statement reads on Druid are a decision of their own rather than a side effect of agent mode joining.
 
-Found 2026-10-30 with agent execution on Apache Druid.
+Found 2026-10-30 with agent execution on Apache Druid; the MCP read measured 2026-11-02.
 
-**Done when:** the Druid overlay gains an estimating plan whose `EXPLAIN PLAN FOR` the agent path's fence admits, measured on 37.0, and a profile composition, or a recorded decision that it keeps none, with tests for each; cited in `docs/AGENT.md`.
+**Done when:** the Druid overlay gains an estimating plan whose `EXPLAIN PLAN FOR` the agent path's fence admits, measured on 37.0, and a profile composition, or a recorded decision that it keeps none, with tests for each, and a per-engine exposure ruling opens MCP statement reads on Druid through the same checks with `MCP_STATEMENT_READ.druid` true, once a lookup is kept from a statement by a layer that does not read its text (or lookups are ruled in scope), with a test that refuses a literal `LOOKUP`, with its accepted-forms row (on 37.0.0 through the agent path a `SELECT`, a `WITH` before it fine, paged with `LIMIT n OFFSET m`, which the native engine runs on a scan, a `GROUP BY` and an aggregate) and its cancel and timeout row in `docs/MCP.md` measured; cited in `docs/AGENT.md`.
 
 ### B152. LibreDB's command language has no MCP statement tool
 
