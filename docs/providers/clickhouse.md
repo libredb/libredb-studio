@@ -963,9 +963,7 @@ Grant the `SELECT` to the user itself: a user whose only `SELECT` comes through 
 
 Measured on `clickhouse/clickhouse-server:26.7.1.1315` (2026-10-29) by [`tests/live/clickhouse-agent-boundary.ts`](../../tests/live/clickhouse-agent-boundary.ts), with Studio's agent admission bypassed: 115 checks, all passing.
 
-On 2026-11-02, the live suite passed all 115 checks against each Linux ARM64 server: `26.7.1.1315` and `26.9.23.15`. Both engine inventories contain 83 names. Version 26.9 adds `BigQuery` and removes `WindowView`; the other 82 names match. `BigQuery` remains refused, and `WindowView` stays in the refused list for 26.7.
-
-The privilege inventory grows from 241 to 249 entries. The additions are `ALTER HANDLER`, `ALTER MODIFY PROJECTION`, `BIGQUERY`, `CREATE HANDLER`, `CREATE TOKEN`, `DISK`, `DROP HANDLER`, and `SHOW HANDLERS`. The existing entries, aliases, parent groups, and levels match. None of the new privileges is in the agent's read allowlist; tests verify that each is refused on 26.9.
+On 2026-11-02, the live suite passed all 115 checks against each Linux ARM64 server: `26.7.1.1315` and `26.9.23.15`. Both engine inventories contain 83 names; 26.9 adds `BigQuery` and removes `WindowView`. Both names remain in the refused list, and the local-engine allowlist is unchanged. The privilege inventory grows from 241 to 249 entries; tests name and refuse all eight additions.
 
 | Probe | Least-privilege user | Writable admin under `readonly = 1` | Writable admin, positive control |
 | --- | --- | --- | --- |

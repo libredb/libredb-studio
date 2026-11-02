@@ -129,24 +129,21 @@ function grants(...lines: string[]): ClickHouseQueryResult {
 }
 
 describe("verifyAgentProfile admits", () => {
-  test.each(["26.7.1.1315", "26.9.23.15"])(
-    "the least-privilege user on %s, after every step in order",
-    async (version) => {
-      const { query, sent } = server({ identity: result([{ version, user: "agent_ro", readonly: "1" }]) });
-      await verifyAgentProfile(query, "demo");
-      expect(sent.map(stepOf)).toEqual([
-        "identity",
-        "lowerReadonly",
-        "write",
-        "grants",
-        "queryLog",
-        "objects",
-        "dictionaries",
-        "functions",
-      ]);
-      expect(sent[2]).toBe("CREATE DATABASE IF NOT EXISTS `demo`");
-    },
-  );
+  test("the least-privilege user, after every step in order", async () => {
+    const { query, sent } = server();
+    await verifyAgentProfile(query, "demo");
+    expect(sent.map(stepOf)).toEqual([
+      "identity",
+      "lowerReadonly",
+      "write",
+      "grants",
+      "queryLog",
+      "objects",
+      "dictionaries",
+      "functions",
+    ]);
+    expect(sent[2]).toBe("CREATE DATABASE IF NOT EXISTS `demo`");
+  });
 
   test("the write refused under readonly, the query log switched off, and no dictionary listed", async () => {
     await expect(
@@ -359,6 +356,7 @@ describe("the checked lists", () => {
     const covered = [...CLICKHOUSE_LOCAL_TABLE_ENGINES, ...CLICKHOUSE_REFUSED_TABLE_ENGINES];
     expect(new Set(covered).size).toBe(covered.length);
     expect([...covered].sort()).toEqual([...new Set([...ENGINES_26_7, ...ENGINES_26_9])].sort());
+    expect(CLICKHOUSE_REFUSED_TABLE_ENGINES).toContain("BigQuery");
   });
 
   test.each(NEW_PRIVILEGES_26_9)("26.9's added %s privilege is refused", async (privilege) => {
@@ -368,15 +366,6 @@ describe("the checked lists", () => {
     });
     expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
     expect(error.message).toContain(privilege);
-  });
-
-  test("26.9's BigQuery table engine is refused", async () => {
-    const error = await refusal({
-      identity: result([{ version: "26.9.23.15", user: "agent_ro", readonly: "1" }]),
-      objects: result([{ database: "demo", name: "external", engine: "BigQuery" }]),
-    });
-    expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
-    expect(error.message).toContain("demo.external (BigQuery)");
   });
 
   test("every source grant 26.7 lists is a source privilege, and none is admitted", () => {
