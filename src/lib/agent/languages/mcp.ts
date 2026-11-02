@@ -15,6 +15,7 @@ import type { z } from "zod";
 import type { AgentStatementLanguageId } from "../agent-manifest";
 import { KUBECTL_MCP_FACET } from "./kubectl/mcp";
 import { MONGO_MCP_FACET } from "./mongo/mcp";
+import { QDRANTAPI_MCP_FACET } from "./qdrantapi/mcp";
 import { SQL_MCP_FACET } from "./sql/mcp";
 
 /** What the MCP module hands a facet's description: the served engines' names and the shared result limits. */
@@ -76,8 +77,7 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   influxql: null,
   // No MCP statement tool yet: MCP read stays closed on Weaviate until a change of its own declares one and opens it.
   weaviateapi: null,
-  // No MCP statement tool yet: MCP read stays closed on Qdrant until a change of its own declares one and opens it.
-  qdrantapi: null,
+  qdrantapi: QDRANTAPI_MCP_FACET,
   // No MCP statement tool yet: MCP read stays closed on Neo4j until a change of its own declares one and opens it.
   cypher: null,
   // No MCP statement tool yet: MCP read stays closed on Milvus until a change of its own declares one and opens it.

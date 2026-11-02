@@ -58,19 +58,22 @@ describe("mcpStatementEngines", () => {
       ...Object.fromEntries(languages.map((language) => [language, []])),
       mongo: ["mongodb"],
       kubectl: ["kubernetes"],
+      qdrantapi: ["qdrant"],
     });
   });
 
   test("reads the shipped records when none are passed", () => {
-    for (const language of ["sql", "mongo", "kubectl"] as const) {
+    for (const language of ["sql", "mongo", "kubectl", "qdrantapi"] as const) {
       expect(mcpStatementEngines(language)).toEqual(mcpStatementEngines(language, SHIPPED));
     }
   });
 
-  test("serves MongoDB and Kubernetes each in its own language", () => {
-    // MongoDB opened with run_mongo_command, Kubernetes with run_kubectl_read, offered only machine-redacted.
+  test("serves MongoDB, Kubernetes and Qdrant each in its own language", () => {
+    // MongoDB opened with run_mongo_command, Kubernetes with run_kubectl_read, offered only machine-redacted, and Qdrant
+    // with run_qdrant_read, metadata only.
     expect(mcpStatementEngines("mongo")).toEqual(["mongodb"]);
     expect(mcpStatementEngines("kubectl")).toEqual(["kubernetes"]);
+    expect(mcpStatementEngines("qdrantapi")).toEqual(["qdrant"]);
   });
 
   test("an agent engine whose MCP read row is false is not served, though every other record lets it through", () => {
