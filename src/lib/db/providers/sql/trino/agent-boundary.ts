@@ -304,7 +304,8 @@ const FIRST_KEYWORD = /^(?:select|with)(?![\w$@:])/i;
  * and only comments and whitespace may follow it. Text that ends inside a comment, string or quoted name cannot be
  * bounded and is refused. A carriage return inside a `--` comment with more text after it is refused, since readers
  * differ on whether it ends the comment, and so is a `$$` run, which the span reader reads as a string and Trino does
- * not.
+ * not. A statement that names the system catalog is refused too (`namesSystemCatalog`): the read-only access control
+ * lets any user read every other user's query text in `system.runtime.queries`.
  */
 export function trinoAgentStatementRefusal(sql: string): string | null {
   const grammar = resolveSqlGrammar("trino");
@@ -338,7 +339,64 @@ export function trinoAgentStatementRefusal(sql: string): string | null {
     if (sql[at] === ";") ended = true;
     at++;
   }
-  return opened ? null : `${FENCE}; this text holds no statement, so nothing was sent.`;
+  if (!opened) return `${FENCE}; this text holds no statement, so nothing was sent.`;
+  return namesSystemCatalog(sql, grammar) ? systemCatalog() : null;
+}
+
+/** A name in code: a run of identifier characters, as `FIRST_KEYWORD` bounds a word. */
+const NAME_CHARACTER = /[\w$@:]/;
+
+/** The catalog every Trino server has, whose `runtime` tables hold the text of every user's queries. */
+const SYSTEM_CATALOG = "system";
+
+/**
+ * Whether the text names the system catalog: the name `system`, bare or double-quoted and in any case (Trino folds a
+ * quoted name too), as the first part of a dotted name, so not after a dot. Measured on Trino 476 under the read-only
+ * access control, alone and beside file rules: any user reads every other user's query text in
+ * `system.runtime.queries`, in each of those spellings and with comments and whitespace around the dots. A schema
+ * named `system` inside another catalog (`pg.system.t`) follows a dot and is not the catalog. Comments and string
+ * literals are skipped as the fence reads them.
+ */
+function namesSystemCatalog(sql: string, grammar: ReturnType<typeof resolveSqlGrammar>): boolean {
+  // The last two code tokens: a name (lowercased), a dot, or anything else.
+  let last: string | null = null;
+  let beforeLast: string | null = null;
+  const push = (token: string) => {
+    beforeLast = last;
+    last = token;
+  };
+  for (let at = 0; at < sql.length; ) {
+    const span = readSqlSpan(sql, at, grammar);
+    if (span !== null && span.kind !== "subscript") {
+      if (span.kind === "quoted-identifier") {
+        push(
+          `name:${sql
+            .slice(at + 1, span.end - 1)
+            .replaceAll('""', '"')
+            .toLowerCase()}`,
+        );
+      } else if (span.kind !== "whitespace" && span.kind !== "line-comment" && span.kind !== "block-comment") {
+        push("other");
+      }
+      at = span.end;
+      continue;
+    }
+    if (NAME_CHARACTER.test(sql[at] ?? "")) {
+      let end = at + 1;
+      while (end < sql.length && NAME_CHARACTER.test(sql[end] ?? "")) end++;
+      push(`name:${sql.slice(at, end).toLowerCase()}`);
+      at = end;
+      continue;
+    }
+    if (sql[at] === "." && last === `name:${SYSTEM_CATALOG}` && beforeLast !== ".") return true;
+    push(sql[at] === "." ? "." : "other");
+    at++;
+  }
+  return false;
+}
+
+function systemCatalog(): string {
+  return `${FENCE}; this statement names the system catalog, whose runtime tables hold the text of every user's queries on this server, so it was not sent. Read the tables of the catalogs that hold the data.`;
 }
 
 function notSelect(): string {

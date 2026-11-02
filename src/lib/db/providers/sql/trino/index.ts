@@ -688,6 +688,14 @@ export class TrinoProvider extends SQLBaseProvider {
     let transport: TrinoTransport;
     let caution: QueryWarning | null = null;
     try {
+      // A handle that will send an agent's statements never pins the system catalog, whose runtime tables hold the
+      // text of every user's queries: the fence refuses a statement that names it, and unqualified names would not.
+      if (this.readOnlyProfile && this.config.database?.trim().toLowerCase() === "system") {
+        throw new ExecutionProfileError(
+          "The agent read-only execution profile needs a Trino connection that pins a catalog other than system: the system catalog's runtime tables hold the text of every user's queries on this server, and a statement's unqualified names would read them. Pin the catalog that holds the data. Nothing was sent.",
+          "PROFILE_UNSUPPORTED_TARGET",
+        );
+      }
       // Constructed inside the guard because the constructor itself refuses one
       // configuration: a password over plain HTTP, which the coordinator rejects
       // with HTTP 401 even when authentication is switched off.

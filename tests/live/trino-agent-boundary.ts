@@ -14,8 +14,8 @@
  *    refused with the operator setting named, and nothing is written; the operations profile opens on the default, so
  *    plan mode grounds on any connection; an editor handle's queryReadOnly is refused;
  *  - the fence: CALL, INSERT, CREATE TABLE AS, catalog creation and removal, COMMIT, ROLLBACK, START TRANSACTION, SET
- *    SESSION, USE, EXECUTE, PREPARE and a second statement are each refused through `queryReadOnly` before anything
- *    is sent;
+ *    SESSION, USE, EXECUTE, PREPARE, a second statement and a read of the system catalog's query history are each
+ *    refused through `queryReadOnly` before anything is sent, and an open that pins the system catalog is refused;
  *  - the boundary behind the fence: the pass-through dblink write through `queryReadOnly` is refused by the server, as
  *    is reading the SECURITY DEFINER view over a pass-through write that `run.sh up` stores as another user, and
  *    the same write, INSERT, CREATE TABLE AS, CALL in a transaction and in autocommit, and catalog creation and removal,
@@ -166,6 +166,19 @@ async function opens(): Promise<void> {
       `${access}: the open is refused with the operator setting named (${error instanceof Error ? error.message.slice(-160) : "opened"})`,
     );
   }
+  const pinned = await createDatabaseProvider(
+    { ...connection("read-only"), database: "system" },
+    {},
+    executionContextFor("agent-read-only"),
+  );
+  const pinnedError = await pinned.connect().then(
+    () => null,
+    (caught: unknown) => caught,
+  );
+  check(
+    pinnedError instanceof ExecutionProfileError && pinnedError.reasonCode === "PROFILE_UNSUPPORTED_TARGET",
+    "read-only: an open that pins the system catalog is refused before anything is sent",
+  );
   const operations = await createDatabaseProvider(connection("allow-all"), {}, executionContextFor("agent-operations"));
   const grounded = await operations.connect().then(
     () => true,
@@ -203,6 +216,7 @@ async function fenceAndBoundary(): Promise<void> {
       "EXECUTE p",
       "PREPARE p FROM SELECT 1",
       "SELECT 1 AS a; COMMIT",
+      'SELECT "user", query FROM "SYSTEM".runtime.queries',
     ]) {
       const error = await readOnly(provider, sql);
       check(error instanceof RefusedBeforeSendError, `${access}: refused before anything is sent: ${sql}`);
