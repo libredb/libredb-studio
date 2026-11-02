@@ -102,7 +102,12 @@ beforeAll(async () => {
       const { commands, rest } = parse(Buffer.concat([buffer, chunk]));
       buffer = rest;
       const drop = dropping ? commands.findIndex((argv) => argv[0].toUpperCase() === "HELLO") : -1;
-      socket.write(commands.slice(0, drop < 0 ? undefined : drop).map((argv) => encode(answer(argv))).join(""));
+      socket.write(
+        commands
+          .slice(0, drop < 0 ? undefined : drop)
+          .map((argv) => encode(answer(argv)))
+          .join(""),
+      );
       if (drop >= 0) socket.destroy();
     });
   });
@@ -125,7 +130,11 @@ afterEach(() => {
 });
 
 const TIME_LEFT_MS = 400;
-const BUDGET: ReadOnlyStatementBudget = { maxResultRows: 200, maxResultBytes: 65_536, statementTimeoutMs: TIME_LEFT_MS };
+const BUDGET: ReadOnlyStatementBudget = {
+  maxResultRows: 200,
+  maxResultBytes: 65_536,
+  statementTimeoutMs: TIME_LEFT_MS,
+};
 
 function connection(database?: string): DatabaseConnection {
   return {

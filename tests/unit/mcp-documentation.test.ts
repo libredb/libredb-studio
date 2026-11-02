@@ -183,8 +183,10 @@ describe("docs/MCP.md", () => {
       "A Redis seed's `user` must be an ACL user of its own, never `default`, that the server refuses every write probe as a command it does not hold, such as `on`, a password, `~*` and `+@read`",
     );
     expect(MCP_DOC).toContain(
-      "Redis proves its ACL user only for a connection that sends statements, so `inspect_schema` opens a Redis connection unproven, as the editor does, with any user, `default` included, and lists the leading segment of each key grouping (`user:*`), never a full key name.",
+      "Redis proves its ACL user only for a connection that sends statements, so `inspect_schema` opens a Redis connection unproven, as the editor does, with any user, `default` and a `+@read` reader included, and lists the leading segment of each key grouping (`user:*`), never a full key name and never a function library.",
     );
+    expect(MCP_DOC).toContain("a user refused `CONFIG GET` is listed its session database alone");
+    expect(MCP_DOC).toMatch(/^\| Redis \| .*after which the connection is closed and never reopened, /m);
     expect(MCP_DOC).toMatch(/^\| Redis \| Studio stops waiting; /m);
   });
 

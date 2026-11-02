@@ -2710,7 +2710,8 @@ describe("RedisProvider", () => {
     });
 
     /** What Redis 8.10.2 refuses a `~* +@read` user each command with, naming the user. */
-    const refusedTo = (command: string) => `NOPERM User agent_reader has no permissions to run the '${command}' command`;
+    const refusedTo = (command: string) =>
+      `NOPERM User agent_reader has no permissions to run the '${command}' command`;
 
     // The editor handle's refusal shapes are pinned under listContainers (#2163); this pins the agent-mode handle to the same list.
     test("a user refused CONFIG GET lists the session database alone on an agent-mode handle", async () => {

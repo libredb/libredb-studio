@@ -18,11 +18,12 @@
  *  - the data scope: a reader whose key pattern is `~app:*` reads its own keys and is refused a key outside the pattern
  *    in the same words whether that key exists or not, words that never name the key; DBSIZE still counts every key of
  *    the database; a `~*` reader answers whether any key exists; inspect_schema, which takes the operations profile,
- *    lists the leading segments of the key groupings for any user, `default` included;
- *  - the limits: a read past `timeout_ms` (the server held by `DEBUG SLEEP`) is answered as the timeout, and a cancelled
- *    call is answered as the cancel at once while the provider's read runs on: each of its steps after the TCP connect,
- *    the connection's AUTH, the proof's round trip and the command, takes the call's time left as its own command
- *    timeout (a connection to a database other than 0 adds a SELECT, which this check's database 0 does not send).
+ *    lists the leading segments of the key groupings for any user, `default`, a `+@read` reader and a key-pattern reader
+ *    included, and no function library;
+ *  - the limits: a read past `timeout_ms` (the server held by `DEBUG SLEEP`) is answered as the timeout, on database 0
+ *    and on database 1, whose connection adds a SELECT, and a cancelled call is answered as the cancel at once while the
+ *    provider's read runs on, on its one connection, until the step the server holds gives up at the call's time left,
+ *    with no second connection; and no promise rejects unheard.
  *
  * It is NOT in `bun run test`: the runner excludes `tests/live/` by name. Run it against a server you may write to,
  * whose `default` user is the stock `nopass +@all` and which allows `DEBUG` (`--enable-debug-command yes`):
@@ -75,6 +76,7 @@ const USERS = {
   full: "~* &* +@all",
   scopedwriter: "~app:* +@read +@write",
   readdel: "~* +@read +del",
+  selector: "~* +@read +select",
 } as const;
 type UserName = keyof typeof USERS;
 
@@ -90,10 +92,12 @@ const KEYS = {
   secret: "secret:token",
 } as const;
 const CONTROL = `${PREFIX}control`;
+/** A function library the run loads, which inspect_schema must not list. */
+const LIBRARY = `${PREFIX}lib`;
 
 const admin = new Redis({ host: HOST, port: PORT, lazyConnect: true, enableReadyCheck: false });
 
-function seed(id: string, user: string | undefined, password = SEEDED_PASSWORD): ManagedConnection {
+function seed(id: string, user: string | undefined, password = SEEDED_PASSWORD, database?: string): ManagedConnection {
   return {
     id: `seed:live-${id}`,
     name: id,
@@ -106,6 +110,7 @@ function seed(id: string, user: string | undefined, password = SEEDED_PASSWORD):
     port: PORT,
     ...(user === undefined ? {} : { user }),
     ...(password === "" ? {} : { password }),
+    ...(database === undefined ? {} : { database }),
     createdAt: new Date(),
   } as ManagedConnection;
 }
@@ -113,6 +118,11 @@ function seed(id: string, user: string | undefined, password = SEEDED_PASSWORD):
 const userSeed = (name: UserName) => seed(name, `${PREFIX}${name}`);
 
 let failures = 0;
+let unheard = 0;
+process.on("unhandledRejection", (reason) => {
+  unheard++;
+  console.log(`unhandled rejection: ${reason instanceof Error ? reason.message : String(reason)}`);
+});
 function check(ok: boolean, line: string): void {
   console.log(`${ok ? "PASS" : "FAIL"} ${line}`);
   if (!ok) failures++;
@@ -194,6 +204,11 @@ async function seedServer(): Promise<void> {
   await admin.xadd(KEYS.stream, "*", "f", "v");
   await admin.set(KEYS.ttl, "s", "EX", 3600);
   await admin.set(KEYS.secret, "not-a-real-token");
+  await admin.call(
+    "FUNCTION",
+    "LOAD",
+    `#!lua name=${LIBRARY}\nredis.register_function{function_name='${LIBRARY}_f', callback=function() return 1 end, flags={'no-writes'}}`,
+  );
   for (const [name, rules] of Object.entries(USERS)) {
     await admin.call("ACL", "SETUSER", `${PREFIX}${name}`, "on", `>${SEEDED_PASSWORD}`, ...rules.split(" "));
   }
@@ -203,6 +218,7 @@ async function cleanup(): Promise<void> {
   const keys = [...Object.values(KEYS), CONTROL, `${CONTROL}:moved`];
   await admin.del(...keys);
   for (const name of Object.keys(USERS)) await admin.call("ACL", "DELUSER", `${PREFIX}${name}`);
+  await admin.call("FUNCTION", "DELETE", LIBRARY).catch(() => undefined);
 }
 
 /** The writes a reader must never make, each also sent raw as the reader and as the admin on the control key. */
@@ -229,6 +245,8 @@ const REFUSED_FORMS: readonly string[] = [
   "OBJECT FREQ app:profile",
   `MEMORY USAGE ${KEYS.hash} SAMPLES 0`,
   `DBSIZE\nDEL ${KEYS.hash}`,
+  `TYPE ${KEYS.hash}\r\n`,
+  `\nTYPE ${KEYS.hash}`,
   'EVAL_RO "return 1" 0',
 ];
 
@@ -300,7 +318,7 @@ async function main(): Promise<void> {
   for (const statement of REFUSED_FORMS) {
     const fenced = await mcp(reader, { statement });
     const bypassed = await mcp(reader, { statement }, UNFENCED);
-    const shown = statement.replace("\n", "\\n");
+    const shown = JSON.stringify(statement);
     check(
       textOf(fenced.result).startsWith("The command was refused before it reached the server (") &&
         fenced.acquired.length === 0 &&
@@ -375,11 +393,21 @@ async function main(): Promise<void> {
     rowsOf(oracle.result) === '[{"exists":true}]',
     `scope: the ~* reader answers whether any key it names exists -> ${rowsOf(oracle.result)}`,
   );
-  const inspected = await inspectSchemaOf(seed("named-default", "default", ""));
-  check(
-    inspected.includes("app:*") && inspected.includes("secret:*") && !inspected.includes(KEYS.secret),
-    `scope: inspect_schema on a connection naming default lists the leading segments under the operations profile -> ${inspected}`,
-  );
+  for (const [what, connection] of [
+    ["a connection naming default", seed("named-default", "default", "")],
+    [`the ${USERS.reader} reader`, reader],
+    [`the ${USERS.scoped} reader`, scoped],
+  ] as const) {
+    const inspected = await inspectSchemaOf(connection);
+    check(
+      inspected.includes('"app:*"') &&
+        inspected.includes('"secret:*"') &&
+        !inspected.includes(KEYS.secret) &&
+        !inspected.includes(LIBRARY) &&
+        !inspected.includes("NOPERM"),
+      `scope: inspect_schema for ${what} lists the leading segments under the operations profile, and no library -> ${inspected.slice(0, 160)}`,
+    );
+  }
 
   // The limits.
   const sleeper = new Redis({ host: HOST, port: PORT, lazyConnect: true, enableReadyCheck: false });
@@ -394,6 +422,20 @@ async function main(): Promise<void> {
     `limits: past timeout_ms 500 while the server sleeps -> ${textOf(slow.result)} (${slow.elapsed} ms)`,
   );
   await held;
+  const numbered = seed("selector", `${PREFIX}selector`, SEEDED_PASSWORD, "1");
+  const numberedServed = await mcp(numbered, { statement: "DBSIZE" });
+  const heldNumbered = sleeper.call("DEBUG", "SLEEP", "3");
+  await Bun.sleep(100);
+  const slowNumbered = await mcp(numbered, { statement: "DBSIZE", timeout_ms: 500 });
+  const settledNumbered = await await slowNumbered.readSettled;
+  check(
+    numberedServed.result.isError === undefined &&
+      textOf(slowNumbered.result).startsWith("The statement did not finish within timeout_ms (500 ms).") &&
+      settledNumbered !== null &&
+      settledNumbered < 1_000,
+    `limits: on database 1 past timeout_ms 500, the read settles on its one connection -> ${textOf(slowNumbered.result)} (read settled ${settledNumbered} ms)`,
+  );
+  await heldNumbered;
   // Long enough that no step of the read is answered before each one's own timeout.
   const cancelHeld = sleeper.call("DEBUG", "SLEEP", "8");
   await Bun.sleep(100);
@@ -405,12 +447,11 @@ async function main(): Promise<void> {
     textOf(cancelled.result) === "The call was cancelled before it finished." && cancelled.elapsed < 1_000,
     `limits: a cancel answers at once -> ${textOf(cancelled.result)} (${cancelled.elapsed} ms)`,
   );
-  // On database 0 each step of the read after the connect (the connection's AUTH, the proof's round trip, the command)
-  // takes the time left as its own command timeout, so a held server holds the read past the time left, never past three
-  // times it; a database other than 0 adds a fourth step, its SELECT.
+  // The server holds the first step, the connection's AUTH, which gives up at the call's time left; the connection is
+  // then closed and never reopened, so the read settles once, near the time left, not twice it.
   check(
-    settledAt !== null && settledAt >= 1_500 && settledAt < 6_500,
-    `limits: the provider's read settles after the cancel, each of its steps bounded by the call's time left -> ${settledAt} ms`,
+    settledAt !== null && settledAt >= 1_500 && settledAt < 3_000,
+    `limits: the provider's read settles after the cancel at the call's time left, on its one connection -> ${settledAt} ms`,
   );
   await cancelHeld;
   sleeper.disconnect();
@@ -460,5 +501,6 @@ try {
   if (!process.argv.includes("--relative")) await cleanup();
   admin.disconnect();
 }
+check(unheard === 0, `no promise rejected unheard -> ${unheard}`);
 console.log(failures === 0 ? "ALL PASS" : `${failures} FAILED`);
 process.exit(failures === 0 ? 0 : 1);

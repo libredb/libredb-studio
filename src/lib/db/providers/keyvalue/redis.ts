@@ -34,7 +34,12 @@ import { EDIT_CHARACTER_LIMIT, userPositionOf } from "../../object-edit";
 import { connectionFingerprint } from "../../connection-fingerprint";
 import { readRedisCommandText } from "./redis-command-text";
 import { readRedisAgentStatement } from "./redis-agent-statement";
-import { REDIS_COMMAND_TIMED_OUT, REDIS_METADATA_ONLY, redisAgentFailure, redisAgentResult } from "./redis-metadata-read";
+import {
+  REDIS_COMMAND_TIMED_OUT,
+  REDIS_METADATA_ONLY,
+  redisAgentFailure,
+  redisAgentResult,
+} from "./redis-metadata-read";
 import { proveRedisReadOnly, type RedisRoundTrip, redisAgentUser } from "./redis-read-only-proof";
 import { comparePaths } from "../../object-path";
 import {
