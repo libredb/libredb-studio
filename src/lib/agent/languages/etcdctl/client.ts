@@ -11,7 +11,8 @@ import type { AgentLanguageClientPack, StatementBudgets } from "../pack";
 /**
  * Agent mode on etcd: the boundary is the provider's closed table of metadata reads, which holds no write and no read
  * of a key name or a value, and before every command the server must show that authentication is on and that the
- * connection's user holds no root role and only READ permissions. Its answers carry names, counts and sizes only.
+ * connection's user holds no root role and only READ permissions, on no range that holds every key or a key under a
+ * Kubernetes storage prefix. Its answers carry names, counts and sizes only.
  */
 function etcdctlReadsPosture(bounds: StatementBudgets): AgentPosture {
   const rows = bounds.maxResultRows;
@@ -21,7 +22,7 @@ function etcdctlReadsPosture(bounds: StatementBudgets): AgentPosture {
     headline: "Reads only",
     qualifier: `metadata only, ${rows} rows and ${seconds} s per command, as an etcd user whose roles grant READ only`,
     title: "Agent mode reads etcd's metadata, as an etcd user whose roles grant READ only",
-    body: `Agent mode runs etcd reads it wrote itself, the cluster's status, members, alarms and leases, the count of every key and, for one key a command names, its existence, revisions, version, lease and value size, bounded to ${rows} rows and ${seconds} seconds each and refused past them rather than cut. Key names count as stored values, so it never lists keys, reads a value or watches. Before every command the server must answer that authentication is on and that the connection's user is not root, holds no root role, and holds READ permissions only, read from its own roles, so a user that may write even one key range is refused; a call the roles do not govern, such as granting a lease, is stopped by the reader, which sends none. Studio's reader refuses every other command before anything is sent. Nothing reaches your editor.`,
+    body: `Agent mode runs etcd reads it wrote itself, the cluster's status, members, alarms and leases and, for one key a command names, its existence, revisions, version, lease and value size, bounded to ${rows} rows and ${seconds} seconds each and refused past them rather than cut. Key names count as stored values, so it never lists keys, reads a value or watches. Before every command the server must answer that authentication is on and that the connection's user is not root, holds no root role, and holds READ permissions only, on no range that holds every key or a key under a Kubernetes storage prefix such as /registry/, read from its own roles, so a user that may write even one key range, or could tell which Kubernetes Secrets exist, is refused, and the count of every key is refused by the server; a call the roles do not govern, such as granting a lease, is stopped by the reader, which sends none. Studio's reader refuses every other command before anything is sent. Nothing reaches your editor.`,
   };
 }
 

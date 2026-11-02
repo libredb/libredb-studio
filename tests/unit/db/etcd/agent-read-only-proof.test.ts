@@ -201,6 +201,10 @@ describe("a READ range that reaches a Kubernetes storage prefix or every key", (
     ["an application prefix", "/app/", "/app0"],
     ["the key /registry itself, which holds no key under /registry/", "/registry", undefined],
     ["a range that begins just past every key under /registry/", "/registry0", "/registry1"],
+    // compact_rev_key holds only Kubernetes' compaction revision and names no object, so a READ on it tells nothing
+    // about which Secrets exist: the rule is the storage prefixes alone.
+    ["the key compact_rev_key, which names no Kubernetes object", "compact_rev_key", undefined],
+    ["a range that holds compact_rev_key and no storage prefix", "c", "d"],
   ] as const)("READ on %s is proved", async (_what, key, end) => {
     expect(await readOn(key, end)).toBe("proved");
   });
