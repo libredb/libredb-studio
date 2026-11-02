@@ -57,7 +57,7 @@ const rows = (...answered: Record<string, unknown>[]): GraphRunResult => ({
   truncated: false,
 });
 
-const refused = () => new GraphClientError("access-mode", "Permission denied", "Neo.ClientError.Security.Forbidden");
+const refused = () => new GraphClientError("forbidden", "Permission denied", "Neo.ClientError.Security.Forbidden");
 const unreachable = () => new GraphClientError("connection", "Connection refused");
 
 describe("the monitoring statements", () => {

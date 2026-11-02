@@ -28,6 +28,7 @@ One directory per principal, each replayable with `recordedGraphClient(<director
 | `denied` | `-ee` | `agent_reader`, `csv_loader` and `no_load` (`DENY LOAD ON ALL DATA`) |
 | `editor` | `-ee` | `editor` |
 | `boosted` | `-ee` | `agent_reader` and `boosted` (`GRANT EXECUTE BOOSTED PROCEDURE * ON DBMS`) |
+| `no_access` | `-ee` | `agent_reader` and `no_access` (`DENY ACCESS ON DATABASE neo4j`) |
 | `admin` | `-ee` | `admin`; also the full `SHOW PROCEDURES` and `SHOW FUNCTIONS` listings |
 | `widened-before`, `widened-after` | `-ee` | `agent_reader`, then also `csv_loader`, granted between the two |
 | `ext_agent` | `-ext` | `agent_reader` |
@@ -40,6 +41,7 @@ One directory per principal, each replayable with `recordedGraphClient(<director
 - After the revoke, `agent` is refused `Neo.ClientError.Security.Forbidden` for `LOAD CSV` in every spelling captured: upper and lower case, after `WITH`, and inside `CALL { }`.
 - `loader` and `widened-after` are answered `LOAD CSV` through the second role; `denied` is refused it, since a denial wins over a grant.
 - `CREATE`, `MERGE`, `SET`, `DELETE`, `CALL { } IN TRANSACTIONS` and `db.createLabel` are refused in a READ session (`AccessMode`), and the same writes are refused `Forbidden` to `agent` in a WRITE session (`agent/write-session/`), while `editor`'s write passes the privilege check (`editor/write-session/create` is refused only for a new label).
+- `no_access` is refused `Neo.ClientError.Security.Forbidden` for every proof read, in a message that opens `ACCESS on database 'neo4j'`, the same code a procedure the user may not execute is answered with.
 - `USE other` is answered, so the database is pinned by Studio's statement reader, which refuses `USE`.
 - `db.checkpoint()` and `db.resampleOutdatedIndexes()` are built-ins a reader may run; Studio's reader refuses both by name, and `dbms.setConfigValue` is refused by the server.
 - `ext_agent` can execute `libredbtest.touch` and `libredbtest.touchFn`, and each wrote its marker file in the server (`state-after.json`); `ext_denied` is refused both and lists only the built-ins.

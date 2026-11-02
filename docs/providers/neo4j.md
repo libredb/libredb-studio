@@ -146,6 +146,7 @@ Every refusal is a `QueryError` whose sentence names what was refused; a policy 
 | The gate: no classification | a plan that carries no query type | The server did not classify this statement, so it was not run. |
 | The gate: the check failed | an `EXPLAIN` the server refused, such as a syntax error | The statement could not be checked by the server, so it was not run: <the server's words> |
 | The server's READ mode | a write that reached a READ session | The server refused a write: Neo4j connections are read-only in this version. |
+| The user's privileges | a statement the server refuses the user, such as `SHOW INDEXES` without `SHOW INDEX` | The server refused this statement for this user's privileges: <the server's words> |
 
 ### 3.4 Why LOAD CSV and APOC are refused
 
@@ -428,11 +429,14 @@ The Bolt client classifies every failure by the server's status code where there
 | `timeout` | `TimeoutError` | The query did not finish in time: <the server's words> |
 | `cancelled` | `QueryCancelledError` | The query was cancelled. |
 | `access-mode` | `QueryError` | The server refused a write: Neo4j connections are read-only in this version. |
+| `forbidden` | `QueryError` | The server refused this statement for this user's privileges: <the server's words> |
 | `syntax` | `QueryError` | <the server's words> |
 | `query` | `QueryError` | <the server's words> |
 
 The server's status code, such as `Neo.ClientError.Statement.SyntaxError`, travels as the error's detail.
 A write that reached the server is reported as refused, never as a driver fault.
+`access-mode` is `Neo.ClientError.Statement.AccessMode`, the READ session's refusal of a write, and the only class worded as a write.
+`forbidden` is `Neo.ClientError.Security.Forbidden`, which the server answers a read the user's privileges do not allow, such as `SHOW INDEXES` without `SHOW INDEX` or `LOAD CSV` without `LOAD`, as well as a write, so it names the privileges and keeps the server's words, which say what was refused.
 The password never reaches an error, and no statement text reaches the server's log through the driver, since no logger is configured.
 
 ## 11. Testing

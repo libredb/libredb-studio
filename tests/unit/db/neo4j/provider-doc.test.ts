@@ -376,6 +376,14 @@ describe("docs/providers/neo4j.md section 3.3 quotes every refusal sentence as t
     expect(cellsOf(rowOf(REFUSALS, "The server's READ mode"))[2]).toBe(sentence);
   });
 
+  test("a statement the server refused for the user's privileges, never worded as a write", () => {
+    const sentence = mapNeo4jError(
+      new GraphClientError("forbidden", SERVER_WORDS, "Neo.ClientError.Security.Forbidden"),
+    ).message;
+    expect(cellsOf(rowOf(REFUSALS, "The user's privileges"))[2]).toBe(sentence);
+    expect(sentence).not.toContain("write");
+  });
+
   test("an allowlisted procedure the server classifies s runs, as the section says", async () => {
     const verdict = checkCypherRead("CALL dbms.components()", NEO4J_POLICY_PROFILE);
     if (!verdict.allowed) throw new Error("the policy refused dbms.components");
@@ -686,7 +694,7 @@ describe("docs/providers/neo4j.md section 9 states the declarations", () => {
 });
 
 describe("docs/providers/neo4j.md section 10 states the error table errors.ts keeps", () => {
-  test.each(["auth", "connection", "tls", "timeout", "cancelled", "syntax", "query"] as const)(
+  test.each(["auth", "connection", "tls", "timeout", "cancelled", "forbidden", "syntax", "query"] as const)(
     "the %s row",
     (category) => {
       const mapped = mapNeo4jError(new GraphClientError(category, SERVER_WORDS, "Neo.Code"));

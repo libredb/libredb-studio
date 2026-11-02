@@ -242,7 +242,7 @@ describe("proveNeo4jAgentPrincipal", () => {
   });
 
   test("reads another server error on SHOW USER PRIVILEGES as unread, never as Community", async () => {
-    const forbidden = new GraphClientError("auth", "not allowed", "Neo.ClientError.Security.Forbidden");
+    const forbidden = new GraphClientError("forbidden", "not allowed", "Neo.ClientError.Security.Forbidden");
     const error = await refusal(agentWith(NEO4J_AGENT_PROOF_STATEMENTS.privileges, forbidden));
     expect(error.reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
     expect(error.message).toContain("could not read the server's answer to SHOW USER PRIVILEGES");
