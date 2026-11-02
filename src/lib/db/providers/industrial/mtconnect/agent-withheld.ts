@@ -18,6 +18,13 @@
  * not know yet. The agent's other items (its availability, the devices it added, changed or removed, its asset counts)
  * carry no address and are answered.
  *
+ * NOR IS A URL'S SECRET IN AN ASSET. MEASURED on the pinned image with `AllowPut = true`: a File asset whose
+ * `FileLocation href` carries a user name and password is stored and served by `/assets` exactly as written, so an
+ * asset's document and attributes can carry whatever credential the system that wrote the asset put in a URL. Every
+ * URL in an asset keeps its scheme, host, port, path and fragment, which say where a file is, and its user name,
+ * password and query string, where a credential or a signature travels, read `[withheld]`; the answer counts them.
+ * MEASURED on the same image with an MQTT sink configured: the broker's address reaches no route of the table.
+ *
  * Browser-safe: no Node built-in, no server module.
  */
 import { MTC_ADAPTER_COMPONENTS, type MtcDataItem } from "./model";
@@ -41,4 +48,32 @@ export function itemWithheld(item: MtcDataItem): boolean {
 export function observationWithheld(observation: MtcObservation, item: MtcDataItem | undefined): boolean {
   if (item?.withinAdapter === true) return true;
   return observation.componentType !== undefined && MTC_ADAPTER_COMPONENTS.has(observation.componentType);
+}
+
+/** Why a URL's user name, password and query string are withheld from an asset, in the words the warning repeats. */
+export const MTCONNECT_WITHHELD_URL_SENTENCE =
+  "Agent mode keeps each URL in an asset to its scheme, host, port, path and fragment, and withholds its user name, password and query string, where a credential or a signature travels.";
+
+/**
+ * A URL: its scheme, then an optional user name and password ending in `@`, a host with its port, a path, and an
+ * optional query string. A mail address or a path with no scheme is no URL here.
+ */
+const URL_PATTERN = /\b([A-Za-z][A-Za-z0-9+.-]*:\/\/)([^\s/?#@"'<>]*@)?([^\s/?#"'<>]*[^\s?#"'<>]*)(\?[^\s#"'<>]*)?/g;
+
+/** `text` with every URL's user name, password and query string read `[withheld]`, and how many were withheld. */
+export function withoutUrlSecrets(text: string): { readonly text: string; readonly withheld: number } {
+  let withheld = 0;
+  const kept = text.replace(URL_PATTERN, (_url, scheme: string, userinfo?: string, rest?: string, query?: string) => {
+    if (userinfo !== undefined) withheld += 1;
+    if (query !== undefined) withheld += 1;
+    return `${scheme}${userinfo === undefined ? "" : "[withheld]@"}${rest}${query === undefined ? "" : "?[withheld]"}`;
+  });
+  return { text: kept, withheld };
+}
+
+/** The warning an asset answer carries for the user names, passwords and query strings it withheld. */
+export function withheldUrlWarning(count: number): string {
+  return count === 1
+    ? `1 user name, password or query string of a URL in an asset was withheld from this answer. ${MTCONNECT_WITHHELD_URL_SENTENCE}`
+    : `${count} user names, passwords or query strings of URLs in assets were withheld from this answer. ${MTCONNECT_WITHHELD_URL_SENTENCE}`;
 }

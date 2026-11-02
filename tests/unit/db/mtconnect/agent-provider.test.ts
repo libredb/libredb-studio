@@ -23,7 +23,10 @@ import {
   MTCONNECT_AGENT_READS,
 } from "@/lib/db/providers/industrial/mtconnect/agent-statement";
 import { MTCONNECT_AGENT_WITHHELD } from "@/lib/db/providers/industrial/mtconnect/agent-surface";
-import { MTCONNECT_WITHHELD_SENTENCE } from "@/lib/db/providers/industrial/mtconnect/agent-withheld";
+import {
+  MTCONNECT_WITHHELD_SENTENCE,
+  withheldUrlWarning,
+} from "@/lib/db/providers/industrial/mtconnect/agent-withheld";
 import { MTConnectProvider, MTCONNECT_STATEMENT_LANGUAGE } from "@/lib/db/providers/industrial/mtconnect/index";
 import { MTC_ROUTES } from "@/lib/db/providers/industrial/mtconnect/routes";
 import { ROW_BUDGET_PREFIX, TIME_BUDGET_PREFIX } from "@/lib/db/providers/sql/read-only-budget";
@@ -307,6 +310,23 @@ describe("what an agent read sends and answers", () => {
     expect(document).toContain("<Note>a &amp; &lt;b&gt; &quot;c&quot;</Note>");
     expect(document).not.toContain("<<<END");
     expect(document).not.toContain("CDATA");
+  });
+
+  test("a URL in an asset keeps its scheme, host and path, and its user name, password and query read [withheld]", async () => {
+    // MEASURED on mtconnect/agent:2.8.0.4 with AllowPut = true: a File asset PUT with a FileLocation href carrying a
+    // user name and password is stored and served by /assets exactly as written.
+    const file =
+      '<File assetId="FILE-1" applicationCategory="DEVICE" deviceUuid="LIBREDB-1722" source="https://reader:not-a-real-password@files.example/index?sig=not-a-real-signature" timestamp="2026-11-02T12:27:05.801276Z"><FileLocation href="ftp://not-a-real-user:not-a-real-password@files.example/programs/program.nc"/><Description>also at https://files.example/p.nc?token=not-a-real-token and file:///opt/programs/p.nc</Description></File>';
+    const assets = capture("assets").replace(/<Assets>[\s\S]*<\/Assets>/, `<Assets>${file}</Assets>`);
+    const provider = await opened(AGENT, { ...DEFAULT_ANSWERS, "/assets": assets });
+    const result = await provider.queryReadOnly("/assets", BUDGET);
+    const [row] = result.rows;
+    expect(row?.source).toBe("https://[withheld]@files.example/index?[withheld]");
+    expect(String(row?.document)).toBe(
+      '<File assetId="FILE-1" applicationCategory="DEVICE" deviceUuid="LIBREDB-1722" source="https://[withheld]@files.example/index?[withheld]" timestamp="2026-11-02T12:27:05.801276Z"><FileLocation href="ftp://[withheld]@files.example/programs/program.nc"/><Description>also at https://files.example/p.nc?[withheld] and file:///opt/programs/p.nc</Description></File>',
+    );
+    expect(JSON.stringify(result)).not.toContain("not-a-real");
+    expect(result.warnings).toEqual([{ message: withheldUrlWarning(4) }]);
   });
 
   test("an asset carrying a processing instruction or an entity declaration is refused by Studio's rule, never answered", async () => {

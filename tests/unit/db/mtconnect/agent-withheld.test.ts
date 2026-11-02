@@ -10,7 +10,9 @@ import { renderXmlElement } from "@/lib/db/providers/industrial/mtconnect/agent-
 import {
   itemWithheld,
   observationWithheld,
+  withheldUrlWarning,
   withheldWarning,
+  withoutUrlSecrets,
 } from "@/lib/db/providers/industrial/mtconnect/agent-withheld";
 import { indexMtconnectModel, type MtcModel } from "@/lib/db/providers/industrial/mtconnect/model";
 import { readMtconnectXml, type MtcElement, type MtcObservation } from "@/lib/db/providers/industrial/mtconnect/xml";
@@ -64,6 +66,36 @@ describe("the adapter connections, read from the agent's own model", () => {
     );
     expect(withheldWarning(4, "data item")).toStartWith(
       "4 data items of the agent's adapter connections were withheld from this answer.",
+    );
+  });
+});
+
+describe("a URL in an asset, its user name, password and query withheld", () => {
+  test.each([
+    ["ftp://not-a-real-user:not-a-real-password@files.example/p.nc", "ftp://[withheld]@files.example/p.nc", 1],
+    ["https://files.example/p.nc?token=not-a-real-token", "https://files.example/p.nc?[withheld]", 1],
+    ["HTTPS://u@files.example:8443/a/b?x=1#part", "HTTPS://[withheld]@files.example:8443/a/b?[withheld]#part", 2],
+    ["see https://a.example/x and s3://u:p@bucket/key", "see https://a.example/x and s3://[withheld]@bucket/key", 1],
+  ])("%s reads %s", (text, kept, withheld) => {
+    expect(withoutUrlSecrets(text)).toEqual({ text: kept, withheld });
+  });
+
+  test.each([
+    ["a URL with neither", "https://files.example/programs/p.nc"],
+    ["a file URL", "file:///opt/programs/p.nc"],
+    ["a mail address", "operator@plant.example"],
+    ["a UNC path", "//fileserver/tools/T2.pdf"],
+    ["plain text", "NEW & used"],
+  ])("%s is left as written", (_what, text) => {
+    expect(withoutUrlSecrets(text)).toEqual({ text, withheld: 0 });
+  });
+
+  test("the warning counts what was withheld, in the singular and the plural", () => {
+    expect(withheldUrlWarning(1)).toStartWith(
+      "1 user name, password or query string of a URL in an asset was withheld",
+    );
+    expect(withheldUrlWarning(3)).toStartWith(
+      "3 user names, passwords or query strings of URLs in assets were withheld",
     );
   });
 });

@@ -41,7 +41,13 @@ import {
   readMtconnectAgentStatement,
   type MtconnectAgentPathTest,
 } from "./agent-statement";
-import { itemWithheld, observationWithheld, withheldWarning } from "./agent-withheld";
+import {
+  itemWithheld,
+  observationWithheld,
+  withheldUrlWarning,
+  withheldWarning,
+  withoutUrlSecrets,
+} from "./agent-withheld";
 import { MtcClientError, type MtcAnswer } from "./client";
 import { guardRequestLine, type MtcRequest } from "./guard";
 import { indexMtconnectModel, type MtcModel } from "./model";
@@ -262,21 +268,58 @@ function modelRows(answer: MtcAnswer, request: MtcRequest, budget: ReadOnlyState
   return { rows, fields: rows.length === 0 ? [] : Object.keys(rows[0]), warnings: warningsOf(withheld, "data item") };
 }
 
-/** An asset route: one row per asset, its document beside its attributes. */
+/** An element with every URL in its attribute values and text kept to what `withoutUrlSecrets` keeps. */
+function withUrlsKept(element: MtcElement, count: (withheld: number) => void): MtcElement {
+  const kept = (text: string): string => {
+    const url = withoutUrlSecrets(text);
+    count(url.withheld);
+    return url.text;
+  };
+  return {
+    ...element,
+    attributes: Object.fromEntries(Object.entries(element.attributes).map(([name, value]) => [name, kept(value)])),
+    text: kept(element.text),
+    children: element.children.map((child) => withUrlsKept(child, count)),
+  };
+}
+
+/**
+ * An asset route: one row per asset, its document beside its attributes, every URL in either with its user name,
+ * password and query string withheld (`agent-withheld.ts`). Every column but the document is one of the document's
+ * own attributes, so each withheld part is counted once, in the document.
+ */
 function assetRows(answer: MtcAnswer, budget: ReadOnlyStatementBudget): MtconnectAgentAnswer {
   const assets = rowsFromAssets(answer.root);
   if (assets.length > budget.maxResultRows) refuseRows(assets.length, budget);
-  const rows = assets.map((row) => ({
-    assetId: row.assetId,
-    type: row.type,
-    deviceUuid: row.deviceUuid,
-    timestamp: row.timestamp,
-    removed: row.removed,
-    hash: row.hash,
-    ...row.attributes,
-    document: renderXmlElement(row.document),
-  }));
-  return { rows, fields: rows.length === 0 ? [] : Object.keys(rows[0]), warnings: [] };
+  let withheld = 0;
+  const rows = assets.map((row) => {
+    const columns: Record<string, unknown> = {
+      assetId: row.assetId,
+      type: row.type,
+      deviceUuid: row.deviceUuid,
+      timestamp: row.timestamp,
+      removed: row.removed,
+      hash: row.hash,
+      ...row.attributes,
+    };
+    const document = withUrlsKept(row.document, (count) => {
+      withheld += count;
+    });
+    return {
+      ...Object.fromEntries(
+        Object.entries(columns).map(([name, value]) => [
+          name,
+          typeof value === "string" ? withoutUrlSecrets(value).text : value,
+        ]),
+      ),
+      document: renderXmlElement(document),
+    };
+  });
+  return {
+    rows,
+    fields: rows.length === 0 ? [] : Object.keys(rows[0]),
+    warnings: withheld === 0 ? [] : [{ message: withheldUrlWarning(withheld) }],
+  };
 }
 
 /**
