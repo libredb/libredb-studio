@@ -38,6 +38,7 @@ import { NEO4J_MONITORING_STATEMENTS, TABLE_STATS_LABEL_BOUND } from "@/lib/db/p
 import { NEO4J_POLICY_PROFILE } from "@/lib/db/providers/graph/neo4j/profile";
 import { neo4jStatementGate } from "@/lib/db/providers/graph/neo4j/statement-gate";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { mcpStatementToolFor } from "@/lib/mcp/tools/statement-arms";
 import { SeedConfigSchema } from "@/lib/seed/types";
 import type { DatabaseConnection, SSLConfig } from "@/lib/types";
 import { TUNNEL_FAR_END } from "@/lib/types";
@@ -375,6 +376,14 @@ describe("docs/providers/neo4j.md section 3.3 quotes every refusal sentence as t
     expect(cellsOf(rowOf(REFUSALS, "The server's READ mode"))[2]).toBe(sentence);
   });
 
+  test("a statement the server refused for the user's privileges, never worded as a write", () => {
+    const sentence = mapNeo4jError(
+      new GraphClientError("forbidden", SERVER_WORDS, "Neo.ClientError.Security.Forbidden"),
+    ).message;
+    expect(cellsOf(rowOf(REFUSALS, "The user's privileges"))[2]).toBe(sentence);
+    expect(sentence).not.toContain("write");
+  });
+
   test("an allowlisted procedure the server classifies s runs, as the section says", async () => {
     const verdict = checkCypherRead("CALL dbms.components()", NEO4J_POLICY_PROFILE);
     if (!verdict.allowed) throw new Error("the policy refused dbms.components");
@@ -417,13 +426,17 @@ describe("docs/SECURITY.md note 3.10 names only what the policy profile refuses"
 });
 
 describe("docs/providers/neo4j.md section 3.6 states the machine access the product offers", () => {
-  test("plan mode, the MCP metadata tools and agent execution, and no run_read_query", () => {
+  test("plan mode, the MCP metadata tools, agent execution and run_cypher_read, and no run_read_query", () => {
     expect(AGENT_EXECUTION_ENGINES).toContain("neo4j");
     expect(MCP_EXPOSABLE.neo4j).toBe(true);
-    expect(MCP_STATEMENT_READ.neo4j).toBe(false);
+    expect(MCP_STATEMENT_READ.neo4j).toBe(true);
+    expect(mcpStatementToolFor("neo4j")).toBe("run_cypher_read");
     expect(MACHINE).toContain("`list_connections` and `inspect_schema`");
     expect(MACHINE).toContain("Agent mode executes Cypher on Enterprise Edition through `queryReadOnly`");
-    expect(MACHINE).toContain("MCP `run_read_query` does not serve Neo4j, filed as B93");
+    expect(MACHINE).toContain(
+      "MCP clients run Cypher through `run_cypher_read` under the same proof, on Enterprise Edition only, and MCP `run_read_query`, which takes SQL, refuses a Neo4j connection and names that tool",
+    );
+    expect(DOC).not.toContain("B93");
   });
 
   test("the plan-mode statement language is the one getLabels() answers", () => {
@@ -681,7 +694,7 @@ describe("docs/providers/neo4j.md section 9 states the declarations", () => {
 });
 
 describe("docs/providers/neo4j.md section 10 states the error table errors.ts keeps", () => {
-  test.each(["auth", "connection", "tls", "timeout", "cancelled", "syntax", "query"] as const)(
+  test.each(["auth", "connection", "tls", "timeout", "cancelled", "forbidden", "syntax", "query"] as const)(
     "the %s row",
     (category) => {
       const mapped = mapNeo4jError(new GraphClientError(category, SERVER_WORDS, "Neo.Code"));
@@ -708,7 +721,7 @@ describe("docs/providers/neo4j.md section 11 states the live fixture and its pro
   });
 });
 
-describe("the backlog entries the doc cites exist, and the agent one is cited by docs/AGENT.md", () => {
+describe("the backlog entries the doc cites exist, and any agent one is cited by docs/AGENT.md", () => {
   const cited = [...new Set([...LIMITS.matchAll(/\b([BDU]\d+)\b/g)].map((match) => match[1]))];
 
   test("the limits section cites at least the six entries the provider filed", () => {
@@ -719,9 +732,8 @@ describe("the backlog entries the doc cites exist, and the agent one is cited by
     expect(BACKLOG).toMatch(new RegExp(`^### ${id}\\. `, "m"));
   });
 
-  test("the B-series entry is cited by docs/AGENT.md", () => {
+  test("every B-series entry it cites is cited by docs/AGENT.md", () => {
     const agentEntries = cited.filter((id) => id.startsWith("B"));
-    expect(agentEntries.length).toBeGreaterThan(0);
     for (const id of agentEntries) expect(AGENT_DOC).toContain(`**${id}**`);
   });
 });
@@ -765,10 +777,56 @@ describe("docs/providers/neo4j.md section 15 states the agent path as the code d
     expect(AGENT).toContain(quoted((error as Error).message));
   });
 
+  test("the refusal of a user without ACCESS on the database is quoted as the proof words it", async () => {
+    const noAccess = recordedGraphClient(path.join(NEO4J_FIXTURES, "agent-boundary", "no_access"));
+    const error = await proveNeo4jAgentPrincipal(noAccess, { database: "neo4j", timeoutMs: 1000 }).catch((e) => e);
+    expect(AGENT).toContain(quoted((error as Error).message));
+    expect(AGENT).toContain("`no_access/proof-components`");
+  });
+
   test("the carriage return refusal is quoted as the reader words it", () => {
     const reading = readNeo4jAgentStatement("RETURN 1\r");
     if (reading.ok) throw new Error("admitted");
     expect(AGENT).toContain(quoted(reading.message));
+  });
+
+  test("the database forms' refusal is quoted as the server's classification words it", async () => {
+    const refusal = await neo4jStatementGate(
+      {
+        run: async () => ({ fields: [], rows: [], truncated: false, queryType: "s" }),
+      } as unknown as GraphClient,
+      checkCypherRead("SHOW DATABASES", NEO4J_POLICY_PROFILE) as Extract<
+        ReturnType<typeof checkCypherRead>,
+        { allowed: true }
+      >,
+      { database: "neo4j", timeoutMs: 1000, maxRows: 0 },
+    );
+    expect(AGENT).toContain(quoted(refusal?.message ?? ""));
+  });
+
+  test("the MCP section names the tool, its facet and the live check that measured it", () => {
+    const MCP = docSection(DOC, "15.7 MCP: `run_cypher_read`") ?? "";
+    expect(MCP).toContain("`run_cypher_read` takes one Cypher statement as `statement`");
+    expect(MCP).toContain("`tests/live/neo4j-mcp-boundary.ts`");
+    expect(MCP).toContain("`tests/fixtures/neo4j/5.26.31/mcp-boundary/run.txt`");
+    expect(AGENT).toContain("[`src/lib/agent/languages/cypher/mcp.ts`](../../src/lib/agent/languages/cypher/mcp.ts)");
+  });
+
+  test("the MCP timeout and cancel measurements are the committed capture's", () => {
+    const MCP = docSection(DOC, "15.7 MCP: `run_cypher_read`") ?? "";
+    const RUN = read("tests/fixtures/neo4j/5.26.31/mcp-boundary/run.txt");
+    const timeout = /answered in (\d+) ms, and the server ended the statement (\d+) ms later/.exec(RUN);
+    const close = /a client close: answered in (\d+) ms, and the statement ran on the server (\d+) ms more/.exec(RUN);
+    expect(timeout).not.toBeNull();
+    expect(close).not.toBeNull();
+    expect(MCP).toContain(
+      `answered as the timeout at ${timeout?.[1]} ms and left \`SHOW TRANSACTIONS\` ${timeout?.[2]} ms later`,
+    );
+    const closedAfter = Math.round(Number(close?.[1]) / 1000);
+    const ranOn = Math.round(Number(close?.[2]) / 1000);
+    expect(MCP).toContain(
+      `closed after ${closedAfter} s of a 10 s call, it left \`SHOW TRANSACTIONS\` about ${ranOn} s later`,
+    );
   });
 
   test("the pinned versions and the proof's row bound are the ones the code holds", () => {

@@ -201,6 +201,40 @@ describe("queryReadOnly", () => {
     expect(statementsOf(recording)).not.toContain(READ);
   });
 
+  test.each([
+    "SHOW DATABASES",
+    "SHOW DATABASES YIELD address AS a RETURN a",
+    "SHOW DATABASE neo4j",
+    "SHOW DEFAULT DATABASE",
+    "SHOW HOME DATABASE",
+  ])(
+    "%s, which the server classifies as administration, is refused by the server's classification, never run",
+    async (statement) => {
+      const { provider, recording } = await opened("agent", AGENT_PROFILE, {
+        [`EXPLAIN ${statement}`]: { fields: ["name", "address"], rows: [], truncated: false, queryType: "s" },
+      });
+      const before = recording.calls.length;
+      const error = await provider.queryReadOnly(statement, BUDGET).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(QueryError);
+      expect((error as Error).message).toBe(
+        "The server classifies this statement as a schema or administration statement, and a read-only Neo4j connection runs only reads.",
+      );
+      expect(statementsOf(recording).slice(before)).toEqual([...PROOF, `EXPLAIN ${statement}`]);
+    },
+  );
+
+  test("an index listing, which the server classifies as a read, is classified first and then run", async () => {
+    const listed: GraphRunResult = { fields: ["name"], rows: [{ name: "person_name" }], truncated: false };
+    const { provider, recording } = await opened("agent", AGENT_PROFILE, {
+      "EXPLAIN SHOW INDEXES": { fields: ["name"], rows: [], truncated: false, queryType: "r" },
+      "SHOW INDEXES": listed,
+    });
+    const before = recording.calls.length;
+    const result = await provider.queryReadOnly("SHOW INDEXES", BUDGET);
+    expect(result.rows).toEqual([{ name: "person_name" }]);
+    expect(statementsOf(recording).slice(before)).toEqual([...PROOF, "EXPLAIN SHOW INDEXES", "SHOW INDEXES"]);
+  });
+
   test("a result past the row budget is refused, never cut", async () => {
     const { provider } = await opened();
     const error = await provider

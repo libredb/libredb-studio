@@ -59,7 +59,7 @@ export const TABLE_STATS_LABEL_BOUND = 50;
 const MONITORING_TIMEOUT_MS = 30_000;
 
 /** The categories of a server that answered and refused the read. */
-const REFUSED: ReadonlySet<GraphClientErrorCategory> = new Set(["access-mode", "query", "syntax"]);
+const REFUSED: ReadonlySet<GraphClientErrorCategory> = new Set(["access-mode", "forbidden", "query", "syntax"]);
 
 type Runner = Pick<GraphClient, "run">;
 type Row = Readonly<Record<string, unknown>>;

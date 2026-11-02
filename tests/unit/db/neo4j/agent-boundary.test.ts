@@ -242,11 +242,37 @@ describe("proveNeo4jAgentPrincipal", () => {
   });
 
   test("reads another server error on SHOW USER PRIVILEGES as unread, never as Community", async () => {
-    const forbidden = new GraphClientError("auth", "not allowed", "Neo.ClientError.Security.Forbidden");
+    const forbidden = new GraphClientError("forbidden", "not allowed", "Neo.ClientError.Security.Forbidden");
     const error = await refusal(agentWith(NEO4J_AGENT_PROOF_STATEMENTS.privileges, forbidden));
     expect(error.reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
     expect(error.message).toContain("could not read the server's answer to SHOW USER PRIVILEGES");
     expect(error.message).not.toContain("Community");
+  });
+
+  test("a user the server refuses ACCESS on the connection's database is refused as missing that access", async () => {
+    const capture = neo4jCapture("proof-components", at("no_access"));
+    expect(capture.error?.code).toBe("Neo.ClientError.Security.Forbidden");
+    const error = await refusal("no_access");
+    expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_NARROW");
+    expect(error.message).toBe(
+      'The agent read-only profile needs a user with ACCESS on the connection\'s database, and the server refuses this user ACCESS on the database "neo4j", so this user is not proved read-only and is refused. Grant it ACCESS on that database. Nothing else was sent.',
+    );
+  });
+
+  test("another privilege refusal of a proof read is read as unread, not as missing access", async () => {
+    const forbidden = new GraphClientError(
+      "forbidden",
+      "Execution of the procedure dbms.components() is not allowed for user 'u' with roles [PUBLIC].",
+      "Neo.ClientError.Security.Forbidden",
+    );
+    const error = await refusal(agentWith(NEO4J_AGENT_PROOF_STATEMENTS.components, forbidden));
+    expect(error.reasonCode).toBe("PROFILE_UNSUPPORTED_TARGET");
+    expect(error.message).toContain("could not read the server's answer to CALL dbms.components()");
+    // The words alone, from another class, are not the server's access refusal.
+    const worded = new GraphClientError("query", "ACCESS on database 'neo4j' is not allowed for user 'u'.");
+    expect((await refusal(agentWith(NEO4J_AGENT_PROOF_STATEMENTS.components, worded))).reasonCode).toBe(
+      "PROFILE_UNSUPPORTED_TARGET",
+    );
   });
 
   test.each(STATEMENTS)("refuses when %s is cut at the row bound", async (statement) => {

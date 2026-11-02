@@ -123,7 +123,7 @@
         Node labels and relationship types with their properties as columns, indexes and constraints are browsable, and a click on a label or a relationship type writes a bounded sample read.
         Nodes, relationships and paths reach the grid as tagged JSON cells with the graph type in the column header, and a 64-bit integer or a temporal value keeps every digit.
         A Graph tab beside the grid draws a result's nodes and relationships, with no statement of its own.
-        Read-only by construction: every statement passes a read policy (no writes, no `LOAD CSV`, no APOC or GDS, allowlisted procedures, functions and SHOW forms), then the server's own classification (which an allowlisted SHOW form skips), then a READ session.
+        Read-only by construction: every statement passes a read policy (no writes, no `LOAD CSV`, no APOC or GDS, allowlisted procedures, functions and SHOW forms), then the server's own classification (which an allowlisted SHOW form skips in the editor, while agent and MCP reads classify every SHOW form), then a READ session.
         See [`providers/neo4j.md`](providers/neo4j.md).
 *   **Vector Databases:**
     *   **Milvus:** Read-only over Milvus's gRPC API through a client of Studio's own, tested on Milvus 3.0.2.
@@ -259,7 +259,7 @@ Two components are described below and a claim true of one can be false of the o
 
 ### 19. MCP Server for your own AI client (off by default)
 *   **Your own client:** Claude Code, Codex, Cursor, VS Code or Gemini CLI connect to `/api/mcp` with a token each user mints on the settings screen.
-*   **Nine read-only tools:** `list_connections` and `inspect_schema` on every engine, `run_read_query` on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra and Couchbase, `run_kubectl_read` on Kubernetes, `run_mongo_command` on MongoDB, `run_libredb_read` on LibreDB, which opens the file read-only for each command, `run_qdrant_read` on Qdrant, `run_rabbitmq_read` on RabbitMQ, which answers each stream message's offset and body size only, and `run_kafka_read` on Apache Kafka, metadata only.
+*   **Ten read-only tools:** `list_connections` and `inspect_schema` on every engine, `run_read_query` on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Oracle, Db2 LUW, Apache Cassandra and Couchbase, `run_kubectl_read` on Kubernetes, `run_mongo_command` on MongoDB, `run_libredb_read` on LibreDB, which opens the file read-only for each command, `run_qdrant_read` on Qdrant, `run_cypher_read` on Neo4j Enterprise Edition, `run_rabbitmq_read` on RabbitMQ, which answers each stream message's offset and body size only, and `run_kafka_read` on Apache Kafka, metadata only.
 *   **Opted-in connections only:** only the seed connections an operator opts in with `mcp: true`, filtered by the token's role; the database credentials stay on the server.
 *   **Bounded and audited:** every result is bounded to 32 KiB and marked as untrusted data, and every call is audited.
 *   **Setup:** client configuration and limits are in [`docs/MCP.md`](MCP.md).

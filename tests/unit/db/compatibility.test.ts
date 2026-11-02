@@ -714,11 +714,11 @@ describe("MCP_STATEMENT_READ", () => {
     expect(open.filter((type) => !AGENT_EXECUTION_ENGINES.includes(type))).toEqual([]);
   });
 
-  test("opens the five SQL engines run_read_query served before the record existed, ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Oracle, Db2, Cassandra, Couchbase, MongoDB, Kubernetes, LibreDB, Qdrant, Kafka, RabbitMQ, and no other", () => {
+  test("opens the five SQL engines run_read_query served before the record existed, ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Oracle, Db2, Cassandra, Couchbase, MongoDB, Kubernetes, LibreDB, Qdrant, Kafka, RabbitMQ, Neo4j, and no other", () => {
     // ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Oracle, Db2, Cassandra and Couchbase each opened to
     // run_read_query on their own, MongoDB with run_mongo_command, Kubernetes with run_kubectl_read, LibreDB with
-    // run_libredb_read, Qdrant with run_qdrant_read, Kafka with run_kafka_read, RabbitMQ with run_rabbitmq_read.
-    // InfluxDB over InfluxQL, InfluxDB 3's sibling in one provider directory, stays closed.
+    // run_libredb_read, Qdrant with run_qdrant_read, Kafka with run_kafka_read, RabbitMQ with run_rabbitmq_read,
+    // Neo4j with run_cypher_read. InfluxDB over InfluxQL, InfluxDB 3's sibling in one provider directory, stays closed.
     expect(SHIPPED_DATABASE_TYPES.filter((type) => MCP_STATEMENT_READ[type])).toEqual([
       "postgres",
       "mysql",
@@ -735,6 +735,7 @@ describe("MCP_STATEMENT_READ", () => {
       "mongodb",
       "couchbase",
       "kafka",
+      "neo4j",
       "qdrant",
       "influxdb3",
       "kubernetes",

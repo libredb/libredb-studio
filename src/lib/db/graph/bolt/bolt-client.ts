@@ -177,9 +177,8 @@ function driverArguments(config: BoltClientConfig): { uri: string; driverConfig:
 }
 
 function categoryOfServerCode(code: string): GraphClientErrorCategory {
-  if (code === "Neo.ClientError.Security.Forbidden" || code === "Neo.ClientError.Statement.AccessMode") {
-    return "access-mode";
-  }
+  if (code === "Neo.ClientError.Statement.AccessMode") return "access-mode";
+  if (code === "Neo.ClientError.Security.Forbidden") return "forbidden";
   if (code.startsWith("Neo.ClientError.Security.")) return "auth";
   if (code === "Neo.ClientError.Statement.SyntaxError") return "syntax";
   if (code.startsWith("Neo.ClientError.Transaction.TransactionTimedOut")) return "timeout";

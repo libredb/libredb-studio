@@ -146,6 +146,7 @@ Every refusal is a `QueryError` whose sentence names what was refused; a policy 
 | The gate: no classification | a plan that carries no query type | The server did not classify this statement, so it was not run. |
 | The gate: the check failed | an `EXPLAIN` the server refused, such as a syntax error | The statement could not be checked by the server, so it was not run: <the server's words> |
 | The server's READ mode | a write that reached a READ session | The server refused a write: Neo4j connections are read-only in this version. |
+| The user's privileges | a statement the server refuses the user, such as `SHOW INDEXES` without `SHOW INDEX` | The server refused this statement for this user's privileges: <the server's words> |
 
 ### 3.4 Why LOAD CSV and APOC are refused
 
@@ -161,7 +162,8 @@ Measured on 5.26.31 on 2026-10-03: `CYPHER 5 EXPLAIN runtime=slotted MATCH (n) R
 `r` runs.
 `s` runs only when the statement calls an allowlisted procedure, because the policy has already refused every other procedure: `CALL dbms.components()` is classified `s` and runs.
 Every other type, a plan with no type, and an `EXPLAIN` that failed refuse the statement, and nothing is run.
-An allowed SHOW form skips the gate, because the server classifies the database forms `s`, a class that also holds administration; the policy has already restricted them to the forms of section 3.2.
+On the editor path an allowed SHOW form skips the gate, because the server classifies the database forms `s`, a class that also holds administration; the policy has already restricted them to the forms of section 3.2.
+An agent handle classifies the SHOW forms too, so the database forms are refused there (section 15.3).
 The gate costs one round trip per statement, which the design accepted because the maintainer's first axis is security.
 
 ### 3.6 Machine access
@@ -170,7 +172,7 @@ Plan mode drafts Cypher and runs nothing: `getLabels().statementLanguage` tells 
 A plan run's fence tag is the type-id, `neo4j`, and a `cypher` block also names Neo4j, as `promql` names Prometheus, while Neo4j is the only engine here that runs Cypher; a second graph engine revisits that.
 `list_connections` and `inspect_schema` work through the object surface and run no user Cypher, so a Neo4j seed may set `mcp: true`.
 Agent mode executes Cypher on Enterprise Edition through `queryReadOnly`, for a user the server proves read-only before every statement, and refuses Community Edition by name (section 15).
-No MCP tool runs Cypher, so MCP `run_read_query` does not serve Neo4j, filed as B93.
+MCP clients run Cypher through `run_cypher_read` under the same proof, on Enterprise Edition only, and MCP `run_read_query`, which takes SQL, refuses a Neo4j connection and names that tool (section 15.7).
 
 ### 3.7 Measurements
 
@@ -354,7 +356,8 @@ A count is the listing's length, and a listing the server refuses answers that k
 A label's or a relationship type's columns come from `CALL db.schema.nodeTypeProperties() YIELD nodeLabels, propertyName, propertyTypes, mandatory` and `CALL db.schema.relTypeProperties() YIELD relType, propertyName, propertyTypes, mandatory`: the property name, the `propertyTypes` text as returned, and `nullable` false only when every row naming that owner and property says `mandatory`.
 A label with no property has no columns.
 Its indexes are the index rows whose entity type and labels or types name it.
-The property and index reads answer every object at once, so they are shared by concurrent callers and kept for 60 seconds, then read again: a schema change shows in the tree within a minute, and listing the container drops the cache at once.
+A user without `SHOW INDEX` is refused `SHOW INDEXES` (`Neo.ClientError.Security.Forbidden`) but may read the property rows, so its columns stand and its indexes are answered unavailable, in the sentence `The index listing was refused for this user's privileges, so no index is shown: <the server's words>`; any other failure of the index read still fails the object's detail.
+The property and index reads answer every object at once, so they are shared by concurrent callers and kept for 60 seconds, a refused index read included, then read again: a schema change shows in the tree within a minute, and listing the container drops the cache at once.
 A tree click on a label writes `` MATCH (n:`Label`) RETURN n LIMIT 100 ``, and on a relationship type `` MATCH (a)-[r:`TYPE`]->(b) RETURN a, r, b LIMIT 100 ``, with every name backticked and every backtick doubled, so a name with a space, a backtick or non-ASCII letters reads back as itself; an index and a constraint have no click action.
 An object whose name holds a unicode escape, a backslash then `u` at the end of an odd run of backslashes, such as `Caf\u00e9`, is listed but cannot be opened: the quoting refuses the name with the read policy's own pattern, `CYPHER_UNICODE_ESCAPE`, since the server would decode the escape and read another name, so the click answers that the name cannot be written as a Cypher identifier and sends nothing (#1295).
 The schema diagram is not offered on a `queryLanguage: "cypher"` connection (`offersSchemaDiagram` in `src/lib/db/types.ts`): relationship types are not tables, and the diagram's `_id` heuristic would invent edges.
@@ -427,11 +430,14 @@ The Bolt client classifies every failure by the server's status code where there
 | `timeout` | `TimeoutError` | The query did not finish in time: <the server's words> |
 | `cancelled` | `QueryCancelledError` | The query was cancelled. |
 | `access-mode` | `QueryError` | The server refused a write: Neo4j connections are read-only in this version. |
+| `forbidden` | `QueryError` | The server refused this statement for this user's privileges: <the server's words> |
 | `syntax` | `QueryError` | <the server's words> |
 | `query` | `QueryError` | <the server's words> |
 
 The server's status code, such as `Neo.ClientError.Statement.SyntaxError`, travels as the error's detail.
 A write that reached the server is reported as refused, never as a driver fault.
+`access-mode` is `Neo.ClientError.Statement.AccessMode`, the READ session's refusal of a write, and the only class worded as a write.
+`forbidden` is `Neo.ClientError.Security.Forbidden`, which the server answers a read the user's privileges do not allow, such as `SHOW INDEXES` without `SHOW INDEX` or `LOAD CSV` without `LOAD`, as well as a write, so it names the privileges and keeps the server's words, which say what was refused.
 The password never reaches an error, and no statement text reaches the server's log through the driver, since no logger is configured.
 
 ## 11. Testing
@@ -507,7 +513,7 @@ Each line is one run.
 - The graph layer is designed from one shipped engine and one probe, Memgraph 3.13.1, which showed that READ mode, cancellation and the catalog differ there; a second engine adds what it needs in its own PR, and the Memgraph provider is filed as D141.
 - The Graph tab draws only the result: it does not connect result nodes the statement left unlinked (U75) or expand a node's neighbours (U76), keeps no style a user sets (U77) and offers one layout (U78).
 - No APOC, GDS or custom procedure, and no `LOAD CSV`: a measured APOC subset is filed as D140.
-- Agent execution only on Enterprise Edition, Community refused at open (section 15), and no MCP `run_read_query`, filed as B93.
+- Agent execution and MCP `run_cypher_read` only on Enterprise Edition, Community refused at open (section 15).
 - The agent proof pins the built-in procedures and functions of 5.26.31 only, so any other server version is refused on the agent path until its built-ins are captured and pinned.
 - One database per connection, filed as D143.
 - No verified TLS through an SSH tunnel, filed as D142.
@@ -561,6 +567,10 @@ The proof reads and the statement each run in a Bolt session of their own, one a
    The same reader denied `EXECUTE` on the extension's names lists only the built-ins and is admitted (`ext_denied`).
 
 Any answer other than the measured shapes refuses the profile, and a proof read cut at its 1,000-row bound is not read.
+A user the server refuses `ACCESS` on the connection's database is answered `Neo.ClientError.Security.Forbidden` with a message that opens `ACCESS on database` (`no_access/proof-components`), and is refused as missing that access, under `PROFILE_PRIVILEGES_TOO_NARROW`:
+> The agent read-only profile needs a user with ACCESS on the connection's database, and the server refuses this user ACCESS on the database "neo4j", so this user is not proved read-only and is refused. Grant it ACCESS on that database. Nothing else was sent.
+
+The same code answers a procedure the user may not execute (`ext_denied/call-extension-procedure`), so any other refusal of a proof read keeps the sentence that the server's answer could not be read.
 The operations profile sends no statement, so its acquisitions open unproved and plan mode keeps grounding on a user that can write.
 
 To set up an agent user: create a role as a copy of `reader`, grant it to a user, and either `REVOKE GRANT LOAD ON ALL DATA FROM PUBLIC` or `DENY LOAD ON ALL DATA` to that role; on a server with extensions, `DENY EXECUTE PROCEDURE` and `DENY EXECUTE USER DEFINED FUNCTION` on their names to that role.
@@ -586,6 +596,10 @@ What the server answers and only Studio's reader stops, each refused before anyt
 - No comment, anywhere: a `//` comment runs on past U+2028 and U+0085 (`agent/fence-line-comment-u2028`, `agent/fence-line-comment-u0085`) and a block comment ends at its first star-slash, nested or not (`agent/fence-block-comment-nested`); with comments refused, no reading of either reaches the server.
 
 Then the statement takes the editor's road: the statement gate of section 3.5, then one run in a READ session on the connection's database, with the product's transaction metadata and nothing else the caller chose; each run is its own Bolt session, so nothing carries from one statement to the next.
+One step differs from the editor's: the gate classifies an allowed `SHOW` form too, where the editor skips it.
+The server classifies the index, constraint, procedure and function listings as reads (`r`) and the database forms, `SHOW DATABASE`, `SHOW DATABASES`, `SHOW DEFAULT DATABASE` and `SHOW HOME DATABASE`, as administration (`s`), in each spelling measured on 5.26.31, a `YIELD` that renames `address` included, so an agent statement never reads a database listing, whose `address` column names the host and port of every server holding a database, and whose other columns name other databases, server ids and store details.
+The refusal is the server's classification of the statement's own text, not Studio's reading of it:
+> The server classifies this statement as a schema or administration statement, and a read-only Neo4j connection runs only reads.
 
 ### 15.4 The budgets
 
@@ -610,4 +624,47 @@ The family offers the investigation and the data-analysis workflows, each throug
 The workflow classifier offers the model only these three.
 Plan mode follows the provider's `statementLanguage` label of section 3.6, not the agent's reader.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-No MCP tool runs Cypher: the family declares no MCP facet, and `MCP_STATEMENT_READ.neo4j` is false (B93).
+MCP clients read it with `run_cypher_read`, the MCP facet the family declares in [`src/lib/agent/languages/cypher/mcp.ts`](../../src/lib/agent/languages/cypher/mcp.ts), which `MCP_STATEMENT_READ.neo4j` opens (section 15.7).
+
+### 15.7 MCP: `run_cypher_read`
+
+`run_cypher_read` takes one Cypher statement as `statement`, read and admitted by the agent's own reader, so a write, `LOAD CSV`, `USE`, a procedure outside the eight of section 3.2, a parameter, a comment and a carriage return are refused before anything is acquired, in the sentence an agent run reads.
+It acquires the connection under the agent read-only profile and runs the statement through `queryReadOnly`, so the boundary is agent mode's: the proof of section 15.1 at the open and again before every statement, the reader of section 15.3, the server's classification of every statement, the `SHOW` forms included, and one READ session.
+It takes no `database`: the connection reads the one database it names, and `USE` is refused.
+It takes no `offset`: a result cut at `max_rows` or at the 32 KiB result limit says to page inside the statement with `ORDER BY`, `SKIP` and `LIMIT`, and a read past the 1000-row provider budget is refused with the language's own advice, never cut.
+
+**The seed's user.** A seed carries no separate agent credential, so the seed's own `user` is the one the proof must admit, on Enterprise Edition: a copy of `reader` with `LOAD` revoked from `PUBLIC` or denied to one of its roles, as section 15.1 says.
+The administrator, a user with the `editor` role, a reader also granted `LOAD` and Community Edition are refused at the open, before any statement is sent, in the tool's sentence.
+`inspect_schema` opens the connection under the operations profile, which proves nothing, so it lists, as the editor does, the labels and relationship types the seed's user may traverse, with the properties it may read, for any user with `ACCESS` on the database.
+A user without `SHOW INDEX` is listed the same, and with `include_indexes` each object's indexes are answered unavailable, in the sentence of section 6.1, rather than the call refused.
+
+**What the user reads, and which layer stops what.**
+Two layers bound it, measured through the MCP handler on 5.26.31 Enterprise with a reader of every database and with a narrow user granted `ACCESS` on one database and `MATCH` on one label, one property of it denied and another label's traversal denied (`tests/live/neo4j-mcp-boundary.ts`, `tests/fixtures/neo4j/5.26.31/mcp-boundary/run.txt`):
+
+| What | Layer that stops it |
+|---|---|
+| A denied property's value | the user's grants: `n.prop` reads `null`, and `properties()`, `keys()`, `n {.*}`, `db.schema.nodeTypeProperties()` and `inspect_schema` leave its key out |
+| A label the user may not traverse | the user's grants: its nodes, `db.labels()`, `db.schema.nodeTypeProperties()`, `db.schema.visualization()` and `inspect_schema` leave it out |
+| Index and constraint listings without `SHOW INDEX` or `SHOW CONSTRAINT` | the user's grants: the server refuses the listing, answered as the privilege refusal of section 10, and `inspect_schema` answers the indexes unavailable |
+| Another database | the user's grants refuse `USE` of a database it has no `ACCESS` on, and a seed bound to such a database is refused at open as missing that access (section 15.1); a user with `ACCESS` on it is answered, and only Studio's reader stops that, so grant `ACCESS` on the connection's database alone |
+| The system graph, with the seed bound to `system` | the server: it runs only administration commands there, refuses `MATCH` and `RETURN`, and answers the schema procedures empty |
+| A database listing and the address of every server | the server's classification of the statement (section 15.3), whatever the user may see |
+| Other users' transactions, settings and roles | the proof: a user granted `SHOW TRANSACTION`, `SHOW SETTING` or any administrator's action is refused, since only the read actions of section 15.1 pass it, and the reader allows no `SHOW` form or procedure that lists them |
+| A write and `LOAD CSV` | the proof and the READ session (section 15.2) |
+
+`db.propertyKeys()` names every property key the database holds, a denied property's and a hidden label's included, though never a value; that is the server's own answer to any user, as a PostgreSQL catalog names the columns of a table a role may not read.
+
+**A cancel and a timeout.**
+`queryReadOnly` takes the time left of `timeout_ms` as its budget, sent as the transaction's timeout and kept as the call's own deadline, and closing the session at it ends the server's work.
+At the 500 ms minimum `timeout_ms`, a read that ran on was answered as the timeout at 501 ms and left `SHOW TRANSACTIONS` 34 ms later.
+A client that closes the call is answered at once, and the statement runs on to the time it had left: closed after 2 s of a 10 s call, it left `SHOW TRANSACTIONS` about 8 s later, so a cancel ends the wait, not the read.
+
+Run the check against a disposable Enterprise server, after exporting `NEO4J_ACCEPT_LICENSE_AGREEMENT` yourself, since only you can accept Neo4j's licence:
+
+```bash
+docker run -d --name neo4j-mcp -p 127.0.0.1:27687:7687 -e NEO4J_AUTH=neo4j/<password> \
+  -e NEO4J_ACCEPT_LICENSE_AGREEMENT neo4j:5.26.31-enterprise
+NEO4J_MCP_PORT=27687 NEO4J_ADMIN_PASSWORD=<password> bun tests/live/neo4j-mcp-boundary.ts
+```
+
+With `NEO4J_MCP_CE_PORT` naming a Community server instead, it checks that Community Edition is refused at the open.

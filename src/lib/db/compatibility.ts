@@ -523,8 +523,8 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // query path is agent mode's alone and reads metadata only, and no MCP surface is decided for it yet (BACKLOG B136),
   // so a seed that sets `mcp: true` on an etcd connection is refused when the seed file loads.
   etcd: false,
-  // Offered for the two metadata tools, `list_connections` and `inspect_schema` (Neo4j spec 6.4).
-  // `run_read_query` does not serve it, because the provider implements no `queryReadOnly`.
+  // Offered for the two metadata tools, `list_connections` and `inspect_schema` (Neo4j spec 6.4), and for
+  // `run_cypher_read`, which MCP_STATEMENT_READ opens on it.
   neo4j: true,
   // Offered for the two metadata tools (vector-family E17); `run_read_query` does not serve it, because the provider
   // implements no `queryReadOnly`.
@@ -605,7 +605,8 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
  * for ClickHouse, libSQL, InfluxDB 3, Elasticsearch, OpenSearch, Oracle, Db2, Cassandra and Couchbase, each opened to `run_read_query` by a change of its own, for MongoDB, whose command `run_mongo_command` reads, for Kubernetes, whose kubectl line `run_kubectl_read` reads
  * under the agent's machine redaction, for LibreDB, whose command `run_libredb_read` reads on a read-only handle, for
  * Qdrant, whose metadata request `run_qdrant_read` reads, for RabbitMQ, whose stream read request `run_rabbitmq_read`
- * reads metadata only, and for Kafka, whose metadata read `run_kafka_read` reads.
+ * reads metadata only, for Kafka, whose metadata read `run_kafka_read` reads,
+ * and for Neo4j, whose Cypher `run_cypher_read` reads.
  * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records
  * above it, and held false wherever `MCP_EXPOSABLE` is false and true only for an engine agent mode executes on by
  * `tests/unit/db/compatibility.test.ts`.
@@ -667,8 +668,10 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // Agent mode executes metadata-only reads on etcd, and MCP read stays closed on it until a change of its own opens
   // it.
   etcd: false,
-  // Agent mode executes statements on Neo4j, and MCP read stays closed on it until a change of its own opens it.
-  neo4j: false,
+  // Opened on its own: run_cypher_read runs under the boundary agent mode uses, on Enterprise Edition only, a user the
+  // server proves before every statement to hold only reads, no LOAD and no extension it can execute, and the
+  // server's own classification of every statement (docs/providers/neo4j.md section 15).
+  neo4j: true,
   // Agent mode executes metadata-only reads on Milvus, and MCP read stays closed on it until a change of its own
   // opens it.
   milvus: false,

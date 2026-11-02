@@ -21,9 +21,10 @@
  *
  * Then it drives the production path, `createDatabaseProvider` with the agent read-only profile's execution context,
  * `connect` and `queryReadOnly`, with no admission of Studio's in front: the proved user reads, `LOAD CSV` and a write
- * are refused, every refused principal and Community are refused at open, a role granted after the open refuses the
- * next call and its revoke admits the one after, and the operations profile opens the administrator unproved. Each
- * check prints one line, and the run ends non-zero if any failed.
+ * are refused, every refused principal and Community are refused at open, a user denied ACCESS on the database is
+ * refused as missing it, a role granted after the open refuses the next call and its revoke admits the one after, and
+ * the operations profile opens the administrator unproved. Each check prints one line, and the run ends non-zero if
+ * any failed.
  *
  * Run by `run.sh`, never by `bun run test` (tests/runner/discover.ts excludes tests/live/).
  */
@@ -362,6 +363,8 @@ async function capture(): Promise<void> {
   admin(enterprise, "DENY LOAD ON ALL DATA TO no_load;");
   admin(enterprise, "CREATE ROLE boosted IF NOT EXISTS;");
   admin(enterprise, "GRANT EXECUTE BOOSTED PROCEDURE * ON DBMS TO boosted;");
+  admin(enterprise, "CREATE ROLE no_access IF NOT EXISTS;");
+  admin(enterprise, "DENY ACCESS ON DATABASE neo4j TO no_access;");
   const reader = user(enterprise, "reader_stock", "role reader, PUBLIC holding LOAD ON ALL DATA", ["reader"]);
   await capturePrincipal(reader, BOUNDARY_STATEMENTS.slice(0, 2));
 
@@ -386,6 +389,7 @@ async function capture(): Promise<void> {
     ],
     ["editor", "role editor", ["editor"], false],
     ["boosted", "agent_reader and boosted (GRANT EXECUTE BOOSTED PROCEDURE *)", ["agent_reader", "boosted"], false],
+    ["no_access", "agent_reader and no_access (DENY ACCESS ON DATABASE neo4j)", ["agent_reader", "no_access"], false],
   ];
   const principals: Record<string, Principal> = {};
   for (const [name, rights, granted, loads] of roles) {
@@ -462,6 +466,7 @@ async function capture(): Promise<void> {
     agent,
     loader: principals.loader,
     editor: principals.editor,
+    noAccess: principals.no_access,
     extensionAgent,
     community,
     administrator,
@@ -543,6 +548,11 @@ async function productionPath(p: Readonly<Record<string, Principal>>): Promise<v
 
   await refusedAtOpen("a second role holding LOAD is refused at open", p.loader as Principal, "csv_loader");
   await refusedAtOpen("a writer is refused at open", p.editor as Principal, "write on");
+  await refusedAtOpen(
+    "a user without ACCESS on the connection's database is refused at open as missing it",
+    p.noAccess as Principal,
+    'refuses this user ACCESS on the database "neo4j"',
+  );
   await refusedAtOpen("the administrator is refused at open", p.administrator as Principal, "through the role admin");
   await refusedAtOpen(
     "the test extension refuses its reader at open",

@@ -1068,6 +1068,43 @@ describe("describeObject", () => {
     );
   });
 
+  test("an index read refused for the user's privileges answers the columns, its indexes unavailable", async () => {
+    const { provider, catalog } = await connected();
+    catalog.indexes = async () => {
+      throw new GraphClientError(
+        "forbidden",
+        "Show indexes on database 'movies' is not allowed for user 'narrow' with roles [PUBLIC, narrow].",
+        "Neo.ClientError.Security.Forbidden",
+      );
+    };
+    const unavailable = {
+      unavailable:
+        "The index listing was refused for this user's privileges, so no index is shown: Show indexes on database 'movies' is not allowed for user 'narrow' with roles [PUBLIC, narrow].",
+    };
+    expect(await provider.describeObject(["movies", "(:Service)"], "label")).toEqual({
+      path: ["movies", "(:Service)"],
+      columns: [{ name: "name", type: "String", nullable: false, isPrimary: false }],
+      indexes: unavailable,
+      foreignKeys: [],
+    });
+    expect((await provider.describeObject(["movies", "[:OWNS]"], "relationship_type")).indexes).toEqual(unavailable);
+    // The refusal is kept as a read is, and listing the container drops it.
+    expect(catalog.indexCalls).toHaveLength(1);
+    await provider.listContainers();
+    await provider.describeObject(["movies", "(:Service)"], "label");
+    expect(catalog.indexCalls).toHaveLength(2);
+  });
+
+  test("an index read that fails for any other reason still fails the detail", async () => {
+    const { provider, catalog } = await connected();
+    catalog.indexes = async () => {
+      throw new GraphClientError("query", "busy");
+    };
+    expect(((await rejectionOf(provider.describeObject(["movies", "(:Service)"], "label"))) as Error).message).toBe(
+      "TestGraph says: busy",
+    );
+  });
+
   test("concurrent describes share one read of each catalog call (SR17)", async () => {
     const { provider, catalog } = await connected();
     await Promise.all([
@@ -1167,6 +1204,20 @@ describe("describeObjects", () => {
       limit: 1,
       reason: "the catalog's index read stopped at its row bound",
     });
+  });
+
+  test("an index read refused for the user's privileges describes every object, its indexes unavailable", async () => {
+    const { provider, catalog } = await connected();
+    catalog.indexes = async () => {
+      throw new GraphClientError("forbidden", "not allowed", "Neo.ClientError.Security.Forbidden");
+    };
+    const batch = await provider.describeObjects(CONTAINER, "label");
+    expect(batch).not.toHaveProperty("truncated");
+    expect(batch.details.map((detail) => detail.indexes)).toEqual([
+      { unavailable: "The index listing was refused for this user's privileges, so no index is shown: not allowed" },
+      { unavailable: "The index listing was refused for this user's privileges, so no index is shown: not allowed" },
+    ]);
+    expect(batch.details[0]?.columns).toHaveLength(1);
   });
 
   test("index and constraint objects are described with no column read", async () => {

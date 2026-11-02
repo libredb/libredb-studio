@@ -4,8 +4,9 @@
  * After the read policy allowed a statement, the server classifies it: `EXPLAIN` plans the statement
  * without running it and answers `summary.queryType`. Only `r` runs, and `s` runs only when the statement
  * calls an allowlisted procedure (`dbms.components` is `s` on 5.26.31), because the policy has already
- * refused every other procedure; `GraphBaseProvider` skips the gate for an allowed SHOW form, whose
- * database forms are `s` too. Any other type, and a plan with no type, refuses: the gate fails closed.
+ * refused every other procedure; on the editor path `GraphBaseProvider` skips the gate for an allowed SHOW
+ * form, whose database forms are `s` too, while agent handles classify the SHOW forms as well, so the database
+ * forms are refused there. Any other type, and a plan with no type, refuses: the gate fails closed.
  *
  * `r` is not "no side effect": the server classifies `LOAD CSV` and `TERMINATE TRANSACTIONS` as `r`
  * (captured), so the policy's denied words are what stop them, and the gate is the second check, not the

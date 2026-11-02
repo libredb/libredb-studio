@@ -7,7 +7,10 @@
  * server's own words follow the provider's, and its status code travels as the `QueryError` detail.
  *
  * A write refused by the READ session is never the server's sentence alone: "Writing in read access mode
- * not allowed" reads as a fault, and the fact the user needs is that the connection is read-only.
+ * not allowed" reads as a fault, and the fact the user needs is that the connection is read-only. A
+ * statement refused for the user's privileges is not called a write: `Security.Forbidden` answers a read
+ * the user may not run, such as `SHOW INDEXES` without `SHOW INDEX`, as well as a write, so it is worded
+ * as the privilege refusal it is, with the server's words, which name what was refused.
  */
 import { AuthenticationError, ConnectionError, QueryCancelledError, QueryError, TimeoutError } from "@/lib/db/errors";
 import type { GraphClientError } from "@/lib/db/graph/bolt/client";
@@ -36,6 +39,14 @@ export function mapNeo4jError(error: GraphClientError): Error {
         undefined,
         undefined,
         error.code === undefined ? message : `${error.code}: ${message}`,
+      );
+    case "forbidden":
+      return new QueryError(
+        `The server refused this statement for this user's privileges: ${message}`,
+        PROVIDER,
+        undefined,
+        undefined,
+        error.code,
       );
     case "syntax":
     case "query":
