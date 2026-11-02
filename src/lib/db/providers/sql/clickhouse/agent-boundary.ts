@@ -57,10 +57,10 @@ export type AgentProofQuery = (sql: string) => Promise<ClickHouseQueryResult>;
 
 /**
  * The releases, as `version()`'s first two numbers, whose privilege and engine lists below were read from a live
- * server: 26.7.1.1315. A release outside this set is refused at open until its own `system.privileges` and
+ * server: 26.7.1.1315 and 26.9.23.15. A release outside this set is refused at open until its own `system.privileges` and
  * `system.table_engines` are read and the lists updated.
  */
-export const CLICKHOUSE_CHECKED_RELEASES: readonly string[] = Object.freeze(["26.7"]);
+export const CLICKHOUSE_CHECKED_RELEASES: readonly string[] = Object.freeze(["26.7", "26.9"]);
 
 /** The privileges the agent principal may hold: SELECT, and SHOW with its four parts. */
 export const CLICKHOUSE_AGENT_PRIVILEGES: readonly string[] = Object.freeze([
@@ -123,8 +123,8 @@ export const CLICKHOUSE_READONLY_EXEMPT_PRIVILEGES: readonly string[] = Object.f
 ]);
 
 /**
- * The table engines that store their rows on this server and read nothing else, of the 81 that 26.7's
- * `system.table_engines` lists: the MergeTree family with its replicated forms, the in-memory and log engines,
+ * The table engines that store their rows on this server and read nothing else, across the checked releases:
+ * the MergeTree family with its replicated forms, the in-memory and log engines,
  * `Null`, `Set` and `Join`, and the two view engines, whose SQL SECURITY is checked separately.
  */
 export const CLICKHOUSE_LOCAL_TABLE_ENGINES: readonly string[] = Object.freeze([
@@ -156,7 +156,7 @@ export const CLICKHOUSE_LOCAL_TABLE_ENGINES: readonly string[] = Object.freeze([
 ]);
 
 /**
- * Every other engine 26.7 lists, refused wherever the principal can read a table of it: each one reads an external
+ * Every other engine the checked releases list, refused wherever the principal can read a table of it: each reads an external
  * source, a file, another server, or another object under an identity or a selection the principal's grants do not
  * name (`Alias`, `Buffer`, `Dictionary`, `Distributed`, `Merge`, `Loop`). An engine in neither list, from a later
  * release, is refused too.
@@ -166,6 +166,7 @@ export const CLICKHOUSE_REFUSED_TABLE_ENGINES: readonly string[] = Object.freeze
   "ArrowFlight",
   "AzureBlobStorage",
   "AzureQueue",
+  "BigQuery",
   "Buffer",
   "COSN",
   "DeltaLake",

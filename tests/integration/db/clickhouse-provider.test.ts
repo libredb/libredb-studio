@@ -4230,12 +4230,12 @@ describe("endOpenQueryTransaction()", () => {
 const AGENT_BUDGET = { statementTimeoutMs: 2_000, maxResultRows: 3, maxResultBytes: 500 };
 const AGENT_PROFILE = { readOnly: true, sendsStatements: true };
 
-/** The open's proof as 26.7.1.1315 answered it for the least-privilege user `agent_ro`, then `answer` for the rest. */
-function agentReply(answer: (sql: string) => Reply): (sql: string) => Reply {
+/** The open's proof for `agent_ro`, checked on 26.7.1.1315 and 26.9.23.15, then `answer` for the rest. */
+function agentReply(answer: (sql: string) => Reply, version = "26.7.1.1315"): (sql: string) => Reply {
   return (sql) => {
     if (sql === "SELECT 1") return jsonReply([{ "1": 1 }]);
     if (sql.startsWith("SELECT version() AS version, currentUser()")) {
-      return jsonReply([{ version: "26.7.1.1315", user: "agent_ro", readonly: "1" }]);
+      return jsonReply([{ version, user: "agent_ro", readonly: "1" }]);
     }
     if (sql === "SELECT 1 SETTINGS readonly = 0") {
       return exceptionReply(164, "READONLY", "Cannot modify 'readonly' setting in readonly mode", 500);
@@ -4289,6 +4289,19 @@ async function readOnlyRefusal(run: Promise<unknown>): Promise<Error> {
 }
 
 describe("ClickHouseProvider agent read-only profile", () => {
+  test("a checked 26.9 server admits the profile and executes a bounded read", async () => {
+    replyFor = agentReply(() => jsonReply([{ id: "1" }], [{ name: "id", type: "UInt64" }]), "26.9.23.15");
+    const provider = new ClickHouseProvider(makeConnection({ user: "agent_ro" }), {}, AGENT_PROFILE);
+    await provider.connect();
+
+    const result = await provider.queryReadOnly("SELECT id FROM demo.orders", AGENT_BUDGET);
+
+    expect(result.rows).toEqual([{ id: "1" }]);
+    expect(sentSql).toContain("SHOW GRANTS FINAL");
+    for (const url of sentUrls.slice(1)) expect(new URL(url).searchParams.get("readonly")).toBe("1");
+    await provider.disconnect();
+  });
+
   test("an ordinary editor handle refuses queryReadOnly and sends nothing", async () => {
     const provider = await connectProvider();
     sentSql = [];
