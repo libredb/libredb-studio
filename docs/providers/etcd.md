@@ -89,7 +89,7 @@ A secret stored under a custom prefix in an envelope Studio does not know is sho
 
 ### 3.4 The read-only mode (E6)
 
-A connection with `readOnly: true`, or a provider opened read-only by an agent execution profile, refuses every write command, every value edit and every maintenance operation before any request, naming where the mode was set:
+A connection with `readOnly: true` refuses every write command, every value edit and every maintenance operation before any request, and a provider opened read-only by an agent execution profile refuses every value edit and every maintenance operation the same way, each naming where the mode was set:
 
 | Where the mode was set | The refusal |
 |---|---|
@@ -98,6 +98,9 @@ A connection with `readOnly: true`, or a provider opened read-only by an agent e
 | An agent execution profile, on a connection that is not read-only | This run opens the connection read-only (agent execution profile). |
 
 Where a connection's own mode and a profile's both hold, the connection's sentence is the one given.
+A handle an agent execution profile opened is an agent handle, so the agent surface's refusal of section 15.4 comes first on it, with that section's sentence in place of the profile's.
+Every command on its editor command path, a read as much as a write, is refused as a `RefusedBeforeSendError`, and a key's, a role's and a lease's source as a `QueryError`.
+Its value edits and maintenance operations still give the profile's sentence above.
 A read-only connection shows a "Read-only" marker beside its name in the sidebar and in the editor header, titled "Writes, value edits and maintenance are refused on this connection", the Operations tab shows "This connection is read-only: use a read-write connection for maintenance" in place of its cards, and Generate Command writes the read alone.
 The mode binds a `user` only on a managed seed and only where etcd authenticates the client, by a password or a client certificate whose secret the managed seed keeps on the server.
 On an etcd that authenticates nobody, and on a connection of the user's own, the mode is a safety rail and not a boundary, because a `user` can connect to any host and port with a connection of their own, and can turn off Read-only on one.
