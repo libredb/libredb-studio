@@ -145,7 +145,7 @@ describe("the answer", () => {
       { id: "legacy-metrics", type: "influxdb", host: "127.0.0.1", port: 8086, database: "home" },
       { id: "search", type: "elasticsearch", host: "127.0.0.1", port: 9200 },
       { id: "fork-search", type: "opensearch", host: "127.0.0.1", port: 9201 },
-      { id: "ledger", type: "oracle", host: "127.0.0.1", port: 1521, serviceName: "FREEPDB1" },
+      { id: "ledger", type: "oracle", host: "127.0.0.1", port: 1521, database: "FREEPDB1" },
       { id: "mainframe", type: "db2", host: "127.0.0.1", port: 50000, database: "SAMPLE" },
       { id: "ring", type: "cassandra", host: "127.0.0.1", port: 9042, database: "shop" },
       { id: "mongo", type: "mongodb", host: "127.0.0.1", port: 27017, database: "app" },
