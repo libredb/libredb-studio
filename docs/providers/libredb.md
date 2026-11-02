@@ -1419,7 +1419,7 @@ so hard links cannot alias reserved files. Other user database files beside them
 
 Agent mode executes LibreDB read commands through `queryReadOnly` in [`libredb.ts`](../../src/lib/db/providers/embedded/libredb.ts), on handles opened through the read-only file adapter in [`libredb-read-only-file.ts`](../../src/lib/db/providers/embedded/libredb-read-only-file.ts), with the command reader in [`libredb-command.ts`](../../src/lib/db/providers/embedded/libredb-command.ts).
 Every fact below was measured on `@libredb/libredb` 0.2.2 against real files, under Bun 1.4.4 and Node.js 26, and the tests named in 15.7 replay it on every run.
-MCP read stays closed on this engine (`MCP_STATEMENT_READ.libredb` is false) until a change of its own opens it, as `docs/BACKLOG.md` B152 records.
+MCP's `run_libredb_read` reads through this same path, under the agent read-only profile, so everything below holds for an MCP client too; 15.8 states what an MCP client reaches.
 
 ### 15.1 The boundary is the handle
 
@@ -1480,4 +1480,29 @@ A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES`
 - [`tests/unit/db/libredb/read-only-file.test.ts`](../../tests/unit/db/libredb/read-only-file.test.ts): the adapter against the real kernel, a held writer beside it, a bypassed `kv.set`, `delete` and raw transaction write with the file and the lock compared byte for byte, a descriptor a write through fails with `EBADF`, a path that is not a regular file refused from what was opened, a missing file, and a torn tail.
 - [`tests/unit/db/libredb/command.test.ts`](../../tests/unit/db/libredb/command.test.ts): every admitted form, and every refused spelling of a write, a second line and a malformed command.
 - [`tests/integration/db/libredb-provider.test.ts`](../../tests/integration/db/libredb-provider.test.ts), "the agent read-only profile": the refusal on an editor and an operations handle, a reader and a writer coexisting in both orders without `LOCKED`, the writes refused before the open, `query()` refused, the writes sent around everything on the provider's own store failing on the handle, a handle per statement closed on every path out and a replaced snapshot closed, the budgets, a missing or foreign file, and a FIFO put at the path after the open refused rather than waited on.
+- [`tests/integration/mcp/run-libredb-read.test.ts`](../../tests/integration/mcp/run-libredb-read.test.ts): the same boundary replayed through MCP's `run_libredb_read` on real files, through the route and the seed file: each read form, a read beside the editor's writer, every refused form at admission and, with that fence removed, a `put` and a `delete` refused by the provider's reader with the file byte for byte unchanged beside a writable positive control, both budgets, every data-scope probe of 15.8, and a timeout and a cancel during a read.
 - [`tests/isolated/factory.test.ts`](../../tests/isolated/factory.test.ts), "single-writer file reuse": the agent read-only acquisition opening its own read-only handle beside the held writer and never the writable one, the editor opening beside a profiled reader that opened first, the operations borrow unchanged, and the agent credential refused under the read-only profile with the file unchanged.
+
+### 15.8 MCP: `run_libredb_read`
+
+The `libredbkv` pack declares its MCP facet in [`src/lib/agent/languages/libredbkv/mcp.ts`](../../src/lib/agent/languages/libredbkv/mcp.ts), so MCP serves LibreDB through `run_libredb_read` (`MCP_STATEMENT_READ.libredb` is true).
+The tool reads and admits the command with the agent's own reader and admission, acquires the connection under `agent-read-only` and runs it through `queryReadOnly`, so the handle of 15.1 and 15.2 is the boundary there too, and the reader is defence in depth.
+It takes no `offset` and no `database`: a LibreDB connection's database is its file's path, which the seed names, and a call naming one is refused before anything runs.
+A result cut at `max_rows` says to read on with a `range` from the last key returned; a read past the 1,000-key provider budget or the 1 MiB budget is refused, never cut; and a value larger than MCP's 32 KiB result limit is refused whole.
+
+The engine has no principal, so a LibreDB seed proves none and carries none, and what an MCP client reaches is decided in two layers, neither of which reads the command:
+
+| What | Reached? | The layer that stops it |
+|---|---|---|
+| Every key of the file the seed names, values included | Yes: this is the connection's data | None; opt in a seed whose file holds only what its roles may read |
+| Another file on the server | No | The tool takes no `database`, and a seed names one path, which the operator chooses and a client cannot change |
+| Studio's storage database, its `-wal` and `-shm` files, `auth-bootstrap.json` (with its `.bak` and temporary files): users, sessions, audit, saved connections and credentials | No | The target check at open (`isReservedStoragePath`, [`src/lib/data-dir.ts`](../../src/lib/data-dir.ts)), by resolved path and by file identity, so a symbolic or hard link to one is refused too, before anything is opened |
+| A file that is not a LibreDB file, such as a copy of the storage database | No | The kernel's own format check, which refuses it as `NOT_A_DATABASE` and leaves it untouched |
+| The file's reserved internal namespace (the catalog, under U+0000) | No | Each key read is dropped from the answer when `isReservedKey` holds for it, so a `get` of a catalog key and a `range` or `prefix` across it answer no reserved row |
+| A file that does not exist | No | The read-only adapter refuses a missing file and creates none |
+
+The built-in sample connection is never visible to an MCP client, so only an operator's seed reaches MCP.
+Measured on `@libredb/libredb` 0.2.2 by [`tests/integration/mcp/run-libredb-read.test.ts`](../../tests/integration/mcp/run-libredb-read.test.ts), through the route and the seed file, against real files.
+
+A cancel or a timeout is seen only when the read has ended, because the read runs on the server's own thread and cannot be stopped midway: a read that outran the time left of `timeout_ms` is then answered as the timeout, and a cancel delivered during a read arrives after the read's answer was settled.
+`run_libredb_read` takes no lock, so it never holds the file from the editor; `inspect_schema` opens the file as the operations profile does, which takes the exclusive lock when no Studio session holds the file open ([`docs/MCP.md`](../MCP.md)).
