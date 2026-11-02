@@ -497,6 +497,8 @@ describe("the agent read-only profile", () => {
     "SELECT * FROM home -- c",
     "SHOW MEASUREMENTS\r",
     "EXPLAIN SHOW MEASUREMENTS",
+    'SHOW TAG VALUES CARDINALITY ON "other" WITH KEY = "tenant"',
+    'SHOW FIELD KEYS FROM "other"."autogen"."m"',
   ])("%p is refused before the proof or the statement is sent", async (statement) => {
     const { provider, wire } = agentServer("1.13.1", at("1.13.1", "listing-reader"), PROOF.reader);
     await provider.connect();

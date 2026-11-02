@@ -733,12 +733,15 @@ A token's write on a bucket it cannot read is out of InfluxQL's reach (`write-pr
 
 ### 15.3 The statement path
 
-[`influxql-agent-statement.ts`](../../src/lib/db/providers/timeseries/influxdb/influxql-agent-statement.ts) reads each statement before anything is sent: the read policy of section 3.3, then three refusals of its own.
+[`influxql-agent-statement.ts`](../../src/lib/db/providers/timeseries/influxdb/influxql-agent-statement.ts) reads each statement before anything is sent: the read policy of section 3.3, then four refusals of its own.
 
 - No carriage return and no comment: both lines end a `--` comment at a lone carriage return and run what follows as a second statement, read a carriage return between two words as a space, and run a statement after a `/* */` comment (`fence-*`).
   > The statement holds a carriage return, which an agent read does not take: InfluxDB ends a -- comment at one and reads on past it. Write each line break as a plain newline. Nothing was sent.
 - `SHOW` of the catalog only: `DATABASES`, `RETENTION POLICIES`, `MEASUREMENTS`, `SERIES`, `TAG KEYS`, `TAG VALUES`, `FIELD KEYS` and their `CARDINALITY` forms.
   A 1.13.1 reader with a database is answered `SHOW QUERIES` with another user's running statement and name (`show-queries-during-admin-read-reader`) and `SHOW CONTINUOUS QUERIES` with the text an administrator wrote (`show-continuous-queries-reader`); `SHOW USERS`, `GRANTS`, `STATS`, `DIAGNOSTICS`, `SHARDS`, `SHARD GROUPS`, `SUBSCRIPTIONS` and `KILL QUERY` are answered to an admin alone.
+- A `SHOW` of the connection's own database: it names no database, so no `ON` clause and no source of three segments (`"db"."rp"."m"`, `"db".."m"`), the connection's own database included.
+  An agent `SHOW` reads the database sent as `db` and nothing else, so the catalog an agent is shown never rests on the server scoping a `SHOW` by its grants; a `SELECT` may still name any database the principal holds `READ` on, and the server refuses one it does not.
+  > An agent SHOW reads the connection's own database and names none: drop the ON clause, and name a measurement by itself or as "rp"."measurement". Nothing was sent.
 - `EXPLAIN` of a `SELECT` only.
 
 Every spelling of `SHOW QUERIES` and `SHOW CONTINUOUS QUERIES` in [`tests/helpers/influxql-query-text-spellings.ts`](../../tests/helpers/influxql-query-text-spellings.ts) is refused here: case, whitespace, quoting, a terminator, a second statement, a comment and the forms that wrap one.
@@ -781,6 +784,6 @@ No MCP tool runs InfluxQL: the family declares no MCP facet, and `MCP_STATEMENT_
 ### 15.7 Boundary record
 
 - [`tests/unit/db/influxdb/influxql-agent-read.test.ts`](../../tests/unit/db/influxdb/influxql-agent-read.test.ts): the proof replayed from every principal's captures, each request it sends pinned, every refusal and every unreadable answer.
-- [`tests/unit/db/influxdb/influxql-agent-statement.test.ts`](../../tests/unit/db/influxdb/influxql-agent-statement.test.ts): every admitted form, and each refused `SHOW`, comment, carriage return and `INTO` spelling, held to the captures that show the server reading past them.
+- [`tests/unit/db/influxdb/influxql-agent-statement.test.ts`](../../tests/unit/db/influxdb/influxql-agent-statement.test.ts): every admitted form, and each refused `SHOW` kind, `SHOW` naming a database, comment, carriage return and `INTO` spelling, held to the captures that show the server reading past them.
 - [`tests/integration/db/influxdb-provider.test.ts`](../../tests/integration/db/influxdb-provider.test.ts), "the agent read-only profile": the open and every statement over the captures, URL and form pinned, a grant widened after the open caught by the next statement, the budgets, and the boundary with Studio's admission bypassed.
 

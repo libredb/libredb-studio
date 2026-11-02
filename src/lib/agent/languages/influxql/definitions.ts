@@ -14,7 +14,7 @@ const readInfluxqlStatementSchema = z.strictObject({
 const INFLUXQL_RUN_READ_QUERY: AgentToolDefinition = Object.freeze({
   name: "run_read_query",
   description:
-    "Run one bounded read-only InfluxQL statement against the connection's database: a SELECT, a SHOW of the catalog (DATABASES, RETENTION POLICIES, MEASUREMENTS, SERIES, TAG KEYS, TAG VALUES, FIELD KEYS, or one of their CARDINALITY forms) or an EXPLAIN of a SELECT. One statement, with no comment. Double-quote a name and single-quote a string. INTO, every write, SHOW QUERIES, SHOW USERS and the server's other administration reads are refused before anything is sent, and you are told why.",
+    "Run one bounded read-only InfluxQL statement against the connection's database: a SELECT, a SHOW of the catalog (DATABASES, RETENTION POLICIES, MEASUREMENTS, SERIES, TAG KEYS, TAG VALUES, FIELD KEYS, or one of their CARDINALITY forms) or an EXPLAIN of a SELECT. A SHOW reads the connection's own database, so it takes no ON clause and no database before a measurement. One statement, with no comment. Double-quote a name and single-quote a string. INTO, every write, SHOW QUERIES, SHOW USERS and the server's other administration reads are refused before anything is sent, and you are told why.",
   inputSchema: readInfluxqlStatementSchema,
   operationId: "influxql.query.read",
 });
