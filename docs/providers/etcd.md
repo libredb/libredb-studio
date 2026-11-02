@@ -625,7 +625,9 @@ What the measured users get:
 | READ on `/app/`, WRITE on `/scratch/` | a put and a delete under `/scratch/` admitted | refused: a role grants WRITE |
 | no role | every write refused | proved |
 
-A User and Password on a server with authentication off never reach the proof: the connection itself is refused when it opens, with "Authentication is not enabled on this etcd, so the User and Password would not be used. Clear them to connect."
+A User and Password on a server with authentication off never reach the proof, since etcd refuses the sign-in itself.
+An editor or operations-profile handle is refused when it opens, with "Authentication is not enabled on this etcd, so the User and Password would not be used. Clear them to connect."
+The agent read-only profile refuses it at the open as the proof refuses authentication off, in the proof's own sentence and without etcd's words, since with authentication off no user is proved.
 Nothing is kept between two proofs: WRITE granted to a role after a command passed is read at the next one, and the same token writes with it at once (`midrun.json`), so the command is refused and never sent.
 A call the roles do not govern is the server's to admit: v3.7.2 grants and revokes a lease for any authenticated user, a READ-only one included (`reader-all.json`, `leaseGrant`), so the proof cannot rule those out, and the closed table, which sends no lease grant, no lease revoke and no write, is what stops them.
 A transport failure is raised as itself, never read as a verdict.

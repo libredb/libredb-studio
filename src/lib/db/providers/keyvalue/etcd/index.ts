@@ -68,7 +68,7 @@ import type {
 import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import { type EtcdAgentAnswer, ETCD_METADATA_ONLY, etcdAgentFailure, etcdAgentResult } from "./agent-metadata-read";
-import { etcdAgentUser, proveEtcdReadOnly } from "./agent-read-only-proof";
+import { ETCD_PROOF_SENTENCES, etcdAgentUser, proveEtcdReadOnly } from "./agent-read-only-proof";
 import { type EtcdAgentPlan, readEtcdAgentStatement } from "./agent-statement";
 import { type EtcdAuthStatus, type EtcdClient, type EtcdClientFactory, EtcdError, type EtcdPermission } from "./client";
 import { type EtcdParseLimits, parseEtcdCommand } from "./commands";
@@ -84,6 +84,7 @@ import {
   type EtcdConnectStep,
   type EtcdErrorConnection,
   type EtcdErrorContext,
+  isAuthNotEnabled,
   isUserNameEmpty,
   toProviderError,
 } from "./errors";
@@ -435,6 +436,11 @@ export class EtcdProvider extends BaseDatabaseProvider {
 
     if (auth.kind === "password") {
       await client.authenticate({ signal: signal() }).catch((error: unknown) => {
+        // With authentication off no user is proved, so the agent read-only profile refuses the open in the proof's
+        // own sentence rather than as the editor's connection failure, and without etcd's words.
+        if (this.readOnlyProfile && isAuthNotEnabled(error)) {
+          throw new ExecutionProfileError(ETCD_PROOF_SENTENCES.authOff, "PROFILE_SERVER_UNENFORCED");
+        }
         throw stepError("authenticate", error, step("sign-in"));
       });
     }

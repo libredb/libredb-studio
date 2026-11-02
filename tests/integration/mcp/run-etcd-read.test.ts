@@ -286,6 +286,27 @@ describe("a refusal", () => {
     expect(methods()).not.toContain("memberList");
   });
 
+  test("a user and password on a server with authentication off is refused at the open in the tool's sentence", async () => {
+    principal = "auth-off";
+    overrides = {
+      authenticate: async () => {
+        throw new EtcdError("failed-precondition", "etcdserver: authentication is not enabled", 9);
+      },
+    };
+    const result = await etcd("endpoint status");
+    expect(result).toEqual({
+      isError: true,
+      content: [
+        {
+          type: "text",
+          text: `run_etcd_read cannot run on this connection: ${ETCD_PROOF_SENTENCES.authOff.replace(/\.+$/, "")}. It runs on etcd.`,
+        },
+      ],
+    });
+    expect(result.content[0].text).not.toContain("(etcd:");
+    expect(methods()).toEqual(["authenticate", "close"]);
+  });
+
   test("a user whose READ reaches /registry/ is refused at the open, naming the prefix", async () => {
     overrides = {
       userGet: async () => ["agent_read_registry"],

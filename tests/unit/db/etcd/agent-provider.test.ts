@@ -140,6 +140,33 @@ describe("the open under the agent read-only profile", () => {
     await expect(provider.connect()).rejects.toThrow(ETCD_PROOF_SENTENCES.authOff);
   });
 
+  test("a user and password on a server with authentication off is the profile's refusal, with no etcd words", async () => {
+    // etcd v3.7.2 answers Authenticate with auth off this way (tests/fixtures/etcd/etcd/error-authenticate-not-enabled.json).
+    const client = clientOf("auth-off", {
+      authenticate: async () => {
+        throw new EtcdError("failed-precondition", "etcdserver: authentication is not enabled", 9);
+      },
+    });
+    const { provider } = build(connectionOf("agent_reader_range"), client, READ_ONLY);
+    const failure = await provider.connect().catch((error: unknown) => error);
+    expect(failure).toEqual(new ExecutionProfileError(ETCD_PROOF_SENTENCES.authOff, "PROFILE_SERVER_UNENFORCED"));
+    expect((failure as Error).message).not.toContain("(etcd:");
+    expect(methods(client)).toEqual(["authenticate", "close"]);
+    expect(provider.isConnected()).toBe(false);
+  });
+
+  test("the operations profile keeps the connection's own refusal of a user and password with authentication off", async () => {
+    const client = clientOf("auth-off", {
+      authenticate: async () => {
+        throw new EtcdError("failed-precondition", "etcdserver: authentication is not enabled", 9);
+      },
+    });
+    const { provider } = build(connectionOf("agent_reader_range"), client, OPERATIONS);
+    const failure = await provider.connect().catch((error: unknown) => error as Error);
+    expect(failure).not.toBeInstanceOf(ExecutionProfileError);
+    expect(failure.message).toStartWith("Authentication is not enabled on this etcd");
+  });
+
   test("a proof read that fails for another reason is raised in the provider's words", async () => {
     let reads = 0;
     const client = clientOf("reader-range", {
