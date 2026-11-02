@@ -4926,7 +4926,7 @@ describe("ElasticsearchProvider agent profile login check", () => {
   }
 
   const TOO_BROAD_TAIL =
-    ", so the connection is refused. Give the agent a user whose role holds the cluster action cluster:monitor/main and read and view_index_metadata on the indices it reads, without allow_restricted_indices, such as the libredb_agent_read role";
+    ", so the connection is refused. Give the agent a user whose role holds the cluster action cluster:monitor/main and read and view_index_metadata on the indices it reads, without allow_restricted_indices, such as the libredb_agent_read role, or libredb_seed_read for a seed that MCP reads";
 
   test.each([
     [
@@ -5514,7 +5514,7 @@ describe("MCP run_read_query on an Elasticsearch connection", () => {
     expect(acquired).toEqual(["agent-read-only"]);
     expect(result).toEqual(
       refusedAtOpen(
-        "The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; the user elastic holds the cluster privilege all and read on every index, the restricted system indices included, so the connection is refused. Give the agent a user whose role holds the cluster action cluster:monitor/main and read and view_index_metadata on the indices it reads, without allow_restricted_indices, such as the libredb_agent_read role",
+        "The agent read-only profile needs an Elasticsearch login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; the user elastic holds the cluster privilege all and read on every index, the restricted system indices included, so the connection is refused. Give the agent a user whose role holds the cluster action cluster:monitor/main and read and view_index_metadata on the indices it reads, without allow_restricted_indices, such as the libredb_agent_read role, or libredb_seed_read for a seed that MCP reads",
       ),
     );
     expect(pathsSent()).toEqual([SQL_PATH, "/", HAS_PRIVILEGES_PATH, LIST_PRIVILEGES_PATH]);

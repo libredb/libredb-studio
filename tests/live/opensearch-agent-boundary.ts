@@ -460,7 +460,7 @@ async function openAs(user: string, password: string): Promise<DatabaseProvider>
 const TOO_BROAD =
   "The agent read-only profile refuses an OpenSearch login that the security plugin lets call its REST API, or whose delete by query or index close on a fresh index name passes the plugin's permission check; these probes narrow the login and do not show that it cannot write, since the statement check and the SQL plugin refuse every write whatever the login. The user ";
 const GRANT_INSTEAD =
-  ", so the connection is refused. Give the agent a user whose role holds the cluster actions cluster:monitor/main and cluster:monitor/state and only reads on the indices it reads, such as the libredb_agent_read role";
+  ", so the connection is refused. Give the agent a user whose role holds the cluster actions cluster:monitor/main and cluster:monitor/state and only reads on the indices it reads, such as the libredb_agent_read role, or libredb_seed_read for a seed that MCP reads";
 
 /**
  * With security on, the open probes what the login may do: the admin, a role that writes every index and a role that

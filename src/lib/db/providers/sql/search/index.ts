@@ -1229,7 +1229,7 @@ abstract class SearchProvider extends SQLBaseProvider {
     }
     if (findings.length === 0) return;
     throw new ExecutionProfileError(
-      `The agent read-only profile needs an ${this.product.label} login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; the user ${reach.user} holds ${findings.join(" and ")}, so the connection is refused. Give the agent a user whose role holds the cluster action cluster:monitor/main and read and view_index_metadata on the indices it reads, without allow_restricted_indices, such as the libredb_agent_read role`,
+      `The agent read-only profile needs an ${this.product.label} login that holds no cluster privilege all, reads no restricted system index and is granted no index privilege with allow_restricted_indices; the user ${reach.user} holds ${findings.join(" and ")}, so the connection is refused. Give the agent a user whose role holds the cluster action cluster:monitor/main and read and view_index_metadata on the indices it reads, without allow_restricted_indices, such as the libredb_agent_read role, or libredb_seed_read for a seed that MCP reads`,
       "PROFILE_PRIVILEGES_TOO_BROAD",
     );
   }
@@ -1258,7 +1258,7 @@ abstract class SearchProvider extends SQLBaseProvider {
     if (writes.managesIndices) findings.push("passed the index close on a fresh index name");
     if (findings.length === 0) return;
     throw new ExecutionProfileError(
-      `The agent read-only profile refuses an ${this.product.label} login that the security plugin lets call its REST API, or whose delete by query or index close on a fresh index name passes the plugin's permission check; these probes narrow the login and do not show that it cannot write, since the statement check and the SQL plugin refuse every write whatever the login. The user ${writes.user} ${findings.join(", and ")}, so the connection is refused. Give the agent a user whose role holds the cluster actions cluster:monitor/main and cluster:monitor/state and only reads on the indices it reads, such as the libredb_agent_read role`,
+      `The agent read-only profile refuses an ${this.product.label} login that the security plugin lets call its REST API, or whose delete by query or index close on a fresh index name passes the plugin's permission check; these probes narrow the login and do not show that it cannot write, since the statement check and the SQL plugin refuse every write whatever the login. The user ${writes.user} ${findings.join(", and ")}, so the connection is refused. Give the agent a user whose role holds the cluster actions cluster:monitor/main and cluster:monitor/state and only reads on the indices it reads, such as the libredb_agent_read role, or libredb_seed_read for a seed that MCP reads`,
       "PROFILE_PRIVILEGES_TOO_BROAD",
     );
   }

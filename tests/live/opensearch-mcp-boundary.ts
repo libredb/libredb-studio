@@ -118,7 +118,7 @@ const NOT_SENT = "The statement was refused before it reached the database: ";
 const unsent = (sentence: string) => `${NOT_SENT}${sentence}.`;
 const TOO_BROAD =
   "run_read_query cannot run on this connection: The agent read-only profile refuses an OpenSearch login that the security plugin lets call its REST API, or whose delete by query or index close on a fresh index name passes the plugin's permission check; these probes narrow the login and do not show that it cannot write, since the statement check and the SQL plugin refuse every write whatever the login. The user ";
-const GRANT_INSTEAD = `, so the connection is refused. Give the agent a user whose role holds the cluster actions cluster:monitor/main and cluster:monitor/state and only reads on the indices it reads, such as the libredb_agent_read role. It runs on ${ENGINES}.`;
+const GRANT_INSTEAD = `, so the connection is refused. Give the agent a user whose role holds the cluster actions cluster:monitor/main and cluster:monitor/state and only reads on the indices it reads, such as the libredb_agent_read role, or libredb_seed_read for a seed that MCP reads. It runs on ${ENGINES}.`;
 /** The plugin's refusal of a statement that is not a read, as 3.8.0 words it. */
 const PLUGIN_REFUSAL = /Query must start with SELECT, DELETE, SHOW or DESCRIBE: |Illegal SQL expression : /;
 
