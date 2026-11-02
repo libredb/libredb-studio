@@ -537,7 +537,8 @@ The operations profile sends no request of the model's, so it opens with any key
 
 ### 15.3 What an agent request may be
 
-One request in the console's own grammar, every body key closed at every level (section 5.3), naming `GET /`, `/collections`, `/collections/{collection}`, its `exists`, `aliases` and `cluster` reads, `/aliases`, or `POST /collections/{collection}/points/count` with `exact` only.
+One request in the console's own grammar, every body key closed at every level (section 5.3), naming `GET /`, `/collections`, `/collections/{collection}`, its `exists`, `aliases` and `cluster` reads, `/aliases`, or `POST /collections/{collection}/points/count` with a body of `exact` only, as `true` or `false`, the server's own type for it, so any other value is refused before anything is sent.
+A count keeps its route's own query keys, `consistency` and `timeout`, since neither reads a stored value: `consistency` sets how many replicas answer, and `timeout` is clamped to the request's deadline, as a console count's is.
 A point read, a scroll, a facet and every query answer stored payloads and, on request, vectors (`points-read-only`, `point-read-only`, `scroll-read-only`, `facet-read-only`, `query-read-only`, `query-groups-read-only`), so each is refused before anything is sent by its route template, never the request's own words, as are the optimization and snapshot lists, which no projection reads, and a count's `filter` and `shard_key`, which count by stored values.
 A read-only key's query whose body names a Document, an Image, an inference object or one in a prefetch makes the server call its configured inference address, while a plain vector query does not (`inference-*-read-only`); no agent request reaches a query at all.
 The connection sets only its `api-key` header, once, and the agent's request carries no query key or header the caller chose beyond the route's own.

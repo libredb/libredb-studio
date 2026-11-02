@@ -27,8 +27,8 @@ export const QDRANTAPI_MCP_FACET = Object.freeze({
   words: {
     fewerFields:
       "Read a narrower route, one collection instead of a whole list, or a collection's count, aliases or cluster layout instead of its full description,",
-    readPast: (shown: number) =>
-      `read past the ${shown} rows returned, raise max_rows (at most 500) when the row limit cut the read, or read a narrower route, since a Qdrant read is never paged.`,
+    readPast: (shown: number, cut: "max_rows" | "result_bytes") =>
+      `read past the ${shown} row${shown === 1 ? "" : "s"} returned, ${cut === "max_rows" ? "raise max_rows (at most 500), or " : ""}read a narrower route, since a Qdrant read is never paged.`,
     rowOverCap:
       "One row of this result is larger than the 32 KiB result limit. Read one collection on its own, and run it again.",
     reached: "the server",

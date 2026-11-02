@@ -13,7 +13,10 @@
  *   configuration, its existence, the aliases, a count and the shard layout, and every answer is projected to names,
  *   counts and flags (`metadata-read.ts`).
  * - **A bare count.** A count's `filter` counts by stored values, so a series of counts would read a value out one
- *   comparison at a time, and its `shard_key` counts by a key's value; the agent's count takes `exact` only.
+ *   comparison at a time, and its `shard_key` counts by a key's value; the agent's count takes `exact` only, as
+ *   `true` or `false`, which is the server's own type for it, so any other value is refused here rather than answered
+ *   400 by the server. The route's declared query keys, `consistency` and `timeout`, read no stored value and stay
+ *   admitted: `consistency` picks how many replicas answer, and `execute.ts` clamps `timeout` to the deadline.
  *
  * Not the boundary. The boundary is the provider's closed route table, which can name no write, and the read-only key
  * the server proves before every agent request (`metadata-read.ts`); this is what lets the model read why it was
@@ -21,7 +24,7 @@
  */
 import { RequestRefusal } from "@/lib/db/console/dialect";
 import type { QdrantOp } from "./client";
-import { parseQdrantRequest, type QdrantPhase0, qdrantPhase0 } from "./request";
+import { kindOf, parseQdrantRequest, type QdrantPhase0, qdrantPhase0 } from "./request";
 
 export type QdrantAgentRefusalCode = "request" | "metadata-only" | "count-shape";
 
@@ -54,6 +57,9 @@ export const QDRANT_AGENT_SENTENCES = {
   /** `key` is a key the closed CountRequest schema declares, never user text. */
   countShape: (key: string): string =>
     `An agent's count counts a whole collection, so it takes "exact" only; "${key}" counts by stored values. Nothing was sent.`,
+  /** `kind` is the JSON kind of the value, never the value itself. */
+  countExact: (kind: string): string =>
+    `An agent's count takes "exact" as true or false; it was given ${kind}. Nothing was sent.`,
 } as const;
 
 /** One agent request read: the console's own reading, then the agent's rules. Never sends anything. */
@@ -76,6 +82,11 @@ export function readQdrantAgentStatement(text: string): QdrantAgentReading {
   const extra = plan.body === null ? undefined : Object.keys(plan.body).find((key) => !COUNT_KEYS.has(key));
   if (extra !== undefined) {
     return { ok: false, code: "count-shape", message: QDRANT_AGENT_SENTENCES.countShape(extra) };
+  }
+  // The console reads an `exact` written as null as one left out, and writes the default true in its place.
+  const exact = plan.body?.exact;
+  if (exact !== undefined && typeof exact !== "boolean") {
+    return { ok: false, code: "count-shape", message: QDRANT_AGENT_SENTENCES.countExact(kindOf(exact)) };
   }
   return { ok: true, plan };
 }

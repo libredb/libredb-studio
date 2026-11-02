@@ -305,6 +305,15 @@ describe("the MongoDB arm", () => {
     );
   });
 
+  test("a cut at one row names one document and one row", () => {
+    expect(RUN_MONGO_COMMAND_ARM.moreRows(find, "mongodb", { maxRows: 1, shown: 1, cut: "max_rows" })).toBe(
+      'More rows exist than this result holds, and this tool does not page with offset. Ask for at most 1 document: narrow the filter, or set "options": {"limit": 1}, and run it again. To read past the 1 row returned, skip it with a find\'s "skip" or a $skip stage.',
+    );
+    expect(RUN_MONGO_COMMAND_ARM.moreRows(find, "mongodb", { maxRows: 100, shown: 1, cut: "result_bytes" })).toBe(
+      'More rows exist than the 32 KiB result limit holds, and 1 of them fitted; this tool does not page with offset. Project fewer fields to fit more rows, and to read past the 1 row returned, skip it with a find\'s "skip" or a $skip stage.',
+    );
+  });
+
   test("a cut at the result cap advises fewer fields and skipping the rows that fitted, never the same limit", () => {
     const limited = JSON.stringify({ collection: "orders", operation: "find", options: { limit: 100 } });
     const hint = RUN_MONGO_COMMAND_ARM.moreRows(limited, "mongodb", { maxRows: 100, shown: 15, cut: "result_bytes" });
@@ -366,6 +375,12 @@ describe("the kubectl arm", () => {
       kind: "too-large",
       text: `The result has more than 1000 rows, the most this server reads for one call. ${server.rowCapAdvice("get pods -A", "1000")}`,
     });
+  });
+
+  test("a cut at one row names one pod and one row", () => {
+    expect(RUN_KUBECTL_READ_ARM.moreRows("top pods -A", "kubernetes", { maxRows: 1, shown: 1, cut: "max_rows" })).toBe(
+      "More rows exist than this result holds, and this tool does not page with offset. Ask for at most 1 pod: name a namespace with -n, or narrow with -l, and run it again. To read past the 1 row returned, split the read into narrower ones, since a kubectl read is never paged.",
+    );
   });
 
   test("names neither a MongoDB stage nor a SQL clause where more rows exist, and says a kubectl read is not paged", () => {
@@ -463,7 +478,7 @@ describe("the qdrantapi arm", () => {
   test("names neither a MongoDB stage nor a SQL clause where more rows exist, and says a Qdrant read is not paged", () => {
     const hint = RUN_QDRANT_READ_ARM.moreRows("GET /aliases", "qdrant", { maxRows: 100, shown: 100, cut: "max_rows" });
     expect(hint).toBe(
-      `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice("GET /aliases", "100")} To read past the 100 rows returned, raise max_rows (at most 500) when the row limit cut the read, or read a narrower route, since a Qdrant read is never paged.`,
+      `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice("GET /aliases", "100")} To read past the 100 rows returned, raise max_rows (at most 500), or read a narrower route, since a Qdrant read is never paged.`,
     );
     const bytes = RUN_QDRANT_READ_ARM.moreRows("GET /aliases", "qdrant", {
       maxRows: 100,
@@ -471,8 +486,9 @@ describe("the qdrantapi arm", () => {
       cut: "result_bytes",
     });
     expect(bytes).toBe(
-      "More rows exist than the 32 KiB result limit holds, and 4 of them fitted; this tool does not page with offset. Read a narrower route, one collection instead of a whole list, or a collection's count, aliases or cluster layout instead of its full description, to fit more rows, and to read past the 4 rows returned, raise max_rows (at most 500) when the row limit cut the read, or read a narrower route, since a Qdrant read is never paged.",
+      "More rows exist than the 32 KiB result limit holds, and 4 of them fitted; this tool does not page with offset. Read a narrower route, one collection instead of a whole list, or a collection's count, aliases or cluster layout instead of its full description, to fit more rows, and to read past the 4 rows returned, read a narrower route, since a Qdrant read is never paged.",
     );
+    expect(bytes).not.toContain("max_rows");
     // A read of one collection is already narrow: its hint must not tell the client to read one collection on its own.
     const one = RUN_QDRANT_READ_ARM.moreRows("GET /collections/plain", "qdrant", {
       maxRows: 100,
@@ -487,6 +503,17 @@ describe("the qdrantapi arm", () => {
     }
     expect(RUN_QDRANT_READ_ARM.rowOverCap).toBe(
       "One row of this result is larger than the 32 KiB result limit. Read one collection on its own, and run it again.",
+    );
+  });
+
+  test("a cut at one row names one row, and a byte cut never advises raising max_rows", () => {
+    expect(RUN_QDRANT_READ_ARM.moreRows("GET /aliases", "qdrant", { maxRows: 1, shown: 1, cut: "max_rows" })).toBe(
+      "More rows exist than this result holds, and this tool does not page with offset. Ask for at most 1 row: read one collection's aliases with GET /collections/{collection}/aliases instead of every alias, and run it again. To read past the 1 row returned, raise max_rows (at most 500), or read a narrower route, since a Qdrant read is never paged.",
+    );
+    expect(
+      RUN_QDRANT_READ_ARM.moreRows("GET /aliases", "qdrant", { maxRows: 100, shown: 1, cut: "result_bytes" }),
+    ).toBe(
+      "More rows exist than the 32 KiB result limit holds, and 1 of them fitted; this tool does not page with offset. Read a narrower route, one collection instead of a whole list, or a collection's count, aliases or cluster layout instead of its full description, to fit more rows, and to read past the 1 row returned, read a narrower route, since a Qdrant read is never paged.",
     );
   });
 

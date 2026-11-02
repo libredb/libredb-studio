@@ -63,13 +63,13 @@ export function fingerprintMongo(text: string): string {
  */
 const MONGO_ROW_CAP_ADVICE: Readonly<Record<string, (allowed: string) => string>> = Object.freeze({
   find: (allowed: string) =>
-    `Ask for at most ${allowed} documents: narrow the filter, or set "options": {"limit": ${allowed}}, and run it again.`,
+    `Ask for at most ${allowed} document${allowed === "1" ? "" : "s"}: narrow the filter, or set "options": {"limit": ${allowed}}, and run it again.`,
   aggregate: (allowed: string) =>
-    `Ask for at most ${allowed} documents: add a $match stage before the $group, or a $limit stage, and run it again.`,
+    `Ask for at most ${allowed} document${allowed === "1" ? "" : "s"}: add a $match stage before the $group, or a $limit stage, and run it again.`,
   count: (allowed: string) =>
     `A count answers one row: narrow the filter to the part of the data it is about, and run it again.`,
   distinct: (allowed: string) =>
-    `Ask for at most ${allowed} values: narrow the filter to a smaller part of the collection, and run it again.`,
+    `Ask for at most ${allowed} value${allowed === "1" ? "" : "s"}: narrow the filter to a smaller part of the collection, and run it again.`,
 });
 
 /** The sentence for a MongoDB read refused past the row budget. Exported for its tests, like the fingerprint. */
@@ -83,7 +83,7 @@ export function mongoRowCapAdvice(statement: string, allowed: string): string {
   }
   const advice = operation === undefined ? undefined : MONGO_ROW_CAP_ADVICE[operation];
   return advice === undefined
-    ? `Ask for at most ${allowed} rows: narrow the command to less of the collection, and run it again.`
+    ? `Ask for at most ${allowed} row${allowed === "1" ? "" : "s"}: narrow the command to less of the collection, and run it again.`
     : advice(allowed);
 }
 

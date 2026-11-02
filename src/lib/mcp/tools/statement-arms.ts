@@ -151,8 +151,8 @@ function languageAdmissionReader(
     // that limit again and be cut again, so it names the rows that fitted and how to read past them.
     moreRows(statement: string, _type: DatabaseType, { maxRows, shown, cut }: MoreRowsCut) {
       return cut === "result_bytes"
-        ? `More rows exist than the 32 KiB result limit holds, and ${shown} of them fitted; this tool does not page with offset. ${own.fewerFields} to fit more rows, and to ${own.readPast(shown)}`
-        : `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice(statement, String(maxRows))} To ${own.readPast(shown)}`;
+        ? `More rows exist than the 32 KiB result limit holds, and ${shown} of them fitted; this tool does not page with offset. ${own.fewerFields} to fit more rows, and to ${own.readPast(shown, cut)}`
+        : `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice(statement, String(maxRows))} To ${own.readPast(shown, cut)}`;
     },
   };
 }

@@ -220,6 +220,7 @@ describe("a refusal", () => {
     ["a scroll", "POST /collections/plain/points/scroll"],
     ["a query", 'POST /collections/plain/points/query\n{"query": [0.1, 0.2, 0.3, 0.4]}'],
     ["a count filter", 'POST /collections/plain/points/count\n{"filter": {"must": []}}'],
+    ["a count's non-boolean exact", 'POST /collections/plain/points/count\n{"exact": "yes"}'],
     ["a write", 'PUT /collections/plain/points\n{"points": []}'],
     ["a collection delete", "DELETE /collections/plain"],
   ])("%s is refused by the agent's admission before anything is acquired", async (_shape, request) => {
