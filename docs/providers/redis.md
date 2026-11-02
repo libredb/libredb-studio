@@ -2266,7 +2266,7 @@ The operations profile sends no command of the model's, so it opens with any use
 
 ### 16.3 What an agent command may be
 
-One line, with no control character anywhere, so a second command, an inline `MULTI` or a CRLF is refused; words separated by spaces, each bare (no quote and no backslash) or wrapped in double quotes with `\"` and `\\` as the only escapes.
+One line, with no control character anywhere, a leading or trailing line break or tab included, so a second command, an inline `MULTI` or a CRLF is refused before any surrounding space is trimmed; words separated by spaces, each bare (no quote and no backslash) or wrapped in double quotes with `\"` and `\\` as the only escapes.
 The command words are matched case-insensitively against the table, a key is 1 to 1,024 characters, and `MEMORY USAGE` takes `SAMPLES` 1 to 5 and nothing else, since 0 samples every nested value.
 Everything else is refused before anything is sent, by a sentence that quotes nothing the command wrote.
 The command runs on a connection of its own in the connection's database, with the request's deadline as its command timeout, and the connection is closed after it, so no `SELECT`, `CLIENT SETNAME`, protocol switch or open `MULTI` reaches the next command; the argv sent is the reader's, the command words uppercased and the key as written.

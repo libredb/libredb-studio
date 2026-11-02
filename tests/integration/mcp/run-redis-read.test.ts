@@ -275,6 +275,8 @@ describe("a refusal", () => {
     ["a value read", "GET agent:string"],
     ["INFO", "INFO keyspace"],
     ["a second command", "DBSIZE\nDEL agent:hash"],
+    ["a trailing CRLF", "TYPE agent:hash\r\n"],
+    ["a leading line break", "\nTYPE agent:hash"],
   ])("%s is refused by the agent's admission before anything is acquired", async (_shape, line) => {
     const result = await redis(line);
     const refusal = server.admit?.(line);

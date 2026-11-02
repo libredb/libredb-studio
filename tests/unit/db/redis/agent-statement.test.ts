@@ -51,7 +51,6 @@ describe("the table's reads", () => {
 
   test("surrounding spaces and runs of spaces between words are not words", () => {
     expect(argvOf("  TYPE   user:1  ")).toEqual(["TYPE", "user:1"]);
-    expect(argvOf("TYPE user:1\n")).toEqual(["TYPE", "user:1"]);
   });
 
   test("a double-quoted key carries spaces and the two escapes, and reaches the server as one argument", () => {
@@ -90,7 +89,7 @@ describe("what is refused before anything is sent", () => {
     expect(refusal("   ")).toEqual({ code: "request", message: REDIS_AGENT_SENTENCES.empty });
   });
 
-  test("a second command, a CRLF, a tab and every other control character are refused, so one request is one command", () => {
+  test("a second command, a CRLF, a tab and every other control character are refused, leading and trailing ones too, so one request is one command", () => {
     for (const text of [
       "TYPE a\nDEL a",
       "TYPE a\r\nDEL a",
@@ -102,6 +101,13 @@ describe("what is refused before anything is sent", () => {
       "TYPE a\u2028DEL a",
       "TYPE a\u2029b",
       "MULTI\nTYPE a\nEXEC",
+      "TYPE a\r\n",
+      "TYPE a\n",
+      "\nTYPE a",
+      "\rTYPE a",
+      "\tTYPE a",
+      "TYPE a\t",
+      "\n",
     ]) {
       expect(refusal(text), JSON.stringify(text)).toEqual({ code: "request", message: REDIS_AGENT_SENTENCES.control });
     }
