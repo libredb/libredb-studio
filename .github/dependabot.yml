@@ -146,6 +146,16 @@ updates:
       - dependency-name: "db2-node"
         versions: ["1.0.26", "1.0.27"]
 
+      # neo4j-driver-lite 6.3.0 waits for the agent-boundary captures of
+      # tests/live/neo4j-agent-captures.ts, which need Neo4j Enterprise, whose
+      # licence only the person running them can accept (docs/BACKLOG.md P13).
+      # The weekly production group proposed it in #2167 and again in #2188, to
+      # be held by hand each time. Only this version is ignored, so a later
+      # release is still proposed, and it is measured before it merges. Remove
+      # this entry when the pin moves and P13 closes.
+      - dependency-name: "neo4j-driver-lite"
+        versions: ["6.3.0"]
+
       # Held at the major @simplewebauthn/server depends on (^2.1.0 as of
       # 14.0.3). tests/helpers/attestation-chain.ts builds attestation chains
       # with it, and tests/unit/lib/passkey/dependency-floor.test.ts fails unless

@@ -6901,10 +6901,11 @@ Found 2026-10-28 while closing the dependency advisories.
 `neo4j-driver-lite` is pinned exactly at 6.2.0, and 6.3.0 (published 2026-10-29) was held out of the Dependabot production group in #2167.
 On 6.3.0 the evidence harness (`tests/live/neo4j-evidence.ts`) against the pinned 5.26.31 Community server matched every committed capture, but the agent-boundary captures of `tests/live/neo4j-agent-captures.ts` were not recorded again, because their `run.sh` starts Neo4j Enterprise, whose licence only the person running it can accept.
 6.3.0 also refuses a non-empty token without a scheme instead of treating it as `none` (neo4j/neo4j-javascript-driver#1451); every token Studio builds is `auth.basic` or absent, and an absent token still maps to `none`, so this change does not reach the provider, but the provider's measurement is incomplete without the agent-boundary captures.
+`.github/dependabot.yml` ignores exactly 6.3.0, because the production group proposed it in #2167 and again in #2188, and it was held by hand in each; a later release is still proposed.
 
 Found 2026-11-02 while taking the Dependabot production group (#2167); the pin stays at 6.2.0.
 
-**Done when:** the agent-boundary captures are recorded on 6.3.0 or a later release against the Enterprise fixture and match the committed ones (or the differences are taken into the provider and `docs/providers/neo4j.md`), and the pin moves to it with the measurement its `//dependencies` note asks for, with `neo4j-driver-core` and `neo4j-driver-bolt-connection` on the same version.
+**Done when:** the agent-boundary captures are recorded on 6.3.0 or a later release against the Enterprise fixture and match the committed ones (or the differences are taken into the provider and `docs/providers/neo4j.md`), the pin moves to it with the measurement its `//dependencies` note asks for, with `neo4j-driver-core` and `neo4j-driver-bolt-connection` on the same version, and the `neo4j-driver-lite` ignore entry in `.github/dependabot.yml` is removed with it.
 
 ## Documentation
 
