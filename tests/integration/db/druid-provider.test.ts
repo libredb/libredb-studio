@@ -3209,6 +3209,22 @@ describe("queryReadOnly", () => {
     expect(recorded.agent.filter((call) => call.sql === "SELECT nope")).toEqual([]);
   });
 
+  test("a planner the provider cannot reach is the environment's failure, and the statement is not sent", async () => {
+    const recorded = recording(undefined, async () => {
+      throw new DruidTransportError(
+        "Druid request failed: connection refused at 127.0.0.1:8888 (line [2], column [8])",
+      );
+    });
+    const provider = await open(recorded);
+    const error = await provider.queryReadOnly("SELECT nope", AGENT_BUDGET).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ConnectionError);
+    // Only the server's own answer counts its positions over the planner's text, so this message is left as it came.
+    expect((error as Error).message).toBe(
+      "Failed to connect to druid database: Druid request failed: connection refused at 127.0.0.1:8888 (line [2], column [8])",
+    );
+    expect(recorded.agent.filter((call) => call.sql === "SELECT nope")).toEqual([]);
+  });
+
   test("a probe the server runs mid-handle refuses the statement, which is never sent", async () => {
     const recorded = recording();
     const provider = await open(recorded);
