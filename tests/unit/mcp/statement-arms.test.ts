@@ -418,6 +418,7 @@ describe("the tool each engine is read with", () => {
     expect(mcpStatementToolFor("elasticsearch")).toBe("run_read_query");
     expect(mcpStatementToolFor("opensearch")).toBe("run_read_query");
     expect(mcpStatementToolFor("cassandra")).toBe("run_read_query");
+    expect(mcpStatementToolFor("couchbase")).toBe("run_read_query");
     expect(mcpStatementToolFor("redis")).toBeNull();
     expect(mcpStatementToolFor("snowflake")).toBeNull();
   });

@@ -68,6 +68,7 @@ describe("the texts", () => {
     expect(inSqlPaging("libsql")).toBe("Page it in SQL: LIMIT n OFFSET m.");
     expect(inSqlPaging("influxdb3")).toBe("Page it in SQL: LIMIT n OFFSET m.");
     expect(inSqlPaging("opensearch")).toBe("Page it in SQL: LIMIT n OFFSET m.");
+    expect(inSqlPaging("couchbase")).toBe("Page it in SQL: LIMIT n OFFSET m.");
     expect(inSqlPaging("elasticsearch")).toBe(
       "Page it in SQL: ORDER BY a unique field, and for the next page add WHERE that field > the last value read.",
     );
@@ -107,11 +108,11 @@ describe("the texts", () => {
     expect(
       profileRefusalText(
         "The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution.",
-        "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch and Apache Cassandra",
+        "PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Apache Cassandra and Couchbase",
         "run_read_query",
       ),
     ).toBe(
-      "run_read_query cannot run on this connection: The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution. It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch and Apache Cassandra.",
+      "run_read_query cannot run on this connection: The agent read-only execution profile requires a least-privilege PostgreSQL role; this role is unverified or too broad (is_superuser). A read-only transaction does not stop server-side file access or program execution. It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Apache Cassandra and Couchbase.",
     );
   });
 });
@@ -133,6 +134,9 @@ describe("the texts", () => {
  * Apache Cassandra 5.0.9, measured on 2026-11-02 as a role holding only SELECT on its keyspace, runs a `SELECT`
  * (`JSON` and `DISTINCT` too) and answers `WITH`, `VALUES`, `TABLE`, `EXPLAIN` and `OFFSET` with a syntax error, and the
  * agent path reads one table of the connection's keyspace or of `system_schema`.
+ * Couchbase Server 8.0.2 Enterprise, measured on 2026-11-02 through the agent read-only path, runs a `SELECT` (a
+ * `WITH` before it too), while the path's statement check refuses `EXPLAIN` and every other statement before it is
+ * sent, and SQL++ has no bare `VALUES` or `TABLE` statement.
  */
 describe("the accepted forms each engine's refusal names", () => {
   test.each([
@@ -153,6 +157,7 @@ describe("the accepted forms each engine's refusal names", () => {
       "a SELECT that reads at most one index expression, with no comment, subquery, WITH, JOIN or double quote (quote a name in backticks)",
     ],
     ["cassandra", "a SELECT of one table of the connection's keyspace or of system_schema"],
+    ["couchbase", "a SELECT (a WITH is fine)"],
   ] as const)("%s: %s", (type, statements) => {
     expect(fenceRefusalText("NON_READ_STATEMENT", type)).toBe(
       `The statement was refused before it reached the database (NON_READ_STATEMENT). On this engine run_read_query runs one read-only statement: ${statements}.`,
@@ -233,6 +238,17 @@ describe("the offset rule", () => {
     ["SELECT id FROM probe.customers", "cassandra", NO_CQL_OFFSET],
     ["SELECT id FROM probe.customers LIMIT 5", "cassandra", NO_CQL_OFFSET],
     ["SELECT id FROM probe.customers WHERE id = 1 LIMIT 5 ALLOW FILTERING", "cassandra", NO_CQL_OFFSET],
+    ["SELECT d.n FROM `_default` AS d ORDER BY d.n LIMIT 2 OFFSET 1", "couchbase", OWN_LIMIT],
+    [
+      "SELECT d.n FROM `_default` AS d ORDER BY d.n",
+      "couchbase",
+      "This query cannot be paged with offset. Page it in SQL: LIMIT n OFFSET m.",
+    ],
+    [
+      "EXPLAIN SELECT d.n FROM `_default` AS d",
+      "couchbase",
+      "This statement's result cannot be paged. Call again without offset.",
+    ],
     ["VALUES (1), (2), (3)", "sqlite", "This statement's result cannot be paged. Call again without offset."],
     ["TABLE numbers", "postgres", "This statement's result cannot be paged. Call again without offset."],
     ["EXPLAIN SELECT id FROM numbers", "duckdb", "This statement's result cannot be paged. Call again without offset."],
@@ -354,6 +370,7 @@ describe("the prefixes the mapper matches still start a message in each provider
         "src/lib/db/providers/timeseries/influxdb/sql-agent-read.ts",
         "src/lib/db/providers/sql/search/index.ts",
         "src/lib/db/providers/sql/cassandra/index.ts",
+        "src/lib/db/providers/document/couchbase/index.ts",
       ],
     },
     MSSQL_TIME_BUDGET_PREFIX: { prefix: MSSQL_TIME_BUDGET_PREFIX, files: ["src/lib/db/providers/sql/mssql.ts"] },
@@ -370,6 +387,7 @@ describe("the prefixes the mapper matches still start a message in each provider
     influxdb3: ["src/lib/db/providers/timeseries/influxdb/sql-agent-read.ts"],
     elasticsearch: ["src/lib/db/providers/sql/search/index.ts"],
     cassandra: ["src/lib/db/providers/sql/cassandra/index.ts"],
+    couchbase: ["src/lib/db/providers/document/couchbase/index.ts"],
     mongodb: ["src/lib/db/providers/document/mongodb/agent-read.ts"],
     kubernetes: [
       "src/lib/db/providers/platform/kubernetes/machine-read.ts",

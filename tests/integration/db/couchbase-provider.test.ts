@@ -30,6 +30,14 @@ import {
   kindHasColumns,
   sourceBoundTruncationReason,
 } from "@/lib/db/object-kinds";
+import { MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import { executionContextFor, type ExecutionProfile } from "@/lib/db/factory";
+import { readQueryFormsOf } from "@/lib/db/providers/sql/read-query-forms";
+import type { McpConnectionContext } from "@/lib/mcp/context";
+import { MCP_ENGINE_ERROR_PREFIX, MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
+import type { McpStatementInput } from "@/lib/mcp/tools/run-statement";
+import type { ManagedConnection } from "@/lib/seed";
+import { RunReadQueryInputSchema, runReadQuery } from "../../helpers/run-read-query";
 
 // ============================================================================
 // Connection
@@ -2763,5 +2771,296 @@ describe("CouchbaseProvider agent read-only profile", () => {
     cluster.statement = () => ({ status: 400, payload: errorPayload(3000, "syntax error") });
     const provider = await agentProvider(cluster);
     await expect(provider.queryReadOnly("SELECT 1 AS", BUDGET)).rejects.toThrow(new QueryError("syntax error"));
+  });
+
+  /**
+   * MCP's `run_read_query` serves Couchbase through the same acquisition and `queryReadOnly` agent mode uses: the
+   * connection is taken under `agent-read-only`, whose open checks the user, and every statement is checked again and
+   * fenced to one SELECT before it is sent. The MCP fence refuses a write-shaped statement before anything is acquired;
+   * an EXPLAIN passes that fence and is refused by the provider's, after the open and before the statement is sent.
+   */
+  describe("MCP run_read_query on a Couchbase connection", () => {
+    const SEED = {
+      id: "seed:travel",
+      name: "travel",
+      type: COUCHBASE,
+      seedId: "travel",
+      managed: true,
+      mcp: true,
+      roles: ["*"],
+      host: "127.0.0.1",
+      port: 8091,
+      user: "agent_ro",
+      database: BUCKET,
+      createdAt: new Date(),
+    } as ManagedConnection;
+    const ENGINES =
+      "It runs on PostgreSQL, SQLite, DuckDB, SQL Server, MySQL, ClickHouse, libSQL, InfluxDB 3 (SQL), Elasticsearch, OpenSearch, Apache Cassandra and Couchbase.";
+
+    let cluster: AgentCluster;
+    let acquired: ExecutionProfile[] = [];
+
+    /** A context over the one Couchbase seed, opening each acquisition the way the factory does, by its profile. */
+    const context = {
+      caller: { username: "alice", role: "admin" },
+      visibleConnections: async () => [SEED],
+      resolve: async () => SEED,
+      acquire: async (_connection: ManagedConnection, profile: ExecutionProfile) => {
+        acquired.push(profile);
+        const provider = new CouchbaseProvider(
+          makeConnection({ user: "agent_ro" }),
+          {},
+          executionContextFor(profile),
+          nodeTransports(cluster),
+        );
+        await provider.connect();
+        return provider;
+      },
+    } as unknown as McpConnectionContext;
+
+    function call(args: Record<string, unknown>) {
+      const parsed = RunReadQueryInputSchema.parse({ connection_id: SEED.id, ...args }) as McpStatementInput;
+      return runReadQuery(parsed, { context, signal: new AbortController().signal });
+    }
+
+    const textOf = (result: { content: unknown }) =>
+      (result.content as { type: string; text: string }[]).map((part) => part.text);
+
+    beforeEach(() => {
+      cluster = agentCluster();
+      acquired = [];
+    });
+
+    test("the provider doc says MCP read is open here and names the statements it runs, from their records", () => {
+      const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/couchbase.md"), "utf8");
+
+      expect(MCP_STATEMENT_READ.couchbase).toBe(true);
+      expect(doc).toContain("`MCP_STATEMENT_READ.couchbase` is true");
+      expect(doc).not.toContain("MCP's statement read stays closed on Couchbase");
+      expect(doc.replaceAll("`", "")).toContain(`It runs ${readQueryFormsOf(COUCHBASE).statements}:`);
+    });
+
+    test("reads rows under the agent profile, the user checked at the open and again before the statement", async () => {
+      cluster.statement = () => ({
+        status: 200,
+        payload: queryPayload([{ n: 1 }, { n: 2 }, { n: 3 }], { signature: { n: "json" } }),
+      });
+
+      const result = await call({ sql: "SELECT d.n FROM `_default` AS d ORDER BY d.n", max_rows: 2 });
+
+      expect(result.isError).toBeUndefined();
+      expect(acquired).toEqual(["agent-read-only"]);
+      expect(result.structuredContent).toMatchObject({
+        connection_id: SEED.id,
+        rows: [{ n: 1 }, { n: 2 }],
+        row_count: 2,
+        truncated: true,
+        truncated_by: "max_rows",
+        pagination: { offset: 0, limit: 2, hasMore: true, nextOffset: 2, wasLimited: true },
+        hint: "Call again with offset 2 for the next page.",
+      });
+      expect(textOf(result)[0]).toBe(MCP_UNTRUSTED_NOTICE);
+      const statement = "SELECT d.n FROM `_default` AS d ORDER BY d.n LIMIT 3";
+      expect(paths(cluster.sent)).toEqual([
+        "GET /whoami",
+        "GET /pools/default/nodeServices",
+        "probe",
+        "GET /whoami",
+        "probe",
+        statement,
+      ]);
+      expect(cluster.sent.at(-1)?.body).toMatchObject({ statement, readonly: true, query_context: "default:`travel`" });
+    });
+
+    test("pages with SQL++'s own LIMIT n OFFSET m", async () => {
+      cluster.statement = () => ({ status: 200, payload: queryPayload([{ n: 3 }], { signature: { n: "json" } }) });
+
+      const result = await call({ sql: "SELECT d.n FROM `_default` AS d ORDER BY d.n", max_rows: 2, offset: 2 });
+
+      expect(cluster.sent.at(-1)?.body?.statement).toBe(
+        "SELECT d.n FROM `_default` AS d ORDER BY d.n LIMIT 3 OFFSET 2",
+      );
+      expect(result.structuredContent).toMatchObject({
+        rows: [{ n: 3 }],
+        pagination: { offset: 2, limit: 2, hasMore: false, nextOffset: null, wasLimited: true },
+      });
+    });
+
+    test("an offset on a query with its own LIMIT is refused before the statement is sent", async () => {
+      const result = await call({ sql: "SELECT d.n FROM `_default` AS d ORDER BY d.n LIMIT 5", offset: 2 });
+
+      expect(result).toEqual({
+        content: [
+          {
+            type: "text",
+            text: "This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: LIMIT n OFFSET m.",
+          },
+        ],
+        isError: true,
+      });
+      expect(paths(cluster.sent)).toEqual(["GET /whoami", "GET /pools/default/nodeServices", "probe"]);
+    });
+
+    const fenced = (code: string) =>
+      `The statement was refused before it reached the database (${code}). On this engine run_read_query runs one read-only statement: a SELECT (a WITH is fine).`;
+
+    test.each([
+      ['INSERT INTO `_default` (KEY, VALUE) VALUES ("k", {"n": 1})', "NON_READ_STATEMENT"],
+      ['UPSERT INTO `_default` (KEY, VALUE) VALUES ("k", {"n": 1})', "NON_READ_STATEMENT"],
+      ['UPDATE `_default` SET n = 0 WHERE META().id = "k"', "NON_READ_STATEMENT"],
+      ['DELETE FROM `_default` USE KEYS "k"', "NON_READ_STATEMENT"],
+      ["MERGE INTO `_default` AS t USING [] AS s ON META(t).id = s.id WHEN MATCHED THEN DELETE", "NON_READ_STATEMENT"],
+      ["CREATE INDEX ix ON `_default`(n)", "NON_READ_STATEMENT"],
+      ["UPDATE STATISTICS FOR `_default` INDEX ALL", "NON_READ_STATEMENT"],
+      ["BEGIN WORK", "NON_READ_STATEMENT"],
+      ["PREPARE p FROM SELECT 1", "NON_READ_STATEMENT"],
+      ["EXECUTE p", "NON_READ_STATEMENT"],
+      ["ADVISE SELECT 1", "NON_READ_STATEMENT"],
+      ["INFER `_default`", "NON_READ_STATEMENT"],
+      ["EXECUTE FUNCTION f()", "NON_READ_STATEMENT"],
+      ["GRANT query_update ON `_default` TO agent_ro", "NON_READ_STATEMENT"],
+      ["SELECT 1 AS a; DELETE FROM `_default`", "MULTIPLE_STATEMENTS"],
+      ["-- x\rDELETE FROM `_default`", "DIALECT_AMBIGUOUS_TEXT"],
+    ])("%p is refused at admission, before anything is acquired or sent", async (sql, code) => {
+      const result = await call({ sql });
+
+      expect(result).toEqual({ content: [{ type: "text", text: fenced(code) }], isError: true });
+      expect(acquired).toEqual([]);
+      expect(cluster.sent).toEqual([]);
+    });
+
+    test("an EXPLAIN passes the MCP fence and is refused by the provider's before the statement is sent", async () => {
+      const result = await call({ sql: "EXPLAIN SELECT d.n FROM `_default` AS d" });
+
+      expect(result).toEqual({
+        content: [
+          {
+            type: "text",
+            text: "The statement was refused before it reached the database: The agent read-only execution profile sends one SQL++ statement, a SELECT (a WITH before it is fine), and nothing else; this statement does not begin with SELECT or WITH, so it was not sent. A user holding only query_select may still run UPDATE STATISTICS, BEGIN WORK, PREPARE and EXECUTE, so only a SELECT reaches the server.",
+          },
+        ],
+        isError: true,
+      });
+      expect(acquired).toEqual(["agent-read-only"]);
+      expect(paths(cluster.sent)).toEqual(["GET /whoami", "GET /pools/default/nodeServices", "probe"]);
+    });
+
+    test("a read past the user's role is answered as the database's refusal", async () => {
+      cluster.statement = () => ({
+        status: 401,
+        payload: errorPayload(
+          13014,
+          "User does not have credentials to run queries accessing user information. Add role admin to allow the statement to run.",
+        ),
+      });
+
+      const result = await call({ sql: "SELECT * FROM system:user_info" });
+
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toEqual([
+        MCP_UNTRUSTED_NOTICE,
+        `${MCP_ENGINE_ERROR_PREFIX}User does not have credentials to run queries accessing user information. Add role admin to allow the statement to run.`,
+      ]);
+    });
+
+    test("a user holding more than query_select is refused at open, in the profile's sentence", async () => {
+      cluster.roles = [SELECT_ONLY, { role: "query_system_catalog" }];
+
+      const result = await call({ sql: "SELECT d.n FROM `_default` AS d" });
+
+      expect(acquired).toEqual(["agent-read-only"]);
+      expect(paths(cluster.sent)).toEqual(["GET /whoami"]);
+      expect(result).toEqual({
+        content: [
+          {
+            type: "text",
+            text: `run_read_query cannot run on this connection: The agent read-only execution profile needs a Couchbase user whose only roles are query_select on named scopes of the bucket travel; the user agent_ro also holds query_system_catalog, which reach past them, so the connection is refused. A role on every scope of the bucket reaches its _system scope too, which holds Sync Gateway's and the query optimizer's own documents. Give the agent a user whose only roles are query_select[travel:<scope>], one for each scope it reads. ${ENGINES}`,
+          },
+        ],
+        isError: true,
+      });
+    });
+
+    test("a server that does not refuse the probe is refused at open, in the profile's sentence", async () => {
+      cluster.probe = { status: 200, payload: queryPayload([]) };
+
+      const result = await call({ sql: "SELECT d.n FROM `_default` AS d" });
+
+      expect(result).toEqual({
+        content: [
+          {
+            type: "text",
+            text: `run_read_query cannot run on this connection: The agent read-only execution profile needs a server that enforces its users' roles; this server ran a DELETE in the bucket travel for the user agent_ro, whose only roles are query_select, so its enforcement is unproven and the connection is refused. ${ENGINES}`,
+          },
+        ],
+        isError: true,
+      });
+    });
+
+    test("takes no database: a Couchbase connection reads the bucket it names", async () => {
+      const result = await call({ sql: "SELECT d.n FROM `_default` AS d", database: "other" });
+
+      expect(result).toEqual({
+        content: [
+          { type: "text", text: "This connection reads only the database it names; call again without database." },
+        ],
+        isError: true,
+      });
+      expect(paths(cluster.sent).includes("SELECT d.n FROM `_default` AS d")).toBe(false);
+    });
+
+    test("a result past the 1000-row provider budget is refused, never cut", async () => {
+      cluster.statement = () => ({
+        status: 200,
+        payload: queryPayload(Array.from({ length: 1001 }, (_, n) => ({ n }))),
+      });
+
+      const result = await call({ sql: "SELECT RAW x FROM ARRAY_RANGE(0, 2000) AS x LIMIT 1001" });
+
+      expect(result).toEqual({
+        content: [
+          {
+            type: "text",
+            text: "The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, or remove your own LIMIT and page with offset.",
+          },
+        ],
+        isError: true,
+      });
+    });
+
+    test("a result past the 1 MiB provider budget is refused, never cut", async () => {
+      cluster.statement = () => ({ status: 200, payload: queryPayload([{ s: "x".repeat(1_048_577) }]) });
+
+      const result = await call({ sql: "SELECT d.s FROM `_default` AS d" });
+
+      expect(result).toEqual({
+        content: [
+          {
+            type: "text",
+            text: "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add a smaller LIMIT.",
+          },
+        ],
+        isError: true,
+      });
+    });
+
+    test("a statement past timeout_ms is answered as the timeout, the server's timeout never past it", async () => {
+      cluster.statement = () => ({ status: 200, payload: errorPayload(1080, "Timeout 1s exceeded") });
+
+      const result = await call({ sql: "SELECT d.n FROM `_default` AS d", timeout_ms: 1000 });
+
+      expect(result).toEqual({
+        content: [
+          {
+            type: "text",
+            text: "The statement did not finish within timeout_ms (1000 ms). Narrow it, or raise timeout_ms up to 30000.",
+          },
+        ],
+        isError: true,
+      });
+      const timeout = String(cluster.sent.at(-1)?.body?.timeout);
+      expect(timeout).toMatch(/^\d+ms$/);
+      expect(Number.parseInt(timeout, 10)).toBeLessThanOrEqual(1000);
+    });
   });
 });

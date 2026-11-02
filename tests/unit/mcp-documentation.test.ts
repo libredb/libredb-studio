@@ -215,6 +215,24 @@ describe("docs/MCP.md", () => {
     );
   });
 
+  test("says what a cancel and a timeout do to a Couchbase statement, as measured on 8.0.2 Enterprise", () => {
+    expect(MCP_DOC).toContain(
+      "| Couchbase | Studio stops waiting; the statement runs on until the provider closes its request at the time left of `timeout_ms`, which stops it on the query service | Studio closes the request at `timeout_ms` and the query service, whose own timeout is set to the time left, stops the statement, and the client gets the timeout answer |",
+    );
+  });
+
+  test("says what Couchbase needs of a seed, how it enforces read-only, and that inspect_schema opens it unchecked", () => {
+    expect(MCP_DOC).toContain(
+      "Couchbase by a user whose only roles are `query_select` on named scopes of the connection's bucket, checked at open and again before every statement on a server proven to refuse that user a write, behind the provider's fence that sends one `SELECT` ([couchbase.md](./providers/couchbase.md))",
+    );
+    expect(MCP_DOC).toContain(
+      "On Couchbase the seed's user must hold no role but `query_select` on named scopes of the seed's bucket (`query_select[<bucket>:<scope>]`, one for each scope it reads), never on every scope or on the bucket's `_system` scope, counting the roles of its groups, on a server that refuses that user a write, as the check proves at open and before every statement for agent mode ([couchbase.md](./providers/couchbase.md) section 15.7): the administrator, `ro_admin`, `query_system_catalog`, `data_reader`, a role on another bucket, a group that grants a writing role and every Community Edition user are refused.",
+    );
+    expect(MCP_DOC).toContain(
+      "Couchbase checks its user only for a connection that sends statements, so `inspect_schema` opens a Couchbase connection unchecked, as the editor does, with the administrator too.",
+    );
+  });
+
   test("says what a cancel and a timeout do to an Elasticsearch statement, as measured on 9.1.4", () => {
     expect(MCP_DOC).toContain(
       "| Elasticsearch | Studio stops waiting, and the provider closes its request at the time left of `timeout_ms`; the cluster runs the statement to its end, and holds no search context for it once it ends | Studio closes the request at `timeout_ms`, the cluster runs the statement to its end and then holds no search context for it, and the client gets the timeout answer |",
@@ -300,6 +318,7 @@ describe("docs/MCP.md", () => {
     "docs/providers/libsql.md",
     "docs/providers/influxdb3.md",
     "docs/providers/opensearch.md",
+    "docs/providers/couchbase.md",
   ])("%s says run_read_query pages a SELECT without its own LIMIT and refuses only a LIMIT past 1000", (doc) => {
     const text = read(doc);
     expect(text).toContain(
@@ -322,7 +341,7 @@ describe("docs/MCP.md", () => {
 
   test("says which libSQL token a seed needs and that inspect_schema opens libSQL unproven", () => {
     expect(MCP_DOC).toContain(
-      "`run_read_query` refuses a PostgreSQL, SQL Server, ClickHouse, libSQL or Apache Cassandra connection whose own login could do more than read",
+      "`run_read_query` refuses a PostgreSQL, SQL Server, ClickHouse, libSQL, Apache Cassandra or Couchbase connection whose own login could do more than read",
     );
     expect(MCP_DOC).toContain(
       "libSQL by a token proven at open to be read-only, which the server refuses every write ([libsql.md](./providers/libsql.md))",
