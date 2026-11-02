@@ -314,13 +314,15 @@ function resourceDatasources(cell: unknown): Set<string> {
   return names;
 }
 
-/** A Calcite plan: only `Bindable` lines, at least one scan, and every scan on INFORMATION_SCHEMA. */
+/**
+ * A Calcite plan: only `Bindable` lines, and every scan on INFORMATION_SCHEMA. A plan with no scan reads no table: the
+ * planner answers a filter it proves empty, such as the agent's relation read (`WHERE 1 = 0`), with
+ * `BindableValues(tuples=[[]])` (measured on 37.0.0).
+ */
 function readCalcitePlan(plan: string): void {
   const lines = plan.split("\n").filter((line) => line.trim() !== "");
   if (lines.length === 0 || !lines.every((line) => CALCITE_LINE.test(line))) throw new PlanRefusal(null);
-  const scans = [...plan.matchAll(CALCITE_SCAN)];
-  if (scans.length === 0) throw new PlanRefusal(null);
-  for (const [, schema, table] of scans) {
+  for (const [, schema, table] of plan.matchAll(CALCITE_SCAN)) {
     if (schema !== CATALOG_SCHEMA) throw new PlanRefusal(`the table ${schema}.${table}`);
   }
 }

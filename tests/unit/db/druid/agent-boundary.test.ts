@@ -349,6 +349,8 @@ describe("the planner check", () => {
       "BindableJoin(condition=[=($0, $1)], joinType=[inner])\n  BindableTableScan(table=[[INFORMATION_SCHEMA, TABLES]])\n  BindableTableScan(table=[[INFORMATION_SCHEMA, COLUMNS]], projects=[[1]])\n",
       [],
     ],
+    // A statement whose filter the planner proves empty, the agent's relation read among them, reads no table at all.
+    ["a Calcite plan that reads no table", "BindableValues(tuples=[[]])\n", []],
   ])("admits %s", (_name, plan, resources) => {
     expect(druidAgentReachRefusal(explained(plan, resources))).toBeNull();
   });
@@ -443,7 +445,6 @@ describe("the planner check", () => {
       "a Calcite plan with a line it does not know",
       explained("BindableTableScan(table=[[INFORMATION_SCHEMA, TABLES]])\nDruidQueryRel(x)\n", []),
     ],
-    ["a Calcite plan with no scan", explained("BindableValues(tuples=[[{ 1 }]])\n", [])],
     ["a nesting past any real plan", explained(native(nested(40)), [])],
   ])("refuses %s as unreadable", (_name, answer) => {
     expect(druidAgentReachRefusal(answer as DruidQueryResult)).toBe(UNREADABLE);
