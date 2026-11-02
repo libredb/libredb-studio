@@ -482,7 +482,7 @@ Only the table list can fail: a refused read is reported on that panel with the 
 
 Plan mode drafts SQL for Db2 and `inspect_schema` reads its schema through the provider's object surface on any connection, whatever its user.
 Agent mode executes statements on Db2 through `queryReadOnly` in [`index.ts`](../../src/lib/db/providers/sql/db2/index.ts), under the profile section 10.1 describes.
-MCP's statement read stays closed on Db2 (`MCP_STATEMENT_READ.db2` is false) until a change of its own opens it, so the MCP tool `run_read_query` refuses a Db2 connection.
+MCP's statement read stays closed on Db2 (`MCP_STATEMENT_READ.db2` is false), so the MCP tool `run_read_query` refuses a Db2 connection: the agent user reads the two stored values `SYSCAT.COLUMNS` keeps of every column, also for a table it holds no `SELECT` on, and that is not opened to an MCP client while it holds (B168, "What only the operator stops" in section 10.1).
 `READ_ONLY_ENFORCED` is false for Db2, so a seed that asks for a read-only Db2 connection is refused: the read-only boundary below holds only for the agent's own statements.
 
 `endOpenQueryTransaction()` is not implemented, because `query()` leaves no transaction open: it autocommits every statement on the shared client, and an interactive transaction runs on a session of its own (section 7.7).
@@ -618,7 +618,11 @@ What the agent reads beyond the tables needs no grant: the catalog reads below a
 - A built-in function (`ORIGIN` B) needs no grant and has no catalog facts to read, so it is part of the SQL language the server parses, not something the check can refuse.
 - Inside the derived table only a function can be invoked, so no procedure, IBM's or not, is reachable from an agent statement, whatever the grants.
 - `LOCK TABLE` and `SET` are not residuals: the user may run them raw, and neither fits inside the derived table.
-- `SYSCAT.COLUMNS` keeps the second highest and second lowest value of every column as `HIGH2KEY` and `LOW2KEY` once `RUNSTATS` has run, and the agent user reads them for a table it holds no `SELECT` on (capture 12). The agent's own catalog read and its grounding read that view, and Db2 grants no `SELECT` on a column alone, so the check cannot refuse it; the same values are in `SYSSTAT.COLUMNS`, `SYSIBM.SYSCOLUMNS` and the partition statistics. Statistics on a table whose values must not reach the agent are the operator's to withhold (B168).
+- `SYSCAT.COLUMNS` keeps the second highest and second lowest value of every column as `HIGH2KEY` and `LOW2KEY` once `RUNSTATS` has run, and the agent user reads them for a table it holds no `SELECT` on (capture 12).
+  Seven IBM objects keep them: `SYSCAT.COLUMNS`, `SYSCAT.SYSCOLUMNS_UNION`, `SYSCAT.COLPARTITIONSTATS`, `SYSIBM.SYSCOLUMNS`, `SYSIBM.SYSCOLPARTITIONSTATS`, `SYSSTAT.COLUMNS` and `SYSSTAT.COLPARTITIONSTATS`, each of which a fresh database lets `PUBLIC` read through its own grant (measured), and Db2 grants no `SELECT` on a column alone (capture 13).
+  Revoking `SELECT` on the seven from `PUBLIC` refuses the values (`SQL0551N`), and `SYSIBM.COLUMNS`, which lists every column without them, stays readable, but it also refuses the provider's own catalog reads for that user: the code page read that every catalog read starts with, so the object tree, `inspect_schema` and the agent's grounding fail with `SQL0551N` on `SYSCAT.COLUMNS` (capture 14, and measured through the provider on 12.1.0.0 on 2026-11-02).
+  Neither `SYSIBM.COLUMNS` nor `SYSIBM.SQLCOLUMNS` carries what the column read shows: neither keeps a `DECFLOAT` column's precision, `SYSIBM.SQLCOLUMNS` leaves `DECFLOAT` columns out, `SYSIBM.COLUMNS` keeps no `VARBINARY` length, and neither keeps the string units a character column was declared in (capture 14).
+  So the check does not refuse the grant, the seed does not revoke it, statistics on a table whose values must not reach the agent are the operator's to withhold, and MCP's statement read stays closed on Db2 for this reason (B168).
 
 #### Boundary record
 

@@ -55,9 +55,9 @@
  * 5. They may read none of the catalog's distribution statistics: an IBM table or view with a `COLVALUE` column, whose
  *    rows hold the most frequent values and the quantiles of every table's columns after `RUNSTATS`, so the user
  *    read values of a table it holds no SELECT on (measured). A fresh database lets PUBLIC read all nine. The second
- *    highest and lowest values `SYSCAT.COLUMNS` keeps as `HIGH2KEY` and `LOW2KEY` stay readable: the agent's own
- *    catalog read needs that view, and Db2 grants no SELECT on a column alone. Nor may they read an IBM table or view
- *    through a user's grant that no grant of the database's matches, such as `SYSIBMADM.MON_CURRENT_SQL`.
+ *    highest and lowest values `SYSCAT.COLUMNS` keeps as `HIGH2KEY` and `LOW2KEY` stay readable: the provider's own
+ *    catalog reads need that view, and Db2 grants no SELECT on a column alone (B168). Nor may they read an IBM table
+ *    or view through a user's grant that no grant of the database's matches, such as `SYSIBMADM.MON_CURRENT_SQL`.
  * 6. `SYSCAT.CONTROLS` lists no row permission or column mask anywhere in the database that is not IBM's: Db2 evaluates
  *    it for any reader of the table it guards, a reader through a view included, and it can call a secured function
  *    with its owner's authority (measured). A fresh database holds five, IBM's own masks on its catalog tables.
