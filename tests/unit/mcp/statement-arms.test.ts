@@ -1114,6 +1114,15 @@ describe("the Milvus arm", () => {
     }
   });
 
+  test("a cut at one row names one row", () => {
+    const hint = RUN_MILVUS_READ_ARM.moreRows(collections, "milvus", { maxRows: 1, shown: 1, cut: "max_rows" });
+    expect(hint).toBe(
+      `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice(collections, "1")} To read past the 1 row returned, read a narrower route, one collection instead of a whole list, since a Milvus read is never paged.`,
+    );
+    const bytes = RUN_MILVUS_READ_ARM.moreRows(collections, "milvus", { maxRows: 100, shown: 1, cut: "result_bytes" });
+    expect(bytes).toContain("to read past the 1 row returned,");
+  });
+
   test("describes the reads, what is never read, the data scope, the proof and its engine", () => {
     const description = RUN_MILVUS_READ_ARM.description;
     expect(description.startsWith("Run one read-only Milvus metadata read")).toBe(true);

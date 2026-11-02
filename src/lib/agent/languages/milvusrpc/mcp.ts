@@ -29,7 +29,7 @@ export const MILVUSRPC_MCP_FACET = Object.freeze({
     fewerFields:
       "Read a narrower route, one collection instead of the whole list, or a collection's indexes, row count or load state instead of its full description,",
     readPast: (shown: number) =>
-      `read past the ${shown} rows returned, read a narrower route, one collection instead of a whole list, since a Milvus read is never paged.`,
+      `read past the ${shown} row${shown === 1 ? "" : "s"} returned, read a narrower route, one collection instead of a whole list, since a Milvus read is never paged.`,
     rowOverCap:
       "One row of this result is larger than the 32 KiB result limit. Read one collection's indexes, row count or load state on its own, and run it again.",
     reached: "the server",
