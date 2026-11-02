@@ -28,8 +28,9 @@
  *  - the catalog reads the agent profiles make from value-free sources: `inspect_schema` lists and describes the
  *    seeded user's tables under the seed's revokes;
  *  - the forms and paging: a SELECT, a WITH and a VALUES answer; TABLE and EXPLAIN are refused by the server; a page
- *    past the first is asked for with `offset` and answered from the next row; an offset on a statement with its own
- *    FETCH FIRST or on a VALUES is refused before anything is sent;
+ *    past the first is asked for with `offset` and answered from the next row; FETCH FIRST, OFFSET ... FETCH and LIMIT
+ *    each run as the statement's own limit, and an offset on a statement with any of them or on a VALUES is refused
+ *    before anything is sent, naming Db2's own clauses;
  *  - the limits: a read past the 1000-row provider budget and one past the 1 MiB budget are refused, never cut; a read
  *    past `timeout_ms` and a read whose client closes the call are answered at once, and the statement is shown
  *    running on the server after the answer, until it ends there.
@@ -40,7 +41,7 @@
  *   docker compose -f database-compose.yml up -d db2
  *   LIBREDB_LIVE_DB2_PORT=50000 LIBREDB_LIVE_DB2_PASSWORD=<db2inst1's password> bun tests/live/db2-mcp-boundary.ts
  *
- * The check's refusal comes from the statement call, so the tool answers it as that call's failure, after the
+ * The check's refusal comes from the statement call, and the tool answers it in its own sentence, after the
  * untrusted-data notice; the match below takes the refusal's own sentence, never any error.
  *
  * Every object it creates carries the `LIBREDB_LM` prefix and is dropped on exit, and every grant it adds is revoked.
@@ -51,7 +52,7 @@ import { createHash } from "node:crypto";
 import { Client } from "db2-node";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
 import type { McpConnectionContext } from "@/lib/mcp/context";
-import { MCP_CANCELLED_TEXT, type ToolResult } from "@/lib/mcp/output";
+import { MCP_CANCELLED_TEXT, MCP_UNTRUSTED_NOTICE, type ToolResult } from "@/lib/mcp/output";
 import { inspectSchema, InspectSchemaInputSchema } from "@/lib/mcp/tools/inspect-schema";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
@@ -190,22 +191,23 @@ function rowsOf(result: ToolResult): Record<string, unknown>[] | null {
   return result.isError === true || content?.rows === undefined ? null : content.rows;
 }
 
-const ENGINES = `It runs on ${RUN_READ_QUERY.engines}.`;
-
 /** The check's own refusal sentence, as `agent-read.ts` writes it. */
 const CHECK_REFUSAL = "The agent read-only execution profile refuses the Db2 user ";
 
 /**
- * A refusal of the agent user by the check, naming `names`. The check runs inside the statement call, so the tool
- * answers it as that call's failure after the untrusted-data notice, or, where the tool answers a profile refusal in
- * its own sentence, in that sentence; either way the last block is the check's refusal itself, never another error.
+ * A refusal of the agent user by the check, naming `names`. The check runs inside the statement call, and the tool
+ * answers a profile refusal there in its own sentence, behind the untrusted-data notice, since the refusal quotes
+ * names a user of the database chose: two blocks, the notice and the sentence, never another error.
  */
 function refusedByCheck(result: ToolResult, names: string): boolean {
-  const last = result.content.map((part) => ("text" in part ? part.text : "")).at(-1) ?? "";
-  const asFailure = last.startsWith(`The database refused or failed the call: ${CHECK_REFUSAL}`);
-  const inToolSentence =
-    last.startsWith(`run_read_query cannot run on this connection: ${CHECK_REFUSAL}`) && last.endsWith(ENGINES);
-  return result.isError === true && (asFailure || inToolSentence) && last.includes(names);
+  const blocks = result.content.map((part) => ("text" in part ? part.text : ""));
+  return (
+    result.isError === true &&
+    blocks.length === 2 &&
+    blocks[0] === MCP_UNTRUSTED_NOTICE &&
+    blocks[1].startsWith(`run_read_query cannot run on this connection: ${CHECK_REFUSAL}`) &&
+    blocks[1].includes(names)
+  );
 }
 
 async function stateHash(): Promise<string> {
@@ -609,17 +611,22 @@ try {
         JSON.stringify(rowsOf(all.result)),
     "paging: the first page names offset 5, and the page at offset 5 is the next five rows",
   );
-  const ownLimit = await mcp(
-    AGENT,
-    { sql: "SELECT ID FROM APP.ORDERS ORDER BY ID FETCH FIRST 1 ROW ONLY", offset: 1 },
-    RUN_READ_QUERY,
-  );
-  check(
-    textOf(ownLimit.result) ===
-      "This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY." &&
-      ownLimit.acquired.length === 1,
-    "an offset on a statement with its own FETCH FIRST is refused before it is sent",
-  );
+  // Each of Db2's own row limiting clauses runs as the statement's own limit, and an offset on it is refused unsent.
+  for (const [clause, sql] of [
+    ["FETCH FIRST", "SELECT ID FROM APP.ORDERS ORDER BY ID FETCH FIRST 1 ROW ONLY"],
+    ["OFFSET ... FETCH", "SELECT ID FROM APP.ORDERS ORDER BY ID OFFSET 1 ROWS FETCH NEXT 1 ROW ONLY"],
+    ["LIMIT", "SELECT ID FROM APP.ORDERS ORDER BY ID LIMIT 1"],
+  ] as const) {
+    const answered = await mcp(AGENT, { sql }, RUN_READ_QUERY);
+    const ownLimit = await mcp(AGENT, { sql, offset: 1 }, RUN_READ_QUERY);
+    check(
+      rowsOf(answered.result)?.length === 1 &&
+        textOf(ownLimit.result) ===
+          "This query has its own FETCH FIRST, OFFSET ... FETCH or LIMIT, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY." &&
+        ownLimit.acquired.length === 1,
+      `${clause}: the server runs it as the statement's own limit, and an offset on it is refused before it is sent`,
+    );
+  }
   const valuesOffset = await mcp(AGENT, { sql: "VALUES (1), (2), (3)", offset: 1 }, RUN_READ_QUERY);
   check(
     textOf(valuesOffset.result) === "This statement's result cannot be paged. Call again without offset.",
@@ -633,7 +640,9 @@ try {
     RUN_READ_QUERY,
   );
   check(
-    textOf(tooMany.result).startsWith("The result has more than 1000 rows"),
+    textOf(tooMany.result).endsWith(
+      "The result has more than 1000 rows, the most this server reads for one call. Add FETCH FIRST n ROWS ONLY with n of 1000 or less, or remove your own FETCH FIRST, OFFSET ... FETCH or LIMIT and page with offset.",
+    ),
     `a read past the 1000-row budget is refused, never cut: ${textOf(tooMany.result).slice(0, 120)}`,
   );
   const tooBig = await mcp(
@@ -642,7 +651,10 @@ try {
     RUN_READ_QUERY,
   );
   check(
-    tooBig.result.isError === true && /larger than|byte|MiB/.test(textOf(tooBig.result)),
+    tooBig.result.isError === true &&
+      textOf(tooBig.result).endsWith(
+        "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add FETCH FIRST n ROWS ONLY with a smaller n.",
+      ),
     `a read past the 1 MiB budget is refused, never cut: ${textOf(tooBig.result).slice(0, 120)}`,
   );
   const timedStart = Date.now();

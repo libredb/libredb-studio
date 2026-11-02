@@ -2692,10 +2692,17 @@ describe("MCP run_read_query on a Db2 connection", () => {
 
     for (const [sql, text] of [
       ["VALUES (1), (2), (3)", "This statement's result cannot be paged. Call again without offset."],
-      [
+      ...[
         "SELECT ID FROM APP.ORDERS FETCH FIRST 5 ROWS ONLY",
-        "This query has its own LIMIT or TOP, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.",
-      ],
+        "SELECT ID FROM APP.ORDERS ORDER BY ID OFFSET 1 ROWS FETCH NEXT 5 ROWS ONLY",
+        "SELECT ID FROM APP.ORDERS ORDER BY ID LIMIT 5",
+      ].map(
+        (sql) =>
+          [
+            sql,
+            "This query has its own FETCH FIRST, OFFSET ... FETCH or LIMIT, so it cannot be paged with offset. Remove it and page with offset, or page it in SQL: ORDER BY ... OFFSET m ROWS FETCH NEXT n ROWS ONLY.",
+          ] as const,
+      ),
     ] as const) {
       const result = await call({ sql, offset: 1 });
 
@@ -2800,7 +2807,8 @@ describe("MCP run_read_query on a Db2 connection", () => {
     const result = await call({ sql: "SELECT COLVALUE FROM SYSCAT.COLDIST" });
 
     // The check runs before every statement, on the statement's own connection, so its refusal comes from the
-    // statement call and is answered as that call's failure, behind the untrusted-data notice.
+    // statement call and is answered in the tool's sentence, behind the untrusted-data notice, since it quotes names
+    // a user of the database chose.
     expect(result).toEqual({
       content: [
         {
@@ -2812,7 +2820,7 @@ describe("MCP run_read_query on a Db2 connection", () => {
         {
           type: "text",
           text:
-            "The database refused or failed the call: The agent read-only execution profile refuses the Db2 user " +
+            "run_read_query cannot run on this connection: The agent read-only execution profile refuses the Db2 user " +
             "AGENT_RO: it holds a database or instance authority beyond CONNECT; it may read the catalog's distribution " +
             "or column statistics, which hold stored values of every table's columns, whether or not it may read the " +
             "table, or an IBM table or view only a grant a user made lets it read, such as a monitor view of other " +
@@ -2835,7 +2843,7 @@ describe("MCP run_read_query on a Db2 connection", () => {
       content: [
         {
           type: "text",
-          text: "The result has more than 1000 rows, the most this server reads for one call. Add a LIMIT of 1000 or less, or remove your own LIMIT and page with offset.",
+          text: "The result has more than 1000 rows, the most this server reads for one call. Add FETCH FIRST n ROWS ONLY with n of 1000 or less, or remove your own FETCH FIRST, OFFSET ... FETCH or LIMIT and page with offset.",
         },
       ],
       isError: true,
@@ -2851,7 +2859,7 @@ describe("MCP run_read_query on a Db2 connection", () => {
       content: [
         {
           type: "text",
-          text: "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add a smaller LIMIT.",
+          text: "The result is larger than 1 MiB, the most this server reads for one call. Select fewer or narrower columns, or add FETCH FIRST n ROWS ONLY with a smaller n.",
         },
       ],
       isError: true,
