@@ -1,0 +1,53 @@
+# tests/live/neo4j-mcp-boundary.ts, run 2026-11-02
+# Enterprise: neo4j:5.26.31-enterprise@sha256:02d30e0a80f0aaed71cfdfaa85c8ea01cf44aacd55510d4a2b4a53f9f1a2e1ad
+PASS the proved reader is served under the agent read-only profile (agent-read-only), behind the notice
+PASS the administrator is refused at open, before a statement is sent: The agent read-only profile needs a user that cannot LOAD, since LOAD CSV is a read clause that reaches files and URLs, and this one holds LOAD on ALL DA
+PASS a user with the editor role is refused at open, before a statement is sent: The agent read-only profile needs a user that only reads, and this one holds write on NODE(*) through the role editor. Use a user whose roles grant only 
+PASS a reader also granted LOAD is refused at open, before a statement is sent: The agent read-only profile needs a user that cannot LOAD, since LOAD CSV is a read clause that reaches files and URLs, and this one holds LOAD on ALL DA
+PASS a LOAD granted after a served call refuses the next call on the cached handle, and its revoke admits the one after
+PASS CREATE (:LmProbe {at: 1}): refused by the fence before anything is acquired, and unfenced by the provider's reader, unsent
+PASS MERGE (:LmProbe {at: 2}): refused by the fence before anything is acquired, and unfenced by the provider's reader, unsent
+PASS MATCH (n:LmPerson) SET n.flag = true: refused by the fence before anything is acquired, and unfenced by the provider's reader, unsent
+PASS MATCH (n:LmPerson) DETACH DELETE n: refused by the fence before anything is acquired, and unfenced by the provider's reader, unsent
+PASS LOAD CSV FROM 'file:///probe.csv' AS row RETURN row: refused by the fence before anything is acquired, and unfenced by the provider's reader, unsent
+PASS CALL { CREATE (:LmProbe {at: 3}) } IN TRANSACTIONS: refused by the fence before anything is acquired, and unfenced by the provider's reader, unsent
+PASS CALL db.createLabel('LmProbe'): refused by the fence before anything is acquired, and unfenced by the provider's reader, unsent
+PASS USE lmother MATCH (n) RETURN n LIMIT 1: refused by the fence before anything is acquired, and unfenced by the provider's reader, unsent
+PASS CALL db.checkpoint(): refused by the fence before anything is acquired, and unfenced by the provider's reader, unsent
+PASS sent raw as the proved user, the server refuses a write (Neo.ClientError.Statement.AccessMode, in a WRITE session Neo.ClientError.Security.Forbidden) and LOAD CSV (Neo.ClientError.Security.Forbidden); the administrator's write ran
+PASS CALL db.labels(): answered
+PASS CALL db.relationshipTypes(): answered
+PASS CALL db.propertyKeys(): answered
+PASS CALL db.schema.visualization(): answered
+PASS CALL db.schema.nodeTypeProperties(): answered
+PASS CALL db.schema.relTypeProperties(): answered
+PASS CALL db.ping(): answered
+PASS CALL dbms.components(): answered
+PASS SHOW INDEXES: answered
+PASS SHOW CONSTRAINTS: answered
+PASS SHOW PROCEDURES YIELD name RETURN count(*) AS n: answered
+PASS SHOW FUNCTIONS YIELD name RETURN count(*) AS n: answered
+PASS SHOW DATABASES: refused by the server's own classification, no address read
+PASS SHOW DATABASES YIELD address AS a RETURN a: refused by the server's own classification, no address read
+PASS SHOW DATABASE neo4j: refused by the server's own classification, no address read
+PASS SHOW DEFAULT DATABASE: refused by the server's own classification, no address read
+PASS SHOW HOME DATABASE: refused by the server's own classification, no address read
+PASS a narrow user reads its denied property as null, never sees the label it may not traverse, and its schema reads leave both out
+PASS db.propertyKeys names every property key of the database to the narrow user, the denied ones included, and no value
+PASS the narrow user is refused the index listing by the server: The database refused or failed the call: The server refused a write: Neo4j connections are read-only in this version.
+PASS sent raw, USE of another database is refused to the narrow user (Neo.ClientError.Security.Forbidden) and answered to a reader of every database (ran), which Studio's reader refuses
+PASS a seed bound to system reads nothing of the system graph: The database refused or failed the call: The statement could not be checked by the server, so it was not run: The following unsupported clauses were used: MATCH
+PASS a seed bound to a database its user may not access is refused: run_cypher_read cannot run on this connection: The agent read-only profile could not read the server's answer to CALL dbms.components(), so 
+PASS inspect_schema lists the reader's labels on the same seed
+PASS SKIP and LIMIT page a read
+PASS a read past max_rows is cut to it, and the hint pages with SKIP and LIMIT
+PASS a read past the 1000-row budget is refused, never cut: The result has more than 1000 rows, the most this server reads for one call. Ask for at most 1000 rows: narrow
+PASS a read past the 1 MiB budget is refused, never cut: The result is larger than 1 MiB, the most this server reads for one call. Narrow the read to fewer or smaller 
+PASS timeout_ms at its 500 ms minimum: answered in 501 ms, and the server ended the statement 6 ms later
+PASS a client close: answered in 2001 ms, and the statement ran on the server 8190 ms more, to the time it had left
+PASS the call after them answers
+PASS the node counts read the same before and after (neo4j=3 lmother=1)
+all checks passed
+# Community: neo4j:5.26.31-community@sha256:d9cfe82983d27f5a75b3aaae8f316d04f9a698a3b7f6103a508f7caf8362f255
+PASS Community Edition is refused at open through MCP: run_cypher_read cannot run on this connection: The agent read-only profile needs Neo4j Enterprise Edition, and this server is Neo4j Community Edition, which has
+all checks passed
