@@ -70,7 +70,7 @@ writeFileSync(
 );
 
 // DuckDB's own read of the schema it wrote: a DECIMAL column reaches the preview as hyparquet computes it,
-// Number(unscaled) * 10 ** -scale (hyparquet convert.js:87-98), so the expected cell is computed the same way.
+// Number(unscaled) / 10 ** scale (hyparquet convert.js:92-107), so the expected cell is computed the same way.
 const schemaRows = (
   await connection.runAndReadAll(`SELECT name, converted_type, scale FROM parquet_schema('${out("fx-zstd.parquet")}')`)
 ).getRowObjectsJson() as { name: string; converted_type: string | null; scale: number | string | null }[];
@@ -78,7 +78,7 @@ const asStored = (value: number, name: string): number => {
   const row = schemaRows.find((each) => each.name === name);
   if (row?.converted_type !== "DECIMAL") return value;
   const scale = Number(row.scale);
-  return Math.round(value * 10 ** scale) * 10 ** -scale;
+  return Math.round(value * 10 ** scale) / 10 ** scale;
 };
 const day = 86_400_000;
 const start = Date.UTC(2026, 0, 1);
