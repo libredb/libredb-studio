@@ -32,9 +32,10 @@
  *    served; with security on, as a role reading every index;
  *  - with security on, the login probes: the admin, a role writing every index and a role managing every index are
  *    each refused at open, and the probes leave no index behind;
- *  - the catalog read: the `DESCRIBE TABLES` command the agent's OpenSearch overlay composes, for one table answered
- *    through `queryReadOnly` and mapped into column rows, and for every table refused by the statement check (`*`
- *    reaches dot-led indices), with the cluster unchanged afterwards;
+ *  - the catalog read: the `DESCRIBE TABLES` command the agent's OpenSearch overlay composes for one table, answered
+ *    through `queryReadOnly` and mapped into column rows; the every-table read, which the overlay refuses to compose
+ *    and the statement check refuses when it is sent anyway (`*` reaches dot-led indices); the cluster unchanged
+ *    afterwards;
  *  - with security on (LIBREDB_OS_AGENT_USER set): the agent user's role holds the cluster actions
  *    `cluster:monitor/main` and `cluster:monitor/state` and, on `probe_*`, `read`, `indices:admin/mappings/get` and
  *    `indices:monitor/settings/get`; without either cluster action the agent profile is refused at open; the user reads
@@ -741,9 +742,14 @@ async function checkBudgets(agent: DatabaseProvider): Promise<void> {
 async function checkCatalog(agent: DatabaseProvider, before: string): Promise<void> {
   const catalogRead = engineServerDialect("opensearch").catalogRead;
   if (catalogRead === "unsupported" || catalogRead.mapRows === undefined) throw new Error("no catalog read to check");
-  const everyTable = composeCatalogRead("opensearch", { kind: "columns" });
-  // Every table is `*`, which reaches the indices whose names start with a dot on a stock node, so the statement check
-  // refuses it before it is sent; a role on probe_* alone cannot resolve `*` at all.
+  // Every table is `*`, which reaches the indices whose names start with a dot on a stock node, so the overlay refuses
+  // to compose it, and the statement check refuses it before it is sent; a role on probe_* alone cannot resolve `*`.
+  const composed = await refusalOf(async () => composeCatalogRead("opensearch", { kind: "columns" }));
+  check(
+    composed?.name === "AgentComposedSqlError" && composed.message.endsWith("so name a table instead"),
+    `catalog: the overlay refuses to compose the every-table read -> ${composed?.message.slice(0, 90)}`,
+  );
+  const everyTable = "DESCRIBE TABLES LIKE %";
   const refused = await refusalOf(() => agent.queryReadOnly!(everyTable, BUDGET));
   const expected = SECURED
     ? resolveFailedRefusal("*", "OpenSearch refused the credentials (HTTP 403)")

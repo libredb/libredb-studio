@@ -3133,46 +3133,41 @@ const CATALOG_READS = readCaptures<CatalogReadCapture>("3.8.0/catalog-read");
  * `queryReadOnly` under the agent profile.
  */
 describe("OpenSearch 3.8.0's catalog-read answers, replayed through queryReadOnly", () => {
-  test("four composed DESCRIBE TABLES statements were captured", () => {
+  test("three composed DESCRIBE TABLES statements were captured", () => {
     expect(CATALOG_READS.map((entry) => [entry.name, entry.status])).toEqual([
       ["catalog-read/columns-alias", 200],
       ["catalog-read/columns-missing", 404],
       ["catalog-read/columns-table", 200],
-      ["catalog-read/columns", 200],
     ]);
     for (const entry of CATALOG_READS) expect(entry.request.body.query).toStartWith("DESCRIBE TABLES LIKE ");
   });
 
-  test.each(
-    CATALOG_READS.filter((entry) => entry.status === 200 && entry.name !== "catalog-read/columns").map(
-      (entry) => [entry.name, entry] as const,
-    ),
-  )("%s: the provider sends the composed command unchanged and answers the engine's rows", async (_name, entry) => {
-    const agent = new OpenSearchProvider(makeConnection(), {}, AGENT_PROFILE);
-    await agent.connect();
-    overridePath("/_plugins/_sql", ok(entry.body));
+  test.each(CATALOG_READS.filter((entry) => entry.status === 200).map((entry) => [entry.name, entry] as const))(
+    "%s: the provider sends the composed command unchanged and answers the engine's rows",
+    async (_name, entry) => {
+      const agent = new OpenSearchProvider(makeConnection(), {}, AGENT_PROFILE);
+      await agent.connect();
+      overridePath("/_plugins/_sql", ok(entry.body));
 
-    const result = await agent.queryReadOnly(entry.request.body.query, { ...AGENT_BUDGET, maxResultRows: 1_000 });
+      const result = await agent.queryReadOnly(entry.request.body.query, { ...AGENT_BUDGET, maxResultRows: 1_000 });
 
-    const answer = JSON.parse(entry.body) as { schema: { name: string }[]; datarows: unknown[][] };
-    expect(result.fields).toEqual(answer.schema.map((column) => column.name));
-    expect(result.rowCount).toBe(answer.datarows.length);
-    expect(result.rows.map((row) => row.TABLE_NAME)).toEqual(answer.datarows.map((row) => row[2]));
-    expect(sentBodies.at(-1)).toEqual({ query: entry.request.body.query });
-    await agent.disconnect();
-  });
+      const answer = JSON.parse(entry.body) as { schema: { name: string }[]; datarows: unknown[][] };
+      expect(result.fields).toEqual(answer.schema.map((column) => column.name));
+      expect(result.rowCount).toBe(answer.datarows.length);
+      expect(result.rows.map((row) => row.TABLE_NAME)).toEqual(answer.datarows.map((row) => row[2]));
+      expect(sentBodies.at(-1)).toEqual({ query: entry.request.body.query });
+      await agent.disconnect();
+    },
+  );
 
-  // Every table is `*`, which reaches the indices whose names start with a dot on a stock node, so the statement check
-  // refuses it and the agent names a table instead.
+  // Every table is `*`, which reaches the indices whose names start with a dot on a stock node: the overlay never
+  // composes it, and the statement check refuses it when it arrives anyway.
   test("the every-table read is refused by the statement check, since `*` reaches a dot-led index", async () => {
-    const entry = CATALOG_READS.find((capture) => capture.name === "catalog-read/columns");
-    if (entry === undefined) throw new Error("no capture");
     const agent = new OpenSearchProvider(makeConnection(), {}, AGENT_PROFILE);
     await agent.connect();
-    overridePath("/_plugins/_sql", ok(entry.body));
     const before = sentBodies.length;
 
-    const error = await agent.queryReadOnly(entry.request.body.query, AGENT_BUDGET).catch((caught: unknown) => caught);
+    const error = await agent.queryReadOnly("DESCRIBE TABLES LIKE %", AGENT_BUDGET).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(RefusedBeforeSendError);
     expect((error as Error).message).toBe(hiddenTargetRefusal("*"));
