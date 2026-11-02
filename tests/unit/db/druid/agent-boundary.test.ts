@@ -8,7 +8,7 @@ import { describe, expect, test } from "bun:test";
 import { ExecutionProfileError } from "@/lib/db/errors";
 import {
   druidAgentExplainStatement,
-  druidAgentPlanErrorMessage,
+  druidAgentPlanMessage,
   druidAgentProbeStatement,
   druidAgentReachRefusal,
   druidAgentStatementRefusal,
@@ -334,7 +334,7 @@ describe("the planner check", () => {
     ],
     ["Object 'nope' not found", "Object 'nope' not found"],
   ])("moves the planner's position %j back onto the statement's own line", (message, statements) => {
-    expect(druidAgentPlanErrorMessage(message)).toBe(statements);
+    expect(druidAgentPlanMessage(message)).toBe(statements);
   });
 
   test.each([

@@ -220,7 +220,7 @@ export const DRUID_UNREADABLE_PLAN_REFUSAL = `${FENCE}; the planner's account of
 /**
  * The statement that asks the planner what `sql` reads: Druid's EXPLAIN never runs the statement it plans. The prefix
  * takes a line of its own, so a position the planner reports in the statement keeps its column, one line further down
- * (`druidAgentPlanErrorMessage`).
+ * (`druidAgentPlanMessage`).
  */
 export function druidAgentExplainStatement(sql: string): string {
   return `EXPLAIN PLAN FOR\n${sql}`;
@@ -233,7 +233,7 @@ export function druidAgentExplainStatement(sql: string): string {
  * answers line 1, column 8 sent raw and line 2, column 8 after the prefix's line. A position on the prefix's own line
  * is not one in the statement and stays as the server wrote it.
  */
-export function druidAgentPlanErrorMessage(message: string): string {
+export function druidAgentPlanMessage(message: string): string {
   return message.replace(/\(line \[(\d+)\], column \[(\d+)\]\)/g, (position, line: string, column: string) =>
     Number(line) > 1 ? `(line [${Number(line) - 1}], column [${column}])` : position,
   );

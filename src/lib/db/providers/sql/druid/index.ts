@@ -86,7 +86,7 @@ import {
 import {
   DRUID_UNREADABLE_PLAN_REFUSAL,
   druidAgentExplainStatement,
-  druidAgentPlanErrorMessage,
+  druidAgentPlanMessage,
   druidAgentReachRefusal,
   druidAgentStatementRefusal,
   verifyDruidAgentEngine,
@@ -616,7 +616,7 @@ export class DruidProvider extends SQLBaseProvider {
       const error =
         caught instanceof DruidTransportError && caught.isServerAnswer()
           ? new DruidTransportError(
-              druidAgentPlanErrorMessage(caught.message),
+              druidAgentPlanMessage(caught.message),
               caught.category,
               caught.errorCode,
               caught.persona,
