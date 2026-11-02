@@ -1,0 +1,224 @@
+{
+  "version": "1.13.1",
+  "image": "influxdb:1.13.1@sha256:3e3913d3b7512d1749922c8183bbf2a76973dd9f98e1a1e3249c652ec1576fc0",
+  "capturedAt": "2026-11-02",
+  "principal": "reader: READ on home, while the admin runs a heavy read",
+  "entries": [
+    {
+      "statement": "SHOW QUERIES",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "show queries",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "Show Queries",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "sHoW qUeRiEs",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "SHOW  QUERIES",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "SHOW\tQUERIES",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "SHOW\nQUERIES",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "  SHOW QUERIES  ",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "\nSHOW QUERIES\n",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "SHOW QUERIES;",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "SHOW QUERIES ;",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "SHOW QUERIES;;",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "SHOW \"QUERIES\"",
+      "status": 400,
+      "statementText": false,
+      "error": "error parsing query: found QUERIES, expected CONTINUOUS, DATABASES, DIAGNOSTICS, FIELD, GRANTS, MEASUREMENT, MEASUREMENTS, QUERIES, RETENTION, SERIES, SHARD, SHARDS, STATS, SUBSCRIPTIONS, TAG, USERS at line 1, char 6"
+    },
+    {
+      "statement": "SHOW QUERIES LIMIT 1",
+      "status": 400,
+      "statementText": false,
+      "error": "error parsing query: found LIMIT, expected ; at line 1, char 14"
+    },
+    {
+      "statement": "SHOW QUERIES",
+      "status": 400,
+      "statementText": false,
+      "error": "error parsing query: found  , expected CONTINUOUS, DATABASES, DIAGNOSTICS, FIELD, GRANTS, MEASUREMENT, MEASUREMENTS, QUERIES, RETENTION, SERIES, SHARD, SHARDS, STATS, SUBSCRIPTIONS, TAG, USERS at line 1, char 5"
+    },
+    {
+      "statement": "SHOW CONTINUOUS QUERIES",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "show continuous queries",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "Show Continuous Queries",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "SHOW CONTINUOUS  QUERIES",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "SHOW\tCONTINUOUS\tQUERIES",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "SHOW\nCONTINUOUS\nQUERIES",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "SHOW CONTINUOUS QUERIES;",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "SHOW \"CONTINUOUS\" QUERIES",
+      "status": 400,
+      "statementText": false,
+      "error": "error parsing query: found CONTINUOUS, expected CONTINUOUS, DATABASES, DIAGNOSTICS, FIELD, GRANTS, MEASUREMENT, MEASUREMENTS, QUERIES, RETENTION, SERIES, SHARD, SHARDS, STATS, SUBSCRIPTIONS, TAG, USERS at line 1, char 6"
+    },
+    {
+      "statement": "SHOW CONTINUOUS \"QUERIES\"",
+      "status": 400,
+      "statementText": false,
+      "error": "error parsing query: found QUERIES, expected QUERIES at line 1, char 17"
+    },
+    {
+      "statement": "SHOW MEASUREMENTS; SHOW QUERIES",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "SHOW MEASUREMENTS;SHOW CONTINUOUS QUERIES",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "SHOW MEASUREMENTS\nSHOW QUERIES",
+      "status": 400,
+      "statementText": false,
+      "error": "error parsing query: found SHOW, expected ; at line 2, char 1"
+    },
+    {
+      "statement": "SELECT * FROM home; SHOW QUERIES",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "EXPLAIN SHOW QUERIES",
+      "status": 400,
+      "statementText": false,
+      "error": "error parsing query: found SHOW, expected SELECT at line 1, char 9"
+    },
+    {
+      "statement": "EXPLAIN ANALYZE SHOW CONTINUOUS QUERIES",
+      "status": 400,
+      "statementText": false,
+      "error": "error parsing query: found SHOW, expected SELECT at line 1, char 17"
+    },
+    {
+      "statement": "SELECT * FROM (SHOW QUERIES)",
+      "status": 400,
+      "statementText": false,
+      "error": "error parsing query: found SHOW, expected SELECT at line 1, char 16"
+    },
+    {
+      "statement": "SHOW QUERIES\r",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "SHOW\rQUERIES",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "SHOW QUERIES -- c",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "SHOW /* c */ QUERIES",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    },
+    {
+      "statement": "/* c */ SHOW CONTINUOUS QUERIES",
+      "status": 200,
+      "statementText": true,
+      "error": null
+    }
+  ]
+}

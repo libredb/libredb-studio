@@ -21,7 +21,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
-import { MCP_EXPOSABLE, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
+import { MCP_EXPOSABLE, MCP_STATEMENT_READ, READ_ONLY_ENFORCED } from "@/lib/db/compatibility";
 import { CREDENTIAL_WARNINGS } from "@/lib/db/credential-warnings";
 import type { InfluxAnswer, InfluxClientFactory, InfluxRequest } from "@/lib/db/providers/timeseries/influxdb/client";
 import {
@@ -522,6 +522,9 @@ describe("docs/providers/influxdb.md quotes what the code says", () => {
     expect(rowOf(table, "`MCP_EXPOSABLE.influxdb`")).toBe(
       `| \`MCP_EXPOSABLE.influxdb\` | \`${MCP_EXPOSABLE.influxdb}\` |`,
     );
+    expect(rowOf(table, "`MCP_STATEMENT_READ.influxdb`")).toBe(
+      `| \`MCP_STATEMENT_READ.influxdb\` | \`${MCP_STATEMENT_READ.influxdb}\` |`,
+    );
   });
 
   test("the monitoring empty states are the labels'", () => {
@@ -565,5 +568,15 @@ describe("section 15, agent mode", () => {
   test("quotes the answer-side refusal of statement text as the code words it", () => {
     const agent = sectionOf(DOC, "## 15. Agent mode: a principal proved read-only before every statement");
     expect(agent).toContain(`> ${INFLUXQL_AGENT_QUERY_TEXT_SENTENCE}`);
+  });
+
+  test("counts the spellings 1.13.1 answered with statement text as the capture records them", () => {
+    const captured = JSON.parse(
+      readFileSync(path.join(ROOT, "tests/fixtures/influxdb/1.13.1/mcp-boundary/query-text-spellings.json"), "utf8"),
+    ) as { entries: { statementText: boolean }[] };
+    const answered = captured.entries.filter((entry) => entry.statementText).length;
+    expect(flat(DOC)).toContain(
+      `${answered} of the ${captured.entries.length} spellings were answered with statement text`,
+    );
   });
 });

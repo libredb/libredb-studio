@@ -36,6 +36,12 @@ The five `r42-*` entries separate two statements with whitespace or a comment al
 Each directory's `run.sh` starts its own digest-pinned servers (containers named `libredb-agent-*` unless `INFLUX_PREFIX` says otherwise), seeds them with passwords and tokens generated for the run, and records one capture per request through `agent-boundary-probe.mjs`, which refuses to write a file that holds a credential; a capture names its principal and that principal's rights, never its credential.
 `docs/providers/influxdb.md`, section 15, reads each one.
 
+## The MCP boundary captures
+
+`1.13.1/mcp-boundary/query-text-spellings.json` and `2.9.1/mcp-boundary/query-text-spellings.json` record what each line answered every spelling of `SHOW QUERIES` and `SHOW CONTINUOUS QUERIES` in `tests/helpers/influxql-query-text-spellings.ts`, sent raw as a principal that reads one database: the status, whether the answer carried statement text, and the server's error, never the text itself.
+`1.13.1/mcp-boundary/run.sh` starts its own digest-pinned 1.13.1 and 2.9.1 servers (containers named `libredb-mcp-*` unless `INFLUX_PREFIX` says otherwise), seeds them with passwords and tokens generated for the run, and runs `tests/live/influxdb-mcp-boundary.ts`, which drives `run_influxql_read` through the MCP handler and writes both files, refusing one that holds a credential.
+`docs/providers/influxdb.md`, section 15.8, reads them.
+
 ## Re-recording
 
 Re-record when a pinned image or the plan changes, with every service healthy:

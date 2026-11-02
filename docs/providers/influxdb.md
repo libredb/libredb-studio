@@ -10,7 +10,7 @@ The dialog names this type "InfluxDB (InfluxQL)".
 Studio sends one InfluxQL statement per run, a `SELECT`, a `SHOW` or an `EXPLAIN`, as a form POST to `/query`, and shows the answer as a grid.
 It browses databases and their measurements, with each measurement's time column, tag keys and field keys.
 It writes nothing: no write route exists in its route table, its read policy refuses every statement that is not one read before any request, and no maintenance operation exists.
-It runs no Flux, sends a password or token without TLS only to this machine, through an SSH tunnel or with the connection's own consent, and shows MCP clients the schema alone.
+It runs no Flux, sends a password or token without TLS only to this machine, through an SSH tunnel or with the connection's own consent, and shows MCP clients the schema and, through `run_influxql_read`, the reads agent mode runs (section 15.8).
 
 ### 1.1 Concept mapping
 
@@ -140,7 +140,7 @@ No InfluxQL statement does what `pivot()`, `join()` or `map()` do, and a stateme
 ### 3.6 Machine access
 
 The type is offered to MCP clients for the two metadata tools (`MCP_EXPOSABLE`), which see database, measurement and column names and types only.
-Agent mode executes InfluxQL on 1.x and 2.x for a principal the server proves read-only before every statement (section 15); no MCP tool runs InfluxQL (B94).
+Agent mode executes InfluxQL on 1.x and 2.x for a principal the server proves read-only before every statement (section 15), and MCP's `run_influxql_read` runs it under the same boundary (section 15.8).
 Plan mode drafts InfluxQL in the language of `statementLanguage` (section 5.1) and runs nothing.
 
 ## 4. Connection
@@ -513,6 +513,7 @@ None: InfluxDB compacts its own storage and keeps no statistics to update.
 |---|---|
 | `READ_ONLY_ENFORCED.influxdb` | `true` |
 | `MCP_EXPOSABLE.influxdb` | `true` |
+| `MCP_STATEMENT_READ.influxdb` | `true` |
 
 | Label | Text |
 |---|---|
@@ -673,7 +674,7 @@ readOnly: true
 - No EXPLAIN strategy: `EXPLAIN` runs as a statement and its plan is rows (D198).
 - The fail-closed lexer refuses some valid reads: the `µ` duration (write `u`), `{` or `[` anywhere outside quotes, and any `$param`.
 - The plaintext consent survives a Host or Port change in the dialog (D204).
-- No MCP statement read, and no dedicated 2.x agent token beside the connection's own credential (B94).
+- No dedicated 2.x agent token beside the connection's own credential (B94).
 - The Charts tab defects of section 5.8 (U79, U80).
 
 ## Migration DDL
@@ -776,11 +777,33 @@ This overlay overrides no Shared member, so every Shared member is the `influxql
 The family offers the investigation and the data-analysis workflows, each through `run_read_query` with one InfluxQL statement, and the operations workflow; it offers no query optimization and no database assessment, since the server composes no plan an agent is shown before a statement runs, and no workflow hands an answer to the editor.
 The workflow classifier offers the model only these three.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-No MCP tool runs InfluxQL: the family declares no MCP facet, and `MCP_STATEMENT_READ.influxdb` is false (B94).
+MCP clients run InfluxQL with `run_influxql_read`, the family's MCP facet ([`src/lib/agent/languages/influxql/mcp.ts`](../../src/lib/agent/languages/influxql/mcp.ts)), and `MCP_STATEMENT_READ.influxdb` is true (section 15.8).
 
 ### 15.7 Boundary record
 
 - [`tests/unit/db/influxdb/influxql-agent-read.test.ts`](../../tests/unit/db/influxdb/influxql-agent-read.test.ts): the proof replayed from every principal's captures, each request it sends pinned, every refusal and every unreadable answer.
 - [`tests/unit/db/influxdb/influxql-agent-statement.test.ts`](../../tests/unit/db/influxdb/influxql-agent-statement.test.ts): every admitted form, and each refused `SHOW`, comment, carriage return and `INTO` spelling, held to the captures that show the server reading past them.
-- [`tests/integration/db/influxdb-provider.test.ts`](../../tests/integration/db/influxdb-provider.test.ts), "the agent read-only profile": the open and every statement over the captures, URL and form pinned, a grant widened after the open caught by the next statement, the budgets, and the boundary with Studio's admission bypassed.
+- [`tests/integration/db/influxdb-provider.test.ts`](../../tests/integration/db/influxdb-provider.test.ts), "the agent read-only profile": the open and every statement over the captures, URL and form pinned, a grant widened after the open caught by the next statement, the budgets, an admitted read answered with captured statement text and refused from its columns, and the boundary with Studio's admission bypassed.
+- [`tests/integration/mcp/run-influxql-read.test.ts`](../../tests/integration/mcp/run-influxql-read.test.ts): `run_influxql_read` over the same captures, through the real route, seed file and handler: a read after the proof runs again, every spelling of the statement text reads refused before anything is acquired, an answer shaped as either refused, a writing principal refused at open, the budgets and the paging hint.
+- [`tests/live/influxdb-mcp-boundary.ts`](../../tests/live/influxdb-mcp-boundary.ts), run by [`tests/fixtures/influxdb/1.13.1/mcp-boundary/run.sh`](../../tests/fixtures/influxdb/1.13.1/mcp-boundary/run.sh): section 15.8, live.
+
+### 15.8 MCP read
+
+`run_influxql_read` runs one InfluxQL statement under the boundary agent mode uses: the connection is acquired under the agent read-only profile, and every statement goes through `queryReadOnly`, so it is read by the agent's reader (section 15.3), the principal is proved again before it (section 15.1), and its answer is shaped under the budgets (section 15.4).
+The MCP fence in front of it is the agent's own admission, defence in depth.
+An MCP seed carries no separate agent credential, so the seed's own principal is the one proved: a 1.x user granted `READ` only, or a 2.x token with read permission on its buckets only.
+
+What a principal reads is decided in two layers.
+
+1. The grants, enforced by the server: the databases the principal holds `READ` on, each reachable by its full name (`"db".."measurement"`), `_internal` only where it is granted.
+   On 1.13.1, measured live with a user granted `READ` on `home` alone, `SHOW DATABASES` lists `home` only, and a read of `"other".."m"` or `"_internal".."runtime"` is refused by the server; a user granted `READ` on `home` and `other` reads `"other".."m"`.
+   On 2.9.1 a token reading bucket `home` is refused `"other".."m"` (`database not found: other`).
+2. What Studio withholds, independent of parsing the request: an answer whose series holds a `query` column and is not led by `time`, the shape of `SHOW QUERIES` and `SHOW CONTINUOUS QUERIES`, is refused from its columns, whatever statement was sent (section 15.3).
+   This is the layer that stops other principals' statement text: on 1.13.1 the grants do not, since a user granted `READ` on one database is answered `SHOW QUERIES` with every running statement and `SHOW CONTINUOUS QUERIES` with an administrator's text.
+   The reader refuses every spelling of both before anything is sent as well; sent raw as that user while the admin ran a heavy read, 27 of the 36 spellings were answered with statement text (`tests/fixtures/influxdb/1.13.1/mcp-boundary/query-text-spellings.json`), and 2.9.1 answers none (`tests/fixtures/influxdb/2.9.1/mcp-boundary/query-text-spellings.json`).
+   A second statement is refused by the answer shaper as more than one statement before its columns are read.
+
+`tests/live/influxdb-mcp-boundary.ts` replays this through the MCP handler on digest-pinned 1.13.1 and 2.9.1 servers: the open refusing an admin, a user that writes a second database, a server with authentication off, the 2.x operator token and a token that writes its bucket, each in the tool's sentence; every write-shaped statement refused by the fenced tool before anything is acquired, by the reader with the MCP fence removed, and by the server when sent raw as the `READ` user, with a writing user's `SELECT ... INTO` the positive control and the server's state the same before and after; each admitted form; the row budget refused and a cut at `max_rows` hinting `OFFSET`; and the time limits.
+A timeout at the minimum `timeout_ms` (500 ms) drops the request, and 1.13.1 stops the statement as it drops.
+A client close stops MCP waiting, not the statement: the provider's request runs on to its own deadline, the time left of `timeout_ms`, and the server stops the statement when it drops there (measured: a close at 1 s on an 8 s `timeout_ms`, the statement gone 7 s later).
 
