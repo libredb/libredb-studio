@@ -9339,8 +9339,9 @@ Measured 2026-11-02 on Elasticsearch 9.1.4 with security off: `inspect_schema` l
 Their rows are not exposed: the provider's statement check refuses a statement naming any of them before it is sent.
 Found 2026-11-02 while reviewing `run_read_query` on Elasticsearch.
 OpenSearch shares the object surface: measured 2026-11-02 on OpenSearch 3.8.0 with security off, `GET /_cat/indices` leaves a hidden index out, but `inspect_schema` listed a hidden alias over `probe_orders` and an alias over a hidden index, each with the columns of the index behind it; their rows are kept out the same way, by OpenSearch's own statement check.
+It also listed an alias over a visible index whose name starts with a dot (an alias over `.plugins-ml-config` answered that index's columns, `master_key` among them), the indices of the plugin families the OpenSearch dialect declares (`pluginIndexFamilies` in `http-transport.ts`) that `toIndexInfo` does not mark system, such as `ubi_queries`, `search-relevance-queryset` and `opensearch-forecast-results-history-<date>-1`, and an alias over a `top_queries-*` index, each with its columns, measured on 3.8.0 the same day; the statement check refuses their rows.
 
-**Done when:** under the agent-facing profiles the object listings drop the names `GET /_resolve/index` marks hidden or system, and the aliases that are hidden or sit over a hidden index, with a live test against a 9.1.4 node that pins all three cases, and on OpenSearch the hidden aliases and the aliases over a hidden index, with a live test against a 3.8.0 node.
+**Done when:** under the agent-facing profiles the object listings drop the names `GET /_resolve/index` marks hidden or system, and the aliases that are hidden or sit over a hidden index, with a live test against a 9.1.4 node that pins all three cases, and on OpenSearch the hidden aliases, the aliases over a hidden index or over an index whose name starts with a dot, and the indices of the dialect's plugin families and the aliases over them, with a live test against a 3.8.0 node.
 
 ---
 
