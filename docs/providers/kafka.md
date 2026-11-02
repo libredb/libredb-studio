@@ -864,7 +864,7 @@ Each agent-mode path reads this much:
 | Path | Handle | What it reads |
 | --- | --- | --- |
 | Investigation reads | agent read-only profile | one read of [§15.2](#152-what-an-agent-request-may-be)'s table, projected as above |
-| Investigation grounding, plan-mode grounding, the operations workflow and MCP `inspect_schema` | either agent profile | topic names and statuses, broker node ids, and a topic's columns `partition`, `earliest_offset`, `end_offset` and `offset_span`; consumer groups are counted as withheld with their reason, which the grounding walk carries since the kind declares `countIsListing` |
+| Investigation grounding, plan-mode grounding, the operations workflow and MCP `inspect_schema` | either agent profile | topic names and statuses, broker node ids (MCP `inspect_schema` lists topics only), and a topic's columns `partition`, `earliest_offset`, `end_offset` and `offset_span`; consumer groups are counted as withheld with their reason, which the grounding walk carries since the kind declares `countIsListing` |
 | Operations readings | operations profile | health from one forced Metadata read, its size on disk the reason it is not read; the overview, storage, session, slow-query, table and index readings answer their reason rather than an empty reading ([§7](#7-monitoring--health)) |
 | MCP `run_kafka_read` | agent read-only profile | one read of [§15.2](#152-what-an-agent-request-may-be)'s table, projected as above ([§16](#16-mcp)) |
 
@@ -919,7 +919,7 @@ A Kafka seed needs no least-privilege principal, and none is proven, since the a
 A read answers at most 500 rows (its `limit`), below the 1000-row provider budget, so that budget never refuses one; a result past `max_rows` or the 32 KiB result limit is cut, and the hint says to read on with `after`, since the tool takes no `offset`.
 The provider's note that more rows follow a page its own `limit` left unfinished is not part of an MCP answer, so the tool's description says that an answer holding as many rows as its `limit` may have more after it.
 A deadline ends the wait, not the work: the read runs under the time left of `timeout_ms`, and a request already sent settles under the client's own timers while its answer is dropped.
-Measured with the broker paused, a read at the minimum `timeout_ms` of 500 was answered as the timeout after 502 ms, and a client cancel 300 ms into a call ended the wait at once; the broker answered the next call once it resumed.
+Measured with the broker paused, a read at the minimum `timeout_ms` of 500 was answered as the timeout after 502 ms, and a client cancel 300 ms into a call ended the handler's wait at once; through the HTTP route a cancel ends the wait when the client closes its request, as `docs/MCP.md` says for every engine. The broker answered the next call once it resumed.
 `inspect_schema` takes the `agent-operations` profile and reads through the same client, so its topic listing withholds the same topics.
 
 ### 16.4 Tests
