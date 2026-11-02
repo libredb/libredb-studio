@@ -1,0 +1,48 @@
+{
+  "$captured": {
+    "server": "authorization on",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-11-02",
+    "runtime": "bun 1.4.4",
+    "rpc": "DescribeCollection",
+    "principal": "root",
+    "rights": "the built-in root user",
+    "surface": "DescribeCollection default/scope_missing",
+    "request": {
+      "db_name": "default",
+      "collection_name": "scope_missing"
+    }
+  },
+  "outcome": "fail",
+  "payload": {
+    "virtual_channel_names": [],
+    "physical_channel_names": [],
+    "aliases": [],
+    "start_positions": [],
+    "properties": [],
+    "status": {
+      "extra_info": {
+        "is_input_error": "true"
+      },
+      "error_code": "CollectionNotExists",
+      "reason": "can't find collection[database=default][collection=scope_missing]",
+      "code": 100,
+      "retriable": false,
+      "detail": "can't find collection[database=default][collection=scope_missing]"
+    },
+    "schema": null,
+    "collectionID": "0",
+    "created_timestamp": "0",
+    "created_utc_timestamp": "0",
+    "shards_num": 0,
+    "consistency_level": "Strong",
+    "collection_name": "scope_missing",
+    "db_name": "default",
+    "num_partitions": "0",
+    "db_id": "0",
+    "request_time": "0",
+    "update_timestamp": "0",
+    "update_timestamp_str": ""
+  }
+}

@@ -7,7 +7,7 @@
  * security page, the authorization-off clause included.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { AGENT_EXECUTION_ENGINES } from "@/lib/agent/engine-support";
 import { DB_UI_CONFIG } from "@/lib/db-ui-config";
@@ -228,6 +228,30 @@ describe("docs/providers/milvus.md quotes what the code says", () => {
     expect(machine).toContain("(`mcp: true`)");
     expect(machine).toContain("Agent execution reads metadata only");
     expect(machine).toContain("MCP `run_read_query` still refuses Milvus");
+  });
+
+  test("the data scope names the layer that stops each item, and every capture it cites is on disk", () => {
+    const scope = sectionOf(DOC, "#### 15.3.1 The data scope");
+    for (const row of [
+      "A database other than the connection's",
+      "A collection outside the user's grants, by name",
+      "An alias where a collection's name stands",
+      "An alias of a collection outside the user's grants",
+      "Every alias of the database",
+    ]) {
+      expect(rowOf(scope, row)).toContain("Studio:");
+    }
+    expect(rowOf(scope, "A database outside the user's grants, in `databases/list`")).toContain("The server:");
+    expect(rowOf(scope, "A collection outside the user's grants, in `collections/list`")).toContain("The server:");
+    const scopeDir = path.join(ROOT, "tests/fixtures/milvus/3.0.2/mcp-scope");
+    for (const cited of scope.match(/`[a-z-]+-(?:dbro|few|onedb|\*)`/g) ?? []) {
+      const name = cited.slice(1, -1);
+      const pattern = new RegExp(`^${name.replace("*", "[a-z]+")}\\.json$`);
+      expect({ cited: name, found: readdirSync(scopeDir).some((file) => pattern.test(file)) }).toEqual({
+        cited: name,
+        found: true,
+      });
+    }
   });
 
   test("the object edit section states the abstention the census holds", () => {

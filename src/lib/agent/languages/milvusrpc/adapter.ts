@@ -38,7 +38,7 @@ const MILVUS_ROW_CAP_ADVICE: Readonly<Record<string, (allowed: string) => string
   partitions: (allowed: string) =>
     `Ask for at most ${allowed} rows: read the collection's load state or row count instead of every partition, and run it again.`,
   aliases: (allowed: string) =>
-    `Ask for at most ${allowed} rows: read one collection's aliases with aliases/list and a collectionName instead of every alias, and run it again.`,
+    `Ask for at most ${allowed} rows: read one alias with aliases/describe and an aliasName instead of the collection's whole list, and run it again.`,
 });
 
 const ADVICE_OF: Readonly<Record<string, string>> = Object.freeze({

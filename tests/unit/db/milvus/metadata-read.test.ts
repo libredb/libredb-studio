@@ -10,6 +10,7 @@ import { MilvusError } from "@/lib/db/providers/vector/milvus/client";
 import type { MilvusConnectionOptions } from "@/lib/db/providers/vector/milvus/connection-options";
 import { createGrpcMilvusClient, type MilvusRpc } from "@/lib/db/providers/vector/milvus/grpc-client";
 import {
+  MILVUS_AGENT_SCOPE_SENTENCES,
   MILVUS_METADATA_ONLY,
   milvusAgentFailure,
   milvusAgentResult,
@@ -17,7 +18,15 @@ import {
 } from "@/lib/db/providers/vector/milvus/metadata-read";
 import { readMilvusAgentStatement } from "@/lib/db/providers/vector/milvus/metadata-request";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
-import { agentMilvusWire, milvusAgentCapture, replayed } from "../../../helpers/milvus-agent";
+import {
+  agentMilvusWire,
+  MILVUS_SCOPE_PRINCIPALS,
+  type MilvusScopePrincipal,
+  milvusAgentCapture,
+  milvusScopeCapture,
+  replayed,
+  scopeMilvusWire,
+} from "../../../helpers/milvus-agent";
 import { okStatus, type RecordedMilvusAnswer, statusError } from "../../../helpers/milvus-wire";
 
 const OPTIONS: MilvusConnectionOptions = {
@@ -106,6 +115,7 @@ describe("each admitted route's metadata, from what 3.0.2 answered a reader", ()
     const { rows, wire } = await read(request("collections/describe", { collectionName: "agent_docs" }));
     const named = { collection_name: "agent_docs", db_name: "default" };
     expect(wire.calls).toEqual([
+      { method: "ShowCollections", args: [{ db_name: "default" }, {}] },
       { method: "DescribeCollection", args: [named, {}] },
       { method: "DescribeIndex", args: [named, {}] },
       { method: "GetLoadState", args: [named, {}] },
@@ -226,6 +236,7 @@ describe("each admitted route's metadata, from what 3.0.2 answered a reader", ()
     });
     const named = { collection_name: "agent_docs", partition_names: ["part_a"], db_name: "default" };
     expect(wire.calls).toEqual([
+      { method: "ShowCollections", args: [{ db_name: "default" }, {}] },
       { method: "GetLoadState", args: [named, {}] },
       { method: "GetLoadingProgress", args: [named, {}] },
     ]);
@@ -236,7 +247,7 @@ describe("each admitted route's metadata, from what 3.0.2 answered a reader", ()
       GetLoadState: () => ({ status: okStatus, state: "LoadStateNotLoad" }),
     });
     expect(rows.rows).toEqual([{ collection: "agent_docs", load_state: "NotLoad", progress: null }]);
-    expect(wire.calls.map((logged) => logged.method)).toEqual(["GetLoadState"]);
+    expect(wire.calls.map((logged) => logged.method)).toEqual(["ShowCollections", "GetLoadState"]);
   });
 
   test("partitions/list answers each partition's name", async () => {
@@ -322,16 +333,14 @@ describe("each admitted route's metadata, from what 3.0.2 answered a reader", ()
         failed: true,
       },
     ]);
-    expect(wire.calls[0]?.args?.[0]).toEqual({
+    expect(wire.calls[1]?.args?.[0]).toEqual({
       collection_name: "agent_docs",
       index_name: "vec_idx",
       db_name: "default",
     });
   });
 
-  test("aliases/list answers each alias, and the collection when the request named one", async () => {
-    const all = await read(request("aliases/list"));
-    expect(all.rows).toEqual({ fields: ["alias", "collection"], rows: [{ alias: "agent_alias", collection: null }] });
+  test("aliases/list answers each alias of the collection the request names, with the collection", async () => {
     const one = await read(request("aliases/list", { collectionName: "agent_docs" }), {
       ListAliases: () => ({ status: okStatus, db_name: "default", collection_name: "agent_docs", aliases: ["a1"] }),
     });
@@ -467,11 +476,178 @@ describe("the agent's answer and its failures", () => {
   });
 
   test("a server refusal through the real adapter is worded without the server's text", async () => {
-    const outcome = await read(request("aliases/describe", { aliasName: "agent_alias" }), {
-      DescribeAlias: () => Promise.reject(statusError(7, "PrivilegeDescribeAlias: stored-title-value")),
+    const outcome = await read(request("partitions/list", { collectionName: "agent_docs" }), {
+      ShowPartitions: () => Promise.reject(statusError(7, "PrivilegeShowPartitions: stored-title-value")),
     }).catch((error: unknown) => error);
     const failure = milvusAgentFailure(outcome, BUDGET, "s");
     expect(failure?.message).toContain("permission-denied");
     expect(failure?.message).not.toMatch(STORED);
+  });
+});
+
+/**
+ * What the agent reads is what the user's own grants list, measured on 3.0.2 (tests/fixtures/milvus/3.0.2/mcp-scope/):
+ * the server filters ListDatabases and ShowCollections by the user's grants, yet the role public, which every user
+ * holds, may describe any collection, its indexes and every alias of any database, and an alias in a collection's
+ * place is answered as the collection it names. So a name in a collection's place is sent only when the user's own
+ * ShowCollections lists it, an alias only when the collection it names is listed, and every call names the
+ * connection's database whatever the plan says.
+ */
+describe("the data scope: only what the user's own collection list holds", () => {
+  const signal = new AbortController().signal;
+
+  async function readAs(principal: MilvusScopePrincipal, text: string, overrides = {}) {
+    const wire = scopeMilvusWire(principal, overrides);
+    const client = await createGrpcMilvusClient(OPTIONS, wire.transport);
+    const db = MILVUS_SCOPE_PRINCIPALS[principal].database;
+    const reading = readMilvusAgentStatement(text, db);
+    if (!reading.ok) throw new Error(reading.message);
+    const outcome = await readMilvusMetadata(client, reading.plan, { db, signal }).catch((error: unknown) => error);
+    return { outcome, methods: wire.calls.map((logged) => logged.method), wire };
+  }
+
+  test("the server lists a user only its own collections, yet describes it any of them, and an alias as its collection", () => {
+    const answered = (surface: string) => milvusScopeCapture(surface, "few").outcome;
+    expect(milvusScopeCapture("show-collections", "few").payload).toMatchObject({
+      collection_names: ["scope_c1", "scope_c2"],
+    });
+    // Outside the user's grants, yet answered; a missing name is refused: the two read apart on the wire.
+    expect(answered("describe-collection-ungranted")).toBe("pass");
+    expect(answered("describe-collection-missing")).toBe("fail");
+    expect(answered("describe-collection-alias-ungranted")).toBe("pass");
+    expect(answered("describe-index-ungranted")).toBe("pass");
+    expect(answered("describe-alias-ungranted")).toBe("pass");
+    expect(milvusScopeCapture("list-aliases", "few").payload).toMatchObject({
+      aliases: ["scope_alias_c1", "scope_alias_c3"],
+    });
+  });
+
+  test.each([
+    ["collections/describe"],
+    ["collections/get_stats"],
+    ["collections/get_load_state"],
+    ["partitions/list"],
+    ["indexes/list"],
+    ["aliases/list"],
+  ])(
+    "%s of a collection outside the user's grants, a missing one or an alias is refused alike, and nothing naming it is sent",
+    async (route) => {
+      const names = ["scope_c3", "scope_missing", "scope_alias_c1", "scope_alias_c3"];
+      const reads = await Promise.all(names.map((name) => readAs("few", request(route, { collectionName: name }))));
+      reads.forEach(({ outcome, methods }, at) => {
+        expect(outcome).toBeInstanceOf(QueryError);
+        expect((outcome as Error).message).toBe(MILVUS_AGENT_SCOPE_SENTENCES.collection(names[at] as string));
+        expect(methods).toEqual(["ShowCollections"]);
+      });
+    },
+  );
+
+  test("indexes/describe of an unlisted collection is refused alike, whatever index it names", async () => {
+    const { outcome, methods } = await readAs(
+      "few",
+      request("indexes/describe", { collectionName: "scope_c3", indexName: "vec_idx" }),
+    );
+    expect((outcome as Error).message).toBe(MILVUS_AGENT_SCOPE_SENTENCES.collection("scope_c3"));
+    expect(methods).toEqual(["ShowCollections"]);
+  });
+
+  test("a collection the user lists is read, by its own name, in the connection's database", async () => {
+    const { outcome, wire } = await readAs("few", request("collections/describe", { collectionName: "scope_c1" }));
+    expect(outcome).toMatchObject({
+      rows: [{ name: "scope_c1", kind: "collection" }, { name: "id" }, { name: "vec" }],
+    });
+    const named = { collection_name: "scope_c1", db_name: "default" };
+    expect(wire.calls).toEqual([
+      { method: "ShowCollections", args: [{ db_name: "default" }, {}] },
+      { method: "DescribeCollection", args: [named, {}] },
+      { method: "DescribeIndex", args: [named, {}] },
+      { method: "GetLoadState", args: [named, {}] },
+    ]);
+  });
+
+  test("a describe answered for another collection than the one named, as an alias made in the same name is, is refused alike", async () => {
+    const { outcome } = await readAs("few", request("collections/describe", { collectionName: "scope_c1" }), {
+      DescribeCollection: () => replayed(milvusScopeCapture("describe-collection-alias-ungranted", "few")),
+    });
+    expect((outcome as Error).message).toBe(MILVUS_AGENT_SCOPE_SENTENCES.collection("scope_c1"));
+  });
+
+  test("aliases/describe answers an alias of a listed collection, and refuses one of an unlisted collection as it refuses a missing one", async () => {
+    const granted = await readAs("few", request("aliases/describe", { aliasName: "scope_alias_c1" }));
+    expect(granted.outcome).toMatchObject({
+      rows: [{ alias: "scope_alias_c1", collection: "scope_c1", database: "default" }],
+    });
+    expect(granted.methods).toEqual(["DescribeAlias", "ShowCollections"]);
+    const aliases = ["scope_alias_c3", "scope_missing"];
+    const refused = await Promise.all(
+      aliases.map((alias) => readAs("few", request("aliases/describe", { aliasName: alias }))),
+    );
+    refused.forEach(({ outcome }, at) => {
+      expect(outcome).toBeInstanceOf(QueryError);
+      expect((outcome as Error).message).toBe(MILVUS_AGENT_SCOPE_SENTENCES.alias(aliases[at] as string));
+    });
+    // The server answered the two apart: one alias it described, the other it did not find.
+    expect(milvusScopeCapture("describe-alias-ungranted", "few").outcome).toBe("pass");
+    expect(milvusScopeCapture("describe-alias-missing", "few").outcome).toBe("fail");
+  });
+
+  test("aliases/describe refused by the server is refused as a missing alias is; a transport failure is passed on", async () => {
+    const denied = await readAs("few", request("aliases/describe", { aliasName: "scope_alias_c1" }), {
+      DescribeAlias: () => Promise.reject(statusError(7, "PrivilegeDescribeAlias: permission deny to scope_few")),
+    });
+    expect((denied.outcome as Error).message).toBe(MILVUS_AGENT_SCOPE_SENTENCES.alias("scope_alias_c1"));
+    expect((denied.outcome as Error).message).not.toContain("scope_few");
+    const down = await readAs("few", request("aliases/describe", { aliasName: "scope_alias_c1" }), {
+      DescribeAlias: () => Promise.reject(statusError(14, "connection refused")),
+    });
+    expect(down.outcome).toBeInstanceOf(MilvusError);
+  });
+
+  test("an alias another database holds is refused alike, though its collection's name is listed here", async () => {
+    const { outcome } = await readAs("few", request("aliases/describe", { aliasName: "scope_alias_c1" }), {
+      DescribeAlias: () => ({
+        ...replayed(milvusScopeCapture("describe-alias-granted", "few")),
+        db_name: "scope_db_b",
+      }),
+    });
+    expect((outcome as Error).message).toBe(MILVUS_AGENT_SCOPE_SENTENCES.alias("scope_alias_c1"));
+  });
+
+  test("the listings are the server's own, filtered by the user's grants, and read no list of their own", async () => {
+    const databases = await readAs("onedb", request("databases/list"));
+    expect(databases.outcome).toMatchObject({ rows: [{ database: "scope_db_a" }] });
+    expect(databases.methods).toEqual(["ListDatabases"]);
+    const collections = await readAs("few", request("collections/list"));
+    expect(collections.outcome).toMatchObject({ rows: [{ collection: "scope_c1" }, { collection: "scope_c2" }] });
+    expect(collections.methods).toEqual(["ShowCollections"]);
+  });
+
+  test("a plan naming another database is read in the connection's, so no request leaves it", async () => {
+    const wire = scopeMilvusWire("few");
+    const client = await createGrpcMilvusClient(OPTIONS, wire.transport);
+    // Read without the connection, as the admission reads it, so the reader leaves the dbName to the provider.
+    const reading = readMilvusAgentStatement(
+      request("collections/describe", { dbName: "scope_db_b", collectionName: "scope_c1" }),
+    );
+    if (!reading.ok) throw new Error(reading.message);
+    expect(reading.plan.db).toBe("scope_db_b");
+    await readMilvusMetadata(client, reading.plan, { db: "default", signal });
+    expect(wire.calls.length).toBeGreaterThan(0);
+    for (const logged of wire.calls) {
+      expect((logged.args?.[0] as { db_name?: string } | undefined)?.db_name).toBe("default");
+    }
+  });
+
+  test("a ListAliases naming no collection never leaves, whatever plan asked for it", async () => {
+    const wire = scopeMilvusWire("few");
+    const client = await createGrpcMilvusClient(OPTIONS, wire.transport);
+    const outcome = await readMilvusMetadata(
+      client,
+      { op: "aliases/list", db: "default", gatedKeys: [], collection: undefined },
+      { db: "default", signal },
+    ).catch((error: unknown) => error);
+    expect(outcome).toBeInstanceOf(QueryError);
+    expect((outcome as Error).message).toBe(MILVUS_AGENT_SCOPE_SENTENCES.aliasList);
+    expect(wire.calls).toEqual([]);
   });
 });

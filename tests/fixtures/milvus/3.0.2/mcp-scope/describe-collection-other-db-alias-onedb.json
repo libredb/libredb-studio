@@ -1,0 +1,138 @@
+{
+  "$captured": {
+    "server": "authorization on",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-11-02",
+    "runtime": "bun 1.4.4",
+    "rpc": "DescribeCollection",
+    "principal": "onedb",
+    "rights": "role scope_onedb_role: the DatabaseReadOnly and CollectionReadOnly groups on scope_db_a/*",
+    "surface": "DescribeCollection scope_db_b/scope_alias_b1",
+    "request": {
+      "db_name": "scope_db_b",
+      "collection_name": "scope_alias_b1"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "virtual_channel_names": [
+      "by-dev-rootcoord-dml_12_470191791767815196v0"
+    ],
+    "physical_channel_names": [
+      "by-dev-rootcoord-dml_12"
+    ],
+    "aliases": [
+      "scope_alias_b1"
+    ],
+    "start_positions": [],
+    "properties": [
+      {
+        "key": "timezone",
+        "value": "UTC"
+      },
+      {
+        "key": "namespace.sharding.enabled",
+        "value": "false"
+      },
+      {
+        "key": "max_field_id",
+        "value": "101"
+      }
+    ],
+    "status": {
+      "extra_info": {},
+      "error_code": "Success",
+      "reason": "",
+      "code": 0,
+      "retriable": false,
+      "detail": ""
+    },
+    "schema": {
+      "fields": [
+        {
+          "type_params": [],
+          "index_params": [],
+          "fieldID": "100",
+          "name": "id",
+          "is_primary_key": true,
+          "description": "",
+          "data_type": "Int64",
+          "autoID": false,
+          "state": "FieldCreated",
+          "element_type": "None",
+          "default_value": null,
+          "is_dynamic": false,
+          "is_partition_key": false,
+          "is_clustering_key": false,
+          "nullable": false,
+          "is_function_output": false,
+          "external_field": ""
+        },
+        {
+          "type_params": [
+            {
+              "key": "dim",
+              "value": "4"
+            }
+          ],
+          "index_params": [],
+          "fieldID": "101",
+          "name": "vec",
+          "is_primary_key": false,
+          "description": "",
+          "data_type": "FloatVector",
+          "autoID": false,
+          "state": "FieldCreated",
+          "element_type": "None",
+          "default_value": null,
+          "is_dynamic": false,
+          "is_partition_key": false,
+          "is_clustering_key": false,
+          "nullable": false,
+          "is_function_output": false,
+          "external_field": ""
+        }
+      ],
+      "properties": [
+        {
+          "key": "timezone",
+          "value": "UTC"
+        },
+        {
+          "key": "namespace.sharding.enabled",
+          "value": "false"
+        },
+        {
+          "key": "max_field_id",
+          "value": "101"
+        }
+      ],
+      "functions": [],
+      "struct_array_fields": [],
+      "file_resource_ids": [],
+      "name": "scope_b1",
+      "description": "",
+      "autoID": false,
+      "enable_dynamic_field": false,
+      "dbName": "scope_db_b",
+      "version": 0,
+      "external_source": "",
+      "external_spec": "",
+      "do_physical_backfill": false,
+      "enable_namespace": false
+    },
+    "collectionID": "470191791767815196",
+    "created_timestamp": "470191792253829161",
+    "created_utc_timestamp": "1793639344230",
+    "shards_num": 1,
+    "consistency_level": "Strong",
+    "collection_name": "scope_alias_b1",
+    "db_name": "scope_db_b",
+    "num_partitions": "1",
+    "db_id": "470191791767815157",
+    "request_time": "0",
+    "update_timestamp": "470191792253829161",
+    "update_timestamp_str": "470191792253829161"
+  }
+}

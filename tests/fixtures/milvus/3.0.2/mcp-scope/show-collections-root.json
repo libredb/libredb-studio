@@ -1,0 +1,54 @@
+{
+  "$captured": {
+    "server": "authorization on",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-11-02",
+    "runtime": "bun 1.4.4",
+    "rpc": "ShowCollections",
+    "principal": "root",
+    "rights": "the built-in root user",
+    "surface": "ShowCollections default",
+    "request": {
+      "db_name": "default"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "collection_names": [
+      "scope_c1",
+      "scope_c2",
+      "scope_c3"
+    ],
+    "collection_ids": [
+      "470191791767815160",
+      "470191791767815168",
+      "470191791767815176"
+    ],
+    "created_timestamps": [
+      "470191792201400341",
+      "470191792253829148",
+      "470191792253829151"
+    ],
+    "created_utc_timestamps": [
+      "1793639344030",
+      "1793639344230",
+      "1793639344230"
+    ],
+    "inMemory_percentages": [],
+    "query_service_available": [],
+    "shards_num": [
+      1,
+      1,
+      1
+    ],
+    "status": {
+      "extra_info": {},
+      "error_code": "Success",
+      "reason": "",
+      "code": 0,
+      "retriable": false,
+      "detail": ""
+    }
+  }
+}

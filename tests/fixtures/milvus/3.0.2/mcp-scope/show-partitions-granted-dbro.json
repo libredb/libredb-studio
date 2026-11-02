@@ -1,0 +1,41 @@
+{
+  "$captured": {
+    "server": "authorization on",
+    "image": "milvusdb/milvus:v3.0.2@sha256:5f13bf88e110a517911c3e6dd8172454e90042c21e606a868084615a4302c8a0",
+    "version": "3.0.2",
+    "date": "2026-11-02",
+    "runtime": "bun 1.4.4",
+    "rpc": "ShowPartitions",
+    "principal": "dbro",
+    "rights": "role scope_dbro_role: the DatabaseReadOnly and CollectionReadOnly groups on default/*",
+    "surface": "ShowPartitions default/scope_c1",
+    "request": {
+      "db_name": "default",
+      "collection_name": "scope_c1"
+    }
+  },
+  "outcome": "pass",
+  "payload": {
+    "partition_names": [
+      "_default"
+    ],
+    "partitionIDs": [
+      "470191791767815161"
+    ],
+    "created_timestamps": [
+      "470191792201400341"
+    ],
+    "created_utc_timestamps": [
+      "1793639344030"
+    ],
+    "inMemory_percentages": [],
+    "status": {
+      "extra_info": {},
+      "error_code": "Success",
+      "reason": "",
+      "code": 0,
+      "retriable": false,
+      "detail": ""
+    }
+  }
+}

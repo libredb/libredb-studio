@@ -602,7 +602,32 @@ The operations profile sends no request of the model's, so it opens with any use
 
 One request in the console's own grammar, every body key closed (section 5.2), naming `databases/list`, `databases/describe`, `collections/list`, `collections/describe`, `collections/get_stats`, `collections/get_load_state`, `partitions/list`, `indexes/list`, `indexes/describe`, `aliases/list` or `aliases/describe`.
 `entities/query` and `entities/get` answer stored scalar, vector and dynamic field values (`query-values-reader`), and `entities/search` with a text input against a function's output field makes the server run the function on it (`search-text-reader`), so every entity route is refused before anything is sent, by its route, never the request's own words.
-A `dbName` naming a database other than the connection's is refused before anything is sent; every call names the connection's database, written by the adapter, and carries only the `authorization` metadata.
+A `dbName` naming a database other than the connection's is refused before anything is sent; every call names the connection's database, written by the adapter from the connection whatever the request was read as, and carries only the `authorization` metadata.
+`aliases/list` names a `collectionName`: 3.0.2 answers every alias of a database to any user, those of collections outside its grants among them (`list-aliases-few` in [`tests/fixtures/milvus/3.0.2/mcp-scope/`](../../tests/fixtures/milvus/3.0.2/mcp-scope/)), so the database's whole list is refused before anything is sent.
+
+#### 15.3.1 The data scope
+
+What an agent request reads is held to what the user's own grants list, in two layers, each measured on 3.0.2 by the captures under [`tests/fixtures/milvus/3.0.2/mcp-scope/`](../../tests/fixtures/milvus/3.0.2/mcp-scope/), which its `run.sh` records with a user holding `DatabaseReadOnly` and `CollectionReadOnly` on `default` (`dbro`), one holding `CollectionReadOnly` on two collections of `default` with `ShowCollections` and `DescribeDatabase` there (`few`), and one holding both groups on a second database only (`onedb`), every call sent raw.
+
+The server's own grants, layer one, decide the listings: `ListDatabases` answers each user only the databases its grants reach (`list-databases-*`), `ShowCollections` only the collections they reach (`show-collections-few` lists two of three, `show-collections-other-db-*` none), and `GetCollectionStatistics`, `GetLoadState` and `ShowPartitions` of a collection outside them are refused `PERMISSION_DENIED` (`statistics-ungranted-few`).
+They do not decide everything: the role `public`, which every user holds, holds `DescribeCollection`, `IndexDetail` and `ListAliases` on every database and collection (`select-grant-public-*`), so 3.0.2 describes any collection and its indexes to any user, in any database, lists any database's aliases and describes an alias whatever collection it names (`describe-collection-ungranted-few`, `describe-collection-ungranted-onedb`, `describe-index-ungranted-*`, `list-aliases-other-db-*`, `describe-alias-ungranted-few`), answers an alias written where a collection's name stands as the collection it names (`describe-collection-alias-ungranted-few`), and answers a name no collection has apart from one outside the grants (`describe-collection-missing-few` against `describe-collection-ungranted-few`).
+
+Studio's client, layer two, closes that: every call is checked as it is sent, not as the request was read (`scopedClient` in `metadata-read.ts`).
+
+| What | Stopped by |
+| --- | --- |
+| A database other than the connection's | Studio: every call names the connection's database, written from the connection |
+| A collection outside the user's grants, by name | Studio: a call naming a collection is sent only when the user's own `ShowCollections` lists that name, read in the same request |
+| An alias where a collection's name stands | Studio: an alias is no name `ShowCollections` lists, so it is refused as a collection outside the grants is |
+| A describe answered for another collection than the one named, as for an alias made in that name since the list was read | Studio: the answer's schema must name the collection the call named |
+| An alias of a collection outside the user's grants | Studio: `aliases/describe` is answered only when its collection is listed and its database is the connection's |
+| Every alias of the database | Studio: `aliases/list` names a collection, and a `ListAliases` naming none is never sent |
+| A database outside the user's grants, in `databases/list` | The server: `ListDatabases` is filtered by the grants |
+| A collection outside the user's grants, in `collections/list` | The server: `ShowCollections` is filtered by the grants |
+
+A collection outside the user's grants, an alias and a name no collection has are refused in one sentence, and an alias of a collection outside them and a name no alias has in another, so no answer tells a collection that exists from one that does not.
+The names that reach an answer are the user's own databases, collections and their fields, functions, partitions, indexes and aliases.
+A residual: a name is checked against the list read at the start of the request, so a collection an administrator drops and replaces in the same instant with an alias of that name could be read through for a statistics, load-state, partition or index read; a describe is refused, since its answer names its schema.
 
 ### 15.4 Metadata only
 
@@ -624,10 +649,10 @@ Milvus declares `ProviderCapabilities.metadataOnly`: every answer is projected t
 A collection read answers one row for the collection itself (`kind` `collection`, with its dynamic flag, shard and partition counts, consistency level and load state), then one per field (its name, data type, element type, dimension, maximum length, flags and index), one per struct array and its fields, and one per function (its name and type).
 A column's name comes from the projection, never from a key the store holds, and nothing the projection does not name reaches a row: no field's default value, no description, no collection or database property's value, no index parameter and no function parameter, which can name a service or a credential.
 A failed index build is answered as `failed`, never its reason, which is the server's text.
-`aliases/list` without a `collectionName` answers `collection` as null on every row, since 3.0.2 lists alias names alone; `aliases/describe` names the collection.
+`aliases/list` names the collection on every row; `aliases/describe` names the collection and the database.
 Names are the operator's own: a database, collection, field, partition, index, alias or function named after a stored value reaches the answer as that name, checked only to be printable text of 1 to 512 characters on one line.
 A cell that does not fit its kind, such as a dimension that is not a whole number or a name holding a line break, withholds the whole answer, naming the column and never the value.
-A server refusal is worded by its category alone, never the server's message: a user without `DescribeAlias` is answered `PrivilegeDescribeAlias: permission deny to agent_dbro in the default database` (`describe-alias-dbro`), and agent mode is told only that the call failed with `permission-denied`.
+A server refusal is worded by its category alone, never the server's message, which names the user: a user without `GetStatistics` on a collection is answered `PrivilegeGetStatistics: permission deny to scope_few in the default database` (`statistics-ungranted-few`), and agent mode is told only that the call failed with `permission-denied`.
 A result past the row or byte budget is refused, never cut, and an estimating plan is refused.
 
 ### 15.5 Agent language pack
@@ -647,7 +672,7 @@ No MCP tool runs a Milvus request: the family declares no MCP facet, and `MCP_ST
 
 - `tests/unit/db/milvus/read-only-proof.test.ts`: the privileges a read-only user may hold, held to 3.0.2's groups, and the proof over every principal's captures, a grant made during the run included.
 - `tests/unit/db/milvus/metadata-request.test.ts`: the routes an agent request may name, and every refusal before the network.
-- `tests/unit/db/milvus/metadata-read.test.ts`: every projection over the captured answers, and answers that carry a stored value where a name, a count or a flag stands.
+- `tests/unit/db/milvus/metadata-read.test.ts`: every projection over the captured answers, answers that carry a stored value where a name, a count or a flag stands, and the data scope over the narrow principals' captures.
 - `tests/unit/db/milvus/agent-provider.test.ts`: the open, the proof before every request, the exact RPCs, requests and metadata through the adapter, the wording of a failure and the budgets.
 - `tests/integration/db/milvus-provider.test.ts`: the boundary replayed from the captures, the read-only principals' writes beside the positive controls, and the proof's verdict on every principal.
 - `tests/unit/lib/db/redaction/metadata-only.test.ts`: the shared projection helpers.

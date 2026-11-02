@@ -751,7 +751,7 @@ describe("the milvusrpc language's server adapter and admission", () => {
       collections: "POST /v2/vectordb/collections/list",
       collection: describe_('{"collectionName": "docs"}'),
       partitions: 'POST /v2/vectordb/partitions/list\n{"collectionName": "docs"}',
-      aliases: "POST /v2/vectordb/aliases/list",
+      aliases: 'POST /v2/vectordb/aliases/list\n{"collectionName": "docs"}',
     };
     expect([...AGENT_LANGUAGE_COPY.milvusrpc.adviceKeys].sort()).toEqual([
       "aliases",

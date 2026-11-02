@@ -11,9 +11,18 @@
  *   withholds the whole answer.
  * - **Failures without the server's words.** A refusal is worded by its category alone, since the server's text can
  *   echo what a request carried.
+ * - **The user's own collections.** 3.0.2 lists a user only the databases and collections its grants reach, yet the
+ *   role public, which every user holds, may describe any collection and its indexes and list any database's aliases,
+ *   and an alias written where a collection's name stands is answered as the collection it names
+ *   (tests/fixtures/milvus/3.0.2/mcp-scope/). So the client every read goes through (`scopedClient`) checks each call
+ *   it sends, not the request it was read from: a call naming a collection leaves only when the user's own
+ *   ShowCollections lists that name, a describe answered for another collection is refused, an alias is answered only
+ *   when it names a listed collection of the connection's database, and a ListAliases naming no collection never
+ *   leaves. A collection outside the grants, an alias and a name no collection has are refused in one sentence, and an
+ *   alias outside them and a missing alias in another, so no answer tells them apart.
  *
- * Every call names the plan's database, which the agent's reader holds to the connection's own, and the calls go one
- * after another under the caller's one signal.
+ * Every call names the connection's database, whatever the plan says, and the calls go one after another under the
+ * caller's one signal.
  */
 import { QueryError, TimeoutError } from "@/lib/db/errors";
 import {
@@ -267,6 +276,90 @@ const PROJECTIONS = {
 /** What `ProviderCapabilities.metadataOnly` states for Milvus, derived from the projections themselves. */
 export const MILVUS_METADATA_ONLY: MetadataOnlyDeclaration = declareMetadataOnly(PROJECTIONS);
 
+/** The refusals of a name outside what the user's own collection list holds. `name` is the request's own text. */
+export const MILVUS_AGENT_SCOPE_SENTENCES = {
+  collection: (name: string): string =>
+    `${JSON.stringify(name)} is not a collection collections/list answers this connection's user in its database, so nothing about it was read: a collection outside the user's grants, an alias and a name no collection has are refused alike. Name a collection as collections/list lists it.`,
+  alias: (name: string): string =>
+    `${JSON.stringify(name)} is not an alias of a collection collections/list answers this connection's user in its database, so nothing about it is answered: an alias of a collection outside the user's grants and a name no alias has are refused alike.`,
+  aliasList:
+    "aliases/list names a collection in agent mode, since Milvus answers every alias of a database to any user, those of collections outside the user's grants among them: read one collection's aliases with aliases/list and a collectionName that collections/list lists.",
+} as const;
+
+/**
+ * The agent's client, scoped to the collections the user's own ShowCollections lists in the connection's database,
+ * read once, on the first call that names a collection. Every check reads the call about to be sent or the answer it
+ * got, never the request the plan was read from.
+ */
+function scopedClient(client: MilvusAgentReadClient, call: CallOptions): MilvusAgentReadClient {
+  let listed: Promise<ReadonlySet<string>> | undefined;
+  const collections = () => {
+    listed ??= client.showCollections(call).then((answer) => new Set(answer.collection_names));
+    return listed;
+  };
+  const admit = async (name: string | undefined): Promise<void> => {
+    if (name === undefined || !(await collections()).has(name)) {
+      throw new QueryError(MILVUS_AGENT_SCOPE_SENTENCES.collection(name ?? ""), "milvus");
+    }
+  };
+  return {
+    listDatabases: (options) => client.listDatabases(options),
+    describeDatabase: (request, options) => client.describeDatabase(request, options),
+    showCollections: (options) => client.showCollections(options),
+    describeCollection: async (request, options) => {
+      await admit(request.collection_name);
+      const answer = await client.describeCollection(request, options);
+      // A name the list held, answered for another collection: an alias made in that name since the list was read.
+      if (answer.schema?.name !== request.collection_name) {
+        throw new QueryError(MILVUS_AGENT_SCOPE_SENTENCES.collection(request.collection_name ?? ""), "milvus");
+      }
+      return answer;
+    },
+    describeIndex: async (request, options) => {
+      await admit(request.collection_name);
+      return client.describeIndex(request, options);
+    },
+    getLoadState: async (request, options) => {
+      await admit(request.collection_name);
+      return client.getLoadState(request, options);
+    },
+    getLoadingProgress: async (request, options) => {
+      await admit(request.collection_name);
+      return client.getLoadingProgress(request, options);
+    },
+    getCollectionStatistics: async (request, options) => {
+      await admit(request.collection_name);
+      return client.getCollectionStatistics(request, options);
+    },
+    showPartitions: async (request, options) => {
+      await admit(request.collection_name);
+      return client.showPartitions(request, options);
+    },
+    listAliases: async (request, options) => {
+      if (request.collection_name === undefined) {
+        throw new QueryError(MILVUS_AGENT_SCOPE_SENTENCES.aliasList, "milvus");
+      }
+      await admit(request.collection_name);
+      return client.listAliases(request, options);
+    },
+    describeAlias: async (request, options) => {
+      const refused = () => new QueryError(MILVUS_AGENT_SCOPE_SENTENCES.alias(request.alias), "milvus");
+      let answer: Awaited<ReturnType<MilvusAgentReadClient["describeAlias"]>>;
+      try {
+        answer = await client.describeAlias(request, options);
+      } catch (error) {
+        // A missing alias, and one the server would not describe, read as one: no answer tells them apart.
+        if (error instanceof MilvusError && (error.category === "status" || error.category === "permission-denied")) {
+          throw refused();
+        }
+        throw error;
+      }
+      if (answer.db_name !== call.db || !(await collections()).has(answer.collection)) throw refused();
+      return answer;
+    },
+  };
+}
+
 const INDEX_NOT_EXIST = 700;
 const named = (names: readonly string[]): Named[] => names.map((name) => ({ name }));
 
@@ -374,15 +467,16 @@ async function sourcesOf(
 }
 
 /**
- * The metadata of one admitted request: its reads under `call`, which names the plan's database, and their
- * projection. A cell that fits no declared kind withholds the whole answer; a failed read is raised as the client's.
+ * The metadata of one admitted request: its reads under `call`, which names the connection's database whatever the
+ * plan's is, through the client scoped to the user's own collections, and their projection. A cell that fits no
+ * declared kind withholds the whole answer; a failed read is raised as the client's.
  */
 export async function readMilvusMetadata(
   client: MilvusAgentReadClient,
   plan: MilvusAgentPlan,
   call: CallOptions,
 ): Promise<MetadataRows> {
-  const { id, sources } = await sourcesOf(client, plan, { db: plan.db, signal: call.signal });
+  const { id, sources } = await sourcesOf(scopedClient(client, call), plan, call);
   try {
     return projectMetadata(PROJECTIONS[id] as MetadataProjection<unknown>, sources);
   } catch (error) {
