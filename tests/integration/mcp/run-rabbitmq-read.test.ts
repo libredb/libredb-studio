@@ -189,7 +189,7 @@ afterAll(() => {
 interface Answered {
   isError?: boolean;
   content: Array<{ type: string; text: string }>;
-  structuredContent?: Record<string, any>;
+  structuredContent?: Record<string, unknown>;
 }
 
 async function call(name: string, args: Record<string, unknown>): Promise<Answered> {
@@ -312,7 +312,7 @@ describe("a read", () => {
       pagination: { offset: 0, limit: 2, hasMore: true, nextOffset: null, wasLimited: false },
       hint: RUN_RABBITMQ_READ_ARM.moreRows(statement, "rabbitmq", { maxRows: 2, shown: 2, cut: "max_rows" }),
     });
-    expect(result.structuredContent?.hint).toContain('{"offset": n}');
+    expect(result.structuredContent?.hint as string).toContain('{"offset": n}');
     holdsNoMarker(result);
   });
 });
