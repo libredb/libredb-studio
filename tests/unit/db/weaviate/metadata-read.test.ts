@@ -277,12 +277,12 @@ describe("the metadata-only projections, over what 1.40.2 answered a viewer", ()
     expect(nodes.fields).toEqual(["node", "status", "version", "objects", "shards"]);
     expect(nodes.rows).toEqual([{ node: "node1", status: "HEALTHY", version: "1.40.2", objects: 0, shards: 4 }]);
     const verbose = shape("GET /v1/nodes/Note?output=verbose", agentAnswer("collection-nodes-viewer"));
-    expect(verbose.fields).toEqual(["node", "collection", "shards", "objects"]);
-    expect(verbose.rows).toEqual([{ node: "node1", collection: "Note", shards: 1, objects: 0 }]);
+    expect(verbose.fields).toEqual(["node", "collection"]);
+    expect(verbose.rows).toEqual([{ node: "node1", collection: "Note" }]);
     expect(shape("GET /v1/nodes?output=verbose", json({ nodes: [{ name: "n" }] })).rows).toEqual([]);
   });
 
-  test("a verbose node read counts each collection's shards and objects, and names no shard", () => {
+  test("a verbose node read names each collection on each node, and neither names nor counts its shards", () => {
     const shard = (name: string, collection: string, objectCount?: unknown) => ({
       class: collection,
       name,
@@ -295,11 +295,12 @@ describe("the metadata-only projections, over what 1.40.2 answered a viewer", ()
       ],
     });
     const result = shape("GET /v1/nodes?output=verbose", answer);
+    expect(result.fields).toEqual(["node", "collection"]);
     expect(result.rows).toEqual([
-      { node: "n1", collection: "Tenanted", shards: 2, objects: 7 },
-      { node: "n1", collection: "Note", shards: 1, objects: 3 },
-      { node: "n2", collection: "Tenanted", shards: 1, objects: 1 },
-      { node: "n2", collection: "Note", shards: 1, objects: null },
+      { node: "n1", collection: "Tenanted" },
+      { node: "n1", collection: "Note" },
+      { node: "n2", collection: "Tenanted" },
+      { node: "n2", collection: "Note" },
     ]);
     for (const name of ["acme", "globex", "initech", "s1", "s2"]) expect(JSON.stringify(result)).not.toContain(name);
   });
@@ -392,16 +393,22 @@ describe("the data scope a key that passes the proof reads", () => {
     }
   });
 
-  test("a verbose node read names tenants the role does not grant, and the projection names none of them", () => {
+  test("a verbose node read names tenants the role does not grant, and the projection neither names nor counts them", () => {
     for (const name of ["collection-nodes-tenanted-scoped", "nodes-verbose-scoped"]) {
       const raw = scopeAnswer(name).text;
       expect(raw).toContain('"name":"globex"');
       expect(raw).toContain('"name":"initech"');
     }
     const tenanted = rowsOf("GET /v1/nodes/Tenanted?output=verbose", "collection-nodes-tenanted-scoped");
-    expect(tenanted).toEqual([{ node: "node1", collection: "Tenanted", shards: 3, objects: expect.any(Number) }]);
+    // The server answers every tenant's shard and their summed objects; a tenant count, or a sum less the count of the
+    // one tenant the key may count, would tell the key what its role does not grant, so no count reaches the row.
+    expect(scopeAnswer("collection-nodes-tenanted-scoped").text).toContain('"shardCount":3');
+    expect(tenanted).toEqual([{ node: "node1", collection: "Tenanted" }]);
     const every = rowsOf("GET /v1/nodes?output=verbose", "nodes-verbose-scoped");
-    expect(every.map((row) => `${row.collection}:${row.shards}`).sort()).toEqual(["Note:1", "Tenanted:3"]);
+    expect(every).toEqual([
+      { node: "node1", collection: "Note" },
+      { node: "node1", collection: "Tenanted" },
+    ]);
     for (const tenant of ["acme", "globex", "initech"]) {
       expect(JSON.stringify([tenanted, every])).not.toContain(tenant);
     }
@@ -455,16 +462,17 @@ describe("a stored value reaches no row, column name or nested cell", () => {
     withheld("GET /v1/nodes", json({ nodes: [{ name: "n", status: "HEALTHY", stats: { objectCount: "stored-v" } }] }));
   });
 
-  test("a shard count that holds text, or a collection that is not a name, withholds a verbose node read", () => {
+  test("a collection that is not a name withholds a verbose node read, and a shard's count is never read", () => {
     const verbose = (shards: unknown[]) => json({ nodes: [{ name: "n", shards }] });
-    withheld("GET /v1/nodes?output=verbose", verbose([{ class: "Note", name: "s", objectCount: "stored-v" }]));
-    withheld(
+    const counted = shape(
       "GET /v1/nodes?output=verbose",
       verbose([
-        { class: "Note", name: "s", objectCount: 1 },
+        { class: "Note", name: "s", objectCount: SECRET },
         { class: "Note", name: "t", objectCount: -1 },
       ]),
     );
+    expect(counted.rows).toEqual([{ node: "n", collection: "Note" }]);
+    expect(JSON.stringify(counted)).not.toContain(SECRET);
     expect(withheld("GET /v1/nodes?output=verbose", verbose([{ class: { v: "stored-x" }, name: "s" }]))).toContain(
       '"collection"',
     );

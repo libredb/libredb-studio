@@ -154,11 +154,11 @@ describe("one agent request", () => {
     ],
     ["GET /v1/aliases", ["GET /v1/aliases"], ["alias"]],
     ["GET /v1/aliases/NotesAlias", ["GET /v1/aliases/NotesAlias"], ["alias"]],
-    ["GET /v1/nodes?output=verbose", ["GET /v1/nodes?output=verbose"], ["node", "collection", "shards"]],
+    ["GET /v1/nodes?output=verbose", ["GET /v1/nodes?output=verbose"], ["node", "collection"]],
     [
       "GET /v1/nodes/Note?output=verbose",
       ["GET /v1/schema/Note", "GET /v1/nodes/Note?output=verbose"],
-      ["node", "collection", "shards"],
+      ["node", "collection"],
     ],
     [
       "POST /v1/aggregate/Note {}",

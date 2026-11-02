@@ -428,12 +428,14 @@ Weaviate declares `ProviderCapabilities.metadataOnly`: every answer is projected
 | tenants, one tenant | `tenant`, `status` |
 | aliases, one alias | `alias`, `collection` |
 | nodes | `node`, `status`, `version`, `objects`, `shards` |
-| nodes with `output=verbose` | `node`, `collection`, `shards` (how many), `objects` (their sum), one row per collection on each node |
+| nodes with `output=verbose` | `node`, `collection`, one row per collection on each node |
 | aggregate | `collection`, `tenant`, `count` |
 
 A column's name comes from the projection, never from a key the store holds, and nothing the projection does not name reaches a row: no description, module setting, base URL or host name.
 A cell that does not fit its kind, such as an object, a list or a vector where a name or a count stands, or a name holding a line break, withholds the whole answer, naming the column and never the value.
-A verbose node read names no shard: a multi-tenant collection's shards are named after its tenants, and the server lists every one of them to a key that may read the collection's nodes, whatever tenants the key may read (section 15.8), so the projection counts each collection's shards and objects on each node instead.
+A verbose node read neither names nor counts a shard: a multi-tenant collection's shards are named after its tenants, and the server lists every one of them to a key that may read the collection's nodes, whatever tenants the key may read (section 15.8).
+A shard count there would be the collection's tenant count, and the summed objects less the count of the one tenant a key may count would be the count of a tenant it may not, so the projection names the collections on each node and nothing else.
+A collection's objects are counted with an aggregate and its shards read with `GET /v1/schema/{collection}/shards`, both of which the server checks against the key's grants.
 This holds for agent mode as much as for MCP; before it, a verbose node read answered one row per shard, with its name, object count, indexing status and loaded flag.
 A server refusal is worded by its status and category alone, never the server's message.
 A result past the row or byte budget is refused, never cut, and an estimating plan is refused.
@@ -471,7 +473,7 @@ Measured on 1.40.2 with the built-in viewer and with such a role, scoped to one 
 | a collection, its shards, a tenant or a count outside its grants | 403 (`collection-doc-*`, `shards-*`, `tenant-globex-*`, `aggregate-*`) | the server |
 | `GET /v1/schema/{collection}/tenants` | the tenants it may read, and no other (`tenants-*`) | the server |
 | `GET /v1/aliases`, one alias | the aliases it may read; another is 403 (`aliases-*`, `alias-docs-*`) | the server |
-| `GET /v1/nodes?output=verbose`, `GET /v1/nodes/{collection}?output=verbose` | only the collections it may read nodes of, but every tenant of each, named as a shard (`nodes-verbose-*`, `collection-nodes-*`) | Studio: the projection counts shards and names none (section 15.5) |
+| `GET /v1/nodes?output=verbose`, `GET /v1/nodes/{collection}?output=verbose` | only the collections it may read nodes of, but every tenant of each, named as a shard (`nodes-verbose-*`, `collection-nodes-*`) | Studio: the projection names the collections and neither names nor counts a shard (section 15.5) |
 | `GET /v1/meta`, `GET /v1/nodes` | the server's version and its nodes, the same for every key | none needed: no collection, tenant or alias is named |
 
 So tenant and alias names reach an answer only where the server filters them by the key's grants, and a per-tenant count only through a count the server checks against the tenant.

@@ -226,7 +226,10 @@ describe("docs/MCP.md", () => {
       "On Weaviate it lists each collection's declared properties and vectors and never its tenants or aliases, which `run_weaviate_read` reads as far as the key's grants reach; a call wakes no tenant.",
     );
     expect(MCP_DOC).not.toContain("a collection's tenants and aliases are never returned");
-    expect(MCP_DOC).toContain("a verbose node read counts each collection's shards and names none");
+    expect(MCP_DOC).toContain(
+      "a verbose node read names the collections on each node and neither names nor counts their shards",
+    );
+    expect(MCP_DOC).not.toContain("counts each collection's shards");
   });
 
   test("claims only SELECT for every engine, and names the record that opens MCP read", () => {

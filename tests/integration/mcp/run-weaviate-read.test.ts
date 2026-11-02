@@ -186,7 +186,7 @@ describe("a read", () => {
     expect(lines().slice(-2)).toEqual(["GET /v1/schema/Note", "POST /v1/aggregate/Note"]);
   });
 
-  test("a verbose node read names no tenant, also for a key whose tenant list the server filters", async () => {
+  test("a verbose node read neither names nor counts a tenant, also for a key whose tenant list the server filters", async () => {
     answer = agentServer("viewer", {
       "GET /v1/users/own-info": scopeAnswer("own-info-scoped"),
       "GET /v1/schema/Tenanted": agentCollectionAnswer("Tenanted"),
@@ -195,9 +195,7 @@ describe("a read", () => {
     });
     const nodes = await weaviate("GET /v1/nodes/Tenanted?output=verbose");
     expect(nodes.isError ?? false).toBe(false);
-    expect(nodes.structuredContent?.rows).toEqual([
-      { node: "node1", collection: "Tenanted", shards: 3, objects: expect.any(Number) },
-    ]);
+    expect(nodes.structuredContent?.rows).toEqual([{ node: "node1", collection: "Tenanted" }]);
     for (const tenant of ["acme", "globex", "initech"]) expect(JSON.stringify(nodes)).not.toContain(tenant);
     const tenants = await weaviate("GET /v1/schema/Tenanted/tenants");
     expect(tenants.structuredContent?.rows).toEqual([{ tenant: "acme", status: "HOT" }]);

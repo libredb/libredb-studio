@@ -19,7 +19,7 @@
  *  - the data scope: a key whose role holds viewer actions scoped to one collection, one tenant, one alias and the
  *    node reads of two collections is answered only those collections, that tenant and that alias, a read outside them
  *    is the server's 403 worded by its status alone, and a verbose node read, which the server does not filter by
- *    tenant, names no tenant; the viewer is answered every collection, the control;
+ *    tenant, neither names nor counts a tenant; the viewer is answered every collection, the control;
  *  - a COLD tenant: a count naming it is refused, and the tenant is still COLD after;
  *  - the limits: a tenant list past the 1000-row provider budget is refused, never cut; a read past `max_rows` is cut
  *    to it and says so;
@@ -420,14 +420,16 @@ async function theDataScope(): Promise<void> {
     check(
       result.isError === undefined &&
         named.length === 0 &&
+        rowsOf(result).length > 0 &&
+        rowsOf(result).every((row) => Object.keys(row).join(",") === "node,collection") &&
         column(result, "collection").every((name) => name === "LmNote" || name === "LmTenanted"),
-      `scope: ${statement} as the scoped key names no tenant and only its collections -> ${JSON.stringify(rowsOf(result))}`,
+      `scope: ${statement} as the scoped key names no tenant, counts no shard and answers only its collections -> ${JSON.stringify(rowsOf(result))}`,
     );
   }
   const direct = await raw(RBAC, keys.scoped, "GET", "/v1/nodes/LmTenanted?output=verbose");
   check(
     direct.text.includes('"globex"') && direct.text.includes('"initech"'),
-    "scope: the same verbose node read sent raw as the scoped key names tenants its role does not grant, which is why the projection names none",
+    "scope: the same verbose node read sent raw as the scoped key names tenants its role does not grant, which is why the projection neither names nor counts them",
   );
 }
 

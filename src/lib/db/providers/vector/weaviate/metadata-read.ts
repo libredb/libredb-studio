@@ -238,33 +238,20 @@ const NODES: MetadataProjection<Json> = [
 ];
 
 /**
- * The shards one node holds of one collection, read from a verbose node read. A multi-tenant collection's shard is
- * named after its tenant, and 1.40.2 lists every tenant of a collection the key may read nodes of, whatever tenants
- * the key may read (`data-scope/collection-nodes-tenanted-scoped`), so a shard is counted here and never named.
+ * One collection a node holds, read from a verbose node read. A multi-tenant collection's shard is named after its
+ * tenant, and 1.40.2 lists every tenant of a collection the key may read nodes of, whatever tenants the key may read
+ * (`data-scope/collection-nodes-tenanted-scoped`). So a shard is neither named nor counted here: the shard count is
+ * the collection's tenant count, and the summed objects less the count of the one tenant a key may count would be the
+ * count of a tenant it may not. A count is read through an aggregate, which the server checks against the tenant.
  */
 interface NodeCollection {
   readonly node: unknown;
   readonly collection: unknown;
-  readonly shards: readonly Json[];
-}
-
-/** The objects a node holds of one collection: the sum of its shards' counts, or what is not a count where one is not. */
-function objectsOf(row: NodeCollection): unknown {
-  let sum = 0;
-  for (const shard of row.shards) {
-    const count = shard.objectCount;
-    if (count === undefined || count === null) return undefined;
-    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0) return count;
-    sum += count;
-  }
-  return sum;
 }
 
 const NODE_SHARDS: MetadataProjection<NodeCollection> = [
   { column: "node", kind: "name", read: (row) => row.node },
   { column: "collection", kind: "name", read: (row) => row.collection },
-  { column: "shards", kind: "count", read: (row) => row.shards.length },
-  { column: "objects", kind: "count", read: objectsOf, optional: true },
 ];
 
 const AGGREGATE: MetadataProjection<Json> = [
@@ -367,15 +354,8 @@ function sourcesOf(id: WeaviateProjectionId, answer: unknown, answered: Weaviate
       return objects(object(answer).nodes);
     case "node-shards":
       return objects(object(answer).nodes).flatMap((node) => {
-        const byCollection = new Map<unknown, Json[]>();
-        for (const shard of objects(node.shards ?? [])) {
-          const held = byCollection.get(shard.class);
-          if (held === undefined) byCollection.set(shard.class, [shard]);
-          else held.push(shard);
-        }
-        return [...byCollection].map(
-          ([collection, shards]): NodeCollection => ({ node: node.name, collection, shards }),
-        );
+        const collections = new Set(objects(node.shards ?? []).map((shard) => shard.class));
+        return [...collections].map((collection): NodeCollection => ({ node: node.name, collection }));
       });
     case "aggregate":
       return [
