@@ -546,7 +546,7 @@ keyword the user never typed, and dropping it silently returns page **one** whil
 it to what it already shows — duplicate rows presented as new ones, which is a wrong *answer*.
 `search/index.ts` refuses Elasticsearch's identical gap the same way.
 The refusal is an `OffsetUnsupportedError`, a `QueryError` of its own class (`src/lib/db/errors.ts`), so a caller can tell it from any other failure of `prepareQuery`.
-MCP `run_read_query` never reaches it: Cassandra's row in `src/lib/db/providers/sql/read-query-forms.ts` says its SQL has no offset, so an `offset` is refused before `prepareQuery` is asked, in the sentence that says how to page in CQL ([§14.7](#147-mcp-read)).
+MCP `run_read_query` never reaches it: Cassandra's row in `src/lib/db/providers/sql/read-query-forms.ts` says its SQL has no offset, so an `offset` is refused before `prepareQuery` is asked, in the sentence that says how to page without one ([§14.7](#147-mcp-read)).
 
 **2. `ALLOW FILTERING` must stay last.**
 
@@ -1919,7 +1919,7 @@ MCP's `run_read_query` serves Cassandra through the boundary of [§14.1](#141-th
 The MCP statement fence runs first, as defence in depth, and refuses a write, `BATCH`, `TRUNCATE`, DDL, `GRANT`, `REVOKE`, role statement, `USE`, `LIST` and a second statement before anything is acquired.
 It runs a `SELECT` of one table of the connection's keyspace or of `system_schema`: a `WITH`, `VALUES`, `TABLE` and `EXPLAIN` pass that fence and are refused by the provider before they are sent, and each is a syntax error on 5.0.9 too, measured on 2026-11-02 as the `SELECT`-only role.
 A `SELECT` without its own `LIMIT` is cut at `max_rows` (100 by default, at most 500), and `pagination.hasMore` says more rows exist; a query whose own `LIMIT` is past 1000 rows, or a result past 1 MiB, is refused, never cut.
-CQL has no `OFFSET`, so an `offset` is refused before anything is sent, no answer names a next offset, and a result cut at `max_rows` says to page in CQL: LIMIT n, and for the next page add WHERE token(the partition key) > token(the last one read), or, within one partition, WHERE the clustering column > the last value read.
+CQL has no `OFFSET`, so an `offset` is refused before anything is sent, no answer names a next offset, and a result cut at `max_rows` says to page it with LIMIT n, and for the next page add WHERE token(the partition key) > token(the last one read), or, within one partition, WHERE the clustering column > the last value read.
 A seed carries no separate agent user, so the seed's own `user` is the role checked: it must name the keyspace as `database`, a keyspace of the user's data and never one of Cassandra's own system keyspaces, and be a role that is no superuser and holds only `SELECT` on that keyspace or its tables, as [§14.2](#142-the-check-before-every-statement) proves; the image's default `cassandra` superuser is refused at open, in the tool's sentence.
 `inspect_schema` takes the operations profile, which sends no statement, so it opens a Cassandra connection unchecked, as the editor does, and as plan mode grounds.
 A cancel or a `timeout_ms` ends the wait, not the statement: the native protocol has no cancel, so the coordinator runs the statement to its end, and the provider closes the call's session at the time left of `timeout_ms` or when the answer arrives.
