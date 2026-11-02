@@ -449,15 +449,16 @@ This overlay overrides no Shared member, so every Shared member is the `weaviate
 The family offers the investigation workflow, through `run_read_query` with one Weaviate request, and the operations workflow; it offers no data analysis, since its answers carry no stored value, and no query optimization or database assessment, since the server composes no plan and no profile, and no workflow hands an answer to the editor.
 The workflow classifier offers the model only these two.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-No MCP tool runs a Weaviate request: the family declares no MCP facet, and `MCP_STATEMENT_READ.weaviate` is false (B153).
+MCP clients read a Weaviate connection with `run_weaviate_read`, the tool the family declares in its MCP facet ([`src/lib/agent/languages/weaviateapi/mcp.ts`](../../src/lib/agent/languages/weaviateapi/mcp.ts)), and `MCP_STATEMENT_READ.weaviate` is true (section 15.9).
 
 ### 15.7 Tests
 
 - `tests/unit/db/weaviate/metadata-request.test.ts`: the operations an agent request may name, and every refusal before the network.
-- `tests/unit/db/weaviate/metadata-read.test.ts`: the viewer proof over each `own-info-*` capture, every projection over the captured answers, and answers that carry a stored value where a name, a count or a flag stands.
+- `tests/unit/db/weaviate/metadata-read.test.ts`: the viewer proof over each `own-info-*` capture, every projection over the captured answers, the data scope of a broad and a narrow key over the `data-scope/` captures, and answers that carry a stored value where a name, a count or a flag stands.
 - `tests/unit/db/weaviate/agent-provider.test.ts`: the open, the proof before every request, the exact request lines and bodies through the REST client, the tenant refusal, the wording of a failure and the budgets.
 - `tests/integration/db/weaviate-provider.test.ts`: the boundary replayed from the captures, the viewer's writes beside the positive control.
 - `tests/unit/lib/db/redaction/metadata-only.test.ts`: the shared projection helpers.
+- `tests/integration/mcp/run-weaviate-read.test.ts`: `run_weaviate_read` through the real route and handler over the provider and the captures: the answer behind the notice, every refusal before anything is acquired, each key the proof refuses, a `COLD` tenant, the budgets, the timeout and the tools that name each other.
 
 ### 15.8 Data scope
 
@@ -474,3 +475,16 @@ Measured on 1.40.2 with the built-in viewer and with such a role, scoped to one 
 | `GET /v1/meta`, `GET /v1/nodes` | the server's version and its nodes, the same for every key | none needed: no collection, tenant or alias is named |
 
 So tenant and alias names reach an answer only where the server filters them by the key's grants, and a per-tenant count only through a count the server checks against the tenant.
+
+### 15.9 MCP read
+
+`run_weaviate_read` takes one request in the agent's own words, reads and admits it with the agent's reader, acquires the connection under the agent read-only profile and runs it through the same `queryReadOnly`, so everything in sections 15.1 to 15.8 holds for an MCP client too: the viewer proof at the open and before every read, the metadata-only projection, a server refusal worded by its status alone and a `COLD` tenant refused rather than woken.
+A seed's `password` is the key every call reads as, since a seed carries no separate agent credential; give it a viewer's key, or a role of viewer actions scoped to what the client may read.
+`inspect_schema` takes the operations profile, which proves nothing, so it lists each collection's properties and vectors with any key, never its tenants or aliases.
+One call sends `GET /v1/meta` and `GET /v1/users/own-info` at the open, `GET /v1/users/own-info` again before the request, the collection's own record before a collection's read and the tenant's own record before a read naming a tenant, then the request: at most five requests.
+The tool takes no `offset` and no `database`; a read past the 1000-row provider budget is refused, never cut, so a collection with more than 1000 tenants cannot be listed and is read one tenant at a time.
+`queryReadOnly` takes no cancel signal: a client cancel ends MCP's wait, and the request stays open until its answer or the provider's transport deadline, set to the time left of `timeout_ms`, closes it (docs/MCP.md, "Limits").
+Measured through a proxy that held a read's answer back: at the minimum `timeout_ms` of 500 the client got the timeout answer after about 500 ms and the provider closed its request then, and a cancel after one second was answered at once while the request stayed open until about four seconds, the time left of a `timeout_ms` of 4000.
+[`tests/live/weaviate-mcp-boundary.ts`](../../tests/live/weaviate-mcp-boundary.ts) replays all of this through the MCP tool's own handler against live 1.40.2 servers: the open for each refused key, every write, object read, search, GraphQL, filter and user or role read refused by the provider's reader with the MCP fence bypassed, the viewer refused the same writes 403 by the server while root runs them, the state unchanged, the data scope of section 15.8, a `COLD` tenant, the limits, the timeout and the cancel.
+Measured on 2026-11-02: every check passed.
+An OIDC group is refused by the proof (section 15.2), but needs an OIDC provider, so that case is held by the unit tests over a constructed answer and not replayed live.

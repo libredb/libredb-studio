@@ -22,6 +22,7 @@ import { QDRANTAPI_MCP_FACET } from "./qdrantapi/mcp";
 import { RABBITREAD_MCP_FACET } from "./rabbitread/mcp";
 import { REDISCLI_MCP_FACET } from "./rediscli/mcp";
 import { SQL_MCP_FACET } from "./sql/mcp";
+import { WEAVIATEAPI_MCP_FACET } from "./weaviateapi/mcp";
 
 /** What the MCP module hands a facet's description: the served engines' names and the shared result limits. */
 export interface AgentLanguageMcpServed {
@@ -82,8 +83,7 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   libredbkv: LIBREDBKV_MCP_FACET,
   // No MCP statement tool yet: MCP read stays closed on InfluxDB until a change of its own declares one and opens it.
   influxql: null,
-  // No MCP statement tool yet: MCP read stays closed on Weaviate until a change of its own declares one and opens it.
-  weaviateapi: null,
+  weaviateapi: WEAVIATEAPI_MCP_FACET,
   qdrantapi: QDRANTAPI_MCP_FACET,
   cypher: CYPHER_MCP_FACET,
   // No MCP statement tool yet: MCP read stays closed on Milvus until a change of its own declares one and opens it.

@@ -17,6 +17,7 @@ import type { DatabaseType } from "@/lib/types";
 const RUN_KUBECTL_READ_ARM = mcpStatementArm("run_kubectl_read");
 const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
 const RUN_LIBREDB_READ_ARM = mcpStatementArm("run_libredb_read");
+const RUN_WEAVIATE_READ_ARM = mcpStatementArm("run_weaviate_read");
 const RUN_QDRANT_READ_ARM = mcpStatementArm("run_qdrant_read");
 const RUN_KAFKA_READ_ARM = mcpStatementArm("run_kafka_read");
 const RUN_RABBITMQ_READ_ARM = mcpStatementArm("run_rabbitmq_read");
@@ -217,6 +218,15 @@ describe("docs/MCP.md", () => {
     expect(MCP_DOC).toContain(
       "every key read of the table but `OBJECT ENCODING` and `MEMORY USAGE` publishes a `keymiss` event naming that key",
     );
+  });
+
+  test("carries run_weaviate_read's engine sentence, and says which Weaviate names each tool returns", () => {
+    expect(MCP_DOC).toContain(`Runs on ${RUN_WEAVIATE_READ_ARM.engines}; other engines refuse it.`);
+    expect(MCP_DOC).toContain(
+      "On Weaviate it lists each collection's declared properties and vectors and never its tenants or aliases, which `run_weaviate_read` reads as far as the key's grants reach; a call wakes no tenant.",
+    );
+    expect(MCP_DOC).not.toContain("a collection's tenants and aliases are never returned");
+    expect(MCP_DOC).toContain("a verbose node read counts each collection's shards and names none");
   });
 
   test("claims only SELECT for every engine, and names the record that opens MCP read", () => {

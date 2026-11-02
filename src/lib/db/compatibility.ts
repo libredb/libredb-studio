@@ -532,8 +532,9 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // Offered for the two metadata tools, carrying names and types only (vector-family spec 4.4), and for
   // `run_qdrant_read`, which MCP_STATEMENT_READ opens on it.
   qdrant: true,
-  // As Milvus and Qdrant (#1566 spec 3.5): offered for the two metadata tools; tenant names are a collection's detail,
-  // listed in its Source up to 1,024 as Milvus lists partitions, and `run_read_query` does not serve it.
+  // As Milvus and Qdrant (#1566 spec 3.5): offered for the two metadata tools, and for `run_weaviate_read`, which reads
+  // one metadata request under the agent's own boundary; inspect_schema lists a collection's properties and vectors and
+  // never its tenants or aliases.
   weaviate: true,
   // Both offered for the two metadata tools (InfluxDB spec I13). Both providers implement `queryReadOnly` for agent
   // mode; `run_read_query` serves InfluxDB 3's SQL, opened by MCP_STATEMENT_READ, and no MCP statement tool reads
@@ -606,7 +607,7 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
  * under the agent's machine redaction, for LibreDB, whose command `run_libredb_read` reads on a read-only handle, for
  * Qdrant, whose metadata request `run_qdrant_read` reads, for RabbitMQ, whose stream read request `run_rabbitmq_read`
  * reads metadata only, for Kafka, whose metadata read `run_kafka_read` reads,
- * and for Neo4j, whose Cypher `run_cypher_read` reads.
+ * for Neo4j, whose Cypher `run_cypher_read` reads, and for Weaviate, whose request `run_weaviate_read` reads metadata only.
  * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records
  * above it, and held false wherever `MCP_EXPOSABLE` is false and true only for an engine agent mode executes on by
  * `tests/unit/db/compatibility.test.ts`.
@@ -681,9 +682,10 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // before every request, with every answer projected to names, counts and flags (docs/providers/qdrant.md, section
   // Agent mode).
   qdrant: true,
-  // Agent mode executes metadata-only reads on Weaviate, and MCP read stays closed on it until a change of its own
-  // opens it.
-  weaviate: false,
+  // Opened on its own: run_weaviate_read runs under the boundary agent mode uses, the provider's closed table of read
+  // requests and a key the server proves before every read to hold the viewer role's read actions only, answered
+  // through the metadata-only projection (docs/providers/weaviate.md section 15).
+  weaviate: true,
   // Agent mode executes statements on InfluxDB, and MCP read stays closed on it until a change of its own opens it.
   influxdb: false,
   // Opened on its own: run_read_query runs under the boundary agent mode uses, the 3.12 Core planner's write refusals

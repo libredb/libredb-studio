@@ -134,6 +134,7 @@ describe("the tool", () => {
         "run_kubectl_read",
         "run_mongo_command",
         "run_libredb_read",
+        "run_weaviate_read",
         "run_qdrant_read",
         "run_cypher_read",
         "run_redis_read",

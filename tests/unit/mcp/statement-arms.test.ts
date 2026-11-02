@@ -42,6 +42,7 @@ const RUN_KAFKA_READ_ARM = mcpStatementArm("run_kafka_read");
 const RUN_RABBITMQ_READ_ARM = mcpStatementArm("run_rabbitmq_read");
 const RUN_CYPHER_READ_ARM = mcpStatementArm("run_cypher_read");
 const RUN_REDIS_READ_ARM = mcpStatementArm("run_redis_read");
+const RUN_WEAVIATE_READ_ARM = mcpStatementArm("run_weaviate_read");
 const RunKubectlReadInputSchema = RUN_KUBECTL_READ_ARM.inputSchema;
 const RunReadQueryInputSchema = RUN_READ_QUERY_ARM.inputSchema;
 const RunMongoCommandInputSchema = RUN_MONGO_COMMAND_ARM.inputSchema;
@@ -64,11 +65,12 @@ describe("MCP_STATEMENT_ARMS", () => {
     }
   });
 
-  test("every language has its arm: run_read_query, run_kubectl_read, run_mongo_command, run_libredb_read, run_qdrant_read, run_rabbitmq_read, run_kafka_read, run_cypher_read and run_redis_read", () => {
+  test("every language has its arm: run_read_query, run_kubectl_read, run_mongo_command, run_libredb_read, run_weaviate_read, run_qdrant_read, run_rabbitmq_read, run_kafka_read, run_cypher_read and run_redis_read", () => {
     expect(MCP_STATEMENT_ARMS.sql).toBe(RUN_READ_QUERY_ARM);
     expect(MCP_STATEMENT_ARMS.kubectl).toBe(RUN_KUBECTL_READ_ARM);
     expect(MCP_STATEMENT_ARMS.mongo).toBe(RUN_MONGO_COMMAND_ARM);
     expect(MCP_STATEMENT_ARMS.libredbkv).toBe(RUN_LIBREDB_READ_ARM);
+    expect(MCP_STATEMENT_ARMS.weaviateapi).toBe(RUN_WEAVIATE_READ_ARM);
     expect(MCP_STATEMENT_ARMS.qdrantapi).toBe(RUN_QDRANT_READ_ARM);
     expect(MCP_STATEMENT_ARMS.rabbitread).toBe(RUN_RABBITMQ_READ_ARM);
     expect(MCP_STATEMENT_ARMS.kafkaread).toBe(RUN_KAFKA_READ_ARM);
@@ -79,6 +81,7 @@ describe("MCP_STATEMENT_ARMS", () => {
       "run_kubectl_read",
       "run_mongo_command",
       "run_libredb_read",
+      "run_weaviate_read",
       "run_qdrant_read",
       "run_cypher_read",
       "run_redis_read",
@@ -90,8 +93,6 @@ describe("MCP_STATEMENT_ARMS", () => {
   test("a language with no MCP tool yet has no arm, and its engine no read tool", () => {
     expect(MCP_STATEMENT_ARMS.influxql).toBeNull();
     expect(mcpStatementToolFor("influxdb")).toBeNull();
-    expect(MCP_STATEMENT_ARMS.weaviateapi).toBeNull();
-    expect(mcpStatementToolFor("weaviate")).toBeNull();
     expect(MCP_STATEMENT_ARMS.milvusrpc).toBeNull();
     expect(mcpStatementToolFor("milvus")).toBeNull();
     expect(MCP_STATEMENT_ARMS.etcdctl).toBeNull();
@@ -428,6 +429,101 @@ describe("the kubectl arm", () => {
   });
 });
 
+describe("the Weaviate arm", () => {
+  const server = languageServer("weaviateapi");
+  const Input = RUN_WEAVIATE_READ_ARM.inputSchema;
+
+  test("takes one request, no offset and no database, and sends it as written", () => {
+    expect(RUN_WEAVIATE_READ_ARM.title).toBe("Run a read-only Weaviate metadata read");
+    expect(RUN_WEAVIATE_READ_ARM.argument).toBe("statement");
+    expect(RUN_WEAVIATE_READ_ARM.paging).toBe("none");
+    expect(RUN_WEAVIATE_READ_ARM.types).toEqual(["weaviate"]);
+    expect(RUN_WEAVIATE_READ_ARM.inputSchema.shape).not.toHaveProperty("offset");
+    expect(RUN_WEAVIATE_READ_ARM.inputSchema.shape).not.toHaveProperty("database");
+    for (const extra of [{ offset: 5 }, { database: "Note" }, { sql: "SELECT 1" }]) {
+      expect(Input.safeParse({ connection_id: "seed:w", statement: "GET /v1/meta", ...extra }).success).toBe(false);
+    }
+    expect(Input.safeParse({ connection_id: "seed:w", statement: "" }).success).toBe(false);
+  });
+
+  test("reads its argument with the agent's canonicalize", () => {
+    expect(RUN_WEAVIATE_READ_ARM.canonicalize("GET /v1/schema")).toBe(server.canonicalize("GET /v1/schema"));
+    expect(RUN_WEAVIATE_READ_ARM.canonicalize({ statement: "GET /v1/schema" })).toBeNull();
+  });
+
+  test.each([
+    ["an object read", "GET /v1/objects?class=Note"],
+    ["a search", 'POST /v1/search/Note/bm25 {"query": "x"}'],
+    ["an aggregate's groupBy", 'POST /v1/aggregate/Note {"groupBy": ["body"]}'],
+    ["a write", "DELETE /v1/schema/Note"],
+  ])("fences %s with the agent's admission and quotes its sentence", (_what, statement) => {
+    const refusal = server.admit?.(statement);
+    expect(refusal).not.toBeNull();
+    expect(RUN_WEAVIATE_READ_ARM.fence(statement, "weaviate")).toBe(
+      `The request was refused before it reached the server (${refusal?.code}). ${refusal?.message}`,
+    );
+  });
+
+  test("admits each metadata read", () => {
+    for (const statement of [
+      "GET /v1/meta",
+      "GET /v1/schema/Note",
+      "GET /v1/schema/Tenanted/tenants",
+      "GET /v1/aliases",
+      "GET /v1/nodes?output=verbose",
+      'POST /v1/aggregate/Tenanted {"tenant": "hot"}',
+    ]) {
+      expect(RUN_WEAVIATE_READ_ARM.fence(statement, "weaviate")).toBeNull();
+    }
+  });
+
+  test("answers a row refusal with the request's own row-cap advice", () => {
+    const statement = "GET /v1/schema/Tenanted/tenants";
+    const rows = classifyReadQueryFailure(
+      new Error("Read-only execution exceeded the row budget: 1001 rows > 1000 allowed"),
+      1,
+      2,
+      RUN_WEAVIATE_READ_ARM.tooLarge(statement, "weaviate"),
+    );
+    expect(rows).toEqual({
+      kind: "too-large",
+      text: `The result has more than 1000 rows, the most this server reads for one call. ${server.rowCapAdvice(statement, "1000")}`,
+    });
+  });
+
+  test("says how to narrow a cut result in Weaviate's words, never with a stage, a clause or an offset", () => {
+    const statement = "GET /v1/schema/Tenanted/tenants";
+    const hint = RUN_WEAVIATE_READ_ARM.moreRows(statement, "weaviate", { maxRows: 100, shown: 100, cut: "max_rows" });
+    expect(hint).toBe(
+      `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice(statement, "100")} To read past the 100 rows returned, read one collection, tenant or alias at a time, since a Weaviate read is never paged.`,
+    );
+    const bytes = RUN_WEAVIATE_READ_ARM.moreRows("GET /v1/schema", "weaviate", {
+      maxRows: 100,
+      shown: 4,
+      cut: "result_bytes",
+    });
+    expect(bytes).toBe(
+      "More rows exist than the 32 KiB result limit holds, and 4 of them fitted; this tool does not page with offset. Read one collection's schema, tenants or nodes rather than the whole server's to fit more rows, and to read past the 4 rows returned, read one collection, tenant or alias at a time, since a Weaviate read is never paged.",
+    );
+    for (const text of [hint, bytes, RUN_WEAVIATE_READ_ARM.rowOverCap]) {
+      expect(text).not.toContain("$skip");
+      expect(text).not.toContain("LIMIT");
+    }
+    expect(RUN_WEAVIATE_READ_ARM.rowOverCap).toBe(
+      "One row of this result is larger than the 32 KiB result limit. Read one collection, tenant or alias instead, and run it again.",
+    );
+  });
+
+  test("describes the reads it takes, the refusals, what an answer carries, the key and its engine", () => {
+    const description = RUN_WEAVIATE_READ_ARM.description;
+    expect(description.startsWith("Run one read-only Weaviate metadata read")).toBe(true);
+    expect(description).toContain("Runs on Weaviate; other engines refuse it.");
+    expect(description).toContain("this tool takes no offset");
+    expect(description).toContain("never a stored object, property or vector");
+    expect(description).toContain("viewer");
+    expect(description).toContain("more than 1000 tenants");
+  });
+});
 describe("the qdrantapi arm", () => {
   const server = languageServer("qdrantapi");
 
@@ -832,10 +928,11 @@ describe("the tool each engine is read with", () => {
     }
   });
 
-  test("MongoDB is read with run_mongo_command, Kubernetes with run_kubectl_read, LibreDB with run_libredb_read, Qdrant with run_qdrant_read, RabbitMQ with run_rabbitmq_read, Kafka with run_kafka_read, Neo4j with run_cypher_read, Redis with run_redis_read, the SQL engines with run_read_query, the rest with none", () => {
+  test("MongoDB is read with run_mongo_command, Kubernetes with run_kubectl_read, LibreDB with run_libredb_read, Weaviate with run_weaviate_read, Qdrant with run_qdrant_read, RabbitMQ with run_rabbitmq_read, Kafka with run_kafka_read, Neo4j with run_cypher_read, Redis with run_redis_read, the SQL engines with run_read_query, the rest with none", () => {
     expect(mcpStatementToolFor("mongodb")).toBe("run_mongo_command");
     expect(mcpStatementToolFor("kubernetes")).toBe("run_kubectl_read");
     expect(mcpStatementToolFor("libredb")).toBe("run_libredb_read");
+    expect(mcpStatementToolFor("weaviate")).toBe("run_weaviate_read");
     expect(mcpStatementToolFor("qdrant")).toBe("run_qdrant_read");
     expect(mcpStatementToolFor("rabbitmq")).toBe("run_rabbitmq_read");
     expect(mcpStatementToolFor("kafka")).toBe("run_kafka_read");
@@ -862,6 +959,7 @@ describe("the tool each engine is read with", () => {
       "run_kubectl_read",
       "run_mongo_command",
       "run_libredb_read",
+      "run_weaviate_read",
       "run_qdrant_read",
       "run_cypher_read",
       "run_redis_read",
@@ -1103,11 +1201,12 @@ describe("the rabbitread arm", () => {
  * to its provider's own declaration: no relation kind where the arm says none, at least one where it does not.
  */
 describe("the arms whose engines hold no table", () => {
-  test("kubectl declares it, SQL, MongoDB, libredbkv, Qdrant, rabbitread, Kafka, Cypher and Redis do not", () => {
+  test("kubectl declares it, SQL, MongoDB, libredbkv, Weaviate, Qdrant, rabbitread, Kafka, Cypher and Redis do not", () => {
     expect(RUN_KUBECTL_READ_ARM.holdsNoTables).toBe(true);
     expect(RUN_READ_QUERY_ARM.holdsNoTables).toBe(false);
     expect(RUN_MONGO_COMMAND_ARM.holdsNoTables).toBe(false);
     // A LibreDB table, collection and keyspace are relations, so inspect_schema lists them.
+    expect(RUN_WEAVIATE_READ_ARM.holdsNoTables).toBe(false);
     expect(RUN_LIBREDB_READ_ARM.holdsNoTables).toBe(false);
     expect(RUN_QDRANT_READ_ARM.holdsNoTables).toBe(false);
     // A RabbitMQ stream is a relation, so inspect_schema lists the streams and their agent columns.
