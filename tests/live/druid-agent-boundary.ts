@@ -20,6 +20,12 @@
  *    writes, the positive control;
  *  - what a SELECT reaches: EXTERN is refused by the server, another datasource is refused to the user who may not read
  *    it, and the composed catalog read lists only the datasources the user may read;
+ *  - the data scope: every read of the `sys` and `lookup` schemas, every `LOOKUP` call and every name spelled with
+ *    Unicode escapes is refused through `queryReadOnly` before it is sent, for a user holding READ on one datasource, one
+ *    holding STATE and CONFIG READ beside it, one holding WRITE on every datasource and the administrator, while the same
+ *    text sent raw answers rows to the users the server lets read it; the planner's own answer to each, asked raw as
+ *    each user, is refused by the planner check, except a LOOKUP the planner evaluates while it plans, which its plan
+ *    cannot show, and a datasource read and an INFORMATION_SCHEMA read are admitted by it;
  *  - the budgets: a result past the row budget, one past the byte budget and one past the time budget are refused, a
  *    statement the data servers compute past its deadline is cancelled by its own query id, and one the Broker computes
  *    over inline data is named as no longer held or cancelled while it runs on.
@@ -31,20 +37,28 @@
  *   LIBREDB_LIVE_DRUID_URL=http://127.0.0.1:18888 LIBREDB_LIVE_DRUID_ADMIN_PASSWORD=<its password> \
  *     bun tests/live/druid-agent-boundary.ts
  *
- * Every user, role and datasource it creates carries the `libredb_lb_` prefix; the users and roles are removed on exit
- * and the datasources are marked unused. Each check prints one line, and the run ends non-zero if any failed.
+ * Every user, role, lookup and datasource it creates carries the `libredb_lb_` prefix; the users, roles and lookup are
+ * removed on exit and the datasources are marked unused. Each check prints one line, and the run ends non-zero if any
+ * failed.
  */
 // oxlint-disable no-await-in-loop -- the checks run one at a time on purpose: each reads what the server holds after the one before.
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { ExecutionProfileError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { composeCatalogRead } from "@/lib/agent/composed-sql";
 import { createDatabaseProvider, executionContextFor } from "@/lib/db/factory";
+import {
+  druidAgentExplainStatement,
+  druidAgentReachRefusal,
+  druidAgentStatementRefusal,
+} from "@/lib/db/providers/sql/druid/agent-boundary";
+import { DruidHttpTransport } from "@/lib/db/providers/sql/druid/http-transport";
 import type { DatabaseProvider, QueryResult, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
 
 const PREFIX = "libredb_lb_";
 const DATA = `${PREFIX}data`;
 const OTHER = `${PREFIX}other`;
+const LOOKUP = `${PREFIX}names`;
 const BUDGET: ReadOnlyStatementBudget = { statementTimeoutMs: 20_000, maxResultRows: 50, maxResultBytes: 64 * 1024 };
 /** One password for every seeded user, made for the run, never printed. */
 const PASSWORD = randomBytes(12).toString("hex");
@@ -160,7 +174,7 @@ async function ingest(authorization: string, datasource: string, size: "million"
   return response.status;
 }
 
-const USERS = { ro: `${PREFIX}ro`, rw: `${PREFIX}rw` };
+const USERS = { ro: `${PREFIX}ro`, rw: `${PREFIX}rw`, state: `${PREFIX}state` };
 
 async function setUser(name: string, permissions: unknown[]): Promise<void> {
   await manage("POST", `${AUTHN}/users/${name}`);
@@ -177,6 +191,7 @@ async function cleanUp(): Promise<void> {
     await manage("DELETE", `${AUTHZ}/roles/${name}`, undefined, true);
     await manage("DELETE", `${AUTHN}/users/${name}`, undefined, true);
   }
+  await manage("DELETE", `/proxy/coordinator/druid/coordinator/v1/lookups/config/__default/${LOOKUP}`, undefined, true);
 }
 
 async function seed(): Promise<void> {
@@ -187,6 +202,21 @@ async function seed(): Promise<void> {
     perm(".*", "DATASOURCE", "WRITE"),
     perm(".*", "EXTERNAL", "READ"),
   ]);
+  await setUser(USERS.state, [
+    perm(`^${DATA}$`, "DATASOURCE", "READ"),
+    perm(".*", "STATE", "READ"),
+    perm(".*", "CONFIG", "READ"),
+  ]);
+  // A lookup, which no permission of the authorizer names. The store takes its first write only once initialized.
+  await manage("POST", "/proxy/coordinator/druid/coordinator/v1/lookups/config", {});
+  await manage("POST", "/proxy/coordinator/druid/coordinator/v1/lookups/config", {
+    __default: {
+      [LOOKUP]: {
+        version: `v${Date.now()}`,
+        lookupExtractorFactory: { type: "map", map: { TR: "Turkey", US: "United States" } },
+      },
+    },
+  });
   for (const datasource of [DATA, OTHER]) {
     if ((await rowCount(datasource)) >= 1_000_000) continue;
     if ((await ingest(admin, datasource, "million")) !== 202) throw new Error(`the seed of ${datasource} was refused`);
@@ -194,7 +224,13 @@ async function seed(): Promise<void> {
   }
   // The authorizer's cache reaches the Broker on its own polling period.
   await waitFor("the seeded users to be known to the Broker", async () => {
-    const answer = await raw(basic(USERS.ro, PASSWORD), `SELECT COUNT(*) AS n FROM "${DATA}"`);
+    const answers = await Promise.all(
+      [USERS.ro, USERS.state].map((user) => raw(basic(user, PASSWORD), `SELECT COUNT(*) AS n FROM "${DATA}"`)),
+    );
+    return answers.every((answer) => answer.status === 200);
+  });
+  await waitFor("the lookup to be loaded on the Broker", async () => {
+    const answer = await asAdmin(`SELECT COUNT(*) AS n FROM lookup."${LOOKUP}"`);
     return answer.status === 200;
   });
 }
@@ -359,6 +395,81 @@ async function reaches(): Promise<void> {
   await ro.disconnect();
 }
 
+/**
+ * Statements that read beyond the datasources, each with whether the planner's answer shows it: a LOOKUP the planner
+ * evaluates on a literal key, and a filter on LOOKUP it rewrites into the keys it maps from, show none, and only the
+ * statement fence keeps them out.
+ */
+const SCOPE_STATEMENTS: readonly { readonly sql: string; readonly planShows: boolean }[] = [
+  { sql: "SELECT * FROM sys.segments LIMIT 1", planShows: true },
+  { sql: "SELECT * FROM sys.tasks LIMIT 1", planShows: true },
+  { sql: "SELECT * FROM sys.supervisors LIMIT 1", planShows: true },
+  { sql: "SELECT * FROM sys.server_segments LIMIT 1", planShows: true },
+  { sql: "SELECT COUNT(*) AS n FROM sys.servers", planShows: true },
+  { sql: "SELECT COUNT(*) AS n FROM sys.server_properties", planShows: true },
+  { sql: 'SELECT COUNT(*) AS n FROM U&"\\0073ys".segments', planShows: true },
+  { sql: `SELECT * FROM lookup."${LOOKUP}"`, planShows: true },
+  { sql: `SELECT COUNT(*) AS n FROM U&"\\006cookup"."${LOOKUP}"`, planShows: true },
+  { sql: `SELECT d.s, l.v FROM "${DATA}" d JOIN lookup."${LOOKUP}" l ON d.s = l.k LIMIT 1`, planShows: true },
+  { sql: `SELECT LOOKUP(s, '${LOOKUP}') AS v FROM "${DATA}" LIMIT 1`, planShows: true },
+  { sql: `SELECT LOOKUP('US', '${LOOKUP}') AS v`, planShows: false },
+  { sql: `SELECT COUNT(*) AS n FROM "${DATA}" WHERE LOOKUP(s, '${LOOKUP}') = 'Turkey'`, planShows: false },
+];
+
+/** The planner's answer to EXPLAIN PLAN FOR `sql`, asked raw as `user`, read by the provider's planner check. */
+async function plannerCheck(user: string, password: string, sql: string): Promise<string | null | Error> {
+  try {
+    const answer = await new DruidHttpTransport(connection(user, password)).agentQuery(
+      druidAgentExplainStatement(sql),
+      {
+        queryId: randomUUID(),
+        timeoutMs: 20_000,
+        signal: AbortSignal.timeout(20_000),
+        maxResponseBytes: 1 << 20,
+      },
+    );
+    return druidAgentReachRefusal(answer);
+  } catch (error) {
+    return error as Error;
+  }
+}
+
+async function scope(): Promise<void> {
+  for (const [user, password] of [
+    [USERS.ro, PASSWORD],
+    [USERS.state, PASSWORD],
+    [USERS.rw, PASSWORD],
+    ["admin", ADMIN_PASSWORD],
+  ] as const) {
+    const provider = await agentHandle(user, password);
+    for (const { sql, planShows } of SCOPE_STATEMENTS) {
+      const refused = await readOnly(provider, sql);
+      const sent = await raw(basic(user, password), sql);
+      check(
+        refused instanceof RefusedBeforeSendError && refused.message === druidAgentStatementRefusal(sql),
+        `scope: ${user}: ${JSON.stringify(sql.slice(0, 70))} is refused by the fence before it is sent; sent raw it answers ${sent.status}${sent.status === 200 ? ` with ${sent.rows.length} row(s)` : ""}`,
+      );
+      const planner = await plannerCheck(user, password, sql);
+      const plannerRefuses = typeof planner === "string";
+      check(
+        sent.status !== 200 ? !(planner === null) : plannerRefuses === planShows,
+        `scope: ${user}: the planner check ${plannerRefuses ? "refuses" : planner === null ? "admits" : "cannot plan"} it${planShows ? "" : ", a lookup the planner evaluates while it plans, which only the fence keeps out"}${typeof planner === "string" ? ` (${planner.slice(planner.indexOf("; ") + 2, planner.indexOf(", which"))})` : planner instanceof Error ? ` (${planner.message.slice(0, 60)})` : ""}`,
+      );
+    }
+    const ownRead = await readOnly(provider, `SELECT COUNT(*) AS n FROM "${DATA}"`);
+    check(
+      !(ownRead instanceof Error),
+      `scope: ${user}: a read of its own datasource passes both checks and is answered`,
+    );
+    const catalog = await readOnly(
+      provider,
+      "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = 'druid'",
+    );
+    check(!(catalog instanceof Error), `scope: ${user}: an INFORMATION_SCHEMA read passes both checks and is answered`);
+    await provider.disconnect();
+  }
+}
+
 async function budgets(): Promise<void> {
   const provider = await agentHandle(USERS.ro);
   const rows = await readOnly(provider, `SELECT x FROM "${DATA}" LIMIT 51`);
@@ -399,6 +510,7 @@ try {
   await opens();
   await fenceAndBoundary();
   await reaches();
+  await scope();
   await budgets();
 } catch (error) {
   check(false, `the run stopped: ${error instanceof Error ? error.message : String(error)}`);
