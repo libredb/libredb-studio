@@ -20,6 +20,7 @@ import { LIBREDBKV_MCP_FACET } from "./libredbkv/mcp";
 import { MONGO_MCP_FACET } from "./mongo/mcp";
 import { QDRANTAPI_MCP_FACET } from "./qdrantapi/mcp";
 import { RABBITREAD_MCP_FACET } from "./rabbitread/mcp";
+import { REDISCLI_MCP_FACET } from "./rediscli/mcp";
 import { SQL_MCP_FACET } from "./sql/mcp";
 
 /** What the MCP module hands a facet's description: the served engines' names and the shared result limits. */
@@ -87,8 +88,7 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   cypher: CYPHER_MCP_FACET,
   // No MCP statement tool yet: MCP read stays closed on Milvus until a change of its own declares one and opens it.
   milvusrpc: null,
-  // No MCP statement tool yet: MCP read stays closed on Redis until a change of its own declares one and opens it.
-  rediscli: null,
+  rediscli: REDISCLI_MCP_FACET,
   // No MCP statement tool yet: MCP read stays closed on etcd until a change of its own declares one and opens it.
   etcdctl: null,
   // No MCP statement tool yet: MCP read stays closed on Oxia until a change of its own declares one and opens it.

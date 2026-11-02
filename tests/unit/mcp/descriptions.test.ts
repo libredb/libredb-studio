@@ -26,6 +26,7 @@ const RUN_LIBREDB_READ_ARM = mcpStatementArm("run_libredb_read");
 const RUN_QDRANT_READ_ARM = mcpStatementArm("run_qdrant_read");
 const RUN_RABBITMQ_READ_ARM = mcpStatementArm("run_rabbitmq_read");
 const RUN_KAFKA_READ_ARM = mcpStatementArm("run_kafka_read");
+const RUN_REDIS_READ_ARM = mcpStatementArm("run_redis_read");
 
 afterEach(async () => {
   await resetMcpTestState();
@@ -41,6 +42,7 @@ const DESCRIPTIONS = [
   ["run_qdrant_read", RUN_QDRANT_READ_ARM.description, "Run one read-only Qdrant metadata read"],
   ["run_rabbitmq_read", RUN_RABBITMQ_READ_ARM.description, "Run one read-only read of one RabbitMQ stream"],
   ["run_kafka_read", RUN_KAFKA_READ_ARM.description, "Run one read-only Kafka metadata read"],
+  ["run_redis_read", RUN_REDIS_READ_ARM.description, "Run one read-only Redis metadata read"],
 ] as const;
 
 describe("the tool descriptions", () => {
@@ -58,6 +60,7 @@ describe("the tool descriptions", () => {
     expect(RUN_QDRANT_READ_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
     expect(RUN_RABBITMQ_READ_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
     expect(RUN_KAFKA_READ_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
+    expect(RUN_REDIS_READ_ARM.description.endsWith(MCP_UNTRUSTED_NOTICE)).toBe(true);
     expect(LIST_CONNECTIONS_DESCRIPTION).not.toContain(MCP_UNTRUSTED_NOTICE);
   });
 
@@ -127,6 +130,14 @@ describe("the tool descriptions", () => {
       "a message's body, headers, properties and routing key are withheld",
     );
     expect(RUN_RABBITMQ_READ_ARM.description).toContain("this tool takes no offset");
+  });
+
+  test("run_redis_read names Redis, the one engine its handler gates on, and says its answer never repeats the key", () => {
+    expect(RUN_REDIS_READ_ARM.description).toContain("Runs on Redis; other engines refuse it.");
+    expect(RUN_REDIS_READ_ARM.description).toContain(
+      "Key names count as stored values, so the answer is one row of counts, types and sizes that never repeats the key",
+    );
+    expect(RUN_REDIS_READ_ARM.description).toContain("this tool takes no offset");
   });
 
   test("inspect_schema says an engine with no tables refuses it, and where to read it instead", () => {

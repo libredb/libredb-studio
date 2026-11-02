@@ -2280,7 +2280,8 @@ Each agent-mode path reads this much:
 | Investigation commands | agent read-only profile | the closed table below, projected to counts, types and sizes |
 | Investigation grounding | agent read-only profile | the session database's number; each kind's count is withheld with the reason, and no grouping or library is listed |
 | Operations workflow and plan-mode grounding | operations profile | the key groupings and function library names; the slow log, sessions, health and storage reads |
-| MCP `inspect_schema` | operations profile | the key groupings and function library names |
+| MCP `run_redis_read` | agent read-only profile | the closed table below, projected to counts, types and sizes, as an investigation command ([§16.7](#167-mcp-read)) |
+| MCP `inspect_schema` | operations profile, which opens with any user and no proof | the key groupings and function library names |
 
 On a handle of either profile, a key grouping names a delimited key's leading segment only (`user:*`), and every key with no `:` after its first character is counted under one grouping, `(keys with no delimiter)`, never under its own name.
 A slow-log entry carries its id, its duration, the command name and the number of arguments it took (`GET (1 argument)`), never an argument; an entry Redis cut at 32 words is counted through its `... (N more arguments)` marker, and an entry whose words are not a list is withheld whole.
@@ -2317,7 +2318,7 @@ This overlay overrides no Shared member, so every Shared member is the `rediscli
 The family offers the investigation workflow, through `run_read_query` with one Redis command, and the operations workflow; it offers no data analysis, since its answers carry no stored value, and no query optimization or database assessment, since the server composes no plan and no profile, and no workflow hands an answer to the editor.
 The workflow classifier offers the model only these two.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-No MCP tool runs a Redis command: the family declares no MCP facet, and `MCP_STATEMENT_READ.redis` is false (B156).
+MCP clients run a Redis command with `run_redis_read`, the family's MCP facet ([`src/lib/agent/languages/rediscli/mcp.ts`](../../src/lib/agent/languages/rediscli/mcp.ts)), and `MCP_STATEMENT_READ.redis` is true ([§16.7](#167-mcp-read)).
 
 ### 16.6 Tests
 
@@ -2327,3 +2328,20 @@ No MCP tool runs a Redis command: the family declares no MCP facet, and `MCP_STA
 - `tests/unit/db/redis/metadata-read.test.ts`: every projection over the captured replies, and the wording of every failure.
 - `tests/unit/db/redis/agent-provider.test.ts`: the open, the proof before every command on its own connection, the argv sent, the object surface under the profile, the slow log reduced to command names and argument counts, and the wording of a failure.
 - `tests/integration/db/redis-provider.test.ts`: `queryReadOnly` refused on an editor handle, and on an operations-profile handle the slow log reduced to command names and argument counts, keys with no delimiter counted under one grouping, and no session name, beside the editor handle's unchanged reads.
+- `tests/integration/mcp/run-redis-read.test.ts`: MCP `run_redis_read` through the route, the seed file and the factory, over the same driver double: a read answered behind the untrusted-content notice without its key, the proof on the command's own connection, each refused form refused before anything is acquired, a seed naming no user or `default` refused before any socket, a writable user refused at the open, a key-pattern reader refused a key outside its pattern in the same words whether the key exists or not, the timeout and the cancel.
+
+### 16.7 MCP read
+
+MCP's `run_redis_read` reads one command with the agent's own reader and admission, takes the connection under the agent read-only profile, and runs it through `queryReadOnly`, so an MCP call meets the boundary, the proof and the projection of [§16.1](#161-the-boundary) to [§16.4](#164-metadata-only) unchanged; it takes no `offset`, since every read answers one row, and no `database`, since a connection reads the numbered database it names ([`docs/MCP.md`](../MCP.md)).
+A seed opted in for MCP needs the same user agent mode does: an ACL user of its own, never `default`, refused every probe as a command it does not hold.
+
+What a call can read is decided in two layers.
+The first is the ACL user's key patterns, which the server enforces: a `~app:* +@read` user reads `app:*` keys, and a key outside the pattern is answered `NOPERM No permissions to access a key` whether it exists or not, which reaches the client as "The agent's ACL user may not read the key this request names", never naming the key; a `~*` user may ask about any key it names, so `EXISTS` answers whether a key exists.
+`DBSIZE` is not a key read, so it counts every key of the connection's database whatever the patterns.
+The second is Studio's, independent of how the command was written: the closed table sends no command that lists keys or reads a value, and the projection keeps only counts, types and sizes and never repeats the key, so neither a key name the command did not write nor a stored value reaches the answer, whatever the user's patterns allow.
+MCP's `inspect_schema` takes the operations profile, which proves no user, so it lists the leading segments of the key groupings (`app:*`) for any seed's user, `default` included; that is the operations handle's projection, not this tool's (B156).
+
+A cancel ends the client's wait at once; the read runs on its own connection, each of whose steps, the sign-in, the proof's round trip and the command, takes the call's time left as its own command timeout, so a server that answers none of them holds the read for up to three times the time left before the connection is closed, as D128 records.
+
+`bun tests/live/redis-mcp-boundary.ts`, run on 2026-11-02 against Redis 8.10.2 and Valkey 9.1.2, each digest-pinned and started with `--enable-debug-command yes` so `DEBUG SLEEP` can hold the server, passes 58 checks through `run_redis_read`'s own handler, with the factory's profiled acquisition and its fence removed where a check says so: a `~* +@read` user is served under `agent-read-only`, and a connection naming no user or `default`, a `~* &* +@all` user, a `~app:* +@read +@write` user and a `~* +@read +del` user are each refused through MCP in the tool's sentence before any command; one read of each command of the table answers one row that never names its key; with the fence in place each write, key listing, value read, `INFO`, `SELECT`, `CONFIG GET`, `OBJECT FREQ`, `MEMORY USAGE ... SAMPLES 0`, second command and `EVAL_RO` is refused before anything is acquired, and with it removed the provider refuses each before it is sent; the same writes sent raw as the reader are refused `NOPERM` by the server, the administrator runs each on a control key, the positive control, and every key, value, time to live, ACL user and function reads the same after; the key-pattern reader's answers are the ones above; a read past `timeout_ms` of 500 is answered as the timeout at 504 ms, and a call of 2000 ms cancelled at 300 ms is answered as the cancel at once while its read settled 4000 ms after the call began.
+With `--relative`, it shows a `~* +@read` user refused at the open through MCP on KeyDB 6.3.4, whose `DEL` refusal is worded otherwise, and on Garnet 2.1.5 with its ACL authenticator on, whose `HELLO` names neither measured server.

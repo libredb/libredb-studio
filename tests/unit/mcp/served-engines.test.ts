@@ -59,6 +59,7 @@ describe("mcpStatementEngines", () => {
       mongo: ["mongodb"],
       kubectl: ["kubernetes"],
       cypher: ["neo4j"],
+      rediscli: ["redis"],
       libredbkv: ["libredb"],
       qdrantapi: ["qdrant"],
       rabbitread: ["rabbitmq"],
@@ -76,19 +77,21 @@ describe("mcpStatementEngines", () => {
       "qdrantapi",
       "rabbitread",
       "kafkaread",
+      "rediscli",
     ] as const) {
       expect(mcpStatementEngines(language)).toEqual(mcpStatementEngines(language, SHIPPED));
     }
   });
 
-  test("serves MongoDB, Kubernetes, Neo4j, LibreDB, Qdrant, RabbitMQ and Kafka each in its own language", () => {
+  test("serves MongoDB, Kubernetes, Neo4j, Redis, LibreDB, Qdrant, RabbitMQ and Kafka each in its own language", () => {
     // MongoDB opened with run_mongo_command, Kubernetes with run_kubectl_read, offered only machine-redacted, Neo4j
-    // with run_cypher_read, LibreDB with run_libredb_read, on a read-only handle per command, Qdrant with
-    // run_qdrant_read, metadata only, RabbitMQ with run_rabbitmq_read, metadata only, and Kafka with run_kafka_read,
-    // answered metadata-only.
+    // with run_cypher_read, Redis with run_redis_read, metadata only, LibreDB with run_libredb_read, on a read-only
+    // handle per command, Qdrant with run_qdrant_read, metadata only, RabbitMQ with run_rabbitmq_read, metadata only,
+    // and Kafka with run_kafka_read, answered metadata-only.
     expect(mcpStatementEngines("mongo")).toEqual(["mongodb"]);
     expect(mcpStatementEngines("kubectl")).toEqual(["kubernetes"]);
     expect(mcpStatementEngines("cypher")).toEqual(["neo4j"]);
+    expect(mcpStatementEngines("rediscli")).toEqual(["redis"]);
     expect(mcpStatementEngines("libredbkv")).toEqual(["libredb"]);
     expect(mcpStatementEngines("qdrantapi")).toEqual(["qdrant"]);
     expect(mcpStatementEngines("rabbitread")).toEqual(["rabbitmq"]);
