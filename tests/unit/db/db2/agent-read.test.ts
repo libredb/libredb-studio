@@ -76,11 +76,15 @@ const keepsToTheCall = (alias: string) =>
   `OR ${alias}.ROUTINESCHEMA = 'SYSPROC' AND COALESCE(${alias}.ROUTINETYPE, '') = 'F' ` +
   `AND ${alias}.SPECIFICNAME IN (${MEASURED_READERS.map((name) => `'${name}'`).join(", ")}))`;
 
-/** The table or view named by `schema` and `name` is IBM's and holds a COLVALUE column: the distribution statistics. */
+/**
+ * The table or view named by `schema` and `name` is IBM's and holds a COLVALUE, HIGH2KEY or LOW2KEY column: the
+ * distribution statistics, or the column statistics' second highest and lowest values. Read through SYSIBM.COLUMNS,
+ * which lists IBM's own objects and keeps no stored value, since the seed revokes SYSCAT.COLUMNS from PUBLIC.
+ */
 const storedValues = (schema: string, name: string) =>
-  "EXISTS (SELECT 1 FROM SYSCAT.TABLES t JOIN SYSCAT.COLUMNS c ON c.TABSCHEMA = t.TABSCHEMA " +
-  `AND c.TABNAME = t.TABNAME WHERE t.TABSCHEMA = ${schema} AND t.TABNAME = ${name} AND t.OWNERTYPE = 'S' ` +
-  "AND c.COLNAME = 'COLVALUE')";
+  "EXISTS (SELECT 1 FROM SYSCAT.TABLES t JOIN SYSIBM.COLUMNS c ON c.TABLE_SCHEMA = t.TABSCHEMA " +
+  `AND c.TABLE_NAME = t.TABNAME WHERE t.TABSCHEMA = ${schema} AND t.TABNAME = ${name} AND t.OWNERTYPE = 'S' ` +
+  "AND c.COLUMN_NAME IN ('COLVALUE', 'HIGH2KEY', 'LOW2KEY'))";
 
 /**
  * The session's grantees hold the routine `alias` names through a grant the database made for itself (GRANTORTYPE S),
@@ -411,7 +415,7 @@ describe("verifyAgentPrincipal", () => {
     expect(error.message).toBe(
       "The agent read-only execution profile refuses the Db2 user AGENT_RO: it may read a view that calls code that " +
         "is not IBM's, an IBM function that acts outside the call or modifies data, or one the database's own grants " +
-        "do not let the user call, or reads the catalog's distribution statistics, an IBM table or view the " +
+        "do not let the user call, or reads the catalog's distribution or column statistics, an IBM table or view the " +
         "database's own grants do not let the user read, or a view or alias the check cannot follow, a view that is " +
         "not valid, or a nickname, which reads another server; each runs with its owner's authority. " +
         "Run, as an administrator: " +
@@ -431,17 +435,20 @@ describe("verifyAgentPrincipal", () => {
         privilege("PUBLIC", "G", "SELECT", "TABLE", "SYSCAT", "COLDIST"),
         privilege("AGENT_RO", "U", "SELECT", "TABLE", "SYSIBM", "SYSCOLGROUPDIST"),
         privilege("AGENT_RO", "U", "SELECT", "TABLE", "SYSIBMADM", "MON_CURRENT_SQL"),
+        privilege("PUBLIC", "G", "SELECT", "TABLE", "SYSCAT", "COLUMNS"),
       ],
     });
     expect(error.reasonCode).toBe("PROFILE_PRIVILEGES_TOO_BROAD");
     expect(error.message).toBe(
       "The agent read-only execution profile refuses the Db2 user AGENT_RO: it may read the catalog's distribution " +
-        "statistics, which hold stored values of every table's columns, whether or not it may read the table, or an " +
+        "or column statistics, which hold stored values of every table's columns, whether or not it may read the " +
+        "table, or an " +
         "IBM table or view only a grant a user made lets it read, such as a monitor view of other sessions' " +
         "statements. " +
         'Run, as an administrator: REVOKE SELECT ON TABLE "SYSCAT"."COLDIST" FROM PUBLIC; ' +
         'REVOKE SELECT ON TABLE "SYSIBM"."SYSCOLGROUPDIST" FROM USER "AGENT_RO"; ' +
-        'REVOKE SELECT ON TABLE "SYSIBMADM"."MON_CURRENT_SQL" FROM USER "AGENT_RO".',
+        'REVOKE SELECT ON TABLE "SYSIBMADM"."MON_CURRENT_SQL" FROM USER "AGENT_RO"; ' +
+        'REVOKE SELECT ON TABLE "SYSCAT"."COLUMNS" FROM PUBLIC.',
     );
   });
 

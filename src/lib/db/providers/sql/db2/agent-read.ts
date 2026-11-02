@@ -54,10 +54,12 @@
  *    that calls a routine of an IBM module depends on the module itself, so it is refused whatever the routine reads.
  * 5. They may read none of the catalog's distribution statistics: an IBM table or view with a `COLVALUE` column, whose
  *    rows hold the most frequent values and the quantiles of every table's columns after `RUNSTATS`, so the user
- *    read values of a table it holds no SELECT on (measured). A fresh database lets PUBLIC read all nine. The second
- *    highest and lowest values `SYSCAT.COLUMNS` keeps as `HIGH2KEY` and `LOW2KEY` stay readable: the provider's own
- *    catalog reads need that view, and Db2 grants no SELECT on a column alone (B168). Nor may they read an IBM table
- *    or view through a user's grant that no grant of the database's matches, such as `SYSIBMADM.MON_CURRENT_SQL`.
+ *    read values of a table it holds no SELECT on (measured). A fresh database lets PUBLIC read all nine. Nor any of
+ *    the seven that keep the second highest and lowest value of every column as `HIGH2KEY` and `LOW2KEY`,
+ *    `SYSCAT.COLUMNS` among them, which a fresh database also lets PUBLIC read (capture 13); Db2 grants no SELECT on a
+ *    column alone, so the provider reads columns from value-free sources under the agent profiles (`catalog.ts`).
+ *    Nor may they read an IBM table or view through a user's grant that no grant of the database's matches, such as
+ *    `SYSIBMADM.MON_CURRENT_SQL`.
  * 6. `SYSCAT.CONTROLS` lists no row permission or column mask anywhere in the database that is not IBM's: Db2 evaluates
  *    it for any reader of the table it guards, a reader through a view included, and it can call a secured function
  *    with its owner's authority (measured). A fresh database holds five, IBM's own masks on its catalog tables.
@@ -83,7 +85,7 @@ export type Db2AgentReader = (sql: string) => Promise<Rows>;
 const list = (names: readonly string[]) => names.map((name) => `'${name}'`).join(", ");
 
 /** The session's grantees as a common table expression `G`, each with the type the catalog's grantee columns use. */
-const GRANTEES =
+export const GRANTEES =
   "G (GRANTEE, GRANTEETYPE) AS (VALUES (CAST(SESSION_USER AS VARCHAR(128)), CAST('U' AS CHAR(1))), " +
   "(CAST('PUBLIC' AS VARCHAR(128)), CAST('G' AS CHAR(1))) " +
   "UNION SELECT CAST(a.\"GROUP\" AS VARCHAR(128)), CAST('G' AS CHAR(1)) " +
@@ -163,14 +165,16 @@ function admittedRoutine(alias: string): string {
 }
 
 /**
- * The table or view `schema`.`name` names is IBM's and holds a `COLVALUE` column: the catalog's distribution
- * statistics, read by the catalog's own rows rather than by a list of names.
+ * The table or view `schema`.`name` names is IBM's and holds a `COLVALUE`, `HIGH2KEY` or `LOW2KEY` column: the
+ * catalog's distribution statistics, or the column statistics' second highest and lowest values, read by the catalog's
+ * own rows rather than by a list of names. The columns are read from `SYSIBM.COLUMNS`, which lists IBM's own objects
+ * and keeps no stored value (capture 16), since the seed revokes `SYSCAT.COLUMNS` from PUBLIC.
  */
 function storedValues(schema: string, name: string): string {
   return (
-    "EXISTS (SELECT 1 FROM SYSCAT.TABLES t JOIN SYSCAT.COLUMNS c ON c.TABSCHEMA = t.TABSCHEMA " +
-    `AND c.TABNAME = t.TABNAME WHERE t.TABSCHEMA = ${schema} AND t.TABNAME = ${name} AND t.OWNERTYPE = 'S' ` +
-    "AND c.COLNAME = 'COLVALUE')"
+    "EXISTS (SELECT 1 FROM SYSCAT.TABLES t JOIN SYSIBM.COLUMNS c ON c.TABLE_SCHEMA = t.TABSCHEMA " +
+    `AND c.TABLE_NAME = t.TABNAME WHERE t.TABSCHEMA = ${schema} AND t.TABNAME = ${name} AND t.OWNERTYPE = 'S' ` +
+    "AND c.COLUMN_NAME IN ('COLVALUE', 'HIGH2KEY', 'LOW2KEY'))"
   );
 }
 
@@ -479,8 +483,8 @@ function reachFinding(rows: Rows): Finding | null {
   return {
     what:
       "it may read a view that calls code that is not IBM's, an IBM function that acts outside the call or modifies " +
-      "data, or one the database's own grants do not let the user call, or reads the catalog's distribution " +
-      "statistics, an IBM table or view the database's own grants do not let the user read, or a view or alias the " +
+      "data, or one the database's own grants do not let the user call, or reads the catalog's distribution or " +
+      "column statistics, an IBM table or view the database's own grants do not let the user read, or a view or alias the " +
       "check cannot follow, a view that is not valid, or a nickname, which reads another server; each runs with its " +
       "owner's authority",
     statements: rows.map((row) => {
@@ -494,7 +498,7 @@ function statisticsFinding(rows: Rows): Finding | null {
   if (rows.length === 0) return null;
   return {
     what:
-      "it may read the catalog's distribution statistics, which hold stored values of every table's columns, " +
+      "it may read the catalog's distribution or column statistics, which hold stored values of every table's columns, " +
       "whether or not it may read the table, or an IBM table or view only a grant a user made lets it read, such as " +
       "a monitor view of other sessions' statements",
     statements: rows.map((row) => revoke(row, "statistics")),
