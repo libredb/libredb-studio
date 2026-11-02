@@ -25,9 +25,10 @@ export const QDRANTAPI_MCP_FACET = Object.freeze({
   describe: ({ engines, limits }) =>
     `Run one read-only Qdrant metadata read on a connection: a REST request line and an optional JSON body, such as "GET /collections", "GET /collections/articles", "GET /collections/articles/exists", "GET /collections/articles/aliases", "GET /collections/articles/cluster", "GET /aliases", "GET /" or "POST /collections/articles/points/count" with an optional {"exact": true}. The answer carries names, counts and flags only, never a stored payload or vector. Point reads, scrolls, facets, every query, a count filter and every write are refused before the server is reached, and before every read the server must refuse an empty alias update and an empty point delete on each collection the key lists, so a key that can write is refused. Runs on ${engines}; other engines refuse it. ${limits}; this tool takes no offset, so read one collection instead of a whole list.`,
   words: {
-    fewerFields: "Read one collection instead of a whole list",
+    fewerFields:
+      "Read a narrower route, one collection instead of a whole list, or a collection's count, aliases or cluster layout instead of its full description,",
     readPast: (shown: number) =>
-      `read past the ${shown} rows returned, read each collection on its own, since a Qdrant read is never paged.`,
+      `read past the ${shown} rows returned, raise max_rows (at most 500) when the row limit cut the read, or read a narrower route, since a Qdrant read is never paged.`,
     rowOverCap:
       "One row of this result is larger than the 32 KiB result limit. Read one collection on its own, and run it again.",
     reached: "the server",

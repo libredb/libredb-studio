@@ -463,7 +463,7 @@ describe("the qdrantapi arm", () => {
   test("names neither a MongoDB stage nor a SQL clause where more rows exist, and says a Qdrant read is not paged", () => {
     const hint = RUN_QDRANT_READ_ARM.moreRows("GET /aliases", "qdrant", { maxRows: 100, shown: 100, cut: "max_rows" });
     expect(hint).toBe(
-      `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice("GET /aliases", "100")} To read past the 100 rows returned, read each collection on its own, since a Qdrant read is never paged.`,
+      `More rows exist than this result holds, and this tool does not page with offset. ${server.rowCapAdvice("GET /aliases", "100")} To read past the 100 rows returned, raise max_rows (at most 500) when the row limit cut the read, or read a narrower route, since a Qdrant read is never paged.`,
     );
     const bytes = RUN_QDRANT_READ_ARM.moreRows("GET /aliases", "qdrant", {
       maxRows: 100,
@@ -471,8 +471,16 @@ describe("the qdrantapi arm", () => {
       cut: "result_bytes",
     });
     expect(bytes).toBe(
-      "More rows exist than the 32 KiB result limit holds, and 4 of them fitted; this tool does not page with offset. Read one collection instead of a whole list to fit more rows, and to read past the 4 rows returned, read each collection on its own, since a Qdrant read is never paged.",
+      "More rows exist than the 32 KiB result limit holds, and 4 of them fitted; this tool does not page with offset. Read a narrower route, one collection instead of a whole list, or a collection's count, aliases or cluster layout instead of its full description, to fit more rows, and to read past the 4 rows returned, raise max_rows (at most 500) when the row limit cut the read, or read a narrower route, since a Qdrant read is never paged.",
     );
+    // A read of one collection is already narrow: its hint must not tell the client to read one collection on its own.
+    const one = RUN_QDRANT_READ_ARM.moreRows("GET /collections/plain", "qdrant", {
+      maxRows: 100,
+      shown: 100,
+      cut: "max_rows",
+    });
+    expect(one).toContain("raise max_rows (at most 500)");
+    expect(one).not.toContain("read each collection on its own");
     for (const text of [hint, bytes, RUN_QDRANT_READ_ARM.rowOverCap]) {
       expect(text).not.toContain("$skip");
       expect(text).not.toContain("LIMIT");
