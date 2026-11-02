@@ -472,6 +472,7 @@ describe("the value-free column source", () => {
     [{ DATA_TYPE: "BINARY", SQL_TYPE_NAME: "BINARY", COLUMN_SIZE: 8 }, "BINARY(8)"],
     // SYSIBM.COLUMNS keeps no binary length; without the SQLCOLUMNS row the length is not shown, never guessed.
     [{ DATA_TYPE: "VARBINARY" }, "VARBINARY"],
+    // A distinct-type column: DATA_TYPE USER-DEFINED, and the type's own name in UDT_NAME (capture 16).
     [{ DATA_TYPE: "USER-DEFINED", UDT_NAME: "LIBREDB_VF_MONEY" }, "LIBREDB_VF_MONEY"],
     [{ DATA_TYPE: "DECFLOAT" }, "DECFLOAT"],
     [{ DATA_TYPE: "DECFLOAT", DECFLOAT_PRECISION: 16 }, "DECFLOAT(16)"],

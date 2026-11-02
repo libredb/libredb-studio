@@ -34,6 +34,9 @@
  *    and a view calling GET_INDEX_COLNAMES, both on the list of IBM functions measured as reading only;
  *  - each call has a connection of its own: what one call's session holds is not the next one's;
  *  - the operations profile opens the instance owner unproven; an editor handle refuses `queryReadOnly`;
+ *  - the object surface as the agent user, from the value-free sources: a DECFLOAT column's precision on a table it
+ *    may read only, kept on a table left set integrity pending or REORG-pending, whose zero-row describe reads no row,
+ *    and a distinct-type column spelled by its type's name, on the surface and in the composed column read;
  *  - the catalog reads the overlay composes, each answered as the agent user;
  *  - the budgets: a result past the row budget, one past the byte budget, a CLOB, a BLOB and an XML column, and a
  *    statement past its deadline are refused, and the next call answers.
@@ -202,6 +205,10 @@ const CLEANUP = [
   "DROP SEQUENCE APP.LIBREDB_AB_SEQ",
   "DROP TABLE LIBREDB_AB_IMPLICIT.T",
   "DROP SCHEMA LIBREDB_AB_IMPLICIT RESTRICT",
+  "DROP TABLE APP.LIBREDB_AB_CHECKPEND",
+  "DROP TABLE APP.LIBREDB_AB_REORGPEND",
+  "DROP TABLE APP.LIBREDB_AB_TYPED",
+  "DROP DISTINCT TYPE APP.LIBREDB_AB_MONEY",
 ];
 
 try {
@@ -1023,6 +1030,84 @@ try {
     sealedTypes === "DECFLOAT, DECFLOAT, CHARACTER(4) FOR BIT DATA, VARBINARY(16)" &&
       readableTypes === "DECFLOAT(34), DECFLOAT(16), CHARACTER(4) FOR BIT DATA, VARBINARY(16)",
     `a DECFLOAT column shows its precision only on a table the agent user may read (${sealedTypes} / ${readableTypes})`,
+  );
+  // A table left set integrity pending or REORG-pending refuses a read of its rows, but not the zero-row describe,
+  // which reads none: its DECFLOAT column keeps its precision, and the call does not fail.
+  await setup([
+    "CREATE TABLE APP.LIBREDB_AB_CHECKPEND (ID INTEGER NOT NULL, C_DF DECFLOAT(16), CONSTRAINT LIBREDB_AB_CK CHECK (ID > 0))",
+    "INSERT INTO APP.LIBREDB_AB_CHECKPEND VALUES (1, 1.5)",
+    "SET INTEGRITY FOR APP.LIBREDB_AB_CHECKPEND OFF",
+    "CREATE TABLE APP.LIBREDB_AB_REORGPEND (ID INTEGER NOT NULL, C_DF DECFLOAT(34), C_GONE INTEGER)",
+    "INSERT INTO APP.LIBREDB_AB_REORGPEND VALUES (1, 1.5, 1)",
+    "ALTER TABLE APP.LIBREDB_AB_REORGPEND DROP COLUMN C_GONE",
+    "GRANT SELECT ON APP.LIBREDB_AB_CHECKPEND TO USER AGENT_RO",
+    "GRANT SELECT ON APP.LIBREDB_AB_REORGPEND TO USER AGENT_RO",
+  ]);
+  const pendingStates = (
+    await rows(
+      "SELECT TABNAME, REORG_PENDING FROM SYSIBMADM.ADMINTABINFO WHERE TABSCHEMA = 'APP' AND TABNAME IN ('LIBREDB_AB_CHECKPEND', 'LIBREDB_AB_REORGPEND') ORDER BY TABNAME",
+    )
+  )
+    .map((row) => `${String(row.TABNAME)}:${String(row.REORG_PENDING)}`)
+    .join(", ");
+  const checkPendingStatus = String(
+    (await rows("SELECT STATUS FROM SYSCAT.TABLES WHERE TABSCHEMA = 'APP' AND TABNAME = 'LIBREDB_AB_CHECKPEND'"))[0]
+      ?.STATUS,
+  );
+  const checkPendingRead = await refusalOf(provider, "SELECT * FROM APP.LIBREDB_AB_CHECKPEND");
+  await surfaceAs.disconnect();
+  await surfaceAs.connect();
+  const pendingTypes = async (table: string) =>
+    (await surfaceAs.describeObject(["APP", table], "table")).columns.map((column) => column.type).join(", ");
+  const checkPendingTypes = await pendingTypes("LIBREDB_AB_CHECKPEND");
+  const reorgPendingTypes = await pendingTypes("LIBREDB_AB_REORGPEND");
+  const pendingBulk = (await surfaceAs.describeObjects(["APP"], "table")).details
+    .filter((detail) => detail.path[1]?.startsWith("LIBREDB_AB_") && detail.path[1].endsWith("PEND"))
+    .map((detail) => detail.columns.find((column) => column.name === "C_DF")?.type)
+    .join(", ");
+  await setup(["DROP TABLE APP.LIBREDB_AB_CHECKPEND", "DROP TABLE APP.LIBREDB_AB_REORGPEND"]);
+  check(
+    checkPendingStatus === "C" &&
+      pendingStates === "LIBREDB_AB_CHECKPEND:N, LIBREDB_AB_REORGPEND:Y" &&
+      checkPendingRead instanceof Error &&
+      sqlcode(checkPendingRead) === -668 &&
+      checkPendingTypes === "INTEGER, DECFLOAT(16)" &&
+      reorgPendingTypes === "INTEGER, DECFLOAT(34)" &&
+      pendingBulk === "DECFLOAT(16), DECFLOAT(34)",
+    `a set integrity pending or REORG-pending table is still described, its DECFLOAT precision kept (${checkPendingStatus}; ${pendingStates}; ${checkPendingRead instanceof Error ? checkPendingRead.message.slice(0, 120) : "read answered"}; ${checkPendingTypes} / ${reorgPendingTypes} / ${pendingBulk})`,
+  );
+  // A distinct-type column is spelled by its type's own name, on the provider surface and in the composed column read.
+  await setup([
+    "CREATE DISTINCT TYPE APP.LIBREDB_AB_MONEY AS DECIMAL(9, 2) WITH COMPARISONS",
+    "CREATE TABLE APP.LIBREDB_AB_TYPED (ID INTEGER NOT NULL, C_MONEY APP.LIBREDB_AB_MONEY)",
+    "GRANT SELECT ON APP.LIBREDB_AB_TYPED TO USER AGENT_RO",
+  ]);
+  // Creating a distinct type creates its cast functions with EXECUTE to PUBLIC, which the check refuses as code that
+  // is not IBM's, so they are revoked as the refusal says.
+  await setup(
+    (
+      await rows(
+        "SELECT DISTINCT SPECIFICNAME FROM SYSCAT.ROUTINEPARMS WHERE ROUTINESCHEMA = 'APP' AND TYPESCHEMA = 'APP' AND TYPENAME = 'LIBREDB_AB_MONEY'",
+      )
+    ).map((row) => `REVOKE EXECUTE ON SPECIFIC FUNCTION APP."${String(row.SPECIFICNAME)}" FROM PUBLIC RESTRICT`),
+  );
+  const typedSurface = (await surfaceAs.describeObject(["APP", "LIBREDB_AB_TYPED"], "table")).columns
+    .map((column) => column.type)
+    .join(", ");
+  const typedComposed = (
+    (
+      await provider.queryReadOnly?.(
+        composeCatalogRead("db2", { kind: "columns", schema: "APP", table: "LIBREDB_AB_TYPED" }),
+        BUDGET,
+      )
+    )?.rows ?? []
+  )
+    .map((row) => String(row.data_type))
+    .join(", ");
+  await setup(["DROP TABLE APP.LIBREDB_AB_TYPED", "DROP DISTINCT TYPE APP.LIBREDB_AB_MONEY"]);
+  check(
+    typedSurface === "INTEGER, LIBREDB_AB_MONEY" && typedComposed === "INTEGER, LIBREDB_AB_MONEY",
+    `a distinct-type column is spelled by its type's name (${typedSurface} / ${typedComposed})`,
   );
   await surfaceAs.disconnect();
 

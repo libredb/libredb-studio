@@ -182,9 +182,14 @@ ORDERS             NOTE        CHARACTER VARYING                          200   
   24 record(s) selected.
 
 
-SELECT VARCHAR(TABLE_NAME, 18) AS TABLE_NAME, VARCHAR(USER_DEFINED_TYPE_SCHEMA, 8) AS UDT_SCHEMA, VARCHAR(USER_DEFINED_TYPE_NAME, 20) AS UDT_NAME, VARCHAR(COLUMN_NAME, 10) AS COLUMN_NAME FROM SYSIBM.COLUMNS WHERE TABLE_SCHEMA = 'APP' AND TABLE_NAME = 'LIBREDB_VF_TYPES' AND USER_DEFINED_TYPE_NAME IS NOT NULL
-SQL0206N  "USER_DEFINED_TYPE_NAME" is not valid in the context where it is 
-used.  SQLSTATE=42703
+SELECT VARCHAR(TABLE_NAME, 18) AS TABLE_NAME, VARCHAR(COLUMN_NAME, 10) AS COLUMN_NAME, VARCHAR(DATA_TYPE, 14) AS DATA_TYPE, VARCHAR(UDT_SCHEMA, 8) AS UDT_SCHEMA, VARCHAR(UDT_NAME, 20) AS UDT_NAME, HEX(UDT_NAME) AS UDT_NAME_HEX FROM SYSIBM.COLUMNS WHERE TABLE_SCHEMA = 'APP' AND TABLE_NAME = 'LIBREDB_VF_TYPES' AND UDT_NAME IS NOT NULL
+
+TABLE_NAME         COLUMN_NAME DATA_TYPE      UDT_SCHEMA UDT_NAME             UDT_NAME_HEX                                                                                                                                                                                                                                                    
+------------------ ----------- -------------- ---------- -------------------- ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+LIBREDB_VF_TYPES   C_MONEY     USER-DEFINED   APP        LIBREDB_VF_MONEY     4C4942524544425F56465F4D4F4E4559                                                                                                                                                                                                                                
+
+  1 record(s) selected.
+
 
 SELECT VARCHAR(TABLE_NAME, 18) AS TABLE_NAME, VARCHAR(COLUMN_NAME, 10) AS COLUMN_NAME, VARCHAR(TYPE_NAME, 26) AS TYPE_NAME, COLUMN_SIZE, DECIMAL_DIGITS, NULLABLE, VARCHAR(COLUMN_DEF, 30) AS COLUMN_DEF FROM SYSIBM.SQLCOLUMNS WHERE TABLE_SCHEM = 'APP' AND TABLE_NAME IN ('LIBREDB_VF_TYPES', 'LIBREDB_VF_HIDDEN') ORDER BY 1, ORDINAL_POSITION
 
