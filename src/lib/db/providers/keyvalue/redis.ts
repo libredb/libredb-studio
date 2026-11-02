@@ -803,9 +803,12 @@ function keyGroupColumns(sampledTypes: ReadonlySet<string>): ColumnSchema[] {
  * 1: `CONFIG GET` accepts a glob and answers every matching parameter, so the position of a
  * parameter in the reply is a property of the request, not of the parameter.
  *
- * A reply with no such key raises. It is the shape a server that has disabled or renamed
- * CONFIG answers, and there is no honest fallback: 16 would be a number nobody measured,
- * and 1 would hide fifteen databases that may hold keys.
+ * A reply with no such key raises. A server that answers `CONFIG` at all answers real
+ * key/value pairs, so a reply missing the key is a pathology there is no honest fallback
+ * for: 16 would be a number nobody measured, and 1 would hide fifteen databases that may
+ * hold keys. A server that refuses the COMMAND itself - renamed or disabled `CONFIG`, an
+ * ACL `NOPERM` - never reaches here: `listContainers` lists the session database alone on
+ * that refusal.
  */
 function parseDatabaseCount(reply: unknown): number {
   const entries = Array.isArray(reply) ? reply : [];
@@ -1958,9 +1961,17 @@ export class RedisProvider extends BaseDatabaseProvider {
    *
    * `CONFIG GET databases` and not a hardcoded 16: measured on redis 8.10.0, the stock
    * server answers 16 and the same image with `--cluster-enabled yes` answers 1, so the
-   * reply already carries the deployment's shape. A refused or unparsable reply RAISES
-   * (see `parseDatabaseCount`), because every fallback available here is a number nobody
-   * measured.
+   * reply already carries the deployment's shape. A reply that ANSWERS but carries no
+   * usable `databases` value still RAISES (see `parseDatabaseCount`), because every
+   * fallback available there is a number nobody measured.
+   *
+   * A server that REFUSES the command itself - renamed or disabled `CONFIG`, an ACL
+   * `NOPERM` - lists the session's own database alone, the same list the read-only
+   * profile returns. That is not an invented count: a connection is in one database at
+   * all times. Issue #2163 measured a managed Valkey 9 deployment that refuses `CONFIG`
+   * while the same connection answers `ZREVRANGE`, `HGETALL` and `XLEN`, so the keys are
+   * there to browse; only the count is withheld. A transport failure is not a refusal
+   * and still raises.
    *
    * Every database is listed, including the empty ones. A Redis database is not created and
    * not dropped: all of them exist at all times, so listing only the ones `INFO keyspace`
@@ -1975,8 +1986,15 @@ export class RedisProvider extends BaseDatabaseProvider {
       return [{ path: [session], name: session, level: 0, isSessionDefault: true }];
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const reply = await (this.client as any).call("CONFIG", "GET", "databases");
+    let reply: unknown;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      reply = await (this.client as any).call("CONFIG", "GET", "databases");
+    } catch (error) {
+      if (!isServerErrorReply(error)) throw error;
+      const session = String(this.sessionDatabase());
+      return [{ path: [session], name: session, level: 0, isSessionDefault: true }];
+    }
     const count = parseDatabaseCount(reply);
     const session = this.sessionDatabase();
 

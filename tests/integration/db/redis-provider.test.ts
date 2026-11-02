@@ -155,6 +155,21 @@ const MOCK_KEY_TYPES: Record<string, string> = { "session:abc": "hash" };
 let databasesReply: string[] = ["databases", "16"];
 
 /**
+ * The refusal a server answers when the command itself is not available: `CONFIG` renamed
+ * away (measured on valkey 9.1.3 started with `--rename-command CONFIG ""`, issue #2163)
+ * or an ACL without the permission. `null` means the command answers `databasesReply`.
+ */
+let configRefusal: string | null = null;
+
+/**
+ * When set, the `CONFIG` command rejects the way a TRANSPORT failure does rather than the
+ * way a server refusal does, in the shapes `functionTransportFailure` documents: the two
+ * are different facts, and only the server's refusal shrinks the container list to the
+ * session database (#2163).
+ */
+let configTransportFailure: unknown = null;
+
+/**
  * One library, in the exact RESP2 shape ioredis hands back: a flat key/value list per
  * library, measured against redis 8.10.0 holding `docker/redis-init/01-object-fixture.redis`.
  * The nested `functions` entry is the library's registered functions and is deliberately
@@ -753,7 +768,11 @@ mock.module("ioredis", () => {
       // substitution is the only reading of the state this connection can be given, so the
       // mock has to make it or a provider that never asks would pass.
       if (this._inMulti) return "QUEUED";
-      if (cmd === "CONFIG") return databasesReply;
+      if (cmd === "CONFIG") {
+        if (configTransportFailure !== null) throw configTransportFailure;
+        if (configRefusal !== null) throw replyError(configRefusal);
+        return databasesReply;
+      }
       if (cmd === "SLOWLOG" && slowlogRefusal !== null) throw replyError(slowlogRefusal);
       if (cmd === "FUNCTION") {
         if (mockCall !== null) return await mockCall(command, ...args);
@@ -3005,6 +3024,8 @@ describe("RedisProvider", () => {
 
     beforeEach(async () => {
       databasesReply = ["databases", "16"];
+      configRefusal = null;
+      configTransportFailure = null;
       functionListReply = MOCK_FUNCTION_LIST;
       functionWithCodeReply = MOCK_FUNCTION_WITHCODE;
       functionRefusal = null;
@@ -3309,9 +3330,40 @@ describe("RedisProvider", () => {
       expect(containers.every((container) => container.level === 0)).toBe(true);
     });
 
-    test("a refused CONFIG GET raises rather than inventing a database list", async () => {
+    test("a CONFIG reply with no databases value raises rather than inventing a database list", async () => {
       databasesReply = [];
       await expect(provider.listContainers()).rejects.toThrow(/CONFIG GET databases/);
+    });
+
+    /**
+     * #2163: a deployment can take `CONFIG` away and still work - the measured managed
+     * Valkey 9 refused the command while the same connection answered `ZREVRANGE`,
+     * `HGETALL` and `XLEN`. The refusal is the server's own `ReplyError`, and the honest
+     * list is the one database the connection is provably in.
+     */
+    test("a server that refuses the CONFIG command lists the session database alone", async () => {
+      configRefusal = "ERR unknown command 'CONFIG', with args beginning with: 'GET' 'databases'";
+      const containers = await provider.listContainers();
+
+      expect(containers.map((container) => container.path)).toEqual([["0"]]);
+      expect(containers.map((container) => container.name)).toEqual(["0"]);
+      expect(containers.every((container) => container.isSessionDefault)).toBe(true);
+      expect(containers.every((container) => container.level === 0)).toBe(true);
+    });
+
+    test("an ACL refusal of CONFIG lists the session database alone too", async () => {
+      provider = new RedisProvider({ ...baseConfig, database: "3" });
+      await provider.connect();
+      configRefusal = "NOPERM User default has no permissions to run the 'config|get' command";
+      const containers = await provider.listContainers();
+
+      expect(containers.map((container) => container.name)).toEqual(["3"]);
+      expect(containers.every((container) => container.isSessionDefault)).toBe(true);
+    });
+
+    test("a transport failure during CONFIG still raises rather than shrinking the list", async () => {
+      configTransportFailure = new Error("Connection is closed.");
+      await expect(provider.listContainers()).rejects.toThrow("Connection is closed.");
     });
 
     test("counts both kinds, seeded at zero before either read answers", async () => {

@@ -949,8 +949,13 @@ ERR SELECT is not allowed in cluster mode
 ```
 
 So the reply already reflects the deployment and nothing reads `cluster_enabled` to work it out. A
-refused or unparsable reply **raises**: 16 would be a number nobody measured, and 1 would hide
-fifteen databases that may hold keys. Every database is listed, including the empty ones, because a
+reply that answers but carries no usable `databases` value **raises**: 16 would be a number nobody
+measured, and 1 would hide fifteen databases that may hold keys. A server that refuses the command
+itself — `CONFIG` renamed away, or an ACL `NOPERM` — does not take the tree down with it:
+[#2163](https://github.com/libredb/libredb-studio/issues/2163) measured a managed Valkey 9 that
+refuses `CONFIG` while the same connection answers `ZREVRANGE`, `HGETALL` and `XLEN`, and on that
+refusal `listContainers()` lists the session's own database alone. A transport failure is not a
+refusal and still raises. Every database is listed, including the empty ones, because a
 Redis database is never created and never dropped — all of them exist at all times, so listing only
 the ones `INFO keyspace` mentions would hide a database a person is about to write to.
 
