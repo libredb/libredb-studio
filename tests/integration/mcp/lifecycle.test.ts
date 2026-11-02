@@ -6,7 +6,7 @@
  * serves after every earlier test has torn down.
  *
  * Servers are counted by McpServer.prototype.registerTool, which the factory calls once per tool,
- * six times per server; providers by the real SQLite provider's connect.
+ * seven times per server; providers by the real SQLite provider's connect.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -83,7 +83,7 @@ async function serversBuiltBy(send: () => Promise<Response>): Promise<number> {
   try {
     const response = await send();
     await response.text();
-    return registrations.calls / 6;
+    return registrations.calls / 7;
   } finally {
     registrations.restore();
   }
@@ -463,6 +463,6 @@ describe("the module-scope handler", () => {
   test("still serves after every earlier test in this file has torn down its clients", async () => {
     const response = await serve(legacyPost({ jsonrpc: "2.0", id: 99, method: "tools/list" }, { token }));
     expect(response.status).toBe(200);
-    expect((await readJsonRpc(response)).result?.tools).toHaveLength(6);
+    expect((await readJsonRpc(response)).result?.tools).toHaveLength(7);
   });
 });

@@ -92,7 +92,7 @@ const legacyInitialize = (protocolVersion: string) =>
   );
 
 describe("the default legacy client", () => {
-  test("connects on 2025-11-25, lists the six tools in registration order and calls one", async () => {
+  test("connects on 2025-11-25, lists the seven tools in registration order and calls one", async () => {
     const warn = spyOn(logger, "warn");
     const session = await connectClient(serve);
     try {
@@ -119,7 +119,7 @@ describe("the default legacy client", () => {
     const session = await connectClient(serve, { supportedProtocolVersions: ["2025-06-18"] });
     try {
       expect(session.client.getNegotiatedProtocolVersion()).toBe("2025-06-18");
-      expect((await session.client.listTools()).tools).toHaveLength(6);
+      expect((await session.client.listTools()).tools).toHaveLength(7);
     } finally {
       await session.close();
     }
@@ -190,7 +190,7 @@ describe("the capability objects", () => {
 });
 
 describe("the tool map", () => {
-  test("names the six tools and nothing an object inherits, so no other name reaches a tool's schema", () => {
+  test("names the seven tools and nothing an object inherits, so no other name reaches a tool's schema", () => {
     for (const name of TOOL_NAMES) expect(isMcpToolName(name)).toBe(true);
     for (const name of ["toString", "constructor", "__proto__", "no_such_tool", 42, undefined]) {
       expect(isMcpToolName(name)).toBe(false);
