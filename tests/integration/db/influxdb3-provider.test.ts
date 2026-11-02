@@ -497,7 +497,8 @@ describe("MCP run_read_query on an InfluxDB 3 connection", () => {
     const doc = readFileSync(join(import.meta.dir, "../../../docs/providers/influxdb3.md"), "utf8");
 
     expect(MCP_STATEMENT_READ.influxdb3).toBe(true);
-    expect(MCP_STATEMENT_READ.influxdb).toBe(false);
+    // InfluxDB over InfluxQL opened through a row of its own, to its own language's tool, never to run_read_query.
+    expect(mcpStatementArm("run_read_query").types).not.toContain("influxdb");
     expect(doc).toContain("`MCP_STATEMENT_READ.influxdb3` is true");
     expect(doc).not.toContain("MCP's statement read stays closed");
     expect(doc).not.toContain("No MCP `run_read_query`");
