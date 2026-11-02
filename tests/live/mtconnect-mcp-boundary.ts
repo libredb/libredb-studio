@@ -23,7 +23,10 @@
  *   assets            File and CuttingTool assets put raw on the AllowPut agent, one with a URL carrying a user name,
  *                     password and query, one whose password holds an @ and a quote and whose fragment holds a
  *                     token, one with backslashes after its scheme, and one whose description splits a user name
- *                     and password across a child element, read through the tool: what reached the answer;
+ *                     and password across a child element, read through the tool: what reached the answer; then
+ *                     two assets whose ids are URLs, one percent-encoded, and four URL spellings (percent-encoded, a
+ *                     schemeless path with a token, `login USER:PASS@host`, a fullwidth scheme), read through
+ *                     `/assets`, `/current` and `/sample`, where `AssetChanged` and `AssetRemoved` name an asset's id;
  *   sink              the MQTT sink agent's nine routes read raw and its model read through the tool: whether the
  *                     broker's address reached any of them;
  *   factory           one read through the factory's own profiled acquisition, as the route makes it;
@@ -71,7 +74,18 @@ const FAKE_SECRETS = [
   "split-user",
   "half-a",
   "-secret",
+  "url-id-user",
+  "url-id-pass",
+  "pct-user",
+  "pct-pass",
+  "bare-token",
+  "login-user",
+  "login-pass",
+  "wide-user",
+  "wide-pass",
 ];
+/** The pieces of the spellings the second asset probe writes: an asset id that is a URL, and four URL spellings. */
+const SPELLING_SECRETS = FAKE_SECRETS.slice(FAKE_SECRETS.indexOf("url-id-user"));
 
 /** The tool as MCP registers it, and the same tool with its fence removed: the boundary under test. */
 const FENCED = mcpStatementArm("run_mtconnect_read");
@@ -559,6 +573,135 @@ check(
   "a user name and password split across an extension asset's child element reach no answer in any piece",
 );
 
+// Assets whose ids are URLs, which `AssetChanged` names on /current and /sample and `AssetRemoved` once removed, and
+// four spellings of a URL a client still reads as one: percent-encoded, a schemeless path with a token, a user name
+// and password after a word, and a fullwidth scheme.
+const URL_ID = "ftp:url-id-user:url-id-pass@h.example";
+const ENCODED_URL_ID = "https%3A%2F%2Furl-id-user%3Aurl-id-pass%40h.example";
+/** Each spelling in an asset of its own, and the note the tool must answer for it. */
+const SPELLINGS = [
+  [
+    "NOTE-PCT",
+    "https%3A%2F%2Fpct-user%3Apct-pass%40files.example/p.nc",
+    "https%3A%2F%2F[withheld]%40files.example/p.nc",
+  ],
+  ["NOTE-BARE", "files.example/x.nc?token=bare-token", "files.example/x.nc?[withheld]"],
+  ["NOTE-LOGIN", "login login-user:login-pass@files.example", "login [withheld]@files.example"],
+  [
+    "NOTE-WIDE",
+    "\uff48\uff54\uff54\uff50\uff53\uff1a\uff0f\uff0fwide-user:wide-pass@files.example",
+    "\uff48\uff54\uff54\uff50\uff53\uff1a\uff0f\uff0f[withheld]@files.example",
+  ],
+] as const;
+const spellingsStored = [];
+for (const [label, query, body] of [
+  ["url-id", `type=ProgramNote&device=${LATHE}`, `<ProgramNote assetId="${URL_ID}"><Note>x</Note></ProgramNote>`],
+  ...SPELLINGS.map(
+    ([id, note]) =>
+      [
+        id,
+        `type=ProgramNote&device=${LATHE}`,
+        `<ProgramNote assetId="${id}"><Note>${note}</Note></ProgramNote>`,
+      ] as const,
+  ),
+  [
+    "encoded-url-id",
+    `type=ProgramNote&device=${LATHE}`,
+    `<ProgramNote assetId="${ENCODED_URL_ID}"><Note>y</Note></ProgramNote>`,
+  ],
+] as const) {
+  const answer = await fetch(`http://127.0.0.1:${PUT_PORT}/asset?${query}`, { method: "PUT", body });
+  await answer.text();
+  spellingsStored.push({ asset: label, status: answer.status });
+}
+const removal = await fetch(`http://127.0.0.1:${PUT_PORT}/asset/${encodeURIComponent(URL_ID)}`, { method: "DELETE" });
+await removal.text();
+spellingsStored.push({ asset: "url-id removed", status: removal.status });
+const carries = (text: string): string[] => SPELLING_SECRETS.filter((secret) => text.includes(secret));
+const rawStreams = {
+  current: await (await fetch(`http://127.0.0.1:${PUT_PORT}/current`)).text(),
+  sample: await (await fetch(`http://127.0.0.1:${PUT_PORT}/sample?count=-200`)).text(),
+  assets: await (await fetch(`http://127.0.0.1:${PUT_PORT}/assets?removed=true`)).text(),
+};
+const spellingReads = {
+  assets: await mcp(putAgent, "/assets?removed=true", { extra: { max_rows: 500 } }),
+  current: await mcp(putAgent, "/current", { extra: { max_rows: 500 } }),
+  sample: await mcp(putAgent, "/sample?count=-200", { extra: { max_rows: 500 } }),
+  assetSample: await mcp(
+    putAgent,
+    '/sample?path=//DataItem[@type="ASSET_CHANGED" or @type="ASSET_REMOVED"]&count=-100',
+    {
+      extra: { max_rows: 500 },
+    },
+  ),
+};
+/** The asset observations of a read, with their values, every fake piece named and never quoted. */
+const assetObservations = (call: Call): { dataItemId: unknown; value: string }[] =>
+  rowsOf(call.result)
+    .filter((row) => /^(ASSET_CHANGED|ASSET_REMOVED)$/.test(String(row.type)))
+    .map((row) => ({
+      dataItemId: row.dataItemId,
+      value: SPELLING_SECRETS.reduce((value, secret) => value.replaceAll(secret, "FAKE"), String(row.value)),
+    }));
+const spellings = {
+  stored: spellingsStored,
+  agentNamesTheUrlIdWhole: {
+    current: /<AssetChanged[^>]*>[^<]*url-id-user/.test(rawStreams.current),
+    sampleChanged: /<AssetChanged[^>]*>[^<]*url-id-user/.test(rawStreams.sample),
+    sampleRemoved: /<AssetRemoved[^>]*>[^<]*url-id-user/.test(rawStreams.sample),
+  },
+  agentServesTheSpellingsAsWritten: ["pct-user", "bare-token", "login-user", "wide-user"].every((secret) =>
+    rawStreams.assets.includes(secret),
+  ),
+  throughTheTool: {
+    answered: Object.fromEntries(
+      Object.entries(spellingReads).map(([route, call]) => [route, call.result.isError !== true]),
+    ),
+    carries: Object.fromEntries(
+      Object.entries(spellingReads).map(([route, call]) => [route, carries(JSON.stringify(call.result))]),
+    ),
+    currentAssetObservations: assetObservations(spellingReads.current),
+    assetSampleObservations: assetObservations(spellingReads.assetSample),
+    spellingNotes: Object.fromEntries(
+      SPELLINGS.map(([id, , kept]) => {
+        const row = rowsOf(spellingReads.assets.result).find((candidate) => candidate.assetId === id);
+        const note = /<Note>([\s\S]*)<\/Note>/.exec(String(row?.document))?.[1];
+        return [
+          id,
+          {
+            answeredAsExpected: note === kept,
+            note: SPELLING_SECRETS.some((secret) => note?.includes(secret)) ? "FAKE" : note,
+          },
+        ];
+      }),
+    ),
+  },
+};
+check(
+  spellings.agentNamesTheUrlIdWhole.current &&
+    spellings.agentNamesTheUrlIdWhole.sampleChanged &&
+    spellings.agentNamesTheUrlIdWhole.sampleRemoved &&
+    spellings.agentServesTheSpellingsAsWritten,
+  "the AllowPut agent names a URL asset id whole in AssetChanged and AssetRemoved, and serves the spellings as written",
+);
+check(
+  Object.values(spellings.throughTheTool.answered).every(Boolean) &&
+    Object.values(spellings.throughTheTool.carries).every((found) => found.length === 0),
+  "no user name, password or token of a URL asset id or of the four spellings reaches /assets, /current or /sample",
+);
+const assetSampleRows = rowsOf(spellingReads.assetSample.result);
+check(
+  ["ASSET_CHANGED", "ASSET_REMOVED"].every((type) =>
+    assetSampleRows.some((row) => row.type === type && row.value === "[withheld]@h.example"),
+  ) &&
+    assetSampleRows.some((row) => row.type === "ASSET_CHANGED" && row.value === "https%3A%2F%2F[withheld]%40h.example"),
+  "the tool answers the URL asset ids in AssetChanged and AssetRemoved with their user information withheld",
+);
+check(
+  Object.values(spellings.throughTheTool.spellingNotes).every((note) => note.answeredAsExpected),
+  "each spelling keeps its host and path and loses its user name, password or token",
+);
+
 // The MQTT sink agent: the broker's address, raw on every route and through the tool's model read.
 const SINK_ROUTES = ["/probe", `/${LATHE}/probe`, "/current", `/${LATHE}/current`, "/sample?count=-50", "/assets"];
 const sinkRaw: Record<string, boolean> = {};
@@ -613,6 +756,7 @@ const capture = {
     cancel,
   },
   assets,
+  spellings,
   sink,
   factory: { answered: viaFactory.result.isError !== true, rowCount: rowsOf(viaFactory.result).length },
   state: {

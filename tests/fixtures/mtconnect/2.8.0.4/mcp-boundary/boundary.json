@@ -437,6 +437,172 @@
       "splitExtensionNote": "<Note>see https://[withheld]<b>[withheld]</b>[withheld]@files.example/programs/p5.nc</Note>"
     }
   },
+  "spellings": {
+    "stored": [
+      {
+        "asset": "url-id",
+        "status": 200
+      },
+      {
+        "asset": "NOTE-PCT",
+        "status": 200
+      },
+      {
+        "asset": "NOTE-BARE",
+        "status": 200
+      },
+      {
+        "asset": "NOTE-LOGIN",
+        "status": 200
+      },
+      {
+        "asset": "NOTE-WIDE",
+        "status": 200
+      },
+      {
+        "asset": "encoded-url-id",
+        "status": 200
+      },
+      {
+        "asset": "url-id removed",
+        "status": 200
+      }
+    ],
+    "agentNamesTheUrlIdWhole": {
+      "current": true,
+      "sampleChanged": true,
+      "sampleRemoved": true
+    },
+    "agentServesTheSpellingsAsWritten": true,
+    "throughTheTool": {
+      "answered": {
+        "assets": true,
+        "current": true,
+        "sample": true,
+        "assetSample": true
+      },
+      "carries": {
+        "assets": [],
+        "current": [],
+        "sample": [],
+        "assetSample": []
+      },
+      "currentAssetObservations": [
+        {
+          "dataItemId": "agent_c0a698bd_asset_rem",
+          "value": "UNAVAILABLE"
+        },
+        {
+          "dataItemId": "agent_c0a698bd_asset_chg",
+          "value": "UNAVAILABLE"
+        },
+        {
+          "dataItemId": "d1722_asset_chg",
+          "value": "https%3A%2F%2F[withheld]%40h.example"
+        },
+        {
+          "dataItemId": "d1722_asset_rem",
+          "value": "[withheld]@h.example"
+        }
+      ],
+      "assetSampleObservations": [
+        {
+          "dataItemId": "agent_c0a698bd_asset_rem",
+          "value": "UNAVAILABLE"
+        },
+        {
+          "dataItemId": "agent_c0a698bd_asset_chg",
+          "value": "UNAVAILABLE"
+        },
+        {
+          "dataItemId": "d1722_asset_chg",
+          "value": "UNAVAILABLE"
+        },
+        {
+          "dataItemId": "d1722_asset_rem",
+          "value": "UNAVAILABLE"
+        },
+        {
+          "dataItemId": "d1722_asset_chg",
+          "value": "TOOL-1722"
+        },
+        {
+          "dataItemId": "d1722_asset_chg",
+          "value": "FILE-1"
+        },
+        {
+          "dataItemId": "d1722_asset_chg",
+          "value": "FILE-2"
+        },
+        {
+          "dataItemId": "d1722_asset_chg",
+          "value": "FILE-3"
+        },
+        {
+          "dataItemId": "d1722_asset_chg",
+          "value": "FILE-4"
+        },
+        {
+          "dataItemId": "d1722_asset_chg",
+          "value": "TOOL-5"
+        },
+        {
+          "dataItemId": "d1722_asset_chg",
+          "value": "NOTE-1"
+        },
+        {
+          "dataItemId": "d1722_asset_chg",
+          "value": "TOOL-2"
+        },
+        {
+          "dataItemId": "d1722_asset_chg",
+          "value": "[withheld]@h.example"
+        },
+        {
+          "dataItemId": "d1722_asset_chg",
+          "value": "NOTE-PCT"
+        },
+        {
+          "dataItemId": "d1722_asset_chg",
+          "value": "NOTE-BARE"
+        },
+        {
+          "dataItemId": "d1722_asset_chg",
+          "value": "NOTE-LOGIN"
+        },
+        {
+          "dataItemId": "d1722_asset_chg",
+          "value": "NOTE-WIDE"
+        },
+        {
+          "dataItemId": "d1722_asset_chg",
+          "value": "https%3A%2F%2F[withheld]%40h.example"
+        },
+        {
+          "dataItemId": "d1722_asset_rem",
+          "value": "[withheld]@h.example"
+        }
+      ],
+      "spellingNotes": {
+        "NOTE-PCT": {
+          "answeredAsExpected": true,
+          "note": "https%3A%2F%2F[withheld]%40files.example/p.nc"
+        },
+        "NOTE-BARE": {
+          "answeredAsExpected": true,
+          "note": "files.example/x.nc?[withheld]"
+        },
+        "NOTE-LOGIN": {
+          "answeredAsExpected": true,
+          "note": "login [withheld]@files.example"
+        },
+        "NOTE-WIDE": {
+          "answeredAsExpected": true,
+          "note": "ｈｔｔｐｓ：／／[withheld]@files.example"
+        }
+      }
+    }
+  },
   "sink": {
     "rawRoutesCarryingTheBroker": [],
     "throughTheTool": {
