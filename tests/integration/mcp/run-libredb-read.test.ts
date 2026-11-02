@@ -54,10 +54,10 @@ const STATE = join(dir, "state");
 const STORAGE = join(STATE, "libredb-storage.db");
 // macOS and Windows file systems fold case, so there a case variant of a name is the same file.
 const FOLDS_CASE = (() => {
-  const probe = join(tmpdir(), `libredb-case-probe-${process.pid}`);
+  const probe = join(dir, "case-probe");
   writeFileSync(probe, "");
   try {
-    return existsSync(probe.toUpperCase());
+    return existsSync(join(dir, "CASE-PROBE"));
   } finally {
     rmSync(probe, { force: true });
   }
