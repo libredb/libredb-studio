@@ -1,0 +1,15 @@
+{
+  "version": "1.40.2",
+  "name": "data-scope/alias-missing-scoped",
+  "image": "cr.weaviate.io/semitechnologies/weaviate:1.40.2@sha256:0083587dc01f33112e5406ce9b471df1abea480c71a0407af903929a389ae08a",
+  "capturedAt": "2026-11-02",
+  "principal": "scoped: db user holding a custom role of viewer actions only: read_collections on Note and Tenanted, read_tenants on Tenanted/acme, read_aliases on NotesAlias, read_nodes verbose on Note and Tenanted, read_data on Note and Tenanted/acme",
+  "request": {
+    "method": "GET",
+    "path": "/v1/aliases/MissingAlias",
+    "auth": "bearer"
+  },
+  "status": 404,
+  "contentType": "application/json",
+  "body": ""
+}

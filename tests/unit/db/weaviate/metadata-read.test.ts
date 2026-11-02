@@ -7,11 +7,14 @@
 import { describe, expect, test } from "bun:test";
 import { ExecutionProfileError, QueryError, TimeoutError } from "@/lib/db/errors";
 import { TransportError } from "@/lib/db/http/node-transport";
+import { answerFailure } from "@/lib/db/providers/vector/weaviate/errors";
 import {
+  keyListsWeaviateName,
   keylessAgentRefusal,
   proveWeaviateViewer,
   readWeaviateViewerProof,
   shapeWeaviateAgentAnswer,
+  WEAVIATE_AGENT_UNREADABLE,
   WEAVIATE_METADATA_ONLY,
   WEAVIATE_OWN_INFO_REQUEST,
   WEAVIATE_PROOF_SENTENCES,
@@ -21,7 +24,7 @@ import {
 } from "@/lib/db/providers/vector/weaviate/metadata-read";
 import { measureResultBytes } from "@/lib/db/providers/sql/read-only-budget";
 import { readWeaviateAgentStatement } from "@/lib/db/providers/vector/weaviate/metadata-request";
-import { type WeaviateAnswer, WeaviateError } from "@/lib/db/providers/vector/weaviate/client";
+import { type WeaviateAnswer, WeaviateError, type WeaviateRequest } from "@/lib/db/providers/vector/weaviate/client";
 import type { WeaviateAnswered } from "@/lib/db/providers/vector/weaviate/execute";
 import type { WeaviatePlan } from "@/lib/db/providers/vector/weaviate/request";
 import type { WeaviatePath } from "@/lib/db/providers/vector/weaviate/versions";
@@ -373,7 +376,7 @@ describe("the data scope a key that passes the proof reads", () => {
       "initech",
     ]);
     expect(rowsOf("GET /v1/schema/Tenanted/tenants", "tenants-scoped")).toEqual([{ tenant: "acme", status: "HOT" }]);
-    expect(column("GET /v1/aliases", "aliases-viewer", "alias")).toEqual(["DocsAlias", "NotesAlias"]);
+    expect(column("GET /v1/aliases", "aliases-viewer", "alias")).toEqual(["DocsAlias", "NotesAlias", "TenantedAlias"]);
     expect(rowsOf("GET /v1/aliases", "aliases-scoped")).toEqual([{ alias: "NotesAlias", collection: "Note" }]);
   });
 
@@ -562,25 +565,153 @@ describe("the budgets", () => {
 });
 
 describe("the agent's wording of a failure", () => {
+  const META = planOf("GET /v1/meta");
+
   test("a server refusal is its status and category, never the server's words", () => {
-    const error = weaviateAgentFailure(new WeaviateError("forbidden", "stored-value in a message", 403), BUDGET, "s");
+    const error = weaviateAgentFailure(
+      new WeaviateError("forbidden", "stored-value in a message", 403),
+      BUDGET,
+      "s",
+      META,
+    );
     expect(error).toBeInstanceOf(QueryError);
     expect(error?.message).toBe(
       "Weaviate answered HTTP 403 (forbidden). The server's own words are not passed on to agent mode, whose answers carry metadata only.",
     );
   });
 
+  /**
+   * Measured on 1.40.2 (data-scope/): an alias outside the key's grants answers 403 and one that does not exist, in any
+   * case, 404, and the viewer is answered 404 for a missing collection or tenant where the narrow key is answered 403.
+   * Two sentences would tell a name the key cannot read apart from a missing one.
+   */
+  test("a named collection, alias, tenant or shard the key may not read and one that does not exist are one sentence", () => {
+    const reads: readonly [string, string][] = [
+      ["GET /v1/aliases/DocsAlias", "alias-docs-scoped"],
+      ["GET /v1/aliases/MissingAlias", "alias-missing-scoped"],
+      ["GET /v1/aliases/docsalias", "alias-docs-lower-scoped"],
+      ["GET /v1/aliases/MissingAlias", "alias-missing-viewer"],
+      ["GET /v1/schema/Doc", "collection-doc-scoped"],
+      ["GET /v1/schema/Missing", "collection-missing-viewer"],
+      ["GET /v1/schema/Tenanted/tenants/globex", "tenant-globex-scoped"],
+      ["GET /v1/schema/Tenanted/tenants/missing", "tenant-missing-viewer"],
+      ["GET /v1/schema/Tenanted/shards?tenant=globex", "shards-globex-scoped"],
+      ["GET /v1/nodes/Doc?output=verbose", "collection-nodes-doc-scoped"],
+      ['POST /v1/aggregate/Tenanted {"tenant": "globex"}', "aggregate-globex-scoped"],
+    ];
+    expect(new Set(reads.map(([, capture]) => scopeAnswer(capture).status))).toEqual(new Set([403, 404]));
+    for (const [text, capture] of reads) {
+      const error = weaviateAgentFailure(answerFailure(scopeAnswer(capture)), BUDGET, text, planOf(text));
+      expect({ capture, message: error?.message }).toEqual({ capture, message: WEAVIATE_AGENT_UNREADABLE });
+      expect(error?.message).not.toContain("scoped");
+    }
+  });
+
+  test("a refusal of a read that names nothing keeps its status", () => {
+    const error = weaviateAgentFailure(new WeaviateError("not-found", "", 404), BUDGET, "s", planOf("GET /v1/aliases"));
+    expect(error?.message).toBe(
+      "Weaviate answered HTTP 404 (not-found). The server's own words are not passed on to agent mode, whose answers carry metadata only.",
+    );
+  });
+
   test("a transport timeout and a deadline are the time budget's refusal", () => {
-    expect(weaviateAgentFailure(new TransportError("timeout", "late"), BUDGET, "s")?.message).toBe(
+    expect(weaviateAgentFailure(new TransportError("timeout", "late"), BUDGET, "s", META)?.message).toBe(
       "Read-only execution exceeded the time budget: no answer within 5000ms",
     );
-    expect(weaviateAgentFailure(new TimeoutError("late"), BUDGET, "s")?.message).toBe(
+    expect(weaviateAgentFailure(new TimeoutError("late"), BUDGET, "s", META)?.message).toBe(
       "Read-only execution exceeded the time budget: no answer within 5000ms",
     );
   });
 
   test("anything else is left to the provider's own table", () => {
-    expect(weaviateAgentFailure(new TransportError("network", "reset"), BUDGET, "s")).toBeUndefined();
-    expect(weaviateAgentFailure(new Error("x"), BUDGET, "s")).toBeUndefined();
+    expect(weaviateAgentFailure(new TransportError("network", "reset"), BUDGET, "s", META)).toBeUndefined();
+    expect(weaviateAgentFailure(new Error("x"), BUDGET, "s", META)).toBeUndefined();
   });
 });
+
+/**
+ * Measured on 1.40.2 (data-scope/): Weaviate resolves an alias where a collection's name stands and checks the
+ * target's grants alone, so the narrow key, which holds no grant on TenantedAlias, reads its target's definition,
+ * tenants, shards, nodes and count through it. A name is admitted there only when the key's own lists, which the
+ * server filters by its grants, hold it.
+ */
+describe("a name where a collection's name stands", () => {
+  function lists(schema: WeaviateAnswer, aliases: WeaviateAnswer) {
+    const sent: string[] = [];
+    const send = async (request: WeaviateRequest): Promise<WeaviateAnswer> => {
+      sent.push(`${request.op} ${JSON.stringify(request.params)} ${JSON.stringify(request.query)}`);
+      return request.op === "schema" ? schema : aliases;
+    };
+    return { sent, send };
+  }
+  const signal = new AbortController().signal;
+  const SCHEMA = "schema {} {}";
+  const ALIASES = "aliases {} {}";
+
+  test("the server answers the narrow key through an alias it holds no grant on", () => {
+    for (const read of [
+      "collection-alias",
+      "tenants-alias",
+      "tenant-alias-acme",
+      "shards-alias-acme",
+      "collection-nodes-alias",
+      "aggregate-alias-acme",
+    ]) {
+      expect({ read, status: scopeAnswer(`${read}-scoped`).status }).toEqual({ read, status: 200 });
+    }
+    expect(JSON.parse(scopeAnswer("collection-alias-scoped").text).class).toBe("Tenanted");
+    expect(rowsOfAliases(scopeAnswer("aliases-scoped"))).toEqual(["NotesAlias"]);
+  });
+
+  test("a collection the key's own schema lists is admitted after that one read", async () => {
+    const { sent, send } = lists(scopeAnswer("schema-scoped"), scopeAnswer("aliases-scoped"));
+    expect(await keyListsWeaviateName(send, "Tenanted", signal)).toBe(true);
+    expect(sent).toEqual([SCHEMA]);
+  });
+
+  test("an alias the key's own alias list holds is admitted after both reads", async () => {
+    const { sent, send } = lists(scopeAnswer("schema-scoped"), scopeAnswer("aliases-scoped"));
+    expect(await keyListsWeaviateName(send, "NotesAlias", signal)).toBe(true);
+    expect(sent).toEqual([SCHEMA, ALIASES]);
+  });
+
+  test("an alias it may not list, a collection it may not read, a missing name and another case are not", async () => {
+    for (const name of ["TenantedAlias", "DocsAlias", "Doc", "Missing", "tenanted", "notesalias"]) {
+      const { sent, send } = lists(scopeAnswer("schema-scoped"), scopeAnswer("aliases-scoped"));
+      expect({ name, admitted: await keyListsWeaviateName(send, name, signal) }).toEqual({ name, admitted: false });
+      expect(sent).toEqual([SCHEMA, ALIASES]);
+    }
+  });
+
+  test("the viewer's lists admit every collection and alias", async () => {
+    for (const name of ["Doc", "Note", "Tenanted", "DocsAlias", "NotesAlias", "TenantedAlias"]) {
+      const { send } = lists(scopeAnswer("schema-viewer"), scopeAnswer("aliases-viewer"));
+      expect({ name, admitted: await keyListsWeaviateName(send, name, signal) }).toEqual({ name, admitted: true });
+    }
+  });
+
+  test("a list the server refuses is its failure, and one Studio cannot read is withheld", async () => {
+    const forbidden = json({ error: [{ message: "rbac: authorization, forbidden action" }] }, 403);
+    const refused = lists(forbidden, scopeAnswer("aliases-scoped"));
+    const error = await keyListsWeaviateName(refused.send, "Note", signal).catch((thrown: unknown) => thrown);
+    expect(error).toBeInstanceOf(WeaviateError);
+    expect((error as WeaviateError).status).toBe(403);
+    for (const [schema, aliases] of [
+      [json({ classes: 3 }), json({ aliases: [] })],
+      [json({ classes: [{ class: 3 }] }), json({ aliases: [] })],
+      [json({ classes: [] }), json({ aliases: [{ alias: { value: "stored" } }] })],
+      [{ ...json({}), text: "not json" }, json({ aliases: [] })],
+    ] as const) {
+      const odd = lists(schema, aliases);
+      await expect(keyListsWeaviateName(odd.send, "Note", signal)).rejects.toThrow(
+        "Weaviate's answer is not in the shape Studio reads for this request, so it was withheld from agent mode.",
+      );
+    }
+    const empty = lists(json({}), json({}));
+    expect(await keyListsWeaviateName(empty.send, "Note", signal)).toBe(false);
+  });
+});
+
+function rowsOfAliases(answer: WeaviateAnswer): string[] {
+  return (JSON.parse(answer.text) as { aliases: { alias: string }[] }).aliases.map((alias) => alias.alias);
+}

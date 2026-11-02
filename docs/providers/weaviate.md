@@ -258,7 +258,8 @@ Redaction is `none`: a redacted statement is stored as `?`, because a reader gue
 
 One kind, Collection, from one `GET /v1/schema`, which also answers every collection's columns, so describing every collection is one round trip; collections are listed by name.
 A collection's columns are `$id`, its properties in schema order typed with Weaviate's own word (`text`, `int`, `number`, `date`, `geoCoordinates`, `object` and the rest, a cross-reference as `ref → Target`), then its vectors.
-The schema declares no dimension, so opening one single-tenant collection reads one object with `include=vector` to spell it; a multi-tenant collection is never read past its schema.
+The schema declares no dimension, so opening one single-tenant collection in the editor reads one object with `include=vector` to spell it; a multi-tenant collection is never read past its schema.
+A connection opened for agent mode or MCP reads no object to describe a collection, so its vectors' dimension reads `?` there (section 15.9).
 No row count is on the listing.
 
 ### 6.2 Object source
@@ -438,6 +439,7 @@ A shard count there would be the collection's tenant count, and the summed objec
 A collection's objects are counted with an aggregate and its shards read with `GET /v1/schema/{collection}/shards`, both of which the server checks against the key's grants.
 This holds for agent mode as much as for MCP; before it, a verbose node read answered one row per shard, with its name, object count, indexing status and loaded flag.
 A server refusal is worded by its status and category alone, never the server's message.
+Of a request that names a collection, alias, tenant or shard, a refusal and a not-found are one sentence, `WEAVIATE_AGENT_UNREADABLE` in `metadata-read.ts`, since the server answers the two apart: an alias outside the key's grants is 403 and a missing one 404 in any case, and a missing collection or tenant is 404 to a key that may read them all and 403 to one that may not (`data-scope/alias-docs-scoped`, `alias-missing-scoped`, `alias-docs-lower-scoped`, `collection-missing-viewer`, `tenant-missing-viewer`).
 A result past the row or byte budget is refused, never cut, and an estimating plan is refused.
 
 ### 15.6 Agent language pack
@@ -475,18 +477,27 @@ Measured on 1.40.2 with the built-in viewer and with such a role, scoped to one 
 | `GET /v1/aliases`, one alias | the aliases it may read; another is 403 (`aliases-*`, `alias-docs-*`) | the server |
 | `GET /v1/nodes?output=verbose`, `GET /v1/nodes/{collection}?output=verbose` | only the collections it may read nodes of, but every tenant of each, named as a shard (`nodes-verbose-*`, `collection-nodes-*`) | Studio: the projection names the collections and neither names nor counts a shard (section 15.5) |
 | `GET /v1/meta`, `GET /v1/nodes` | the server's version and its nodes, the same for every key | none needed: no collection, tenant or alias is named |
+| an alias where a collection's name stands, the alias outside its grants and its collection inside them: `GET /v1/schema/{alias}`, its tenants, one tenant, its shards, `GET /v1/nodes/{alias}?output=verbose` and a count | the target's definition, tenants, shards, nodes and count, as if it had named the collection (`collection-alias-*`, `tenants-alias-*`, `tenant-alias-acme-*`, `shards-alias-acme-*`, `collection-nodes-alias-*`, `aggregate-alias-acme-*`) | Studio: the name is sent only when the key's own lists hold it |
+| a collection, alias or tenant that does not exist | 404 to the viewer, and to the scoped role 403 for a collection or tenant and 404 for an alias (`collection-missing-*`, `tenant-missing-*`, `alias-missing-*`, `alias-docs-lower-*`) | Studio: one sentence for a missing name and one outside the grants (section 15.5) |
 
+The server resolves an alias in a collection's place and checks the grants of the collection it names alone.
+So before a request whose path names a collection is sent, the provider reads the key's own collection list, `GET /v1/schema`, and when that does not hold the name exactly as spelled, the key's own alias list, `GET /v1/aliases`; a name neither holds is refused in the one sentence of section 15.5 and the request is not sent.
+Both lists are the server's own, filtered by the key's grants, and are read for every request, as the viewer proof is, so an alias granted to the key is read through as far as its collection's grants reach, and the collection it names is one the key's alias list already shows.
+The check reads the name from the request the provider sends, not from the agent's reading of the text.
 So tenant and alias names reach an answer only where the server filters them by the key's grants, and a per-tenant count only through a count the server checks against the tenant.
 
 ### 15.9 MCP read
 
 `run_weaviate_read` takes one request in the agent's own words, reads and admits it with the agent's reader, acquires the connection under the agent read-only profile and runs it through the same `queryReadOnly`, so everything in sections 15.1 to 15.8 holds for an MCP client too: the viewer proof at the open and before every read, the metadata-only projection, a server refusal worded by its status alone and a `COLD` tenant refused rather than woken.
 A seed's `password` is the key every call reads as, since a seed carries no separate agent credential; give it a viewer's key, or a role of viewer actions scoped to what the client may read.
-`inspect_schema` takes the operations profile, which proves nothing, so it lists each collection's properties and vectors with any key, never its tenants or aliases.
-One call sends `GET /v1/meta` and `GET /v1/users/own-info` at the open, `GET /v1/users/own-info` again before the request, the collection's own record before a collection's read and the tenant's own record before a read naming a tenant, then the request: at most five requests.
+`inspect_schema` takes the operations profile, which proves nothing, so it lists each collection's properties and vectors with any key that may read the collections' definitions, never its tenants or aliases.
+It reads `GET /v1/schema` and each collection's own record and no stored object, so a key that may read a collection's definition and none of its objects is listed all the same, and the vectors' dimension, which the schema does not declare, reads `?` (`data-scope/objects-note-sample-nodata`).
+A failure under either profile is worded by Studio's sentence alone, without the server's words, which name the key's user.
+One call on a fresh connection sends `GET /v1/meta` and `GET /v1/users/own-info` at the open, `GET /v1/users/own-info` again before the request, the key's collection list `GET /v1/schema` before a request naming a collection and its alias list `GET /v1/aliases` when that does not hold the name, the collection's own record, the tenant's own record before a read naming a tenant, then the request: at most eight requests, and seven for a count of a tenant of a collection the key lists.
+On a connection already open the two open requests are not sent again; the proof at the open and the proof before the request are kept apart on purpose, since the open refuses a key before any request of the call is sent and the request's proof keeps no verdict.
 The tool takes no `offset` and no `database`; a read past the 1000-row provider budget is refused, never cut, so a collection with more than 1000 tenants cannot be listed and is read one tenant at a time.
 `queryReadOnly` takes no cancel signal: a client cancel ends MCP's wait, and the request stays open until its answer or the provider's transport deadline, set to the time left of `timeout_ms`, closes it (docs/MCP.md, "Limits").
 Measured through a proxy that held a read's answer back: at the minimum `timeout_ms` of 500 the client got the timeout answer after about 500 ms and the provider closed its request then, and a cancel after one second was answered at once while the request stayed open until about four seconds, the time left of a `timeout_ms` of 4000.
-[`tests/live/weaviate-mcp-boundary.ts`](../../tests/live/weaviate-mcp-boundary.ts) replays all of this through the MCP tool's own handler against live 1.40.2 servers: the open for each refused key, every write, object read, search, GraphQL, filter and user or role read refused by the provider's reader with the MCP fence bypassed, the viewer refused the same writes 403 by the server while root runs them, the state unchanged, the data scope of section 15.8, a `COLD` tenant, the limits, the timeout and the cancel.
+[`tests/live/weaviate-mcp-boundary.ts`](../../tests/live/weaviate-mcp-boundary.ts) replays all of this through the MCP tool's own handler against live 1.40.2 servers: the open for each refused key, every write, object read, search, GraphQL, filter and user or role read refused by the provider's reader with the MCP fence bypassed, the viewer refused the same writes 403 by the server while root runs them, the state unchanged, the data scope of section 15.8 with an alias in a collection's place and a missing name beside one outside the grants, `inspect_schema` for a key that may read no object, a `COLD` tenant, the limits, the timeout and the cancel.
 Measured on 2026-11-02: every check passed.
 An OIDC group is refused by the proof (section 15.2), but needs an OIDC provider, so that case is held by the unit tests over a constructed answer and not replayed live.

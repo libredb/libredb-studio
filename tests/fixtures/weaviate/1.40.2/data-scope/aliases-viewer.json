@@ -11,5 +11,5 @@
   },
   "status": 200,
   "contentType": "application/json",
-  "body": "{\"aliases\":[{\"alias\":\"DocsAlias\",\"class\":\"Doc\"},{\"alias\":\"NotesAlias\",\"class\":\"Note\"}]}\n"
+  "body": "{\"aliases\":[{\"alias\":\"TenantedAlias\",\"class\":\"Tenanted\"},{\"alias\":\"DocsAlias\",\"class\":\"Doc\"},{\"alias\":\"NotesAlias\",\"class\":\"Note\"}]}\n"
 }

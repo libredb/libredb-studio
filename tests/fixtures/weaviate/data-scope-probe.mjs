@@ -11,7 +11,9 @@
 // The question it answers: which names a key that passes the agent's viewer proof reads beyond the collections,
 // tenants and aliases its role grants. The broad principal holds the built-in viewer role; the narrow one a custom
 // role holding only viewer actions, scoped to the collection Note, the tenant acme of Tenanted, the alias NotesAlias
-// and the node reads of Note and Tenanted.
+// and the node reads of Note and Tenanted. The alias TenantedAlias names Tenanted and is granted to neither, so the
+// reads that name it show what the server answers for an alias in a collection's place. A third principal may read
+// the definition of Note and none of its objects, which is what a listing that sampled an object would need.
 // oxlint-disable no-await-in-loop -- each step runs after the one before, on purpose: a capture records what the server holds then.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -39,6 +41,7 @@ const PRINCIPALS = {
   viewer: "db user holding the built-in viewer role",
   scoped:
     "db user holding a custom role of viewer actions only: read_collections on Note and Tenanted, read_tenants on Tenanted/acme, read_aliases on NotesAlias, read_nodes verbose on Note and Tenanted, read_data on Note and Tenanted/acme",
+  nodata: "db user holding a custom role of one viewer action: read_collections on Note",
 };
 
 async function call(principal, method, path, body) {
@@ -98,6 +101,7 @@ async function seed() {
   }
   await root("POST", "/v1/aliases", { alias: "NotesAlias", class: "Note" });
   await root("POST", "/v1/aliases", { alias: "DocsAlias", class: "Doc" });
+  await root("POST", "/v1/aliases", { alias: "TenantedAlias", class: "Tenanted" });
 }
 
 async function user(name, roles) {
@@ -122,6 +126,11 @@ async function principals() {
     ],
   });
   await user("scoped", ["agent-scoped"]);
+  await root("POST", "/v1/authz/roles", {
+    name: "agent-nodata",
+    permissions: [{ action: "read_collections", collections: { collection: "Note" } }],
+  });
+  await user("nodata", ["agent-nodata"]);
 }
 
 /** An answer with what changes run to run replaced: times and the random names of single-tenant shards. */
@@ -175,6 +184,31 @@ const READS = [
   ["collection-nodes-tenanted", "GET", "/v1/nodes/Tenanted?output=verbose"],
   ["aggregate-doc", "POST", "/v1/aggregate/Doc", {}],
   ["aggregate-globex", "POST", "/v1/aggregate/Tenanted", { tenant: "globex" }],
+  // The reads a count of the granted tenant sends, and an alias the narrow key may read where a collection stands.
+  ["collection-tenanted", "GET", "/v1/schema/Tenanted"],
+  ["tenant-acme", "GET", "/v1/schema/Tenanted/tenants/acme"],
+  ["aggregate-acme", "POST", "/v1/aggregate/Tenanted", { tenant: "acme" }],
+  ["collection-notes-alias", "GET", "/v1/schema/NotesAlias"],
+  // A name nothing holds, beside the reads above that name something outside the narrow grants.
+  ["alias-missing", "GET", "/v1/aliases/MissingAlias"],
+  ["alias-docs-lower", "GET", "/v1/aliases/docsalias"],
+  ["collection-missing", "GET", "/v1/schema/Missing"],
+  ["tenant-missing", "GET", "/v1/schema/Tenanted/tenants/missing"],
+  // An alias where a collection's name stands.
+  ["collection-alias", "GET", "/v1/schema/TenantedAlias"],
+  ["tenants-alias", "GET", "/v1/schema/TenantedAlias/tenants"],
+  ["tenant-alias-acme", "GET", "/v1/schema/TenantedAlias/tenants/acme"],
+  ["shards-alias-acme", "GET", "/v1/schema/TenantedAlias/shards?tenant=acme"],
+  ["collection-nodes-alias", "GET", "/v1/nodes/TenantedAlias?output=verbose"],
+  ["aggregate-alias-acme", "POST", "/v1/aggregate/TenantedAlias", { tenant: "acme" }],
+];
+
+/** What the principal that may read Note's definition and none of its objects is answered. */
+const NODATA_READS = [
+  ["own-info", "GET", "/v1/users/own-info"],
+  ["schema", "GET", "/v1/schema"],
+  ["collection-note", "GET", "/v1/schema/Note"],
+  ["objects-note-sample", "GET", "/v1/objects?class=Note&limit=1&include=vector"],
 ];
 
 async function main() {
@@ -184,6 +218,9 @@ async function main() {
     for (const [name, method, path, body] of READS) {
       await capture(`${name}-${principal}`, principal, method, path, body);
     }
+  }
+  for (const [name, method, path, body] of NODATA_READS) {
+    await capture(`${name}-nodata`, "nodata", method, path, body);
   }
   console.log(`${written} captures written to ${out}`);
 }

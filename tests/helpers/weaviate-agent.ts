@@ -13,6 +13,8 @@ const VERSION_DIRECTORY = posix.join(import.meta.dir.replaceAll("\\", "/"), ".."
 const DIRECTORY = posix.join(VERSION_DIRECTORY, "agent-boundary");
 const SCOPE_DIRECTORY = posix.join(VERSION_DIRECTORY, "data-scope");
 
+const asResponse = (answer: WeaviateAnswer): NodeResponse => ({ ...answer });
+
 export interface WeaviateAgentCapture {
   readonly name: string;
   readonly principal: string;
@@ -33,6 +35,32 @@ export function scopeCapture(name: string): WeaviateAgentCapture {
   return JSON.parse(readFileSync(posix.join(SCOPE_DIRECTORY, `${name}.json`), "utf8")) as WeaviateAgentCapture;
 }
 
+/** Every data-scope capture's file name, without `.json`. */
+function scopeCaptureNames(): readonly string[] {
+  return readdirSync(SCOPE_DIRECTORY)
+    .filter((file) => file.endsWith(".json"))
+    .map((file) => file.slice(0, -".json".length));
+}
+
+/**
+ * A recording transport's answers for a data-scope `principal` (`viewer`, `scoped`, `nodata`): each request line is
+ * answered with the data-scope capture of the same line sent as that principal, and the meta read with the
+ * agent-boundary viewer's, since every key is answered the same meta; a line no capture holds throws by name.
+ */
+export function scopeServer(principal: string): RecordedAnswer {
+  const byLine = new Map<string, WeaviateAnswer>([["GET /v1/meta", agentAnswer("meta-viewer")]]);
+  for (const name of scopeCaptureNames()) {
+    if (!name.endsWith(`-${principal}`)) continue;
+    const capture = scopeCapture(name);
+    byLine.set(`${capture.request.method} ${capture.request.path}`, scopeAnswer(name));
+  }
+  return (_request, line) => {
+    const found = byLine.get(line);
+    if (found === undefined) throw new Error(`no ${principal} data-scope capture answers ${line}`);
+    return asResponse(found);
+  };
+}
+
 /** A data-scope capture's answer as it crosses the client seam. */
 export function scopeAnswer(name: string): WeaviateAnswer {
   const capture = scopeCapture(name);
@@ -51,8 +79,6 @@ export function agentAnswer(name: string): WeaviateAnswer {
   const capture = agentCapture(name);
   return { status: capture.status, contentType: capture.contentType, retryAfter: null, text: capture.body };
 }
-
-const asResponse = (answer: WeaviateAnswer): NodeResponse => ({ ...answer });
 
 /**
  * A recording transport's answers for `principal` (`viewer`, `root`, ...): each request is answered with the capture

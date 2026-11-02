@@ -19,7 +19,12 @@
  *  - the data scope: a key whose role holds viewer actions scoped to one collection, one tenant, one alias and the
  *    node reads of two collections is answered only those collections, that tenant and that alias, a read outside them
  *    is the server's 403 worded by its status alone, and a verbose node read, which the server does not filter by
- *    tenant, neither names nor counts a tenant; the viewer is answered every collection, the control;
+ *    tenant, neither names nor counts a tenant; the viewer is answered every collection, the control; an alias outside
+ *    the key's grants where a collection's name stands, which the server reads as the collection it names, is refused
+ *    before the request is sent, and a name that does not exist is answered the sentence a name outside the grants is,
+ *    though the server answers the two apart;
+ *  - inspect_schema, through MCP: a key that may read a collection's definition and none of its objects is answered
+ *    the collection's columns, its vector's dimension `?`, and no word of the server's;
  *  - a COLD tenant: a count naming it is refused, and the tenant is still COLD after;
  *  - the limits: a tenant list past the 1000-row provider budget is refused, never cut; a read past `max_rows` is cut
  *    to it and says so;
@@ -44,7 +49,9 @@ import { createServer, request as httpRequest, type IncomingMessage, type Server
 import type { AddressInfo } from "node:net";
 import { acquireExecutionProfileProvider, clearProviderCache, type ExecutionProfile } from "@/lib/db/factory";
 import type { McpConnectionContext } from "@/lib/mcp/context";
+import { WEAVIATE_AGENT_UNREADABLE } from "@/lib/db/providers/vector/weaviate/metadata-read";
 import { MCP_CANCELLED_TEXT, type ToolResult } from "@/lib/mcp/output";
+import { InspectSchemaInputSchema, inspectSchema } from "@/lib/mcp/tools/inspect-schema";
 import { runStatement, type McpStatementInput } from "@/lib/mcp/tools/run-statement";
 import { mcpStatementArm, type McpStatementArm } from "@/lib/mcp/tools/statement-arms";
 import type { ManagedConnection } from "@/lib/seed";
@@ -64,9 +71,9 @@ const KEYONLY = new URL(env("LIBREDB_LIVE_WEAVIATE_KEYONLY_URL"));
 const KEYONLY_KEY = env("LIBREDB_LIVE_WEAVIATE_KEYONLY_KEY");
 const USER = "libredb-lm-";
 const COLLECTIONS = ["LmNote", "LmDoc", "LmTenanted", "LmMany", "LmControl"] as const;
-const ALIASES = ["LmNotesAlias", "LmDocsAlias"] as const;
-const ROLES = ["libredb-lm-scoped", "libredb-lm-widened"] as const;
-const USERS = ["viewer", "admin", "widened", "scoped"] as const;
+const ALIASES = ["LmNotesAlias", "LmDocsAlias", "LmTenantedAlias"] as const;
+const ROLES = ["libredb-lm-scoped", "libredb-lm-widened", "libredb-lm-nodata"] as const;
+const USERS = ["viewer", "admin", "widened", "scoped", "nodata"] as const;
 const ENGINES = "It runs on Weaviate.";
 
 /** The tool as MCP registers it, and the same tool with its statement fence removed: the boundary under test. */
@@ -151,6 +158,26 @@ async function mcp(
   return { result, acquired };
 }
 
+/** One MCP inspect_schema call on `connection`, through the factory's own profiled acquisition. */
+async function inspect(
+  connection: ManagedConnection,
+  args: Record<string, unknown>,
+): Promise<{ readonly result: ToolResult; readonly acquired: ExecutionProfile[] }> {
+  const acquired: ExecutionProfile[] = [];
+  const context = {
+    caller: { username: "live", role: "admin" },
+    visibleConnections: async () => [connection],
+    resolve: async () => connection,
+    acquire: (target: ManagedConnection, profile: ExecutionProfile) => {
+      acquired.push(profile);
+      return acquireExecutionProfileProvider(target, profile);
+    },
+  } as unknown as McpConnectionContext;
+  const input = InspectSchemaInputSchema.parse({ connection_id: connection.id, ...args });
+  const result = await inspectSchema(input, { context, signal: new AbortController().signal });
+  return { result, acquired };
+}
+
 const textOf = (result: ToolResult): string =>
   result.content.map((part) => ("text" in part ? part.text : "")).join(" ");
 const rowsOf = (result: ToolResult): Record<string, unknown>[] =>
@@ -221,6 +248,7 @@ async function seedServer(): Promise<void> {
   }
   await root("POST", "/v1/aliases", { alias: "LmNotesAlias", class: "LmNote" });
   await root("POST", "/v1/aliases", { alias: "LmDocsAlias", class: "LmDoc" });
+  await root("POST", "/v1/aliases", { alias: "LmTenantedAlias", class: "LmTenanted" });
   await root("POST", "/v1/authz/roles", {
     name: "libredb-lm-scoped",
     permissions: [
@@ -245,6 +273,11 @@ async function seedServer(): Promise<void> {
   await user("admin", ["admin"]);
   await user("widened", ["libredb-lm-widened"]);
   await user("scoped", ["libredb-lm-scoped"]);
+  await root("POST", "/v1/authz/roles", {
+    name: "libredb-lm-nodata",
+    permissions: [{ action: "read_collections", collections: { collection: "LmNote" } }],
+  });
+  await user("nodata", ["libredb-lm-nodata"]);
 }
 
 /** The schema, the aliases, every tenant's status and every collection's count, as root reads them. */
@@ -395,24 +428,79 @@ async function theDataScope(): Promise<void> {
     ours(column(aliases.result, "alias")).join() === "LmNotesAlias",
     `scope: the scoped key's alias list holds LmNotesAlias alone -> ${column(aliases.result, "alias")}`,
   );
-  for (const statement of [
-    "GET /v1/schema/LmDoc",
-    "GET /v1/schema/LmTenanted/tenants/globex",
-    "GET /v1/aliases/LmDocsAlias",
-    "GET /v1/nodes/LmDoc?output=verbose",
-    "POST /v1/aggregate/LmDoc",
-    'POST /v1/aggregate/LmTenanted {"tenant": "globex"}',
-  ]) {
+  // Outside the scoped key's grants, and beside each a name nothing holds: one sentence for both, whatever the server
+  // answered, which the raw read shows.
+  const unreadable: readonly [string, string, string][] = [
+    ["GET /v1/schema/LmDoc", "GET", "/v1/schema/LmDoc"],
+    ["GET /v1/schema/LmMissing", "GET", "/v1/schema/LmMissing"],
+    ["GET /v1/schema/LmTenanted/tenants/globex", "GET", "/v1/schema/LmTenanted/tenants/globex"],
+    ["GET /v1/schema/LmTenanted/tenants/missing", "GET", "/v1/schema/LmTenanted/tenants/missing"],
+    ["GET /v1/aliases/LmDocsAlias", "GET", "/v1/aliases/LmDocsAlias"],
+    ["GET /v1/aliases/LmMissingAlias", "GET", "/v1/aliases/LmMissingAlias"],
+    ["GET /v1/aliases/lmdocsalias", "GET", "/v1/aliases/lmdocsalias"],
+    ["GET /v1/nodes/LmDoc?output=verbose", "GET", "/v1/nodes/LmDoc?output=verbose"],
+    ["POST /v1/aggregate/LmDoc", "POST", "/v1/aggregate/LmDoc"],
+    ['POST /v1/aggregate/LmTenanted {"tenant": "globex"}', "POST", "/v1/aggregate/LmTenanted"],
+  ];
+  const rawStatuses = new Set<number>();
+  for (const [statement, method, path] of unreadable) {
+    const { result } = await mcp(scoped, { statement });
+    const text = textOf(result);
+    const answer = await raw(
+      RBAC,
+      keys.scoped,
+      method,
+      path,
+      method === "POST" ? (statement.includes("globex") ? { tenant: "globex" } : {}) : undefined,
+    );
+    rawStatuses.add(answer.status);
+    check(
+      result.isError === true &&
+        text.includes(WEAVIATE_AGENT_UNREADABLE) &&
+        !text.includes("insufficient") &&
+        !text.includes(USER) &&
+        !/\b40[34]\b/.test(text),
+      `scope: ${statement}, raw ${answer.status} as the scoped key, is the one sentence for a missing name and one outside the grants -> ${text.slice(-120)}`,
+    );
+  }
+  check(
+    rawStatuses.has(403) && rawStatuses.has(404),
+    `scope: the server answered those reads ${[...rawStatuses].sort().join(" and ")}, which the one sentence does not tell apart`,
+  );
+  for (const [statement, method, path, body] of [
+    ["GET /v1/schema/LmTenantedAlias", "GET", "/v1/schema/LmTenantedAlias", undefined],
+    ["GET /v1/schema/LmTenantedAlias/tenants", "GET", "/v1/schema/LmTenantedAlias/tenants", undefined],
+    ["GET /v1/schema/LmTenantedAlias/tenants/acme", "GET", "/v1/schema/LmTenantedAlias/tenants/acme", undefined],
+    [
+      "GET /v1/schema/LmTenantedAlias/shards?tenant=acme",
+      "GET",
+      "/v1/schema/LmTenantedAlias/shards?tenant=acme",
+      undefined,
+    ],
+    ["GET /v1/nodes/LmTenantedAlias?output=verbose", "GET", "/v1/nodes/LmTenantedAlias?output=verbose", undefined],
+    [
+      'POST /v1/aggregate/LmTenantedAlias {"tenant": "acme"}',
+      "POST",
+      "/v1/aggregate/LmTenantedAlias",
+      { tenant: "acme" },
+    ],
+  ] as const) {
+    const answer = await raw(RBAC, keys.scoped, method, path, body);
     const { result } = await mcp(scoped, { statement });
     const text = textOf(result);
     check(
-      result.isError === true &&
-        text.includes("Weaviate answered HTTP 403 (forbidden)") &&
-        !text.includes("insufficient") &&
-        !text.includes(USER),
-      `scope: ${statement} outside the scoped key's grants is the server's 403, in its status alone -> ${text.slice(-160)}`,
+      answer.status === 200 &&
+        result.isError === true &&
+        text.includes(WEAVIATE_AGENT_UNREADABLE) &&
+        !JSON.stringify(result).includes('"LmTenanted"'),
+      `scope: ${statement}, which the server answers the scoped key ${answer.status} through an alias it holds no grant on, is refused before it is sent -> ${text.slice(-120)}`,
     );
   }
+  const granted = await mcp(scoped, { statement: "GET /v1/schema/LmNotesAlias" });
+  check(
+    granted.result.isError === undefined && column(granted.result, "property").join() === "body",
+    `scope: an alias the scoped key may read is read through -> ${JSON.stringify(rowsOf(granted.result))}`,
+  );
   for (const statement of ["GET /v1/nodes?output=verbose", "GET /v1/nodes/LmTenanted?output=verbose"]) {
     const { result } = await mcp(scoped, { statement });
     const answered = JSON.stringify(result.structuredContent);
@@ -430,6 +518,33 @@ async function theDataScope(): Promise<void> {
   check(
     direct.text.includes('"globex"') && direct.text.includes('"initech"'),
     "scope: the same verbose node read sent raw as the scoped key names tenants its role does not grant, which is why the projection neither names nor counts them",
+  );
+}
+
+async function theInspection(): Promise<void> {
+  const nodata = seed("nodata", keys.nodata);
+  const sampled = await raw(RBAC, keys.nodata, "GET", "/v1/objects?class=LmNote&limit=1&include=vector");
+  const { result, acquired } = await inspect(nodata, { include_indexes: true });
+  const tables = (result.structuredContent?.tables ?? []) as {
+    name: string;
+    columns?: { name: string; data_type: string }[];
+  }[];
+  const note = tables.find((table) => table.name === "LmNote");
+  check(
+    sampled.status === 403 &&
+      result.isError === undefined &&
+      acquired.join() === "agent-operations" &&
+      tables.map((table) => table.name).join() === "LmNote" &&
+      note?.columns?.map((entry) => `${entry.name}:${entry.data_type}`).join() ===
+        "$id:uuid,body:text,$vector:Vector(?, cosine, hnsw)" &&
+      !JSON.stringify(result).includes(USER),
+    `inspect: a key that may read LmNote's definition and none of its objects (raw object read ${sampled.status}) is listed LmNote, its vector's dimension ?, and no server word -> ${JSON.stringify(note?.columns)}`,
+  );
+  const viewer = await inspect(seed("viewer", keys.viewer), {});
+  check(
+    viewer.result.isError === undefined &&
+      ((viewer.result.structuredContent?.tables ?? []) as { name: string }[]).some((table) => table.name === "LmNote"),
+    "inspect: the viewer is listed every collection, the control",
   );
 }
 
@@ -535,6 +650,7 @@ try {
   await theOpen();
   await theBoundary();
   await theDataScope();
+  await theInspection();
   await theColdTenant();
   await theLimits();
   await theTimeoutAndCancel();

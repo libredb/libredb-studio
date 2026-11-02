@@ -15,7 +15,11 @@
  *   stored property, vector or payload, and no description, module setting or base URL, reaches a row, a column name
  *   or a nested cell.
  * - **Failures without the server's words.** A refusal is worded by its HTTP status and category alone, since the
- *   server's message can echo what a request carried.
+ *   server's message can echo what a request carried, and a named collection, alias, tenant or shard the key may not
+ *   read is worded as one that does not exist (`data-scope/alias-docs-scoped`, `alias-missing-scoped`).
+ * - **A name in a collection's place.** Weaviate resolves an alias there and checks the target's grants alone
+ *   (`data-scope/collection-alias-scoped` and the other `*-alias-*` captures), so a name is sent there only when the
+ *   key's own collection list or alias list, which the server filters by its grants, holds it.
  *
  * Pure: it receives the answers and never a client.
  */
@@ -36,7 +40,8 @@ import {
 } from "@/lib/db/redaction/metadata-only";
 import type { ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { QueryResult } from "@/lib/types";
-import { type WeaviateAnswer, WeaviateError, type WeaviateRequest } from "./client";
+import { type WeaviateAnswer, WeaviateError, type WeaviateErrorCategory, type WeaviateRequest } from "./client";
+import { answerFailure } from "./errors";
 import type { WeaviateAnswered } from "./execute";
 import type { WeaviatePlan } from "./request";
 
@@ -139,6 +144,66 @@ export async function proveWeaviateViewer(
   signal: AbortSignal,
 ): Promise<void> {
   readWeaviateViewerProof(await send(WEAVIATE_OWN_INFO_REQUEST, signal));
+}
+
+/**
+ * The agent's one sentence for a named collection, alias, tenant or shard it cannot read. Measured on 1.40.2, an alias
+ * outside the key's grants is answered 403 and one that does not exist 404 in any case (`data-scope/alias-docs-scoped`,
+ * `alias-missing-scoped`, `alias-docs-lower-scoped`), and a missing collection or tenant 404 to a key that may read
+ * them all and 403 to one that may not, so two sentences would tell a name the key cannot read apart from a missing
+ * one. Studio's own refusal of a name the key's lists do not hold is the same sentence.
+ */
+export const WEAVIATE_AGENT_UNREADABLE =
+  "The request names a collection, alias, tenant or shard that does not exist or that this key may not read, and agent mode answers both alike. GET /v1/schema, GET /v1/aliases and a collection's tenants list the names this key may read.";
+
+const SCHEMA_REQUEST: WeaviateRequest = Object.freeze({
+  op: "schema",
+  params: Object.freeze({}),
+  query: Object.freeze({}),
+});
+const ALIASES_REQUEST: WeaviateRequest = Object.freeze({
+  op: "aliases",
+  params: Object.freeze({}),
+  query: Object.freeze({}),
+});
+
+/** The names one of the key's own lists holds: each entry's `key`, from the list under `field`. */
+async function listedNames(
+  send: (request: WeaviateRequest, signal: AbortSignal) => Promise<WeaviateAnswer>,
+  request: WeaviateRequest,
+  field: "classes" | "aliases",
+  key: "class" | "alias",
+  signal: AbortSignal,
+): Promise<readonly string[]> {
+  const answer = await send(request, signal);
+  const failure = answerFailure(answer);
+  if (failure !== undefined) throw failure;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(answer.text);
+  } catch {
+    throw shapeError();
+  }
+  return objects(object(parsed)[field] ?? []).map((entry) => {
+    const name = entry[key];
+    if (typeof name !== "string") throw shapeError();
+    return name;
+  });
+}
+
+/**
+ * Whether the key's own lists hold `name`, exactly as spelled: its collection list, `GET /v1/schema`, then its alias
+ * list, `GET /v1/aliases`, read only when the first does not hold it. The server filters both by the key's grants
+ * (`data-scope/schema-scoped`, `aliases-scoped`), so a name held by neither is one the key may not read or one that
+ * does not exist. A list the server refuses throws its failure, and one Studio cannot read is withheld.
+ */
+export async function keyListsWeaviateName(
+  send: (request: WeaviateRequest, signal: AbortSignal) => Promise<WeaviateAnswer>,
+  name: string,
+  signal: AbortSignal,
+): Promise<boolean> {
+  if ((await listedNames(send, SCHEMA_REQUEST, "classes", "class", signal)).includes(name)) return true;
+  return (await listedNames(send, ALIASES_REQUEST, "aliases", "alias", signal)).includes(name);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -406,16 +471,33 @@ export function shapeWeaviateAgentAnswer(
   };
 }
 
+/** The answers that mean a name the key cannot read, whether it does not exist or the key may not read it. */
+const UNREADABLE_CATEGORIES: ReadonlySet<WeaviateErrorCategory> = new Set<WeaviateErrorCategory>([
+  "forbidden",
+  "not-found",
+  "collection-not-found",
+]);
+
+/** Whether a request names a collection, an alias or a tenant: every read but meta, the lists and the cluster's nodes. */
+function namesAnObject(plan: WeaviatePlan): boolean {
+  return plan.collection !== null || plan.route.op === "alias";
+}
+
 /**
  * The agent's wording of a failure, or undefined for one the provider's own table words. A server refusal is worded
- * by its status and category alone, never its message; a transport timeout is the time budget's refusal.
+ * by its status and category alone, never its message, and of a request that names a collection, alias, tenant or
+ * shard, a refusal and a not-found are one sentence; a transport timeout is the time budget's refusal.
  */
 export function weaviateAgentFailure(
   error: unknown,
   budget: ReadOnlyStatementBudget,
   statement: string,
+  plan: WeaviatePlan,
 ): QueryError | undefined {
   if (error instanceof WeaviateError) {
+    if (namesAnObject(plan) && UNREADABLE_CATEGORIES.has(error.category)) {
+      return new QueryError(WEAVIATE_AGENT_UNREADABLE, "weaviate", statement);
+    }
     return new QueryError(
       `${error.message}. The server's own words are not passed on to agent mode, whose answers carry metadata only.`,
       "weaviate",

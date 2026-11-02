@@ -20,7 +20,7 @@ import { languageServer } from "@/lib/agent/languages/server";
 import { getServerAuditBuffer } from "@/lib/audit";
 import type { ExecutionProfile } from "@/lib/db/factory";
 import { TransportError } from "@/lib/db/http/node-transport";
-import { WEAVIATE_PROOF_SENTENCES } from "@/lib/db/providers/vector/weaviate/metadata-read";
+import { WEAVIATE_AGENT_UNREADABLE, WEAVIATE_PROOF_SENTENCES } from "@/lib/db/providers/vector/weaviate/metadata-read";
 import { WeaviateProvider } from "@/lib/db/providers/vector/weaviate/index";
 import { createRestWeaviateClient } from "@/lib/db/providers/vector/weaviate/rest-client";
 import { McpConnectionContext } from "@/lib/mcp/context";
@@ -30,7 +30,13 @@ import type { ManagedConnection } from "@/lib/seed";
 import type { DatabaseConnection } from "@/lib/types";
 import { pinMcpTestEnvironment, resetMcpTestState, writeSeedFile } from "../../helpers/mcp-fixtures";
 import { connectClient, handlerServe, testAuthInfo } from "../../helpers/mcp-harness";
-import { agentAnswer, agentCollectionAnswer, agentServer, scopeAnswer } from "../../helpers/weaviate-agent";
+import {
+  agentAnswer,
+  agentCollectionAnswer,
+  agentServer,
+  scopeAnswer,
+  scopeServer,
+} from "../../helpers/weaviate-agent";
 import { type RecordedAnswer, okAnswer, recordingWeaviateTransport } from "../../helpers/weaviate-wire";
 
 pinMcpTestEnvironment();
@@ -65,11 +71,12 @@ beforeEach(() => {
   // The factory's provider, with only its transport replaced: opened under the agent's context for agent-read-only.
   spyOn(McpConnectionContext.prototype, "acquire").mockImplementation(
     async (connection: ManagedConnection, profile: ExecutionProfile) => {
+      // Every execution profile opens read-only; only agent-read-only sends statements (the factory's own table).
       const agent = honourProfile && profile === "agent-read-only";
       const provider = new WeaviateProvider(
         connection as DatabaseConnection,
         { queryTimeout: 30_000 },
-        { readOnly: agent, sendsStatements: agent },
+        { readOnly: honourProfile, sendsStatements: agent },
         (options, routes) => createRestWeaviateClient(options, routes, transport.factory),
       );
       await provider.connect();
@@ -201,16 +208,26 @@ describe("a read", () => {
     expect(tenants.structuredContent?.rows).toEqual([{ tenant: "acme", status: "HOT" }]);
   });
 
-  test("a read outside the key's grants is the server's 403, worded without the server's words", async () => {
-    answer = agentServer("viewer", {
-      "GET /v1/users/own-info": scopeAnswer("own-info-scoped"),
-      "GET /v1/aliases/DocsAlias": scopeAnswer("alias-docs-scoped"),
-    });
-    const result = await weaviate("GET /v1/aliases/DocsAlias");
-    expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain("Weaviate answered HTTP 403");
-    expect(textOf(result)).not.toContain("DocsAlias");
-    expect(textOf(result)).not.toContain("scoped");
+  test("a name outside the key's grants and a missing one are one answer, without the server's words", async () => {
+    answer = scopeServer("scoped");
+    const texts: string[] = [];
+    for (const statement of [
+      "GET /v1/aliases/DocsAlias",
+      "GET /v1/aliases/MissingAlias",
+      "GET /v1/schema/Doc",
+      "GET /v1/schema/Missing",
+      "GET /v1/schema/TenantedAlias/tenants",
+      'POST /v1/aggregate/TenantedAlias {"tenant": "acme"}',
+    ]) {
+      const result = await weaviate(statement);
+      expect(result.isError).toBe(true);
+      texts.push(textOf(result));
+    }
+    expect(new Set(texts).size).toBe(1);
+    expect(texts[0]).toContain(WEAVIATE_AGENT_UNREADABLE);
+    for (const word of ["DocsAlias", "Tenanted", "scoped", "403", "404"]) expect(texts[0]).not.toContain(word);
+    expect(lines()).not.toContain("GET /v1/schema/TenantedAlias/tenants");
+    expect(lines()).not.toContain("POST /v1/aggregate/TenantedAlias");
   });
 
   test("a read past max_rows is cut to it, and the hint narrows the read rather than paging", async () => {
@@ -225,6 +242,31 @@ describe("a read", () => {
       pagination: { offset: 0, limit: 100, hasMore: true, nextOffset: null, wasLimited: false },
       hint: RUN_WEAVIATE_READ_ARM.moreRows(statement, "weaviate", { maxRows: 100, shown: 100, cut: "max_rows" }),
     });
+  });
+});
+
+describe("inspect_schema", () => {
+  test("lists a collection the key may read the definition of and none of its objects, reading no object", async () => {
+    answer = scopeServer("nodata");
+    const result = await call("inspect_schema", { connection_id: "seed:vectors", include_indexes: true });
+    expect(result.isError ?? false).toBe(false);
+    expect(result.structuredContent?.tables.map((table: { name: string }) => table.name)).toEqual(["Note"]);
+    const columns = result.structuredContent?.tables[0].columns as { name: string; data_type: string }[];
+    expect(columns.map((column) => column.name)).toEqual(["$id", "body", "$vector"]);
+    expect(columns.at(-1)?.data_type).toBe("Vector(?, cosine, hnsw)");
+    expect(lines().some((line) => line.startsWith("GET /v1/objects"))).toBe(false);
+    expect(JSON.stringify(result)).not.toContain("nodata");
+  });
+
+  test("a definition read the server refuses is worded by its status, never the server's words", async () => {
+    answer = scopeServer("nodata");
+    const refused = scopeAnswer("objects-note-sample-nodata");
+    answer = (request, line) =>
+      line === "GET /v1/schema/Note" ? { ...refused } : scopeServer("nodata")(request, line);
+    const result = await call("inspect_schema", { connection_id: "seed:vectors" });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("The credential is not allowed to run this request.");
+    for (const word of ["nodata", "rbac", "read_data"]) expect(textOf(result)).not.toContain(word);
   });
 });
 

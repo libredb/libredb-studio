@@ -42,6 +42,7 @@ const CONTEXT: WeaviateErrorContext = {
   responseCapBytes: 16 * 1024 * 1024,
   timeoutMs: 30_000,
   secretForms: secretForms([TEST_PASSWORD]),
+  withholdServerWords: false,
 };
 
 const NO_KEY = capturedAnswer("weaviate-auth/no-key.json", "GET /v1/meta");
@@ -404,6 +405,24 @@ describe("toProviderError: Studio's sentence first, the server's words after it"
     expect(worded(handler(500, "x".repeat(2000))).message).toBe(
       `Weaviate failed to run the request (HTTP 500). (Weaviate: ${"x".repeat(2000)})`,
     );
+  });
+});
+
+describe("a context that withholds the server's words", () => {
+  const WORDS = "rbac: authorization, forbidden action: user 'narrow-user' has insufficient permissions to read_data";
+
+  test.each([
+    handler(403, WORDS),
+    handler(404, `tenant not found: ${WORDS}`),
+    handler(400, `invalid ${WORDS}`),
+    handler(500, `failure ${WORDS}`),
+    plain(418, `teapot ${WORDS}`),
+  ])("words %j with Studio's sentence alone", (answer) => {
+    const failure = answerFailure(answer) as WeaviateError;
+    const message = toProviderError(failure, { ...CONTEXT, withholdServerWords: true }).message;
+    expect(message).not.toContain("narrow-user");
+    expect(message).not.toContain("(Weaviate:");
+    expect(toProviderError(failure, CONTEXT).message).toContain("narrow-user");
   });
 });
 

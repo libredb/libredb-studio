@@ -53,9 +53,11 @@ import {
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
 import type { QueryWarning } from "@/lib/types";
 import {
+  keyListsWeaviateName,
   keylessAgentRefusal,
   proveWeaviateViewer,
   shapeWeaviateAgentAnswer,
+  WEAVIATE_AGENT_UNREADABLE,
   WEAVIATE_METADATA_ONLY,
   weaviateAgentFailure,
 } from "./metadata-read";
@@ -136,6 +138,7 @@ function errorContext(
   phase: WeaviateErrorContext["phase"],
   op: WeaviateOp,
   timeoutMs: number,
+  withholdServerWords: boolean,
 ): WeaviateErrorContext {
   return {
     phase,
@@ -144,6 +147,7 @@ function errorContext(
     responseCapBytes: options.responseCapBytes,
     timeoutMs,
     secretForms: options.secretForms,
+    withholdServerWords,
   };
 }
 
@@ -178,6 +182,13 @@ export class WeaviateProvider extends BaseDatabaseProvider {
    */
   private readonly readOnlyProfile: boolean;
 
+  /**
+   * Whether this handle was opened under an execution profile, agent or operations: then no failure carries the
+   * server's words, which name the key's user (`data-scope/objects-note-sample-nodata`), and no listing or
+   * description reads a stored object. An editor handle keeps both.
+   */
+  private readonly withholdsServerWords: boolean;
+
   /** Validates nothing and opens nothing: the connection's rules run in `connect()`, before the factory. */
   constructor(
     config: DatabaseConnection,
@@ -187,6 +198,7 @@ export class WeaviateProvider extends BaseDatabaseProvider {
   ) {
     super(config, options);
     this.readOnlyProfile = execution.readOnly === true && execution.sendsStatements === true;
+    this.withholdsServerWords = execution.readOnly === true;
   }
 
   /** Every member written out: the base's defaults are SQL's, so each flag here is a decision (spec 6.2). */
@@ -295,6 +307,7 @@ export class WeaviateProvider extends BaseDatabaseProvider {
         phase,
         request.op,
         Math.min(WEAVIATE_SURFACE_TIMEOUT_MS, this.queryTimeout),
+        this.withholdsServerWords,
       );
       let answer: Awaited<ReturnType<WeaviateClient["send"]>>;
       try {
@@ -328,7 +341,13 @@ export class WeaviateProvider extends BaseDatabaseProvider {
       } catch (error) {
         throw toProviderError(
           error,
-          errorContext(options, phase, request.op, Math.min(WEAVIATE_SURFACE_TIMEOUT_MS, this.queryTimeout)),
+          errorContext(
+            options,
+            phase,
+            request.op,
+            Math.min(WEAVIATE_SURFACE_TIMEOUT_MS, this.queryTimeout),
+            this.withholdsServerWords,
+          ),
         );
       }
     };
@@ -342,6 +361,7 @@ export class WeaviateProvider extends BaseDatabaseProvider {
       version: session.version,
       paths: session.paths,
       scoped: session.options.secretForms.length > 0,
+      readsObjects: !this.withholdsServerWords,
     };
   }
 
@@ -362,6 +382,7 @@ export class WeaviateProvider extends BaseDatabaseProvider {
           "request",
           failure.op,
           Math.min(WEAVIATE_BOUNDS.searchDeadlineMs, this.queryTimeout),
+          this.withholdsServerWords,
         );
         if (failure.kind === "thrown") return toProviderError(failure.error, context);
         const answered = failure.op === "graphql" ? graphqlFailure(failure.answer) : answerFailure(failure.answer);
@@ -376,9 +397,11 @@ export class WeaviateProvider extends BaseDatabaseProvider {
    * `readWeaviateAgentStatement` and refused before anything is sent when it is not a metadata read. Then, under the
    * request's own deadline, the server is asked again who the key is, with no verdict kept from the open or the
    * request before, and the request runs as the console runs it, the tenant's own record read first so a COLD
-   * tenant is refused rather than woken, with a path memory of its own. Its answer is the metadata-only projection of
-   * its operation, refused past the row or byte budget rather than cut, and a server refusal is worded without the
-   * server's words.
+   * tenant is refused rather than woken, with a path memory of its own. A request whose path names a collection is
+   * sent only when the key's own collection or alias list holds the name, since the server reads an alias there as
+   * the collection it names. Its answer is the metadata-only projection of its operation, refused past the row or
+   * byte budget rather than cut, and a server refusal is worded without the server's words, a refusal and a not-found
+   * of a named collection, alias, tenant or shard in one sentence.
    */
   public async queryReadOnly(
     statement: string,
@@ -393,11 +416,23 @@ export class WeaviateProvider extends BaseDatabaseProvider {
     if (!reading.ok) throw new RefusedBeforeSendError(reading.message, this.type, statement);
     const { client, options } = session;
     const signal = AbortSignal.timeout(budget.statementTimeoutMs);
+    // A name where a collection's name stands is sent only when the key's own lists hold it; once per request.
+    const admitted = new Set<string>();
+    const send = async (request: WeaviateRequest, read: AbortSignal): Promise<WeaviateAnswer> => {
+      const name = request.params.collection;
+      if (name !== undefined && !admitted.has(name)) {
+        if (!(await keyListsWeaviateName((list, at) => client.send(list, at), name, read))) {
+          throw new QueryError(WEAVIATE_AGENT_UNREADABLE, this.type, statement);
+        }
+        admitted.add(name);
+      }
+      return client.send(request, read);
+    };
     return this.trackQuery(async () => {
       try {
         await proveWeaviateViewer(this.answerFor(client, options, "request"), signal);
         return await executeWeaviate(statement, undefined, {
-          send: (request, read) => client.send(request, read),
+          send,
           limiter: this.limiter,
           runs: this.runs,
           version: session.version,
@@ -414,8 +449,11 @@ export class WeaviateProvider extends BaseDatabaseProvider {
       } catch (error) {
         if (error instanceof ExecutionProfileError) throw error;
         throw (
-          weaviateAgentFailure(error, budget, statement) ??
-          toProviderError(error, errorContext(options, "request", reading.plan.route.op, budget.statementTimeoutMs))
+          weaviateAgentFailure(error, budget, statement, reading.plan) ??
+          toProviderError(
+            error,
+            errorContext(options, "request", reading.plan.route.op, budget.statementTimeoutMs, true),
+          )
         );
       }
     });

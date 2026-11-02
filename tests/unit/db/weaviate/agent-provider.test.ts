@@ -10,13 +10,13 @@
 import { describe, expect, test } from "bun:test";
 import { ExecutionProfileError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import type { NodeResponse } from "@/lib/db/http/node-transport";
-import { WEAVIATE_PROOF_SENTENCES } from "@/lib/db/providers/vector/weaviate/metadata-read";
+import { WEAVIATE_AGENT_UNREADABLE, WEAVIATE_PROOF_SENTENCES } from "@/lib/db/providers/vector/weaviate/metadata-read";
 import { WEAVIATE_AGENT_SENTENCES } from "@/lib/db/providers/vector/weaviate/metadata-request";
 import type { WeaviateAnswer } from "@/lib/db/providers/vector/weaviate/client";
 import { WeaviateProvider } from "@/lib/db/providers/vector/weaviate/index";
 import { createRestWeaviateClient } from "@/lib/db/providers/vector/weaviate/rest-client";
 import type { DatabaseConnection, ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
-import { agentAnswer, agentCollectionAnswer, agentServer } from "../../../helpers/weaviate-agent";
+import { agentAnswer, agentCollectionAnswer, agentServer, scopeServer } from "../../../helpers/weaviate-agent";
 import { rejection, WEAVIATE_TEST_CONNECTION } from "../../../helpers/weaviate-surface";
 import { type RecordedAnswer, recordingWeaviateTransport } from "../../../helpers/weaviate-wire";
 
@@ -144,12 +144,16 @@ describe("one agent request", () => {
 
   const reads: readonly [string, string[], string[]][] = [
     ["GET /v1/schema", ["GET /v1/schema"], ["collection"]],
-    ["GET /v1/schema/Note", ["GET /v1/schema/Note"], ["property"]],
-    ["GET /v1/schema/Note/shards", ["GET /v1/schema/Note", "GET /v1/schema/Note/shards"], ["shard"]],
-    ["GET /v1/schema/Tenanted/tenants", ["GET /v1/schema/Tenanted", "GET /v1/schema/Tenanted/tenants"], ["tenant"]],
+    ["GET /v1/schema/Note", ["GET /v1/schema", "GET /v1/schema/Note"], ["property"]],
+    ["GET /v1/schema/Note/shards", ["GET /v1/schema", "GET /v1/schema/Note", "GET /v1/schema/Note/shards"], ["shard"]],
+    [
+      "GET /v1/schema/Tenanted/tenants",
+      ["GET /v1/schema", "GET /v1/schema/Tenanted", "GET /v1/schema/Tenanted/tenants"],
+      ["tenant"],
+    ],
     [
       "GET /v1/schema/Tenanted/tenants/hot",
-      ["GET /v1/schema/Tenanted", "GET /v1/schema/Tenanted/tenants/hot"],
+      ["GET /v1/schema", "GET /v1/schema/Tenanted", "GET /v1/schema/Tenanted/tenants/hot"],
       ["tenant"],
     ],
     ["GET /v1/aliases", ["GET /v1/aliases"], ["alias"]],
@@ -157,12 +161,12 @@ describe("one agent request", () => {
     ["GET /v1/nodes?output=verbose", ["GET /v1/nodes?output=verbose"], ["node", "collection"]],
     [
       "GET /v1/nodes/Note?output=verbose",
-      ["GET /v1/schema/Note", "GET /v1/nodes/Note?output=verbose"],
+      ["GET /v1/schema", "GET /v1/schema/Note", "GET /v1/nodes/Note?output=verbose"],
       ["node", "collection"],
     ],
     [
       "POST /v1/aggregate/Note {}",
-      ["GET /v1/schema/Note", "POST /v1/aggregate/Note"],
+      ["GET /v1/schema", "GET /v1/schema/Note", "POST /v1/aggregate/Note"],
       ["collection", "tenant", "count"],
     ],
   ];
@@ -277,6 +281,7 @@ describe("one agent request", () => {
     );
     expect(lines(wire)).toEqual([
       "GET /v1/users/own-info",
+      "GET /v1/schema",
       "GET /v1/schema/Tenanted",
       "GET /v1/schema/Tenanted/tenants/cold",
     ]);
@@ -321,7 +326,7 @@ describe("one agent request", () => {
       expect((error as Error).message).toContain(
         `The collection "Tenanted" is multi-tenant, so the request needs a tenant ${hint}. Nothing was read`,
       );
-      expect(lines(wire)).toEqual(["GET /v1/users/own-info", "GET /v1/schema/Tenanted"]);
+      expect(lines(wire)).toEqual(["GET /v1/users/own-info", "GET /v1/schema", "GET /v1/schema/Tenanted"]);
     });
   }
 
@@ -335,6 +340,7 @@ describe("one agent request", () => {
     const result = await provider.queryReadOnly('POST /v1/aggregate/Tenanted {"tenant": "hot"}', BUDGET);
     expect(lines(wire)).toEqual([
       "GET /v1/users/own-info",
+      "GET /v1/schema",
       "GET /v1/schema/Tenanted",
       "GET /v1/schema/Tenanted/tenants/hot",
       "POST /v1/aggregate/Tenanted",
@@ -426,8 +432,122 @@ describe("one agent request", () => {
     );
     wire.calls.length = 0;
     const result = await provider.queryReadOnly("POST /v1/aggregate/Note", BUDGET);
-    expect(lines(wire)).toEqual(["GET /v1/users/own-info", "GET /v1/schema/Note", "POST /v1/graphql"]);
+    expect(lines(wire)).toEqual([
+      "GET /v1/users/own-info",
+      "GET /v1/schema",
+      "GET /v1/schema/Note",
+      "POST /v1/graphql",
+    ]);
     expect(result.rows).toEqual([{ collection: "Note", tenant: null, count: 3 }]);
+  });
+});
+
+/**
+ * A name where a collection's name stands, replayed from what 1.40.2 answered a narrow key (tests/fixtures/weaviate/
+ * 1.40.2/data-scope/): Weaviate resolves an alias there and checks the target's grants alone, so the request is sent
+ * only when the key's own collection list or alias list, both filtered by the server, holds the name. A name the key
+ * cannot read and a name that does not exist are one sentence.
+ */
+describe("a name in a collection's place, as the key's own lists hold it", () => {
+  async function scoped(principal = "scoped") {
+    const made = agentProvider(scopeServer(principal));
+    await made.provider.connect();
+    made.wire.calls.length = 0;
+    return made;
+  }
+
+  const throughTheAlias = [
+    "GET /v1/schema/TenantedAlias",
+    "GET /v1/schema/TenantedAlias/tenants",
+    "GET /v1/schema/TenantedAlias/tenants/acme",
+    "GET /v1/schema/TenantedAlias/shards?tenant=acme",
+    "GET /v1/nodes/TenantedAlias?output=verbose",
+    'POST /v1/aggregate/TenantedAlias {"tenant": "acme"}',
+  ];
+  for (const text of throughTheAlias) {
+    test(`${text}, through an alias the key holds no grant on, is refused before it is sent`, async () => {
+      const { provider, wire } = await scoped();
+      const error = await rejection(provider.queryReadOnly(text, BUDGET));
+      expect(error).toBeInstanceOf(QueryError);
+      expect((error as Error).message).toBe(WEAVIATE_AGENT_UNREADABLE);
+      expect(lines(wire)).toEqual(["GET /v1/users/own-info", "GET /v1/schema", "GET /v1/aliases"]);
+    });
+  }
+
+  const unreadable: readonly [string, string, string[]][] = [
+    ["scoped", "GET /v1/schema/Doc", ["GET /v1/schema", "GET /v1/aliases"]],
+    ["scoped", "GET /v1/schema/Missing", ["GET /v1/schema", "GET /v1/aliases"]],
+    ["viewer", "GET /v1/schema/Missing", ["GET /v1/schema", "GET /v1/aliases"]],
+    ["scoped", "GET /v1/nodes/Doc?output=verbose", ["GET /v1/schema", "GET /v1/aliases"]],
+    ["scoped", "POST /v1/aggregate/Doc", ["GET /v1/schema", "GET /v1/aliases"]],
+    ["scoped", "GET /v1/aliases/DocsAlias", ["GET /v1/aliases/DocsAlias"]],
+    ["scoped", "GET /v1/aliases/MissingAlias", ["GET /v1/aliases/MissingAlias"]],
+    ["scoped", "GET /v1/aliases/docsalias", ["GET /v1/aliases/docsalias"]],
+    ["viewer", "GET /v1/aliases/MissingAlias", ["GET /v1/aliases/MissingAlias"]],
+    [
+      "scoped",
+      "GET /v1/schema/Tenanted/tenants/globex",
+      ["GET /v1/schema", "GET /v1/schema/Tenanted", "GET /v1/schema/Tenanted/tenants/globex"],
+    ],
+    [
+      "scoped",
+      "GET /v1/schema/Tenanted/tenants/missing",
+      ["GET /v1/schema", "GET /v1/schema/Tenanted", "GET /v1/schema/Tenanted/tenants/missing"],
+    ],
+    [
+      "viewer",
+      "GET /v1/schema/Tenanted/tenants/missing",
+      ["GET /v1/schema", "GET /v1/schema/Tenanted", "GET /v1/schema/Tenanted/tenants/missing"],
+    ],
+  ];
+  for (const [principal, text, sent] of unreadable) {
+    test(`${text} as the ${principal} key, missing or outside its grants, is the one sentence`, async () => {
+      const { provider, wire } = await scoped(principal);
+      const error = await rejection(provider.queryReadOnly(text, BUDGET));
+      expect(error).toBeInstanceOf(QueryError);
+      expect((error as Error).message).toBe(WEAVIATE_AGENT_UNREADABLE);
+      expect(lines(wire)).toEqual(["GET /v1/users/own-info", ...sent]);
+    });
+  }
+
+  test("a collection the key lists is read after its schema list alone", async () => {
+    const { provider, wire } = await scoped();
+    const result = await provider.queryReadOnly("GET /v1/schema/Tenanted/tenants", BUDGET);
+    expect(lines(wire)).toEqual([
+      "GET /v1/users/own-info",
+      "GET /v1/schema",
+      "GET /v1/schema/Tenanted",
+      "GET /v1/schema/Tenanted/tenants",
+    ]);
+    expect(result.rows).toEqual([{ tenant: "acme", status: "HOT" }]);
+  });
+
+  test("an alias the key lists is admitted, and its read answers the target's properties", async () => {
+    const { provider, wire } = await scoped();
+    const result = await provider.queryReadOnly("GET /v1/schema/NotesAlias", BUDGET);
+    expect(lines(wire)).toEqual([
+      "GET /v1/users/own-info",
+      "GET /v1/schema",
+      "GET /v1/aliases",
+      "GET /v1/schema/NotesAlias",
+    ]);
+    expect(result.rows.map((row) => row.property)).toEqual(["body"]);
+  });
+
+  test("a fresh connection's count of a granted tenant sends seven requests, the count last", async () => {
+    const { provider, wire } = agentProvider(scopeServer("scoped"));
+    await provider.connect();
+    const result = await provider.queryReadOnly('POST /v1/aggregate/Tenanted {"tenant": "acme"}', BUDGET);
+    expect(lines(wire)).toEqual([
+      "GET /v1/meta",
+      "GET /v1/users/own-info",
+      "GET /v1/users/own-info",
+      "GET /v1/schema",
+      "GET /v1/schema/Tenanted",
+      "GET /v1/schema/Tenanted/tenants/acme",
+      "POST /v1/aggregate/Tenanted",
+    ]);
+    expect(result.rows).toEqual([{ collection: "Tenanted", tenant: "acme", count: 1 }]);
   });
 });
 
@@ -445,13 +565,68 @@ describe("no state is kept between agent requests", () => {
         "POST /v1/graphql": agentAnswer("graphql-viewer"),
       }),
     );
-    const aggregate = ["GET /v1/users/own-info", "GET /v1/schema/Note", "POST /v1/aggregate/Note", "POST /v1/graphql"];
+    const aggregate = [
+      "GET /v1/users/own-info",
+      "GET /v1/schema",
+      "GET /v1/schema/Note",
+      "POST /v1/aggregate/Note",
+      "POST /v1/graphql",
+    ];
     await provider.queryReadOnly("POST /v1/aggregate/Note", BUDGET);
     expect(lines(wire)).toEqual(aggregate);
     wire.calls.length = 0;
     const result = await provider.queryReadOnly("POST /v1/aggregate/Note", BUDGET);
     expect(lines(wire)).toEqual(aggregate);
     expect(result.rows).toEqual([{ collection: "Note", tenant: null, count: 3 }]);
+  });
+});
+
+describe("a description on the operations profile, which MCP's inspect_schema opens", () => {
+  test("reads the definition alone and no object, so a key that may not read objects is described", async () => {
+    const { provider, wire } = agentProvider(scopeServer("nodata"), OPERATIONS);
+    await provider.connect();
+    wire.calls.length = 0;
+    const listed = await provider.listObjects([], "collection");
+    const detail = await provider.describeObject(["Note"], "collection");
+    expect(listed.map((entry) => entry.name)).toEqual(["Note"]);
+    expect(lines(wire)).toEqual(["GET /v1/schema", "GET /v1/schema/Note"]);
+    expect(detail.columns.map((column) => [column.name, column.type])).toEqual([
+      ["$id", "uuid"],
+      ["body", "text"],
+      ["$vector", "Vector(?, cosine, hnsw)"],
+    ]);
+  });
+
+  test("a failure is worded by Studio's sentence alone, never the server's words that name the key's user", async () => {
+    const refused = scopeServer("nodata");
+    const { provider } = agentProvider(
+      (request, line) =>
+        line === "GET /v1/schema/Note"
+          ? {
+              ...agentAnswer("objects-viewer"),
+              status: 403,
+              text: JSON.stringify({
+                error: [
+                  { message: "rbac: authorization, forbidden action: user 'nodata' has insufficient permissions" },
+                ],
+              }),
+            }
+          : refused(request, line),
+      OPERATIONS,
+    );
+    await provider.connect();
+    const error = await rejection(provider.describeObject(["Note"], "collection"));
+    expect((error as Error).message).toBe('Collection "Note": The credential is not allowed to run this request.');
+  });
+
+  test("an editor handle still reads one object for the dimension, and keeps the server's words", async () => {
+    const sample = scopeServer("nodata");
+    const { provider, wire } = agentProvider(sample, {});
+    await provider.connect();
+    wire.calls.length = 0;
+    const error = await rejection(provider.describeObject(["Note"], "collection"));
+    expect(lines(wire)).toEqual(["GET /v1/schema/Note", "GET /v1/objects?class=Note&limit=1&include=vector"]);
+    expect((error as Error).message).toContain("nodata");
   });
 });
 
