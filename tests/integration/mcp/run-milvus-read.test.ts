@@ -54,19 +54,27 @@ let overrides: Parameters<typeof scopeMilvusWire>[1] = {};
 /** Whether the next acquisition hands out a provider opened under the profile it asked for, or an editor's. */
 let honourProfile = true;
 
+/** The same user's seed naming a second database, as a tenant's seed would. */
+const TENANT_SEED = { ...VECTORS_SEED, id: "tenant", database: "scope_db_a" };
+
 beforeEach(() => {
   overrides = {};
   honourProfile = true;
-  writeSeedFile(dir, [VECTORS_SEED, { id: "shop", type: "sqlite", database: join(dir, "absent.db") }]);
-  // The factory's provider, with only its wire replaced: opened to send statements for agent-read-only alone.
+  writeSeedFile(dir, [VECTORS_SEED, TENANT_SEED, { id: "shop", type: "sqlite", database: join(dir, "absent.db") }]);
+  // The factory's provider, with only its wire replaced: opened to send statements for agent-read-only alone, and
+  // read-only without statements for agent-operations, as the factory's profile table opens them.
   spyOn(McpConnectionContext.prototype, "acquire").mockImplementation(
     async (connection: ManagedConnection, profile: ExecutionProfile) => {
-      const agent = honourProfile && profile === "agent-read-only";
+      const execution = !honourProfile
+        ? {}
+        : profile === "agent-read-only"
+          ? { readOnly: true, sendsStatements: true }
+          : { readOnly: true };
       wire = scopeMilvusWire("few", overrides);
       const provider = new MilvusProvider(
         connection as DatabaseConnection,
         { queryTimeout: 30_000 },
-        agent ? { readOnly: true, sendsStatements: true } : {},
+        execution,
         (options) => createGrpcMilvusClient(options, wire.transport),
       );
       await provider.connect();
@@ -148,6 +156,7 @@ describe("the tool", () => {
     }>;
     expect(connections.map((connection) => [connection.id, connection.read_tool])).toEqual([
       ["seed:vectors", "run_milvus_read"],
+      ["seed:tenant", "run_milvus_read"],
       ["seed:shop", "run_read_query"],
     ]);
   });
@@ -234,6 +243,43 @@ describe("the data scope", () => {
       { alias: "scope_alias_c1", collection: "scope_c1", database: "default" },
     ]);
   });
+});
+
+describe("inspect_schema", () => {
+  const inspect = (seed: string, extra: Record<string, unknown> = {}) =>
+    call("inspect_schema", { connection_id: `seed:${seed}`, include_columns: false, ...extra });
+  const databasesSent = () =>
+    wire.calls.map((logged) => `${logged.method}:${String((logged.args[0] as { db_name?: string }).db_name)}`);
+
+  test("reads the seed's own database, as run_milvus_read does, and lists no other", async () => {
+    const result = await inspect("vectors");
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({ schema: "default", total_tables: 2 });
+    expect(databasesSent()).toEqual(["ShowCollections:default"]);
+    const tenant = await inspect("tenant");
+    expect(tenant.structuredContent).toMatchObject({ schema: "scope_db_a" });
+    expect(databasesSent()).toEqual(["ShowCollections:scope_db_a"]);
+  });
+
+  test.each([
+    ["a default-database seed", "vectors", "scope_db_a"],
+    ["a second database's seed", "tenant", "default"],
+  ])(
+    "on %s, a schema naming another database is no schema of that connection, and nothing is sent",
+    async (_seed, seed, schema) => {
+      const result = await inspect(seed, { schema });
+      expect(result).toEqual({
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: "This connection has no schema of that name. Call inspect_schema without schema to read the default one.",
+          },
+        ],
+      });
+      expect(wire.calls).toEqual([]);
+    },
+  );
 });
 
 describe("a refusal", () => {

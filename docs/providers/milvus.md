@@ -407,7 +407,7 @@ Redaction is `none`: a redacted statement is stored as `?`, because a reader gue
 
 ### 6.1 The object surface
 
-One container level, Database, from ListDatabases, and one kind, Collection, from one ShowCollections per database, names only.
+One container level, Database, from ListDatabases (a handle opened under an execution profile lists the connection's own database alone, section 15.6), and one kind, Collection, from one ShowCollections per database, names only.
 Opening a collection reads DescribeCollection: a vector type is spelled with its dimension, `FloatVector(768)`, a BM25 function's output as `SparseFloatVector(BM25: text_bm25)`, and the tree shows the type before the parenthesis with the full text in the tooltip.
 Partitions, aliases and indexes are details in the collection's Source, never tree objects, and the row count is never on the listing.
 
@@ -676,6 +676,7 @@ So an MCP seed's user must pass the proof of section 15.2: root, the admin role,
 Recommended: a user granted `CollectionReadOnly` on the collections the client may read, with `ShowCollections` and `DescribeDatabase` on their database, or `DatabaseReadOnly` and `CollectionReadOnly` on one database.
 The two data-scope layers of section 15.3.1 hold for MCP unchanged; the names MCP clients newly read through it, beside the collection and field names `inspect_schema` already lists, are the user's databases, partitions, functions, indexes and aliases.
 `inspect_schema` opens its connection under the operations profile, unproved, and lists what the seed's user's own `ShowCollections` lists, so a narrow user's listing is its own collections; a root or writer seed is listed every collection there, while `run_milvus_read` refuses it.
+It reads the seed's database alone: a handle opened under an execution profile lists the connection's own database as its one container, with no `ListDatabases` sent, so a `schema` naming another database is no schema of that connection and nothing is sent, as `run_milvus_read` refuses a `dbName` naming one.
 A client cancel ends the wait, not the read: the request's gRPC calls, the proof's among them, run on until answered or until the provider cancels them at the time left of `timeout_ms`, and the channel has no retry or reconnect that could extend them; a `timeout_ms` cancels the call in flight.
 Measured on 3.0.2 by [`tests/live/milvus-mcp-boundary.ts`](../../tests/live/milvus-mcp-boundary.ts), run by [`tests/fixtures/milvus/3.0.2/mcp-boundary/run.sh`](../../tests/fixtures/milvus/3.0.2/mcp-boundary/run.sh), which records `boundary.json` beside it: with the server paused, a read at a `timeout_ms` of 500 is answered as the timeout at 501 ms and a cancel 300 ms in at 301 ms, the server answers the next call once it resumes, and no promise is left rejected; the same check replays the open's refusals, every admitted route, the writes and value reads refused with the admission removed beside a positive control, the data scope, an alias repointed under parallel reads and `inspect_schema` as the narrow user.
 
