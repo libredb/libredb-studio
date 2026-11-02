@@ -11,7 +11,8 @@
  *  - the principal, through MCP: the READ ONLY user holding `CREATE SESSION`, `SELECT` on one table and the two policy
  *    catalogs is served; SYSTEM, a READ WRITE user, a user holding `EXECUTE` on a definer's-rights function, the
  *    `CONNECT`, `DBA`, `SELECT_CATALOG_ROLE` or `AUDIT_VIEWER` role, `SELECT ANY TABLE`, `READ ANY TABLE`,
- *    `SELECT ANY DICTIONARY`, `SELECT` on `SYS.USER$` or on a sequence, and any user while a PUBLIC database link exists, are each
+ *    `SELECT ANY DICTIONARY`, `SELECT` on `SYS.USER$` or on a sequence, a role of the operator's holding
+ *    `SELECT ANY DICTIONARY` or `SELECT` on `SYS.USER$`, and any user while a PUBLIC database link exists, are each
  *    refused before the statement is sent, in the tool's sentence, naming what lifts it;
  *  - the data scope: each refused user is shown to read, signed in directly, what the check keeps from it (the
  *    dictionary, the audit trail, another schema's table), and the served user is refused each of those through MCP by
@@ -267,6 +268,27 @@ const REFUSED: readonly {
     grants: [`GRANT SELECT ON ${OWNER}.${PREFIX}SEQ TO {u}`],
     says: `REVOKE ALL ON "${OWNER}"."${PREFIX}SEQ" FROM "${PREFIX}SEQ"`,
   },
+  // The same reach through a role of the operator's: a system privilege, and an object grant on Oracle's own schema.
+  {
+    name: "RSAD",
+    grants: [
+      `CREATE ROLE ${PREFIX}R_SAD`,
+      `GRANT SELECT ANY DICTIONARY TO ${PREFIX}R_SAD`,
+      `GRANT ${PREFIX}R_SAD TO {u}`,
+    ],
+    says: `REVOKE SELECT ANY DICTIONARY FROM "${PREFIX}R_SAD"`,
+    reads: { sql: "SELECT COUNT(*) AS N FROM SYS.DBA_USERS", answers: /^\{"N":\d+\}$/ },
+  },
+  {
+    name: "ROBJ",
+    grants: [
+      `CREATE ROLE ${PREFIX}R_OBJ`,
+      `GRANT SELECT ON SYS.USER$ TO ${PREFIX}R_OBJ`,
+      `GRANT ${PREFIX}R_OBJ TO {u}`,
+    ],
+    says: `REVOKE "${PREFIX}R_OBJ" FROM "${PREFIX}ROBJ"`,
+    reads: { sql: "SELECT COUNT(*) AS N FROM SYS.USER$", answers: /^\{"N":\d+\}$/ },
+  },
   {
     name: "SAD",
     grants: ["GRANT SELECT ANY DICTIONARY TO {u}"],
@@ -380,6 +402,8 @@ async function cleanup(): Promise<void> {
     "SYS",
     [
       ...USERS.map((user) => `DROP USER ${user} CASCADE`),
+      `DROP ROLE ${PREFIX}R_SAD`,
+      `DROP ROLE ${PREFIX}R_OBJ`,
       `DROP PUBLIC SYNONYM ${PREFIX}USER_SYN`,
       `DROP PUBLIC DATABASE LINK ${PREFIX}LINK`,
       `DROP FUNCTION ${OWNER}.${PREFIX}NEXT`,

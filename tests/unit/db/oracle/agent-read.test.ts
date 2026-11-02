@@ -111,6 +111,11 @@ const ORACLE_SCHEMA_GRANT =
   "AND NVL(p.TYPE, '-') <> 'DIRECTORY' " +
   "AND NOT (p.TABLE_SCHEMA = 'SYS' AND p.TABLE_NAME IN ('DBA_POLICIES', 'DBA_AUDIT_POLICIES') AND p.PRIVILEGE = 'SELECT')";
 
+/** The roles the user or PUBLIC holds by a grant the dictionary lists, and every role granted under one of them. */
+const TRACED_ROLES =
+  "(SELECT t.GRANTED_ROLE FROM SYS.USER_ROLE_PRIVS t UNION SELECT u.GRANTED_ROLE FROM SYS.ROLE_ROLE_PRIVS u " +
+  "START WITH u.ROLE IN (SELECT v.GRANTED_ROLE FROM SYS.USER_ROLE_PRIVS v) CONNECT BY PRIOR u.GRANTED_ROLE = u.ROLE)";
+
 /** Every check statement, whole: a change of any join, filter or view the check reads fails the test that pins it. */
 const EXPECTED_STATEMENTS: Readonly<Record<Statement, string>> = {
   readOnly: "SELECT USERNAME, READ_ONLY FROM SYS.USER_USERS",
@@ -164,7 +169,8 @@ const EXPECTED_STATEMENTS: Readonly<Record<Statement, string>> = {
   links: "SELECT OWNER, DB_LINK FROM SYS.ALL_DB_LINKS ORDER BY 1, 2",
   dictionary:
     "SELECT 'OBJECT' AS KIND, p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME, p.PRIVILEGE " +
-    `FROM SYS.ALL_TAB_PRIVS p WHERE p.GRANTEE = USER AND ${ORACLE_SCHEMA_GRANT} ` +
+    "FROM SYS.ALL_TAB_PRIVS p WHERE (p.GRANTEE = USER OR p.GRANTEE IN (SELECT ROLE FROM SYS.SESSION_ROLES) " +
+    `AND p.GRANTEE NOT IN ${TRACED_ROLES}) AND ${ORACLE_SCHEMA_GRANT} ` +
     "UNION SELECT 'ROLE', g.USERNAME, NULL, g.GRANTED_ROLE, NULL FROM SYS.USER_ROLE_PRIVS g " +
     "WHERE EXISTS (SELECT 1 FROM SYS.ALL_TAB_PRIVS p WHERE p.GRANTEE IN (SELECT g.GRANTED_ROLE FROM SYS.DUAL " +
     "UNION ALL SELECT r.GRANTED_ROLE FROM SYS.ROLE_ROLE_PRIVS r START WITH r.ROLE = g.GRANTED_ROLE " +
@@ -817,9 +823,21 @@ describe("verifyAgentPrincipal", () => {
       );
     });
 
+    // A grant through an enabled role the check cannot trace back to a grant the user or PUBLIC holds is still found
+    // (fail closed), named by the role that holds it, since no role revoke can be named for it.
+    test("refuses a grant held through a session role it cannot trace, naming the grant's own revoke", async () => {
+      const error = await refusal({
+        dictionary: [{ KIND: "OBJECT", GRANTEE: "UNTRACED_ROLE", OWNER: "SYS", NAME: "USER$", PRIVILEGE: "SELECT" }],
+      });
+      expect(error.message).toContain('Run, as an administrator: REVOKE SELECT ON "SYS"."USER$" FROM "UNTRACED_ROLE".');
+    });
+
     test("reads the user's own grants and the roles it holds, never PUBLIC's own grants, and spares the two catalogs", () => {
-      // What PUBLIC may read every user of the database reads; Oracle's PUBLIC grants are the vendor's boundary.
-      expect(AGENT_PRINCIPAL_STATEMENTS.dictionary).toContain("WHERE p.GRANTEE = USER AND ");
+      // What PUBLIC may read every user of the database reads; Oracle's PUBLIC grants are the vendor's boundary. Every
+      // session role's grant is read: a traced role is named as the role to revoke, any other by its grant.
+      expect(AGENT_PRINCIPAL_STATEMENTS.dictionary).toContain(
+        "WHERE (p.GRANTEE = USER OR p.GRANTEE IN (SELECT ROLE FROM SYS.SESSION_ROLES) AND p.GRANTEE NOT IN ",
+      );
       expect(AGENT_PRINCIPAL_STATEMENTS.dictionary).not.toContain("'PUBLIC'");
       expect(AGENT_PRINCIPAL_STATEMENTS.dictionary).toContain(
         "AND NOT (p.TABLE_SCHEMA = 'SYS' AND p.TABLE_NAME IN ('DBA_POLICIES', 'DBA_AUDIT_POLICIES') AND p.PRIVILEGE = 'SELECT')",

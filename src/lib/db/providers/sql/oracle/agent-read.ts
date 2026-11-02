@@ -64,7 +64,8 @@
  *    grant, direct or through a role such as SELECT_CATALOG_ROLE or AUDIT_VIEWER, reads what PUBLIC cannot, the users'
  *    password hashes in SYS.USER$, the unified audit trail and other sessions in V$SESSION included (measured). The
  *    schema's flag is enough here, since it only refuses. A role is named by the role the user or PUBLIC holds,
- *    however deep the grant lies under it. What PUBLIC itself may read, every user of the database reads.
+ *    however deep the grant lies under it; a session role the dictionary does not trace to one is named by its grant,
+ *    fail closed. What PUBLIC itself may read, every user of the database reads.
  *
  * Every finding is collected and named in one refusal, as the statements that lift it, or, for a policy, as the
  * policy. A revoke can uncover the next finding: a granted view over a view the refusal names is refused once that
@@ -199,6 +200,14 @@ const ORACLE_SCHEMA_GRANT =
   "AND NVL(p.TYPE, '-') <> 'DIRECTORY' " +
   "AND NOT (p.TABLE_SCHEMA = 'SYS' AND p.TABLE_NAME IN ('DBA_POLICIES', 'DBA_AUDIT_POLICIES') AND p.PRIVILEGE = 'SELECT')";
 
+/**
+ * The roles the user or PUBLIC holds by a grant `USER_ROLE_PRIVS` lists, and every role granted under one of them
+ * (`ROLE_ROLE_PRIVS`): a role item 13 can name the revoke of. A session role outside them is read by its grants.
+ */
+const TRACED_ROLES =
+  "(SELECT t.GRANTED_ROLE FROM SYS.USER_ROLE_PRIVS t UNION SELECT u.GRANTED_ROLE FROM SYS.ROLE_ROLE_PRIVS u " +
+  "START WITH u.ROLE IN (SELECT v.GRANTED_ROLE FROM SYS.USER_ROLE_PRIVS v) CONNECT BY PRIOR u.GRANTED_ROLE = u.ROLE)";
+
 /** The check's statements, in the order they are sent. Each is one SELECT the agent user may run on any 23ai. */
 export const AGENT_PRINCIPAL_STATEMENTS = Object.freeze({
   readOnly: "SELECT USERNAME, READ_ONLY FROM SYS.USER_USERS",
@@ -250,10 +259,12 @@ export const AGENT_PRINCIPAL_STATEMENTS = Object.freeze({
     "(SELECT USERNAME AS GRANTEE, PRIVILEGE FROM SYS.USER_SYS_PRIVS UNION ALL SELECT ROLE, PRIVILEGE FROM SYS.ROLE_SYS_PRIVS) g " +
     "ON g.PRIVILEGE = p.PRIVILEGE WHERE p.PRIVILEGE <> 'CREATE SESSION' ORDER BY 1, 2",
   links: "SELECT OWNER, DB_LINK FROM SYS.ALL_DB_LINKS ORDER BY 1, 2",
-  // The user's own grants, and each role the user or PUBLIC holds whose closure holds one: the role is what to revoke.
+  // The user's own grants and those of a session role it cannot trace, by the grant; each role the user or PUBLIC
+  // holds whose closure holds one, by the role, which is what to revoke.
   dictionary:
     "SELECT 'OBJECT' AS KIND, p.GRANTEE, p.TABLE_SCHEMA AS OWNER, p.TABLE_NAME AS NAME, p.PRIVILEGE " +
-    `FROM SYS.ALL_TAB_PRIVS p WHERE p.GRANTEE = USER AND ${ORACLE_SCHEMA_GRANT} ` +
+    "FROM SYS.ALL_TAB_PRIVS p WHERE (p.GRANTEE = USER OR p.GRANTEE IN (SELECT ROLE FROM SYS.SESSION_ROLES) " +
+    `AND p.GRANTEE NOT IN ${TRACED_ROLES}) AND ${ORACLE_SCHEMA_GRANT} ` +
     "UNION SELECT 'ROLE', g.USERNAME, NULL, g.GRANTED_ROLE, NULL FROM SYS.USER_ROLE_PRIVS g " +
     "WHERE EXISTS (SELECT 1 FROM SYS.ALL_TAB_PRIVS p WHERE p.GRANTEE IN (SELECT g.GRANTED_ROLE FROM SYS.DUAL " +
     "UNION ALL SELECT r.GRANTED_ROLE FROM SYS.ROLE_ROLE_PRIVS r START WITH r.ROLE = g.GRANTED_ROLE " +
