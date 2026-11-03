@@ -161,6 +161,19 @@ describe("the tool", () => {
   });
 });
 
+describe("inspect_schema naming a withheld table", () => {
+  test("answers an empty listing with no reason, as for a table that does not exist, and asks nothing past the probe", async () => {
+    const withheld = await call("inspect_schema", { connection_id: "seed:router", table: "hrSWRunTable" });
+    const absent = await call("inspect_schema", { connection_id: "seed:router", table: "noSuchTable" });
+    expect(withheld.isError ?? false).toBe(false);
+    expect(withheld.structuredContent?.tables).toEqual([]);
+    expect(withheld.structuredContent?.tables).toEqual(absent.structuredContent?.tables);
+    expect(JSON.stringify(withheld)).not.toContain("hrSWRun");
+    // Each call's connect probe of sysUpTime.0, and nothing else.
+    expect(asked().every((oid) => oid === "1.3.6.1.2.1.1.3.0")).toBe(true);
+  });
+});
+
 describe("a read", () => {
   test("a get answers the device's values behind the notice, with no notes where nothing was withheld", async () => {
     const result = await snmp("get sysDescr.0 sysName.0");
@@ -304,6 +317,36 @@ describe("a refusal", () => {
     }
   });
 
+  test("a call made while an abandoned acquisition is still probing joins it and answers its failure, sending nothing", async () => {
+    // Documented, not fixed (docs/providers/snmp.md section 14): the first call stops waiting at its timeout_ms, the
+    // acquisition it started keeps probing for the provider's 5,000 ms silence deadline, and a call made before that
+    // ends joins it rather than opening its own, so it answers the earlier probe's failure though the agent answers by
+    // then. A call made after it ended opens anew.
+    let dropping = true;
+    const flaky = await startFakeAgent(TREE, { silentOn: () => dropping });
+    writeSeedFile(dir, [{ ...SNMP_SEED(), port: flaky.port }]);
+    try {
+      const first = await snmp("get sysName.0", { timeout_ms: 500 });
+      expect(first.content.map((block) => block.text).join("\n")).toContain(
+        "did not finish within timeout_ms (500 ms)",
+      );
+      dropping = false;
+      const sent = flaky.requests.length;
+      const second = await snmp("get sysName.0", { timeout_ms: 10_000 });
+      expect(second.isError).toBe(true);
+      expect(second.content.map((block) => block.text).join("\n")).toContain("No SNMP agent answered at 127.0.0.1:");
+      expect(flaky.requests.length).toBe(sent);
+      const third = await snmp("get sysName.0", { timeout_ms: 10_000 });
+      expect(third.isError ?? false).toBe(false);
+      expect(third.structuredContent?.rows).toEqual([
+        { object: "1.3.6.1.2.1.1.5.0", value: "router-one", type: "text" },
+      ]);
+      expectNoWithheld(second);
+    } finally {
+      flaky.close();
+    }
+  }, 15_000);
+
   test("a SQL engine is refused before anything is acquired, naming the tool that reads it", async () => {
     const result = await call("run_snmp_read", { connection_id: "seed:shop", statement: "get sysDescr.0" });
     expect(result).toEqual({
@@ -315,6 +358,35 @@ describe("a refusal", () => {
         },
       ],
     });
+  });
+});
+
+describe("the size of a read", () => {
+  test("a walk past max_rows and within the 1,000-row budget is cut, and says it was cut by max_rows", async () => {
+    const result = await snmp("walk system", { max_rows: 1 });
+    expect(result.isError ?? false).toBe(false);
+    expect(result.structuredContent).toMatchObject({
+      rows: [{ object: "1.3.6.1.2.1.1.1.0", value: "a test agent", type: "text" }],
+      row_count: 1,
+      truncated: true,
+      truncated_by: "max_rows",
+    });
+  });
+
+  test("a get reaches 400 identifiers only with short ones, under the 4,096-character statement limit", async () => {
+    const short = `get${" sysName.0".repeat(400)}`;
+    expect(short.length).toBeLessThanOrEqual(4_096);
+    const answered = await snmp(short, { max_rows: 500 });
+    expect(answered.isError ?? false).toBe(false);
+    // One Get carried all 400 and the agent's whole answer was read; the 32 KiB result limit then cuts what is shown.
+    expect(agent.requests.at(-1)?.oids).toHaveLength(400);
+    expect(answered.structuredContent).toMatchObject({ truncated: true, truncated_by: "result_bytes" });
+    const numeric = `get${" 1.3.6.1.2.1.1.5.0".repeat(228)}`;
+    expect(numeric.length).toBeGreaterThan(4_096);
+    expect(`get${" 1.3.6.1.2.1.1.5.0".repeat(227)}`.length).toBeLessThanOrEqual(4_096);
+    const refused = await snmp(numeric);
+    expect(refused.isError).toBe(true);
+    expect(refused.content.map((block) => block.text).join("\n")).toContain("longer than 4096 characters");
   });
 });
 
