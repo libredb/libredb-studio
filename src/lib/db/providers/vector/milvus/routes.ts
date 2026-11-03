@@ -144,15 +144,17 @@ const ROUTE_ROWS: readonly RouteRow[] = [
 
 /** The console's route table: every route a POST under the prefix, every one a read (5.4). */
 export const MILVUS_ROUTES: readonly RouteSpec<MilvusOp>[] = Object.freeze(
-  ROUTE_ROWS.map((row): RouteSpec<MilvusOp> => ({
-    method: "POST",
-    template: row.op,
-    op: row.op,
-    class: "read",
-    params: {},
-    query: {},
-    body: row.body,
-  })),
+  ROUTE_ROWS.map(
+    (row): RouteSpec<MilvusOp> => ({
+      method: "POST",
+      template: row.op,
+      op: row.op,
+      class: "read",
+      params: {},
+      query: {},
+      body: row.body,
+    }),
+  ),
 );
 
 /** The keys each route accepts; anything else is refused by name, because Milvus and REST drop it (R08 F15). */

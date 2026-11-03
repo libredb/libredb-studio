@@ -14,7 +14,9 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import path from "node:path";
 import type { EtcdStatus } from "@/lib/db/providers/keyvalue/etcd/client";
+import type { ReadOnlySource } from "@/lib/db/providers/keyvalue/etcd/write-policy";
 import { readOnlySentence } from "@/lib/db/providers/keyvalue/etcd/write-policy";
+import type { DatabaseConnection, DatabaseProvider, ObjectEditPlan } from "@/lib/db/types";
 import { createFakeEtcdClient, type FakeEtcdClient } from "../../../helpers/etcd-fake-client";
 import { KEY_SPACE_HEADER, keySpaceRange } from "../../../helpers/etcd-key-space";
 
@@ -136,4 +138,78 @@ describe("a read-only etcd seed, from the seed file to the provider (#1089 E6)",
     await expect(provider.query(WRITE)).rejects.toThrow("An etcd handle opened for agent mode answers only");
     expect(sentAfter(client, mark)).toEqual([]);
   });
+});
+
+/** A connection of the user's own, read-only by its own toggle, with no seed behind it. */
+const OWN_READ_ONLY: DatabaseConnection = {
+  id: "own-read-only",
+  name: "Cluster (mine)",
+  type: "etcd",
+  host: "etcd.internal",
+  port: 2379,
+  readOnly: true,
+  createdAt: new Date(0),
+};
+
+const ADMIN = { role: "admin", username: "a" } as const;
+const VALUE_EDIT = { path: ["/app/cfg"], kind: "key", partId: "value", text: "new" } as const;
+
+/** A provider for each place read-only mode is set, and the sentence its write refusals give. */
+const SOURCES: ReadonlyArray<readonly [ReadOnlySource, () => Promise<DatabaseProvider>]> = [
+  [
+    "seed",
+    async () =>
+      getOrCreateProvider(
+        await resolveConnection({ connectionId: "seed:cluster-read" }, { role: "user", username: "u" }),
+      ),
+  ],
+  ["connection", async () => getOrCreateProvider(OWN_READ_ONLY)],
+  [
+    "execution-profile",
+    async () =>
+      acquireExecutionProfileProvider(
+        await resolveConnection({ connectionId: "seed:cluster-write" }, ADMIN),
+        "agent-operations",
+      ),
+  ],
+];
+
+/** A value-edit plan the writable seed builds, so the apply below has a real plan to refuse. */
+async function writablePlan(): Promise<ObjectEditPlan> {
+  const writable = await getOrCreateProvider(await resolveConnection({ connectionId: "seed:cluster-write" }, ADMIN));
+  const built = await writable.buildObjectEdit?.(VALUE_EDIT);
+  if (built === undefined || !built.built) throw new Error("the writable seed did not build the value edit");
+  return built.plan;
+}
+
+describe("every etcd write path under every read-only source", () => {
+  test.each(SOURCES)(
+    "set by the %s: the editor, the value edit and maintenance are refused and nothing is sent",
+    async (source, open) => {
+      const plan = await writablePlan();
+      clients.length = 0;
+      const provider = await open();
+      expect(clients).toHaveLength(1);
+      const [client] = clients;
+      const mark = client.calls.length;
+      const sentence = readOnlySentence(source);
+
+      // An execution profile's handle answers no editor command at all, before the write policy is asked.
+      const editorRefusal =
+        source === "execution-profile" ? "An etcd handle opened for agent mode answers only" : sentence;
+      await expect(provider.query(WRITE)).rejects.toThrow(editorRefusal);
+
+      expect(await provider.buildObjectEdit?.(VALUE_EDIT)).toEqual({
+        built: false,
+        refusal: expect.objectContaining({ refusal: "privilege", sentence }),
+      });
+      const applied = await provider.applyObjectEdit?.(plan);
+      expect(applied).toMatchObject({ outcome: "refused", refusal: { refusal: "privilege", sentence } });
+
+      for (const operation of ["compact", "defragment", "disarm"] as const) {
+        await expect(provider.runMaintenance(operation)).rejects.toThrow(sentence);
+      }
+      expect(sentAfter(client, mark)).toEqual([]);
+    },
+  );
 });
