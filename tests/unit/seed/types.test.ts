@@ -849,7 +849,7 @@ describe("SeedConnectionSchema: the Modbus register map", () => {
 /**
  * The read-only mode (#1089). Declared for the reason skipObjectScan is (zod strips an undeclared
  * key, and a seed file's mode would validate and vanish, leaving a connection that writes), accepted
- * only on an engine whose provider enforces it, never a reference, never a default, and only on a
+ * only on an engine whose write reach is not open, never a reference, never a default, and only on a
  * managed seed.
  */
 describe("SeedConnectionSchema: the read-only mode (#1089)", () => {
