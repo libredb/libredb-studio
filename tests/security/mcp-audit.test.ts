@@ -30,13 +30,15 @@ import {
 } from "../helpers/mcp-fixtures";
 import { legacyPost, modernPost, readJsonRpc, routeServe } from "../helpers/mcp-harness";
 import { mintTestToken, useMcpChannel } from "../helpers/mcp-token";
+import { registeredMcpToolNames } from "../helpers/mcp-tool-names";
 
 pinMcpTestEnvironment();
 
 const serve = routeServe(route);
 const dir = mkdtempSync(join(tmpdir(), "libredb-mcp-audit-"));
 const AUDIT_FAILURE = "The call was not run because its audit record could not be written.";
-const TOOL_ACTIONS = new Set(["list_connections", "inspect_schema", "run_read_query", "mint_token"]);
+/** The audit actions an MCP call writes: each registered tool's name, and the token mint. */
+const TOOL_ACTIONS = new Set([...registeredMcpToolNames(), "mint_token"]);
 let token = "";
 let restoreChannel: () => void = () => {};
 let sink: ReturnType<typeof spyOn<Console, "log">>;
@@ -261,7 +263,7 @@ describe("what the trail records", () => {
     expect(mcpLines()).toEqual([expect.objectContaining({ action: "list_connections", outcome: "success" })]);
   });
 
-  test("the user is the token's, whatever the arguments claim, and the action is one of the four names", async () => {
+  test("the user is the token's, whatever the arguments claim, and the action is a tool's name or the token mint", async () => {
     await callTool("run_read_query", { connection_id: "seed:shop", sql: "SELECT 'mallory' AS user_name" });
     for (const line of mcpLines()) {
       expect(line.actor).toBe("alice");

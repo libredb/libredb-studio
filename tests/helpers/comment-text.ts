@@ -23,6 +23,8 @@ export interface TextLine {
 export interface ArrayStrings {
   readonly line: number;
   readonly strings: readonly string[];
+  /** The array is the case table of a `.each(...)` call, so each of its rows is a test of its own. */
+  readonly caseTable: boolean;
 }
 
 export interface CodeText {
@@ -58,7 +60,12 @@ export function codeText(source: string, path: string): CodeText {
   const file = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, SCRIPT_KINDS[extension]);
   const comments: TextLine[] = [];
   const strings: TextLine[] = [];
-  const arrays: { line: number; strings: string[] }[] = [];
+  const arrays: { line: number; strings: string[]; caseTable: boolean }[] = [];
+  const isCaseTable = (node: ts.ArrayLiteralExpression): boolean =>
+    ts.isCallExpression(node.parent) &&
+    node.parent.arguments.includes(node) &&
+    ts.isPropertyAccessExpression(node.parent.expression) &&
+    node.parent.expression.name.text === "each";
   const jsxText: ts.TextRange[] = [];
   const seen = new Set<number>();
   const ranges: ts.CommentRange[] = [];
@@ -93,7 +100,11 @@ export function codeText(source: string, path: string): CodeText {
     let inner = openArrays;
     if (ts.isArrayLiteralExpression(node)) {
       const array: string[] = [];
-      arrays.push({ line: file.getLineAndCharacterOfPosition(node.getStart(file)).line, strings: array });
+      arrays.push({
+        line: file.getLineAndCharacterOfPosition(node.getStart(file)).line,
+        strings: array,
+        caseTable: isCaseTable(node),
+      });
       inner = [...openArrays, array];
     }
     for (const child of node.getChildren(file)) visit(child, inner);

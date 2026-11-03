@@ -62,6 +62,17 @@ describe("countFindings", () => {
       'expect(names.indexOf("run_cypher_read")).toBe(names.indexOf("run_qdrant_read") + 1);',
     ],
     ["tests/unit/mcp/x.test.ts", 'const names = ["list_connections", "run_read_query", "run_kubectl_read"];'],
+    ["tests/unit/mcp/x.test.ts", 'const names = ["list_connections", "inspect_schema", "run_read_query"];'],
+    [
+      "tests/integration/mcp/opt-in.test.ts",
+      'for (const [tool] of [["list_connections"], ["inspect_schema"], ["run_read_query"]]) call(tool);',
+    ],
+    ["tests/integration/mcp/protocol.test.ts", "expect(listed).toHaveLength(15);"],
+    ["tests/integration/mcp/protocol.test.ts", "expect(names).toHaveLength(15);"],
+    ["tests/integration/mcp/protocol.test.ts", "expect(TOOL_NAMES.length).toBe(15);"],
+    ["tests/integration/mcp/protocol.test.ts", "expect((await client.listTools()).tools.length).toBe(15);"],
+    ["tests/integration/mcp/protocol.test.ts", "// the fifteen-tool list"],
+    ["docs/MCP.md", "The fifteen-tool surface is read-only."],
     [
       "tests/integration/mcp/x.test.ts",
       'expect(tools).toEqual([["a", "run_read_query"], ["b", "run_redis_read"], ["c", "inspect_schema"]]);',
@@ -82,6 +93,13 @@ describe("countFindings", () => {
     ["tests/unit/mcp/x.test.ts", 'const pair = ["list_connections", "inspect_schema"];'],
     ["tests/unit/mcp/x.test.ts", 'test.each([["run_read_query", 1], ["inspect_schema", 2], ["list_connections", 3]]);'],
     ["tests/integration/mcp/x.test.ts", "expect(registrations.calls).toBe(0);"],
+    ["tests/integration/mcp/x.test.ts", "expect(rows).toHaveLength(2);"],
+    ["tests/integration/mcp/x.test.ts", "expect(names).toHaveLength(1);"],
+    ["tests/integration/mcp/x.test.ts", "// a two-tool-call session"],
+    [
+      "tests/integration/mcp/x.test.ts",
+      'it.each([["run_read_query", null], ["inspect_schema", []], ["list_connections", null]])("%s", () => {});',
+    ],
     ["src/lib/agent/x.ts", 'const lead = "the two tools its verdict accepts";'],
   ])("leaves a look-alike alone in %s: %s", (path, source) => {
     expect(hits(path, source)).toEqual([]);

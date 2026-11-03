@@ -67,9 +67,19 @@ describe("codeText", () => {
   test("collects the strings of each array literal, an outer array holding its nested ones", () => {
     const { arrays } = codeText('const a = [["one", 1], ["two"], `three`, x];', "x.cjs");
     expect(arrays).toEqual([
-      { line: 0, strings: ["one", "two", "three"] },
-      { line: 0, strings: ["one"] },
-      { line: 0, strings: ["two"] },
+      { line: 0, strings: ["one", "two", "three"], caseTable: false },
+      { line: 0, strings: ["one"], caseTable: false },
+      { line: 0, strings: ["two"], caseTable: false },
+    ]);
+  });
+
+  test("marks the array a .each call takes as its case table, and no other array", () => {
+    const { arrays } = codeText('test.each([["a"], ["b"]])("%s", () => f(["c"]));', "x.ts");
+    expect(arrays.map((array) => [array.strings, array.caseTable])).toEqual([
+      [["a", "b"], true],
+      [["a"], false],
+      [["b"], false],
+      [["c"], false],
     ]);
   });
 

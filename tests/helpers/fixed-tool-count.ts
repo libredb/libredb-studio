@@ -50,13 +50,18 @@ const readsMcpStrings = matchesAny(["src/lib/mcp/**"]);
 export const MCP_LINE_MARKER =
   /mcp|list_connections|inspect_schema|metadata tools|\brun_[a-z]+_(?:read|query|command)\b|registerTool|listTools|tools\/list/i;
 
-/** A count of two or more before "tools", as a word or a numeral. */
+/** A count of two or more before "tools", or hyphenated before "tool" ("fifteen-tool"), as a word or a numeral. */
 export const TOOL_COUNT =
-  /\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty[a-z-]*|thirty[a-z-]*|\d{1,3})\s+(?:read-only\s+|MCP\s+|metadata\s+|statement\s+|shared\s+)*tools\b/i;
+  /\b(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty[a-z-]*|thirty[a-z-]*|\d{1,3})(?:\s+(?:read-only\s+|MCP\s+|metadata\s+|statement\s+|shared\s+)*tools|-tool(?!-))\b/i;
 
-/** A literal length or call count on the tool list, in test code; zero is "none", which no flip changes. */
+/**
+ * A literal length or call count on the tool list or a list of tool names, in test code; zero is "none", which no
+ * flip changes, and a single name is one tool, not the list.
+ */
 const FIXED_LENGTH = [
   /tools\)?\??\.?\)?\s*\.toHaveLength\(\s*[1-9]/,
+  /expect\(\s*[\w.]*(?:names|listed|tools)\)\s*\.toHaveLength\(\s*(?:[2-9]|\d{2,})/i,
+  /(?:names|listed|tools)\)?\.length\)\s*\.toBe\(\s*(?:[2-9]|\d{2,})/i,
   /registrations\.calls\)\.toBe\(\s*[1-9]/,
   /registrations\.calls\s*\/\s*[1-9]/,
 ];
@@ -68,15 +73,13 @@ const NEIGHBOUR_ORDER = /indexOf\(\s*"run_[a-z_]+"\s*\)\s*\+\s*1/;
 const RUNS_ON_LIST = /\b(?:It runs on|Runs on) [^$;.]*, /;
 
 const TOOL_NAME = /^(?:list_connections|inspect_schema|run_[a-z_]+)$/;
-const STATEMENT_TOOL_NAME = /^run_/;
 
 /**
- * An array literal holding this many distinct tool names, this many of them statement tools, is a hand-written tool
- * list. A case table that calls the metadata tools and one statement tool is a test of each, not a list a new
- * tool has to join.
+ * An array literal holding this many distinct tool names is a hand-written tool list. The case table of a `.each`
+ * call is not: each row is a test of the one tool it names, with that tool's own arguments, so a new tool has no row
+ * to join.
  */
 const TOOL_LIST_SIZE = 3;
-const STATEMENT_TOOL_LIST_SIZE = 2;
 
 /**
  * The fixed counts and literal lists in one file. `labels` are the engine display labels, which tell a "Runs on"
@@ -99,10 +102,9 @@ export function countFindings(path: string, source: string, labels: readonly str
     if (!isTestFile(path)) read = readsMcpStrings(path) ? [...code.comments, ...code.strings] : code.comments;
     else {
       for (const array of code.arrays) {
+        if (array.caseTable) continue;
         const names = [...new Set(array.strings.filter((text) => TOOL_NAME.test(text)))];
-        const statementTools = names.filter((name) => STATEMENT_TOOL_NAME.test(name));
-        if (names.length >= TOOL_LIST_SIZE && statementTools.length >= STATEMENT_TOOL_LIST_SIZE)
-          add(array.line, `array literal of tool names: ${names.join(", ")}`);
+        if (names.length >= TOOL_LIST_SIZE) add(array.line, `array literal of tool names: ${names.join(", ")}`);
       }
       for (const string of code.strings) {
         if (RUNS_ON_LIST.test(string.text) && namedLabels(string.text, labels).length >= 2)
