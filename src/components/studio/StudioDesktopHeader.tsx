@@ -15,7 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { GitHubRepoLink } from "@/components/github-repo-link";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { ReadOnlyMarker } from "@/components/read-only-marker";
+import { ReadOnlyMarker, showsReadOnlyMarker } from "@/components/read-only-marker";
 
 /** What the pulse indicator reads for each state. Only Online animates: the others are not live. */
 const PULSE_TEXT: Record<ConnectionPulse, string> = {
@@ -53,7 +53,7 @@ export const StudioDesktopHeader = React.memo(function StudioDesktopHeader({
             <h1 className="text-xs font-medium text-fg truncate max-w-[120px]">
               {activeConnection ? activeConnection.name : "Quick Access"}
             </h1>
-            {activeConnection?.readOnly === true && <ReadOnlyMarker />}
+            {activeConnection && showsReadOnlyMarker(activeConnection) && <ReadOnlyMarker />}
           </div>
           {activeConnection && (
             <p className="text-xs text-fg-muted font-mono uppercase leading-none mt-0.5">

@@ -1,10 +1,21 @@
 import { LockKeyhole } from "lucide-react";
+import { WRITE_REACH } from "@/lib/db/compatibility";
+import type { DatabaseConnection } from "@/lib/types";
 
 /**
- * The "Read-only" marker a connection whose `readOnly` is true carries beside its name (#1089): in the
- * sidebar beside the managed lock, and in both editor headers. Its callers read the public field and
- * nothing else, so no engine is named here; only an engine whose provider enforces the mode can carry
- * it, because the seed schema and the factory refuse the field everywhere else.
+ * Whether a connection carries the marker: its `readOnly` is true, or its engine's `WRITE_REACH` is
+ * `none`, where Studio has no write path at all. The connection form does not write `readOnly` on such
+ * an engine, so the record answers for it, and no engine is named here.
+ */
+export function showsReadOnlyMarker(connection: Pick<DatabaseConnection, "type" | "readOnly">): boolean {
+  return connection.readOnly === true || WRITE_REACH[connection.type] === "none";
+}
+
+/**
+ * The "Read-only" marker beside a connection's name (#1089): in the sidebar beside the managed lock,
+ * and in both editor headers. Its callers decide through `showsReadOnlyMarker`; only an engine whose
+ * provider enforces the mode can carry it, because the seed schema and the factory refuse the field
+ * everywhere else.
  */
 export function ReadOnlyMarker({ compact = false }: { compact?: boolean }) {
   return (
