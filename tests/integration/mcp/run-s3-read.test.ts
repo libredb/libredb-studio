@@ -76,7 +76,11 @@ let port = 0;
 let slowClosedAt: number | null = null;
 
 function keyIdOf(request: IncomingMessage): string | null {
-  return /Credential=([^/]+)\//.exec(request.headers.authorization ?? "")?.[1] ?? null;
+  const header = request.headers.authorization ?? "";
+  const start = header.indexOf("Credential=");
+  if (start === -1) return null;
+  const end = header.indexOf("/", start);
+  return end === -1 ? null : header.slice(start + "Credential=".length, end);
 }
 
 function answer(request: IncomingMessage, response: ServerResponse): void {
