@@ -250,7 +250,7 @@ describe("docs/providers/milvus.md quotes what the code says", () => {
     const scopeDir = path.join(ROOT, "tests/fixtures/milvus/3.0.2/mcp-scope");
     for (const cited of scope.match(/`[a-z-]+-(?:dbro|few|onedb|\*)`/g) ?? []) {
       const name = cited.slice(1, -1);
-      const pattern = new RegExp(`^${name.replace("*", "[a-z]+")}\\.json$`);
+      const pattern = new RegExp(`^${name.replaceAll("*", "[a-z]+")}\\.json$`);
       expect({ cited: name, found: readdirSync(scopeDir).some((file) => pattern.test(file)) }).toEqual({
         cited: name,
         found: true,
