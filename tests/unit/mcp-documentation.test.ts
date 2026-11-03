@@ -204,12 +204,15 @@ describe("docs/MCP.md", () => {
 
   // Measured through /api/mcp: a broker that accepts TCP and never sends CONNACK is given up when the handshake's own
   // 3-second window ends, whatever timeout_ms is, and answered as an engine error, not the timeout answer.
-  test.each(["MQTT", "Sparkplug B"])("the %s cancel row says a broker that sends no CONNACK ends at about 3 s as an engine error", (label) => {
-    const row = MCP_DOC.split("\n").find((line) => line.startsWith(`| ${label} | `));
-    expect(row).toContain("never sends a CONNACK is given up at about 3 s whatever `timeout_ms` is");
-    expect(row).toContain("an engine error saying no CONNACK arrived, not the timeout answer");
-    expect(row).not.toContain("given up at the time left");
-  });
+  test.each(["MQTT", "Sparkplug B"])(
+    "the %s cancel row says a broker that sends no CONNACK ends at about 3 s as an engine error",
+    (label) => {
+      const row = MCP_DOC.split("\n").find((line) => line.startsWith(`| ${label} | `));
+      expect(row).toContain("never sends a CONNACK is given up at about 3 s whatever `timeout_ms` is");
+      expect(row).toContain("an engine error saying no CONNACK arrived, not the timeout answer");
+      expect(row).not.toContain("given up at the time left");
+    },
+  );
 
   test("says inspect_schema refuses Kubernetes", () => {
     expect(MCP_DOC).toContain(
