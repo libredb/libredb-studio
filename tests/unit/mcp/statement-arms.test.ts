@@ -147,11 +147,11 @@ describe("MCP_STATEMENT_ARMS", () => {
       const facet = AGENT_LANGUAGE_MCP_FACETS[arm.language] as AgentLanguageMcpFacet;
       expect(arm.answersWarnings).toBe(facet.answersWarnings === true);
     }
-    expect(ARMS.filter((arm) => arm.answersWarnings).map((arm) => arm.tool)).toEqual([
-      "run_snmp_read",
-      "run_mqtt_read",
-      "run_sparkplug_read",
-    ]);
+    // The window tools say what a window cannot; SNMP names the withheld subtrees a read stepped over or answered.
+    for (const arm of [RUN_MQTT_READ_ARM, RUN_SPARKPLUG_READ_ARM, RUN_SNMP_READ_ARM])
+      expect(arm.answersWarnings).toBe(true);
+    expect(RUN_READ_QUERY_ARM.answersWarnings).toBe(false);
+    expect(RUN_ETCD_READ_ARM.answersWarnings).toBe(false);
   });
 
   test("leaves a connection's database setting out of list_connections only where its facet says it is a stored value", () => {
