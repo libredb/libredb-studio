@@ -47,8 +47,15 @@ describe("the run_sparkplug_read capture", () => {
     expect(capture.scope.scopedOtherGroup).toMatchObject({ isError: true, carriesSeeded: false });
   });
 
-  test("every refused form sent nothing past the handshake, and inspect_schema listed nothing", () => {
-    expect(capture.refused).toHaveLength(5);
+  test("every refused form was refused in its own words and sent nothing past the handshake, and inspect_schema listed nothing", () => {
+    expect(capture.refused.map((form: { request: string; code: string }) => [form.request, form.code])).toEqual([
+      ["an id with a wildcard", "metadata-only"],
+      ["an id with a level separator", "request"],
+      ["the host state group", "metadata-only"],
+      ["a rebirth command", "metadata-only"],
+      ["a filter of the model's", "request"],
+    ]);
+    for (const form of capture.refused) expect(form.ownWords).toBe(true);
     for (const form of capture.refused) expect(form.sessionsUnfenced).toBe(1);
     expect(capture.inspect).toEqual({ totalTables: 0, isError: false });
   });

@@ -102,7 +102,7 @@
           "retained": true,
           "delivered_qos": 0,
           "payload_bytes": 15,
-          "last_seen_ms": 42,
+          "last_seen_ms": 41,
           "messages_lost": 0
         }
       ],
@@ -145,36 +145,50 @@
   "refused": [
     {
       "request": "a publish",
+      "code": "request",
+      "ownWords": true,
       "fenced": "The read request was refused before it reached the broker (request). The request",
       "sessionsUnfenced": 1
     },
     {
       "request": "a will",
+      "code": "request",
+      "ownWords": true,
       "fenced": "The read request was refused before it reached the broker (request). The request",
       "sessionsUnfenced": 1
     },
     {
       "request": "a wildcard below the root",
+      "code": "metadata-only",
+      "ownWords": true,
       "fenced": "The read request was refused before it reached the broker (metadata-only). \"topi",
       "sessionsUnfenced": 1
     },
     {
       "request": "a multi-level wildcard below the root",
+      "code": "metadata-only",
+      "ownWords": true,
       "fenced": "The read request was refused before it reached the broker (metadata-only). \"topi",
       "sessionsUnfenced": 1
     },
     {
       "request": "a shared subscription",
+      "code": "metadata-only",
+      "ownWords": true,
       "fenced": "The read request was refused before it reached the broker (metadata-only). A top",
       "sessionsUnfenced": 1
     },
     {
       "request": "a $SYS topic",
+      "code": "metadata-only",
+      "ownWords": true,
       "fenced": "The read request was refused before it reached the broker (metadata-only). A top",
       "sessionsUnfenced": 1
     },
     {
       "request": "a filter of the model's",
+      "code": "request",
+      "ownWords": true,
       "fenced": "The read request was refused before it reached the broker (request). The request",
       "sessionsUnfenced": 1
     }
@@ -187,7 +201,7 @@
   "limits": {
     "leastTimeoutAnsweredMs": 3005,
     "belowLeast": "[\n  {\n    \"origin\": \"number\",\n    \"code\": \"too_small\",\n    \"minimum\": 5000,\n    \"inclusive\": true,\n    \"path\": [\n      \"timeout_ms\"\n    ],\n    \"message\": \"timeout_ms must be at least 5000 for run_mqtt_read: an MQTT read listens for a 3,000 ms window and needs 4,000 ms with its dial, after the connection's own handshake, and a window is never shortened, so nothing was sent.\"\n  }\n]",
-    "cancelAnsweredMs": 1001,
+    "cancelAnsweredMs": 1002,
     "cancelReadEndedMs": 3002
   },
   "collision": {

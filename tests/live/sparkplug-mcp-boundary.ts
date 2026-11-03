@@ -214,25 +214,58 @@ async function main(): Promise<void> {
     "scope: a connection that names a group refuses another after the handshake alone",
   );
 
-  const forms: readonly (readonly [string, string])[] = [
-    ["an id with a wildcard", '{"read": "group", "group": "Sekoya#"}'],
-    ["an id with a level separator", '{"read": "edgeNode", "group": "SekoyaPlant/NBIRTH", "edgeNode": "Line1"}'],
-    ["the host state group", '{"read": "group", "group": "STATE"}'],
-    ["a rebirth command", '{"read": "rebirth", "group": "SekoyaPlant", "edgeNode": "Line1"}'],
-    ["a filter of the model's", '{"read": "window", "filter": "spBv1.0/#"}'],
+  // Fenced, nothing is acquired and the agent reader's own refusal answers, its code and its words; unfenced, the
+  // provider refuses before anything is sent.
+  const forms: readonly (readonly [string, string, string, string])[] = [
+    [
+      "an id with a wildcard",
+      '{"read": "group", "group": "Sekoya#"}',
+      "metadata-only",
+      "An id is named in full, with no + and no #",
+    ],
+    [
+      "an id with a level separator",
+      '{"read": "edgeNode", "group": "SekoyaPlant/NBIRTH", "edgeNode": "Line1"}',
+      "request",
+      "An id is one topic level and holds no /",
+    ],
+    [
+      "the host state group",
+      '{"read": "group", "group": "STATE"}',
+      "metadata-only",
+      "A group named STATE is never read in agent mode",
+    ],
+    [
+      "a rebirth command",
+      '{"read": "rebirth", "group": "SekoyaPlant", "edgeNode": "Line1"}',
+      "metadata-only",
+      "never sends a command or a rebirth request",
+    ],
+    [
+      "a filter of the model's",
+      '{"read": "window", "filter": "spBv1.0/#"}',
+      "request",
+      "The request holds a key agent mode does not read",
+    ],
   ];
   const refused = [];
-  for (const [what, statement] of forms) {
+  for (const [what, statement, code, words] of forms) {
     const fenced = await mcp(open, { statement });
     const at = studioClients(0).lines;
     const unfenced = await mcp(open, { statement }, UNFENCED);
     const opened = studioClients(at).ids.length;
-    check(fenced.result.isError === true && fenced.acquired.length === 0, `refused: ${what} fenced, nothing acquired`);
+    const ownWords =
+      textOf(fenced.result).startsWith(`The read request was refused before it reached the broker (${code}). `) &&
+      textOf(fenced.result).includes(words);
+    check(
+      fenced.result.isError === true && fenced.acquired.length === 0 && ownWords,
+      `refused: ${what} fenced, in its own words (${code}), nothing acquired`,
+    );
     check(
       textOf(unfenced.result).includes(NOT_SENT) && opened === 1,
       `refused: ${what} unfenced, refused after the handshake alone (${opened} session)`,
     );
-    refused.push({ request: what, sessionsUnfenced: opened });
+    refused.push({ request: what, code, ownWords, sessionsUnfenced: opened });
   }
 
   const started = Date.now();

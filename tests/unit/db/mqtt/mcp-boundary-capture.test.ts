@@ -47,16 +47,17 @@ describe("the run_mqtt_read capture", () => {
     expect(capture.scope.broadIdleVsMissingAlike).toBe(true);
   });
 
-  test("every refused form sent nothing past the handshake, and no read changed a retained message", () => {
-    expect(capture.refused.map((form: { request: string }) => form.request)).toEqual([
-      "a publish",
-      "a will",
-      "a wildcard below the root",
-      "a multi-level wildcard below the root",
-      "a shared subscription",
-      "a $SYS topic",
-      "a filter of the model's",
+  test("every refused form was refused in its own words and sent nothing past the handshake, and no read changed a retained message", () => {
+    expect(capture.refused.map((form: { request: string; code: string }) => [form.request, form.code])).toEqual([
+      ["a publish", "request"],
+      ["a will", "request"],
+      ["a wildcard below the root", "metadata-only"],
+      ["a multi-level wildcard below the root", "metadata-only"],
+      ["a shared subscription", "metadata-only"],
+      ["a $SYS topic", "metadata-only"],
+      ["a filter of the model's", "request"],
     ]);
+    for (const form of capture.refused) expect(form.ownWords).toBe(true);
     for (const form of capture.refused) expect(form.sessionsUnfenced).toBe(1);
     expect(capture.writes).toEqual({ retainedBefore: 3, afterRawPublish: 4, afterUnfencedRequest: 4 });
   });

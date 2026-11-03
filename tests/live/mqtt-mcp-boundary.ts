@@ -261,28 +261,44 @@ async function main(): Promise<void> {
     "scope: the narrow login's window counts no topic outside its ACL",
   );
 
-  // The refused forms: fenced, nothing is acquired; unfenced, the provider refuses before anything is sent.
-  const forms: readonly (readonly [string, string])[] = [
-    ["a publish", '{"read": "publish", "topic": "homes/ayse-yilmaz/door", "payload": "x"}'],
-    ["a will", '{"read": "window", "will": {"topic": "homes/ayse-yilmaz/door", "payload": "x"}}'],
-    ["a wildcard below the root", '{"read": "topic", "topic": "homes/+/door"}'],
-    ["a multi-level wildcard below the root", '{"read": "topic", "topic": "homes/#"}'],
-    ["a shared subscription", '{"read": "topic", "topic": "$share/g/factory/#"}'],
-    ["a $SYS topic", '{"read": "topic", "topic": "$SYS/broker/clients/connected"}'],
-    ["a filter of the model's", '{"read": "window", "filter": "homes/#"}'],
+  // The refused forms: fenced, nothing is acquired and the agent reader's own refusal answers, its code and its words;
+  // unfenced, the provider refuses before anything is sent.
+  const KEY = "The request holds a key agent mode does not read";
+  const WILDCARD = '"topic" names one topic in full, with no + and no #';
+  const DOLLAR = "A topic beginning with $ is never read in agent mode";
+  const forms: readonly (readonly [string, string, string, string])[] = [
+    ["a publish", '{"read": "publish", "topic": "homes/ayse-yilmaz/door", "payload": "x"}', "request", KEY],
+    ["a will", '{"read": "window", "will": {"topic": "homes/ayse-yilmaz/door", "payload": "x"}}', "request", KEY],
+    ["a wildcard below the root", '{"read": "topic", "topic": "homes/+/door"}', "metadata-only", WILDCARD],
+    ["a multi-level wildcard below the root", '{"read": "topic", "topic": "homes/#"}', "metadata-only", WILDCARD],
+    ["a shared subscription", '{"read": "topic", "topic": "$share/g/factory/#"}', "metadata-only", DOLLAR],
+    ["a $SYS topic", '{"read": "topic", "topic": "$SYS/broker/clients/connected"}', "metadata-only", DOLLAR],
+    ["a filter of the model's", '{"read": "window", "filter": "homes/#"}', "request", KEY],
   ];
   const refused = [];
-  for (const [what, statement] of forms) {
+  for (const [what, statement, code, words] of forms) {
     const fenced = await mcp(broad, { statement });
     const logAt = studioClients(0).lines;
     const unfenced = await mcp(broad, { statement }, UNFENCED);
     const opened = studioClients(logAt).ids.length;
-    check(fenced.result.isError === true && fenced.acquired.length === 0, `refused: ${what} fenced, nothing acquired`);
+    const ownWords =
+      textOf(fenced.result).startsWith(`The read request was refused before it reached the broker (${code}). `) &&
+      textOf(fenced.result).includes(words);
+    check(
+      fenced.result.isError === true && fenced.acquired.length === 0 && ownWords,
+      `refused: ${what} fenced, in its own words (${code}), nothing acquired`,
+    );
     check(
       textOf(unfenced.result).includes(NOT_SENT) && opened === 1,
       `refused: ${what} unfenced, refused after the handshake alone (${opened} session)`,
     );
-    refused.push({ request: what, fenced: textOf(fenced.result).slice(0, 80), sessionsUnfenced: opened });
+    refused.push({
+      request: what,
+      code,
+      ownWords,
+      fenced: textOf(fenced.result).slice(0, 80),
+      sessionsUnfenced: opened,
+    });
   }
 
   // The positive control: a raw PUBLISH by the writer changes the retained set, the agent's read changes nothing.
