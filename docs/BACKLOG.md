@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S11 · 8
-- [Drivers and connections](#drivers-and-connections) — D1-D423, U17 · 308
+- [Drivers and connections](#drivers-and-connections) — D1-D434, U17 · 318
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U196 · 182
@@ -42,7 +42,7 @@ None of it is a GitHub issue.
 - [Agent M1 deferrals (#328)](#agent-m1-deferrals-328) — A2–A8 · 5
 - [Agent M2 deferrals (#329)](#agent-m2-deferrals-329) — B2-B169 · 83
 - [Passkey deferrals (#785)](#passkey-deferrals-785) — PK1-PK9 · 8
-- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP14 · 14
+- [MCP server deferrals (#246)](#mcp-server-deferrals-246) — MCP1-MCP15 · 15
 - [Governance follow-ups](#governance-follow-ups) — GOV1-GOV30 · 30
 
 ---
@@ -1821,6 +1821,7 @@ Both reach the caller as a shorter list with no reason: `GET /api/connections/ma
 When an MCP client cancels by closing the request, or `timeout_ms` passes, the statement tool stops waiting but the statement runs on; what each served engine does instead is the cancel table in `docs/MCP.md` "Limits".
 A 2025-era `notifications/cancelled` sent in its own `POST` does not even stop the wait: the stateless server answers it 202 without knowing the call, which runs to completion or `timeout_ms` (`tests/integration/mcp/http-route.test.ts`).
 This departs from the MCP rule that a server should stop work on a cancelled request as soon as practical.
+Where an engine serialises a seed's reads, the read that runs on also holds the next call: it keeps the seed's read slot until it ends on its own, so a later call on that seed waits behind a read its client already gave up, and one whose `timeout_ms` ends first is answered as the timeout; the cancel table says which engines do.
 
 **Done when:** `queryReadOnly` accepts an `AbortSignal`, every engine a statement tool serves stops the statement on abort, the cancel table and each provider doc say so, and `/api/mcp` passes the tool call's signal.
 
@@ -4211,6 +4212,102 @@ The service declares `restart: unless-stopped`, so a host reboot or a `docker co
 Found 2026-11-02 while verifying the fix for D160.
 
 **Done when:** a stop and a start of the `db2` service, measured on 12.1.0.0 and 11.5.9.0, bring the database back with its fixture, or the compose file states why the service cannot be restarted and how to recreate it.
+
+### D425. A file engine's open error names the server's absolute path, and LibreDB's says "agent" to every caller
+
+`describeOpenError` in `src/lib/db/providers/embedded/libredb.ts` answers an `ENOENT` with "The LibreDB file <path> does not exist. The agent opens an existing file only and creates none.", where `<path>` is `resolveDatabasePath()`, the absolute path on the Studio server.
+Its comment says only an agent profile's open can meet a missing file, and that no longer holds on two paths.
+- **MCP:** `inspect_schema` and `run_libredb_read` on a LibreDB seed whose file is missing are answered with that sentence, so an MCP client is told about "the agent" and is shown the server's file system layout.
+- **The editor:** An editor open of `/proc/self/environ` fails with the same sentence, because the kernel's `.lock` sidecar cannot be created there and its `ENOENT` takes this branch; the file exists, and no agent is involved (measured 2026-11-03 with `new LibreDBProvider(...).connect()` under no execution profile).
+
+`describeOpenFailure` in `src/lib/db/providers/sql/duckdb/client.ts` answers a read-only handle on an absent file with "DuckDB database <path> does not exist and a read-only handle will not create one." followed by the engine's message, which names the path again, so an MCP caller of a DuckDB seed meets the same absolute path.
+Found 2026-11-02 while verifying `run_libredb_read`, and the editor case the same day.
+
+**Done when:** an open error names the file as the connection names it, or by its base name, never the resolved server path, to a caller that is not an administrator of the server; LibreDB's missing-file sentence names no agent and is chosen by what failed (the store, or its `.lock` sidecar), not by an assumed caller; and provider tests pin the MCP missing-file answer for both engines and the editor's `/proc/self/environ` answer.
+
+### D426. A LibreDB read-only open of a `/sys` file is refused with the kernel's short-read message
+
+The read-only adapter in `src/lib/db/providers/embedded/libredb-read-only-file.ts` refuses a procfs file, which reports a size of 0 and is filled when read, as no LibreDB file with the format sentence (`LibreDBNotAStoreError`).
+A sysfs file is the other shape: it reports a size of 4096 and holds fewer bytes, so the kernel's read comes back short and the open fails with the kernel's own text.
+Measured 2026-11-03 with the agent read-only profile: `/sys/kernel/mm/transparent_hugepage/enabled` was refused "Failed to open LibreDB file: libredb: WAL read returned 23 of 4096 bytes", and `/sys/devices/system/cpu/online` "... returned 5 of 4096 bytes".
+The file is left untouched, so nothing is lost; the sentence just does not say the file is no LibreDB database, and it quotes byte counts of a file the user did not mean to open.
+`docs/providers/libredb.md` (the read-only adapter section and its table) records the procfs case only.
+Found 2026-11-02 while verifying `run_libredb_read`.
+
+**Done when:** a file whose bytes end before the size it reports is refused as no LibreDB file with the format sentence, under both agent profiles, with an adapter test on a file that reports more than it holds and the doc's table carrying the row.
+
+### D427. A LibreDB read-only handle replays the whole file on the server's thread whenever the file changed
+
+On a read-only handle `ensureConnected` in `src/lib/db/providers/embedded/libredb.ts` compares the file's snapshot (inode, size, mtime) before every read and, when it changed, reopens it through the read-only adapter, whose reads are `fs.readSync` (`libredb-read-only-file.ts`): the kernel replays the whole write-ahead log to rebuild the store, synchronously, on the thread that serves every request.
+So a file the editor is writing beside an agent or MCP read is replayed in full per read, and nothing else the server does runs meanwhile.
+Measured 2026-11-02 while verifying `run_libredb_read`: `/api/health` waited up to 3.3 s during slow reads of a large file.
+`docs/MCP.md` (the cancel table) says a LibreDB read runs on the server's thread and cannot be stopped midway; it does not say the cost grows with the file's whole history.
+Found 2026-11-02 while verifying `run_libredb_read`.
+
+**Done when:** a changed file is reopened without blocking the request thread for the length of the replay, by replaying off the thread or replaying only what was appended since the last snapshot, with a test that a health request is answered within a bound while a large file is reopened, and the cancel table states the cost that remains.
+
+### D428. The Redis editor fails every query for a read-only ACL user, because the transaction check sends `PING`
+
+After every editor query `src/lib/api/editor-query.ts` awaits `endOpenQueryTransaction()` in a `finally`, and on Redis that sends `PING` to learn whether a `MULTI` is open (`src/lib/db/providers/keyvalue/redis.ts`).
+`PING` is in Redis's `@connection` category, not `@read`, so a user the agent's read-only proof admits, such as `ACL SETUSER ro on >pw ~* +@read` (`docs/providers/redis.md` section 16), is refused it with `NOPERM`, and the refusal raised in the `finally` replaces the query's own answer.
+So such a user can open the connection and browse keys, but every command typed in the editor answers an error after it ran.
+`docs/providers/redis.md` measures the check with `+@read +ping +info`, where `PING` is granted, and does not state that a user without `+ping` loses the editor.
+Found 2026-11-02 while verifying `run_redis_read` with a least-privilege seed user.
+
+**Done when:** a refused `PING` is read as "no transaction this connection can open", since a user who may not `PING` may not `MULTI` either, or the check is skipped for a user the open found without `MULTI`, so the query's own answer stands; with a provider test on a `+@read` user, and the provider doc saying which grants the editor needs.
+
+### D429. Each Redis agent-operations open logs ioredis's ready-check warning, naming the ACL user
+
+The agent read-only profile turns off ioredis's ready check (`enableReadyCheck: false` in `src/lib/db/providers/keyvalue/redis.ts`), because its `INFO` is refused a `+@read` user, but the agent operations profile, which `inspect_schema` and the grounding acquire, keeps it.
+So every open of an operations handle for a user without `+info` writes ioredis's `console.warn` to the server log: "Skipping the ready check because INFO command fails: "NOPERM User <name> has no permissions to run the 'info' command"", which names the seed's ACL user.
+No credential is in it, and the editor's same warning for a restricted user is documented as wanted (`docs/providers/redis.md`, the restricted-user note); on the operations profile it is noise that repeats with MCP traffic and names an account in a log operators may ship elsewhere.
+Found 2026-11-02 while verifying `run_redis_read`.
+
+**Done when:** the operations profile skips the ready check as the read-only profile does, with what it reads checked by its own first command, and a provider test pins the option on both agent profiles.
+
+### D430. The RabbitMQ editor answers an exchange read as a stream as if nothing had that name
+
+`missingObject` in `src/lib/db/providers/stream/rabbitmq/errors.ts` answers a name whose queue type check found no queue with "Virtual host <vhost> has no queue, stream or exchange <name>, or the virtual host does not exist: refresh the tree."
+The agent's read asks the exchange route next and answers an exchange as not a stream (`exchangeOfTheName` in `src/lib/db/providers/stream/rabbitmq/read.ts`), but the editor's `runRead` does not, so a read naming an exchange that exists is told that no exchange of that name exists.
+Repro: on a broker with exchange `amq.topic`, run a read of `amq.topic` in the editor; the answer says the virtual host has no queue, stream or exchange `amq.topic`.
+Found 2026-11-02 while verifying `run_rabbitmq_read`.
+
+**Done when:** the editor's read asks the exchange route as the agent's does and answers an exchange as not a stream, with a test on a broker double that holds an exchange and no queue of the name.
+
+### D431. etcd's agent table still admits the count of every key, which no proved user can read
+
+`agent-statement.ts` in `src/lib/db/providers/keyvalue/etcd/` admits `get "" --prefix --count-only` as the count of every key, and the `etcdctl` language's tool and server texts offer it (`src/lib/agent/languages/etcdctl/`).
+The read-only proof in `agent-read-only-proof.ts` refuses a user with a READ range that reaches every key, so every user that passes the proof is refused that count by the server, and the read can only answer "etcd refused the read: the agent's etcd user is not granted it".
+So the agent is offered a read that never succeeds and spends a step learning it; `docs/providers/etcd.md` sections 15.2 and 15.7 already say the server always refuses it, and the table still holds it.
+Found 2026-11-02 while opening `run_etcd_read`.
+
+**Done when:** the count of every key leaves the closed table and every text that offers it, the agent description's golden regenerated, with a test that the form is refused before anything is sent, and sections 15.2 to 15.7 of `docs/providers/etcd.md` updated to match.
+
+### D432. A Modbus pacing test assumes its first read holds the lane after 20 ms
+
+"a read whose turn comes after its time budget is refused in Studio's words, and sends nothing" in `tests/unit/db/modbus/agent-provider.test.ts` starts a read, waits 20 ms, then starts a second read with a 100 ms budget and expects the second to be refused before it dials, with one device connection in all.
+Under load the first read may not have taken the lane within 20 ms, so the second runs first, and the test sees two connections: it failed so once in a full `test:coverage` run on 2026-11-02 (expected 1 connection, got 2, 5.3 s), and passes alone with and without coverage.
+Found 2026-11-02 during a full coverage run.
+
+**Done when:** the test waits on the first read holding the lane (an event or the pacer's own state) rather than on a fixed delay, and passes in a coverage run under load.
+
+### D433. The Weaviate `agentServer` test helper keys its fixtures by request line, so two root captures collide
+
+`agentServer` in `tests/helpers/weaviate-agent.ts` answers each request with the capture of the same method and path for the principal, and keeps one capture per line.
+For principal `root`, `aggregate-root.json` and `write-count-after-root.json` in `tests/fixtures/weaviate/1.40.2/agent-boundary/` are both `POST /v1/aggregate/Note`, so whichever is read last answers both requests.
+No test calls `agentServer("root")` today, so nothing is wrong yet; the first one would read the wrong body for one of them, and the result would depend on the order the directory lists.
+The `scopeServer` helper had the same collision and now matches the request body as well.
+Found 2026-11-03 while fixing that helper.
+
+**Done when:** `agentServer` matches a request by its line and body, or refuses at build time when two captures of one principal share a line, with a helper test on the two root captures.
+
+### D434. The OPC UA live step publishes its fixture on a fixed port inside the ephemeral range
+
+The CI step that starts the OPC UA fixture publishes it on `127.0.0.1:54840` (`.github/workflows/ci.yml`, `LIBREDB_OPCUA_LIVE_URL`), and `tests/unit/db/opcua/live-environment.test.ts` pins that mapping.
+54840 is inside Linux's ephemeral port range (32768 to 60999), where a client socket of an earlier step, open or in `TIME_WAIT`, can hold it, and Docker then refuses the bind with "address already in use"; the live PostgreSQL fixtures failed this way and now publish on a port Docker picks.
+Found 2026-11-03 while moving those fixtures.
+
+**Done when:** the OPC UA live step publishes on a port Docker picks and passes it to the probes through `LIBREDB_OPCUA_LIVE_URL`, or on a fixed port below 32768, with `live-environment.test.ts` pinning the new form.
 
 ## Value interpolation
 
@@ -8457,27 +8554,33 @@ No MCP tool runs InfluxQL: the `influxql` language pack declares no MCP facet (`
 The agent half closed on 2026-10-30: the `influxdb` provider implements `queryReadOnly` for a principal the server proves read-only before every statement, under the agent's InfluxQL statement reader (`docs/providers/influxdb.md`, section Agent mode).
 Its agent credential takes the default form, `agentUser` and `agentPassword` together, which is a 1.x user; a 2.x token beside the connection's own credential has no form, because one provider class serves both lines and declares its form before it knows the line, so a 2.x connection gives the agent a read-only token as its own credential.
 `influxdb3` left this entry on 2026-10-29: agent mode executes its DataFusion SQL under the 3.12 Core planner's write refusals, and on 2026-11-01 MCP's `run_read_query` opened on it under the same boundary (`docs/providers/influxdb3.md` section 3.5), with `MCP_STATEMENT_READ.influxdb` left false.
-MCP read on `influxdb` waits on one more condition, measured on 1.13.1 on 2026-11-02: a catalog read's database scope rests on the agent's statement reader alone, which refuses a `SHOW` naming any database (`docs/providers/influxdb.md` section 15.3).
+Why MCP statement read stays closed, measured on 1.13.1 on 2026-11-02: on a 1.x server the database scope of a catalog `SHOW` rests on the agent's statement reader alone, which refuses a `SHOW` that names any database, so an agent `SHOW` reads only the database sent as `db` (`docs/providers/influxdb.md` section 15.3).
 No layer that reads the answer can hold that scope, since a `SHOW` answer names no database and has the shape of the same read on the connection's own one, and MCP read opens only where a layer independent of parsing the request holds the scope.
-The answer-side refusal of statement text (`SHOW QUERIES`, `SHOW CONTINUOUS QUERIES`) is already in place for agent mode.
+The answer-side refusal of statement text (`SHOW QUERIES`, `SHOW CONTINUOUS QUERIES`) is already in place for agent mode, and a `SELECT` naming another database is still refused by the server where the principal holds no `READ` on it.
+What would reopen it: a layer independent of the reader that holds a catalog `SHOW` to the connection's database on 1.x, measured on 1.13.1, or a recorded decision that the reader is enough for MCP clients.
 
-Found 2026-10-04 while designing the InfluxDB provider (ruling R10).
+Found 2026-10-04 while designing the InfluxDB provider; the MCP condition measured 2026-11-02.
 
-**Done when:** MCP serves `influxdb`'s InfluxQL through its own MCP facet in its language pack (`src/lib/agent/languages/influxql/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), under the same principal proof, with the catalog reads' database scope held by a layer independent of the reader and `MCP_STATEMENT_READ.influxdb` opened by the owner, and a 2.x agent token is accepted beside the connection's own credential, with tests.
+**Done when:** MCP serves `influxdb`'s InfluxQL through its own MCP facet in its language pack (`src/lib/agent/languages/influxql/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), under the same principal proof, once the condition above holds, with `MCP_STATEMENT_READ.influxdb` opened by the owner, and a 2.x agent token is accepted beside the connection's own credential, with tests.
 
 ### B100. Oxia's agent reads are metadata only, and it has no MCP statement tool
 
 Agent mode executes Oxia metadata reads under the `oxiacli` statement language, over a gRPC stub that holds only the shard map, Read, List and RangeScan calls (`docs/providers/oxia.md`, section 15).
 Oxia 0.18.0 checks a token and authorizes nothing, so any authenticated client writes and deletes every key; no reader can be proved, and the provider's closed table is the boundary: it sends no write, delete, session, notification, sequence, range-scan or read of another namespace.
-Key names count as stored values, since Pulsar's key paths name tenants, namespaces and topics (O14), so the reads are the namespace's shard and leader counts, one named key's existence, version, times, value size and ephemeral flag (never its session id or client identity), and the count of every key in the namespace, counted in Studio and refused past the row budget; a count over a range or prefix the request names is refused, since narrower counts would spell out key names: nothing lists keys, reads a value, or reads by comparison, secondary index or partition key, and every answer is projected to names, counts and sizes (`ProviderCapabilities.metadataOnly`, `src/lib/db/redaction/metadata-only.ts`).
+Key names count as stored values, since Pulsar's key paths name tenants, namespaces and topics, so the reads are the namespace's shard and leader counts, one named key's existence, version, times, value size and ephemeral flag (never its session id or client identity), and the count of every key in the namespace, counted in Studio and refused past the row budget; a count over a range or prefix the request names is refused, since narrower counts would spell out key names: nothing lists keys, reads a value, or reads by comparison, secondary index or partition key, and every answer is projected to names, counts and sizes (`ProviderCapabilities.metadataOnly`, `src/lib/db/redaction/metadata-only.ts`).
 On a handle of either agent profile the editor's command path, the Keys panel and a key's listing and source are refused, and the grounding and the operations workflow read the shard rows alone.
 So the language offers the investigation and the operations workflow only: data analysis needs stored values, and query optimization and database assessment need a plan and a profile the server does not compose.
-Its MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) and `MCP_EXPOSABLE.oxia` and `MCP_STATEMENT_READ.oxia` are false, so no MCP tool reads an Oxia connection.
+Its MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) and `MCP_EXPOSABLE.oxia` and `MCP_STATEMENT_READ.oxia` are false, so a seed with `mcp: true` on an Oxia connection fails the whole file and no MCP tool reads one.
+
+Why MCP stays closed: the 0.18.0 server authorizes nothing, so a token, or no token on a standalone server, reads, writes and deletes every key of every namespace (`docs/providers/oxia.md`, "Before you connect" and section 3.1).
+On an Oxia connection the provider's closed table and projection are therefore the only layer between a caller and the whole cluster, and nothing the server holds narrows the connection to its namespace or to reads.
+Agent mode accepts that inside a run a Studio user started; an MCP token would carry the same reach to an external client, and MCP read opens only where a layer independent of parsing the request holds the scope.
+What would reopen it: an Oxia release that authorizes per namespace and per operation, measured on the pinned fixture, with a check at open that the connection's token holds reads only, on its own namespace; or a recorded decision that the closed table alone is enough for MCP clients on Oxia.
 Kept so that key-name and value exposure and MCP exposure are decisions of their own rather than side effects of agent mode joining.
 
-Found 2026-10-04 while designing the Oxia provider (DECISIONS O14); narrowed 2026-10-30 when agent mode joined Oxia.
+Found 2026-10-04 while designing the Oxia provider; narrowed 2026-10-30 when agent mode joined Oxia; the MCP reason recorded 2026-11-03.
 
-**Done when:** the owner rules on whether agent mode may read key names and which values it may read on Oxia and how they are redacted, the `oxiacli` pack offers the workflows that ruling opens, a per-engine exposure ruling opens MCP for Oxia, the pack declares its MCP facet (`src/lib/agent/languages/oxiacli/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same table and projection, and `MCP_EXPOSABLE.oxia` and `MCP_STATEMENT_READ.oxia` are true, with tests that every MCP answer carries no key name or value; cited in `docs/AGENT.md`.
+**Done when:** the owner rules on whether agent mode may read key names and which values it may read on Oxia and how they are redacted, the `oxiacli` pack offers the workflows that ruling opens, one of the two MCP conditions above holds, an MCP metadata surface that lists no key name is designed, a per-engine exposure ruling opens MCP for Oxia, the pack declares its MCP facet (`src/lib/agent/languages/oxiacli/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same table and projection, and `MCP_EXPOSABLE.oxia` and `MCP_STATEMENT_READ.oxia` are true, with tests that every MCP answer carries no key name or value; cited in `docs/AGENT.md`.
 
 B100 rather than the next free id: InfluxDB, built at the same time, took B94, and the gap kept the two from racing for an id.
 
@@ -8516,8 +8619,11 @@ The boundary is the provider's structural closed table: every agent-mode surface
 Object keys count as stored values, since key paths name tenants and people, and bodies, user metadata, tags, ETags, version ids, owners and ACL grants, bucket policies, CORS and lifecycle rules, endpoints and presigned URLs stay off the agent path, so every answer is projected to names, counts and flags (`ProviderCapabilities.metadataOnly`, `src/lib/db/redaction/metadata-only.ts`); a bucket is counted whole and never by prefix, since narrower counts would reveal key names, and a bucket larger than the row budget is refused rather than counted in part.
 On a handle of either agent profile the console, the Keys panel and every object and bucket source are refused, no key is listed, and the overview, storage, session, slow-query, table, index and performance readings answer their reason rather than an empty reading.
 So the language offers the investigation and the operations workflow only: data analysis needs stored values, and query optimization and database assessment need a plan and a profile S3 does not compose.
-`MCP_EXPOSABLE.s3` is false, so a seed with `mcp: true` on an S3 connection fails the whole file, and the language's MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) with `MCP_STATEMENT_READ.s3` false, so MCP `run_read_query` refuses an S3 connection.
-MCP may read S3 only with an agent read key of its own, beside the connection's key, since the key's grants are the one layer that holds the bucket scope without reading the request (measured with a scoped, an unlisted and a broad key on Silo, RustFS and Garage, `docs/providers/s3.md` section 15.5), and MCP reads seed connections alone, whose entries carry no `agentUser` or `agentPassword`, so no S3 connection can meet that condition.
+`MCP_EXPOSABLE.s3` is false, so a seed with `mcp: true` on an S3 connection fails the whole file, and the language's MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) with `MCP_STATEMENT_READ.s3` false, so no MCP tool reads an S3 connection.
+
+Why MCP stays closed: MCP may read S3 only with an agent read key of its own, beside the connection's key, since the key's grants are the one layer that holds the bucket scope without reading the request (measured with a scoped, an unlisted and a broad key on Silo, RustFS and Garage, `docs/providers/s3.md` section 15.5).
+MCP reads seed connections alone, and a seed entry carries no `agentUser` or `agentPassword`, so no S3 connection MCP can read can carry such a key.
+What would reopen it: a seed connection that can carry an agent read key, with an S3 seed set `mcp: true` and no agent read key refused when the file loads, and an MCP metadata surface that lists buckets and never an object key.
 Kept so that key exposure, object and tag reads and MCP access are decisions of their own rather than side effects of agent mode joining.
 
 Found 2026-10-09 while designing the S3 provider; narrowed 2026-10-31 when agent mode joined S3; the MCP condition measured 2026-11-02.
@@ -8532,13 +8638,20 @@ Document ids and paths, field names and field values count as stored values, sin
 Every read is billed, so every request on the agent path, the grounding's collection id listings included, is charged to the run's `RunReadAllowance` (`src/lib/db/read-allowance.ts`) before it is sent, and a read that carries no allowance sends nothing.
 On a handle of either agent profile the console, the field expand, the Keys panel and the Source tab are refused, no document is listed, and the overview, storage, session, slow-query, table, index and performance readings answer their reason rather than an empty reading.
 So the language offers the investigation and the operations workflow only: data analysis needs stored values, and query optimization and database assessment need a plan and a profile the agent does not read.
-`MCP_EXPOSABLE.firestore` is false, so a seed with `mcp: true` on a Firestore connection fails the whole file, and the language's MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) with `MCP_STATEMENT_READ.firestore` false, so MCP `run_read_query` refuses a Firestore connection, because no MCP surface that lists collections but never returns a document id is designed yet.
+`MCP_EXPOSABLE.firestore` is false, so a seed with `mcp: true` on a Firestore connection fails the whole file, and the language's MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) with `MCP_STATEMENT_READ.firestore` false, so no MCP tool reads a Firestore connection.
 A production project's viewer role is not measured: it needs a Google project and a credential, which the owner runs.
+
+Why MCP stays closed: every read is billed to the user's project, and the bound on billed reads is per run.
+- **No cross-call cap:** MCP has no run, so each statement call gets an allowance of its own (`MCP_CALL_READ_ALLOWANCE` in `src/lib/mcp/output.ts`), and nothing bounds what one MCP client spends across calls, where an agent run's allowance bounds the run.
+- **No metadata surface:** `inspect_schema` acquires its handle with no allowance, and on Firestore a grounding read with no allowance sends nothing (`agent-surface.ts`), so no MCP surface that lists collections but never a document id exists yet.
+- **No production measurement:** The closed table is the only boundary on a live project, and it has been exercised on the emulator alone, which authorizes nothing; what a production viewer role reaches, and so what a second layer could hold, is not measured.
+
+What would reopen it: a bound on billed reads across MCP calls (per token or per day) beside the per-call allowance, a collection listing for `inspect_schema` that carries an allowance and returns no document id, and the viewer role measured on a production project.
 Kept so that document and field exposure and MCP access are decisions of their own rather than side effects of agent mode joining.
 
-Found 2026-10-12 while designing the Firestore provider; narrowed 2026-10-31 when agent mode joined Firestore.
+Found 2026-10-12 while designing the Firestore provider; narrowed 2026-10-31 when agent mode joined Firestore; the MCP reason recorded 2026-11-03.
 
-**Done when:** the owner rules on which document ids, fields and values agent mode may read on Firestore and how they are redacted, the `fsquery` pack offers the workflows that ruling opens, an MCP metadata surface that lists collections and never returns a document id is designed and `MCP_EXPOSABLE.firestore` turns true for it, a per-engine exposure ruling opens MCP statement read for Firestore, the pack declares its MCP facet (`src/lib/agent/languages/fsquery/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same table, projection and read allowance, and `MCP_STATEMENT_READ.firestore` is true, with tests that every MCP answer carries no document id or value and every billed request is charged; cited in `docs/AGENT.md`.
+**Done when:** the owner rules on which document ids, fields and values agent mode may read on Firestore and how they are redacted, the `fsquery` pack offers the workflows that ruling opens, the cross-call bound and the production measurement above are in place, an MCP metadata surface that lists collections, charges an allowance and never returns a document id is designed and `MCP_EXPOSABLE.firestore` turns true for it, a per-engine exposure ruling opens MCP statement read for Firestore, the pack declares its MCP facet (`src/lib/agent/languages/fsquery/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same table, projection and read allowance, and `MCP_STATEMENT_READ.firestore` is true, with tests that every MCP answer carries no document id or value and every billed request is charged; cited in `docs/AGENT.md`.
 
 ### B108. RabbitMQ's agent and MCP reads are metadata only
 
@@ -8992,13 +9105,19 @@ Values are the device's management data, so they are answered as text; withheld 
 A read whose modules cannot be read, or that serve more than the check's total, is refused, a path naming a withheld node or filtering on a withheld key is refused before it is sent, and a withheld node in an answer is `[withheld]` with its path and reason.
 On a handle of either agent profile the console, a source and the overview are refused with their reason.
 So the language offers the investigation and the operations workflow only.
-`MCP_EXPOSABLE.netconf` is false, and the language's MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) with `MCP_STATEMENT_READ.netconf` false, so MCP `run_read_query` refuses a NETCONF connection, because no MCP surface that withholds the same nodes is designed yet.
+`MCP_EXPOSABLE.netconf` is false, and the language's MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) with `MCP_STATEMENT_READ.netconf` false, so a seed with `mcp: true` on a NETCONF connection fails the whole file and no MCP tool reads one.
 Matching is by the chain of data-node names from where a node is declared, without expanding `uses` or `augment`, so it errs toward withholding: two nodes with one name chain are both withheld whichever carries the mark.
+
+Why MCP stays closed: the withholding is Studio's alone, and what it does not withhold is the device's whole configuration.
+The account is not a boundary for what is read: measured on the fixture, the read-only account is answered each password user's `hashed-password` raw and the keystore's host key entry by name (`docs/providers/netconf.md`, sections 6.3 and 14.3), and NACM refuses that account a write only because the fixture's setup applies a rule list a device need not have (section 14.1).
+So the secrets are kept out by Studio's reading of the device's own YANG modules and nothing on the device, and that reading goes by marks and types: a secret a vendor module stores in a leaf it neither marks `nacm:default-deny-all` nor types as one is answered.
+What is answered is the running configuration and state, interfaces, addresses, routes, peers and filter rules outside `ietf-netconf-acm` among them, which an external client would read whole.
+What would reopen it: a check at open, on the device, that the connection's account is denied the withheld modules and the `nacm:default-deny-all` nodes by the device's own access control, measured on the fixture with and without its rule list, so a second layer the request does not control holds the secrets; and a recorded decision that a device's configuration may be read by MCP clients.
 Kept so that MCP access, and any widening of what agent mode reads on NETCONF, are decisions of their own rather than side effects of agent mode joining.
 
-Found 2026-10-31 when agent mode joined NETCONF.
+Found 2026-10-31 when agent mode joined NETCONF; the MCP reason recorded 2026-11-03.
 
-**Done when:** a per-engine exposure ruling opens MCP for NETCONF, an MCP surface that withholds the same nodes from the device's own modules is designed and `MCP_EXPOSABLE.netconf` turns true for it, the pack declares its MCP facet (`src/lib/agent/languages/netconfrpc/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same table and withholding, and `MCP_STATEMENT_READ.netconf` is true, with tests that no MCP answer carries a key, a password hash, an access rule or a value of a `nacm:default-deny-all` node; cited in `docs/AGENT.md`.
+**Done when:** both conditions above hold, a per-engine exposure ruling opens MCP for NETCONF, an MCP surface that withholds the same nodes from the device's own modules is designed and `MCP_EXPOSABLE.netconf` turns true for it, the pack declares its MCP facet (`src/lib/agent/languages/netconfrpc/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same table and withholding, and `MCP_STATEMENT_READ.netconf` is true, with tests that no MCP answer carries a key, a password hash, an access rule or a value of a `nacm:default-deny-all` node; cited in `docs/AGENT.md`.
 
 ### B160. Modbus's agent reads are paced per device, and it has no MCP surface
 
@@ -9009,12 +9128,19 @@ Values are the device's own readings, so they are answered as the console render
 A device that serves one client at a time answers nobody else while a read holds it, measured on a single-client libmodbus device, so agent reads of one device never overlap across every run and connection of the server process, a one-second gap follows each, measured from its close, the wait counts against the read's time budget, and one run sends at most 64 device requests, charged before the socket; a lane is the device's host and port, so one device written as a name and as an address is two lanes.
 On a handle of either agent profile the console is refused, the overview, performance, storage, session, slow-query, table and index readings answer their reason rather than an empty reading, and the dial of `connect` and the read of health take their turn on the device's lane.
 So the language offers the investigation and the operations workflow only.
-`MCP_EXPOSABLE.modbus` is false, and the language's MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) with `MCP_STATEMENT_READ.modbus` false, so MCP `run_read_query` refuses a Modbus connection, because no MCP surface that paces a device and counts its requests is designed yet, and an MCP client has no register map to form a points read from.
+`MCP_EXPOSABLE.modbus` is false, and the language's MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`) with `MCP_STATEMENT_READ.modbus` false, so a seed with `mcp: true` on a Modbus connection fails the whole file and no MCP tool reads one.
+
+Why MCP stays closed: the device is the scarce resource, and three things that bound an agent's load on it have no MCP form yet.
+- **The request budget is per run, and MCP has no run:** An agent run sends at most 64 device requests, but an MCP call is its own run, so each call would get a fresh 64 and nothing bounds how many requests one MCP client sends to a device across calls.
+- **A cancelled call keeps its lane:** A cancel or a timeout ends the MCP wait and not the provider's read (D128), so the read keeps the device's lane, and on a single-client device the device itself, until its own deadline, and every agent and MCP read of that device waits behind it; the lane is released in `finally` (`agent-pacing.ts`), which a cancel never reaches early.
+- **The register map has no MCP surface:** A seed can carry the map (`registerMap`, `docs/SEED_CONNECTIONS.md`), but no MCP surface lists its points, so a client could form only a block read, decoded with a type and word and byte orders it would have to guess, and a wrong order reads as a plausible number with no error, the reading the map exists to prevent (`docs/providers/modbus.md`, section 3.1).
+
+What would reopen it: a bound on device requests across MCP calls (per device or per token, not per call), a cancel that releases the lane when the read stops, and an MCP metadata surface that lists the map's points by name, with a recorded decision on whether a block read without a map is offered.
 Kept so that MCP access, and any widening of what agent mode sends to a device or how often, are decisions of their own rather than side effects of agent mode joining.
 
-Found 2026-10-31 when agent mode joined Modbus.
+Found 2026-10-31 when agent mode joined Modbus; the MCP reason recorded 2026-11-03.
 
-**Done when:** a per-engine exposure ruling opens MCP for Modbus, an MCP surface that reads through the same closed table, takes its turn on the same per-device lanes and bounds its requests per call is designed and `MCP_EXPOSABLE.modbus` turns true for it, the pack declares its MCP facet (`src/lib/agent/languages/modbusread/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), and `MCP_STATEMENT_READ.modbus` is true, with tests that an MCP read and an agent read of one device never overlap and that no MCP request can carry a write function code; cited in `docs/AGENT.md`.
+**Done when:** the three conditions above hold, a per-engine exposure ruling opens MCP for Modbus, an MCP surface that reads through the same closed table, takes its turn on the same per-device lanes and bounds its requests across calls is designed and `MCP_EXPOSABLE.modbus` turns true for it, the pack declares its MCP facet (`src/lib/agent/languages/modbusread/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`), and `MCP_STATEMENT_READ.modbus` is true, with tests that an MCP read and an agent read of one device never overlap, that a cancelled MCP read releases its lane, that requests past the cross-call bound are refused before the socket, and that no MCP request can carry a write function code; cited in `docs/AGENT.md`.
 
 ### B161. Prometheus's agent reads withhold the flags and URL secrets, and it has no MCP statement read
 
@@ -9028,12 +9154,18 @@ The projection goes by a value's shape, so what it cannot reach is a label value
 The storage and table readings' shape requires a byte figure the server never publishes, so on an agent-mode handle each is a 0 with the text beside it saying it is a placeholder, not a measurement; making those figures optional across the providers is a change of its own.
 On a handle of either agent profile the console is refused, and the overview, performance, slow-query, session and index readings answer their reason rather than an empty reading.
 So the language offers the investigation, the data analysis and the operations workflow; query optimization and database assessment need a plan and a profile the server does not give.
-`MCP_STATEMENT_READ.prometheus` is false and the language's MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`), so MCP `run_read_query` refuses a Prometheus connection; `MCP_EXPOSABLE.prometheus` stays true, and the MCP metadata tools, which acquire an agent-mode handle, read through the same projection.
+`MCP_STATEMENT_READ.prometheus` is false and the language's MCP facet is null (`AGENT_LANGUAGE_MCP_FACETS` in `src/lib/agent/languages/mcp.ts`), so no MCP statement tool serves a Prometheus connection; `MCP_EXPOSABLE.prometheus` stays true, and the MCP metadata tools, which acquire an agent-mode handle, read through the same projection.
+
+Why MCP statement read stays closed: Prometheus has no principal that narrows a read.
+A stock server authorizes nothing, and a server with basic auth in its web config, or a token-guarded proxy in front of it, authenticates a caller without narrowing what it reads (`docs/providers/prometheus.md`, section 4.2 and check M5), so whoever holds the connection's credential reads every series the TSDB stores.
+The projection goes by a value's shape and the reader by the expression's text, and an expression can select on any label and any stored value, so no layer independent of reading the request narrows a connection to some of its series.
+Agent mode reads under that reach inside a run a Studio user started and watches; an MCP token would hand the same whole-TSDB reach to an external client, and MCP statement read opens only where a layer the request does not control holds the data scope.
+What would reopen it: a layer outside the expression, such as a label-enforcing proxy or a tenant-scoped query endpoint, that narrows the connection's credential to the series it may read, measured, and a check at open that the connection reaches the server through it; or a recorded decision that whole-TSDB reach is in scope for MCP clients.
 Kept so that MCP statement reads, and any widening of what agent mode reads on Prometheus, are decisions of their own rather than side effects of agent mode joining.
 
-Found 2026-10-31 when agent mode joined Prometheus.
+Found 2026-10-31 when agent mode joined Prometheus; the MCP reason recorded 2026-11-03.
 
-**Done when:** a change of its own opens MCP statement reads on Prometheus: the pack declares its MCP facet (`src/lib/agent/languages/promql/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same closed table, budgets and projection, and `MCP_STATEMENT_READ.prometheus` is true, with tests that an MCP read sends only the instant query's form and that no MCP answer carries the flags or a URL's userinfo or query string; cited in `docs/AGENT.md`.
+**Done when:** a change of its own opens MCP statement reads on Prometheus once one of the two conditions above holds: the pack declares its MCP facet (`src/lib/agent/languages/promql/mcp.ts`, registered in `AGENT_LANGUAGE_MCP_FACETS`) under the same closed table, budgets and projection, and `MCP_STATEMENT_READ.prometheus` is true, with tests that an MCP read sends only the instant query's form, that no MCP answer carries the flags or a URL's userinfo or query string, and, where a narrowing layer is the condition, that a connection which bypasses it is refused at open; cited in `docs/AGENT.md`.
 
 ### B162. OPC UA's agent reads withhold the server's configuration, roles and sessions, and it has no MCP surface
 
@@ -9223,9 +9355,10 @@ Found 2026-11-01 while verifying `run_read_query` on ClickHouse.
 `build` in `src/lib/mcp/tools/run-statement.ts` measures the whole tool result with `resultBytes` in `src/lib/mcp/output.ts`, and that result carries the rows twice, once in the text block and once in `structuredContent`.
 So one row of about 16 KiB is answered with `ROW_OVER_CAP_TEXT`, "One row of this result is larger than the 32 KiB result limit": measured 2026-11-01 on ClickHouse, a row of `repeat('x', 15000)` was served and one of `repeat('x', 16000)` refused.
 `docs/MCP.md` says a call answers at most 32 KiB, which holds; the refusal's sentence does not.
-Found 2026-11-01 while verifying `run_read_query` on ClickHouse; pre-existing and engine-agnostic.
+Every statement tool runs the same `build`, and every facet's own row refusal (`rowOverCap` in `src/lib/agent/languages/<statement-language>/mcp.ts`) names "the 32 KiB result limit" the same way, so the sentence is false near half that size on every tool, not only `run_read_query`.
+Found 2026-11-01 while verifying `run_read_query` on ClickHouse; pre-existing and engine-agnostic; the same on the other statement tools, noted 2026-11-02.
 
-**Done when:** the refusal states the limit the row actually exceeds, or the cap is measured on one copy of the rows, with a test on a row between 16 and 32 KiB, and `docs/MCP.md` says which bytes the 32 KiB counts.
+**Done when:** every statement tool's row refusal states the limit the row actually exceeds, or the cap is measured on one copy of the rows, with a test on a row between 16 and 32 KiB on each served arm, and `docs/MCP.md` says which bytes the 32 KiB counts.
 
 ### MCP7. `list_connections` names `run_read_query` for a SQLite seed every MCP call refuses
 
@@ -9306,6 +9439,19 @@ It seeds no Neo4j, etcd or MTConnect connection, so the `read_tool` those three 
 Found 2026-11-03 while deriving that test's expectations from the served-engine records.
 
 **Done when:** that test seeds a connection of every engine a served statement tool reads, and a test derives the seeded set from `servingStatementArms()` so a newly served engine without a seed fails it.
+
+### MCP15. A statement tool drops its provider's warnings unless its facet says they must reach the client
+
+`runStatement` in `src/lib/mcp/tools/run-statement.ts` passes a result's `warnings` to the answer, as its `notes`, only on an arm whose facet sets `answersWarnings` (`src/lib/agent/languages/mcp.ts`); every other statement tool's answer carries no warning text, and the warning is lost.
+Some of those warnings are Studio's own sentences that change how an answer reads:
+- MTConnect warns how many user names and passwords, query strings or fragments of URLs were withheld from an asset answer (`withheldUrlWarning` in `src/lib/db/providers/industrial/mtconnect/agent-withheld.ts`), so an MCP client sees `[withheld]` markers with no count.
+- Kafka warns that more topics, brokers or partitions follow a page and how to read on (`MORE` in `src/lib/db/providers/stream/kafka/agent-metadata-read.ts`); the tool's description says only that a full page may have more rows.
+- RabbitMQ warns that a read stopped because no message arrived for 1 s, which is not proof that the stream ends, and that a read from `next` reads only messages published after it started (`IDLE_WARNING` and `NEXT_EMPTY_WARNING` in `src/lib/db/providers/stream/rabbitmq/errors.ts`); the tool's description says both in general terms.
+
+`docs/MCP.md` records each loss where it bites, and the MQTT and Sparkplug facets set `answersWarnings` because their window sentences must reach the client.
+Found 2026-11-02 while opening `run_kafka_read`, `run_rabbitmq_read` and `run_mtconnect_read`.
+
+**Done when:** a provider warning that is Studio's own sentence reaches every statement tool's answer as `notes`, or each served engine's warnings are classified as must-reach or droppable in its facet with the must-reach ones passed, with a handler test per served engine that pins which warnings reach the answer, and `docs/MCP.md` updated to match.
 
 ---
 
