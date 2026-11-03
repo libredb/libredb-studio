@@ -371,10 +371,10 @@ Each provider doc states the same value in its `Write reach` row, and `tests/uni
 | Apache Spark | `spark` | open | editor |
 | Apache Cassandra | `cassandra` | open | editor, with Import |
 | Databend | `databend` | open | editor; maintenance (kill) |
-| Prometheus | `prometheus` | open | editor: the provider sends no write today, and the engine is recorded open until a proof test and a live measurement pin that |
+| Prometheus | `prometheus` | none | editor: `PATHS` is the closed endpoint table the transport requests, with no admin, remote-write, OTLP or lifecycle endpoint; no other path |
 | InfluxDB (InfluxQL) | `influxdb` | none | editor: `evaluateInfluxql` refuses every statement that is not one read before any request; no other path |
 | InfluxDB 3 (SQL) | `influxdb3` | none | editor: `evaluateInfluxSql` refuses every statement that does not lead with a read keyword before any request; no other path |
-| Apache Kafka | `kafka` | open | editor: as Prometheus |
+| Apache Kafka | `kafka` | open | editor: the provider sends no write today, and the engine is recorded open until a proof test and a live measurement pin that |
 | RabbitMQ | `rabbitmq` | none | editor: `isAllowedOutbound` admits no publish and no queue or exchange method on the AMQP connection, and the management routes are reads; no other path |
 | etcd | `etcd` | guarded | editor: `refuseBeforeSend` refuses `put`, `del` and `lease revoke`; object edit and maintenance (compact, defragment, disarm): `refuseReadOnly`; no transaction path |
 | Neo4j | `neo4j` | none | editor: `checkCypherRead` refuses every statement that is not a read before any request; no other path |
