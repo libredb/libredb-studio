@@ -7,15 +7,18 @@
  * the next caller. Providers are counted on the real SQLite provider's connect, which the factory
  * calls exactly once for each provider it constructs (src/lib/db/factory.ts).
  */
-import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { editorExecutionContext } from "@/lib/api/execution-context";
+import { ExecutionProfileError } from "@/lib/db/errors";
 import { acquireExecutionProfileProvider, getOrCreateProvider } from "@/lib/db/factory";
+import { PostgresProvider } from "@/lib/db/providers/sql/postgres";
 import { SQLiteProvider } from "@/lib/db/providers/sql/sqlite";
 import { logger } from "@/lib/logger";
 import { MCP_CONNECTIONS_UNREADABLE, McpConnectionContext, mcpCaller } from "@/lib/mcp/context";
+import { resetVaultCache } from "@/lib/seed/vault-client";
 import {
   countMethod,
   createDuckdbFile,
@@ -319,6 +322,177 @@ describe("acquire", () => {
       const acquired = await context.acquire(connection, "agent-operations");
       expect(acquired).not.toBe(adminEditor);
     }
+  });
+});
+
+describe("a seed's Vault reference", () => {
+  const REFERENCE = "${vault:secret/data/mcp/warehouse#password}";
+  const VAULT_ADDR = "http://127.0.0.1:8200";
+  const realFetch = globalThis.fetch;
+  let vaultCalls: string[] = [];
+
+  beforeEach(() => {
+    vaultCalls = [];
+    resetVaultCache();
+    process.env.VAULT_ADDR = VAULT_ADDR;
+    process.env.VAULT_TOKEN = "not-a-real-token";
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    delete process.env.VAULT_ADDR;
+    delete process.env.VAULT_TOKEN;
+    delete process.env.SEED_LITERAL_VALUES;
+    resetVaultCache();
+  });
+
+  function vaultAnswers(status: number, body: unknown): void {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      vaultCalls.push(String(input));
+      return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+    }) as unknown as typeof fetch;
+  }
+
+  function seedWarehouse(): void {
+    writeSeedFile(dir, [
+      { id: "warehouse", type: "postgres", host: "127.0.0.1", port: 5432, user: "reader", password: REFERENCE },
+    ]);
+  }
+
+  /** The password each Postgres provider was opened with, and the open stopped there, before any socket. */
+  function capturePasswords(): { readonly passwords: unknown[]; restore(): void } {
+    const passwords: unknown[] = [];
+    const connect = spyOn(PostgresProvider.prototype, "connect").mockImplementation(async function (
+      this: PostgresProvider,
+    ) {
+      passwords.push(this.config.password);
+      throw new Error("stopped after the open read its password");
+    });
+    return { passwords, restore: () => connect.mockRestore() };
+  }
+
+  async function warehouse(context: McpConnectionContext) {
+    const connection = await context.resolve("seed:warehouse");
+    if (connection === null || connection === MCP_CONNECTIONS_UNREADABLE)
+      throw new Error("seed:warehouse did not resolve");
+    return connection;
+  }
+
+  test("is read from Vault when a tool opens the connection, so the provider gets the secret and not the text", async () => {
+    vaultAnswers(200, { data: { data: { password: "not-a-real-password" } } });
+    seedWarehouse();
+    const context = new McpConnectionContext(alice);
+    const connection = await warehouse(context);
+    // Listing reads no secret: the connection a tool is handed still carries the reference.
+    expect(connection.password).toBe(REFERENCE);
+    expect(vaultCalls).toEqual([]);
+    const captured = capturePasswords();
+    try {
+      await expect(context.acquire(connection, "agent-read-only")).rejects.toThrow("stopped after the open");
+      await expect(context.acquire(connection, "agent-operations")).rejects.toThrow("stopped after the open");
+    } finally {
+      captured.restore();
+    }
+
+    expect(captured.passwords).toEqual(["not-a-real-password", "not-a-real-password"]);
+    expect(vaultCalls).toEqual([`${VAULT_ADDR}/v1/secret/data/mcp/warehouse`]);
+  });
+
+  test("that Vault cannot answer refuses the open in Studio's words, naming the connection and opening nothing", async () => {
+    vaultAnswers(503, { errors: ["not-a-real-vault-detail"] });
+    seedWarehouse();
+    const context = new McpConnectionContext(alice);
+    const connection = await warehouse(context);
+    const errors = spyOn(logger, "error").mockImplementation(() => {});
+    const captured = capturePasswords();
+    let refusal: unknown;
+    let logged: unknown[][] = [];
+    try {
+      refusal = await context.acquire(connection, "agent-read-only").catch((error: unknown) => error);
+      logged = [...errors.mock.calls];
+    } finally {
+      captured.restore();
+      errors.mockRestore();
+    }
+
+    expect(refusal).toBeInstanceOf(ExecutionProfileError);
+    const { message, reasonCode } = refusal as ExecutionProfileError;
+    expect(reasonCode).toBe("CONNECTION_SECRET_UNRESOLVABLE");
+    expect(message).toBe(
+      'Connection "seed:warehouse" could not be opened: a secret reference in its seed entry could not be read from Vault, so nothing was sent to the database. The server log names the cause.',
+    );
+    // No fallback: no provider was opened, with the reference or without a password.
+    expect(captured.passwords).toEqual([]);
+    // The cause is the server log's, never the caller's.
+    expect(message).not.toContain("503");
+    expect(message).not.toContain("secret/data/mcp/warehouse");
+    expect(logged).toHaveLength(1);
+    expect(String(logged[0]?.[1])).toContain("HTTP 503");
+  });
+
+  test("of a malformed reference is refused the same way, and its text reaches no caller", async () => {
+    vaultAnswers(200, {});
+    writeSeedFile(dir, [
+      { id: "warehouse", type: "postgres", host: "127.0.0.1", user: "reader", password: "${vault:not-a-reference" },
+    ]);
+    const context = new McpConnectionContext(alice);
+    const errors = spyOn(logger, "error").mockImplementation(() => {});
+    let refusal: unknown;
+    try {
+      refusal = await context.acquire(await warehouse(context), "agent-read-only").catch((error: unknown) => error);
+    } finally {
+      errors.mockRestore();
+    }
+
+    expect((refusal as ExecutionProfileError).reasonCode).toBe("CONNECTION_SECRET_UNRESOLVABLE");
+    expect((refusal as Error).message).not.toContain("not-a-reference");
+    expect(vaultCalls).toEqual([]);
+  });
+
+  test("that fails for a reason other than Vault rethrows that error, so its cause is not hidden behind the refusal", async () => {
+    // A fetch that answers no Response makes the Vault read throw a plain TypeError, the shape of a programming error.
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      vaultCalls.push(String(input));
+      return null;
+    }) as unknown as typeof fetch;
+    seedWarehouse();
+    const context = new McpConnectionContext(alice);
+    const connection = await warehouse(context);
+    const errors = spyOn(logger, "error").mockImplementation(() => {});
+    const captured = capturePasswords();
+    let refusal: unknown;
+    let logged: unknown[][] = [];
+    try {
+      refusal = await context.acquire(connection, "agent-read-only").catch((error: unknown) => error);
+      logged = [...errors.mock.calls];
+    } finally {
+      captured.restore();
+      errors.mockRestore();
+    }
+
+    expect(vaultCalls).toEqual([`${VAULT_ADDR}/v1/secret/data/mcp/warehouse`]);
+    expect(refusal).toBeInstanceOf(TypeError);
+    expect(refusal).not.toBeInstanceOf(ExecutionProfileError);
+    expect(logged).toEqual([]);
+    expect(captured.passwords).toEqual([]);
+  });
+
+  test("on a literal connection is the text it is, and Vault is never asked", async () => {
+    process.env.SEED_LITERAL_VALUES = "true";
+    vaultAnswers(200, { data: { data: { password: "not-a-real-password" } } });
+    seedWarehouse();
+    const context = new McpConnectionContext(alice);
+    const captured = capturePasswords();
+    try {
+      await expect(context.acquire(await warehouse(context), "agent-read-only")).rejects.toThrow(
+        "stopped after the open",
+      );
+    } finally {
+      captured.restore();
+    }
+
+    expect(captured.passwords).toEqual([REFERENCE]);
+    expect(vaultCalls).toEqual([]);
   });
 });
 

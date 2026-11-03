@@ -1,10 +1,13 @@
 import type { AuthInfo } from "@modelcontextprotocol/server";
 import type { Role } from "@/lib/auth";
 import { editorExecutionContext } from "@/lib/api/execution-context";
+import { ExecutionProfileError } from "@/lib/db/errors";
 import { acquireExecutionProfileProvider, profiledCacheKey, type ExecutionProfile } from "@/lib/db/factory";
 import type { DatabaseProvider } from "@/lib/db/types";
 import { logger } from "@/lib/logger";
 import { getManagedConnections, seedRolesOf, type ManagedConnection } from "@/lib/seed";
+import { resolveVaultCredentials } from "@/lib/seed/credential-resolver";
+import { VaultError } from "@/lib/seed/vault-client";
 import { redactError } from "./serializer";
 
 /** The answer of a context whose seed file could not be loaded; the cause is logged, never sent. */
@@ -28,6 +31,11 @@ export const MCP_CONNECTIONS_UNREADABLE_TEXT =
  *
  * A seed file that cannot be loaded answers MCP_CONNECTIONS_UNREADABLE, which every tool turns
  * into its own explicit error.
+ *
+ * The listing hands a `${vault:...}` reference back unresolved, as the managed list does, so it is
+ * read at acquisition, after the role filter and before the cache key, exactly as resolveConnection
+ * reads it for the editor and agent routes; a literal connection is the text it carries and is never
+ * resolved. A reference that cannot be read refuses the open, with no fallback.
  */
 
 export interface McpCaller {
@@ -58,6 +66,27 @@ export function mcpCaller(authInfo: AuthInfo): McpCaller {
 
 const pendingAcquisitions = new Map<string, Promise<DatabaseProvider>>();
 
+/**
+ * The connection with its `${vault:...}` references read, or an ExecutionProfileError naming it, so both tools answer
+ * the refusal in Studio's words. The VaultError's own text stays in the server log: it may quote the reference.
+ */
+async function resolvedSecrets(connection: ManagedConnection): Promise<ManagedConnection> {
+  if (connection.literal) return connection;
+  try {
+    return await resolveVaultCredentials(connection);
+  } catch (error) {
+    if (!(error instanceof VaultError)) throw error;
+    logger.error("Could not read a seed connection's Vault reference for MCP", redactError(error), {
+      route: "/api/mcp",
+      connectionId: connection.id,
+    });
+    throw new ExecutionProfileError(
+      `Connection "${connection.id}" could not be opened: a secret reference in its seed entry could not be read from Vault, so nothing was sent to the database. The server log names the cause.`,
+      "CONNECTION_SECRET_UNRESOLVABLE",
+    );
+  }
+}
+
 export class McpConnectionContext {
   private visible: Promise<readonly ManagedConnection[] | typeof MCP_CONNECTIONS_UNREADABLE> | null = null;
 
@@ -74,7 +103,8 @@ export class McpConnectionContext {
     return visible.find((connection) => connection.id === connectionId) ?? null;
   }
 
-  async acquire(connection: ManagedConnection, profile: ExecutionProfile): Promise<DatabaseProvider> {
+  async acquire(listed: ManagedConnection, profile: ExecutionProfile): Promise<DatabaseProvider> {
+    const connection = await resolvedSecrets(listed);
     // The caller's editor posture on this connection (non-admin DuckDB file access): it decides whether a
     // SQLite handle opens at all and which open single-writer handle an operations acquisition may
     // borrow, and it is part of the key, so it is derived first; every caller that can resolve one seed

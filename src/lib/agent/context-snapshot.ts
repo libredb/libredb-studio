@@ -810,6 +810,8 @@ const PROFILE_REFUSAL_ADVICE: Readonly<Record<ExecutionProfileDenyCode, string>>
     "The connection configures an agent credential that could not be resolved: it must have the form the engine takes (a user and a password, unless the engine takes a token or key alone, a user other than the connection's own, or none), and a sealed password must be decryptable.",
   AGENT_CREDENTIAL_WITH_CONNECTION_STRING:
     "The connection configures an agent credential alongside a connection string, which would silently drop the credential, so acquisition was refused.",
+  CONNECTION_SECRET_UNRESOLVABLE:
+    "A secret reference in the connection's seed entry could not be read from Vault, so nothing was sent to the database. The server log names the cause; fix the reference or Vault's access and try again.",
 });
 
 /**
