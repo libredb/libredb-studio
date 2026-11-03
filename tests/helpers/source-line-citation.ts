@@ -71,11 +71,21 @@ export const PATH_LINE =
 const CONTINUATION = [/`:\d{2,}(?:-\d+)?`/, /(?:(?<=[^\s`])`|\]\([^)\s]*\)):\d+(?:-\d+)?\b/];
 const FILE_NAME = /\.(?:tsx?|mjs|js)\b/;
 
-/** "line N of `file`" and "`file` ... (line N)", N a number. */
+/**
+ * "line N of `file`", "`file` ... (line N)", "(`symbol`, line N)" and a bullet or comment that opens with "Line N"
+ * or "Lines N-M", N a number. An engine's "Line 24:6" goes on with a colon, never a space, and an engine's
+ * "`user`, line 4, column 1" names a column.
+ */
 const IMPLICIT = [
   /\b(?:near|around|at|see)?\s*lines?\s+\d+(?:\s*(?:-|,|and|to)\s*\d+)*\s+(?:of|in)\s+`[^`]+`/i,
-  /`[^`]+\.\w+`[^.]{0,80}\((?:around |near )?lines?\s+\d+(?:\s*-\s*\d+)?\)/i,
+  /`[^`]+\.\w+`[^.]{0,80}\((?:around |near )?lines?\s+\d+(?:\s*(?:-|to)\s*\d+)?\)/i,
+  /`[^`\s]+`,\s*lines?\s+\d+\b(?!,? column)/,
+  /^\s*(?:[-*]\s+|\/\/\s*|#\s*)?Lines? \d+(?:-\d+)?(?:'s)?(?=\s|$)/,
 ];
+/** "line N of file" with a bare path, read only when the path is a tracked file. */
+const LINE_OF_PATH = /\blines?\s+\d+(?:\s*(?:-|,|and|to)\s*\d+)*\s+(?:of|in)\s+([\w@./-]+\.[A-Za-z]\w*)/gi;
+/** "line N", "lines N-M" or "LN" right after a tracked path, past a closing backtick, a link, a comma or a "(". */
+const AFTER_PATH = /^`?(?:\]\([^)\s]*\))?,?\s*\(?(?:around |near )?(?:lines?\s+\d+|L\d+)\b/i;
 /**
  * "at line N" names a location only when a tracked path follows it on the line ("at line N in factory.ts"); an
  * engine's "at line 1, column 5" never does, and neither does measured output that names its file first.
@@ -138,8 +148,17 @@ export function citationFindings(
       const match = rule.exec(piece.text);
       if (match !== null) add(piece, match[0].trim());
     }
+    const before = found.length;
+    for (const match of piece.text.matchAll(LINE_OF_PATH)) if (resolves(match[1])) add(piece, match[0]);
+    const lineOfPath = found.length > before;
+    for (const match of piece.text.matchAll(PATH_TOKEN)) {
+      if (!resolves(match[0])) continue;
+      const after = AFTER_PATH.exec(piece.text.slice(match.index + match[0].length));
+      if (after !== null) add(piece, `${match[0]}${after[0]}`);
+    }
     const atLine = AT_LINE.exec(piece.text);
-    if (atLine !== null && namesTrackedPath(piece.text.slice(atLine.index + atLine[0].length))) add(piece, atLine[0]);
+    if (atLine !== null && !lineOfPath && namesTrackedPath(piece.text.slice(atLine.index + atLine[0].length)))
+      add(piece, atLine[0]);
     const paren = inComment ? PAREN_LINE.exec(piece.text) : null;
     if (paren !== null) add(piece, paren[0]);
   };

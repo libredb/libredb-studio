@@ -7130,9 +7130,9 @@ No gate reads these lists for completeness, and each misses engines that shipped
 The BigQuery (#1672) and Firestore (#1695) changes never added themselves to the seven files, and the Snowflake change never reached the two metainfo lists.
 `deploy/rancher/CATALOG_LISTING.md` then says three false things about them:
 
-- Lines 111-118 say winget's, chocolatey's and tauri's "exhaustive descriptions still name every engine", and that the claim "was false until a review read them", which reads as true again; it is not.
-- Line 109 says the AUR package "is twelve ahead" and that its `pkgdesc` says thirty, while `packaging/aur/PKGBUILD` pins `pkgver=0.17.0` (eighteen engines) and its `pkgdesc` says thirty-six, so it is eighteen ahead, and the list of engines 0.17.0 lacks stops at MQTT, without BigQuery, Firestore, RabbitMQ, Snowflake, OPC UA or Apache Spark.
-- Line 107's pointer "see BACKLOG D39 - nothing counts these lists" lands on D39, a slow-query entry.
+- The passage on the winget, chocolatey and tauri packages says their "exhaustive descriptions still name every engine", and that the claim "was false until a review read them", which reads as true again; it is not.
+- The AUR passage says the package "is twelve ahead" and that its `pkgdesc` says thirty, while `packaging/aur/PKGBUILD` pins `pkgver=0.17.0` (eighteen engines) and its `pkgdesc` says thirty-six, so it is eighteen ahead, and the list of engines 0.17.0 lacks stops at MQTT, without BigQuery, Firestore, RabbitMQ, Snowflake, OPC UA or Apache Spark.
+- The pointer "see BACKLOG D39 - nothing counts these lists" lands on D39, a slow-query entry.
 
 Found 2026-10-13 while building the Apache Spark provider (#1759); pre-existing.
 

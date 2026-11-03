@@ -63,6 +63,17 @@ describe("citationFindings", () => {
     ["a vendored grammar with a range", "`SqlBaseLexer-v4.2.0.g4:42-50`"],
     ["a range after a Markdown link", "[`StorageTab.tsx`](../../src/components/monitoring/tabs/StorageTab.tsx):79-80"],
     ["a GitHub permalink anchor", "https://github.com/x/y/blob/0abc/src/index.ts#L42"],
+    ["a line after a backticked path", "See `src/lib/db/factory.ts` line 12."],
+    ["a line after a bare path", "see factory.ts line 12"],
+    ["lines after a path and a comma", "src/lib/db/factory.ts, lines 10-20"],
+    ["an L-prefixed line after a path", "factory.ts L12"],
+    ["a line of a bare tracked path", "line 12 of factory.ts"],
+    ["a range joined by to in parentheses", "`factory.ts` (lines 1779 to 1792)"],
+    ["a line after a backticked symbol in parentheses", "(`guardedNodeOptions`, line 130)"],
+    ["a line after a backticked symbol", "`getOrCreateProvider`, line 130"],
+    ["a bullet that starts with a line range", "- Lines 111-118 say the chart pins it."],
+    ["a bullet that starts with a line", "- Line 109 says the image is public."],
+    ["a bullet that starts with a line's possessive", "- Line 107's pointer is dead."],
   ])("cites a line in Markdown: %s", (_name, text) => {
     expect(hits(text)).not.toEqual([]);
   });
@@ -80,10 +91,14 @@ describe("citationFindings", () => {
     expect(hits("// the branch (line 82) decides", "src/x.ts")).toEqual(["(line 82)"]);
     expect(hits("# see values.yaml:12", "charts/x/values.yaml")).toEqual(["values.yaml:12"]);
     expect(hits("// see main.go:12", "packaging/x/main.go")).toEqual(["main.go:12"]);
+    expect(hits("// see factory.ts line 12", "src/x.ts")).not.toEqual([]);
+    expect(hits("// `getOrCreateProvider`, line 130", "src/x.ts")).not.toEqual([]);
+    expect(hits("// Lines 413-415 covered during mount", "tests/components/x.test.tsx")).not.toEqual([]);
   });
 
   test("names a line beside a tracked path, never beside another dotted name", () => {
-    expect(hits("the check at line 40 in factory.ts")).toEqual(["at line 40"]);
+    expect(hits("the check at line 40 in factory.ts")).toEqual(["line 40 in factory.ts"]);
+    expect(hits("the check at line 40, in factory.ts")).toEqual(["at line 40"]);
     expect(hits("the parser stops at line 40 on SYS.DBMS_OUTPUT")).toEqual([]);
   });
 
@@ -105,6 +120,10 @@ describe("citationFindings", () => {
     "Doris answers errno 1105 in `apache/doris:4.1.3` (line 1, pos 5)",
     "shifting src/lib/db/factory.ts by 20 reported a marker at line 27 on a nine-line model",
     "```\n    at node_modules/x/lib/y.js:44826\n```",
+    "Line 24:6 no viable alternative",
+    "| `definition` | `user`, line 4, column 1 |",
+    "Lines of `factory.ts` stay short",
+    "the `apache/doris:4.1.3` answer (line 1, pos 5)",
   ])("leaves a look-alike in Markdown alone: %s", (text) => {
     expect(hits(text)).toEqual([]);
   });

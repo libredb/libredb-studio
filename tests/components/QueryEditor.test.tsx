@@ -1626,7 +1626,7 @@ describe("QueryEditor", () => {
   test("SQL completion provider registered when monaco is available", () => {
     mockUseMonacoReturn = { Range: class {} };
     const { unmount } = render(React.createElement(QueryEditor, createDefaultProps({ language: "sql" })));
-    // Lines 413-415 covered during mount, cleanup dispose on unmount
+    // The completion-registration effect runs during mount, and its cleanup disposes on unmount
     unmount();
   });
 
@@ -3174,7 +3174,7 @@ describe("QueryEditor", () => {
     componentFilter("Real error message");
 
     // The "Canceled" messages should NOT have reached our tracker
-    // (they were caught by the return on line 403)
+    // (they were caught by the early return in the console.error filter the mount installs)
     // Only the real error should have passed through
     // Note: componentFilter delegates to the captured originalConsoleError, not our spy
     // So we verify by checking the filter function doesn't crash
