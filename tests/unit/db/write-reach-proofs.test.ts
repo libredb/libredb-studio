@@ -47,8 +47,8 @@ const NAMED = await namedProofs();
 
 describe("every write-reach gate and proof names a real export", () => {
   test("the census found a proof or a gate on every non-open engine", () => {
-    // Seventeen editor proofs, etcd's three gates, and Milvus's route-table proof and maintenance gate.
-    expect(NAMED).toHaveLength(22);
+    // Eighteen editor proofs, etcd's three gates, and Milvus's route-table proof and maintenance gate.
+    expect(NAMED).toHaveLength(23);
   });
 
   test.each(NAMED.map((entry) => [`${entry.type} ${entry.path}`, entry] as const))(

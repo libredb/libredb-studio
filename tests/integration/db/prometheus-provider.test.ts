@@ -50,7 +50,9 @@ import {
   QueryError,
   TimeoutError,
 } from "@/lib/db/errors";
+import { createDatabaseProvider } from "@/lib/db/factory";
 import { isSourcePartUnavailable } from "@/lib/db/object-kinds";
+import { PATHS } from "@/lib/db/providers/timeseries/prometheus/http-transport";
 import { PrometheusProvider } from "@/lib/db/providers/timeseries/prometheus/index";
 import { TSDB_LABEL_SCAN_LIMIT, TSDB_TOP_METRICS } from "@/lib/db/providers/timeseries/prometheus/monitoring";
 import {
@@ -62,6 +64,7 @@ import { ALL_METRICS_SELECTOR, PROMQL_RESERVED_WORDS } from "@/lib/db/providers/
 import { labelFieldNames, vectorFieldNames } from "@/lib/db/providers/timeseries/prometheus/results";
 import type { ObjectSourceDocument, ObjectSourcePart } from "@/lib/db/types";
 import { DEFAULT_QUERY_LIMIT } from "@/lib/db/utils/query-limiter";
+import { noWritePath } from "@/lib/db/write-reach";
 import type { DatabaseConnection } from "@/lib/types";
 import { assertObjectSurface } from "../../helpers/object-surface-conformance";
 import { capture, captureBody, captureVm, captureVmBody } from "../../helpers/prometheus-fixtures";
@@ -1818,5 +1821,68 @@ describe("the query deadline, end to end (section 5.2)", () => {
     // The control: the query did reach the server, so the timeout ended a request that was sent.
     expect(requestsTo("/api/v1/query")).toHaveLength(1);
     await provider.disconnect();
+  });
+});
+
+// ============================================================================
+// Write reach
+// ============================================================================
+
+describe("write reach: no surface of a read-only connection requests anything but a PATHS value", () => {
+  test("the provider declares no write path, with the closed endpoint table as the editor's proof", () => {
+    const capabilities = new PrometheusProvider(makeConnection()).getCapabilities();
+    expect(capabilities.enforcesReadOnly).toBe(true);
+    expect(capabilities.writeReach).toEqual(
+      noWritePath({ module: "src/lib/db/providers/timeseries/prometheus/http-transport.ts", symbol: "PATHS" }),
+    );
+  });
+
+  test("a read-only connection opens, and every surface it offers sends only reads of the table", async () => {
+    const consoleError = spyOn(console, "error").mockImplementation(() => {});
+    const provider = await createDatabaseProvider(makeConnection({ readOnly: true }));
+    await provider.connect();
+    const attempt = (call: () => Promise<unknown>): Promise<unknown> => call().catch((error: unknown) => error);
+
+    await attempt(() => provider.query(QUERY.vector));
+    await attempt(() => provider.listContainers());
+    await attempt(() => provider.countObjects([]));
+    for (const kind of provider.getCapabilities().objectKinds ?? []) {
+      const objects = await attempt(() => provider.listObjects([], kind.id));
+      await attempt(() => provider.describeObjects([], kind.id, 5));
+      const first = Array.isArray(objects) ? (objects[0] as { path?: readonly string[] } | undefined) : undefined;
+      if (first?.path !== undefined) {
+        await attempt(() => provider.describeObject(first.path as readonly string[], kind.id));
+        await attempt(async () => provider.readObjectSource?.(first.path as readonly string[], kind.id));
+      }
+    }
+    await attempt(() => provider.getHealth());
+    await attempt(() => provider.getOverview());
+    await attempt(() => provider.getPerformanceMetrics());
+    await attempt(() => provider.getSlowQueries());
+    await attempt(() => provider.getActiveSessions());
+    await attempt(() => provider.getTableStats());
+    await attempt(() => provider.getIndexStats());
+    await attempt(() => provider.getStorageStats());
+    await attempt(() => provider.getMonitoringData());
+    const maintenance = await attempt(() => provider.runMaintenance("analyze"));
+    await provider.disconnect();
+    consoleError.mockRestore();
+
+    // The control: the surfaces did reach the server, over most of the table.
+    const paths = new Set(sent.map((request) => request.url.pathname));
+    expect(paths.size).toBeGreaterThan(8);
+    expect(maintenance).toBeInstanceOf(Error);
+    const table: readonly string[] = Object.values(PATHS);
+    for (const request of sent) {
+      expect({
+        path: request.url.pathname,
+        method: request.method,
+        inTable: table.includes(request.url.pathname),
+      }).toEqual({
+        path: request.url.pathname,
+        method: request.url.pathname === PATHS.QUERY ? "POST" : "GET",
+        inTable: true,
+      });
+    }
   });
 });

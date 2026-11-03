@@ -34,7 +34,10 @@ const OTHER_PASSWORD = ["not", "a", "real", "password"].join("-");
  */
 const ROOT = join(import.meta.dir, "..", "..", "..");
 
-/** The map `READ_ONLY_ENFORCED` held before it was derived from the record, so deriving it changes no answer. */
+/**
+ * The map `READ_ONLY_ENFORCED` held before it was derived from the record, so deriving it changes no answer, with one
+ * entry flipped since: Prometheus, once a test held its closed endpoint table to reads.
+ */
 const READ_ONLY_ENFORCED_BEFORE: Readonly<Record<DatabaseType, boolean>> = {
   postgres: false,
   bigquery: false,
@@ -56,7 +59,7 @@ const READ_ONLY_ENFORCED_BEFORE: Readonly<Record<DatabaseType, boolean>> = {
   mongodb: false,
   couchbase: false,
   redis: false,
-  prometheus: false,
+  prometheus: true,
   kafka: false,
   etcd: true,
   neo4j: true,
@@ -122,7 +125,7 @@ describe("WRITE_REACH against each provider's own declaration", () => {
     expect(Object.isFrozen(WRITE_REACH)).toBe(true);
   });
 
-  test("READ_ONLY_ENFORCED, now derived from the record, answers exactly what it answered before", () => {
+  test("READ_ONLY_ENFORCED, now derived from the record, answers what it answered before, bar the flipped entry", () => {
     expect({ ...READ_ONLY_ENFORCED }).toEqual(READ_ONLY_ENFORCED_BEFORE);
     expect(Object.isFrozen(READ_ONLY_ENFORCED)).toBe(true);
   });
@@ -167,10 +170,10 @@ describe("WRITE_REACH against each provider's own declaration", () => {
     },
   );
 
-  test("the record reads 24 open, 2 guarded and 17 none", () => {
-    expect(ofReach("open")).toHaveLength(24);
+  test("the record reads 23 open, 2 guarded and 18 none", () => {
+    expect(ofReach("open")).toHaveLength(23);
     expect(ofReach("guarded")).toEqual(["etcd", "milvus"]);
-    expect(ofReach("none")).toHaveLength(17);
+    expect(ofReach("none")).toHaveLength(18);
   });
 });
 
