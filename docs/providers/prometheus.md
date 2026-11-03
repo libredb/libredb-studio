@@ -705,12 +705,14 @@ The configuration in `docker/prometheus/` produces every kind, status and identi
 ### 11.4 Write reach, measured live
 
 Prometheus's write reach is `none`: the transport requests only the paths of the frozen table `PATHS`, and none of them is under `/api/v1/admin/`, `/api/v1/write`, `/api/v1/otlp/`, `/-/reload` or `/-/quit`.
-[`write-reach.test.ts`](../../tests/unit/db/prometheus/write-reach.test.ts) holds that three ways: the table's values, every method of the transport driven through a recording sender (the requested paths are exactly the table's, the instant query the only POST), and a parse of `http-transport.ts` that finds no path handed to the URL builder except a member of `PATHS`.
+[`write-reach.test.ts`](../../tests/unit/db/prometheus/write-reach.test.ts) holds that three ways: the table's values, every method of the transport driven through a recording sender (the requested paths are exactly the table's, the instant query the only POST), and a parse of `http-transport.ts` that finds no path handed to the URL builder or a path helper except a member of `PATHS`, no literal starting with `/` outside the table, no use of the global `URL`, and the sender reached only through `exchange`, itself reached only from `probe` and `read`.
 The integration test drives every surface of a `readOnly: true` connection opened through the factory and holds each request to the same table.
 
-The live run is [`tests/fixtures/prometheus/v3.13.3/write-reach/run.sh`](../../tests/fixtures/prometheus/v3.13.3/write-reach/run.sh): a fresh `prom/prometheus:v3.13.3` by digest, with `--web.enable-admin-api`, `--web.enable-remote-write-receiver` and `--web.enable-lifecycle` on and no scrape job, so its series come from rules alone and its TSDB head's series count moves only when something writes.
+The live run is [`tests/fixtures/prometheus/v3.13.3/write-reach/run.sh`](../../tests/fixtures/prometheus/v3.13.3/write-reach/run.sh): a fresh `prom/prometheus:v3.13.3` by digest, with `--web.enable-admin-api`, `--web.enable-remote-write-receiver` and `--web.enable-lifecycle` on and no scrape job, so its series come from rules alone and its TSDB head's series count moves when a new series is written, by remote write or OTLP.
+The count does not see the admin and lifecycle endpoints: a series deletion, a snapshot, a tombstone clean or a reload leaves it where it was.
+Those are shown absent by the recorded request list instead, `sentByStudio`, which holds every request Studio sent in the run.
 [`tests/live/prometheus-write-reach.ts`](../../tests/live/prometheus-write-reach.ts) reads that count before and after every surface of a read-only connection, of the agent read-only profile and of the agent operations profile, and records it in `write-reach.json`.
-Measured 2026-11-03: 116 surfaces, the count 4 before and after each, every request a GET of a table path or the instant query's POST; one raw remote write sent by the script afterwards answered 204 and moved the count to 5, which is the control that a write would have been seen.
+Measured 2026-11-03: 116 surfaces, the count 4 before and after each, every request in `sentByStudio` a GET of a table path or the instant query's POST, so no admin or lifecycle endpoint was asked; one raw remote write sent by the script afterwards answered 204 and moved the count to 5, which is the control that a write would have been seen.
 The test replays that capture.
 
 ---

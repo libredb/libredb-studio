@@ -7,9 +7,11 @@
  *
  * The environment names the server: PROMETHEUS_WRITE_REACH_URL (its origin), PROMETHEUS_WRITE_REACH_OUT (the directory
  * to write) and PROMETHEUS_WRITE_REACH_IMAGE (the pinned image, recorded). The server runs with the admin API, the
- * remote-write receiver and the lifecycle endpoints on and scrapes nothing, so its series count moves only when
- * something writes. After Studio's surfaces, this script sends one remote write itself, with `fetch` and never through
- * Studio, and reads the count again: the control that shows a write would have been seen.
+ * remote-write receiver and the lifecycle endpoints on and scrapes nothing, so its series count moves when a new series
+ * is written, by remote write or OTLP. The count does not see the admin and lifecycle endpoints (a series deletion, a
+ * snapshot or a reload leaves it unchanged), so those are shown absent by the recorded request list, sentByStudio.
+ * After Studio's surfaces, this script sends one remote write itself, with `fetch` and never through Studio, and reads
+ * the count again: the control that shows a new series would have been seen.
  *
  * Run by hand through run.sh, never by `bun run test`, which runs no file under tests/live/.
  */

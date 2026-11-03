@@ -7,8 +7,10 @@
 #
 # The server scrapes nothing, itself included, because its own request metrics would add a series for every new
 # handler Studio reads; its series come from recording and alerting rules alone, so the TSDB head's series count moves
-# only when something writes. The capture script reads that count before and after every provider surface, then sends
-# one raw remote write, never through Studio, to show the count does move when a write lands.
+# when a new series is written (remote write, OTLP). The admin and lifecycle endpoints leave the count unchanged, so the
+# capture also records every request Studio sent, which shows none of them was asked. The capture script reads the count
+# before and after every provider surface, then sends one raw remote write, never through Studio, to show the count
+# does move when a new series lands.
 # Run it under the team's docker lock; it touches only the container it names.
 set -eu
 here="$(cd "$(dirname "$0")" && pwd)"
