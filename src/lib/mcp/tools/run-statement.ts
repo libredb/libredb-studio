@@ -74,6 +74,9 @@ import { MCP_STATEMENT_ARMS, mcpStatementToolFor, servingStatementArms, type Mcp
  * engine whose accepted-forms row says its SQL has none, refused before prepareQuery with the way to page there; such
  * an engine is never offered a next offset either. An arm that does not page sends the statement as written, and the
  * provider's row budget bounds it.
+ *
+ * A result's warnings stay off the answer, except on an arm whose facet says they are Studio's own sentences an answer
+ * must carry: there they are its `notes`, in the order the provider gave them.
  */
 
 /** What the core reads from a call's parsed arguments; the statement itself is under the arm's own key. */
@@ -102,6 +105,7 @@ const StatementOutputSchema = z.object({
     wasLimited: z.boolean(),
   }),
   hint: z.string().nullable(),
+  notes: z.array(z.string()).optional(),
   byte_size: z.number().int(),
   execution_time_ms: z.number(),
 });
@@ -174,6 +178,9 @@ function resultOf(call: StatementCall, type: DatabaseType, prepared: PreparedQue
             : truncatedBy !== null
               ? arm.moreRows(call.statement, type, { maxRows: args.max_rows, shown: count, cut: truncatedBy })
               : null,
+        ...(arm.answersWarnings && raw.warnings !== undefined && raw.warnings.length > 0
+          ? { notes: raw.warnings.map((warning) => warning.message) }
+          : {}),
         byte_size: 0,
         execution_time_ms: raw.executionTime,
       },

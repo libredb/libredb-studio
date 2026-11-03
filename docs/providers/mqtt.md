@@ -435,9 +435,8 @@ seen in the window may still exist; the tool description, the grounding note and
 none of them claims that a topic does not exist. Agent mode is metadata only: no topic name, payload or property
 reaches it.
 
-`MCP_EXPOSABLE.mqtt` is `false`, as for etcd, Oxia and S3, and `MCP_STATEMENT_READ.mqtt` is `false`, so every
-MCP tool refuses an MQTT connection; no MCP surface that carries the same window and sentence is designed yet
-([B164](../BACKLOG.md#b164-mqtts-agent-reads-count-what-one-window-delivers-with-topic-names-withheld-and-it-has-no-mcp-surface)).
+MCP reads a broker on the same condition: `run_mqtt_read` runs agent mode's reads, and every answer carries the
+window and the completeness sentence as its notes (section 15).
 
 ### 9.2 SQL writing
 
@@ -685,4 +684,38 @@ The investigation rule tells the model to read a topic the question names direct
 A plan of the investigation is prose: an MQTT connection has no query console, so there is no statement for the editor to run, and plan mode is ungrounded on it, as agent mode is.
 The editor language id stays `mqtt`, and the fence alias `mqttread` names this engine.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-No MCP tool reads an MQTT broker: the family declares no MCP facet, `MCP_EXPOSABLE.mqtt` and `MCP_STATEMENT_READ.mqtt` are false ([B164](../BACKLOG.md#b164-mqtts-agent-reads-count-what-one-window-delivers-with-topic-names-withheld-and-it-has-no-mcp-surface)), and `READ_ONLY_ENFORCED.mqtt` is unchanged.
+MCP clients run an MQTT read with `run_mqtt_read`, the tool the family declares in its MCP facet ([`src/lib/agent/languages/mqttread/mcp.ts`](../../src/lib/agent/languages/mqttread/mcp.ts)), opened by `MCP_EXPOSABLE.mqtt` and `MCP_STATEMENT_READ.mqtt` (section 15); `READ_ONLY_ENFORCED.mqtt` is unchanged.
+
+## 15. MCP read
+
+`run_mqtt_read` takes one read request as `statement` and runs it through `queryReadOnly` under the agent read-only profile, so every rule of section 14 holds for it unchanged: the closed five-packet encoder and the valve, one fresh session per read, and the metadata-only projection.
+The agent's own reader is the tool's fence, so a request outside the table is refused before anything is acquired, in the sentence an agent run reads; with that fence removed the provider's reader refuses it before anything is sent past the connection's handshake (`tests/live/mqtt-mcp-boundary.ts`).
+It takes no `offset` and no `database`: every read answers one row.
+`list_connections` lists an MQTT connection without its `database`, since that setting is the discovery topic filter, a stored value; the facet says so (`withholdsDatabase`).
+
+Every answer carries `notes`, the provider's warnings: the window it listened for, what it counted and why it stopped, for a topic read what its per-message columns are, a loss the read proved, counted, and that a topic not seen in the window may still exist.
+An MCP answer carries no warning on other tools; these are Studio's own sentences, naming no topic, so this tool's facet passes them on (`answersWarnings`).
+
+The call that opens the connection opens two broker sessions: the acquisition's handshake, CONNECT and DISCONNECT with no subscription, and the read.
+A later call on the same connection reuses that acquisition, which Studio keeps until it has been idle for 30 minutes (`IDLE_TIMEOUT_MS` in `src/lib/db/factory.ts`), and opens one session, the read.
+Each has a client id of its own, `libredb-` and 16 random hex digits, so a call never takes over a live client's id; measured on Mosquitto 2.1.2, one call logged two new clients with two ids, and a live client holding its own id stayed connected through every call.
+`timeout_ms` must be at least 5000: the read needs 4,000 ms, its 3,000 ms window and the least dial, and the call leaves the handshake 1,000 ms before that; a smaller one is refused before anything is acquired, and a handshake slower than its allowance leaves the read too little, which the provider refuses before the read is sent.
+A broker that accepts the TCP connection and never sends a CONNACK is given up at about 3 s whatever `timeout_ms` is, when the handshake's own 3,000 ms window ends (`MQTT_READ_BUDGET_MS`), and the call is answered as an engine error saying no CONNACK arrived, not as the timeout answer.
+A cancel or a timeout ends the wait: the read's session runs on until its own window ends and leaves, and its answer is dropped (measured: a cancel at 1,000 ms answered at 1,001 ms, and the read ended on its window at 3,002 ms).
+
+The seed's login is the principal, since a seed carries no separate agent login, and no broker tells a client what its ACL grants, so Studio proves nothing about it.
+Give an MQTT seed with `mcp: true` a login whose ACL grants read alone on the topics an MCP client should count.
+
+What a login reaches, in two layers, measured on Mosquitto 2.1.2 with an ACL file and on a stock EMQX 5.8.9 (`tests/fixtures/mqtt/mosquitto-2.1.2/mcp-boundary/boundary.json`):
+
+| Item | The broker's ACL | Studio |
+| --- | --- | --- |
+| the window, under a login reading `#` | the subscription granted, every topic delivered | totals only: topics seen, messages, retained messages, payload bytes; never a topic name |
+| the window, under a login reading `factory/#` alone | the subscription to `#` granted, and only the login's own topics delivered | the totals of what was delivered, so they count the login's topics alone |
+| a topic outside that login's ACL, holding a retained message, and one that does not exist | granted and nothing delivered, alike | seen false, every figure null, the same answer for both |
+| an idle topic and a missing one, under a broad login | nothing delivered, alike | the same answer for both |
+| the window on a stock EMQX | the subscription to `#` refused with reason code 135 by its default ACL | `stop_reason` `subscription-refused`, `broker_reason_code` 135, nothing read |
+| `$SYS`, `$share/` and every filter but `#` at the root | never sent | refused before anything is acquired |
+
+So the topic scope is held by the broker's ACL, which does not depend on parsing the request, and Studio's projection, computed on the answer, names no topic whatever the request named; a topic outside the login's ACL is not told from a missing one.
+A broker that lets the seed's login read every topic is counted whole, topic names still withheld.

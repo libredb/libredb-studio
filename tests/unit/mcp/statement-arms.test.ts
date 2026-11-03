@@ -7,7 +7,11 @@
 import { describe, expect, mock, test } from "bun:test";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { AGENT_LANGUAGE_COPY, AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
-import { AGENT_LANGUAGE_MCP_FACETS, type AgentLanguageMcpTool } from "@/lib/agent/languages/mcp";
+import {
+  AGENT_LANGUAGE_MCP_FACETS,
+  type AgentLanguageMcpFacet,
+  type AgentLanguageMcpTool,
+} from "@/lib/agent/languages/mcp";
 import { languageServer } from "@/lib/agent/languages/server";
 import { MCP_STATEMENT_READ, SHIPPED_DATABASE_TYPES } from "@/lib/db/compatibility";
 import { createDatabaseProvider } from "@/lib/db/factory";
@@ -27,6 +31,7 @@ import {
   mcpStatementArm,
   mcpStatementToolFor,
   mcpTablelessReadTool,
+  mcpWithholdsDatabase,
   servingStatementArms,
 } from "@/lib/mcp/tools/statement-arms";
 import { CENSUS_CONNECTION } from "../../helpers/census-connection";
@@ -45,6 +50,8 @@ const RUN_REDIS_READ_ARM = mcpStatementArm("run_redis_read");
 const RUN_WEAVIATE_READ_ARM = mcpStatementArm("run_weaviate_read");
 const RUN_MTCONNECT_READ_ARM = mcpStatementArm("run_mtconnect_read");
 const RUN_MILVUS_READ_ARM = mcpStatementArm("run_milvus_read");
+const RUN_MQTT_READ_ARM = mcpStatementArm("run_mqtt_read");
+const RUN_SPARKPLUG_READ_ARM = mcpStatementArm("run_sparkplug_read");
 const RunKubectlReadInputSchema = RUN_KUBECTL_READ_ARM.inputSchema;
 const RunReadQueryInputSchema = RUN_READ_QUERY_ARM.inputSchema;
 const RunMongoCommandInputSchema = RUN_MONGO_COMMAND_ARM.inputSchema;
@@ -109,6 +116,55 @@ describe("MCP_STATEMENT_ARMS", () => {
       expect(arm?.inputSchema.shape[arm.argument]).toBe(facet?.statementInput as never);
       expect(Object.hasOwn(arm?.inputSchema.shape ?? {}, "database")).toBe(facet?.takesDatabase);
     }
+  });
+
+  test("takes the shared least timeout, 500 ms, unless its facet declares one, and refuses below it in its words", () => {
+    for (const arm of ARMS) {
+      const facet = AGENT_LANGUAGE_MCP_FACETS[arm.language] as AgentLanguageMcpFacet;
+      const least = facet.leastTimeout?.ms ?? 500;
+      const timeoutIssues = (timeout_ms: number) =>
+        (arm.inputSchema.safeParse({ connection_id: "seed:c", timeout_ms }).error?.issues ?? [])
+          .filter((issue) => issue.path.join(".") === "timeout_ms")
+          .map((issue) => issue.message);
+      expect(timeoutIssues(least)).toEqual([]);
+      expect(timeoutIssues(least - 1)).toHaveLength(1);
+      if (facet.leastTimeout !== undefined) {
+        expect(timeoutIssues(least - 1)).toEqual([
+          `timeout_ms must be at least ${least} for ${arm.tool}: ${facet.leastTimeout.why}`,
+        ]);
+      }
+    }
+    expect(
+      ARMS.filter((arm) => (AGENT_LANGUAGE_MCP_FACETS[arm.language] as AgentLanguageMcpFacet).leastTimeout).map(
+        (arm) => arm.tool,
+      ),
+    ).toEqual(["run_mqtt_read", "run_sparkplug_read"]);
+  });
+
+  test("carries the provider's warnings as notes only where its facet says they are Studio's own sentences", () => {
+    for (const arm of ARMS) {
+      const facet = AGENT_LANGUAGE_MCP_FACETS[arm.language] as AgentLanguageMcpFacet;
+      expect(arm.answersWarnings).toBe(facet.answersWarnings === true);
+    }
+    expect(ARMS.filter((arm) => arm.answersWarnings).map((arm) => arm.tool)).toEqual([
+      "run_mqtt_read",
+      "run_sparkplug_read",
+    ]);
+  });
+
+  test("leaves a connection's database setting out of list_connections only where its facet says it is a stored value", () => {
+    for (const arm of ARMS) {
+      const facet = AGENT_LANGUAGE_MCP_FACETS[arm.language] as AgentLanguageMcpFacet;
+      expect(arm.withholdsDatabase).toBe(facet.withholdsDatabase === true);
+    }
+    expect(ARMS.filter((arm) => arm.withholdsDatabase).map((arm) => arm.tool)).toEqual([
+      "run_mqtt_read",
+      "run_sparkplug_read",
+    ]);
+    expect(mcpWithholdsDatabase("mqtt")).toBe(true);
+    expect(mcpWithholdsDatabase("sparkplug")).toBe(true);
+    expect(mcpWithholdsDatabase("postgres")).toBe(false);
+    expect(mcpWithholdsDatabase("spark")).toBe(false);
   });
 
   test("finds an arm by its tool, and names the tool no language declares", () => {
@@ -1427,7 +1483,7 @@ describe("the rabbitread arm", () => {
  * to its provider's own declaration: no relation kind where the arm says none, at least one where it does not.
  */
 describe("the arms whose engines hold no table", () => {
-  test("kubectl declares it, SQL, MongoDB, libredbkv, Weaviate, Qdrant, etcd, rabbitread, Kafka, Cypher, Milvus, Redis and MTConnect do not", () => {
+  test("kubectl and MQTT declare it, SQL, MongoDB, libredbkv, Weaviate, Qdrant, etcd, rabbitread, Kafka, Cypher, Milvus, Redis, MTConnect and Sparkplug do not", () => {
     expect(RUN_KUBECTL_READ_ARM.holdsNoTables).toBe(true);
     expect(RUN_READ_QUERY_ARM.holdsNoTables).toBe(false);
     expect(RUN_MONGO_COMMAND_ARM.holdsNoTables).toBe(false);
@@ -1445,6 +1501,11 @@ describe("the arms whose engines hold no table", () => {
     // A Redis key grouping is a `keyspace` relation, which inspect_schema lists.
     expect(RUN_REDIS_READ_ARM.holdsNoTables).toBe(false);
     expect(RUN_MTCONNECT_READ_ARM.holdsNoTables).toBe(false);
+    // An MQTT broker declares no relation kind: a topic is a key, so inspect_schema refuses it by name.
+    expect(RUN_MQTT_READ_ARM.holdsNoTables).toBe(true);
+    // An edge node and a device are relation kinds; an agent-mode handle declares none, so inspect_schema answers an
+    // empty page.
+    expect(RUN_SPARKPLUG_READ_ARM.holdsNoTables).toBe(false);
   });
 
   test.each(ARMS.flatMap((arm) => arm.types.map((type) => [arm.tool, type, arm] as const)))(

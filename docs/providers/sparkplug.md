@@ -270,7 +270,7 @@ Agent mode reads a plant on that condition (section 14).
 Every agent answer states the window it listened for, what it counted in that window and why it stopped, its scope is never `complete`, and it says that an edge node or device not seen in the window may still exist; the tool description, the grounding note and the posture say the same, and none of them says a node is online or offline.
 Agent mode is metadata only: no group, edge node, device or host application id, metric name, value, property or stored certificate reaches it.
 
-`MCP_EXPOSABLE.sparkplug` is `false`, as for MQTT, and `MCP_STATEMENT_READ.sparkplug` is `false`, so every MCP tool refuses a Sparkplug connection; no MCP surface that carries the same window and sentence is designed yet ([B165](../BACKLOG.md#b165-sparkplugs-agent-reads-count-what-one-window-delivers-with-ids-withheld-and-it-has-no-mcp-surface)).
+MCP reads a plant on the same condition: `run_sparkplug_read` runs agent mode's reads, and every answer carries the window and the completeness sentence as its notes (section 15).
 
 ### SQL writing
 
@@ -414,4 +414,37 @@ The investigation rule tells the model to read a group, edge node or device the 
 A plan of the investigation is prose: the editor's console request reads metric values, which agent mode never reads, and plan mode is ungrounded on it, as agent mode is.
 The editor language id stays `sparkplug`, and the fence alias `sparkplugread` names this engine.
 A pack does not open agent mode: execution is gated by `AGENT_EXECUTION_ENGINES` and the execution-profile check.
-No MCP tool reads a Sparkplug plant: the family declares no MCP facet, `MCP_EXPOSABLE.sparkplug` and `MCP_STATEMENT_READ.sparkplug` are false ([B165](../BACKLOG.md#b165-sparkplugs-agent-reads-count-what-one-window-delivers-with-ids-withheld-and-it-has-no-mcp-surface)), and `READ_ONLY_ENFORCED.sparkplug` is unchanged.
+MCP clients run a Sparkplug read with `run_sparkplug_read`, the tool the family declares in its MCP facet ([`src/lib/agent/languages/sparkplugread/mcp.ts`](../../src/lib/agent/languages/sparkplugread/mcp.ts)), opened by `MCP_EXPOSABLE.sparkplug` and `MCP_STATEMENT_READ.sparkplug` (section 15); `READ_ONLY_ENFORCED.sparkplug` is unchanged.
+
+## 15. MCP read
+
+`run_sparkplug_read` takes one read request as `statement` and runs it through `queryReadOnly` under the agent read-only profile, so every rule of section 14 holds for it unchanged: the closed encoder, one fresh session per read, the connection's group as the scope of every read, and the metadata-only projection.
+The agent's own reader is the tool's fence, so a request outside the table is refused before anything is acquired, in the sentence an agent run reads; with that fence removed the provider's reader refuses it before anything is sent past the connection's handshake (`tests/live/sparkplug-mcp-boundary.ts`).
+A read of another group on a connection that names one is refused by the provider after the handshake, before the read is sent.
+It takes no `offset` and no `database`: every read answers one row.
+`list_connections` lists a Sparkplug connection without its `database`, since that setting is the group id the connection names, a stored value; the facet says so (`withholdsDatabase`).
+
+Every answer carries `notes`, the provider's warnings: the window it listened for, what it counted and why it stopped, for an exact read what its columns are, what the read could not count, and that an edge node or device not seen in the window may still exist.
+An MCP answer carries no warning on other tools; these are Studio's own sentences, naming no id, so this tool's facet passes them on (`answersWarnings`).
+
+The call that opens the connection opens two broker sessions: the acquisition's handshake, CONNECT and DISCONNECT with no subscription, and the read, each with a client id of its own, `libredb-` and 16 random hex digits; measured on the fixture's Mosquitto 2.0.22, one call logged two new clients with two ids.
+A later call on the same connection reuses that acquisition, which Studio keeps until it has been idle for 30 minutes (`IDLE_TIMEOUT_MS` in `src/lib/db/factory.ts`), and opens one session, the read.
+`timeout_ms` must be at least 5000: the read needs 4,000 ms, its 3,000 ms window and the least dial, and the call leaves the handshake 1,000 ms before that; a smaller one is refused before anything is acquired.
+A broker that accepts the TCP connection and never sends a CONNACK is given up at about 3 s whatever `timeout_ms` is, when the handshake's own 3,000 ms window ends, and the call is answered as an engine error saying no CONNACK arrived, not as the timeout answer.
+A cancel or a timeout ends the wait: the read's session runs on until its own window ends, and its answer is dropped.
+
+`inspect_schema` lists no group, edge node or device and answers an empty page: an agent-mode handle declares no container level and no object kind, since ids are withheld, so the call costs one handshake and reads nothing.
+
+The provider connects anonymously, so the broker's anonymous ACL is the only layer the broker adds, and Studio proves nothing about it.
+What a read reaches, in two layers, measured on the fixture's broker and on one whose anonymous ACL reads `spBv1.0/<one group>/#` alone (`tests/fixtures/sparkplug/mosquitto-2.0.22/mcp-boundary/boundary.json`):
+
+| Item | The broker's ACL | Studio |
+| --- | --- | --- |
+| the window on the open broker | every group delivered | totals only: groups, edge nodes and devices seen, messages by type, metrics, payload bytes; never an id |
+| the window behind the one-group ACL | that group alone delivered | the totals of that group alone |
+| a group outside the ACL that publishes, and one that does not exist | nothing delivered, alike | seen false and zero counts, the same answer for both |
+| a group, edge node or device the request names | delivered as the ACL allows | its counts, flags and last arrival; never the id it named, a metric name or a value |
+| another group, on a connection whose Database field names one | never sent | refused after the handshake |
+| `STATE`, `$sparkplug/`, a command, a rebirth request | never sent | refused before anything is acquired |
+
+So the id scope is held by the broker's ACL and the connection's group setting, neither of which depends on parsing the request, and Studio's projection, computed on the answer, names no id whatever the request named.

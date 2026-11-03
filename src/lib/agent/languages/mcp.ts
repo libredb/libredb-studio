@@ -3,7 +3,8 @@
  *
  * A facet holds what only its language knows about its MCP statement tool: the tool's name and title, the statement
  * argument's own input field, whether the tool takes a `database` key, its paging mode, whether the language's engines
- * hold any table, its description, and the words its refusals and cut results are phrased in. `src/lib/mcp/` builds
+ * hold any table, its description, the words its refusals and cut results are phrased in, and where they apply, the
+ * least timeout its reads need and whether its answers carry the provider's warnings. `src/lib/mcp/` builds
  * every statement tool from this registry and names no language; neither this module nor any facet imports from
  * `src/lib/mcp/`, since the MCP module depends on the language packs and never the reverse.
  *
@@ -20,10 +21,12 @@ import { KUBECTL_MCP_FACET } from "./kubectl/mcp";
 import { LIBREDBKV_MCP_FACET } from "./libredbkv/mcp";
 import { MILVUSRPC_MCP_FACET } from "./milvusrpc/mcp";
 import { MONGO_MCP_FACET } from "./mongo/mcp";
+import { MQTTREAD_MCP_FACET } from "./mqttread/mcp";
 import { MTCONNECTREAD_MCP_FACET } from "./mtconnectread/mcp";
 import { QDRANTAPI_MCP_FACET } from "./qdrantapi/mcp";
 import { RABBITREAD_MCP_FACET } from "./rabbitread/mcp";
 import { REDISCLI_MCP_FACET } from "./rediscli/mcp";
+import { SPARKPLUGREAD_MCP_FACET } from "./sparkplugread/mcp";
 import { SQL_MCP_FACET } from "./sql/mcp";
 import { WEAVIATEAPI_MCP_FACET } from "./weaviateapi/mcp";
 
@@ -66,6 +69,23 @@ interface AgentLanguageMcpFacetBase {
   readonly holdsNoTables: boolean;
   /** The description up to the untrusted-content notice the MCP module closes every statement tool's with. */
   readonly describe: (served: AgentLanguageMcpServed) => string;
+  /**
+   * The least `timeout_ms` the tool takes, where its engine's read cannot be answered in less than the shared least of
+   * 500 ms, and why, as the end of the sentence that refuses a smaller one before anything is acquired.
+   */
+  readonly leastTimeout?: { readonly ms: number; readonly why: string };
+  /**
+   * True where every warning the provider gives on this language's answers is Studio's own sentence, naming no stored
+   * value, and one an answer must carry (a read's window and why it cannot be complete), so the warnings reach the
+   * client as the answer's `notes`. Absent, a warning stays off the answer, and the description says what it would.
+   */
+  readonly answersWarnings?: true;
+  /**
+   * True where a connection's database setting is, on this language's engines, a stored value rather than a catalog's
+   * name (a topic filter, a group id), so list_connections leaves it out of the connection's row. Absent, the row
+   * carries it.
+   */
+  readonly withholdsDatabase?: true;
 }
 
 /**
@@ -112,10 +132,8 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   // No MCP statement tool yet: MCP read stays closed on OPC UA until a change of its own declares one and opens it.
   opcuaread: null,
   mtconnectread: MTCONNECTREAD_MCP_FACET,
-  // No MCP statement tool yet: MCP read stays closed on MQTT until a change of its own declares one and opens it.
-  mqttread: null,
-  // No MCP statement tool yet: MCP read stays closed on Sparkplug until a change of its own declares one and opens it.
-  sparkplugread: null,
+  mqttread: MQTTREAD_MCP_FACET,
+  sparkplugread: SPARKPLUGREAD_MCP_FACET,
 } satisfies Record<AgentStatementLanguageId, AgentLanguageMcpFacet | null>);
 
 /** A facet some language declares, with its tool's name as a literal. */

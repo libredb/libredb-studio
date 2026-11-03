@@ -190,7 +190,7 @@ defaults:                    # Optional — merges managed/environment/ssl only
 connections:
   - id: "analytics-pg"       # Required, unique, lowercase slug [a-z0-9-]
     name: "Analytics DB"      # Required, display name in UI
-    type: postgres            # Required: postgres|mysql|sqlite|libsql|duckdb|mongodb|redis|oracle|db2|mssql|libredb|couchbase|firestore|clickhouse|druid|elasticsearch|opensearch|trino|bigquery|snowflake|spark|cassandra|prometheus|kafka|mqtt|rabbitmq|opcua|mtconnect|etcd|neo4j|milvus|qdrant|weaviate|influxdb|influxdb3|oxia|databend|s3|kubernetes
+    type: postgres            # Required: postgres|mysql|sqlite|libsql|duckdb|mongodb|redis|oracle|db2|mssql|libredb|couchbase|firestore|clickhouse|druid|elasticsearch|opensearch|trino|bigquery|snowflake|spark|cassandra|prometheus|kafka|mqtt|rabbitmq|opcua|mtconnect|modbus|netconf|snmp|sparkplug|etcd|neo4j|milvus|qdrant|weaviate|influxdb|influxdb3|oxia|databend|s3|kubernetes
     host: "${PG_HOST}"
     port: 5432
     database: analytics
@@ -373,7 +373,7 @@ connections:
 | `connections` | Yes | — | Array of connection definitions (min 1) |
 | `connections[].id` | Yes | — | Unique slug: `[a-z0-9-]+`, max 64 chars |
 | `connections[].name` | Yes | — | Display name, max 128 chars |
-| `connections[].type` | Yes | - | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `db2`, `mssql`, `libredb`, `couchbase`, `firestore`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `bigquery`, `snowflake`, `spark`, `cassandra`, `prometheus`, `kafka`, `mqtt`, `rabbitmq`, `opcua`, `mtconnect`, `etcd`, `neo4j`, `milvus`, `qdrant`, `weaviate`, `influxdb`, `influxdb3`, `oxia`, `databend`, `s3`, `kubernetes` |
+| `connections[].type` | Yes | - | Database type: `postgres`, `mysql`, `sqlite`, `libsql`, `duckdb`, `mongodb`, `redis`, `oracle`, `db2`, `mssql`, `libredb`, `couchbase`, `firestore`, `clickhouse`, `druid`, `elasticsearch`, `opensearch`, `trino`, `bigquery`, `snowflake`, `spark`, `cassandra`, `prometheus`, `kafka`, `mqtt`, `rabbitmq`, `opcua`, `mtconnect`, `modbus`, `netconf`, `snmp`, `sparkplug`, `etcd`, `neo4j`, `milvus`, `qdrant`, `weaviate`, `influxdb`, `influxdb3`, `oxia`, `databend`, `s3`, `kubernetes` |
 | `connections[].host` | No | — | Hostname or IP |
 | `connections[].port` | No | — | Port number (1-65535) |
 | `connections[].database` | No | — | Database name (Couchbase: the bucket. Druid has one catalog and ignores it. Trino: the **catalog**. S3: the optional pinned bucket. PostgreSQL: empty reaches the whole server, every database the role can CONNECT to) |
@@ -418,7 +418,7 @@ connections:
 | `connections[].securityPolicyUri` | No | absent | OPC UA only: the policy to insist on, such as `http://opcfoundation.org/UA/SecurityPolicy#Basic256Sha256`. An endpoint is a mode **and** a policy, so naming one narrows the choice to that pair and is refused when the server offers no such pair |
 | `connections[].clientCertificatePath` / `connections[].clientPrivateKeyPath` | No | absent | OPC UA only: the client certificate and private key to present, as paths on the host that runs Studio, supplied together or not at all. A server holding a trust list of its own has to be given a STABLE client identity before it will accept a secured channel, which is what a mounted pair is for; absent, the library generates one under the PKI root (`LIBREDB_OPCUA_PKI_ROOT`), which is stable for as long as that directory is. Paths and never keys: the private key stays in the file |
 | `connections[].authSource` | No | - | MongoDB: the database its credentials live in (`admin` in the ordinary deployment). Without it the driver checks the user against the database being opened, which reports a credentials error. A seed for MongoDB agent mode names the read user's own database here: [the agent's user](providers/mongodb.md#setting-up-the-agents-user) has the whole entry |
-| `connections[].mcp` | No | absent | `true` makes the connection visible to MCP clients whose token's role the connection's `roles` admit ([docs/MCP.md](MCP.md)). Anything but a boolean fails the whole file. An Oxia, S3, MQTT, Firestore, OPC UA, Modbus, NETCONF, SNMP or Sparkplug B connection refuses `mcp: true` when the file loads: MCP is not offered for it. An etcd connection with `mcp: true` whose `user` is `root` is refused too, since MCP reads etcd only under a user the server proves reads only ([providers/etcd.md](providers/etcd.md), section 15.7) |
+| `connections[].mcp` | No | absent | `true` makes the connection visible to MCP clients whose token's role the connection's `roles` admit ([docs/MCP.md](MCP.md)). Anything but a boolean fails the whole file. An Oxia, S3, Firestore, OPC UA, Modbus, NETCONF or SNMP connection refuses `mcp: true` when the file loads: MCP is not offered for it. An etcd connection with `mcp: true` whose `user` is `root` is refused too, since MCP reads etcd only under a user the server proves reads only ([providers/etcd.md](providers/etcd.md), section 15.7) |
 
 ### MCP opt-in
 
@@ -1546,7 +1546,7 @@ In OIDC sign-in mode the ServiceAccount review refuses to run on OpenShift: befo
 | `mcp` that is not a boolean, or `mcp` in `defaults` | The whole file fails like any invalid config; every MCP tool answers that the connection configuration could not be read |
 | `readOnly: true` on a connection whose type does not enforce it, on a connection whose effective `managed` is false, or `readOnly` in `defaults` | The whole file fails like any invalid config, and the error names the connection, the field and the reason |
 | `readOnly: true` on a connection whose literal credential matches a default its type declares, or with no password where its type declares it accepts none | The whole file fails like any invalid config, and the error names the connection and `password`, never the value; a `${ENV}` or `${vault:...}` reference is checked once it resolves, and the connection is refused before anything is dialled |
-| `mcp: true` on an Oxia, S3, MQTT, Firestore, OPC UA, Modbus, NETCONF, SNMP or Sparkplug B connection | The whole file fails like any invalid config, and the error names `mcp` and the type, such as `oxia` or `s3` |
+| `mcp: true` on an Oxia, S3, Firestore, OPC UA, Modbus, NETCONF or SNMP connection | The whole file fails like any invalid config, and the error names `mcp` and the type, such as `oxia` or `s3` |
 | `mcp: true` on an etcd connection whose `user` is `root` | The whole file fails like any invalid config, and the error names the connection and `user` |
 | Unrecognized `version` | Endpoint returns 500. Future versions require code update. |
 | `${ENV_VAR}` not defined | That connection is **skipped**. Others work normally. Error logged, and the Seed sources card lists the skip with the variable; the endpoint's record also names the field. |

@@ -15,7 +15,8 @@
  * same encoder and valve, and each answer projected to counts and flags (`agent-read.ts`), never a topic name or a
  * payload, and always with the window it listened for and the sentence that a topic not seen may still exist. On a
  * handle opened for any agent-mode profile, connecting is a handshake that subscribes to nothing, and every other
- * surface answers its reason (`agent-surface.ts`). MCP read stays closed on this engine.
+ * surface answers its reason (`agent-surface.ts`). MCP's `run_mqtt_read` reads through this same `queryReadOnly` on an
+ * agent read-only handle, and its answers carry the window and the completeness sentence as notes.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";

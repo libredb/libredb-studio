@@ -9,6 +9,7 @@ import { AGENT_EXECUTION_ENGINES, namedList } from "@/lib/agent/engine-support";
 import { AGENT_STATEMENT_LANGUAGE } from "@/lib/agent/agent-manifest";
 import { getDBConfig } from "@/lib/db-ui-config";
 import { MCP_EXPOSABLE, MCP_STATEMENT_READ } from "@/lib/db/compatibility";
+import { MQTT_COMPLETENESS } from "@/lib/db/providers/keyvalue/mqtt/agent-read";
 import { MCP_UNTRUSTED_NOTICE } from "@/lib/mcp/output";
 import { MCP_INSTRUCTIONS } from "@/lib/mcp/server";
 import { INSPECT_SCHEMA_DESCRIPTION } from "@/lib/mcp/tools/inspect-schema";
@@ -25,6 +26,8 @@ const RUN_MONGO_COMMAND_ARM = mcpStatementArm("run_mongo_command");
 const RUN_LIBREDB_READ_ARM = mcpStatementArm("run_libredb_read");
 const RUN_QDRANT_READ_ARM = mcpStatementArm("run_qdrant_read");
 const RUN_MILVUS_READ_ARM = mcpStatementArm("run_milvus_read");
+const RUN_MQTT_READ_ARM = mcpStatementArm("run_mqtt_read");
+const RUN_SPARKPLUG_READ_ARM = mcpStatementArm("run_sparkplug_read");
 const RUN_ETCD_READ_ARM = mcpStatementArm("run_etcd_read");
 const RUN_RABBITMQ_READ_ARM = mcpStatementArm("run_rabbitmq_read");
 const RUN_KAFKA_READ_ARM = mcpStatementArm("run_kafka_read");
@@ -120,6 +123,32 @@ describe("the tool descriptions", () => {
     expect(RUN_QDRANT_READ_ARM.description).toContain("Runs on Qdrant; other engines refuse it.");
     expect(RUN_QDRANT_READ_ARM.description).toContain("names, counts and flags only, never a stored payload or vector");
     expect(RUN_QDRANT_READ_ARM.description).toContain("this tool takes no offset");
+  });
+
+  test("run_mqtt_read names MQTT, says it answers totals only, carries the completeness sentence and its least timeout", () => {
+    expect(RUN_MQTT_READ_ARM.description).toContain("Runs on MQTT; other engines refuse it.");
+    expect(RUN_MQTT_READ_ARM.description).toContain("answers totals only");
+    expect(RUN_MQTT_READ_ARM.description).toContain("never a topic name");
+    expect(RUN_MQTT_READ_ARM.description).toContain(MQTT_COMPLETENESS);
+    expect(RUN_MQTT_READ_ARM.description).toContain("The first call on a connection opens two broker sessions");
+    expect(RUN_MQTT_READ_ARM.description).toContain("a later call opens the read alone");
+    expect(RUN_MQTT_READ_ARM.description).toContain("timeout_ms must be at least 5000");
+    expect(RUN_MQTT_READ_ARM.description).toContain("inspect_schema refuses an MQTT connection");
+    expect(RUN_MQTT_READ_ARM.description).toContain("this tool takes no offset");
+  });
+
+  test("run_sparkplug_read names Sparkplug B, says it names no id, carries the completeness sentence and its least timeout", () => {
+    expect(RUN_SPARKPLUG_READ_ARM.description).toContain("Runs on Sparkplug B; other engines refuse it.");
+    expect(RUN_SPARKPLUG_READ_ARM.description).toContain("answers totals only");
+    expect(RUN_SPARKPLUG_READ_ARM.description).toContain("never a metric name or value and never the id it named");
+    expect(RUN_SPARKPLUG_READ_ARM.description).toContain(
+      "an edge node or device not seen in the window may still exist, and no answer says one is online, offline or absent",
+    );
+    expect(RUN_SPARKPLUG_READ_ARM.description).toContain("The first call on a connection opens two broker sessions");
+    expect(RUN_SPARKPLUG_READ_ARM.description).toContain("a later call opens the read alone");
+    expect(RUN_SPARKPLUG_READ_ARM.description).toContain("timeout_ms must be at least 5000");
+    expect(RUN_SPARKPLUG_READ_ARM.description).toContain("inspect_schema lists no group, edge node or device");
+    expect(RUN_SPARKPLUG_READ_ARM.description).toContain("this tool takes no offset");
   });
 
   test("run_milvus_read names Milvus, the one engine its handler gates on, says what it never reads, and takes no offset", () => {
