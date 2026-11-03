@@ -12,13 +12,18 @@
  *
  *   bun tests/live/postgres-read-only-live.ts
  *
- * The port is not e2e/functional-smoke.spec.ts's 54329, so the two containers never collide.
+ * The container publishes on a loopback port Docker picks, read back with `docker port`, and its name carries a
+ * per-run suffix. A fixed host port failed CI on PR #2216 with "failed to bind host port 127.0.0.1:54332/tcp:
+ * address already in use": 54332 is inside Linux's ephemeral range (32768-60999), the step before this one opens
+ * many loopback client connections to its own PostgreSQL, and a client socket on that local port, open or in
+ * TIME_WAIT, blocks Docker's bind. `LIBREDB_LIVE_PG_CONTAINER_PREFIX` replaces the name's prefix for a local run.
  */
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { acquireExecutionProfileProvider } from "@/lib/db/factory";
 
-const PG_CONTAINER = "libredb-live-readonly-pg";
-const PG_PORT = 54332;
+/** Names this run's container apart from any other run's on the same Docker. */
+const PG_CONTAINER = `${process.env.LIBREDB_LIVE_PG_CONTAINER_PREFIX ?? "libredb-live-readonly-pg"}-${randomBytes(4).toString("hex")}`;
 const PG_ADMIN_PASSWORD = "smoke-pg-password";
 const AGENT_USER = "agent_readonly";
 const AGENT_PASSWORD = "smoke-agent-password";
@@ -38,12 +43,15 @@ function dockerAvailable(): boolean {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function startSeededPostgres(): Promise<void> {
-  try {
-    docker(["rm", "-f", PG_CONTAINER]);
-  } catch {
-    // fine if no container exists
-  }
+/** The host port Docker published for the container's 5432, from `docker port`'s `127.0.0.1:49153`. */
+function publishedPort(container: string): number {
+  const binding = docker(["port", container, "5432/tcp"]).trim().split("\n")[0] ?? "";
+  const port = Number(binding.slice(binding.lastIndexOf(":") + 1));
+  if (!Number.isInteger(port) || port <= 0) throw new Error(`Docker published no port for ${container}: "${binding}"`);
+  return port;
+}
+
+async function startSeededPostgres(): Promise<number> {
   docker([
     "run",
     "-d",
@@ -53,9 +61,10 @@ async function startSeededPostgres(): Promise<void> {
     "-e",
     `POSTGRES_PASSWORD=${PG_ADMIN_PASSWORD}`,
     "-p",
-    `127.0.0.1:${PG_PORT}:5432`,
+    "127.0.0.1::5432",
     "postgres:16-alpine",
   ]);
+  const port = publishedPort(PG_CONTAINER);
 
   const seedSql =
     "CREATE TABLE smoke_items (id int PRIMARY KEY, name text NOT NULL);" +
@@ -82,6 +91,7 @@ async function startSeededPostgres(): Promise<void> {
     }
   }
   if (!seeded) throw new Error(`live postgres container did not accept seed: ${lastError}`);
+  return port;
 }
 
 async function main(): Promise<void> {
@@ -90,8 +100,8 @@ async function main(): Promise<void> {
       throw new Error("Docker daemon is not available");
     }
 
-    await startSeededPostgres();
-    console.log("PostgreSQL container started and seeded");
+    const port = await startSeededPostgres();
+    console.log(`PostgreSQL container ${PG_CONTAINER} started on 127.0.0.1:${port} and seeded`);
 
     const provider = await acquireExecutionProfileProvider(
       {
@@ -99,7 +109,7 @@ async function main(): Promise<void> {
         type: "postgres",
         name: "Live PG Read-Only",
         host: "127.0.0.1",
-        port: PG_PORT,
+        port,
         user: "postgres",
         password: PG_ADMIN_PASSWORD,
         agentUser: AGENT_USER,
