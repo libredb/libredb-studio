@@ -962,6 +962,7 @@ than drawn disabled with no explanation.
 | Declaration | Value |
 |---|---|
 | `enforcesReadOnly` | true, structurally |
+| `writeReach` | none: the editor absent with its proof, `readRequest`, and object edit, maintenance and transactions absent |
 | `queryLanguage` / `queryDialect` | `json` / `opcua` |
 | `defaultPort` | 4840 |
 | `supportsResultPagination` | false |

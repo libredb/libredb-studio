@@ -462,6 +462,7 @@ Health and pulse reuse the connect probe; the overview and the monitoring panels
 | `createTable` | absent |
 | `supportsInlineRowEdit`, `supportsTestDataGeneration`, `supportsTransactions`, `supportsMaintenance` | false |
 | `enforcesReadOnly` | true |
+| `writeReach` | none: the editor absent with its proof, `buildRequest`, and object edit, maintenance and transactions absent |
 | `containerLevels` | none |
 | `objectKinds` | `collection` (relation), `document` (Keys panel, Source tab, JSON) |
 | `keyScan` | separator `/`, opaque cursor, prefix pattern, no total, levels rooted at `collection`, 100 by default and 1,000 at most |

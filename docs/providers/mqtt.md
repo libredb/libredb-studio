@@ -414,6 +414,7 @@ by name rather than left to a default.
 | Capability | Value | Why |
 |---|---|---|
 | `enforcesReadOnly` | `true` | Structural, not a setting: see 3.1 |
+| `writeReach` | none | The editor absent with its proof, `guardOutboundPacket`, and object edit, maintenance and transactions absent |
 | `queryLanguage` | `json` | The tab's editor language, shared with Kafka |
 | `queryDialect` | `mqtt` | Its own, so a connection never falls through to MongoDB's tab (#427) |
 | `defaultPort` | `1883` | The IANA assignment |
