@@ -194,6 +194,23 @@ describe("an answer is read up to the most objects one request asks for, and ref
   });
 });
 
+describe("a varbind list that is broken rather than long", () => {
+  test("is refused as unreadable, never as too large", () => {
+    // A list whose one entry claims five octets and holds one: a broken answer, not a long one.
+    const broken = writeSequence([
+      writeInteger(VERSION_V2C),
+      writeOctetString(new TextEncoder().encode("public")),
+      writeSequence(
+        [writeInteger(5), writeInteger(0), writeInteger(0), writeSequence([Uint8Array.of(0x30, 0x05, 0x06)])],
+        0xa2,
+      ),
+    ]);
+    const run = () => decodeResponse(broken);
+    expect(run).toThrow(BerError);
+    expect(run).not.toThrow(SnmpAnswerTooLargeError);
+  });
+});
+
 describe("a message whose second field is not a community", () => {
   test("is refused rather than read as one", () => {
     // `communityOf` is what the valve uses to say which connection a datagram belongs to, so a
