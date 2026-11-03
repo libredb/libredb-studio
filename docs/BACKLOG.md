@@ -28,7 +28,7 @@ None of it is a GitHub issue.
 **Sections**
 
 - [SQL statement reading](#sql-statement-reading) — S2-S11 · 8
-- [Drivers and connections](#drivers-and-connections) — D1-D447, U17 · 331
+- [Drivers and connections](#drivers-and-connections) — D1-D448, U17 · 332
 - [Value interpolation](#value-interpolation) — V1
 - [Row editing](#row-editing) — R1–R3 · 3
 - [Studio UI and query execution](#studio-ui-and-query-execution) — X2-X26, U2-U198 · 184
@@ -4425,6 +4425,15 @@ So an operator whose server takes a token alone cannot give either engine an age
 Found 2026-11-03 while adding the seed agent credential.
 
 **Done when:** an `AgentCredentialForm` member takes a user and a password or a password alone, `assertAgentCredentialForm` supports it, both providers declare it, the census and `SEED_AGENT_CREDENTIAL` follow, and a factory test shows an agent token alone opening each.
+
+### D448. `ProviderCapabilities.enforcesReadOnly` repeats what `writeReach` declares
+
+Every provider whose reach is not `open` declares both `enforcesReadOnly: true` and a `writeReach` naming the gate or proof on each write path, and `tests/unit/db/write-reach-capability.test.ts` holds `enforcesReadOnly` true exactly where `summarizeWriteReach(writeReach)` is not `open`.
+Nothing under `src/` reads `enforcesReadOnly`, so it is a second hand-written answer that only the census keeps equal to the first, and `docs/ADDING_A_PROVIDER.md` asks a new provider for both.
+It waits until Prometheus and Kafka are recorded `none`, since each of those flips sets the flag as well.
+Found 2026-11-03 while recording what each engine can write.
+
+**Done when:** `enforcesReadOnly` is removed from `ProviderCapabilities` and from every provider as a clean removal, `tests/unit/db/read-only-enforced-capability.test.ts` holds `READ_ONLY_ENFORCED` to `summarizeWriteReach(writeReach)` instead, `docs/ADDING_A_PROVIDER.md` drops the row, and the release note names the published-interface change.
 
 ## Value interpolation
 
