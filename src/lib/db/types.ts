@@ -944,6 +944,36 @@ export interface KindRowAction {
  */
 export type AgentCredentialForm = "token" | "service-account-key" | "dedicated-user" | "none";
 
+/**
+ * A Studio server route that can send an engine a request that changes stored data, schema or server state.
+ *
+ * - `editor`: `POST /api/db/query` and `POST /api/db/multi-query`, and every surface that builds a statement and
+ *   runs it there: inline row edit, Import, Generate Test Data and Create Table.
+ * - `objectEdit`: `POST /api/db/objects/edit-apply`, through `buildObjectEdit` and `applyObjectEdit`.
+ * - `maintenance`: `POST /api/db/maintenance`, through `supportsMaintenance` and `maintenanceOperations`; a session
+ *   kill and any other operation that changes what the next user of the engine sees counts as a write.
+ * - `transaction`: `POST /api/db/transaction`, which keys on the four transaction methods being present.
+ *
+ * Schema Diff's migration DDL, plan mode, the agent and MCP, cancel and disconnect, and the object reads are not
+ * write paths: none of them sends a write.
+ */
+export type WritePath = "editor" | "objectEdit" | "maintenance" | "transaction";
+
+/** A named export that keeps a claim: the module path from the repository root and the export's name. */
+export type WriteProof = { readonly module: string; readonly symbol: string };
+
+/**
+ * One write path's answer. `absent`: the provider has no code on this path that can send a write, and on the
+ * editor path it names the structural proof (a closed route table, an encoder with no write function, or a
+ * statement policy that refuses every non-read before any request). `gated`: provider code on the server refuses
+ * every write on this path while read-only mode holds, naming the mode, before any request. `open`: a write no
+ * Studio gate refuses.
+ */
+export type WritePathReach =
+  | { readonly reach: "absent"; readonly proof?: WriteProof }
+  | { readonly reach: "gated"; readonly gate: WriteProof }
+  | { readonly reach: "open" };
+
 export interface ProviderCapabilities {
   /**
    * The language this engine's statements are written in: what its editor tabs are typed and
@@ -1394,6 +1424,20 @@ export interface ProviderCapabilities {
    * is refused here", the answer for every engine whose provider does not refuse writes itself.
    */
   readonly enforcesReadOnly?: true;
+  /**
+   * What this provider can write, per write path: whether each Studio route that can change the engine has no code
+   * here that sends a write (`absent`), is refused by a named gate while read-only mode holds (`gated`), or sends
+   * writes no Studio gate refuses (`open`). `summarizeWriteReach` in `src/lib/db/write-reach.ts` folds it into one
+   * value, and `tests/unit/db/write-reach-capability.test.ts` holds `WRITE_REACH` in `src/lib/db/compatibility.ts`
+   * equal to that value for every shipped type-id.
+   *
+   * A frozen module constant of static strings, never built from the connection: `GET /api/db/provider-meta` sends
+   * the capabilities to the browser, so nothing a connection supplies may reach this field.
+   *
+   * Absent means open on every path, as an absent `enforcesReadOnly` does; every provider whose reach is not open
+   * declares all four paths. Optional for the same published-interface reason as `enforcesReadOnly`.
+   */
+  readonly writeReach?: Readonly<Record<WritePath, WritePathReach>>;
   /**
    * How this engine takes the agent's own credential, one of the `AgentCredentialForm` forms; absent is the
    * user-and-password form. `acquireExecutionProfileProvider` in `src/lib/db/factory.ts` reads it from the provider
