@@ -585,9 +585,11 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // password hashes and keystore entries (docs/providers/netconf.md 6.3), and nothing on the device is proved to hold
   // them out; the rest is the device's whole configuration (BACKLOG B159).
   netconf: false,
-  // Closed: agent mode reads SNMP values with the SNMP security modules withheld, and no MCP surface that
-  // withholds them is designed yet (BACKLOG B158).
-  snmp: false,
+  // Offered as agent mode reads it: values are the device's own readings, and the withheld subtrees (the security and
+  // target modules, the running processes, the commands the agent runs and the vendor copy tables) are decided on every
+  // answer, so `inspect_schema` lists the bundled catalog's tables and scalar groups, none inside a withheld subtree,
+  // and `run_snmp_read` steps over or answers withheld every one a read reaches.
+  snmp: true,
   // Offered with every answer metadata only, as agent mode reads it: ids, metric names and values are withheld, so
   // `inspect_schema` answers an empty page, since an agent-mode handle declares no kind, and `run_sparkplug_read`
   // answers one window's totals or one named object's counts, with its window and the completeness sentence.
@@ -727,9 +729,11 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // Agent mode executes reads on NETCONF with the withheld nodes pruned, and MCP read stays closed on it: the pruning
   // is Studio's alone, with no device layer proved to hold the secrets out (BACKLOG B159).
   netconf: false,
-  // Agent mode executes reads on SNMP with the SNMP security modules withheld, and MCP read stays closed on it
-  // until a change of its own opens it (BACKLOG B158).
-  snmp: false,
+  // Opened on its own: run_snmp_read runs under the boundary agent mode uses, the agent's client of Get, GetNext and
+  // GetBulk alone behind the valve, with every withheld subtree decided by the prefix of every identifier an answer
+  // carries, and its reasons carried as notes; a v2c community is no principal, so the agent's own view and Studio's
+  // withheld set are the data scope (docs/providers/snmp.md section 14).
+  snmp: true,
   // Opened on its own: run_sparkplug_read runs under the boundary agent mode uses, the provider's closed encoder, which
   // sends no PUBLISH, command or Will, with every answer projected to one window's counts and flags, never an id, a
   // metric name or a value, and carrying its window and the completeness sentence as notes

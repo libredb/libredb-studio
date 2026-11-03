@@ -23,8 +23,8 @@
  * over an exchange opened for that read alone through the agent's client (`agent-client.ts`), which holds Get, GetNext
  * and GetBulk only, and answered by `agent-read.ts` with values rendered as the console renders them, refused past the
  * row, byte or time budget rather than cut. On a handle opened for any agent-mode profile the console is refused and
- * every reading the agent does not report answers its reason (`agent-surface.ts`). MCP read stays closed on this
- * engine.
+ * every reading the agent does not report answers its reason (`agent-surface.ts`). MCP's `run_snmp_read` reads through
+ * this same `queryReadOnly` on an agent read-only handle, and its answers carry the withheld subtrees' reasons as notes.
  */
 import { randomInt } from "node:crypto";
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
