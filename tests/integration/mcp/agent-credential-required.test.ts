@@ -59,7 +59,9 @@ beforeEach(() => {
   restoreChannel = useMcpChannel();
   opened = [];
   spies.push(
-    spyOn(PostgresProvider.prototype, "connect").mockImplementation(async function (this: PostgresProvider) {
+    spyOn(PostgresProvider.prototype, "connect").mockImplementation(async function (
+      this: InstanceType<typeof PostgresProvider>,
+    ) {
       opened.push(this.config.user);
       throw new Error("the test stopped the open here");
     }),
