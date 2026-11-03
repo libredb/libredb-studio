@@ -22,8 +22,8 @@
  * existence, size, last-modified time and storage class, never an object key, body, ETag, version id, user metadata,
  * tag, owner, ACL, policy or the endpoint. On a handle opened for any agent-mode profile every other surface goes
  * through that client too (`agent-surface.ts`): keys are never listed, an object's or a bucket's source, the console
- * and the Keys panel are refused, and every reading S3 does not report answers its reason. MCP read stays closed on
- * this engine.
+ * and the Keys panel are refused, and every reading S3 does not report answers its reason. MCP reads the same
+ * `queryReadOnly` through `run_s3_read`, under the seed's agent read key alone.
  */
 import { BaseDatabaseProvider } from "@/lib/db/base-provider";
 import { AuthenticationError, DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
@@ -271,6 +271,9 @@ export class S3Provider extends BaseDatabaseProvider {
       // Object keys, bodies, metadata, tags, ETags and version ids are stored values: an agent read answers names,
       // counts and flags.
       metadataOnly: S3_METADATA_ONLY,
+      // An agent key is an access key ID and secret of its own: one equal to the connection's own names the same key,
+      // so the narrowing would be false, and it is refused at open.
+      agentCredential: "dedicated-user",
     };
   }
 

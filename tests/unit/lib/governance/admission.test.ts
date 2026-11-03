@@ -581,6 +581,21 @@ describe("admitConnectionRows", () => {
     );
     expect(itemsOf(oxia)).toEqual([]);
     expect(oxia.admitted[0].read.mcp).toBeUndefined();
+
+    // S3 is offered to MCP only under a seed agent read key, which a governed record never carries, so its flag is
+    // left off the same way and the row is still served.
+    const s3 = admit(
+      [
+        connectionRow({
+          engine: "s3",
+          definition: { host: "s3.example.internal", port: 9000 },
+          columns: { mcp_enabled: true },
+        }),
+      ],
+      { allowedEngines: ["s3"] },
+    );
+    expect(itemsOf(s3)).toEqual([]);
+    expect(s3.admitted[0].read.mcp).toBeUndefined();
   });
 
   test("an opener failure that carries no envelope code is no row's fault, so admission throws it", () => {

@@ -578,10 +578,11 @@ export const MCP_EXPOSABLE: Readonly<Record<DatabaseType, boolean>> = Object.fre
   // name Pulsar tenants, namespaces and topics, and no MCP surface that lists no key name is designed (BACKLOG B100).
   oxia: false,
   databend: true,
-  // Closed: MCP may read S3 only with an agent read key beside the connection's, whose grants hold the bucket scope;
-  // a seed may carry one as its agent credential, but MCP does not yet require it on S3, and no MCP surface that lists
-  // buckets but never an object key is designed either (BACKLOG B104).
-  s3: false,
+  // Offered with every answer metadata only, as agent mode reads it, and only under the seed's agent read key, which
+  // MCP_AGENT_CREDENTIAL_REQUIRED requires: object keys are withheld, so `inspect_schema` refuses an S3 connection by
+  // name, since a bucket declares no relation kind, and `run_s3_read` answers bucket names, counts and flags under that
+  // key's grants.
+  s3: true,
   // Offered with every answer machine-redacted: `run_kubectl_read` runs the agent's
   // `queryReadOnly`, whose output masks every Secret name, and `inspect_schema` lists relations alone, which no
   // Kubernetes kind is, so no object name, a Secret's included, reaches it.
@@ -731,9 +732,11 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
   // so the closed table would be the only layer between an MCP client and every key (BACKLOG B100).
   oxia: false,
   databend: false,
-  // Agent mode executes metadata-only reads on S3, and MCP read stays closed on it: the agent read key, the one layer
-  // that holds the bucket scope, is not yet required of an S3 seed MCP reads (BACKLOG B104).
-  s3: false,
+  // Opened on its own: run_s3_read runs under the boundary agent mode uses, the provider's closed table of six metadata
+  // reads over a transport that sends GET and HEAD only, with every answer projected to names, counts and flags, never an
+  // object key or value, signed with the seed's agent read key alone, whose grants hold the bucket scope
+  // (docs/providers/s3.md section 15.7).
+  s3: true,
   kubernetes: true,
   // Opened on its own: run_mqtt_read runs under the boundary agent mode uses, the provider's closed five-packet
   // encoder and valve, which send no PUBLISH and no Will, with every answer projected to one window's counts and flags,
@@ -785,7 +788,7 @@ export const MCP_STATEMENT_READ: Readonly<Record<DatabaseType, boolean>> = Objec
  *
  * An exhaustive Record for the reason `EXTERNAL` gives, frozen like the records above it, and held true only where
  * `MCP_EXPOSABLE` offers the engine and `SEED_AGENT_CREDENTIAL` (src/lib/db/connection-fields.ts) gives a seed of it an
- * agent credential, by `tests/unit/db/compatibility.test.ts`. No engine answers true yet.
+ * agent credential, by `tests/unit/db/compatibility.test.ts`.
  */
 export const MCP_AGENT_CREDENTIAL_REQUIRED: Readonly<Record<DatabaseType, boolean>> = Object.freeze({
   postgres: false,
@@ -819,7 +822,9 @@ export const MCP_AGENT_CREDENTIAL_REQUIRED: Readonly<Record<DatabaseType, boolea
   influxdb3: false,
   oxia: false,
   databend: false,
-  s3: false,
+  // The agent read key's grants are the only layer that holds the buckets an MCP client reaches: the connection's own
+  // key may read every bucket, and S3 has no read-only principal Studio can prove.
+  s3: true,
   kubernetes: false,
   mqtt: false,
   firestore: false,

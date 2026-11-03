@@ -1,0 +1,33 @@
+{
+  "version": "1",
+  "connections": [
+    {
+      "id": "unlisted-agent",
+      "name": "S3, agent key without the bucket listing",
+      "type": "s3",
+      "host": "127.0.0.1",
+      "user": "${S3_SCOPE_BROAD_KEY}",
+      "password": "${S3_SCOPE_BROAD_SECRET}",
+      "agentUser": "${S3_SCOPE_UNLISTED_KEY}",
+      "agentPassword": "${S3_SCOPE_UNLISTED_SECRET}",
+      "region": "${S3_SCOPE_REGION}",
+      "roles": ["admin"],
+      "managed": true,
+      "mcp": true
+    },
+    {
+      "id": "scoped-agent",
+      "name": "S3, agent key with the bucket listing",
+      "type": "s3",
+      "host": "127.0.0.1",
+      "user": "${S3_SCOPE_BROAD_KEY}",
+      "password": "${S3_SCOPE_BROAD_SECRET}",
+      "agentUser": "${S3_SCOPE_SCOPED_KEY}",
+      "agentPassword": "${S3_SCOPE_SCOPED_SECRET}",
+      "region": "${S3_SCOPE_REGION}",
+      "roles": ["admin"],
+      "managed": true,
+      "mcp": true
+    }
+  ]
+}

@@ -452,9 +452,13 @@ describe("SeedConnectionSchema: the MCP opt-in where MCP is not offered (#1089)"
     const offered = SHIPPED_DATABASE_TYPES.filter((type) => MCP_EXPOSABLE[type]);
     // Vacuity, by name: an empty population would refuse nothing and pass.
     expect(offered).toContain("postgres");
+    // An engine MCP reads only under an agent credential is given one, which its own describe block covers.
+    const agentKey = (type: (typeof offered)[number]) =>
+      MCP_AGENT_CREDENTIAL_REQUIRED[type] ? { agentUser: "agent", agentPassword: "${AGENT_SECRET}" } : {};
     const refused = offered.filter(
       (type) =>
-        SeedConnectionSchema.safeParse({ ...connection, type, ...completeFor(type), mcp: true }).data?.mcp !== true,
+        SeedConnectionSchema.safeParse({ ...connection, type, ...completeFor(type), ...agentKey(type), mcp: true }).data
+          ?.mcp !== true,
     );
     expect(refused).toEqual([]);
   });
@@ -479,23 +483,43 @@ describe("SeedConnectionSchema: the MCP opt-in where MCP is not offered (#1089)"
   });
 });
 
-describe("SeedConnectionSchema: an S3 connection is not offered to MCP", () => {
-  it("fails a seed with mcp: true on an S3 connection, naming mcp and the type", () => {
-    const result = SeedConnectionSchema.safeParse({
-      id: "objects",
-      name: "Objects",
-      type: "s3",
-      host: "minio.internal",
-      port: 9000,
-      roles: ["*"],
-      mcp: true,
-    });
+describe("SeedConnectionSchema: an S3 connection is offered to MCP under an agent read key of its own", () => {
+  const objects = {
+    id: "objects",
+    name: "Objects",
+    type: "s3",
+    host: "minio.internal",
+    port: 9000,
+    user: "AKIDCONNECTIONKEY",
+    password: "${S3_SECRET}",
+    roles: ["*"],
+    mcp: true,
+  };
+  const issues = (fields: Record<string, unknown>) =>
+    (SeedConnectionSchema.safeParse({ ...objects, ...fields }).error?.issues ?? []).map((issue) => [
+      issue.path.join("."),
+      issue.message,
+    ]);
 
-    expect(result.success).toBe(false);
-    expect(result.error?.issues.map((issue) => [issue.path.join("."), issue.message])).toEqual([
+  it("fails a seed with mcp: true and no agent key, naming mcp and the type", () => {
+    expect(issues({})).toEqual([
       [
         "mcp",
-        "mcp is not offered for s3: the product does not expose this engine to MCP clients. Remove mcp from this connection.",
+        'Seed connection "objects" sets mcp: true on s3 without an agent credential: MCP reads this engine only under an agent credential of its own, whose grants are what bound what it reads. Set agentUser and agentPassword to a read credential, or remove mcp from this connection.',
+      ],
+    ]);
+  });
+
+  it("admits one whose agent key is a key of its own, written as references or literals", () => {
+    expect(issues({ agentUser: "AKIDAGENTKEY", agentPassword: "${S3_AGENT_SECRET}" })).toEqual([]);
+    expect(issues({ agentUser: "${S3_AGENT_KEY}", agentPassword: "${S3_AGENT_SECRET}" })).toEqual([]);
+  });
+
+  it("refuses an agent key ID that names the connection's own key, at agentUser", () => {
+    expect(issues({ agentUser: " akidconnectionkey ", agentPassword: "${S3_AGENT_SECRET}" })).toEqual([
+      [
+        "agentUser",
+        'Seed connection "objects": agentUser is refused: it names the connection\'s own user, and the s3 provider takes only an agent user of its own. Name a dedicated agent user.',
       ],
     ]);
   });
@@ -1629,8 +1653,8 @@ describe("refuseMcpWithoutAgentCredential", () => {
     expect(issues({ type: "mysql", mcp: true })).toEqual([]);
   });
 
-  it("names no engine in the shipped registry, so the shipped seed schema admits an MCP opt-in without one", () => {
-    expect(SHIPPED_DATABASE_TYPES.filter((type) => MCP_AGENT_CREDENTIAL_REQUIRED[type])).toEqual([]);
+  it("names S3 alone in the shipped registry, so the shipped seed schema admits an MCP opt-in without one elsewhere", () => {
+    expect(SHIPPED_DATABASE_TYPES.filter((type) => MCP_AGENT_CREDENTIAL_REQUIRED[type])).toEqual(["s3"]);
     expect(
       SeedConnectionSchema.safeParse({ id: "pg", name: "pg", type: "postgres", roles: ["admin"], mcp: true }).success,
     ).toBe(true);

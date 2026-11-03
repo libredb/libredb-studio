@@ -19,8 +19,8 @@ const STAND_IN_PASSWORD = ["not", "a", "real", "password"].join("-");
  * its form would refuse every Kubernetes agent token. So the census pins which engines declare which form, and that
  * every other engine declares none, the user-and-password form.
  *
- * `"dedicated-user"` has no row: no shipped engine declares it yet (Snowflake's key-pair sign-in reads `privateKey`,
- * which the agent credential does not reach), so a row appears here with the engine that does.
+ * `"dedicated-user"` is S3's: an S3 agent key is an access key ID and secret of its own, and an agent access key ID equal
+ * to the connection's own names the same key, so the narrowing would be false.
  *
  * Nothing here connects: `createDatabaseProvider` is a switch over dynamic imports and a constructor, the reading
  * `CENSUS_CONNECTION` documents.
@@ -32,6 +32,7 @@ const DECLARED_FORMS: Readonly<Partial<Record<DatabaseType, AgentCredentialForm>
   libsql: "token",
   influxdb3: "token",
   bigquery: "service-account-key",
+  s3: "dedicated-user",
   libredb: "none",
 };
 

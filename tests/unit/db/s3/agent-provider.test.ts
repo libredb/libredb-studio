@@ -108,7 +108,7 @@ describe("the agent's reads on the agent read-only profile", () => {
   test("each read sends exactly its pinned requests and answers no key, ETag, version, metadata or endpoint", async () => {
     const { s3, sent } = await provider(READ_ONLY);
     const reads: readonly [string, readonly string[]][] = [
-      ["aws s3api list-buckets", ["GET /?max-buckets=10000"]],
+      ["aws s3api list-buckets", ["GET /?max-buckets=10000", "HEAD /archive", "HEAD /sales"]],
       ["aws s3api head-bucket --bucket sales", ["HEAD /sales"]],
       ["aws s3api get-bucket-location --bucket sales", ["GET /sales?location="]],
       ["aws s3api get-bucket-versioning --bucket sales", ["GET /sales?versioning="]],
@@ -215,8 +215,9 @@ describe("the other surfaces of an agent-mode handle", () => {
       const { s3, sent } = await provider(execution);
       expect(await s3.countObjects([])).toEqual({ bucket: { count: 2 } });
       expect((await s3.listObjects([], "bucket")).map((object) => object.name)).toEqual(["archive", "sales"]);
-      // Nothing is handed from the count to the listing: each read the bucket list itself.
-      expect(sent()).toEqual(["GET /?max-buckets=10000", "GET /?max-buckets=10000"]);
+      // Nothing is handed from the count to the listing: each reads the bucket list and checks each bucket itself.
+      const listed = ["GET /?max-buckets=10000", "HEAD /archive", "HEAD /sales"];
+      expect(sent()).toEqual([...listed, ...listed]);
       const before = sent().length;
       const refusals: [Promise<unknown>, string][] = [
         [s3.listObjects([], "object"), S3_AGENT_WITHHELD.objects],
@@ -248,6 +249,30 @@ describe("the other surfaces of an agent-mode handle", () => {
         activeSessions: [],
       });
       expect(sent().slice(before)).toEqual(["GET /?max-buckets=10000"]);
+    },
+  );
+
+  test.each([
+    ["the read-only profile", READ_ONLY],
+    ["the operations profile", OPERATIONS],
+  ] as const)(
+    "on %s, the grounding names only the buckets whose HEAD the key is answered, as the agent's listing does",
+    async (_name, execution) => {
+      // A bucket the server gave no creation date is listed without one.
+      const undated = "<Bucket><Name>undated</Name></Bucket></Buckets>";
+      const { s3 } = await provider(execution, {}, (request) => {
+        if (request.target.path === "/")
+          return xmlAnswer(bucketsXml(["granted", `${MARKER}-a`, `${MARKER}-b`]).replace("</Buckets>", undated));
+        if (request.target.path === "/granted" || request.target.path === "/undated") return { status: 200 };
+        return xmlAnswer(errorXml("AccessDenied", `no access to ${MARKER}`), 403);
+      });
+      expect(await s3.countObjects([])).toEqual({ bucket: { count: 2 } });
+      const listed = await s3.listObjects([], "bucket");
+      expect(listed).toEqual([
+        { path: ["granted"], name: "granted", kind: "bucket", status: "created 2026-10-09" },
+        { path: ["undated"], name: "undated", kind: "bucket" },
+      ]);
+      expect(JSON.stringify(listed)).not.toContain(MARKER);
     },
   );
 

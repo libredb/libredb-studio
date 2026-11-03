@@ -28,6 +28,13 @@ export const S3_KEY_SCAN_DEFAULT_COUNT = 500;
 export const S3_KEY_SCAN_MAX_COUNT = 1_000;
 /** The `max-buckets` sent: AWS's documented maximum. */
 export const S3_MAX_BUCKETS_READ = 10_000;
+/**
+ * The most listed buckets an agent-mode bucket listing checks against the signing key's grants, one HeadBucket each:
+ * a key that lists more is refused the listing rather than sent more checks.
+ */
+export const S3_AGENT_BUCKET_CHECK_MAX = 100;
+/** HeadBucket checks of one listing in flight at once: the limiter's per-provider bound, so none waits in its queue. */
+export const S3_AGENT_BUCKET_CHECK_CONCURRENCY = S3_LIMITER_OPTIONS.perProvider;
 /** One ListObjectsV2 or ListObjectVersions page. */
 export const S3_LIST_RESPONSE_BYTES = 8 * 1024 * 1024;
 /** One ListBuckets answer: 10,000 buckets at about 150 bytes each is 1.5 MB. */

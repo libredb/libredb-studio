@@ -26,6 +26,7 @@ import { MTCONNECTREAD_MCP_FACET } from "./mtconnectread/mcp";
 import { QDRANTAPI_MCP_FACET } from "./qdrantapi/mcp";
 import { RABBITREAD_MCP_FACET } from "./rabbitread/mcp";
 import { REDISCLI_MCP_FACET } from "./rediscli/mcp";
+import { S3API_MCP_FACET } from "./s3api/mcp";
 import { SNMPGET_MCP_FACET } from "./snmpget/mcp";
 import { SPARKPLUGREAD_MCP_FACET } from "./sparkplugread/mcp";
 import { SQL_MCP_FACET } from "./sql/mcp";
@@ -118,8 +119,7 @@ export const AGENT_LANGUAGE_MCP_FACETS = Object.freeze({
   oxiacli: null,
   rabbitread: RABBITREAD_MCP_FACET,
   kafkaread: KAFKAREAD_MCP_FACET,
-  // No MCP statement tool yet: MCP read stays closed on S3 until a change of its own declares one and opens it.
-  s3api: null,
+  s3api: S3API_MCP_FACET,
   // No MCP statement tool yet: MCP read stays closed on Firestore until a change of its own declares one and opens it.
   fsquery: null,
   snmpget: SNMPGET_MCP_FACET,

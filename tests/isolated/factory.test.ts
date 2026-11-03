@@ -3568,7 +3568,7 @@ describe("acquireExecutionProfileProvider", () => {
   /**
    * The agent credential forms past the user-and-password pair and the token (PR 0.7): `"none"`, which libredb
    * declares, `"service-account-key"`, which BigQuery declares, the token form on Weaviate and Qdrant, and
-   * `"dedicated-user"`, which no shipped engine declares yet, so a PostgreSQL provider is given it here. Every refusal
+   * `"dedicated-user"`, which S3 declares and a PostgreSQL provider is given here as well. Every refusal
    * lands before the provider connects, which each test holds by stubbing `connect` and asserting it never ran.
    */
   describe("agent credential forms", () => {
@@ -3801,6 +3801,40 @@ describe("acquireExecutionProfileProvider", () => {
         expect(error.message).toBe(
           'Connection "pg-dedicated-half" configures an incomplete agent credential (user and password are both required)',
         );
+      });
+    });
+
+    describe("dedicated-user on S3, the engine that declares it", () => {
+      const s3Conn = (overrides: Partial<DatabaseConnection>) =>
+        makeConnection("s3", { port: 9000, database: undefined, user: "AKIDCONNECTIONKEY", ...overrides });
+
+      test("refuses an agent access key ID that names the connection's own key, before it connects", async () => {
+        const conn = s3Conn({ id: "s3-same-key", agentUser: "akidconnectionkey", agentPassword: "agent-secret" });
+        const connect = await connectStubbed(conn);
+        try {
+          const error = await refusal(conn);
+
+          expect(error.reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
+          expect(error.message).toBe(
+            'Connection "s3-same-key" configures the connection\'s own user as the agent user, and this engine takes only an agent user of its own: name a dedicated agent user',
+          );
+          expect(connect).not.toHaveBeenCalled();
+        } finally {
+          connect.mockRestore();
+        }
+      });
+
+      test("signs with an agent access key ID of its own and its secret", async () => {
+        const conn = s3Conn({ id: "s3-agent-key", agentUser: "AKIDAGENTKEY", agentPassword: "agent-secret" });
+        const connect = await connectStubbed(conn);
+        try {
+          const agent = await acquireExecutionProfileProvider(conn, "agent-operations");
+
+          expect(agent.config.user).toBe("AKIDAGENTKEY");
+          expect(agent.config.password).toBe("agent-secret");
+        } finally {
+          connect.mockRestore();
+        }
       });
     });
 

@@ -115,8 +115,8 @@ const isLiteral = (value: string | undefined): value is string => isSet(value) &
  * The load's refusals of an agent credential its engine's row does not take, read from the table it is handed,
  * `SEED_AGENT_CREDENTIAL` in `SeedConnectionSchema`, never a type-id branch. Each names the connection and the field,
  * never the value, and a reference is unknown here: load refuses what the file shows, and the factory refuses the rest
- * at open, before it connects. A factory over the table, the way `refuseMcpWhereNotOffered` takes its record, so the
- * "dedicated-pair" form is tested before any shipped engine declares it.
+ * at open, before it connects. A factory over the table, the way `refuseMcpWhereNotOffered` takes its record, so each
+ * form is tested on an engine of the test's choosing.
  */
 export function refuseInvalidAgentCredential(table: Readonly<Record<DatabaseType, SeedAgentCredential | null>>) {
   return (conn: AgentCredentialFields, ctx: z.RefinementCtx): void => {
