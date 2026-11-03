@@ -488,7 +488,7 @@ describe("the posture on SNMP", () => {
 
   test("names every withheld module, and why, and counts none of them", () => {
     expect(posture.body).toContain(
-      "Withheld, because they hold community strings, user names, keys and access rules, are SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB, SNMP-COMMUNITY-MIB, SNMP-SSH-TM-MIB, SNMP-TSM-MIB, SNMP-TLS-TM-MIB, SNMP-USM-DH-OBJECTS-MIB and Net-SNMP's NET-SNMP-VACM-MIB;",
+      "Withheld, because they hold community strings, user names, keys and access rules, are SNMP-TARGET-MIB, SNMP-NOTIFICATION-MIB, SNMP-PROXY-MIB, SNMP-USER-BASED-SM-MIB, SNMP-VIEW-BASED-ACM-MIB, SNMP-COMMUNITY-MIB, SNMP-SSH-TM-MIB, SNMP-TSM-MIB, SNMP-TLS-TM-MIB, SNMP-USM-DH-OBJECTS-MIB and Net-SNMP's NET-SNMP-VACM-MIB, and, because a command line, a script's output or a copy's login can carry credentials, the running processes (HOST-RESOURCES-MIB::hrSWRun), the commands the agent runs and what they print (NET-SNMP-EXTEND-MIB::nsExtendObjects, UCD-SNMP-MIB::extTable and UCD-SNMP-MIB::prErrFixCmd) and Cisco's file copies (CISCO-CONFIG-COPY-MIB and CISCO-FLASH-MIB::ciscoFlashCopyTable);",
     );
     expect(posture.body).toContain(
       "a walk that covers one steps over it and names it, and a walk inside one is refused",

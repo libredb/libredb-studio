@@ -755,7 +755,11 @@ const SNMPGET_READ_BOUNDARY =
   "SNMP-USER-BASED-SM-MIB (1.3.6.1.6.3.15), SNMP-VIEW-BASED-ACM-MIB (1.3.6.1.6.3.16) and SNMP-COMMUNITY-MIB " +
   "(1.3.6.1.6.3.18), the transport security modules SNMP-SSH-TM-MIB (1.3.6.1.2.1.189), SNMP-TSM-MIB " +
   "(1.3.6.1.2.1.190) and SNMP-TLS-TM-MIB (1.3.6.1.2.1.198), SNMP-USM-DH-OBJECTS-MIB (1.3.6.1.3.101) and Net-SNMP's " +
-  "NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9) are withheld by identifier prefix: an identifier inside one is never " +
+  "NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9), and, since a command line, a script's output and a copy's login can " +
+  "carry credentials, HOST-RESOURCES-MIB::hrSWRun (1.3.6.1.2.1.25.4), NET-SNMP-EXTEND-MIB::nsExtendObjects " +
+  "(1.3.6.1.4.1.8072.1.3), UCD-SNMP-MIB::extTable (1.3.6.1.4.1.2021.8), UCD-SNMP-MIB::prErrFixCmd " +
+  "(1.3.6.1.4.1.2021.2.1.103), CISCO-CONFIG-COPY-MIB (1.3.6.1.4.1.9.9.96) and CISCO-FLASH-MIB::ciscoFlashCopyTable " +
+  "(1.3.6.1.4.1.9.9.10.1.2.1) are withheld by identifier prefix: an identifier inside one is never " +
   "sent, an answer landing inside one is answered withheld without its value or instance, a walk or table covering " +
   "one steps over it, so no request starts inside it, and a walk or table inside one is refused before anything is " +
   "sent. Every other identifier under 1.3.6.1.6.3, the engine and MPD objects among them, is read. A v2c community cannot be proved " +

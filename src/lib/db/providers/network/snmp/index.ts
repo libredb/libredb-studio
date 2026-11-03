@@ -69,7 +69,8 @@ import { failureFromStatus } from "./errors";
 import { assertReadOnlyBudget } from "@/lib/db/providers/sql/read-only-budget";
 import { createSnmpAgentClient } from "./agent-client";
 import { runSnmpAgentReadWithin, snmpAgentResult } from "./agent-read";
-import { readSnmpAgentStatement } from "./agent-statement";
+import { readSnmpAgentStatement, withheldReason, withheldSubtreeOf } from "./agent-statement";
+import { MIB_NAMES } from "./mib-names";
 import { SNMP_AGENT_WITHHELD } from "./agent-surface";
 
 /** Studio's own refusals on the agent's statement path, made before anything is sent. */
@@ -493,7 +494,17 @@ export class SnmpProvider extends BaseDatabaseProvider {
     // The number of objects each folder lists, from the bundled catalog. It counts definitions,
     // never instances on the agent, which are not counted: see SNMP_NO_COUNT. A refused count would
     // make the object tree draw the folder as a leaf that cannot be opened.
-    return Object.fromEntries(SNMP_KINDS.map((kind) => [kind, { count: catalogObjects(kind).length }]));
+    return Object.fromEntries(SNMP_KINDS.map((kind) => [kind, { count: this.catalog(kind).length }]));
+  }
+
+  /**
+   * The bundled tree's objects of one kind. On an agent-mode handle an object inside a withheld subtree is left out,
+   * so the grounding walk and MCP's inspect_schema never offer a read the agent's reader withholds; the editor's
+   * handles list every object the modules define.
+   */
+  private catalog(kind: SnmpKind): ReturnType<typeof catalogObjects> {
+    const objects = catalogObjects(kind);
+    return this.agentProfile ? objects.filter((object) => withheldSubtreeOf(object.oid) === undefined) : objects;
   }
 
   /**
@@ -504,7 +515,7 @@ export class SnmpProvider extends BaseDatabaseProvider {
    * something to act on.
    */
   public async listObjects(_container: readonly string[], kind: string): Promise<DatabaseObject[]> {
-    return catalogObjects(requireKind(kind)).map((object) => ({
+    return this.catalog(requireKind(kind)).map((object) => ({
       path: [object.name],
       name: object.name,
       kind: object.kind,
@@ -513,7 +524,11 @@ export class SnmpProvider extends BaseDatabaseProvider {
   }
 
   public async describeObject(path: readonly string[], kind: string): Promise<ObjectDetail> {
-    return describeCatalogObject(path.at(-1) ?? "", requireKind(kind));
+    const name = path.at(-1) ?? "";
+    const oid = MIB_NAMES.get(name);
+    const withheld = this.agentProfile && oid !== undefined ? withheldSubtreeOf(oid) : undefined;
+    if (withheld !== undefined) throw new QueryError(withheldReason(withheld), "snmp");
+    return describeCatalogObject(name, requireKind(kind));
   }
 
   /** Every object of one kind, from the same tree: no round trip at all, let alone one per object. */
@@ -522,7 +537,7 @@ export class SnmpProvider extends BaseDatabaseProvider {
     kind: string,
     limit?: number,
   ): Promise<ObjectDetailBatch> {
-    const objects = catalogObjects(requireKind(kind));
+    const objects = this.catalog(requireKind(kind));
     const taken = limit === undefined ? objects : objects.slice(0, limit);
     const details = taken.map((object) => describeCatalogObject(object.name, object.kind));
     return taken.length === objects.length

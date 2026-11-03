@@ -19,6 +19,17 @@
  * bundled MIB modules carry none of these eleven, so none of their names resolves here, and only a numeric identifier
  * reaches them.
  *
+ * Beside them, the subtrees whose values carry a command line, a command's output or a login, any of which can hold a
+ * credential: HOST-RESOURCES-MIB's running processes (`hrSWRun`, each process's name, path and parameters), the
+ * commands Net-SNMP runs and what they print (NET-SNMP-EXTEND-MIB's `nsExtendObjects`, UCD-SNMP-MIB's `extTable` and
+ * its `prErrFixCmd` column), and the file copies Cisco's CISCO-CONFIG-COPY-MIB and CISCO-FLASH-MIB's
+ * `ciscoFlashCopyTable` hold, with the user name and password of the server each copies to or from. The first four
+ * were measured on the Net-SNMP 5.9.4 fixture with markers planted in a process's arguments and in the `extend`,
+ * `exec` and `procfix` directives: a raw walk of 1.3 answered them under these roots and nowhere else outside the
+ * framework modules. The two Cisco roots are read from the vendor's own MIB text. A name in `MODULE::object` form
+ * withholds that object's subtree alone, so `hrSWRunPerf` and `hrSWInstalled` beside `hrSWRun` stay readable; the
+ * bundled modules define `hrSWRun`'s names, so they resolve, and meet the same rule as a number would.
+ *
  * A `get` or a `next` that names an identifier inside one is admitted, and that identifier is never sent: its row is
  * answered withheld (`agent-read.ts`), since even a noSuchInstance would tell whether a guessed community exists. A
  * `walk` or a `table` whose subtree lies inside one, or is one, is refused here, before anything is sent. A `walk` or a
@@ -44,8 +55,13 @@ export interface SnmpWithheldSubtree {
   readonly holds: string;
 }
 
-/** The eleven withheld subtrees, in agent order. */
+/** The withheld subtrees, in agent order. */
 export const SNMP_WITHHELD_SUBTREES: readonly SnmpWithheldSubtree[] = Object.freeze([
+  {
+    module: "HOST-RESOURCES-MIB::hrSWRun",
+    root: [1, 3, 6, 1, 2, 1, 25, 4],
+    holds: "the running processes' names, paths and parameters, whose command lines can carry credentials",
+  },
   {
     module: "SNMP-SSH-TM-MIB",
     root: [1, 3, 6, 1, 2, 1, 189],
@@ -65,6 +81,35 @@ export const SNMP_WITHHELD_SUBTREES: readonly SnmpWithheldSubtree[] = Object.fre
     module: "SNMP-USM-DH-OBJECTS-MIB",
     root: [1, 3, 6, 1, 3, 101],
     holds: "the Diffie-Hellman key-change objects of SNMPv3 users and their public values",
+  },
+  {
+    module: "CISCO-FLASH-MIB::ciscoFlashCopyTable",
+    root: [1, 3, 6, 1, 4, 1, 9, 9, 10, 1, 2, 1],
+    holds:
+      "the flash file copies, with the server each copies to or from and the user name and password it logs in with",
+  },
+  {
+    module: "CISCO-CONFIG-COPY-MIB",
+    root: [1, 3, 6, 1, 4, 1, 9, 9, 96],
+    holds:
+      "the configuration copies, with the server each copies to or from and the user name and password it logs in with",
+  },
+  {
+    module: "UCD-SNMP-MIB::prErrFixCmd",
+    root: [1, 3, 6, 1, 4, 1, 2021, 2, 1, 103],
+    holds: "the command line the agent runs to fix a missing process, which can carry credentials",
+  },
+  {
+    module: "UCD-SNMP-MIB::extTable",
+    root: [1, 3, 6, 1, 4, 1, 2021, 8],
+    holds:
+      "the commands the agent runs for its exec directives and what they print, either of which can carry credentials",
+  },
+  {
+    module: "NET-SNMP-EXTEND-MIB::nsExtendObjects",
+    root: [1, 3, 6, 1, 4, 1, 8072, 1, 3],
+    holds:
+      "the commands the agent runs for its extend directives, their arguments and what they print, any of which can carry credentials",
   },
   {
     module: "NET-SNMP-VACM-MIB",
@@ -153,7 +198,7 @@ const NOTHING_SENT = "Nothing was sent.";
  * walk of it, which steps over the six and answers the engine and MPD objects.
  */
 export const SNMP_WITHHELD_MODULES_TEXT =
-  "Withheld from agent mode are SNMP-TARGET-MIB (1.3.6.1.6.3.12), SNMP-NOTIFICATION-MIB (1.3.6.1.6.3.13), SNMP-PROXY-MIB (1.3.6.1.6.3.14), SNMP-USER-BASED-SM-MIB (1.3.6.1.6.3.15), SNMP-VIEW-BASED-ACM-MIB (1.3.6.1.6.3.16) and SNMP-COMMUNITY-MIB (1.3.6.1.6.3.18), the transport security modules SNMP-SSH-TM-MIB (1.3.6.1.2.1.189), SNMP-TSM-MIB (1.3.6.1.2.1.190) and SNMP-TLS-TM-MIB (1.3.6.1.2.1.198), SNMP-USM-DH-OBJECTS-MIB (1.3.6.1.3.101) and Net-SNMP's NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9), since they hold community strings, user names, keys and access rules; every other identifier under 1.3.6.1.6.3, the engine and MPD objects among them, is readable, and a walk that covers a withheld module steps over that module and answers the rest.";
+  "Withheld from agent mode are SNMP-TARGET-MIB (1.3.6.1.6.3.12), SNMP-NOTIFICATION-MIB (1.3.6.1.6.3.13), SNMP-PROXY-MIB (1.3.6.1.6.3.14), SNMP-USER-BASED-SM-MIB (1.3.6.1.6.3.15), SNMP-VIEW-BASED-ACM-MIB (1.3.6.1.6.3.16) and SNMP-COMMUNITY-MIB (1.3.6.1.6.3.18), the transport security modules SNMP-SSH-TM-MIB (1.3.6.1.2.1.189), SNMP-TSM-MIB (1.3.6.1.2.1.190) and SNMP-TLS-TM-MIB (1.3.6.1.2.1.198), SNMP-USM-DH-OBJECTS-MIB (1.3.6.1.3.101) and Net-SNMP's NET-SNMP-VACM-MIB (1.3.6.1.4.1.8072.1.9), since they hold community strings, user names, keys and access rules, and HOST-RESOURCES-MIB::hrSWRun (1.3.6.1.2.1.25.4), the running processes, NET-SNMP-EXTEND-MIB::nsExtendObjects (1.3.6.1.4.1.8072.1.3), UCD-SNMP-MIB::extTable (1.3.6.1.4.1.2021.8) and UCD-SNMP-MIB::prErrFixCmd (1.3.6.1.4.1.2021.2.1.103), the commands the agent runs and what they print, and CISCO-CONFIG-COPY-MIB (1.3.6.1.4.1.9.9.96) and CISCO-FLASH-MIB::ciscoFlashCopyTable (1.3.6.1.4.1.9.9.10.1.2.1), the file copies and their servers' logins, since a command line, a script's output and a copy's login can carry credentials; every other identifier under 1.3.6.1.6.3, the engine and MPD objects among them, is readable, and a walk that covers a withheld module steps over that module and answers the rest.";
 
 const AGENT_READS = `Agent mode on SNMP reads with the console's four commands, one per read: get OID [OID ...] for the named instances, next OID [OID ...] for the instance after each, walk SUBTREE for every instance under a subtree, and table ENTRY for a conceptual table's rows, named by its entry (ifEntry), each OID written numerically (1.3.6.1.2.1.1.1.0) or by a name the bundled MIB modules define (sysDescr.0, ifTable, ifEntry). ${SNMP_WITHHELD_MODULES_TEXT}`;
 

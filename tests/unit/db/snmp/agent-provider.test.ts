@@ -11,7 +11,11 @@ import { fenceUntrustedContent, UNTRUSTED_CONTENT_END } from "@/lib/agent/untrus
 import { DatabaseConfigError, QueryError, RefusedBeforeSendError } from "@/lib/db/errors";
 import { SNMP_PROVIDER_SENTENCES as S, SnmpProvider } from "@/lib/db/providers/network/snmp";
 import { SNMP_AGENT_FAILURE_SENTENCES as F, SnmpAgentError } from "@/lib/db/providers/network/snmp/agent-read";
-import { SNMP_AGENT_SENTENCES } from "@/lib/db/providers/network/snmp/agent-statement";
+import {
+  SNMP_AGENT_SENTENCES,
+  SNMP_WITHHELD_SUBTREES,
+  withheldReason,
+} from "@/lib/db/providers/network/snmp/agent-statement";
 import { SNMP_AGENT_WITHHELD as W } from "@/lib/db/providers/network/snmp/agent-surface";
 import type { ProviderExecutionContext, ReadOnlyStatementBudget } from "@/lib/db/types";
 import type { DatabaseConnection } from "@/lib/types";
@@ -282,6 +286,38 @@ describe("the other surfaces of an agent-mode handle", () => {
     expect(health.description).toBe("a test agent");
     expect(leaks(health)).toBe(false);
     expect((await provider.listObjects([], "table")).length).toBeGreaterThan(0);
+  });
+
+  test("the catalog lists no object inside a withheld subtree, so grounding and inspect_schema offer no read it withholds", async () => {
+    const reason = withheldReason(
+      SNMP_WITHHELD_SUBTREES.find((entry) => entry.module === "HOST-RESOURCES-MIB::hrSWRun")!,
+    );
+    for (const execution of [READ_ONLY, OPERATIONS]) {
+      const { provider, agent } = await connected(execution);
+      const tables = (await provider.listObjects([], "table")).map((object) => object.name);
+      const groups = (await provider.listObjects([], "scalars")).map((object) => object.name);
+      expect(tables).toContain("hrSWRunPerfTable");
+      expect(tables).toContain("hrSWInstalledTable");
+      expect(tables).not.toContain("hrSWRunTable");
+      expect(groups).not.toContain("hrSWRun");
+      const counts = await provider.countObjects();
+      expect(counts).toEqual({ table: { count: tables.length }, scalars: { count: groups.length } });
+      const batch = await provider.describeObjects([], "table");
+      expect(batch.details.map((detail) => detail.path[0])).toEqual(tables);
+      expect(batch.truncated).toBeUndefined();
+      const limited = await provider.describeObjects([], "table", 2);
+      expect(limited.details).toHaveLength(2);
+      expect(limited.truncated?.limit).toBe(2);
+      await expect(provider.describeObject(["hrSWRunTable"], "table")).rejects.toThrow(reason);
+      await expect(provider.describeObject(["hrSWRun"], "scalars")).rejects.toThrow(reason);
+      expect((await provider.describeObject(["hrSWRunPerfTable"], "table")).path).toEqual(["hrSWRunPerfTable"]);
+      expect(agent.requests).toHaveLength(1);
+      await provider.disconnect();
+      agent.close();
+    }
+    const { provider: editor } = await connected({});
+    expect((await editor.listObjects([], "table")).map((object) => object.name)).toContain("hrSWRunTable");
+    expect((await editor.describeObject(["hrSWRunTable"], "table")).path).toEqual(["hrSWRunTable"]);
   });
 
   test("the overview's reason points the run at no figure the operations health reading drops", () => {
