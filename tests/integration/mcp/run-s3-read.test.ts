@@ -42,6 +42,9 @@ const OWN_KEY = ["AKID", "OWN", "STANDIN"].join("");
 const OWN_SECRET = ["not", "a", "real", "own", "secret"].join("-");
 const AGENT_KEY = ["AKID", "AGENT", "STANDIN"].join("");
 const AGENT_SECRET = ["not", "a", "real", "agent", "secret"].join("-");
+/** A third key, an agent key that lists every bucket, as one holding s3:ListAllMyBuckets is on Silo and RustFS. */
+const LIST_ALL_KEY = ["AKID", "LISTALL", "STANDIN"].join("");
+const LIST_ALL_SECRET = ["not", "a", "real", "list", "all", "secret"].join("-");
 
 /** A key name and a metadata value planted in the store, which no answer may carry. */
 const KEY_NAME = "tenant-acme/payroll-2026.csv";
@@ -51,11 +54,14 @@ const MARKER = "planted-metadata-marker";
 const GRANTS: Readonly<Record<string, readonly string[]>> = {
   [OWN_KEY]: ["sales", "payroll", "slow", "big"],
   [AGENT_KEY]: ["sales", "slow", "big"],
+  [LIST_ALL_KEY]: ["sales"],
 };
 /** The buckets that exist. `absent` does not. */
 const BUCKETS = ["sales", "payroll", "slow", "big"];
 /** What the agent key is answered for the bucket listing: only its granted buckets, as a key without list-all is. */
 const AGENT_LISTING = ["sales"];
+/** What the list-all key is answered: three buckets, of which it may read one. */
+const LIST_ALL_LISTING = ["sales", "payroll", "big"];
 
 interface Seen {
   readonly method: string;
@@ -82,7 +88,8 @@ function answer(request: IncomingMessage, response: ServerResponse): void {
     response.end(request.method === "HEAD" ? undefined : body);
   };
   const granted = keyId === null ? [] : (GRANTS[keyId] ?? []);
-  if (url.pathname === "/") return xml(bucketsXml(keyId === OWN_KEY ? BUCKETS : AGENT_LISTING));
+  if (url.pathname === "/")
+    return xml(bucketsXml(keyId === OWN_KEY ? BUCKETS : keyId === LIST_ALL_KEY ? LIST_ALL_LISTING : AGENT_LISTING));
   const [, bucket = "", ...rest] = url.pathname.split("/");
   const key = decodeURIComponent(rest.join("/"));
   // A bucket that exists and is not granted answers 403, a missing one 404, as Garage answers them.
@@ -162,10 +169,10 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  // Whatever a case did, every request MCP made the provider send was a GET or a HEAD signed with the agent key.
+  // Whatever a case did, every request MCP made the provider send was a GET or a HEAD signed with an agent key.
   for (const request of seen) {
     expect(["GET", "HEAD"]).toContain(request.method);
-    expect(request.keyId).toBe(AGENT_KEY);
+    expect([AGENT_KEY, LIST_ALL_KEY]).toContain(request.keyId as string);
   }
   await resetMcpTestState();
 });
@@ -258,15 +265,35 @@ describe("a read under the agent read key", () => {
     // The connection's own key would list payroll too: its absence is the proof MCP signed with the agent key.
     expect(textOf(result)).not.toContain("payroll");
     expect(result.structuredContent?.notes).toBeUndefined();
+    // The connect probe's listing, then the read's listing and one HEAD of the one bucket listed.
     expect(seen.map((request) => `${request.method} ${request.path}`)).toEqual([
       "GET /?max-buckets=10000",
       "GET /?max-buckets=10000",
+      "HEAD /sales",
     ]);
     expect(mcpEvents().map((event) => [event.action, event.target, event.result])).toEqual([
       ["run_s3_read", "mcp/decision", "success"],
       ["run_s3_read", "mcp/execution", "success"],
     ]);
     expectNoStoredValue(JSON.stringify(mcpEvents()));
+  });
+
+  test("an agent key that lists three buckets but may read one is answered that one, the other two counted and not named", async () => {
+    writeSeedFile(dir, [{ ...STORE(), id: "list-all", agentUser: LIST_ALL_KEY, agentPassword: LIST_ALL_SECRET }]);
+    const result = await call("run_s3_read", { connection_id: "seed:list-all", statement: "aws s3api list-buckets" });
+    expect(result.isError ?? false).toBe(false);
+    expect(result.structuredContent?.rows).toEqual([{ bucket: "sales", created: "2026-10-09T13:13:17.442Z" }]);
+    expect(result.structuredContent?.notes).toEqual([S3_AGENT_FAILURE_SENTENCES.withheldBuckets(2)]);
+    expect(textOf(result)).not.toContain("payroll");
+    expect(textOf(result)).not.toContain("big");
+    expect(JSON.stringify(result.structuredContent)).not.toContain(LIST_ALL_SECRET);
+    // The server listed three to the list-all key and refused it the HEAD of two, each signed with that key; the
+    // HEADs run side by side, so they arrive in any order.
+    const read = seen
+      .filter((request) => request.keyId === LIST_ALL_KEY)
+      .map((request) => `${request.method} ${request.path}`);
+    expect(read.slice(-4, -3)).toEqual(["GET /?max-buckets=10000"]);
+    expect(read.slice(-3).sort()).toEqual(["HEAD /big", "HEAD /payroll", "HEAD /sales"]);
   });
 
   test("a pinned connection answers its one bucket and says so in the notes, sending no listing", async () => {

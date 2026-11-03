@@ -3,15 +3,16 @@
  * walk and MCP `inspect_schema` read, and the readings of the operations workflow. Every read here goes through the
  * agent's client (`S3AgentClient`), which holds the agent's reads alone.
  *
- * Metadata only, as the agent's reads are: buckets are listed by name and creation time, and object keys, which count
- * as stored values, are never listed, previewed or described from the server; an object's or a bucket's source (which
- * holds the endpoint, the ETag, the version id, user metadata, tags and a preview), the editor's console, the Keys
- * panel, the overview and every reading S3 does not report are answered by their reason, never by an empty answer or
- * a zero, so the model is told what it was not shown rather than reading an absence as the server's own answer. Nothing
- * read here is kept for a later call. The editor's handles keep every surface.
+ * Metadata only, as the agent's reads are: buckets are listed by name and creation time, only those the key may read,
+ * and object keys, which count as stored values, are never listed, previewed or described from the server; an object's
+ * or a bucket's source (which holds the endpoint, the ETag, the version id, user metadata, tags and a preview), the
+ * editor's console, the Keys panel, the overview and every reading S3 does not report are answered by their reason,
+ * never by an empty answer or a zero, so the model is told what it was not shown rather than reading an absence as the
+ * server's own answer. Nothing read here is kept for a later call. The editor's handles keep every surface.
  */
 import { QueryError } from "@/lib/db/errors";
 import type { DatabaseObject, HealthInfo, KindCount } from "@/lib/db/types";
+import { readableBuckets } from "./agent-metadata-read";
 import type { S3AgentClient, S3CallOptions } from "./client";
 import { S3_TYPE } from "./constants";
 import { S3_OBJECT_KINDS } from "./objects";
@@ -52,29 +53,30 @@ export function requireAgentRoot(container: readonly string[]): void {
   if (container.length !== 0) throw refusal(S3_AGENT_SHAPE.container);
 }
 
-/** The buckets, by name and creation time, read afresh: nothing is kept for a later call. */
+/**
+ * The buckets the key may read, by name and creation time, read afresh: the agent read's own check of each listed
+ * bucket against the key's grants (`readableBuckets`), so the grounding walk names no bucket the agent's reads would
+ * refuse. Nothing is kept for a later call.
+ */
 async function bucketObjects(
   client: S3AgentClient,
   pinnedBucket: string | undefined,
   call: S3CallOptions,
-): Promise<{ readonly objects: DatabaseObject[]; readonly truncated: boolean }> {
-  if (pinnedBucket !== undefined)
-    return { objects: [{ path: [pinnedBucket], name: pinnedBucket, kind: "bucket" }], truncated: false };
-  const listing = await client.listBuckets(call);
-  return {
-    objects: listing.buckets.map((bucket) => ({
-      path: [bucket.name],
-      name: bucket.name,
-      kind: "bucket",
-      ...(bucket.created === undefined ? {} : { status: `created ${bucket.created.slice(0, 10)}` }),
-    })),
-    truncated: listing.truncated,
-  };
+): Promise<DatabaseObject[]> {
+  if (pinnedBucket !== undefined) return [{ path: [pinnedBucket], name: pinnedBucket, kind: "bucket" }];
+  const { buckets } = await readableBuckets(client, call);
+  return buckets.map(
+    ({ name, created }): DatabaseObject =>
+      created === undefined
+        ? { path: [name], name, kind: "bucket" }
+        : { path: [name], name, kind: "bucket", status: `created ${created.slice(0, 10)}` },
+  );
 }
 
-const SAMPLED_FROM = "the first 10,000 buckets this key may list";
-
-/** The bucket count on an agent-mode handle: the bucket listing's, a pinned connection's one bucket with no request. */
+/**
+ * The bucket count on an agent-mode handle: the buckets the key may read, a pinned connection's one bucket with no
+ * request.
+ */
 export async function agentCountObjects(
   client: S3AgentClient,
   container: readonly string[],
@@ -82,8 +84,7 @@ export async function agentCountObjects(
   call: S3CallOptions,
 ): Promise<Record<string, KindCount>> {
   requireAgentRoot(container);
-  const { objects, truncated } = await bucketObjects(client, pinnedBucket, call);
-  return { bucket: truncated ? { count: objects.length, sampledFrom: SAMPLED_FROM } : { count: objects.length } };
+  return { bucket: { count: (await bucketObjects(client, pinnedBucket, call)).length } };
 }
 
 /** One kind's listing on an agent-mode handle: buckets by name, and the object kind refused with its reason. */
@@ -97,7 +98,7 @@ export async function agentListObjects(
   requireAgentRoot(container);
   if (kind === "object") throw refusal(S3_AGENT_WITHHELD.objects);
   if (!S3_OBJECT_KINDS.some((spec) => spec.id === kind)) throw refusal(S3_AGENT_SHAPE.kind);
-  return (await bucketObjects(client, pinnedBucket, call)).objects;
+  return bucketObjects(client, pinnedBucket, call);
 }
 
 /**
