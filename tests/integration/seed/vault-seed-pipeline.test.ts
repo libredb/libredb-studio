@@ -97,3 +97,46 @@ describe("seed pipeline with Vault references", () => {
     expect(vaultCalls).toHaveLength(0);
   });
 });
+
+describe("seed pipeline with an agent credential", () => {
+  beforeEach(() => {
+    resetCache();
+    resetPlaintextWarnings();
+    resetVaultCache();
+    vaultCalls = [];
+    process.env.SEED_CONFIG_PATH = path.join(FIXTURES, "agent-credential-config.yaml");
+    process.env.AGENT_FIXTURE_OWNER_PASSWORD = "not-a-real-owner-password";
+    process.env.AGENT_FIXTURE_AGENT_USER = "agent_reader";
+    process.env.VAULT_ADDR = "http://127.0.0.1:8200";
+    process.env.VAULT_TOKEN = "not-a-real-token";
+    respondWithSecret("not-a-real-agent-password");
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    delete process.env.SEED_CONFIG_PATH;
+    delete process.env.AGENT_FIXTURE_OWNER_PASSWORD;
+    delete process.env.AGENT_FIXTURE_AGENT_USER;
+    delete process.env.VAULT_ADDR;
+    delete process.env.VAULT_TOKEN;
+  });
+
+  it("lists the agent user resolved from the environment and the agent password as its reference, reading no Vault", async () => {
+    const [conn] = await getManagedConnections(["admin"]);
+
+    expect([conn.user, conn.agentUser, conn.agentPassword]).toEqual([
+      "owner",
+      "agent_reader",
+      "${vault:secret/data/prod/agent#password}",
+    ]);
+    expect(vaultCalls).toHaveLength(0);
+  });
+
+  it("resolves the agent password from Vault when the connection is opened", async () => {
+    const conn = await resolveConnection({ connectionId: "seed:agent-postgres" }, SESSION);
+
+    expect([conn.agentUser, conn.agentPassword]).toEqual(["agent_reader", "not-a-real-agent-password"]);
+    expect(conn.password).toBe("not-a-real-owner-password");
+    expect(vaultCalls).toEqual(["http://127.0.0.1:8200/v1/secret/data/prod/agent"]);
+  });
+});

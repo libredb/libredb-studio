@@ -66,6 +66,7 @@ import { MACHINE_PROFILE_SENTENCE } from "@/lib/db/providers/platform/kubernetes
 import { removeOwnerProviders } from "@/lib/db/owner-removal";
 import { logger } from "@/lib/logger";
 import { encryptSecret } from "@/lib/storage/encryption";
+import { projectSeedConnection } from "@/lib/seed/connection-filter";
 import type { SSHTunnelConfig } from "@/lib/types";
 import { CassandraTransportError } from "@/lib/db/providers/sql/cassandra/transport";
 import { CouchbaseError } from "@/lib/db/providers/document/couchbase/transport";
@@ -3413,6 +3414,71 @@ describe("acquireExecutionProfileProvider", () => {
     expect(error).toBeInstanceOf(ExecutionProfileError);
     expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
     expect(getExecutionProfileCacheStats().size).toBe(0);
+  });
+
+  /**
+   * A seed delivers its agent credential as plaintext once resolved, never sealed, and the factory reads it through
+   * readSecret as it reads a stored one. Projected from a seed, so the test fails if the projection drops a field.
+   */
+  test("opens every profile of a seed connection under its resolved agent credential, and one without under its own", async () => {
+    const seed = {
+      id: "pg-seed",
+      name: "pg-seed",
+      type: "postgres" as const,
+      host: "localhost",
+      port: 5432,
+      database: "testdb",
+      user: "owner",
+      password: "not-a-real-owner-password",
+      roles: ["*"],
+    };
+    const withAgent = projectSeedConnection(
+      { ...seed, agentUser: "agent_ro", agentPassword: "not-a-real-agent-password" },
+      ["admin"],
+    );
+    for (const profile of ["agent-read-only", "agent-operations", "agent-handover"] as const) {
+      const provider = await acquireExecutionProfileProvider(withAgent, profile);
+      expect([profile, provider.config.user, provider.config.password]).toEqual([
+        profile,
+        "agent_ro",
+        "not-a-real-agent-password",
+      ]);
+    }
+    const own = await acquireExecutionProfileProvider(
+      projectSeedConnection({ ...seed, id: "pg-seed-own" }, ["admin"]),
+      "agent-read-only",
+    );
+    expect([own.config.user, own.config.password]).toEqual(["owner", "not-a-real-owner-password"]);
+  });
+
+  test("refuses a plaintext agent password that reads as a sealed envelope, naming no value", async () => {
+    // A value whose text before the first colon is v and digits is read as an envelope, so this plaintext is refused
+    // where the same text as `password` would open (docs/SEED_CONNECTIONS.md says so).
+    const conn = projectSeedConnection(
+      {
+        id: "pg-seed-envelope",
+        name: "pg-seed-envelope",
+        type: "postgres",
+        host: "localhost",
+        user: "owner",
+        agentUser: "agent_ro",
+        agentPassword: "v2:x",
+        roles: ["*"],
+      },
+      ["admin"],
+    );
+
+    const error: unknown = await acquireExecutionProfileProvider(conn, "agent-read-only").catch((e: unknown) => e);
+
+    expect((error as InstanceType<typeof ExecutionProfileError>).reasonCode).toBe("AGENT_CREDENTIAL_UNRESOLVABLE");
+    expect((error as Error).message).toBe(
+      'Connection "seed:pg-seed-envelope" configures an agent credential that cannot be resolved',
+    );
+    const sealed = await acquireExecutionProfileProvider(
+      { ...conn, id: "seed:pg-seed-sealed", agentPassword: encryptSecret("not-a-real-agent-password") },
+      "agent-read-only",
+    );
+    expect(sealed.config.password).toBe("not-a-real-agent-password");
   });
 
   test("denies an agent user without a password (fail closed)", async () => {
